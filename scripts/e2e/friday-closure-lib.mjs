@@ -227,12 +227,23 @@ export function resolveReadinessReport(entries, mode = "local") {
     (entry) => String(entry?.id ?? entry?.stage ?? "").startsWith("cloud."),
   );
   const repoBackstopEntry = entries.find((entry) => entry?.id === "local.backstop.release-verify");
+  // Deep-proof live lane is DECOUPLED from repo-health and reported as its own
+  // signal. `repoReady` is now the DETERMINISTIC repo-health backstop (the
+  // release-verify step runs with the deep-proof gate closed); `deepProofReady`
+  // is the separate, required live-LLM/provider signal. `overall` still ANDs
+  // ALL entries (incl. local.deep-proof.live), so a real deep-proof failure
+  // still flips the closure NO-GO — the split makes attribution precise, it
+  // does not hide or weaken any signal.
+  const deepProofEntry = entries.find((entry) => entry?.id === "local.deep-proof.live");
   const overall = resolveClosureVerdict(entries).verdict;
 
   return {
     mode,
     repoReady: repoBackstopEntry
       ? readinessVerdictFromEntries([repoBackstopEntry])
+      : FRIDAY_READINESS_VERDICTS.NOT_RUN,
+    deepProofReady: deepProofEntry
+      ? readinessVerdictFromEntries([deepProofEntry])
       : FRIDAY_READINESS_VERDICTS.NOT_RUN,
     productReadyLocal: readinessVerdictFromEntries(localEntries),
     cloudReady: readinessVerdictFromEntries(cloudEntries),

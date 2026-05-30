@@ -112,6 +112,7 @@ describe("friday closure lib", () => {
     expect(readiness).toEqual({
       mode: "local",
       repoReady: FRIDAY_READINESS_VERDICTS.GO,
+      deepProofReady: FRIDAY_READINESS_VERDICTS.NOT_RUN,
       productReadyLocal: FRIDAY_READINESS_VERDICTS.GO,
       cloudReady: FRIDAY_READINESS_VERDICTS.NOT_RUN,
       overall: "GO",
@@ -128,6 +129,7 @@ describe("friday closure lib", () => {
     expect(readiness).toEqual({
       mode: "all",
       repoReady: FRIDAY_READINESS_VERDICTS.GO,
+      deepProofReady: FRIDAY_READINESS_VERDICTS.NOT_RUN,
       productReadyLocal: FRIDAY_READINESS_VERDICTS.GO,
       cloudReady: FRIDAY_READINESS_VERDICTS.NO_GO,
       overall: "NO-GO",
@@ -150,10 +152,33 @@ describe("friday closure lib", () => {
     expect(readiness).toEqual({
       mode: "local",
       repoReady: FRIDAY_READINESS_VERDICTS.GO,
+      deepProofReady: FRIDAY_READINESS_VERDICTS.NOT_RUN,
       productReadyLocal: FRIDAY_READINESS_VERDICTS.NO_GO,
       cloudReady: FRIDAY_READINESS_VERDICTS.NOT_RUN,
       overall: "NO-GO",
     });
+  });
+
+  it("decouples repo-health from the deep-proof live lane (separate signals; overall still ANDs both)", () => {
+    // Deterministic repo-health GREEN, but the decoupled deep-proof live lane
+    // FAILED → repoReady stays GO, deepProofReady is NO-GO, and overall is
+    // NO-GO (the deep-proof failure is attributed, not hidden, and still blocks).
+    const readiness = resolveReadinessReport([
+      { id: "local.backstop.release-verify", status: FRIDAY_CLOSURE_STATUSES.PASS },
+      { id: "local.deep-proof.live", status: FRIDAY_CLOSURE_STATUSES.FAIL },
+    ], "local");
+    expect(readiness.repoReady).toBe(FRIDAY_READINESS_VERDICTS.GO);
+    expect(readiness.deepProofReady).toBe(FRIDAY_READINESS_VERDICTS.NO_GO);
+    expect(readiness.overall).toBe("NO-GO");
+
+    // And when both pass, both signals + overall are GO.
+    const green = resolveReadinessReport([
+      { id: "local.backstop.release-verify", status: FRIDAY_CLOSURE_STATUSES.PASS },
+      { id: "local.deep-proof.live", status: FRIDAY_CLOSURE_STATUSES.PASS },
+    ], "local");
+    expect(green.repoReady).toBe(FRIDAY_READINESS_VERDICTS.GO);
+    expect(green.deepProofReady).toBe(FRIDAY_READINESS_VERDICTS.GO);
+    expect(green.overall).toBe("GO");
   });
 
   it("treats PASS entries with closureFailures as failed in closure verdict summaries", () => {
