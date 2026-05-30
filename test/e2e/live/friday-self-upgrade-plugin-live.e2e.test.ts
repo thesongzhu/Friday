@@ -177,8 +177,12 @@ function createPluginFixture(rootDir: string, pluginId: string): string {
   fs.writeFileSync(
     path.join(distDir, "index.mjs"),
     `import fs from "node:fs";
-const activatedPath = new URL("../activated.json", import.meta.url);
-const deactivatedPath = new URL("../deactivated.json", import.meta.url);
+// Liveness markers are written OUTSIDE the install/package tree (into the parent
+// plugin root dir) so the trust-on-install fingerprint of the install dir stays
+// intact across canary -> promote loads. From dist/, "../../" resolves to the
+// parent of the install dir.
+const activatedPath = new URL("../../${pluginId}.activated.json", import.meta.url);
+const deactivatedPath = new URL("../../${pluginId}.deactivated.json", import.meta.url);
 export async function activate(context) {
   fs.writeFileSync(activatedPath, JSON.stringify({ pluginId: context.pluginId, activated: true }));
 }
@@ -333,7 +337,10 @@ describe.skipIf(!FRIDAY_DEEP_PROOF_GATED)(`Friday Plugin Self Upgrade Live (${FR
       expect(reviewEnableRes.json.data.evidence?.rollbackPointerAvailable).toBe(true);
       expect(reviewEnableRes.json.data.evidence?.planDigest).toBeTruthy();
 
-      const activatedMarker = path.join(installPath, "activated.json");
+      // Markers live OUTSIDE the install dir (in the parent plugin root) so the
+      // trust-on-install fingerprint of the install tree is not perturbed by the
+      // activate()/deactivate() liveness writes during canary -> promote.
+      const activatedMarker = path.join(path.dirname(installPath), `${pluginId}.activated.json`);
       expect(fs.existsSync(activatedMarker)).toBe(true);
       const activatedPayload = JSON.parse(fs.readFileSync(activatedMarker, "utf8")) as { pluginId: string };
       expect(activatedPayload.pluginId).toBe(pluginId);
