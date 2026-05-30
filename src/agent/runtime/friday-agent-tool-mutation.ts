@@ -2,6 +2,11 @@
 // Determines whether a tool call is considered mutating (write-side-effect).
 // Used to enforce readOnly constraints on agent runs.
 
+import {
+  getApprovalRequiredReasonForExecCommand,
+  unwrapCommand,
+} from "./friday-agent-tool-risk.js";
+
 // Tools that are always mutating
 const MUTATING_TOOLS = new Set([
   "write",
@@ -16,10 +21,21 @@ const READ_ONLY_SHELL_COMMANDS = /^\s*(ls|find|cat|head|tail|wc|grep|rg|awk|sed\
 // Tools that are mutating only for certain actions/sub-operations
 const CONDITIONAL_MUTATING_TOOLS: Record<string, (args: Record<string, unknown>) => boolean> = {
   exec: (args) => {
-    // Shell commands: read-only commands (ls, find, cat, grep, etc.) are not mutating
+    // Shell commands: read-only commands (ls, find, cat, grep, etc.) are not mutating.
+    // Align with the exec risk gate's unwrapCommand so a read-only program name at the START
+    // of the command cannot mask a mutating INNER command (`env FOO=x rm -rf …`) or dangerous
+    // flags (`find … -delete`, `bash -c …`). Without this, readOnly enforcement under-counts
+    // such calls as non-mutating even though the action writes/destroys state.
     const command = typeof args.command === "string" ? args.command.trim() : "";
     if (!command) return true; // empty command → treat as mutating for safety
-    return !READ_ONLY_SHELL_COMMANDS.test(command);
+    // 1) Anything the exec risk gate would force approval on (destructive program, dangerous
+    //    flags, opaque `sh -c …`, env-wrapped destructive) is mutating.
+    if (getApprovalRequiredReasonForExecCommand(command)) return true;
+    // 2) Otherwise classify on the UNWRAPPED inner command (strip env/sudo/nice/timeout wrappers
+    //    + inline VAR=value assignments) so wrapped mutating commands don't masquerade as read-only.
+    const unwrapped = unwrapCommand(command.split(/\s+/));
+    if (unwrapped.approve) return true; // opaque/unverifiable wrapper → mutating (fail safe)
+    return !READ_ONLY_SHELL_COMMANDS.test(unwrapped.inner.join(" "));
   },
   system: (args) => {
     const action = typeof args.action === "string" ? args.action : "";

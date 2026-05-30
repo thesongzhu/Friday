@@ -115,7 +115,7 @@ const COMMAND_WRAPPER_OPTS: Record<string, { value: ReadonlySet<string>; flag: R
   },
 };
 
-interface UnwrappedCommand {
+export interface UnwrappedCommand {
   /** Set when the wrapper form itself requires approval (shell `-c`, or an unparseable wrapper). */
   approve?: string;
   /** The innermost command tokens to risk-classify (the original tokens if there was no wrapper). */
@@ -128,7 +128,7 @@ interface UnwrappedCommand {
 // are skipped precisely; an unrecognized option (which might hide the wrapped command) forces
 // approval rather than a guess. Recurses (with a depth guard) so nested forms like
 // `sudo env rm -rf` and `sudo bash -c …` resolve to their effective risk.
-function unwrapCommand(parts: readonly string[]): UnwrappedCommand {
+export function unwrapCommand(parts: readonly string[]): UnwrappedCommand {
   let toks: string[] = parts.slice();
   for (let depth = 0; toks.length > 0; depth++) {
     if (depth >= 8) {

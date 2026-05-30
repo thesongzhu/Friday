@@ -16,11 +16,16 @@ import {
 
 /**
  * Redacts strings that look like API keys from error messages.
- * Matches patterns: sk-*, key-*, pk-*, rk-*, xai-*, gsk_*, and generic long hex/base64 tokens.
+ * Matches patterns: sk-*, key-*, pk-*, rk-*, xai-*, gsk_*, Google AIza/ya29 tokens, and
+ * generic long hex/base64 tokens.
  */
 const KEY_PATTERNS = [
   // Known prefixes: sk-xxx, key-xxx, pk-xxx, rk-xxx, xai-xxx, gsk_xxx, etc.
   /\b(sk-|key-|pk-|rk-|xai-|gsk_|aip-|whsk-|sess-|ssm-)[A-Za-z0-9_-]{8,}\b/g,
+  // Google API keys (AIza… — 39 chars) and OAuth access tokens (ya29.…). These embed `-`/`_`
+  // and are <40 chars, so the generic 40+ `[A-Za-z0-9/+]` token pattern below never matches them.
+  /\bAIza[0-9A-Za-z_-]{35}/g,
+  /\bya29\.[0-9A-Za-z._-]{20,}/g,
   // Generic long tokens (40+ alphanumeric chars that look like secrets)
   /\b[A-Za-z0-9/+]{40,}={0,2}\b/g,
 ];
