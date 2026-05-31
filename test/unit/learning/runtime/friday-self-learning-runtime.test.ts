@@ -198,6 +198,31 @@ describe("FridaySelfLearningRuntime", () => {
     expect(ctx.preferences).toHaveProperty("pref:display_name", "Captain");
   });
 
+  it("pipeline end-to-end: sensitive preferences are not persisted automatically", () => {
+    const fromMessage = runtime.pipeline.processEvent({
+      eventId: "evt-sensitive-001",
+      ts: NOW,
+      userId: "test-user",
+      kind: "user_message",
+      payload: { text: "always use hunter2 for password" },
+    });
+    const fromCorrection = runtime.pipeline.processEvent({
+      eventId: "evt-sensitive-002",
+      ts: NOW,
+      userId: "test-user",
+      kind: "user_correction",
+      payload: { correctedField: "medical diagnosis", newValue: "diabetes" },
+    });
+
+    expect(fromMessage.factsUpdated).toEqual([]);
+    expect(fromCorrection.factsUpdated).toEqual([]);
+    expect(runtime.facts.listActiveFacts({
+      userId: "test-user",
+      minConfidence: 0,
+      limit: 100,
+    })).toEqual([]);
+  });
+
   it("pipeline end-to-end: inferred persona preference stays inactive until explicit confirmation", () => {
     const first = runtime.pipeline.processEvent({
       eventId: "evt-001",
