@@ -1,6 +1,6 @@
 import { apiClient } from "./client";
 
-export type ReflexCandidateKind = "memory" | "preference" | "recipe" | "skill" | "workflow" | "fix" | "test_policy";
+export type ReflexCandidateKind = "memory" | "learned_fact" | "preference" | "recipe" | "skill" | "workflow" | "fix" | "test_policy";
 export type ReflexCandidateStatus = "proposed" | "testing" | "ready_for_review" | "approved" | "rejected" | "dismissed" | "failed" | "superseded";
 export type ReflexSurface = "channel" | "operate" | "review_center";
 export type ReflexPreferenceCategory = "communication" | "uix" | "reflex";

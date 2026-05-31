@@ -293,6 +293,7 @@ import {
   createFridayPreferenceFactRepository,
   createFridaySelfHealingApiService,
   createFridaySelfLearningRuntime,
+  type FridayExtractedSignal,
 } from "#learning";
 import {
   createFridayObservabilityApiService,
@@ -5982,6 +5983,56 @@ export async function createFridayHub(
     onboardingRepo: reflexOnboardingRepository,
     preferenceRepo: uixUserPreferenceRepository,
     memoryService,
+    learnedFactApprover: (input) => {
+      const eventId = idGenerator();
+      const event: FridayLearningEventAppendInput = {
+        eventId,
+        ts: input.nowIso,
+        userId: input.userId,
+        sessionId: input.sessionKey,
+        runId: input.sourceRunId,
+        kind: "user_correction",
+        payload: {
+          feedbackKind: "learned_fact_approval",
+          key: input.key,
+          value: input.value,
+          candidateId: input.candidateId,
+          origin: input.origin,
+        },
+      };
+      const signal: FridayExtractedSignal = {
+        signalId: idGenerator(),
+        kind: "preference",
+        key: input.key,
+        value: input.value,
+        confidence: input.confidence,
+        sourceEventId: eventId,
+        userId: input.userId,
+        sessionId: input.sessionKey,
+        runId: input.sourceRunId,
+        ts: input.nowIso,
+        situationalContext: {
+          candidateId: input.candidateId,
+          origin: input.origin,
+          evidence: input.evidence,
+        },
+      };
+      const [fact] = selfLearningRuntime.facts.applySignals({
+        event,
+        signals: [signal],
+        nowIso: input.nowIso,
+      });
+      if (!fact) {
+        throw new Error("Learned-fact approval produced no persisted fact.");
+      }
+      return {
+        factId: fact.factId,
+        key: fact.key,
+        confidence: fact.confidence,
+        evidenceCount: fact.evidenceCount,
+        lastConfirmedAt: fact.lastConfirmedAt,
+      };
+    },
     skillGenerator,
     workflowGenerator,
     learningEventWriter,

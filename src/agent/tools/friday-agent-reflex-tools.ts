@@ -23,6 +23,7 @@ const CANDIDATE_STATUSES = new Set<FridayReflexCandidateStatus>([
 
 const CANDIDATE_KINDS = new Set<FridayReflexCandidateKind>([
   "memory",
+  "learned_fact",
   "preference",
   "recipe",
   "skill",
