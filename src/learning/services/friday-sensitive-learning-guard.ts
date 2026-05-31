@@ -19,4 +19,4 @@ export function isFridaySensitiveLearningCandidate(...values: unknown[]): boolea
 }
 
 export const FRIDAY_SENSITIVE_LEARNING_REJECTION =
-  "Sensitive or high-risk preferences are not persisted automatically. Ask the user to use an explicit review/secure-storage flow instead.";
+  "Sensitive or high-risk preferences are not persisted automatically. Keep them out of learned facts and use an explicit review or user-approved secret surface where one is available.";
