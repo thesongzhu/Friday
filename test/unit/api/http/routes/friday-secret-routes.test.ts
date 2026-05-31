@@ -111,8 +111,8 @@ describe("FridaySecretRoutes", () => {
     await expect(
       route.handler(makeCtx({
         principal: makeSecretReadPrincipal(),
-        params: { secretId: "missing" },
-      })), // pragma: allowlist secret
+        params: { secretId: "missing" }, // pragma: allowlist secret
+      })),
     ).rejects.toThrow("Secret not found");
   });
 
