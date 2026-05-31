@@ -163,6 +163,7 @@ describe("FridayPreferenceExtractionService", () => {
         "always use hunter2 for password",
         "I prefer insulin for medication",
         "call me my-secret-token",
+        "always use driver license marker for driver's license",
         "以后叫我 密码123",
       ]) {
         const event = makeEvent({
