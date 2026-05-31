@@ -2,11 +2,9 @@ import { useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { postBootstrapLocalPassphrase } from "@/lib/api/auth";
+import { MIN_PASSPHRASE_LENGTH, evaluatePassphraseGate } from "@/lib/auth/first-run-passphrase";
 import { localize } from "@/lib/i18n/localized-text";
 import { useAppLocale } from "@/providers/locale-provider";
-
-/** Backend minimum for the local passphrase (POST /v1/auth/bootstrap/local-passphrase). */
-const MIN_PASSPHRASE_LENGTH = 12;
 
 /**
  * First-run local security gate. Shown when the backend is reachable, the user is not
@@ -28,10 +26,10 @@ export function FirstRunPassphraseGate() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const tooShort = passphrase.length > 0 && passphrase.length < MIN_PASSPHRASE_LENGTH;
-  const mismatch = confirm.length > 0 && passphrase !== confirm;
-  const canSubmit =
-    passphrase.length >= MIN_PASSPHRASE_LENGTH && passphrase === confirm && !submitting;
+  const gate = evaluatePassphraseGate(passphrase, confirm);
+  const tooShort = gate.tooShort;
+  const mismatch = gate.mismatch;
+  const canSubmit = gate.canSubmit && !submitting;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
