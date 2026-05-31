@@ -4066,14 +4066,15 @@ export async function createFridayHub(
     if (userRulesFragment) {
       fragments.push(userRulesFragment);
     }
-    if (input.userId) {
+    const userId = input.userId;
+    if (userId) {
       const explicitPreferences = stateRuntime.sqlite.withReadConnection((db) =>
         uixUserPreferenceRepository.listByPrincipal(db, {
-          principalId: input.userId!,
+          principalId: userId,
           category: "communication",
         }));
       const learnedPreferences = _learningContextRef?.buildContext({
-        userId: input.userId,
+        userId,
         nowIso: nowIso(),
       }).preferences ?? {};
       const persona = resolveFridayCommunicationPersona({
@@ -4084,7 +4085,7 @@ export async function createFridayHub(
       if (personaFragment.trim().length > 0) {
         fragments.push(personaFragment.trim());
       }
-      const reflexFragment = buildReflexPreferencePromptFragment(input.userId);
+      const reflexFragment = buildReflexPreferencePromptFragment(userId);
       if (reflexFragment) {
         fragments.push(reflexFragment);
       }
