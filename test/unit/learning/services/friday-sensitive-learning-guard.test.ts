@@ -82,8 +82,9 @@ describe("Friday sensitive learning guard", () => {
     }
   });
 
-  it("exports a review-flow rejection message", () => {
+  it("exports a truthful review-surface rejection message", () => {
     expect(FRIDAY_SENSITIVE_LEARNING_REJECTION).toContain("explicit review");
-    expect(FRIDAY_SENSITIVE_LEARNING_REJECTION).toContain("secure-storage");
+    expect(FRIDAY_SENSITIVE_LEARNING_REJECTION).toContain("where one is available");
+    expect(FRIDAY_SENSITIVE_LEARNING_REJECTION).not.toContain("secure-storage flow");
   });
 });
