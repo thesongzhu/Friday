@@ -70,6 +70,8 @@ export type FridayPublicMutationOperation =
   | "task.workflow.channel.command.confirm"
   | "runtime.config.update"
   | "runtime.config.revert"
+  | "runtime.secret.list"
+  | "runtime.secret.read"
   | "runtime.secret.create"
   | "runtime.secret.update"
   | "runtime.secret.delete"
