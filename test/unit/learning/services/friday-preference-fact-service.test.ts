@@ -187,7 +187,7 @@ describe("FridayPreferenceFactService", () => {
     expect(active).toHaveLength(0);
   });
 
-  it("promotes repeated inferred preferences into active context", () => {
+  it("keeps repeated inferred preferences below active context until explicit confirmation", () => {
     service.applySignals({
       event: makeEvent({ eventId: "evt-001", kind: "user_message" }),
       signals: [makeSignal({ kind: "preference", key: "persona.verbosity", value: "concise", confidence: 0.65 })],
@@ -210,16 +210,14 @@ describe("FridayPreferenceFactService", () => {
 
     expect(updated).toHaveLength(1);
     expect(updated[0]!.evidenceCount).toBe(2);
-    expect(updated[0]!.confidence).toBeGreaterThanOrEqual(0.60);
+    expect(updated[0]!.confidence).toBeLessThan(0.60);
 
     const active = service.listActiveFacts({
       userId: "test-user",
       minConfidence: 0.60,
       limit: 100,
     });
-    expect(active).toHaveLength(1);
-    expect(active[0]!.key).toBe("persona.verbosity");
-    expect(active[0]!.value).toBe("concise");
+    expect(active).toHaveLength(0);
   });
 
   it("downgrades conflicting inferred preferences back below active context threshold", () => {

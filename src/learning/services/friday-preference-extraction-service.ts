@@ -23,6 +23,18 @@ function normalizeKey(field: string): string {
     .replace(/^_|_$/g, "");
 }
 
+const SENSITIVE_PREFERENCE_PATTERN =
+  /\b(password|passcode|secret|api[\s_]*key|token|ssn|social[\s_]+security|credit[\s_]+card|bank[\s_]+account|routing[\s_]+number|passport|driver'?s[\s_]+license|medical|medication|diagnosis|diabetes|cancer|hiv|financial|religion|political)\b|密码|口令|密钥|令牌|身份证|护照|银行卡|信用卡|病历|诊断|宗教|政治/u;
+
+function isSensitiveLearnedPreference(key: string, value: unknown): boolean {
+  const valueText = typeof value === "string"
+    ? value
+    : value === undefined || value === null
+      ? ""
+      : JSON.stringify(value);
+  return SENSITIVE_PREFERENCE_PATTERN.test(`${key} ${valueText}`);
+}
+
 function readCorrectionPayload(payload: Record<string, unknown>): {
   correctedField?: string;
   newValue?: unknown;
@@ -195,7 +207,9 @@ export function createFridayPreferenceExtractionService(
           const { correctedField, newValue } = readCorrectionPayload(event.payload);
           if (correctedField && newValue !== undefined) {
             const key = `pref:${normalizeKey(correctedField)}`;
-            signals.push(makeSignal("correction", key, newValue, 1.0));
+            if (!isSensitiveLearnedPreference(key, newValue)) {
+              signals.push(makeSignal("correction", key, newValue, 1.0));
+            }
           }
           break;
         }
@@ -209,9 +223,11 @@ export function createFridayPreferenceExtractionService(
               if (match) {
                 const key = rule.keyExtractor(match);
                 const value = rule.valueExtractor(match);
-                signals.push(
-                  makeSignal("preference", key, value, rule.confidence),
-                );
+                if (!isSensitiveLearnedPreference(key, value)) {
+                  signals.push(
+                    makeSignal("preference", key, value, rule.confidence),
+                  );
+                }
                 matched = true;
                 break; // first match wins
               }
@@ -223,9 +239,11 @@ export function createFridayPreferenceExtractionService(
                 if (match) {
                   const key = rule.keyExtractor(match);
                   const value = rule.valueExtractor(match);
-                  signals.push(
-                    makeSignal("preference", key, value, rule.confidence),
-                  );
+                  if (!isSensitiveLearnedPreference(key, value)) {
+                    signals.push(
+                      makeSignal("preference", key, value, rule.confidence),
+                    );
+                  }
                   break;
                 }
               }

@@ -48,6 +48,10 @@ export interface CreatePreferenceFactServiceDeps {
 const FIRST_INFERRED_PREFERENCE_CONFIDENCE_CAP = 0.55;
 const EXPLICIT_PREFERENCE_CONFIDENCE_FLOOR = 0.8;
 
+function isUnconfirmedInferredPreference(signal: FridayExtractedSignal): boolean {
+  return signal.kind === "preference" && signal.confidence < EXPLICIT_PREFERENCE_CONFIDENCE_FLOOR;
+}
+
 /**
  * Recompute confidence using the scoring model from the plan:
  *   existingDecayed = existingConfidence * exp(-ln(2) * daysSinceLastConfirmed / halfLifeDays)
@@ -123,9 +127,7 @@ export function createFridayPreferenceFactService(
             nowIso,
             halfLifeDays,
           );
-          const gatedConfidence = !existing
-            && signal.kind === "preference"
-            && signal.confidence < EXPLICIT_PREFERENCE_CONFIDENCE_FLOOR
+          const gatedConfidence = isUnconfirmedInferredPreference(signal)
             ? Math.min(newConfidence, FIRST_INFERRED_PREFERENCE_CONFIDENCE_CAP)
             : newConfidence;
 

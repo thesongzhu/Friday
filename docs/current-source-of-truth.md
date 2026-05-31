@@ -221,7 +221,7 @@ This document is the current architecture reference for steady-state Friday runt
 - The communication style resolution priority cascade is: explicit preferences > learned preferences > system defaults.
 - The communication prompt fragment is injected into the agent's effective system prompt at runtime. Enrichment failure is non-fatal and must not kill the agent run.
 - The communication prompt builder reads both explicit preferences and learned preferences from the self-learning context builder.
-- Learned preference facts use a Bayesian-inspired confidence model with decay, conflict penalty, and evidence boost.
+- Learned preference facts use a Bayesian-inspired confidence model with decay, conflict penalty, and evidence boost. Low-confidence inferred preferences are kept below the active context threshold until an explicit/high-confidence preference or correction confirms them; repeated low-confidence observations alone must not make a learned preference affect behavior.
 - The self-learning context enrichment service is wired through hub bootstrap and becomes available after self-learning runtime creation.
 - Communication style affects wording, progress updates, failure phrasing, and clarification style only. It must not weaken approval gates, rollback rules, or destructive-action safeguards.
 - Raw learned facts are not blanket prompt injection. `createFridayPreferenceInjector` exists as a bounded injector utility and test target, but current hub prompt wiring uses the communication prompt builder plus persisted Reflex/User Constitution preference fragments instead of silently injecting raw learned facts.

@@ -162,7 +162,7 @@ describe("FridayLearningContextEnrichmentService", () => {
     expect(ctx.appliedFacts).toEqual([]);
   });
 
-  it("buildContext includes repeated inferred preferences after corroborating evidence", () => {
+  it("buildContext excludes repeated inferred preferences until explicit confirmation", () => {
     const factRepo = createFridayPreferenceFactRepository();
     const factService = createFridayPreferenceFactService({
       db,
@@ -201,9 +201,8 @@ describe("FridayLearningContextEnrichmentService", () => {
       nowIso: NOW,
     });
 
-    expect(ctx.preferences).toHaveProperty("persona.verbosity", "concise");
-    expect(ctx.appliedFacts[0]!.key).toBe("persona.verbosity");
-    expect(ctx.appliedFacts[0]!.confidence).toBeGreaterThanOrEqual(0.60);
+    expect(ctx.preferences).not.toHaveProperty("persona.verbosity");
+    expect(ctx.appliedFacts).toEqual([]);
   });
 
   it("enrichSkillPayload adds __fridayLearning envelope", () => {
