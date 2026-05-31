@@ -60,8 +60,9 @@ Rules:
 - Use "kind" to classify: "fact", "decision", "preference", or "action_item".
 - Reference the source message IDs that contributed to each item.
 - Content should be concise but complete enough to be useful without the original conversation.
-- Preserve the exact user-stated value for names, codenames, passphrases, labels, and stylistic preferences when those specifics matter.
+- Preserve the exact user-stated value for names, codenames, labels, and stylistic preferences when those specifics matter.
 - Do not generalize a concrete preference into a broader summary. For example, if the user specifies a release-note style, keep that wording instead of replacing it with something vague like "concise release notes."
+- Do not extract secrets, credentials, passphrases, API keys, tokens, financial identifiers, medical details, identity documents, political/religious traits, or other high-risk sensitive facts or preferences.
 - Do not extract trivial greetings, acknowledgments, or filler.
 - If there is nothing meaningful to extract, return an empty items array.
 

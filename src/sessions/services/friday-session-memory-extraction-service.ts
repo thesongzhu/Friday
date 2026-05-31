@@ -1,5 +1,6 @@
 import { FridayDomainError } from "#errors";
 import { safeJsonParse } from "#utilities";
+import { isFridaySensitiveLearningCandidate } from "../../learning/services/friday-sensitive-learning-guard.js";
 
 import {
   FRIDAY_SESSION_MEMORY_EXTRACTION_DEFAULT_BATCH_SIZE,
@@ -14,6 +15,7 @@ import {
   FRIDAY_SESSION_MEMORY_EXTRACTION_TAG_PREFIX_KIND,
 } from "../friday-session-memory-extraction.constants.js";
 import type {
+  FridaySessionMemoryExtractionLlmItem,
   FridaySessionMemoryExtractionRunResult,
   FridaySessionMemoryExtractionStatus,
   FridaySessionMemoryExtractionTrigger,
@@ -167,6 +169,17 @@ export function createFridaySessionMemoryExtractionService(
     return { processable, alreadyExtracted };
   }
 
+  function isSensitiveExtractionItem(
+    item: FridaySessionMemoryExtractionLlmItem,
+    batch: FridaySessionMessageRecord[],
+  ): boolean {
+    const sourceTextById = new Map(batch.map((message) => [message.id, message.contentText]));
+    const sourceTexts = item.sourceMessageIds
+      .map((id) => sourceTextById.get(id))
+      .filter((text): text is string => typeof text === "string" && text.length > 0);
+    return isFridaySensitiveLearningCandidate(item.content, item.tags, sourceTexts);
+  }
+
   async function processInline(
     sessionKey: string,
     trigger: FridaySessionMemoryExtractionTrigger,
@@ -233,7 +246,9 @@ export function createFridaySessionMemoryExtractionService(
           },
         );
 
-        if (llmResponse.items.length === 0) {
+        const safeItems = llmResponse.items.filter((item) => !isSensitiveExtractionItem(item, batch));
+
+        if (safeItems.length === 0) {
           // No items — mark all as skipped
           updateMessageExtractStatus(
             batch.map((m) => m.id),
@@ -246,14 +261,14 @@ export function createFridaySessionMemoryExtractionService(
 
         // Collect which message IDs were referenced by items
         const referencedIds = new Set<string>();
-        for (const item of llmResponse.items) {
+        for (const item of safeItems) {
           for (const id of item.sourceMessageIds) {
             referencedIds.add(id);
           }
         }
 
         // Store memory items
-        for (const item of llmResponse.items) {
+        for (const item of safeItems) {
           const tags = [
             sourceTag,
             `session:${sessionKey}`,
