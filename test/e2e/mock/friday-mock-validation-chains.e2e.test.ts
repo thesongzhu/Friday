@@ -288,6 +288,54 @@ describe("Friday Validation Chain E2E", () => {
       expect(toneItem?.value).toBe("analytical");
     });
 
+    it("PUT persona maps UI setting keys to canonical communication preference keys", { timeout: TEST_TIMEOUT_MS }, async () => {
+      const putRes = await apiFetch<{
+        ok: boolean;
+        data: {
+          persona: {
+            settings: {
+              tone: string;
+              verbosity: string;
+              structure: string;
+              directness: string;
+            };
+          };
+        };
+        error?: { code: string; message: string };
+      }>(env.baseUrl, env.accessToken, "PUT", "/v1/uix/persona", {
+        settings: {
+          tone: "warm",
+          verbosity: "concise",
+          structure: "structured",
+          directness: "direct",
+        },
+      });
+
+      expect(putRes.status).toBe(200);
+      expect(putRes.json.ok).toBe(true);
+      expect(putRes.json.data.persona.settings).toMatchObject({
+        tone: "warm",
+        verbosity: "concise",
+        structure: "structured",
+        directness: "direct",
+      });
+
+      const getRes = await apiFetch<{
+        ok: boolean;
+        data: { items: Array<{ category: string; key: string; value: unknown }> };
+      }>(env.baseUrl, env.accessToken, "GET", "/v1/uix/preferences");
+
+      expect(getRes.status).toBe(200);
+      expect(getRes.json.data.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ category: "communication", key: "persona.tone", value: "warm" }),
+          expect.objectContaining({ category: "communication", key: "persona.verbosity", value: "concise" }),
+          expect.objectContaining({ category: "communication", key: "persona.structure", value: "structured" }),
+          expect.objectContaining({ category: "communication", key: "persona.directness", value: "direct" }),
+        ]),
+      );
+    });
+
     it("invalid MBTI type is rejected with 400", { timeout: TEST_TIMEOUT_MS }, async () => {
       const res = await apiFetch<{
         ok: boolean;

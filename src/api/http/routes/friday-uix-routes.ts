@@ -1,6 +1,9 @@
 import { FridayDomainError } from "#errors";
 import type { FridayProviderTenantContext } from "#providers";
-import { isMbti } from "../../../uix/services/friday-communication-persona.js";
+import {
+  FRIDAY_COMMUNICATION_PREFERENCE_KEYS,
+  isMbti,
+} from "../../../uix/services/friday-communication-persona.js";
 import type { FridayUixSurfaceService } from "../../../uix/services/friday-uix-surface-service.js";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type {
@@ -323,16 +326,26 @@ export function createFridayUixRoutes(
         const settings = (body?.settings ?? {}) as Record<string, unknown>;
 
         // Map persona settings to user preferences with category "communication"
-        const validKeys = new Set(["tone", "verbosity", "structure", "questionStyle", "directness", "emojiStyle", "jargonTolerance", "assumptionStyle", "confirmationStyle"]);
+        const validKeys = new Map<string, string>([
+          ["tone", FRIDAY_COMMUNICATION_PREFERENCE_KEYS.tone],
+          ["verbosity", FRIDAY_COMMUNICATION_PREFERENCE_KEYS.verbosity],
+          ["structure", FRIDAY_COMMUNICATION_PREFERENCE_KEYS.structure],
+          ["questionStyle", FRIDAY_COMMUNICATION_PREFERENCE_KEYS.questionStyle],
+          ["directness", FRIDAY_COMMUNICATION_PREFERENCE_KEYS.directness],
+          ["emojiStyle", FRIDAY_COMMUNICATION_PREFERENCE_KEYS.emojiStyle],
+          ["jargonTolerance", FRIDAY_COMMUNICATION_PREFERENCE_KEYS.jargonTolerance],
+          ["assumptionStyle", FRIDAY_COMMUNICATION_PREFERENCE_KEYS.assumptionStyle],
+          ["confirmationStyle", FRIDAY_COMMUNICATION_PREFERENCE_KEYS.confirmationStyle],
+        ]);
         const preferences: Array<{ category: "communication"; key: string; value: string }> = [];
         for (const [key, value] of Object.entries(settings)) {
           if (validKeys.has(key) && typeof value === "string" && value.trim().length > 0) {
-            preferences.push({ category: "communication", key, value: value.trim() });
+            preferences.push({ category: "communication", key: validKeys.get(key)!, value: value.trim() });
           }
         }
 
         if (preferences.length === 0) {
-          throw new FridayDomainError("VALIDATION_ERROR", "At least one valid persona setting is required. Valid keys: " + [...validKeys].join(", "), { httpStatus: 400 });
+          throw new FridayDomainError("VALIDATION_ERROR", "At least one valid persona setting is required. Valid keys: " + [...validKeys.keys()].join(", "), { httpStatus: 400 });
         }
 
         deps.service.updatePreferences({
