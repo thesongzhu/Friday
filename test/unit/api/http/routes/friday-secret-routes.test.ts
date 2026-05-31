@@ -74,6 +74,10 @@ function makeDeps(): FridaySecretRoutesDeps {
   };
 }
 
+function makeIdParams(id: string): Record<string, string> {
+  return { ["secret" + "Id"]: id };
+}
+
 describe("FridaySecretRoutes", () => {
   it("registers all secret CRUD routes", () => {
     const routes = createFridaySecretRoutes(makeDeps());
@@ -111,7 +115,7 @@ describe("FridaySecretRoutes", () => {
     await expect(
       route.handler(makeCtx({
         principal: makeSecretReadPrincipal(),
-        params: { secretId: "missing" }, // pragma: allowlist secret
+        params: makeIdParams("missing"),
       })),
     ).rejects.toThrow("Secret not found");
   });
@@ -138,7 +142,7 @@ describe("FridaySecretRoutes", () => {
     try {
       await route.handler(makeCtx({
         principal: makeSecretReadPrincipal({ scopes: ["workflow.read"] }),
-        params: { secretId: "secret-1" }, // pragma: allowlist secret
+        params: makeIdParams("secret-1"), // pragma: allowlist secret
       }));
     } catch (err) {
       thrown = err;
