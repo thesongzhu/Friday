@@ -77,6 +77,7 @@ import type { SkillLifecycleStatus, SkillOrigin, SkillSource } from "#skills";
 import { createFridaySkillExecutor } from "#skills";
 import { createFridaySkillGeneratorService } from "#skills/generator";
 import { createFridayWorkflowGeneratorService } from "#workflows";
+import type { FridayWorkflowGeneratorService } from "#workflows";
 import {
   createDarwinProgramScanner,
   createFridayProgramDiscoveryService,
@@ -1693,21 +1694,7 @@ export async function createFridayHub(
 
   // ─── Workflow generator service ───
 
-  const workflowGenerator = createFridayWorkflowGeneratorService({
-    db: stateRuntime!.sqlite,
-    providerService,
-    workflowCrud: workflowRuntime.crud,
-    skillRegistry: registry,
-    getSkillLifecycleStatus: getPersistedSkillLifecycleStatus,
-    idGenerator,
-    nowIso,
-    computeChecksum,
-    userRulesContextProvider: (input) =>
-      buildFridayUserRulesPromptContext({
-        task: input.task,
-        surface: input.surface,
-      }),
-  });
+  let workflowGenerator: FridayWorkflowGeneratorService;
 
   // ─── Agent runtime ───
 
@@ -4066,6 +4053,57 @@ export async function createFridayHub(
     fragments.push(`Friday Reflex preferences:\n${lines.join("\n")}`);
     return fragments.join("\n\n");
   };
+  const buildWorkflowGeneratorPromptContext = async (input: {
+    task: string;
+    userId?: string;
+    channel?: string;
+  }): Promise<string | null> => {
+    const fragments: string[] = [];
+    const userRulesFragment = await buildFridayUserRulesPromptContext({
+      task: input.task,
+      surface: "workflow_generator",
+    });
+    if (userRulesFragment) {
+      fragments.push(userRulesFragment);
+    }
+    const userId = input.userId;
+    if (userId) {
+      const explicitPreferences = stateRuntime.sqlite.withReadConnection((db) =>
+        uixUserPreferenceRepository.listByPrincipal(db, {
+          principalId: userId,
+          category: "communication",
+        }));
+      const learnedPreferences = _learningContextRef?.buildContext({
+        userId,
+        nowIso: nowIso(),
+      }).preferences ?? {};
+      const persona = resolveFridayCommunicationPersona({
+        explicitPreferences,
+        learnedPreferences,
+      });
+      const personaFragment = buildFridayCommunicationPromptFragment(persona);
+      if (personaFragment.trim().length > 0) {
+        fragments.push(personaFragment.trim());
+      }
+      const reflexFragment = buildReflexPreferencePromptFragment(userId);
+      if (reflexFragment) {
+        fragments.push(reflexFragment);
+      }
+    }
+    return fragments.length > 0 ? fragments.join("\n\n") : null;
+  };
+
+  workflowGenerator = createFridayWorkflowGeneratorService({
+    db: stateRuntime!.sqlite,
+    providerService,
+    workflowCrud: workflowRuntime.crud,
+    skillRegistry: registry,
+    getSkillLifecycleStatus: getPersistedSkillLifecycleStatus,
+    idGenerator,
+    nowIso,
+    computeChecksum,
+    userRulesContextProvider: buildWorkflowGeneratorPromptContext,
+  });
 
   // ─── Tool approval gates (GAP 2) ───
   // Shared promise map for tool-level approval flow.
