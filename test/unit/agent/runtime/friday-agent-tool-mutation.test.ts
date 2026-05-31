@@ -49,6 +49,10 @@ describe("isMutatingToolCall", () => {
     expect(isMutatingToolCall("web_fetch", {})).toBe(false);
   });
 
+  it("classifies pdf_parse as non-mutating", () => {
+    expect(isMutatingToolCall("pdf_parse", { path: "source.pdf" })).toBe(false);
+  });
+
   it("classifies memory_search as non-mutating", () => {
     expect(isMutatingToolCall("memory_search", {})).toBe(false);
   });
