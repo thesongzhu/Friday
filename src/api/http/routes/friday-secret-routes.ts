@@ -41,6 +41,16 @@ function assertSecretAdminPrincipal(
   });
 }
 
+function assertSecretReadPrincipal(
+  principal: Parameters<typeof assertBoundPrincipalAuthorityForOperation>[0],
+  operation: "runtime.secret.list" | "runtime.secret.read",
+): void {
+  assertBoundPrincipalAuthorityForOperation(principal, operation, "api", {
+    anyOfScopes: ["hub.admin", "secrets.read", "secrets.write", "security.read", "security.write"],
+    anyOfRoles: ["owner", "admin"],
+  });
+}
+
 export function createFridaySecretRoutes(
   deps: FridaySecretRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
@@ -51,6 +61,7 @@ export function createFridaySecretRoutes(
       path: "/v1/secrets",
       auth: { public: true },
       async handler(ctx): Promise<FridayListSecretsResponse> {
+        assertSecretReadPrincipal(ctx.principal ?? null, "runtime.secret.list");
         const query = ctx.query as Record<string, unknown>;
         return {
           items: deps.service.listSecrets({
@@ -67,6 +78,7 @@ export function createFridaySecretRoutes(
       path: "/v1/secrets/:secretId",
       auth: { public: true },
       async handler(ctx): Promise<FridayGetSecretResponse> {
+        assertSecretReadPrincipal(ctx.principal ?? null, "runtime.secret.read");
         const { secretId } = ctx.params as { secretId: string };
         const secret = deps.service.getSecret(secretId);
         if (!secret) {
