@@ -1173,7 +1173,8 @@ export function createFridayAgentRuntime(
         toolNames: buildVisibleToolNames(),
         toolRouting: effectiveToolRouting,
       });
-      const timeSensitiveNewsRequested = hasTimeSensitiveNewsIntent(params.task, messages);
+      const timeSensitiveNewsRequested = !isAutonomousInternalReasoningSurface(params.executionContext?.surface)
+        && hasTimeSensitiveNewsIntent(params.task, messages);
       const allToolCalls: FridayAgentToolCallRecord[] = [];
       let toolErrorRecoveryCount = 0;
       const TOOL_ERROR_RECOVERY_MAX = 2;
