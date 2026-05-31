@@ -161,12 +161,32 @@ export interface FridayPreferenceRevokeResult {
   preference: FridayPreferenceWriteResult["preference"];
 }
 
+export interface FridayReflexLearnedFactApprovalResult {
+  factId?: string;
+  key: string;
+  confidence: number;
+  evidenceCount: number;
+  lastConfirmedAt: string;
+}
+
 export interface CreateFridayReflexServiceDeps {
   db: FridaySqliteLayer;
   candidateRepo: FridayReflexCandidateRepository;
   onboardingRepo: FridayReflexOnboardingRepository;
   preferenceRepo: FridayUixUserPreferenceRepository;
   memoryService?: FridayMemoryService;
+  learnedFactApprover?: (input: {
+    userId: string;
+    key: string;
+    value: JsonValue;
+    confidence: number;
+    candidateId: string;
+    origin: string;
+    sourceRunId?: string;
+    sessionKey?: string;
+    nowIso: string;
+    evidence: Record<string, JsonValue>;
+  }) => FridayReflexLearnedFactApprovalResult;
   skillGenerator?: FridaySkillGeneratorService;
   workflowGenerator?: FridayWorkflowGeneratorService;
   learningEventWriter?: (events: FridayLearningEventAppendInput[]) => void;
@@ -1118,6 +1138,47 @@ export function createFridayReflexService(
             },
           );
           evidence = { ...evidence, recipeMemoryItemId: stored.id };
+        } else if (candidate.kind === "learned_fact") {
+          if (!deps.learnedFactApprover) {
+            throw new FridayDomainError(
+              "REFLEX_LEARNED_FACT_UNAVAILABLE",
+              "Learned-fact approval is not available in this runtime.",
+              { httpStatus: 503 },
+            );
+          }
+          const key = readPayloadString(candidate.payload, "key");
+          const value = candidate.payload["value"];
+          if (!key || value === undefined) {
+            throw new FridayDomainError(
+              "REFLEX_LEARNED_FACT_INVALID",
+              "Learned-fact candidate payload requires key and value.",
+              { httpStatus: 400 },
+            );
+          }
+          const payloadConfidence = candidate.payload.confidence;
+          const confidence = typeof payloadConfidence === "number" && Number.isFinite(payloadConfidence)
+            ? Math.max(0, Math.min(1, payloadConfidence))
+            : Math.max(0, Math.min(1, candidate.confidence));
+          const result = deps.learnedFactApprover({
+            userId: candidate.userId,
+            key,
+            value,
+            confidence,
+            candidateId: candidate.id,
+            origin: candidate.origin,
+            sourceRunId: candidate.sourceRunId,
+            sessionKey: candidate.sessionKey,
+            nowIso: deps.nowIso(),
+            evidence: candidate.evidence,
+          });
+          evidence = {
+            ...evidence,
+            learnedFactKey: result.key,
+            learnedFactConfidence: result.confidence,
+            learnedFactEvidenceCount: result.evidenceCount,
+            learnedFactLastConfirmedAt: result.lastConfirmedAt,
+            ...(result.factId ? { learnedFactId: result.factId } : {}),
+          };
         } else if (candidate.kind === "preference") {
           const category = readPayloadString(candidate.payload, "category") as FridayUserPreferenceCategory | undefined;
           const key = readPayloadString(candidate.payload, "key");
