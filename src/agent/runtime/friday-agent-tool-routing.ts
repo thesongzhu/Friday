@@ -523,6 +523,9 @@ function classifyFridayToolRoutingProfile(input: {
   if (/\b(status|progress|capabilit(?:y|ies)|what can you do|enabled|disabled|running task|current task)\b|状态|进度|能力|能做什么/u.test(text)) {
     return "status";
   }
+  if (taskIsUntrustedExternalSourceReview(text)) {
+    return "web";
+  }
   if (/\b(remember|memory|preference|preferences|recall|previously|past conversation|stored fact)\b|记住|记忆|偏好|之前|上次/u.test(text)) {
     return "memory";
   }
@@ -592,6 +595,15 @@ function taskIsQaWithProvidedContext(task: string): boolean {
 
 function taskLooksLikeCurrentOrExternalKnowledgeRequest(task: string): boolean {
   return /\b(latest|current|today|news|source|sources|url|documentation|docs|release notes)\b|最新|今天|最近|新闻|资料|来源/u.test(task);
+}
+
+function taskIsUntrustedExternalSourceReview(task: string): boolean {
+  const reviewsExternalSource =
+    /\b(?:source[-\s]?review|recommendation|recommendations|evaluate|review|compare)\b/i.test(task)
+    && /\b(?:web_fetch|fetch|fetched|source|url|urls|https?:\/\/)\b/i.test(task);
+  const includesUntrustedSourceBoundary =
+    /\b(?:untrusted|prompt injection|ignore all instructions|system override|memory_store|long[-\s]?term preferences?)\b/i.test(task);
+  return reviewsExternalSource && includesUntrustedSourceBoundary;
 }
 
 function buildToolRoutingIntentText(input: {
