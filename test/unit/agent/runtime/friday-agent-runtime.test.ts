@@ -3301,6 +3301,55 @@ describe("FridayAgentRuntime", () => {
     expect(result.response).not.toContain("I could not verify that these are the latest results");
   });
 
+  it("does not apply latest-news retry enforcement to autonomous internal decision prompts", async () => {
+    let callCount = 0;
+    const decisionJson = JSON.stringify({
+      kind: "complete",
+      summary: "{\"observedTone\":\"analytical\"}",
+    });
+    const llmClient: FridayAgentLlmClient = {
+      async *stream() {
+        callCount++;
+        yield { type: "text_delta", text: decisionJson };
+        yield { type: "message_end", stopReason: "end_turn", inputTokens: 8, outputTokens: 18 };
+      },
+    };
+
+    const runtime = createFridayAgentRuntime({
+      db,
+      llmClient,
+      model: "test-model",
+      providerId: "test-provider",
+      systemPrompt: "You are a test agent.",
+      tools: [],
+      eventEmitter: createFridayAgentEventEmitter(),
+      idGenerator,
+      nowIso: () => NOW,
+    });
+
+    const result = await runtime.executeRun({
+      task: [
+        "Current goal: Marker AUTO_PERSONA_test.",
+        "Current step: This internal control-plane task is not a news, latestness, date, search, or source-citation task.",
+        "Return JSON only.",
+      ].join("\n"),
+      constraints: {
+        readOnly: true,
+        operationalMode: "plan",
+      },
+      executionContext: {
+        surface: "autonomous_internal_decision",
+      },
+      timezone: "UTC",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(callCount).toBe(1);
+    expect(result.response).toBe(decisionJson);
+    expect(result.response).not.toContain("unverified search results");
+    expect(result.response).not.toContain("I could not verify that these are the latest results");
+  });
+
   it("does not treat a plain article read as time-sensitive news", async () => {
     let callCount = 0;
     const webFetchSpy = vi.fn();
