@@ -198,7 +198,7 @@ describe("FridaySelfLearningRuntime", () => {
     expect(ctx.preferences).toHaveProperty("pref:display_name", "Captain");
   });
 
-  it("pipeline end-to-end: inferred persona preference requires repeated evidence before context use", () => {
+  it("pipeline end-to-end: inferred persona preference stays inactive until explicit confirmation", () => {
     const first = runtime.pipeline.processEvent({
       eventId: "evt-001",
       ts: NOW,
@@ -224,11 +224,11 @@ describe("FridaySelfLearningRuntime", () => {
     });
 
     expect(second.factsUpdated).toHaveLength(1);
-    expect(second.factsUpdated[0]!.confidence).toBeGreaterThanOrEqual(0.60);
+    expect(second.factsUpdated[0]!.confidence).toBeLessThan(0.60);
     expect(runtime.context.buildContext({
       userId: "test-user",
       nowIso: NOW,
-    }).preferences).toHaveProperty("persona.verbosity", "concise");
+    }).preferences).not.toHaveProperty("persona.verbosity");
   });
 
   it("pipeline end-to-end: error → incident → diagnosis (Phase 7: no lesson at ingestion)", () => {
