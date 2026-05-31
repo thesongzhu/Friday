@@ -1,5 +1,5 @@
 const SENSITIVE_LEARNING_PATTERN =
-  /\b(password|passcode|secret|api[\s_-]*key|access[\s_-]*token|refresh[\s_-]*token|token|credential|private[\s_-]*key|ssn|social[\s_]+security|credit[\s_]+card|bank[\s_]+account|routing[\s_]+number|passport|driver'?s[\s_]+license|medical|medication|diagnosis|diabetes|cancer|hiv|financial|religion|political)\b|密码|口令|密钥|令牌|身份证|护照|银行卡|信用卡|病历|诊断|宗教|政治/u;
+  /\b(password|passcode|secret|api[\s_-]*key|access[\s_-]*token|refresh[\s_-]*token|token|credential|private[\s_-]*key|ssn|social[\s_]+security|credit[\s_]+card|bank[\s_]+account|routing[\s_]+number|passport|driver'?s[\s_]+license|medical|medication|diagnosis|diabetes|cancer|hiv|financial|religion|political)\b|密码|口令|密钥|令牌|身份证|护照|银行卡|信用卡|病历|诊断|宗教|政治/iu;
 
 export function isFridaySensitiveLearningCandidate(...values: unknown[]): boolean {
   const text = values
