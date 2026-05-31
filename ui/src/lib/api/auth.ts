@@ -1,10 +1,15 @@
 import { apiClient } from "./client";
 import { authStorage } from "@/lib/storage/auth-storage";
 import type {
+  AuthBootstrapResponse,
   AuthBootstrapStatusResponse,
   LoginResponse,
   MeResponse,
 } from "./types";
+
+export interface BootstrapLocalPassphraseInput {
+  passphrase: string;
+}
 
 export interface LoginInput {
   localPassphrase?: string;
@@ -30,6 +35,20 @@ export async function fetchMe(): Promise<MeResponse> {
 
 export async function getBootstrapStatus(): Promise<AuthBootstrapStatusResponse> {
   return apiClient.get<AuthBootstrapStatusResponse>("/v1/auth/bootstrap/status");
+}
+
+/**
+ * First-boot only: set the local passphrase for this machine's Friday. The backend
+ * enforces loopback-only + first-boot-only (returns 409 if already bootstrapped).
+ * On success the caller should immediately `login({ localPassphrase })`.
+ */
+export async function postBootstrapLocalPassphrase(
+  input: BootstrapLocalPassphraseInput,
+): Promise<AuthBootstrapResponse> {
+  return apiClient.post<BootstrapLocalPassphraseInput, AuthBootstrapResponse>(
+    "/v1/auth/bootstrap/local-passphrase",
+    input,
+  );
 }
 
 export async function logout(): Promise<void> {
