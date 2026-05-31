@@ -75,6 +75,30 @@ describe("FridayAgentFeedbackTool", () => {
     expect(event.payload).not.toHaveProperty("context");
   });
 
+  it("rejects sensitive preferences before writing learning events", async () => {
+    const { tool, learningEventWriter } = setup();
+
+    const result = await tool.execute(
+      { kind: "preference", field: "password", value: "SENSITIVE-PASSCODE-FR-TEST" },
+      signalWithTaskPrompt("I prefer you use SENSITIVE-PASSCODE-FR-TEST as my password."),
+    );
+
+    expect(learningEventWriter).not.toHaveBeenCalled();
+    expect(result.content).toContain("Sensitive or high-risk preferences are not persisted automatically");
+  });
+
+  it("rejects sensitive corrections before writing learning events", async () => {
+    const { tool, learningEventWriter } = setup();
+
+    const result = await tool.execute(
+      { kind: "correction", field: "medical diagnosis", value: "diabetes" },
+      signalWithTaskPrompt("Actually my medical diagnosis should be diabetes."),
+    );
+
+    expect(learningEventWriter).not.toHaveBeenCalled();
+    expect(result.content).toContain("Sensitive or high-risk preferences are not persisted automatically");
+  });
+
   it("normalizes display-name preferences from the current task prompt when the model truncates them", async () => {
     const { tool, written } = setup();
 

@@ -3,6 +3,10 @@ import type { FridayLearningEventAppendInput } from "#ledger";
 import type { FridayAgentToolDefinition } from "../model/friday-agent.types.js";
 import { getFridayAgentToolExecutionContext } from "../runtime/friday-agent-tool-execution-context.js";
 import { readStringParam, textResult } from "./friday-agent-tool-helpers.js";
+import {
+  FRIDAY_SENSITIVE_LEARNING_REJECTION,
+  isFridaySensitiveLearningCandidate,
+} from "../../learning/services/friday-sensitive-learning-guard.js";
 
 // ─── Factory deps ───
 
@@ -174,6 +178,10 @@ export function createFridayAgentFeedbackTool(
       const explicitFeedbackStatement = taskPromptExplicitlyStatesFeedback(taskPrompt);
       const questionLikePrompt = taskPromptLooksLikeQuestion(taskPrompt);
       const valueSupportedByPrompt = taskPromptSupportsFeedbackValue(taskPrompt, value);
+
+      if (isFridaySensitiveLearningCandidate(field, value, context, taskPrompt)) {
+        return textResult(FRIDAY_SENSITIVE_LEARNING_REJECTION);
+      }
 
       if (!explicitFeedbackStatement || questionLikePrompt || !valueSupportedByPrompt) {
         return textResult(

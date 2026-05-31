@@ -19,6 +19,10 @@ import {
   matchesLearnedFactQuery,
   toLearnedFactSearchResult,
 } from "../../learning/services/friday-learned-fact-memory-view.js";
+import {
+  FRIDAY_SENSITIVE_LEARNING_REJECTION,
+  isFridaySensitiveLearningCandidate,
+} from "../../learning/services/friday-sensitive-learning-guard.js";
 
 // ─── Deps ───
 
@@ -748,6 +752,10 @@ function createMemoryStoreTool(
           ? rawTags.filter((t): t is string => typeof t === "string")
           : [];
       const executionContext = getFridayAgentToolExecutionContext(signal);
+
+      if (isFridaySensitiveLearningCandidate(content, tags, executionContext?.taskPrompt)) {
+        return errorResult(`Memory store rejected: ${FRIDAY_SENSITIVE_LEARNING_REJECTION}`);
+      }
 
       const storingUserFacingMemory =
         explicitResolution?.isUserFacing === true

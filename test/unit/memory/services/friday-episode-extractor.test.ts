@@ -95,6 +95,23 @@ describe("FridayEpisodeExtractor", () => {
     expect(episode!.outcome).toBe("success");
   });
 
+  it("does not extract world-model episodes for sensitive learning tasks", async () => {
+    seedRun(
+      "run-sensitive",
+      "I prefer you tailor future advice around my medical diagnosis marker SENSITIVE_MEDICAL_FR_TEST.",
+      "completed",
+    );
+
+    const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso });
+    const episode = await extractor.extractFromRun("run-sensitive", "user-1");
+
+    expect(episode).toBeNull();
+    const persisted = db.withReadConnection((conn) =>
+      conn.prepare("SELECT COUNT(*) AS count FROM friday_episodes WHERE run_id = ?")
+        .get("run-sensitive") as { count: number });
+    expect(persisted.count).toBe(0);
+  });
+
   it("returns null when run ID does not exist at all", async () => {
     const extractor = createFridayEpisodeExtractor({ db, idGenerator: idGen, nowIso });
     const episode = await extractor.extractFromRun("nonexistent-run", "user-1");
