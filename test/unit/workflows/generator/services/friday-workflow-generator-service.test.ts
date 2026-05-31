@@ -441,6 +441,40 @@ describe("FridayWorkflowGeneratorService", () => {
       expect(readFetchSystemPrompt()).toContain("Ask before saving generated workflows.");
     });
 
+    it("injects communication preference guidance into workflow generator prompts", async () => {
+      deps.userRulesContextProvider = vi.fn().mockResolvedValue(
+        [
+          "<friday-user-project-rules>Keep durable saves behind approval.</friday-user-project-rules>",
+          "Communication persona (user-facing guidance only):",
+          "- Tone: analytical",
+          "- Verbosity: concise",
+          "- Structure: structured",
+          "- Directness: direct",
+          "- These settings affect wording, guidance, and clarification style only.",
+          "- They must not weaken approval gates, rollback rules, or destructive-action safeguards.",
+        ].join("\n"),
+      );
+      service = createFridayWorkflowGeneratorService(deps);
+      mockFetchForLlm([makeRequirementsResponse("needs_clarification")]);
+
+      await service.startSession({
+        goal: "Build a workflow",
+        userId: "u-1",
+        channel: "test",
+      });
+
+      expect(deps.userRulesContextProvider).toHaveBeenCalledWith({
+        task: "Build a workflow",
+        userId: "u-1",
+        channel: "test",
+        surface: "workflow_generator",
+      });
+      expect(readFetchSystemPrompt()).toContain("Communication persona");
+      expect(readFetchSystemPrompt()).toContain("- Tone: analytical");
+      expect(readFetchSystemPrompt()).toContain("- Verbosity: concise");
+      expect(readFetchSystemPrompt()).toContain("must not weaken approval gates");
+    });
+
     it("auto-generates draft when ready", async () => {
       mockFetchForLlm([
         makeRequirementsResponse("ready_for_generation"),
