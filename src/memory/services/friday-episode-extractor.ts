@@ -17,6 +17,7 @@ import type {
   FridayEpisodeStepCategory,
 } from "../../agent/model/friday-agent-world-state.types.js";
 import { safeJsonParse } from "#utilities";
+import { isFridaySensitiveLearningCandidate } from "../../learning/services/friday-sensitive-learning-guard.js";
 
 // ─── Deps ───────────────────────────────────────────────────────
 
@@ -70,6 +71,9 @@ export function createFridayEpisodeExtractor(
       );
 
       if (!run) return null;
+      if (isFridaySensitiveLearningCandidate(run.task)) {
+        return null;
+      }
 
       // 2. Read tool events (best-effort; a run with no tool events still
       // produces a minimal episode so world-model readiness is visible in

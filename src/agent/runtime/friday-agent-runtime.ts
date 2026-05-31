@@ -17,6 +17,7 @@ import {
   createFridaySystemIntentMutatingActionRequest,
   signFridayCanonicalApproval,
 } from "../../security/friday-mutating-action-gate.js";
+import { isFridaySensitiveLearningCandidate } from "../../learning/services/friday-sensitive-learning-guard.js";
 import type {
   FridayCanonicalApprovalResolution,
   FridayMutatingActionRequest,
@@ -5960,6 +5961,9 @@ function buildEvidenceRetryPrompt(params: {
 function taskRequiresPreferencePersistence(task: string): boolean {
   const normalized = task.trim().toLowerCase();
   if (normalized.length === 0) {
+    return false;
+  }
+  if (isFridaySensitiveLearningCandidate(task)) {
     return false;
   }
   return (
