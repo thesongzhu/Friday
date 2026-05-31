@@ -325,13 +325,13 @@ export function createFridayMemoryService(
         nowIso: now,
       });
 
-      // Fallback: if FTS and semantic both returned nothing, try a namespace-filtered
-      // substring scan so that exact-word queries still find matches when FTS tokenization
-      // misses (e.g. short or unusual tokens).
+      // Fallback/backfill: try a namespace-filtered substring scan so exact or
+      // partial topic matches can still surface related memories when FTS is
+      // too narrow and semantic search is unavailable/noisy.
       // Skip the fallback entirely when the caller demands a higher score than substring
       // matches can provide (0.1), to avoid scanning all items for results that would
       // all be filtered out anyway.
-      if (results.length === 0 && options?.namespace && !(options?.minScore != null && 0.1 < options.minScore)) {
+      if (results.length < limit && options?.namespace && !(options?.minScore != null && 0.1 < options.minScore)) {
         const allItems = deps.db.withReadConnection((db) =>
           itemRepo.list(db, {
             namespace: options.namespace,
@@ -346,9 +346,11 @@ export function createFridayMemoryService(
 
         const queryLower = query.toLowerCase();
         const queryTokens = queryLower.split(/\s+/).filter((t) => t.length > 0);
+        const existingIds = new Set(results.map((result) => result.item.id));
 
         for (const item of allItems) {
           if (results.length >= limit) break;
+          if (existingIds.has(item.id)) continue;
           const contentLower = item.content.toLowerCase();
           // Match if any query token appears as substring
           const matched = queryTokens.some((token) => contentLower.includes(token));
