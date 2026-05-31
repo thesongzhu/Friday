@@ -22,6 +22,7 @@ describe("Friday sensitive learning guard", () => {
     "remember my routing number preference",
     "prefer my passport identity when booking",
     "my driver's license should be in memory",
+    "my driver_s_license should be in memory",
     "tailor replies around my MEDICAL history",
     "prefer this medication schedule",
     "remember my diagnosis context",
