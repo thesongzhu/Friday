@@ -5,6 +5,7 @@ import type { FridaySkillGeneratorService } from "#skills/generator";
 import type { FridaySqliteLayer } from "#state";
 import type { FridayWorkflowGeneratorService } from "#workflows";
 
+import { isFridaySensitiveLearningCandidate } from "../../learning/services/friday-sensitive-learning-guard.js";
 import type { FridayUixUserPreferenceRepository } from "../../uix/persistence/friday-uix-user-preference-repository.js";
 import type { FridayUserPreferenceCategory, JsonValue } from "../../uix/model/friday-uix.types.js";
 import type {
@@ -36,6 +37,8 @@ const REFLEX_MEMORY_NAMESPACE = "reflex.memories";
 const REFLEX_CURATOR_METADATA_VERSION = 1;
 const REFLEX_CURATOR_STALE_DAYS = 14;
 const REFLEX_CURATOR_FAILED_STALE_DAYS = 7;
+const LEARNED_FACT_TASK_MAX_LENGTH = 500;
+const LEARNED_FACT_VALUE_MAX_LENGTH = 160;
 const REFLEX_PREFERENCE_CATEGORIES = new Set<FridayUserPreferenceCategory>([
   "communication",
   "uix",
@@ -229,6 +232,60 @@ function readPayloadString(
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : undefined;
+}
+
+function cleanLearnedFactValue(value: string): string {
+  return value
+    .replace(/[。.!！?？]+$/u, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, LEARNED_FACT_VALUE_MAX_LENGTH)
+    .trim();
+}
+
+function learnedFactSubjectSlug(subject: string): string | null {
+  const cleaned = subject
+    .replace(/^(?:my|our|the|this|a|an)\s+/iu, "")
+    .replace(/^(?:我的|我们的|这个|本项目|项目)/u, "")
+    .trim();
+  const slug = cleaned
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/giu, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/_{2,}/g, "_")
+    .slice(0, 64)
+    .replace(/_+$/g, "");
+  return slug.length >= 2 ? slug : null;
+}
+
+function extractLearnedFactFromRunTask(task: string | undefined): {
+  key: string;
+  value: JsonValue;
+  statement: string;
+  subject: string;
+} | null {
+  const text = task?.trim().slice(0, LEARNED_FACT_TASK_MAX_LENGTH) ?? "";
+  if (!text) return null;
+  if (/(?:do not|don't|dont|never|不要|别|不用|不许).{0,40}(?:remember|learn|record|store|记住|学习|保存)/iu.test(text)) {
+    return null;
+  }
+  if (isFridaySensitiveLearningCandidate(text)) return null;
+
+  const english = /(?:remember|learn|note|record|for future reference)[,:]?\s+(?:that\s+)?((?:my|our|the|this|a|an)\s+[^.!?;\n:=]{2,80}?)\s+(?:is|are|=|:)\s+([^.!?;\n]{1,160})/iu.exec(text);
+  const chinese = /(?:请记住|记住|学习|以后记得|以后请记得)[:：]?\s*((?:我的|我们的|这个|本项目|项目)?[^，。！？\n:=：]{2,50}?)(?:是|为|=|：|:)\s*([^，。！？\n]{1,120})/u.exec(text);
+  const subject = (english?.[1] ?? chinese?.[1] ?? "").trim();
+  const value = cleanLearnedFactValue(english?.[2] ?? chinese?.[2] ?? "");
+  if (!subject || !value) return null;
+  if (isFridaySensitiveLearningCandidate(subject, value)) return null;
+  const slug = learnedFactSubjectSlug(subject);
+  if (!slug) return null;
+  return {
+    key: `learned.${slug}`,
+    value,
+    statement: `${subject} = ${value}`,
+    subject,
+  };
 }
 
 function buildCandidateContent(candidate: FridayReflexCandidate): string {
@@ -536,6 +593,70 @@ export function createFridayReflexService(
       && candidate.payload.key === input.key
       && JSON.stringify(candidate.payload.value) === JSON.stringify(input.value),
     ) ?? null;
+  }
+
+  function findPendingLearnedFactCandidate(db: FridayReflexDb, input: {
+    userId: string;
+    key: string;
+    value: JsonValue;
+  }): FridayReflexCandidate | null {
+    return deps.candidateRepo.list(db, {
+      userId: input.userId,
+      kind: "learned_fact",
+      limit: 200,
+    }).find((candidate) =>
+      (candidate.status === "proposed" || candidate.status === "ready_for_review" || candidate.status === "testing")
+      && candidate.payload.key === input.key
+      && JSON.stringify(candidate.payload.value) === JSON.stringify(input.value),
+    ) ?? null;
+  }
+
+  function createLearnedFactCandidateFromRunTask(input: {
+    userId: string;
+    runId?: string;
+    sessionKey?: string;
+    channelKind?: string;
+    channelUserId?: string;
+    task?: string;
+  }): FridayReflexCandidate | null {
+    const extracted = extractLearnedFactFromRunTask(input.task);
+    if (!extracted) return null;
+    return deps.db.withWriteTransaction((db) => {
+      const existing = findPendingLearnedFactCandidate(db, {
+        userId: input.userId,
+        key: extracted.key,
+        value: extracted.value,
+      });
+      if (existing) return existing;
+      return deps.candidateRepo.insert(db, {
+        id: deps.idGenerator(),
+        nowIso: deps.nowIso(),
+        userId: input.userId,
+        kind: "learned_fact",
+        origin: input.channelKind ? "channel" : "post_run",
+        status: "ready_for_review",
+        sourceRunId: input.runId,
+        sessionKey: input.sessionKey,
+        channelKind: input.channelKind,
+        channelUserId: input.channelUserId,
+        title: `Review learned fact: ${extracted.subject.slice(0, 80)}`,
+        summary: "Friday detected an explicit fact-like memory request during a completed run. Review once before it becomes a revocable learned fact.",
+        payload: {
+          key: extracted.key,
+          value: extracted.value,
+          confidence: 0.84,
+        },
+        evidence: {
+          requiresExplicitConfirmation: true,
+          source: "post_run_task_text",
+          extractionMode: "explicit_fact_pattern",
+          statement: extracted.statement,
+          safetyBoundary: "review_center_required_before_learned_fact_persistence",
+        },
+        confidence: 0.84,
+        riskTier: 1,
+      });
+    });
   }
 
   function createPreferenceConfirmationCandidate(db: FridayReflexDb, input: {
@@ -1366,6 +1487,10 @@ export function createFridayReflexService(
       assertPrincipal(input.userId);
       const created: FridayReflexCandidate[] = [];
       const toolSequence = input.toolSequence ?? [];
+      if (input.outcome === "success") {
+        const learnedFactCandidate = createLearnedFactCandidateFromRunTask(input);
+        if (learnedFactCandidate) created.push(learnedFactCandidate);
+      }
       const reflexSignature = normalizeReflexTaskSignature(input.task, toolSequence);
       const hasPriorReusableSuccess = toolSequence.length >= 2 && deps.db.withReadConnection((db) =>
         deps.candidateRepo.list(db, {
