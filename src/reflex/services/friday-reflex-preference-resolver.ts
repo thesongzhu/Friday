@@ -82,8 +82,7 @@ export function resolveFridayReflexOnboardingPreferenceWrites(input: {
   }
 }
 
-export function isFridayReflexPreferenceKey(key: string): boolean {
-  return [
+export const FRIDAY_REFLEX_PREFERENCE_KEYS = [
     FRIDAY_USER_CONSTITUTION_PREFERENCE_KEYS.skepticalMode,
     FRIDAY_USER_CONSTITUTION_PREFERENCE_KEYS.clarificationPolicy,
     FRIDAY_USER_CONSTITUTION_PREFERENCE_KEYS.challengePolicy,
@@ -109,5 +108,14 @@ export function isFridayReflexPreferenceKey(key: string): boolean {
     "learning.transparency_policy",
     "automation.conservatism",
     "testing.live_llm_policy",
-  ].includes(key);
+  ] as const;
+
+const FRIDAY_REFLEX_PREFERENCE_KEY_SET = new Set<string>(FRIDAY_REFLEX_PREFERENCE_KEYS);
+
+export function getFridayReflexPreferenceKeys(): readonly string[] {
+  return FRIDAY_REFLEX_PREFERENCE_KEYS;
+}
+
+export function isFridayReflexPreferenceKey(key: string): boolean {
+  return FRIDAY_REFLEX_PREFERENCE_KEY_SET.has(key);
 }

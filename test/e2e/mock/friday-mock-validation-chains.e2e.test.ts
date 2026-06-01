@@ -342,7 +342,7 @@ describe("Friday Validation Chain E2E", () => {
         error?: { code: string };
       }>(env.baseUrl, env.accessToken, "PUT", "/v1/uix/preferences", {
         preferences: [
-          { category: "communication", key: "mbtiType", value: "XXXX" },
+          { category: "communication", key: "persona.mbti", value: "XXXX" },
         ],
       });
 

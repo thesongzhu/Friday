@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { FridayDomainError } from "#errors";
-import { createFridayUixSurfaceService } from "../../../../src/uix/services/friday-uix-surface-service.js";
+import {
+  createFridayUixSurfaceService,
+  getFridayUixPreferenceKeys,
+} from "../../../../src/uix/services/friday-uix-surface-service.js";
+import { getFridayCommunicationPreferenceKeys } from "../../../../src/uix/services/friday-communication-persona.js";
+import {
+  getFridayReflexConfirmationRequiredPreferenceKeys,
+  getFridayReflexPreferenceKeys,
+} from "../../../../src/reflex/index.js";
 
 describe("createFridayUixSurfaceService", () => {
   function createWizardPersistenceHarness() {
@@ -276,6 +284,123 @@ describe("createFridayUixSurfaceService", () => {
     expect(service.listPreferences({ userId: "user-1", category: "reflex" }).items).toEqual([
       expect.objectContaining({ category: "reflex", key: "communication.language_policy", value: "zh" }),
     ]);
+  });
+
+  it("covers every current preference key with explicit generic UIX write semantics", () => {
+    const persistence = createPreferencePersistenceHarness();
+    const service = createFridayUixSurfaceService({
+      db: persistence.db as never,
+      preferenceRepo: persistence.preferenceRepo as never,
+      idGenerator: (() => {
+        let counter = 0;
+        return () => `pref-all-${++counter}`;
+      })(),
+      nowIso: () => "2026-06-01T03:10:00.000Z",
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+      } as never,
+    });
+
+    const communicationSamples = new Map<string, unknown>([
+      ["persona.mbti", "INTJ"],
+      ["persona.tone", "warm"],
+      ["persona.verbosity", "concise"],
+      ["persona.structure", "structured"],
+      ["persona.question_style", "guided"],
+      ["persona.directness", "direct"],
+      ["persona.emoji_style", "light"],
+      ["persona.jargon_tolerance", "high"],
+      ["persona.assumption_style", "ask_first"],
+      ["persona.confirmation_style", "explicit"],
+    ]);
+    const uixSamples = new Map<string, unknown>([
+      ["user.profile_type", "developer"],
+      ["user.onboarded_at", "2026-06-01T03:10:00.000Z"],
+      ["display.locale", "en"],
+      ["navigation.lastPrimarySurface", "assistant"],
+      ["home.pinnedPackIds", ["industry-creator-media"]],
+      ["home.packOrder", ["industry-creator-media"]],
+      ["home.widgetOrder", ["active_now", "pending_approvals"]],
+      ["home.visibleWidgets", ["active_now", "recent_results"]],
+      ["packs.customInputs", [{
+        name: "Release review",
+        description: "Review release evidence.",
+        skillIds: ["review"],
+        entryPrompts: ["Review this release."],
+      }]],
+    ]);
+    const reflexSamples = new Map<string, unknown>(
+      getFridayReflexPreferenceKeys().map((key) => [key, `${key}.sample`]),
+    );
+    const confirmationRequired = new Set(getFridayReflexConfirmationRequiredPreferenceKeys());
+    const ordinaryReflex = [...reflexSamples.entries()]
+      .filter(([key]) => !confirmationRequired.has(key));
+    const highImpactReflex = [...reflexSamples.entries()]
+      .filter(([key]) => confirmationRequired.has(key));
+
+    expect([...communicationSamples.keys()].sort()).toEqual([...getFridayCommunicationPreferenceKeys()].sort());
+    expect([...uixSamples.keys()].sort()).toEqual([...getFridayUixPreferenceKeys()].sort());
+    expect(ordinaryReflex.length).toBeGreaterThan(0);
+    expect(highImpactReflex.length).toBeGreaterThan(0);
+    expect(ordinaryReflex.length + highImpactReflex.length).toBe(getFridayReflexPreferenceKeys().length);
+
+    const acceptedPreferences = [
+      ...[...communicationSamples.entries()].map(([key, value]) => ({ category: "communication" as const, key, value })),
+      ...[...uixSamples.entries()].map(([key, value]) => ({ category: "uix" as const, key, value })),
+      ...ordinaryReflex.map(([key, value]) => ({ category: "reflex" as const, key, value })),
+    ];
+
+    const result = service.updatePreferences({
+      userId: "user-1",
+      request: { preferences: acceptedPreferences },
+    });
+
+    expect(result.created).toBe(acceptedPreferences.length);
+    expect(service.listPreferences({ userId: "user-1" }).items).toHaveLength(acceptedPreferences.length);
+    for (const preference of acceptedPreferences) {
+      expect(service.listPreferences({ userId: "user-1", category: preference.category }).items)
+        .toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            category: preference.category,
+            key: preference.key,
+            value: preference.value,
+          }),
+        ]));
+    }
+
+    for (const [key, value] of highImpactReflex) {
+      expect(() =>
+        service.updatePreferences({
+          userId: "user-1",
+          request: {
+            preferences: [{ category: "reflex", key, value }],
+          },
+        })).toThrowError(FridayDomainError);
+      expect(service.listPreferences({ userId: "user-1", category: "reflex" }).items
+        .some((preference) => preference.key === key)).toBe(false);
+    }
+  });
+
+  it("rejects invalid canonical MBTI preferences instead of persisting silent fallback", () => {
+    const persistence = createPreferencePersistenceHarness();
+    const service = createFridayUixSurfaceService({
+      db: persistence.db as never,
+      preferenceRepo: persistence.preferenceRepo as never,
+      idGenerator: () => "pref-invalid-mbti",
+      nowIso: () => "2026-06-01T03:10:00.000Z",
+      selfHealing: {
+        listIssueCards: vi.fn(() => []),
+      } as never,
+    });
+
+    expect(() =>
+      service.updatePreferences({
+        userId: "user-1",
+        request: {
+          preferences: [{ category: "communication", key: "persona.mbti", value: "XXXX" }],
+        },
+      })).toThrowError(FridayDomainError);
+    expect(persistence.preferenceRepo.upsert).not.toHaveBeenCalled();
   });
 
   it("writes harness focus for wizard clarification continuations", async () => {
