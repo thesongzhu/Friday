@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  getFridayReflexConfirmationRequiredPreferenceKeys,
   isFridayReflexConfirmationRequiredKey,
   requiresFridayReflexPreferenceConfirmation,
 } from "../../../src/reflex/services/friday-reflex-preference-sensitivity.js";
@@ -30,6 +31,10 @@ const KNOWN_HIGH_IMPACT_KEYS: readonly string[] = [
 ];
 
 describe("isFridayReflexConfirmationRequiredKey", () => {
+  it("exports the same canonical confirmation-required key inventory used by the guard", () => {
+    expect([...getFridayReflexConfirmationRequiredPreferenceKeys()].sort()).toEqual([...KNOWN_HIGH_IMPACT_KEYS].sort());
+  });
+
   it("returns true for every known confirmation-required reflex key", () => {
     for (const key of KNOWN_HIGH_IMPACT_KEYS) {
       expect(isFridayReflexConfirmationRequiredKey(key), key).toBe(true);

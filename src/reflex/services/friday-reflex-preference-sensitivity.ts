@@ -25,6 +25,10 @@ const CONFIRMATION_REQUIRED_REFLEX_KEYS = new Set([
   "testing.live_llm_policy",
 ]);
 
+export function getFridayReflexConfirmationRequiredPreferenceKeys(): readonly string[] {
+  return [...CONFIRMATION_REQUIRED_REFLEX_KEYS];
+}
+
 export function requiresFridayReflexPreferenceConfirmation(input: {
   category: FridayUserPreferenceCategory;
   key: string;

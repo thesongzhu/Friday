@@ -264,7 +264,8 @@ export function createFridayUixRoutes(
           if (
             pref && typeof pref === "object" &&
             (pref as Record<string, unknown>).category === "communication" &&
-            (pref as Record<string, unknown>).key === "mbtiType" &&
+            (pref as Record<string, unknown>).key === FRIDAY_COMMUNICATION_PREFERENCE_KEYS.mbti &&
+            (pref as Record<string, unknown>).value !== null &&
             !isMbti((pref as Record<string, unknown>).value)
           ) {
             throw new FridayDomainError("INVALID_MBTI_TYPE", "Invalid MBTI type. Valid values: INTJ, INTP, ENTJ, ENTP, INFJ, INFP, ENFJ, ENFP, ISTJ, ISFJ, ESTJ, ESFJ, ISTP, ISFP, ESTP, ESFP", { httpStatus: 400 });
