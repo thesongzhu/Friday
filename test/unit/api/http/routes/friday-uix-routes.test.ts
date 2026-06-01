@@ -515,6 +515,32 @@ describe("FridayUixRoutes", () => {
     });
   });
 
+  it("labels Review Center approved learned facts from fact metadata", async () => {
+    const service = makeService();
+    const routes = createFridayUixRoutes({
+      service,
+      listLearnedFacts: vi.fn(() => [{
+        key: "learned.preferred_editor",
+        value: "Helix",
+        confidence: 0.84,
+        evidenceCount: 1,
+        lastConfirmedAt: NOW,
+        metadata: {
+          reviewBoundary: "review_center_confirmed",
+          reviewCenterCandidateId: "candidate-123",
+        },
+      }]),
+    });
+    const route = routes.find((entry) => entry.operationId === "uix.learnedfacts.list")!;
+
+    const result = await route.handler(makeCtx()) as {
+      items: Array<{ boundary: Record<string, string>; metadata?: Record<string, unknown> }>;
+    };
+
+    expect(result.items[0]!.boundary.reviewBoundary).toBe("review_center_confirmed");
+    expect(result.items[0]!.metadata).toBeUndefined();
+  });
+
   it("updates a learned fact via PATCH with value and confidence", async () => {
     const service = makeService();
     const updateLearnedFact = vi.fn(() => ({

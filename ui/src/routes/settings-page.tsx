@@ -115,9 +115,11 @@ function learnedFactBoundaryDetails(fact: LearnedFact, locale: AppLocale): Array
     },
     {
       label: localize(locale, "审核", "Review"),
-      value: boundary?.reviewBoundary === "not_review_center_confirmed"
-        ? localize(locale, "未由 Review Center 确认", "not Review Center confirmed")
-        : boundary?.reviewBoundary ?? localize(locale, "边界未知", "boundary unknown"),
+      value: boundary?.reviewBoundary === "review_center_confirmed"
+        ? localize(locale, "已由 Review Center 确认", "Review Center confirmed")
+        : boundary?.reviewBoundary === "not_review_center_confirmed"
+          ? localize(locale, "未由 Review Center 确认", "not Review Center confirmed")
+          : boundary?.reviewBoundary ?? localize(locale, "边界未知", "boundary unknown"),
     },
     {
       label: localize(locale, "撤销", "Revoke"),

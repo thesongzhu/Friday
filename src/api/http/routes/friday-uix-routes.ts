@@ -30,16 +30,25 @@ import {
   FRIDAY_LEARNED_FACT_EVIDENCE_BOUNDARY,
   FRIDAY_LEARNED_FACT_MEMORY_BOUNDARY,
   FRIDAY_LEARNED_FACT_PROMPT_INJECTION_BOUNDARY,
-  FRIDAY_LEARNED_FACT_REVIEW_BOUNDARY,
   FRIDAY_LEARNED_FACT_REVOCATION_BOUNDARY,
   FRIDAY_LEARNED_FACT_TRUST_LEVEL,
+  readLearnedFactReviewBoundary,
 } from "../../../learning/services/friday-learned-fact-memory-view.js";
+
+interface FridayUixLearnedFactItem {
+  key: string;
+  value: unknown;
+  confidence: number;
+  evidenceCount: number;
+  lastConfirmedAt: string;
+  metadata?: Record<string, unknown>;
+}
 
 export interface FridayUixRoutesDeps {
   service: FridayUixSurfaceService;
   readSetupCompletedAt?: () => string | null;
   /** Optional: expose learned preference facts to users for transparency. */
-  listLearnedFacts?: (input: { userId: string }) => Array<{ key: string; value: unknown; confidence: number; evidenceCount: number; lastConfirmedAt: string }>;
+  listLearnedFacts?: (input: { userId: string }) => FridayUixLearnedFactItem[];
   deleteLearnedFact?: (input: { userId: string; key: string }) => boolean;
   updateLearnedFact?: (input: { userId: string; key: string; value?: unknown; confidence?: number }) => { key: string; value: unknown; confidence: number; evidenceCount: number; lastConfirmedAt: string } | null;
   clearLearnedFacts?: (input: { userId: string }) => number;
@@ -138,7 +147,8 @@ function enrichLearnedFactBoundary<T extends {
   confidence: number;
   evidenceCount: number;
   lastConfirmedAt: string;
-}>(item: T): T & {
+  metadata?: Record<string, unknown>;
+}>(item: T): Omit<T, "metadata"> & {
   boundary: {
     trustLevel: string;
     memoryBoundary: string;
@@ -149,15 +159,16 @@ function enrichLearnedFactBoundary<T extends {
     revocationBoundary: string;
   };
 } {
+  const { metadata: _metadata, ...publicItem } = item;
   return {
-    ...item,
+    ...publicItem,
     boundary: {
       trustLevel: FRIDAY_LEARNED_FACT_TRUST_LEVEL,
       memoryBoundary: FRIDAY_LEARNED_FACT_MEMORY_BOUNDARY,
       evidenceBoundary: FRIDAY_LEARNED_FACT_EVIDENCE_BOUNDARY,
       contextUseBoundary: FRIDAY_LEARNED_FACT_CONTEXT_USE_BOUNDARY,
       promptInjectionBoundary: FRIDAY_LEARNED_FACT_PROMPT_INJECTION_BOUNDARY,
-      reviewBoundary: FRIDAY_LEARNED_FACT_REVIEW_BOUNDARY,
+      reviewBoundary: readLearnedFactReviewBoundary(item),
       revocationBoundary: FRIDAY_LEARNED_FACT_REVOCATION_BOUNDARY,
     },
   };

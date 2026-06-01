@@ -6,6 +6,7 @@ export interface FridayLearnedFactView {
   confidence: number;
   evidenceCount: number;
   lastConfirmedAt: string;
+  metadata?: Record<string, unknown>;
 }
 
 export const FRIDAY_LEARNED_FACT_ID_PREFIX = "learned-fact:";
@@ -17,7 +18,14 @@ export const FRIDAY_LEARNED_FACT_EVIDENCE_BOUNDARY = "preference_fact_evidence";
 export const FRIDAY_LEARNED_FACT_CONTEXT_USE_BOUNDARY = "learning_context_service_gated";
 export const FRIDAY_LEARNED_FACT_PROMPT_INJECTION_BOUNDARY = "not_direct_prompt_injection";
 export const FRIDAY_LEARNED_FACT_REVIEW_BOUNDARY = "not_review_center_confirmed";
+export const FRIDAY_LEARNED_FACT_REVIEW_CENTER_CONFIRMED_BOUNDARY = "review_center_confirmed";
 export const FRIDAY_LEARNED_FACT_REVOCATION_BOUNDARY = "clear_delete_or_synthetic_memory_delete";
+
+export function readLearnedFactReviewBoundary(fact: Pick<FridayLearnedFactView, "metadata">): string {
+  return fact.metadata?.reviewBoundary === FRIDAY_LEARNED_FACT_REVIEW_CENTER_CONFIRMED_BOUNDARY
+    ? FRIDAY_LEARNED_FACT_REVIEW_CENTER_CONFIRMED_BOUNDARY
+    : FRIDAY_LEARNED_FACT_REVIEW_BOUNDARY;
+}
 
 function stringifyLearnedFactValue(value: unknown): string {
   if (typeof value === "string") {
@@ -117,7 +125,7 @@ export function toLearnedFactMemoryItem(fact: FridayLearnedFactView): FridayMemo
       evidenceBoundary: FRIDAY_LEARNED_FACT_EVIDENCE_BOUNDARY,
       contextUseBoundary: FRIDAY_LEARNED_FACT_CONTEXT_USE_BOUNDARY,
       promptInjectionBoundary: FRIDAY_LEARNED_FACT_PROMPT_INJECTION_BOUNDARY,
-      reviewBoundary: FRIDAY_LEARNED_FACT_REVIEW_BOUNDARY,
+      reviewBoundary: readLearnedFactReviewBoundary(fact),
       revocationBoundary: FRIDAY_LEARNED_FACT_REVOCATION_BOUNDARY,
       evidenceCount: fact.evidenceCount,
       lastConfirmedAt: fact.lastConfirmedAt,
