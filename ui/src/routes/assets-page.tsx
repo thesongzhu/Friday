@@ -43,6 +43,7 @@ function kindLabel(kind: string, locale: ReturnType<typeof useAppLocale>["locale
     plugin: ["插件", "Plugin"],
     mcp_server: ["MCP 服务器", "MCP Server"],
     channel_adapter: ["渠道", "Channel"],
+    secure_fact: ["加密事实", "Encrypted Fact"],
     learned_fact: ["已学习", "Learned Fact"],
     automation: ["自动化", "Automation"],
   };

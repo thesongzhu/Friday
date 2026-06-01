@@ -172,6 +172,27 @@ export interface FridayReflexLearnedFactApprovalResult {
   lastConfirmedAt: string;
 }
 
+export interface FridayReflexSecureFactStageResult {
+  secretId: string;
+  scope: string;
+  refKey: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface FridayReflexSecureFactStagerInput {
+  userId: string;
+  key: string;
+  subject: string;
+  value: string;
+  candidateId: string;
+  origin: FridayReflexCandidate["origin"];
+  sourceRunId?: string;
+  sessionKey?: string;
+  nowIso: string;
+  evidence: Record<string, JsonValue>;
+}
+
 export interface CreateFridayReflexServiceDeps {
   db: FridaySqliteLayer;
   candidateRepo: FridayReflexCandidateRepository;
@@ -190,6 +211,15 @@ export interface CreateFridayReflexServiceDeps {
     nowIso: string;
     evidence: Record<string, JsonValue>;
   }) => FridayReflexLearnedFactApprovalResult;
+  secureFactStager?: (input: FridayReflexSecureFactStagerInput) => FridayReflexSecureFactStageResult;
+  secureFactRejecter?: (input: {
+    userId: string;
+    candidateId: string;
+    secretId: string;
+    scope: string;
+    refKey: string;
+    nowIso: string;
+  }) => { deleted: boolean };
   skillGenerator?: FridaySkillGeneratorService;
   workflowGenerator?: FridayWorkflowGeneratorService;
   learningEventWriter?: (events: FridayLearningEventAppendInput[]) => void;
@@ -261,7 +291,7 @@ function learnedFactSubjectSlug(subject: string): string | null {
 
 function extractLearnedFactFromRunTask(task: string | undefined): {
   key: string;
-  value: JsonValue;
+  value: string;
   statement: string;
   subject: string;
 } | null {
@@ -284,6 +314,32 @@ function extractLearnedFactFromRunTask(task: string | undefined): {
     key: `learned.${slug}`,
     value,
     statement: `${subject} = ${value}`,
+    subject,
+  };
+}
+
+function extractSecureFactFromRunTask(task: string | undefined): {
+  key: string;
+  value: string;
+  subject: string;
+} | null {
+  const text = task?.trim().slice(0, LEARNED_FACT_TASK_MAX_LENGTH) ?? "";
+  if (!text) return null;
+  if (/(?:do not|don't|dont|never|不要|别|不用|不许).{0,40}(?:remember|learn|record|store|记住|学习|保存)/iu.test(text)) {
+    return null;
+  }
+
+  const english = /(?:remember|learn|note|record|for future reference)[,:]?\s+(?:that\s+)?((?:my|our|the|this|a|an)\s+[^.!?;\n:=]{2,80}?)\s+(?:is|are|=|:)\s+([^.!?;\n]{1,160})/iu.exec(text);
+  const chinese = /(?:请记住|记住|学习|以后记得|以后请记得)[:：]?\s*((?:我的|我们的|这个|本项目|项目)?[^，。！？\n:=：]{2,50}?)(?:是|为|=|：|:)\s*([^，。！？\n]{1,120})/u.exec(text);
+  const subject = (english?.[1] ?? chinese?.[1] ?? "").trim();
+  const value = cleanLearnedFactValue(english?.[2] ?? chinese?.[2] ?? "");
+  if (!subject || !value) return null;
+  if (!isFridaySensitiveLearningCandidate(text) && !isFridaySensitiveLearningCandidate(subject, value)) return null;
+  const slug = learnedFactSubjectSlug(subject);
+  if (!slug) return null;
+  return {
+    key: `secure.${slug}`,
+    value,
     subject,
   };
 }
@@ -611,6 +667,20 @@ export function createFridayReflexService(
     ) ?? null;
   }
 
+  function findPendingSecureFactCandidate(db: FridayReflexDb, input: {
+    userId: string;
+    key: string;
+  }): FridayReflexCandidate | null {
+    return deps.candidateRepo.list(db, {
+      userId: input.userId,
+      kind: "secure_fact",
+      limit: 200,
+    }).find((candidate) =>
+      (candidate.status === "proposed" || candidate.status === "ready_for_review" || candidate.status === "testing")
+      && candidate.payload.key === input.key,
+    ) ?? null;
+  }
+
   function createLearnedFactCandidateFromRunTask(input: {
     userId: string;
     runId?: string;
@@ -657,6 +727,88 @@ export function createFridayReflexService(
         riskTier: 1,
       });
     });
+  }
+
+  function createSecureFactCandidateFromRunTask(input: {
+    userId: string;
+    runId?: string;
+    sessionKey?: string;
+    channelKind?: string;
+    channelUserId?: string;
+    task?: string;
+  }): FridayReflexCandidate | null {
+    if (!deps.secureFactStager) return null;
+    const extracted = extractSecureFactFromRunTask(input.task);
+    if (!extracted) return null;
+    const existing = deps.db.withReadConnection((db) =>
+      findPendingSecureFactCandidate(db, {
+        userId: input.userId,
+        key: extracted.key,
+      }));
+    if (existing) return existing;
+
+    const candidateId = deps.idGenerator();
+    const now = deps.nowIso();
+    const origin: FridayReflexCandidate["origin"] = input.channelKind ? "channel" : "post_run";
+    const redactedEvidence: Record<string, JsonValue> = {
+      requiresExplicitConfirmation: true,
+      source: "post_run_task_text",
+      extractionMode: "explicit_sensitive_fact_pattern",
+      statement: `${extracted.subject} = [encrypted secret pending review]`,
+      valueRedacted: true,
+      safetyBoundary: "encrypted_secret_staged_pending_review",
+    };
+    let staged: FridayReflexSecureFactStageResult;
+    try {
+      staged = deps.secureFactStager({
+        userId: input.userId,
+        key: extracted.key,
+        subject: extracted.subject,
+        value: extracted.value,
+        candidateId,
+        origin,
+        ...(input.runId ? { sourceRunId: input.runId } : {}),
+        ...(input.sessionKey ? { sessionKey: input.sessionKey } : {}),
+        nowIso: now,
+        evidence: redactedEvidence,
+      });
+    } catch {
+      return null;
+    }
+
+    return deps.db.withWriteTransaction((db) =>
+      deps.candidateRepo.insert(db, {
+        id: candidateId,
+        nowIso: now,
+        userId: input.userId,
+        kind: "secure_fact",
+        origin,
+        status: "ready_for_review",
+        sourceRunId: input.runId,
+        sessionKey: input.sessionKey,
+        channelKind: input.channelKind,
+        channelUserId: input.channelUserId,
+        title: `Review encrypted fact: ${extracted.subject.slice(0, 80)}`,
+        summary: "Friday detected an explicit sensitive fact request. The value was staged in encrypted secret storage and stays redacted until you review it.",
+        payload: {
+          key: extracted.key,
+          valueRedacted: true,
+          confidence: 0.84,
+          secretId: staged.secretId,
+          secretScope: staged.scope,
+          secretRefKey: staged.refKey,
+        },
+        evidence: {
+          ...redactedEvidence,
+          secretId: staged.secretId,
+          secretScope: staged.scope,
+          secretRefKey: staged.refKey,
+          stagedAt: now,
+          stagedSecretCreatedAt: staged.createdAt ?? null,
+        },
+        confidence: 0.84,
+        riskTier: 3,
+      }));
   }
 
   function createPreferenceConfirmationCandidate(db: FridayReflexDb, input: {
@@ -1300,6 +1452,28 @@ export function createFridayReflexService(
             learnedFactLastConfirmedAt: result.lastConfirmedAt,
             ...(result.factId ? { learnedFactId: result.factId } : {}),
           };
+        } else if (candidate.kind === "secure_fact") {
+          const key = readPayloadString(candidate.payload, "key");
+          const secretId = readPayloadString(candidate.payload, "secretId");
+          const secretScope = readPayloadString(candidate.payload, "secretScope");
+          const secretRefKey = readPayloadString(candidate.payload, "secretRefKey");
+          if (!key || !secretId || !secretScope || !secretRefKey) {
+            throw new FridayDomainError(
+              "REFLEX_SECURE_FACT_INVALID",
+              "Secure-fact candidate payload requires key and encrypted secret reference metadata.",
+              { httpStatus: 400 },
+            );
+          }
+          evidence = {
+            ...evidence,
+            secureFactConfirmed: true,
+            secureFactConfirmedAt: deps.nowIso(),
+            secureFactKey: key,
+            secretId,
+            secretScope,
+            secretRefKey,
+            valueRedacted: true,
+          };
         } else if (candidate.kind === "preference") {
           const category = readPayloadString(candidate.payload, "category") as FridayUserPreferenceCategory | undefined;
           const key = readPayloadString(candidate.payload, "key");
@@ -1361,15 +1535,39 @@ export function createFridayReflexService(
     },
 
     rejectCandidate(input) {
+      const candidate = this.getCandidate({ userId: input.userId, candidateId: input.candidateId });
+      const evidence: Record<string, JsonValue> = {
+        rejectedBy: input.userId,
+        rejectedAt: deps.nowIso(),
+        ...(input.reason ? { reason: input.reason } : {}),
+      };
+      if (candidate.kind === "secure_fact") {
+        const secretId = readPayloadString(candidate.payload, "secretId");
+        const secretScope = readPayloadString(candidate.payload, "secretScope");
+        const secretRefKey = readPayloadString(candidate.payload, "secretRefKey");
+        if (secretId && secretScope && secretRefKey && deps.secureFactRejecter) {
+          const result = deps.secureFactRejecter({
+            userId: input.userId,
+            candidateId: input.candidateId,
+            secretId,
+            scope: secretScope,
+            refKey: secretRefKey,
+            nowIso: deps.nowIso(),
+          });
+          evidence.stagedSecretDeleted = result.deleted;
+          evidence.secretId = secretId;
+          evidence.secretScope = secretScope;
+          evidence.secretRefKey = secretRefKey;
+        } else {
+          evidence.stagedSecretDeleted = false;
+          evidence.secureFactRejectionCleanup = "unavailable_or_missing_secret_ref";
+        }
+      }
       return updateCandidateStatus({
         userId: input.userId,
         candidateId: input.candidateId,
         status: "rejected",
-        evidence: {
-          rejectedBy: input.userId,
-          rejectedAt: deps.nowIso(),
-          ...(input.reason ? { reason: input.reason } : {}),
-        },
+        evidence,
       });
     },
 
@@ -1488,6 +1686,8 @@ export function createFridayReflexService(
       const created: FridayReflexCandidate[] = [];
       const toolSequence = input.toolSequence ?? [];
       if (input.outcome === "success") {
+        const secureFactCandidate = createSecureFactCandidateFromRunTask(input);
+        if (secureFactCandidate) created.push(secureFactCandidate);
         const learnedFactCandidate = createLearnedFactCandidateFromRunTask(input);
         if (learnedFactCandidate) created.push(learnedFactCandidate);
       }

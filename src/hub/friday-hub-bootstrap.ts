@@ -50,6 +50,7 @@ import {
   createFridayProviderCostCalculator,
   createFridayProviderPricingCatalog,
   createFridayProviderService,
+  createFridaySecretAdminService,
   createFridaySecretRepository,
   decryptSecret,
   getFridayProviderPreset,
@@ -5977,6 +5978,11 @@ export async function createFridayHub(
 
   const reflexCandidateRepository = createFridayReflexCandidateRepository();
   const reflexOnboardingRepository = createFridayReflexOnboardingRepository();
+  const reflexSecretAdminService = createFridaySecretAdminService({
+    db: stateRuntime.sqlite,
+    idGenerator,
+    nowIso,
+  });
   reflexService = createFridayReflexService({
     db: stateRuntime.sqlite,
     candidateRepo: reflexCandidateRepository,
@@ -6033,6 +6039,23 @@ export async function createFridayHub(
         lastConfirmedAt: fact.lastConfirmedAt,
       };
     },
+    secureFactStager: (input) => {
+      const secret = reflexSecretAdminService.createSecret({
+        scope: "learned_fact",
+        refKey: `${input.userId}:${input.candidateId}`,
+        value: input.value,
+      });
+      return {
+        secretId: secret.id,
+        scope: secret.scope,
+        refKey: secret.refKey,
+        createdAt: secret.createdAt,
+        updatedAt: secret.updatedAt,
+      };
+    },
+    secureFactRejecter: (input) => ({
+      deleted: reflexSecretAdminService.deleteSecret(input.secretId),
+    }),
     skillGenerator,
     workflowGenerator,
     learningEventWriter,

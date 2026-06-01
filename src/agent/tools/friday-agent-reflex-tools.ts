@@ -23,6 +23,7 @@ const CANDIDATE_STATUSES = new Set<FridayReflexCandidateStatus>([
 
 const CANDIDATE_KINDS = new Set<FridayReflexCandidateKind>([
   "memory",
+  "secure_fact",
   "learned_fact",
   "preference",
   "recipe",
@@ -213,7 +214,7 @@ function evaluateAgentReflexApproval(candidate: FridayReflexCandidate): {
 
   return {
     allowed: false,
-    reason: "Skill, workflow, fix, recipe, and test-policy candidates require Review Center confirmation.",
+    reason: "Secure-fact, learned-fact, skill, workflow, fix, recipe, and test-policy candidates require Review Center confirmation.",
   };
 }
 
