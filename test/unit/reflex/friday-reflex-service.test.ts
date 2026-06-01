@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createFridayPreferenceFactRepository, createFridayPreferenceFactService } from "#learning";
 import { createFridaySqliteLayer, type FridaySqliteLayer } from "#state";
 import { createFridayUixUserPreferenceRepository } from "../../../src/uix/persistence/friday-uix-user-preference-repository.js";
 import {
@@ -380,6 +381,193 @@ describe("Friday Reflex service", () => {
     expect(created).toHaveLength(1);
     expect(created[0]?.kind).toBe("recipe");
     expect(created[0]?.status).toBe("proposed");
+  });
+
+  it("creates review-only learned-fact candidates from explicit completed run text", async () => {
+    const service = createService();
+
+    const created = await service.processRunCompletion({
+      userId: "user-1",
+      runId: "run-learned-fact-1",
+      sessionKey: "agent:learned-fact-1",
+      task: "For future reference, my preferred editor is Helix.",
+      outcome: "success",
+      toolSequence: [],
+    });
+
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({
+      kind: "learned_fact",
+      status: "ready_for_review",
+      origin: "post_run",
+      sourceRunId: "run-learned-fact-1",
+      sessionKey: "agent:learned-fact-1",
+      payload: {
+        key: "learned.preferred_editor",
+        value: "Helix",
+        confidence: 0.84,
+      },
+      evidence: {
+        requiresExplicitConfirmation: true,
+        source: "post_run_task_text",
+        extractionMode: "explicit_fact_pattern",
+        safetyBoundary: "review_center_required_before_learned_fact_persistence",
+      },
+    });
+    const factRows = db!.withReadConnection((conn) =>
+      conn.prepare("SELECT COUNT(*) AS count FROM preference_facts").get() as { count: number });
+    expect(factRows.count).toBe(0);
+
+    await service.processRunCompletion({
+      userId: "user-1",
+      runId: "run-learned-fact-2",
+      sessionKey: "agent:learned-fact-2",
+      task: "Remember that my preferred editor is Helix.",
+      outcome: "success",
+      toolSequence: [],
+    });
+    expect(service.listCandidates({ userId: "user-1", kind: "learned_fact" })).toHaveLength(1);
+  });
+
+  it("does not create learned-fact candidates for sensitive fact requests", async () => {
+    const service = createService();
+
+    const created = await service.processRunCompletion({
+      userId: "user-1",
+      runId: "run-sensitive-learned-fact",
+      sessionKey: "agent:sensitive-learned-fact",
+      task: "Remember that my medical diagnosis is Friday synthetic test marker.",
+      outcome: "success",
+      toolSequence: [],
+    });
+
+    expect(created).toEqual([]);
+    expect(service.listCandidates({ userId: "user-1", kind: "learned_fact" })).toEqual([]);
+  });
+
+  it("queues learned facts separately and writes them only after approval", async () => {
+    let factService: ReturnType<typeof createFridayPreferenceFactService> | undefined;
+    const learnedFactApprover = vi.fn((input: Parameters<NonNullable<Parameters<typeof createFridayReflexService>[0]["learnedFactApprover"]>>[0]) => {
+      if (!factService) throw new Error("fact service not initialized");
+      const event = {
+        eventId: `event-${input.candidateId}`,
+        ts: input.nowIso,
+        userId: input.userId,
+        kind: "user_correction" as const,
+        payload: {
+          feedbackKind: "learned_fact_approval",
+          key: input.key,
+          value: input.value,
+          candidateId: input.candidateId,
+        },
+      };
+      const [fact] = factService.applySignals({
+        event,
+        signals: [{
+          signalId: `signal-${input.candidateId}`,
+          kind: "preference",
+          key: input.key,
+          value: input.value,
+          confidence: input.confidence,
+          sourceEventId: event.eventId,
+          userId: input.userId,
+          ts: input.nowIso,
+        }],
+        nowIso: input.nowIso,
+      });
+      if (!fact) throw new Error("expected learned fact");
+      return {
+        factId: fact.factId,
+        key: fact.key,
+        confidence: fact.confidence,
+        evidenceCount: fact.evidenceCount,
+        lastConfirmedAt: fact.lastConfirmedAt,
+      };
+    });
+    const service = createService({ learnedFactApprover });
+    factService = createFridayPreferenceFactService({
+      db: db!,
+      factRepo: createFridayPreferenceFactRepository(),
+      idGenerator: nextId,
+      nowIso: () => "2026-04-30T12:00:00.000Z",
+    });
+    db!.withWriteTransaction((conn) => {
+      conn.prepare(
+        `INSERT INTO users (id, display_name, role, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).run(
+        "user-1",
+        "Test User",
+        "user",
+        "2026-04-30T12:00:00.000Z",
+        "2026-04-30T12:00:00.000Z",
+      );
+    });
+
+    const rejectedCandidate = service.createCandidate({
+      userId: "user-1",
+      kind: "learned_fact",
+      status: "ready_for_review",
+      origin: "channel",
+      title: "Default branch is main",
+      summary: "The user stated this repo uses main as the default branch.",
+      payload: {
+        key: "repo.default_branch",
+        value: "main",
+      },
+      evidence: {
+        reviewReason: "explicit_user_statement",
+      },
+      confidence: 0.91,
+      riskTier: 1,
+    });
+    expect(service.listCandidates({ userId: "user-1", kind: "learned_fact" })).toHaveLength(1);
+
+    const rejected = service.rejectCandidate({
+      userId: "user-1",
+      candidateId: rejectedCandidate.id,
+      reason: "not durable",
+    });
+    expect(rejected.status).toBe("rejected");
+    expect(learnedFactApprover).not.toHaveBeenCalled();
+    expect(factService.listActiveFacts({ userId: "user-1", minConfidence: 0, limit: 10 })).toEqual([]);
+
+    const approvedCandidate = service.createCandidate({
+      userId: "user-1",
+      kind: "learned_fact",
+      status: "ready_for_review",
+      origin: "channel",
+      title: "Preferred branch naming",
+      summary: "The user confirmed this workspace uses trunk branches.",
+      payload: {
+        key: "workspace.branch_policy",
+        value: "trunk",
+        confidence: 0.93,
+      },
+      evidence: {
+        reviewReason: "user_confirmed",
+      },
+      confidence: 0.8,
+      riskTier: 1,
+    });
+
+    const approved = await service.approveCandidate({
+      userId: "user-1",
+      candidateId: approvedCandidate.id,
+    });
+    expect(approved.status).toBe("approved");
+    expect(approved.evidence.learnedFactKey).toBe("workspace.branch_policy");
+    expect(approved.evidence.learnedFactEvidenceCount).toBe(1);
+    expect(learnedFactApprover).toHaveBeenCalledTimes(1);
+
+    const facts = factService.listActiveFacts({ userId: "user-1", minConfidence: 0, limit: 10 });
+    expect(facts).toHaveLength(1);
+    expect(facts[0]).toMatchObject({
+      key: "workspace.branch_policy",
+      value: "trunk",
+      confidence: 0.93,
+      evidenceCount: 1,
+    });
   });
 
   it("revokes explicit preferences through the same canonical store", () => {
