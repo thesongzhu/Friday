@@ -76,6 +76,42 @@ describe("FridayPreferenceFactService", () => {
     expect(updated[0]!.confidence).toBeGreaterThan(0);
   });
 
+  it("marks Review Center approved learned facts in metadata", () => {
+    service.applySignals({
+      event: makeEvent({
+        eventId: "evt-review-learned-fact",
+        payload: { feedbackKind: "learned_fact_approval" },
+      }),
+      signals: [
+        makeSignal({
+          signalId: "sig-review-learned-fact",
+          kind: "preference",
+          key: "learned.preferred_editor",
+          value: "Helix",
+          confidence: 0.9,
+          sourceEventId: "evt-review-learned-fact",
+          situationalContext: {
+            candidateId: "candidate-123",
+            origin: "post_run",
+          },
+        }),
+      ],
+      nowIso: NOW,
+    });
+
+    const [fact] = service.listActiveFacts({
+      userId: "test-user",
+      minConfidence: 0,
+      limit: 10,
+    });
+
+    expect(fact?.metadata).toMatchObject({
+      reviewBoundary: "review_center_confirmed",
+      reviewCenterCandidateId: "candidate-123",
+      reviewCenterOrigin: "post_run",
+    });
+  });
+
   it("applySignals skips non-preference/correction signals", () => {
     const event = makeEvent();
     const signals = [
