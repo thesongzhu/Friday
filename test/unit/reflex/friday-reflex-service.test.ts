@@ -445,6 +445,131 @@ describe("Friday Reflex service", () => {
     expect(service.listCandidates({ userId: "user-1", kind: "learned_fact" })).toEqual([]);
   });
 
+  it("stages sensitive fact requests as redacted secure-fact review candidates", async () => {
+    const secureFactStager = vi.fn((input: Parameters<NonNullable<Parameters<typeof createFridayReflexService>[0]["secureFactStager"]>>[0]) => ({
+      secretId: `secret-${input.candidateId}`, // pragma: allowlist secret
+      scope: "learned_fact",
+      refKey: `${input.userId}:${input.candidateId}`,
+      createdAt: input.nowIso,
+      updatedAt: input.nowIso,
+    }));
+    const service = createService({ secureFactStager });
+
+    const created = await service.processRunCompletion({
+      userId: "user-1",
+      runId: "run-sensitive-learned-fact",
+      sessionKey: "agent:sensitive-learned-fact",
+      task: "Remember that my medical diagnosis is Friday synthetic test marker.",
+      outcome: "success",
+      toolSequence: [],
+    });
+
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({
+      kind: "secure_fact",
+      status: "ready_for_review",
+      riskTier: 3,
+      payload: {
+        key: "secure.medical_diagnosis",
+        valueRedacted: true,
+        secretId: "secret-id-0001", // pragma: allowlist secret
+        secretScope: "learned_fact", // pragma: allowlist secret
+        secretRefKey: "user-1:id-0001", // pragma: allowlist secret
+      },
+      evidence: {
+        requiresExplicitConfirmation: true,
+        extractionMode: "explicit_sensitive_fact_pattern",
+        valueRedacted: true,
+        safetyBoundary: "encrypted_secret_staged_pending_review",
+      },
+    });
+    expect(secureFactStager).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "user-1",
+      key: "secure.medical_diagnosis",
+      subject: "my medical diagnosis",
+      value: "Friday synthetic test marker",
+      candidateId: "id-0001",
+    }));
+    expect(service.listCandidates({ userId: "user-1", kind: "learned_fact" })).toEqual([]);
+
+    const serialized = JSON.stringify(created[0]);
+    expect(serialized).not.toContain("Friday synthetic test marker");
+    const factRows = db!.withReadConnection((conn) =>
+      conn.prepare("SELECT COUNT(*) AS count FROM preference_facts").get() as { count: number });
+    expect(factRows.count).toBe(0);
+  });
+
+  it("keeps secure facts encrypted on approval and deletes staged secrets on rejection", async () => {
+    const secureFactStager = vi.fn((input: Parameters<NonNullable<Parameters<typeof createFridayReflexService>[0]["secureFactStager"]>>[0]) => ({
+      secretId: `secret-${input.candidateId}`, // pragma: allowlist secret
+      scope: "learned_fact",
+      refKey: `${input.userId}:${input.candidateId}`,
+    }));
+    const secureFactRejecter = vi.fn(() => ({ deleted: true }));
+    const service = createService({ secureFactStager, secureFactRejecter });
+
+    const [approvalCandidate] = await service.processRunCompletion({
+      userId: "user-1",
+      runId: "run-sensitive-approval",
+      sessionKey: "agent:sensitive-approval",
+      task: "Remember that my medical diagnosis is Friday synthetic test marker.",
+      outcome: "success",
+      toolSequence: [],
+    });
+    expect(approvalCandidate).toBeDefined();
+    const approved = await service.approveCandidate({
+      userId: "user-1",
+      candidateId: approvalCandidate!.id,
+    });
+
+    expect(approved.status).toBe("approved");
+    expect(approved.evidence).toMatchObject({
+      secureFactConfirmed: true,
+      secureFactKey: "secure.medical_diagnosis",
+      secretId: "secret-id-0001", // pragma: allowlist secret
+      secretScope: "learned_fact", // pragma: allowlist secret
+      secretRefKey: "user-1:id-0001", // pragma: allowlist secret
+      valueRedacted: true,
+    });
+    expect(JSON.stringify(approved)).not.toContain("Friday synthetic test marker");
+    expect(secureFactRejecter).not.toHaveBeenCalled();
+
+    const [rejectionCandidate] = await service.processRunCompletion({
+      userId: "user-1",
+      runId: "run-sensitive-rejection",
+      sessionKey: "agent:sensitive-rejection",
+      task: "Remember that my bank account number is Friday synthetic test marker.",
+      outcome: "success",
+      toolSequence: [],
+    });
+    expect(rejectionCandidate).toBeDefined();
+    const rejected = service.rejectCandidate({
+      userId: "user-1",
+      candidateId: rejectionCandidate!.id,
+      reason: "do not keep",
+    });
+
+    expect(rejected.status).toBe("rejected");
+    expect(rejected.evidence).toMatchObject({
+      stagedSecretDeleted: true,
+      secretId: "secret-id-0002", // pragma: allowlist secret
+      secretScope: "learned_fact", // pragma: allowlist secret
+      secretRefKey: "user-1:id-0002", // pragma: allowlist secret
+      reason: "do not keep",
+    });
+    expect(secureFactRejecter).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "user-1",
+      candidateId: "id-0002",
+      secretId: "secret-id-0002", // pragma: allowlist secret
+      scope: "learned_fact",
+      refKey: "user-1:id-0002",
+    }));
+    expect(service.listCandidates({ userId: "user-1", kind: "learned_fact" })).toEqual([]);
+    const factRows = db!.withReadConnection((conn) =>
+      conn.prepare("SELECT COUNT(*) AS count FROM preference_facts").get() as { count: number });
+    expect(factRows.count).toBe(0);
+  });
+
   it("queues learned facts separately and writes them only after approval", async () => {
     let factService: ReturnType<typeof createFridayPreferenceFactService> | undefined;
     const learnedFactApprover = vi.fn((input: Parameters<NonNullable<Parameters<typeof createFridayReflexService>[0]["learnedFactApprover"]>>[0]) => {
