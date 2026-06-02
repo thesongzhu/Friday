@@ -192,7 +192,10 @@ pub fn canonical_action_bytes(request: &MutatingActionRequest) -> Vec<u8> {
         }
     }
     out.push(request.mutating as u8);
-    put_str(&mut out, request.risk.map(|r| r.as_str()).unwrap_or("none"));
+    // Bind the DERIVED effective risk (incl. local-claim escalation), not the raw
+    // declared risk — so an approval is scoped to the effective risk assessment and a
+    // request a guard later escalates no longer digest-matches (faithful to the oracle).
+    put_str(&mut out, derive_risk(request).as_str());
     put_opt_str(&mut out, &request.parameters);
     put_opt_str(&mut out, &request.plan_digest);
     put_opt_str(&mut out, &request.idempotency_key);
@@ -427,6 +430,17 @@ mod tests {
         let mut e = c.clone();
         e.idempotency_key = Some("k1".into());
         assert_ne!(canonical_action_bytes(&c), canonical_action_bytes(&e));
+        // The DERIVED effective risk is bound: a risk-escalating local claim changes
+        // the digest, so an approval can't survive a later guard escalation.
+        let mut f = req("inspect", ActorKind::Owner, false); // non-mutating -> ReadOnly base
+        let base_bytes = canonical_action_bytes(&f);
+        f.local_claims.push(LocalClaim {
+            guard_id: "risk".into(),
+            decision: GateDecision::Allow,
+            risk: Some(Risk::High),
+            reason: None,
+        });
+        assert_ne!(base_bytes, canonical_action_bytes(&f));
     }
 
     #[test]
