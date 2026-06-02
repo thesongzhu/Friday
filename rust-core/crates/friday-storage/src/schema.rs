@@ -18,6 +18,7 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     "memory_item",
     "workflow_run",
     "workflow_step",
+    "consumed_approval",
 ];
 
 /// Tables present only on a phone (never created on the Hub).
@@ -45,6 +46,15 @@ pub fn hub_migrations() -> Vec<Migration> {
             name: "memory_state",
             destructive: false,
             up: m0003_memory_state,
+        },
+        // PR-3b: single-use canonical-approval replay store (additive). The
+        // `use_key` PRIMARY KEY makes a replayed approval an INSERT uniqueness
+        // violation — double-spend is unrepresentable, not a check-then-consume race.
+        Migration {
+            version: 4,
+            name: "consumed_approval",
+            destructive: false,
+            up: m0004_consumed_approval,
         },
     ]
 }
@@ -259,5 +269,18 @@ fn m0003_memory_state(tx: &Transaction) -> rusqlite::Result<()> {
          UPDATE memory_item
             SET confidence = 'candidate'
             WHERE confirmed_at IS NULL AND (confidence IS NULL OR confidence = 'confirmed');",
+    )
+}
+
+fn m0004_consumed_approval(tx: &Transaction) -> rusqlite::Result<()> {
+    // `use_key` PRIMARY KEY: a single approval is spendable exactly once — a second
+    // grant attempt collides on the PK (INSERT-as-grant), so replay is unrepresentable.
+    tx.execute_batch(
+        "CREATE TABLE consumed_approval (
+            use_key       TEXT PRIMARY KEY,
+            approval_id   TEXT NOT NULL,
+            action_digest TEXT NOT NULL,
+            consumed_at   INTEGER NOT NULL
+         );",
     )
 }

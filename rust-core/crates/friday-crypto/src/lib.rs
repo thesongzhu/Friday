@@ -24,8 +24,10 @@ use std::collections::HashMap;
 use thiserror::Error;
 use zeroize::ZeroizeOnDrop;
 
+pub mod approval;
 pub mod pairing;
 pub mod session;
+pub use approval::{action_digest, sign_approval, verify_approval_signature};
 pub use pairing::{pairing_proof, verify_pairing_proof};
 pub use session::DeviceKeypair;
 
