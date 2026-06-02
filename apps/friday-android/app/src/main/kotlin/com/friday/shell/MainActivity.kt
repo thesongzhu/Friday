@@ -17,6 +17,7 @@ import uniffi.friday_ffi.initialConnectionState
 import uniffi.friday_ffi.negotiateSchemaVersion
 import uniffi.friday_ffi.protocolSchemaVersion
 import uniffi.friday_ffi.sampleActivityInbox
+import uniffi.friday_ffi.sampleMemoryReview
 
 class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -39,6 +40,8 @@ class MainActivity : Activity() {
         )
         // Urgency-first Needs-Me inbox, built + sorted by Rust (08 §1/§2).
         val inbox = sampleActivityInbox()
+        // Memory candidates awaiting the user's review (07 §6/§7).
+        val memReview = sampleMemoryReview()
 
         // (The app identity "FridayShell" is shown in the action bar; the body is
         // exactly the values the all-Rust core computes, so the rendered screen
@@ -54,6 +57,15 @@ class MainActivity : Activity() {
             for (item in inbox) {
                 appendLine("  p${item.priority} [${item.source}] ${item.reason}")
                 appendLine("      → ${item.destination}")
+            }
+            appendLine()
+            appendLine("Memory Review (${memReview.size}, sample):")
+            appendLine("  awaiting confirm/reject — never auto-saved")
+            for (m in memReview) {
+                // Show confidence AND lifecycle state (parity with iOS); state is
+                // the field the no-silent-write story turns on (07 §6/§7).
+                appendLine("  [${m.scope}] ${m.preview}")
+                appendLine("      ${m.confidence} · ${m.state.name.lowercase()}")
             }
             appendLine()
             append("rendered from Rust ✓")
