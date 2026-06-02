@@ -81,10 +81,14 @@ fn ffi_dependency_closure_excludes_deepseek() {
 
     let ffi_closure = closure(&graph, "friday-ffi");
 
-    assert!(
-        !ffi_closure.contains("friday-deepseek"),
-        "PHONE SECRET LEAK: friday-ffi transitively depends on friday-deepseek; closure = {ffi_closure:?}"
-    );
+    // Hub-only, provider-secret-bearing crates must never reach the phone.
+    for hub_only in ["friday-deepseek", "friday-providers"] {
+        assert!(graph.contains_key(hub_only), "{hub_only} crate not found");
+        assert!(
+            !ffi_closure.contains(hub_only),
+            "PHONE SECRET LEAK: friday-ffi transitively depends on {hub_only}; closure = {ffi_closure:?}"
+        );
+    }
 
     // Sanity: the phone crate does link the phone-side crates it actually uses.
     for expected in ["friday-core", "friday-storage", "friday-crypto"] {

@@ -1,0 +1,15 @@
+[package]
+name = "friday-providers"
+description = "Friday Rust Core — Codex/Claude provider adapters (Hub-only). Unit 6/7: auth-readiness detection via official provider status commands."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+
+# Hub-only: runs the local Codex/Claude CLIs. Provider credentials stay in those
+# CLIs' own config on the Hub; this crate only reads auth STATUS (read-only, no
+# model call). Must stay OUT of friday-ffi's (phone) dependency graph — asserted
+# by friday-arch-tests.
+[dependencies]
+thiserror.workspace = true
