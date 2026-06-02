@@ -268,6 +268,34 @@ fn word_within(lower: &str, start: usize, needle: &str, window: usize) -> Option
     None
 }
 
+/// Like [`word_within`] but yields the end index of EVERY whole-word occurrence of
+/// `needle` starting within `window` chars after `start` (not just the first). The
+/// oracle regex `A[\s\S]{0,N}B[\s\S]{0,N}C` backtracks across B positions; a
+/// first-occurrence-only scan under-detects when an earlier B's window doesn't reach
+/// a C but a later B's does. `lower` must be lowercased.
+fn word_ends_within(lower: &str, start: usize, needle: &str, window: usize) -> Vec<usize> {
+    let mut out = Vec::new();
+    if needle.is_empty() {
+        return out;
+    }
+    let bytes = lower.as_bytes();
+    let mut from = start;
+    while let Some(rel) = lower[from..].find(needle) {
+        let pos = from + rel;
+        if lower[start..pos].chars().count() > window {
+            break;
+        }
+        let end = pos + needle.len();
+        let left_ok = pos == 0 || !is_word_byte(bytes[pos - 1]);
+        let right_ok = end >= bytes.len() || !is_word_byte(bytes[end]);
+        if left_ok && right_ok {
+            out.push(end);
+        }
+        from = pos + 1;
+    }
+    out
+}
+
 /// True if some `first` phrase occurs as a whole word and some `second` phrase
 /// begins as a whole word within `window` chars after it. Faithful to the
 /// oracle's `\bA\b[\s\S]{0,N}\bB\b` co-occurrence patterns (the VAGUE_* hints,
@@ -438,10 +466,13 @@ fn matches_vague_improvement(lower: &str) -> bool {
             let left_ok = vpos == 0 || !is_word_byte(lower.as_bytes()[vpos - 1]);
             let right_ok = vend >= lower.len() || !is_word_byte(lower.as_bytes()[vend]);
             if left_ok && right_ok {
-                // For each whole-word subject within the window, look for a
-                // whole-word quality within the window after IT.
+                // For EACH whole-word subject occurrence within the window, look for
+                // a whole-word quality within the window after IT. Iterating all
+                // subject occurrences (not just the first) mirrors the oracle regex's
+                // backtracking — an earlier subject whose window misses a quality must
+                // not mask a later subject whose window reaches one.
                 for s in SUBJECTS {
-                    if let Some(send) = word_within(lower, vend, s, 80) {
+                    for send in word_ends_within(lower, vend, s, 80) {
                         if QUALITIES
                             .iter()
                             .any(|q| word_within(lower, send, q, 80).is_some())
@@ -617,6 +648,18 @@ mod tests {
             classify_kind("make Friday more production-ready and stable"),
             Some(PlanningKind::MajorDecision)
         );
+    }
+
+    #[test]
+    fn vague_improvement_backtracks_across_repeated_subjects() {
+        // Reviewer-A under-detection fix: an EARLIER subject occurrence whose
+        // 80-char quality window misses must not mask a LATER subject occurrence
+        // whose window reaches a quality (the oracle regex backtracks across B
+        // positions). Here the first "friday" is far from any quality word, but the
+        // second "friday" is immediately followed by "ready".
+        let task = "improve friday in lots of little unrelated ways here and there and \
+                    then friday should be ready";
+        assert_eq!(classify_kind(task), Some(PlanningKind::MajorDecision));
     }
 
     #[test]

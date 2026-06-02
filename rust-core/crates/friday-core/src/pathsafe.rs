@@ -93,8 +93,11 @@ fn is_within_base(base: &str, target: &str) -> bool {
 
 /// Is `path` absolute? POSIX-style leading `/` or a Windows drive/UNC root. We
 /// detect Windows roots too so a candidate like `C:\x` or `\\srv\s` is treated
-/// as absolute on every platform (matching Node's cross-platform rejection
-/// intent for untrusted input).
+/// as absolute on every platform. NOTE: this is deliberately **stricter** than the
+/// POSIX `node:path` oracle, where `isAbsolute("C:\\x")` is `false` (it would treat
+/// the drive root as a relative segment). We over-reject Windows/UNC roots in
+/// untrusted candidates — over-rejection is always safe (it can never produce an
+/// escape), and a workspace-relative path is never legitimately a drive/UNC root.
 fn is_absolute(path: &str) -> bool {
     if path.starts_with('/') || path.starts_with('\\') {
         return true;
