@@ -25,6 +25,11 @@ struct ContentView: View {
     private let dbPath: String = FileManager.default
         .urls(for: .documentDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("friday.db").path
+    // Token/cost usage read from the phone's own ledger (02 §13 cost transparency).
+    private let tokens: PhoneTokensFfi = {
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return phoneTokenUsage(dbPath: dir.appendingPathComponent("friday.db").path)
+    }()
     @State private var activity: [ActivityItemFfi] = []
     @State private var activityError: String = ""
     @State private var note: String = ""
@@ -89,6 +94,24 @@ struct ContentView: View {
                     }
                 }
                 ForEach(activity, id: \.activityId) { activityRow($0) }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text("Tokens / cost").font(.headline)
+                        Spacer()
+                        Text(tokens.ok ? "\(tokens.items.count)" : "—")
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("live · phone ledger · fallback always shown")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                if tokens.ok {
+                    ForEach(Array(tokens.items.enumerated()), id: \.offset) { _, t in tokenRow(t) }
+                } else {
+                    Text(tokens.error).font(.caption2).foregroundStyle(.red)
+                }
 
                 Divider()
                 Text("rendered from Rust ✓")
@@ -192,6 +215,22 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .disabled(isDone)
+    }
+
+    // One token/cost row: provider/model, total tokens, $cost, and the fallback
+    // flag (always surfaced — a fallback is never hidden, 02 §13).
+    private func tokenRow(_ t: TokenUsageFfi) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(t.provider.uppercased())
+                .font(.caption2).bold().foregroundStyle(.secondary)
+                .frame(width: 72, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(t.model)
+                Text("\(t.totalTokens) tok · \(t.costEstimate.map { String(format: "$%.4f", $0) } ?? "—") · \(t.fallback ? "⚠ fallback" : "direct")")
+                    .font(.caption2).foregroundStyle(t.fallback ? .orange : .secondary)
+            }
+            Spacer()
+        }
     }
 }
 
