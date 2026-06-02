@@ -24,6 +24,9 @@ use std::collections::HashMap;
 use thiserror::Error;
 use zeroize::ZeroizeOnDrop;
 
+pub mod session;
+pub use session::DeviceKeypair;
+
 const KEY_LEN: usize = 32;
 const NONCE_LEN: usize = 24;
 const DATA_KEY_WRAP_AAD: &[u8] = b"friday-data-key-wrap-v1";
