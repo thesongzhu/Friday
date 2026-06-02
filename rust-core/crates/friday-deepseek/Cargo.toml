@@ -1,12 +1,25 @@
 [package]
 name = "friday-deepseek"
-description = "Friday Rust Core — DeepSeek Friday-provider route (Hub-only, provider-secret-bearing). Unit-2 boundary stub; route lands in Unit 3."
+description = "Friday Rust Core — DeepSeek Friday-provider route (Hub-only, provider-secret-bearing)."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 publish = false
 rust-version.workspace = true
 
+# Hub-only, provider-secret-bearing crate. It reads FRIDAY_DEEPSEEK_API_KEY from
+# the environment (set on the Hub only) and must stay OUT of friday-ffi's
+# dependency graph (asserted by friday-arch-tests; re-verified after ureq landed).
 [dependencies]
 friday-core.workspace = true
+serde_json = "1"
 thiserror.workspace = true
+# Blocking HTTP client (rustls/webpki-roots; no async runtime, no system certs).
+ureq = { version = "2", features = ["json"] }
+
+[dev-dependencies]
+# The live route smoke test persists the resulting ledger entry to prove the
+# end-to-end path through Rust/Core storage with fallback=0, and reads the row
+# back directly.
+friday-storage.workspace = true
+rusqlite.workspace = true
