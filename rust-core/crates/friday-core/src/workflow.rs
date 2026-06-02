@@ -146,6 +146,15 @@ pub struct StepView {
 /// engine has otherwise finished it — the engine, not this predicate, decides
 /// when all *work* is done. This predicate answers exactly one question: "is it
 /// safe to call this run complete given its side effects?"
+///
+/// CAUTION — this is a **safety floor, not a readiness signal**. It is `true`
+/// whenever every *side-effect* step is `Verified`, even if a non-side-effect
+/// step is still `Pending`/`Running`. Use it ONLY as a guard ("refuse `Done`
+/// when `!run_is_complete`"), never as the completion trigger: a future engine
+/// that does `if run_is_complete(steps) { mark_done() }` would mark a run `Done`
+/// with unfinished analysis work. The engine must separately confirm all steps
+/// (side-effect *and* pure) are finished before driving the run to `Done`; this
+/// function only forbids the unsafe case.
 pub fn run_is_complete(steps: &[StepView]) -> bool {
     steps
         .iter()
