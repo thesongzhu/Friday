@@ -16,15 +16,16 @@ import uniffi.friday_ffi.connectionIsStaleOrOffline
 import uniffi.friday_ffi.initialConnectionState
 import uniffi.friday_ffi.negotiateSchemaVersion
 import uniffi.friday_ffi.protocolSchemaVersion
+import uniffi.friday_ffi.sampleActivityInbox
 
 class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // JNA on Android loads its own jnidispatch from a CLASSPATH RESOURCE
-        // (com/sun/jna/android-aarch64/libjnidispatch.so — staged by build-emu.sh).
-        // Our Rust lib (libfriday_ffi.so) is a jniLib, extracted on disk via
-        // useLegacyPackaging; point JNA's library search at that dir to find it.
+        // JNA (5.18.1@aar) loads its jnidispatch on Android via System.loadLibrary
+        // from the bundled jniLib. Our Rust lib (libfriday_ffi.so) is also a jniLib,
+        // extracted on disk via useLegacyPackaging; point JNA's library search at
+        // that dir so it is found.
         System.setProperty("jna.library.path", applicationInfo.nativeLibraryDir)
 
         // Every value below comes from the Rust core via UniFFI — not hardcoded.
@@ -36,6 +37,8 @@ class MainActivity : Activity() {
         val negotiated = negotiateSchemaVersion(
             1.toUShort(), 3.toUShort(), 2.toUShort(), 5.toUShort()
         )
+        // Urgency-first Needs-Me inbox, built + sorted by Rust (08 §1/§2).
+        val inbox = sampleActivityInbox()
 
         // (The app identity "FridayShell" is shown in the action bar; the body is
         // exactly the values the all-Rust core computes, so the rendered screen
@@ -46,6 +49,12 @@ class MainActivity : Activity() {
             appendLine("stale/offline? ${if (stale) "yes" else "no"}")
             appendLine("schema ver:   $schemaVersion")
             appendLine("negotiated:   ${negotiated?.toString() ?: "incompatible"}")
+            appendLine()
+            appendLine("Needs Me (${inbox.size}, sample):")
+            for (item in inbox) {
+                appendLine("  p${item.priority} [${item.source}] ${item.reason}")
+                appendLine("      → ${item.destination}")
+            }
             appendLine()
             append("rendered from Rust ✓")
         }

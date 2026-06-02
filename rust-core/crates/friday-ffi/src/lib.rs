@@ -13,7 +13,7 @@
 //! depend on `friday-deepseek` or a Hub crate, so "no provider secret on phone"
 //! is a compile-time property (gate `21` §1/§3), asserted by `friday-arch-tests`.
 
-use friday_core::ConnState;
+use friday_core::{ConnState, NeedsMeItem};
 
 uniffi::setup_scaffolding!();
 
@@ -97,6 +97,90 @@ pub fn negotiate_schema_version(
     .ok()
 }
 
+/// A cross-source "Needs Me" action item for the Activity inbox (`08` §1/§2),
+/// projected for native UI. Carries the provider detail (reason/destination) so
+/// nothing is silently dropped.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct NeedsMeItemFfi {
+    pub source: String,
+    pub id: String,
+    pub reason: String,
+    /// Higher = more urgent.
+    pub priority: u8,
+    pub destination: String,
+}
+
+impl From<NeedsMeItem> for NeedsMeItemFfi {
+    fn from(i: NeedsMeItem) -> Self {
+        NeedsMeItemFfi {
+            source: i.source,
+            id: i.id,
+            reason: i.reason,
+            priority: i.priority,
+            destination: i.destination,
+        }
+    }
+}
+
+impl From<NeedsMeItemFfi> for NeedsMeItem {
+    fn from(i: NeedsMeItemFfi) -> Self {
+        NeedsMeItem {
+            source: i.source,
+            id: i.id,
+            reason: i.reason,
+            priority: i.priority,
+            destination: i.destination,
+        }
+    }
+}
+
+/// Aggregate Needs-Me items urgency-first (highest priority first, stable within
+/// equal priority), via the `friday-core` logic. Exposed to native UI (`08` §1).
+#[uniffi::export]
+pub fn aggregate_needs_me(items: Vec<NeedsMeItemFfi>) -> Vec<NeedsMeItemFfi> {
+    friday_core::aggregate_needs_me(items.into_iter().map(Into::into).collect())
+        .into_iter()
+        .map(Into::into)
+        .collect()
+}
+
+/// A representative Needs-Me inbox, built and aggregated in Rust — a UI fixture
+/// so the native shells can render the prioritized Activity list before the
+/// persisted Activity store (Unit 9) is wired to the phone. NOT live data.
+#[uniffi::export]
+pub fn sample_activity_inbox() -> Vec<NeedsMeItemFfi> {
+    aggregate_needs_me(vec![
+        NeedsMeItemFfi {
+            source: "claude".into(),
+            id: "c1".into(),
+            reason: "Question: which API key to use?".into(),
+            priority: 9,
+            destination: "session/claude-1".into(),
+        },
+        NeedsMeItemFfi {
+            source: "codex".into(),
+            id: "x1".into(),
+            reason: "Approve: run DB migration".into(),
+            priority: 7,
+            destination: "session/codex-1".into(),
+        },
+        NeedsMeItemFfi {
+            source: "workflow".into(),
+            id: "w1".into(),
+            reason: "Checkpoint: confirm deploy".into(),
+            priority: 7,
+            destination: "wf/deploy".into(),
+        },
+        NeedsMeItemFfi {
+            source: "memory".into(),
+            id: "m1".into(),
+            reason: "Review: 2 new memory candidates".into(),
+            priority: 3,
+            destination: "memory/review".into(),
+        },
+    ])
+}
+
 // --- internal (non-FFI) helpers retained for the phone-side runtime/tests ---
 
 /// Open a phone-profile database. The phone schema omits the Hub-only
@@ -139,5 +223,51 @@ mod tests {
         assert_eq!(protocol_schema_version(), 1);
         assert_eq!(negotiate_schema_version(1, 3, 2, 5), Some(3));
         assert_eq!(negotiate_schema_version(1, 1, 2, 4), None);
+    }
+
+    #[test]
+    fn ffi_needs_me_aggregation_is_urgency_first_and_stable() {
+        let item = |src: &str, id: &str, p: u8| NeedsMeItemFfi {
+            source: src.into(),
+            id: id.into(),
+            reason: String::new(),
+            priority: p,
+            destination: String::new(),
+        };
+        let sorted = aggregate_needs_me(vec![
+            item("a", "1", 5),
+            item("b", "2", 9),
+            item("c", "3", 5),
+        ]);
+        assert_eq!(sorted[0].id, "2"); // priority 9 first
+                                       // equal priority (5) keeps arrival order: 1 before 3
+        assert_eq!(sorted[1].id, "1");
+        assert_eq!(sorted[2].id, "3");
+    }
+
+    #[test]
+    fn ffi_needs_me_item_round_trips_losslessly() {
+        let ffi = NeedsMeItemFfi {
+            source: "claude".into(),
+            id: "c1".into(),
+            reason: "a question".into(),
+            priority: 7,
+            destination: "session/x".into(),
+        };
+        let core: NeedsMeItem = ffi.clone().into();
+        let back: NeedsMeItemFfi = core.into();
+        assert_eq!(ffi, back); // every field survives both conversions
+    }
+
+    #[test]
+    fn ffi_sample_inbox_is_nonempty_and_urgency_ordered() {
+        let inbox = sample_activity_inbox();
+        assert!(!inbox.is_empty());
+        for w in inbox.windows(2) {
+            assert!(w[0].priority >= w[1].priority, "must be urgency-first");
+        }
+        assert_eq!(inbox[0].source, "claude"); // highest priority (9)
+                                               // detail is carried, never dropped.
+        assert!(!inbox[0].reason.is_empty() && !inbox[0].destination.is_empty());
     }
 }
