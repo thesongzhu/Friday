@@ -13,3 +13,14 @@ rust-version.workspace = true
 # by friday-arch-tests.
 [dependencies]
 thiserror.workspace = true
+
+[dev-dependencies]
+# Token-safety regression lock only: a provider SEND returns reply text and must
+# NOT implicitly write a token_ledger row. The test opens a real Hub/Phone DB and
+# asserts the row count is unchanged across a send. This is a DEV-dependency, so
+# it does NOT enter the normal/build dependency graph the friday-ffi phone-
+# boundary arch test inspects (that test parses [dependencies]/[build-dependencies]
+# only), and friday-storage does not depend on friday-providers (no cycle). This
+# mirrors the friday-deepseek crate, which already dev-depends on friday-storage
+# for its end-to-end ledger proof.
+friday-storage.workspace = true
