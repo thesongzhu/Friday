@@ -13,6 +13,7 @@ pub mod audit;
 pub mod blob;
 mod error;
 mod migrate;
+pub mod offline;
 mod schema;
 
 pub use error::{Result, StorageError};
