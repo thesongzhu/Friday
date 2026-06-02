@@ -1,0 +1,11 @@
+# Build artifacts + generated/cross-compiled inputs.
+.gradle/
+.build/
+build/
+local.properties
+*.png
+# Generated UniFFI bindings + cross-compiled .so + staged JNA resource are
+# produced by build-emu.sh.
+app/src/main/kotlin/uniffi/
+app/src/main/jniLibs/
+app/src/main/resources/

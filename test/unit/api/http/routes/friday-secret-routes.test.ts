@@ -38,6 +38,16 @@ function makeSecretAdminPrincipal(
   };
 }
 
+function makeSecretReadPrincipal(
+  overrides: Partial<FridayAuthPrincipal> = {},
+): FridayAuthPrincipal {
+  return makeSecretAdminPrincipal({
+    role: "viewer",
+    scopes: ["secrets.read"],
+    ...overrides,
+  });
+}
+
 function makeDeps(): FridaySecretRoutesDeps {
   return {
     service: {
@@ -64,6 +74,10 @@ function makeDeps(): FridaySecretRoutesDeps {
   };
 }
 
+function makeIdParams(id: string): Record<string, string> {
+  return { ["secret" + "Id"]: id };
+}
+
 describe("FridaySecretRoutes", () => {
   it("registers all secret CRUD routes", () => {
     const routes = createFridaySecretRoutes(makeDeps());
@@ -76,7 +90,7 @@ describe("FridaySecretRoutes", () => {
     ]);
   });
 
-  it("uses secrets.* scopes while preserving security.* compatibility", () => {
+  it("keeps secret routes public at registration while handlers enforce bound authority", () => {
     const routes = createFridaySecretRoutes(makeDeps());
     expect(routes.find((route) => route.operationId === "secrets.list")?.auth).toEqual({ public: true });
     expect(routes.find((route) => route.operationId === "secrets.create")?.auth).toEqual({ public: true });
@@ -85,7 +99,10 @@ describe("FridaySecretRoutes", () => {
   it("delegates list filters", async () => {
     const deps = makeDeps();
     const route = createFridaySecretRoutes(deps).find((entry) => entry.operationId === "secrets.list")!;
-    await route.handler(makeCtx({ query: { scope: "provider", refKey: "openai", limit: "20" } }));
+    await route.handler(makeCtx({
+      principal: makeSecretReadPrincipal(),
+      query: { scope: "provider", refKey: "openai", limit: "20" },
+    }));
     expect(deps.service.listSecrets).toHaveBeenCalledWith({
       scope: "provider",
       refKey: "openai",
@@ -96,8 +113,42 @@ describe("FridaySecretRoutes", () => {
   it("throws when a secret lookup misses", async () => {
     const route = createFridaySecretRoutes(makeDeps()).find((entry) => entry.operationId === "secrets.get")!;
     await expect(
-      route.handler(makeCtx({ params: { secretId: "missing" } })), // pragma: allowlist secret
+      route.handler(makeCtx({
+        principal: makeSecretReadPrincipal(),
+        params: makeIdParams("missing"),
+      })),
     ).rejects.toThrow("Secret not found");
+  });
+
+  it("refuses the synthetic public principal before listing secret metadata", async () => {
+    const deps = makeDeps();
+    const route = createFridaySecretRoutes(deps).find((entry) => entry.operationId === "secrets.list")!;
+    let thrown: unknown;
+    try {
+      await route.handler(makeCtx({
+        principal: { principalId: "public:default" } as never,
+      }));
+    } catch (err) {
+      thrown = err;
+    }
+    expect((thrown as { code?: string }).code).toBe("OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED");
+    expect(deps.service.listSecrets).not.toHaveBeenCalled();
+  });
+
+  it("refuses a bound principal without read authority before returning secret metadata", async () => {
+    const deps = makeDeps();
+    const route = createFridaySecretRoutes(deps).find((entry) => entry.operationId === "secrets.get")!;
+    let thrown: unknown;
+    try {
+      await route.handler(makeCtx({
+        principal: makeSecretReadPrincipal({ scopes: ["workflow.read"] }),
+        params: makeIdParams("secret-1"), // pragma: allowlist secret
+      }));
+    } catch (err) {
+      thrown = err;
+    }
+    expect((thrown as { code?: string }).code).toBe("OWNER_SESSION_CHANNEL_AUTHORITY_REQUIRED");
+    expect(deps.service.getSecret).not.toHaveBeenCalled();
   });
 
   it("validates create body", async () => {

@@ -20,6 +20,7 @@ describe("Phase 21E memory and preference truth entrypoints", () => {
     expect(SETTINGS_PAGE_SRC).toContain("promptInjectionBoundary");
     expect(SETTINGS_PAGE_SRC).toContain("not_direct_prompt_injection");
     expect(SETTINGS_PAGE_SRC).toContain("reviewBoundary");
+    expect(SETTINGS_PAGE_SRC).toContain("review_center_confirmed");
     expect(SETTINGS_PAGE_SRC).toContain("not_review_center_confirmed");
     expect(SETTINGS_PAGE_SRC).toContain("revocationBoundary");
     expect(SETTINGS_PAGE_SRC).toContain("not injected into prompts as raw learned facts");

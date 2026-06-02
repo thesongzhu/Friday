@@ -1439,7 +1439,7 @@ Tier-2 actions require explicit user confirmation before execution. The `Approva
 
 ### 4.4 Guardrails
 
-1. **Evidence requirements:** Every learned fact requires minimum evidence count (default: 2), minimum confidence (default: 0.5), and source traceability (linked event IDs).
+1. **Evidence requirements:** Every learned fact requires source traceability (linked event IDs) and confidence-scored evidence. Low-confidence inferred preferences must stay below active context use until explicit/high-confidence confirmation; repeated low-confidence observations alone cannot make a learned preference affect behavior. Product claims must distinguish explicit preferences, learned-fact materialization, and learned-fact deletion/revocation proof.
 2. **Fix requirements:** Every auto-fix requires explicit risk tier, rollback plan (for Tier 1+), and outcome logging.
 3. **Additive by default:** Learning never silently overwrites hard user settings. User-explicit config values always take precedence over learned preferences.
 4. **Hard-stop conditions:**

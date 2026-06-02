@@ -33,6 +33,7 @@ const CrossBorderPackSetupPage = lazy(async () => import("@/routes/cross-border-
 const ReflexPage = lazy(async () => import("@/routes/reflex-page").then((module) => ({ default: module.ReflexPage })));
 const SettingsPage = lazy(async () => import("@/routes/settings-page").then((module) => ({ default: module.SettingsPage })));
 const SetupPage = lazy(async () => import("@/routes/setup-page").then((module) => ({ default: module.SetupPage })));
+const FirstRunPassphraseGate = lazy(async () => import("@/routes/first-run-passphrase-gate").then((module) => ({ default: module.FirstRunPassphraseGate })));
 const SkillsPage = lazy(async () => import("@/routes/skills-page").then((module) => ({ default: module.SkillsPage })));
 const SkillGeneratorPage = lazy(async () => import("@/routes/skill-generator-page").then((module) => ({ default: module.SkillGeneratorPage })));
 const WorkflowBuilderPage = lazy(async () => import("@/routes/workflow-builder-page").then((module) => ({ default: module.WorkflowBuilderPage })));
@@ -165,45 +166,8 @@ function SetupFailureMessage(props: { error: unknown; onRetry: () => void }) {
   );
 }
 
-function LocalSessionUnavailableGate(props: { error?: unknown; onRetry: () => void }) {
-  const { locale } = useAppLocale();
-  const reload: SplashAction = {
-    label: localize(locale, "刷新页面", "Reload page"),
-    onClick: () => {
-      if (typeof window !== "undefined") window.location.reload();
-    },
-    tone: "secondary",
-  };
-  const retry: SplashAction = {
-    label: localize(locale, "重试连接", "Retry connection"),
-    onClick: props.onRetry,
-    tone: "primary",
-  };
-  const isNetwork = props.error instanceof ApiError
-    && (props.error.code === "NETWORK_ERROR" || props.error.statusCode === 0);
-
-  return (
-    <SetupGateSplash
-      eyebrow="Friday"
-      title={isNetwork
-        ? localize(locale, "Friday 后台还没连上", "Friday backend is not connected yet")
-        : localize(locale, "正在连接本机 Friday", "Connecting to local Friday")}
-      body={localize(
-        locale,
-        "Friday 没能自动连接本机服务。重试或刷新后会继续进入 setup 或首页。",
-        "Friday could not connect to the local service automatically. Retry or reload to continue to setup or home.",
-      )}
-      steps={[
-        { label: localize(locale, "重新连接本机服务。", "Reconnect the local service."), status: "active" },
-        { label: localize(locale, "继续完成模型、网络和渠道设置。", "Continue model, network, and channel setup."), status: "todo" },
-      ]}
-      actions={[retry, reload]}
-    />
-  );
-}
-
 function RequireAuth({ children }: { children: ReactNode }) {
-  const { authError, isAuthenticated, isLoading, retryLocalSession } = useAuth();
+  const { isAuthenticated, isLoading } = useAuth();
   const location = useLocation();
   const bootstrapStatusQuery = useQuery({
     queryKey: ["auth", "bootstrap", "status"],
@@ -226,8 +190,8 @@ function RequireAuth({ children }: { children: ReactNode }) {
     if (bootstrapStatusQuery.isLoading) {
       return (
         <LoadingMessage
-          title={localizedText("连接本机 Friday", "Connecting to local Friday")}
-          detail={localizedText("Friday 正在确认本机服务可用。", "Friday is checking the local service.")}
+          title={localizedText("检查本机设置", "Checking local setup")}
+          detail={localizedText("Friday 正在确认这台机器的本地安全设置状态。", "Friday is checking this machine's local security setup status.")}
         />
       );
     }
@@ -242,13 +206,15 @@ function RequireAuth({ children }: { children: ReactNode }) {
       );
     }
     if (bootstrapStatusQuery.data?.bootstrapRequired) {
+      // Backend is reachable and reports a fresh machine → offer the first-run local
+      // security gate (create passphrase), NOT a misleading "connecting" screen.
       return (
-        <LocalSessionUnavailableGate
-          error={authError}
-          onRetry={() => {
-            void retryLocalSession();
-          }}
-        />
+        <RouteSuspense
+          title={localizedText("创建本机口令", "Create local passphrase")}
+          detail={localizedText("Friday 正在准备本机安全设置。", "Friday is preparing local security setup.")}
+        >
+          <FirstRunPassphraseGate />
+        </RouteSuspense>
       );
     }
     const nextPath = `${location.pathname}${location.search}${location.hash}`;

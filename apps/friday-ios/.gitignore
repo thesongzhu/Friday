@@ -1,0 +1,3 @@
+# Local build artifacts (staticlib, generated bindings, .app bundle, screenshots).
+.build/
+*.png

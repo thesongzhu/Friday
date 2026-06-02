@@ -67,6 +67,8 @@ function candidateTone(status: ReflexCandidateStatus): "neutral" | "success" | "
 function kindLabel(kind: ReflexCandidateKind, locale: "zh" | "en"): string {
   const zh: Record<ReflexCandidateKind, string> = {
     memory: "记忆",
+    secure_fact: "加密事实",
+    learned_fact: "已学习事实",
     preference: "偏好",
     recipe: "流程",
     skill: "技能",
@@ -76,6 +78,8 @@ function kindLabel(kind: ReflexCandidateKind, locale: "zh" | "en"): string {
   };
   const en: Record<ReflexCandidateKind, string> = {
     memory: "Memory",
+    secure_fact: "Encrypted Fact",
+    learned_fact: "Learned Fact",
     preference: "Preference",
     recipe: "Recipe",
     skill: "Skill",
@@ -151,6 +155,12 @@ function candidateImpact(candidate: ReflexCandidate, locale: "zh" | "en"): strin
   }
   if (candidate.kind === "memory") {
     return localize(locale, "批准后写入长期记忆", "Approval writes long-term memory");
+  }
+  if (candidate.kind === "secure_fact") {
+    return localize(locale, "批准保留加密存储；拒绝删除暂存密钥", "Approval keeps encrypted storage; rejection deletes the staged secret");
+  }
+  if (candidate.kind === "learned_fact") {
+    return localize(locale, "批准后写入可撤销的已学习事实", "Approval writes a revocable learned fact");
   }
   return localize(locale, "批准后更新测试策略", "Approval updates test policy");
 }

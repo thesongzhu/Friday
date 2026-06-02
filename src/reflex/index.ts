@@ -9,10 +9,12 @@ export {
   parseFridayReflexExplicitPreferenceMessage,
 } from "./services/friday-reflex-explicit-preference-parser.js";
 export {
+  getFridayReflexPreferenceKeys,
   isFridayReflexPreferenceKey,
   resolveFridayReflexOnboardingPreferenceWrites,
 } from "./services/friday-reflex-preference-resolver.js";
 export {
+  getFridayReflexConfirmationRequiredPreferenceKeys,
   isFridayReflexConfirmationRequiredKey,
   requiresFridayReflexPreferenceConfirmation,
 } from "./services/friday-reflex-preference-sensitivity.js";

@@ -48,6 +48,30 @@ export interface CreatePreferenceFactServiceDeps {
 const FIRST_INFERRED_PREFERENCE_CONFIDENCE_CAP = 0.55;
 const EXPLICIT_PREFERENCE_CONFIDENCE_FLOOR = 0.8;
 
+function buildPreferenceFactMetadata(
+  event: FridayLearningEventAppendInput,
+  signal: FridayExtractedSignal,
+): Record<string, unknown> | undefined {
+  const feedbackKind = typeof event.payload.feedbackKind === "string" ? event.payload.feedbackKind : undefined;
+  const candidateId = typeof signal.situationalContext?.candidateId === "string"
+    ? signal.situationalContext.candidateId
+    : undefined;
+  if (event.kind !== "user_correction" || feedbackKind !== "learned_fact_approval" || !candidateId) {
+    return undefined;
+  }
+  return {
+    reviewBoundary: "review_center_confirmed",
+    reviewCenterCandidateId: candidateId,
+    reviewCenterOrigin: typeof signal.situationalContext?.origin === "string"
+      ? signal.situationalContext.origin
+      : undefined,
+  };
+}
+
+function isUnconfirmedInferredPreference(signal: FridayExtractedSignal): boolean {
+  return signal.kind === "preference" && signal.confidence < EXPLICIT_PREFERENCE_CONFIDENCE_FLOOR;
+}
+
 /**
  * Recompute confidence using the scoring model from the plan:
  *   existingDecayed = existingConfidence * exp(-ln(2) * daysSinceLastConfirmed / halfLifeDays)
@@ -123,9 +147,7 @@ export function createFridayPreferenceFactService(
             nowIso,
             halfLifeDays,
           );
-          const gatedConfidence = !existing
-            && signal.kind === "preference"
-            && signal.confidence < EXPLICIT_PREFERENCE_CONFIDENCE_FLOOR
+          const gatedConfidence = isUnconfirmedInferredPreference(signal)
             ? Math.min(newConfidence, FIRST_INFERRED_PREFERENCE_CONFIDENCE_CAP)
             : newConfidence;
 
@@ -138,6 +160,7 @@ export function createFridayPreferenceFactService(
             evidenceCountDelta: 1,
             lastConfirmedAt: nowIso,
             sourceEventId: event.eventId,
+            metadata: buildPreferenceFactMetadata(event, signal),
             nowIso,
           });
 
