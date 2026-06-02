@@ -10,3 +10,4 @@ rust-version.workspace = true
 [dependencies]
 chacha20poly1305.workspace = true
 thiserror.workspace = true
+zeroize.workspace = true

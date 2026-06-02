@@ -11,7 +11,7 @@
 //! the Hub runtime in Unit 4, not claimed here.
 
 use crate::error::{Result, StorageError};
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, Transaction};
 use sha2::{Digest, Sha256};
 
 pub const GENESIS_PREV_HASH: [u8; 32] = [0u8; 32];
@@ -73,17 +73,17 @@ fn last_hash(conn: &Connection) -> rusqlite::Result<[u8; 32]> {
 /// same transaction as any state change it records, so the read of the prior
 /// hash and the insert are atomic (gate 21 §2.3).
 pub fn append_audit(
-    conn: &Connection,
+    tx: &Transaction<'_>,
     audit_id: &str,
     actor: &str,
     action: &str,
     payload_ref: Option<&str>,
     created_at: i64,
 ) -> rusqlite::Result<[u8; 32]> {
-    let prev = last_hash(conn)?;
+    let prev = last_hash(tx)?;
     let canon = canonical(audit_id, actor, action, payload_ref, created_at);
     let entry = hash_entry(&prev, &canon);
-    conn.execute(
+    tx.execute(
         "INSERT INTO audit_ledger
             (audit_id, prev_hash, entry_hash, actor, action, payload_ref, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",

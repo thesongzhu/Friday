@@ -134,10 +134,12 @@ impl Db {
 
     /// Row count for a (trusted, code-supplied) table name. For tests/inspection.
     pub fn count(&self, table: &str) -> Result<i64> {
-        // `table` is always a code-level identifier here, never user input.
+        let table_ident = quote_existing_table(&self.conn, table)?;
         Ok(self
             .conn
-            .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))?)
+            .query_row(&format!("SELECT count(*) FROM {table_ident}"), [], |r| {
+                r.get(0)
+            })?)
     }
 
     // --- writers ------------------------------------------------------------
@@ -223,6 +225,32 @@ impl Db {
         tx.commit()?;
         Ok(())
     }
+}
+
+fn quote_existing_table(conn: &Connection, table: &str) -> Result<String> {
+    if table.is_empty()
+        || !table
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    {
+        return Err(StorageError::Unsupported(format!(
+            "invalid table identifier {table:?}"
+        )));
+    }
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM sqlite_master
+            WHERE type = 'table' AND name = ?1 AND name NOT LIKE 'sqlite_%'
+        )",
+        [table],
+        |r| r.get(0),
+    )?;
+    if !exists {
+        return Err(StorageError::Unsupported(format!(
+            "unknown table identifier {table:?}"
+        )));
+    }
+    Ok(format!("\"{}\"", table.replace('"', "\"\"")))
 }
 
 // Free fns so the same insert logic runs against either a Connection or a

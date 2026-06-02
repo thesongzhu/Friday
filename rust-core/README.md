@@ -31,7 +31,7 @@ the Hub-only secret/audit tables entirely.
 ## Build & test
 
 ```sh
-cargo test --workspace        # 51 tests
+cargo test --workspace        # 52 tests
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 cargo tree -p friday-ffi      # confirm friday-deepseek absent

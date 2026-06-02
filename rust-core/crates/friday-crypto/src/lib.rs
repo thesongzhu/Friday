@@ -22,6 +22,7 @@ use chacha20poly1305::{
 };
 use std::collections::HashMap;
 use thiserror::Error;
+use zeroize::ZeroizeOnDrop;
 
 const KEY_LEN: usize = 32;
 const NONCE_LEN: usize = 24;
@@ -40,7 +41,7 @@ pub enum CryptoError {
 }
 
 /// A 256-bit data key used to encrypt sensitive fields/blobs.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, ZeroizeOnDrop)]
 pub struct DataKey([u8; KEY_LEN]);
 
 impl DataKey {
@@ -58,7 +59,7 @@ impl DataKey {
 }
 
 /// A key-encryption key (held in OS secure storage). Wraps data keys.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, ZeroizeOnDrop)]
 pub struct Kek([u8; KEY_LEN]);
 
 impl Kek {

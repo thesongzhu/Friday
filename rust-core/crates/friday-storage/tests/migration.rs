@@ -78,6 +78,21 @@ fn refuses_to_open_when_disk_newer_than_code() {
     }
 }
 
+#[test]
+fn count_rejects_unknown_or_injected_table_identifier() {
+    let p = temp_db_path("count-ident");
+    let db = Db::open_hub(&p).unwrap();
+    assert_eq!(db.count("session").unwrap(), 0);
+    assert!(matches!(
+        db.count("session; DROP TABLE session"),
+        Err(StorageError::Unsupported(_))
+    ));
+    assert!(matches!(
+        db.count("not_a_foundation_table"),
+        Err(StorageError::Unsupported(_))
+    ));
+}
+
 /// A genuinely destructive migration: rebuild `activity_item` with an extra
 /// column (drop + recreate + copy). This is what makes the backup guard fire.
 fn rebuild_activity_v2(tx: &Transaction) -> rusqlite::Result<()> {
