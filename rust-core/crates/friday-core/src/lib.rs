@@ -20,6 +20,7 @@ mod ledger;
 mod memory;
 mod offline;
 mod session;
+mod tool_policy;
 mod workflow;
 
 pub use activity::{ActivityState, ActivityType};
@@ -33,6 +34,10 @@ pub use memory::{
 };
 pub use offline::OfflineQueueState;
 pub use session::SessionState;
+pub use tool_policy::{
+    contains_blocked_shell_char, contains_sensitive_assignment, contains_sensitive_material,
+    is_destructive_request, shell_risk, touches_protected_artifact, Risk, ShellRisk,
+};
 pub use workflow::{
     aggregate_needs_me, resolve_step_completion, run_is_complete, NeedsMeItem, StepStatus,
     StepView, WorkflowRunState,
