@@ -122,6 +122,37 @@ pub fn resolve_step_completion(
     }
 }
 
+/// A read-only projection of a workflow step for the run-completion gate: the
+/// only two facts the gate needs are whether the step has an external side effect
+/// and its current verification status. (`08` §6, `10` §6, `32` deferral.)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StepView {
+    pub has_side_effect: bool,
+    pub status: StepStatus,
+}
+
+/// The run-completion gate (`08` §6 / `10` §6; closes the `32` deferral).
+///
+/// A run is complete **only** when every side-effect step is `Verified`. The
+/// per-step evidence-gating invariant (`resolve_step_completion`) guarantees a
+/// side-effect step reaches `Verified` only with deterministic evidence; this
+/// function lifts that invariant from the step to the **run**: a run with a
+/// `ProofPending` (evidence not yet arrived) **or** `Failed` side-effect step is
+/// NOT complete — the `Failed` case must route the run to `Failed`, never `Done`.
+///
+/// Non-side-effect steps do not gate completion here: they may legitimately
+/// complete on a model result (`resolve_step_completion(false, ..)`), and a run
+/// can be `Done` while a non-side-effect step is still in flight only if the
+/// engine has otherwise finished it — the engine, not this predicate, decides
+/// when all *work* is done. This predicate answers exactly one question: "is it
+/// safe to call this run complete given its side effects?"
+pub fn run_is_complete(steps: &[StepView]) -> bool {
+    steps
+        .iter()
+        .filter(|s| s.has_side_effect)
+        .all(|s| s.status == StepStatus::Verified)
+}
+
 /// A cross-source action item the user must act on (`08` §2). Needs-Me preserves
 /// the underlying provider detail; missing detail must be truth-labeled, not
 /// silently dropped (so `reason`/`destination` are always carried).
@@ -201,6 +232,46 @@ mod tests {
             resolve_step_completion(false, false, false),
             StepStatus::Running
         );
+    }
+
+    #[test]
+    fn run_completion_gate_requires_every_side_effect_verified() {
+        let se = |status| StepView {
+            has_side_effect: true,
+            status,
+        };
+        let pure = |status| StepView {
+            has_side_effect: false,
+            status,
+        };
+
+        // All side-effect steps Verified -> complete (non-side-effect steps don't gate).
+        assert!(run_is_complete(&[
+            se(StepStatus::Verified),
+            se(StepStatus::Verified),
+            pure(StepStatus::Verified),
+        ]));
+        // A run with no steps at all is trivially complete (no side effect to verify).
+        assert!(run_is_complete(&[]));
+        // A run whose only steps have no side effect is complete regardless of their status.
+        assert!(run_is_complete(&[
+            pure(StepStatus::Running),
+            pure(StepStatus::Pending)
+        ]));
+
+        // A ProofPending side-effect step (evidence not yet arrived) blocks completion.
+        assert!(!run_is_complete(&[
+            se(StepStatus::Verified),
+            se(StepStatus::ProofPending),
+        ]));
+        // A Failed side-effect step blocks completion (the run must go Failed, not Done).
+        assert!(!run_is_complete(&[
+            se(StepStatus::Verified),
+            se(StepStatus::Failed),
+        ]));
+        // Pending/Running side-effect steps also block completion.
+        assert!(!run_is_complete(&[se(StepStatus::Pending)]));
+        assert!(!run_is_complete(&[se(StepStatus::Running)]));
     }
 
     #[test]
