@@ -90,6 +90,12 @@ impl StepStatus {
     pub fn is_complete(&self) -> bool {
         matches!(self, StepStatus::Verified)
     }
+
+    /// A terminal step cannot be re-completed. `ProofPending` is **not** terminal
+    /// — its deterministic evidence may still arrive and verify it later.
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, StepStatus::Verified | StepStatus::Failed)
+    }
 }
 
 /// Resolve a step's completion status.
@@ -172,6 +178,17 @@ mod tests {
             resolve_step_completion(true, true, false),
             StepStatus::Verified
         );
+    }
+
+    #[test]
+    fn step_terminality_lets_proof_pending_verify_later() {
+        // ProofPending is NOT terminal: late-arriving evidence can still verify it.
+        assert!(!StepStatus::ProofPending.is_terminal());
+        assert!(!StepStatus::Pending.is_terminal());
+        assert!(!StepStatus::Running.is_terminal());
+        // Verified/Failed are terminal (no re-completion / no downgrade).
+        assert!(StepStatus::Verified.is_terminal());
+        assert!(StepStatus::Failed.is_terminal());
     }
 
     #[test]

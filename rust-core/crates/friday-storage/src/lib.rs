@@ -16,6 +16,7 @@ mod migrate;
 pub mod offline;
 pub mod pairing;
 mod schema;
+pub mod workflow;
 
 pub use error::{Result, StorageError};
 pub use migrate::{
