@@ -427,11 +427,35 @@ mod tests {
         assert_eq!(r1.items[0].activity_id, "a1"); // oldest-first (created_at 1)
         assert_eq!(r1.items[0].state, "done");
 
-        // Reopen: data persisted on disk, no re-seed (same rows back).
+        // Reopen: no re-seed (count!=0 guard), same rows back.
         let r2 = phone_activity_demo(p.clone());
         assert!(r2.ok);
         assert_eq!(r2.items.len(), 3);
         assert_eq!(r2.items, r1.items);
+
+        // Write a NON-seed row directly, then reopen via a FRESH Db: it must
+        // survive — this is the true on-DISK discriminator (a non-persistent
+        // store would lose it; the deterministic seed alone could not prove this).
+        {
+            use friday_core::{ActivityState, ActivityType};
+            use friday_storage::{ActivityRow, Db};
+            let db = Db::open_phone(&p).unwrap();
+            db.insert_activity(&ActivityRow {
+                activity_id: "extra".into(),
+                session_id: None,
+                kind: ActivityType::AskStatus,
+                state: ActivityState::Done,
+                summary: "persisted across reopen".into(),
+                created_at: 99,
+                updated_at: 99,
+                deep_link: None,
+            })
+            .unwrap();
+        }
+        let r3 = phone_activity_demo(p.clone());
+        assert!(r3.ok);
+        assert_eq!(r3.items.len(), 4, "the extra row must survive a fresh open");
+        assert!(r3.items.iter().any(|a| a.activity_id == "extra"));
 
         let _ = std::fs::remove_file(&path);
     }
