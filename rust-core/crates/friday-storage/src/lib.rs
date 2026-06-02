@@ -12,6 +12,7 @@
 pub mod audit;
 pub mod blob;
 mod error;
+pub mod memory;
 mod migrate;
 pub mod offline;
 pub mod pairing;

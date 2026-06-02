@@ -38,6 +38,14 @@ pub fn hub_migrations() -> Vec<Migration> {
             destructive: false,
             up: m0002_workflow,
         },
+        // Unit 10: memory lifecycle `state` column (additive; backfills existing
+        // confirmed rows so a confirmed memory is never silently demoted).
+        Migration {
+            version: 3,
+            name: "memory_state",
+            destructive: false,
+            up: m0003_memory_state,
+        },
     ]
 }
 
@@ -225,4 +233,31 @@ fn m0001_init_phone(tx: &Transaction) -> rusqlite::Result<()> {
 fn m0002_workflow(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(DDL_WORKFLOW)?;
     Ok(())
+}
+
+// Unit 10: additive forward migration (v2 -> v3) adding the memory lifecycle
+// `state` column. SQLite `ADD COLUMN ... DEFAULT 'candidate'` sets EVERY existing
+// row to the default, so we backfill in the SAME transaction — otherwise an
+// already-confirmed memory (`confirmed_at` set) would be silently demoted to a
+// candidate (a data-correctness regression). `confirmed_at` is the authoritative
+// pre-migration signal of "the user confirmed this".
+//
+// The migration is the ONLY writer of these columns besides the typed repo, so it
+// must uphold the same `(confidence, state)` consistency the repo guarantees —
+// otherwise it could mint the very divergent pair the repo makes unrepresentable
+// (`memory_item` has existed since v1 with a nullable, repo-unenforced
+// `confidence`). So we also normalize `confidence`: a confirmed row gets
+// `confidence='confirmed'`; a non-confirmed row never keeps a `confirmed` (or
+// NULL) confidence. Post-migration: `confidence='confirmed'` IFF
+// `state='confirmed'` IFF `confirmed_at IS NOT NULL`, and `confidence` is never NULL.
+fn m0003_memory_state(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "ALTER TABLE memory_item ADD COLUMN state TEXT NOT NULL DEFAULT 'candidate';
+         UPDATE memory_item
+            SET state = 'confirmed', confidence = 'confirmed'
+            WHERE confirmed_at IS NOT NULL;
+         UPDATE memory_item
+            SET confidence = 'candidate'
+            WHERE confirmed_at IS NULL AND (confidence IS NULL OR confidence = 'confirmed');",
+    )
 }

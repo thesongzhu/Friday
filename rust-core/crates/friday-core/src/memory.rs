@@ -22,6 +22,16 @@ pub enum MemoryScope {
     Session,
 }
 
+impl MemoryScope {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MemoryScope::Global => "global",
+            MemoryScope::Project => "project",
+            MemoryScope::Session => "session",
+        }
+    }
+}
+
 /// Confidence tier (`07` §9 / `02` §12).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Confidence {
@@ -40,6 +50,15 @@ impl Confidence {
             Confidence::Confirmed | Confidence::HighConfidenceContext
         )
     }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Confidence::Confirmed => "confirmed",
+            Confidence::HighConfidenceContext => "high_confidence_context",
+            Confidence::Inferred => "inferred",
+            Confidence::Candidate => "candidate",
+        }
+    }
 }
 
 /// Lifecycle of a long-term memory item.
@@ -54,6 +73,21 @@ impl MemoryState {
     /// Durable (usable as long-term fact) only when `Confirmed`.
     pub fn is_durable(&self) -> bool {
         matches!(self, MemoryState::Confirmed)
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MemoryState::Candidate => "candidate",
+            MemoryState::Confirmed => "confirmed",
+            MemoryState::Rejected => "rejected",
+        }
+    }
+
+    /// A terminal lifecycle state. A `Confirmed` or `Rejected` item is not a
+    /// pending candidate and is not re-decidable (no silent re-write / no
+    /// downgrade); only a `Candidate` is awaiting the user's decision.
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, MemoryState::Confirmed | MemoryState::Rejected)
     }
 }
 
@@ -255,6 +289,36 @@ mod tests {
         assert_ne!(MemoryScope::Global, MemoryScope::Project);
         assert_ne!(MemoryScope::Project, MemoryScope::Session);
         assert_ne!(MemoryScope::Global, MemoryScope::Session);
+    }
+
+    #[test]
+    fn memory_state_terminality_matches_durability_semantics() {
+        // A Candidate is awaiting the user's decision -> NOT terminal, re-decidable.
+        assert!(!MemoryState::Candidate.is_terminal());
+        // Confirmed/Rejected are terminal: no silent re-write, no downgrade.
+        assert!(MemoryState::Confirmed.is_terminal());
+        assert!(MemoryState::Rejected.is_terminal());
+        // Only Confirmed is durable; a terminal Rejected is NOT durable.
+        assert!(MemoryState::Confirmed.is_durable());
+        assert!(!MemoryState::Rejected.is_durable());
+    }
+
+    #[test]
+    fn enum_wire_strings_are_stable_and_distinct() {
+        // These strings are persisted; they must be stable + mutually distinct.
+        assert_eq!(MemoryScope::Global.as_str(), "global");
+        assert_eq!(MemoryState::Candidate.as_str(), "candidate");
+        assert_eq!(Confidence::Confirmed.as_str(), "confirmed");
+        // A confirmed Confidence and a confirmed MemoryState share the wire token
+        // (same lifecycle point) — intended, the repo keeps them consistent.
+        assert_eq!(
+            Confidence::Confirmed.as_str(),
+            MemoryState::Confirmed.as_str()
+        );
+        assert_ne!(
+            Confidence::Inferred.as_str(),
+            Confidence::Candidate.as_str()
+        );
     }
 
     #[test]
