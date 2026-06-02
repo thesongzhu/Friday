@@ -9,9 +9,11 @@
 //! Scope: this is the wire framing + E2E sealing for the transport. It runs over
 //! plain TCP (and is exercised over loopback in tests with a real relay hop). The
 //! WebSocket upgrade/handshake framing is a mechanical wrapper around this same
-//! frame+seal contract and is the only remaining transport detail; the
-//! security-critical properties (E2E confidentiality vs a relay, reconnect,
-//! resumable catch-up) are framing-independent and are proven here.
+//! frame+seal contract; it — along with the real-network LAN/Tailscale/SSH
+//! transports and the `Direct|Relay|Stale` connection-state machine — is
+//! first-slice-deferred per gate §4. The security-critical properties (E2E
+//! confidentiality vs a relay, reconnect, resumable catch-up) are
+//! framing-independent and are proven here over a real socket.
 
 use friday_crypto::{open, seal, DataKey, Sealed};
 use friday_protocol::Envelope;
