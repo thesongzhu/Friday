@@ -147,3 +147,25 @@ fn event_log_is_append_only_with_monotonic_seq() {
     // Recording an event for an unknown run is refused.
     assert!(agent_run::record_event(db.conn(), "e9", "missing", "x", 9).is_err());
 }
+
+#[test]
+fn duplicate_run_seq_is_structurally_refused() {
+    // Reviewer-B C1: the `UNIQUE(run_id, seq)` constraint makes a per-run seq
+    // collision an INSERT error rather than a silent duplicate — the same
+    // "unrepresentable, not a check-then-consume race" discipline as
+    // `consumed_approval`'s PK. A second row at the same (run_id, seq) is refused.
+    let p = temp_db_path("agent-dup-seq");
+    let db = Db::open_hub(&p).unwrap();
+    agent_run::create_run(db.conn(), "r1", "task", 1).unwrap();
+    agent_run::record_event(db.conn(), "e1", "r1", "run.started", 1).unwrap(); // seq 1
+                                                                               // A forced second row at (run_id='r1', seq=1) violates UNIQUE(run_id, seq).
+    let dup = db.conn().execute(
+        "INSERT INTO agent_run_event (event_id, run_id, seq, kind, created_at)
+         VALUES ('e_dup', 'r1', 1, 'forged', 2)",
+        [],
+    );
+    assert!(
+        dup.is_err(),
+        "a duplicate (run_id, seq) must be refused by UNIQUE"
+    );
+}

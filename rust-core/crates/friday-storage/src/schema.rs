@@ -243,7 +243,8 @@ CREATE TABLE agent_run_event (
     run_id     TEXT NOT NULL,
     seq        INTEGER NOT NULL,
     kind       TEXT NOT NULL,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    UNIQUE(run_id, seq)
 );
 CREATE INDEX idx_agent_run_event_run ON agent_run_event(run_id, seq);";
 
