@@ -472,6 +472,7 @@ dependencies = [
 name = "friday-providers"
 version = "0.0.1"
 dependencies = [
+ "friday-storage",
  "thiserror 1.0.69",
 ]
 
