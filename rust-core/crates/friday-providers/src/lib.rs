@@ -19,6 +19,9 @@
 use std::process::Command;
 use thiserror::Error;
 
+pub mod session;
+pub use session::{send_to_provider, CliSession, MockSession, SessionOutcome, SessionRunner};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Provider {
     Codex,
@@ -38,6 +41,23 @@ impl Provider {
 pub enum ProviderError {
     #[error("provider CLI not found or not runnable: {0}")]
     NotInstalled(String),
+
+    /// A send was requested for a provider that is not authenticated. Refused —
+    /// never silently routed to a different provider (no fallback, `04` §2/§4.5).
+    #[error("provider {0} is not authenticated; refusing to send (no fallback)")]
+    NotAuthenticated(&'static str),
+
+    /// The provider CLI ran but exited non-zero. Carries only the provider label
+    /// and exit code — never the CLI's stdout/stderr (which may hold account info).
+    #[error("provider {provider} send failed (exit code {code:?})")]
+    SendFailed {
+        provider: &'static str,
+        code: Option<i32>,
+    },
+
+    /// The provider CLI did not finish within the send timeout and was killed.
+    #[error("provider {provider} send timed out after {secs}s")]
+    Timeout { provider: &'static str, secs: u64 },
 }
 
 /// Output of a provider's read-only status command.
