@@ -1,0 +1,16 @@
+[package]
+name = "friday-ffi"
+description = "Friday Rust Core — phone-side FFI surface (Swift/Kotlin). Unit-2 boundary stub; UniFFI bindings land in Unit 5."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+
+# Phone-side library. Its dependency graph deliberately EXCLUDES friday-deepseek
+# and friday-hub so "no provider secret on phone" is a compile-time property
+# (gate 21 §1/§3). Asserted by friday-arch-tests.
+[dependencies]
+friday-core.workspace = true
+friday-storage.workspace = true
+friday-crypto.workspace = true

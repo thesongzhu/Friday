@@ -1,0 +1,12 @@
+[package]
+name = "friday-deepseek"
+description = "Friday Rust Core — DeepSeek Friday-provider route (Hub-only, provider-secret-bearing). Unit-2 boundary stub; route lands in Unit 3."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+
+[dependencies]
+friday-core.workspace = true
+thiserror.workspace = true

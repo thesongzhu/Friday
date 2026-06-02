@@ -1,0 +1,22 @@
+[package]
+name = "friday-storage"
+description = "Friday Rust Core — SQLite schema, forward migrations, audit/token ledger, encrypted blobs."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+
+[dependencies]
+friday-core.workspace = true
+friday-crypto.workspace = true
+rusqlite.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# Integration tests construct their own destructive migration to exercise the
+# backup guard (direct rusqlite), and build domain/crypto values directly.
+rusqlite.workspace = true
+friday-core.workspace = true
+friday-crypto.workspace = true

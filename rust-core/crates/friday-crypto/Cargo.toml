@@ -1,0 +1,12 @@
+[package]
+name = "friday-crypto"
+description = "Friday Rust Core — field/blob encryption, key wrap, OS-secure-storage adapter."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+
+[dependencies]
+chacha20poly1305.workspace = true
+thiserror.workspace = true
