@@ -1,15 +1,23 @@
-// Friday — native Android shell (emulator proof).
+// Friday — native Android app, operator-selected design baseline (file 17 §3 / 06).
 //
-// A minimal Activity whose screen is computed by the ALL-RUST core through the
-// generated UniFFI Kotlin bindings (uniffi.friday_ffi): connection/protocol
-// state, the sample Needs-Me + Memory-Review surfaces, and a LIVE activity list
-// read from the phone's own SQLite store — plus a real WRITE path ("mark done")
-// that persists to that store. No model call, no provider secret on the phone.
+// Native Cousin of the iOS baseline (not pixel-perfect): Cyan+Coral palette,
+// Glass-ish rounded cards, Retro-LCD Hero Pet (custom Canvas view), Command-Sheet
+// menu (Friday/Platform/Workflows/Activity/Settings), Friday-first launch,
+// Friday Home = Hero Pet + Status + Needs-Me, Platform = Cards+Queues, Activity
+// urgency-first with the REAL mark-done write, Workflows = Memory Review, Settings
+// = token/cost ledger. Every value comes from the all-Rust core via UniFFI.
 
 package com.friday.shell
 
 import android.app.Activity
+import android.app.AlertDialog
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.view.Gravity
+import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -25,105 +33,243 @@ import uniffi.friday_ffi.protocolSchemaVersion
 import uniffi.friday_ffi.sampleActivityInbox
 import uniffi.friday_ffi.sampleMemoryReview
 
+private object Palette {
+    val cyan = Color.rgb(26, 176, 194)
+    val coral = Color.rgb(242, 115, 91)
+    val lcd = Color.rgb(140, 242, 178)
+    val lcdBg = Color.rgb(15, 26, 23)
+    val ink = Color.rgb(28, 30, 34)
+    val sub = Color.rgb(120, 128, 134)
+    val bg = Color.rgb(247, 248, 247)
+    val card = Color.WHITE
+    fun risk(s: String) = when (s) {
+        "done", "direct", "success" -> cyan
+        "running", "pending", "warning" -> Color.rgb(230, 150, 30)
+        "failed", "fallback", "danger" -> coral
+        else -> sub
+    }
+}
+
+// Retro-LCD Hero Pet: a pixel cat face on an LCD panel (mood companion).
+private class LcdPet(ctx: Activity) : View(ctx) {
+    private val face = listOf(
+        "X..XX..X", ".XXXXXX.", "X.XOXO.X", "X.XXXX.X", "X.X..X.X", ".XXXXXX."
+    )
+    private val on = Paint().apply { color = Palette.lcd; isAntiAlias = true }
+    private val dim = Paint().apply { color = Color.argb(90, 140, 242, 178); isAntiAlias = true }
+    override fun onDraw(c: Canvas) {
+        val cell = minOf(width / 8f, height / face.size.toFloat())
+        for ((r, line) in face.withIndex()) for ((col, ch) in line.withIndex()) {
+            if (ch == '.') continue
+            val p = if (ch == 'X') on else dim
+            c.drawRoundRect(col * cell + 2, r * cell + 2, (col + 1) * cell - 2, (r + 1) * cell - 2, 2f, 2f, p)
+        }
+    }
+}
+
+enum class Dest(val title: String) {
+    FRIDAY("Friday"), PLATFORM("Platform"), WORKFLOWS("Workflows"),
+    ACTIVITY("Activity"), SETTINGS("Settings")
+}
+
 class MainActivity : Activity() {
     private val dbPath by lazy { java.io.File(filesDir, "friday.db").absolutePath }
-    private var note: String = ""
+    private var dest = Dest.FRIDAY
+    private var note = ""
+    private lateinit var content: LinearLayout
+    private lateinit var titleView: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // JNA (5.18.1@aar) loads jnidispatch on Android via System.loadLibrary from
-        // the bundled jniLib; point JNA's library search at the native-lib dir.
         System.setProperty("jna.library.path", applicationInfo.nativeLibraryDir)
 
-        val tv = TextView(this).apply { textSize = 13f }
-
-        // Real WRITE path control: mark the oldest pending activity done, persist,
-        // and refresh from the store.
-        val markBtn = Button(this).apply {
-            text = "Mark oldest pending → done"
-            setOnClickListener {
-                markOldestPendingDone()
-                tv.text = render()
-            }
-        }
-
-        // On launch, perform ONE real persisted write so the screen shows a live
-        // state change through SQLite (the same write path the button uses).
-        markOldestPendingDone()
-        tv.text = render()
-
-        val column = LinearLayout(this).apply {
+        val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            // API 36 edge-to-edge: pad the top to clear the status/action bars.
-            setPadding(56, 300, 56, 56)
-            addView(markBtn)
-            addView(tv)
+            setBackgroundColor(Palette.bg)
+            setPadding(0, 96, 0, 0) // clear status bar (edge-to-edge)
         }
-        setContentView(ScrollView(this).apply { addView(column) })
+        root.addView(topBar())
+        content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(36, 12, 36, 48) }
+        root.addView(ScrollView(this).apply { addView(content) })
+        setContentView(root)
+        render()
     }
 
-    /** Find the oldest still-pending activity and mark it done (a real SQLite write). */
-    private fun markOldestPendingDone() {
-        val cur = phoneActivityDemo(dbPath)
-        if (!cur.ok) return
-        val pending = cur.items.firstOrNull { it.state == "pending" } ?: return
-        val after = markActivityDone(dbPath, pending.activityId, 200L)
-        if (after.ok) note = "✓ marked “${pending.summary}” done (persisted)"
+    private fun topBar(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(28, 8, 28, 16)
+        addView(Button(this@MainActivity).apply {
+            text = "⌘"; textSize = 20f; setTextColor(Palette.cyan)
+            setBackgroundColor(Color.TRANSPARENT)
+            setOnClickListener { showCommandSheet() }
+        })
+        titleView = TextView(this@MainActivity).apply {
+            text = dest.title; textSize = 20f; setTextColor(Palette.ink)
+            setPadding(8, 0, 0, 0)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        addView(titleView)
+        // Small Mark (app identity).
+        addView(View(this@MainActivity).apply {
+            background = dot(Palette.coral); layoutParams = LinearLayout.LayoutParams(30, 30)
+        })
     }
 
-    /** Build the screen text, reading the LIVE activity list fresh from the store. */
-    private fun render(): String {
-        val state = initialConnectionState()
-        val online = connectionIsOnline(state)
-        val stale = connectionIsStaleOrOffline(state)
-        val schemaVersion = protocolSchemaVersion()
-        val negotiated = negotiateSchemaVersion(1.toUShort(), 3.toUShort(), 2.toUShort(), 5.toUShort())
-        val inbox = sampleActivityInbox()
-        val memReview = sampleMemoryReview()
-        val phoneActivity = phoneActivityDemo(dbPath)
+    private fun showCommandSheet() {
+        val items = Dest.entries.map { it.title }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Friday — command")
+            .setItems(items) { _, i ->
+                dest = Dest.entries[i]; note = ""; titleView.text = dest.title; render()
+            }
+            .show()
+    }
 
-        return buildString {
-            appendLine("connection:   ${state.name.lowercase()}")
-            appendLine("online?       ${if (online) "yes" else "no"}")
-            appendLine("stale/offline? ${if (stale) "yes" else "no"}")
-            appendLine("schema ver:   $schemaVersion")
-            appendLine("negotiated:   ${negotiated?.toString() ?: "incompatible"}")
-            appendLine()
-            appendLine("Needs Me (${inbox.size}, sample):")
-            for (item in inbox) {
-                appendLine("  p${item.priority} [${item.source}] ${item.reason}")
+    // --- rendering -------------------------------------------------------
+
+    private fun render() {
+        content.removeAllViews()
+        when (dest) {
+            Dest.FRIDAY -> fridayHome()
+            Dest.PLATFORM -> platform()
+            Dest.WORKFLOWS -> memoryReview()
+            Dest.ACTIVITY -> activity()
+            Dest.SETTINGS -> settings()
+        }
+        content.addView(footer("rendered from Rust ✓ · v1 NO-GO (greenfield)"))
+    }
+
+    private fun fridayHome() {
+        val st = initialConnectionState()
+        val online = connectionIsOnline(st)
+        // Hero Pet
+        content.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+            addView(LcdPet(this@MainActivity).apply {
+                background = rounded(Palette.lcdBg, Palette.lcd, 14)
+                layoutParams = LinearLayout.LayoutParams(360, 260).apply { topMargin = 8 }
+                setPadding(16, 16, 16, 16)
+            })
+            addView(label(if (online) "Friday is here" else "Friday is offline", 13f, Palette.sub).apply { gravity = Gravity.CENTER })
+        })
+        content.addView(card {
+            it.addView(rowHeader("Status", st.name.lowercase(), if (online) Palette.cyan else Palette.coral))
+            it.addView(label(if (online) "online" else "offline / stale", 16f, if (online) Palette.cyan else Palette.coral))
+            it.addView(label("protocol v${protocolSchemaVersion()}", 15f, Palette.sub))
+            it.addView(label("negotiated " + (negotiateSchemaVersion(1.toUShort(), 3.toUShort(), 2.toUShort(), 5.toUShort())?.toString() ?: "—"), 15f, Palette.sub))
+        })
+        content.addView(card {
+            it.addView(label("Chat", 17f, Palette.ink))
+            it.addView(label("Ask Friday…", 15f, Palette.sub))
+            it.addView(label("connect a Hub to chat (sync operator/env-gated)", 12f, Palette.sub))
+        })
+        content.addView(card {
+            it.addView(rowHeader("Needs Me", "${sampleActivityInbox().size}", Palette.coral))
+            it.addView(label("urgency-first · sample", 12f, Palette.sub))
+            for (n in sampleActivityInbox().take(3)) it.addView(label("p${n.priority} [${n.source}] ${n.reason}", 14f, Palette.ink))
+        })
+    }
+
+    private fun platform() {
+        content.addView(sectionTitle("Providers", "cards open the provider workspace"))
+        for ((id, name) in listOf("codex" to "Codex", "claude" to "Claude", "deepseek" to "DeepSeek")) {
+            content.addView(card {
+                val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+                r.addView(View(this).apply { background = dot(providerColor(id)); layoutParams = LinearLayout.LayoutParams(28, 28).apply { rightMargin = 18 } })
+                r.addView(label(name + (if (id == "deepseek") "  · live route" else "  · session-control"), 16f, Palette.ink))
+                it.addView(r)
+            })
+        }
+        content.addView(sectionTitle("Queues", "Needs-Me · urgency-first"))
+        for (n in sampleActivityInbox()) content.addView(card { it.addView(label("p${n.priority} [${n.source}] ${n.reason}\n   → ${n.destination}", 14f, Palette.ink)) })
+    }
+
+    private fun activity() {
+        content.addView(sectionTitle("Activity", "live · phone SQLite · tap a row to mark done"))
+        val r = phoneActivityDemo(dbPath)
+        if (!r.ok) { content.addView(label("error: ${r.error}", 14f, Palette.coral)); return }
+        var items = r.items
+        if (note.isEmpty()) {
+            r.items.firstOrNull { it.state == "pending" }?.let { p ->
+                val after = markActivityDone(dbPath, p.activityId, 100L)
+                if (after.ok) { items = after.items; note = "✓ marked “${p.summary}” done (persisted)" }
             }
-            appendLine()
-            appendLine("Memory Review (${memReview.size}, sample):")
-            appendLine("  awaiting confirm/reject — never auto-saved")
-            for (m in memReview) {
-                appendLine("  [${m.scope}] ${m.preview} (${m.confidence} · ${m.state.name.lowercase()})")
-            }
-            appendLine()
-            if (phoneActivity.ok) {
-                appendLine("Activity (${phoneActivity.items.size}, live · phone SQLite):")
-                for (a in phoneActivity.items) {
-                    appendLine("  [${a.state}] ${a.summary} (${a.kind})")
+        }
+        if (note.isNotEmpty()) content.addView(label(note, 13f, Palette.cyan))
+        for (a in items) {
+            content.addView(card {
+                val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+                row.addView(chip(a.state, Palette.risk(a.state)))
+                row.addView(label("  ${a.summary}  (${a.kind})", 14f, Palette.ink))
+                it.addView(row)
+            }.also { cv ->
+                if (a.state != "done") cv.setOnClickListener {
+                    val after = markActivityDone(dbPath, a.activityId, 200L)
+                    if (after.ok) { note = "✓ marked “${a.summary}” done (persisted)"; render() }
                 }
-                if (note.isNotEmpty()) appendLine("  $note")
-            } else {
-                appendLine("Activity (live store error): ${phoneActivity.error}")
-            }
-            appendLine()
-            val tokens = phoneTokenUsage(dbPath)
-            if (tokens.ok) {
-                appendLine("Tokens / cost (${tokens.items.size}, live · phone ledger):")
-                for (t in tokens.items) {
-                    val cost = t.costEstimate?.let { "$%.4f".format(it) } ?: "—"
-                    val flag = if (t.fallback) "⚠ fallback" else "direct"
-                    appendLine("  ${t.provider}/${t.model}: ${t.totalTokens} tok · $cost · $flag")
-                }
-            } else {
-                appendLine("Tokens (live ledger error): ${tokens.error}")
-            }
-            appendLine()
-            append("rendered from Rust ✓")
+            })
         }
     }
+
+    private fun memoryReview() {
+        content.addView(sectionTitle("Memory Review", "recommendation-first · confirm/reject · never auto-saved"))
+        for (m in sampleMemoryReview()) content.addView(card {
+            it.addView(label("[${m.scope}] ${m.preview}", 15f, Palette.ink))
+            it.addView(label("${m.confidence} · ${m.state.name.lowercase()}    [Confirm] [Reject]", 12f, Palette.sub))
+        })
+    }
+
+    private fun settings() {
+        content.addView(sectionTitle("Token / cost ledger", "live · phone ledger · fallback always shown (02 §13)"))
+        val t = phoneTokenUsage(dbPath)
+        if (!t.ok) { content.addView(label("error: ${t.error}", 14f, Palette.coral)); return }
+        val total = t.items.sumOf { it.totalTokens }
+        val cost = t.items.mapNotNull { it.costEstimate }.sum()
+        content.addView(card { it.addView(label("$total total tokens", 22f, Palette.cyan)); it.addView(label("$%.4f est. cost".format(cost), 15f, Palette.sub)) })
+        for (u in t.items) content.addView(card {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            row.addView(label("${u.provider}/${u.model}\n   ${u.totalTokens} tok · ${u.costEstimate?.let { "$%.4f".format(it) } ?: "—"}", 14f, Palette.ink).apply {
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            row.addView(chip(if (u.fallback) "fallback" else "direct", if (u.fallback) Palette.coral else Palette.cyan))
+            it.addView(row)
+        })
+    }
+
+    // --- view helpers ----------------------------------------------------
+
+    private fun card(build: (LinearLayout) -> Unit): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = rounded(Palette.card, Color.argb(40, 26, 176, 194), 18)
+        setPadding(28, 24, 28, 24)
+        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            .apply { topMargin = 16 }
+        build(this)
+    }
+    private fun rowHeader(title: String, chipText: String, c: Int): View = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+        addView(label(title, 17f, Palette.ink).apply { layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f) })
+        addView(chip(chipText, c))
+    }
+    private fun sectionTitle(t: String, s: String) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL; setPadding(4, 20, 4, 4)
+        addView(label(t, 20f, Palette.ink)); addView(label(s, 12f, Palette.sub))
+    }
+    private fun label(t: String, size: Float, c: Int) = TextView(this).apply { text = t; textSize = size; setTextColor(c); setPadding(0, 3, 0, 3) }
+    private fun footer(t: String) = TextView(this).apply { text = t; textSize = 12f; setTextColor(Palette.sub); setPadding(4, 24, 4, 4) }
+    private fun chip(t: String, c: Int) = TextView(this).apply {
+        text = t.uppercase(); textSize = 11f; setTextColor(c); setPadding(16, 6, 16, 6)
+        background = rounded(Color.argb(28, Color.red(c), Color.green(c), Color.blue(c)), Color.TRANSPARENT, 20)
+    }
+    private fun dot(c: Int) = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(c) }
+    private fun rounded(fill: Int, stroke: Int, radius: Int) = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE; setColor(fill); cornerRadius = radius.toFloat()
+        if (stroke != Color.TRANSPARENT) setStroke(2, stroke)
+    }
+}
+
+private fun providerColor(s: String) = when (s) {
+    "claude" -> Palette.coral; "codex" -> Palette.cyan; "workflow" -> Color.rgb(150, 90, 200)
+    "memory" -> Color.rgb(40, 160, 150); else -> Palette.sub
 }
