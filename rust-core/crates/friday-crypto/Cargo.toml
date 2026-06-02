@@ -12,6 +12,8 @@ chacha20poly1305.workspace = true
 thiserror.workspace = true
 zeroize.workspace = true
 # E2E session-key agreement (phone<->Hub). X25519 ECDH + HKDF-SHA256.
-x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
+# `zeroize` named explicitly so a future default-features change can't silently
+# disable StaticSecret wipe-on-drop.
+x25519-dalek = { version = "2.0.1", features = ["static_secrets", "zeroize"] }
 hkdf = "0.12.4"
 sha2.workspace = true

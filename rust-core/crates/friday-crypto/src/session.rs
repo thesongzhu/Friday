@@ -10,12 +10,18 @@
 //! live networked WebSocket transport that *carries* these sealed envelopes over
 //! a real relay is the Unit-4 transport sub-slice (needs a running Hub+relay).
 //!
+//! This proves confidentiality against a **passive** relay (forwards ciphertext;
+//! holds only the public keys). Active MITM — a relay substituting its own public
+//! keys during an unauthenticated exchange — is prevented by authenticated QR
+//! pairing, which is Unit-4 slice d (not claimed here).
+//!
 //! The private key never derives `Debug` and `StaticSecret` zeroizes on drop.
 
 use crate::DataKey;
 use hkdf::Hkdf;
 use sha2::Sha256;
 use x25519_dalek::{PublicKey, StaticSecret};
+use zeroize::Zeroize;
 
 // chacha20poly1305 re-exports a rand_core 0.6 OsRng compatible with x25519-dalek 2.x.
 use chacha20poly1305::aead::OsRng;
@@ -65,13 +71,15 @@ fn derive_session_key(shared: &[u8; 32]) -> DataKey {
     let mut okm = [0u8; 32];
     hk.expand(SESSION_KDF_INFO, &mut okm)
         .expect("32 is a valid HKDF-SHA256 output length");
-    DataKey::from_bytes(okm)
+    let key = DataKey::from_bytes(okm);
+    okm.zeroize(); // wipe the intermediate key material from the stack
+    key
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{open, seal};
+    use crate::{open, seal, CryptoError};
 
     #[test]
     fn both_ends_derive_the_same_session_key() {
@@ -114,8 +122,14 @@ mod tests {
         let relay = DeviceKeypair::generate();
         let relay_vs_alice = relay.agree(&alice.public_bytes());
         let relay_vs_bob = relay.agree(&bob.public_bytes());
-        assert!(open(&relay_vs_alice, &sealed, b"envelope-aad").is_err());
-        assert!(open(&relay_vs_bob, &sealed, b"envelope-aad").is_err());
+        assert_eq!(
+            open(&relay_vs_alice, &sealed, b"envelope-aad"),
+            Err(CryptoError::Open)
+        );
+        assert_eq!(
+            open(&relay_vs_bob, &sealed, b"envelope-aad"),
+            Err(CryptoError::Open)
+        );
     }
 
     #[test]
