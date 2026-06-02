@@ -1,6 +1,6 @@
 [package]
 name = "friday-ffi"
-description = "Friday Rust Core — phone-side FFI surface (Swift/Kotlin). Unit-2 boundary stub; UniFFI bindings land in Unit 5."
+description = "Friday Rust Core — phone-side FFI surface (Swift/Kotlin via UniFFI)."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
@@ -9,8 +9,21 @@ rust-version.workspace = true
 
 # Phone-side library. Its dependency graph deliberately EXCLUDES friday-deepseek
 # and friday-hub so "no provider secret on phone" is a compile-time property
-# (gate 21 §1/§3). Asserted by friday-arch-tests.
+# (gate 21 §1/§3). Asserted by friday-arch-tests. (uniffi/protocol are phone-safe.)
+[lib]
+# `lib` keeps it usable by the workspace + unit tests; `cdylib` is what UniFFI
+# library-mode bindgen reads to generate Swift/Kotlin.
+crate-type = ["lib", "cdylib"]
+
 [dependencies]
 friday-core.workspace = true
 friday-storage.workspace = true
 friday-crypto.workspace = true
+friday-protocol.workspace = true
+uniffi = { version = "0.31.1", features = ["cli"] }
+
+# Host binary that generates the Swift/Kotlin bindings from the built cdylib
+# (`cargo run -p friday-ffi --bin uniffi-bindgen -- generate --library ...`).
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
