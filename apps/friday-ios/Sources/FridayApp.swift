@@ -20,6 +20,11 @@ struct ContentView: View {
     private let inbox = sampleActivityInbox()
     // Memory candidates awaiting the user's review (07 §6/§7).
     private let memReview = sampleMemoryReview()
+    // LIVE data: read back from the phone's own SQLite store (not a fixture).
+    private let phoneActivity: PhoneActivityFfi = {
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return phoneActivityDemo(dbPath: dir.appendingPathComponent("friday.db").path)
+    }()
 
     var body: some View {
         ScrollView {
@@ -62,6 +67,24 @@ struct ContentView: View {
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 ForEach(memReview, id: \.memoryId) { memoryRow($0) }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text("Activity").font(.headline)
+                        Spacer()
+                        Text(phoneActivity.ok ? "\(phoneActivity.items.count)" : "—")
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("live · phone SQLite store")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                if phoneActivity.ok {
+                    ForEach(phoneActivity.items, id: \.activityId) { activityRow($0) }
+                } else {
+                    Text(phoneActivity.error).font(.caption).foregroundStyle(.red)
+                }
 
                 Divider()
                 Text("rendered from Rust ✓")
@@ -107,6 +130,21 @@ struct ContentView: View {
                 Text(m.preview)
                 Text("\(m.confidence) · \(String(describing: m.state).lowercased())")
                     .font(.caption2).foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+    }
+
+    // One activity item read back from the phone's SQLite store: state tag,
+    // summary, and kind.
+    private func activityRow(_ a: ActivityItemFfi) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(a.state.uppercased())
+                .font(.caption2).bold().foregroundStyle(.secondary)
+                .frame(width: 72, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(a.summary)
+                Text(a.kind).font(.caption2).foregroundStyle(.secondary)
             }
             Spacer()
         }

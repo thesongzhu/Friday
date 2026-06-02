@@ -49,6 +49,16 @@ pub struct ActivityRow {
     pub deep_link: Option<String>,
 }
 
+/// A UI-facing activity summary (a read projection of `activity_item`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActivitySummary {
+    pub activity_id: String,
+    pub kind: String,
+    pub state: String,
+    pub summary: String,
+    pub created_at: i64,
+}
+
 /// One auditable event (mirrors the inputs to `audit::append_audit`).
 #[derive(Clone, Debug)]
 pub struct AuditEvent {
@@ -144,6 +154,29 @@ impl Db {
             .query_row(&format!("SELECT count(*) FROM {table_ident}"), [], |r| {
                 r.get(0)
             })?)
+    }
+
+    /// All activity items as a UI-facing summary projection, oldest first. The
+    /// `kind`/`state` are the stored string forms (already validated on write).
+    pub fn list_activity(&self) -> Result<Vec<ActivitySummary>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT activity_id, type, state, summary, created_at
+             FROM activity_item ORDER BY created_at, activity_id",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(ActivitySummary {
+                activity_id: r.get(0)?,
+                kind: r.get(1)?,
+                state: r.get(2)?,
+                summary: r.get(3)?,
+                created_at: r.get(4)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
     }
 
     // --- writers ------------------------------------------------------------
