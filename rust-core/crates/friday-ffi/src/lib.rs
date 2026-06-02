@@ -336,6 +336,10 @@ fn load_phone_activity(db_path: &str) -> friday_storage::Result<Vec<ActivityItem
             3,
         ))?;
     }
+    activity_items(&db)
+}
+
+fn activity_items(db: &friday_storage::Db) -> friday_storage::Result<Vec<ActivityItemFfi>> {
     Ok(db
         .list_activity()?
         .into_iter()
@@ -347,6 +351,35 @@ fn load_phone_activity(db_path: &str) -> friday_storage::Result<Vec<ActivityItem
             created_at: s.created_at,
         })
         .collect())
+}
+
+/// Interactive WRITE path: mark an activity item `Done` in the phone's own SQLite
+/// store and return the updated list. A real persisted state change (the UI's
+/// "mark done" action), not UI-only state. Unknown ids are a no-op (still `ok`).
+#[uniffi::export]
+pub fn mark_activity_done(db_path: String, activity_id: String, now: i64) -> PhoneActivityFfi {
+    match mark_and_list(&db_path, &activity_id, now) {
+        Ok(items) => PhoneActivityFfi {
+            ok: true,
+            error: String::new(),
+            items,
+        },
+        Err(e) => PhoneActivityFfi {
+            ok: false,
+            error: e.to_string(),
+            items: Vec::new(),
+        },
+    }
+}
+
+fn mark_and_list(
+    db_path: &str,
+    activity_id: &str,
+    now: i64,
+) -> friday_storage::Result<Vec<ActivityItemFfi>> {
+    let db = friday_storage::Db::open_phone(db_path)?;
+    db.mark_activity_done(activity_id, now)?;
+    activity_items(&db)
 }
 
 // --- internal (non-FFI) helpers retained for the phone-side runtime/tests ---
@@ -456,6 +489,47 @@ mod tests {
         assert!(r3.ok);
         assert_eq!(r3.items.len(), 4, "the extra row must survive a fresh open");
         assert!(r3.items.iter().any(|a| a.activity_id == "extra"));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn ffi_mark_activity_done_persists_across_reopen() {
+        let path =
+            std::env::temp_dir().join(format!("friday-ffi-markdone-{}.db", std::process::id()));
+        let p = path.to_string_lossy().to_string();
+        let _ = std::fs::remove_file(&path);
+
+        // Seed (a3 = "Queued offline" is Pending).
+        let seeded = phone_activity_demo(p.clone());
+        assert!(seeded.ok);
+        let a3 = seeded.items.iter().find(|a| a.activity_id == "a3").unwrap();
+        assert_eq!(a3.state, "pending");
+
+        // The interactive write: mark a3 done. Returns the updated list.
+        let after = mark_activity_done(p.clone(), "a3".into(), 100);
+        assert!(after.ok);
+        assert_eq!(
+            after
+                .items
+                .iter()
+                .find(|a| a.activity_id == "a3")
+                .unwrap()
+                .state,
+            "done"
+        );
+
+        // Reopen via a FRESH read path: the state change persisted on disk.
+        let reopened = phone_activity_demo(p.clone());
+        assert_eq!(
+            reopened
+                .items
+                .iter()
+                .find(|a| a.activity_id == "a3")
+                .unwrap()
+                .state,
+            "done"
+        );
 
         let _ = std::fs::remove_file(&path);
     }

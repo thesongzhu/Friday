@@ -179,6 +179,16 @@ impl Db {
         Ok(out)
     }
 
+    /// Mark an activity item `Done` (a real persisted state write). Returns
+    /// `true` if a row was updated, `false` if the id is unknown.
+    pub fn mark_activity_done(&self, activity_id: &str, now: i64) -> Result<bool> {
+        let n = self.conn.execute(
+            "UPDATE activity_item SET state = ?1, updated_at = ?2 WHERE activity_id = ?3",
+            rusqlite::params![ActivityState::Done.as_str(), now, activity_id],
+        )?;
+        Ok(n > 0)
+    }
+
     // --- writers ------------------------------------------------------------
 
     pub fn insert_device(&self, d: &DeviceIdentity) -> Result<()> {
