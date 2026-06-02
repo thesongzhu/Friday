@@ -80,7 +80,7 @@ bash scripts/ops/friday-first-run.sh
 # Or on macOS, double-click "Friday Setup.command"
 ```
 
-The first-run helper installs dependencies, builds Friday, starts the local runtime, and opens the setup page. On macOS it also installs the login startup agent and menu bar companion so Friday can come back after restart. If you run it from Desktop, Documents, or Downloads, it prepares the launchd-safe runtime at `~/Friday` automatically before installing the login agents.
+The first-run helper installs dependencies, builds Friday, starts the local runtime, and opens the setup page. On macOS it also attempts to install the login startup agent and menu-bar companion (an unsigned local-source build — not a notarized or release-proven desktop distribution; see the capability matrix) so Friday can come back after restart. If you run it from Desktop, Documents, or Downloads, it prepares the launchd-safe runtime at `~/Friday` automatically before installing the login agents.
 
 ### Option 3 - manual source start
 
