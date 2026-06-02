@@ -64,8 +64,22 @@ pub struct LocalClaim {
     pub reason: Option<String>,
 }
 
+/// The resource an action targets. Bound into the action digest so an approval
+/// authorizes the action on THIS resource, not the same verb on another.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Resource {
+    pub resource_type: String,
+    pub id: Option<String>,
+    pub digest: Option<String>,
+}
+
 /// A request to perform a (possibly mutating) action (TS `FridayMutatingActionRequest`,
 /// minus the `canonicalApproval` field — see the module-level fail-closed note).
+///
+/// `resource` / `parameters` / `idempotency_key` / `plan_digest` are bound into the
+/// action digest (`canonical_action_bytes`): they distinguish one authorized action
+/// from another, so a canonical approval (PR-3b) is bound to the exact action — the
+/// same verb on a different resource produces a different digest and is not authorized.
 #[derive(Clone, Debug)]
 pub struct MutatingActionRequest {
     pub action: String,
@@ -74,6 +88,12 @@ pub struct MutatingActionRequest {
     pub mutating: bool,
     pub risk: Option<Risk>,
     pub local_claims: Vec<LocalClaim>,
+    pub resource: Option<Resource>,
+    /// Caller-supplied canonical serialization of the action parameters (opaque to
+    /// the gate; bound into the digest). The caller is responsible for determinism.
+    pub parameters: Option<String>,
+    pub idempotency_key: Option<String>,
+    pub plan_digest: Option<String>,
 }
 
 /// The gate's evidence record — a **decision-core subset** of the TS
@@ -90,6 +110,130 @@ pub struct GateEvidenceRecord {
     pub risk: Risk,
     pub approval_required: bool,
     pub denied_by: Option<String>,
+}
+
+/// The owner's decision on a canonical approval (TS `FridayCanonicalApprovalDecision`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApprovalDecision {
+    Approved,
+    Denied,
+}
+
+/// A canonical approval resolution (TS `FridayCanonicalApprovalResolution`) — pure
+/// data. PR-3a's pure `evaluate` never reads it (fail-closed); the verified
+/// approval→Allow upgrade lives in `friday-storage::authorize_mutating_action`
+/// (PR-3b), which composes this with `friday-crypto` (digest/signature) and the
+/// single-use replay store.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CanonicalApproval {
+    pub decision: ApprovalDecision,
+    pub approval_id: String,
+    /// Hex SHA-256 of the request's `canonical_action_bytes` at issue time. Must
+    /// match the live request's digest or the approval does not apply to this action.
+    pub action_digest: String,
+    /// Epoch ms after which the approval is expired. `None` is rejected (an approval
+    /// MUST carry an expiry — fail-closed).
+    pub expires_at: Option<i64>,
+    /// Must be `"friday_canonical_gate"` for a valid approval.
+    pub issuer: Option<String>,
+    /// Hex HMAC-SHA256 over `canonical_approval_signature_bytes`.
+    pub signature: Option<String>,
+}
+
+/// The canonical gate issuer string a valid approval must carry.
+pub const CANONICAL_GATE_ISSUER: &str = "friday_canonical_gate";
+
+// --- deterministic, collision-resistant serialization (pure; no crypto) ------
+
+fn put_bytes(out: &mut Vec<u8>, field: &[u8]) {
+    // fixed-width length prefix so concatenation is unambiguous.
+    out.extend_from_slice(&(field.len() as u64).to_le_bytes());
+    out.extend_from_slice(field);
+}
+
+fn put_str(out: &mut Vec<u8>, s: &str) {
+    put_bytes(out, s.as_bytes());
+}
+
+fn put_opt_str(out: &mut Vec<u8>, s: &Option<String>) {
+    // presence tag so `None` != `Some("")`.
+    match s {
+        None => out.push(0u8),
+        Some(v) => {
+            out.push(1u8);
+            put_str(out, v);
+        }
+    }
+}
+
+/// Deterministic, length-prefixed byte serialization of the request fields that
+/// distinguish one authorized action from another. `friday-crypto::action_digest`
+/// hashes these bytes; an approval binds to the resulting digest. This is
+/// Rust-internal (it need not match the TS hex) but MUST bind every distinguishing
+/// field — incl. `resource`/`parameters`/`idempotency_key`/`plan_digest` — so the
+/// same verb on a different resource yields a different digest.
+pub fn canonical_action_bytes(request: &MutatingActionRequest) -> Vec<u8> {
+    let mut out = Vec::new();
+    put_bytes(&mut out, b"friday.mutating_action.v1");
+    put_str(&mut out, &request.action);
+    // actor
+    put_str(&mut out, request.actor.kind.as_str());
+    put_str(&mut out, &request.actor.id);
+    put_opt_str(&mut out, &request.actor.principal_id);
+    put_str(&mut out, &request.surface);
+    // resource (presence-tagged)
+    match &request.resource {
+        None => out.push(0u8),
+        Some(r) => {
+            out.push(1u8);
+            put_str(&mut out, &r.resource_type);
+            put_opt_str(&mut out, &r.id);
+            put_opt_str(&mut out, &r.digest);
+        }
+    }
+    out.push(request.mutating as u8);
+    // Bind the DERIVED effective risk (incl. local-claim escalation), not the raw
+    // declared risk — so an approval is scoped to the effective risk assessment and a
+    // request a guard later escalates no longer digest-matches (faithful to the oracle).
+    put_str(&mut out, derive_risk(request).as_str());
+    put_opt_str(&mut out, &request.parameters);
+    put_opt_str(&mut out, &request.plan_digest);
+    put_opt_str(&mut out, &request.idempotency_key);
+    out
+}
+
+/// Deterministic byte serialization of the approval fields that are SIGNED (all
+/// fields except the signature itself). `friday-crypto::{sign,verify}_approval`
+/// HMACs these bytes.
+pub fn canonical_approval_signature_bytes(approval: &CanonicalApproval) -> Vec<u8> {
+    let mut out = Vec::new();
+    put_bytes(&mut out, b"friday.canonical_approval.v1");
+    out.push(match approval.decision {
+        ApprovalDecision::Approved => 1u8,
+        ApprovalDecision::Denied => 0u8,
+    });
+    put_str(&mut out, &approval.approval_id);
+    put_str(&mut out, &approval.action_digest);
+    match approval.expires_at {
+        None => out.push(0u8),
+        Some(v) => {
+            out.push(1u8);
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    put_opt_str(&mut out, &approval.issuer);
+    out
+}
+
+impl ActorKind {
+    fn as_str(&self) -> &'static str {
+        match self {
+            ActorKind::Owner => "owner",
+            ActorKind::Agent => "agent",
+            ActorKind::Api => "api",
+            ActorKind::Channel => "channel",
+        }
+    }
 }
 
 /// Reserved approval actions an `Agent` actor may never self-execute (TS
@@ -247,7 +391,56 @@ mod tests {
             mutating,
             risk: None,
             local_claims: vec![],
+            resource: None,
+            parameters: None,
+            idempotency_key: None,
+            plan_digest: None,
         }
+    }
+
+    #[test]
+    fn canonical_action_bytes_binds_distinguishing_fields() {
+        // The same verb/actor/surface but a DIFFERENT resource MUST yield different
+        // bytes (so a different digest, so an approval cannot cross-authorize).
+        let mut a = req("delete_file", ActorKind::Owner, true);
+        a.resource = Some(Resource {
+            resource_type: "file".into(),
+            id: Some("/data/a.txt".into()),
+            digest: None,
+        });
+        let mut b = req("delete_file", ActorKind::Owner, true);
+        b.resource = Some(Resource {
+            resource_type: "file".into(),
+            id: Some("/data/b.txt".into()),
+            digest: None,
+        });
+        assert_ne!(canonical_action_bytes(&a), canonical_action_bytes(&b));
+        // Identical requests -> identical bytes (deterministic).
+        assert_eq!(
+            canonical_action_bytes(&a),
+            canonical_action_bytes(&a.clone())
+        );
+        // None resource != Some(empty-ish) — presence tag prevents collision.
+        let c = req("delete_file", ActorKind::Owner, true);
+        assert_ne!(canonical_action_bytes(&a), canonical_action_bytes(&c));
+        // parameters / idempotency_key also distinguish.
+        let mut d = c.clone();
+        d.parameters = Some("force=true".into());
+        assert_ne!(canonical_action_bytes(&c), canonical_action_bytes(&d));
+        let mut e = c.clone();
+        e.idempotency_key = Some("k1".into());
+        assert_ne!(canonical_action_bytes(&c), canonical_action_bytes(&e));
+        // The DERIVED effective risk is bound: a risk-escalating local claim changes
+        // the digest, so an approval can't survive a later guard escalation.
+        let mut f = req("inspect", ActorKind::Owner, false); // non-mutating -> ReadOnly base
+        let base_bytes = canonical_action_bytes(&f);
+        f.local_claims.push(LocalClaim {
+            guard_id: "risk".into(),
+            decision: GateDecision::Allow,
+            risk: Some(Risk::High),
+            reason: None,
+        });
+        assert_ne!(base_bytes, canonical_action_bytes(&f));
     }
 
     #[test]

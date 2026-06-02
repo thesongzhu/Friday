@@ -10,6 +10,7 @@
 //! repositories for every domain are deferred to their owning units (gate 21 §9).
 
 pub mod audit;
+pub mod authorize;
 pub mod blob;
 mod error;
 pub mod memory;
@@ -19,6 +20,7 @@ pub mod pairing;
 mod schema;
 pub mod workflow;
 
+pub use authorize::authorize_mutating_action;
 pub use error::{Result, StorageError};
 pub use migrate::{
     apply_migrations, current_version, now_ms, Migration, MigrationFn, MigrationReport,

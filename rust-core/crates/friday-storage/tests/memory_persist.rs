@@ -61,8 +61,12 @@ fn forward_migration_v2_to_v3_backfills_confirmed_and_defaults_candidate() {
         seed_v2_memory(&db, "pending1", Some("candidate"), None);
     }
 
-    // Reopen with the full set -> forward-migrate to v3 (adds `state` + backfills).
-    let db = Db::open_hub(&p).unwrap();
+    // Reopen pinned to v3 (the migration under test) -> forward-migrate to v3 (adds
+    // `state` + backfills). Truncating keeps this test independent of later migrations
+    // (v4+), exactly like the v1->v2 workflow-persist test.
+    let mut migs3 = hub_migrations();
+    migs3.truncate(3);
+    let db = Db::open(&p, Profile::Hub, &migs3, "v3").unwrap();
     assert_eq!(db.version().unwrap(), 3);
 
     // THE discriminating assertion: the pre-existing confirmed memory was NOT
@@ -101,7 +105,9 @@ fn forward_migration_normalizes_confidence_so_no_divergent_pair_survives() {
         seed_v2_memory(&db, "stale_confirmed", Some("confirmed"), None); // not confirmed, stale 'confirmed'
         seed_v2_memory(&db, "cand_null", None, None); // not confirmed, NULL conf
     }
-    let db = Db::open_hub(&p).unwrap();
+    let mut migs3 = hub_migrations();
+    migs3.truncate(3);
+    let db = Db::open(&p, Profile::Hub, &migs3, "v3").unwrap();
     assert_eq!(db.version().unwrap(), 3);
 
     // Genuinely-confirmed rows: state AND confidence both normalized to confirmed.
