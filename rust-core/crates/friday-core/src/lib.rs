@@ -17,6 +17,7 @@ mod identity;
 mod ledger;
 mod offline;
 mod session;
+mod workflow;
 
 pub use activity::{ActivityState, ActivityType};
 pub use conn::ConnState;
@@ -25,3 +26,6 @@ pub use identity::{DeviceIdentity, DeviceRole};
 pub use ledger::{LedgerEntry, ProviderKind};
 pub use offline::OfflineQueueState;
 pub use session::SessionState;
+pub use workflow::{
+    aggregate_needs_me, resolve_step_completion, NeedsMeItem, StepStatus, WorkflowRunState,
+};
