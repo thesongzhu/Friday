@@ -31,6 +31,7 @@ export interface FridayPreferenceFactRepository {
       evidenceCountDelta: number;
       lastConfirmedAt: string;
       sourceEventId: string;
+      metadata?: Record<string, unknown>;
       nowIso: string;
     },
   ): FridayPreferenceFactEntity;
@@ -62,6 +63,7 @@ function rowToEntity(row: FridayPreferenceFactRow): FridayPreferenceFactEntity {
     evidenceCount: row.evidence_count,
     lastConfirmedAt: row.last_confirmed_at,
     sourceEventIds: safeJsonParse<string[]>(row.source_event_ids_json) ?? [],
+    metadata: row.metadata_json ? safeJsonParse<Record<string, unknown>>(row.metadata_json) ?? undefined : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -104,6 +106,12 @@ export function createFridayPreferenceFactRepository(): FridayPreferenceFactRepo
         const mergedSourceIds = existingSourceIds.includes(input.sourceEventId)
           ? existingSourceIds
           : [...existingSourceIds, input.sourceEventId].slice(-50);
+        const existingMetadata = existing.metadata_json
+          ? safeJsonParse<Record<string, unknown>>(existing.metadata_json) ?? {}
+          : {};
+        const mergedMetadata = input.metadata
+          ? { ...existingMetadata, ...input.metadata }
+          : existingMetadata;
 
         db.prepare(
           `UPDATE preference_facts
@@ -112,6 +120,7 @@ export function createFridayPreferenceFactRepository(): FridayPreferenceFactRepo
                evidence_count = evidence_count + ?,
                last_confirmed_at = ?,
                source_event_ids_json = ?,
+               metadata_json = ?,
                updated_at = ?
            WHERE user_id = ? AND key = ?`,
         ).run(
@@ -120,6 +129,7 @@ export function createFridayPreferenceFactRepository(): FridayPreferenceFactRepo
           input.evidenceCountDelta,
           input.lastConfirmedAt,
           JSON.stringify(mergedSourceIds),
+          Object.keys(mergedMetadata).length > 0 ? JSON.stringify(mergedMetadata) : null,
           input.nowIso,
           input.userId,
           input.key,
@@ -128,8 +138,8 @@ export function createFridayPreferenceFactRepository(): FridayPreferenceFactRepo
         db.prepare(
           `INSERT INTO preference_facts
            (fact_id, user_id, key, value_json, confidence, evidence_count,
-            last_confirmed_at, source_event_ids_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            last_confirmed_at, source_event_ids_json, metadata_json, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           input.factId,
           input.userId,
@@ -139,6 +149,7 @@ export function createFridayPreferenceFactRepository(): FridayPreferenceFactRepo
           input.evidenceCountDelta,
           input.lastConfirmedAt,
           JSON.stringify([input.sourceEventId]),
+          input.metadata ? JSON.stringify(input.metadata) : null,
           input.nowIso,
           input.nowIso,
         );

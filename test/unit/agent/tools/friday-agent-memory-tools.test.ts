@@ -654,6 +654,54 @@ describe("FridayAgentMemoryTools", () => {
       expect(result.content).toContain("database full");
     });
 
+    it("rejects sensitive content before storing memory", async () => {
+      const svc = mockMemoryService();
+      const tools = createFridayAgentMemoryTools({ memoryService: svc });
+      const storeTool = tools[1]!;
+
+      const result = await storeTool.execute(
+        {
+          content: "Remember the user's password is SENSITIVE-PASSCODE-FR-TEST.",
+          tags: ["preference"],
+        },
+        signalWithContext({
+          principalId: "user-1",
+          taskPrompt: "Please remember my password is SENSITIVE-PASSCODE-FR-TEST.",
+        }),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content).toContain("Sensitive or high-risk preferences are not persisted automatically");
+      expect(svc.store).not.toHaveBeenCalled();
+    });
+
+    it("rejects sensitive medical memory before mirroring learning events", async () => {
+      const svc = mockMemoryService();
+      const learningEventWriter = vi.fn();
+      const tools = createFridayAgentMemoryTools({
+        memoryService: svc,
+        learningEventWriter,
+        idGenerator: () => "event-sensitive",
+        nowIso: () => "2026-02-19T10:00:00.000Z",
+      });
+      const storeTool = tools[1]!;
+
+      const result = await storeTool.execute(
+        {
+          content: "User medical diagnosis is diabetes.",
+          tags: ["user_preference", "medical"],
+        },
+        signalWithContext({
+          principalId: "user-1",
+          taskPrompt: "My medical diagnosis is diabetes.",
+        }),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(svc.store).not.toHaveBeenCalled();
+      expect(learningEventWriter).not.toHaveBeenCalled();
+    });
+
     it("mirrors name preferences from memory_store into learning events when the model stores them directly", async () => {
       const svc = mockMemoryService();
       const learningEventWriter = vi.fn();

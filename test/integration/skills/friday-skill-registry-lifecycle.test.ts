@@ -248,7 +248,7 @@ describe("FridaySkillRegistry Lifecycle (Integration)", () => {
       expect(reg.list()).toHaveLength(0);
     });
 
-    it("loads the bundled diagnosis, recovery, and gstack-style starter skills from the repo starter pack", async () => {
+    it("loads the bundled diagnosis, recovery, and review starter skills from the repo starter pack", async () => {
       const workspace = process.cwd();
       const skillsDir = path.join(workspace, "skills");
 

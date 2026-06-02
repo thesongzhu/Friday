@@ -66,6 +66,23 @@ describe("FridayPreferenceExtractionService", () => {
       expect(signals[0]!.value).toBe("TypeScript");
     });
 
+    it("does not extract sensitive correction facts", () => {
+      const sensitivePayloads = [
+        { correctedField: "password", newValue: "hunter2" },
+        { correctedField: "medical diagnosis", newValue: "diabetes" },
+        { field: "credit card", value: "4111111111111111" },
+      ];
+      for (const [index, payload] of sensitivePayloads.entries()) {
+        const event = makeEvent({
+          eventId: `evt-sensitive-${String(index)}`,
+          kind: "user_correction",
+          payload,
+        });
+
+        expect(service.extract(event)).toHaveLength(0);
+      }
+    });
+
     it("returns empty for missing correctedField", () => {
       const event = makeEvent({
         kind: "user_correction",
@@ -139,6 +156,24 @@ describe("FridayPreferenceExtractionService", () => {
       expect(signals[0]!.kind).toBe("preference");
       expect(signals[0]!.key).toBe("pref:display_name");
       expect(signals[0]!.value).toBe("测试名");
+    });
+
+    it("does not extract sensitive user-message preferences", () => {
+      for (const text of [
+        "always use hunter2 for password",
+        "I prefer insulin for medication",
+        "call me my-secret-token",
+        "always use driver license marker for driver's license",
+        "以后叫我 密码123",
+      ]) {
+        const event = makeEvent({
+          eventId: `evt-sensitive-${text.length}`,
+          kind: "user_message",
+          payload: { text },
+        });
+
+        expect(service.extract(event)).toHaveLength(0);
+      }
     });
 
     it("returns empty for no matching pattern", () => {

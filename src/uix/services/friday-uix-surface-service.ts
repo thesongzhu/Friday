@@ -48,6 +48,7 @@ import {
   FRIDAY_DEFAULT_COMMUNICATION_PERSONA,
   type FridayCommunicationPersona,
   type FridayCommunicationPersonaSettings,
+  isMbti,
   resolveFridayCommunicationPersona,
 } from "./friday-communication-persona.js";
 
@@ -472,7 +473,7 @@ const FRIDAY_UIX_HOME_WIDGET_IDS = new Set([
   "recent_results",
   "recommended_to_add",
 ]);
-const FRIDAY_UIX_PREFERENCE_KEYS = new Set([
+export const FRIDAY_UIX_PREFERENCE_KEYS = [
   "user.profile_type",
   "user.onboarded_at",
   "display.locale",
@@ -482,7 +483,13 @@ const FRIDAY_UIX_PREFERENCE_KEYS = new Set([
   "home.widgetOrder",
   "home.visibleWidgets",
   "packs.customInputs",
-]);
+] as const;
+
+const FRIDAY_UIX_PREFERENCE_KEY_SET = new Set<string>(FRIDAY_UIX_PREFERENCE_KEYS);
+
+export function getFridayUixPreferenceKeys(): readonly string[] {
+  return FRIDAY_UIX_PREFERENCE_KEYS;
+}
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
@@ -595,7 +602,7 @@ function isValidCommunicationPreference(
   value: unknown,
 ): boolean {
   if (key === FRIDAY_COMMUNICATION_PREFERENCE_KEYS.mbti) {
-    return value === null || typeof value === "string";
+    return value === null || isMbti(value);
   }
   const settingEntry = Object.entries(FRIDAY_COMMUNICATION_PREFERENCE_KEYS).find(([, mappedKey]) => mappedKey === key);
   if (!settingEntry) {
@@ -613,7 +620,7 @@ function isValidUixPreference(
   key: string,
   value: unknown,
 ): boolean {
-  if (!FRIDAY_UIX_PREFERENCE_KEYS.has(key)) {
+  if (!FRIDAY_UIX_PREFERENCE_KEY_SET.has(key)) {
     return false;
   }
   if (key === "user.profile_type") {

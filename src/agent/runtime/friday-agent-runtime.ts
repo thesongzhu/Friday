@@ -17,6 +17,7 @@ import {
   createFridaySystemIntentMutatingActionRequest,
   signFridayCanonicalApproval,
 } from "../../security/friday-mutating-action-gate.js";
+import { isFridaySensitiveLearningCandidate } from "../../learning/services/friday-sensitive-learning-guard.js";
 import type {
   FridayCanonicalApprovalResolution,
   FridayMutatingActionRequest,
@@ -1172,7 +1173,8 @@ export function createFridayAgentRuntime(
         toolNames: buildVisibleToolNames(),
         toolRouting: effectiveToolRouting,
       });
-      const timeSensitiveNewsRequested = hasTimeSensitiveNewsIntent(params.task, messages);
+      const timeSensitiveNewsRequested = !isAutonomousInternalReasoningSurface(params.executionContext?.surface)
+        && hasTimeSensitiveNewsIntent(params.task, messages);
       const allToolCalls: FridayAgentToolCallRecord[] = [];
       let toolErrorRecoveryCount = 0;
       const TOOL_ERROR_RECOVERY_MAX = 2;
@@ -5960,6 +5962,9 @@ function buildEvidenceRetryPrompt(params: {
 function taskRequiresPreferencePersistence(task: string): boolean {
   const normalized = task.trim().toLowerCase();
   if (normalized.length === 0) {
+    return false;
+  }
+  if (isFridaySensitiveLearningCandidate(task)) {
     return false;
   }
   return (

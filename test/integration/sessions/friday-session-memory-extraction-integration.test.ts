@@ -299,6 +299,77 @@ describe("Session memory extraction — integration", () => {
     expect(mockMemory.storedItems[0]!.tags).toContain("color.preference");
   });
 
+  it("filters sensitive LLM-proposed memory items before storage", async () => {
+    const session = await sessionService.createSession({
+      channel: "discord",
+      chatId: "sensitive-filter-chat-001",
+    });
+
+    await sessionService.addMessage(session.key, {
+      role: "user",
+      content: "My medical diagnosis is EXTRACT_DIAGNOSIS_SHOULD_NOT_PERSIST.",
+    });
+    await sessionService.addMessage(session.key, {
+      role: "user",
+      content: "For non-sensitive editor preferences, I prefer Helix for quick terminal edits.",
+    });
+
+    const messages = await sessionService.getMessages(session.key);
+    const sensitiveMessageId = messages[0]!.id;
+    const preferenceMessageId = messages[1]!.id;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  items: [
+                    {
+                      kind: "fact",
+                      content: "User's medical diagnosis is EXTRACT_DIAGNOSIS_SHOULD_NOT_PERSIST.",
+                      sourceMessageIds: [sensitiveMessageId],
+                      tags: ["medical"],
+                    },
+                    {
+                      kind: "preference",
+                      content: "User prefers Helix for quick terminal edits.",
+                      sourceMessageIds: [preferenceMessageId],
+                      tags: ["editor.preference"],
+                    },
+                  ],
+                }),
+              },
+            },
+          ],
+          usage: { prompt_tokens: 120, completion_tokens: 80, total_tokens: 200 },
+        }),
+      }),
+    );
+
+    const result = await extractionService.extractFromSession(session.key, {
+      trigger: "manual",
+      mode: "inline",
+    });
+
+    expect(result.processedMessageCount).toBe(2);
+    expect(result.memoryItemsCreated).toBe(1);
+    expect(result.extractedMessageCount).toBe(1);
+    expect(result.skippedMessageCount).toBe(1);
+    expect(mockMemory.storedItems).toHaveLength(1);
+    expect(mockMemory.storedItems[0]!.content).toContain("Helix");
+    expect(mockMemory.storedItems[0]!.content).not.toContain("EXTRACT_DIAGNOSIS_SHOULD_NOT_PERSIST");
+
+    const statusAfter = await extractionService.getExtractionStatus(session.key);
+    expect(statusAfter.extractedMessages).toBe(1);
+    expect(statusAfter.skippedMessages).toBe(1);
+    expect(statusAfter.failedMessages).toBe(0);
+  });
+
   // ── extraction_status_reflects_state ───────────────────────────────────
 
   it("extraction_status_reflects_state", async () => {

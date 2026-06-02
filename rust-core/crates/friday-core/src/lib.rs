@@ -1,0 +1,38 @@
+//! Friday Rust Core — pure domain types and state machines.
+//!
+//! This crate has **no I/O** (no SQL, no network, no FFI). It is the shared
+//! foundation linked by both the Hub and the phone-side FFI library, so the
+//! domain types cannot drift between processes (architecture gate 21 §1).
+//!
+//! Domain coverage grows by unit: device/session identity, session/activity/
+//! offline-queue/connection state machines (the offline-queue invariant is that
+//! an *ack is not completion*), the token/model ledger entry shape (Unit 2);
+//! workflow run with evidence-gated step completion and Needs-Me aggregation
+//! (Unit 9); memory trust (no silent long-term writes; candidates/inferred are
+//! not facts), conflict choice-cards, and Context Passport transfer gating
+//! (Unit 10). Provider adapters and the wire protocol live in their own crates.
+
+mod activity;
+mod conn;
+mod error;
+mod identity;
+mod ledger;
+mod memory;
+mod offline;
+mod session;
+mod workflow;
+
+pub use activity::{ActivityState, ActivityType};
+pub use conn::ConnState;
+pub use error::CoreError;
+pub use identity::{DeviceIdentity, DeviceRole};
+pub use ledger::{LedgerEntry, ProviderKind};
+pub use memory::{
+    decide_candidate, gate_transfer, resolve_conflict, Confidence, ConflictResolution, MemoryScope,
+    MemoryState, PassportItem, PassportItemKind,
+};
+pub use offline::OfflineQueueState;
+pub use session::SessionState;
+pub use workflow::{
+    aggregate_needs_me, resolve_step_completion, NeedsMeItem, StepStatus, WorkflowRunState,
+};

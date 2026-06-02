@@ -4,6 +4,7 @@ import type {
   FridayLearningEventAppendInput,
   FridayLearningSignalKind,
 } from "../model/friday-learning.types.js";
+import { isFridaySensitiveLearningCandidate } from "./friday-sensitive-learning-guard.js";
 
 export interface FridayPreferenceExtractionService {
   extract(event: FridayLearningEventAppendInput): FridayExtractedSignal[];
@@ -21,6 +22,10 @@ function normalizeKey(field: string): string {
     .replace(/[^a-z0-9_]/g, "_")
     .replace(/_+/g, "_")
     .replace(/^_|_$/g, "");
+}
+
+function isSensitiveLearnedPreference(key: string, value: unknown): boolean {
+  return isFridaySensitiveLearningCandidate(key, value);
 }
 
 function readCorrectionPayload(payload: Record<string, unknown>): {
@@ -195,7 +200,9 @@ export function createFridayPreferenceExtractionService(
           const { correctedField, newValue } = readCorrectionPayload(event.payload);
           if (correctedField && newValue !== undefined) {
             const key = `pref:${normalizeKey(correctedField)}`;
-            signals.push(makeSignal("correction", key, newValue, 1.0));
+            if (!isSensitiveLearnedPreference(key, newValue)) {
+              signals.push(makeSignal("correction", key, newValue, 1.0));
+            }
           }
           break;
         }
@@ -209,9 +216,11 @@ export function createFridayPreferenceExtractionService(
               if (match) {
                 const key = rule.keyExtractor(match);
                 const value = rule.valueExtractor(match);
-                signals.push(
-                  makeSignal("preference", key, value, rule.confidence),
-                );
+                if (!isSensitiveLearnedPreference(key, value)) {
+                  signals.push(
+                    makeSignal("preference", key, value, rule.confidence),
+                  );
+                }
                 matched = true;
                 break; // first match wins
               }
@@ -223,9 +232,11 @@ export function createFridayPreferenceExtractionService(
                 if (match) {
                   const key = rule.keyExtractor(match);
                   const value = rule.valueExtractor(match);
-                  signals.push(
-                    makeSignal("preference", key, value, rule.confidence),
-                  );
+                  if (!isSensitiveLearnedPreference(key, value)) {
+                    signals.push(
+                      makeSignal("preference", key, value, rule.confidence),
+                    );
+                  }
                   break;
                 }
               }

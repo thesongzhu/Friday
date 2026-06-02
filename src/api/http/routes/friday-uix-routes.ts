@@ -1,6 +1,9 @@
 import { FridayDomainError } from "#errors";
 import type { FridayProviderTenantContext } from "#providers";
-import { isMbti } from "../../../uix/services/friday-communication-persona.js";
+import {
+  FRIDAY_COMMUNICATION_PREFERENCE_KEYS,
+  isMbti,
+} from "../../../uix/services/friday-communication-persona.js";
 import type { FridayUixSurfaceService } from "../../../uix/services/friday-uix-surface-service.js";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type {
@@ -27,16 +30,25 @@ import {
   FRIDAY_LEARNED_FACT_EVIDENCE_BOUNDARY,
   FRIDAY_LEARNED_FACT_MEMORY_BOUNDARY,
   FRIDAY_LEARNED_FACT_PROMPT_INJECTION_BOUNDARY,
-  FRIDAY_LEARNED_FACT_REVIEW_BOUNDARY,
   FRIDAY_LEARNED_FACT_REVOCATION_BOUNDARY,
   FRIDAY_LEARNED_FACT_TRUST_LEVEL,
+  readLearnedFactReviewBoundary,
 } from "../../../learning/services/friday-learned-fact-memory-view.js";
+
+interface FridayUixLearnedFactItem {
+  key: string;
+  value: unknown;
+  confidence: number;
+  evidenceCount: number;
+  lastConfirmedAt: string;
+  metadata?: Record<string, unknown>;
+}
 
 export interface FridayUixRoutesDeps {
   service: FridayUixSurfaceService;
   readSetupCompletedAt?: () => string | null;
   /** Optional: expose learned preference facts to users for transparency. */
-  listLearnedFacts?: (input: { userId: string }) => Array<{ key: string; value: unknown; confidence: number; evidenceCount: number; lastConfirmedAt: string }>;
+  listLearnedFacts?: (input: { userId: string }) => FridayUixLearnedFactItem[];
   deleteLearnedFact?: (input: { userId: string; key: string }) => boolean;
   updateLearnedFact?: (input: { userId: string; key: string; value?: unknown; confidence?: number }) => { key: string; value: unknown; confidence: number; evidenceCount: number; lastConfirmedAt: string } | null;
   clearLearnedFacts?: (input: { userId: string }) => number;
@@ -135,7 +147,8 @@ function enrichLearnedFactBoundary<T extends {
   confidence: number;
   evidenceCount: number;
   lastConfirmedAt: string;
-}>(item: T): T & {
+  metadata?: Record<string, unknown>;
+}>(item: T): Omit<T, "metadata"> & {
   boundary: {
     trustLevel: string;
     memoryBoundary: string;
@@ -146,15 +159,16 @@ function enrichLearnedFactBoundary<T extends {
     revocationBoundary: string;
   };
 } {
+  const { metadata: _metadata, ...publicItem } = item;
   return {
-    ...item,
+    ...publicItem,
     boundary: {
       trustLevel: FRIDAY_LEARNED_FACT_TRUST_LEVEL,
       memoryBoundary: FRIDAY_LEARNED_FACT_MEMORY_BOUNDARY,
       evidenceBoundary: FRIDAY_LEARNED_FACT_EVIDENCE_BOUNDARY,
       contextUseBoundary: FRIDAY_LEARNED_FACT_CONTEXT_USE_BOUNDARY,
       promptInjectionBoundary: FRIDAY_LEARNED_FACT_PROMPT_INJECTION_BOUNDARY,
-      reviewBoundary: FRIDAY_LEARNED_FACT_REVIEW_BOUNDARY,
+      reviewBoundary: readLearnedFactReviewBoundary(item),
       revocationBoundary: FRIDAY_LEARNED_FACT_REVOCATION_BOUNDARY,
     },
   };
@@ -250,7 +264,8 @@ export function createFridayUixRoutes(
           if (
             pref && typeof pref === "object" &&
             (pref as Record<string, unknown>).category === "communication" &&
-            (pref as Record<string, unknown>).key === "mbtiType" &&
+            (pref as Record<string, unknown>).key === FRIDAY_COMMUNICATION_PREFERENCE_KEYS.mbti &&
+            (pref as Record<string, unknown>).value !== null &&
             !isMbti((pref as Record<string, unknown>).value)
           ) {
             throw new FridayDomainError("INVALID_MBTI_TYPE", "Invalid MBTI type. Valid values: INTJ, INTP, ENTJ, ENTP, INFJ, INFP, ENFJ, ENFP, ISTJ, ISFJ, ESTJ, ESFJ, ISTP, ISFP, ESTP, ESFP", { httpStatus: 400 });
@@ -323,16 +338,26 @@ export function createFridayUixRoutes(
         const settings = (body?.settings ?? {}) as Record<string, unknown>;
 
         // Map persona settings to user preferences with category "communication"
-        const validKeys = new Set(["tone", "verbosity", "structure", "questionStyle", "directness", "emojiStyle", "jargonTolerance", "assumptionStyle", "confirmationStyle"]);
+        const validKeys = new Map<string, string>([
+          ["tone", FRIDAY_COMMUNICATION_PREFERENCE_KEYS.tone],
+          ["verbosity", FRIDAY_COMMUNICATION_PREFERENCE_KEYS.verbosity],
+          ["structure", FRIDAY_COMMUNICATION_PREFERENCE_KEYS.structure],
+          ["questionStyle", FRIDAY_COMMUNICATION_PREFERENCE_KEYS.questionStyle],
+          ["directness", FRIDAY_COMMUNICATION_PREFERENCE_KEYS.directness],
+          ["emojiStyle", FRIDAY_COMMUNICATION_PREFERENCE_KEYS.emojiStyle],
+          ["jargonTolerance", FRIDAY_COMMUNICATION_PREFERENCE_KEYS.jargonTolerance],
+          ["assumptionStyle", FRIDAY_COMMUNICATION_PREFERENCE_KEYS.assumptionStyle],
+          ["confirmationStyle", FRIDAY_COMMUNICATION_PREFERENCE_KEYS.confirmationStyle],
+        ]);
         const preferences: Array<{ category: "communication"; key: string; value: string }> = [];
         for (const [key, value] of Object.entries(settings)) {
           if (validKeys.has(key) && typeof value === "string" && value.trim().length > 0) {
-            preferences.push({ category: "communication", key, value: value.trim() });
+            preferences.push({ category: "communication", key: validKeys.get(key)!, value: value.trim() });
           }
         }
 
         if (preferences.length === 0) {
-          throw new FridayDomainError("VALIDATION_ERROR", "At least one valid persona setting is required. Valid keys: " + [...validKeys].join(", "), { httpStatus: 400 });
+          throw new FridayDomainError("VALIDATION_ERROR", "At least one valid persona setting is required. Valid keys: " + [...validKeys.keys()].join(", "), { httpStatus: 400 });
         }
 
         deps.service.updatePreferences({

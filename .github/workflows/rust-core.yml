@@ -1,0 +1,41 @@
+name: Rust Core
+
+# Gates the all-Rust Friday Core workspace (rust-core/) added by the
+# Rust/mobile rewrite. Runs only when rust-core or this workflow changes.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "rust-core/**"
+      - ".github/workflows/rust-core.yml"
+  pull_request:
+    paths:
+      - "rust-core/**"
+      - ".github/workflows/rust-core.yml"
+
+concurrency:
+  group: rust-core-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: rust-core
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      # rustup is preinstalled on ubuntu runners; rust-core/rust-toolchain.toml
+      # pins 1.95.0 + clippy/rustfmt, which `rustup show` installs.
+      - name: Toolchain
+        run: rustup show && cargo --version && cargo clippy --version
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy (-D warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        # The one live DeepSeek test is #[ignore]d, so this needs no network/secrets.
+        run: cargo test --workspace

@@ -470,6 +470,31 @@ describe("FridayMemoryService", () => {
       expect(results[0].score).toBeCloseTo(0.1);
     });
 
+    it("namespace substring backfill returns sibling facts when FTS only matches one conflict token", async () => {
+      const failService = createMockProviderService({ embedFails: true });
+      const svc = createFridayMemoryService({
+        db,
+        providerService: failService,
+        idGenerator: idGen,
+        nowIso: () => NOW,
+      });
+
+      await svc.store("conflict-ns", "The user's workshop accent color is teal");
+      await svc.store("conflict-ns", "The user's workshop accent color is navy");
+
+      const results = await svc.search("workshop accent color teal", {
+        namespace: "conflict-ns",
+        limit: 5,
+      });
+
+      const contents = results.map((result) => result.item.content).join("\n");
+      expect(contents).toContain("teal");
+      expect(contents).toContain("navy");
+      expect(results.map((result) => result.item.id)).toEqual(
+        Array.from(new Set(results.map((result) => result.item.id))),
+      );
+    });
+
     it("namespace substring fallback honors memoryType filtering", async () => {
       const failService = createMockProviderService({ embedFails: true });
       const svc = createFridayMemoryService({

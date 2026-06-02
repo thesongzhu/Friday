@@ -2,6 +2,8 @@ import type { JsonValue } from "../../uix/model/friday-uix.types.js";
 
 export type FridayReflexCandidateKind =
   | "memory"
+  | "secure_fact"
+  | "learned_fact"
   | "preference"
   | "recipe"
   | "skill"

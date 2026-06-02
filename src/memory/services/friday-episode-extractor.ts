@@ -17,6 +17,7 @@ import type {
   FridayEpisodeStepCategory,
 } from "../../agent/model/friday-agent-world-state.types.js";
 import { safeJsonParse } from "#utilities";
+import { isFridaySensitiveLearningCandidate } from "../../learning/services/friday-sensitive-learning-guard.js";
 
 // ─── Deps ───────────────────────────────────────────────────────
 
@@ -70,6 +71,9 @@ export function createFridayEpisodeExtractor(
       );
 
       if (!run) return null;
+      if (isFridaySensitiveLearningCandidate(run.task) || isFridayUntrustedSourceLearningCandidate(run.task)) {
+        return null;
+      }
 
       // 2. Read tool events (best-effort; a run with no tool events still
       // produces a minimal episode so world-model readiness is visible in
@@ -195,6 +199,25 @@ function extractContextFiles(contextCostSummaryJson: string | null): string[] {
   return blocks
     .map((b) => b.name as string | undefined)
     .filter((n): n is string => typeof n === "string");
+}
+
+const EXTERNAL_SOURCE_REVIEW_WORLD_MODEL_PATTERN =
+  /\b(?:source[-\s]?review|recommendation|recommendations|evaluate|review|compare)\b[\s\S]{0,240}\b(?:web_fetch|fetch|fetched|source|url|urls|https?:\/\/)\b|\b(?:web_fetch|fetch|fetched|source|url|urls|https?:\/\/)\b[\s\S]{0,240}\b(?:source[-\s]?review|recommendation|recommendations|evaluate|review|compare)\b/i;
+
+const UNTRUSTED_SOURCE_WORLD_MODEL_PATTERNS = [
+  /\bfetched\s+(?:page\s+)?bodies?\s+as\s+untrusted\b/i,
+  /\buntrusted\s+(?:web|source|page|document|tool)\s+content\b/i,
+  /\bprompt\s+injection\b/i,
+  /\bignore\s+(?:all|previous|prior)\s+instructions\b/i,
+  /\bsystem\s+override\b/i,
+  /\bmemory_store\b/i,
+  /\bfeedback\b[\s\S]{0,120}\bpersist\b/i,
+  /\blong[- ]term preferences?\b/i,
+];
+
+function isFridayUntrustedSourceLearningCandidate(task: string): boolean {
+  return EXTERNAL_SOURCE_REVIEW_WORLD_MODEL_PATTERN.test(task)
+    && UNTRUSTED_SOURCE_WORLD_MODEL_PATTERNS.some((pattern) => pattern.test(task));
 }
 
 const READ_TOOLS = new Set(["read", "glob", "grep", "web_fetch", "web_search", "skills_list"]);

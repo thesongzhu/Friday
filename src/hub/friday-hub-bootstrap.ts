@@ -50,6 +50,7 @@ import {
   createFridayProviderCostCalculator,
   createFridayProviderPricingCatalog,
   createFridayProviderService,
+  createFridaySecretAdminService,
   createFridaySecretRepository,
   decryptSecret,
   getFridayProviderPreset,
@@ -77,6 +78,7 @@ import type { SkillLifecycleStatus, SkillOrigin, SkillSource } from "#skills";
 import { createFridaySkillExecutor } from "#skills";
 import { createFridaySkillGeneratorService } from "#skills/generator";
 import { createFridayWorkflowGeneratorService } from "#workflows";
+import type { FridayWorkflowGeneratorService } from "#workflows";
 import {
   createDarwinProgramScanner,
   createFridayProgramDiscoveryService,
@@ -292,6 +294,7 @@ import {
   createFridayPreferenceFactRepository,
   createFridaySelfHealingApiService,
   createFridaySelfLearningRuntime,
+  type FridayExtractedSignal,
 } from "#learning";
 import {
   createFridayObservabilityApiService,
@@ -1693,21 +1696,7 @@ export async function createFridayHub(
 
   // ─── Workflow generator service ───
 
-  const workflowGenerator = createFridayWorkflowGeneratorService({
-    db: stateRuntime!.sqlite,
-    providerService,
-    workflowCrud: workflowRuntime.crud,
-    skillRegistry: registry,
-    getSkillLifecycleStatus: getPersistedSkillLifecycleStatus,
-    idGenerator,
-    nowIso,
-    computeChecksum,
-    userRulesContextProvider: (input) =>
-      buildFridayUserRulesPromptContext({
-        task: input.task,
-        surface: input.surface,
-      }),
-  });
+  let workflowGenerator: FridayWorkflowGeneratorService;
 
   // ─── Agent runtime ───
 
@@ -4066,6 +4055,57 @@ export async function createFridayHub(
     fragments.push(`Friday Reflex preferences:\n${lines.join("\n")}`);
     return fragments.join("\n\n");
   };
+  const buildWorkflowGeneratorPromptContext = async (input: {
+    task: string;
+    userId?: string;
+    channel?: string;
+  }): Promise<string | null> => {
+    const fragments: string[] = [];
+    const userRulesFragment = await buildFridayUserRulesPromptContext({
+      task: input.task,
+      surface: "workflow_generator",
+    });
+    if (userRulesFragment) {
+      fragments.push(userRulesFragment);
+    }
+    const userId = input.userId;
+    if (userId) {
+      const explicitPreferences = stateRuntime.sqlite.withReadConnection((db) =>
+        uixUserPreferenceRepository.listByPrincipal(db, {
+          principalId: userId,
+          category: "communication",
+        }));
+      const learnedPreferences = _learningContextRef?.buildContext({
+        userId,
+        nowIso: nowIso(),
+      }).preferences ?? {};
+      const persona = resolveFridayCommunicationPersona({
+        explicitPreferences,
+        learnedPreferences,
+      });
+      const personaFragment = buildFridayCommunicationPromptFragment(persona);
+      if (personaFragment.trim().length > 0) {
+        fragments.push(personaFragment.trim());
+      }
+      const reflexFragment = buildReflexPreferencePromptFragment(userId);
+      if (reflexFragment) {
+        fragments.push(reflexFragment);
+      }
+    }
+    return fragments.length > 0 ? fragments.join("\n\n") : null;
+  };
+
+  workflowGenerator = createFridayWorkflowGeneratorService({
+    db: stateRuntime!.sqlite,
+    providerService,
+    workflowCrud: workflowRuntime.crud,
+    skillRegistry: registry,
+    getSkillLifecycleStatus: getPersistedSkillLifecycleStatus,
+    idGenerator,
+    nowIso,
+    computeChecksum,
+    userRulesContextProvider: buildWorkflowGeneratorPromptContext,
+  });
 
   // ─── Tool approval gates (GAP 2) ───
   // Shared promise map for tool-level approval flow.
@@ -5938,12 +5978,84 @@ export async function createFridayHub(
 
   const reflexCandidateRepository = createFridayReflexCandidateRepository();
   const reflexOnboardingRepository = createFridayReflexOnboardingRepository();
+  const reflexSecretAdminService = createFridaySecretAdminService({
+    db: stateRuntime.sqlite,
+    idGenerator,
+    nowIso,
+  });
   reflexService = createFridayReflexService({
     db: stateRuntime.sqlite,
     candidateRepo: reflexCandidateRepository,
     onboardingRepo: reflexOnboardingRepository,
     preferenceRepo: uixUserPreferenceRepository,
     memoryService,
+    learnedFactApprover: (input) => {
+      const eventId = idGenerator();
+      const event: FridayLearningEventAppendInput = {
+        eventId,
+        ts: input.nowIso,
+        userId: input.userId,
+        sessionId: input.sessionKey,
+        runId: input.sourceRunId,
+        kind: "user_correction",
+        payload: {
+          feedbackKind: "learned_fact_approval",
+          key: input.key,
+          value: input.value,
+          candidateId: input.candidateId,
+          origin: input.origin,
+        },
+      };
+      const signal: FridayExtractedSignal = {
+        signalId: idGenerator(),
+        kind: "preference",
+        key: input.key,
+        value: input.value,
+        confidence: input.confidence,
+        sourceEventId: eventId,
+        userId: input.userId,
+        sessionId: input.sessionKey,
+        runId: input.sourceRunId,
+        ts: input.nowIso,
+        situationalContext: {
+          candidateId: input.candidateId,
+          origin: input.origin,
+          evidence: input.evidence,
+        },
+      };
+      const [fact] = selfLearningRuntime.facts.applySignals({
+        event,
+        signals: [signal],
+        nowIso: input.nowIso,
+      });
+      if (!fact) {
+        throw new Error("Learned-fact approval produced no persisted fact.");
+      }
+      return {
+        factId: fact.factId,
+        key: fact.key,
+        confidence: fact.confidence,
+        evidenceCount: fact.evidenceCount,
+        lastConfirmedAt: fact.lastConfirmedAt,
+      };
+    },
+    secureFactStager: (input) => {
+      const secret = reflexSecretAdminService.createSecret({
+        scope: "learned_fact",
+        refKey: `${input.userId}:${input.candidateId}`,
+        value: input.value,
+      });
+      return {
+        secretId: secret.id,
+        scope: secret.scope,
+        refKey: secret.refKey,
+        createdAt: secret.createdAt,
+        updatedAt: secret.updatedAt,
+      };
+    },
+    secureFactRejecter: (input) => ({
+      deleted: reflexSecretAdminService.deleteSecret(input.secretId),
+    }),
     skillGenerator,
     workflowGenerator,
     learningEventWriter,
