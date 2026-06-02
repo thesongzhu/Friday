@@ -10,19 +10,35 @@
 use crate::migrate::Migration;
 use rusqlite::Transaction;
 
-/// Tables present only on the Hub (never created on a phone).
-pub const HUB_ONLY_TABLES: &[&str] = &["trusted_device", "audit_ledger", "memory_item"];
+/// Tables present only on the Hub (never created on a phone). Workflow runs are
+/// Hub-coordinated (gate 21 §9 / `08`), so they are Hub-only too.
+pub const HUB_ONLY_TABLES: &[&str] = &[
+    "trusted_device",
+    "audit_ledger",
+    "memory_item",
+    "workflow_run",
+    "workflow_step",
+];
 
 /// Tables present only on a phone (never created on the Hub).
 pub const PHONE_ONLY_TABLES: &[&str] = &["offline_queue"];
 
 pub fn hub_migrations() -> Vec<Migration> {
-    vec![Migration {
-        version: 1,
-        name: "init_hub",
-        destructive: false,
-        up: m0001_init_hub,
-    }]
+    vec![
+        Migration {
+            version: 1,
+            name: "init_hub",
+            destructive: false,
+            up: m0001_init_hub,
+        },
+        // Unit 9: workflow runs + steps (additive forward migration over v1).
+        Migration {
+            version: 2,
+            name: "workflow",
+            destructive: false,
+            up: m0002_workflow,
+        },
+    ]
 }
 
 pub fn phone_migrations() -> Vec<Migration> {
@@ -158,6 +174,29 @@ CREATE TABLE offline_queue (
 );
 CREATE INDEX idx_offline_state_created ON offline_queue(state, created_at);";
 
+// --- Unit-9 workflow fragments (Hub-only) -----------------------------------
+
+const DDL_WORKFLOW: &str = "
+CREATE TABLE workflow_run (
+    run_id     TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    state      TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_workflow_run_state ON workflow_run(state, updated_at);
+CREATE TABLE workflow_step (
+    step_id         TEXT PRIMARY KEY,
+    run_id          TEXT NOT NULL,
+    seq             INTEGER NOT NULL,
+    has_side_effect INTEGER NOT NULL,
+    status          TEXT NOT NULL,
+    evidence_ref    TEXT,
+    created_at      INTEGER NOT NULL,
+    updated_at      INTEGER NOT NULL
+);
+CREATE INDEX idx_workflow_step_run ON workflow_step(run_id, seq);";
+
 // --- migration bodies -------------------------------------------------------
 
 fn m0001_init_hub(tx: &Transaction) -> rusqlite::Result<()> {
@@ -179,5 +218,11 @@ fn m0001_init_phone(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(DDL_TOKEN_LEDGER)?;
     tx.execute_batch(DDL_OFFLINE_QUEUE)?;
     tx.execute_batch(DDL_BLOB)?;
+    Ok(())
+}
+
+// Unit 9: additive forward migration (v1 -> v2) adding the Hub workflow tables.
+fn m0002_workflow(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_WORKFLOW)?;
     Ok(())
 }
