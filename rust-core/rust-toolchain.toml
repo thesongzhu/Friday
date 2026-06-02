@@ -1,0 +1,6 @@
+# Pin the toolchain so CI's clippy/rustfmt match local exactly (reproducible
+# -D warnings). Honored by rustup-managed environments (e.g. CI); a standalone
+# cargo without rustup ignores this file.
+[toolchain]
+channel = "1.95.0"
+components = ["clippy", "rustfmt"]

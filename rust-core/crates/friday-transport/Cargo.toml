@@ -1,0 +1,20 @@
+[package]
+name = "friday-transport"
+description = "Friday Rust Core — framed E2E transport: length-prefixed frames carrying session-sealed protocol envelopes over a socket, with a relay-forwarding model."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+
+# Carries friday-protocol envelopes sealed with friday-crypto session keys over a
+# byte stream. Phone-safe (no provider secret); not coupled to friday-deepseek.
+[dependencies]
+friday-protocol.workspace = true
+friday-crypto.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# Integration tests drive real loopback sockets with device keypairs + envelopes.
+friday-protocol.workspace = true
+friday-crypto.workspace = true

@@ -1,0 +1,17 @@
+[package]
+name = "friday-protocol"
+description = "Friday Rust Core — versioned E2E WebSocket envelope, message kinds, version negotiation, idempotency, replay (the phone<->Hub wire contract)."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+
+# The wire contract is Rust<->Rust (both endpoints are Rust Cores), so wire types
+# are serde structs carrying a schema_version (gate 21 §0/§4). Pure types + logic;
+# no I/O. Safe for the phone (friday-ffi) side too — carries no provider secret.
+[dependencies]
+friday-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

@@ -1,0 +1,11 @@
+[package]
+name = "friday-core"
+description = "Friday Rust Core — pure domain types and state machines (no I/O)."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+
+[dependencies]
+thiserror.workspace = true
