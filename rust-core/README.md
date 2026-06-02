@@ -1,9 +1,9 @@
 # Friday Rust Core — Units 2–4 (foundation, DeepSeek route, transport)
 
 This is the all-Rust Friday product core (the v1 source of truth) for the Friday
-Rust/mobile rewrite. Goal folder:
-`/Users/jarvis/Desktop/friday-rust-mobile-rewrite-goals-20260601` (files `03`, `15`,
-architecture gate `21`; continuation artifact `27`).
+Rust/mobile rewrite. Goal evidence bundle: operator-local
+`friday-rust-mobile-rewrite-goals-20260601` (files `03`, `15`, architecture gate
+`21`; continuation artifact `27`).
 
 > **Overall product status: `NO-GO` (greenfield).** Units 2–4 (core + DeepSeek
 > route + protocol/transport/pairing/offline) are implemented and tested; Units
