@@ -240,6 +240,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "friday-protocol"
+version = "0.0.1"
+dependencies = [
+ "friday-core",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "friday-storage"
 version = "0.0.1"
 dependencies = [
@@ -609,6 +619,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
 dependencies = [
  "serde_core",
+ "serde_derive",
 ]
 
 [[package]]

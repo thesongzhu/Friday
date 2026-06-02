@@ -16,6 +16,7 @@ resolver = "2"
 members = [
     "crates/friday-core",
     "crates/friday-crypto",
+    "crates/friday-protocol",
     "crates/friday-storage",
     "crates/friday-deepseek",
     "crates/friday-ffi",
@@ -37,9 +38,12 @@ sha2 = "0.10.8"
 rusqlite = { version = "0.31.0", features = ["bundled"] }
 toml = "0.8.19"
 zeroize = { version = "1.8.2", features = ["derive"] }
+serde = { version = "1.0.215", features = ["derive"] }
+serde_json = "1.0.133"
 # internal crates
 friday-core = { path = "crates/friday-core" }
 friday-crypto = { path = "crates/friday-crypto" }
+friday-protocol = { path = "crates/friday-protocol" }
 friday-storage = { path = "crates/friday-storage" }
 friday-deepseek = { path = "crates/friday-deepseek" }
 friday-ffi = { path = "crates/friday-ffi" }
