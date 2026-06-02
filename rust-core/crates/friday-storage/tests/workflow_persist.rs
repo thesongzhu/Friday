@@ -35,8 +35,12 @@ fn forward_migration_v1_to_v2_adds_workflow_tables_preserving_data() {
         )
         .unwrap();
     }
-    // Reopen with the full set -> forward-migrate to v2.
-    let db = Db::open_hub(&p).unwrap();
+    // Reopen with the v2 set -> forward-migrate v1 -> v2 in isolation (truncating
+    // to 2 keeps this test pinned to the workflow migration, independent of later
+    // migrations such as 0003).
+    let mut migs2 = hub_migrations();
+    migs2.truncate(2);
+    let db = Db::open(&p, Profile::Hub, &migs2, "v2").unwrap();
     assert_eq!(db.version().unwrap(), 2);
     let tables = db.table_names().unwrap();
     assert!(tables.iter().any(|t| t == "workflow_run"));

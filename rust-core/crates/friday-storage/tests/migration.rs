@@ -26,7 +26,7 @@ const FOUNDATION_HUB_TABLES: &[&str] = &[
 fn fresh_hub_db_has_all_foundation_tables() {
     let p = temp_db_path("fresh");
     let db = Db::open_hub(&p).unwrap();
-    assert_eq!(db.version().unwrap(), 2);
+    assert_eq!(db.version().unwrap(), 3);
     let tables = db.table_names().unwrap();
     for t in FOUNDATION_HUB_TABLES {
         assert!(
@@ -51,11 +51,11 @@ fn reopen_is_idempotent_and_preserves_rows() {
             "mac_live",
         )
         .unwrap();
-        assert_eq!(db.version().unwrap(), 2);
+        assert_eq!(db.version().unwrap(), 3);
     }
     // Reopening runs zero pending migrations and keeps the data.
     let db = Db::open_hub(&p).unwrap();
-    assert_eq!(db.version().unwrap(), 2);
+    assert_eq!(db.version().unwrap(), 3);
     assert_eq!(db.count("session").unwrap(), 1);
 }
 
@@ -71,7 +71,7 @@ fn refuses_to_open_when_disk_newer_than_code() {
     match Db::open_hub(&p) {
         Err(StorageError::SchemaTooNew { disk, code }) => {
             assert_eq!(disk, 999);
-            assert_eq!(code, 2);
+            assert_eq!(code, 3);
         }
         Ok(_) => panic!("expected SchemaTooNew, got Ok"),
         Err(other) => panic!("expected SchemaTooNew, got {other:?}"),
@@ -137,16 +137,16 @@ fn destructive_migration_creates_verified_backup() {
         .unwrap();
     }
 
-    // Seed is at the current hub version (v2); add a destructive v3 on top.
+    // Seed is at the current hub version (v3); add a destructive v4 on top.
     let mut migs = hub_migrations();
     migs.push(Migration {
-        version: 3,
+        version: 4,
         name: "rebuild_activity",
         destructive: true,
         up: rebuild_activity_v2,
     });
     let db = Db::open(&p, Profile::Hub, &migs, "test-destructive").unwrap();
-    assert_eq!(db.version().unwrap(), 3);
+    assert_eq!(db.version().unwrap(), 4);
 
     // New column exists post-migration.
     let has_priority: i64 = db
