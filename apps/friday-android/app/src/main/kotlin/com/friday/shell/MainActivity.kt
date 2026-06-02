@@ -15,6 +15,7 @@ import uniffi.friday_ffi.connectionIsOnline
 import uniffi.friday_ffi.connectionIsStaleOrOffline
 import uniffi.friday_ffi.initialConnectionState
 import uniffi.friday_ffi.negotiateSchemaVersion
+import uniffi.friday_ffi.phoneActivityDemo
 import uniffi.friday_ffi.protocolSchemaVersion
 import uniffi.friday_ffi.sampleActivityInbox
 import uniffi.friday_ffi.sampleMemoryReview
@@ -42,6 +43,8 @@ class MainActivity : Activity() {
         val inbox = sampleActivityInbox()
         // Memory candidates awaiting the user's review (07 §6/§7).
         val memReview = sampleMemoryReview()
+        // LIVE data: read back from the phone's own SQLite store (not a fixture).
+        val phoneActivity = phoneActivityDemo(java.io.File(filesDir, "friday.db").absolutePath)
 
         // (The app identity "FridayShell" is shown in the action bar; the body is
         // exactly the values the all-Rust core computes, so the rendered screen
@@ -68,12 +71,21 @@ class MainActivity : Activity() {
                 appendLine("      ${m.confidence} · ${m.state.name.lowercase()}")
             }
             appendLine()
+            if (phoneActivity.ok) {
+                appendLine("Activity (${phoneActivity.items.size}, live · phone SQLite):")
+                for (a in phoneActivity.items) {
+                    appendLine("  [${a.state}] ${a.summary} (${a.kind})")
+                }
+            } else {
+                appendLine("Activity (live store error): ${phoneActivity.error}")
+            }
+            appendLine()
             append("rendered from Rust ✓")
         }
 
         val tv = TextView(this).apply {
             text = body
-            textSize = 20f
+            textSize = 15f
             // API 36 enforces edge-to-edge, so the content view draws behind the
             // status + action bars; pad the top enough to clear them so every
             // value is visible (this is a minimal proof shell, not production UI).

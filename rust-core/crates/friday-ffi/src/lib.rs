@@ -258,6 +258,97 @@ pub fn sample_memory_review() -> Vec<MemoryCandidateFfi> {
     ]
 }
 
+/// An activity item read back from the phone's own SQLite store (`08`), for UI.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ActivityItemFfi {
+    pub activity_id: String,
+    pub kind: String,
+    pub state: String,
+    pub summary: String,
+    pub created_at: i64,
+}
+
+/// Result of reading the phone-side activity store. `ok=false` carries a
+/// secret-safe `error` string (errors are surfaced to the UI, not swallowed).
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct PhoneActivityFfi {
+    pub ok: bool,
+    pub error: String,
+    pub items: Vec<ActivityItemFfi>,
+}
+
+/// Open the **phone-profile** SQLite DB at `db_path`, seed a few demo activity
+/// rows on first run, then read them back — a REAL on-device persistence
+/// round-trip through the bundled SQLite compiled into this library (NOT a
+/// fixture). The phone profile omits all Hub-only secret/audit tables (gate
+/// `21` §2), so nothing sensitive can exist in this store.
+#[uniffi::export]
+pub fn phone_activity_demo(db_path: String) -> PhoneActivityFfi {
+    match load_phone_activity(&db_path) {
+        Ok(items) => PhoneActivityFfi {
+            ok: true,
+            error: String::new(),
+            items,
+        },
+        Err(e) => PhoneActivityFfi {
+            ok: false,
+            error: e.to_string(),
+            items: Vec::new(),
+        },
+    }
+}
+
+fn load_phone_activity(db_path: &str) -> friday_storage::Result<Vec<ActivityItemFfi>> {
+    use friday_core::{ActivityState, ActivityType};
+    use friday_storage::{ActivityRow, Db};
+
+    let db = Db::open_phone(db_path)?;
+    if db.count("activity_item")? == 0 {
+        let seed = |id: &str, kind, state, summary: &str, t: i64| ActivityRow {
+            activity_id: id.to_string(),
+            session_id: None,
+            kind,
+            state,
+            summary: summary.to_string(),
+            created_at: t,
+            updated_at: t,
+            deep_link: None,
+        };
+        db.insert_activity(&seed(
+            "a1",
+            ActivityType::AskReceipt,
+            ActivityState::Done,
+            "Asked Friday: today's build status",
+            1,
+        ))?;
+        db.insert_activity(&seed(
+            "a2",
+            ActivityType::AskStatus,
+            ActivityState::Running,
+            "Friday is summarizing the repo",
+            2,
+        ))?;
+        db.insert_activity(&seed(
+            "a3",
+            ActivityType::OfflineQueued,
+            ActivityState::Pending,
+            "Queued offline: send report",
+            3,
+        ))?;
+    }
+    Ok(db
+        .list_activity()?
+        .into_iter()
+        .map(|s| ActivityItemFfi {
+            activity_id: s.activity_id,
+            kind: s.kind,
+            state: s.state,
+            summary: s.summary,
+            created_at: s.created_at,
+        })
+        .collect())
+}
+
 // --- internal (non-FFI) helpers retained for the phone-side runtime/tests ---
 
 /// Open a phone-profile database. The phone schema omits the Hub-only
@@ -320,6 +411,53 @@ mod tests {
                                        // equal priority (5) keeps arrival order: 1 before 3
         assert_eq!(sorted[1].id, "1");
         assert_eq!(sorted[2].id, "3");
+    }
+
+    #[test]
+    fn ffi_phone_activity_demo_round_trips_real_sqlite() {
+        // A real on-disk phone SQLite round-trip (open + migrate + seed + read).
+        let path =
+            std::env::temp_dir().join(format!("friday-ffi-activity-{}.db", std::process::id()));
+        let p = path.to_string_lossy().to_string();
+        let _ = std::fs::remove_file(&path);
+
+        let r1 = phone_activity_demo(p.clone());
+        assert!(r1.ok, "open/seed failed: {}", r1.error);
+        assert_eq!(r1.items.len(), 3);
+        assert_eq!(r1.items[0].activity_id, "a1"); // oldest-first (created_at 1)
+        assert_eq!(r1.items[0].state, "done");
+
+        // Reopen: no re-seed (count!=0 guard), same rows back.
+        let r2 = phone_activity_demo(p.clone());
+        assert!(r2.ok);
+        assert_eq!(r2.items.len(), 3);
+        assert_eq!(r2.items, r1.items);
+
+        // Write a NON-seed row directly, then reopen via a FRESH Db: it must
+        // survive — this is the true on-DISK discriminator (a non-persistent
+        // store would lose it; the deterministic seed alone could not prove this).
+        {
+            use friday_core::{ActivityState, ActivityType};
+            use friday_storage::{ActivityRow, Db};
+            let db = Db::open_phone(&p).unwrap();
+            db.insert_activity(&ActivityRow {
+                activity_id: "extra".into(),
+                session_id: None,
+                kind: ActivityType::AskStatus,
+                state: ActivityState::Done,
+                summary: "persisted across reopen".into(),
+                created_at: 99,
+                updated_at: 99,
+                deep_link: None,
+            })
+            .unwrap();
+        }
+        let r3 = phone_activity_demo(p.clone());
+        assert!(r3.ok);
+        assert_eq!(r3.items.len(), 4, "the extra row must survive a fresh open");
+        assert!(r3.items.iter().any(|a| a.activity_id == "extra"));
+
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
