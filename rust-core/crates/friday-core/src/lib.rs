@@ -34,5 +34,6 @@ pub use memory::{
 pub use offline::OfflineQueueState;
 pub use session::SessionState;
 pub use workflow::{
-    aggregate_needs_me, resolve_step_completion, NeedsMeItem, StepStatus, WorkflowRunState,
+    aggregate_needs_me, resolve_step_completion, run_is_complete, NeedsMeItem, StepStatus,
+    StepView, WorkflowRunState,
 };
