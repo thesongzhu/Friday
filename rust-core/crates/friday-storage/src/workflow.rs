@@ -6,7 +6,9 @@
 //! never marks it verified (`08` §6 / `10` §6).
 
 use crate::error::{Result, StorageError};
-use friday_core::{resolve_step_completion, StepStatus, WorkflowRunState};
+use friday_core::{
+    resolve_step_completion, run_is_complete, StepStatus, StepView, WorkflowRunState,
+};
 use rusqlite::{params, Connection, OptionalExtension};
 
 fn parse_run_state(s: &str) -> WorkflowRunState {
@@ -50,8 +52,34 @@ pub fn run_state(conn: &Connection, run_id: &str) -> Result<Option<WorkflowRunSt
     Ok(s.map(|x| parse_run_state(&x)))
 }
 
+/// Load every step of a run as a `StepView` (side-effect flag + status). This is
+/// the input to the run-completion gate; it is the single read used by
+/// `set_run_state` to decide whether a `-> Done` transition is allowed.
+fn step_views(conn: &Connection, run_id: &str) -> Result<Vec<StepView>> {
+    let mut stmt = conn.prepare(
+        "SELECT has_side_effect, status FROM workflow_step WHERE run_id = ?1 ORDER BY seq",
+    )?;
+    let rows = stmt.query_map([run_id], |r| {
+        Ok(StepView {
+            has_side_effect: r.get::<_, i64>(0)? != 0,
+            status: parse_step_status(&r.get::<_, String>(1)?),
+        })
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(StorageError::from)
+}
+
 /// Transition a run's state, validated by the `friday-core` state machine
 /// (an invalid transition is rejected).
+///
+/// Beyond the per-run state-machine check, a transition **to `Done`** is gated by
+/// `run_is_complete` (`08` §6 / `10` §6 / `32` deferral): a run cannot be reported
+/// `Done` while any side-effect step is still `ProofPending` (evidence not yet
+/// arrived) or `Failed`. Because this is the single write API for run state, a
+/// `Done` run with an unverified side-effect step is **unrepresentable through the
+/// API** — not merely discouraged (the Unit-9 divergent-pair resolution discipline).
+/// A run whose side-effect step has `Failed` must be transitioned to `Failed`, not
+/// forced `Done`.
 pub fn set_run_state(
     conn: &Connection,
     run_id: &str,
@@ -61,6 +89,18 @@ pub fn set_run_state(
     let cur = run_state(conn, run_id)?
         .ok_or_else(|| StorageError::Unsupported(format!("workflow_run '{run_id}' not found")))?;
     let next = cur.try_transition(next)?; // CoreError -> StorageError
+
+    // Run-completion gate: refuse `-> Done` while a side-effect step is unverified.
+    if next == WorkflowRunState::Done {
+        let steps = step_views(conn, run_id)?;
+        if !run_is_complete(&steps) {
+            return Err(StorageError::Unsupported(format!(
+                "workflow_run '{run_id}' cannot be marked Done: a side-effect step is not Verified \
+                 (proof_pending or failed). Attach evidence to verify it, or transition the run to Failed."
+            )));
+        }
+    }
+
     conn.execute(
         "UPDATE workflow_run SET state = ?1, updated_at = ?2 WHERE run_id = ?3",
         params![next.as_str(), now, run_id],

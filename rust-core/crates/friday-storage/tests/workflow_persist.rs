@@ -71,6 +71,103 @@ fn run_state_machine_is_persisted_and_validated() {
 }
 
 #[test]
+fn run_cannot_be_done_while_a_side_effect_step_is_proof_pending() {
+    // The file-32 deferral, closed: persistence + per-step gating alone let a run
+    // reach Done with an unverified side-effect step. This is the discriminating
+    // test — "the transition is allowed" is NOT proof; we prove the unverified-step
+    // run is refused, and that attaching evidence then unblocks it.
+    let p = temp_db_path("wf-run-gate");
+    let db = Db::open_hub(&p).unwrap();
+    workflow::create_run(db.conn(), "r1", "QA", 1).unwrap();
+    workflow::set_run_state(db.conn(), "r1", WorkflowRunState::Running, 2).unwrap();
+
+    // A side-effect step left ProofPending (model claimed done, no evidence).
+    workflow::add_step(db.conn(), "st1", "r1", 1, true, 1).unwrap();
+    assert_eq!(
+        workflow::complete_step(db.conn(), "st1", None, true, 3).unwrap(),
+        StepStatus::ProofPending
+    );
+
+    // -> Done is REFUSED while the side-effect step is unverified.
+    assert!(
+        workflow::set_run_state(db.conn(), "r1", WorkflowRunState::Done, 4).is_err(),
+        "a run with a ProofPending side-effect step must not be marked Done"
+    );
+    // The run did not silently advance — it is still Running.
+    assert_eq!(
+        workflow::run_state(db.conn(), "r1").unwrap(),
+        Some(WorkflowRunState::Running)
+    );
+
+    // Evidence arrives -> the step verifies -> the SAME -> Done transition is now allowed.
+    assert_eq!(
+        workflow::complete_step(db.conn(), "st1", Some("evidence://receipt"), false, 5).unwrap(),
+        StepStatus::Verified
+    );
+    workflow::set_run_state(db.conn(), "r1", WorkflowRunState::Done, 6).unwrap();
+    assert_eq!(
+        workflow::run_state(db.conn(), "r1").unwrap(),
+        Some(WorkflowRunState::Done)
+    );
+}
+
+#[test]
+fn run_with_all_side_effects_verified_can_be_done_even_with_an_incomplete_pure_step() {
+    // Non-side-effect steps do not gate run completion (they complete on a model
+    // result; the engine, not this gate, decides when their work is done).
+    let p = temp_db_path("wf-run-gate-pure");
+    let db = Db::open_hub(&p).unwrap();
+    workflow::create_run(db.conn(), "r1", "QA", 1).unwrap();
+    workflow::set_run_state(db.conn(), "r1", WorkflowRunState::Running, 2).unwrap();
+
+    workflow::add_step(db.conn(), "se", "r1", 1, true, 1).unwrap();
+    workflow::complete_step(db.conn(), "se", Some("evidence://ok"), false, 3).unwrap();
+    // A pure (no-side-effect) step that is still Pending must NOT block Done.
+    workflow::add_step(db.conn(), "pure", "r1", 2, false, 1).unwrap();
+
+    workflow::set_run_state(db.conn(), "r1", WorkflowRunState::Done, 4).unwrap();
+    assert_eq!(
+        workflow::run_state(db.conn(), "r1").unwrap(),
+        Some(WorkflowRunState::Done)
+    );
+}
+
+#[test]
+fn failed_side_effect_step_blocks_done_through_the_single_write_api() {
+    // A `Failed` side-effect step must also block `-> Done` (the run must go to
+    // Failed, not Done). No public API yet produces a Failed step (that lands with
+    // the engine slice), so we inject the failed status directly via raw SQL — the
+    // gate must already defend against it. Scope of the "unrepresentable" claim: the
+    // only *typed repo API* that sets run state is `set_run_state`, and it is gated;
+    // `create_run` only ever writes `Pending`. Raw `Db::conn()` access (used here to
+    // inject the otherwise-unreachable Failed step) is deliberately out of scope —
+    // the guarantee holds at the typed-API layer, not against arbitrary raw SQL.
+    let p = temp_db_path("wf-run-gate-failed");
+    let db = Db::open_hub(&p).unwrap();
+    workflow::create_run(db.conn(), "r1", "QA", 1).unwrap();
+    workflow::set_run_state(db.conn(), "r1", WorkflowRunState::Running, 2).unwrap();
+    workflow::add_step(db.conn(), "st1", "r1", 1, true, 1).unwrap();
+    // Inject a Failed side-effect step state directly (no fail-step API yet).
+    db.conn()
+        .execute(
+            "UPDATE workflow_step SET status = 'failed' WHERE step_id = 'st1'",
+            [],
+        )
+        .unwrap();
+
+    assert!(
+        workflow::set_run_state(db.conn(), "r1", WorkflowRunState::Done, 3).is_err(),
+        "a run with a Failed side-effect step must not be marked Done"
+    );
+    // But the run CAN legitimately transition to Failed.
+    workflow::set_run_state(db.conn(), "r1", WorkflowRunState::Failed, 4).unwrap();
+    assert_eq!(
+        workflow::run_state(db.conn(), "r1").unwrap(),
+        Some(WorkflowRunState::Failed)
+    );
+}
+
+#[test]
 fn evidence_gated_step_completion_is_persisted() {
     let p = temp_db_path("wf-step");
     let db = Db::open_hub(&p).unwrap();
