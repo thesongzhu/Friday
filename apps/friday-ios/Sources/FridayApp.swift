@@ -18,6 +18,8 @@ struct ContentView: View {
         localMin: 1, localMax: 3, remoteMin: 2, remoteMax: 5)
     // Urgency-first Needs-Me inbox, built + sorted by Rust (08 §1/§2).
     private let inbox = sampleActivityInbox()
+    // Memory candidates awaiting the user's review (07 §6/§7).
+    private let memReview = sampleMemoryReview()
 
     var body: some View {
         ScrollView {
@@ -49,6 +51,19 @@ struct ContentView: View {
                 ForEach(inbox, id: \.id) { needsMeRow($0) }
 
                 Divider()
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text("Memory Review").font(.headline)
+                        Spacer()
+                        Text("\(memReview.count)").foregroundStyle(.secondary)
+                    }
+                    Text("sample — awaiting confirm/reject, never auto-saved")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                ForEach(memReview, id: \.memoryId) { memoryRow($0) }
+
+                Divider()
                 Text("rendered from Rust ✓")
                     .font(.footnote).foregroundStyle(.green)
             }
@@ -78,6 +93,22 @@ struct ContentView: View {
             }
             Spacer()
             Text("p\(item.priority)").font(.caption).monospaced()
+        }
+    }
+
+    // One memory candidate: scope tag, preview, and its confidence + lifecycle
+    // state. A candidate is never auto-confirmed (07 §6/§7).
+    private func memoryRow(_ m: MemoryCandidateFfi) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(m.scope.uppercased())
+                .font(.caption2).bold().foregroundStyle(.secondary)
+                .frame(width: 72, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(m.preview)
+                Text("\(m.confidence) · \(String(describing: m.state).lowercased())")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            Spacer()
         }
     }
 }

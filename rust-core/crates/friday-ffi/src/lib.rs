@@ -13,7 +13,7 @@
 //! depend on `friday-deepseek` or a Hub crate, so "no provider secret on phone"
 //! is a compile-time property (gate `21` §1/§3), asserted by `friday-arch-tests`.
 
-use friday_core::{ConnState, NeedsMeItem};
+use friday_core::{ConnState, MemoryState, NeedsMeItem};
 
 uniffi::setup_scaffolding!();
 
@@ -181,6 +181,83 @@ pub fn sample_activity_inbox() -> Vec<NeedsMeItemFfi> {
     ])
 }
 
+/// Lifecycle of a long-term memory item, projected for UI (`07` §6/§7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum MemoryStateFfi {
+    Candidate,
+    Confirmed,
+    Rejected,
+}
+
+impl From<MemoryState> for MemoryStateFfi {
+    fn from(s: MemoryState) -> Self {
+        match s {
+            MemoryState::Candidate => MemoryStateFfi::Candidate,
+            MemoryState::Confirmed => MemoryStateFfi::Confirmed,
+            MemoryState::Rejected => MemoryStateFfi::Rejected,
+        }
+    }
+}
+
+impl MemoryStateFfi {
+    fn to_core(self) -> MemoryState {
+        match self {
+            MemoryStateFfi::Candidate => MemoryState::Candidate,
+            MemoryStateFfi::Confirmed => MemoryState::Confirmed,
+            MemoryStateFfi::Rejected => MemoryState::Rejected,
+        }
+    }
+}
+
+/// A memory candidate awaiting the user's review (`07` §7), projected for UI.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MemoryCandidateFfi {
+    pub memory_id: String,
+    pub scope: String,
+    /// A short human-readable preview of the candidate content.
+    pub preview: String,
+    pub confidence: String,
+    pub state: MemoryStateFfi,
+}
+
+/// Apply the user's review decision to a memory candidate, via the `friday-core`
+/// invariant: a candidate becomes `Confirmed` ONLY on an explicit yes; an explicit
+/// no rejects it; **no decision leaves it a candidate (never silently written)**
+/// (`07` §6/§7). Exposed so the native Memory Review UI surfaces the real logic.
+#[uniffi::export]
+pub fn decide_candidate(state: MemoryStateFfi, user_confirmed: Option<bool>) -> MemoryStateFfi {
+    friday_core::decide_candidate(state.to_core(), user_confirmed).into()
+}
+
+/// A representative Memory Review queue — pending candidates awaiting an explicit
+/// confirm/reject. A Rust-built UI fixture (the persisted phone memory store is
+/// deferred); every item is a `Candidate` (nothing is auto-confirmed). NOT live data.
+#[uniffi::export]
+pub fn sample_memory_review() -> Vec<MemoryCandidateFfi> {
+    let candidate = |id: &str, scope: &str, preview: &str, confidence: &str| MemoryCandidateFfi {
+        memory_id: id.into(),
+        scope: scope.into(),
+        preview: preview.into(),
+        confidence: confidence.into(),
+        state: MemoryStateFfi::Candidate,
+    };
+    vec![
+        candidate("mc1", "global", "Prefers Rust for new services", "inferred"),
+        candidate(
+            "mc2",
+            "project",
+            "Deploy target is the Pixel_8 emulator",
+            "candidate",
+        ),
+        candidate(
+            "mc3",
+            "session",
+            "Working on the Friday mobile rewrite",
+            "high_confidence_context",
+        ),
+    ]
+}
+
 // --- internal (non-FFI) helpers retained for the phone-side runtime/tests ---
 
 /// Open a phone-profile database. The phone schema omits the Hub-only
@@ -243,6 +320,40 @@ mod tests {
                                        // equal priority (5) keeps arrival order: 1 before 3
         assert_eq!(sorted[1].id, "1");
         assert_eq!(sorted[2].id, "3");
+    }
+
+    #[test]
+    fn ffi_memory_decision_never_silently_writes() {
+        // No decision -> stays a Candidate (NOT written).
+        assert_eq!(
+            decide_candidate(MemoryStateFfi::Candidate, None),
+            MemoryStateFfi::Candidate
+        );
+        // Explicit yes -> Confirmed; explicit no -> Rejected.
+        assert_eq!(
+            decide_candidate(MemoryStateFfi::Candidate, Some(true)),
+            MemoryStateFfi::Confirmed
+        );
+        assert_eq!(
+            decide_candidate(MemoryStateFfi::Candidate, Some(false)),
+            MemoryStateFfi::Rejected
+        );
+        // A terminal decision is not re-opened by a later (even contrary) signal.
+        assert_eq!(
+            decide_candidate(MemoryStateFfi::Confirmed, Some(false)),
+            MemoryStateFfi::Confirmed
+        );
+    }
+
+    #[test]
+    fn ffi_sample_memory_review_is_all_pending_candidates() {
+        let review = sample_memory_review();
+        assert!(!review.is_empty());
+        // Nothing is auto-confirmed: every item awaits the user's decision.
+        assert!(review.iter().all(|m| m.state == MemoryStateFfi::Candidate));
+        assert!(review
+            .iter()
+            .all(|m| !m.preview.is_empty() && !m.memory_id.is_empty()));
     }
 
     #[test]
