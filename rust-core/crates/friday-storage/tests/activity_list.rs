@@ -34,3 +34,29 @@ fn list_activity_returns_summaries_oldest_first() {
     assert_eq!(list[0].summary, "summary-a");
     assert_eq!(list[1].activity_id, "b");
 }
+
+#[test]
+fn mark_activity_done_persists_and_reports_unknown() {
+    let p = temp_db_path("mark-done");
+    let row = |id: &str| ActivityRow {
+        activity_id: id.into(),
+        session_id: None,
+        kind: ActivityType::AskStatus,
+        state: ActivityState::Pending,
+        summary: "s".into(),
+        created_at: 1,
+        updated_at: 1,
+        deep_link: None,
+    };
+    {
+        let db = Db::open_phone(&p).unwrap();
+        db.insert_activity(&row("a")).unwrap();
+        assert!(db.mark_activity_done("a", 5).unwrap()); // updated
+        assert!(!db.mark_activity_done("ghost", 5).unwrap()); // unknown id -> false
+    }
+    // Reopen a fresh handle: the state change survived on disk.
+    let db = Db::open_phone(&p).unwrap();
+    let list = db.list_activity().unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].state, "done");
+}

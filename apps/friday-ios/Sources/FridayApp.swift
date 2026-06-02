@@ -20,11 +20,14 @@ struct ContentView: View {
     private let inbox = sampleActivityInbox()
     // Memory candidates awaiting the user's review (07 §6/§7).
     private let memReview = sampleMemoryReview()
-    // LIVE data: read back from the phone's own SQLite store (not a fixture).
-    private let phoneActivity: PhoneActivityFfi = {
-        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return phoneActivityDemo(dbPath: dir.appendingPathComponent("friday.db").path)
-    }()
+
+    // The phone's own SQLite file (the app sandbox). LIVE data + a real WRITE path.
+    private let dbPath: String = FileManager.default
+        .urls(for: .documentDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("friday.db").path
+    @State private var activity: [ActivityItemFfi] = []
+    @State private var activityError: String = ""
+    @State private var note: String = ""
 
     var body: some View {
         ScrollView {
@@ -74,17 +77,18 @@ struct ContentView: View {
                     HStack {
                         Text("Activity").font(.headline)
                         Spacer()
-                        Text(phoneActivity.ok ? "\(phoneActivity.items.count)" : "—")
-                            .foregroundStyle(.secondary)
+                        Text("\(activity.count)").foregroundStyle(.secondary)
                     }
-                    Text("live · phone SQLite store")
+                    Text("live · phone SQLite · tap a row to mark done")
                         .font(.caption2).foregroundStyle(.secondary)
+                    if !note.isEmpty {
+                        Text(note).font(.caption2).foregroundStyle(.green)
+                    }
+                    if !activityError.isEmpty {
+                        Text(activityError).font(.caption2).foregroundStyle(.red)
+                    }
                 }
-                if phoneActivity.ok {
-                    ForEach(phoneActivity.items, id: \.activityId) { activityRow($0) }
-                } else {
-                    Text(phoneActivity.error).font(.caption).foregroundStyle(.red)
-                }
+                ForEach(activity, id: \.activityId) { activityRow($0) }
 
                 Divider()
                 Text("rendered from Rust ✓")
@@ -93,6 +97,38 @@ struct ContentView: View {
             .padding(28)
         }
         .background(Color(white: 0.98))
+        .onAppear(perform: loadActivity)
+    }
+
+    // Load the phone store, then perform ONE real persisted write (mark the oldest
+    // pending item done) so the screen shows a live state change through SQLite.
+    // Every value comes from / goes to the real store — no UI-only mock state.
+    private func loadActivity() {
+        let loaded = phoneActivityDemo(dbPath: dbPath)
+        guard loaded.ok else {
+            activityError = loaded.error
+            return
+        }
+        if let pending = loaded.items.first(where: { $0.state == "pending" }) {
+            let after = markActivityDone(dbPath: dbPath, activityId: pending.activityId, now: 100)
+            if after.ok {
+                activity = after.items
+                note = "✓ marked “\(pending.summary)” done (persisted)"
+                return
+            }
+        }
+        activity = loaded.items
+    }
+
+    // Tapping an item marks it done via the real SQLite write path and refreshes.
+    private func markDone(_ a: ActivityItemFfi) {
+        let after = markActivityDone(dbPath: dbPath, activityId: a.activityId, now: 200)
+        if after.ok {
+            activity = after.items
+            note = "✓ marked “\(a.summary)” done (persisted)"
+        } else {
+            activityError = after.error
+        }
     }
 
     private func row(_ label: String, _ value: String) -> some View {
@@ -135,19 +171,27 @@ struct ContentView: View {
         }
     }
 
-    // One activity item read back from the phone's SQLite store: state tag,
-    // summary, and kind.
+    // One activity item from the phone's SQLite store. A non-done row is a tappable
+    // control that marks it done through the real write path; done rows are inert.
     private func activityRow(_ a: ActivityItemFfi) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Text(a.state.uppercased())
-                .font(.caption2).bold().foregroundStyle(.secondary)
-                .frame(width: 72, alignment: .leading)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(a.summary)
-                Text(a.kind).font(.caption2).foregroundStyle(.secondary)
+        let isDone = a.state == "done"
+        return Button(action: { if !isDone { markDone(a) } }) {
+            HStack(alignment: .top, spacing: 10) {
+                Text(a.state.uppercased())
+                    .font(.caption2).bold()
+                    .foregroundStyle(isDone ? Color.green : Color.secondary)
+                    .frame(width: 72, alignment: .leading)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(a.summary).foregroundStyle(.primary)
+                    Text(a.kind).font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: isDone ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isDone ? .green : .secondary)
             }
-            Spacer()
         }
+        .buttonStyle(.plain)
+        .disabled(isDone)
     }
 }
 
