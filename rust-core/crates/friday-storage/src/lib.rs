@@ -49,6 +49,18 @@ pub struct ActivityRow {
     pub deep_link: Option<String>,
 }
 
+/// A UI-facing token/cost summary (a read projection of `token_ledger`). The
+/// `fallback` flag is always surfaced — a fallback is never hidden (`02` §13).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TokenUsageRow {
+    pub provider_kind: String,
+    pub model: String,
+    pub total_tokens: i64,
+    pub cost_estimate: Option<f64>,
+    pub fallback: bool,
+    pub created_at: i64,
+}
+
 /// A UI-facing activity summary (a read projection of `activity_item`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivitySummary {
@@ -177,6 +189,40 @@ impl Db {
             out.push(row?);
         }
         Ok(out)
+    }
+
+    /// Token/cost usage rows (read projection of `token_ledger`), oldest-first.
+    /// Surfaces the `fallback` flag so a fallback is never hidden (`02` §13).
+    pub fn list_token_usage(&self) -> Result<Vec<TokenUsageRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT provider_kind, model, total_tokens, cost_estimate, fallback, created_at
+             FROM token_ledger ORDER BY created_at, ledger_id",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(TokenUsageRow {
+                provider_kind: r.get(0)?,
+                model: r.get(1)?,
+                total_tokens: r.get(2)?,
+                cost_estimate: r.get(3)?,
+                fallback: r.get::<_, i64>(4)? != 0,
+                created_at: r.get(5)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Mark an activity item `Done` (a real persisted state write). Returns
+    /// `true` if a row was updated, `false` if the id is unknown.
+    pub fn mark_activity_done(&self, activity_id: &str, now: i64) -> Result<bool> {
+        let n = self.conn.execute(
+            "UPDATE activity_item SET state = ?1, updated_at = ?2 WHERE activity_id = ?3",
+            rusqlite::params![ActivityState::Done.as_str(), now, activity_id],
+        )?;
+        Ok(n > 0)
     }
 
     // --- writers ------------------------------------------------------------

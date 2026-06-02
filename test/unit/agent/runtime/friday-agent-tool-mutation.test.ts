@@ -180,4 +180,51 @@ describe("isMutatingToolCall", () => {
   it("classifies unknown tools as mutating for safety", () => {
     expect(isMutatingToolCall("unknown_tool", {})).toBe(true);
   });
+
+  // ─── exec wrapper / dangerous-flag alignment (P2 safety-labeling: env/find/echo holes) ───
+  // isMutatingToolCall must agree with the exec risk gate's unwrapCommand: a read-only program
+  // name at the START of the command must NOT mask a mutating INNER command or dangerous flags.
+
+  it("classifies env-wrapped destructive command as mutating", () => {
+    // `env FOO=bar rm -rf /tmp/x` previously matched the leading `env` read-only token → false (HOLE)
+    expect(isMutatingToolCall("exec", { command: "env FOO=bar rm -rf /tmp/x" })).toBe(true);
+    expect(isMutatingToolCall("exec", { command: "FOO=bar BAR=baz rm -rf /tmp/x" })).toBe(true);
+  });
+
+  it("classifies env-wrapped mutating (non-destructive) command as mutating", () => {
+    // inner program (git commit) is mutating even though wrapped by env
+    expect(isMutatingToolCall("exec", { command: "env GIT_AUTHOR=x git commit -m y" })).toBe(true);
+  });
+
+  it("keeps env-wrapped read-only command non-mutating", () => {
+    expect(isMutatingToolCall("exec", { command: "env LANG=C ls -la" })).toBe(false);
+    expect(isMutatingToolCall("exec", { command: "env FOO=bar cat /etc/hosts" })).toBe(false);
+  });
+
+  it("classifies find with destructive -delete flag as mutating", () => {
+    // `find … -delete` previously matched the leading `find` read-only token → false (HOLE).
+    // (`find … -exec rm {} ;` is separately rejected as "blocked" by shell-metachar detection at
+    //  the execution gate, so it never runs regardless of this label.)
+    expect(isMutatingToolCall("exec", { command: "find /tmp -name '*.log' -delete" })).toBe(true);
+  });
+
+  it("keeps read-only find non-mutating", () => {
+    expect(isMutatingToolCall("exec", { command: "find . -name '*.ts'" })).toBe(false);
+  });
+
+  it("classifies shell -c opaque command string as mutating", () => {
+    expect(isMutatingToolCall("exec", { command: "bash -c 'rm -rf /tmp/x'" })).toBe(true);
+    expect(isMutatingToolCall("exec", { command: "sh -c \"echo hi > /etc/x\"" })).toBe(true);
+  });
+
+  it("keeps plain read-only exec non-mutating (regression guard)", () => {
+    expect(isMutatingToolCall("exec", { command: "ls -la" })).toBe(false);
+    expect(isMutatingToolCall("exec", { command: "grep -r foo src" })).toBe(false);
+    expect(isMutatingToolCall("exec", { command: "printenv" })).toBe(false);
+  });
+
+  it("classifies plain mutating exec as mutating (regression guard)", () => {
+    expect(isMutatingToolCall("exec", { command: "mkdir foo" })).toBe(true);
+    expect(isMutatingToolCall("exec", { command: "git commit -m x" })).toBe(true);
+  });
 });

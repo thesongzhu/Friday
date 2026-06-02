@@ -734,6 +734,37 @@ describe("FridayProviderFallback", () => {
       expect(result.attempts[0].error).toContain("[REDACTED]");
       expect(result.attempts[0].error).not.toContain("sk-test-abc");
     });
+
+    it("redacts Google AIza API keys and ya29 OAuth tokens in attempt error logs", async () => {
+      // Google keys are 39 chars and contain `-`/`_`, so they match neither the prefix list
+      // nor the generic 40+ `[A-Za-z0-9/+]` token — they previously leaked verbatim (HOLE).
+      // Intentionally-fake test fixtures (not real credentials). pragma: allowlist secret
+      const googleKey = "AIzaSyD-9aBcDeFgHiJkLmNoPqRsTuVwXyZ0123"; // pragma: allowlist secret
+      const oauthToken = "ya29.a0AfB_byD-abcDEF_ghiJKL1234567890mnopQRSTuvwx"; // pragma: allowlist secret
+      const fb = createFridayProviderFallback();
+      const p1 = makeProvider("p1");
+      const p2 = makeProvider("p2");
+
+      const result = await fb.runWithFallback({
+        candidates: [
+          { provider: p1, model: "gpt-4o" },
+          { provider: p2, model: "gpt-4o" },
+        ],
+        run: async (route) => {
+          if (route.provider.id === "p1") {
+            throw new Error(`401 invalid key ${googleKey} token=${oauthToken}`);
+          }
+          return "ok";
+        },
+      });
+
+      expect(result.attempts).toHaveLength(1);
+      expect(result.attempts[0].error).toContain("[REDACTED]");
+      expect(result.attempts[0].error).not.toContain(googleKey);
+      expect(result.attempts[0].error).not.toContain("AIzaSyD-9aBc");
+      expect(result.attempts[0].error).not.toContain(oauthToken);
+      expect(result.attempts[0].error).not.toContain("ya29.a0AfB");
+    });
   });
 
   // ─── A2: Cooldown Behavior ───

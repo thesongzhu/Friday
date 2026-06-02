@@ -336,6 +336,10 @@ fn load_phone_activity(db_path: &str) -> friday_storage::Result<Vec<ActivityItem
             3,
         ))?;
     }
+    activity_items(&db)
+}
+
+fn activity_items(db: &friday_storage::Db) -> friday_storage::Result<Vec<ActivityItemFfi>> {
     Ok(db
         .list_activity()?
         .into_iter()
@@ -345,6 +349,111 @@ fn load_phone_activity(db_path: &str) -> friday_storage::Result<Vec<ActivityItem
             state: s.state,
             summary: s.summary,
             created_at: s.created_at,
+        })
+        .collect())
+}
+
+/// Interactive WRITE path: mark an activity item `Done` in the phone's own SQLite
+/// store and return the updated list. A real persisted state change (the UI's
+/// "mark done" action), not UI-only state. Unknown ids are a no-op (still `ok`).
+#[uniffi::export]
+pub fn mark_activity_done(db_path: String, activity_id: String, now: i64) -> PhoneActivityFfi {
+    match mark_and_list(&db_path, &activity_id, now) {
+        Ok(items) => PhoneActivityFfi {
+            ok: true,
+            error: String::new(),
+            items,
+        },
+        Err(e) => PhoneActivityFfi {
+            ok: false,
+            error: e.to_string(),
+            items: Vec::new(),
+        },
+    }
+}
+
+fn mark_and_list(
+    db_path: &str,
+    activity_id: &str,
+    now: i64,
+) -> friday_storage::Result<Vec<ActivityItemFfi>> {
+    let db = friday_storage::Db::open_phone(db_path)?;
+    db.mark_activity_done(activity_id, now)?;
+    activity_items(&db)
+}
+
+/// A token/cost usage row for the UI (`02` §13 cost transparency). `fallback` is
+/// always shown — a fallback is never hidden.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TokenUsageFfi {
+    pub provider: String,
+    pub model: String,
+    pub total_tokens: i64,
+    pub cost_estimate: Option<f64>,
+    pub fallback: bool,
+}
+
+/// Result of reading the phone-side token/cost ledger (`ok=false` -> secret-safe error).
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct PhoneTokensFfi {
+    pub ok: bool,
+    pub error: String,
+    pub items: Vec<TokenUsageFfi>,
+}
+
+/// Read the phone's own `token_ledger` (seeding a couple of DeepSeek Friday-route
+/// rows on first run) for a cost/usage view. Real on-device SQLite; the
+/// `fallback` flag is surfaced for every row (`02` §13 — never hide a fallback).
+#[uniffi::export]
+pub fn phone_token_usage(db_path: String) -> PhoneTokensFfi {
+    match load_token_usage(&db_path) {
+        Ok(items) => PhoneTokensFfi {
+            ok: true,
+            error: String::new(),
+            items,
+        },
+        Err(e) => PhoneTokensFfi {
+            ok: false,
+            error: e.to_string(),
+            items: Vec::new(),
+        },
+    }
+}
+
+fn load_token_usage(db_path: &str) -> friday_storage::Result<Vec<TokenUsageFfi>> {
+    use friday_core::{LedgerEntry, ProviderKind};
+    use friday_storage::Db;
+
+    let db = Db::open_phone(db_path)?;
+    if db.count("token_ledger")? == 0 {
+        let seed = |id: &str, model: &str, p: i64, c: i64, cost: f64, t: i64| LedgerEntry {
+            ledger_id: id.to_string(),
+            session_id: "s1".to_string(),
+            activity_id: "a1".to_string(),
+            provider_kind: ProviderKind::DeepSeek,
+            model: model.to_string(),
+            base_url_host: "api.deepseek.com".to_string(),
+            prompt_tokens: p,
+            completion_tokens: c,
+            total_tokens: p + c,
+            cost_estimate: Some(cost),
+            // DeepSeek Friday route: fallback is always false (no hidden substitute).
+            fallback: false,
+            result_link: None,
+            created_at: t,
+        };
+        db.insert_token_ledger(&seed("l1", "deepseek-v4-flash", 1200, 800, 0.0021, 1))?;
+        db.insert_token_ledger(&seed("l2", "deepseek-v4-pro", 3000, 1500, 0.0185, 2))?;
+    }
+    Ok(db
+        .list_token_usage()?
+        .into_iter()
+        .map(|u| TokenUsageFfi {
+            provider: u.provider_kind,
+            model: u.model,
+            total_tokens: u.total_tokens,
+            cost_estimate: u.cost_estimate,
+            fallback: u.fallback,
         })
         .collect())
 }
@@ -456,6 +565,70 @@ mod tests {
         assert!(r3.ok);
         assert_eq!(r3.items.len(), 4, "the extra row must survive a fresh open");
         assert!(r3.items.iter().any(|a| a.activity_id == "extra"));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn ffi_mark_activity_done_persists_across_reopen() {
+        let path =
+            std::env::temp_dir().join(format!("friday-ffi-markdone-{}.db", std::process::id()));
+        let p = path.to_string_lossy().to_string();
+        let _ = std::fs::remove_file(&path);
+
+        // Seed (a3 = "Queued offline" is Pending).
+        let seeded = phone_activity_demo(p.clone());
+        assert!(seeded.ok);
+        let a3 = seeded.items.iter().find(|a| a.activity_id == "a3").unwrap();
+        assert_eq!(a3.state, "pending");
+
+        // The interactive write: mark a3 done. Returns the updated list.
+        let after = mark_activity_done(p.clone(), "a3".into(), 100);
+        assert!(after.ok);
+        assert_eq!(
+            after
+                .items
+                .iter()
+                .find(|a| a.activity_id == "a3")
+                .unwrap()
+                .state,
+            "done"
+        );
+
+        // Reopen via a FRESH read path: the state change persisted on disk.
+        let reopened = phone_activity_demo(p.clone());
+        assert_eq!(
+            reopened
+                .items
+                .iter()
+                .find(|a| a.activity_id == "a3")
+                .unwrap()
+                .state,
+            "done"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn ffi_phone_token_usage_seeds_lists_and_surfaces_fallback() {
+        let path =
+            std::env::temp_dir().join(format!("friday-ffi-tokens-{}.db", std::process::id()));
+        let p = path.to_string_lossy().to_string();
+        let _ = std::fs::remove_file(&path);
+
+        let r = phone_token_usage(p.clone());
+        assert!(r.ok, "open/seed failed: {}", r.error);
+        assert_eq!(r.items.len(), 2);
+        assert_eq!(r.items[0].provider, "deepseek");
+        assert_eq!(r.items[0].total_tokens, 2000); // 1200 + 800
+        assert_eq!(r.items[0].cost_estimate, Some(0.0021));
+        // The fallback flag is surfaced for every row; Friday route => false.
+        assert!(r.items.iter().all(|u| !u.fallback));
+
+        // Reopen: persisted, no re-seed.
+        let r2 = phone_token_usage(p.clone());
+        assert_eq!(r2.items.len(), 2);
 
         let _ = std::fs::remove_file(&path);
     }
