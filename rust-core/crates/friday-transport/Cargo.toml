@@ -13,8 +13,13 @@ rust-version.workspace = true
 friday-protocol.workspace = true
 friday-crypto.workspace = true
 thiserror.workspace = true
+# Real WebSocket upgrade/handshake framing (ws://, plaintext; E2E is at the seal
+# layer). No TLS feature — the relay carries already-sealed payloads.
+tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }
 
 [dev-dependencies]
-# Integration tests drive real loopback sockets with device keypairs + envelopes.
+# Integration tests drive real loopback sockets with device keypairs + envelopes,
+# and the connection-state machine from friday-core.
 friday-protocol.workspace = true
 friday-crypto.workspace = true
+friday-core.workspace = true

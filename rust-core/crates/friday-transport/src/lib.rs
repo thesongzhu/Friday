@@ -6,19 +6,20 @@
 //! that forwards frames sees only ciphertext; without the session key it cannot
 //! decrypt them — proven over a real loopback socket in `tests/transport.rs`.
 //!
-//! Scope: this is the wire framing + E2E sealing for the transport. It runs over
-//! plain TCP (and is exercised over loopback in tests with a real relay hop). The
-//! WebSocket upgrade/handshake framing is a mechanical wrapper around this same
-//! frame+seal contract; it — along with the real-network LAN/Tailscale/SSH
-//! transports and the `Direct|Relay|Stale` connection-state machine — is
-//! first-slice-deferred per gate §4. The security-critical properties (E2E
-//! confidentiality vs a relay, reconnect, resumable catch-up) are
-//! framing-independent and are proven here over a real socket.
+//! Framings: length-prefixed frames AND a real WebSocket upgrade/handshake
+//! (`ws_accept`/`ws_connect`, carrying the sealed body as a Binary message) — both
+//! exercised over real loopback sockets, including a relay hop and the
+//! `Direct|Relay|Stale` connection-state machine (see `tests/`). E2E
+//! confidentiality is at the seal layer, so relay-cannot-decrypt holds for both
+//! framings. The only remaining Unit-4 transport gap is **real multi-host
+//! network** transport (LAN/Tailscale/SSH), which needs peer hosts/Tailscale/SSH
+//! and is environment-gated here — truth-labeled, not claimed.
 
 use friday_crypto::{open, seal, DataKey, Sealed};
 use friday_protocol::Envelope;
 use std::io::{Read, Write};
 use thiserror::Error;
+use tungstenite::{Message, WebSocket};
 
 /// 1 MiB cap on a single frame (defensive; the slice has no large payloads).
 pub const MAX_FRAME: usize = 1 << 20;
@@ -33,6 +34,10 @@ pub enum TransportError {
     Protocol(String),
     #[error("crypto error: {0}")]
     Crypto(#[from] friday_crypto::CryptoError),
+    // tungstenite::Error is a large enum; store its message as a String so
+    // TransportError stays small (avoids clippy::result_large_err on every fn).
+    #[error("websocket error: {0}")]
+    WebSocket(String),
 }
 
 /// Write a length-prefixed frame (4-byte big-endian length + payload).
@@ -119,6 +124,60 @@ pub fn recv_envelope<R: Read>(
 ) -> Result<Envelope, TransportError> {
     let body = read_frame(r)?;
     open_envelope(key, &body, aad)
+}
+
+// --- WebSocket framing (gate 21 §4: versioned E2E WebSocket protocol) --------
+//
+// The same sealed-envelope body is carried as a WebSocket Binary message over a
+// real WS upgrade/handshake. E2E confidentiality is unchanged (the payload is
+// sealed before framing), so the relay-cannot-decrypt property holds identically
+// whether the framing is length-prefixed or WebSocket.
+
+/// Seal an envelope and send it as a WebSocket Binary message.
+pub fn ws_send_envelope<S: Read + Write>(
+    ws: &mut WebSocket<S>,
+    key: &DataKey,
+    env: &Envelope,
+    aad: &[u8],
+) -> Result<(), TransportError> {
+    let body = seal_envelope(key, env, aad)?;
+    ws.send(Message::Binary(body))
+        .map_err(|e| TransportError::WebSocket(e.to_string()))?;
+    Ok(())
+}
+
+/// Read the next Binary WebSocket message and open it into an envelope.
+/// Ping/Pong/raw frames are skipped; Text/Close are surfaced as errors.
+pub fn ws_recv_envelope<S: Read + Write>(
+    ws: &mut WebSocket<S>,
+    key: &DataKey,
+    aad: &[u8],
+) -> Result<Envelope, TransportError> {
+    loop {
+        let msg = ws
+            .read()
+            .map_err(|e| TransportError::WebSocket(e.to_string()))?;
+        match msg {
+            Message::Binary(b) => return open_envelope(key, &b, aad),
+            Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => continue,
+            Message::Text(_) => {
+                return Err(TransportError::Protocol("unexpected text ws frame".into()))
+            }
+            Message::Close(_) => return Err(TransportError::Protocol("websocket closed".into())),
+        }
+    }
+}
+
+/// Server-side WebSocket handshake over an accepted stream.
+pub fn ws_accept<S: Read + Write>(stream: S) -> Result<WebSocket<S>, TransportError> {
+    tungstenite::accept(stream).map_err(|e| TransportError::Protocol(format!("ws accept: {e}")))
+}
+
+/// Client-side WebSocket handshake over a connected stream (uri e.g. `ws://host:port/`).
+pub fn ws_connect<S: Read + Write>(uri: &str, stream: S) -> Result<WebSocket<S>, TransportError> {
+    let (ws, _resp) = tungstenite::client(uri, stream)
+        .map_err(|e| TransportError::Protocol(format!("ws connect: {e}")))?;
+    Ok(ws)
 }
 
 #[cfg(test)]
