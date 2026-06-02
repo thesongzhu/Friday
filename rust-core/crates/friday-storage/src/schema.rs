@@ -19,6 +19,10 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     "workflow_run",
     "workflow_step",
     "consumed_approval",
+    // PR-5: agent-loop substrate. Agent runs are Hub-coordinated (gate 21 §9),
+    // so the run + its event log are Hub-only (never created on a phone).
+    "agent_run",
+    "agent_run_event",
 ];
 
 /// Tables present only on a phone (never created on the Hub).
@@ -55,6 +59,14 @@ pub fn hub_migrations() -> Vec<Migration> {
             name: "consumed_approval",
             destructive: false,
             up: m0004_consumed_approval,
+        },
+        // PR-5: agent-loop substrate (additive forward migration adding the
+        // Hub-only agent_run + agent_run_event tables). Purely additive.
+        Migration {
+            version: 5,
+            name: "agent_run",
+            destructive: false,
+            up: m0005_agent_run,
         },
     ]
 }
@@ -215,6 +227,26 @@ CREATE TABLE workflow_step (
 );
 CREATE INDEX idx_workflow_step_run ON workflow_step(run_id, seq);";
 
+// --- PR-5 agent-loop fragments (Hub-only) -----------------------------------
+
+const DDL_AGENT_RUN: &str = "
+CREATE TABLE agent_run (
+    run_id     TEXT PRIMARY KEY,
+    task       TEXT NOT NULL,
+    state      TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_agent_run_state ON agent_run(state, updated_at);
+CREATE TABLE agent_run_event (
+    event_id   TEXT PRIMARY KEY,
+    run_id     TEXT NOT NULL,
+    seq        INTEGER NOT NULL,
+    kind       TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_agent_run_event_run ON agent_run_event(run_id, seq);";
+
 // --- migration bodies -------------------------------------------------------
 
 fn m0001_init_hub(tx: &Transaction) -> rusqlite::Result<()> {
@@ -283,4 +315,12 @@ fn m0004_consumed_approval(tx: &Transaction) -> rusqlite::Result<()> {
             consumed_at   INTEGER NOT NULL
          );",
     )
+}
+
+// PR-5: additive forward migration adding the Hub-only agent_run +
+// agent_run_event tables. Purely additive (CREATE TABLE only) — it touches no
+// existing table, so pre-existing rows are untouched.
+fn m0005_agent_run(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_AGENT_RUN)?;
+    Ok(())
 }

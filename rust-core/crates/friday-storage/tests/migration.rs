@@ -9,6 +9,13 @@ use friday_core::{ActivityState, ActivityType, SessionState};
 use friday_storage::{hub_migrations, ActivityRow, Db, Migration, Profile, StorageError};
 use rusqlite::Transaction;
 
+/// The max migration version the current hub migration set reaches. Derived
+/// (not hardcoded) so these tests survive new additive migrations landing —
+/// including the concurrent PR-3b version-4 migration merging alongside PR-5's 5.
+fn hub_max_version() -> i64 {
+    hub_migrations().iter().map(|m| m.version).max().unwrap()
+}
+
 const FOUNDATION_HUB_TABLES: &[&str] = &[
     "device_identity",
     "trusted_device",
@@ -26,7 +33,7 @@ const FOUNDATION_HUB_TABLES: &[&str] = &[
 fn fresh_hub_db_has_all_foundation_tables() {
     let p = temp_db_path("fresh");
     let db = Db::open_hub(&p).unwrap();
-    assert_eq!(db.version().unwrap(), 4);
+    assert_eq!(db.version().unwrap(), hub_max_version());
     let tables = db.table_names().unwrap();
     for t in FOUNDATION_HUB_TABLES {
         assert!(
@@ -51,11 +58,11 @@ fn reopen_is_idempotent_and_preserves_rows() {
             "mac_live",
         )
         .unwrap();
-        assert_eq!(db.version().unwrap(), 4);
+        assert_eq!(db.version().unwrap(), hub_max_version());
     }
     // Reopening runs zero pending migrations and keeps the data.
     let db = Db::open_hub(&p).unwrap();
-    assert_eq!(db.version().unwrap(), 4);
+    assert_eq!(db.version().unwrap(), hub_max_version());
     assert_eq!(db.count("session").unwrap(), 1);
 }
 
@@ -71,7 +78,7 @@ fn refuses_to_open_when_disk_newer_than_code() {
     match Db::open_hub(&p) {
         Err(StorageError::SchemaTooNew { disk, code }) => {
             assert_eq!(disk, 999);
-            assert_eq!(code, 4);
+            assert_eq!(code, hub_max_version());
         }
         Ok(_) => panic!("expected SchemaTooNew, got Ok"),
         Err(other) => panic!("expected SchemaTooNew, got {other:?}"),
@@ -137,16 +144,19 @@ fn destructive_migration_creates_verified_backup() {
         .unwrap();
     }
 
-    // Seed is at the current hub version (v4); add a destructive v5 on top.
+    // Seed is at the current hub version; add a destructive migration ABOVE the
+    // current max (derived, so it always runs as the next pending version even as
+    // new additive migrations land — e.g. PR-5's v5 and PR-3b's v4).
+    let destructive_version = hub_max_version() + 1;
     let mut migs = hub_migrations();
     migs.push(Migration {
-        version: 5,
+        version: destructive_version,
         name: "rebuild_activity",
         destructive: true,
         up: rebuild_activity_v2,
     });
     let db = Db::open(&p, Profile::Hub, &migs, "test-destructive").unwrap();
-    assert_eq!(db.version().unwrap(), 5);
+    assert_eq!(db.version().unwrap(), destructive_version);
 
     // New column exists post-migration.
     let has_priority: i64 = db

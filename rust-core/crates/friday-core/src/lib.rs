@@ -22,6 +22,8 @@ mod identity;
 mod ledger;
 mod memory;
 mod offline;
+mod pathsafe;
+mod planning;
 mod session;
 mod tool_policy;
 mod workflow;
@@ -36,6 +38,8 @@ pub use memory::{
     MemoryState, PassportItem, PassportItemKind,
 };
 pub use offline::OfflineQueueState;
+pub use pathsafe::{contained, PathError};
+pub use planning::{classify_kind, PlanState, PlanningKind};
 pub use session::SessionState;
 pub use tool_policy::{
     contains_blocked_shell_char, contains_sensitive_assignment, contains_sensitive_material,
