@@ -469,6 +469,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "friday-providers"
+version = "0.0.1"
+dependencies = [
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "friday-storage"
 version = "0.0.1"
 dependencies = [

@@ -20,6 +20,7 @@ members = [
     "crates/friday-transport",
     "crates/friday-storage",
     "crates/friday-deepseek",
+    "crates/friday-providers",
     "crates/friday-ffi",
     "crates/friday-arch-tests",
 ]
@@ -48,6 +49,7 @@ friday-protocol = { path = "crates/friday-protocol" }
 friday-transport = { path = "crates/friday-transport" }
 friday-storage = { path = "crates/friday-storage" }
 friday-deepseek = { path = "crates/friday-deepseek" }
+friday-providers = { path = "crates/friday-providers" }
 friday-ffi = { path = "crates/friday-ffi" }
 
 [profile.dev]
