@@ -62,7 +62,10 @@ class MainActivity : Activity() {
             appendLine("Memory Review (${memReview.size}, sample):")
             appendLine("  awaiting confirm/reject — never auto-saved")
             for (m in memReview) {
-                appendLine("  [${m.scope}] ${m.preview} (${m.confidence})")
+                // Show confidence AND lifecycle state (parity with iOS); state is
+                // the field the no-silent-write story turns on (07 §6/§7).
+                appendLine("  [${m.scope}] ${m.preview}")
+                appendLine("      ${m.confidence} · ${m.state.name.lowercase()}")
             }
             appendLine()
             append("rendered from Rust ✓")
