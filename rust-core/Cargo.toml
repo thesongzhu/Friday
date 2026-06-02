@@ -17,6 +17,7 @@ members = [
     "crates/friday-core",
     "crates/friday-crypto",
     "crates/friday-protocol",
+    "crates/friday-transport",
     "crates/friday-storage",
     "crates/friday-deepseek",
     "crates/friday-ffi",
@@ -44,6 +45,7 @@ serde_json = "1.0.133"
 friday-core = { path = "crates/friday-core" }
 friday-crypto = { path = "crates/friday-crypto" }
 friday-protocol = { path = "crates/friday-protocol" }
+friday-transport = { path = "crates/friday-transport" }
 friday-storage = { path = "crates/friday-storage" }
 friday-deepseek = { path = "crates/friday-deepseek" }
 friday-ffi = { path = "crates/friday-ffi" }

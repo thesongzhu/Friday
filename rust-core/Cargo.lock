@@ -298,6 +298,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "friday-transport"
+version = "0.0.1"
+dependencies = [
+ "friday-crypto",
+ "friday-protocol",
+ "thiserror",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
