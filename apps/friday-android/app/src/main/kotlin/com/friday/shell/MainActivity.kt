@@ -20,6 +20,7 @@ import uniffi.friday_ffi.initialConnectionState
 import uniffi.friday_ffi.markActivityDone
 import uniffi.friday_ffi.negotiateSchemaVersion
 import uniffi.friday_ffi.phoneActivityDemo
+import uniffi.friday_ffi.phoneTokenUsage
 import uniffi.friday_ffi.protocolSchemaVersion
 import uniffi.friday_ffi.sampleActivityInbox
 import uniffi.friday_ffi.sampleMemoryReview
@@ -35,7 +36,7 @@ class MainActivity : Activity() {
         // the bundled jniLib; point JNA's library search at the native-lib dir.
         System.setProperty("jna.library.path", applicationInfo.nativeLibraryDir)
 
-        val tv = TextView(this).apply { textSize = 15f }
+        val tv = TextView(this).apply { textSize = 13f }
 
         // Real WRITE path control: mark the oldest pending activity done, persist,
         // and refresh from the store.
@@ -108,6 +109,18 @@ class MainActivity : Activity() {
                 if (note.isNotEmpty()) appendLine("  $note")
             } else {
                 appendLine("Activity (live store error): ${phoneActivity.error}")
+            }
+            appendLine()
+            val tokens = phoneTokenUsage(dbPath)
+            if (tokens.ok) {
+                appendLine("Tokens / cost (${tokens.items.size}, live · phone ledger):")
+                for (t in tokens.items) {
+                    val cost = t.costEstimate?.let { "$%.4f".format(it) } ?: "—"
+                    val flag = if (t.fallback) "⚠ fallback" else "direct"
+                    appendLine("  ${t.provider}/${t.model}: ${t.totalTokens} tok · $cost · $flag")
+                }
+            } else {
+                appendLine("Tokens (live ledger error): ${tokens.error}")
             }
             appendLine()
             append("rendered from Rust ✓")
