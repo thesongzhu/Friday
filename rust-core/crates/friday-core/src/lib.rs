@@ -15,6 +15,9 @@
 mod activity;
 mod conn;
 mod error;
+/// Canonical mutating-action gate decision core (PR-3a). Public module (rather than
+/// flat re-export) so the generically-named `gate::evaluate` is unambiguous.
+pub mod gate;
 mod identity;
 mod ledger;
 mod memory;
