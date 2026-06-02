@@ -14,6 +14,7 @@ pub mod blob;
 mod error;
 mod migrate;
 pub mod offline;
+pub mod pairing;
 mod schema;
 
 pub use error::{Result, StorageError};

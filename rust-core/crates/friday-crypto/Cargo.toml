@@ -16,4 +16,5 @@ zeroize.workspace = true
 # disable StaticSecret wipe-on-drop.
 x25519-dalek = { version = "2.0.1", features = ["static_secrets", "zeroize"] }
 hkdf = "0.12.4"
+hmac = "0.12.1"
 sha2.workspace = true

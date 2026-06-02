@@ -248,6 +248,7 @@ version = "0.0.1"
 dependencies = [
  "chacha20poly1305",
  "hkdf",
+ "hmac",
  "sha2",
  "thiserror",
  "x25519-dalek",

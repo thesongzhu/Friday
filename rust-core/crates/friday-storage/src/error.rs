@@ -23,6 +23,11 @@ pub enum StorageError {
     #[error("unsupported for this profile: {0}")]
     Unsupported(String),
 
+    /// Pairing proof did not authenticate the device's public key against the
+    /// out-of-band QR secret (gate 21 §4.2; blocks active-MITM key substitution).
+    #[error("pairing denied: invalid pairing proof for device {0}")]
+    PairingDenied(String),
+
     #[error("core error: {0}")]
     Core(#[from] friday_core::CoreError),
 

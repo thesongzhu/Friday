@@ -24,7 +24,9 @@ use std::collections::HashMap;
 use thiserror::Error;
 use zeroize::ZeroizeOnDrop;
 
+pub mod pairing;
 pub mod session;
+pub use pairing::{pairing_proof, verify_pairing_proof};
 pub use session::DeviceKeypair;
 
 const KEY_LEN: usize = 32;
