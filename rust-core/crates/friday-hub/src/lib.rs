@@ -880,14 +880,15 @@ impl ToolExecutor for FsToolExecutor {
 /// the gate decision (the gate WAS enforced; the tool merely failed) — `executed`
 /// reflects whether the tool actually completed.
 ///
-/// Known error-path limitations (Reviewer-A NITs, tracked follow-up — happy path is
-/// clean): (1) the outcome `agent_run` event autocommits BEFORE the audit-receipt tx,
-/// so a SQLite error during the receipt commit leaves the event log ahead of the
-/// hash-chained ledger; (2) `write_file` truncates-on-open (friday-fs `set_len(0)`),
-/// so a mid-write I/O failure AFTER a successful open can leave a truncated file with
-/// an event but no audit receipt (a missing-param write errors before the open, so it
-/// does not truncate). The follow-up records an `exec_failed` audit receipt on the
-/// error path and writes via temp+rename for atomicity.
+/// Ledger consistency (task #30): the outcome `agent_run` event AND the hash-chained
+/// audit receipt are written in ONE transaction, so the event log can never get ahead
+/// of the hash-chained ledger on a partial commit; and BOTH the success and the error
+/// paths record a receipt (`tool.exec_failed:*` on error) so the audit chain reflects
+/// every gate-Allowed dispatch attempt. This makes the LEDGER internally consistent — it
+/// does NOT make the file write and the ledger atomic (`execute()` commits the file side
+/// effect before the tx opens). Remaining (tracked, #30b): `write_file` truncates-on-open
+/// (friday-fs `set_len(0)`), so a mid-write I/O failure AFTER a successful open can leave
+/// a truncated file; the fix is a temp-file + atomic-rename write in friday-fs.
 #[allow(clippy::too_many_arguments)]
 pub fn run_one_turn_with_executor(
     client: &dyn AgentLlmClient,
@@ -970,20 +971,29 @@ pub fn run_one_turn_with_executor(
         });
     }
 
-    // Allow → real dispatch. Record the outcome event + a hash-chained audit receipt.
+    // Allow → real dispatch. The outcome event AND the hash-chained audit receipt are
+    // written in ONE transaction (task #30) so the event log can never get ahead of the
+    // hash-chained ledger on a partial commit. Both success AND error now record a
+    // receipt (`tool.exec_failed:*` on error) so the audit chain reflects every
+    // gate-Allowed dispatch attempt. (NOTE: the file side effect is committed by
+    // `execute()` BEFORE this tx opens — this makes the LEDGER internally consistent, it
+    // does NOT make the file write and the ledger atomic; durable file atomicity is the
+    // separate temp+rename follow-up, #30b.)
+    let event_id = format!("{run_id}:t{turn_index}:outcome");
+    let receipt_id = format!("{run_id}:t{turn_index}:receipt");
     match executor.execute(&raw.action, &raw.params) {
         Ok(receipt) => {
+            let tx = conn.unchecked_transaction()?;
             agent_run::record_event(
-                conn,
-                &format!("{run_id}:t{turn_index}:outcome"),
+                &tx,
+                &event_id,
                 run_id,
                 &format!("tool.executed:{}", receipt.summary),
                 now_ms,
             )?;
-            let tx = conn.unchecked_transaction()?;
             friday_storage::audit::append_audit(
                 &tx,
-                &format!("{run_id}:t{turn_index}:receipt"),
+                &receipt_id,
                 "hub-agent",
                 &format!("tool.executed:{}", receipt.action),
                 Some(&receipt.summary),
@@ -998,16 +1008,27 @@ pub fn run_one_turn_with_executor(
             })
         }
         Err(e) => {
+            let err_text = format!("{e}");
+            let tx = conn.unchecked_transaction()?;
             agent_run::record_event(
-                conn,
-                &format!("{run_id}:t{turn_index}:outcome"),
+                &tx,
+                &event_id,
                 run_id,
-                &format!("tool.exec_error:{e}"),
+                &format!("tool.exec_error:{err_text}"),
                 now_ms,
             )?;
+            friday_storage::audit::append_audit(
+                &tx,
+                &receipt_id,
+                "hub-agent",
+                &format!("tool.exec_failed:{}", raw.action),
+                Some(&err_text),
+                now_ms,
+            )?;
+            tx.commit()?;
             Ok(TurnOutcome {
                 decision: GateDecision::Allow,
-                reason: format!("exec_error:{e}"),
+                reason: format!("exec_error:{err_text}"),
                 executed: false,
                 plan_kind,
             })
@@ -1156,14 +1177,16 @@ pub fn run_loop(
         match record.decision {
             GateDecision::Allow => match executor.execute(&raw.action, &raw.params) {
                 Ok(receipt) => {
+                    // Outcome event + hash-chained receipt in ONE tx (task #30): the
+                    // event log can't get ahead of the ledger on a partial commit.
+                    let tx = conn.unchecked_transaction()?;
                     agent_run::record_event(
-                        conn,
+                        &tx,
                         &ev("outcome"),
                         run_id,
                         &format!("tool.executed:{}", receipt.summary),
                         now_ms,
                     )?;
-                    let tx = conn.unchecked_transaction()?;
                     friday_storage::audit::append_audit(
                         &tx,
                         &ev("receipt"),
@@ -1181,19 +1204,32 @@ pub fn run_loop(
                     });
                 }
                 Err(e) => {
+                    // A tool error is informative, not fatal: thread it back and let the
+                    // model adapt on the next turn (still bounded by max_turns). The error
+                    // event + an `exec_failed` receipt are written in ONE tx so a
+                    // gate-Allowed-but-failed dispatch is still on the hash-chained ledger.
+                    let err_text = format!("{e}");
+                    let tx = conn.unchecked_transaction()?;
                     agent_run::record_event(
-                        conn,
+                        &tx,
                         &ev("outcome"),
                         run_id,
-                        &format!("tool.exec_error:{e}"),
+                        &format!("tool.exec_error:{err_text}"),
                         now_ms,
                     )?;
-                    // A tool error is informative, not fatal: thread it back and let the
-                    // model adapt on the next turn (still bounded by max_turns).
+                    friday_storage::audit::append_audit(
+                        &tx,
+                        &ev("receipt"),
+                        "hub-agent",
+                        &format!("tool.exec_failed:{}", raw.action),
+                        Some(&err_text),
+                        now_ms,
+                    )?;
+                    tx.commit()?;
                     history.push(TurnTrace {
                         action: raw.action.clone(),
                         params: raw.params.clone(),
-                        outcome: format!("exec_error: {e}"),
+                        outcome: format!("exec_error: {err_text}"),
                     });
                 }
             },
@@ -1859,6 +1895,18 @@ mod tests {
             "reason was {:?}",
             out.reason
         );
+        // #30: the gate-Allowed-but-failed dispatch records a hash-chained exec_failed
+        // receipt (atomic with the error event), and the chain still verifies.
+        let failed: i64 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM audit_ledger WHERE audit_id='r1:t0:receipt' AND action LIKE 'tool.exec_failed:%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(failed, 1, "an exec_failed audit receipt was recorded");
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
     }
 
     #[test]
@@ -2292,6 +2340,21 @@ mod tests {
             errs, 1,
             "the exec error was recorded and threaded back, not swallowed"
         );
+        // #30: the error turn also wrote a hash-chained exec_failed receipt (atomic with
+        // the event), so the chain reflects the failed dispatch and still verifies.
+        let failed: i64 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM audit_ledger WHERE action LIKE 'tool.exec_failed:%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            failed, 1,
+            "the exec_error turn recorded one exec_failed receipt"
+        );
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
     }
 
     #[test]
