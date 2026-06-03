@@ -25,6 +25,7 @@ mod offline;
 mod pathsafe;
 mod planning;
 mod session;
+mod skill;
 mod tool_policy;
 mod workflow;
 
@@ -42,6 +43,7 @@ pub use offline::OfflineQueueState;
 pub use pathsafe::{contained, PathError};
 pub use planning::{classify_kind, PlanState, PlanningKind};
 pub use session::SessionState;
+pub use skill::SkillState;
 pub use tool_policy::{
     contains_blocked_shell_char, contains_sensitive_assignment, contains_sensitive_material,
     is_destructive_request, shell_risk, touches_protected_artifact, Risk, ShellRisk,
