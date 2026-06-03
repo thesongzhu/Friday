@@ -2856,6 +2856,51 @@ mod ask_coupling_tests {
     }
 
     #[test]
+    fn ask_with_recall_gates_sensitive_memory_out_of_the_answer() {
+        // Pins the Passport gate DIRECTLY on the ask surface (defense against a future
+        // refactor that bypasses the shared recall_preamble_for chokepoint): a sensitive
+        // memory must NOT reach the answer under v1 deny-all, while a non-sensitive one does.
+        let mut db = Db::open_hub(&tmp("recall-ask-sens")).unwrap();
+        seed_owned_confirmed(&db, "ok", "codename FRIDAYMARKER-OK is public.", "owner");
+        friday_storage::memory::record_candidate(
+            db.conn(),
+            &friday_storage::memory::NewMemoryCandidate {
+                memory_id: "sens",
+                scope: friday_core::MemoryScope::Global,
+                content_ref: None,
+                content: Some("home address FRIDAYMARKER-SECRET"),
+                principal_id: Some("owner"),
+                sensitive: true,
+                created_at: 1,
+            },
+        )
+        .unwrap();
+        friday_storage::memory::confirm(db.conn(), "sens", 2).unwrap();
+        let client = friday_deepseek::DeepSeekClient::with_transport(EchoTransport, "k".into());
+        let out = record_friday_ask_with_recall(
+            &mut db,
+            &client,
+            Some("owner"),
+            "l1",
+            "s1",
+            "a1",
+            "tell me",
+            256,
+            1000,
+        )
+        .unwrap();
+        assert!(
+            out.content.contains("FRIDAYMARKER-OK"),
+            "non-sensitive memory should inject"
+        );
+        assert!(
+            !out.content.contains("FRIDAYMARKER-SECRET"),
+            "a sensitive memory must NOT reach the answer under deny-all: {:?}",
+            out.content
+        );
+    }
+
+    #[test]
     #[ignore = "live: requires FRIDAY_DEEPSEEK_API_KEY; run manually (PROOF-MEMORY-001 proof). \
                 The locked credential file is /private/tmp/friday-closure-20260530/.deepseek-env; \
                 source it, never print the key (07 §2.5)."]
