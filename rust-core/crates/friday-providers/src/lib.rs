@@ -21,6 +21,7 @@ use thiserror::Error;
 pub mod claude_control;
 pub mod codex_appserver;
 pub mod session;
+pub mod unified;
 pub use session::{send_to_provider, CliSession, MockSession, SessionOutcome, SessionRunner};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
