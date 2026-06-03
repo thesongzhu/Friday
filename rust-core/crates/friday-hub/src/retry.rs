@@ -93,12 +93,14 @@ mod tests {
             RetryDisposition::classify_deepseek(&DeepSeekError::ProviderUnavailable("503".into())),
             RetryDisposition::Retryable
         );
-        // Everything else is Terminal — retrying cannot fix it.
+        // Everything else is Terminal — retrying cannot fix it. (All 5 non-transient
+        // variants pinned, incl. Core — exhaustive coverage of the mapping.)
         for terminal in [
             DeepSeekError::CredentialMissing,
             DeepSeekError::Auth(401),
             DeepSeekError::BadResponse("garbage".into()),
             DeepSeekError::NoModels,
+            DeepSeekError::Core(friday_core::CoreError::BlockedTransfer("x".into())),
         ] {
             assert_eq!(
                 RetryDisposition::classify_deepseek(&terminal),
@@ -125,6 +127,22 @@ mod tests {
         assert_eq!(
             RetryDisposition::classify_routed(&RoutedLoopError::NoClientForProvider(
                 "deepseek".into()
+            )),
+            RetryDisposition::Terminal
+        );
+        // The remaining two variants pinned too (no-route selection + Hub-internal storage).
+        assert_eq!(
+            RetryDisposition::classify_routed(&RoutedLoopError::Route(
+                RouteError::NoEligibleRoute {
+                    required_capabilities: vec![],
+                    model_size: None,
+                }
+            )),
+            RetryDisposition::Terminal
+        );
+        assert_eq!(
+            RetryDisposition::classify_routed(&RoutedLoopError::Storage(
+                friday_storage::StorageError::Unsupported("x".into())
             )),
             RetryDisposition::Terminal
         );
