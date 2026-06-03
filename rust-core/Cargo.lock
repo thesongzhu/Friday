@@ -474,6 +474,7 @@ dependencies = [
  "friday-core",
  "friday-crypto",
  "friday-deepseek",
+ "friday-fs",
  "friday-providers",
  "friday-storage",
  "rusqlite",

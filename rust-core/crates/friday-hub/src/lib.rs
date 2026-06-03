@@ -538,6 +538,247 @@ pub fn run_one_turn(
     })
 }
 
+// --- the tool executor (real, friday-fs-backed dispatch) ---------------------
+
+/// A receipt of a tool execution: what ran + a short outcome summary. Recorded to the
+/// agent_run event log AND the hash-chained audit ledger.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolReceipt {
+    pub action: String,
+    pub summary: String,
+}
+
+/// Why a tool EXECUTION failed — distinct from the GATE refusing it. The gate runs
+/// first; the executor is only ever reached on `Allow`. Fail-closed: an unsupported
+/// or malformed call errors, never a silent no-op.
+#[derive(Debug)]
+pub enum ExecError {
+    /// A required parameter was absent.
+    MissingParam(String),
+    /// The action is registered but this executor does not implement it (yet).
+    Unsupported(String),
+    /// The hardened safe-open rejected the path (containment/symlink/not-found/...).
+    Fs(friday_fs::FsError),
+    /// A read/write I/O error after a successful safe-open.
+    Io(std::io::Error),
+}
+
+impl std::fmt::Display for ExecError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExecError::MissingParam(p) => write!(f, "missing_param:{p}"),
+            ExecError::Unsupported(a) => write!(f, "unsupported_tool:{a}"),
+            ExecError::Fs(e) => write!(f, "fs_error:{e}"),
+            ExecError::Io(e) => write!(f, "io_error:{e}"),
+        }
+    }
+}
+
+/// Executes an APPROVED tool call. The turn loop reaches an executor ONLY after the
+/// gate returns `Allow` ([`run_one_turn_with_executor`]), so the gate is mandatory
+/// before every dispatch by construction — there is no path from a model proposal to
+/// an executor that skips it (this is the UNW-001 non-optional-DI property).
+pub trait ToolExecutor {
+    fn execute(&self, action: &str, params: &[(String, String)]) -> Result<ToolReceipt, ExecError>;
+}
+
+/// The real executor: file reads/writes go through `friday-fs` hardened safe-open,
+/// contained to a workspace `root` (NEVER `std::fs` on an agent-supplied path). This
+/// slice implements `read_file` + the replace-write `write_file`; higher-risk
+/// registered tools (`delete_file`, `run_command`, `list_dir`, ...) are intentionally
+/// `Unsupported` here — they get their own safe primitives + adverse tests in a later
+/// slice. Fail-closed in every arm.
+pub struct FsToolExecutor {
+    root: std::path::PathBuf,
+}
+
+impl FsToolExecutor {
+    pub fn new(root: impl Into<std::path::PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+    fn param<'a>(params: &'a [(String, String)], key: &str) -> Result<&'a str, ExecError> {
+        params
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+            .ok_or_else(|| ExecError::MissingParam(key.to_string()))
+    }
+}
+
+impl ToolExecutor for FsToolExecutor {
+    fn execute(&self, action: &str, params: &[(String, String)]) -> Result<ToolReceipt, ExecError> {
+        use std::io::{Read, Write};
+        match action {
+            "read_file" => {
+                let path = Self::param(params, "path")?;
+                let mut file =
+                    friday_fs::open_read_within_root(&self.root, path).map_err(ExecError::Fs)?;
+                let mut buf = String::new();
+                let n = file.read_to_string(&mut buf).map_err(ExecError::Io)?;
+                Ok(ToolReceipt {
+                    action: action.to_string(),
+                    summary: format!("read {n} bytes from {path}"),
+                })
+            }
+            "write_file" => {
+                let path = Self::param(params, "path")?;
+                let content = Self::param(params, "content")?;
+                let mut file = friday_fs::open_write_within_root(&self.root, path, true)
+                    .map_err(ExecError::Fs)?;
+                file.write_all(content.as_bytes()).map_err(ExecError::Io)?;
+                Ok(ToolReceipt {
+                    action: action.to_string(),
+                    summary: format!("wrote {} bytes to {path}", content.len()),
+                })
+            }
+            other => Err(ExecError::Unsupported(other.to_string())),
+        }
+    }
+}
+
+/// Drive ONE composed agent turn with a REAL [`ToolExecutor`] — the runtime-proven
+/// dispatch. Identical to [`run_one_turn`] through authorization, then: the executor
+/// is reached ONLY on a gate `Allow` (the gate is mandatory before every dispatch —
+/// UNW-001), and a successful execution is recorded both as an agent_run event and as
+/// a HASH-CHAINED audit receipt. A tool-execution error is recorded but does not flip
+/// the gate decision (the gate WAS enforced; the tool merely failed) — `executed`
+/// reflects whether the tool actually completed.
+///
+/// Known error-path limitations (Reviewer-A NITs, tracked follow-up — happy path is
+/// clean): (1) the outcome `agent_run` event autocommits BEFORE the audit-receipt tx,
+/// so a SQLite error during the receipt commit leaves the event log ahead of the
+/// hash-chained ledger; (2) `write_file` truncates-on-open (friday-fs `set_len(0)`),
+/// so a mid-write I/O failure AFTER a successful open can leave a truncated file with
+/// an event but no audit receipt (a missing-param write errors before the open, so it
+/// does not truncate). The follow-up records an `exec_failed` audit receipt on the
+/// error path and writes via temp+rename for atomicity.
+#[allow(clippy::too_many_arguments)]
+pub fn run_one_turn_with_executor(
+    client: &dyn AgentLlmClient,
+    executor: &dyn ToolExecutor,
+    conn: &Connection,
+    run_id: &str,
+    turn_index: u64,
+    task: &str,
+    secret: &[u8],
+    approval: Option<&CanonicalApproval>,
+    now_ms: i64,
+) -> Result<TurnOutcome, StorageError> {
+    let plan_kind = friday_core::classify_kind(task).map(|k| k.as_str());
+    agent_run::record_event(
+        conn,
+        &format!("{run_id}:t{turn_index}:plan"),
+        run_id,
+        &format!("plan.{}", plan_kind.unwrap_or("none")),
+        now_ms,
+    )?;
+
+    let raw = match client.propose_tool_call(task) {
+        Ok(raw) => raw,
+        Err(e) => {
+            agent_run::record_event(
+                conn,
+                &format!("{run_id}:t{turn_index}:outcome"),
+                run_id,
+                &format!("agent.error:{e}"),
+                now_ms,
+            )?;
+            return Ok(TurnOutcome {
+                decision: GateDecision::Deny,
+                reason: format!("agent_error:{e}"),
+                executed: false,
+                plan_kind,
+            });
+        }
+    };
+
+    let request = match build_request(&raw) {
+        Ok(request) => request,
+        Err(ToolError::UnknownTool(action)) => {
+            agent_run::record_event(
+                conn,
+                &format!("{run_id}:t{turn_index}:outcome"),
+                run_id,
+                &format!("tool.rejected:unregistered:{action}"),
+                now_ms,
+            )?;
+            return Ok(TurnOutcome {
+                decision: GateDecision::Deny,
+                reason: "unregistered_tool".to_string(),
+                executed: false,
+                plan_kind,
+            });
+        }
+    };
+
+    let record = authorize_mutating_action(conn, &request, approval, secret, now_ms)?;
+
+    // The gate is the ONLY path to the executor: dispatch happens IFF Allow.
+    if !matches!(record.decision, GateDecision::Allow) {
+        agent_run::record_event(
+            conn,
+            &format!("{run_id}:t{turn_index}:outcome"),
+            run_id,
+            &format!(
+                "tool.blocked:{}:{}",
+                record.decision.as_str(),
+                record.reason
+            ),
+            now_ms,
+        )?;
+        return Ok(TurnOutcome {
+            decision: record.decision,
+            reason: record.reason,
+            executed: false,
+            plan_kind,
+        });
+    }
+
+    // Allow → real dispatch. Record the outcome event + a hash-chained audit receipt.
+    match executor.execute(&raw.action, &raw.params) {
+        Ok(receipt) => {
+            agent_run::record_event(
+                conn,
+                &format!("{run_id}:t{turn_index}:outcome"),
+                run_id,
+                &format!("tool.executed:{}", receipt.summary),
+                now_ms,
+            )?;
+            let tx = conn.unchecked_transaction()?;
+            friday_storage::audit::append_audit(
+                &tx,
+                &format!("{run_id}:t{turn_index}:receipt"),
+                "hub-agent",
+                &format!("tool.executed:{}", receipt.action),
+                Some(&receipt.summary),
+                now_ms,
+            )?;
+            tx.commit()?;
+            Ok(TurnOutcome {
+                decision: GateDecision::Allow,
+                reason: record.reason,
+                executed: true,
+                plan_kind,
+            })
+        }
+        Err(e) => {
+            agent_run::record_event(
+                conn,
+                &format!("{run_id}:t{turn_index}:outcome"),
+                run_id,
+                &format!("tool.exec_error:{e}"),
+                now_ms,
+            )?;
+            Ok(TurnOutcome {
+                decision: GateDecision::Allow,
+                reason: format!("exec_error:{e}"),
+                executed: false,
+                plan_kind,
+            })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -965,5 +1206,249 @@ mod tests {
             kind.starts_with("agent.error:"),
             "outcome kind was {kind:?}"
         );
+    }
+
+    // --- §5-PR3: real ToolExecutor over friday-fs, gate mandatory before dispatch ---
+
+    /// A unique temp directory (workspace root for the executor), removed on drop.
+    struct TempDir(std::path::PathBuf);
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            static C: AtomicU64 = AtomicU64::new(0);
+            let mut p = std::env::temp_dir();
+            p.push(format!(
+                "friday-hub-exec-{}-{}-{}",
+                std::process::id(),
+                tag,
+                C.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&p).unwrap();
+            TempDir(p)
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn raw(action: &str, params: &[(&str, &str)]) -> RawToolCall {
+        RawToolCall {
+            action: action.to_string(),
+            params: params
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn read_file_executes_on_allow_via_real_fs_with_audit_receipt() {
+        let root = TempDir::new("read");
+        std::fs::write(root.0.join("notes.md"), b"hello from disk").unwrap();
+        let db = Db::open_hub(&temp_path("exec-read")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "read notes.md", 1).unwrap();
+        let client = MockAgentLlmClient {
+            proposal: raw("read_file", &[("path", "notes.md")]),
+        };
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_one_turn_with_executor(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            0,
+            "read notes.md",
+            SECRET,
+            None,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.decision, GateDecision::Allow);
+        assert!(out.executed, "read_file is non-mutating → Allow → executes");
+        // The outcome event names a real byte count, and a hash-chained audit receipt exists + verifies.
+        let kind: String = db
+            .conn()
+            .query_row(
+                "SELECT kind FROM agent_run_event WHERE event_id='r1:t0:outcome'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            kind.contains("read 15 bytes from notes.md"),
+            "outcome was {kind:?}"
+        );
+        let receipts: i64 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM audit_ledger WHERE audit_id='r1:t0:receipt'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(receipts, 1, "one hash-chained audit receipt");
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
+    }
+
+    #[test]
+    fn write_file_executes_and_reads_back_via_real_fs() {
+        let root = TempDir::new("write");
+        let db = Db::open_hub(&temp_path("exec-write")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "write out.txt", 1).unwrap();
+        // write_file is mutating → needs an approval to reach Allow. Mint one over the
+        // exact request the turn will build.
+        let proposal = raw(
+            "write_file",
+            &[("path", "out.txt"), ("content", "written by friday")],
+        );
+        let request = build_request(&proposal).unwrap();
+        let approval = mint_approval(&request, "ap-w", SECRET, 5000);
+        let client = MockAgentLlmClient { proposal };
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_one_turn_with_executor(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            0,
+            "write out.txt",
+            SECRET,
+            Some(&approval),
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.decision, GateDecision::Allow);
+        assert!(out.executed);
+        // The bytes really landed on disk inside the root.
+        assert_eq!(
+            std::fs::read_to_string(root.0.join("out.txt")).unwrap(),
+            "written by friday"
+        );
+    }
+
+    #[test]
+    fn mutating_without_approval_never_reaches_the_executor() {
+        let root = TempDir::new("noappr");
+        let db = Db::open_hub(&temp_path("exec-noappr")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "write secret.txt", 1).unwrap();
+        let client = MockAgentLlmClient {
+            proposal: raw("write_file", &[("path", "secret.txt"), ("content", "X")]),
+        };
+        let executor = FsToolExecutor::new(&root.0);
+        // No approval → mutating write → RequiresApproval → executor NEVER invoked.
+        let out = run_one_turn_with_executor(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            0,
+            "write secret.txt",
+            SECRET,
+            None,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.decision, GateDecision::RequiresApproval);
+        assert!(!out.executed);
+        // The gate-before-dispatch property: NO file was written (the executor was not reached).
+        assert!(
+            !root.0.join("secret.txt").exists(),
+            "gate must block dispatch — no file written"
+        );
+    }
+
+    #[test]
+    fn unsupported_tool_errors_after_allow_without_panicking() {
+        let root = TempDir::new("unsup");
+        let db = Db::open_hub(&temp_path("exec-unsup")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "list the dir", 1).unwrap();
+        // list_dir is registered + read-only → Allow → executor returns Unsupported.
+        let client = MockAgentLlmClient {
+            proposal: raw("list_dir", &[("path", ".")]),
+        };
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_one_turn_with_executor(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            0,
+            "list the dir",
+            SECRET,
+            None,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.decision, GateDecision::Allow);
+        assert!(!out.executed, "unsupported tool did not complete");
+        assert!(
+            out.reason.starts_with("exec_error:"),
+            "reason was {:?}",
+            out.reason
+        );
+    }
+
+    #[test]
+    fn executor_read_outside_root_is_refused_by_friday_fs() {
+        let root = TempDir::new("escape");
+        let executor = FsToolExecutor::new(&root.0);
+        // A traversal path is refused by the hardened safe-open, surfaced as ExecError::Fs.
+        let err = executor
+            .execute(
+                "read_file",
+                &[("path".to_string(), "../../etc/passwd".to_string())],
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, ExecError::Fs(_)),
+            "expected Fs containment error, got {err:?}"
+        );
+    }
+
+    /// LIVE end-to-end (runtime-proven, the UNW-001 read-only path). Ignored in CI (no
+    /// key); run manually with the Hub key. Real DeepSeek proposes → strict parse →
+    /// trusted_classify → gate Allow → REAL friday-fs read → hash-chained audit
+    /// receipt. The full live dispatch with the gate enforced. Never prints the key.
+    #[test]
+    #[ignore = "live: requires FRIDAY_DEEPSEEK_API_KEY; run manually (see ledger)"]
+    fn live_read_only_turn_executes_through_the_gate_e2e() {
+        let root = TempDir::new("live-e2e");
+        std::fs::write(root.0.join("notes.md"), b"Friday live e2e note.").unwrap();
+        let db = Db::open_hub(&temp_path("live-e2e")).unwrap();
+        agent_run::create_run(
+            db.conn(),
+            "r1",
+            "read the file notes.md and summarize it",
+            1,
+        )
+        .unwrap();
+        let client = DeepSeekAgentLlmClient::new(
+            friday_deepseek::DeepSeekClient::from_env()
+                .expect("FRIDAY_DEEPSEEK_API_KEY must be set"),
+        );
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_one_turn_with_executor(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            0,
+            "read the file notes.md and summarize it",
+            SECRET,
+            None,
+            5000,
+        )
+        .unwrap();
+        eprintln!(
+            "LIVE e2e: decision={:?} executed={} reason={}",
+            out.decision, out.executed, out.reason
+        );
+        // If the live model proposed the read_file tool (non-mutating), it Allows,
+        // executes via real friday-fs, and leaves a verifiable audit receipt.
+        if out.executed {
+            assert_eq!(out.decision, GateDecision::Allow);
+            assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
+        }
     }
 }
