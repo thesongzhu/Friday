@@ -655,6 +655,46 @@ mod tests {
     }
 
     #[test]
+    fn resume_of_a_sensitive_read_executes_on_resume_alone_no_crypto_approval() {
+        // Locks the documented authorization asymmetry: a sensitive READ checkpoints at
+        // the planner, but on RESUME it is gate-Allowed (a read needs no approval) — the
+        // resume_workflow call IS the human authorization. Even with deny-all (no minted
+        // approval), the resumed read executes. (A mutating step would still need a crypto
+        // approval — proven by resume_without_a_valid_approval_re_pauses.)
+        let db = Db::open_hub(&tmp("resume-sensread")).unwrap();
+        let exec = CountingExec {
+            calls: Cell::new(0),
+        };
+        let def = WorkflowDefinition {
+            name: "audit".into(),
+            steps: vec![step(
+                "read_secret",
+                "read_file",
+                &[("path", "id_rsa")],
+                false,
+                false,
+            )],
+        };
+        // Pause at the sensitive read; the executor is NOT called.
+        let paused = run_workflow(&def, &exec, db.conn(), "r1", SECRET, &deny_all, 100).unwrap();
+        assert!(matches!(
+            paused.status,
+            WorkflowRunStatus::AwaitingCheckpoint { .. }
+        ));
+        assert_eq!(exec.calls.get(), 0);
+        // Resume with NO crypto approval (deny-all) → the read executes (resume is the
+        // authorization for a read) → run reaches Done.
+        let out = resume_workflow(&def, &exec, db.conn(), "r1", SECRET, &deny_all, 200).unwrap();
+        assert_eq!(out.status, WorkflowRunStatus::Completed);
+        assert_eq!(
+            exec.calls.get(),
+            1,
+            "the sensitive read executes on resume alone"
+        );
+        assert_eq!(run_state(&db, "r1"), "done");
+    }
+
+    #[test]
     fn resume_advances_to_the_next_checkpoint() {
         let db = Db::open_hub(&tmp("resume-next")).unwrap();
         let exec = CountingExec {
