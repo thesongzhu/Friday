@@ -58,6 +58,12 @@ pub mod diagnostics;
 /// release gate (honest `false` in this build).
 pub mod setup;
 
+/// Step-4 — memory-recall cognition (PROOF-MEMORY-001): recency-decay ranking +
+/// top-k bound + PII redaction over `recall_confirmed`'s rows, before any recalled
+/// memory is injected into a provider prompt. Hub-only (recall is Hub-side). No
+/// semantic/embedding recall (greenfield NO-GO — not claimed).
+pub mod cognition;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,

@@ -123,6 +123,19 @@ fn ffi_dependency_closure_excludes_deepseek() {
         "PHONE FS-PRIVILEGE LEAK: friday-ffi transitively depends on friday-fs; closure = {ffi_closure:?}"
     );
 
+    // friday-hub is the Hub composition root: it links the provider-secret crates
+    // AND Hub-only logic (the agent loop, memory-recall cognition + its `regex`
+    // dep). The phone never recalls and must never link the Hub — keeping
+    // friday-hub out of the ffi closure also keeps `regex` off the phone.
+    assert!(
+        graph.contains_key("friday-hub"),
+        "friday-hub crate not found"
+    );
+    assert!(
+        !ffi_closure.contains("friday-hub"),
+        "PHONE HUB LEAK: friday-ffi transitively depends on friday-hub (composition root + secret/recall logic); closure = {ffi_closure:?}"
+    );
+
     // Sanity: the phone crate does link the phone-side crates it actually uses.
     for expected in ["friday-core", "friday-storage", "friday-crypto"] {
         assert!(
