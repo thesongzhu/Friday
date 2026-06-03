@@ -139,7 +139,12 @@ pub fn plan_step(step: &WorkflowStep) -> StepDisposition {
     // Sensitive-resource floor (`#389`/`#494`): even a read of a token/secret/key/.pem
     // resource checkpoints — not template-overridable. The classifier already extracted
     // the resource from a path/target/file param; we screen it with the same detector
-    // the read-side gate uses. (Closes the #505 gap for the workflow path.)
+    // the read-side gate uses. (Closes the #505 gap for the workflow path.) NOTE the
+    // floor fires only when a resource is extracted, which `classify` does solely from
+    // params named `path`/`target`/`file` (the same extraction the approval-digest
+    // scoping uses) — the built-in read tools all use `path`, but a future custom
+    // tool-pack read tool naming its target differently would need that extraction
+    // extended to stay screened here.
     if classified
         .resource()
         .is_some_and(friday_core::gate::is_sensitive_resource)
