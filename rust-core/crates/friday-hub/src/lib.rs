@@ -54,29 +54,54 @@ pub struct RawToolCall {
     pub params: Vec<(String, String)>,
 }
 
-/// The model-client seam (mirrors `friday-deepseek`'s `Transport` DI pattern). The
-/// turn loop dispatches through this so it is unit-testable with a mock; the live
-/// impl over `friday-deepseek` is the runtime-proven slice (not this tracer). It
-/// returns only the untrusted [`RawToolCall`] — classification is the Hub's job.
-pub trait AgentLlmClient {
-    fn propose_tool_call(&self, task: &str) -> RawToolCall;
+/// Why the model client could not produce a tool call this turn. The seam is fallible
+/// because the live impl does real I/O (the model can be unreachable) and parses
+/// untrusted model output (which can violate the tool-call contract). Both are turn
+/// failures the caller fail-closes on — never a silent default.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AgentError {
+    /// The model/transport call itself failed (network, auth, bad response).
+    Model(String),
+    /// The model replied, but its output did not parse as a single valid tool-call
+    /// object per the contract (prose, multiple objects, missing `tool`, bad JSON).
+    Parse(String),
 }
 
-/// A mock client that returns a fixed raw call — used by the tracer to prove the
-/// composition without a live model call.
+impl std::fmt::Display for AgentError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AgentError::Model(m) => write!(f, "model_error: {m}"),
+            AgentError::Parse(m) => write!(f, "parse_error: {m}"),
+        }
+    }
+}
+
+/// The model-client seam (mirrors `friday-deepseek`'s `Transport` DI pattern). The
+/// turn loop dispatches through this so it is unit-testable with a mock; the live impl
+/// over `friday-deepseek` is the runtime-proven slice. It returns only the untrusted
+/// [`RawToolCall`] (classification is the Hub's job), or an [`AgentError`] — the turn
+/// fail-closes on `Err`, it is never treated as a no-op or a non-mutating action.
+pub trait AgentLlmClient {
+    fn propose_tool_call(&self, task: &str) -> Result<RawToolCall, AgentError>;
+}
+
+/// A mock client that returns a fixed raw call — used to prove the composition
+/// without a live model call.
 pub struct MockAgentLlmClient {
     pub proposal: RawToolCall,
 }
 
 impl AgentLlmClient for MockAgentLlmClient {
-    fn propose_tool_call(&self, _task: &str) -> RawToolCall {
-        self.proposal.clone()
+    fn propose_tool_call(&self, _task: &str) -> Result<RawToolCall, AgentError> {
+        Ok(self.proposal.clone())
     }
 }
 
-/// Real model-client adapter over `friday-deepseek` (establishes the secret-bearing
-/// dependency + is the home of the future live `AgentLlmClient` impl). The live
-/// model→tool-call parse is the runtime-proven slice; this tracer does not call it.
+/// Real model-client adapter over `friday-deepseek` (the runtime-proven slice). It
+/// builds the tool-call prompt, calls the live model (`fallback=false`), and parses
+/// the reply STRICTLY back into a [`RawToolCall`]. The model output is untrusted: the
+/// parse fails closed (an `AgentError`) on any contract violation, and the Hub — not
+/// the model — classifies the resulting call via `build_request`/`trusted_classify`.
 pub struct DeepSeekAgentLlmClient<T: friday_deepseek::Transport> {
     client: friday_deepseek::DeepSeekClient<T>,
 }
@@ -85,11 +110,121 @@ impl<T: friday_deepseek::Transport> DeepSeekAgentLlmClient<T> {
     pub fn new(client: friday_deepseek::DeepSeekClient<T>) -> Self {
         Self { client }
     }
-    /// Passthrough to the route's model discovery — the real `friday-deepseek` path
-    /// the live client will build on.
+    /// Passthrough to the route's model discovery.
     pub fn discover_models(&self) -> Result<Vec<String>, friday_deepseek::DeepSeekError> {
         self.client.discover_models()
     }
+}
+
+impl<T: friday_deepseek::Transport> AgentLlmClient for DeepSeekAgentLlmClient<T> {
+    fn propose_tool_call(&self, task: &str) -> Result<RawToolCall, AgentError> {
+        let models = self
+            .client
+            .discover_models()
+            .map_err(|e| AgentError::Model(format!("{e:?}")))?;
+        let model = friday_deepseek::select_model(&models)
+            .ok_or_else(|| AgentError::Model("no model available".to_string()))?;
+        let prompt = build_tool_prompt(task);
+        // 512 tokens is ample for one tool-call JSON object.
+        let outcome = self
+            .client
+            .chat(&model, &prompt, 512)
+            .map_err(|e| AgentError::Model(format!("{e:?}")))?;
+        parse_tool_call(&outcome.content)
+    }
+}
+
+/// Tools advertised to the model. MUST stay aligned with `tool_spec` (the trusted
+/// allow-list): a tool the model is told about but that `tool_spec` does not register
+/// would be refused at `build_request`; a registered tool not advertised here simply
+/// won't be proposed. The model can still NAME anything — the registry is the gate.
+const ADVERTISED_TOOLS: &[(&str, &str)] = &[
+    ("read_file", "read a file's contents (params: path)"),
+    ("list_dir", "list a directory's entries (params: path)"),
+    (
+        "write_file",
+        "create or replace a file (params: path, content)",
+    ),
+    ("edit_file", "modify part of a file (params: path, ...)"),
+    ("delete_file", "delete a file (params: path)"),
+    ("run_command", "run a shell command (params: command)"),
+];
+
+/// Build the tool-call prompt: the tool menu + the EXACT single-JSON-object output
+/// contract the [`parse_tool_call`] reader enforces. Pure + deterministic.
+pub fn build_tool_prompt(task: &str) -> String {
+    let mut s = String::from(
+        "You are Friday's tool-using agent. Pick exactly ONE tool to make progress.\n\
+         Available tools:\n",
+    );
+    for (name, desc) in ADVERTISED_TOOLS {
+        s.push_str(&format!("- {name}: {desc}\n"));
+    }
+    s.push_str(
+        "\nReply with EXACTLY ONE JSON object and nothing else (no prose, no code fence \
+         is required but tolerated), of the form:\n\
+         {\"tool\": \"<tool name>\", \"parameters\": {\"<key>\": \"<value>\"}}\n\
+         All parameter values must be strings. If no tool is needed, reply {\"tool\": \"none\"}.\n\n",
+    );
+    s.push_str("Task: ");
+    s.push_str(task);
+    s.push('\n');
+    s
+}
+
+/// Strip a leading triple-backtick code fence (optionally tagged, e.g. json) and its
+/// closing fence if present, returning the inner body; otherwise the trimmed input
+/// unchanged. Models commonly wrap JSON in a fence; the contract tolerates it.
+fn strip_code_fence(s: &str) -> &str {
+    let t = s.trim();
+    let Some(after_open) = t.strip_prefix("```") else {
+        return t;
+    };
+    // Skip an optional language tag up to (and including) the first newline.
+    let body_start = after_open
+        .find('\n')
+        .map(|i| i + 1)
+        .unwrap_or(after_open.len());
+    let body = &after_open[body_start..];
+    match body.rfind("```") {
+        Some(i) => body[..i].trim(),
+        None => body.trim(),
+    }
+}
+
+/// STRICTLY parse a model reply into a [`RawToolCall`]. Fail-closed by design: the
+/// de-fenced content must be EXACTLY one JSON object (serde_json rejects trailing
+/// data, so prose after the object is a parse error — not a best-effort first match),
+/// with a string `tool` and an optional `parameters` object whose values are all
+/// strings. Any violation is an [`AgentError::Parse`]; the model can never coax a
+/// partial/over-broad match. (`tool: "none"` parses to `action == "none"`, which the
+/// registry treats as an unregistered tool → the turn fail-closes; the richer
+/// "no tool / finish" control flow is the full-loop slice.)
+pub fn parse_tool_call(content: &str) -> Result<RawToolCall, AgentError> {
+    let trimmed = strip_code_fence(content);
+    let value: serde_json::Value = serde_json::from_str(trimmed)
+        .map_err(|e| AgentError::Parse(format!("not a single JSON object: {e}")))?;
+    let obj = value
+        .as_object()
+        .ok_or_else(|| AgentError::Parse("top-level value is not a JSON object".to_string()))?;
+    let action = obj
+        .get("tool")
+        .and_then(|t| t.as_str())
+        .ok_or_else(|| AgentError::Parse("missing or non-string `tool`".to_string()))?
+        .to_string();
+    let mut params = Vec::new();
+    if let Some(p) = obj.get("parameters") {
+        let pobj = p
+            .as_object()
+            .ok_or_else(|| AgentError::Parse("`parameters` is not an object".to_string()))?;
+        for (k, v) in pobj {
+            let vs = v.as_str().ok_or_else(|| {
+                AgentError::Parse(format!("parameter `{k}` value is not a string"))
+            })?;
+            params.push((k.clone(), vs.to_string()));
+        }
+    }
+    Ok(RawToolCall { action, params })
 }
 
 /// Provider auth-readiness, delegating to `friday-providers` (establishes that
@@ -317,13 +452,10 @@ pub fn run_one_turn(
     approval: Option<&CanonicalApproval>,
     now_ms: i64,
 ) -> Result<TurnOutcome, StorageError> {
-    // 1. The model proposes a tool call (untrusted: action + params only).
-    let raw = client.propose_tool_call(task);
-
-    // 2. Plan classification, recorded as an event. event_id keys on the caller's
-    //    monotonic `turn_index` (NOT `now_ms`) so consecutive turns never PK-collide
-    //    on `agent_run_event.event_id` — this is what makes run_one_turn safely
-    //    loopable (a real loop increments turn_index per turn).
+    // 1. Plan classification (on the TASK, independent of the proposal), recorded as an
+    //    event. event_id keys on the caller's monotonic `turn_index` (NOT `now_ms`) so
+    //    consecutive turns never PK-collide on `agent_run_event.event_id` — this is what
+    //    makes run_one_turn safely loopable (a real loop increments turn_index per turn).
     let plan_kind = friday_core::classify_kind(task).map(|k| k.as_str());
     agent_run::record_event(
         conn,
@@ -332,6 +464,27 @@ pub fn run_one_turn(
         &format!("plan.{}", plan_kind.unwrap_or("none")),
         now_ms,
     )?;
+
+    // 2. The model proposes a tool call (untrusted: action + params only). A model or
+    //    parse failure fail-closes to Deny — never a silent no-op or non-mutating action.
+    let raw = match client.propose_tool_call(task) {
+        Ok(raw) => raw,
+        Err(e) => {
+            agent_run::record_event(
+                conn,
+                &format!("{run_id}:t{turn_index}:outcome"),
+                run_id,
+                &format!("agent.error:{e}"),
+                now_ms,
+            )?;
+            return Ok(TurnOutcome {
+                decision: GateDecision::Deny,
+                reason: format!("agent_error:{e}"),
+                executed: false,
+                plan_kind,
+            });
+        }
+    };
 
     // 3. Build the canonical request — the trusted chokepoint. An unregistered tool is
     //    refused HERE (fail closed): it is never authorized and never executed.
@@ -654,5 +807,163 @@ mod tests {
         .unwrap();
         assert_eq!(a.resource, b.resource);
         assert_eq!(a.resource.unwrap().id, Some("p".to_string())); // `path` wins
+    }
+
+    // --- §5-PR2: prompt + strict parse (offline) ---
+
+    #[test]
+    fn build_tool_prompt_lists_tools_and_the_json_contract() {
+        let p = build_tool_prompt("read notes.md");
+        assert!(p.contains("read_file"));
+        assert!(p.contains("delete_file"));
+        assert!(p.contains("\"tool\""));
+        assert!(p.contains("\"parameters\""));
+        assert!(p.contains("read notes.md")); // the task is included
+    }
+
+    #[test]
+    fn parse_accepts_a_single_json_object() {
+        let r =
+            parse_tool_call("{\"tool\":\"read_file\",\"parameters\":{\"path\":\"a.md\"}}").unwrap();
+        assert_eq!(r.action, "read_file");
+        assert_eq!(r.params, vec![("path".to_string(), "a.md".to_string())]);
+    }
+
+    #[test]
+    fn parse_tolerates_a_code_fence() {
+        let fenced = "```json\n{\"tool\":\"list_dir\",\"parameters\":{\"path\":\"/x\"}}\n```";
+        let r = parse_tool_call(fenced).unwrap();
+        assert_eq!(r.action, "list_dir");
+        assert_eq!(r.params, vec![("path".to_string(), "/x".to_string())]);
+        // bare fence (no language tag) too
+        let bare = "```\n{\"tool\":\"none\"}\n```";
+        assert_eq!(parse_tool_call(bare).unwrap().action, "none");
+    }
+
+    #[test]
+    fn parse_accepts_no_parameters() {
+        let r = parse_tool_call("{\"tool\":\"none\"}").unwrap();
+        assert_eq!(r.action, "none");
+        assert!(r.params.is_empty());
+    }
+
+    #[test]
+    fn parse_fails_closed_on_contract_violations() {
+        // Prose before/after the object, multiple objects, non-object, missing/wrong-typed
+        // fields — every one is a parse error, never a best-effort partial match.
+        for bad in [
+            "Sure! {\"tool\":\"read_file\"}",            // leading prose
+            "{\"tool\":\"read_file\"} now run it",       // trailing prose
+            "{\"tool\":\"a\"}{\"tool\":\"b\"}",          // two objects
+            "[\"read_file\"]",                           // array, not object
+            "\"read_file\"",                             // bare string
+            "42",                                        // number
+            "{\"parameters\":{}}",                       // missing `tool`
+            "{\"tool\":42}",                             // non-string tool
+            "{\"tool\":\"x\",\"parameters\":{\"k\":1}}", // non-string param value
+            "{\"tool\":\"x\",\"parameters\":[]}",        // parameters not an object
+            "",                                          // empty
+            "not json at all",
+        ] {
+            assert!(
+                matches!(parse_tool_call(bad), Err(AgentError::Parse(_))),
+                "must fail-closed on: {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parsed_call_flows_through_the_trusted_chokepoint() {
+        // A parsed destructive call is still classified mutating by the registry — the
+        // parse layer feeds the same chokepoint, it does not bypass it.
+        let raw =
+            parse_tool_call("{\"tool\":\"delete_file\",\"parameters\":{\"path\":\"x\"}}").unwrap();
+        assert!(build_request(&raw).unwrap().mutating);
+        // An unregistered parsed tool is still refused.
+        let unk = parse_tool_call("{\"tool\":\"frobnicate\"}").unwrap();
+        assert!(matches!(
+            build_request(&unk),
+            Err(ToolError::UnknownTool(_))
+        ));
+    }
+
+    /// LIVE evidence (runtime-proven). Ignored in CI (no `FRIDAY_DEEPSEEK_API_KEY`
+    /// there); run manually with the Hub key sourced into the env. Proves a real
+    /// DeepSeek reply parses into a RawToolCall that flows through the trusted
+    /// chokepoint. fallback=false (discover→select→chat). Never prints the key.
+    #[test]
+    #[ignore = "live: requires FRIDAY_DEEPSEEK_API_KEY; run manually (see ledger)"]
+    fn live_deepseek_proposes_a_parseable_tool_call() {
+        let client = friday_deepseek::DeepSeekClient::from_env()
+            .expect("FRIDAY_DEEPSEEK_API_KEY must be set");
+        let agent = DeepSeekAgentLlmClient::new(client);
+        let raw = agent
+            .propose_tool_call("read the file notes.md and summarize it")
+            .expect("live propose_tool_call");
+        assert!(!raw.action.is_empty());
+        // It must flow through the trusted chokepoint without panic (Ok or UnknownTool).
+        let _ = build_request(&raw);
+        eprintln!(
+            "LIVE proposed tool call: action={:?} params={:?}",
+            raw.action, raw.params
+        );
+    }
+
+    /// A client that always fails — to exercise `run_one_turn`'s fail-closed `Err`
+    /// branch (Reviewer-A CONCERNS: the headline "the seam is now fallible" behavior
+    /// was otherwise inspection-only).
+    struct ErrAgentLlmClient(AgentError);
+    impl AgentLlmClient for ErrAgentLlmClient {
+        fn propose_tool_call(&self, _task: &str) -> Result<RawToolCall, AgentError> {
+            Err(self.0.clone())
+        }
+    }
+
+    #[test]
+    fn agent_error_fails_closed_to_deny_and_records_event() {
+        let db = Db::open_hub(&temp_path("agenterr")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "do something", 1).unwrap();
+        let client = ErrAgentLlmClient(AgentError::Model("network down".to_string()));
+        let out = run_one_turn(
+            &client,
+            db.conn(),
+            "r1",
+            0,
+            "do something",
+            SECRET,
+            None,
+            1000,
+        )
+        .unwrap();
+        // Fail-closed: never executes, never Allow.
+        assert_eq!(out.decision, GateDecision::Deny);
+        assert!(!out.executed);
+        assert!(
+            out.reason.starts_with("agent_error:"),
+            "reason was {:?}",
+            out.reason
+        );
+        // The plan event is recorded FIRST (on the task), then the agent.error outcome.
+        let n: i64 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM agent_run_event WHERE run_id='r1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 2, "plan + agent.error outcome events");
+        let kind: String = db
+            .conn()
+            .query_row(
+                "SELECT kind FROM agent_run_event WHERE event_id='r1:t0:outcome'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            kind.starts_with("agent.error:"),
+            "outcome kind was {kind:?}"
+        );
     }
 }

@@ -19,4 +19,7 @@ rusqlite.workspace = true
 # "no secret on phone" boundary, asserted by friday-arch-tests.
 friday-deepseek.workspace = true
 friday-providers.workspace = true
+# The live model returns free-text content; the tool-call protocol is a JSON object
+# the Hub parses back into a RawToolCall. serde_json is the strict parser for that.
+serde_json.workspace = true
 

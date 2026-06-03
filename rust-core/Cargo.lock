@@ -477,6 +477,7 @@ dependencies = [
  "friday-providers",
  "friday-storage",
  "rusqlite",
+ "serde_json",
 ]
 
 [[package]]
