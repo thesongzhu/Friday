@@ -34,8 +34,9 @@ pub use error::CoreError;
 pub use identity::{DeviceIdentity, DeviceRole};
 pub use ledger::{LedgerEntry, ProviderKind};
 pub use memory::{
-    decide_candidate, gate_transfer, resolve_conflict, Confidence, ConflictResolution, MemoryScope,
-    MemoryState, PassportItem, PassportItemKind,
+    decide_candidate, gate_transfer, redact_passport_for_projection, resolve_conflict, Confidence,
+    ConflictResolution, MemoryScope, MemoryState, PassportItem, PassportItemKind,
+    RedactedPassportItem,
 };
 pub use offline::OfflineQueueState;
 pub use pathsafe::{contained, PathError};
