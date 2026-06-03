@@ -76,13 +76,44 @@ impl std::fmt::Display for AgentError {
     }
 }
 
+/// One step the model takes in a multi-turn loop: either propose a tool call
+/// (untrusted) or declare the task finished. Termination is the model's `Finish` (the
+/// `{"tool":"none"}` contract), bounded by `max_turns` in [`run_loop`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AgentStep {
+    /// Propose an (untrusted) tool call — classified by the Hub, not trusted as-is.
+    Tool(RawToolCall),
+    /// The model considers the task complete; the loop stops (not a tool, not a no-op).
+    Finish { message: String },
+}
+
+/// A record of one completed turn, threaded back to the model as conversation history
+/// so the next step is informed by what already happened. `outcome` is a short,
+/// Hub-authored summary (never raw secret material).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TurnTrace {
+    pub action: String,
+    pub params: Vec<(String, String)>,
+    pub outcome: String,
+}
+
 /// The model-client seam (mirrors `friday-deepseek`'s `Transport` DI pattern). The
 /// turn loop dispatches through this so it is unit-testable with a mock; the live impl
 /// over `friday-deepseek` is the runtime-proven slice. It returns only the untrusted
 /// [`RawToolCall`] (classification is the Hub's job), or an [`AgentError`] — the turn
 /// fail-closes on `Err`, it is never treated as a no-op or a non-mutating action.
 pub trait AgentLlmClient {
+    /// Single-turn proposal (no history). Required.
     fn propose_tool_call(&self, task: &str) -> Result<RawToolCall, AgentError>;
+
+    /// Multi-turn step with conversation `history`; the model MAY finish. The default
+    /// wraps [`AgentLlmClient::propose_tool_call`] as a single `Tool` step (ignores
+    /// history, never finishes) — degenerate single-turn behavior, safely bounded by
+    /// [`run_loop`]'s `max_turns`. A live/scripted client OVERRIDES this for real
+    /// history-aware multi-turn + `Finish` termination.
+    fn next_step(&self, task: &str, _history: &[TurnTrace]) -> Result<AgentStep, AgentError> {
+        Ok(AgentStep::Tool(self.propose_tool_call(task)?))
+    }
 }
 
 /// A mock client that returns a fixed raw call — used to prove the composition
@@ -131,6 +162,23 @@ impl<T: friday_deepseek::Transport> AgentLlmClient for DeepSeekAgentLlmClient<T>
             .chat(&model, &prompt, 512)
             .map_err(|e| AgentError::Model(format!("{e:?}")))?;
         parse_tool_call(&outcome.content)
+    }
+
+    /// History-aware multi-turn step: the prompt includes prior turns + their outcomes
+    /// so the model can build on them or finish. `{"tool":"none"}` parses to `Finish`.
+    fn next_step(&self, task: &str, history: &[TurnTrace]) -> Result<AgentStep, AgentError> {
+        let models = self
+            .client
+            .discover_models()
+            .map_err(|e| AgentError::Model(format!("{e:?}")))?;
+        let model = friday_deepseek::select_model(&models)
+            .ok_or_else(|| AgentError::Model("no model available".to_string()))?;
+        let prompt = build_loop_prompt(task, history);
+        let outcome = self
+            .client
+            .chat(&model, &prompt, 512)
+            .map_err(|e| AgentError::Model(format!("{e:?}")))?;
+        parse_agent_step(&outcome.content)
     }
 }
 
@@ -225,6 +273,36 @@ pub fn parse_tool_call(content: &str) -> Result<RawToolCall, AgentError> {
         }
     }
     Ok(RawToolCall { action, params })
+}
+
+/// Build the MULTI-TURN prompt: the tool menu + the EXACT JSON contract + the
+/// conversation history (prior actions + Hub-authored outcome summaries) so the model
+/// can build on what already happened or finish. Pure + deterministic.
+pub fn build_loop_prompt(task: &str, history: &[TurnTrace]) -> String {
+    let mut s = build_tool_prompt(task);
+    if !history.is_empty() {
+        s.push_str("\nSo far this run:\n");
+        for (i, t) in history.iter().enumerate() {
+            s.push_str(&format!("{}. {} → {}\n", i + 1, t.action, t.outcome));
+        }
+        s.push_str("If the task is now complete, reply {\"tool\": \"none\"}.\n");
+    }
+    s
+}
+
+/// Parse a model reply into an [`AgentStep`]: a strict [`parse_tool_call`] whose
+/// sentinel `"none"` action (the finish contract) maps to [`AgentStep::Finish`];
+/// every other (parsed) tool is a [`AgentStep::Tool`]. Fail-closed identically to
+/// `parse_tool_call` on any contract violation.
+pub fn parse_agent_step(content: &str) -> Result<AgentStep, AgentError> {
+    let raw = parse_tool_call(content)?;
+    if raw.action == "none" {
+        Ok(AgentStep::Finish {
+            message: String::new(),
+        })
+    } else {
+        Ok(AgentStep::Tool(raw))
+    }
 }
 
 /// Provider auth-readiness, delegating to `friday-providers` (establishes that
@@ -777,6 +855,239 @@ pub fn run_one_turn_with_executor(
             })
         }
     }
+}
+
+// --- the multi-turn run loop -------------------------------------------------
+
+/// How a [`run_loop`] ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoopStatus {
+    /// The model declared the task finished (`AgentStep::Finish`).
+    Finished,
+    /// A mutating tool needs owner approval the loop did not have — paused (the owner
+    /// approval leg is operator-relayed; the loop stops here, resumable later).
+    Paused,
+    /// A tool was denied (replay, deny, or an unregistered tool) — hard stop.
+    Blocked,
+    /// `max_turns` reached without the model finishing — bounded stop.
+    Bounded,
+    /// The model client errored (transport/parse) — fail-closed stop.
+    Errored,
+}
+
+/// The outcome of a whole [`run_loop`]. `executed_tools` is the count of tools that
+/// actually ran (gate `Allow` + executor `Ok`) — a `Finished` with `executed_tools==0`
+/// is an HONEST "model finished without doing anything", never a fabricated success.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoopOutcome {
+    pub status: LoopStatus,
+    /// Turns taken = model `next_step` calls made (the no-hidden-call invariant: the
+    /// loop makes EXACTLY this many model calls, none outside the loop body).
+    pub turns: u64,
+    pub executed_tools: u64,
+    pub final_message: Option<String>,
+    pub detail: String,
+}
+
+/// Drive a MULTI-TURN agent loop: repeatedly ask the model for the next step (with
+/// conversation history), and for each proposed tool run the SAME gate-mandatory
+/// dispatch as [`run_one_turn_with_executor`] (authorize → execute only on `Allow` →
+/// hash-chained receipt), threading the outcome back into history. The loop ends when
+/// the model `Finish`es, a tool is `Paused`(RequiresApproval)/`Blocked`(Deny/unknown),
+/// the client errors, or `max_turns` is hit (the bound — a runaway model cannot loop
+/// forever).
+///
+/// `approve` is the owner-approval seam: given a mutating request, it returns a signed
+/// [`CanonicalApproval`] iff the owner approved THIS action (in production this is the
+/// phone-relayed owner-approval leg + Hub mint; in tests it mints-or-`None`). A
+/// read-only action needs no approval (the gate `Allow`s it directly).
+///
+/// No-hidden-call invariant: the model is called EXACTLY once per loop turn (via
+/// `next_step` — count == `turns`), and the executor EXACTLY once per `Allow`ed tool;
+/// nothing calls the model or a tool outside this body. Note `executed_tools` counts
+/// only Allowed tools that ALSO executed without error (so executor-calls == `executed_tools`
+/// only when no exec error occurs — an erroring Allow is one executor call, zero
+/// `executed_tools`, by deliberate honest accounting). All observable in the
+/// `agent_run_event` log.
+#[allow(clippy::too_many_arguments)]
+pub fn run_loop(
+    client: &dyn AgentLlmClient,
+    executor: &dyn ToolExecutor,
+    conn: &Connection,
+    run_id: &str,
+    task: &str,
+    secret: &[u8],
+    approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
+    max_turns: u64,
+    now_ms: i64,
+) -> Result<LoopOutcome, StorageError> {
+    // Plan classification recorded ONCE (it is a property of the task, constant across
+    // turns).
+    let plan_kind = friday_core::classify_kind(task).map(|k| k.as_str());
+    agent_run::record_event(
+        conn,
+        &format!("{run_id}:plan"),
+        run_id,
+        &format!("plan.{}", plan_kind.unwrap_or("none")),
+        now_ms,
+    )?;
+
+    let mut history: Vec<TurnTrace> = Vec::new();
+    let mut executed_tools: u64 = 0;
+
+    for turn_index in 0..max_turns {
+        let ev = |suffix: &str| format!("{run_id}:t{turn_index}:{suffix}");
+
+        let step = match client.next_step(task, &history) {
+            Ok(step) => step,
+            Err(e) => {
+                agent_run::record_event(
+                    conn,
+                    &ev("outcome"),
+                    run_id,
+                    &format!("agent.error:{e}"),
+                    now_ms,
+                )?;
+                return Ok(LoopOutcome {
+                    status: LoopStatus::Errored,
+                    turns: turn_index + 1,
+                    executed_tools,
+                    final_message: None,
+                    detail: format!("agent_error:{e}"),
+                });
+            }
+        };
+
+        let raw = match step {
+            AgentStep::Finish { message } => {
+                agent_run::record_event(conn, &ev("finish"), run_id, "agent.finished", now_ms)?;
+                return Ok(LoopOutcome {
+                    status: LoopStatus::Finished,
+                    turns: turn_index + 1,
+                    executed_tools,
+                    final_message: Some(message),
+                    detail: "finished".to_string(),
+                });
+            }
+            AgentStep::Tool(raw) => raw,
+        };
+
+        let request = match build_request(&raw) {
+            Ok(request) => request,
+            Err(ToolError::UnknownTool(action)) => {
+                agent_run::record_event(
+                    conn,
+                    &ev("outcome"),
+                    run_id,
+                    &format!("tool.rejected:unregistered:{action}"),
+                    now_ms,
+                )?;
+                return Ok(LoopOutcome {
+                    status: LoopStatus::Blocked,
+                    turns: turn_index + 1,
+                    executed_tools,
+                    final_message: None,
+                    detail: format!("unregistered_tool:{action}"),
+                });
+            }
+        };
+
+        let approval = approve(&request);
+        let record = authorize_mutating_action(conn, &request, approval.as_ref(), secret, now_ms)?;
+
+        match record.decision {
+            GateDecision::Allow => match executor.execute(&raw.action, &raw.params) {
+                Ok(receipt) => {
+                    agent_run::record_event(
+                        conn,
+                        &ev("outcome"),
+                        run_id,
+                        &format!("tool.executed:{}", receipt.summary),
+                        now_ms,
+                    )?;
+                    let tx = conn.unchecked_transaction()?;
+                    friday_storage::audit::append_audit(
+                        &tx,
+                        &ev("receipt"),
+                        "hub-agent",
+                        &format!("tool.executed:{}", receipt.action),
+                        Some(&receipt.summary),
+                        now_ms,
+                    )?;
+                    tx.commit()?;
+                    executed_tools += 1;
+                    history.push(TurnTrace {
+                        action: raw.action.clone(),
+                        params: raw.params.clone(),
+                        outcome: format!("executed: {}", receipt.summary),
+                    });
+                }
+                Err(e) => {
+                    agent_run::record_event(
+                        conn,
+                        &ev("outcome"),
+                        run_id,
+                        &format!("tool.exec_error:{e}"),
+                        now_ms,
+                    )?;
+                    // A tool error is informative, not fatal: thread it back and let the
+                    // model adapt on the next turn (still bounded by max_turns).
+                    history.push(TurnTrace {
+                        action: raw.action.clone(),
+                        params: raw.params.clone(),
+                        outcome: format!("exec_error: {e}"),
+                    });
+                }
+            },
+            GateDecision::RequiresApproval => {
+                agent_run::record_event(
+                    conn,
+                    &ev("outcome"),
+                    run_id,
+                    &format!("tool.paused:requires_approval:{}", raw.action),
+                    now_ms,
+                )?;
+                return Ok(LoopOutcome {
+                    status: LoopStatus::Paused,
+                    turns: turn_index + 1,
+                    executed_tools,
+                    final_message: None,
+                    detail: format!("requires_approval:{}", raw.action),
+                });
+            }
+            GateDecision::Deny => {
+                agent_run::record_event(
+                    conn,
+                    &ev("outcome"),
+                    run_id,
+                    &format!("tool.blocked:deny:{}", record.reason),
+                    now_ms,
+                )?;
+                return Ok(LoopOutcome {
+                    status: LoopStatus::Blocked,
+                    turns: turn_index + 1,
+                    executed_tools,
+                    final_message: None,
+                    detail: format!("denied:{}", record.reason),
+                });
+            }
+        }
+    }
+
+    agent_run::record_event(
+        conn,
+        &format!("{run_id}:bounded"),
+        run_id,
+        "agent.loop_bounded",
+        now_ms,
+    )?;
+    Ok(LoopOutcome {
+        status: LoopStatus::Bounded,
+        turns: max_turns,
+        executed_tools,
+        final_message: None,
+        detail: format!("max_turns:{max_turns}"),
+    })
 }
 
 #[cfg(test)]
@@ -1450,5 +1761,447 @@ mod tests {
             assert_eq!(out.decision, GateDecision::Allow);
             assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
         }
+    }
+
+    // --- §5-PR5: multi-turn run_loop ---
+
+    /// A scripted multi-turn client: returns pre-set steps in order, COUNTING
+    /// `next_step` calls (the no-hidden-call probe). After the script is exhausted it
+    /// finishes (so an under-scripted test can't run away).
+    struct ScriptedAgentLlmClient {
+        steps: Vec<AgentStep>,
+        calls: std::cell::Cell<usize>,
+    }
+    impl ScriptedAgentLlmClient {
+        fn new(steps: Vec<AgentStep>) -> Self {
+            Self {
+                steps,
+                calls: std::cell::Cell::new(0),
+            }
+        }
+    }
+    impl AgentLlmClient for ScriptedAgentLlmClient {
+        fn propose_tool_call(&self, _task: &str) -> Result<RawToolCall, AgentError> {
+            match self.steps.first() {
+                Some(AgentStep::Tool(raw)) => Ok(raw.clone()),
+                _ => Err(AgentError::Parse(
+                    "scripted: first step is not a tool".to_string(),
+                )),
+            }
+        }
+        fn next_step(&self, _task: &str, _history: &[TurnTrace]) -> Result<AgentStep, AgentError> {
+            let i = self.calls.get();
+            self.calls.set(i + 1);
+            Ok(self.steps.get(i).cloned().unwrap_or(AgentStep::Finish {
+                message: "script exhausted".to_string(),
+            }))
+        }
+    }
+
+    /// Wraps a ToolExecutor counting `execute` calls (the no-hidden-tool-call probe).
+    struct CountingExecutor<'a> {
+        inner: &'a dyn ToolExecutor,
+        calls: std::cell::Cell<usize>,
+    }
+    impl<'a> ToolExecutor for CountingExecutor<'a> {
+        fn execute(
+            &self,
+            action: &str,
+            params: &[(String, String)],
+        ) -> Result<ToolReceipt, ExecError> {
+            self.calls.set(self.calls.get() + 1);
+            self.inner.execute(action, params)
+        }
+    }
+
+    fn no_approval() -> impl Fn(&MutatingActionRequest) -> Option<CanonicalApproval> {
+        |_req| None
+    }
+    fn mint_for_each() -> impl Fn(&MutatingActionRequest) -> Option<CanonicalApproval> {
+        // Owner-approval seam: mint a signed approval bound to THIS request (simulates
+        // an instant owner approval). Distinct requests → distinct digests → distinct
+        // single-use keys.
+        |req| Some(mint_approval(req, "ap-loop", SECRET, 1_000_000))
+    }
+
+    #[test]
+    fn loop_multi_turn_read_only_finishes_with_no_hidden_calls() {
+        let root = TempDir::new("loop-ro");
+        std::fs::write(root.0.join("a.md"), b"alpha").unwrap();
+        std::fs::write(root.0.join("b.md"), b"bravo!!").unwrap();
+        let db = Db::open_hub(&temp_path("loop-ro")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "read a then b", 1).unwrap();
+        let client = ScriptedAgentLlmClient::new(vec![
+            AgentStep::Tool(raw("read_file", &[("path", "a.md")])),
+            AgentStep::Tool(raw("read_file", &[("path", "b.md")])),
+            AgentStep::Finish {
+                message: "done".to_string(),
+            },
+        ]);
+        let fs_exec = FsToolExecutor::new(&root.0);
+        let executor = CountingExecutor {
+            inner: &fs_exec,
+            calls: std::cell::Cell::new(0),
+        };
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "read a then b",
+            SECRET,
+            &no_approval(),
+            10,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.status, LoopStatus::Finished);
+        assert_eq!(out.turns, 3); // 2 tools + 1 finish
+        assert_eq!(out.executed_tools, 2);
+        // No-hidden-call proof: model called exactly `turns` times; executor exactly `executed_tools`.
+        assert_eq!(client.calls.get(), out.turns as usize);
+        assert_eq!(executor.calls.get(), out.executed_tools as usize);
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
+    }
+
+    #[test]
+    fn loop_mutating_with_approval_across_turns_writes_to_disk() {
+        let root = TempDir::new("loop-mut");
+        std::fs::write(root.0.join("in.md"), b"input").unwrap();
+        let db = Db::open_hub(&temp_path("loop-mut")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "read input then write output", 1).unwrap();
+        let client = ScriptedAgentLlmClient::new(vec![
+            AgentStep::Tool(raw("read_file", &[("path", "in.md")])),
+            AgentStep::Tool(raw(
+                "write_file",
+                &[("path", "out.md"), ("content", "produced")],
+            )),
+            AgentStep::Finish {
+                message: "done".to_string(),
+            },
+        ]);
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "read input then write output",
+            SECRET,
+            &mint_for_each(),
+            10,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.status, LoopStatus::Finished);
+        assert_eq!(out.executed_tools, 2); // a read AND an approved mutating write, across two turns
+        assert_eq!(
+            std::fs::read_to_string(root.0.join("out.md")).unwrap(),
+            "produced"
+        );
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
+    }
+
+    #[test]
+    fn loop_premature_finish_does_no_work_honestly() {
+        let root = TempDir::new("loop-prem");
+        let db = Db::open_hub(&temp_path("loop-prem")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "do the thing", 1).unwrap();
+        // Model finishes on turn 0 without doing anything.
+        let client = ScriptedAgentLlmClient::new(vec![AgentStep::Finish {
+            message: "nothing to do".to_string(),
+        }]);
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "do the thing",
+            SECRET,
+            &no_approval(),
+            10,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.status, LoopStatus::Finished);
+        assert_eq!(out.turns, 1);
+        assert_eq!(
+            out.executed_tools, 0,
+            "premature finish must report ZERO work honestly"
+        );
+        // No tool.executed event exists — the loop fabricates no success.
+        let executed: i64 = db.conn().query_row("SELECT count(*) FROM agent_run_event WHERE run_id='r1' AND kind LIKE 'tool.executed%'", [], |r| r.get(0)).unwrap();
+        assert_eq!(executed, 0);
+    }
+
+    #[test]
+    fn loop_unapproved_mutating_tool_pauses_with_no_mutation() {
+        let root = TempDir::new("loop-unappr");
+        let db = Db::open_hub(&temp_path("loop-unappr")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "write secret.txt", 1).unwrap();
+        let client = ScriptedAgentLlmClient::new(vec![
+            AgentStep::Tool(raw(
+                "write_file",
+                &[("path", "secret.txt"), ("content", "X")],
+            )),
+            AgentStep::Finish {
+                message: "done".to_string(),
+            }, // never reached
+        ]);
+        let executor = FsToolExecutor::new(&root.0);
+        // No approval available → mutating write → RequiresApproval → Paused.
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "write secret.txt",
+            SECRET,
+            &no_approval(),
+            10,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.status, LoopStatus::Paused);
+        assert_eq!(out.executed_tools, 0);
+        assert!(
+            !root.0.join("secret.txt").exists(),
+            "unapproved mutating tool must not reach the executor"
+        );
+    }
+
+    #[test]
+    fn loop_bound_stops_a_runaway_model() {
+        let root = TempDir::new("loop-bound");
+        std::fs::write(root.0.join("x.md"), b"x").unwrap();
+        let db = Db::open_hub(&temp_path("loop-bound")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "loop forever", 1).unwrap();
+        // A model that never finishes: every step proposes another read.
+        let client = ScriptedAgentLlmClient::new(vec![
+            AgentStep::Tool(raw("read_file", &[("path", "x.md")])),
+            AgentStep::Tool(raw("read_file", &[("path", "x.md")])),
+            AgentStep::Tool(raw("read_file", &[("path", "x.md")])),
+            AgentStep::Tool(raw("read_file", &[("path", "x.md")])),
+            AgentStep::Tool(raw("read_file", &[("path", "x.md")])),
+        ]);
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "loop forever",
+            SECRET,
+            &no_approval(),
+            3,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(
+            out.status,
+            LoopStatus::Bounded,
+            "max_turns must stop a runaway"
+        );
+        assert_eq!(out.turns, 3);
+        assert_eq!(out.executed_tools, 3);
+    }
+
+    /// LIVE multi-turn end-to-end (runtime-proven). Ignored in CI; run manually with
+    /// the Hub key. Real DeepSeek drives a bounded loop over real friday-fs files;
+    /// asserts no panic and (if it finished) a verifiable audit chain. Never prints the key.
+    #[test]
+    #[ignore = "live: requires FRIDAY_DEEPSEEK_API_KEY; run manually (see ledger)"]
+    fn live_multi_turn_loop_e2e() {
+        let root = TempDir::new("live-loop");
+        std::fs::write(
+            root.0.join("notes.md"),
+            b"Buy milk. Call Sam. Ship the release.",
+        )
+        .unwrap();
+        let db = Db::open_hub(&temp_path("live-loop")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "read notes.md and tell me the tasks", 1).unwrap();
+        let client = DeepSeekAgentLlmClient::new(
+            friday_deepseek::DeepSeekClient::from_env()
+                .expect("FRIDAY_DEEPSEEK_API_KEY must be set"),
+        );
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "read notes.md and tell me the tasks",
+            SECRET,
+            &mint_for_each(),
+            5,
+            5000,
+        )
+        .unwrap();
+        eprintln!(
+            "LIVE loop: status={:?} turns={} executed_tools={} detail={}",
+            out.status, out.turns, out.executed_tools, out.detail
+        );
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
+    }
+
+    // --- §5-PR5: each loop TERMINAL covered by a dedicated run_loop test (Reviewer-A) ---
+
+    #[test]
+    fn loop_agent_error_terminates_errored() {
+        let root = TempDir::new("loop-err");
+        let db = Db::open_hub(&temp_path("loop-err")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "do it", 1).unwrap();
+        let client = ErrAgentLlmClient(AgentError::Model("transport down".to_string()));
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "do it",
+            SECRET,
+            &no_approval(),
+            5,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.status, LoopStatus::Errored);
+        assert_eq!(out.turns, 1);
+        assert_eq!(out.executed_tools, 0);
+    }
+
+    #[test]
+    fn loop_unknown_tool_in_a_later_turn_blocks() {
+        let root = TempDir::new("loop-unk");
+        std::fs::write(root.0.join("a.md"), b"a").unwrap();
+        let db = Db::open_hub(&temp_path("loop-unk")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "read then frobnicate", 1).unwrap();
+        let client = ScriptedAgentLlmClient::new(vec![
+            AgentStep::Tool(raw("read_file", &[("path", "a.md")])), // turn 0: Allow + execute
+            AgentStep::Tool(raw("frobnicate", &[])), // turn 1: unregistered → Blocked
+        ]);
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "read then frobnicate",
+            SECRET,
+            &no_approval(),
+            5,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.status, LoopStatus::Blocked);
+        assert_eq!(out.executed_tools, 1); // the read ran; the unknown tool was refused
+        assert!(out.detail.contains("unregistered_tool:frobnicate"));
+    }
+
+    #[test]
+    fn loop_exec_error_threads_back_and_continues() {
+        let root = TempDir::new("loop-execerr");
+        let db = Db::open_hub(&temp_path("loop-execerr")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "list then finish", 1).unwrap();
+        let client = ScriptedAgentLlmClient::new(vec![
+            AgentStep::Tool(raw("list_dir", &[("path", ".")])), // turn 0: Allow but Unsupported → exec_error → continue
+            AgentStep::Finish {
+                message: "ok".to_string(),
+            }, // turn 1: finish (loop did NOT wedge on the error)
+        ]);
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "list then finish",
+            SECRET,
+            &no_approval(),
+            5,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.status, LoopStatus::Finished);
+        assert_eq!(out.turns, 2);
+        assert_eq!(out.executed_tools, 0); // the exec_error did not count as executed
+        let errs: i64 = db.conn().query_row("SELECT count(*) FROM agent_run_event WHERE run_id='r1' AND kind LIKE 'tool.exec_error%'", [], |r| r.get(0)).unwrap();
+        assert_eq!(
+            errs, 1,
+            "the exec error was recorded and threaded back, not swallowed"
+        );
+    }
+
+    #[test]
+    fn loop_approval_double_spend_across_turns_is_refused() {
+        // Reviewer-B's highest-value gap: ONE pre-minted approval reused for two
+        // IDENTICAL mutating writes on turns 0 and 1. Turn 0 writes; turn 1's same
+        // single-use key is replay-refused → Deny → Blocked. One execution, one receipt.
+        let root = TempDir::new("loop-dup");
+        let db = Db::open_hub(&temp_path("loop-dup")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "write twice", 1).unwrap();
+        let write = raw("write_file", &[("path", "x.txt"), ("content", "C")]);
+        let request = build_request(&write).unwrap();
+        let appr = mint_approval(&request, "ap-dup", SECRET, 1_000_000);
+        let approve = move |_req: &MutatingActionRequest| Some(appr.clone());
+        let client = ScriptedAgentLlmClient::new(vec![
+            AgentStep::Tool(write.clone()),
+            AgentStep::Tool(write.clone()),
+            AgentStep::Finish {
+                message: "x".to_string(),
+            }, // never reached
+        ]);
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "write twice",
+            SECRET,
+            &approve,
+            5,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.status, LoopStatus::Blocked);
+        assert_eq!(
+            out.executed_tools, 1,
+            "the single-use approval executes once; the replay is refused"
+        );
+        assert!(out.detail.contains("replay_refused"));
+        let receipts: i64 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM audit_ledger WHERE audit_id LIKE 'r1:t%:receipt'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            receipts, 1,
+            "exactly one receipt — the replayed turn produced none"
+        );
+        assert_eq!(std::fs::read_to_string(root.0.join("x.txt")).unwrap(), "C");
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
+    }
+
+    #[test]
+    fn build_loop_prompt_renders_history() {
+        let p = build_loop_prompt(
+            "summarize",
+            &[TurnTrace {
+                action: "read_file".to_string(),
+                params: vec![("path".to_string(), "a.md".to_string())],
+                outcome: "executed: read 5 bytes from a.md".to_string(),
+            }],
+        );
+        assert!(p.contains("read_file"));
+        assert!(p.contains("executed: read 5 bytes from a.md"));
+        assert!(p.contains("So far this run"));
+        assert!(p.contains("\"none\"")); // the finish hint
+                                         // No history → no history section.
+        assert!(!build_loop_prompt("t", &[]).contains("So far this run"));
     }
 }
