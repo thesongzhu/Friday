@@ -10,7 +10,7 @@
 //!   NOT an unbuilt-subsystem placeholder. The two are kept DISTINCT: real substrate counts
 //!   vs the truth-labeled [`DiagnosticsSnapshot::unavailable`] list (unbuilt subsystems carry
 //!   their exact blocker, never a fabricated `0` that would falsely read as "0 problems").
-//! - **Same-SHA / version evidence (anti-stale):** every snapshot is stamped with
+//! - **Same-version (build) evidence (anti-stale):** every snapshot is stamped with
 //!   [`current_build_id`] (the crate version); a reader compares it to the running build, so a
 //!   stale snapshot from a different build is detectable ([`DiagnosticsSnapshot::is_current`]).
 //! - **Audit chain is the integrity substrate; an anomaly is never silently suppressed:** the
@@ -49,7 +49,8 @@ pub struct UnavailableMetric {
 /// A read-only, truth-labeled diagnostics snapshot composed from the wired substrate.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DiagnosticsSnapshot {
-    /// Build/version marker (same-SHA evidence — anti-stale). [`current_build_id`] at collect time.
+    /// Build/version marker (same-version (build) evidence — anti-stale; `CARGO_PKG_VERSION`,
+    /// version-granular not commit-granular). [`current_build_id`] at collect time.
     pub build_id: String,
     /// REAL count of `token_ledger` rows (billable model calls). `0` = genuinely none — not a
     /// fabricated placeholder.
@@ -244,22 +245,31 @@ mod tests {
     }
 
     #[test]
-    fn broken_chain_surfaces_not_healthy() {
-        // Construct a Broken status directly (verify_audit_chain returns Err on tamper, which
-        // the collector maps to Broken). Assert the surface reports it + is_healthy=false —
-        // the anomaly is not silently suppressed.
-        let broken = DiagnosticsSnapshot {
-            build_id: current_build_id().to_string(),
-            model_calls: 3,
-            total_tokens: 99,
-            agent_runs: 1,
-            activity_items: 2,
-            audit_chain: ChainStatus::Broken {
-                reason: "audit chain broken at audit_id=x".into(),
-            },
-            unavailable: UNAVAILABLE_METRICS.to_vec(),
-        };
-        assert!(!broken.is_healthy());
-        assert!(!broken.audit_chain.is_verified());
+    fn tampered_audit_chain_surfaces_broken_via_collect_not_healthy() {
+        // Real-path adverse test: seed a model call (one audit row), TAMPER the row's hashed
+        // `action` column, then collect() — verify_audit_chain detects the hash mismatch, the
+        // collector maps Err→Broken, and is_healthy()=false. The anomaly is surfaced through
+        // the real collect path, NOT silently suppressed.
+        let mut db = Db::open_hub(&tmp("tamper")).unwrap();
+        let client = friday_deepseek::DeepSeekClient::with_transport(MockTransport, "k".into());
+        record_friday_ask(&mut db, &client, "l1", "s1", "a1", "hi", 128, 1000).unwrap();
+        // sanity: the chain is intact before tamper.
+        assert!(DiagnosticsSnapshot::collect(&db).unwrap().is_healthy());
+        // Tamper a HASHED field (`action`) of the audit row → recomputed entry_hash mismatches.
+        let n = db
+            .conn()
+            .execute("UPDATE audit_ledger SET action = 'TAMPERED'", [])
+            .unwrap();
+        assert_eq!(n, 1, "tampered the one audit row");
+
+        let snap = DiagnosticsSnapshot::collect(&db).unwrap();
+        assert!(
+            matches!(snap.audit_chain, ChainStatus::Broken { .. }),
+            "tampered chain must surface Broken, got {:?}",
+            snap.audit_chain
+        );
+        assert!(!snap.is_healthy(), "a broken chain is not healthy");
+        // real substrate counts are still read truthfully alongside the surfaced anomaly
+        assert_eq!(snap.model_calls, 1);
     }
 }
