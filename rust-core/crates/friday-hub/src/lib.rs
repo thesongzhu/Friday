@@ -52,6 +52,12 @@ pub mod capability;
 /// truth-labeled unbuilt-subsystem metrics. Not the XL metrics pipeline (that stays NO-GO).
 pub mod diagnostics;
 
+/// Step-3 — setup-readiness blocker labels (truth-labeled): the runtime analog of the file-57
+/// external-prep checklist. Every prep item is `Ready { evidence }` ONLY when verified, else
+/// `NotReady { blocker }` — never falsely ready. `is_release_ready()` is the prep half of the
+/// release gate (honest `false` in this build).
+pub mod setup;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,
