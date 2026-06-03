@@ -43,12 +43,38 @@
 //! approval is supplied. NL generation + skill/plugin execution stay NO-GO; v1 NO-GO.
 
 use friday_core::gate::{CanonicalApproval, MutatingActionRequest};
-use friday_core::{StepStatus, WorkflowRunState};
+use friday_core::{NeedsMeItem, StepStatus, WorkflowRunState};
 use friday_storage::{workflow, StorageError};
 use rusqlite::Connection;
 
 use crate::planner::{plan_step, StepDisposition, WorkflowDefinition};
 use crate::{gate_dispatch, GateDispatch, RawToolCall, ToolExecutor};
+
+/// Priority of a workflow-checkpoint Needs-Me item (urgency-first ordering, `08` §1).
+const WORKFLOW_CHECKPOINT_PRIORITY: u8 = 7;
+
+/// The Needs-Me items for PAUSED workflows (`08` §2): every `AwaitingCheckpoint` run is
+/// surfaced as a cross-source action item the user must act on (approve/resume the
+/// paused step). Read-only — the Hub composes these with the other Needs-Me sources
+/// (Codex/Claude/memory/…) via [`friday_core::aggregate_needs_me`]. The `reason` carries
+/// the workflow name + the exact paused step (never silently dropped, `08` §2).
+pub fn workflow_needs_me(conn: &Connection) -> Result<Vec<NeedsMeItem>, StorageError> {
+    let runs = workflow::runs_in_state(conn, WorkflowRunState::AwaitingCheckpoint)?;
+    let mut items = Vec::with_capacity(runs.len());
+    for (run_id, name) in runs {
+        let at = workflow::first_pending_seq(conn, &run_id)?
+            .map(|s| format!(" (step s{s})"))
+            .unwrap_or_default();
+        items.push(NeedsMeItem {
+            source: "workflow".to_string(),
+            id: run_id.clone(),
+            reason: format!("Checkpoint: workflow '{name}' awaiting your approval{at}"),
+            priority: WORKFLOW_CHECKPOINT_PRIORITY,
+            destination: format!("workflow/{run_id}"),
+        });
+    }
+    Ok(items)
+}
 
 /// How a workflow run ended.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -737,5 +763,94 @@ mod tests {
         assert_eq!(out2.status, WorkflowRunStatus::Completed);
         assert_eq!(exec.calls.get(), 4);
         assert_eq!(run_state(&db, "run"), "done");
+    }
+
+    // --- workflow → Needs-Me (08 §2) -----------------------------------------
+
+    #[test]
+    fn paused_workflows_surface_as_needs_me_items_completed_ones_do_not() {
+        let db = Db::open_hub(&tmp("needsme")).unwrap();
+        let exec = CountingExec {
+            calls: Cell::new(0),
+        };
+        // A run that PAUSES at a mutating checkpoint.
+        run_workflow(
+            &db_def_paused(),
+            &exec,
+            db.conn(),
+            "paused1",
+            SECRET,
+            &deny_all,
+            100,
+        )
+        .unwrap();
+        // A run that COMPLETES (all read-only).
+        let done_def = WorkflowDefinition {
+            name: "research".into(),
+            steps: vec![step("r", "read_file", &[("path", "x")], false, false)],
+        };
+        run_workflow(&done_def, &exec, db.conn(), "done1", SECRET, &deny_all, 200).unwrap();
+
+        let items = workflow_needs_me(db.conn()).unwrap();
+        // Only the paused run is a Needs-Me item; the completed run is not.
+        assert_eq!(items.len(), 1, "only the AwaitingCheckpoint run surfaces");
+        let it = &items[0];
+        assert_eq!(it.source, "workflow");
+        assert_eq!(it.id, "paused1");
+        assert_eq!(it.destination, "workflow/paused1");
+        assert_eq!(it.priority, WORKFLOW_CHECKPOINT_PRIORITY);
+        // reason carries the workflow name + the exact paused step (never dropped).
+        assert!(
+            it.reason.contains("ship") && it.reason.contains("s1"),
+            "reason: {}",
+            it.reason
+        );
+
+        // It composes with the cross-source inbox via aggregate_needs_me.
+        let mut all = items;
+        all.push(NeedsMeItem {
+            source: "claude".into(),
+            id: "c1".into(),
+            reason: "urgent question".into(),
+            priority: 9,
+            destination: "session/claude-1".into(),
+        });
+        let ranked = friday_core::aggregate_needs_me(all);
+        // urgency-first: the p9 claude item ranks above the p7 workflow checkpoint.
+        assert_eq!(ranked[0].source, "claude");
+        assert_eq!(ranked[1].source, "workflow");
+    }
+
+    #[test]
+    fn workflow_needs_me_is_empty_when_no_run_is_paused() {
+        let db = Db::open_hub(&tmp("needsme-empty")).unwrap();
+        assert!(workflow_needs_me(db.conn()).unwrap().is_empty());
+        // a completed run leaves the inbox empty.
+        let exec = CountingExec {
+            calls: Cell::new(0),
+        };
+        let def = WorkflowDefinition {
+            name: "research".into(),
+            steps: vec![step("r", "read_file", &[("path", "x")], false, false)],
+        };
+        run_workflow(&def, &exec, db.conn(), "done1", SECRET, &deny_all, 100).unwrap();
+        assert!(workflow_needs_me(db.conn()).unwrap().is_empty());
+    }
+
+    // a definition that pauses at a mutating step `s1` (named "ship").
+    fn db_def_paused() -> WorkflowDefinition {
+        WorkflowDefinition {
+            name: "ship".into(),
+            steps: vec![
+                step("read", "read_file", &[("path", "x")], false, false),
+                step(
+                    "write",
+                    "write_file",
+                    &[("path", "o"), ("content", "y")],
+                    false,
+                    true,
+                ),
+            ],
+        }
     }
 }
