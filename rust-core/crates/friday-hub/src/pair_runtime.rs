@@ -6,8 +6,11 @@
 //! calls; scan/open/status are connection bootstrap, not Ask Friday.
 
 use friday_core::FridayPairPayload;
+use friday_crypto::DataKey;
 use friday_protocol::{Envelope, ErrorCode, Message, SUPPORTED};
 use friday_storage::Db;
+use friday_transport::{ws_recv_envelope, ws_send_envelope, TransportError, WireWebSocket};
+use std::io::{Read, Write};
 
 /// Minimal Hub pairing runtime. A future listener owns sockets/mDNS; this type
 /// owns the pairing semantics and can be tested without network or provider I/O.
@@ -81,6 +84,23 @@ impl PairingHub {
         }
     }
 
+    /// Handle exactly one E2E-sealed WebSocket pairing message and reply with a
+    /// sealed response. The socket/listener lifecycle is owned by the caller
+    /// (daemon, test, or future mobile bridge); this method binds the proven
+    /// transport framing to the pairing semantics.
+    pub fn handle_websocket_once<S: Read + Write>(
+        &self,
+        db: &mut Db,
+        ws: &mut WireWebSocket<S>,
+        session_key: &DataKey,
+        aad: &[u8],
+    ) -> Result<Envelope, TransportError> {
+        let request = ws_recv_envelope(ws, session_key, aad)?;
+        let response = self.handle_envelope(db, request);
+        ws_send_envelope(ws, session_key, &response, aad)?;
+        Ok(response)
+    }
+
     fn handle_pair(
         &self,
         db: &mut Db,
@@ -127,11 +147,18 @@ mod tests {
     use friday_core::{
         PairAuthority, PairTransportHint, PairTransportKind, CURRENT_PAIR_PAYLOAD_VERSION,
     };
-    use friday_crypto::pairing_proof;
+    use friday_crypto::{pairing_proof, DeviceKeypair};
     use friday_protocol::CURRENT_SCHEMA_VERSION;
     use friday_storage::StorageError;
+    use friday_transport::{
+        seal_envelope, ws_accept, ws_connect, ws_recv_envelope, ws_send_envelope,
+    };
+    use std::net::{TcpListener, TcpStream};
     use std::path::PathBuf;
+    use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    const AAD: &[u8] = b"friday-pairing-ws-v1";
 
     struct TempDb(PathBuf);
 
@@ -314,5 +341,137 @@ mod tests {
             db.count("trusted_device"),
             Err(StorageError::Unsupported(_))
         ));
+    }
+
+    #[test]
+    fn websocket_pair_round_trip_over_loopback_writes_trust_no_model_rows() {
+        let tmp = TempDb::new("ws-pair");
+        let db_path = tmp.path().to_string();
+        let payload = sample_payload(2000);
+        let secret = payload.pairing_secret.expose_for_qr().as_bytes().to_vec();
+        let hub = PairingHub::new(payload, vec!["pairing".into()]);
+        let hub_kp = DeviceKeypair::generate();
+        let phone_kp = DeviceKeypair::generate();
+        let hub_pub = hub_kp.public_bytes();
+        let phone_pub = phone_kp.public_bytes();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let session = hub_kp.agree(&phone_pub);
+            let mut db = Db::open_hub(&db_path).unwrap();
+            let (stream, _) = listener.accept().unwrap();
+            let mut ws = ws_accept(stream).unwrap();
+            let response = hub
+                .handle_websocket_once(&mut db, &mut ws, &session, AAD)
+                .unwrap();
+            assert_eq!(
+                response.message,
+                Message::PairAck {
+                    accepted: true,
+                    error_code: None,
+                }
+            );
+        });
+
+        let session = phone_kp.agree(&hub_pub);
+        let pubkey = vec![7u8; 32];
+        let proof = pairing_proof(&secret, &pubkey);
+        let request = Envelope::new(
+            "ws-pair-msg",
+            1000,
+            Message::Pair {
+                device_id: "ios-ws-1".into(),
+                device_pubkey: pubkey,
+                pairing_proof: proof,
+            },
+        );
+        let wire = seal_envelope(&session, &request, AAD).unwrap();
+        assert!(
+            !wire.windows(b"ios-ws-1".len()).any(|w| w == b"ios-ws-1"),
+            "device id leaked in sealed WebSocket body"
+        );
+        assert!(
+            !wire.windows(secret.len()).any(|w| w == secret.as_slice()),
+            "QR secret leaked in sealed WebSocket body"
+        );
+
+        let stream = TcpStream::connect(addr).unwrap();
+        let mut ws = ws_connect(&format!("ws://{addr}/"), stream).unwrap();
+        ws_send_envelope(&mut ws, &session, &request, AAD).unwrap();
+        let response = ws_recv_envelope(&mut ws, &session, AAD).unwrap();
+        assert_eq!(response.correlation_id.as_deref(), Some("ws-pair-msg"));
+        assert_eq!(
+            response.message,
+            Message::PairAck {
+                accepted: true,
+                error_code: None,
+            }
+        );
+        server.join().unwrap();
+
+        let db = Db::open_hub(tmp.path()).unwrap();
+        assert_eq!(db.count("trusted_device").unwrap(), 1);
+        assert_eq!(db.count("audit_ledger").unwrap(), 1);
+        assert_eq!(db.count("token_ledger").unwrap(), 0);
+        assert_eq!(db.count("activity_item").unwrap(), 0);
+    }
+
+    #[test]
+    fn websocket_ask_on_pairing_channel_is_refused_no_model_rows() {
+        let tmp = TempDb::new("ws-ask");
+        let db_path = tmp.path().to_string();
+        let hub = PairingHub::new(sample_payload(2000), vec!["pairing".into()]);
+        let hub_kp = DeviceKeypair::generate();
+        let phone_kp = DeviceKeypair::generate();
+        let hub_pub = hub_kp.public_bytes();
+        let phone_pub = phone_kp.public_bytes();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let session = hub_kp.agree(&phone_pub);
+            let mut db = Db::open_hub(&db_path).unwrap();
+            let (stream, _) = listener.accept().unwrap();
+            let mut ws = ws_accept(stream).unwrap();
+            let response = hub
+                .handle_websocket_once(&mut db, &mut ws, &session, AAD)
+                .unwrap();
+            match response.message {
+                Message::Error {
+                    code: ErrorCode::ProviderUnavailable,
+                    message,
+                } => assert!(message.contains("does not dispatch")),
+                other => panic!("unexpected {other:?}"),
+            }
+        });
+
+        let session = phone_kp.agree(&hub_pub);
+        let request = Envelope::new(
+            "ws-ask",
+            1000,
+            Message::AskFridayRequest {
+                prompt: "hidden model call must not happen".into(),
+            },
+        );
+        let stream = TcpStream::connect(addr).unwrap();
+        let mut ws = ws_connect(&format!("ws://{addr}/"), stream).unwrap();
+        ws_send_envelope(&mut ws, &session, &request, AAD).unwrap();
+        let response = ws_recv_envelope(&mut ws, &session, AAD).unwrap();
+        assert_eq!(response.correlation_id.as_deref(), Some("ws-ask"));
+        match response.message {
+            Message::Error {
+                code: ErrorCode::ProviderUnavailable,
+                ..
+            } => {}
+            other => panic!("unexpected {other:?}"),
+        }
+        server.join().unwrap();
+
+        let db = Db::open_hub(tmp.path()).unwrap();
+        assert_eq!(db.count("trusted_device").unwrap(), 0);
+        assert_eq!(db.count("audit_ledger").unwrap(), 0);
+        assert_eq!(db.count("token_ledger").unwrap(), 0);
+        assert_eq!(db.count("activity_item").unwrap(), 0);
     }
 }

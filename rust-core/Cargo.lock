@@ -487,6 +487,7 @@ dependencies = [
  "friday-protocol",
  "friday-providers",
  "friday-storage",
+ "friday-transport",
  "regex",
  "rusqlite",
  "serde_json",

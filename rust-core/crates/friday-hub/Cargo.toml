@@ -12,6 +12,7 @@ friday-core.workspace = true
 friday-crypto.workspace = true
 friday-protocol.workspace = true
 friday-storage.workspace = true
+friday-transport.workspace = true
 # The composition layer (`authorize_mutating_action`, `agent_run`) operates on a
 # `rusqlite::Connection`, so the turn-loop signatures name it directly.
 rusqlite.workspace = true

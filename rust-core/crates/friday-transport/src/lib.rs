@@ -21,6 +21,11 @@ use std::io::{Read, Write};
 use thiserror::Error;
 use tungstenite::{Message, WebSocket};
 
+/// Public WebSocket carrier type for crates that need to bind a domain handler
+/// to the already-tested Friday E2E WebSocket framing without depending on
+/// tungstenite directly.
+pub type WireWebSocket<S> = WebSocket<S>;
+
 /// 1 MiB cap on a single frame (defensive; the slice has no large payloads).
 pub const MAX_FRAME: usize = 1 << 20;
 
