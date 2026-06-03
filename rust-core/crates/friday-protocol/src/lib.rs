@@ -19,6 +19,38 @@ pub const CURRENT_SCHEMA_VERSION: u16 = 1;
 /// The inclusive range of versions this build supports.
 pub const SUPPORTED: VersionRange = VersionRange { min: 1, max: 1 };
 
+/// Redacted provider-session projection safe to carry to phone/channel clients.
+/// Hub-only fields such as account hashes, cwd, external URLs, provider tokens,
+/// and raw provider ids are intentionally absent.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProviderSessionProjectionWire {
+    pub friday_session_id: String,
+    pub provider: String,
+    pub workspace_id: String,
+    pub sync_mode: String,
+    pub capability_snapshot: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_provider_seen_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_friday_event_id: Option<String>,
+    pub truth_label: String,
+}
+
+impl From<friday_core::ProviderSessionProjection> for ProviderSessionProjectionWire {
+    fn from(value: friday_core::ProviderSessionProjection) -> Self {
+        Self {
+            friday_session_id: value.friday_session_id,
+            provider: value.provider,
+            workspace_id: value.workspace_id,
+            sync_mode: value.sync_mode.as_str().to_string(),
+            capability_snapshot: value.capability_snapshot,
+            last_provider_seen_at: value.last_provider_seen_at,
+            last_friday_event_id: value.last_friday_event_id,
+            truth_label: value.truth_label,
+        }
+    }
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ProtocolError {
     #[error("decode error: {0}")]
@@ -369,5 +401,40 @@ mod tests {
         );
         // Fully caught up -> nothing to replay.
         assert!(s.missed_since(3).is_empty());
+    }
+
+    #[test]
+    fn provider_session_projection_wire_is_redacted() {
+        let wire: ProviderSessionProjectionWire = friday_core::ProviderSessionLink {
+            friday_session_id: "friday-s1".into(),
+            provider: "codex".into(),
+            account_key_hash: "account-hash".into(),
+            workspace_id: "workspace".into(),
+            cwd: Some("/Users/jarvis/private".into()),
+            external_session_id: Some("external-session".into()),
+            external_thread_id: Some("external-thread".into()),
+            external_url: Some("https://provider.example/private".into()),
+            sync_mode: friday_core::SyncMode::ProviderAppServerLocal,
+            capability_snapshot: "thread/read".into(),
+            last_provider_seen_at: Some(1),
+            last_friday_event_id: Some("event-1".into()),
+            truth_label: "provider local session".into(),
+        }
+        .redacted_projection()
+        .into();
+        let json = serde_json::to_string(&wire).unwrap();
+        assert!(json.contains("provider_app_server_local"));
+        for forbidden in [
+            "account-hash",
+            "/Users/jarvis/private",
+            "external-session",
+            "external-thread",
+            "https://provider.example/private",
+        ] {
+            assert!(
+                !json.contains(forbidden),
+                "provider session wire projection leaked {forbidden}: {json}"
+            );
+        }
     }
 }

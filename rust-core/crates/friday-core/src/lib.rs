@@ -24,6 +24,7 @@ mod memory;
 mod offline;
 mod pathsafe;
 mod planning;
+mod provider_session;
 mod session;
 mod skill;
 mod tool_policy;
@@ -42,6 +43,9 @@ pub use memory::{
 pub use offline::OfflineQueueState;
 pub use pathsafe::{contained, PathError};
 pub use planning::{classify_kind, PlanState, PlanningKind};
+pub use provider_session::{
+    ProviderSessionEvent, ProviderSessionLink, ProviderSessionProjection, SyncMode, ALL_SYNC_MODES,
+};
 pub use session::SessionState;
 pub use skill::SkillState;
 pub use tool_policy::{

@@ -27,6 +27,10 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     // reference (Hub-only; never on a phone). NOT a secret store — the bearer secret
     // lives in OS secure storage; the table holds only an opaque `webhook_auth_ref`.
     "channel_binding",
+    // PNS-001: provider session links + event mirror (Hub-only; may hold provider
+    // account hashes, cwd, external urls/ids — never created on a phone).
+    "provider_session_link",
+    "provider_session_event",
 ];
 
 /// Tables present only on a phone (never created on the Hub).
@@ -93,6 +97,16 @@ pub fn hub_migrations() -> Vec<Migration> {
             name: "channel_binding",
             destructive: false,
             up: m0007_channel_binding,
+        },
+        // PNS-001: Hub-only provider session links + event mirror. These rows
+        // may contain provider account hashes, cwd, and external urls/ids, so
+        // the tables are never created in the phone profile. Renumbered to v8 on the
+        // pre-PR rebase (channel_binding took v7 on main); purely additive.
+        Migration {
+            version: 8,
+            name: "provider_session_contract",
+            destructive: false,
+            up: m0008_provider_session_contract,
         },
     ]
 }
@@ -274,6 +288,51 @@ CREATE TABLE agent_run_event (
 );
 CREATE INDEX idx_agent_run_event_run ON agent_run_event(run_id, seq);";
 
+// --- PNS-001 provider-session fragments (Hub-only) --------------------------
+
+const DDL_PROVIDER_SESSION: &str = "
+CREATE TABLE provider_session_link (
+    friday_session_id     TEXT PRIMARY KEY,
+    provider              TEXT NOT NULL CHECK(length(trim(provider)) > 0),
+    account_key_hash      TEXT NOT NULL CHECK(length(trim(account_key_hash)) > 0),
+    workspace_id          TEXT NOT NULL CHECK(length(trim(workspace_id)) > 0),
+    cwd                   TEXT,
+    external_session_id   TEXT,
+    external_thread_id    TEXT,
+    external_url          TEXT,
+    sync_mode             TEXT NOT NULL CHECK(sync_mode IN (
+        'provider_native_synced',
+        'provider_app_server_local',
+        'friday_local_mirror',
+        'provider_native_link_only',
+        'unsupported_truth_labeled'
+    )),
+    capability_snapshot   TEXT NOT NULL DEFAULT '',
+    last_provider_seen_at INTEGER,
+    last_friday_event_id  TEXT,
+    truth_label           TEXT NOT NULL CHECK(length(trim(truth_label)) > 0)
+);
+CREATE INDEX idx_provider_session_provider_seen
+    ON provider_session_link(provider, last_provider_seen_at);
+
+CREATE TABLE provider_session_event (
+    friday_session_id     TEXT NOT NULL,
+    provider_event_id     TEXT NOT NULL,
+    provider              TEXT NOT NULL CHECK(length(trim(provider)) > 0),
+    event_kind            TEXT NOT NULL CHECK(length(trim(event_kind)) > 0),
+    transcript_item_kind  TEXT NOT NULL CHECK(length(trim(transcript_item_kind)) > 0),
+    body_ref              TEXT NOT NULL DEFAULT '',
+    redaction_level       TEXT NOT NULL CHECK(length(trim(redaction_level)) > 0),
+    token_ledger_ref      TEXT,
+    approval_ref          TEXT,
+    audit_receipt_ref     TEXT,
+    observed_at           INTEGER NOT NULL,
+    PRIMARY KEY(friday_session_id, provider_event_id),
+    FOREIGN KEY(friday_session_id) REFERENCES provider_session_link(friday_session_id)
+);
+CREATE INDEX idx_provider_session_event_session_seen
+    ON provider_session_event(friday_session_id, observed_at, provider_event_id);";
+
 // --- migration bodies -------------------------------------------------------
 
 fn m0001_init_hub(tx: &Transaction) -> rusqlite::Result<()> {
@@ -384,4 +443,11 @@ fn m0007_channel_binding(tx: &Transaction) -> rusqlite::Result<()> {
             created_at          INTEGER NOT NULL
         );",
     )
+}
+
+// PNS-001: Hub-only provider session links + event mirror (renumbered v7→v8 on the
+// pre-PR rebase; channel_binding took v7 on main). Purely additive.
+fn m0008_provider_session_contract(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_PROVIDER_SESSION)?;
+    Ok(())
 }

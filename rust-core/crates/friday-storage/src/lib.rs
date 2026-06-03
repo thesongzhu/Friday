@@ -19,6 +19,7 @@ pub mod memory;
 mod migrate;
 pub mod offline;
 pub mod pairing;
+pub mod provider_session;
 mod schema;
 pub mod workflow;
 
@@ -29,7 +30,10 @@ pub use migrate::{
 };
 pub use schema::{hub_migrations, phone_migrations, HUB_ONLY_TABLES, PHONE_ONLY_TABLES};
 
-use friday_core::{ActivityState, ActivityType, DeviceIdentity, LedgerEntry, SessionState};
+use friday_core::{
+    ActivityState, ActivityType, DeviceIdentity, LedgerEntry, ProviderSessionEvent,
+    ProviderSessionLink, ProviderSessionProjection, SessionState,
+};
 use rusqlite::Connection;
 
 /// Which process this database belongs to. Determines the schema (a phone DB
@@ -217,6 +221,57 @@ impl Db {
             out.push(row?);
         }
         Ok(out)
+    }
+
+    pub fn upsert_provider_session_link(&self, link: &ProviderSessionLink) -> Result<()> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "provider session links are Hub-only".into(),
+            ));
+        }
+        provider_session::upsert_link(&self.conn, link)
+    }
+
+    pub fn get_provider_session_link(
+        &self,
+        friday_session_id: &str,
+    ) -> Result<Option<ProviderSessionLink>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "provider session links are Hub-only".into(),
+            ));
+        }
+        provider_session::get_link(&self.conn, friday_session_id)
+    }
+
+    pub fn list_provider_session_projections(&self) -> Result<Vec<ProviderSessionProjection>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "provider session projections are Hub-only".into(),
+            ));
+        }
+        provider_session::list_projections(&self.conn)
+    }
+
+    pub fn append_provider_session_event(&self, event: &ProviderSessionEvent) -> Result<()> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "provider session events are Hub-only".into(),
+            ));
+        }
+        provider_session::append_event(&self.conn, event)
+    }
+
+    pub fn list_provider_session_events(
+        &self,
+        friday_session_id: &str,
+    ) -> Result<Vec<ProviderSessionEvent>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "provider session events are Hub-only".into(),
+            ));
+        }
+        provider_session::list_events(&self.conn, friday_session_id)
     }
 
     /// Mark an activity item `Done` (a real persisted state write). Returns
