@@ -19,6 +19,13 @@
 //!   checkpoint), so it structurally cannot smuggle a skill/plugin invocation — this
 //!   engine runs registered built-in tools only (`FsToolExecutor`), the line the
 //!   operator drew (workflow-exec authorized; skill/plugin-exec NOT).
+//! - HONEST GAP: `gate_dispatch` runs the MUTATING-action gate (`authorize_mutating_action`
+//!   → `gate::evaluate`), which does NOT run the read-side sensitive-resource check
+//!   (`evaluate_sensitive_read`, `#389` — not yet wired into the live dispatch path,
+//!   the `#494` enforcement gap). So a read-only step reading a *sensitive* resource
+//!   auto-advances WITHOUT a `#389` checkpoint. The read result stays Hub-side; any
+//!   external transfer is separately Context-Passport-gated. Wiring `#389` into
+//!   dispatch (so a sensitive read also checkpoints) is a separate unit.
 //! - Run-state moves only through `set_run_state`'s SM guard + run-completion gate
 //!   (`08` §6 / #471): the run cannot reach `Done` while a side-effect step is
 //!   unverified, and an executed step is completed WITH its tool receipt as evidence.
