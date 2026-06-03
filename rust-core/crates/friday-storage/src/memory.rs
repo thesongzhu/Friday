@@ -228,8 +228,8 @@ pub fn auto_usable(conn: &Connection) -> Result<Vec<MemoryRow>> {
 ///   never returned. Cross-principal recall is structurally impossible here.
 /// - **Confirmed only** (`07` §9): a `Candidate`/`Rejected`/inferred item is never
 ///   recalled as fact.
-/// - **Content-bearing only**: a row with `NULL content` has nothing to inject and
-///   is skipped (fail-closed).
+/// - **Content-bearing only**: a row with `NULL` or empty (`''`) content has
+///   nothing to inject and is skipped (fail-closed).
 ///
 /// A blank/empty `principal_id` argument returns an EMPTY set WITHOUT querying —
 /// an anonymous/owner-less caller recalls nothing (it must not match `''` rows or
@@ -242,7 +242,7 @@ pub fn recall_confirmed(conn: &Connection, principal_id: &str) -> Result<Vec<Mem
     }
     let mut stmt = conn.prepare(&format!(
         "SELECT {SELECT_COLS} FROM memory_item
-         WHERE state = ?1 AND principal_id = ?2 AND content IS NOT NULL
+         WHERE state = ?1 AND principal_id = ?2 AND content IS NOT NULL AND content != ''
          ORDER BY confirmed_at DESC, created_at DESC, memory_id"
     ))?;
     let rows = stmt.query_map(
@@ -254,10 +254,12 @@ pub fn recall_confirmed(conn: &Connection, principal_id: &str) -> Result<Vec<Mem
         let row = r?;
         out.push(row);
     }
-    // Defense-in-depth: every returned row is a durable, content-bearing fact owned
-    // by exactly the requested principal (the SQL enforces it; assert it too).
+    // Defense-in-depth: every returned row is a durable, AUTO-USABLE, content-bearing
+    // fact owned by exactly the requested principal (the SQL enforces it; assert the
+    // full trust invariant too — same shape `auto_usable` asserts, plus ownership).
     debug_assert!(out.iter().all(|m| m.state.is_durable()
-        && m.content.is_some()
+        && m.confidence.auto_usable()
+        && m.content.as_deref().is_some_and(|c| !c.is_empty())
         && m.principal_id.as_deref() == Some(principal_id)));
     Ok(out)
 }

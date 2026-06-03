@@ -536,16 +536,27 @@ fn recall_excludes_unconfirmed_unowned_and_contentless() {
     )
     .unwrap();
     memory::confirm(db.conn(), "unowned", 21).unwrap();
-    // (4) a genuinely-recallable control row.
-    memory::record_candidate(db.conn(), &owned_cand("ok", "real fact", "alice", false, 4)).unwrap();
-    memory::confirm(db.conn(), "ok", 22).unwrap();
+    // (4) alice's explicitly-REJECTED memory — a terminal non-fact, never recalled.
+    memory::record_candidate(
+        db.conn(),
+        &owned_cand("rejected", "rejected fact", "alice", false, 4),
+    )
+    .unwrap();
+    memory::reject(db.conn(), "rejected", 22).unwrap();
+    // (5) alice's confirmed but EMPTY-STRING content — still nothing to inject.
+    memory::record_candidate(db.conn(), &owned_cand("empty", "", "alice", false, 5)).unwrap();
+    memory::confirm(db.conn(), "empty", 23).unwrap();
+    // (6) a genuinely-recallable control row.
+    memory::record_candidate(db.conn(), &owned_cand("ok", "real fact", "alice", false, 6)).unwrap();
+    memory::confirm(db.conn(), "ok", 24).unwrap();
 
     let recalled: Vec<String> = memory::recall_confirmed(db.conn(), "alice")
         .unwrap()
         .into_iter()
         .map(|m| m.memory_id)
         .collect();
-    // Only the control row recalls; the candidate, content-less, and unowned rows do not.
+    // ONLY the control row recalls; the candidate, content-less, unowned, rejected,
+    // and empty-content rows are all excluded.
     assert_eq!(recalled, vec!["ok".to_string()]);
 }
 
