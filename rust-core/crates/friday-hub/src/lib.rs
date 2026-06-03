@@ -40,6 +40,12 @@ pub mod routing;
 /// [`runtime::HubRuntime::run_task`] entry. Deny-all approval by default; v1 NO-GO.
 pub mod runtime;
 
+/// UNW-016 — capability route table + truth-labeled disabled-route stubs + Command Sheet
+/// entrypoint resolver. A non-wired capability resolves to a truth-labeled `Disabled`
+/// (never silent / fake-ready); an unknown command fails closed. Closes the contract's
+/// `menu_command_sheet_entrypoints` orphan. The HTTP route-family half stays NO-GO (no API).
+pub mod capability;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,
