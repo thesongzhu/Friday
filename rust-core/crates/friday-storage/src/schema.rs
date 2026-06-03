@@ -23,6 +23,10 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     // so the run + its event log are Hub-only (never created on a phone).
     "agent_run",
     "agent_run_event",
+    // Channels A-PR1: a channel binding holds the owner principal + inbound-auth
+    // reference (Hub-only; never on a phone). NOT a secret store — the bearer secret
+    // lives in OS secure storage; the table holds only an opaque `webhook_auth_ref`.
+    "channel_binding",
 ];
 
 /// Tables present only on a phone (never created on the Hub).
@@ -80,6 +84,15 @@ pub fn hub_migrations() -> Vec<Migration> {
             name: "memory_recall_fields",
             destructive: false,
             up: m0006_memory_recall_fields,
+        },
+        // Channels A-PR1 (additive): the Hub-only `channel_binding` table — a channel
+        // tied to its bound owner principal + allowlist + an opaque inbound-auth
+        // reference (NOT the secret material). Purely additive.
+        Migration {
+            version: 7,
+            name: "channel_binding",
+            destructive: false,
+            up: m0007_channel_binding,
         },
     ]
 }
@@ -351,5 +364,24 @@ fn m0006_memory_recall_fields(tx: &Transaction) -> rusqlite::Result<()> {
          ALTER TABLE memory_item ADD COLUMN principal_id TEXT;
          ALTER TABLE memory_item ADD COLUMN sensitive INTEGER NOT NULL DEFAULT 0;
          CREATE INDEX idx_memory_principal_state ON memory_item(principal_id, state);",
+    )
+}
+
+// Channels A-PR1: the Hub-only `channel_binding` table. `bound_principal_id` is the
+// owner the trusted-inbound invariant binds to (non-anonymous, enforced by the repo);
+// `allowlist` is newline-joined sender ids; `webhook_auth_ref` is an OPAQUE reference
+// to the inbound bearer secret in OS secure storage — NEVER the secret material (so the
+// no-provider-secret-table invariant holds). Purely additive.
+fn m0007_channel_binding(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "CREATE TABLE channel_binding (
+            channel_id          TEXT PRIMARY KEY,
+            kind                TEXT NOT NULL,
+            bound_principal_id  TEXT NOT NULL,
+            allowlist           TEXT NOT NULL DEFAULT '',
+            webhook_auth_ref    TEXT,
+            status              TEXT NOT NULL,
+            created_at          INTEGER NOT NULL
+        );",
     )
 }
