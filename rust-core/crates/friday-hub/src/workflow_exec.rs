@@ -55,9 +55,14 @@ const WORKFLOW_CHECKPOINT_PRIORITY: u8 = 7;
 
 /// The Needs-Me items for PAUSED workflows (`08` §2): every `AwaitingCheckpoint` run is
 /// surfaced as a cross-source action item the user must act on (approve/resume the
-/// paused step). Read-only — the Hub composes these with the other Needs-Me sources
-/// (Codex/Claude/memory/…) via [`friday_core::aggregate_needs_me`]. The `reason` carries
-/// the workflow name + the exact paused step (never silently dropped, `08` §2).
+/// paused step). Read-only. The `reason` carries the workflow name + the exact paused
+/// step (never silently dropped, `08` §2).
+///
+/// SCOPE: this is the workflow PRODUCER. A live Needs-Me inbox would compose these with
+/// the other sources (Codex/Claude/memory/…) via [`friday_core::aggregate_needs_me`] —
+/// but that cross-source aggregation entry point + the Activity inbox surface are a
+/// follow-up (the surface is UI-gated; the Codex/Claude sources are login-gated). No
+/// production caller composes these yet.
 pub fn workflow_needs_me(conn: &Connection) -> Result<Vec<NeedsMeItem>, StorageError> {
     let runs = workflow::runs_in_state(conn, WorkflowRunState::AwaitingCheckpoint)?;
     let mut items = Vec::with_capacity(runs.len());
