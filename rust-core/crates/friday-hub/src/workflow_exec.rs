@@ -19,13 +19,12 @@
 //!   checkpoint), so it structurally cannot smuggle a skill/plugin invocation — this
 //!   engine runs registered built-in tools only (`FsToolExecutor`), the line the
 //!   operator drew (workflow-exec authorized; skill/plugin-exec NOT).
-//! - HONEST GAP: `gate_dispatch` runs the MUTATING-action gate (`authorize_mutating_action`
-//!   → `gate::evaluate`), which does NOT run the read-side sensitive-resource check
-//!   (`evaluate_sensitive_read`, `#389` — not yet wired into the live dispatch path,
-//!   the `#494` enforcement gap). So a read-only step reading a *sensitive* resource
-//!   auto-advances WITHOUT a `#389` checkpoint. The read result stays Hub-side; any
-//!   external transfer is separately Context-Passport-gated. Wiring `#389` into
-//!   dispatch (so a sensitive read also checkpoints) is a separate unit.
+//! - Sensitive reads checkpoint (`#389`/`#494`): the planner screens each step's
+//!   resource, so a read of a token/secret/key/.pem resource is a
+//!   `CheckpointReason::SensitiveResource` checkpoint — it PAUSES, never auto-advances.
+//!   (The narrower remaining `#494` gap is the model-driven `run_loop` dispatch, which
+//!   does not run the read-side gate — a separate unit; it does not affect this
+//!   definition-driven engine, whose every step is planner-screened first.)
 //! - Run-state moves only through `set_run_state`'s SM guard + run-completion gate
 //!   (`08` §6 / #471): the run cannot reach `Done` while a side-effect step is
 //!   unverified, and an executed step is completed WITH its tool receipt as evidence.
@@ -323,6 +322,39 @@ mod tests {
             exec.calls.get(),
             1,
             "executor must NOT run the mutating checkpoint step"
+        );
+        assert_eq!(run_state(&db, "r1"), "awaiting_checkpoint");
+    }
+
+    #[test]
+    fn sensitive_resource_read_pauses_and_is_not_executed() {
+        // A read of a sensitive resource checkpoints (the planner SensitiveResource floor):
+        // the workflow pauses and the executor is NEVER called for it.
+        let db = Db::open_hub(&tmp("sensread")).unwrap();
+        let exec = CountingExec {
+            calls: Cell::new(0),
+        };
+        let def = WorkflowDefinition {
+            name: "audit".into(),
+            steps: vec![step(
+                "read_secret",
+                "read_file",
+                &[("path", "id_rsa")],
+                false,
+                false,
+            )],
+        };
+        let out = run_workflow(&def, &exec, db.conn(), "r1", SECRET, &deny_all, 100).unwrap();
+        match out.status {
+            WorkflowRunStatus::AwaitingCheckpoint { reason, .. } => {
+                assert!(reason.contains("sensitive resource"), "reason: {reason}");
+            }
+            other => panic!("expected AwaitingCheckpoint, got {other:?}"),
+        }
+        assert_eq!(
+            exec.calls.get(),
+            0,
+            "a sensitive read must NOT auto-execute"
         );
         assert_eq!(run_state(&db, "r1"), "awaiting_checkpoint");
     }
