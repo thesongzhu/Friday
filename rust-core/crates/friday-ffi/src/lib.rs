@@ -258,6 +258,86 @@ pub fn sample_memory_review() -> Vec<MemoryCandidateFfi> {
     ]
 }
 
+/// A Context Passport item PROJECTED to the phone (`07` §10, design `passportPattern: Checklist
+/// Sheet`). The `label` is ALREADY redacted by `friday_core::redact_passport_for_projection` for
+/// secret/token/sensitive kinds — the secret value never reaches this struct. `transferable` is
+/// `false` for never-transferable (secret/token) kinds.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PassportItemFfi {
+    pub kind: String,
+    pub label: String,
+    pub included: bool,
+    pub transferable: bool,
+    pub redacted: bool,
+}
+
+fn passport_kind_str(kind: friday_core::PassportItemKind) -> String {
+    use friday_core::PassportItemKind as K;
+    match kind {
+        K::MemorySnippet => "memory_snippet",
+        K::Summary => "summary",
+        K::File => "file",
+        K::Screenshot => "screenshot",
+        K::Attachment => "attachment",
+        K::ProviderSecret => "provider_secret",
+        K::RawToken => "raw_token",
+    }
+    .to_string()
+}
+
+/// A representative Context Passport "Checklist Sheet" PROJECTED through
+/// `friday_core::redact_passport_for_projection`, so a secret/token kind is redacted +
+/// non-transferable — the secret value NEVER leaves the Hub. A Rust-built UI fixture (the live
+/// passport store is deferred); NOT live data. Surfaces the real redaction boundary the UI shows.
+#[uniffi::export]
+pub fn sample_context_passport() -> Vec<PassportItemFfi> {
+    use friday_core::{PassportItem, PassportItemKind};
+    let mk = |kind, label: &str, included, sensitive| PassportItem {
+        kind,
+        label: label.to_string(),
+        included,
+        sensitive,
+    };
+    let items = vec![
+        mk(
+            PassportItemKind::MemorySnippet,
+            "Prefers Rust for new services",
+            true,
+            false,
+        ),
+        mk(
+            PassportItemKind::Summary,
+            "This week: ship the Rust agent loop",
+            true,
+            false,
+        ),
+        mk(PassportItemKind::File, "design-notes.md", true, false),
+        // a secret in context: projected redacted + non-transferable (value never leaves the Hub)
+        mk(
+            PassportItemKind::ProviderSecret,
+            "DEEPSEEK_API_KEY=sk-SECRETVALUE",
+            true,
+            true,
+        ),
+        mk(
+            PassportItemKind::RawToken,
+            "Bearer eyJSECRETTOKEN",
+            false,
+            true,
+        ),
+    ];
+    friday_core::redact_passport_for_projection(&items)
+        .iter()
+        .map(|r| PassportItemFfi {
+            kind: passport_kind_str(r.kind),
+            label: r.label.clone(),
+            included: r.included,
+            transferable: r.transferable,
+            redacted: r.redacted,
+        })
+        .collect()
+}
+
 /// An activity item read back from the phone's own SQLite store (`08`), for UI.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ActivityItemFfi {
@@ -738,5 +818,41 @@ mod tests {
         assert_eq!(inbox[0].source, "claude"); // highest priority (9)
                                                // detail is carried, never dropped.
         assert!(!inbox[0].reason.is_empty() && !inbox[0].destination.is_empty());
+    }
+
+    #[test]
+    fn context_passport_projection_redacts_secrets_never_leaves_hub() {
+        let proj = sample_context_passport();
+        // a provider-secret item is present, redacted, and non-transferable.
+        let secret = proj
+            .iter()
+            .find(|i| i.kind == "provider_secret")
+            .expect("secret item present in the passport");
+        assert_eq!(secret.label, "[redacted: provider secret]");
+        assert!(secret.redacted && !secret.transferable);
+        let token = proj.iter().find(|i| i.kind == "raw_token").unwrap();
+        assert!(token.redacted && !token.transferable);
+        // ordinary items keep their real label + are transferable.
+        let mem = proj.iter().find(|i| i.kind == "memory_snippet").unwrap();
+        assert_eq!(mem.label, "Prefers Rust for new services");
+        assert!(mem.transferable && !mem.redacted);
+        // ADVERSE: the secret VALUE/token never appears anywhere in the projected labels.
+        for i in &proj {
+            assert!(
+                !i.label.contains("sk-SECRETVALUE"),
+                "secret leaked: {}",
+                i.label
+            );
+            assert!(
+                !i.label.contains("eyJSECRETTOKEN"),
+                "token leaked: {}",
+                i.label
+            );
+            assert!(
+                !i.label.contains("DEEPSEEK_API_KEY"),
+                "secret label leaked: {}",
+                i.label
+            );
+        }
     }
 }

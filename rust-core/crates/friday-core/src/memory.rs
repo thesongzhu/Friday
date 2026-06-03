@@ -182,6 +182,55 @@ pub fn gate_transfer(
     Ok(items.iter().filter(|i| i.included).collect())
 }
 
+/// A phone-safe, REDACTED projection of a Context Passport item (`07` §10). The Hub holds the
+/// real passport; this is what may be PROJECTED to the phone/UI (the "Checklist Sheet"). A
+/// never-transferable kind (`ProviderSecret`/`RawToken`) or any `sensitive` item has its `label`
+/// replaced with a generic redaction marker — the secret label/value NEVER leaves the Hub — and
+/// a never-transferable item is `transferable: false`. A reader sees THAT a secret is in context
+/// (so automation stays visible) but not WHAT it is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RedactedPassportItem {
+    pub kind: PassportItemKind,
+    pub label: String,
+    pub included: bool,
+    pub transferable: bool,
+    pub redacted: bool,
+}
+
+fn redacted_label(kind: PassportItemKind) -> &'static str {
+    match kind {
+        PassportItemKind::ProviderSecret => "[redacted: provider secret]",
+        PassportItemKind::RawToken => "[redacted: raw token]",
+        _ => "[redacted: sensitive]",
+    }
+}
+
+/// Project passport items into their phone-safe redacted form. The redaction boundary: a
+/// never-transferable (secret/token) kind OR a `sensitive` item has its real label replaced by a
+/// generic marker (the secret never projects); `transferable` is `false` for never-transferable
+/// kinds (consistent with [`gate_transfer`]). Non-sensitive ordinary items project their real
+/// label. This is the SOLE projection used to surface the passport off the Hub.
+pub fn redact_passport_for_projection(items: &[PassportItem]) -> Vec<RedactedPassportItem> {
+    items
+        .iter()
+        .map(|it| {
+            let never = it.kind.is_never_transferable();
+            let redact = never || it.sensitive;
+            RedactedPassportItem {
+                kind: it.kind,
+                label: if redact {
+                    redacted_label(it.kind).to_string()
+                } else {
+                    it.label.clone()
+                },
+                included: it.included,
+                transferable: !never,
+                redacted: redact,
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,5 +397,75 @@ mod tests {
                 "{kind:?} must block even when approved=true"
             );
         }
+    }
+
+    fn item(kind: PassportItemKind, label: &str, sensitive: bool) -> PassportItem {
+        PassportItem {
+            kind,
+            label: label.to_string(),
+            included: true,
+            sensitive,
+        }
+    }
+
+    #[test]
+    fn redact_projection_never_leaks_secret_label_and_marks_non_transferable() {
+        let items = vec![
+            item(PassportItemKind::MemorySnippet, "prefers rust", false),
+            item(PassportItemKind::Summary, "weekly plan", false),
+            item(
+                PassportItemKind::ProviderSecret,
+                "DEEPSEEK_API_KEY=sk-LEAK",
+                true,
+            ),
+            item(PassportItemKind::RawToken, "Bearer eyJLEAK", false),
+            item(PassportItemKind::File, "confidential.txt", true), // sensitive non-secret
+        ];
+        let proj = redact_passport_for_projection(&items);
+
+        // ordinary non-sensitive items project their REAL label, transferable, not redacted.
+        assert_eq!(proj[0].label, "prefers rust");
+        assert!(proj[0].transferable && !proj[0].redacted);
+        assert_eq!(proj[1].label, "weekly plan");
+
+        // never-transferable kinds: label redacted + transferable=false + redacted=true.
+        assert_eq!(proj[2].label, "[redacted: provider secret]");
+        assert!(!proj[2].transferable && proj[2].redacted);
+        assert_eq!(proj[3].label, "[redacted: raw token]");
+        assert!(!proj[3].transferable && proj[3].redacted);
+
+        // sensitive non-secret: label redacted + redacted=true, but still transferable (w/ approval).
+        assert_eq!(proj[4].label, "[redacted: sensitive]");
+        assert!(proj[4].transferable && proj[4].redacted);
+
+        // ADVERSE: the projection's labels NEVER contain the raw secret material.
+        for r in &proj {
+            assert!(
+                !r.label.contains("sk-LEAK"),
+                "secret value leaked: {}",
+                r.label
+            );
+            assert!(!r.label.contains("eyJLEAK"), "token leaked: {}", r.label);
+            assert!(
+                !r.label.contains("DEEPSEEK_API_KEY"),
+                "secret label leaked: {}",
+                r.label
+            );
+        }
+    }
+
+    #[test]
+    fn redact_projection_transferable_matches_gate_transfer() {
+        // a never-transferable kind is non-transferable in BOTH the projection and gate_transfer.
+        let secret = vec![item(PassportItemKind::ProviderSecret, "k", true)];
+        assert!(!redact_passport_for_projection(&secret)[0].transferable);
+        assert!(matches!(
+            gate_transfer(&secret, true),
+            Err(CoreError::BlockedTransfer(_))
+        ));
+        // an ordinary item is transferable in both.
+        let ok = vec![item(PassportItemKind::MemorySnippet, "x", false)];
+        assert!(redact_passport_for_projection(&ok)[0].transferable);
+        assert!(gate_transfer(&ok, false).is_ok());
     }
 }
