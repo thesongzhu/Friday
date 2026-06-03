@@ -279,7 +279,7 @@ fn passport_kind_str(kind: friday_core::PassportItemKind) -> String {
         K::File => "file",
         K::Screenshot => "screenshot",
         K::Attachment => "attachment",
-        K::ProviderSecret => "provider_secret",
+        K::ProviderSecret => "provider_secret", // pragma: allowlist secret (kind tag, not a secret)
         K::RawToken => "raw_token",
     }
     .to_string()
@@ -312,16 +312,18 @@ pub fn sample_context_passport() -> Vec<PassportItemFfi> {
             false,
         ),
         mk(PassportItemKind::File, "design-notes.md", true, false),
-        // a secret in context: projected redacted + non-transferable (value never leaves the Hub)
+        // a secret in context: projected redacted + non-transferable (value never leaves the Hub).
+        // Fixture values are intentionally NOT secret-shaped (no `sk-`/`eyJ`/`API_KEY=`) so the
+        // repo secrets-scanner stays clean; redaction is by KIND, so the value is irrelevant.
         mk(
             PassportItemKind::ProviderSecret,
-            "DEEPSEEK_API_KEY=sk-SECRETVALUE",
+            "deepseek provider material FIXTURE-PROVIDER-VALUE",
             true,
             true,
         ),
         mk(
             PassportItemKind::RawToken,
-            "Bearer eyJSECRETTOKEN",
+            "phone session blob FIXTURE-TOKEN-VALUE",
             false,
             true,
         ),
@@ -836,23 +838,16 @@ mod tests {
         let mem = proj.iter().find(|i| i.kind == "memory_snippet").unwrap();
         assert_eq!(mem.label, "Prefers Rust for new services");
         assert!(mem.transferable && !mem.redacted);
-        // ADVERSE: the secret VALUE/token never appears anywhere in the projected labels.
+        // ADVERSE: the secret/token VALUE never appears anywhere in the projected labels.
         for i in &proj {
-            assert!(
-                !i.label.contains("sk-SECRETVALUE"),
-                "secret leaked: {}",
-                i.label
-            );
-            assert!(
-                !i.label.contains("eyJSECRETTOKEN"),
-                "token leaked: {}",
-                i.label
-            );
-            assert!(
-                !i.label.contains("DEEPSEEK_API_KEY"),
-                "secret label leaked: {}",
-                i.label
-            );
+            for leaked in ["FIXTURE-PROVIDER-VALUE", "FIXTURE-TOKEN-VALUE"] {
+                assert!(
+                    !i.label.contains(leaked),
+                    "redacted material leaked: {} in {}",
+                    leaked,
+                    i.label
+                );
+            }
         }
     }
 }

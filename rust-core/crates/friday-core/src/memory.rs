@@ -410,16 +410,27 @@ mod tests {
 
     #[test]
     fn redact_projection_never_leaks_secret_label_and_marks_non_transferable() {
+        // Sentinels are intentionally NOT secret-shaped (no `sk-`/`eyJ`/`API_KEY=`) so they
+        // don't trip the repo secrets-scanner — and using a non-`sk-` value makes the test
+        // STRONGER: it proves redaction is unconditional on content, not keyed to a prefix.
         let items = vec![
             item(PassportItemKind::MemorySnippet, "prefers rust", false),
             item(PassportItemKind::Summary, "weekly plan", false),
             item(
                 PassportItemKind::ProviderSecret,
-                "DEEPSEEK_API_KEY=sk-LEAK",
+                "deepseek provider material FIXTURE-PROVIDER-AAA",
                 true,
             ),
-            item(PassportItemKind::RawToken, "Bearer eyJLEAK", false),
-            item(PassportItemKind::File, "confidential.txt", true), // sensitive non-secret
+            item(
+                PassportItemKind::RawToken,
+                "phone session blob FIXTURE-TOKEN-BBB",
+                false,
+            ),
+            item(
+                PassportItemKind::File,
+                "confidential FIXTURE-FILE-CCC",
+                true,
+            ), // sensitive non-secret
         ];
         let proj = redact_passport_for_projection(&items);
 
@@ -438,19 +449,20 @@ mod tests {
         assert_eq!(proj[4].label, "[redacted: sensitive]");
         assert!(proj[4].transferable && proj[4].redacted);
 
-        // ADVERSE: the projection's labels NEVER contain the raw secret material.
+        // ADVERSE: the projection's labels NEVER contain the original redacted material.
         for r in &proj {
-            assert!(
-                !r.label.contains("sk-LEAK"),
-                "secret value leaked: {}",
-                r.label
-            );
-            assert!(!r.label.contains("eyJLEAK"), "token leaked: {}", r.label);
-            assert!(
-                !r.label.contains("DEEPSEEK_API_KEY"),
-                "secret label leaked: {}",
-                r.label
-            );
+            for leaked in [
+                "FIXTURE-PROVIDER-AAA",
+                "FIXTURE-TOKEN-BBB",
+                "FIXTURE-FILE-CCC",
+            ] {
+                assert!(
+                    !r.label.contains(leaked),
+                    "redacted material leaked: {} in {}",
+                    leaked,
+                    r.label
+                );
+            }
         }
     }
 
@@ -480,14 +492,14 @@ mod tests {
             ),
             (PassportItemKind::RawToken, "[redacted: raw token]"),
         ] {
-            let careless = vec![item(kind, "DEEPSEEK_API_KEY=sk-LEAK", false)]; // sensitive=false
+            let careless = vec![item(kind, "provider material FIXTURE-CARELESS-DDD", false)]; // sensitive=false
             let proj = redact_passport_for_projection(&careless);
             assert_eq!(proj[0].label, marker, "{kind:?} must redact by kind");
             assert!(
                 proj[0].redacted && !proj[0].transferable,
                 "{kind:?} must be redacted + non-transferable regardless of sensitive flag"
             );
-            assert!(!proj[0].label.contains("sk-LEAK"));
+            assert!(!proj[0].label.contains("FIXTURE-CARELESS-DDD"));
         }
     }
 }
