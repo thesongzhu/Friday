@@ -209,6 +209,105 @@ pub fn open_write_within_root(root: &Path, candidate: &str, create: bool) -> Res
     Ok(file)
 }
 
+/// Atomically write `contents` to a contained file: write to a temp file in the SAME
+/// directory, fsync, then `rename(2)` it over the target. **Durable atomicity** — a
+/// reader/observer sees either the full old contents or the full new contents, never a
+/// truncated/partial file: the target is mutated ONLY by the final atomic rename, so a
+/// mid-write I/O failure or crash leaves the original intact (the documented #30b NIT in
+/// the agent-loop ToolExecutor).
+///
+/// **Beyond the oracle (deliberate, NOT a mirror):** the TS write tool
+/// (`friday-agent-file-tools.ts`) does open→identity-check→`ftruncate`→`writeFileSync`
+/// in place — it guards destructive-zeroing-before-verification but accepts the
+/// partial-write window. This temp+rename closes that window; it is a conscious
+/// improvement over the oracle, not a port of it.
+///
+/// Containment + safety are preserved:
+/// - The target is resolved through the same [`resolve_within_root`] pipeline (lexical
+///   gate + canonicalized-root + realpath-ancestor parent check) as the open paths.
+/// - The temp is created in the target's realpath-verified parent with
+///   `O_CREAT|O_EXCL|O_NOFOLLOW` + `0o600`. `O_EXCL` means the temp is provably ours —
+///   freshly created, never a pre-existing symlink — so there is no TOCTOU on it and no
+///   fd-identity re-check is needed (we never open the *target*; `rename(2)` acts on the
+///   name, which the parent realpath check contained).
+/// - An existing **non-regular target** (symlink / dir / fifo / …) is refused via a
+///   pre-`lstat` (no-follow). This is a *don't-clobber* policy matching the open path's
+///   refusal, NOT an escape control: `rename(2)` never follows a symlink (it replaces
+///   the link), so the lstat's TOCTOU is harmless.
+/// - On ANY failure after the temp is created (write/fsync/rename), the temp is unlinked
+///   — and never after a successful rename (the rename consumes the temp name).
+///
+/// Residual (same posture as [`open_write_within_root`], tracked follow-up): a
+/// parent-*directory* swap between the realpath check and the rename is a path-based
+/// TOCTOU not closed here; the hardening is `renameat`/`O_DIRECTORY`-fd-relative ops.
+pub fn write_file_within_root(
+    root: &Path,
+    candidate: &str,
+    contents: &[u8],
+) -> Result<(), FsError> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    let resolved = resolve_within_root(root, candidate, /* parent_must_exist */ true)?;
+    let target = resolved.full;
+
+    // Don't-clobber policy (lstat = no follow): refuse to replace a non-regular target,
+    // matching the open path's O_NOFOLLOW / regular-only refusal. A missing target is a
+    // fresh create. (Not an escape control — see the doc comment.)
+    match std::fs::symlink_metadata(&target) {
+        Ok(meta) => {
+            let ft = meta.file_type();
+            if ft.is_symlink() {
+                return Err(FsError::Symlink);
+            }
+            if ft.is_dir() {
+                return Err(FsError::IsDirectory);
+            }
+            if !ft.is_file() {
+                return Err(FsError::NotRegularFile);
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(classify_open_err(e)),
+    }
+
+    // Temp in the SAME directory (so the rename is same-filesystem ⇒ atomic). The parent
+    // was realpath-verified under root by resolve_within_root; the temp name has no path
+    // separators, so it stays in that directory.
+    let parent = target.parent().ok_or(FsError::Escape)?;
+    let file_name = target
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or(FsError::Escape)?;
+    static TMP_CTR: AtomicU64 = AtomicU64::new(0);
+    let nonce = TMP_CTR.fetch_add(1, Ordering::Relaxed);
+    let tmp_path = parent.join(format!(".{file_name}.tmp.{}.{nonce}", std::process::id()));
+
+    // Create the temp FRESH (O_CREAT|O_EXCL ⇒ provably ours, no TOCTOU, can't be a
+    // pre-existing symlink), O_NOFOLLOW + owner-only.
+    let mut tmp = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&tmp_path)
+        .map_err(classify_open_err)?;
+
+    // write → fsync → atomic rename. On any failure, unlink the temp (it still exists,
+    // because a successful rename consumes the temp name — so we never unlink post-rename).
+    let io_result = tmp
+        .write_all(contents)
+        .and_then(|()| tmp.sync_all())
+        .and_then(|()| std::fs::rename(&tmp_path, &target));
+    match io_result {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp_path);
+            Err(FsError::from(e))
+        }
+    }
+}
+
 /// A candidate that has passed the lexical gate + canonicalized-root +
 /// realpath-ancestor containment checks. `full` is the absolute path to open
 /// (built from the *real* root so it is safe to hand to `open`).
@@ -429,5 +528,101 @@ mod tests {
             matches!(err, FsError::IsDirectory),
             "expected IsDirectory, got {err:?}"
         );
+    }
+
+    // ── task #30b: atomic temp+rename write ─────────────────────────────────────
+
+    fn read_file(path: &Path) -> String {
+        let mut f = File::open(path).expect("open");
+        let mut s = String::new();
+        f.read_to_string(&mut s).expect("read");
+        s
+    }
+
+    /// Count temp files (`.<name>.tmp.*`) left in a dir — must be zero after a write.
+    fn temp_leftovers(dir: &Path) -> usize {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp."))
+            .count()
+    }
+
+    #[test]
+    fn write_file_within_root_creates_then_fully_replaces() {
+        let root = TempDir::new();
+        // Create a new file.
+        write_file_within_root(root.path(), "out.txt", b"hello world").unwrap();
+        assert_eq!(read_file(&root.path().join("out.txt")), "hello world");
+        assert_eq!(temp_leftovers(root.path()), 0, "no temp left after create");
+
+        // Replace with SHORTER content — full replace, no stale tail (the bug the oracle
+        // comment notes for in-place ftruncate; temp+rename also fixes it).
+        write_file_within_root(root.path(), "out.txt", b"hi").unwrap();
+        assert_eq!(read_file(&root.path().join("out.txt")), "hi");
+        assert_eq!(temp_leftovers(root.path()), 0, "no temp left after replace");
+    }
+
+    #[test]
+    fn write_file_within_root_refuses_symlink_target_and_leaves_it_intact() {
+        let root = TempDir::new();
+        let outside = TempDir::new();
+        let secret = outside.path().join("secret.txt");
+        write_file(&secret, "OUTSIDE SECRET");
+        // A final-component symlink at the target name (pointing outside root).
+        symlink(&secret, root.path().join("link.txt")).unwrap();
+
+        let err = write_file_within_root(root.path(), "link.txt", b"PWNED").unwrap_err();
+        assert!(
+            matches!(err, FsError::Symlink),
+            "a symlink target must be refused, got {err:?}"
+        );
+        // The symlink AND the file it points at are untouched — we never wrote through it.
+        assert_eq!(read_file(&secret), "OUTSIDE SECRET");
+        assert!(std::fs::symlink_metadata(root.path().join("link.txt"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(temp_leftovers(root.path()), 0);
+    }
+
+    #[test]
+    fn write_file_within_root_refuses_traversal_and_dir_target() {
+        let root = TempDir::new();
+        // Lexical traversal is refused (no write outside root).
+        assert!(matches!(
+            write_file_within_root(root.path(), "../escape.txt", b"x").unwrap_err(),
+            FsError::Lexical(_)
+        ));
+        // A directory target is refused (don't-clobber), original dir intact.
+        std::fs::create_dir(root.path().join("d")).unwrap();
+        assert!(matches!(
+            write_file_within_root(root.path(), "d", b"x").unwrap_err(),
+            FsError::IsDirectory
+        ));
+        assert!(root.path().join("d").is_dir());
+    }
+
+    #[test]
+    fn write_file_within_root_replace_is_atomic_original_survives_a_refused_write() {
+        // The target is mutated ONLY by the final rename. A write that is REFUSED before
+        // the rename (here: the target was swapped to a symlink after it existed as a
+        // regular file) leaves the original regular file's content fully intact — never a
+        // truncated partial. (A mid-write I/O failure has the same guarantee by
+        // construction: the original is untouched until the atomic rename.)
+        let root = TempDir::new();
+        write_file_within_root(root.path(), "data.txt", b"ORIGINAL-INTACT").unwrap();
+        // Swap the now-existing regular file for a symlink (simulating a hostile race /
+        // a pre-existing symlink): the next write must refuse and NOT clobber.
+        let outside = TempDir::new();
+        let decoy = outside.path().join("decoy.txt");
+        write_file(&decoy, "DECOY");
+        std::fs::remove_file(root.path().join("data.txt")).unwrap();
+        symlink(&decoy, root.path().join("data.txt")).unwrap();
+        let err = write_file_within_root(root.path(), "data.txt", b"NEW").unwrap_err();
+        assert!(matches!(err, FsError::Symlink), "got {err:?}");
+        // The decoy (what the symlink pointed at) was NOT written through.
+        assert_eq!(read_file(&decoy), "DECOY");
+        assert_eq!(temp_leftovers(root.path()), 0);
     }
 }

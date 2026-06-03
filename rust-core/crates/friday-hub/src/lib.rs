@@ -843,7 +843,7 @@ impl FsToolExecutor {
 
 impl ToolExecutor for FsToolExecutor {
     fn execute(&self, action: &str, params: &[(String, String)]) -> Result<ToolReceipt, ExecError> {
-        use std::io::{Read, Write};
+        use std::io::Read;
         match action {
             "read_file" => {
                 let path = Self::param(params, "path")?;
@@ -859,9 +859,11 @@ impl ToolExecutor for FsToolExecutor {
             "write_file" => {
                 let path = Self::param(params, "path")?;
                 let content = Self::param(params, "content")?;
-                let mut file = friday_fs::open_write_within_root(&self.root, path, true)
+                // Atomic temp+rename (task #30b): a mid-write failure leaves the original
+                // file intact rather than a truncated partial — the target is replaced by
+                // a single rename, never truncated in place.
+                friday_fs::write_file_within_root(&self.root, path, content.as_bytes())
                     .map_err(ExecError::Fs)?;
-                file.write_all(content.as_bytes()).map_err(ExecError::Io)?;
                 Ok(ToolReceipt {
                     action: action.to_string(),
                     summary: format!("wrote {} bytes to {path}", content.len()),
