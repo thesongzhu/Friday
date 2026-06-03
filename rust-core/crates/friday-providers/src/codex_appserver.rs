@@ -83,6 +83,12 @@ pub struct ThreadListProbe {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadListSummary {
+    pub threads: Vec<ThreadSummary>,
+    pub has_next_cursor: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HealthSummary {
     pub initialized: InitializeSummary,
     pub thread_list: ThreadListProbe,
@@ -268,7 +274,14 @@ impl<R: Read, W: Write> JsonLineTransport<R, W> {
 
 impl<R: Read, W: Write> CodexAppServerTransport for JsonLineTransport<R, W> {
     fn request(&mut self, request: JsonRpcRequest) -> Result<JsonRpcResponse, CodexAppServerError> {
-        let encoded = serde_json::to_vec(&request).map_err(|_| CodexAppServerError::Protocol {
+        let request_id = request.id;
+        let encoded = serde_json::to_vec(&json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": request.method,
+            "params": request.params,
+        }))
+        .map_err(|_| CodexAppServerError::Protocol {
             code: "request-encode",
         })?;
         self.writer
@@ -279,21 +292,41 @@ impl<R: Read, W: Write> CodexAppServerTransport for JsonLineTransport<R, W> {
                 code: "request-write",
             })?;
 
-        let mut line = String::new();
-        let read =
-            self.reader
-                .read_line(&mut line)
-                .map_err(|_| CodexAppServerError::Transport {
-                    code: "response-read",
+        loop {
+            let mut line = String::new();
+            let read =
+                self.reader
+                    .read_line(&mut line)
+                    .map_err(|_| CodexAppServerError::Transport {
+                        code: "response-read",
+                    })?;
+            if read == 0 {
+                return Err(CodexAppServerError::Transport {
+                    code: "response-eof",
+                });
+            }
+            let value: Value =
+                serde_json::from_str(&line).map_err(|_| CodexAppServerError::Protocol {
+                    code: "response-json",
                 })?;
-        if read == 0 {
-            return Err(CodexAppServerError::Transport {
-                code: "response-eof",
-            });
+            match value.get("id") {
+                Some(id) if id == &json!(request_id) => {
+                    return serde_json::from_value(value).map_err(|_| {
+                        CodexAppServerError::Protocol {
+                            code: "response-json",
+                        }
+                    });
+                }
+                Some(_) => {
+                    return Err(CodexAppServerError::Protocol {
+                        code: "interleaved-server-request",
+                    });
+                }
+                None => {
+                    continue;
+                }
+            }
         }
-        serde_json::from_str(&line).map_err(|_| CodexAppServerError::Protocol {
-            code: "response-json",
-        })
     }
 }
 
@@ -344,24 +377,40 @@ impl<T: CodexAppServerTransport> CodexAppServerClient<T> {
     /// Non-model health probe. `thread/list` is a metadata read; it must not be
     /// used as proof of a model send or official provider-history sync.
     pub fn thread_list_probe(&mut self) -> Result<ThreadListProbe, CodexAppServerError> {
+        let list = self.list_threads(1, true)?;
+        Ok(ThreadListProbe {
+            item_count: list.threads.len(),
+            has_next_cursor: list.has_next_cursor,
+        })
+    }
+
+    pub fn list_threads(
+        &mut self,
+        limit: u64,
+        use_state_db_only: bool,
+    ) -> Result<ThreadListSummary, CodexAppServerError> {
         let result = self.call(
             "thread/list",
             json!({
-                "limit": 1,
+                "limit": limit,
                 "archived": false,
-                "useStateDbOnly": true,
+                "useStateDbOnly": use_state_db_only,
             }),
         )?;
-        let item_count = result
-            .get("data")
-            .and_then(Value::as_array)
-            .ok_or(CodexAppServerError::Protocol {
-                code: "thread-list-data",
-            })?
-            .len();
+        let data =
+            result
+                .get("data")
+                .and_then(Value::as_array)
+                .ok_or(CodexAppServerError::Protocol {
+                    code: "thread-list-data",
+                })?;
+        let threads = data
+            .iter()
+            .map(thread_summary_from_thread_value)
+            .collect::<Result<Vec<_>, _>>()?;
         let has_next_cursor = result.get("nextCursor").is_some_and(|v| !v.is_null());
-        Ok(ThreadListProbe {
-            item_count,
+        Ok(ThreadListSummary {
+            threads,
             has_next_cursor,
         })
     }
@@ -832,8 +881,28 @@ mod tests {
         );
         let (_reader, writer) = transport.into_parts();
         let written = String::from_utf8(writer).unwrap();
+        assert!(written.contains("\"jsonrpc\":\"2.0\""));
         assert!(written.contains("\"method\":\"initialize\""));
         assert!(written.ends_with('\n'));
+    }
+
+    #[test]
+    fn json_line_transport_skips_notifications_until_matching_response() {
+        let response = br#"{"method":"remoteControl/status/changed","params":{"status":"disabled"}}
+{"id":1,"result":{"platformFamily":"unix","platformOs":"macos","userAgent":"codex-test"}}
+"#;
+        let mut transport = JsonLineTransport::new(&response[..], Vec::<u8>::new());
+        let out = transport
+            .request(JsonRpcRequest {
+                id: 1,
+                method: "initialize".to_string(),
+                params: json!({}),
+            })
+            .unwrap();
+        assert_eq!(
+            out.result.unwrap().get("userAgent").and_then(Value::as_str),
+            Some("codex-test")
+        );
     }
 
     #[test]
@@ -865,6 +934,27 @@ mod tests {
         assert!(
             calls.iter().all(|c| c.method != "turn/start"),
             "PNS-002 health must not start a model turn"
+        );
+    }
+
+    #[test]
+    fn list_threads_projects_thread_summaries_without_turns() {
+        let transport = MockCodexAppServerTransport::new(vec![ok(json!({
+            "data": [
+                thread("thread-1", json!({"type":"notLoaded"}), json!([])),
+            ],
+            "nextCursor": "cursor-2",
+        }))]);
+        let mut client = CodexAppServerClient::new(transport);
+        let list = client.list_threads(1, true).unwrap();
+        assert_eq!(list.threads[0].thread_id, "thread-1");
+        assert_eq!(list.threads[0].status.as_deref(), Some("notLoaded"));
+        assert!(list.has_next_cursor);
+        let transport = client.into_transport();
+        assert_eq!(transport.calls()[0].method, "thread/list");
+        assert_eq!(
+            transport.calls()[0].params.get("useStateDbOnly"),
+            Some(&json!(true))
         );
     }
 
