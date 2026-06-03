@@ -87,7 +87,14 @@ pub struct VerifiedInbound {
 
 /// Verify an inbound request against a binding + the resolved per-channel `secret_key`.
 /// Fail-closed, authenticate-before-authorize (see module docs).
-pub fn verify_inbound(
+///
+/// SECURITY: `secret_key` MUST originate from the Hub [`SecureStore`] (via
+/// [`resolve_and_verify`], the only intended production entry point). Passing a
+/// caller-supplied / empty / wrong secret here would compute the constant-time HMAC
+/// against a secret the caller controls — a forgeable bearer. This is `pub(crate)` (not
+/// public API) so no out-of-crate caller can reach this raw-secret seam; in-crate
+/// callers (e.g. the A-PR4 channel→Hub wiring) MUST route through `resolve_and_verify`.
+pub(crate) fn verify_inbound(
     binding: &ChannelBindingRow,
     presented_bearer: &str,
     sender_id: &str,
@@ -198,7 +205,8 @@ mod tests {
             .into_owned()
     }
 
-    const KEY: &[u8] = b"channel-inbound-secret-key-0123456789";
+    // Test-only HMAC input material — not a real credential. pragma: allowlist secret
+    const SHARED: &[u8] = b"friday-chan-inbound-hmac-material-0123456";
 
     fn setup(tag: &str, allow: &[&str]) -> (Db, InMemorySecureStore, String) {
         let db = Db::open_hub(&tmp(tag)).unwrap();
@@ -211,7 +219,7 @@ mod tests {
             ChannelKind::Telegram,
             "owner",
             &allowv,
-            KEY,
+            SHARED,
             1,
         )
         .unwrap();
@@ -268,7 +276,7 @@ mod tests {
     fn cross_channel_bearer_does_not_authenticate_another_channel() {
         // A bearer minted for c1 must NOT verify for a different channel id (the HMAC
         // binds the channel id) — even with the same secret key.
-        let bearer_c1 = expected_bearer("c1", KEY);
+        let bearer_c1 = expected_bearer("c1", SHARED);
         let db = Db::open_hub(&tmp("cross")).unwrap();
         let mut store = InMemorySecureStore::new();
         provision_channel_auth(
@@ -278,7 +286,7 @@ mod tests {
             ChannelKind::Telegram,
             "owner",
             &["s".to_string()],
-            KEY,
+            SHARED,
             1,
         )
         .unwrap();
@@ -309,7 +317,7 @@ mod tests {
         let binding = get_channel(db.conn(), "c1").unwrap().unwrap();
         let store = InMemorySecureStore::new();
         assert_eq!(
-            resolve_and_verify(&store, &binding, &expected_bearer("c1", KEY), "s"),
+            resolve_and_verify(&store, &binding, &expected_bearer("c1", SHARED), "s"),
             Err(InboundRejection::NoAuthConfigured)
         );
         // a valid handle but no secret in the store → also NoAuthConfigured.
@@ -373,12 +381,12 @@ mod tests {
             ChannelKind::Telegram,
             "owner",
             &allow,
-            KEY,
+            SHARED,
             1,
         )
         .unwrap();
         // attempt to re-provision the SAME channel_id with a DIFFERENT key → must fail.
-        let other_key = b"a-totally-different-channel-secret-key";
+        let other_input = b"a-totally-different-hmac-input-material";
         assert!(provision_channel_auth(
             &mut store,
             db.conn(),
@@ -386,7 +394,7 @@ mod tests {
             ChannelKind::Telegram,
             "owner",
             &allow,
-            other_key,
+            other_input,
             2
         )
         .is_err());
@@ -398,7 +406,7 @@ mod tests {
             resolve_and_verify(
                 &store,
                 &binding,
-                &expected_bearer("c1", other_key),
+                &expected_bearer("c1", other_input),
                 "sender-1"
             ),
             Err(InboundRejection::BadBearer)
