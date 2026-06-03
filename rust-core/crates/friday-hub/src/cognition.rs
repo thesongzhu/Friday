@@ -18,6 +18,21 @@
 //! recency-decay only; the SQL query already did the same-principal + Confirmed +
 //! content-bearing filtering, so this layer adds bounded ranking, a
 //! defense-in-depth trust re-check, and redaction.
+//!
+//! **PII-port fidelity (honest deviations from the oracle PII guard):**
+//! - **SSN** drops the oracle's invalid-prefix look-aheads (the Rust engine is
+//!   look-around-free) → matches the plain 3-2-4 shape (over-match, safe).
+//! - **Boundaries** use `(?-u:\b)` (ASCII), matching the oracle's ASCII-`\b`, so
+//!   CJK-adjacent PII redacts. A plain Unicode `\b` would LEAK it.
+//! - **Phone** requires a full 10 digits; the oracle also matches bare 7-digit
+//!   locals. This is a DELIBERATE under-match — a bare 7-digit pattern would
+//!   over-redact benign numbers; disclosed, not a parity claim.
+//! - **Glued ASCII tokens** (e.g. an email TLD immediately followed by a digit
+//!   run, no separator) under-match — inherited from the oracle's `\b` (both
+//!   ASCII and Unicode `\b` agree there is no boundary mid-token). Not introduced.
+//!
+//! Redaction is defense-in-depth; the Context Passport sensitive-flag gate is the
+//! primary control and is NOT replaced by this.
 
 use friday_storage::memory::MemoryRow;
 use regex::Regex;
@@ -69,11 +84,18 @@ pub const DEFAULT_HALF_LIFE_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 // matches are resolved earliest-start-wins in `redact_pii`.
 fn pii_patterns() -> &'static [(PiiKind, Regex)] {
     static PATTERNS: OnceLock<Vec<(PiiKind, Regex)>> = OnceLock::new();
+    // NOTE the boundaries are the ASCII word boundary `(?-u:\b)`, NOT a plain `\b`.
+    // The Rust `regex` crate's `\b` is UNICODE-aware (a CJK char is a word char), so
+    // a plain `\b` does NOT fire between a CJK char and an adjacent ASCII PII run —
+    // e.g. `电话212-555-0143` / `邮箱alice@example.com` (idiomatic Chinese writes no
+    // space) would pass through UNREDACTED. That is a real leak in the operator's
+    // language. `(?-u:\b)` restores the oracle's ASCII-`\b` semantics (CJK acts as a
+    // boundary) so CJK-adjacent PII redacts.
     PATTERNS.get_or_init(|| {
         vec![
             (
                 PiiKind::Email,
-                Regex::new(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b").unwrap(),
+                Regex::new(r"(?i)(?-u:\b)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}(?-u:\b)").unwrap(),
             ),
             // SSN: 3-2-4 nine-digit shape. (The oracle additionally excludes invalid
             // prefixes via look-ahead; the Rust `regex` crate is look-around-free, so
@@ -82,20 +104,23 @@ fn pii_patterns() -> &'static [(PiiKind, Regex)] {
             // would leak a real SSN, is the dangerous one.)
             (
                 PiiKind::Ssn,
-                Regex::new(r"\b\d{3}[- ]?\d{2}[- ]?\d{4}\b").unwrap(),
+                Regex::new(r"(?-u:\b)\d{3}[- ]?\d{2}[- ]?\d{4}(?-u:\b)").unwrap(),
             ),
-            // Credit-card candidate: 13–19 digits with optional space/dash groups.
-            // Luhn-validated in `redact_pii` so arbitrary long digit runs are NOT
-            // redacted as cards.
+            // Credit-card candidate: 13–19 digits with any space/dash separators
+            // between them (`[ -]*`, matching the oracle, so a multi-separator card
+            // like `4111 - 1111 - 1111 - 1111` is still caught). Luhn-validated in
+            // `redact_pii` so arbitrary long digit runs are NOT redacted as cards.
             (
                 PiiKind::CreditCard,
-                Regex::new(r"\b(?:\d[ -]?){13,19}\b").unwrap(),
+                Regex::new(r"(?-u:\b)(?:\d[ -]*){13,19}(?-u:\b)").unwrap(),
             ),
             // North-American phone (10 digits, optional +1 / grouping / separators).
             (
                 PiiKind::Phone,
-                Regex::new(r"\b(?:\+1[-.\s]?)?\(?[2-9]\d{2}\)?[-.\s]?[2-9]\d{2}[-.\s]?\d{4}\b")
-                    .unwrap(),
+                Regex::new(
+                    r"(?-u:\b)(?:\+1[-.\s]?)?\(?[2-9]\d{2}\)?[-.\s]?[2-9]\d{2}[-.\s]?\d{4}(?-u:\b)",
+                )
+                .unwrap(),
             ),
         ]
     })
@@ -305,6 +330,54 @@ mod tests {
         let (out, kinds) = redact_pii("prefers rust for new services");
         assert_eq!(out, "prefers rust for new services");
         assert!(kinds.is_empty());
+    }
+
+    #[test]
+    fn cjk_adjacent_pii_is_redacted_not_leaked() {
+        // Idiomatic Chinese writes no space between a label and the value. With a
+        // Unicode `\b` these would LEAK (CJK + ASCII are both word chars → no
+        // boundary fires); the ASCII `(?-u:\b)` boundary redacts them.
+        let cases = [
+            (
+                "邮箱alice@example.com是我的",
+                "alice@example.com",
+                PiiKind::Email,
+            ),
+            ("电话212-555-0143打来", "212-555-0143", PiiKind::Phone),
+            ("社保123-45-6789记录", "123-45-6789", PiiKind::Ssn),
+        ];
+        for (input, raw, kind) in cases {
+            let (out, kinds) = redact_pii(input);
+            assert!(
+                kinds.contains(&kind),
+                "{input:?} should detect {kind:?}, got {kinds:?}"
+            );
+            assert!(
+                !out.contains(raw),
+                "CJK-adjacent PII leaked: {raw:?} survived in {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn multibyte_prefix_does_not_corrupt_or_panic() {
+        // A 4-byte emoji + 3-byte CJK before the match — byte offsets must stay on
+        // char boundaries (replace_range would panic otherwise).
+        let (out, kinds) = redact_pii("😀你好 alice@example.com 123-45-6789");
+        assert!(kinds.contains(&PiiKind::Email) && kinds.contains(&PiiKind::Ssn));
+        assert!(out.starts_with("😀你好 "));
+        assert!(!out.contains("alice@example.com") && !out.contains("123-45-6789"));
+    }
+
+    #[test]
+    fn multi_separator_credit_card_is_caught() {
+        // " - " between groups (multiple separators) — `[ -]*` matches the oracle.
+        let (out, kinds) = redact_pii("card 4111 - 1111 - 1111 - 1111 ok");
+        assert!(
+            kinds.contains(&PiiKind::CreditCard),
+            "multi-sep card missed: {kinds:?}"
+        );
+        assert!(!out.contains("4111 - 1111 - 1111 - 1111"));
     }
 
     #[test]
