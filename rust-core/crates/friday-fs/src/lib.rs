@@ -210,17 +210,29 @@ pub fn open_write_within_root(root: &Path, candidate: &str, create: bool) -> Res
 }
 
 /// Atomically write `contents` to a contained file: write to a temp file in the SAME
-/// directory, fsync, then `rename(2)` it over the target. **Durable atomicity** — a
-/// reader/observer sees either the full old contents or the full new contents, never a
+/// directory, fsync the temp, then `rename(2)` it over the target. **Atomic replace** — a
+/// reader sees either the full old contents or the full new contents, never a
 /// truncated/partial file: the target is mutated ONLY by the final atomic rename, so a
-/// mid-write I/O failure or crash leaves the original intact (the documented #30b NIT in
-/// the agent-loop ToolExecutor).
+/// mid-write I/O failure leaves the original intact (the documented #30b NIT in the
+/// agent-loop ToolExecutor). (We fsync the temp before rename, but do NOT fsync the
+/// parent directory, so the *crash-durability* of the committed rename is not guaranteed
+/// — "atomic", not "durable across a power loss".)
 ///
 /// **Beyond the oracle (deliberate, NOT a mirror):** the TS write tool
 /// (`friday-agent-file-tools.ts`) does open→identity-check→`ftruncate`→`writeFileSync`
 /// in place — it guards destructive-zeroing-before-verification but accepts the
 /// partial-write window. This temp+rename closes that window; it is a conscious
 /// improvement over the oracle, not a port of it.
+///
+/// **Replace semantics differ from an in-place write (truth-labeled):** because the new
+/// file is a fresh inode renamed over the target, a successful replace **normalizes the
+/// file's mode to `0o600`** (dropping any prior mode/xattrs/ACLs) and **breaks hardlinks**
+/// (the other names keep the old inode). This is acceptable for the agent workspace
+/// (agent-written files are `0o600` regular files), but it is strictly different from the
+/// oracle's in-place write, which preserves the existing inode/mode. The one protection
+/// that IS preserved: a **read-only** (non-owner-writable) existing target is refused with
+/// `EACCES`, exactly as an in-place write-open would fail — temp+rename does not silently
+/// overwrite a read-only contained file.
 ///
 /// Containment + safety are preserved:
 /// - The target is resolved through the same [`resolve_within_root`] pipeline (lexical
@@ -265,6 +277,13 @@ pub fn write_file_within_root(
             }
             if !ft.is_file() {
                 return Err(FsError::NotRegularFile);
+            }
+            // Preserve the open path's (and the oracle's) protection of a read-only file:
+            // an in-place write-open of a non-owner-writable file fails EACCES. temp+rename
+            // writes via the *parent* dir, so it would otherwise silently overwrite a
+            // read-only file (and reset its mode) — refuse instead, EACCES like the oracle.
+            if meta.mode() & 0o200 == 0 {
+                return Err(FsError::Io(std::io::Error::from_raw_os_error(libc::EACCES)));
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -604,25 +623,35 @@ mod tests {
     }
 
     #[test]
-    fn write_file_within_root_replace_is_atomic_original_survives_a_refused_write() {
-        // The target is mutated ONLY by the final rename. A write that is REFUSED before
-        // the rename (here: the target was swapped to a symlink after it existed as a
-        // regular file) leaves the original regular file's content fully intact — never a
-        // truncated partial. (A mid-write I/O failure has the same guarantee by
-        // construction: the original is untouched until the atomic rename.)
+    fn write_file_within_root_refuses_readonly_target_leaving_content_and_mode_intact() {
+        // Parity with the open path / oracle: a read-only (non-owner-writable) regular
+        // target is refused with EACCES — temp+rename does NOT silently overwrite it (nor
+        // reset its mode). This is also the genuine "a regular file survives a refused
+        // write" case: the original content + mode are untouched (the target is mutated
+        // ONLY by the final rename, which never happens here).
+        use std::os::unix::fs::PermissionsExt;
         let root = TempDir::new();
-        write_file_within_root(root.path(), "data.txt", b"ORIGINAL-INTACT").unwrap();
-        // Swap the now-existing regular file for a symlink (simulating a hostile race /
-        // a pre-existing symlink): the next write must refuse and NOT clobber.
-        let outside = TempDir::new();
-        let decoy = outside.path().join("decoy.txt");
-        write_file(&decoy, "DECOY");
-        std::fs::remove_file(root.path().join("data.txt")).unwrap();
-        symlink(&decoy, root.path().join("data.txt")).unwrap();
-        let err = write_file_within_root(root.path(), "data.txt", b"NEW").unwrap_err();
-        assert!(matches!(err, FsError::Symlink), "got {err:?}");
-        // The decoy (what the symlink pointed at) was NOT written through.
-        assert_eq!(read_file(&decoy), "DECOY");
+        let path = root.path().join("ro.txt");
+        write_file(&path, "ORIGINAL-INTACT");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+        let err = write_file_within_root(root.path(), "ro.txt", b"OVERWRITE").unwrap_err();
+        assert!(
+            matches!(&err, FsError::Io(e) if e.raw_os_error() == Some(libc::EACCES)),
+            "a read-only target must be refused EACCES, got {err:?}"
+        );
+        // Content fully intact (never truncated/partial) and mode NOT reset to 0o600.
+        assert_eq!(read_file(&path), "ORIGINAL-INTACT");
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().mode() & 0o777,
+            0o444,
+            "the refused write must not have replaced the file (mode preserved)"
+        );
         assert_eq!(temp_leftovers(root.path()), 0);
+
+        // Make it writable → the write now succeeds and fully replaces.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_file_within_root(root.path(), "ro.txt", b"NEW").unwrap();
+        assert_eq!(read_file(&path), "NEW");
     }
 }
