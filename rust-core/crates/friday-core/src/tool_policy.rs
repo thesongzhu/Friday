@@ -745,8 +745,9 @@ pub fn contains_sensitive_assignment(text: &str) -> bool {
 // --- destructive-request detection (planning gate; EN + CJK) -----------------
 
 const EN_DESTRUCT_VERBS: &[&str] = &[
-    "delete", "remove", "erase", "wipe", "purge", "clean", "clear", "drop", "reset", "destroy",
-    "rm", "unlink", "shred", "truncate", "format",
+    "delete", "remove", "erase", "wipe", "purge",    // ↓ `clean up` mirrors the oracle's
+    "clean up", // `clean(?:\s+up)?` so the in-window match starts AFTER "up" (reviewer-B C2);
+    "clean", "clear", "drop", "reset", "destroy", "rm", "unlink", "shred", "truncate", "format",
 ];
 const EN_DESTRUCT_OBJECTS: &[&str] = &[
     "file",
@@ -775,6 +776,16 @@ const EN_DESTRUCT_OBJECTS: &[&str] = &[
     "log",
     "all",
     "everything",
+    // C2 hardening (reviewer-B): high-risk delete/reset targets the oracle's list
+    // omits. So "reset the production credentials" / "delete the production
+    // deployment" / "wipe the tokens" now escalate (via deployment/credentials/token —
+    // bare "production" was dropped to avoid `rotate the production banner` false flags).
+    "deployment",
+    "deployments",
+    "credentials",
+    "credential",
+    "token",
+    "tokens",
 ];
 const EN_SAVE_VERBS: &[&str] = &["save", "store", "write", "persist", "record", "remember"];
 const EN_SAVE_OBJECTS: &[&str] = &[
@@ -813,6 +824,74 @@ const EN_CONFIG_OBJECTS: &[&str] = &[
     "secret",
     "provider config",
     "routing config",
+    // C2 hardening: repo visibility + 2FA toggles via config verbs
+    // (set/change/update/disable/enable + these) — catches "change the repo
+    // visibility to public" / "disable 2fa" without the noisy bare `make` verb.
+    // NOTE: bare `public`/`private` were dropped (reviewer A+B C2 round-2): with the
+    // config verbs they flooded ordinary coding asks ("change the public API",
+    // "set the field to private"). The motivating case ("change repo visibility to
+    // public") is carried by `visibility`; "disable 2fa" by `2fa`.
+    "visibility",
+    "2fa",
+    "mfa",
+    "two-factor",
+];
+/// C2 hardening (reviewer-B), DELIBERATE divergence from the TS oracle: high-risk
+/// operations phrased outside the file/credential/config clauses above
+/// (`revoke tokens`, `rotate the signing key`, `transfer ownership`, `force push`/
+/// `overwrite history`, `grant admin`, `turn off branch protection`,
+/// `leak/expose the secret`). The oracle SHARES this under-detection; we close it
+/// because the planning gate should escalate these to a plan. Stricter is safe here
+/// (over-planning a high-risk ask is harmless; under-planning a destructive one is
+/// not). Repo-visibility ("make X public") is NOT here — bare `make` was dropped as a
+/// flooding verb; it is caught via the config clause (`change/set visibility`).
+const EN_HIGHRISK_VERBS: &[&str] = &[
+    "revoke",
+    "rotate",
+    "transfer",
+    "overwrite",
+    "leak",
+    "expose",
+    "grant",
+    "turn off",
+    "force push",
+    "force-push",
+    // NOTE: `make` was dropped (reviewer A+B C2): even word-bounded it pairs with
+    // common objects ("make a cake for the public bake sale") and floods the gate.
+    // Repo-visibility ("make X public") is instead caught via the config clause
+    // (set/change/update + public/private/visibility).
+];
+const EN_HIGHRISK_OBJECTS: &[&str] = &[
+    "token",
+    "tokens",
+    "access token",
+    "credential",
+    "credentials",
+    "key",
+    "keys",
+    "signing key",
+    "api key",
+    "admin",
+    "ownership",
+    "deployment",
+    "deployments",
+    "history",
+    // NOTE: `production` was dropped as a bare object (reviewer A+B C2): it caused
+    // `rotate the production banner image`-class false flags. The real cases catch
+    // via their concrete object (delete+deployment, reset+credentials, wipe+database).
+    "main",
+    "master",
+    "2fa",
+    "mfa",
+    "two-factor",
+    // NOTE: bare `public`/`private` dropped here too (reviewer A+B C2 round-2): they
+    // flooded "rotate the public key"-class asks while adding nothing — `rotate ...
+    // key` already fires via `key`, and visibility changes fire via the config clause.
+    "branch protection",
+    "secret",
+    "secrets",
+    "permission",
+    "permissions",
 ];
 /// Programs that, followed by an argument, are a destructive shell action.
 const DESTRUCT_EXEC: &[&str] = &["rm", "unlink", "shred", "truncate", "mkfs", "dd"];
@@ -842,7 +921,11 @@ const CJK_DESTRUCT_OBJECTS: &[&str] = &[
 ];
 const CJK_SAVE_VERBS: &[&str] = &["保存", "写入", "记录", "存储"];
 const CJK_SAVE_OBJECTS: &[&str] = &["token", "令牌", "密钥", "密码", "凭据", "secret", "api key"];
-const CJK_CONFIG_VERBS: &[&str] = &["修改", "更改", "改变", "关闭", "开启", "删除"];
+const CJK_CONFIG_VERBS: &[&str] = &[
+    "修改", "更改", "改变", "关闭", "开启", "删除",
+    // C2 hardening (CJK parity, best-effort): revoke / transfer.
+    "撤销", "转移",
+];
 const CJK_CONFIG_OBJECTS: &[&str] = &[
     "github",
     "分支保护",
@@ -851,20 +934,42 @@ const CJK_CONFIG_OBJECTS: &[&str] = &[
     "配置",
     "provider",
     "供应商",
+    // C2 hardening: token / key / credentials / deployment / ownership.
+    "令牌",
+    "密钥",
+    "凭据",
+    "部署",
+    "所有权",
 ];
 
 /// True if the request describes a destructive / high-risk action (delete files/repos/DBs,
 /// persist credentials, mutate GitHub/permission/repo settings, or invoke a destructive program
 /// with an argument). Detects both English and Chinese phrasings (UNW-009 multilingual).
+///
+/// Known limitations vs the oracle (Reviewer-B C2 differential, both low-severity):
+/// - **Homoglyph / Unicode case-fold evasion (under-detect).** Matching lowercases via
+///   `to_ascii_lowercase`, while the oracle's `/iu` does full Unicode case-fold; a
+///   confusable like U+212A (Kelvin, ≈`K`) in `保存to\u{212A}en` evades. This is a
+///   classification gate, not the execution backstop (`shell_risk` still classifies a
+///   real destructive command), and the evasion is exotic. Closing it belongs in the
+///   shared normalization layer (a full case-fold), not here.
+/// - **Window counted in code points (over-detect, safe).** The gap is
+///   `chars().count()`; the EN oracle's `/i` (no `u`) counts UTF-16 units, so astral-
+///   char-laden gaps make us slightly MORE permissive (never less). The CJK oracle is
+///   `/iu` (code points) and matches exactly.
 pub fn is_destructive_request(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
-    co_occurs_within(&lower, EN_DESTRUCT_VERBS, EN_DESTRUCT_OBJECTS, 120)
-        || co_occurs_within(&lower, EN_SAVE_VERBS, EN_SAVE_OBJECTS, 80)
-        || co_occurs_within(&lower, EN_CONFIG_VERBS, EN_CONFIG_OBJECTS, 100)
+    // EN clauses port `\bverb\b…\bobject\b` → word_bound = true. CJK clauses port the
+    // no-`\b` `DESTRUCTIVE_ACTION_CJK_HINTS` → word_bound = false (pure substring), so a
+    // CJK verb glued to an ASCII object (`保存access_token`) still matches as the oracle does.
+    co_occurs_within(&lower, EN_DESTRUCT_VERBS, EN_DESTRUCT_OBJECTS, 120, true)
+        || co_occurs_within(&lower, EN_SAVE_VERBS, EN_SAVE_OBJECTS, 80, true)
+        || co_occurs_within(&lower, EN_CONFIG_VERBS, EN_CONFIG_OBJECTS, 100, true)
+        || co_occurs_within(&lower, EN_HIGHRISK_VERBS, EN_HIGHRISK_OBJECTS, 100, true)
         || has_exec_with_arg(&lower, DESTRUCT_EXEC)
-        || co_occurs_within(text, CJK_DESTRUCT_VERBS, CJK_DESTRUCT_OBJECTS, 80)
-        || co_occurs_within(&lower, CJK_SAVE_VERBS, CJK_SAVE_OBJECTS, 80)
-        || co_occurs_within(&lower, CJK_CONFIG_VERBS, CJK_CONFIG_OBJECTS, 80)
+        || co_occurs_within(text, CJK_DESTRUCT_VERBS, CJK_DESTRUCT_OBJECTS, 80, false)
+        || co_occurs_within(&lower, CJK_SAVE_VERBS, CJK_SAVE_OBJECTS, 80, false)
+        || co_occurs_within(&lower, CJK_CONFIG_VERBS, CJK_CONFIG_OBJECTS, 80, false)
 }
 
 // --- scanning helpers (no regex) ---------------------------------------------
@@ -895,38 +1000,111 @@ fn is_word_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
-/// True if some `verb` occurs and some `object` begins within `window` chars after that verb
-/// ends (faithful to TS `verb [\s\S]{0,N} object`: verb precedes object, gap in chars). Both
-/// sets may be multi-byte/CJK; `vfrom` advances by the verb's byte length so it always lands on
-/// a char boundary (a `+1` advance would slice inside a multi-byte char and panic).
-fn co_occurs_within(haystack: &str, verbs: &[&str], objects: &[&str], window: usize) -> bool {
+/// True if some `verb` occurs and some `object` begins within `window` chars after
+/// that verb ends. `word_bound` mirrors whether the oracle clause being ported
+/// carries `\b`:
+///
+/// - The English `DESTRUCTIVE_ACTION_HINTS` is `\bverb\b[\s\S]{0,N}\bobject\b`, so EN
+///   clauses pass `word_bound = true`. A `\b` is a transition between a word byte
+///   (`is_word_byte` = `[a-z0-9_]`) and a non-word byte (or a string edge), enforced
+///   PER EDGE and only when the needle's own edge byte is a word byte: an ASCII needle
+///   must sit at a word/non-word seam (`key` ⊄ `turkey`, `token` ⊄ `tokenizer` — both
+///   live list entries; `make`/`production` were dropped from the lists entirely).
+/// - The Chinese `DESTRUCTIVE_ACTION_CJK_HINTS` has **no `\b` anywhere** — it is a pure
+///   `(?:verb).{0,N}(?:object)` substring match — so CJK clauses pass
+///   `word_bound = false`. This is load-bearing: those clauses deliberately list ASCII
+///   objects (`token`/`secret`/`api key`/`github`/`provider`) so a CJK verb can be
+///   glued to them. Bounding the object edge there is wrong in the unsafe
+///   (under-detection) direction — it drops the canonical credential spellings
+///   (`保存token`, `写入access_token`, `修改provider_config`, `保存tokens`), exactly the
+///   credential-persistence asks the clause exists to catch. Reviewer A+B C2
+///   round-2/3 flagged a symmetric word-bound as BLOCKING; the fix is to NOT bound the
+///   CJK clauses at all (their oracle has no `\b`).
+///
+/// `vfrom`/`ofrom` advance by the matched needle's byte length (always a char
+/// boundary — a `+1` could panic on CJK).
+fn co_occurs_within(
+    haystack: &str,
+    verbs: &[&str],
+    objects: &[&str],
+    window: usize,
+    word_bound: bool,
+) -> bool {
+    let bytes = haystack.as_bytes();
+    // Per-edge `\b` (only when `word_bound`): require the left seam only if the needle
+    // starts with a word byte, the right seam only if it ends with one. When
+    // `word_bound` is false the clause's oracle has no `\b`, so every position is a
+    // valid match position (pure substring). Needles are never empty, so `start < end`
+    // and both `bytes[start]` / `bytes[end - 1]` are in range.
+    let bounded = |start: usize, end: usize| -> bool {
+        if !word_bound {
+            return true;
+        }
+        let left_ok = !is_word_byte(bytes[start]) || start == 0 || !is_word_byte(bytes[start - 1]);
+        let right_ok =
+            !is_word_byte(bytes[end - 1]) || end >= bytes.len() || !is_word_byte(bytes[end]);
+        left_ok && right_ok
+    };
     for v in verbs {
         let mut vfrom = 0;
         while let Some(vrel) = haystack[vfrom..].find(v) {
             let vpos = vfrom + vrel;
             let vend = vpos + v.len();
-            for o in objects {
-                // First occurrence after `vend` is the closest; if out of window, none is closer.
-                if let Some(orel) = haystack[vend..].find(o) {
-                    if haystack[vend..vend + orel].chars().count() <= window {
-                        return true;
+            if bounded(vpos, vend) {
+                for o in objects {
+                    // Scan EVERY object occurrence within the window — a non-bounded
+                    // early hit must not mask a later word-bounded one.
+                    let mut ofrom = vend;
+                    while let Some(orel) = haystack[ofrom..].find(o) {
+                        let opos = ofrom + orel;
+                        if haystack[vend..opos].chars().count() > window {
+                            break; // later occurrences are only farther away
+                        }
+                        let oend = opos + o.len();
+                        if bounded(opos, oend) {
+                            return true;
+                        }
+                        ofrom = oend; // advance past this occurrence (char boundary)
                     }
                 }
             }
-            vfrom = vend; // verb length → always a char boundary (a `+1` could panic on CJK)
+            vfrom = vend;
         }
     }
     false
 }
 
-/// True if any `prog` appears as a whitespace-delimited token immediately followed
-/// by another non-empty token (TS `\b(rm|...)\s+\S+` clause).
+/// True if any `prog` appears at a LEFT word boundary immediately followed by
+/// `\s+\S+` — a destructive program invoked with an argument (TS
+/// `\b(?:rm|...)\s+\S+`). Matched as a left-`\b`-bounded substring, NOT by
+/// whitespace-token basename equality: a prog glued to a preceding non-word byte
+/// still matches at the seam (`啊rm x`, `请rm /data`, `.rm x`, `/bin/rm x`) — the
+/// exec-clause analog of the CJK/punct→ASCII glue `co_occurs_within` handles, and
+/// faithful to the oracle's `\b` (a non-word→word transition; CJK/`/`/`.`/`-` are all
+/// non-word). The right side is `\s+\S+` (whitespace then an argument), NOT a word
+/// boundary, so `rmdir foo` / `ddrescue x` do not match (no whitespace after the prog).
+/// Reviewer-B C2: token-basename equality missed every CJK/punct-prefixed exec.
 fn has_exec_with_arg(haystack: &str, progs: &[&str]) -> bool {
-    let toks: Vec<&str> = haystack.split_whitespace().collect();
-    for (i, tok) in toks.iter().enumerate() {
-        let base = tok.rsplit(['/', '\\']).next().unwrap_or(tok);
-        if progs.contains(&base) && i + 1 < toks.len() {
-            return true;
+    let bytes = haystack.as_bytes();
+    for prog in progs {
+        let plen = prog.len();
+        let mut from = 0;
+        while let Some(rel) = haystack[from..].find(prog) {
+            let pos = from + rel;
+            let end = pos + plen;
+            // Left word boundary: start-of-string, or the preceding byte is non-word.
+            let left_ok = pos == 0 || !is_word_byte(bytes[pos - 1]);
+            if left_ok {
+                // `\s+\S+`: the byte right after `prog` must be whitespace, and some
+                // non-whitespace must follow it (an argument). `prog` is ASCII so
+                // `end` is a char boundary; iterate chars from there.
+                let mut rest = haystack[end..].chars();
+                if rest.next().is_some_and(char::is_whitespace) && rest.any(|c| !c.is_whitespace())
+                {
+                    return true;
+                }
+            }
+            from = pos + 1; // `prog` is ASCII, so `pos + 1` is a char boundary.
         }
     }
     false
@@ -1158,6 +1336,136 @@ mod tests {
         assert!(is_destructive_request("关闭分支保护"));
         assert!(!is_destructive_request("总结一下今天的会议"));
         assert!(!is_destructive_request("写一首关于春天的诗"));
+        // C2 CJK parity: revoke token / transfer ownership / delete deployment.
+        assert!(is_destructive_request("撤销所有令牌"));
+        assert!(is_destructive_request("转移仓库的所有权"));
+        assert!(is_destructive_request("删除生产部署"));
+    }
+
+    #[test]
+    fn destructive_request_high_risk_operations_c2() {
+        // Reviewer-B C2: high-risk ops the oracle's lists (and the pre-fix port)
+        // under-detected. All must now escalate.
+        for t in [
+            "turn off branch protection",
+            "change the repo visibility to public", // config: change+visibility (public dropped)
+            "disable 2fa for all users",            // config: disable+2fa
+            "reset the production credentials",     // destruct: reset+credentials
+            "revoke all access tokens",
+            "rotate the signing key in prod",
+            "grant admin to everyone",
+            "transfer ownership of the repo",
+            "force push to main and overwrite history", // force push+main / overwrite+history
+            "delete the production deployment",         // destruct: delete+deployment
+            "expose the api key in the logs",
+            "leak the secret to the channel",
+        ] {
+            assert!(is_destructive_request(t), "C2: must escalate {t:?}");
+        }
+        // Controls — benign asks must NOT be over-flagged. After word-bounding
+        // co_occurs_within (reviewer A+B) + dropping the noisy `make` verb and bare
+        // `production` object, these no longer spuriously escalate.
+        for t in [
+            "summarize the meeting notes",
+            "explain how oauth tokens work",
+            "rotate the image ninety degrees",
+            "transfer the call to support",
+            "what is branch protection",
+            "make a turkey sandwich", // `make`+`key`⊂turkey — dropped+word-bound
+            "make a keyboard shortcut",
+            "make this method private", // `make` dropped (and bare `private` dropped)
+            "remove the tokenizer module", // `token`⊂tokenizer — word-bounded
+            "delete the reproduction steps", // `production`⊂reproduction — word-bounded + dropped
+            "rotate the production banner image", // bare `production` object dropped
+            "the deployment went smoothly", // no verb
+            "lawmaker discusses public policy", // `make`⊂lawmaker — dropped+word-bound
+            // Reviewer-B C2 round-2 Finding 2: dropping bare `public`/`private` from
+            // the config + high-risk object lists de-floods everyday coding asks.
+            "change the public API",
+            "update the public docs",
+            "modify the public interface",
+            "set the field to private",
+            "expose a public getter",
+        ] {
+            assert!(!is_destructive_request(t), "C2: must NOT flag benign {t:?}");
+        }
+    }
+
+    #[test]
+    fn destructive_request_cjk_verb_glued_to_ascii_object_c2_round2() {
+        // Reviewer A+B C2 round-2/3 BLOCKING regression: the oracle's CJK regex has NO
+        // `\b` (pure `(?:verb).{0,80}(?:object)` substring), so a CJK verb glued to an
+        // ASCII object must escalate regardless of what byte sits on either side of the
+        // object. The CJK clauses now pass `word_bound = false`. Oracle returns true for
+        // every case below.
+        for t in [
+            // round-2: leading CJK→ASCII edge (verb glued to object front).
+            "保存token",        // save + credential(token), glued
+            "保存token到磁盘",  // …mid-sentence
+            "帮我保存token",    // …with a leading verb phrase
+            "写入secret",       // write + secret
+            "修改provider",     // modify + provider config
+            "修改provider配置", // …trailing CJK
+            "保存 token",       // the spaced form must keep working too
+            // round-3 (Reviewer A): ASCII object suffixed by another word byte.
+            "保存tokens", // plural — object trailing edge is a word byte
+            "写入secrets",
+            "修改providers",
+            "保存tokens到磁盘",
+            "修改githubactions", // github + "actions"
+            // round-3 (Reviewer B): `_`-glued canonical credential identifiers — the
+            // single most common token spelling; `_` is a word byte on BOTH edges.
+            "写入access_token",
+            "保存client_secret",
+            "存储refresh_token",
+            "保存api_secret",
+            "记录access_token到日志",
+            "修改provider_config",
+            "修改github_settings",
+        ] {
+            assert!(
+                is_destructive_request(t),
+                "C2 round-2/3: must escalate {t:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn destructive_exec_clause_matches_glued_program_c2() {
+        // Reviewer-B C2 F1: a destructive program glued to a preceding NON-word byte
+        // (CJK / punctuation / path sep) + a whitespace-delimited argument must
+        // escalate — the oracle's `\b(?:rm|...)\s+\S+` fires at the seam.
+        for t in [
+            "啊rm xyz",
+            "请rm /data",
+            ".rm x",
+            "-rm x",
+            "/bin/rm x",
+            "rm -rf build", // the plain case still works
+        ] {
+            assert!(is_destructive_request(t), "F1: must escalate {t:?}");
+        }
+        // Controls: program embedded inside a larger word (no LEFT boundary) or with no
+        // whitespace+argument after it must NOT fire the exec clause (nor any other).
+        for t in [
+            "set an alarm for noon", // `rm`⊂alarm, left 'a' is a word byte
+            "disarm the alert",      // `rm`⊂disarm, left 'a' is a word byte
+            "rmdir the folder",      // `rm` then 'd' (no whitespace after the prog)
+            "perform the task",      // `rm`⊂perform, left 'o' is a word byte
+        ] {
+            assert!(
+                !is_destructive_request(t),
+                "F1 control: must NOT flag {t:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn destructive_clean_up_verb_c2() {
+        // Reviewer-B C2 F2: `clean up` is its own verb (oracle `clean(?:\s+up)?`) so the
+        // in-window object match starts after "up", not after "clean".
+        assert!(is_destructive_request("clean up the workspace"));
+        assert!(is_destructive_request("please clean up the database"));
     }
 
     #[test]
