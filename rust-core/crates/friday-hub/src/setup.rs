@@ -3,10 +3,17 @@
 //! The runtime analog of the file-57 external-preparation checklist: a queryable readiness
 //! surface where every external/operator prep item is `Ready { evidence }` ONLY when verified,
 //! and otherwise `NotReady { blocker }` with its exact blocker — **never falsely "ready"**.
-//! Sealed construction enforces the truth-label invariant by type: a `Ready` MUST carry
-//! non-empty evidence; a `NotReady` MUST carry a non-empty blocker. So this surface cannot
-//! report a fake-ready item, and [`SetupReadiness::is_release_ready`] is `true` ONLY when every
-//! item is genuinely Ready (honest: it is `false` in this build — v1 NO-GO).
+//!
+//! Truth-label invariant — how it actually holds (NOT "sealed by type"): `ReadinessStatus` is
+//! an ordinary `pub enum` (matchable, with public variant fields), so it is constructible
+//! directly; the asserting constructors [`ReadinessStatus::ready`]/[`ReadinessStatus::not_ready`]
+//! (non-empty evidence / blocker) are the BLESSED path but not the only possible one. What
+//! actually prevents a fake-ready from reaching a [`SetupReadiness`] is that its `items` field
+//! is **private with no public setter / `&mut` accessor / `new(items)` constructor** — every
+//! write routes through `baseline()`→`not_ready`, `mark_ready`→`ready`, or `detect_*`→`mark_ready`,
+//! all of which assert. (Do NOT add a public items constructor/setter that bypasses them.)
+//! [`SetupReadiness::is_release_ready`] is `true` ONLY when every item is genuinely Ready
+//! (honest: `false` in this build — v1 NO-GO).
 //!
 //! Read-only / non-side-effecting: it composes cheap, safe signals (env-var PRESENCE — never
 //! the value) + truth-labeled "awaiting operator" defaults. It does NOT run provider CLIs or
@@ -200,8 +207,10 @@ impl SetupReadiness {
 
     /// Release-ready ONLY when EVERY prep item is genuinely Ready. Honest: `false` in this
     /// build (most items await operator prep) — a true result is the release-gate's prep half.
+    /// Fail-closed on an empty surface (an empty `items` is NOT release-ready — guards against
+    /// `all()` being vacuously true if a future path could produce an empty surface).
     pub fn is_release_ready(&self) -> bool {
-        self.items.iter().all(|i| i.status.is_ready())
+        !self.items.is_empty() && self.items.iter().all(|i| i.status.is_ready())
     }
 }
 
