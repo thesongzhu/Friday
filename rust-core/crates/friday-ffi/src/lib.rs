@@ -355,7 +355,9 @@ fn activity_items(db: &friday_storage::Db) -> friday_storage::Result<Vec<Activit
 
 /// Interactive WRITE path: mark an activity item `Done` in the phone's own SQLite
 /// store and return the updated list. A real persisted state change (the UI's
-/// "mark done" action), not UI-only state. Unknown ids are a no-op (still `ok`).
+/// "mark done" action), not UI-only state. An UNKNOWN id is surfaced as `ok=false`
+/// with an error — no longer a silent success (file-37 red-team NIT #4). The struct
+/// shape is unchanged, so callers that already branch on `ok` need no change.
 #[uniffi::export]
 pub fn mark_activity_done(db_path: String, activity_id: String, now: i64) -> PhoneActivityFfi {
     match mark_and_list(&db_path, &activity_id, now) {
@@ -378,7 +380,13 @@ fn mark_and_list(
     now: i64,
 ) -> friday_storage::Result<Vec<ActivityItemFfi>> {
     let db = friday_storage::Db::open_phone(db_path)?;
-    db.mark_activity_done(activity_id, now)?;
+    // Surface an unknown id instead of silently succeeding: `mark_activity_done`
+    // returns false when no row matched (file-37 NIT #4).
+    if !db.mark_activity_done(activity_id, now)? {
+        return Err(friday_storage::StorageError::NotFound(format!(
+            "activity_id {activity_id}"
+        )));
+    }
     activity_items(&db)
 }
 
@@ -588,6 +596,35 @@ mod tests {
                 .state,
             "done"
         );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn ffi_mark_unknown_activity_id_surfaces_not_found() {
+        // file-37 NIT #4: marking an id that does not exist is no longer a silent
+        // success — it surfaces ok=false + an error. (Same struct shape, so a caller
+        // that branches on `ok` needs no change.)
+        let path =
+            std::env::temp_dir().join(format!("friday-ffi-markunknown-{}.db", std::process::id()));
+        let p = path.to_string_lossy().to_string();
+        let _ = std::fs::remove_file(&path);
+
+        let seeded = phone_activity_demo(p.clone());
+        assert!(seeded.ok);
+
+        let r = mark_activity_done(p.clone(), "does-not-exist".into(), 100);
+        assert!(!r.ok, "unknown id must not silently succeed");
+        assert!(
+            r.error.contains("does-not-exist"),
+            "the error names the missing id, got {:?}",
+            r.error
+        );
+        assert!(r.items.is_empty());
+
+        // A KNOWN id still succeeds (the fix did not break the happy path).
+        let ok = mark_activity_done(p.clone(), "a3".into(), 100);
+        assert!(ok.ok && ok.error.is_empty());
 
         let _ = std::fs::remove_file(&path);
     }
