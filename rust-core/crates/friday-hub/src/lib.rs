@@ -35,6 +35,11 @@
 /// chokepoint regardless of the routed provider.
 pub mod routing;
 
+/// UNW-004 — Hub composition root: wires the built graph (Db + RouteRegistry + live
+/// DeepSeek client + FsToolExecutor + secret + approval policy) into one composed
+/// [`runtime::HubRuntime::run_task`] entry. Deny-all approval by default; v1 NO-GO.
+pub mod runtime;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,
