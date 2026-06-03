@@ -146,6 +146,10 @@ impl<T: Transport> HubRuntime<T> {
         now_ms: i64,
     ) -> Result<(RoutedSelection, LoopOutcome), RoutedLoopError> {
         agent_run::create_run(self.db.conn(), run_id, task, now_ms)?;
+        // v1: a constraint-free request (selects the highest-priority dispatchable route =
+        // deepseek-flash, the only live one). Deriving required capabilities / model-size
+        // from the task is a later refinement; with one live provider it cannot mask a wrong
+        // selection here.
         let request = RouteRequest::any();
         let approve = |req: &MutatingActionRequest| self.approval.approve(req);
         run_routed_loop(
@@ -203,6 +207,7 @@ mod tests {
     use friday_deepseek::DeepSeekError;
     use serde_json::Value;
     use std::cell::Cell;
+    use std::rc::Rc;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static C: AtomicU64 = AtomicU64::new(0);
@@ -245,13 +250,14 @@ mod tests {
     /// calls so the no-hidden-call invariant is checkable.
     struct ScriptTransport {
         contents: Vec<String>,
-        post_calls: Cell<usize>,
+        // Shared so a test can assert the real chat/POST count == loop turns (no hidden call).
+        post_calls: Rc<Cell<usize>>,
     }
     impl ScriptTransport {
         fn new(contents: &[&str]) -> Self {
             Self {
                 contents: contents.iter().map(|s| s.to_string()).collect(),
-                post_calls: Cell::new(0),
+                post_calls: Rc::new(Cell::new(0)),
             }
         }
     }
@@ -303,9 +309,11 @@ mod tests {
         tag: &str,
         contents: &[&str],
         approval: Box<dyn ApprovalPolicy>,
-    ) -> (HubRuntime<ScriptTransport>, TempDir) {
+    ) -> (HubRuntime<ScriptTransport>, TempDir, Rc<Cell<usize>>) {
         let ws = TempDir::new(tag);
-        let client = DeepSeekClient::with_transport(ScriptTransport::new(contents), "k".into());
+        let transport = ScriptTransport::new(contents);
+        let post_calls = transport.post_calls.clone(); // shared chat/POST counter for no-hidden-call proof
+        let client = DeepSeekClient::with_transport(transport, "k".into());
         let agent = DeepSeekAgentLlmClient::new(client);
         let rt = HubRuntime::new(
             HubConfig {
@@ -318,7 +326,7 @@ mod tests {
             approval,
         )
         .unwrap();
-        (rt, ws) // return the TempDir guard so the workspace lives for the test body
+        (rt, ws, post_calls) // TempDir guard keeps the workspace alive; counter for the no-hidden test
     }
 
     // ---- routing honesty (dispatchable_routes) ------------------------------
@@ -355,7 +363,7 @@ mod tests {
 
     #[test]
     fn resolver_resolves_only_deepseek() {
-        let (rt, _root) = runtime_with(
+        let (rt, _root, _post) = runtime_with(
             "resolve",
             &["{\"tool\":\"none\"}"],
             Box::new(DenyAllApprovals),
@@ -372,7 +380,7 @@ mod tests {
     #[test]
     fn composed_read_only_task_executes_via_gate_and_audit() {
         // turn 0: read_file (read-only → Allow → real fs read) ; turn 1: finish
-        let (rt, root) = runtime_with(
+        let (rt, root, _post) = runtime_with(
             "ro",
             &[
                 "{\"tool\":\"read_file\",\"parameters\":{\"path\":\"notes.md\"}}",
@@ -393,7 +401,7 @@ mod tests {
     /// without an owner approval (deny-all) — it Pauses, executes nothing, writes no file.
     #[test]
     fn composed_mutating_task_denied_without_approval_no_bypass() {
-        let (rt, root) = runtime_with(
+        let (rt, root, _post) = runtime_with(
             "nobypass",
             &["{\"tool\":\"write_file\",\"parameters\":{\"path\":\"out.txt\",\"content\":\"X\"}}"],
             Box::new(DenyAllApprovals),
@@ -415,9 +423,13 @@ mod tests {
     /// single-use approval on the next turn is refused (Blocked) — one execution, one receipt.
     #[test]
     fn composed_mutating_with_approval_executes_then_replay_refused() {
+        // Two IDENTICAL writes: identical action+params → identical digest → the SAME
+        // single-use approval. Turn 0 consumes it (Allow→execute); turn 1's replay of the
+        // same digest is refused. (Different content would be a DIFFERENT digest → a fresh
+        // approval → not a replay at all, so the writes must be identical for this scenario.)
         let write =
             "{\"tool\":\"write_file\",\"parameters\":{\"path\":\"out.txt\",\"content\":\"C\"}}";
-        let (rt, root) = runtime_with(
+        let (rt, root, _post) = runtime_with(
             "approve",
             &[write, write, "{\"tool\":\"none\"}"],
             Box::new(MintPolicy {
@@ -433,6 +445,22 @@ mod tests {
         );
         assert!(matches!(out.status, LoopStatus::Blocked));
         assert_eq!(std::fs::read_to_string(root.join("out.txt")).unwrap(), "C");
+        // Discriminating witness (Finding B): EXACTLY ONE execution receipt on the hash-chain
+        // — the replayed second write produced none. This distinguishes single-vs-double
+        // execution without changing the (necessarily-identical) replay writes.
+        let receipts: i64 = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM audit_ledger WHERE action LIKE 'tool.executed%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            receipts, 1,
+            "one execution receipt; the replay produced none"
+        );
         assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
     }
 
@@ -440,8 +468,8 @@ mod tests {
     /// transport's POST count == turns), and the executor is reached only on a gate-Allow.
     #[test]
     fn composed_no_hidden_model_call_one_post_per_turn() {
-        // read_file (Allow+exec) → finish = 2 turns, 2 POSTs, 1 execution.
-        let (rt, root) = runtime_with(
+        // read_file (Allow+exec) → finish = 2 turns, 2 chat POSTs, 1 execution.
+        let (rt, root, post) = runtime_with(
             "nohidden",
             &[
                 "{\"tool\":\"read_file\",\"parameters\":{\"path\":\"n.md\"}}",
@@ -453,9 +481,15 @@ mod tests {
         let (_sel, out) = rt.run_task("run-nh", "read n.md", 1000).unwrap();
         assert_eq!(out.status, LoopStatus::Finished);
         assert_eq!(out.turns, 2, "exactly 2 model turns");
-        // The transport POST count is observed via the live e2e in practice; here the loop's
-        // own `turns` is the no-hidden-call witness (model called once per turn, none outside).
         assert_eq!(out.executed_tools, 1);
+        // THE no-hidden-call proof (transport-level, not just the loop's self-count): the
+        // shared chat/POST counter equals the loop's turn count — exactly one model call per
+        // turn, none hidden inside next_step or outside the loop body.
+        assert_eq!(
+            post.get(),
+            out.turns as usize,
+            "exactly one model chat/POST per loop turn — no hidden model call"
+        );
     }
 
     /// LIVE end-to-end (runtime-proven) through the FULL composition root. Ignored in CI (no
