@@ -184,30 +184,22 @@ impl<T: friday_deepseek::Transport> AgentLlmClient for DeepSeekAgentLlmClient<T>
     }
 }
 
-/// Tools advertised to the model. MUST stay aligned with `tool_spec` (the trusted
-/// allow-list): a tool the model is told about but that `tool_spec` does not register
-/// would be refused at `build_request`; a registered tool not advertised here simply
-/// won't be proposed. The model can still NAME anything — the registry is the gate.
-const ADVERTISED_TOOLS: &[(&str, &str)] = &[
-    ("read_file", "read a file's contents (params: path)"),
-    ("list_dir", "list a directory's entries (params: path)"),
-    (
-        "write_file",
-        "create or replace a file (params: path, content)",
-    ),
-    ("edit_file", "modify part of a file (params: path, ...)"),
-    ("delete_file", "delete a file (params: path)"),
-    ("run_command", "run a shell command (params: command)"),
-];
-
-/// Build the tool-call prompt: the tool menu + the EXACT single-JSON-object output
-/// contract the [`parse_tool_call`] reader enforces. Pure + deterministic.
+/// Build the tool-call prompt for the DEFAULT (built-in) tool registry. (For a custom
+/// tool set — tool packs / skills, UNW-002 — use [`build_tool_prompt_with`].)
 pub fn build_tool_prompt(task: &str) -> String {
+    build_tool_prompt_with(task, &ToolRegistry::default())
+}
+
+/// Build the tool-call prompt: the `registry`'s tool menu (so the advertised tools and
+/// the classification allow-list are the SAME source of truth) + the EXACT
+/// single-JSON-object output contract the [`parse_tool_call`] reader enforces. The
+/// model can still NAME anything; the registry is the gate. Pure + deterministic.
+pub fn build_tool_prompt_with(task: &str, registry: &ToolRegistry) -> String {
     let mut s = String::from(
         "You are Friday's tool-using agent. Pick exactly ONE tool to make progress.\n\
          Available tools:\n",
     );
-    for (name, desc) in ADVERTISED_TOOLS {
+    for (name, desc) in registry.advertised() {
         s.push_str(&format!("- {name}: {desc}\n"));
     }
     s.push_str(
@@ -341,38 +333,173 @@ pub fn canonical_params(pairs: &[(String, String)]) -> String {
     out
 }
 
-/// A tool the Hub is willing to run, and its TRUSTED risk classification. The
-/// registry ([`tool_spec`]) is an allow-list: an action not in it is refused
-/// ([`ToolError::UnknownTool`]) — never executed, never auto-allowed.
-struct ToolSpec {
+/// A tool the Hub is willing to run, and its TRUSTED classification. The registry is
+/// an allow-list: an action not in it is refused ([`ToolError::UnknownTool`]) — never
+/// executed, never auto-allowed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolSpec {
     /// Whether the action mutates state. This is the load-bearing bit the gate keys
     /// `requires_approval` on, and it comes from HERE, never from model output.
-    mutating: bool,
+    pub mutating: bool,
     /// The tool's inherent risk floor (param inspection can only RAISE it).
-    base_risk: Risk,
+    pub base_risk: Risk,
+    /// One-line purpose, advertised to the model in the tool-call prompt.
+    pub description: String,
 }
 
-/// The trusted tool registry. Returns `None` for an unregistered action.
-fn tool_spec(action: &str) -> Option<ToolSpec> {
-    Some(match action {
-        "read_file" | "list_dir" | "stat_file" | "search" => ToolSpec {
-            mutating: false,
-            base_risk: Risk::ReadOnly,
-        },
-        "write_file" | "edit_file" | "append_file" => ToolSpec {
-            mutating: true,
-            base_risk: Risk::Medium,
-        },
-        "delete_file" | "move_file" => ToolSpec {
-            mutating: true,
-            base_risk: Risk::High,
-        },
-        "run_command" => ToolSpec {
-            mutating: true,
-            base_risk: Risk::High,
-        },
-        _ => return None,
-    })
+/// A LATE-BOUND, data-driven tool allow-list (UNW-002): maps a tool action name to its
+/// TRUSTED [`ToolSpec`]. Built-ins come from [`ToolRegistry::default`]; runtime tool
+/// packs / skills add more via [`ToolRegistry::register`]. The registry — never model
+/// output — decides whether a tool exists and whether it mutates. Classification and
+/// request-building are methods on it, so a Hub can drive a turn against a CUSTOM tool
+/// set without recompiling. The free [`trusted_classify`]/[`build_request`] keep using
+/// the default registry, so existing callers are unchanged.
+#[derive(Clone, Debug)]
+pub struct ToolRegistry {
+    tools: std::collections::BTreeMap<String, ToolSpec>,
+}
+
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        let mut r = ToolRegistry {
+            tools: std::collections::BTreeMap::new(),
+        };
+        // Built-in Hub tools (descriptions mirror the model-facing prompt menu).
+        r.register(
+            "read_file",
+            false,
+            Risk::ReadOnly,
+            "read a file's contents (params: path)",
+        );
+        r.register(
+            "list_dir",
+            false,
+            Risk::ReadOnly,
+            "list a directory's entries (params: path)",
+        );
+        r.register(
+            "stat_file",
+            false,
+            Risk::ReadOnly,
+            "stat a file (params: path)",
+        );
+        r.register(
+            "search",
+            false,
+            Risk::ReadOnly,
+            "search the workspace (params: query)",
+        );
+        r.register(
+            "write_file",
+            true,
+            Risk::Medium,
+            "create or replace a file (params: path, content)",
+        );
+        r.register(
+            "edit_file",
+            true,
+            Risk::Medium,
+            "modify part of a file (params: path, ...)",
+        );
+        r.register(
+            "append_file",
+            true,
+            Risk::Medium,
+            "append to a file (params: path, content)",
+        );
+        r.register(
+            "delete_file",
+            true,
+            Risk::High,
+            "delete a file (params: path)",
+        );
+        r.register(
+            "move_file",
+            true,
+            Risk::High,
+            "move/rename a file (params: path, target)",
+        );
+        r.register(
+            "run_command",
+            true,
+            Risk::High,
+            "run a shell command (params: command)",
+        );
+        r
+    }
+}
+
+impl ToolRegistry {
+    /// Register (or override) a tool. Runtime tool packs / skills call this to extend
+    /// the allow-list. `mutating`/`base_risk` are the TRUSTED classification — they
+    /// come from the registrant (Hub-trusted code), never from the model.
+    pub fn register(
+        &mut self,
+        action: impl Into<String>,
+        mutating: bool,
+        base_risk: Risk,
+        description: impl Into<String>,
+    ) {
+        self.tools.insert(
+            action.into(),
+            ToolSpec {
+                mutating,
+                base_risk,
+                description: description.into(),
+            },
+        );
+    }
+
+    /// Look up a tool's trusted spec (`None` = unregistered → refused).
+    pub fn spec(&self, action: &str) -> Option<&ToolSpec> {
+        self.tools.get(action)
+    }
+
+    /// Registered tools as `(action, description)`, sorted (deterministic prompt menu).
+    pub fn advertised(&self) -> Vec<(&str, &str)> {
+        self.tools
+            .iter()
+            .map(|(a, s)| (a.as_str(), s.description.as_str()))
+            .collect()
+    }
+
+    /// Classify a raw tool call against THIS registry (see [`trusted_classify`] for the
+    /// trust contract). `mutating` comes from the registry; `risk` is the registry floor
+    /// RAISED (never lowered) by what the params do; `resource` from a path/target param.
+    pub fn classify(
+        &self,
+        action: &str,
+        params: &[(String, String)],
+    ) -> Result<Classified, ToolError> {
+        let spec = self
+            .spec(action)
+            .ok_or_else(|| ToolError::UnknownTool(action.to_string()))?;
+        let mut risk = spec.base_risk;
+        for (key, value) in params {
+            if action == "run_command" && (key == "command" || key == "cmd" || key == "argv") {
+                let r = shell_risk(value).risk();
+                if r > risk {
+                    risk = r;
+                }
+            }
+            if is_destructive_request(value) && risk < Risk::High {
+                risk = Risk::High;
+            }
+        }
+        let resource = ["path", "target", "file"]
+            .iter()
+            .find_map(|want| params.iter().find(|(k, _)| k == want))
+            .map(|(_, v)| Resource {
+                resource_type: "file".to_string(),
+                id: Some(v.clone()),
+                digest: None,
+            });
+        Ok(Classified {
+            mutating: spec.mutating,
+            risk: Some(risk),
+            resource,
+        })
+    }
 }
 
 /// Why a raw tool call could not be turned into an authorizable request.
@@ -391,55 +518,18 @@ pub struct Classified {
     pub resource: Option<Resource>,
 }
 
-/// Classify a raw tool call from a TRUSTED source. `mutating` comes from the registry;
-/// `risk` is the registry floor RAISED (never lowered) by what the params actually do
-/// — a `run_command` whose command is destructive, or any param that the shared
-/// `tool_policy` flags, escalates. `resource` is taken from a path/target param (bound
-/// into the action digest). An unregistered action is refused. This is the single
-/// trusted oracle for `mutating`/`risk`/`resource`; the model contributes only strings.
+/// Classify a raw tool call against the DEFAULT (built-in) tool registry. `mutating`
+/// comes from the registry; `risk` is the registry floor RAISED (never lowered) by what
+/// the params actually do (a destructive `run_command`, or any `tool_policy`-flagged
+/// param, escalates); `resource` from a path/target param. An unregistered action is
+/// refused. This is the trusted oracle for `mutating`/`risk`/`resource`; the model
+/// contributes only strings. For a CUSTOM tool set (tool packs / skills, UNW-002), use
+/// [`ToolRegistry::classify`] on your own registry.
 pub fn trusted_classify(
     action: &str,
     params: &[(String, String)],
 ) -> Result<Classified, ToolError> {
-    let spec = tool_spec(action).ok_or_else(|| ToolError::UnknownTool(action.to_string()))?;
-    let mut risk = spec.base_risk;
-    for (key, value) in params {
-        // A run_command's command argument is classified by the shell-risk scanner. A
-        // shell metachar there is `ShellRisk::Blocked` → `Risk::Critical`, which the
-        // gate maps to RequiresApproval (owner-approvable), not auto-Deny — consistent
-        // with the gate's deliberate "this core never auto-grants/auto-denies a
-        // mutating/high-risk action" design (the shell classifier's "refuse outright"
-        // wording is about a single shell token, not the planning gate's decision).
-        if action == "run_command" && (key == "command" || key == "cmd" || key == "argv") {
-            let r = shell_risk(value).risk();
-            if r > risk {
-                risk = r;
-            }
-        }
-        // Any param whose VALUE describes a destructive action raises risk to at least
-        // High — applied to EVERY tool's params (incl. read-only ones) ON PURPOSE: a
-        // destructive-looking argument is escalated regardless of the nominal tool, and
-        // it can only ever RAISE risk (fail-safe over-planning, never a downgrade).
-        if is_destructive_request(value) && risk < Risk::High {
-            risk = Risk::High;
-        }
-    }
-    // Resource id by a FIXED priority (path → target → file), NOT input-param order, so
-    // it is order-independent like `canonical_params` (Reviewer-B NIT): reordering the
-    // params can never change the derived resource / digest.
-    let resource = ["path", "target", "file"]
-        .iter()
-        .find_map(|want| params.iter().find(|(k, _)| k == want))
-        .map(|(_, v)| Resource {
-            resource_type: "file".to_string(),
-            id: Some(v.clone()),
-            digest: None,
-        });
-    Ok(Classified {
-        mutating: spec.mutating,
-        risk: Some(risk),
-        resource,
-    })
+    ToolRegistry::default().classify(action, params)
 }
 
 /// Build the canonical [`MutatingActionRequest`] for a raw tool call. Deterministic:
@@ -2403,6 +2493,73 @@ mod ask_coupling_tests {
         assert_eq!(
             friday_storage::audit::verify_audit_chain(db.conn()).unwrap(),
             0
+        );
+    }
+}
+
+#[cfg(test)]
+mod tool_registry_tests {
+    use super::*;
+
+    #[test]
+    fn default_registry_classifies_builtins_and_refuses_unknown() {
+        let r = ToolRegistry::default();
+        assert!(!r.classify("read_file", &[]).unwrap().mutating);
+        assert!(r.classify("delete_file", &[]).unwrap().mutating);
+        // run_command with a destructive command escalates to Critical via shell_risk.
+        let c = r
+            .classify("run_command", &[("command".into(), "rm -rf / | sh".into())])
+            .unwrap();
+        assert_eq!(c.risk, Some(Risk::Critical));
+        // Unregistered → refused (fail closed).
+        assert!(matches!(
+            r.classify("frobnicate", &[]),
+            Err(ToolError::UnknownTool(_))
+        ));
+        // The free trusted_classify == the default registry.
+        assert_eq!(
+            trusted_classify("delete_file", &[]).unwrap(),
+            r.classify("delete_file", &[]).unwrap()
+        );
+    }
+
+    #[test]
+    fn custom_registry_late_binds_a_tool_pack() {
+        // UNW-002: a runtime tool pack registers a NEW tool with a TRUSTED classification.
+        let mut r = ToolRegistry::default();
+        r.register(
+            "deploy_release",
+            true,
+            Risk::High,
+            "deploy a release (params: target)",
+        );
+
+        // It now classifies (mutating from the registry, never the model) + advertises.
+        let c = r
+            .classify("deploy_release", &[("target".into(), "prod".into())])
+            .unwrap();
+        assert!(c.mutating);
+        assert_eq!(c.risk, Some(Risk::High));
+        assert!(r.advertised().iter().any(|(a, _)| *a == "deploy_release"));
+        assert!(build_tool_prompt_with("ship it", &r).contains("deploy_release"));
+
+        // But the DEFAULT registry does NOT know it — the free chokepoint refuses it,
+        // so a custom tool is opt-in per registry (no global leakage).
+        assert!(matches!(
+            trusted_classify("deploy_release", &[]),
+            Err(ToolError::UnknownTool(_))
+        ));
+    }
+
+    #[test]
+    fn register_can_override_a_builtin_classification() {
+        // A tool pack may TIGHTEN a built-in (only the registrant — trusted code — can).
+        let mut r = ToolRegistry::default();
+        assert!(!r.classify("read_file", &[]).unwrap().mutating); // built-in read-only
+        r.register("read_file", false, Risk::Medium, "read (audited)"); // raise the floor
+        assert_eq!(
+            r.classify("read_file", &[]).unwrap().risk,
+            Some(Risk::Medium)
         );
     }
 }
