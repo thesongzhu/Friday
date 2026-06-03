@@ -33,8 +33,10 @@ use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, Resource, CANONICAL_GATE_ISSUER,
 };
-use friday_core::{is_destructive_request, shell_risk, Risk};
-use friday_storage::{agent_run, authorize_mutating_action, StorageError};
+use friday_core::{is_destructive_request, shell_risk, ActivityState, ActivityType, Risk};
+use friday_storage::{
+    agent_run, authorize_mutating_action, ActivityRow, AuditEvent, Db, StorageError,
+};
 use rusqlite::Connection;
 
 // --- the LLM seam ------------------------------------------------------------
@@ -496,6 +498,82 @@ pub fn mint_approval(
         secret,
     ));
     approval
+}
+
+// --- model-call → ledger → audit coupling (audit 10A Q1) ---------------------
+
+/// Why persisting a Friday-route model call failed.
+#[derive(Debug)]
+pub enum RecordAskError {
+    /// The model/transport call failed — NOTHING is persisted (no half-billed row).
+    Route(friday_deepseek::DeepSeekError),
+    /// The atomic ledger+activity+audit write failed (all-or-nothing rollback).
+    Storage(StorageError),
+}
+
+impl std::fmt::Display for RecordAskError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RecordAskError::Route(e) => write!(f, "route_error: {e:?}"),
+            RecordAskError::Storage(e) => write!(f, "storage_error: {e}"),
+        }
+    }
+}
+
+/// Run a Friday-route DeepSeek ask AND persist it as ONE atomic ledger+activity+audit
+/// record — the call→ledger→audit COUPLING the token-safety audit (file 10A Q1, gaps
+/// 1a/1b) requires. The route ([`friday_deepseek`]) builds the `LedgerEntry` (total
+/// recomputed, `fallback=false`); the Hub (composition root) persists it via
+/// `record_model_call` so EVERY billable call leaves exactly ONE ledger row + ONE
+/// activity receipt + ONE hash-chained audit entry, all-or-nothing. On a route failure
+/// nothing is written (no half-billed row); discovery (`GET /models`) is non-billable
+/// and writes nothing — only the `POST /chat` produces the row.
+///
+/// The caller MUST supply a fresh `ledger_id` per ask: reusing one fails CLOSED — the
+/// `token_ledger` PK collision (the first insert in `record_model_call`'s tx) rolls the
+/// whole transaction back, so a reused id yields `Err(Storage)` with no double-bill and
+/// no partial row, never a second charge (Reviewer-A).
+#[allow(clippy::too_many_arguments)]
+pub fn record_friday_ask<T: friday_deepseek::Transport>(
+    db: &mut Db,
+    client: &friday_deepseek::DeepSeekClient<T>,
+    ledger_id: &str,
+    session_id: &str,
+    activity_id: &str,
+    prompt: &str,
+    max_tokens: u32,
+    now_ms: i64,
+) -> Result<friday_deepseek::ModelCallOutcome, RecordAskError> {
+    let (outcome, entry) = client
+        .run_friday_ask(
+            ledger_id,
+            session_id,
+            activity_id,
+            prompt,
+            max_tokens,
+            now_ms,
+        )
+        .map_err(RecordAskError::Route)?;
+    let activity = ActivityRow {
+        activity_id: activity_id.to_string(),
+        session_id: Some(session_id.to_string()),
+        kind: ActivityType::AskReceipt,
+        state: ActivityState::Done,
+        summary: format!("{} tokens via {}", entry.total_tokens, entry.model),
+        created_at: now_ms,
+        updated_at: now_ms,
+        deep_link: None,
+    };
+    let audit = AuditEvent {
+        audit_id: format!("{ledger_id}:modelcall"),
+        actor: "hub".to_string(),
+        action: "friday_ask.model_call".to_string(),
+        payload_ref: Some(ledger_id.to_string()),
+        created_at: now_ms,
+    };
+    db.record_model_call(&entry, &activity, &audit)
+        .map_err(RecordAskError::Storage)?;
+    Ok(outcome)
 }
 
 // --- the one composed turn ---------------------------------------------------
@@ -2203,5 +2281,128 @@ mod tests {
         assert!(p.contains("\"none\"")); // the finish hint
                                          // No history → no history section.
         assert!(!build_loop_prompt("t", &[]).contains("So far this run"));
+    }
+}
+
+#[cfg(test)]
+mod ask_coupling_tests {
+    use super::*;
+    use friday_storage::Db;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static C: AtomicU64 = AtomicU64::new(0);
+    fn tmp(tag: &str) -> String {
+        std::env::temp_dir()
+            .join(format!(
+                "friday-hub-ask-{}-{}-{}.sqlite",
+                std::process::id(),
+                tag,
+                C.fetch_add(1, Ordering::Relaxed)
+            ))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// Canned DeepSeek transport: GET /models → one model; POST /chat → a completion
+    /// with usage (or a route failure when `post_fails`).
+    struct MockTransport {
+        post_fails: bool,
+    }
+    impl friday_deepseek::Transport for MockTransport {
+        fn get_json(
+            &self,
+            _url: &str,
+            _bearer: &str,
+        ) -> Result<serde_json::Value, friday_deepseek::DeepSeekError> {
+            Ok(serde_json::json!({"data":[{"id":"deepseek-v4-flash"}]}))
+        }
+        fn post_json(
+            &self,
+            _url: &str,
+            _bearer: &str,
+            _body: &serde_json::Value,
+        ) -> Result<serde_json::Value, friday_deepseek::DeepSeekError> {
+            if self.post_fails {
+                return Err(friday_deepseek::DeepSeekError::ProviderUnavailable(
+                    "simulated".to_string(),
+                ));
+            }
+            Ok(serde_json::json!({
+                "model":"deepseek-v4-flash",
+                "choices":[{"message":{"content":"hello"},"finish_reason":"stop"}],
+                "usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}
+            }))
+        }
+    }
+    // MockTransport is only used to construct a client; suppress dead-field warning paths.
+    impl MockTransport {
+        fn new(post_fails: bool) -> Self {
+            Self { post_fails }
+        }
+    }
+
+    #[test]
+    fn record_friday_ask_writes_exactly_one_atomic_ledger_activity_audit() {
+        let mut db = Db::open_hub(&tmp("ok")).unwrap();
+        let client =
+            friday_deepseek::DeepSeekClient::with_transport(MockTransport::new(false), "k".into());
+        let out = record_friday_ask(&mut db, &client, "l1", "s1", "a1", "hi", 128, 1000).unwrap();
+        assert_eq!(out.total_tokens, 15);
+        // The COUPLING: one billable call ⇒ EXACTLY one ledger row + one activity receipt
+        // + one hash-chained audit entry (all in one tx). count("token_ledger")==1 is also
+        // the discovery-not-billed proof: the GET /models added no row.
+        assert_eq!(
+            db.count("token_ledger").unwrap(),
+            1,
+            "exactly one ledger row"
+        );
+        assert_eq!(
+            db.count("activity_item").unwrap(),
+            1,
+            "one activity receipt"
+        );
+        assert_eq!(
+            friday_storage::audit::verify_audit_chain(db.conn()).unwrap(),
+            1,
+            "one hash-chained audit entry, chain verifies"
+        );
+        // Pin the SHAPE (Reviewer-A): the persisted rows are specifically the model-call
+        // receipt + audit, not just "some" row.
+        let (kind, state): (String, String) = db
+            .conn()
+            .query_row(
+                "SELECT type, state FROM activity_item WHERE activity_id='a1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(kind, "ask_receipt");
+        assert_eq!(state, "done");
+        let action: String = db
+            .conn()
+            .query_row(
+                "SELECT action FROM audit_ledger WHERE audit_id='l1:modelcall'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(action, "friday_ask.model_call");
+    }
+
+    #[test]
+    fn route_failure_writes_no_ledger_row() {
+        let mut db = Db::open_hub(&tmp("fail")).unwrap();
+        let client =
+            friday_deepseek::DeepSeekClient::with_transport(MockTransport::new(true), "k".into());
+        let err =
+            record_friday_ask(&mut db, &client, "l1", "s1", "a1", "hi", 128, 1000).unwrap_err();
+        assert!(matches!(err, RecordAskError::Route(_)), "got {err}");
+        // No half-billed row / orphan activity / audit on a route failure.
+        assert_eq!(db.count("token_ledger").unwrap(), 0);
+        assert_eq!(db.count("activity_item").unwrap(), 0);
+        assert_eq!(
+            friday_storage::audit::verify_audit_chain(db.conn()).unwrap(),
+            0
+        );
     }
 }

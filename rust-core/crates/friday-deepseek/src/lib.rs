@@ -246,10 +246,17 @@ impl<T: Transport> DeepSeekClient<T> {
             .get("completion_tokens")
             .and_then(Value::as_i64)
             .ok_or_else(|| DeepSeekError::BadResponse("usage.completion_tokens".into()))?;
-        let total_tokens = usage
-            .get("total_tokens")
-            .and_then(Value::as_i64)
-            .unwrap_or(prompt_tokens + completion_tokens);
+        // Use the reported total if present; otherwise sum the parts with a CHECKED add.
+        // (The eager `unwrap_or(prompt + completion)` form computed the sum even when a
+        // total WAS present, panicking on overflow in a checked build for a hostile/buggy
+        // `usage`; a malformed provider response must be a clean `BadResponse`, never a
+        // panic — every other malformed usage field already is. Reviewer-B audit-10A.)
+        let total_tokens = match usage.get("total_tokens").and_then(Value::as_i64) {
+            Some(t) => t,
+            None => prompt_tokens
+                .checked_add(completion_tokens)
+                .ok_or_else(|| DeepSeekError::BadResponse("usage token total overflow".into()))?,
+        };
 
         // Ledger the model id the response reports (avoids stale-model claims).
         let reported_model = v
@@ -427,6 +434,31 @@ mod tests {
         assert_eq!(out.completion_tokens, 8);
         assert_eq!(out.total_tokens, 19);
         assert_eq!(out.finish_reason, "stop");
+    }
+
+    #[test]
+    fn chat_overflow_usage_total_is_bad_response_not_panic() {
+        // Hostile/buggy usage: parts sum past i64::MAX. With NO reported total, the
+        // checked sum must yield BadResponse (never a panic / overflow). Reviewer-B 10A.
+        let no_total = json!({
+            "model":"deepseek-v4-flash",
+            "choices":[{"message":{"content":"x"},"finish_reason":"stop"}],
+            "usage":{"prompt_tokens": i64::MAX, "completion_tokens": 1}
+        });
+        let c = client(MockTransport::new(Ok(models_json()), Ok(no_total)));
+        let err = c.chat("deepseek-v4-flash", "hi", 16).unwrap_err();
+        assert!(matches!(err, DeepSeekError::BadResponse(_)), "got {err:?}");
+
+        // With a reported total present, the sum is NOT computed (lazy) — no panic even
+        // though the parts would overflow; the reported total is used.
+        let with_total = json!({
+            "model":"deepseek-v4-flash",
+            "choices":[{"message":{"content":"x"},"finish_reason":"stop"}],
+            "usage":{"prompt_tokens": i64::MAX, "completion_tokens": 1, "total_tokens": 42}
+        });
+        let c2 = client(MockTransport::new(Ok(models_json()), Ok(with_total)));
+        let out = c2.chat("deepseek-v4-flash", "hi", 16).unwrap();
+        assert_eq!(out.total_tokens, 42);
     }
 
     #[test]
