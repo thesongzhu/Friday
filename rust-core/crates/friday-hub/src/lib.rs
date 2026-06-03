@@ -33,21 +33,22 @@ use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, Resource, CANONICAL_GATE_ISSUER,
 };
+use friday_core::{is_destructive_request, shell_risk, Risk};
 use friday_storage::{agent_run, authorize_mutating_action, StorageError};
 use rusqlite::Connection;
 
 // --- the LLM seam ------------------------------------------------------------
 
-/// A tool call the model proposes for a turn. (A real client parses this from a
-/// model response; the mock returns a canned one.)
+/// A tool call as proposed by the model — **untrusted**. It carries ONLY the strings
+/// the model can express: the tool `action` name and its `params`. It deliberately
+/// has NO `mutating`/`risk`/`resource` field, so a model can never assert that a
+/// destructive action is non-mutating — those are DERIVED from a trusted source
+/// ([`trusted_classify`]) inside [`build_request`], the single chokepoint. (A real
+/// client parses this from a model response; the mock returns a canned one.)
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ToolCallProposal {
-    /// The tool/action name (e.g. `read_file`, `delete_file`).
+pub struct RawToolCall {
+    /// The tool/action name the model asked for (e.g. `read_file`, `delete_file`).
     pub action: String,
-    /// Whether the action mutates state (drives the gate's approval requirement).
-    pub mutating: bool,
-    /// The resource the action targets (bound into the action digest).
-    pub resource: Option<Resource>,
     /// Tool parameters as key/value pairs; serialized deterministically into the
     /// request's `parameters` (so the approval issuer and the live re-check agree).
     pub params: Vec<(String, String)>,
@@ -55,19 +56,20 @@ pub struct ToolCallProposal {
 
 /// The model-client seam (mirrors `friday-deepseek`'s `Transport` DI pattern). The
 /// turn loop dispatches through this so it is unit-testable with a mock; the live
-/// impl over `friday-deepseek` is the runtime-proven slice (not this tracer).
+/// impl over `friday-deepseek` is the runtime-proven slice (not this tracer). It
+/// returns only the untrusted [`RawToolCall`] — classification is the Hub's job.
 pub trait AgentLlmClient {
-    fn propose_tool_call(&self, task: &str) -> ToolCallProposal;
+    fn propose_tool_call(&self, task: &str) -> RawToolCall;
 }
 
-/// A mock client that returns a fixed proposal — used by the tracer to prove the
+/// A mock client that returns a fixed raw call — used by the tracer to prove the
 /// composition without a live model call.
 pub struct MockAgentLlmClient {
-    pub proposal: ToolCallProposal,
+    pub proposal: RawToolCall,
 }
 
 impl AgentLlmClient for MockAgentLlmClient {
-    fn propose_tool_call(&self, _task: &str) -> ToolCallProposal {
+    fn propose_tool_call(&self, _task: &str) -> RawToolCall {
         self.proposal.clone()
     }
 }
@@ -124,36 +126,134 @@ pub fn canonical_params(pairs: &[(String, String)]) -> String {
     out
 }
 
-/// Build the canonical [`MutatingActionRequest`] for a proposal. Deterministic:
-/// the same proposal always yields byte-identical `canonical_action_bytes`, so an
-/// approval minted over this request matches when the turn re-builds it.
+/// A tool the Hub is willing to run, and its TRUSTED risk classification. The
+/// registry ([`tool_spec`]) is an allow-list: an action not in it is refused
+/// ([`ToolError::UnknownTool`]) — never executed, never auto-allowed.
+struct ToolSpec {
+    /// Whether the action mutates state. This is the load-bearing bit the gate keys
+    /// `requires_approval` on, and it comes from HERE, never from model output.
+    mutating: bool,
+    /// The tool's inherent risk floor (param inspection can only RAISE it).
+    base_risk: Risk,
+}
+
+/// The trusted tool registry. Returns `None` for an unregistered action.
+fn tool_spec(action: &str) -> Option<ToolSpec> {
+    Some(match action {
+        "read_file" | "list_dir" | "stat_file" | "search" => ToolSpec {
+            mutating: false,
+            base_risk: Risk::ReadOnly,
+        },
+        "write_file" | "edit_file" | "append_file" => ToolSpec {
+            mutating: true,
+            base_risk: Risk::Medium,
+        },
+        "delete_file" | "move_file" => ToolSpec {
+            mutating: true,
+            base_risk: Risk::High,
+        },
+        "run_command" => ToolSpec {
+            mutating: true,
+            base_risk: Risk::High,
+        },
+        _ => return None,
+    })
+}
+
+/// Why a raw tool call could not be turned into an authorizable request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ToolError {
+    /// The action is not in the trusted registry — refuse (fail closed).
+    UnknownTool(String),
+}
+
+/// The trusted classification of a tool call: derived from the registry + an
+/// inspection of the (model-controlled) params, NEVER from model-asserted fields.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Classified {
+    pub mutating: bool,
+    pub risk: Option<Risk>,
+    pub resource: Option<Resource>,
+}
+
+/// Classify a raw tool call from a TRUSTED source. `mutating` comes from the registry;
+/// `risk` is the registry floor RAISED (never lowered) by what the params actually do
+/// — a `run_command` whose command is destructive, or any param that the shared
+/// `tool_policy` flags, escalates. `resource` is taken from a path/target param (bound
+/// into the action digest). An unregistered action is refused. This is the single
+/// trusted oracle for `mutating`/`risk`/`resource`; the model contributes only strings.
+pub fn trusted_classify(
+    action: &str,
+    params: &[(String, String)],
+) -> Result<Classified, ToolError> {
+    let spec = tool_spec(action).ok_or_else(|| ToolError::UnknownTool(action.to_string()))?;
+    let mut risk = spec.base_risk;
+    for (key, value) in params {
+        // A run_command's command argument is classified by the shell-risk scanner. A
+        // shell metachar there is `ShellRisk::Blocked` → `Risk::Critical`, which the
+        // gate maps to RequiresApproval (owner-approvable), not auto-Deny — consistent
+        // with the gate's deliberate "this core never auto-grants/auto-denies a
+        // mutating/high-risk action" design (the shell classifier's "refuse outright"
+        // wording is about a single shell token, not the planning gate's decision).
+        if action == "run_command" && (key == "command" || key == "cmd" || key == "argv") {
+            let r = shell_risk(value).risk();
+            if r > risk {
+                risk = r;
+            }
+        }
+        // Any param whose VALUE describes a destructive action raises risk to at least
+        // High — applied to EVERY tool's params (incl. read-only ones) ON PURPOSE: a
+        // destructive-looking argument is escalated regardless of the nominal tool, and
+        // it can only ever RAISE risk (fail-safe over-planning, never a downgrade).
+        if is_destructive_request(value) && risk < Risk::High {
+            risk = Risk::High;
+        }
+    }
+    // Resource id by a FIXED priority (path → target → file), NOT input-param order, so
+    // it is order-independent like `canonical_params` (Reviewer-B NIT): reordering the
+    // params can never change the derived resource / digest.
+    let resource = ["path", "target", "file"]
+        .iter()
+        .find_map(|want| params.iter().find(|(k, _)| k == want))
+        .map(|(_, v)| Resource {
+            resource_type: "file".to_string(),
+            id: Some(v.clone()),
+            digest: None,
+        });
+    Ok(Classified {
+        mutating: spec.mutating,
+        risk: Some(risk),
+        resource,
+    })
+}
+
+/// Build the canonical [`MutatingActionRequest`] for a raw tool call. Deterministic:
+/// the same call always yields byte-identical `canonical_action_bytes`, so an approval
+/// minted over this request matches when the turn re-builds it.
 ///
-/// **SECURITY CONTRACT for the live slice (do NOT trust the model here).** This
-/// tracer copies `proposal.mutating` / `resource` / `params` straight from the
-/// (mock) proposal. That is safe ONLY because the proposal is a fixed test fixture.
-/// The gate keys `requires_approval` on `mutating`, so a live `AgentLlmClient` that
-/// set these fields from raw model output could let a destructive action self-declare
-/// `mutating=false` and bypass approval. The live `AgentLlmClient`/`ToolExecutor`
-/// MUST derive `mutating` (and the risk/resource classification) from a TRUSTED tool
-/// policy (e.g. `friday_core::tool_policy` / a per-tool mutating registry), never from
-/// model-asserted fields. This is a binding requirement on the deferred runtime slice.
-pub fn build_request(proposal: &ToolCallProposal) -> MutatingActionRequest {
-    MutatingActionRequest {
-        action: proposal.action.clone(),
+/// **This is the single chokepoint that closes UNW-001.** `mutating`/`risk`/`resource`
+/// come from [`trusted_classify`] (the registry + param inspection), NEVER from the
+/// model — and [`RawToolCall`] has no such fields, so a model cannot even express the
+/// "this destructive action is non-mutating" lie. An unregistered action is refused
+/// here ([`ToolError::UnknownTool`]) and the turn never authorizes or executes it.
+pub fn build_request(raw: &RawToolCall) -> Result<MutatingActionRequest, ToolError> {
+    let classified = trusted_classify(&raw.action, &raw.params)?;
+    Ok(MutatingActionRequest {
+        action: raw.action.clone(),
         actor: friday_core::gate::Actor {
             kind: ActorKind::Agent,
             id: "hub-agent".to_string(),
             principal_id: None,
         },
         surface: "agent".to_string(),
-        mutating: proposal.mutating,
-        risk: None,
+        mutating: classified.mutating,
+        risk: classified.risk,
         local_claims: vec![],
-        resource: proposal.resource.clone(),
-        parameters: Some(canonical_params(&proposal.params)),
+        resource: classified.resource,
+        parameters: Some(canonical_params(&raw.params)),
         idempotency_key: None,
         plan_digest: None,
-    }
+    })
 }
 
 // --- Hub-side approval minting (advisor must-nail #3, Hub side) --------------
@@ -217,8 +317,8 @@ pub fn run_one_turn(
     approval: Option<&CanonicalApproval>,
     now_ms: i64,
 ) -> Result<TurnOutcome, StorageError> {
-    // 1. The model proposes a tool call.
-    let proposal = client.propose_tool_call(task);
+    // 1. The model proposes a tool call (untrusted: action + params only).
+    let raw = client.propose_tool_call(task);
 
     // 2. Plan classification, recorded as an event. event_id keys on the caller's
     //    monotonic `turn_index` (NOT `now_ms`) so consecutive turns never PK-collide
@@ -233,8 +333,26 @@ pub fn run_one_turn(
         now_ms,
     )?;
 
-    // 3. Build the canonical request (deterministic, so a minted approval matches).
-    let request = build_request(&proposal);
+    // 3. Build the canonical request — the trusted chokepoint. An unregistered tool is
+    //    refused HERE (fail closed): it is never authorized and never executed.
+    let request = match build_request(&raw) {
+        Ok(request) => request,
+        Err(ToolError::UnknownTool(action)) => {
+            agent_run::record_event(
+                conn,
+                &format!("{run_id}:t{turn_index}:outcome"),
+                run_id,
+                &format!("tool.rejected:unregistered:{action}"),
+                now_ms,
+            )?;
+            return Ok(TurnOutcome {
+                decision: GateDecision::Deny,
+                reason: "unregistered_tool".to_string(),
+                executed: false,
+                plan_kind,
+            });
+        }
+    };
 
     // 4. Authorize — composes the pure gate decision, crypto digest/signature
     //    verification, expiry, and the single-use replay store.
@@ -243,7 +361,7 @@ pub fn run_one_turn(
     // 5. Execute ONLY on Allow (mock executor); record the outcome either way.
     let executed = matches!(record.decision, GateDecision::Allow);
     let outcome_kind = if executed {
-        format!("tool.executed:{}", proposal.action)
+        format!("tool.executed:{}", raw.action)
     } else {
         format!(
             "tool.blocked:{}:{}",
@@ -290,28 +408,16 @@ mod tests {
 
     const SECRET: &[u8] = b"hub-signing-secret"; // pragma: allowlist secret
 
-    fn read_only_proposal() -> ToolCallProposal {
-        ToolCallProposal {
+    fn read_only_proposal() -> RawToolCall {
+        RawToolCall {
             action: "read_file".to_string(),
-            mutating: false,
-            resource: Some(Resource {
-                resource_type: "file".to_string(),
-                id: Some("notes.md".to_string()),
-                digest: None,
-            }),
             params: vec![("path".to_string(), "notes.md".to_string())],
         }
     }
 
-    fn delete_proposal() -> ToolCallProposal {
-        ToolCallProposal {
+    fn delete_proposal() -> RawToolCall {
+        RawToolCall {
             action: "delete_file".to_string(),
-            mutating: true,
-            resource: Some(Resource {
-                resource_type: "file".to_string(),
-                id: Some("backups/old.db".to_string()),
-                digest: None,
-            }),
             params: vec![("path".to_string(), "backups/old.db".to_string())],
         }
     }
@@ -392,7 +498,7 @@ mod tests {
             proposal: proposal.clone(),
         };
         // Hub mints a signed approval bound to the EXACT request the turn will build.
-        let request = build_request(&proposal);
+        let request = build_request(&proposal).unwrap();
         let approval = mint_approval(&request, "ap-1", SECRET, 5000);
 
         // Turn 1 (turn_index 0): approval valid + unspent -> Allow + executed.
@@ -435,7 +541,7 @@ mod tests {
         let db = Db::open_hub(&temp_path("forge")).unwrap();
         agent_run::create_run(db.conn(), "r1", "delete the old backup db", 1).unwrap();
         let proposal = delete_proposal();
-        let request = build_request(&proposal);
+        let request = build_request(&proposal).unwrap();
         let mut forged = mint_approval(&request, "ap-x", SECRET, 5000);
         forged.signature = Some("0".repeat(64)); // wrong signature
         let client = MockAgentLlmClient { proposal };
@@ -452,5 +558,101 @@ mod tests {
         .unwrap();
         assert_eq!(out.decision, GateDecision::Deny);
         assert!(!out.executed);
+    }
+
+    #[test]
+    fn model_cannot_assert_non_mutating_for_a_destructive_tool() {
+        // The model can express only action + params (RawToolCall has NO mutating
+        // field), and build_request derives `mutating` from the trusted registry. So a
+        // destructive tool is ALWAYS mutating=true regardless of anything the model
+        // says — the "this destructive action is non-mutating" bypass is unrepresentable
+        // by type. This is the UNW-001-relevant property of the chokepoint.
+        let request = build_request(&RawToolCall {
+            action: "delete_file".to_string(),
+            params: vec![("path".to_string(), "x".to_string())],
+        })
+        .unwrap();
+        assert!(request.mutating, "delete_file must classify mutating=true");
+        // The trusted non-mutating case (read_file) is the only way to mutating=false.
+        let ro = build_request(&RawToolCall {
+            action: "read_file".to_string(),
+            params: vec![],
+        })
+        .unwrap();
+        assert!(!ro.mutating);
+    }
+
+    #[test]
+    fn run_command_param_drives_risk_escalation() {
+        // mutating comes from the registry; risk is RAISED by what the params do. A
+        // run_command whose command contains a shell metacharacter is Critical (via the
+        // trusted shell-risk scanner), above the tool's High base — the params, not the
+        // model, drive the classification.
+        let c = trusted_classify(
+            "run_command",
+            &[("command".to_string(), "rm -rf / | sh".to_string())],
+        )
+        .unwrap();
+        assert!(c.mutating);
+        assert_eq!(c.risk, Some(Risk::Critical));
+    }
+
+    #[test]
+    fn unregistered_tool_is_refused_fail_closed() {
+        // An action not in the trusted registry is refused at build_request and never
+        // authorized or executed by the turn.
+        let err = build_request(&RawToolCall {
+            action: "frobnicate".to_string(),
+            params: vec![],
+        })
+        .unwrap_err();
+        assert_eq!(err, ToolError::UnknownTool("frobnicate".to_string()));
+
+        let db = Db::open_hub(&temp_path("unreg")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "please frobnicate the thing", 1).unwrap();
+        let client = MockAgentLlmClient {
+            proposal: RawToolCall {
+                action: "frobnicate".to_string(),
+                params: vec![],
+            },
+        };
+        let out = run_one_turn(
+            &client,
+            db.conn(),
+            "r1",
+            0,
+            "please frobnicate the thing",
+            SECRET,
+            None,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.decision, GateDecision::Deny);
+        assert_eq!(out.reason, "unregistered_tool");
+        assert!(!out.executed);
+    }
+
+    #[test]
+    fn resource_selection_is_param_order_independent() {
+        // Reviewer-B NIT: resource is chosen by fixed priority (path→target→file), not
+        // input order, so reordering params can never change the derived resource/digest.
+        let a = build_request(&RawToolCall {
+            action: "write_file".to_string(),
+            params: vec![
+                ("path".to_string(), "p".to_string()),
+                ("target".to_string(), "t".to_string()),
+            ],
+        })
+        .unwrap();
+        let b = build_request(&RawToolCall {
+            action: "write_file".to_string(),
+            params: vec![
+                ("target".to_string(), "t".to_string()),
+                ("path".to_string(), "p".to_string()),
+            ],
+        })
+        .unwrap();
+        assert_eq!(a.resource, b.resource);
+        assert_eq!(a.resource.unwrap().id, Some("p".to_string())); // `path` wins
     }
 }
