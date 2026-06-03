@@ -29,6 +29,12 @@
 //! `friday-ffi` (phone) must NOT. That compile-time no-provider-key-on-phone
 //! boundary is asserted by `friday-arch-tests`.
 
+/// UNW-003 — dynamic provider routing (which provider/model answers a request).
+/// Routing decides *who answers*; it has zero authority over tool-call
+/// classification, which stays the trusted [`build_request`]/`trusted_classify`
+/// chokepoint regardless of the routed provider.
+pub mod routing;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, Resource, CANONICAL_GATE_ISSUER,
