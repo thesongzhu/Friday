@@ -52,6 +52,35 @@ pub fn run_state(conn: &Connection, run_id: &str) -> Result<Option<WorkflowRunSt
     Ok(s.map(|x| parse_run_state(&x)))
 }
 
+/// `(run_id, name)` for every run in `state`, most-recently-updated first (uses
+/// `idx_workflow_run_state`). The data-layer query that backs the Needs-Me inbox's
+/// workflow source (`08` §2) — e.g. all `AwaitingCheckpoint` runs awaiting the user.
+pub fn runs_in_state(conn: &Connection, state: WorkflowRunState) -> Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT run_id, name FROM workflow_run WHERE state = ?1 ORDER BY updated_at DESC, run_id",
+    )?;
+    let rows = stmt.query_map([state.as_str()], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+/// The seq of the run's first `Pending` step (the paused checkpoint of an
+/// `AwaitingCheckpoint` run), or `None` if it has no pending step. Used to label the
+/// Needs-Me item with the exact step awaiting the user.
+pub fn first_pending_seq(conn: &Connection, run_id: &str) -> Result<Option<i64>> {
+    let seq: Option<i64> = conn
+        .query_row(
+            "SELECT seq FROM workflow_step WHERE run_id = ?1 AND status = ?2 ORDER BY seq LIMIT 1",
+            params![run_id, StepStatus::Pending.as_str()],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(seq)
+}
+
 /// Load every step of a run as a `StepView` (side-effect flag + status). This is
 /// the input to the run-completion gate; it is the single read used by
 /// `set_run_state` to decide whether a `-> Done` transition is allowed.
