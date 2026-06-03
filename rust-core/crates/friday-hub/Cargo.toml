@@ -1,0 +1,22 @@
+[package]
+name = "friday-hub"
+description = "Friday Hub runtime — composition root + agent turn loop (Hub-only). PR-6 tracer-bullet first slice: one composed turn through a mock LLM, proving the substrate seams snap together (classify -> gate -> authorize -> execute -> record). Not the runtime; not live."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+
+[dependencies]
+friday-core.workspace = true
+friday-crypto.workspace = true
+friday-storage.workspace = true
+# The composition layer (`authorize_mutating_action`, `agent_run`) operates on a
+# `rusqlite::Connection`, so the turn-loop signatures name it directly.
+rusqlite.workspace = true
+# Secret-bearing provider crates — the Hub is where provider secrets/credentials
+# live. Depending on them here (and NOT in friday-ffi) is the compile-time
+# "no secret on phone" boundary, asserted by friday-arch-tests.
+friday-deepseek.workspace = true
+friday-providers.workspace = true
+

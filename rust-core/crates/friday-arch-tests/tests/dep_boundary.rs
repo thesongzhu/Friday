@@ -37,11 +37,33 @@ fn internal_dep_graph(root: &Path) -> BTreeMap<String, BTreeSet<String>> {
         let value: toml::Value = toml::from_str(&text).unwrap();
         let name = value["package"]["name"].as_str().unwrap().to_string();
         let mut deps = BTreeSet::new();
+        // Collect friday-* deps from a dependency table, resolving the REAL crate
+        // name via the `package` field so a renamed dep
+        // (`x = { package = "friday-deepseek" }`) cannot evade the boundary check.
+        let mut scan = |tbl: &toml::value::Table| {
+            for (k, v) in tbl {
+                let dep_name = v
+                    .as_table()
+                    .and_then(|t| t.get("package"))
+                    .and_then(|p| p.as_str())
+                    .unwrap_or(k.as_str());
+                if dep_name.starts_with("friday-") {
+                    deps.insert(dep_name.to_string());
+                }
+            }
+        };
         for section in ["dependencies", "build-dependencies"] {
             if let Some(tbl) = value.get(section).and_then(|v| v.as_table()) {
-                for k in tbl.keys() {
-                    if k.starts_with("friday-") {
-                        deps.insert(k.clone());
+                scan(tbl);
+            }
+        }
+        // Also scan platform-specific [target.'cfg(...)'.dependencies] tables — a
+        // secret-bearing dep hidden behind a target cfg would otherwise be missed.
+        if let Some(targets) = value.get("target").and_then(|v| v.as_table()) {
+            for (_cfg, t) in targets {
+                for section in ["dependencies", "build-dependencies"] {
+                    if let Some(tbl) = t.get(section).and_then(|v| v.as_table()) {
+                        scan(tbl);
                     }
                 }
             }
@@ -108,4 +130,40 @@ fn deepseek_does_not_depend_on_ffi_either() {
         !ds_closure.contains("friday-ffi"),
         "friday-deepseek must not depend on friday-ffi; closure = {ds_closure:?}"
     );
+}
+
+#[test]
+fn hub_is_the_secret_bearing_composition_root_and_phone_is_not() {
+    // PR-6 boundary (file 52 §3 must-nail #1): the Hub runtime is where provider
+    // secrets live, so `friday-hub`'s closure INCLUDES the secret-bearing crates;
+    // `friday-ffi` (phone) must still EXCLUDE them. This is the compile-time
+    // "secrets on the Hub, never on the phone" property for the new crate.
+    let graph = internal_dep_graph(&workspace_root());
+    assert!(
+        graph.contains_key("friday-hub"),
+        "friday-hub crate not found"
+    );
+
+    let hub_closure = closure(&graph, "friday-hub");
+    for secret in ["friday-deepseek", "friday-providers"] {
+        assert!(
+            hub_closure.contains(secret),
+            "friday-hub closure must include the secret-bearing {secret}: {hub_closure:?}"
+        );
+    }
+    // The Hub composes the substrate it drives.
+    for expected in ["friday-core", "friday-crypto", "friday-storage"] {
+        assert!(
+            hub_closure.contains(expected),
+            "friday-hub closure unexpectedly missing {expected}: {hub_closure:?}"
+        );
+    }
+    // And the phone STILL cannot reach the secret crates (re-asserted with hub present).
+    let ffi_closure = closure(&graph, "friday-ffi");
+    for secret in ["friday-deepseek", "friday-providers", "friday-hub"] {
+        assert!(
+            !ffi_closure.contains(secret),
+            "PHONE SECRET LEAK: friday-ffi depends on {secret}; closure = {ffi_closure:?}"
+        );
+    }
 }

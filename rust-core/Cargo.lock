@@ -459,6 +459,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "friday-hub"
+version = "0.0.1"
+dependencies = [
+ "friday-core",
+ "friday-crypto",
+ "friday-deepseek",
+ "friday-providers",
+ "friday-storage",
+ "rusqlite",
+]
+
+[[package]]
 name = "friday-protocol"
 version = "0.0.1"
 dependencies = [
