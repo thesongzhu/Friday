@@ -509,12 +509,17 @@ pub fn evaluate(request: &MutatingActionRequest) -> GateEvidenceRecord {
 // Faithful to the oracle's `isUnauthenticatedPublicPrincipal` + the authority-required
 // refusal on sensitive access (`assertBoundPrincipalForOperation`).
 
-/// Sentinel principal id for the default-public / anonymous principal (the oracle's
-/// `FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID` analog).
-pub const PUBLIC_PRINCIPAL_ID: &str = "public";
+/// Sentinel principal ids for the default-public / anonymous principal. Covers the oracle's
+/// `FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID` (`"public:default"`) and the bare `"public"`
+/// form, compared case-insensitively against the TRIMMED principal id.
+pub const PUBLIC_PRINCIPAL_IDS: &[&str] = &["public", "public:default"];
 
 /// Resource type/id substrings that mark a resource as sensitive (read-side analog of the
 /// oracle's `SENSITIVE_HEADER_PATTERNS`): credentials, auth tokens, cookies, secrets, keys.
+/// Deliberately a SUPERSET — for a fail-closed gate an over-match (over-deny an anonymous
+/// read) is safe, while an under-match (a real secret unflagged) is the dangerous direction,
+/// so common key/token forms (`token`, `jwt`, `ssh`, `id_rsa`, `.pem`, `oauth`, `private`)
+/// are included even at the cost of false positives like `cookie-recipe.md`.
 const SENSITIVE_RESOURCE_MARKERS: &[&str] = &[
     "authorization",
     "proxy-authorization",
@@ -524,6 +529,8 @@ const SENSITIVE_RESOURCE_MARKERS: &[&str] = &[
     "apikey",
     "auth-token",
     "auth_token",
+    "token", // bare token / jwt-token / access-token / refresh-token / session-token
+    "jwt",
     "session-token",
     "session_token",
     "csrf",
@@ -531,23 +538,40 @@ const SENSITIVE_RESOURCE_MARKERS: &[&str] = &[
     "credential",
     "bearer",
     "password",
+    "passwd",
+    "oauth",
     "private-key",
     "private_key",
+    "private", // private.pem / privatekey / private-* (over-match is safe, fail-closed)
+    "id_rsa",
+    "id-rsa",
+    "ssh",
+    ".pem",
+    "keystore",
+    "keychain",
 ];
 
-/// True if the actor is an unauthenticated / anonymous principal: no bound `principal_id`
-/// (or an empty / default-public one). Mirrors the oracle `isUnauthenticatedPublicPrincipal`.
-/// An `Owner` with no bound principal is still anonymous (an unbound owner context) — the
-/// principal binding, not the kind, authenticates a sensitive read.
+/// True if the actor is an unauthenticated / anonymous principal: no bound `principal_id`,
+/// or an empty / default-public one. Mirrors the oracle `isUnauthenticatedPublicPrincipal`
+/// — a MODEL REDUCTION: the oracle checks three arms (`principalId`/`tokenId`/`userId`); the
+/// Rust `Actor` carries only `principal_id`, so this mirrors that one arm. An `Owner` with no
+/// bound principal is still anonymous (an unbound owner context) — the principal binding, not
+/// the kind, authenticates a sensitive read.
 pub fn is_anonymous_principal(actor: &Actor) -> bool {
     match actor.principal_id.as_deref() {
         None => true,
-        Some(p) => p.trim().is_empty() || p.eq_ignore_ascii_case(PUBLIC_PRINCIPAL_ID),
+        Some(p) => {
+            let t = p.trim();
+            t.is_empty()
+                || PUBLIC_PRINCIPAL_IDS
+                    .iter()
+                    .any(|s| t.eq_ignore_ascii_case(s))
+        }
     }
 }
 
 /// True if `resource` denotes sensitive material (a credential / auth-token / cookie /
-/// secret / key) — checked over a lowercased `resource_type` + `id`.
+/// secret / key) — substring-matched over a lowercased `resource_type` + `id`.
 pub fn is_sensitive_resource(resource: &Resource) -> bool {
     let hay = format!(
         "{} {}",
@@ -953,12 +977,30 @@ mod tests {
         assert!(is_anonymous_principal(&bound(ActorKind::Api, "   ")));
         assert!(is_anonymous_principal(&bound(ActorKind::Channel, "public")));
         assert!(is_anonymous_principal(&bound(ActorKind::Channel, "PUBLIC")));
-        // a real bound principal is NOT anonymous (even an Api/Channel actor)
+        // the oracle's full default-public sentinel form, and a trimmed variant
+        assert!(is_anonymous_principal(&bound(
+            ActorKind::Api,
+            "public:default"
+        )));
+        assert!(is_anonymous_principal(&bound(
+            ActorKind::Api,
+            "  public:default  "
+        )));
+        assert!(is_anonymous_principal(&bound(
+            ActorKind::Channel,
+            " public "
+        )));
+        // a real bound principal is NOT anonymous (even an Api/Channel actor); a legit id
+        // merely CONTAINING "public" is not the sentinel (exact-match per arm)
         assert!(!is_anonymous_principal(&bound(
             ActorKind::Owner,
             "user-123"
         )));
         assert!(!is_anonymous_principal(&bound(ActorKind::Api, "svc-7")));
+        assert!(!is_anonymous_principal(&bound(
+            ActorKind::Api,
+            "public-user-1"
+        )));
     }
 
     #[test]
@@ -968,6 +1010,13 @@ mod tests {
         assert!(is_sensitive_resource(&res("file", "session_token.json")));
         assert!(is_sensitive_resource(&res("cookie", "sid")));
         assert!(is_sensitive_resource(&res("file", "credentials")));
+        // widened markers (reviewer CONCERNS-2: under-match is the dangerous direction)
+        assert!(is_sensitive_resource(&res("file", "id_rsa")));
+        assert!(is_sensitive_resource(&res("file", "server.pem")));
+        assert!(is_sensitive_resource(&res("file", "deploy.jwt")));
+        assert!(is_sensitive_resource(&res("file", "access_token.txt")));
+        assert!(is_sensitive_resource(&res("file", "known_hosts.ssh")));
+        assert!(is_sensitive_resource(&res("config", "oauth_client.json")));
         // ordinary resources are NOT sensitive
         assert!(!is_sensitive_resource(&res("file", "notes.md")));
         assert!(!is_sensitive_resource(&res("file", "/data/report.txt")));
