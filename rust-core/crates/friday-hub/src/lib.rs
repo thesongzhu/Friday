@@ -37,9 +37,11 @@ pub mod routing;
 
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
-    CanonicalApproval, GateDecision, MutatingActionRequest, Resource, CANONICAL_GATE_ISSUER,
+    CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,
 };
-use friday_core::{is_destructive_request, shell_risk, ActivityState, ActivityType, Risk};
+// The risk-escalation primitives (`shell_risk`/`is_destructive_request`) now live behind
+// the sealed `friday_core::gate::classify`; `Resource` is constructed there too.
+use friday_core::{ActivityState, ActivityType, Risk};
 use friday_storage::{
     agent_run, authorize_mutating_action, ActivityRow, AuditEvent, Db, StorageError,
 };
@@ -470,41 +472,24 @@ impl ToolRegistry {
     }
 
     /// Classify a raw tool call against THIS registry (see [`trusted_classify`] for the
-    /// trust contract). `mutating` comes from the registry; `risk` is the registry floor
-    /// RAISED (never lowered) by what the params do; `resource` from a path/target param.
+    /// trust contract). The registry supplies the trusted per-tool spec (`mutating` +
+    /// `base_risk`); the never-lowered risk escalation + resource extraction live in the
+    /// sealed [`friday_core::gate::classify`], so the result is a `Classification` that
+    /// can only have come from classification — not a forgeable struct literal (task #29).
     pub fn classify(
         &self,
         action: &str,
         params: &[(String, String)],
-    ) -> Result<Classified, ToolError> {
+    ) -> Result<friday_core::gate::Classification, ToolError> {
         let spec = self
             .spec(action)
             .ok_or_else(|| ToolError::UnknownTool(action.to_string()))?;
-        let mut risk = spec.base_risk;
-        for (key, value) in params {
-            if action == "run_command" && (key == "command" || key == "cmd" || key == "argv") {
-                let r = shell_risk(value).risk();
-                if r > risk {
-                    risk = r;
-                }
-            }
-            if is_destructive_request(value) && risk < Risk::High {
-                risk = Risk::High;
-            }
-        }
-        let resource = ["path", "target", "file"]
-            .iter()
-            .find_map(|want| params.iter().find(|(k, _)| k == want))
-            .map(|(_, v)| Resource {
-                resource_type: "file".to_string(),
-                id: Some(v.clone()),
-                digest: None,
-            });
-        Ok(Classified {
-            mutating: spec.mutating,
-            risk: Some(risk),
-            resource,
-        })
+        Ok(friday_core::gate::classify(
+            spec.mutating,
+            spec.base_risk,
+            action,
+            params,
+        ))
     }
 }
 
@@ -515,14 +500,12 @@ pub enum ToolError {
     UnknownTool(String),
 }
 
-/// The trusted classification of a tool call: derived from the registry + an
-/// inspection of the (model-controlled) params, NEVER from model-asserted fields.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Classified {
-    pub mutating: bool,
-    pub risk: Option<Risk>,
-    pub resource: Option<Resource>,
-}
+/// The trusted classification of a tool call: the sealed gate-decision trio from
+/// `friday-core` ([`friday_core::gate::Classification`]). Aliased here for continuity;
+/// it is derived from the registry spec + an inspection of the (model-controlled)
+/// params, NEVER from model-asserted fields, and its fields are read via getters
+/// (`mutating()`/`risk()`/`resource()`) — there is no forgeable struct literal.
+pub type Classified = friday_core::gate::Classification;
 
 /// Classify a raw tool call against the DEFAULT (built-in) tool registry. `mutating`
 /// comes from the registry; `risk` is the registry floor RAISED (never lowered) by what
@@ -545,26 +528,27 @@ pub fn trusted_classify(
 /// **This is the single chokepoint that closes UNW-001.** `mutating`/`risk`/`resource`
 /// come from [`trusted_classify`] (the registry + param inspection), NEVER from the
 /// model — and [`RawToolCall`] has no such fields, so a model cannot even express the
-/// "this destructive action is non-mutating" lie. An unregistered action is refused
-/// here ([`ToolError::UnknownTool`]) and the turn never authorizes or executes it.
+/// "this destructive action is non-mutating" lie. As of task #29 this is enforced by
+/// the type system: those fields are private on `MutatingActionRequest` and can only be
+/// set from the sealed [`Classified`] via [`MutatingActionRequest::from_classification`],
+/// so no other code can construct a request that skips classification. An unregistered
+/// action is refused here ([`ToolError::UnknownTool`]) and the turn never authorizes it.
 pub fn build_request(raw: &RawToolCall) -> Result<MutatingActionRequest, ToolError> {
     let classified = trusted_classify(&raw.action, &raw.params)?;
-    Ok(MutatingActionRequest {
-        action: raw.action.clone(),
-        actor: friday_core::gate::Actor {
+    Ok(MutatingActionRequest::from_classification(
+        classified,
+        raw.action.clone(),
+        friday_core::gate::Actor {
             kind: ActorKind::Agent,
             id: "hub-agent".to_string(),
             principal_id: None,
         },
-        surface: "agent".to_string(),
-        mutating: classified.mutating,
-        risk: classified.risk,
-        local_claims: vec![],
-        resource: classified.resource,
-        parameters: Some(canonical_params(&raw.params)),
-        idempotency_key: None,
-        plan_digest: None,
-    })
+        "agent".to_string(),
+        vec![],
+        Some(canonical_params(&raw.params)),
+        None,
+        None,
+    ))
 }
 
 // --- Hub-side approval minting (advisor must-nail #3, Hub side) --------------
@@ -1451,14 +1435,17 @@ mod tests {
             params: vec![("path".to_string(), "x".to_string())],
         })
         .unwrap();
-        assert!(request.mutating, "delete_file must classify mutating=true");
+        assert!(
+            request.mutating(),
+            "delete_file must classify mutating=true"
+        );
         // The trusted non-mutating case (read_file) is the only way to mutating=false.
         let ro = build_request(&RawToolCall {
             action: "read_file".to_string(),
             params: vec![],
         })
         .unwrap();
-        assert!(!ro.mutating);
+        assert!(!ro.mutating());
     }
 
     #[test]
@@ -1472,8 +1459,8 @@ mod tests {
             &[("command".to_string(), "rm -rf / | sh".to_string())],
         )
         .unwrap();
-        assert!(c.mutating);
-        assert_eq!(c.risk, Some(Risk::Critical));
+        assert!(c.mutating());
+        assert_eq!(c.risk(), Some(Risk::Critical));
     }
 
     #[test]
@@ -1531,8 +1518,8 @@ mod tests {
             ],
         })
         .unwrap();
-        assert_eq!(a.resource, b.resource);
-        assert_eq!(a.resource.unwrap().id, Some("p".to_string())); // `path` wins
+        assert_eq!(a.resource(), b.resource());
+        assert_eq!(a.resource().unwrap().id, Some("p".to_string())); // `path` wins
     }
 
     // --- §5-PR2: prompt + strict parse (offline) ---
@@ -1604,7 +1591,7 @@ mod tests {
         // parse layer feeds the same chokepoint, it does not bypass it.
         let raw =
             parse_tool_call("{\"tool\":\"delete_file\",\"parameters\":{\"path\":\"x\"}}").unwrap();
-        assert!(build_request(&raw).unwrap().mutating);
+        assert!(build_request(&raw).unwrap().mutating());
         // An unregistered parsed tool is still refused.
         let unk = parse_tool_call("{\"tool\":\"frobnicate\"}").unwrap();
         assert!(matches!(
@@ -2510,13 +2497,13 @@ mod tool_registry_tests {
     #[test]
     fn default_registry_classifies_builtins_and_refuses_unknown() {
         let r = ToolRegistry::default();
-        assert!(!r.classify("read_file", &[]).unwrap().mutating);
-        assert!(r.classify("delete_file", &[]).unwrap().mutating);
+        assert!(!r.classify("read_file", &[]).unwrap().mutating());
+        assert!(r.classify("delete_file", &[]).unwrap().mutating());
         // run_command with a destructive command escalates to Critical via shell_risk.
         let c = r
             .classify("run_command", &[("command".into(), "rm -rf / | sh".into())])
             .unwrap();
-        assert_eq!(c.risk, Some(Risk::Critical));
+        assert_eq!(c.risk(), Some(Risk::Critical));
         // Unregistered → refused (fail closed).
         assert!(matches!(
             r.classify("frobnicate", &[]),
@@ -2544,8 +2531,8 @@ mod tool_registry_tests {
         let c = r
             .classify("deploy_release", &[("target".into(), "prod".into())])
             .unwrap();
-        assert!(c.mutating);
-        assert_eq!(c.risk, Some(Risk::High));
+        assert!(c.mutating());
+        assert_eq!(c.risk(), Some(Risk::High));
         assert!(r.advertised().iter().any(|(a, _)| *a == "deploy_release"));
         assert!(build_tool_prompt_with("ship it", &r).contains("deploy_release"));
 
@@ -2561,10 +2548,10 @@ mod tool_registry_tests {
     fn register_can_override_a_builtin_classification() {
         // A tool pack may TIGHTEN a built-in (only the registrant — trusted code — can).
         let mut r = ToolRegistry::default();
-        assert!(!r.classify("read_file", &[]).unwrap().mutating); // built-in read-only
+        assert!(!r.classify("read_file", &[]).unwrap().mutating()); // built-in read-only
         r.register("read_file", false, Risk::Medium, "read (audited)"); // raise the floor
         assert_eq!(
-            r.classify("read_file", &[]).unwrap().risk,
+            r.classify("read_file", &[]).unwrap().risk(),
             Some(Risk::Medium)
         );
     }

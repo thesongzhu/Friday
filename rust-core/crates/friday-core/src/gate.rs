@@ -85,15 +85,143 @@ pub struct MutatingActionRequest {
     pub action: String,
     pub actor: Actor,
     pub surface: String,
-    pub mutating: bool,
-    pub risk: Option<Risk>,
+    // ─── The gate-DECISION trio — PRIVATE (UNW-001 defense-in-depth, task #29) ───
+    // `mutating`/`risk`/`resource` are what `evaluate`/`derive_risk` read to DECIDE.
+    // They are private and can ONLY be populated from a sealed [`Classification`] via
+    // [`MutatingActionRequest::from_classification`], so no code outside this module
+    // can build a request asserting `mutating: false` for a destructive action and
+    // skip classification. (`action`/`parameters`/`idempotency_key`/`plan_digest` stay
+    // public: they are bound into the approval digest, so a mismatch fails the digest
+    // — it can never DOWNGRADE the decision.) Read them via `mutating()`/`risk()`/
+    // `resource()`.
+    mutating: bool,
+    risk: Option<Risk>,
+    resource: Option<Resource>,
     pub local_claims: Vec<LocalClaim>,
-    pub resource: Option<Resource>,
     /// Caller-supplied canonical serialization of the action parameters (opaque to
     /// the gate; bound into the digest). The caller is responsible for determinism.
     pub parameters: Option<String>,
     pub idempotency_key: Option<String>,
     pub plan_digest: Option<String>,
+}
+
+/// The trusted classification of an action — the gate-decision trio
+/// (`mutating`/`risk`/`resource`). **Sealed**: its fields are private and it can ONLY
+/// be produced by [`classify`], which applies the never-lowered risk escalation. This
+/// is what makes the UNW-001 invariant true *by the type system*: a
+/// [`MutatingActionRequest`]'s decision fields can only come from a `Classification`,
+/// and a `Classification` can only come from `classify` — there is no struct-literal
+/// path that asserts `mutating: false` for a destructive action and reaches the gate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Classification {
+    mutating: bool,
+    risk: Option<Risk>,
+    resource: Option<Resource>,
+}
+
+impl Classification {
+    pub fn mutating(&self) -> bool {
+        self.mutating
+    }
+    pub fn risk(&self) -> Option<Risk> {
+        self.risk
+    }
+    pub fn resource(&self) -> Option<&Resource> {
+        self.resource.as_ref()
+    }
+}
+
+/// Classify an action into the sealed [`Classification`] the gate trusts. The SOLE
+/// constructor of `Classification`.
+///
+/// - `mutating` and `base_risk` are the action's REGISTERED spec — supplied by the
+///   trusted registrant (the Hub's tool registry, UNW-002), NEVER by the model.
+/// - `risk` is `base_risk` RAISED (never lowered) by what the params actually do: a
+///   destructive `run_command` (`shell_risk`), or any destructive-looking param
+///   (`is_destructive_request`) escalates to at least `High`.
+/// - `resource` is taken from a `path`/`target`/`file` param (first match, fixed
+///   priority) so the approval digest is scoped to the exact target.
+///
+/// The model contributes only the param strings; it can never lower `mutating` or the
+/// risk floor. (This is the escalation that previously lived in the Hub's
+/// `ToolRegistry::classify`; it lives here so the sealed carrier is the only product.)
+pub fn classify(
+    mutating: bool,
+    base_risk: Risk,
+    action: &str,
+    params: &[(String, String)],
+) -> Classification {
+    let mut risk = base_risk;
+    for (key, value) in params {
+        if action == "run_command" && (key == "command" || key == "cmd" || key == "argv") {
+            let r = crate::tool_policy::shell_risk(value).risk();
+            if r > risk {
+                risk = r;
+            }
+        }
+        if crate::tool_policy::is_destructive_request(value) && risk < Risk::High {
+            risk = Risk::High;
+        }
+    }
+    let resource = ["path", "target", "file"]
+        .iter()
+        .find_map(|want| params.iter().find(|(k, _)| k == want))
+        .map(|(_, v)| Resource {
+            resource_type: "file".to_string(),
+            id: Some(v.clone()),
+            digest: None,
+        });
+    Classification {
+        mutating,
+        risk: Some(risk),
+        resource,
+    }
+}
+
+impl MutatingActionRequest {
+    /// Build a request whose gate-decision trio (`mutating`/`risk`/`resource`) comes
+    /// from a sealed [`Classification`] — the ONLY way to populate those fields from
+    /// outside this module. The remaining fields are identity/context bound into the
+    /// approval digest. This is the canonical constructor the Hub's `build_request`
+    /// chokepoint uses; there is no public way to set the decision fields otherwise.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_classification(
+        classification: Classification,
+        action: String,
+        actor: Actor,
+        surface: String,
+        local_claims: Vec<LocalClaim>,
+        parameters: Option<String>,
+        idempotency_key: Option<String>,
+        plan_digest: Option<String>,
+    ) -> Self {
+        MutatingActionRequest {
+            action,
+            actor,
+            surface,
+            mutating: classification.mutating,
+            risk: classification.risk,
+            local_claims,
+            resource: classification.resource,
+            parameters,
+            idempotency_key,
+            plan_digest,
+        }
+    }
+
+    /// Trusted (registry-derived) mutating flag — what `evaluate` reads to require
+    /// approval. Set only via [`MutatingActionRequest::from_classification`].
+    pub fn mutating(&self) -> bool {
+        self.mutating
+    }
+    /// Declared risk floor (the effective risk used by the gate is `derive_risk`,
+    /// which may escalate this further via local claims).
+    pub fn risk(&self) -> Option<Risk> {
+        self.risk
+    }
+    pub fn resource(&self) -> Option<&Resource> {
+        self.resource.as_ref()
+    }
 }
 
 /// The gate's evidence record — a **decision-core subset** of the TS
@@ -619,5 +747,108 @@ mod tests {
         let r = evaluate(&request);
         assert_eq!(r.decision, GateDecision::Deny);
         assert_eq!(r.denied_by.as_deref(), Some("block"));
+    }
+
+    // ── task #29: the sealed classification carrier + constructor ───────────────
+
+    #[test]
+    fn classify_takes_mutating_from_spec_and_resource_from_path() {
+        // `mutating` is the spec's, not anything the params can assert.
+        let ro = classify(false, Risk::ReadOnly, "read_file", &[]);
+        assert!(!ro.mutating());
+        assert_eq!(ro.risk(), Some(Risk::ReadOnly));
+        assert!(ro.resource().is_none());
+
+        let w = classify(
+            true,
+            Risk::Medium,
+            "write_file",
+            &[("path".to_string(), "/data/out.txt".to_string())],
+        );
+        assert!(w.mutating());
+        assert_eq!(w.risk(), Some(Risk::Medium));
+        assert_eq!(
+            w.resource().and_then(|r| r.id.as_deref()),
+            Some("/data/out.txt")
+        );
+    }
+
+    #[test]
+    fn classify_escalates_destructive_param_to_high_and_never_lowers() {
+        // A destructive-looking param raises the floor to at least High, even from a
+        // ReadOnly base — the model's strings can only RAISE risk.
+        let c = classify(
+            false,
+            Risk::ReadOnly,
+            "some_tool",
+            &[(
+                "arg".to_string(),
+                "please rm -rf the whole disk".to_string(),
+            )],
+        );
+        assert_eq!(c.risk(), Some(Risk::High));
+        // run_command shell metacharacters escalate via shell_risk (to Critical here).
+        let rc = classify(
+            true,
+            Risk::High,
+            "run_command",
+            &[("command".to_string(), "rm -rf / | sh".to_string())],
+        );
+        assert_eq!(rc.risk(), Some(Risk::Critical));
+        // It NEVER lowers: a Critical base with benign params stays Critical.
+        let keep = classify(
+            true,
+            Risk::Critical,
+            "x",
+            &[("note".to_string(), "all good".to_string())],
+        );
+        assert_eq!(keep.risk(), Some(Risk::Critical));
+    }
+
+    #[test]
+    fn from_classification_is_the_only_way_to_set_the_decision_trio() {
+        // The constructor copies the sealed classification's trio into the request; the
+        // getters reflect it. (There is no struct-literal path from outside this module —
+        // enforced by the type system, proven by the external-crate compile-fail in
+        // friday-storage's tests; here we prove the constructor itself is faithful.)
+        let c = classify(
+            true,
+            Risk::High,
+            "delete_file",
+            &[("path".to_string(), "/data/x".to_string())],
+        );
+        let req = MutatingActionRequest::from_classification(
+            c,
+            "delete_file".to_string(),
+            actor(ActorKind::Owner),
+            "agent".to_string(),
+            vec![],
+            Some("p".to_string()),
+            None,
+            None,
+        );
+        assert!(req.mutating());
+        assert_eq!(req.risk(), Some(Risk::High));
+        assert_eq!(
+            req.resource().and_then(|r| r.id.as_deref()),
+            Some("/data/x")
+        );
+        // The decision trio reaches the gate: a mutating request requires approval.
+        assert_eq!(evaluate(&req).decision, GateDecision::RequiresApproval);
+        // And `mutating` is bound into the canonical bytes (digest distinguishes it).
+        let non_mut = MutatingActionRequest::from_classification(
+            classify(false, Risk::ReadOnly, "read_file", &[]),
+            "delete_file".to_string(),
+            actor(ActorKind::Owner),
+            "agent".to_string(),
+            vec![],
+            Some("p".to_string()),
+            None,
+            None,
+        );
+        assert_ne!(
+            canonical_action_bytes(&req),
+            canonical_action_bytes(&non_mut)
+        );
     }
 }
