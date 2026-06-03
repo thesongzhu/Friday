@@ -11,7 +11,12 @@
 //!
 //! No secret material in SQLite (`09` §3 / gate 21 §3): `webhook_auth_ref` is an
 //! OPAQUE REFERENCE to the per-channel inbound bearer secret held in the Hub OS secure
-//! store (`friday_crypto::InMemorySecureStore` in v1) — never the secret itself.
+//! store (`friday_crypto::InMemorySecureStore` in v1) — never the secret itself. This
+//! is a CALLER CONTRACT at A-PR1 (the column is passed through verbatim; the
+//! `no_provider_secret_table` guard is name-only and cannot inspect a stuffed value).
+//! A-PR2 — which mints + stores the bearer secret and resolves the ref — MUST enforce
+//! the ref FORMAT (a store-handle shape, e.g. `kc://…`, not raw secret bytes) so the
+//! "no secret in SQLite" invariant is code-enforced, not just documented.
 
 use crate::error::{Result, StorageError};
 use friday_core::gate::{is_anonymous_principal, Actor, ActorKind};
@@ -241,15 +246,31 @@ pub fn set_channel_status(
 }
 
 /// The gate [`Actor`] for a channel binding — an `ActorKind::Channel` actor bound to
-/// the owner principal. This is how channel-origin actions enter the UNW-001 gate
-/// (a channel can NEVER self-execute a reserved approval action, and an anonymous
-/// channel is impossible since `register_channel` refuses to persist one).
+/// the owner principal. This is how channel-origin actions enter the UNW-001 gate as a
+/// bound, non-anonymous Channel actor (an anonymous channel is impossible —
+/// [`register_channel`] refuses to persist one, and this asserts it as defense-in-depth
+/// on the read path).
+///
+/// IMPORTANT (not yet enforced — A-PR2 decision): the gate's reserved-approval-action
+/// hard-`Deny` currently binds ONLY `ActorKind::Agent` (see `friday_core::gate` —
+/// Owner/Api/Channel are NOT subject to it). So a Channel actor is NOT presently
+/// barred from a reserved approve/deny action. This PR does NOT claim that property;
+/// A-PR2 (channel→Hub action wiring) MUST explicitly decide whether a channel actor
+/// should be reserved-action-bound BEFORE any channel-origin action reaches the gate.
 pub fn channel_actor(row: &ChannelBindingRow) -> Actor {
-    Actor {
+    let actor = Actor {
         kind: ActorKind::Channel,
         id: row.channel_id.clone(),
         principal_id: Some(row.bound_principal_id.clone()),
-    }
+    };
+    // Defense-in-depth: a persisted row is non-anonymous by construction (register
+    // refused otherwise + no path mutates the principal); assert it, mirroring the
+    // read-side fail-closed treatment of kind/status.
+    debug_assert!(
+        !is_anonymous_principal(&actor),
+        "channel_actor produced an anonymous actor — register_channel invariant violated"
+    );
+    actor
 }
 
 #[cfg(test)]
@@ -385,5 +406,51 @@ mod tests {
             .unwrap()
             .iter()
             .any(|t| t == "channel_binding"));
+    }
+
+    #[test]
+    fn empty_allowlist_round_trips_to_empty_vec() {
+        // Load-bearing: decode_allowlist's `if s.is_empty()` guard — without it
+        // "".split('\n') would yield [""] and corrupt the round-trip.
+        let db = Db::open_hub(&tmp("empty-allow")).unwrap();
+        register_channel(db.conn(), &nb("c1", ChannelKind::Telegram, "owner", &[])).unwrap();
+        let row = get_channel(db.conn(), "c1").unwrap().unwrap();
+        assert!(
+            row.allowlist.is_empty(),
+            "empty allowlist must read back empty, got {:?}",
+            row.allowlist
+        );
+    }
+
+    // Hand-insert a row directly (bypassing register_channel) to exercise the read-side
+    // fail-closed paths against a corrupted/raw-written row.
+    fn raw_insert(db: &Db, channel_id: &str, kind: &str, status: &str) {
+        db.conn()
+            .execute(
+                "INSERT INTO channel_binding
+                    (channel_id, kind, bound_principal_id, allowlist, webhook_auth_ref, status, created_at)
+                 VALUES (?1, ?2, 'owner', '', NULL, ?3, 1)",
+                params![channel_id, kind, status],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn corrupted_kind_row_fails_closed_on_read() {
+        let db = Db::open_hub(&tmp("bad-kind")).unwrap();
+        raw_insert(&db, "c1", "garbage_kind", "active");
+        // an unknown kind token errors the read (never silently mis-typed).
+        assert!(get_channel(db.conn(), "c1").is_err());
+    }
+
+    #[test]
+    fn garbage_status_row_reads_as_disabled_never_active() {
+        let db = Db::open_hub(&tmp("bad-status")).unwrap();
+        raw_insert(&db, "c1", "telegram", "ACTIVE_GARBAGE");
+        // a tampered/unknown status reads fail-closed as Disabled, never Active.
+        assert_eq!(
+            get_channel(db.conn(), "c1").unwrap().unwrap().status,
+            ChannelStatus::Disabled
+        );
     }
 }
