@@ -8,35 +8,52 @@ mod common;
 use common::temp_db_path;
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, Actor, ActorKind, ApprovalDecision,
-    CanonicalApproval, GateDecision, MutatingActionRequest, Resource, CANONICAL_GATE_ISSUER,
+    CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,
 };
+use friday_core::Risk;
 use friday_storage::{authorize_mutating_action, Db};
 
 const SECRET: &[u8] = b"gate-signing-secret";
 const NOW: i64 = 1_000;
 const FUTURE: i64 = 2_000;
 
-fn mutating_req() -> MutatingActionRequest {
-    MutatingActionRequest {
-        action: "delete_file".to_string(),
-        actor: Actor {
-            kind: ActorKind::Owner,
+/// Build a request through the SEALED constructor (task #29): the gate-decision trio
+/// (`mutating`/`risk`/`resource`) comes from `gate::classify` — there is no struct
+/// literal path. `resource` is derived from the `path` param, mirroring `build_request`.
+fn req_with(
+    action: &str,
+    actor_kind: ActorKind,
+    mutating: bool,
+    base_risk: Risk,
+    path: Option<&str>,
+) -> MutatingActionRequest {
+    let params: Vec<(String, String)> = path
+        .map(|p| vec![("path".to_string(), p.to_string())])
+        .unwrap_or_default();
+    MutatingActionRequest::from_classification(
+        friday_core::gate::classify(mutating, base_risk, action, &params),
+        action.to_string(),
+        Actor {
+            kind: actor_kind,
             id: "owner-1".to_string(),
             principal_id: Some("p1".to_string()),
         },
-        surface: "system".to_string(),
-        mutating: true,
-        risk: None,
-        local_claims: vec![],
-        resource: Some(Resource {
-            resource_type: "file".to_string(),
-            id: Some("/data/secret.db".to_string()),
-            digest: None,
-        }),
-        parameters: None,
-        idempotency_key: Some("idem-1".to_string()),
-        plan_digest: None,
-    }
+        "system".to_string(),
+        vec![],
+        None,
+        Some("idem-1".to_string()),
+        None,
+    )
+}
+
+fn mutating_req() -> MutatingActionRequest {
+    req_with(
+        "delete_file",
+        ActorKind::Owner,
+        true,
+        Risk::Medium,
+        Some("/data/secret.db"),
+    )
 }
 
 /// A correctly-signed, digest-bound, future-dated approval for `request`.
@@ -102,12 +119,13 @@ fn digest_mismatch_is_denied() {
     let mut approval = signed_approval(&req, Some(FUTURE));
     // Re-point the approval at a DIFFERENT action (different resource) and re-sign it
     // so the signature is valid but the digest no longer matches `req`.
-    let mut other = mutating_req();
-    other.resource = Some(Resource {
-        resource_type: "file".to_string(),
-        id: Some("/data/OTHER.db".to_string()),
-        digest: None,
-    });
+    let other = req_with(
+        "delete_file",
+        ActorKind::Owner,
+        true,
+        Risk::Medium,
+        Some("/data/OTHER.db"),
+    );
     approval.action_digest = friday_crypto::action_digest(&canonical_action_bytes(&other));
     approval.signature = Some(friday_crypto::sign_approval(
         &canonical_approval_signature_bytes(&approval),
@@ -189,9 +207,13 @@ fn explicit_owner_denial_is_denied() {
 fn base_allow_and_base_deny_bypass_approval_and_replay_store() {
     let db = Db::open_hub(&temp_db_path("authz-base")).unwrap();
     // Base Allow: a non-mutating, low-risk action — approval irrelevant, table untouched.
-    let mut ro = mutating_req();
-    ro.action = "read_file".to_string();
-    ro.mutating = false;
+    let ro = req_with(
+        "read_file",
+        ActorKind::Owner,
+        false,
+        Risk::ReadOnly,
+        Some("/data/secret.db"),
+    );
     let r = authorize_mutating_action(db.conn(), &ro, None, SECRET, NOW).unwrap();
     assert_eq!(r.decision, GateDecision::Allow);
 
