@@ -459,6 +459,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "friday-fs"
+version = "0.0.1"
+dependencies = [
+ "friday-core",
+ "libc",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "friday-hub"
 version = "0.0.1"
 dependencies = [

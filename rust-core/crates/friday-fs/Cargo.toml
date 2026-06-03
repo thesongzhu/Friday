@@ -1,0 +1,19 @@
+[package]
+name = "friday-fs"
+description = "Friday Rust Core — hardened workspace-root-contained file open (Hub-only). PR-4-deferred safe-open: lexical gate + O_NOFOLLOW + realpath-ancestor containment + fd-identity TOCTOU check."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+
+# Hub-only: this is the real filesystem read/write/edit surface for the agent-
+# loop ToolExecutor. It grants filesystem privilege (open arbitrary files within
+# a trusted root) and so must stay OUT of friday-ffi's (phone) dependency graph —
+# the phone never gets the Hub safe-open. Asserted by friday-arch-tests. This is
+# a FILESYSTEM-PRIVILEGE boundary (distinct from the provider-secret boundary
+# that keeps friday-deepseek/friday-providers off the phone).
+[dependencies]
+friday-core.workspace = true
+libc.workspace = true
+thiserror.workspace = true
