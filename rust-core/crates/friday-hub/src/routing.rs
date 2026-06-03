@@ -432,6 +432,7 @@ pub fn run_routed_loop(
     conn: &Connection,
     run_id: &str,
     task: &str,
+    recall_preamble: &str,
     secret: &[u8],
     approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
     max_turns: u64,
@@ -449,7 +450,16 @@ pub fn run_routed_loop(
         .ok_or_else(|| RoutedLoopError::NoClientForProvider(route.provider_id.clone()))?;
 
     let outcome = run_loop(
-        client, executor, conn, run_id, task, secret, approve, max_turns, now_ms,
+        client,
+        executor,
+        conn,
+        run_id,
+        task,
+        recall_preamble,
+        secret,
+        approve,
+        max_turns,
+        now_ms,
     )?;
     Ok((selection, outcome))
 }
@@ -842,6 +852,7 @@ mod tests {
             db.conn(),
             "run-ro",
             "read the notes",
+            "",
             b"secret-key-0123456789",
             &|_req| None,
             4,
@@ -877,6 +888,7 @@ mod tests {
             db.conn(),
             "run-mut",
             "delete the database",
+            "",
             b"secret-key-0123456789",
             &|_req| None, // owner does NOT approve
             4,
@@ -919,6 +931,7 @@ mod tests {
             db.conn(),
             "run-noclient",
             "do something",
+            "",
             b"secret-key-0123456789",
             &|_req| None,
             4,
@@ -954,6 +967,7 @@ mod tests {
             db.conn(),
             "run-pinned",
             "use codex",
+            "",
             b"secret-key-0123456789",
             &|_req| None,
             4,

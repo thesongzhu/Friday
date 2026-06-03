@@ -1137,13 +1137,15 @@ pub fn run_loop(
     conn: &Connection,
     run_id: &str,
     task: &str,
+    recall_preamble: &str,
     secret: &[u8],
     approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
     max_turns: u64,
     now_ms: i64,
 ) -> Result<LoopOutcome, StorageError> {
     // Plan classification recorded ONCE (it is a property of the task, constant across
-    // turns).
+    // turns). Uses the CLEAN `task` — the recall preamble below augments only the prompt,
+    // never the run row / classification / events.
     let plan_kind = friday_core::classify_kind(task).map(|k| k.as_str());
     agent_run::record_event(
         conn,
@@ -1153,13 +1155,26 @@ pub fn run_loop(
         now_ms,
     )?;
 
+    // The prompt the model sees = recall preamble (PROOF-MEMORY-001; already
+    // Passport-gated + PII-redacted by the caller) + the clean task. Built once
+    // (constant across turns). Empty preamble ⇒ prompt_task == task (recall disabled).
+    // NOTE this enters the agent's INSTRUCTION context — a prompt-injection-inward
+    // surface. The backstop is genuine: the UNW-001 mutating-action gate evaluates EVERY
+    // tool call regardless of prompt text, and the recalled memory is user-CONFIRMED
+    // (not raw channel text), so it is trusted context, not arbitrary injection.
+    let prompt_task = if recall_preamble.is_empty() {
+        task.to_string()
+    } else {
+        format!("{recall_preamble}{task}")
+    };
+
     let mut history: Vec<TurnTrace> = Vec::new();
     let mut executed_tools: u64 = 0;
 
     for turn_index in 0..max_turns {
         let ev = |suffix: &str| format!("{run_id}:t{turn_index}:{suffix}");
 
-        let step = match client.next_step(task, &history) {
+        let step = match client.next_step(&prompt_task, &history) {
             Ok(step) => step,
             Err(e) => {
                 agent_run::record_event(
@@ -2100,6 +2115,7 @@ mod tests {
             db.conn(),
             "r1",
             "read a then b",
+            "",
             SECRET,
             &no_approval(),
             10,
@@ -2138,6 +2154,7 @@ mod tests {
             db.conn(),
             "r1",
             "read input then write output",
+            "",
             SECRET,
             &mint_for_each(),
             10,
@@ -2169,6 +2186,7 @@ mod tests {
             db.conn(),
             "r1",
             "do the thing",
+            "",
             SECRET,
             &no_approval(),
             10,
@@ -2208,6 +2226,7 @@ mod tests {
             db.conn(),
             "r1",
             "write secret.txt",
+            "",
             SECRET,
             &no_approval(),
             10,
@@ -2243,6 +2262,7 @@ mod tests {
             db.conn(),
             "r1",
             "loop forever",
+            "",
             SECRET,
             &no_approval(),
             3,
@@ -2283,6 +2303,7 @@ mod tests {
             db.conn(),
             "r1",
             "read notes.md and tell me the tasks",
+            "",
             SECRET,
             &mint_for_each(),
             5,
@@ -2311,6 +2332,7 @@ mod tests {
             db.conn(),
             "r1",
             "do it",
+            "",
             SECRET,
             &no_approval(),
             5,
@@ -2339,6 +2361,7 @@ mod tests {
             db.conn(),
             "r1",
             "read then frobnicate",
+            "",
             SECRET,
             &no_approval(),
             5,
@@ -2368,6 +2391,7 @@ mod tests {
             db.conn(),
             "r1",
             "list then finish",
+            "",
             SECRET,
             &no_approval(),
             5,
@@ -2425,6 +2449,7 @@ mod tests {
             db.conn(),
             "r1",
             "write twice",
+            "",
             SECRET,
             &approve,
             5,

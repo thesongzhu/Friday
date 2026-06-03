@@ -36,6 +36,9 @@ use crate::routing::{
 };
 use crate::{AgentLlmClient, DeepSeekAgentLlmClient, FsToolExecutor, LoopOutcome};
 
+/// Max confirmed memories injected into one task's prompt (bounds recall's token cost).
+const RECALL_TOP_K: usize = 8;
+
 /// The owner-approval seam: given a mutating request, return a signed [`CanonicalApproval`]
 /// iff the owner approved THIS exact action. Production default is [`DenyAllApprovals`]
 /// until the phone-relayed owner-approval leg is wired (operator-gated).
@@ -63,6 +66,10 @@ pub struct HubConfig {
     /// approval to verify); load-bearing once a granting policy is wired.
     pub secret: Vec<u8>,
     pub max_turns: u64,
+    /// The Hub owner whose confirmed memory may be recalled into a task's prompt
+    /// (PROOF-MEMORY-001). A Hub is single-owner in v1, so every run inherits this
+    /// principal. `None` ⇒ memory recall is DISABLED (fail-closed: no owner, no recall).
+    pub principal_id: Option<String>,
 }
 
 /// Why the live runtime failed to assemble.
@@ -94,6 +101,8 @@ pub struct HubRuntime<T: Transport> {
     secret: Vec<u8>,
     approval: Box<dyn ApprovalPolicy>,
     max_turns: u64,
+    /// Hub owner for memory recall; `None` disables recall (see [`HubConfig::principal_id`]).
+    principal_id: Option<String>,
 }
 
 impl<T: Transport> HubRuntime<T> {
@@ -116,6 +125,7 @@ impl<T: Transport> HubRuntime<T> {
             secret: config.secret,
             approval,
             max_turns: config.max_turns,
+            principal_id: config.principal_id,
         })
     }
 
@@ -146,6 +156,11 @@ impl<T: Transport> HubRuntime<T> {
         now_ms: i64,
     ) -> Result<(RoutedSelection, LoopOutcome), RoutedLoopError> {
         agent_run::create_run(self.db.conn(), run_id, task, now_ms)?;
+        // PROOF-MEMORY-001: recall this owner's confirmed memory, gate it through the
+        // Context Passport, and inject it as a prompt PREAMBLE (the run's `task` stays
+        // clean — the preamble is added only to what the model sees). `None` principal ⇒
+        // no recall. Records a hash-chained `memory.recalled` audit receipt.
+        let recall_preamble = self.recall_preamble(run_id, now_ms)?;
         // v1: a constraint-free request (selects the highest-priority dispatchable route =
         // deepseek-flash, the only live one). Deriving required capabilities / model-size
         // from the task is a later refinement; with one live provider it cannot mask a wrong
@@ -160,11 +175,70 @@ impl<T: Transport> HubRuntime<T> {
             self.db.conn(),
             run_id,
             task,
+            &recall_preamble,
             &self.secret,
             &approve,
             self.max_turns,
             now_ms,
         )
+    }
+
+    /// Build the memory-recall prompt preamble for this run and record its receipt.
+    ///
+    /// Pipeline: [`recall_confirmed`] (same-principal + Confirmed + content-bearing, SQL
+    /// layer) → [`cognition::rank_recall`] (recency-decay + top-k + PII redaction) →
+    /// [`cognition::gate_and_render_recall`] (the per-item Context Passport gate — a
+    /// `sensitive` memory drops itself under v1 deny-all). When anything was recalled, a
+    /// hash-chained `memory.recalled` audit event records the `recalled/injected/gated`
+    /// counts and the injected `memory_id`s (the recall→answer receipt; the
+    /// answer-carries-marker proof is the separate live e2e). `None` principal ⇒ empty
+    /// preamble, no recall.
+    ///
+    /// SCOPE: this records the audit RECEIPT; it does NOT ledger tokens — `run_loop` does
+    /// not write `token_ledger` rows (loop-level token ledgering is a separate gap), so no
+    /// token-accounting claim is made here.
+    fn recall_preamble(&self, run_id: &str, now_ms: i64) -> Result<String, RoutedLoopError> {
+        let Some(principal) = self.principal_id.as_deref() else {
+            return Ok(String::new());
+        };
+        let rows = friday_storage::memory::recall_confirmed(self.db.conn(), principal)?;
+        let ranked = crate::cognition::rank_recall(
+            &rows,
+            now_ms,
+            RECALL_TOP_K,
+            crate::cognition::DEFAULT_HALF_LIFE_MS,
+        );
+        // v1: no sensitive-transfer approval is wired (deny-all), so sensitive memory is
+        // never injected. The recall principal and the gate Actor's principal (still
+        // `None` in the loop) are the SAME v1 owner conceptually — flagged so they don't
+        // silently diverge when per-run principal binding lands.
+        let approved_sensitive = false;
+        let (preamble, receipt) =
+            crate::cognition::gate_and_render_recall(&ranked, approved_sensitive);
+        if receipt.recalled > 0 {
+            // Hash-chained recall receipt (counts + injected ids). A separate audit_id from
+            // the loop's events; the chain links it to the prior tip. (rusqlite errors map
+            // through StorageError, which RoutedLoopError converts from.)
+            let tx = self
+                .db
+                .conn()
+                .unchecked_transaction()
+                .map_err(StorageError::from)?;
+            friday_storage::audit::append_audit(
+                &tx,
+                &format!("{run_id}:memory-recall"),
+                principal,
+                &format!(
+                    "memory.recalled:recalled={} injected={} gated_sensitive={}",
+                    receipt.recalled, receipt.injected, receipt.gated_sensitive
+                ),
+                Some(&receipt.injected_ids.join(",")),
+                now_ms,
+            )
+            .map_err(StorageError::from)?;
+            tx.commit().map_err(StorageError::from)?;
+        }
+        Ok(preamble)
     }
 
     /// Read access to the composed DB (for evidence/inspection: agent_run events, audit chain).
@@ -321,12 +395,177 @@ mod tests {
                 workspace_root: ws.0.clone(),
                 secret: SECRET.to_vec(),
                 max_turns: 6,
+                principal_id: None, // recall disabled by default; the recall test sets it
             },
             agent,
             approval,
         )
         .unwrap();
         (rt, ws, post_calls) // TempDir guard keeps the workspace alive; counter for the no-hidden test
+    }
+
+    // ---- PROOF-MEMORY-001 recall→inject wiring -------------------------------
+
+    /// A transport that CAPTURES every outgoing chat body (so a test can assert what
+    /// the model actually receives), and finishes the loop in one turn.
+    struct CaptureTransport {
+        bodies: Rc<std::cell::RefCell<Vec<Value>>>,
+    }
+    impl Transport for CaptureTransport {
+        fn get_json(&self, _url: &str, _bearer: &str) -> Result<Value, DeepSeekError> {
+            Ok(serde_json::json!({"data":[{"id":"deepseek-v4-flash"}]}))
+        }
+        fn post_json(
+            &self,
+            _url: &str,
+            _bearer: &str,
+            body: &Value,
+        ) -> Result<Value, DeepSeekError> {
+            self.bodies.borrow_mut().push(body.clone());
+            // Finish immediately so the loop runs exactly one turn.
+            Ok(serde_json::json!({
+                "model":"deepseek-v4-flash",
+                "choices":[{"message":{"content":"{\"tool\":\"none\"}"},"finish_reason":"stop"}],
+                "usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}
+            }))
+        }
+    }
+
+    fn recall_runtime(
+        tag: &str,
+        principal: Option<&str>,
+    ) -> (
+        HubRuntime<CaptureTransport>,
+        TempDir,
+        Rc<std::cell::RefCell<Vec<Value>>>,
+    ) {
+        let ws = TempDir::new(tag);
+        let bodies = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let transport = CaptureTransport {
+            bodies: bodies.clone(),
+        };
+        let client = DeepSeekClient::with_transport(transport, "k".into());
+        let agent = DeepSeekAgentLlmClient::new(client);
+        let rt = HubRuntime::new(
+            HubConfig {
+                db_path: tmp(tag),
+                workspace_root: ws.0.clone(),
+                secret: SECRET.to_vec(),
+                max_turns: 4,
+                principal_id: principal.map(|p| p.to_string()),
+            },
+            agent,
+            Box::new(DenyAllApprovals),
+        )
+        .unwrap();
+        (rt, ws, bodies)
+    }
+
+    fn seed_confirmed(
+        rt: &HubRuntime<CaptureTransport>,
+        id: &str,
+        content: &str,
+        principal: &str,
+        sensitive: bool,
+    ) {
+        let conn = rt.db().conn();
+        friday_storage::memory::record_candidate(
+            conn,
+            &friday_storage::memory::NewMemoryCandidate {
+                memory_id: id,
+                scope: friday_core::MemoryScope::Global,
+                content_ref: None,
+                content: Some(content),
+                principal_id: Some(principal),
+                sensitive,
+                created_at: 1,
+            },
+        )
+        .unwrap();
+        friday_storage::memory::confirm(conn, id, 2).unwrap();
+    }
+
+    fn body_contains(bodies: &Rc<std::cell::RefCell<Vec<Value>>>, needle: &str) -> bool {
+        bodies
+            .borrow()
+            .iter()
+            .any(|b| b.to_string().contains(needle))
+    }
+
+    fn recall_audit_count(rt: &HubRuntime<CaptureTransport>) -> i64 {
+        rt.db()
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM audit_ledger WHERE action LIKE 'memory.recalled%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn recall_injects_owner_confirmed_memory_into_the_prompt_and_records_receipt() {
+        // POSITIVE recall — the test that makes the negatives below non-vacuous.
+        let (rt, _ws, bodies) = recall_runtime("recall-pos", Some("alice"));
+        seed_confirmed(&rt, "m1", "MEMMARKER-alice-prefers-rust", "alice", false);
+        rt.run_task("r-pos", "help me", 100).unwrap();
+        assert!(
+            body_contains(&bodies, "MEMMARKER-alice-prefers-rust"),
+            "alice's confirmed memory must be injected into the outgoing prompt"
+        );
+        // a hash-chained memory.recalled receipt was written.
+        assert_eq!(recall_audit_count(&rt), 1);
+        // SCOPE: this proves recall→PROMPT INJECTION, not that the model's ANSWER carries
+        // the marker (that is the separate live e2e — PROOF-MEMORY-001 stays proof_pending).
+    }
+
+    #[test]
+    fn recall_is_cross_principal_isolated_in_the_prompt() {
+        // bob's runtime, alice's memory → bob's prompt must NEVER carry it.
+        let (rt, _ws, bodies) = recall_runtime("recall-xp", Some("bob"));
+        seed_confirmed(&rt, "m1", "MEMMARKER-alice-secret-plan", "alice", false);
+        rt.run_task("r-xp", "help me", 100).unwrap();
+        assert!(
+            !body_contains(&bodies, "MEMMARKER-alice-secret-plan"),
+            "cross-principal recall leak: alice's memory reached bob's prompt"
+        );
+        // nothing was recalled for bob → no receipt.
+        assert_eq!(recall_audit_count(&rt), 0);
+    }
+
+    #[test]
+    fn recall_no_principal_injects_nothing() {
+        let (rt, _ws, bodies) = recall_runtime("recall-none", None);
+        seed_confirmed(&rt, "m1", "MEMMARKER-unowned", "alice", false);
+        rt.run_task("r-none", "help me", 100).unwrap();
+        assert!(!body_contains(&bodies, "MEMMARKER-unowned"));
+        assert_eq!(recall_audit_count(&rt), 0);
+    }
+
+    #[test]
+    fn recall_sensitive_memory_is_gated_out_under_deny_all() {
+        let (rt, _ws, bodies) = recall_runtime("recall-sens", Some("alice"));
+        seed_confirmed(&rt, "ok", "MEMMARKER-ok-nonsensitive", "alice", false);
+        seed_confirmed(&rt, "sens", "MEMMARKER-sensitive-pii", "alice", true);
+        rt.run_task("r-sens", "help me", 100).unwrap();
+        // the non-sensitive memory injects; the sensitive one is gated out (deny-all).
+        assert!(body_contains(&bodies, "MEMMARKER-ok-nonsensitive"));
+        assert!(
+            !body_contains(&bodies, "MEMMARKER-sensitive-pii"),
+            "a sensitive memory must NOT be injected under deny-all"
+        );
+        // receipt recorded recalled=2 injected=1 gated_sensitive=1.
+        let action: String = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT action FROM audit_ledger WHERE action LIKE 'memory.recalled%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(action.contains("recalled=2") && action.contains("injected=1"));
+        assert!(action.contains("gated_sensitive=1"));
     }
 
     // ---- routing honesty (dispatchable_routes) ------------------------------
@@ -505,6 +744,7 @@ mod tests {
             workspace_root: ws.0.clone(),
             secret: SECRET.to_vec(),
             max_turns: 5,
+            principal_id: None, // the live save→recall→answer-carries-marker e2e is a separate proof (PR4)
         })
         .expect("live runtime assembles (FRIDAY_DEEPSEEK_API_KEY set)");
         let (sel, out) = rt
