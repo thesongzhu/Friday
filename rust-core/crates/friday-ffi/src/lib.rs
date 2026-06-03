@@ -421,30 +421,12 @@ pub fn phone_token_usage(db_path: String) -> PhoneTokensFfi {
 }
 
 fn load_token_usage(db_path: &str) -> friday_storage::Result<Vec<TokenUsageFfi>> {
-    use friday_core::{LedgerEntry, ProviderKind};
     use friday_storage::Db;
 
+    // Token-trust / reverse-integrity (audit 10A finding 5): the cost view reflects ONLY
+    // real model calls. An empty `token_ledger` yields an EMPTY projection — never a
+    // fabricated demo row, which would show usage/cost for a call that never happened.
     let db = Db::open_phone(db_path)?;
-    if db.count("token_ledger")? == 0 {
-        let seed = |id: &str, model: &str, p: i64, c: i64, cost: f64, t: i64| LedgerEntry {
-            ledger_id: id.to_string(),
-            session_id: "s1".to_string(),
-            activity_id: "a1".to_string(),
-            provider_kind: ProviderKind::DeepSeek,
-            model: model.to_string(),
-            base_url_host: "api.deepseek.com".to_string(),
-            prompt_tokens: p,
-            completion_tokens: c,
-            total_tokens: p + c,
-            cost_estimate: Some(cost),
-            // DeepSeek Friday route: fallback is always false (no hidden substitute).
-            fallback: false,
-            result_link: None,
-            created_at: t,
-        };
-        db.insert_token_ledger(&seed("l1", "deepseek-v4-flash", 1200, 800, 0.0021, 1))?;
-        db.insert_token_ledger(&seed("l2", "deepseek-v4-pro", 3000, 1500, 0.0185, 2))?;
-    }
     Ok(db
         .list_token_usage()?
         .into_iter()
@@ -611,24 +593,52 @@ mod tests {
     }
 
     #[test]
-    fn ffi_phone_token_usage_seeds_lists_and_surfaces_fallback() {
+    fn ffi_phone_token_usage_empty_is_empty_then_surfaces_real_rows() {
         let path =
             std::env::temp_dir().join(format!("friday-ffi-tokens-{}.db", std::process::id()));
         let p = path.to_string_lossy().to_string();
         let _ = std::fs::remove_file(&path);
 
+        // Reverse-integrity (audit 10A #5): an empty ledger surfaces NOTHING — no
+        // fabricated demo rows for calls that never happened.
+        let r0 = phone_token_usage(p.clone());
+        assert!(r0.ok, "open failed: {}", r0.error);
+        assert_eq!(
+            r0.items.len(),
+            0,
+            "empty ledger must yield an empty cost view"
+        );
+
+        // A REAL row, written via the constructor (recomputes total, fallback=false —
+        // never a struct literal), surfaces correctly.
+        {
+            let db = friday_storage::Db::open_phone(&p).unwrap();
+            let entry = friday_core::LedgerEntry::friday_route(
+                "l1",
+                "s1",
+                "a1",
+                "deepseek-v4-flash",
+                1200,
+                800,
+                Some(0.0021),
+                None,
+                1,
+            )
+            .unwrap();
+            db.insert_token_ledger(&entry).unwrap();
+        }
         let r = phone_token_usage(p.clone());
-        assert!(r.ok, "open/seed failed: {}", r.error);
-        assert_eq!(r.items.len(), 2);
+        assert!(r.ok, "list failed: {}", r.error);
+        assert_eq!(r.items.len(), 1);
         assert_eq!(r.items[0].provider, "deepseek");
-        assert_eq!(r.items[0].total_tokens, 2000); // 1200 + 800
+        assert_eq!(r.items[0].total_tokens, 2000); // recomputed 1200 + 800
         assert_eq!(r.items[0].cost_estimate, Some(0.0021));
-        // The fallback flag is surfaced for every row; Friday route => false.
+        // The fallback flag is surfaced; Friday route => false.
         assert!(r.items.iter().all(|u| !u.fallback));
 
-        // Reopen: persisted, no re-seed.
+        // Reopen: persisted, still exactly one (no re-seed).
         let r2 = phone_token_usage(p.clone());
-        assert_eq!(r2.items.len(), 2);
+        assert_eq!(r2.items.len(), 1);
 
         let _ = std::fs::remove_file(&path);
     }
