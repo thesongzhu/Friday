@@ -28,12 +28,12 @@
 //! execution, never remove it), and a plan `AutoAdvance` must never be treated as a
 //! grant that lets the executor skip the gate.
 //!
-//! NOTE (honest gap, not a claim): the mutating-action gate does NOT run the
-//! read-side sensitive-resource check (`evaluate_sensitive_read`, `#389`) — that gate
-//! is not yet wired into the live dispatch path (the `#494` enforcement gap). So a
-//! read-only step that reads a *sensitive* resource is NOT screened by `#389` here; it
-//! auto-advances. The read result stays Hub-side (any EXTERNAL transfer is separately
-//! Context-Passport-gated). Wiring `#389` into dispatch is a separate unit.
+//! Sensitive resources (`#389`/`#494`): the planner screens the classifier's extracted
+//! resource with `is_sensitive_resource`, so even a READ of a sensitive resource
+//! (token/secret/key/.pem/…) checkpoints (`CheckpointReason::SensitiveResource`) rather
+//! than auto-advancing. This closes the read-side gap at the planner for the workflow
+//! path. (The broader model-driven `run_loop` dispatch still does not run the read-side
+//! gate — that remains the `#494` enforcement gap for that path, a separate unit.)
 //!
 //! ## Anti-speculation
 //! The definition models ONLY what the planner consumes: steps + each step's
@@ -79,6 +79,10 @@ pub enum CheckpointReason {
     Mutating,
     /// The action's risk is `>= High` (destructive / high-risk) — the gate floor.
     HighRisk,
+    /// The action touches a SENSITIVE resource (token/secret/key/.pem/…) — even a
+    /// read of a sensitive resource checkpoints (`#389`/`#494` applied at the planner;
+    /// the gate floor, not template-overridable).
+    SensitiveResource,
     /// Gate-safe, but the template's checkpoint policy requires a checkpoint (NARROW).
     TemplatePolicy,
     /// Unregistered/unclassifiable action — fail-closed (never auto-advance unknown).
@@ -90,6 +94,7 @@ impl CheckpointReason {
         match self {
             CheckpointReason::Mutating => "mutating action (gate floor)",
             CheckpointReason::HighRisk => "high-risk action (gate floor)",
+            CheckpointReason::SensitiveResource => "sensitive resource access (gate floor)",
             CheckpointReason::TemplatePolicy => "template checkpoint policy",
             CheckpointReason::Unclassifiable => "unclassifiable/unregistered action (fail-closed)",
         }
@@ -115,9 +120,10 @@ impl StepDisposition {
 /// Decide a single step's disposition, anchored to the trusted classifier.
 ///
 /// Order matters and encodes the floor: classify FIRST (the gate's verdict), and a
-/// mutating or `>= High` action checkpoints unconditionally — the template flag is
-/// consulted ONLY after the gate has cleared the step, so it can add but never
-/// remove a checkpoint. An unregistered action is a fail-closed checkpoint.
+/// mutating action, a `>= High`-risk action, or a SENSITIVE-resource access
+/// checkpoints unconditionally — the template flag is consulted ONLY after these
+/// floors clear, so it can add but never remove a checkpoint. An unregistered action
+/// is a fail-closed checkpoint.
 pub fn plan_step(step: &WorkflowStep) -> StepDisposition {
     let classified = match trusted_classify(&step.action, &step.params) {
         Ok(c) => c,
@@ -130,7 +136,17 @@ pub fn plan_step(step: &WorkflowStep) -> StepDisposition {
     if matches!(classified.risk(), Some(r) if r >= Risk::High) {
         return StepDisposition::Checkpoint(CheckpointReason::HighRisk);
     }
-    // Gate-safe (read-only, below High). The template may NARROW only.
+    // Sensitive-resource floor (`#389`/`#494`): even a read of a token/secret/key/.pem
+    // resource checkpoints — not template-overridable. The classifier already extracted
+    // the resource from a path/target/file param; we screen it with the same detector
+    // the read-side gate uses. (Closes the #505 gap for the workflow path.)
+    if classified
+        .resource()
+        .is_some_and(friday_core::gate::is_sensitive_resource)
+    {
+        return StepDisposition::Checkpoint(CheckpointReason::SensitiveResource);
+    }
+    // Gate-safe (read-only, below High, non-sensitive). The template may NARROW only.
     if step.force_checkpoint {
         return StepDisposition::Checkpoint(CheckpointReason::TemplatePolicy);
     }
@@ -213,6 +229,35 @@ mod tests {
             false,
         ));
         assert!(d.is_checkpoint());
+    }
+
+    #[test]
+    fn read_of_a_sensitive_resource_checkpoints_not_auto_advance() {
+        // Even a READ-ONLY step checkpoints when its resource is sensitive (#389/#494):
+        // a workflow must not silently auto-read a secret/key/.pem.
+        for path in [
+            "secrets.pem",
+            "id_rsa",
+            "api_token.txt",
+            "service.credential",
+        ] {
+            let d = plan_step(&step("s", "read_file", &[("path", path)], false));
+            assert_eq!(
+                d,
+                StepDisposition::Checkpoint(CheckpointReason::SensitiveResource),
+                "reading {path} must checkpoint"
+            );
+        }
+        // a non-sensitive read still auto-advances.
+        assert_eq!(
+            plan_step(&step("s", "read_file", &[("path", "notes.txt")], false)),
+            StepDisposition::AutoAdvance
+        );
+        // a read with NO resource param (e.g. search) is not sensitive → auto-advance.
+        assert_eq!(
+            plan_step(&step("s", "search", &[("query", "TODO")], false)),
+            StepDisposition::AutoAdvance
+        );
     }
 
     #[test]
