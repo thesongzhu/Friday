@@ -508,6 +508,7 @@ dependencies = [
 name = "friday-providers"
 version = "0.0.1"
 dependencies = [
+ "friday-core",
  "friday-storage",
  "serde",
  "serde_json",

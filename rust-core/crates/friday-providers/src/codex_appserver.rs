@@ -12,6 +12,8 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use thiserror::Error;
 
+use friday_core::ProviderSessionEvent;
+
 pub const CODEX_APP_SERVER_SYNC_MODE: &str = "provider_app_server_local";
 pub const CODEX_APP_SERVER_CLI_VERSION: &str = "codex-cli 0.136.0";
 
@@ -85,6 +87,58 @@ pub struct HealthSummary {
     pub initialized: InitializeSummary,
     pub thread_list: ThreadListProbe,
     pub sync_mode: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadSummary {
+    pub thread_id: String,
+    pub session_id: Option<String>,
+    pub status: Option<String>,
+    pub preview: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadReadSummary {
+    pub thread: ThreadSummary,
+    pub turn_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurnSummary {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub status: Option<String>,
+    pub item_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InterruptSummary {
+    pub thread_id: String,
+    pub turn_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct JsonRpcServerMessage {
+    #[serde(default)]
+    pub id: Option<Value>,
+    pub method: String,
+    #[serde(default)]
+    pub params: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderMirrorContext {
+    pub friday_session_id: String,
+    pub provider: String,
+}
+
+impl ProviderMirrorContext {
+    pub fn codex(friday_session_id: impl Into<String>) -> Self {
+        Self {
+            friday_session_id: friday_session_id.into(),
+            provider: "codex".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -326,6 +380,133 @@ impl<T: CodexAppServerTransport> CodexAppServerClient<T> {
         })
     }
 
+    pub fn start_thread(
+        &mut self,
+        cwd: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<ThreadSummary, CodexAppServerError> {
+        let result = self.call(
+            "thread/start",
+            json!({
+                "cwd": cwd,
+                "model": model,
+                "modelProvider": null,
+                "approvalPolicy": null,
+                "approvalsReviewer": null,
+                "sandbox": null,
+                "ephemeral": false,
+                "threadSource": null,
+                "sessionStartSource": null,
+            }),
+        )?;
+        thread_summary_from_response(&result)
+    }
+
+    pub fn resume_thread(&mut self, thread_id: &str) -> Result<ThreadSummary, CodexAppServerError> {
+        let result = self.call(
+            "thread/resume",
+            json!({
+                "threadId": thread_id,
+                "approvalPolicy": null,
+                "approvalsReviewer": null,
+            }),
+        )?;
+        thread_summary_from_response(&result)
+    }
+
+    pub fn read_thread(
+        &mut self,
+        thread_id: &str,
+        include_turns: bool,
+    ) -> Result<ThreadReadSummary, CodexAppServerError> {
+        let result = self.call(
+            "thread/read",
+            json!({
+                "threadId": thread_id,
+                "includeTurns": include_turns,
+            }),
+        )?;
+        let thread_value = result.get("thread").ok_or(CodexAppServerError::Protocol {
+            code: "thread-missing",
+        })?;
+        let turn_count = thread_value
+            .get("turns")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        Ok(ThreadReadSummary {
+            thread: thread_summary_from_thread_value(thread_value)?,
+            turn_count,
+        })
+    }
+
+    pub fn send_turn_text(
+        &mut self,
+        thread_id: &str,
+        client_user_message_id: Option<&str>,
+        text: &str,
+    ) -> Result<TurnSummary, CodexAppServerError> {
+        let result = self.call(
+            "turn/start",
+            json!({
+                "threadId": thread_id,
+                "clientUserMessageId": client_user_message_id,
+                "input": [
+                    {
+                        "type": "text",
+                        "text": text,
+                    }
+                ],
+            }),
+        )?;
+        turn_summary_from_response(thread_id, &result)
+    }
+
+    pub fn steer_turn_text(
+        &mut self,
+        thread_id: &str,
+        expected_turn_id: &str,
+        client_user_message_id: Option<&str>,
+        text: &str,
+    ) -> Result<InterruptSummary, CodexAppServerError> {
+        let result = self.call(
+            "turn/steer",
+            json!({
+                "threadId": thread_id,
+                "expectedTurnId": expected_turn_id,
+                "clientUserMessageId": client_user_message_id,
+                "input": [
+                    {
+                        "type": "text",
+                        "text": text,
+                    }
+                ],
+            }),
+        )?;
+        let turn_id = required_string(&result, "turnId")?;
+        Ok(InterruptSummary {
+            thread_id: thread_id.to_string(),
+            turn_id,
+        })
+    }
+
+    pub fn interrupt_turn(
+        &mut self,
+        thread_id: &str,
+        turn_id: &str,
+    ) -> Result<InterruptSummary, CodexAppServerError> {
+        self.call(
+            "turn/interrupt",
+            json!({
+                "threadId": thread_id,
+                "turnId": turn_id,
+            }),
+        )?;
+        Ok(InterruptSummary {
+            thread_id: thread_id.to_string(),
+            turn_id: turn_id.to_string(),
+        })
+    }
+
     fn call(&mut self, method: &str, params: Value) -> Result<Value, CodexAppServerError> {
         let id = self.next_id;
         self.next_id += 1;
@@ -351,6 +532,163 @@ fn required_string(value: &Value, field: &'static str) -> Result<String, CodexAp
         .and_then(Value::as_str)
         .map(ToString::to_string)
         .ok_or(CodexAppServerError::Protocol { code: field })
+}
+
+fn optional_string(value: &Value, field: &str) -> Option<String> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
+fn status_string(value: &Value) -> Option<String> {
+    match value.get("status") {
+        Some(Value::String(s)) => Some(s.clone()),
+        Some(Value::Object(map)) => map
+            .get("type")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        _ => None,
+    }
+}
+
+fn thread_summary_from_response(value: &Value) -> Result<ThreadSummary, CodexAppServerError> {
+    let thread = value.get("thread").ok_or(CodexAppServerError::Protocol {
+        code: "thread-missing",
+    })?;
+    thread_summary_from_thread_value(thread)
+}
+
+fn thread_summary_from_thread_value(value: &Value) -> Result<ThreadSummary, CodexAppServerError> {
+    Ok(ThreadSummary {
+        thread_id: required_string(value, "id")?,
+        session_id: optional_string(value, "sessionId"),
+        status: status_string(value),
+        preview: optional_string(value, "preview"),
+    })
+}
+
+fn turn_summary_from_response(
+    thread_id: &str,
+    value: &Value,
+) -> Result<TurnSummary, CodexAppServerError> {
+    let turn = value.get("turn").ok_or(CodexAppServerError::Protocol {
+        code: "turn-missing",
+    })?;
+    Ok(TurnSummary {
+        thread_id: thread_id.to_string(),
+        turn_id: required_string(turn, "id")?,
+        status: status_string(turn),
+        item_count: turn
+            .get("items")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len),
+    })
+}
+
+pub fn map_server_message_to_provider_event(
+    context: &ProviderMirrorContext,
+    message: &JsonRpcServerMessage,
+    observed_at: i64,
+    mirror_seq: u64,
+) -> Result<Option<ProviderSessionEvent>, CodexAppServerError> {
+    let method = message.method.as_str();
+    let (event_kind, transcript_item_kind) = match method {
+        "thread/started" => ("thread_started", "thread"),
+        "thread/status/changed" => ("thread_status_changed", "thread"),
+        "thread/tokenUsage/updated" => ("token_usage_updated", "token_usage"),
+        "turn/started" => ("turn_started", "turn"),
+        "turn/completed" => ("turn_completed", "turn"),
+        "turn/diff/updated" => ("turn_diff_updated", "diff"),
+        "item/started" => ("item_started", "item"),
+        "item/completed" => ("item_completed", "item"),
+        "item/agentMessage/delta" => ("agent_message_delta", "agent_message"),
+        "item/plan/delta" => ("plan_delta", "plan"),
+        "command/exec/outputDelta" | "item/commandExecution/outputDelta" => {
+            ("command_output_delta", "command_execution")
+        }
+        "item/fileChange/outputDelta" => ("file_change_output_delta", "file_change"),
+        "item/commandExecution/requestApproval" => ("approval_requested", "approval"),
+        "item/fileChange/requestApproval" => ("approval_requested", "approval"),
+        "item/permissions/requestApproval" => ("approval_requested", "approval"),
+        "item/tool/requestUserInput" => ("user_input_requested", "user_input"),
+        "mcpServer/elicitation/request" => ("user_input_requested", "user_input"),
+        _ => ("provider_event_unmapped", "provider_event"),
+    };
+    if method == "error" {
+        return Ok(None);
+    }
+
+    let thread_id = extract_thread_id(&message.params)?;
+    let turn_id = extract_optional_string(&message.params, "turnId")
+        .or_else(|| {
+            message
+                .params
+                .get("turn")
+                .and_then(|turn| extract_optional_string(turn, "id"))
+        })
+        .unwrap_or_else(|| "no-turn".to_string());
+    let item_id = extract_optional_string(&message.params, "itemId")
+        .or_else(|| {
+            message
+                .params
+                .get("item")
+                .and_then(|item| extract_optional_string(item, "id"))
+        })
+        .unwrap_or_else(|| "no-item".to_string());
+    let approval_ref = if event_kind == "approval_requested" || event_kind == "user_input_requested"
+    {
+        Some(format!(
+            "codex:{}:{}:{}:{}:{}",
+            method,
+            thread_id,
+            turn_id,
+            item_id,
+            extract_optional_string(&message.params, "approvalId")
+                .unwrap_or_else(|| "default".to_string())
+        ))
+    } else {
+        None
+    };
+
+    Ok(Some(ProviderSessionEvent {
+        friday_session_id: context.friday_session_id.clone(),
+        provider_event_id: format!(
+            "codex:{}:{}:{}:{}:{}",
+            method, thread_id, turn_id, item_id, mirror_seq
+        ),
+        provider: context.provider.clone(),
+        event_kind: event_kind.to_string(),
+        transcript_item_kind: transcript_item_kind.to_string(),
+        body_ref: format!(
+            "codex://provider-event/{}/{}/{}",
+            context.friday_session_id,
+            mirror_seq,
+            method.replace('/', ".")
+        ),
+        redaction_level: "metadata_only".to_string(),
+        token_ledger_ref: None,
+        approval_ref,
+        audit_receipt_ref: None,
+        observed_at,
+    }))
+}
+
+fn extract_thread_id(params: &Value) -> Result<String, CodexAppServerError> {
+    extract_optional_string(params, "threadId")
+        .or_else(|| {
+            params
+                .get("thread")
+                .and_then(|thread| extract_optional_string(thread, "id"))
+        })
+        .ok_or(CodexAppServerError::Protocol { code: "thread-id" })
+}
+
+fn extract_optional_string(value: &Value, field: &str) -> Option<String> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
 }
 
 #[derive(Debug, Default)]
@@ -528,6 +866,166 @@ mod tests {
             calls.iter().all(|c| c.method != "turn/start"),
             "PNS-002 health must not start a model turn"
         );
+    }
+
+    fn thread(id: &str, status: Value, turns: Value) -> Value {
+        json!({
+            "id": id,
+            "sessionId": "session-1",
+            "status": status,
+            "preview": "Friday test",
+            "turns": turns,
+        })
+    }
+
+    fn turn(id: &str, status: &str, items: Value) -> Value {
+        json!({
+            "id": id,
+            "status": status,
+            "items": items,
+        })
+    }
+
+    #[test]
+    fn thread_and_turn_control_methods_use_app_server_not_cli_send() {
+        let transport = MockCodexAppServerTransport::new(vec![
+            ok(json!({"thread": thread("thread-1", json!({"type":"idle"}), json!([]))})),
+            ok(
+                json!({"thread": thread("thread-1", json!({"type":"active","activeFlags":[]}), json!([]))}),
+            ),
+            ok(json!({"turn": turn("turn-1", "inProgress", json!([]))})),
+            ok(json!({"turnId": "turn-1"})),
+            ok(json!({})),
+            ok(
+                json!({"thread": thread("thread-1", json!({"type":"idle"}), json!([turn("turn-1", "completed", json!([]))]))}),
+            ),
+        ]);
+        let mut client = CodexAppServerClient::new(transport);
+        assert_eq!(
+            client
+                .start_thread(Some("/tmp/friday"), Some("gpt-5"))
+                .unwrap()
+                .thread_id,
+            "thread-1"
+        );
+        assert_eq!(
+            client.resume_thread("thread-1").unwrap().status.as_deref(),
+            Some("active")
+        );
+        let turn = client
+            .send_turn_text("thread-1", Some("client-msg-1"), "ping")
+            .unwrap();
+        assert_eq!(turn.turn_id, "turn-1");
+        assert_eq!(
+            client
+                .steer_turn_text("thread-1", "turn-1", Some("client-msg-2"), "more")
+                .unwrap()
+                .turn_id,
+            "turn-1"
+        );
+        client.interrupt_turn("thread-1", "turn-1").unwrap();
+        assert_eq!(client.read_thread("thread-1", true).unwrap().turn_count, 1);
+
+        let transport = client.into_transport();
+        let methods: Vec<&str> = transport
+            .calls()
+            .iter()
+            .map(|c| c.method.as_str())
+            .collect();
+        assert_eq!(
+            methods,
+            vec![
+                "thread/start",
+                "thread/resume",
+                "turn/start",
+                "turn/steer",
+                "turn/interrupt",
+                "thread/read",
+            ]
+        );
+        let calls = transport.calls();
+        assert_eq!(calls[0].params.get("threadSource"), Some(&Value::Null));
+        assert_eq!(
+            calls[2].params.get("input"),
+            Some(&json!([
+                {
+                    "type": "text",
+                    "text": "ping",
+                }
+            ]))
+        );
+    }
+
+    #[test]
+    fn server_notifications_map_to_friday_provider_events_without_raw_body() {
+        let context = ProviderMirrorContext::codex("friday-session-1");
+        let msg = JsonRpcServerMessage {
+            id: None,
+            method: "item/agentMessage/delta".to_string(),
+            params: json!({
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "itemId": "item-1",
+                "delta": "secret transcript text must live behind a future blob ref",
+            }),
+        };
+        let event = map_server_message_to_provider_event(&context, &msg, 123, 7)
+            .unwrap()
+            .unwrap();
+        assert_eq!(event.event_kind, "agent_message_delta");
+        assert_eq!(event.transcript_item_kind, "agent_message");
+        assert_eq!(event.redaction_level, "metadata_only");
+        assert_eq!(event.approval_ref, None);
+        let debug = format!("{event:?}");
+        assert!(
+            !debug.contains("secret transcript text"),
+            "PNS-003 mirror event must not inline raw provider text: {debug}"
+        );
+    }
+
+    #[test]
+    fn approval_requests_map_to_needs_me_ready_event_refs() {
+        let context = ProviderMirrorContext::codex("friday-session-1");
+        let msg = JsonRpcServerMessage {
+            id: Some(json!(99)),
+            method: "item/commandExecution/requestApproval".to_string(),
+            params: json!({
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "itemId": "item-approval",
+                "approvalId": "approval-1",
+                "command": "rm -rf /private/project",
+                "startedAtMs": 123000,
+            }),
+        };
+        let event = map_server_message_to_provider_event(&context, &msg, 123, 8)
+            .unwrap()
+            .unwrap();
+        assert_eq!(event.event_kind, "approval_requested");
+        assert_eq!(event.transcript_item_kind, "approval");
+        assert_eq!(
+            event.approval_ref.as_deref(),
+            Some("codex:item/commandExecution/requestApproval:thread-1:turn-1:item-approval:approval-1")
+        );
+        let debug = format!("{event:?}");
+        assert!(
+            !debug.contains("rm -rf"),
+            "approval event must not inline raw command text before a future redacted body store"
+        );
+    }
+
+    #[test]
+    fn recognized_events_missing_thread_id_fail_closed() {
+        let context = ProviderMirrorContext::codex("friday-session-1");
+        let msg = JsonRpcServerMessage {
+            id: None,
+            method: "turn/started".to_string(),
+            params: json!({"turn": turn("turn-1", "inProgress", json!([]))}),
+        };
+        assert!(matches!(
+            map_server_message_to_provider_event(&context, &msg, 123, 9),
+            Err(CodexAppServerError::Protocol { code: "thread-id" })
+        ));
     }
 
     #[test]
