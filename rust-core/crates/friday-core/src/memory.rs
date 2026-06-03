@@ -468,4 +468,26 @@ mod tests {
         assert!(redact_passport_for_projection(&ok)[0].transferable);
         assert!(gate_transfer(&ok, false).is_ok());
     }
+
+    #[test]
+    fn redact_by_kind_not_by_sensitive_flag_for_secrets() {
+        // The invariant that matters: a secret/token kind is redacted + non-transferable EVEN IF
+        // the caller forgot to mark it `sensitive` — redaction keys off the KIND, never the flag.
+        for (kind, marker) in [
+            (
+                PassportItemKind::ProviderSecret,
+                "[redacted: provider secret]",
+            ),
+            (PassportItemKind::RawToken, "[redacted: raw token]"),
+        ] {
+            let careless = vec![item(kind, "DEEPSEEK_API_KEY=sk-LEAK", false)]; // sensitive=false
+            let proj = redact_passport_for_projection(&careless);
+            assert_eq!(proj[0].label, marker, "{kind:?} must redact by kind");
+            assert!(
+                proj[0].redacted && !proj[0].transferable,
+                "{kind:?} must be redacted + non-transferable regardless of sensitive flag"
+            );
+            assert!(!proj[0].label.contains("sk-LEAK"));
+        }
+    }
 }
