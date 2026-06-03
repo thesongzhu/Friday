@@ -342,7 +342,51 @@ fn quote_existing_table(conn: &Connection, table: &str) -> Result<String> {
 // Free fns so the same insert logic runs against either a Connection or a
 // Transaction (Transaction derefs to Connection).
 
-fn insert_token_ledger_conn(conn: &Connection, e: &LedgerEntry) -> rusqlite::Result<()> {
+fn insert_token_ledger_conn(conn: &Connection, e: &LedgerEntry) -> Result<()> {
+    // Persistence-boundary invariant (audit 10A Q3 / finding 3c): REJECT any row whose
+    // `total_tokens` is not exactly `prompt_tokens + completion_tokens`. The
+    // `LedgerEntry` constructors already recompute the total, but the struct has `pub`
+    // fields — a struct-literal / future writer could mint a divergent row. Enforcing
+    // it HERE, at the single insert chokepoint used by both `insert_token_ledger` and
+    // `record_model_call`, makes "ledger total == prompt + completion" a property no
+    // writer can bypass, regardless of how the entry was constructed. (`fallback` is a
+    // `bool`, already constrained to {0,1} by type.)
+    //
+    // Non-negativity (Reviewer audit-10A-Q3): negative token counts sum-consistently
+    // (e.g. prompt=-100, completion=50, total=-50) and would slip past a `total==sum`
+    // check while corrupting every downstream cost/usage projection. The `LedgerEntry`
+    // constructor rejects negatives; mirror that at the persistence boundary so a
+    // struct-literal writer cannot persist a sign-garbage row either.
+    if e.prompt_tokens < 0 || e.completion_tokens < 0 {
+        return Err(StorageError::Unsupported(format!(
+            "token_ledger invariant: negative token count (prompt={}, completion={})",
+            e.prompt_tokens, e.completion_tokens
+        )));
+    }
+    let expected = e
+        .prompt_tokens
+        .checked_add(e.completion_tokens)
+        .ok_or_else(|| {
+            StorageError::Unsupported(format!(
+                "token_ledger invariant: prompt+completion overflow ({} + {})",
+                e.prompt_tokens, e.completion_tokens
+            ))
+        })?;
+    if e.total_tokens != expected {
+        return Err(StorageError::Unsupported(format!(
+            "token_ledger invariant violated: total_tokens={} != prompt+completion={}",
+            e.total_tokens, expected
+        )));
+    }
+    // A negative or non-finite cost corrupts the same downstream cost projections this
+    // boundary protects (Reviewer audit-10A-Q3 follow-up). Reject it here too.
+    if let Some(cost) = e.cost_estimate {
+        if cost < 0.0 || !cost.is_finite() {
+            return Err(StorageError::Unsupported(format!(
+                "token_ledger invariant: invalid cost_estimate ({cost})"
+            )));
+        }
+    }
     conn.execute(
         "INSERT INTO token_ledger
             (ledger_id, session_id, activity_id, provider_kind, model, base_url_host,
