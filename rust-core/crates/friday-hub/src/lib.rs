@@ -89,6 +89,12 @@ pub mod planner;
 /// only (no skill/plugin exec). Resume-after-approval is a deferred follow-up.
 pub mod workflow_exec;
 
+/// PAIR-002 — Hub-side local pairing message handler. It consumes the structured
+/// QR payload from PAIR-001 and the first-slice protocol `Pair` message, writes a
+/// trusted device through the existing authenticated pairing proof, and never
+/// dispatches provider/model calls.
+pub mod pair_runtime;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,

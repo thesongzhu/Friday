@@ -484,6 +484,7 @@ dependencies = [
  "friday-crypto",
  "friday-deepseek",
  "friday-fs",
+ "friday-protocol",
  "friday-providers",
  "friday-storage",
  "regex",

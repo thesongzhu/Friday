@@ -224,6 +224,7 @@ pub enum ErrorCode {
 pub enum Message {
     /// phone->hub: complete QR pairing handshake (pubkey + proof; never the raw secret).
     Pair {
+        device_id: String,
         device_pubkey: Vec<u8>,
         pairing_proof: Vec<u8>,
     },
@@ -418,6 +419,7 @@ mod tests {
     fn envelope_round_trips_for_each_kind() {
         let cases = vec![
             Message::Pair {
+                device_id: "dev-1".into(),
                 device_pubkey: vec![1, 2, 3],
                 pairing_proof: vec![4, 5],
             },
