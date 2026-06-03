@@ -19,14 +19,21 @@
 //! never lower `mutating` or the risk floor (UNW-001/UNW-002 discipline).
 //!
 //! ## `AutoAdvance` is a PREVIEW, not an authorization
-//! The planner is a decision/preview layer; it does NOT authorize. When the
-//! (deferred) executor runs a step it MUST still go through the full UNW-001 gate
-//! (`authorize_mutating_action`), which additionally applies the principal/claim
-//! escalations the planner does not reproduce (e.g. sensitive-anonymous-read `#389`,
-//! `derive_risk` local-claim raises). So any planner-vs-gate divergence is
-//! fail-SAFE — the gate can only ADD approval at execution, never remove it — and a
-//! plan `AutoAdvance` must never be treated as a grant that lets the executor skip
-//! the gate.
+//! The planner is a decision/preview layer; it does NOT authorize. When the executor
+//! runs a step it MUST still go through the full UNW-001 gate
+//! (`authorize_mutating_action`), which applies the mutating-side escalations the
+//! planner does not reproduce — bound-principal (an agent cannot self-execute an
+//! approve/deny), local-guard `Deny` claims, and `derive_risk` raises. So any
+//! planner-vs-gate divergence is fail-SAFE (the gate can only ADD approval at
+//! execution, never remove it), and a plan `AutoAdvance` must never be treated as a
+//! grant that lets the executor skip the gate.
+//!
+//! NOTE (honest gap, not a claim): the mutating-action gate does NOT run the
+//! read-side sensitive-resource check (`evaluate_sensitive_read`, `#389`) — that gate
+//! is not yet wired into the live dispatch path (the `#494` enforcement gap). So a
+//! read-only step that reads a *sensitive* resource is NOT screened by `#389` here; it
+//! auto-advances. The read result stays Hub-side (any EXTERNAL transfer is separately
+//! Context-Passport-gated). Wiring `#389` into dispatch is a separate unit.
 //!
 //! ## Anti-speculation
 //! The definition models ONLY what the planner consumes: steps + each step's
