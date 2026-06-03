@@ -64,6 +64,11 @@ pub mod setup;
 /// semantic/embedding recall (greenfield NO-GO — not claimed).
 pub mod cognition;
 
+/// Step-5 (workflow/skills substrate) — UNW-011: the single canonical retry
+/// classifier (Retryable vs Terminal) over the real provider/route error types.
+/// No silent fallback (a retry is the SAME route, never a reroute); bounded.
+pub mod retry;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,
