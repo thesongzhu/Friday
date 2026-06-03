@@ -46,6 +46,14 @@ pub mod runtime;
 /// `menu_command_sheet_entrypoints` orphan. The HTTP route-family half stays NO-GO (no API).
 pub mod capability;
 
+/// Channels (UNW-013) — trusted-inbound AUTH for external channels (Telegram-first).
+/// A-PR2: fail-closed, authenticate-before-authorize webhook bearer (constant-time HMAC)
+/// + sender allowlist; the per-channel secret lives ONLY in the Hub secure store,
+/// reachable through an opaque `kc://…` store handle (the binding never holds material).
+/// Channel-origin actions do not yet reach the gate; see the module's reserved-action
+/// DECISION note (to be enforced in A-PR4 before any channel action is dispatched).
+pub mod channels;
+
 /// Step-3 — observability/diagnostics (small/medium truth-labeled): composes the wired
 /// substrate (token_ledger / audit chain / agent_run) into a [`diagnostics::DiagnosticsSnapshot`]
 /// with no fake-zero, same-build (anti-stale) stamping, surfaced chain integrity, and
