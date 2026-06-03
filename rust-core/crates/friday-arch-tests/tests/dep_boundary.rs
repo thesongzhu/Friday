@@ -112,6 +112,17 @@ fn ffi_dependency_closure_excludes_deepseek() {
         );
     }
 
+    // friday-fs is Hub-only for a *filesystem-privilege* reason (distinct from
+    // the provider-secret reason above): it is the agent-loop ToolExecutor's
+    // real file read/write/edit surface (the hardened workspace-root-contained
+    // safe-open). The phone must never get this open primitive, so friday-fs
+    // must not be in the ffi dependency closure.
+    assert!(graph.contains_key("friday-fs"), "friday-fs crate not found");
+    assert!(
+        !ffi_closure.contains("friday-fs"),
+        "PHONE FS-PRIVILEGE LEAK: friday-ffi transitively depends on friday-fs; closure = {ffi_closure:?}"
+    );
+
     // Sanity: the phone crate does link the phone-side crates it actually uses.
     for expected in ["friday-core", "friday-storage", "friday-crypto"] {
         assert!(
