@@ -24,10 +24,10 @@
 //! (with the deferred `pathsafe` syscall safe-open) call this on every dispatch.
 //!
 //! ## Why this crate carries the provider-secret dependency
-//! The Hub is where provider credentials live. `friday-hub` depends on the
-//! secret-bearing `friday-deepseek` / `friday-providers`; `friday-ffi` (phone) must
-//! NOT. That boundary is the compile-time "no secret on phone" property, asserted
-//! by `friday-arch-tests`.
+//! The Hub is where provider credentials live, so `friday-hub` depends on the
+//! provider crates `friday-deepseek` / `friday-providers` (which hold credentials);
+//! `friday-ffi` (phone) must NOT. That compile-time no-provider-key-on-phone
+//! boundary is asserted by `friday-arch-tests`.
 
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
@@ -288,7 +288,7 @@ mod tests {
             .into_owned()
     }
 
-    const SECRET: &[u8] = b"hub-signing-secret";
+    const SECRET: &[u8] = b"hub-signing-secret"; // pragma: allowlist secret
 
     fn read_only_proposal() -> ToolCallProposal {
         ToolCallProposal {
