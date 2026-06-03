@@ -13,6 +13,7 @@ pub mod agent_run;
 pub mod audit;
 pub mod authorize;
 pub mod blob;
+pub mod channel;
 mod error;
 pub mod memory;
 mod migrate;
