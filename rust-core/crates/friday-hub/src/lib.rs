@@ -46,6 +46,12 @@ pub mod runtime;
 /// `menu_command_sheet_entrypoints` orphan. The HTTP route-family half stays NO-GO (no API).
 pub mod capability;
 
+/// Step-3 — observability/diagnostics (small/medium truth-labeled): composes the wired
+/// substrate (token_ledger / audit chain / agent_run) into a [`diagnostics::DiagnosticsSnapshot`]
+/// with no fake-zero, same-build (anti-stale) stamping, surfaced chain integrity, and
+/// truth-labeled unbuilt-subsystem metrics. Not the XL metrics pipeline (that stays NO-GO).
+pub mod diagnostics;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,
