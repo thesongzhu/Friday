@@ -109,3 +109,39 @@ fn deepseek_does_not_depend_on_ffi_either() {
         "friday-deepseek must not depend on friday-ffi; closure = {ds_closure:?}"
     );
 }
+
+#[test]
+fn hub_is_the_secret_bearing_composition_root_and_phone_is_not() {
+    // PR-6 boundary (file 52 §3 must-nail #1): the Hub runtime is where provider
+    // secrets live, so `friday-hub`'s closure INCLUDES the secret-bearing crates;
+    // `friday-ffi` (phone) must still EXCLUDE them. This is the compile-time
+    // "secrets on the Hub, never on the phone" property for the new crate.
+    let graph = internal_dep_graph(&workspace_root());
+    assert!(
+        graph.contains_key("friday-hub"),
+        "friday-hub crate not found"
+    );
+
+    let hub_closure = closure(&graph, "friday-hub");
+    for secret in ["friday-deepseek", "friday-providers"] {
+        assert!(
+            hub_closure.contains(secret),
+            "friday-hub closure must include the secret-bearing {secret}: {hub_closure:?}"
+        );
+    }
+    // The Hub composes the substrate it drives.
+    for expected in ["friday-core", "friday-crypto", "friday-storage"] {
+        assert!(
+            hub_closure.contains(expected),
+            "friday-hub closure unexpectedly missing {expected}: {hub_closure:?}"
+        );
+    }
+    // And the phone STILL cannot reach the secret crates (re-asserted with hub present).
+    let ffi_closure = closure(&graph, "friday-ffi");
+    for secret in ["friday-deepseek", "friday-providers", "friday-hub"] {
+        assert!(
+            !ffi_closure.contains(secret),
+            "PHONE SECRET LEAK: friday-ffi depends on {secret}; closure = {ffi_closure:?}"
+        );
+    }
+}
