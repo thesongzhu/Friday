@@ -25,4 +25,7 @@ friday-fs.workspace = true
 # The live model returns free-text content; the tool-call protocol is a JSON object
 # the Hub parses back into a RawToolCall. serde_json is the strict parser for that.
 serde_json.workspace = true
+# Memory-recall PII redaction (Hub-only — recall is Hub-side, the phone never
+# recalls). Pure computation, no I/O. NOT depended on by friday-ffi (phone).
+regex.workspace = true
 
