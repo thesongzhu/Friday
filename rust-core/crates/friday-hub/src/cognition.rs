@@ -34,6 +34,7 @@
 //! Redaction is defense-in-depth; the Context Passport sensitive-flag gate is the
 //! primary control and is NOT replaced by this.
 
+use friday_core::{gate_transfer, PassportItem, PassportItemKind};
 use friday_storage::memory::MemoryRow;
 use regex::Regex;
 use std::sync::OnceLock;
@@ -251,6 +252,70 @@ pub fn rank_recall(
         .collect()
 }
 
+/// Outcome of gating a recall set for injection — a hash-chainable receipt.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecallReceipt {
+    /// Memories that passed cognition (ranked + redacted) and were CONSIDERED.
+    pub recalled: usize,
+    /// Of those, the count that cleared the Context Passport gate and were injected.
+    pub injected: usize,
+    /// Dropped by the gate (a `sensitive` memory with no transfer approval).
+    pub gated_sensitive: usize,
+    /// The `memory_id`s actually injected (the receipt's payload).
+    pub injected_ids: Vec<String>,
+}
+
+/// Build the recall preamble by applying the Context Passport gate PER ITEM — the
+/// REAL runtime control (`07` §10), not a pre-filter or a `debug_assert`. A recalled
+/// memory is injected ONLY if [`friday_core::gate_transfer`] clears it: the secret-KIND
+/// hard block AND the sensitive-needs-approval rule both run. In v1 `approved_sensitive`
+/// is `false` (no sensitive-transfer approval is wired — deny-all), so a `sensitive`
+/// memory drops itself while the rest still inject (no all-or-nothing). The injected
+/// `content` is already PII-redacted by [`rank_recall`]. Returns the preamble (empty
+/// if nothing injects) + a [`RecallReceipt`].
+pub fn gate_and_render_recall(
+    ranked: &[RecalledMemory],
+    approved_sensitive: bool,
+) -> (String, RecallReceipt) {
+    let mut lines: Vec<String> = Vec::new();
+    let mut injected_ids: Vec<String> = Vec::new();
+    let mut gated_sensitive = 0usize;
+    for m in ranked {
+        // A MemorySnippet is never a secret-KIND, so the gate fires only on the
+        // sensitive rule here — but routing through the real gate means a future
+        // secret-bearing kind is blocked by construction, not by this call site.
+        let item = PassportItem {
+            kind: PassportItemKind::MemorySnippet,
+            label: m.content.clone(),
+            included: true,
+            sensitive: m.sensitive,
+        };
+        if gate_transfer(std::slice::from_ref(&item), approved_sensitive).is_ok() {
+            lines.push(format!("- {}", m.content));
+            injected_ids.push(m.memory_id.clone());
+        } else {
+            gated_sensitive += 1;
+        }
+    }
+    let preamble = if lines.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "Relevant confirmed memory for this user (use only if helpful; do not repeat verbatim):\n{}\n\n",
+            lines.join("\n")
+        )
+    };
+    (
+        preamble,
+        RecallReceipt {
+            recalled: ranked.len(),
+            injected: injected_ids.len(),
+            gated_sensitive,
+            injected_ids,
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,6 +516,61 @@ mod tests {
         assert!(ranked[0].sensitive);
         assert!(ranked[0].content.contains("[EMAIL]"));
         assert!(!ranked[0].content.contains("alice@example.com"));
+    }
+
+    // --- Passport-gated render ------------------------------------------------
+
+    fn recalled(id: &str, content: &str, sensitive: bool) -> RecalledMemory {
+        RecalledMemory {
+            memory_id: id.to_string(),
+            content: content.to_string(),
+            score: 1.0,
+            sensitive,
+            redacted: false,
+        }
+    }
+
+    #[test]
+    fn gate_injects_nonsensitive_and_drops_sensitive_under_deny_all() {
+        let ranked = vec![
+            recalled("a", "alice likes rust", false),
+            recalled("s", "alice home address", true), // sensitive
+            recalled("b", "alice ships fridays", false),
+        ];
+        // v1 deny-all: no sensitive-transfer approval.
+        let (preamble, receipt) = gate_and_render_recall(&ranked, false);
+        assert_eq!(receipt.recalled, 3);
+        assert_eq!(receipt.injected, 2);
+        assert_eq!(receipt.gated_sensitive, 1);
+        assert_eq!(receipt.injected_ids, vec!["a".to_string(), "b".to_string()]);
+        // the non-sensitive content is in the preamble; the sensitive content is NOT.
+        assert!(preamble.contains("alice likes rust") && preamble.contains("alice ships fridays"));
+        assert!(
+            !preamble.contains("alice home address"),
+            "a sensitive memory must NOT be injected under deny-all: {preamble:?}"
+        );
+    }
+
+    #[test]
+    fn gate_injects_sensitive_only_when_transfer_approved() {
+        let ranked = vec![recalled("s", "sensitive note", true)];
+        // approved → injected
+        let (yes, ry) = gate_and_render_recall(&ranked, true);
+        assert_eq!(ry.injected, 1);
+        assert!(yes.contains("sensitive note"));
+        // not approved → gated out, empty preamble
+        let (no, rn) = gate_and_render_recall(&ranked, false);
+        assert_eq!(rn.injected, 0);
+        assert_eq!(rn.gated_sensitive, 1);
+        assert!(no.is_empty());
+    }
+
+    #[test]
+    fn gate_empty_recall_is_empty_preamble() {
+        let (preamble, receipt) = gate_and_render_recall(&[], false);
+        assert!(preamble.is_empty());
+        assert_eq!(receipt.recalled, 0);
+        assert_eq!(receipt.injected, 0);
     }
 
     #[test]
