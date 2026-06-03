@@ -98,34 +98,43 @@ fn pii_patterns() -> &'static [(PiiKind, Regex)] {
     // boundary) so CJK-adjacent PII redacts.
     PATTERNS.get_or_init(|| {
         vec![
+            // No TRAILING `(?-u:\b)`: a trailing boundary UNDER-matches when an ASCII
+            // word/digit char is glued directly after the value (e.g. `alice@example.com1`)
+            // — and under-matching leaks a real value, the dangerous direction. The TLD
+            // class `[A-Z]{2,}` already bounds the right edge, so dropping the trailing
+            // boundary makes the glued case redact. Leading `(?-u:\b)` is KEPT — it gives
+            // the CJK-adjacency semantics (CJK is a non-word char under ASCII `\b`).
             (
                 PiiKind::Email,
-                Regex::new(r"(?i)(?-u:\b)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}(?-u:\b)").unwrap(),
+                Regex::new(r"(?i)(?-u:\b)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}").unwrap(),
             ),
             // SSN: 3-2-4 nine-digit shape. (The oracle additionally excludes invalid
             // prefixes via look-ahead; the Rust `regex` crate is look-around-free, so
             // we match the plain shape. Over-matching a non-SSN 9-digit run is the
             // SAFE direction for a privacy-redaction boundary — under-matching, which
-            // would leak a real SSN, is the dangerous one.)
+            // would leak a real SSN, is the dangerous one.) No TRAILING boundary, same
+            // glued-digit reason as Email (`123-45-67890` must still redact the SSN).
             (
                 PiiKind::Ssn,
-                Regex::new(r"(?-u:\b)\d{3}[- ]?\d{2}[- ]?\d{4}(?-u:\b)").unwrap(),
+                Regex::new(r"(?-u:\b)\d{3}[- ]?\d{2}[- ]?\d{4}").unwrap(),
             ),
             // Credit-card candidate: 13–19 digits with any space/dash separators
             // between them (`[ -]*`, matching the oracle, so a multi-separator card
-            // like `4111 - 1111 - 1111 - 1111` is still caught). Luhn-validated in
-            // `redact_pii` so arbitrary long digit runs are NOT redacted as cards.
+            // like `4111 - 1111 - 1111 - 1111` is still caught). The greedy candidate can
+            // ANNEX a following separator-joined digit group; `redact_pii` therefore
+            // Luhn-validates the longest 13–19 digit SUB-window via `luhn_card_subspan`
+            // (not the whole greedy span) so a real card is never dropped when an extra
+            // group is swallowed.
             (
                 PiiKind::CreditCard,
                 Regex::new(r"(?-u:\b)(?:\d[ -]*){13,19}(?-u:\b)").unwrap(),
             ),
             // North-American phone (10 digits, optional +1 / grouping / separators).
+            // No TRAILING boundary (same glued-digit reason as Email/SSN).
             (
                 PiiKind::Phone,
-                Regex::new(
-                    r"(?-u:\b)(?:\+1[-.\s]?)?\(?[2-9]\d{2}\)?[-.\s]?[2-9]\d{2}[-.\s]?\d{4}(?-u:\b)",
-                )
-                .unwrap(),
+                Regex::new(r"(?-u:\b)(?:\+1[-.\s]?)?\(?[2-9]\d{2}\)?[-.\s]?[2-9]\d{2}[-.\s]?\d{4}")
+                    .unwrap(),
             ),
         ]
     })
@@ -153,6 +162,53 @@ fn luhn_valid(s: &str) -> bool {
     sum % 10 == 0
 }
 
+/// Within a credit-card *candidate* (a maximal run of digits separated by spaces/dashes,
+/// as matched by the card regex), find the byte span of the LONGEST Luhn-valid 13–19
+/// digit sub-run, mapped to absolute offsets via `base`. `None` if none validates.
+///
+/// This is the fix for the greedy-annex leak: the card regex's `[ -]*` separator class
+/// can swallow a trailing separator-joined digit group that follows a real card, so the
+/// whole span (card + extra digits) fails Luhn. The old code then DROPPED the entire
+/// candidate, leaving a real Luhn-valid PAN un-redacted. Instead we scan the candidate's
+/// digit groups and redact exactly the longest Luhn-valid card window inside it.
+fn luhn_card_subspan(candidate: &str, base: usize) -> Option<(usize, usize)> {
+    let bytes = candidate.as_bytes();
+    // Maximal ASCII-digit groups as (start_byte, end_byte) within `candidate`.
+    let mut groups: Vec<(usize, usize)> = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            let s = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            groups.push((s, i));
+        } else {
+            i += 1;
+        }
+    }
+    let mut best: Option<(usize, usize, usize)> = None; // (start, end, ndigits)
+    for a in 0..groups.len() {
+        let mut ndigits = 0usize;
+        for b in a..groups.len() {
+            ndigits += groups[b].1 - groups[b].0; // ASCII digits are 1 byte each
+            if ndigits > 19 {
+                break;
+            }
+            if ndigits >= 13 && luhn_valid(&candidate[groups[a].0..groups[b].1]) {
+                let better = match best {
+                    Some((bs, _, bn)) => ndigits > bn || (ndigits == bn && groups[a].0 < bs),
+                    None => true,
+                };
+                if better {
+                    best = Some((groups[a].0, groups[b].1, ndigits));
+                }
+            }
+        }
+    }
+    best.map(|(s, e, _)| (base + s, base + e))
+}
+
 #[derive(Clone, Copy)]
 struct Span {
     start: usize,
@@ -169,7 +225,16 @@ pub fn redact_pii(content: &str) -> (String, Vec<PiiKind>) {
     let mut spans: Vec<Span> = Vec::new();
     for (kind, re) in pii_patterns() {
         for m in re.find_iter(content) {
-            if *kind == PiiKind::CreditCard && !luhn_valid(m.as_str()) {
+            if *kind == PiiKind::CreditCard {
+                // Redact the longest Luhn-valid sub-window, not the whole greedy span,
+                // so an annexed trailing group can't make a real card fail Luhn and drop.
+                if let Some((start, end)) = luhn_card_subspan(m.as_str(), m.start()) {
+                    spans.push(Span {
+                        start,
+                        end,
+                        kind: *kind,
+                    });
+                }
                 continue;
             }
             spans.push(Span {
@@ -455,6 +520,42 @@ mod tests {
         assert!(kinds.contains(&PiiKind::Email) && kinds.contains(&PiiKind::Ssn));
         assert!(!out.contains("alice@example.com") && !out.contains("123-45-6789"));
         assert!(out.contains("[EMAIL]") && out.contains("[SSN]"));
+    }
+
+    #[test]
+    fn card_followed_by_separator_joined_digits_is_still_redacted() {
+        // Regression: the greedy card candidate annexes a trailing separator-joined
+        // group, so the whole span fails Luhn. The real PAN must STILL be redacted (the
+        // longest Luhn-valid sub-window), not dropped. 4012888888881881 is a Luhn-valid
+        // Visa test number.
+        for (input, leak) in [
+            ("card 4012888888881881 000-00-0000", "4012888888881881"),
+            ("4242424242424242 111 22 3333", "4242424242424242"),
+            ("4111 1111 1111 1111 123-45-6789", "4111 1111 1111 1111"),
+        ] {
+            let (out, kinds) = redact_pii(input);
+            assert!(
+                kinds.contains(&PiiKind::CreditCard),
+                "{input:?} must report a card, got {kinds:?}"
+            );
+            assert!(
+                !out.contains(leak),
+                "PAN {leak:?} leaked through in {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn pii_glued_to_a_trailing_ascii_char_is_still_redacted() {
+        // The trailing-boundary under-match: a sender glues a digit/word char right
+        // after the value to evade redaction. The value must still be stripped.
+        let (out, kinds) = redact_pii("mail alice@example.com123 end");
+        assert!(kinds.contains(&PiiKind::Email));
+        assert!(!out.contains("alice@example.com"), "email leaked: {out:?}");
+
+        let (out, kinds) = redact_pii("ssn 123-45-67890 ok");
+        assert!(kinds.contains(&PiiKind::Ssn));
+        assert!(!out.contains("123-45-6789"), "ssn leaked: {out:?}");
     }
 
     // --- ranking --------------------------------------------------------------

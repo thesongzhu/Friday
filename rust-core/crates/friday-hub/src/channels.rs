@@ -191,8 +191,9 @@ pub fn provision_channel_auth<S: SecureStore>(
 /// A verified inbound request whose message body has been PII-redacted (A-PR3). This is
 /// the ONLY type that carries channel-origin content past the channel boundary into the
 /// Hub (event / audit / reasoning in A-PR5). It has NO field holding the raw text — the
-/// raw body is consumed by [`redact_inbound`] and dropped, so there is no path by which
-/// un-redacted channel content can be persisted, logged, or reach the model.
+/// raw body is consumed by [`redact_inbound`] and never re-exposed, so a caller cannot
+/// forward un-redacted channel content onward (the ownership guarantee, R2). Redaction
+/// COMPLETENESS is bounded by the redactor — see [`redact_inbound`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RedactedInbound {
     pub channel_id: String,
@@ -205,23 +206,43 @@ pub struct RedactedInbound {
     pub pii_redacted: Vec<crate::cognition::PiiKind>,
 }
 
-/// Redact an authenticated inbound message body at the channel boundary. `raw_text` is
-/// taken BY VALUE and dropped here — the returned [`RedactedInbound`] never exposes it —
-/// so strict redaction is enforced by ownership, not discipline: a caller cannot forward
-/// the raw body onward. Redaction reuses the single Hub redactor
+/// Redact an authenticated inbound message body at the channel boundary.
+///
+/// `raw_text` is taken BY VALUE and is never re-exposed by [`RedactedInbound`] — so the
+/// caller cannot forward the raw body onward (the ownership guarantee, R2). That is the
+/// part ownership buys; it does NOT by itself make redaction "strict".
+///
+/// Redaction COMPLETENESS is delegated to and bounded by the single Hub redactor
 /// [`crate::cognition::redact_pii`] (Email / Phone / SSN / credit-card-by-Luhn, with the
-/// ASCII word-boundary fix so PII adjacent to CJK is still stripped — the operator works
-/// in Chinese). Only authenticated + allowlisted inbound (a [`VerifiedInbound`] from
+/// ASCII leading-boundary so PII adjacent to CJK is still stripped — the operator works
+/// in Chinese). KNOWN RESIDUAL LIMIT: a value with an ASCII word/digit char glued to its
+/// LEFT (e.g. `x123-45-6789`) can under-match — this layer inherits the redactor's
+/// documented bounds and does not claim to defeat every evasion.
+///
+/// We apply the redactor to a fixpoint (release-active, bounded, never panics): tags like
+/// `[EMAIL]` never re-match a pattern, so this converges in one pass for the current
+/// patterns; the bounded loop is belt-and-braces against a future pattern that could
+/// leave re-detectable residue, and replaces the prior debug-only assertion (which gave
+/// zero protection in release and could panic on attacker input).
+///
+/// Only authenticated + allowlisted inbound (a [`VerifiedInbound`] from
 /// [`resolve_and_verify`]) should reach this; this layer assumes auth already passed.
 pub fn redact_inbound(verified: VerifiedInbound, raw_text: String) -> RedactedInbound {
-    let (text, pii_redacted) = crate::cognition::redact_pii(&raw_text);
-    drop(raw_text);
-    // Defense-in-depth: a single redaction pass must leave no detectable PII behind
-    // (debug builds only; no production cost).
-    debug_assert!(
-        crate::cognition::redact_pii(&text).1.is_empty(),
-        "redacted channel body still contains detectable PII"
-    );
+    let mut text = raw_text; // moved in; overwritten/dropped below, never re-exposed
+    let mut pii_redacted: Vec<crate::cognition::PiiKind> = Vec::new();
+    for _ in 0..4 {
+        let (redacted, kinds) = crate::cognition::redact_pii(&text);
+        for k in kinds {
+            if !pii_redacted.contains(&k) {
+                pii_redacted.push(k);
+            }
+        }
+        let converged = redacted == text;
+        text = redacted;
+        if converged {
+            break;
+        }
+    }
     RedactedInbound {
         channel_id: verified.channel_id,
         sender_id: verified.sender_id,
@@ -520,6 +541,24 @@ mod tests {
         let out = redact_inbound(verified("owner"), raw.to_string());
         assert_eq!(out.text, raw);
         assert!(out.pii_redacted.is_empty());
+    }
+
+    #[test]
+    fn redact_inbound_strips_card_followed_by_separator_joined_digits() {
+        // Direct regression at the strict boundary for the confirmed BLOCKING leak: a
+        // card followed by a separator-joined digit group (which made the greedy
+        // candidate fail Luhn and get dropped) must NOT leak the PAN. Holds in release
+        // (no debug-assert reliance) and must not panic.
+        let out = redact_inbound(
+            verified("owner"),
+            "card 4012888888881881 000-00-0000".to_string(),
+        );
+        assert!(
+            !out.text.contains("4012888888881881"),
+            "PAN leaked: {:?}",
+            out.text
+        );
+        assert!(out.pii_redacted.contains(&PiiKind::CreditCard));
     }
 
     #[test]
