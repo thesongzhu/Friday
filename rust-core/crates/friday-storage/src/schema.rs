@@ -68,6 +68,19 @@ pub fn hub_migrations() -> Vec<Migration> {
             destructive: false,
             up: m0005_agent_run,
         },
+        // Memory recall (PROOF-MEMORY-001): additive fields that make a confirmed
+        // memory RECALLABLE — the inline `content` (the text a recall injects), the
+        // owning `principal_id` (the axis the cross-principal-no-recall invariant
+        // keys on), and a `sensitive` flag (so a recalled item routes through the
+        // Context Passport gate). Purely additive; pre-existing rows get NULL
+        // content / NULL principal / sensitive=0 and are therefore NOT recallable
+        // (fail-closed: no captured content + no owner ⇒ never injected).
+        Migration {
+            version: 6,
+            name: "memory_recall_fields",
+            destructive: false,
+            up: m0006_memory_recall_fields,
+        },
     ]
 }
 
@@ -324,4 +337,19 @@ fn m0004_consumed_approval(tx: &Transaction) -> rusqlite::Result<()> {
 fn m0005_agent_run(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(DDL_AGENT_RUN)?;
     Ok(())
+}
+
+// Additive recall fields on `memory_item` (PROOF-MEMORY-001). `content` is the
+// inline recallable text (the marker a recall injects); `principal_id` is the
+// owner the same-principal-only recall keys on; `sensitive` (0/1) routes a
+// recalled item through the Context Passport gate. Pre-existing rows backfill to
+// NULL/NULL/0 — not recallable (no content, no owner) — which is the fail-closed
+// default. An index on (principal_id, state) keeps the recall query cheap.
+fn m0006_memory_recall_fields(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "ALTER TABLE memory_item ADD COLUMN content TEXT;
+         ALTER TABLE memory_item ADD COLUMN principal_id TEXT;
+         ALTER TABLE memory_item ADD COLUMN sensitive INTEGER NOT NULL DEFAULT 0;
+         CREATE INDEX idx_memory_principal_state ON memory_item(principal_id, state);",
+    )
 }

@@ -23,6 +23,15 @@ pub struct MemoryRow {
     pub memory_id: String,
     pub scope: MemoryScope,
     pub content_ref: Option<String>,
+    /// Inline recallable text (the marker a recall injects). `None` for pre-recall
+    /// rows — such a row is never recallable (nothing to inject).
+    pub content: Option<String>,
+    /// Owning principal. The same-principal-only recall keys on this; `None` is an
+    /// unowned row that NO principal recalls (fail-closed, `07` §9 / `02` §7).
+    pub principal_id: Option<String>,
+    /// PII/secret-bearing marker. A recalled `sensitive` item routes through the
+    /// Context Passport gate (`07` §10) — under deny-all approval it is not injected.
+    pub sensitive: bool,
     pub confidence: Confidence,
     pub state: MemoryState,
     pub created_at: i64,
@@ -65,10 +74,15 @@ fn row_from(r: &rusqlite::Row) -> rusqlite::Result<MemoryRow> {
     // default (Candidate — not durable, not auto-usable), never error the read path.
     let confidence: Option<String> = r.get("confidence")?;
     let state: String = r.get("state")?;
+    // `sensitive` is INTEGER NOT NULL DEFAULT 0; read non-zero as true.
+    let sensitive: i64 = r.get("sensitive")?;
     Ok(MemoryRow {
         memory_id: r.get("memory_id")?,
         scope: parse_scope(&scope),
         content_ref: r.get("content_ref")?,
+        content: r.get("content")?,
+        principal_id: r.get("principal_id")?,
+        sensitive: sensitive != 0,
         confidence: parse_confidence(confidence.as_deref().unwrap_or("")),
         state: parse_state(&state),
         created_at: r.get("created_at")?,
@@ -76,30 +90,48 @@ fn row_from(r: &rusqlite::Row) -> rusqlite::Result<MemoryRow> {
     })
 }
 
-const SELECT_COLS: &str =
-    "memory_id, scope, content_ref, confidence, state, created_at, confirmed_at";
+const SELECT_COLS: &str = "memory_id, scope, content_ref, content, principal_id, sensitive, \
+     confidence, state, created_at, confirmed_at";
+
+/// A freshly-extracted memory candidate to persist. Carries the recall fields
+/// (`content`, `principal_id`, `sensitive`) alongside the v1 fields so the save
+/// path captures everything a later recall needs — there is no second "make it
+/// recallable" write that could be forgotten.
+#[derive(Clone, Debug)]
+pub struct NewMemoryCandidate<'a> {
+    pub memory_id: &'a str,
+    pub scope: MemoryScope,
+    /// Opaque pointer to external content (legacy v1 field; may be `None`).
+    pub content_ref: Option<&'a str>,
+    /// Inline recallable text. A candidate with `None` content is never recallable.
+    pub content: Option<&'a str>,
+    /// Owning principal (the same-principal-only recall keys on this).
+    pub principal_id: Option<&'a str>,
+    /// PII/secret-bearing — a recalled sensitive item routes through the Passport gate.
+    pub sensitive: bool,
+    pub created_at: i64,
+}
 
 /// Record a freshly-extracted memory candidate. NEVER durable: `state=Candidate`,
 /// `confidence=Candidate`, `confirmed_at=NULL`. Nothing here makes it a fact
-/// (`07` §6/§7 — no silent long-term write).
-pub fn record_candidate(
-    conn: &Connection,
-    memory_id: &str,
-    scope: MemoryScope,
-    content_ref: Option<&str>,
-    created_at: i64,
-) -> Result<()> {
+/// (`07` §6/§7 — no silent long-term write); recall still requires explicit
+/// confirmation (`state=Confirmed`) AND a matching principal.
+pub fn record_candidate(conn: &Connection, c: &NewMemoryCandidate) -> Result<()> {
     conn.execute(
         "INSERT INTO memory_item
-            (memory_id, scope, content_ref, confidence, state, created_at, confirmed_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)",
+            (memory_id, scope, content_ref, content, principal_id, sensitive,
+             confidence, state, created_at, confirmed_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL)",
         params![
-            memory_id,
-            scope.as_str(),
-            content_ref,
+            c.memory_id,
+            c.scope.as_str(),
+            c.content_ref,
+            c.content,
+            c.principal_id,
+            c.sensitive as i64,
             Confidence::Candidate.as_str(),
             MemoryState::Candidate.as_str(),
-            created_at
+            c.created_at
         ],
     )?;
     Ok(())
@@ -173,7 +205,9 @@ pub fn pending_review(conn: &Connection) -> Result<Vec<MemoryRow>> {
 }
 
 /// Durable, auto-usable long-term memory: only `Confirmed` items (`07` §9,
-/// `02` §12). A candidate or rejected item is never returned here.
+/// `02` §12). A candidate or rejected item is never returned here. This is the
+/// PRINCIPAL-AGNOSTIC view (all owners) — for recall-into-an-answer use
+/// [`recall_confirmed`], which additionally enforces the same-principal boundary.
 pub fn auto_usable(conn: &Connection) -> Result<Vec<MemoryRow>> {
     let rows = select_by_state(conn, MemoryState::Confirmed)?;
     // Defense-in-depth: the state filter already restricts to Confirmed, but assert
@@ -182,6 +216,52 @@ pub fn auto_usable(conn: &Connection) -> Result<Vec<MemoryRow>> {
         .iter()
         .all(|m| m.state.is_durable() && m.confidence.auto_usable()));
     Ok(rows)
+}
+
+/// The recall set for one principal: the `Confirmed`, `content`-bearing memory
+/// OWNED BY `principal_id`, most-recently-confirmed first. This is the data-layer
+/// half of the save→recall loop (PROOF-MEMORY-001) and enforces every hard
+/// boundary at the SQL layer so a non-eligible row never even leaves the DB:
+///
+/// - **Same-principal only** (`07` §9 / `02` §7): `principal_id = ?1` exact match.
+///   A row owned by another principal — or an unowned (`NULL` principal) row — is
+///   never returned. Cross-principal recall is structurally impossible here.
+/// - **Confirmed only** (`07` §9): a `Candidate`/`Rejected`/inferred item is never
+///   recalled as fact.
+/// - **Content-bearing only**: a row with `NULL` or empty (`''`) content has
+///   nothing to inject and is skipped (fail-closed).
+///
+/// A blank/empty `principal_id` argument returns an EMPTY set WITHOUT querying —
+/// an anonymous/owner-less caller recalls nothing (it must not match `''` rows or
+/// act as a wildcard). `sensitive` rows ARE returned (the Context Passport gate,
+/// not this query, decides whether a sensitive item is actually injected).
+pub fn recall_confirmed(conn: &Connection, principal_id: &str) -> Result<Vec<MemoryRow>> {
+    // Fail-closed on a missing principal: no wildcard, no '' match — recall nothing.
+    if principal_id.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {SELECT_COLS} FROM memory_item
+         WHERE state = ?1 AND principal_id = ?2 AND content IS NOT NULL AND content != ''
+         ORDER BY confirmed_at DESC, created_at DESC, memory_id"
+    ))?;
+    let rows = stmt.query_map(
+        params![MemoryState::Confirmed.as_str(), principal_id],
+        row_from,
+    )?;
+    let mut out = Vec::new();
+    for r in rows {
+        let row = r?;
+        out.push(row);
+    }
+    // Defense-in-depth: every returned row is a durable, AUTO-USABLE, content-bearing
+    // fact owned by exactly the requested principal (the SQL enforces it; assert the
+    // full trust invariant too — same shape `auto_usable` asserts, plus ownership).
+    debug_assert!(out.iter().all(|m| m.state.is_durable()
+        && m.confidence.auto_usable()
+        && m.content.as_deref().is_some_and(|c| !c.is_empty())
+        && m.principal_id.as_deref() == Some(principal_id)));
+    Ok(out)
 }
 
 // --- helpers ---------------------------------------------------------------
