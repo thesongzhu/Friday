@@ -162,11 +162,14 @@ impl CapabilityRouteTable {
                 capability: e.id.clone(),
                 surface: surface.to_string(),
                 status: e.status,
-                // Sealed construction guarantees a non-empty blocker for a non-wired entry.
-                blocker: e
-                    .blocker
-                    .clone()
-                    .unwrap_or_else(|| "disabled (no blocker recorded)".to_string()),
+                // Sealed construction (CapabilityEntry::disabled) guarantees a non-empty
+                // blocker for every non-Wired entry — so this `.expect` is unreachable. We
+                // assert it rather than substitute a fake string, keeping the truth-label
+                // invariant self-documenting (a future regression would panic, not silently
+                // emit an untruth-labeled disabled stub).
+                blocker: e.blocker.clone().expect(
+                    "non-Wired CapabilityEntry always carries a blocker (sealed construction)",
+                ),
             },
         }
     }
@@ -175,6 +178,11 @@ impl CapabilityRouteTable {
     /// Wired = the agent-loop/runtime capabilities; NO-GO/gated = the XL/gated families, each
     /// with its exact blocker (so a disabled resolution is always truth-labeled).
     pub fn friday_baseline() -> Self {
+        // NOTE (traceability): these capability ids are short, surface-friendly aliases of the
+        // verbatim file-56 contract rows (e.g. `agent_loop_run_task` ↔
+        // `agent_loop_planning_clarify_approval_dangerous_action`; `approval_pocket_decision` ↔
+        // `security_approval_bound_principal_gate_cat10_netnew`). Each alias maps to a row whose
+        // status here matches the contract — no status is misrepresented by the renaming.
         let mut t = Self::new();
         // Wired (dispatchable) — agent-loop substrate + runtime, proven on main.
         for w in [
@@ -206,10 +214,13 @@ impl CapabilityRouteTable {
             CapabilityStatus::OperatorGated,
             "operator must confirm the saved design baseline for wiring (truthLabel='Design proof only / no runtime PASS')",
         ));
+        // external_blocked — matches the freshest contract row (file 56 line 184,
+        // GATED_multi_provider_routing_fallback_resilience): the env has only DeepSeek
+        // (anthropic secret empty), in addition to Codex/Claude login being absent.
         t.register(CapabilityEntry::disabled(
             "multi_provider_live_routing",
-            CapabilityStatus::OperatorGated,
-            "Codex/Claude login (OAuth/CLI) not present; only DeepSeek live",
+            CapabilityStatus::ExternalBlocked,
+            "env has only DeepSeek (anthropic secret empty) + Codex/Claude login (OAuth/CLI) not present; decision layer #487 live on DeepSeek only",
         ));
         // external_blocked.
         t.register(CapabilityEntry::disabled(
@@ -319,7 +330,7 @@ mod tests {
             ("design_baseline_ui", CapabilityStatus::OperatorGated),
             (
                 "multi_provider_live_routing",
-                CapabilityStatus::OperatorGated,
+                CapabilityStatus::ExternalBlocked,
             ),
             ("hub_phone_sync", CapabilityStatus::ExternalBlocked),
         ] {
