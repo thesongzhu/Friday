@@ -1,6 +1,6 @@
 [package]
 name = "friday-providers"
-description = "Friday Rust Core — Codex/Claude provider adapters (Hub-only). Unit 6/7: auth-readiness detection via official provider status commands."
+description = "Friday Rust Core — Codex/Claude provider adapters and Hub-only control-surface contracts."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
