@@ -81,6 +81,10 @@ pub struct RecalledMemory {
 /// for every half-life of age since confirmation.
 pub const DEFAULT_HALF_LIFE_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 
+/// Default max confirmed memories injected into one prompt (bounds recall's token cost).
+/// Shared by the agent loop and the `friday_ask` surface so both inject the same amount.
+pub const DEFAULT_RECALL_TOP_K: usize = 8;
+
 // The PII patterns, compiled once. Ordered most-specific-first; overlapping
 // matches are resolved earliest-start-wins in `redact_pii`.
 fn pii_patterns() -> &'static [(PiiKind, Regex)] {

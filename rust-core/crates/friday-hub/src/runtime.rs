@@ -36,9 +36,6 @@ use crate::routing::{
 };
 use crate::{AgentLlmClient, DeepSeekAgentLlmClient, FsToolExecutor, LoopOutcome};
 
-/// Max confirmed memories injected into one task's prompt (bounds recall's token cost).
-const RECALL_TOP_K: usize = 8;
-
 /// The owner-approval seam: given a mutating request, return a signed [`CanonicalApproval`]
 /// iff the owner approved THIS exact action. Production default is [`DenyAllApprovals`]
 /// until the phone-relayed owner-approval leg is wired (operator-gated).
@@ -198,46 +195,17 @@ impl<T: Transport> HubRuntime<T> {
     /// not write `token_ledger` rows (loop-level token ledgering is a separate gap), so no
     /// token-accounting claim is made here.
     fn recall_preamble(&self, run_id: &str, now_ms: i64) -> Result<String, RoutedLoopError> {
-        let Some(principal) = self.principal_id.as_deref() else {
-            return Ok(String::new());
-        };
-        let rows = friday_storage::memory::recall_confirmed(self.db.conn(), principal)?;
-        let ranked = crate::cognition::rank_recall(
-            &rows,
+        // Delegates to the SHARED recall composition so the loop and the `friday_ask`
+        // surface apply the identical per-item Passport gate (no divergence). The recall
+        // principal and the gate Actor's principal (still `None` in the loop) are the SAME
+        // v1 owner conceptually — flagged so they don't silently diverge when per-run
+        // principal binding lands.
+        let preamble = crate::recall_preamble_for(
+            &self.db,
+            self.principal_id.as_deref(),
+            &format!("{run_id}:memory-recall"),
             now_ms,
-            RECALL_TOP_K,
-            crate::cognition::DEFAULT_HALF_LIFE_MS,
-        );
-        // v1: no sensitive-transfer approval is wired (deny-all), so sensitive memory is
-        // never injected. The recall principal and the gate Actor's principal (still
-        // `None` in the loop) are the SAME v1 owner conceptually — flagged so they don't
-        // silently diverge when per-run principal binding lands.
-        let approved_sensitive = false;
-        let (preamble, receipt) =
-            crate::cognition::gate_and_render_recall(&ranked, approved_sensitive);
-        if receipt.recalled > 0 {
-            // Hash-chained recall receipt (counts + injected ids). A separate audit_id from
-            // the loop's events; the chain links it to the prior tip. (rusqlite errors map
-            // through StorageError, which RoutedLoopError converts from.)
-            let tx = self
-                .db
-                .conn()
-                .unchecked_transaction()
-                .map_err(StorageError::from)?;
-            friday_storage::audit::append_audit(
-                &tx,
-                &format!("{run_id}:memory-recall"),
-                principal,
-                &format!(
-                    "memory.recalled:recalled={} injected={} gated_sensitive={}",
-                    receipt.recalled, receipt.injected, receipt.gated_sensitive
-                ),
-                Some(&receipt.injected_ids.join(",")),
-                now_ms,
-            )
-            .map_err(StorageError::from)?;
-            tx.commit().map_err(StorageError::from)?;
-        }
+        )?;
         Ok(preamble)
     }
 

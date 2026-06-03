@@ -696,6 +696,95 @@ pub fn record_friday_ask<T: friday_deepseek::Transport>(
     Ok(outcome)
 }
 
+/// Build the memory-recall prompt preamble for `principal` and record its hash-chained
+/// receipt (PROOF-MEMORY-001). The SINGLE recall composition shared by both surfaces:
+/// `recall_confirmed` (same-principal + Confirmed + content, SQL layer) →
+/// [`cognition::rank_recall`] (recency-decay + top-k + PII) →
+/// [`cognition::gate_and_render_recall`] (the per-item Context Passport gate — sensitive
+/// drops itself under v1 deny-all). Sharing this guarantees the agent loop and the
+/// `friday_ask` surface apply the SAME gate (no bypass). When anything was recalled, a
+/// `memory.recalled` audit event (`receipt_audit_id`) records the recalled/injected/gated
+/// counts + injected ids. `None` principal ⇒ empty preamble, no recall.
+pub fn recall_preamble_for(
+    db: &Db,
+    principal: Option<&str>,
+    receipt_audit_id: &str,
+    now_ms: i64,
+) -> Result<String, StorageError> {
+    let Some(principal) = principal else {
+        return Ok(String::new());
+    };
+    let rows = friday_storage::memory::recall_confirmed(db.conn(), principal)?;
+    let ranked = cognition::rank_recall(
+        &rows,
+        now_ms,
+        cognition::DEFAULT_RECALL_TOP_K,
+        cognition::DEFAULT_HALF_LIFE_MS,
+    );
+    // v1 deny-all: no sensitive-transfer approval is wired, so sensitive memory never injects.
+    let (preamble, receipt) = cognition::gate_and_render_recall(&ranked, false);
+    if receipt.recalled > 0 {
+        let tx = db
+            .conn()
+            .unchecked_transaction()
+            .map_err(StorageError::from)?;
+        friday_storage::audit::append_audit(
+            &tx,
+            receipt_audit_id,
+            principal,
+            &format!(
+                "memory.recalled:recalled={} injected={} gated_sensitive={}",
+                receipt.recalled, receipt.injected, receipt.gated_sensitive
+            ),
+            Some(&receipt.injected_ids.join(",")),
+            now_ms,
+        )
+        .map_err(StorageError::from)?;
+        tx.commit().map_err(StorageError::from)?;
+    }
+    Ok(preamble)
+}
+
+/// A Friday ask (single ledgered model call) FED BY MEMORY RECALL — the full
+/// PROOF-MEMORY-001 trace on ONE surface: `principal`'s confirmed memory is recalled +
+/// Passport-gated (via [`recall_preamble_for`]), prepended to the question, and the model
+/// call returns an ANSWER ([`friday_deepseek::ModelCallOutcome::content`]) that is
+/// token-LEDGERED + AUDITED by [`record_friday_ask`]. So a recall-fed answer here carries
+/// the trace the agent loop cannot (the loop has no free-text answer channel + no token
+/// ledger). `None` principal ⇒ a plain ask (no recall). The recalled marker reaches the
+/// answer ONLY if the model actually uses the injected memory — that is the live proof.
+#[allow(clippy::too_many_arguments)]
+pub fn record_friday_ask_with_recall<T: friday_deepseek::Transport>(
+    db: &mut Db,
+    client: &friday_deepseek::DeepSeekClient<T>,
+    principal: Option<&str>,
+    ledger_id: &str,
+    session_id: &str,
+    activity_id: &str,
+    question: &str,
+    max_tokens: u32,
+    now_ms: i64,
+) -> Result<friday_deepseek::ModelCallOutcome, RecordAskError> {
+    let preamble =
+        recall_preamble_for(db, principal, &format!("{ledger_id}:memory-recall"), now_ms)
+            .map_err(RecordAskError::Storage)?;
+    let prompt = if preamble.is_empty() {
+        question.to_string()
+    } else {
+        format!("{preamble}{question}")
+    };
+    record_friday_ask(
+        db,
+        client,
+        ledger_id,
+        session_id,
+        activity_id,
+        &prompt,
+        max_tokens,
+        now_ms,
+    )
+}
+
 // --- the one composed turn ---------------------------------------------------
 
 /// The outcome of one composed turn.
@@ -2646,6 +2735,182 @@ mod ask_coupling_tests {
         assert_eq!(
             friday_storage::audit::verify_audit_chain(db.conn()).unwrap(),
             0
+        );
+    }
+
+    // --- PROOF-MEMORY-001 recall-fed ask (answer + ledger + recall on one surface) ----
+
+    /// A transport that ECHOES the outgoing prompt into the answer content. So if the
+    /// recalled marker reached the prompt (via the recall preamble), it appears in
+    /// `outcome.content` — a deterministic proof of the recall→prompt→answer round-trip
+    /// (a REAL model deciding to use the memory is the separate live e2e).
+    struct EchoTransport;
+    impl friday_deepseek::Transport for EchoTransport {
+        fn get_json(
+            &self,
+            _url: &str,
+            _bearer: &str,
+        ) -> Result<serde_json::Value, friday_deepseek::DeepSeekError> {
+            Ok(serde_json::json!({"data":[{"id":"deepseek-v4-flash"}]}))
+        }
+        fn post_json(
+            &self,
+            _url: &str,
+            _bearer: &str,
+            body: &serde_json::Value,
+        ) -> Result<serde_json::Value, friday_deepseek::DeepSeekError> {
+            // Echo the request body (which carries the prompt) back as the answer.
+            let echoed = body.to_string();
+            Ok(serde_json::json!({
+                "model":"deepseek-v4-flash",
+                "choices":[{"message":{"content": echoed},"finish_reason":"stop"}],
+                "usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}
+            }))
+        }
+    }
+
+    fn seed_owned_confirmed(db: &Db, id: &str, content: &str, principal: &str) {
+        friday_storage::memory::record_candidate(
+            db.conn(),
+            &friday_storage::memory::NewMemoryCandidate {
+                memory_id: id,
+                scope: friday_core::MemoryScope::Global,
+                content_ref: None,
+                content: Some(content),
+                principal_id: Some(principal),
+                sensitive: false,
+                created_at: 1,
+            },
+        )
+        .unwrap();
+        friday_storage::memory::confirm(db.conn(), id, 2).unwrap();
+    }
+
+    #[test]
+    fn ask_with_recall_answer_carries_marker_and_is_ledgered_and_audited() {
+        let mut db = Db::open_hub(&tmp("recall-ask")).unwrap();
+        seed_owned_confirmed(&db, "m1", "The codename is FRIDAYMARKER-DET-91A2.", "owner");
+        let client = friday_deepseek::DeepSeekClient::with_transport(EchoTransport, "k".into());
+        let out = record_friday_ask_with_recall(
+            &mut db,
+            &client,
+            Some("owner"),
+            "l1",
+            "s1",
+            "a1",
+            "What is the codename?",
+            256,
+            1000,
+        )
+        .unwrap();
+        // ANSWER carries the recalled marker (it reached the prompt via recall → echoed back).
+        assert!(
+            out.content.contains("FRIDAYMARKER-DET-91A2"),
+            "recalled marker must reach the answer: {:?}",
+            out.content
+        );
+        // LEDGERED: exactly one token_ledger row for the billable call.
+        assert_eq!(db.count("token_ledger").unwrap(), 1);
+        // AUDITED: the model-call audit + the memory.recalled receipt are both chained.
+        let recall_audit: i64 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM audit_ledger WHERE action LIKE 'memory.recalled%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(recall_audit, 1, "a memory.recalled receipt was recorded");
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).unwrap() >= 2);
+    }
+
+    #[test]
+    fn ask_without_principal_recalls_nothing() {
+        let mut db = Db::open_hub(&tmp("recall-ask-none")).unwrap();
+        seed_owned_confirmed(&db, "m1", "The codename is FRIDAYMARKER-NONE.", "owner");
+        let client = friday_deepseek::DeepSeekClient::with_transport(EchoTransport, "k".into());
+        let out = record_friday_ask_with_recall(
+            &mut db,
+            &client,
+            None, // no principal ⇒ no recall
+            "l1",
+            "s1",
+            "a1",
+            "What is the codename?",
+            256,
+            1000,
+        )
+        .unwrap();
+        assert!(!out.content.contains("FRIDAYMARKER-NONE"));
+        let recall_audit: i64 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM audit_ledger WHERE action LIKE 'memory.recalled%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(recall_audit, 0);
+        // a plain ask is still billed (the model call happened, just without recall).
+        assert_eq!(db.count("token_ledger").unwrap(), 1);
+    }
+
+    #[test]
+    #[ignore = "live: requires FRIDAY_DEEPSEEK_API_KEY; run manually (PROOF-MEMORY-001 proof). \
+                The locked credential file is /private/tmp/friday-closure-20260530/.deepseek-env; \
+                source it, never print the key (07 §2.5)."]
+    fn live_ask_with_recall_answer_carries_marker() {
+        // SAVE a confirmed memory whose fact is obtainable ONLY via recall, then ASK for it.
+        // A recall-fed answer that carries the marker is the full PROOF-MEMORY-001 trace
+        // (answer + token-ledger + recall + hash-chained audit) on one surface. If a real
+        // model does not use the injected memory, this fails → proof_pending (model
+        // behaviour), NOT a mechanism defect.
+        let mut db = Db::open_hub(&tmp("live-recall-ask")).unwrap();
+        let marker = "FRIDAY-RECALL-PROOF-7F3A9C2D";
+        seed_owned_confirmed(
+            &db,
+            "proof-mem",
+            &format!("The project's secret codename is {marker}. Remember it exactly."),
+            "owner",
+        );
+        let client = friday_deepseek::DeepSeekClient::from_env()
+            .expect("FRIDAY_DEEPSEEK_API_KEY set (sourced from the locked credential file)");
+        let out = record_friday_ask_with_recall(
+            &mut db,
+            &client,
+            Some("owner"),
+            "live-l1",
+            "live-s1",
+            "live-a1",
+            "What is the project's secret codename? Reply with ONLY the codename.",
+            128,
+            5_000,
+        )
+        .expect("live recall-fed ask");
+        eprintln!(
+            "[PROOF-MEMORY-001] tokens={} model={} answer={:?}",
+            out.total_tokens, out.model, out.content
+        );
+        // mechanism fired + ledgered + audited (deterministic parts).
+        assert_eq!(
+            db.count("token_ledger").unwrap(),
+            1,
+            "answer is token-ledgered"
+        );
+        let recall_audit: i64 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM audit_ledger WHERE action LIKE 'memory.recalled%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(recall_audit, 1, "memory.recalled receipt recorded");
+        // THE PROOF (model-dependent): the answer carries the recalled marker.
+        assert!(
+            out.content.contains(marker),
+            "PROOF-MEMORY-001: the recall-fed answer must carry the marker (else proof_pending): {:?}",
+            out.content
         );
     }
 }
