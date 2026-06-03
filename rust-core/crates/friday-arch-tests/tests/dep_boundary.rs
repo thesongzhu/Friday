@@ -37,11 +37,33 @@ fn internal_dep_graph(root: &Path) -> BTreeMap<String, BTreeSet<String>> {
         let value: toml::Value = toml::from_str(&text).unwrap();
         let name = value["package"]["name"].as_str().unwrap().to_string();
         let mut deps = BTreeSet::new();
+        // Collect friday-* deps from a dependency table, resolving the REAL crate
+        // name via the `package` field so a renamed dep
+        // (`x = { package = "friday-deepseek" }`) cannot evade the boundary check.
+        let mut scan = |tbl: &toml::value::Table| {
+            for (k, v) in tbl {
+                let dep_name = v
+                    .as_table()
+                    .and_then(|t| t.get("package"))
+                    .and_then(|p| p.as_str())
+                    .unwrap_or(k.as_str());
+                if dep_name.starts_with("friday-") {
+                    deps.insert(dep_name.to_string());
+                }
+            }
+        };
         for section in ["dependencies", "build-dependencies"] {
             if let Some(tbl) = value.get(section).and_then(|v| v.as_table()) {
-                for k in tbl.keys() {
-                    if k.starts_with("friday-") {
-                        deps.insert(k.clone());
+                scan(tbl);
+            }
+        }
+        // Also scan platform-specific [target.'cfg(...)'.dependencies] tables — a
+        // secret-bearing dep hidden behind a target cfg would otherwise be missed.
+        if let Some(targets) = value.get("target").and_then(|v| v.as_table()) {
+            for (_cfg, t) in targets {
+                for section in ["dependencies", "build-dependencies"] {
+                    if let Some(tbl) = t.get(section).and_then(|v| v.as_table()) {
+                        scan(tbl);
                     }
                 }
             }

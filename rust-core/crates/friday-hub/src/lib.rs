@@ -127,6 +127,16 @@ pub fn canonical_params(pairs: &[(String, String)]) -> String {
 /// Build the canonical [`MutatingActionRequest`] for a proposal. Deterministic:
 /// the same proposal always yields byte-identical `canonical_action_bytes`, so an
 /// approval minted over this request matches when the turn re-builds it.
+///
+/// **SECURITY CONTRACT for the live slice (do NOT trust the model here).** This
+/// tracer copies `proposal.mutating` / `resource` / `params` straight from the
+/// (mock) proposal. That is safe ONLY because the proposal is a fixed test fixture.
+/// The gate keys `requires_approval` on `mutating`, so a live `AgentLlmClient` that
+/// set these fields from raw model output could let a destructive action self-declare
+/// `mutating=false` and bypass approval. The live `AgentLlmClient`/`ToolExecutor`
+/// MUST derive `mutating` (and the risk/resource classification) from a TRUSTED tool
+/// policy (e.g. `friday_core::tool_policy` / a per-tool mutating registry), never from
+/// model-asserted fields. This is a binding requirement on the deferred runtime slice.
 pub fn build_request(proposal: &ToolCallProposal) -> MutatingActionRequest {
     MutatingActionRequest {
         action: proposal.action.clone(),
@@ -193,10 +203,15 @@ pub struct TurnOutcome {
 /// `MutatingActionRequest` → `authorize_mutating_action` → (mock) execute on
 /// `Allow` → `record_event`. Every step is real substrate; only the model and the
 /// executor are mocked.
+// Consistent with `friday-storage`'s `add_step`: the turn driver legitimately
+// threads several distinct values; the live-loop slice may bundle them into a
+// `TurnContext`, but for the tracer an explicit signature is clearer.
+#[allow(clippy::too_many_arguments)]
 pub fn run_one_turn(
     client: &dyn AgentLlmClient,
     conn: &Connection,
     run_id: &str,
+    turn_index: u64,
     task: &str,
     secret: &[u8],
     approval: Option<&CanonicalApproval>,
@@ -205,11 +220,14 @@ pub fn run_one_turn(
     // 1. The model proposes a tool call.
     let proposal = client.propose_tool_call(task);
 
-    // 2. Plan classification, recorded as an event.
+    // 2. Plan classification, recorded as an event. event_id keys on the caller's
+    //    monotonic `turn_index` (NOT `now_ms`) so consecutive turns never PK-collide
+    //    on `agent_run_event.event_id` — this is what makes run_one_turn safely
+    //    loopable (a real loop increments turn_index per turn).
     let plan_kind = friday_core::classify_kind(task).map(|k| k.as_str());
     agent_run::record_event(
         conn,
-        &format!("{run_id}:{now_ms}:plan"),
+        &format!("{run_id}:t{turn_index}:plan"),
         run_id,
         &format!("plan.{}", plan_kind.unwrap_or("none")),
         now_ms,
@@ -235,7 +253,7 @@ pub fn run_one_turn(
     };
     agent_run::record_event(
         conn,
-        &format!("{run_id}:{now_ms}:outcome"),
+        &format!("{run_id}:t{turn_index}:outcome"),
         run_id,
         &outcome_kind,
         now_ms,
@@ -320,6 +338,7 @@ mod tests {
             &client,
             db.conn(),
             "r1",
+            0,
             "read the notes file",
             SECRET,
             None,
@@ -351,6 +370,7 @@ mod tests {
             &client,
             db.conn(),
             "r1",
+            0,
             "delete the old backup db",
             SECRET,
             None,
@@ -375,11 +395,12 @@ mod tests {
         let request = build_request(&proposal);
         let approval = mint_approval(&request, "ap-1", SECRET, 5000);
 
-        // Turn 1: approval valid + unspent -> Allow + executed.
+        // Turn 1 (turn_index 0): approval valid + unspent -> Allow + executed.
         let t1 = run_one_turn(
             &client,
             db.conn(),
             "r1",
+            0,
             "delete the old backup db",
             SECRET,
             Some(&approval),
@@ -389,11 +410,13 @@ mod tests {
         assert_eq!(t1.decision, GateDecision::Allow);
         assert!(t1.executed);
 
-        // Turn 2: same approval -> single-use replay refused (Deny), not executed.
+        // Turn 2 (turn_index 1): same approval -> single-use replay refused (Deny),
+        // not executed. Distinct turn_index keeps the event_ids collision-free.
         let t2 = run_one_turn(
             &client,
             db.conn(),
             "r1",
+            1,
             "delete the old backup db",
             SECRET,
             Some(&approval),
@@ -420,6 +443,7 @@ mod tests {
             &client,
             db.conn(),
             "r1",
+            0,
             "delete the old backup db",
             SECRET,
             Some(&forged),
