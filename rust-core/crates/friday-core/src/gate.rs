@@ -499,6 +499,107 @@ pub fn evaluate(request: &MutatingActionRequest) -> GateEvidenceRecord {
     }
 }
 
+// ─── Read-side gate — sensitive-anonymous-read auth (file-56 #389) ────────────
+//
+// The mutating-action `evaluate` above gates WRITES (reserved-action / local-deny /
+// approval). It does NOT gate READS. The DISTINCT read-side rule below closes that gap: a
+// SENSITIVE resource read by an ANONYMOUS / unauthenticated principal is refused
+// (fail-closed `Deny`) — to read it the caller must present a bound (authenticated)
+// principal. A non-sensitive read, or a sensitive read by a bound principal, is `Allow`.
+// Faithful to the oracle's `isUnauthenticatedPublicPrincipal` + the authority-required
+// refusal on sensitive access (`assertBoundPrincipalForOperation`).
+
+/// Sentinel principal ids for the default-public / anonymous principal. Covers the oracle's
+/// `FRIDAY_DEFAULT_PUBLIC_HTTP_PRINCIPAL_ID` (`"public:default"`) and the bare `"public"`
+/// form, compared case-insensitively against the TRIMMED principal id.
+pub const PUBLIC_PRINCIPAL_IDS: &[&str] = &["public", "public:default"];
+
+/// Resource type/id substrings that mark a resource as sensitive (read-side analog of the
+/// oracle's `SENSITIVE_HEADER_PATTERNS`): credentials, auth tokens, cookies, secrets, keys.
+/// Deliberately a SUPERSET — for a fail-closed gate an over-match (over-deny an anonymous
+/// read) is safe, while an under-match (a real secret unflagged) is the dangerous direction,
+/// so common key/token forms (`token`, `jwt`, `ssh`, `id_rsa`, `.pem`, `oauth`, `private`)
+/// are included even at the cost of false positives like `cookie-recipe.md`.
+const SENSITIVE_RESOURCE_MARKERS: &[&str] = &[
+    "authorization",
+    "proxy-authorization",
+    "cookie",
+    "set-cookie",
+    "api-key",
+    "apikey",
+    "auth-token",
+    "auth_token",
+    "token", // bare token / jwt-token / access-token / refresh-token / session-token
+    "jwt",
+    "session-token",
+    "session_token",
+    "csrf",
+    "secret",
+    "credential",
+    "bearer",
+    "password",
+    "passwd",
+    "oauth",
+    "private-key",
+    "private_key",
+    "private", // private.pem / privatekey / private-* (over-match is safe, fail-closed)
+    "id_rsa",
+    "id-rsa",
+    "ssh",
+    ".pem",
+    "keystore",
+    "keychain",
+];
+
+/// True if the actor is an unauthenticated / anonymous principal: no bound `principal_id`,
+/// or an empty / default-public one. Mirrors the oracle `isUnauthenticatedPublicPrincipal`
+/// — a MODEL REDUCTION: the oracle checks three arms (`principalId`/`tokenId`/`userId`); the
+/// Rust `Actor` carries only `principal_id`, so this mirrors that one arm. An `Owner` with no
+/// bound principal is still anonymous (an unbound owner context) — the principal binding, not
+/// the kind, authenticates a sensitive read.
+pub fn is_anonymous_principal(actor: &Actor) -> bool {
+    match actor.principal_id.as_deref() {
+        None => true,
+        Some(p) => {
+            let t = p.trim();
+            t.is_empty()
+                || PUBLIC_PRINCIPAL_IDS
+                    .iter()
+                    .any(|s| t.eq_ignore_ascii_case(s))
+        }
+    }
+}
+
+/// True if `resource` denotes sensitive material (a credential / auth-token / cookie /
+/// secret / key) — substring-matched over a lowercased `resource_type` + `id`.
+pub fn is_sensitive_resource(resource: &Resource) -> bool {
+    let hay = format!(
+        "{} {}",
+        resource.resource_type,
+        resource.id.as_deref().unwrap_or("")
+    )
+    .to_lowercase();
+    SENSITIVE_RESOURCE_MARKERS.iter().any(|m| hay.contains(m))
+}
+
+/// The read-side sensitive-anonymous-read auth gate (file-56 #389), DISTINCT from the
+/// mutating-action `evaluate`. A sensitive resource read by an anonymous principal is a
+/// fail-closed `Deny`; a non-sensitive read, or a sensitive read by a bound (authenticated)
+/// principal, is `Allow`. `resource == None` is treated as non-sensitive (`Allow`).
+pub fn evaluate_sensitive_read(actor: &Actor, resource: Option<&Resource>) -> GateDecision {
+    let sensitive = resource.is_some_and(is_sensitive_resource);
+    if !sensitive {
+        return GateDecision::Allow;
+    }
+    if is_anonymous_principal(actor) {
+        // Anonymous + sensitive → refuse (authority required). The caller may retry with a
+        // bound principal; that is a different, authenticated request → Allow.
+        GateDecision::Deny
+    } else {
+        GateDecision::Allow
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -849,6 +950,114 @@ mod tests {
         assert_ne!(
             canonical_action_bytes(&req),
             canonical_action_bytes(&non_mut)
+        );
+    }
+
+    // ── read-side gate: sensitive-anonymous-read auth (file-56 #389) ────────────
+
+    fn bound(kind: ActorKind, principal: &str) -> Actor {
+        Actor {
+            kind,
+            id: "a1".to_string(),
+            principal_id: Some(principal.to_string()),
+        }
+    }
+    fn res(ty: &str, id: &str) -> Resource {
+        Resource {
+            resource_type: ty.to_string(),
+            id: Some(id.to_string()),
+            digest: None,
+        }
+    }
+
+    #[test]
+    fn is_anonymous_principal_detects_unbound_empty_and_public() {
+        assert!(is_anonymous_principal(&actor(ActorKind::Owner))); // principal_id: None
+        assert!(is_anonymous_principal(&bound(ActorKind::Api, "")));
+        assert!(is_anonymous_principal(&bound(ActorKind::Api, "   ")));
+        assert!(is_anonymous_principal(&bound(ActorKind::Channel, "public")));
+        assert!(is_anonymous_principal(&bound(ActorKind::Channel, "PUBLIC")));
+        // the oracle's full default-public sentinel form, and a trimmed variant
+        assert!(is_anonymous_principal(&bound(
+            ActorKind::Api,
+            "public:default"
+        )));
+        assert!(is_anonymous_principal(&bound(
+            ActorKind::Api,
+            "  public:default  "
+        )));
+        assert!(is_anonymous_principal(&bound(
+            ActorKind::Channel,
+            " public "
+        )));
+        // a real bound principal is NOT anonymous (even an Api/Channel actor); a legit id
+        // merely CONTAINING "public" is not the sentinel (exact-match per arm)
+        assert!(!is_anonymous_principal(&bound(
+            ActorKind::Owner,
+            "user-123"
+        )));
+        assert!(!is_anonymous_principal(&bound(ActorKind::Api, "svc-7")));
+        assert!(!is_anonymous_principal(&bound(
+            ActorKind::Api,
+            "public-user-1"
+        )));
+    }
+
+    #[test]
+    fn is_sensitive_resource_matches_markers_not_ordinary_files() {
+        assert!(is_sensitive_resource(&res("http-header", "Authorization")));
+        assert!(is_sensitive_resource(&res("secret", "deepseek_api_key")));
+        assert!(is_sensitive_resource(&res("file", "session_token.json")));
+        assert!(is_sensitive_resource(&res("cookie", "sid")));
+        assert!(is_sensitive_resource(&res("file", "credentials")));
+        // widened markers (reviewer CONCERNS-2: under-match is the dangerous direction)
+        assert!(is_sensitive_resource(&res("file", "id_rsa")));
+        assert!(is_sensitive_resource(&res("file", "server.pem")));
+        assert!(is_sensitive_resource(&res("file", "deploy.jwt")));
+        assert!(is_sensitive_resource(&res("file", "access_token.txt")));
+        assert!(is_sensitive_resource(&res("file", "known_hosts.ssh")));
+        assert!(is_sensitive_resource(&res("config", "oauth_client.json")));
+        // ordinary resources are NOT sensitive
+        assert!(!is_sensitive_resource(&res("file", "notes.md")));
+        assert!(!is_sensitive_resource(&res("file", "/data/report.txt")));
+    }
+
+    #[test]
+    fn sensitive_read_by_anonymous_is_denied_fail_closed() {
+        let r = res("secret", "deepseek_api_key");
+        // anonymous (unbound) + sensitive → Deny (authority required)
+        assert_eq!(
+            evaluate_sensitive_read(&actor(ActorKind::Owner), Some(&r)),
+            GateDecision::Deny
+        );
+        assert_eq!(
+            evaluate_sensitive_read(&bound(ActorKind::Api, "public"), Some(&r)),
+            GateDecision::Deny
+        );
+        assert_eq!(
+            evaluate_sensitive_read(&bound(ActorKind::Channel, ""), Some(&r)),
+            GateDecision::Deny
+        );
+    }
+
+    #[test]
+    fn sensitive_read_by_bound_principal_allows_nonsensitive_always_allows() {
+        let secret = res("secret", "deepseek_api_key");
+        let ordinary = res("file", "notes.md");
+        // sensitive + bound (authenticated) principal → Allow
+        assert_eq!(
+            evaluate_sensitive_read(&bound(ActorKind::Owner, "user-123"), Some(&secret)),
+            GateDecision::Allow
+        );
+        // non-sensitive read → Allow even for an anonymous principal
+        assert_eq!(
+            evaluate_sensitive_read(&actor(ActorKind::Owner), Some(&ordinary)),
+            GateDecision::Allow
+        );
+        // no resource → treated non-sensitive → Allow
+        assert_eq!(
+            evaluate_sensitive_read(&actor(ActorKind::Owner), None),
+            GateDecision::Allow
         );
     }
 }
