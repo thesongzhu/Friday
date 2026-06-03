@@ -75,6 +75,12 @@ pub mod retry;
 /// narrow; unknown ⇒ fail-closed). Pure decision layer — no execution.
 pub mod planner;
 
+/// Step-5 — the workflow EXECUTION engine (operator-authorized): drives a definition
+/// semi-automatically, auto-advancing gate-safe read-only steps through the SHARED
+/// `gate_dispatch` chokepoint and pausing at the first checkpoint. Built-in tools
+/// only (no skill/plugin exec). Resume-after-approval is a deferred follow-up.
+pub mod workflow_exec;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,
@@ -1210,6 +1216,55 @@ pub struct LoopOutcome {
     pub detail: String,
 }
 
+/// The outcome of dispatching ONE raw tool call through the gate-mandatory path.
+/// This is the SINGLE source of truth for "classify → authorize → execute ONLY on
+/// `Allow`", shared by [`run_loop`] (the model-driven agent loop) and
+/// [`workflow_exec::run_workflow`] (the definition-driven workflow engine), so the
+/// two drivers cannot drift on the security-critical dispatch. The caller records
+/// the outcome (event log / step state / history) in its own vocabulary.
+pub(crate) enum GateDispatch {
+    /// Gate `Allow`ed AND the executor ran successfully.
+    Executed(ToolReceipt),
+    /// Gate `Allow`ed but the executor returned an error (one executor call, not run).
+    ExecError(ExecError),
+    /// Gate withheld the action pending owner approval (`RequiresApproval`). Not executed.
+    RequiresApproval,
+    /// Gate `Deny`. Not executed; carries the reason.
+    Denied(String),
+    /// The action is not a registered tool — fail-closed; never executed.
+    Unregistered(String),
+}
+
+/// Classify → authorize → execute-ONLY-on-`Allow`, the gate-mandatory dispatch for a
+/// single raw tool call. The executor is invoked EXACTLY once, and ONLY on a gate
+/// `Allow`; `RequiresApproval`/`Deny`/unregistered never reach the executor. Records
+/// nothing itself (the caller does) — this is purely the security-critical decision +
+/// execution, so [`run_loop`] and [`workflow_exec::run_workflow`] share ONE copy.
+pub(crate) fn gate_dispatch(
+    conn: &Connection,
+    executor: &dyn ToolExecutor,
+    raw: &RawToolCall,
+    secret: &[u8],
+    approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
+    now_ms: i64,
+) -> Result<GateDispatch, StorageError> {
+    let request = match build_request(raw) {
+        Ok(request) => request,
+        Err(ToolError::UnknownTool(action)) => return Ok(GateDispatch::Unregistered(action)),
+    };
+    let approval = approve(&request);
+    let record = authorize_mutating_action(conn, &request, approval.as_ref(), secret, now_ms)?;
+    Ok(match record.decision {
+        // Execute ONLY on Allow — the single chokepoint both drivers rely on.
+        GateDecision::Allow => match executor.execute(&raw.action, &raw.params) {
+            Ok(receipt) => GateDispatch::Executed(receipt),
+            Err(e) => GateDispatch::ExecError(e),
+        },
+        GateDecision::RequiresApproval => GateDispatch::RequiresApproval,
+        GateDecision::Deny => GateDispatch::Denied(record.reason),
+    })
+}
+
 /// Drive a MULTI-TURN agent loop: repeatedly ask the model for the next step (with
 /// conversation history), and for each proposed tool run the SAME gate-mandatory
 /// dispatch as [`run_one_turn_with_executor`] (authorize → execute only on `Allow` →
@@ -1308,9 +1363,10 @@ pub fn run_loop(
             AgentStep::Tool(raw) => raw,
         };
 
-        let request = match build_request(&raw) {
-            Ok(request) => request,
-            Err(ToolError::UnknownTool(action)) => {
+        // Gate-mandatory dispatch via the SHARED chokepoint (same as run_workflow):
+        // classify → authorize → execute ONLY on Allow. run_loop owns the recording.
+        match gate_dispatch(conn, executor, &raw, secret, approve, now_ms)? {
+            GateDispatch::Unregistered(action) => {
                 agent_run::record_event(
                     conn,
                     &ev("outcome"),
@@ -1326,14 +1382,8 @@ pub fn run_loop(
                     detail: format!("unregistered_tool:{action}"),
                 });
             }
-        };
-
-        let approval = approve(&request);
-        let record = authorize_mutating_action(conn, &request, approval.as_ref(), secret, now_ms)?;
-
-        match record.decision {
-            GateDecision::Allow => match executor.execute(&raw.action, &raw.params) {
-                Ok(receipt) => {
+            GateDispatch::Executed(receipt) => {
+                {
                     // Outcome event + hash-chained receipt in ONE tx (task #30): the
                     // event log can't get ahead of the ledger on a partial commit.
                     let tx = conn.unchecked_transaction()?;
@@ -1360,7 +1410,9 @@ pub fn run_loop(
                         outcome: format!("executed: {}", receipt.summary),
                     });
                 }
-                Err(e) => {
+            }
+            GateDispatch::ExecError(e) => {
+                {
                     // A tool error is informative, not fatal: thread it back and let the
                     // model adapt on the next turn (still bounded by max_turns). The error
                     // event + an `exec_failed` receipt are written in ONE tx so a
@@ -1389,8 +1441,8 @@ pub fn run_loop(
                         outcome: format!("exec_error: {err_text}"),
                     });
                 }
-            },
-            GateDecision::RequiresApproval => {
+            }
+            GateDispatch::RequiresApproval => {
                 agent_run::record_event(
                     conn,
                     &ev("outcome"),
@@ -1406,12 +1458,12 @@ pub fn run_loop(
                     detail: format!("requires_approval:{}", raw.action),
                 });
             }
-            GateDecision::Deny => {
+            GateDispatch::Denied(reason) => {
                 agent_run::record_event(
                     conn,
                     &ev("outcome"),
                     run_id,
-                    &format!("tool.blocked:deny:{}", record.reason),
+                    &format!("tool.blocked:deny:{reason}"),
                     now_ms,
                 )?;
                 return Ok(LoopOutcome {
@@ -1419,7 +1471,7 @@ pub fn run_loop(
                     turns: turn_index + 1,
                     executed_tools,
                     final_message: None,
-                    detail: format!("denied:{}", record.reason),
+                    detail: format!("denied:{reason}"),
                 });
             }
         }
