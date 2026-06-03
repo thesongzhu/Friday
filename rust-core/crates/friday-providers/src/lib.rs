@@ -19,6 +19,7 @@
 use std::process::Command;
 use thiserror::Error;
 
+pub mod codex_appserver;
 pub mod session;
 pub use session::{send_to_provider, CliSession, MockSession, SessionOutcome, SessionRunner};
 
