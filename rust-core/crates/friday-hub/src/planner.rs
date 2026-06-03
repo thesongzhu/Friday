@@ -18,6 +18,16 @@
 //! **CLOSED** to a checkpoint. The model contributes only param strings; it can
 //! never lower `mutating` or the risk floor (UNW-001/UNW-002 discipline).
 //!
+//! ## `AutoAdvance` is a PREVIEW, not an authorization
+//! The planner is a decision/preview layer; it does NOT authorize. When the
+//! (deferred) executor runs a step it MUST still go through the full UNW-001 gate
+//! (`authorize_mutating_action`), which additionally applies the principal/claim
+//! escalations the planner does not reproduce (e.g. sensitive-anonymous-read `#389`,
+//! `derive_risk` local-claim raises). So any planner-vs-gate divergence is
+//! fail-SAFE — the gate can only ADD approval at execution, never remove it — and a
+//! plan `AutoAdvance` must never be treated as a grant that lets the executor skip
+//! the gate.
+//!
 //! ## Anti-speculation
 //! The definition models ONLY what the planner consumes: steps + each step's
 //! classifiable action/params + the (narrow-only) checkpoint flag + an
