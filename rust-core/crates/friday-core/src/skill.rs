@@ -22,6 +22,16 @@
 //! route through the UNW-001 mutating-action gate + ToolExecutor with a receipt.
 //! Until that exists, a `Runnable` skill is "reviewed and eligible to run", not
 //! "has run" — the promotion proof is NOT closed by reaching this state.
+//!
+//! **Where the no-skip invariant holds (future-wiring constraint):** the ladder
+//! guarantee is a property of [`SkillState::try_transition`]/[`SkillState::next_rung`],
+//! NOT of the type — like [`crate::WorkflowRunState`], the variants are public and so
+//! `Runnable` is directly constructible. There is no caller, no executor, and no
+//! deserialization/FFI reconstruction path today (nothing to harden yet). When that
+//! wiring lands, a skill's state MUST originate at `Candidate` and advance ONLY
+//! through the guarded API (a persisted/rehydrated state is data the writer is
+//! responsible for having produced via the ladder) — direct assignment to a later
+//! rung would bypass the no-skip review and must not be introduced.
 
 use crate::error::CoreError;
 
