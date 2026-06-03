@@ -23,6 +23,11 @@ pub enum StorageError {
     #[error("unsupported for this profile: {0}")]
     Unsupported(String),
 
+    /// A write/update targeted a row that does not exist (e.g. marking an unknown
+    /// activity id). Surfaced rather than treated as a silent success.
+    #[error("not found: {0}")]
+    NotFound(String),
+
     /// Pairing proof did not authenticate the device's public key against the
     /// out-of-band QR secret (gate 21 §4.2; blocks active-MITM key substitution).
     #[error("pairing denied: invalid pairing proof for device {0}")]

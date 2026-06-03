@@ -192,10 +192,21 @@ impl<T: friday_deepseek::Transport> AgentLlmClient for DeepSeekAgentLlmClient<T>
     }
 }
 
+/// The process-wide DEFAULT (built-in) tool registry, built once and reused. The free
+/// `trusted_classify`/`build_tool_prompt` chokepoints call this on every turn; caching
+/// avoids rebuilding the `BTreeMap` + its ~10 `String`s per call (the UNW-002 reviewer
+/// perf NIT). The registry is immutable after init, so a shared `&'static` is safe; a
+/// CUSTOM registry (tool packs) is still constructed per-caller via [`ToolRegistry::default`]
+/// + [`ToolRegistry::register`].
+fn default_registry() -> &'static ToolRegistry {
+    static DEFAULT: std::sync::OnceLock<ToolRegistry> = std::sync::OnceLock::new();
+    DEFAULT.get_or_init(ToolRegistry::default)
+}
+
 /// Build the tool-call prompt for the DEFAULT (built-in) tool registry. (For a custom
 /// tool set — tool packs / skills, UNW-002 — use [`build_tool_prompt_with`].)
 pub fn build_tool_prompt(task: &str) -> String {
-    build_tool_prompt_with(task, &ToolRegistry::default())
+    build_tool_prompt_with(task, default_registry())
 }
 
 /// Build the tool-call prompt: the `registry`'s tool menu (so the advertised tools and
@@ -518,7 +529,7 @@ pub fn trusted_classify(
     action: &str,
     params: &[(String, String)],
 ) -> Result<Classified, ToolError> {
-    ToolRegistry::default().classify(action, params)
+    default_registry().classify(action, params)
 }
 
 /// Build the canonical [`MutatingActionRequest`] for a raw tool call. Deterministic:
@@ -2547,6 +2558,36 @@ mod ask_coupling_tests {
         assert!(matches!(err, RecordAskError::Route(_)), "got {err}");
         // No half-billed row / orphan activity / audit on a route failure.
         assert_eq!(db.count("token_ledger").unwrap(), 0);
+        assert_eq!(db.count("activity_item").unwrap(), 0);
+        assert_eq!(
+            friday_storage::audit::verify_audit_chain(db.conn()).unwrap(),
+            0
+        );
+    }
+
+    /// Token-safety (audit 10A): model DISCOVERY (the `GET /models` round-trip) is NOT
+    /// billed. `record_friday_ask`'s one-row test proves discovery added no row *alongside*
+    /// a chat; this isolates discovery ON ITS OWN — a `discover_models()` call with NO
+    /// chat leaves the token ledger (and the whole billing surface) empty. It is unbillable
+    /// by construction: `discover_models` takes no `&Db` and never reaches
+    /// `record_model_call`, so only an actual completion (`chat`) can ever write a row.
+    #[test]
+    fn model_discovery_get_alone_is_not_billed() {
+        let db = Db::open_hub(&tmp("discover")).unwrap();
+        let client =
+            friday_deepseek::DeepSeekClient::with_transport(MockTransport::new(false), "k".into());
+        // The GET /models round-trip happens (returns the live model id)…
+        let models = client.discover_models().unwrap();
+        assert!(
+            models.iter().any(|m| m == "deepseek-v4-flash"),
+            "discovery returned the model, so the GET really ran"
+        );
+        // …yet nothing is billed: no ledger row, no activity receipt, no audit entry.
+        assert_eq!(
+            db.count("token_ledger").unwrap(),
+            0,
+            "model discovery is a free GET — it must never write a token_ledger row"
+        );
         assert_eq!(db.count("activity_item").unwrap(), 0);
         assert_eq!(
             friday_storage::audit::verify_audit_chain(db.conn()).unwrap(),
