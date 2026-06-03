@@ -69,6 +69,12 @@ pub mod cognition;
 /// No silent fallback (a retry is the SAME route, never a reroute); bounded.
 pub mod retry;
 
+/// Step-5 (workflow/skills substrate) — the workflow PLANNER + minimal definition
+/// type. Decides per-step auto-advance vs checkpoint, ANCHORED to the trusted
+/// classifier (mutating/high-risk ⇒ checkpoint, the gate floor; template may only
+/// narrow; unknown ⇒ fail-closed). Pure decision layer — no execution.
+pub mod planner;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,
