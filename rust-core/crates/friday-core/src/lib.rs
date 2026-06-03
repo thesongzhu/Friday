@@ -22,6 +22,7 @@ mod identity;
 mod ledger;
 mod memory;
 mod offline;
+mod pairing;
 mod pathsafe;
 mod planning;
 mod provider_session;
@@ -41,6 +42,10 @@ pub use memory::{
     RedactedPassportItem,
 };
 pub use offline::OfflineQueueState;
+pub use pairing::{
+    FridayPairPayload, FridayPairProjection, PairAuthority, PairTransportHint, PairTransportKind,
+    PairingSecret, TrustedDeviceProjection, CURRENT_PAIR_PAYLOAD_VERSION,
+};
 pub use pathsafe::{contained, PathError};
 pub use planning::{classify_kind, PlanState, PlanningKind};
 pub use provider_session::{

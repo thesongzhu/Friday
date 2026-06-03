@@ -12,6 +12,7 @@
 //! the Unit-4 transport sub-slice (this crate is the contract they carry).
 
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use thiserror::Error;
 
 /// Highest wire schema version this build speaks.
@@ -47,6 +48,141 @@ impl From<friday_core::ProviderSessionProjection> for ProviderSessionProjectionW
             last_provider_seen_at: value.last_provider_seen_at,
             last_friday_event_id: value.last_friday_event_id,
             truth_label: value.truth_label,
+        }
+    }
+}
+
+/// Structured QR payload for Hub/device pairing. This is the JSON that can be
+/// encoded into a QR code. It contains a short-lived Friday pairing secret, but
+/// never provider OAuth/API/session material.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct FridayPairPayloadWire {
+    pub v: u16,
+    pub hub_id: String,
+    pub pairing_id: String,
+    pub pairing_secret: String,
+    pub display_name: String,
+    pub transport_hints: Vec<PairTransportHintWire>,
+    pub expires_at: i64,
+    pub capabilities_hint: Vec<String>,
+}
+
+impl fmt::Debug for FridayPairPayloadWire {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FridayPairPayloadWire")
+            .field("v", &self.v)
+            .field("hub_id", &self.hub_id)
+            .field("pairing_id", &self.pairing_id)
+            .field("pairing_secret", &"<redacted>")
+            .field("display_name", &self.display_name)
+            .field("transport_hints", &self.transport_hints)
+            .field("expires_at", &self.expires_at)
+            .field("capabilities_hint", &self.capabilities_hint)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PairTransportHintWire {
+    pub kind: String,
+    pub endpoint: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FridayPairProjectionWire {
+    pub v: u16,
+    pub hub_id: String,
+    pub pairing_id: String,
+    pub display_name: String,
+    pub transport_labels: Vec<String>,
+    pub expires_at: i64,
+    pub capabilities_hint: Vec<String>,
+}
+
+impl FridayPairPayloadWire {
+    pub fn encode_qr_json(&self) -> Result<String, ProtocolError> {
+        serde_json::to_string(self).map_err(|e| ProtocolError::Encode(e.to_string()))
+    }
+
+    pub fn decode_qr_json(value: &str) -> Result<Self, ProtocolError> {
+        serde_json::from_str(value).map_err(|e| ProtocolError::Decode(e.to_string()))
+    }
+
+    pub fn into_core(self) -> Result<friday_core::FridayPairPayload, ProtocolError> {
+        let mut hints = Vec::with_capacity(self.transport_hints.len());
+        for hint in self.transport_hints {
+            let kind = friday_core::PairTransportKind::parse(&hint.kind).ok_or_else(|| {
+                ProtocolError::Decode(format!("unknown pair transport kind '{}'", hint.kind))
+            })?;
+            hints.push(
+                friday_core::PairTransportHint::new(kind, hint.endpoint, hint.label)
+                    .map_err(|e| ProtocolError::Decode(e.to_string()))?,
+            );
+        }
+        let mut authorities = Vec::with_capacity(self.capabilities_hint.len());
+        for authority in self.capabilities_hint {
+            authorities.push(
+                friday_core::PairAuthority::parse(&authority).ok_or_else(|| {
+                    ProtocolError::Decode(format!("unknown pair authority '{authority}'"))
+                })?,
+            );
+        }
+        friday_core::FridayPairPayload::new(
+            self.v,
+            self.hub_id,
+            self.pairing_id,
+            self.pairing_secret,
+            self.display_name,
+            hints,
+            self.expires_at,
+            authorities,
+        )
+        .map_err(|e| ProtocolError::Decode(e.to_string()))
+    }
+}
+
+impl From<&friday_core::FridayPairPayload> for FridayPairPayloadWire {
+    fn from(value: &friday_core::FridayPairPayload) -> Self {
+        Self {
+            v: value.v,
+            hub_id: value.hub_id.clone(),
+            pairing_id: value.pairing_id.clone(),
+            pairing_secret: value.pairing_secret.expose_for_qr().to_string(),
+            display_name: value.display_name.clone(),
+            transport_hints: value
+                .transport_hints
+                .iter()
+                .map(|hint| PairTransportHintWire {
+                    kind: hint.kind.as_str().to_string(),
+                    endpoint: hint.endpoint.clone(),
+                    label: hint.label.clone(),
+                })
+                .collect(),
+            expires_at: value.expires_at,
+            capabilities_hint: value
+                .capabilities_hint
+                .iter()
+                .map(|authority| authority.as_str().to_string())
+                .collect(),
+        }
+    }
+}
+
+impl From<friday_core::FridayPairProjection> for FridayPairProjectionWire {
+    fn from(value: friday_core::FridayPairProjection) -> Self {
+        Self {
+            v: value.v,
+            hub_id: value.hub_id,
+            pairing_id: value.pairing_id,
+            display_name: value.display_name,
+            transport_labels: value.transport_labels,
+            expires_at: value.expires_at,
+            capabilities_hint: value
+                .capabilities_hint
+                .iter()
+                .map(|authority| authority.as_str().to_string())
+                .collect(),
         }
     }
 }
@@ -436,5 +572,81 @@ mod tests {
                 "provider session wire projection leaked {forbidden}: {json}"
             );
         }
+    }
+
+    #[test]
+    fn friday_pair_payload_wire_round_trips_and_projection_redacts_secret() {
+        let payload = friday_core::FridayPairPayload::new(
+            friday_core::CURRENT_PAIR_PAYLOAD_VERSION,
+            "hub-mac-mini",
+            "pair-1",
+            "friday-pairing-secret-32-bytes",
+            "Jarvis Mac mini",
+            vec![friday_core::PairTransportHint::new(
+                friday_core::PairTransportKind::LanWebSocket,
+                "ws://192.168.1.8:4477",
+                "LAN WebSocket",
+            )
+            .unwrap()],
+            2000,
+            vec![
+                friday_core::PairAuthority::StatusOnly,
+                friday_core::PairAuthority::Approvals,
+            ],
+        )
+        .unwrap();
+        let wire = FridayPairPayloadWire::from(&payload);
+        let debug = format!("{wire:?}");
+        assert!(debug.contains("<redacted>"));
+        assert!(!debug.contains(payload.pairing_secret.expose_for_qr()));
+
+        let json = wire.encode_qr_json().unwrap();
+        assert!(
+            json.contains(payload.pairing_secret.expose_for_qr()),
+            "QR JSON must carry the Friday-scoped pairing secret"
+        );
+        let decoded = FridayPairPayloadWire::decode_qr_json(&json)
+            .unwrap()
+            .into_core()
+            .unwrap();
+        decoded.validate_at(1000).unwrap();
+
+        let projection: FridayPairProjectionWire = decoded.redacted_projection().into();
+        let projection_json = serde_json::to_string(&projection).unwrap();
+        assert!(!projection_json.contains(payload.pairing_secret.expose_for_qr()));
+        assert!(projection_json.contains("LAN WebSocket"));
+    }
+
+    #[test]
+    fn friday_pair_payload_wire_rejects_unknown_authority_and_provider_secret_hints() {
+        let raw = r#"{
+            "v":1,
+            "hub_id":"hub",
+            "pairing_id":"pair",
+            "pairing_secret":"friday-pairing-secret-32-bytes",
+            "display_name":"Hub",
+            "transport_hints":[{"kind":"lan_websocket","endpoint":"ws://127.0.0.1:4477?api_key=abc","label":"LAN"}],
+            "expires_at":2000,
+            "capabilities_hint":["status_only"]
+        }"#;
+        assert!(FridayPairPayloadWire::decode_qr_json(raw)
+            .unwrap()
+            .into_core()
+            .is_err());
+
+        let raw = r#"{
+            "v":1,
+            "hub_id":"hub",
+            "pairing_id":"pair",
+            "pairing_secret":"friday-pairing-secret-32-bytes",
+            "display_name":"Hub",
+            "transport_hints":[{"kind":"lan_websocket","endpoint":"ws://127.0.0.1:4477","label":"LAN"}],
+            "expires_at":2000,
+            "capabilities_hint":["provider_oauth_admin"]
+        }"#;
+        assert!(FridayPairPayloadWire::decode_qr_json(raw)
+            .unwrap()
+            .into_core()
+            .is_err());
     }
 }

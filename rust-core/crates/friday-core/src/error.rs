@@ -19,4 +19,9 @@ pub enum CoreError {
     /// sensitive item) — `07` §10 / `02` §7.
     #[error("blocked transfer: {0}")]
     BlockedTransfer(String),
+
+    /// A QR/local-host pairing payload failed validation. Pairing is the
+    /// Friday Hub/device bootstrap, not provider credential transfer.
+    #[error("invalid pairing payload: {0}")]
+    InvalidPairPayload(String),
 }

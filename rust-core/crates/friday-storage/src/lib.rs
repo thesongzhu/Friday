@@ -31,8 +31,9 @@ pub use migrate::{
 pub use schema::{hub_migrations, phone_migrations, HUB_ONLY_TABLES, PHONE_ONLY_TABLES};
 
 use friday_core::{
-    ActivityState, ActivityType, DeviceIdentity, LedgerEntry, ProviderSessionEvent,
-    ProviderSessionLink, ProviderSessionProjection, SessionState,
+    ActivityState, ActivityType, DeviceIdentity, FridayPairPayload, LedgerEntry,
+    ProviderSessionEvent, ProviderSessionLink, ProviderSessionProjection, SessionState,
+    TrustedDeviceProjection,
 };
 use rusqlite::Connection;
 
@@ -272,6 +273,41 @@ impl Db {
             ));
         }
         provider_session::list_events(&self.conn, friday_session_id)
+    }
+
+    pub fn list_trusted_device_projections(&self) -> Result<Vec<TrustedDeviceProjection>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "trusted device projections are Hub-only".into(),
+            ));
+        }
+        pairing::list_trusted_device_projections(&self.conn)
+    }
+
+    pub fn complete_qr_pairing(
+        &mut self,
+        payload: &FridayPairPayload,
+        device_id: &str,
+        device_pubkey: &[u8],
+        pairing_proof: &[u8],
+        paired_at: i64,
+        audit_id: &str,
+    ) -> Result<()> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "QR pairing completion is Hub-only".into(),
+            ));
+        }
+        payload.validate_at(paired_at)?;
+        pairing::pair_device(
+            &mut self.conn,
+            payload.pairing_secret.expose_for_qr().as_bytes(),
+            device_id,
+            device_pubkey,
+            pairing_proof,
+            paired_at,
+            audit_id,
+        )
     }
 
     /// Mark an activity item `Done` (a real persisted state write). Returns
