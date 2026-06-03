@@ -521,9 +521,14 @@ mod tests {
         // DeepSeek available; Codex registered but unavailable. With NO preference
         // the single eligible provider is *selected* (allowed) — this is not a
         // reroute, because nothing else was requested.
+        //
+        // Codex is given the WINNING priority (0, vs deepseek's 1) so the ONLY
+        // reason it loses is the dispatchability filter: if availability filtering
+        // were removed, codex would win on priority and this assertion would fail.
+        // That makes the test discriminate the availability logic, not priority.
         let mut r = RouteRegistry::new();
-        r.register(route("deepseek", 0, ModelSize::Small, &[Capability::Text]));
-        let mut codex = route("codex", 1, ModelSize::Large, &[Capability::Text]);
+        r.register(route("deepseek", 1, ModelSize::Small, &[Capability::Text]));
+        let mut codex = route("codex", 0, ModelSize::Large, &[Capability::Text]);
         codex.available = false;
         codex.validation_ok = false;
         r.register(codex);
@@ -561,6 +566,36 @@ mod tests {
             ..RouteRequest::any()
         };
         assert_eq!(select_route(&r, &req).unwrap().provider_id, "other");
+    }
+
+    #[test]
+    fn pinned_provider_failing_constraints_errors_without_reroute() {
+        // The security-critical no-fallback case: a pinned provider that IS
+        // dispatchable but cannot satisfy the request's constraints must error —
+        // NEVER reroute to another provider that *could* satisfy them. Here
+        // deepseek is pinned (Text only) but Vision is required, while a separate
+        // dispatchable "vision-cap" route DOES support Vision. The contract: the
+        // request pinned deepseek, so the answer is NoEligibleRoute, not vision-cap.
+        // (A future edit turning the pinned-path `return Err` into a fall-through
+        // would silently reroute to vision-cap and every OTHER test would stay
+        // green — this test is the guard against exactly that regression.)
+        let mut r = RouteRegistry::new();
+        r.register(route("deepseek", 0, ModelSize::Small, &[Capability::Text]));
+        r.register(route(
+            "vision-cap",
+            1,
+            ModelSize::Large,
+            &[Capability::Text, Capability::Vision],
+        ));
+        let req = RouteRequest {
+            preferred_provider: Some("deepseek".to_string()),
+            required_capabilities: vec![Capability::Vision],
+            ..RouteRequest::any()
+        };
+        match select_route(&r, &req) {
+            Err(RouteError::NoEligibleRoute { .. }) => {}
+            other => panic!("pinned-but-incapable must NOT reroute; got {other:?}"),
+        }
     }
 
     #[test]
