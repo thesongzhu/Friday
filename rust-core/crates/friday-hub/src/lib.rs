@@ -108,6 +108,13 @@ pub mod provider_workspace;
 /// in CODEX-LIVE-001 / CLAUDE-MIRROR-001.
 pub mod provider_dispatch;
 
+/// SMOOTH-001 — provider session timeline + reconnect harness. One Friday-canonical
+/// timeline per session with strictly-monotonic seq + revision-on-every-mutation, a
+/// PendingAction state machine where Hub-ack is never provider-completion, dedup by
+/// client_msg_id, and a reconnect that returns a bounded delta when the cursor is retained
+/// and a snapshot only when it is behind retention (no full-history reload by default).
+pub mod provider_timeline;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,
