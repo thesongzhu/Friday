@@ -8,6 +8,11 @@
 
 use friday_core::{ProviderSessionEvent, SyncMode};
 use serde_json::Value;
+use std::io::{BufRead, BufReader};
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 use thiserror::Error;
 
 pub const CLAUDE_REMOTE_CONTROL_CANDIDATE_SYNC_MODE: &str =
@@ -21,6 +26,9 @@ pub enum ClaudeControlError {
 
     #[error("claude stream event missing required metadata: {code}")]
     MissingMetadata { code: &'static str },
+
+    #[error("claude process error: {code}")]
+    Process { code: &'static str },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -253,6 +261,129 @@ fn optional_string(value: &Value, field: &str) -> Option<String> {
         .get(field)
         .and_then(Value::as_str)
         .map(ToString::to_string)
+}
+
+/// The result of a live Claude local-mirror run (CLAUDE-MIRROR-001). Carries ONLY the
+/// metadata-only [`ProviderSessionEvent`]s the mapper produced + counts — never raw
+/// transcript text (the mapper enforces `redaction_level = metadata_only`).
+#[derive(Debug, Clone)]
+pub struct ClaudeMirrorRun {
+    pub events: Vec<ProviderSessionEvent>,
+    /// Stream-json lines the mapper did not recognize (counted, not inlined).
+    pub unmapped_count: usize,
+    pub session_id: Option<String>,
+}
+
+/// LIVE Claude LOCAL MIRROR (CLAUDE-MIRROR-001). Drives the Claude CLI's
+/// `--print --output-format stream-json` path and folds the real event stream through
+/// [`map_stream_json_to_provider_event`] into Friday-owned, metadata-only events. The
+/// lane is ALWAYS `friday_local_mirror` ([`CLAUDE_STREAM_JSON_SYNC_MODE`]) — Friday owns
+/// the transcript; this is NOT Claude Remote Control and NOT provider-native sync (those
+/// stay operator-gated). Hub-side; no provider secret is read here (the CLI uses the
+/// operator's local Claude credentials).
+pub struct LocalClaudeMirror;
+
+impl LocalClaudeMirror {
+    /// Classify the LIVE Claude CLI surface by parsing `<program> --help`. The local
+    /// stream-json mirror surface is read from the main help; remote-control is left
+    /// unproven here (operator-gated) unless its help is supplied separately.
+    pub fn capabilities(program: &str) -> Result<ClaudeHelpCapabilities, ClaudeControlError> {
+        let main_help = Self::run_help(program, &["--help"])?;
+        // Remote-control help is not sourced here; CLAUDE-MIRROR-001 proves the LOCAL
+        // mirror only. Passing the main help keeps remote-control classification honest
+        // (it stays operator-gated / unproven without a dedicated remote-control proof).
+        Ok(ClaudeHelpCapabilities::parse(&main_help, &main_help))
+    }
+
+    fn run_help(program: &str, args: &[&str]) -> Result<String, ClaudeControlError> {
+        let out = Command::new(program)
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|_| ClaudeControlError::Process { code: "help-spawn" })?;
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    /// Run ONE `--print --output-format stream-json` turn and mirror its event stream into
+    /// metadata-only [`ProviderSessionEvent`]s. This is a real model turn (the stream-json
+    /// path inherently runs a turn); provider live sends are operator-authorized. A
+    /// `--print` run exits after the turn, so stdout EOFs naturally; a pid watchdog kills
+    /// the child if it hangs, so a blocking read can never freeze the caller.
+    pub fn mirror_stream_json(
+        program: &str,
+        prompt: &str,
+        context: &ClaudeMirrorContext,
+        observed_at: i64,
+        timeout: Duration,
+    ) -> Result<ClaudeMirrorRun, ClaudeControlError> {
+        let mut child = Command::new(program)
+            .args([
+                "-p",
+                prompt,
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--allowedTools",
+                "",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| ClaudeControlError::Process {
+                code: "mirror-spawn",
+            })?;
+        let stdout = child.stdout.take().ok_or(ClaudeControlError::Process {
+            code: "mirror-stdout",
+        })?;
+
+        let pid = child.id();
+        let (done_tx, done_rx) = mpsc::channel::<()>();
+        let watchdog = thread::spawn(move || {
+            if done_rx.recv_timeout(timeout).is_err() {
+                let _ = Command::new("kill").arg("-9").arg(pid.to_string()).status();
+            }
+        });
+
+        let mut events = Vec::new();
+        let mut unmapped_count = 0usize;
+        let mut session_id = None;
+        let mut seq = 0u64;
+        for line in BufReader::new(stdout).lines() {
+            let line = match line {
+                Ok(l) => l,
+                Err(_) => break,
+            };
+            let trimmed = line.trim();
+            if !trimmed.starts_with('{') {
+                continue;
+            }
+            let value: Value = match serde_json::from_str(trimmed) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            if session_id.is_none() {
+                session_id = optional_string(&value, "session_id");
+            }
+            match map_stream_json_to_provider_event(context, &value, observed_at, seq) {
+                Ok(Some(event)) => {
+                    events.push(event);
+                    seq += 1;
+                }
+                Ok(None) => {} // ping / heartbeat
+                Err(_) => unmapped_count += 1,
+            }
+        }
+
+        let _ = done_tx.send(());
+        let _ = watchdog.join();
+        let _ = child.wait();
+        Ok(ClaudeMirrorRun {
+            events,
+            unmapped_count,
+            session_id,
+        })
+    }
 }
 
 #[cfg(test)]
