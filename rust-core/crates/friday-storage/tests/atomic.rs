@@ -93,3 +93,38 @@ fn record_model_call_rejected_on_phone_profile() {
     let res = db.record_model_call(&ledger("l1"), &activity("a1"), &audit_event("au1"));
     assert!(matches!(res, Err(StorageError::Unsupported(_))));
 }
+
+#[test]
+fn record_event_writes_activity_and_audit_then_replay_writes_nothing() {
+    let p = temp_db_path("event-replay");
+    let mut db = Db::open_hub(&p).unwrap();
+
+    let recorded = db
+        .record_event(&activity("evt-1"), &audit_event("evt-1"))
+        .unwrap();
+    assert_eq!(recorded, friday_storage::RecordEventOutcome::Recorded);
+    assert_eq!(db.count("activity_item").unwrap(), 1);
+    assert_eq!(db.count("audit_ledger").unwrap(), 1);
+    assert_eq!(audit::verify_audit_chain(db.conn()).unwrap(), 1);
+
+    let replayed = db
+        .record_event(&activity("evt-1"), &audit_event("evt-1-replay"))
+        .unwrap();
+    assert_eq!(replayed, friday_storage::RecordEventOutcome::Duplicate);
+    assert_eq!(db.count("activity_item").unwrap(), 1);
+    assert_eq!(
+        db.count("audit_ledger").unwrap(),
+        1,
+        "replay must not append a second audit row"
+    );
+    assert_eq!(audit::verify_audit_chain(db.conn()).unwrap(), 1);
+}
+
+#[test]
+fn record_event_is_hub_only() {
+    let p = temp_db_path("event-phone");
+    let mut db = Db::open_phone(&p).unwrap();
+    let res = db.record_event(&activity("evt-1"), &audit_event("evt-1"));
+    assert!(matches!(res, Err(StorageError::Unsupported(_))));
+    assert_eq!(db.count("activity_item").unwrap(), 0);
+}

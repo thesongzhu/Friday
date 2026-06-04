@@ -9,6 +9,8 @@ pub enum ActivityType {
     AskReceipt,
     OfflineQueued,
     OfflineResult,
+    /// A verified channel-origin inbound recorded as a Hub event (Channels track A-PR4).
+    ChannelInbound,
 }
 
 impl ActivityType {
@@ -18,6 +20,7 @@ impl ActivityType {
             ActivityType::AskReceipt => "ask_receipt",
             ActivityType::OfflineQueued => "offline_queued",
             ActivityType::OfflineResult => "offline_result",
+            ActivityType::ChannelInbound => "channel_inbound",
         }
     }
 }
@@ -79,6 +82,7 @@ mod tests {
     fn type_strings() {
         assert_eq!(ActivityType::AskReceipt.as_str(), "ask_receipt");
         assert_eq!(ActivityType::OfflineResult.as_str(), "offline_result");
+        assert_eq!(ActivityType::ChannelInbound.as_str(), "channel_inbound");
     }
 
     #[test]
