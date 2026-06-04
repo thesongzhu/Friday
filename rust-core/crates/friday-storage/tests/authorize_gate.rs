@@ -229,3 +229,20 @@ fn base_allow_and_base_deny_bypass_approval_and_replay_store() {
 
     assert_eq!(consumed_count(&db), 0);
 }
+
+#[test]
+fn channel_reserved_approval_action_is_hard_denied_through_authorize() {
+    // A-PR4 end-to-end through the real wired authorize path: a Channel actor (untrusted
+    // external inbound) attempting a reserved approval action is a hard Deny regardless of
+    // any presented approval, with the distinct channel reason, and never touches the
+    // replay store.
+    let db = Db::open_hub(&temp_db_path("authz-channel-reserved")).unwrap();
+    let mut channel = mutating_req();
+    channel.action = "approve".to_string();
+    channel.actor.kind = ActorKind::Channel;
+    let approval = signed_approval(&channel, Some(FUTURE));
+    let r = authorize_mutating_action(db.conn(), &channel, Some(&approval), SECRET, NOW).unwrap();
+    assert_eq!(r.decision, GateDecision::Deny);
+    assert_eq!(r.reason, "channel_cannot_execute_reserved_approval_action");
+    assert_eq!(consumed_count(&db), 0);
+}
