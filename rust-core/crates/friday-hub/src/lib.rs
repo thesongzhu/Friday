@@ -54,6 +54,13 @@ pub mod capability;
 /// DECISION note (to be enforced in A-PR4 before any channel action is dispatched).
 pub mod channels;
 
+/// Phase-1 runtime bridge — headless Hub serve-loop. Composes the existing mechanisms
+/// (pairing session, DeepSeek route via `record_friday_ask`, gate/ledger/audit/activity)
+/// into a local headless runtime a future UI can consume: connect/status/refresh/list/
+/// reconnect are pure (zero model calls); only `AskFridayRequest` reaches DeepSeek; the
+/// outbound projection is refs-only. No UI.
+pub mod hub_server;
+
 /// Step-3 — observability/diagnostics (small/medium truth-labeled): composes the wired
 /// substrate (token_ledger / audit chain / agent_run) into a [`diagnostics::DiagnosticsSnapshot`]
 /// with no fake-zero, same-build (anti-stale) stamping, surfaced chain integrity, and
