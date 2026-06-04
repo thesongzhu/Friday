@@ -169,6 +169,64 @@ pub struct ProviderWorkspaceActionResultWire {
     pub dispatch_ref: Option<String>,
 }
 
+/// One provider-session timeline event on the wire (metadata-only). It carries ONLY
+/// refs (`body_ref`/`provider_event_id`) — never raw transcript text. This is a
+/// structural guarantee: there is no field on this type that can hold a transcript body.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderTimelineEventWire {
+    pub seq: u64,
+    pub revision: u64,
+    pub event_kind: String,
+    pub actor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_event_id: Option<String>,
+}
+
+/// A Friday-originated pending action on the wire. `state` is the lifecycle label and
+/// `terminal` is whether that state is terminal — together they preserve the honesty
+/// invariant that a Hub ack (`sent_to_hub`/`accepted_by_hub`) is NOT a provider
+/// completion: only `provider_completed` is both terminal and a real completion.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderTimelinePendingWire {
+    pub request_id: String,
+    pub client_msg_id: String,
+    pub action: String,
+    pub state: String,
+    pub terminal: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatch_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<String>,
+    pub base_revision: u64,
+    pub updated_at_revision: u64,
+}
+
+/// The provider-session timeline reconnect answer on the wire: a bounded `delta` when
+/// the client's cursor is still retained, else a `snapshot` (full retained replay) when
+/// it is behind retention. Mirrors the Hub-side `ProviderTimeline::reconnect`; a UI applies
+/// a delta incrementally and replaces on a snapshot. Internally tagged by `mode`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum ProviderTimelineReconnectWire {
+    Delta {
+        from_seq: u64,
+        to_seq: u64,
+        from_revision: u64,
+        to_revision: u64,
+        events: Vec<ProviderTimelineEventWire>,
+        pending: Vec<ProviderTimelinePendingWire>,
+    },
+    Snapshot {
+        to_seq: u64,
+        revision: u64,
+        events: Vec<ProviderTimelineEventWire>,
+        pending: Vec<ProviderTimelinePendingWire>,
+        reason: String,
+    },
+}
+
 /// Structured QR payload for Hub/device pairing. This is the JSON that can be
 /// encoded into a QR code. It contains a short-lived Friday pairing secret, but
 /// never provider OAuth/API/session material.
@@ -398,6 +456,13 @@ pub enum Message {
     /// hub->client: pre-dispatch result for a Provider Workspace action request.
     ProviderWorkspaceActionResult {
         result: ProviderWorkspaceActionResultWire,
+    },
+    /// hub->client: provider-session timeline reconnect — a bounded DELTA when the
+    /// client's cursor is retained, else a SNAPSHOT. Events carry refs only (never raw
+    /// transcript); a pending action's `state`/`terminal` preserve Hub-ack≠completion.
+    ProviderTimelineReconnect {
+        friday_session_id: String,
+        reconnect: ProviderTimelineReconnectWire,
     },
     /// either: explicit error code + message.
     Error { code: ErrorCode, message: String },
@@ -658,6 +723,64 @@ mod tests {
             let back = Envelope::decode(&json).unwrap();
             assert_eq!(back, env);
         }
+    }
+
+    #[test]
+    fn provider_timeline_reconnect_wire_round_trips_delta_and_snapshot() {
+        // DELTA: internally tagged by mode; events carry refs only; a Hub-ack pending
+        // action is NOT terminal (ack != provider completion).
+        let delta = Message::ProviderTimelineReconnect {
+            friday_session_id: "fsess-1".into(),
+            reconnect: ProviderTimelineReconnectWire::Delta {
+                from_seq: 2,
+                to_seq: 4,
+                from_revision: 5,
+                to_revision: 7,
+                events: vec![ProviderTimelineEventWire {
+                    seq: 3,
+                    revision: 6,
+                    event_kind: "provider_event".into(),
+                    actor: "provider".into(),
+                    body_ref: Some("ref://event/3".into()),
+                    provider_event_id: Some("pe-3".into()),
+                }],
+                pending: vec![ProviderTimelinePendingWire {
+                    request_id: "r1".into(),
+                    client_msg_id: "c1".into(),
+                    action: "send_turn".into(),
+                    state: "accepted_by_hub".into(),
+                    terminal: false,
+                    dispatch_ref: None,
+                    blocker: None,
+                    base_revision: 5,
+                    updated_at_revision: 6,
+                }],
+            },
+        };
+        let env = Envelope::new("ptl-delta", 1000, delta.clone());
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"ProviderTimelineReconnect\""));
+        assert!(json.contains("\"mode\":\"delta\""));
+        assert!(json.contains("\"body_ref\":\"ref://event/3\""));
+        assert!(json.contains("\"terminal\":false")); // Hub ack is not completion
+        assert_eq!(Envelope::decode(&json).unwrap(), env);
+
+        // SNAPSHOT: carries the fallback reason; round-trips.
+        let snapshot = Message::ProviderTimelineReconnect {
+            friday_session_id: "fsess-1".into(),
+            reconnect: ProviderTimelineReconnectWire::Snapshot {
+                to_seq: 9,
+                revision: 12,
+                events: vec![],
+                pending: vec![],
+                reason: "cursor_behind_retention".into(),
+            },
+        };
+        let env = Envelope::new("ptl-snap", 1001, snapshot);
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"mode\":\"snapshot\""));
+        assert!(json.contains("\"reason\":\"cursor_behind_retention\""));
+        assert_eq!(Envelope::decode(&json).unwrap(), env);
     }
 
     #[test]
