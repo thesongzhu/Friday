@@ -34,8 +34,9 @@ impl GateDecision {
     }
 }
 
-/// Who is requesting the action. Only the `Agent` kind is bound by the
-/// reserved-approval-action rule; `Owner`/`Api`/`Channel` are not.
+/// Who is requesting the action. The untrusted-origin kinds `Agent` and `Channel` are
+/// bound by the reserved-approval-action rule (they can never self-execute approve/deny);
+/// `Owner`/`Api` are not.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActorKind {
     Owner,
@@ -364,8 +365,9 @@ impl ActorKind {
     }
 }
 
-/// Reserved approval actions an `Agent` actor may never self-execute (TS
-/// `AGENT_RESERVED_APPROVAL_ACTIONS`).
+/// Reserved approval actions an untrusted-origin actor (`Agent` or `Channel`) may never
+/// self-execute (TS `AGENT_RESERVED_APPROVAL_ACTIONS`; Friday extends the binding to
+/// `Channel` — see [`is_reserved_approval_action_for_actor`]).
 const AGENT_RESERVED_APPROVAL_ACTIONS: &[&str] =
     &["approve", "deny", "system.approve", "system.deny"];
 
@@ -395,10 +397,13 @@ fn normalize_reserved_action(action: &str) -> String {
         .collect()
 }
 
-/// True if `request` is an `Agent` actor attempting a reserved approval action —
-/// the bound-principal rule (an agent can never approve/deny on its own behalf).
+/// True if `request` is an untrusted-origin actor (`Agent` or `Channel`) attempting a
+/// reserved approval action — the bound-principal rule. An `Agent` can never approve/deny
+/// on its own behalf (TS parity); a `Channel` (untrusted external inbound) likewise must
+/// never self-execute a reserved approve/deny — the A-PR1-review DECISION, enforced HERE
+/// before any channel-origin action can reach the gate. `Owner`/`Api` are NOT bound.
 pub fn is_reserved_approval_action_for_actor(request: &MutatingActionRequest) -> bool {
-    if request.actor.kind != ActorKind::Agent {
+    if !matches!(request.actor.kind, ActorKind::Agent | ActorKind::Channel) {
         return false;
     }
     let normalized = normalize_reserved_action(&request.action);
@@ -444,11 +449,18 @@ fn requires_approval(request: &MutatingActionRequest, risk: Risk) -> bool {
 pub fn evaluate(request: &MutatingActionRequest) -> GateEvidenceRecord {
     let risk = derive_risk(request);
 
-    // (1) Bound-principal rule, FIRST: an agent cannot self-execute approve/deny.
+    // (1) Bound-principal rule, FIRST: an untrusted-origin actor (agent or channel)
+    // cannot self-execute approve/deny.
     if is_reserved_approval_action_for_actor(request) {
+        // Actor-aware reason — the `agent_cannot_…` string is TS-parity (asserted by
+        // existing tests); a channel-origin reserved action gets a distinct reason.
+        let reason = match request.actor.kind {
+            ActorKind::Channel => "channel_cannot_execute_reserved_approval_action",
+            _ => "agent_cannot_execute_reserved_approval_action",
+        };
         return GateEvidenceRecord {
             decision: GateDecision::Deny,
-            reason: "agent_cannot_execute_reserved_approval_action".to_string(),
+            reason: reason.to_string(),
             risk,
             approval_required: false,
             denied_by: Some("canonical_gate".to_string()),
@@ -737,6 +749,66 @@ mod tests {
             evaluate(&req("read_file", ActorKind::Agent, false)).decision,
             GateDecision::Allow
         );
+    }
+
+    #[test]
+    fn channel_cannot_self_execute_reserved_approval_action() {
+        // A-PR1-review DECISION enforced (A-PR4): a Channel actor (untrusted external
+        // inbound) must never self-execute approve/deny — a hard Deny with a distinct
+        // channel reason, even when ALSO mutating, and resisting the same
+        // canonicalization-evasion hardening as the agent rule.
+        for action in [
+            "approve",
+            "deny",
+            "system.approve",
+            "system.deny",
+            "  Approve  ",
+            "appro\u{200B}ve",
+            "ap prove",
+        ] {
+            let r = evaluate(&req(action, ActorKind::Channel, false));
+            assert_eq!(r.decision, GateDecision::Deny, "action={action}");
+            assert_eq!(r.reason, "channel_cannot_execute_reserved_approval_action");
+            assert_eq!(r.denied_by.as_deref(), Some("canonical_gate"));
+        }
+        // Mutating reserved channel action is STILL a hard Deny (checked before approval).
+        let m = evaluate(&req("approve", ActorKind::Channel, true));
+        assert_eq!(m.decision, GateDecision::Deny);
+        assert_eq!(m.reason, "channel_cannot_execute_reserved_approval_action");
+        // A non-reserved channel action is not denied by this rule.
+        assert!(!is_reserved_approval_action_for_actor(&req(
+            "read_file",
+            ActorKind::Channel,
+            false
+        )));
+    }
+
+    #[test]
+    fn only_agent_and_channel_are_reserved_action_bound() {
+        // Guard against over-binding: Owner/Api are NOT bound (they may legitimately
+        // approve); Agent/Channel ARE.
+        for action in ["approve", "deny", "system.approve"] {
+            assert!(is_reserved_approval_action_for_actor(&req(
+                action,
+                ActorKind::Agent,
+                false
+            )));
+            assert!(is_reserved_approval_action_for_actor(&req(
+                action,
+                ActorKind::Channel,
+                false
+            )));
+            assert!(!is_reserved_approval_action_for_actor(&req(
+                action,
+                ActorKind::Owner,
+                false
+            )));
+            assert!(!is_reserved_approval_action_for_actor(&req(
+                action,
+                ActorKind::Api,
+                false
+            )));
+        }
     }
 
     #[test]
