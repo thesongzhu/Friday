@@ -134,11 +134,11 @@ mod tests {
         let link = ProviderSessionLink {
             friday_session_id: "friday-s1".into(),
             provider: "codex".into(),
-            account_key_hash: "acct-hash-secret".into(),
+            account_key_hash: "acct-hash-hidden".into(), // pragma: allowlist secret
             workspace_id: "workspace-a".into(),
             cwd: Some("/Users/jarvis/private/project".into()),
-            external_session_id: Some("provider-session-secret".into()),
-            external_thread_id: Some("provider-thread-secret".into()),
+            external_session_id: Some("provider-session-hidden".into()),
+            external_thread_id: Some("provider-thread-hidden".into()),
             external_url: Some("https://provider.example/private".into()),
             sync_mode: SyncMode::ProviderAppServerLocal,
             capability_snapshot: "thread/start,turn/start".into(),
@@ -149,10 +149,10 @@ mod tests {
 
         let projection = format!("{:?}", link.redacted_projection());
         for forbidden in [
-            "acct-hash-secret",
+            "acct-hash-hidden",
             "/Users/jarvis/private/project",
-            "provider-session-secret",
-            "provider-thread-secret",
+            "provider-session-hidden",
+            "provider-thread-hidden",
             "https://provider.example/private",
         ] {
             assert!(
