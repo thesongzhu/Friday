@@ -6,10 +6,13 @@
 //! catch-up logic — no networking and no encryption (the transport layer seals
 //! the serialized payload; see Unit-4 transport slice).
 //!
-//! Scope (gate §4.2): exactly the first-slice message kinds. Session-detail,
-//! attachments, workflow, and provider-adapter messages are deferred to their
-//! owning units. The actual networked WebSocket + relay + live key exchange are
-//! the Unit-4 transport sub-slice (this crate is the contract they carry).
+//! Scope (gate §4.2): the first-slice message kinds plus the Provider Workspace wire
+//! messages (session/action projection, action request/result), included as of schema
+//! v3. Session-detail, attachments, and workflow messages remain deferred to their owning
+//! units; for the provider lane, what is still deferred is NOT these wire types but the
+//! real provider ADAPTERS (live dispatch) and the operator-gated remote proof lanes. The
+//! actual networked WebSocket + relay + live key exchange are the Unit-4 transport
+//! sub-slice (this crate is the contract they carry).
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
