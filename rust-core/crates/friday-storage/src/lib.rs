@@ -90,6 +90,15 @@ pub struct AuditEvent {
     pub created_at: i64,
 }
 
+/// Outcome of [`Db::record_event`]: a fresh event was recorded, or a replay (same
+/// `activity_id`) was refused idempotently — nothing written (no second activity, no
+/// second audit).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecordEventOutcome {
+    Recorded,
+    Duplicate,
+}
+
 pub struct Db {
     conn: Connection,
     path: String,
@@ -402,6 +411,46 @@ impl Db {
         )?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Atomically record a Hub EVENT: one `activity_item` + one hash-chained `audit_ledger`
+    /// row in a single transaction (Hub-only). IDEMPOTENT on `activity.activity_id` (the
+    /// PK): a replay (same id) writes NOTHING — no second activity AND no second audit —
+    /// and returns [`RecordEventOutcome::Duplicate`]. A genuine storage error is never
+    /// misread as a duplicate: ONLY a UNIQUE-constraint violation maps to `Duplicate`.
+    pub fn record_event(
+        &mut self,
+        activity: &ActivityRow,
+        audit: &AuditEvent,
+    ) -> Result<RecordEventOutcome> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "record_event requires the Hub profile (audit_ledger is Hub-only)".into(),
+            ));
+        }
+        let tx = self.conn.transaction()?;
+        match insert_activity_conn(&tx, activity) {
+            Ok(()) => {}
+            // ONLY a UNIQUE-constraint violation on the activity_id PK is a benign replay.
+            Err(rusqlite::Error::SqliteFailure(e, _))
+                if e.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
+                // Drop the tx (rollback): no activity row, and crucially NO audit row.
+                return Ok(RecordEventOutcome::Duplicate);
+            }
+            // Any other storage error is surfaced, never misclassified as a duplicate.
+            Err(e) => return Err(e.into()),
+        }
+        audit::append_audit(
+            &tx,
+            &audit.audit_id,
+            &audit.actor,
+            &audit.action,
+            audit.payload_ref.as_deref(),
+            audit.created_at,
+        )?;
+        tx.commit()?;
+        Ok(RecordEventOutcome::Recorded)
     }
 }
 

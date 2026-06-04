@@ -46,6 +46,8 @@ pub mod runtime;
 /// `menu_command_sheet_entrypoints` orphan. The HTTP route-family half stays NO-GO (no API).
 pub mod capability;
 
+/// A-PR4: channel→Hub event wiring (verified inbound → bound principal → Activity+audit).
+pub mod channel_event;
 /// Channels (UNW-013) — trusted-inbound AUTH for external channels (Telegram-first).
 /// A-PR2: fail-closed, authenticate-before-authorize webhook bearer (constant-time HMAC)
 /// + sender allowlist; the per-channel secret lives ONLY in the Hub secure store,
