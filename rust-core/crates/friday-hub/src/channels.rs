@@ -1,8 +1,9 @@
 //! Channel trusted-inbound (Channels track, UNW-013). Hub-only. A-PR2 = AUTH;
 //! A-PR3 = PII redaction at the boundary ([`redact_inbound`] / [`RedactedInbound`] —
 //! authenticated channel content is PII-stripped via the single Hub redactor before it
-//! can become a Hub event / be persisted / reach the model; the raw body is consumed by
-//! value and dropped, so strict redaction is enforced by ownership).
+//! can become a Hub event / be persisted / reach the model). Ownership guarantees the raw
+//! body is consumed and never re-exposed (R2); redaction COMPLETENESS is best-effort,
+//! bounded by the redactor's documented limits (see [`redact_inbound`]).
 //!
 //! Verifies an inbound channel request FAIL-CLOSED, AUTHENTICATE-before-AUTHORIZE:
 //! 1. the channel must be `Active`;

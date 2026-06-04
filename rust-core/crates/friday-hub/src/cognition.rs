@@ -22,14 +22,22 @@
 //! **PII-port fidelity (honest deviations from the oracle PII guard):**
 //! - **SSN** drops the oracle's invalid-prefix look-aheads (the Rust engine is
 //!   look-around-free) → matches the plain 3-2-4 shape (over-match, safe).
-//! - **Boundaries** use `(?-u:\b)` (ASCII), matching the oracle's ASCII-`\b`, so
-//!   CJK-adjacent PII redacts. A plain Unicode `\b` would LEAK it.
+//! - **Boundaries** use ONLY a LEADING `(?-u:\b)` (ASCII) on Email/SSN/Phone; the
+//!   TRAILING `(?-u:\b)` is removed. The Rust `regex` `\b` is Unicode-aware (a CJK char
+//!   is a word char), so a plain `\b` would not fire between CJK and an adjacent ASCII
+//!   PII run and would LEAK it; the ASCII `(?-u:\b)` treats CJK as a boundary. The
+//!   trailing boundary was removed because it UNDER-matched (the dangerous direction)
+//!   when an ASCII word/digit char is glued AFTER the value (`alice@example.com1`,
+//!   `123-45-67890`) — dropping it makes those redact. (Over-match is the safe direction.)
 //! - **Phone** requires a full 10 digits; the oracle also matches bare 7-digit
 //!   locals. This is a DELIBERATE under-match — a bare 7-digit pattern would
 //!   over-redact benign numbers; disclosed, not a parity claim.
-//! - **Glued ASCII tokens** (e.g. an email TLD immediately followed by a digit
-//!   run, no separator) under-match — inherited from the oracle's `\b` (both
-//!   ASCII and Unicode `\b` agree there is no boundary mid-token). Not introduced.
+//! - **Residual under-matches (disclosed):** a value with an ASCII word/digit char glued
+//!   to its LEFT (e.g. `x123-45-6789`) still under-matches — only the leading boundary
+//!   remains, and removing it too would let patterns start mid-ASCII-token. Credit-card
+//!   detection is group-aligned (see `luhn_card_subspan`): a PAN glued to a stray digit
+//!   mid-group, or inside one >19-digit run, is not isolated. Both are pre-existing,
+//!   behind the Passport gate for recall, and never leak MORE than before.
 //!
 //! Redaction is defense-in-depth; the Context Passport sensitive-flag gate is the
 //! primary control and is NOT replaced by this.
@@ -162,15 +170,26 @@ fn luhn_valid(s: &str) -> bool {
     sum % 10 == 0
 }
 
-/// Within a credit-card *candidate* (a maximal run of digits separated by spaces/dashes,
-/// as matched by the card regex), find the byte span of the LONGEST Luhn-valid 13–19
-/// digit sub-run, mapped to absolute offsets via `base`. `None` if none validates.
+/// Within a credit-card *candidate* (a run of digits separated by spaces/dashes, as
+/// matched by the card regex), find the byte span of the longest Luhn-valid 13–19 digit
+/// window formed by a contiguous sequence of WHOLE separator-delimited digit groups,
+/// mapped to absolute offsets via `base`. `None` if no group-aligned window validates.
 ///
 /// This is the fix for the greedy-annex leak: the card regex's `[ -]*` separator class
 /// can swallow a trailing separator-joined digit group that follows a real card, so the
 /// whole span (card + extra digits) fails Luhn. The old code then DROPPED the entire
-/// candidate, leaving a real Luhn-valid PAN un-redacted. Instead we scan the candidate's
-/// digit groups and redact exactly the longest Luhn-valid card window inside it.
+/// candidate, leaving a real Luhn-valid PAN un-redacted. Instead we scan WHOLE-group
+/// windows and redact the longest Luhn-valid card inside it.
+///
+/// DELIBERATELY group-aligned, NOT digit-indexed: a digit-by-digit window over arbitrary
+/// 13–19 digit sub-runs would pervasively over-redact — almost every long digit run
+/// (order ids, the Luhn-invalid `4111…1112`, a 19-digit number) contains *some* Luhn-valid
+/// 13–19 digit sub-window, so digit-indexing would mask benign numbers across the shared
+/// memory-recall path. Group-alignment matches how cards are actually written.
+/// RESIDUAL (disclosed, pre-existing, behind the Passport gate for recall): a PAN that
+/// ends/starts mid-group (e.g. a glued typo digit `…1881 0` making a 5-digit last group)
+/// or sits inside one >19-digit contiguous run is not isolated by group windows. These
+/// degrade to a partial redaction, never a worse leak than before this fix.
 fn luhn_card_subspan(candidate: &str, base: usize) -> Option<(usize, usize)> {
     let bytes = candidate.as_bytes();
     // Maximal ASCII-digit groups as (start_byte, end_byte) within `candidate`.
