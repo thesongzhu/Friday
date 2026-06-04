@@ -1,0 +1,41 @@
+name: Telegram Live Proof (Rust channels)
+
+# Live proof harness for the Rust channels track (UNW-013). The bot token + trusted
+# identity come ONLY from the phase-24-live-channels environment secrets; the token is
+# never printed (GitHub also masks it). `readonly` needs no operator action; `listen`
+# requires the trusted user to send one real message during the window.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "readonly = getMe+getWebhookInfo (no operator needed) | listen = Rust getUpdates live proof (operator sends a message)"
+        type: choice
+        options: [readonly, listen]
+        default: readonly
+
+jobs:
+  readonly:
+    if: ${{ inputs.mode == 'readonly' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: phase-24-live-channels
+    env:
+      FRIDAY_TELEGRAM_BOT_TOKEN: ${{ secrets.FRIDAY_TELEGRAM_BOT_TOKEN }}
+      FRIDAY_TELEGRAM_ALLOWED_USER_ID: ${{ secrets.FRIDAY_TELEGRAM_ALLOWED_USER_ID || vars.FRIDAY_TELEGRAM_ALLOWED_USER_ID }}
+    steps:
+      - name: getMe + getWebhookInfo (read-only; token never printed)
+        run: |
+          set -euo pipefail
+          if [ -z "${FRIDAY_TELEGRAM_BOT_TOKEN:-}" ]; then echo "::error::FRIDAY_TELEGRAM_BOT_TOKEN not set in this environment"; exit 1; fi
+          api="https://api.telegram.org/bot${FRIDAY_TELEGRAM_BOT_TOKEN}"
+          me=$(curl -sS "${api}/getMe")
+          echo "getMe.ok=$(echo "$me" | jq -r '.ok')"
+          echo "bot.username=@$(echo "$me" | jq -r '.result.username // "?"')"
+          echo "bot.id=$(echo "$me" | jq -r '.result.id // "?"')"
+          echo "bot.can_read_all_group_messages=$(echo "$me" | jq -r '.result.can_read_all_group_messages')"
+          echo "allowed_user_id.configured=$([ -n "${FRIDAY_TELEGRAM_ALLOWED_USER_ID:-}" ] && echo true || echo false)"
+          wh=$(curl -sS "${api}/getWebhookInfo")
+          url=$(echo "$wh" | jq -r '.result.url // ""')
+          if [ -n "$url" ]; then echo "webhook.set=true (delivery=webhook; getUpdates polling would 409 — do NOT poll without deleting it)"; else echo "webhook.set=false (delivery=polling-available)"; fi
+          echo "webhook.pending_update_count=$(echo "$wh" | jq -r '.result.pending_update_count')"
+          echo "OK: read-only credential probe complete (no side effects, no token printed)."
