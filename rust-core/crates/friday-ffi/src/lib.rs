@@ -741,6 +741,7 @@ fn message_kind_name(m: &friday_protocol::Message) -> &'static str {
         M::ProviderWorkspaceSnapshot { .. } => "ProviderWorkspaceSnapshot",
         M::ProviderWorkspaceActionRequest { .. } => "ProviderWorkspaceActionRequest",
         M::ProviderWorkspaceActionResult { .. } => "ProviderWorkspaceActionResult",
+        M::ProviderTimelineReconnect { .. } => "ProviderTimelineReconnect",
         M::Error { .. } => "Error",
     }
 }
