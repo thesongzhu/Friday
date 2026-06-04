@@ -391,7 +391,7 @@ mod tests {
 
     #[test]
     fn provider_credential_looking_material_is_rejected() {
-        assert!(PairingSecret::new("sk-live-provider-secret-value").is_err());
+        assert!(PairingSecret::new("sk-live-provider-secret-value").is_err()); // intentionally invalid fixture; pragma: allowlist secret
         assert!(PairTransportHint::new(
             PairTransportKind::LanWebSocket,
             "ws://127.0.0.1:4477?api_key=abc",
