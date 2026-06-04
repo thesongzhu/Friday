@@ -29,3 +29,10 @@ serde_json.workspace = true
 # recalls). Pure computation, no I/O. NOT depended on by friday-ffi (phone).
 regex.workspace = true
 
+[dev-dependencies]
+# TEST-ONLY HTTP client for the LIVE Telegram channels proof (tests/telegram_live.rs,
+# `#[ignore]`d, run only in the phase-24-live-channels CI env). dev-dependencies are NOT
+# part of the production dependency graph (friday-arch-tests scans dependencies /
+# build-dependencies only) and never reach the phone (friday-ffi).
+ureq = { version = "2", features = ["json"] }
+
