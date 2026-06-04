@@ -100,6 +100,14 @@ pub mod pair_runtime;
 /// any UI can look ready. Pure projection only; no provider/model calls.
 pub mod provider_workspace;
 
+/// PWS-004 — Provider Workspace dispatch adapter seam. Gates an action through
+/// [`provider_workspace::guard_action_request`] FIRST, then dispatches an accepted +
+/// routed action to a `ProviderDispatchAdapter`, returning dispatch_ref / truth_label /
+/// blocker. No adapter call on a non-accepted request; the capability truth_label is
+/// never upgraded by a dispatch; secrets stay Hub-side. Real Codex/Claude adapters land
+/// in CODEX-LIVE-001 / CLAUDE-MIRROR-001.
+pub mod provider_dispatch;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,
