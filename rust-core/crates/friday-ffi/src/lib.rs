@@ -4,8 +4,10 @@
 //! and generates idiomatic Swift + Kotlin bindings from one Rust definition
 //! (`cargo run -p friday-ffi --bin uniffi-bindgen -- generate --library <cdylib>
 //! --language swift|kotlin`). The exposed ops are pure, FFI-safe projections of
-//! the slice's connection-state + protocol version-negotiation logic; the
-//! model-calling `ask_friday` streaming op and the native app shells land with
+//! the slice's connection-state + protocol version-negotiation logic, plus the
+//! native-facing `ask_friday` CLIENT ACTION contract (build the request envelope +
+//! parse the Hub's refs-only response). The model call itself is Hub-owned (never on
+//! the phone); the streaming-answer projection and the native app shells land with
 //! the Unit-5 native build (operator-gated tooling).
 //!
 //! Trust boundary: this is the phone-side library. It links `friday-core`,
@@ -530,6 +532,219 @@ fn load_token_usage(db_path: &str) -> friday_storage::Result<Vec<TokenUsageFfi>>
         .collect())
 }
 
+// =====================================================================================
+// Phase 3 (goal file 92 §Phase 3): the native-facing `ask_friday` CLIENT ACTION contract.
+//
+// This is a CLIENT ACTION to the Hub — a `friday_protocol::AskFridayRequest` the native
+// shell seals + sends — NOT a phone-side provider adapter. The phone BUILDS the request and
+// PARSES the Hub's refs-only response; it never links `friday-deepseek`/`friday-providers`/
+// `friday-fs`, never holds a provider credential, and never sees the raw answer text
+// (enforced at compile time by `friday-arch-tests::dep_boundary`). All wire (de)serialization
+// stays inside `friday-protocol` (`Envelope::encode`/`decode`) — this crate adds no serde.
+// =====================================================================================
+
+/// A built, wire-ready Ask-Friday client action (the "action" struct of the slice).
+/// `ok=false` carries a secret-safe `error` (an encode failure is surfaced, never a panic
+/// across the FFI). `client_msg_id` is the idempotency key — it IS the envelope `msg_id`
+/// the Hub correlates the response to; resend the SAME id to retry an ask. NOTE: end-to-end
+/// replay-dedup is **not yet enforced Hub-side** (the Phase-1 serve-loop routes by kind and
+/// keeps no seen-id set); this contract only EXPOSES the key the Hub would dedup on.
+/// `wire_json` is the PLAINTEXT envelope JSON the native transport seals + sends — it carries
+/// only the prompt (no credential, no provider material).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AskRequestFfi {
+    pub ok: bool,
+    pub error: String,
+    pub client_msg_id: String,
+    pub wire_json: String,
+}
+
+/// Build the `ask_friday` client action: a schema-stamped `AskFridayRequest` envelope.
+/// Idempotency is the caller's `client_msg_id` (reuse it verbatim to retry safely). The
+/// model call happens Hub-side; this only produces the request the phone sends.
+#[uniffi::export]
+pub fn build_ask_friday_request(
+    client_msg_id: String,
+    prompt: String,
+    sent_at: i64,
+) -> AskRequestFfi {
+    let env = friday_protocol::Envelope::new(
+        client_msg_id.clone(),
+        sent_at,
+        friday_protocol::Message::AskFridayRequest { prompt },
+    );
+    match env.encode() {
+        Ok(wire_json) => AskRequestFfi {
+            ok: true,
+            error: String::new(),
+            client_msg_id,
+            wire_json,
+        },
+        Err(e) => AskRequestFfi {
+            ok: false,
+            error: e.to_string(),
+            client_msg_id,
+            wire_json: String::new(),
+        },
+    }
+}
+
+/// What the Hub said back, projected SAFELY for the native UI (the slice's "result/snapshot"
+/// types). Exactly one variant per response frame. NONE carries the raw answer text, usage
+/// cost detail, provider account id, auth material, or private reasoning — the Hub keeps
+/// those; the phone gets refs + truth labels. Consistent with the Phase-1 serve-loop's
+/// refs-only projection: the answer body is followed via `result_link`, never inlined here.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum AskResponseFfi {
+    /// Hub health snapshot: online + capabilities + supported schema range. No model call.
+    Status {
+        online: bool,
+        capabilities: Vec<String>,
+        min_version: u16,
+        max_version: u16,
+    },
+    /// Terminal ask frame — REFS ONLY: a `ledger_id` + a `result_link` (`friday://activity/...`),
+    /// NOT the answer. `correlation_id` matches the `client_msg_id` the phone sent (empty if none).
+    AskResult {
+        ledger_id: String,
+        result_link: String,
+        correlation_id: String,
+    },
+    /// Token/model ledger row projection (safe cost-view fields only; no host/key/cost-secret).
+    /// `fallback` is ALWAYS surfaced — a fallback is never hidden (`02` §13).
+    LedgerRef {
+        ledger_id: String,
+        provider_kind: String,
+        model: String,
+        total_tokens: i64,
+        fallback: bool,
+    },
+    /// Activity receipt/status ref — id + type + state, NO body.
+    ActivityRef {
+        activity_id: String,
+        item_type: String,
+        state: String,
+    },
+    /// Ack of a queued offline action on reconnect. NOT completion (an ack is not a result).
+    OfflineAck { acked_msg_id: String },
+    /// An explicit, surfaced Hub error (e.g. `PROVIDER_UNAVAILABLE`) — never a silent fallback.
+    Error { code: String, message: String },
+    /// A well-formed envelope whose message kind is NOT part of the ask_friday slice (a
+    /// Provider Workspace frame, a streamed `AskFridayStream` chunk, pairing, …). It is
+    /// truth-labeled by `kind`, never silently dropped or mis-rendered as a result. The
+    /// chunk/payload of such a frame is NOT projected (no raw answer reaches the phone here).
+    Unsupported { kind: String },
+    /// The bytes did not decode as a protocol envelope (structural error only — no secret).
+    Undecodable { error: String },
+}
+
+/// Parse a Hub→phone response envelope (the plaintext the native transport just opened) into
+/// the safe [`AskResponseFfi`] projection. Decoding stays in `friday-protocol`; an undecodable
+/// or out-of-slice frame is truth-labeled, never silently treated as a completed result.
+#[uniffi::export]
+pub fn parse_hub_response(wire_json: String) -> AskResponseFfi {
+    use friday_protocol::Message;
+    let env = match friday_protocol::Envelope::decode(&wire_json) {
+        Ok(e) => e,
+        Err(e) => {
+            return AskResponseFfi::Undecodable {
+                error: e.to_string(),
+            }
+        }
+    };
+    let correlation_id = env.correlation_id.unwrap_or_default();
+    match env.message {
+        Message::HubStatus {
+            online,
+            capabilities,
+            min_version,
+            max_version,
+        } => AskResponseFfi::Status {
+            online,
+            capabilities,
+            min_version,
+            max_version,
+        },
+        Message::AskFridayResult {
+            ledger_id,
+            result_link,
+        } => AskResponseFfi::AskResult {
+            ledger_id,
+            result_link: result_link.unwrap_or_default(),
+            correlation_id,
+        },
+        // Drop `base_url_host` (Hub-side trust/infra detail) — the cost view needs only these,
+        // matching `phone_token_usage`/`TokenUsageFfi`.
+        Message::LedgerEntry {
+            ledger_id,
+            provider_kind,
+            model,
+            total_tokens,
+            fallback,
+            ..
+        } => AskResponseFfi::LedgerRef {
+            ledger_id,
+            provider_kind,
+            model,
+            total_tokens,
+            fallback,
+        },
+        Message::ActivityItem {
+            activity_id,
+            item_type,
+            state,
+        } => AskResponseFfi::ActivityRef {
+            activity_id,
+            item_type,
+            state,
+        },
+        Message::OfflineQueueAck { acked_msg_id } => AskResponseFfi::OfflineAck { acked_msg_id },
+        Message::Error { code, message } => AskResponseFfi::Error {
+            code: error_code_str(code).to_string(),
+            message,
+        },
+        other => AskResponseFfi::Unsupported {
+            kind: message_kind_name(&other).to_string(),
+        },
+    }
+}
+
+/// The wire (`SCREAMING_SNAKE_CASE`) name of an error code — surfaced, never hidden.
+fn error_code_str(code: friday_protocol::ErrorCode) -> &'static str {
+    use friday_protocol::ErrorCode as E;
+    match code {
+        E::PairingDenied => "PAIRING_DENIED",
+        E::DeviceRevoked => "DEVICE_REVOKED",
+        E::SchemaVersionUnsupported => "SCHEMA_VERSION_UNSUPPORTED",
+        E::HubOffline => "HUB_OFFLINE",
+        E::ProviderUnavailable => "PROVIDER_UNAVAILABLE",
+        E::RateLimited => "RATE_LIMITED",
+        E::IdempotencyReplay => "IDEMPOTENCY_REPLAY",
+        E::Internal => "INTERNAL",
+    }
+}
+
+/// Truth label for an out-of-slice message kind. The exhaustive match is intentional: a new
+/// protocol message variant forces this to be updated (it cannot drift to a silent "other").
+fn message_kind_name(m: &friday_protocol::Message) -> &'static str {
+    use friday_protocol::Message as M;
+    match m {
+        M::Pair { .. } => "Pair",
+        M::PairAck { .. } => "PairAck",
+        M::HubStatus { .. } => "HubStatus",
+        M::AskFridayRequest { .. } => "AskFridayRequest",
+        M::AskFridayStream { .. } => "AskFridayStream",
+        M::AskFridayResult { .. } => "AskFridayResult",
+        M::LedgerEntry { .. } => "LedgerEntry",
+        M::ActivityItem { .. } => "ActivityItem",
+        M::OfflineQueueAck { .. } => "OfflineQueueAck",
+        M::ProviderWorkspaceSnapshot { .. } => "ProviderWorkspaceSnapshot",
+        M::ProviderWorkspaceActionRequest { .. } => "ProviderWorkspaceActionRequest",
+        M::ProviderWorkspaceActionResult { .. } => "ProviderWorkspaceActionResult",
+        M::Error { .. } => "Error",
+    }
+}
+
 // --- internal (non-FFI) helpers retained for the phone-side runtime/tests ---
 
 /// Open a phone-profile database. The phone schema omits the Hub-only
@@ -849,5 +1064,185 @@ mod tests {
                 );
             }
         }
+    }
+
+    // --- Phase 3: native-facing ask_friday CLIENT ACTION contract ---
+
+    #[test]
+    fn ffi_ask_friday_request_builds_a_decodable_envelope_and_exposes_idempotency_key() {
+        let r = build_ask_friday_request("cmsg-1".into(), "hello friday".into(), 7);
+        assert!(r.ok, "build failed: {}", r.error);
+        assert_eq!(r.client_msg_id, "cmsg-1");
+        // The wire decodes back to exactly the request the phone meant to send (round-trip).
+        let env = friday_protocol::Envelope::decode(&r.wire_json).unwrap();
+        assert_eq!(env.msg_id, "cmsg-1"); // idempotency key == client_msg_id
+        assert_eq!(env.schema_version, friday_protocol::CURRENT_SCHEMA_VERSION);
+        match env.message {
+            friday_protocol::Message::AskFridayRequest { prompt } => {
+                assert_eq!(prompt, "hello friday")
+            }
+            other => panic!("expected AskFridayRequest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ffi_ask_friday_idempotency_key_is_stable_across_retries() {
+        // Idempotency contract: a retry reuses the SAME client_msg_id, so the envelope msg_id
+        // (the dedup key) is identical even when sent_at differs. End-to-end dedup is NOT yet
+        // enforced Hub-side — this only proves the key the Hub WOULD dedup on is stable.
+        let a = build_ask_friday_request("retry-7".into(), "do x".into(), 100);
+        let b = build_ask_friday_request("retry-7".into(), "do x".into(), 999);
+        let ea = friday_protocol::Envelope::decode(&a.wire_json).unwrap();
+        let eb = friday_protocol::Envelope::decode(&b.wire_json).unwrap();
+        assert_eq!(
+            ea.msg_id, eb.msg_id,
+            "the idempotency key must be stable across retries"
+        );
+        assert_ne!(
+            ea.sent_at, eb.sent_at,
+            "sent_at may differ; the dedup key does not"
+        );
+    }
+
+    #[test]
+    fn ffi_parse_hub_response_projects_safely_and_truth_labels() {
+        use friday_protocol::{Envelope, ErrorCode, Message};
+
+        // AskResult → refs only; correlation preserved; the struct has no answer-body field.
+        let result = Envelope::new(
+            "r1",
+            1,
+            Message::AskFridayResult {
+                ledger_id: "ask-1".into(),
+                result_link: Some("friday://activity/ask-1:activity".into()),
+            },
+        )
+        .with_correlation("cmsg-1");
+        match parse_hub_response(result.encode().unwrap()) {
+            AskResponseFfi::AskResult {
+                ledger_id,
+                result_link,
+                correlation_id,
+            } => {
+                assert_eq!(ledger_id, "ask-1");
+                assert_eq!(result_link, "friday://activity/ask-1:activity");
+                assert_eq!(correlation_id, "cmsg-1");
+            }
+            other => panic!("expected AskResult, got {other:?}"),
+        }
+
+        // Status snapshot — no model call implied.
+        let status = Envelope::new(
+            "s1",
+            0,
+            Message::HubStatus {
+                online: true,
+                capabilities: vec!["ask_friday".into()],
+                min_version: 1,
+                max_version: 3,
+            },
+        );
+        assert!(matches!(
+            parse_hub_response(status.encode().unwrap()),
+            AskResponseFfi::Status { online: true, .. }
+        ));
+
+        // Error is surfaced (never a silent fallback) with the SCREAMING_SNAKE code.
+        let err = Envelope::new(
+            "e1",
+            0,
+            Message::Error {
+                code: ErrorCode::ProviderUnavailable,
+                message: "ask route unavailable".into(),
+            },
+        );
+        match parse_hub_response(err.encode().unwrap()) {
+            AskResponseFfi::Error { code, message } => {
+                assert_eq!(code, "PROVIDER_UNAVAILABLE");
+                assert!(message.contains("unavailable"));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+
+        // A LedgerEntry projects the cost-view fields only (base_url_host dropped).
+        let ledger = Envelope::new(
+            "l1",
+            0,
+            Message::LedgerEntry {
+                ledger_id: "ask-1".into(),
+                provider_kind: "deepseek".into(),
+                model: "deepseek-v4-flash".into(),
+                base_url_host: "api.deepseek.example".into(),
+                total_tokens: 19,
+                fallback: false,
+            },
+        );
+        match parse_hub_response(ledger.encode().unwrap()) {
+            AskResponseFfi::LedgerRef {
+                provider_kind,
+                total_tokens,
+                fallback,
+                ..
+            } => {
+                assert_eq!(provider_kind, "deepseek");
+                assert_eq!(total_tokens, 19);
+                assert!(!fallback);
+            }
+            other => panic!("expected LedgerRef, got {other:?}"),
+        }
+
+        // OfflineQueueAck is NOT completion → its own label, never AskResult.
+        let ack = Envelope::new(
+            "o1",
+            0,
+            Message::OfflineQueueAck {
+                acked_msg_id: "q1".into(),
+            },
+        );
+        assert!(matches!(
+            parse_hub_response(ack.encode().unwrap()),
+            AskResponseFfi::OfflineAck { .. }
+        ));
+
+        // An out-of-slice kind (a streamed chunk) is truth-labeled Unsupported, NOT a result.
+        let stream = Envelope::new(
+            "st1",
+            0,
+            Message::AskFridayStream {
+                seq: 0,
+                chunk: "later".into(),
+            },
+        );
+        match parse_hub_response(stream.encode().unwrap()) {
+            AskResponseFfi::Unsupported { kind } => assert_eq!(kind, "AskFridayStream"),
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
+
+        // Undecodable garbage → structural error, never a result.
+        assert!(matches!(
+            parse_hub_response("not a protocol envelope".into()),
+            AskResponseFfi::Undecodable { .. }
+        ));
+    }
+
+    #[test]
+    fn ffi_parse_hub_response_never_surfaces_raw_answer_text() {
+        // ADVERSE: even if a (wrong) Hub stuffed answer text into a streamed chunk, the phone
+        // projection never carries it — the chunk kind is Unsupported and its content is NOT
+        // projected into any FFI field (consistent with the Phase-1 refs-only stance).
+        use friday_protocol::{Envelope, Message};
+        let stream = Envelope::new(
+            "st1",
+            0,
+            Message::AskFridayStream {
+                seq: 1,
+                chunk: "SECRET-ANSWER-TEXT".into(),
+            },
+        );
+        let projected = parse_hub_response(stream.encode().unwrap());
+        assert!(
+            !format!("{projected:?}").contains("SECRET-ANSWER-TEXT"),
+            "raw answer leaked into the projection"
+        );
     }
 }
