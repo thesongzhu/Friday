@@ -489,6 +489,7 @@ dependencies = [
  "regex",
  "rusqlite",
  "serde_json",
+ "ureq",
 ]
 
 [[package]]
