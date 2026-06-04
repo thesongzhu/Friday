@@ -814,7 +814,7 @@ mod tests {
         let wire: ProviderSessionProjectionWire = friday_core::ProviderSessionLink {
             friday_session_id: "friday-s1".into(),
             provider: "codex".into(),
-            account_key_hash: "account-hash".into(),
+            account_key_hash: "account-hash".into(), // pragma: allowlist secret
             workspace_id: "workspace".into(),
             cwd: Some("/Users/jarvis/private".into()),
             external_session_id: Some("external-session".into()),

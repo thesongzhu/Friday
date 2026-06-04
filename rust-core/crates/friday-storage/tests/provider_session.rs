@@ -18,7 +18,7 @@ fn link() -> ProviderSessionLink {
     ProviderSessionLink {
         friday_session_id: "friday-session-1".into(),
         provider: "codex".into(),
-        account_key_hash: "account-hash-never-project".into(),
+        account_key_hash: "account-hash-never-project".into(), // pragma: allowlist secret
         workspace_id: "workspace-alpha".into(),
         cwd: Some("/Users/jarvis/private/project".into()),
         external_session_id: Some("provider-session-id".into()),
