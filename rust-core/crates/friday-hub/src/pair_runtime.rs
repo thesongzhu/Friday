@@ -9,8 +9,11 @@ use friday_core::FridayPairPayload;
 use friday_crypto::DataKey;
 use friday_protocol::{Envelope, ErrorCode, Message, SUPPORTED};
 use friday_storage::Db;
-use friday_transport::{ws_recv_envelope, ws_send_envelope, TransportError, WireWebSocket};
+use friday_transport::{
+    ws_accept, ws_recv_envelope, ws_send_envelope, TransportError, WireWebSocket,
+};
 use std::io::{Read, Write};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 
 /// Minimal Hub pairing runtime. A future listener owns sockets/mDNS; this type
 /// owns the pairing semantics and can be tested without network or provider I/O.
@@ -138,6 +141,46 @@ impl PairingHub {
             )
             .with_correlation(msg_id),
         }
+    }
+}
+
+/// PAIR-004 — local Hub pairing LISTENER. Binds **loopback only** (`127.0.0.1`) so the QR
+/// pairs a phone to THIS Mac's Hub and nothing routable off-box; it never exposes a
+/// provider secret. It owns the socket lifecycle; the pairing semantics + trust writes
+/// stay in [`PairingHub`]. Challenge-response is enforced downstream by
+/// `handle_websocket_once` → `handle_envelope`: only a valid `Pair` proof writes trust,
+/// and a pre-auth session/proof/model message is refused with no trust/model rows.
+pub struct PairingListener {
+    hub: PairingHub,
+    listener: TcpListener,
+}
+
+impl PairingListener {
+    /// Bind a LOOPBACK-only listener on `127.0.0.1:<port>` (`port = 0` lets the OS assign).
+    /// Binding `Ipv4Addr::LOCALHOST` (not `0.0.0.0`) is the "this Mac only" guarantee.
+    pub fn bind_loopback(hub: PairingHub, port: u16) -> std::io::Result<Self> {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))?;
+        Ok(Self { hub, listener })
+    }
+
+    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        self.listener.local_addr()
+    }
+
+    /// Accept exactly ONE connection, run the WebSocket handshake, and handle one sealed
+    /// pairing message. The E2E `session_key` is established out of band (pairing
+    /// handshake); this binds the listener to the proven pairing semantics. The challenge
+    /// (a valid `pairing_proof`) is verified before any trust/session/proof data.
+    pub fn accept_one(
+        &self,
+        db: &mut Db,
+        session_key: &DataKey,
+        aad: &[u8],
+    ) -> Result<Envelope, TransportError> {
+        let (stream, _peer) = self.listener.accept()?;
+        let mut ws = ws_accept(stream)?;
+        self.hub
+            .handle_websocket_once(db, &mut ws, session_key, aad)
     }
 }
 
@@ -473,5 +516,196 @@ mod tests {
         assert_eq!(db.count("audit_ledger").unwrap(), 0);
         assert_eq!(db.count("token_ledger").unwrap(), 0);
         assert_eq!(db.count("activity_item").unwrap(), 0);
+    }
+
+    // ---- PAIR-004 adverse suite -------------------------------------------------
+
+    /// Build a valid `Pair` message for `payload` + `device`.
+    fn pair_msg(payload: &FridayPairPayload, device_id: &str, pubkey: &[u8]) -> Message {
+        let secret = payload.pairing_secret.expose_for_qr().as_bytes().to_vec();
+        Message::Pair {
+            device_id: device_id.into(),
+            device_pubkey: pubkey.to_vec(),
+            pairing_proof: pairing_proof(&secret, pubkey),
+        }
+    }
+
+    #[test]
+    fn expired_pairing_payload_is_denied_and_writes_no_trust() {
+        let tmp = TempDb::new("expiry");
+        let mut db = Db::open_hub(tmp.path()).unwrap();
+        let payload = sample_payload(1000); // expires_at = 1000
+        let msg = pair_msg(&payload, "ios-exp", &[7u8; 32]);
+        let hub = PairingHub::new(payload, vec!["pairing".into()]);
+        // sent_at == expires_at → expired (validate_at: expires_at <= now).
+        let response = hub.handle_envelope(&mut db, Envelope::new("pair-exp", 1000, msg));
+        assert_eq!(
+            response.message,
+            Message::PairAck {
+                accepted: false,
+                error_code: Some(ErrorCode::PairingDenied),
+            }
+        );
+        assert_eq!(db.count("trusted_device").unwrap(), 0);
+        assert_eq!(db.count("audit_ledger").unwrap(), 0);
+    }
+
+    #[test]
+    fn replayed_pairing_is_denied_with_no_double_trust() {
+        let tmp = TempDb::new("replay");
+        let mut db = Db::open_hub(tmp.path()).unwrap();
+        let payload = sample_payload(5000);
+        let pubkey = [7u8; 32];
+        let first_msg = pair_msg(&payload, "ios-replay", &pubkey);
+        let replay_msg = pair_msg(&payload, "ios-replay", &pubkey); // identical proof
+        let hub = PairingHub::new(payload, vec!["pairing".into()]);
+
+        let first = hub.handle_envelope(&mut db, Envelope::new("pair-1", 1000, first_msg));
+        assert_eq!(
+            first.message,
+            Message::PairAck {
+                accepted: true,
+                error_code: None,
+            }
+        );
+        assert_eq!(db.count("trusted_device").unwrap(), 1);
+
+        // Replaying the exact captured Pair must be denied (device_id PK conflict) and
+        // must NOT create a second trust row.
+        let replay = hub.handle_envelope(&mut db, Envelope::new("pair-2", 1001, replay_msg));
+        assert_eq!(
+            replay.message,
+            Message::PairAck {
+                accepted: false,
+                error_code: Some(ErrorCode::PairingDenied),
+            }
+        );
+        assert_eq!(db.count("trusted_device").unwrap(), 1);
+    }
+
+    #[test]
+    fn revoked_device_is_no_longer_trusted() {
+        let tmp = TempDb::new("revoke");
+        let mut db = Db::open_hub(tmp.path()).unwrap();
+        let payload = sample_payload(5000);
+        let msg = pair_msg(&payload, "ios-revoke", &[7u8; 32]);
+        let hub = PairingHub::new(payload, vec!["pairing".into()]);
+        hub.handle_envelope(&mut db, Envelope::new("pair-rev", 1000, msg));
+        assert!(friday_storage::pairing::is_trusted(db.conn(), "ios-revoke").unwrap());
+
+        friday_storage::pairing::revoke_device(db.conn_mut(), "ios-revoke", 2000, "audit-revoke-1")
+            .unwrap();
+        assert!(!friday_storage::pairing::is_trusted(db.conn(), "ios-revoke").unwrap());
+    }
+
+    #[test]
+    fn first_message_before_auth_writes_no_trust_and_leaks_no_session_data() {
+        // Before any valid Pair, NO message (status / ask / unsupported) may write trust
+        // or return session/proof/transcript data — only challenge-response (a valid
+        // Pair) establishes trust.
+        let tmp = TempDb::new("preauth");
+        let mut db = Db::open_hub(tmp.path()).unwrap();
+        let hub = PairingHub::new(sample_payload(5000), vec!["pairing".into()]);
+
+        // (a) Ask before auth → refused, no model/provider call.
+        let ask = hub.handle_envelope(
+            &mut db,
+            Envelope::new(
+                "pre-ask",
+                1000,
+                Message::AskFridayRequest {
+                    prompt: "leak my history".into(),
+                },
+            ),
+        );
+        assert!(matches!(ask.message, Message::Error { .. }));
+
+        // (b) An unsupported pairing-channel message before auth → Error, not data.
+        let unsupported = hub.handle_envelope(
+            &mut db,
+            Envelope::new(
+                "pre-unsupported",
+                1000,
+                Message::PairAck {
+                    accepted: true,
+                    error_code: None,
+                },
+            ),
+        );
+        assert!(matches!(unsupported.message, Message::Error { .. }));
+
+        // (c) Status before auth is bootstrap-only: online + capabilities, NEVER a
+        // session/proof/transcript payload.
+        let status = hub.handle_envelope(&mut db, hub.status_envelope("pre-status", 1000));
+        assert!(matches!(status.message, Message::HubStatus { .. }));
+
+        // No pre-auth message wrote trust or any side-effect row.
+        assert_eq!(db.count("trusted_device").unwrap(), 0);
+        assert_eq!(db.count("audit_ledger").unwrap(), 0);
+        assert_eq!(db.count("token_ledger").unwrap(), 0);
+        assert_eq!(db.count("activity_item").unwrap(), 0);
+    }
+
+    #[test]
+    fn pairing_listener_binds_loopback_and_accepts_one_pair() {
+        let tmp = TempDb::new("listener");
+        let db_path = tmp.path().to_string();
+        let payload = sample_payload(5000);
+        let secret = payload.pairing_secret.expose_for_qr().as_bytes().to_vec();
+        let hub = PairingHub::new(payload, vec!["pairing".into()]);
+        let hub_kp = DeviceKeypair::generate();
+        let phone_kp = DeviceKeypair::generate();
+        let hub_pub = hub_kp.public_bytes();
+        let phone_pub = phone_kp.public_bytes();
+
+        let listener = PairingListener::bind_loopback(hub, 0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        assert!(
+            addr.ip().is_loopback(),
+            "pairing listener must bind loopback only (this Mac)"
+        );
+
+        let server = thread::spawn(move || {
+            let session = hub_kp.agree(&phone_pub);
+            let mut db = Db::open_hub(&db_path).unwrap();
+            listener.accept_one(&mut db, &session, AAD).unwrap()
+        });
+
+        let session = phone_kp.agree(&hub_pub);
+        // The proof is over the SAME pairing secret the hub holds (captured before the
+        // payload moved into the hub).
+        let pubkey = vec![7u8; 32];
+        let request = Envelope::new(
+            "listener-pair",
+            1000,
+            Message::Pair {
+                device_id: "ios-listener".into(),
+                device_pubkey: pubkey.clone(),
+                pairing_proof: pairing_proof(&secret, &pubkey),
+            },
+        );
+
+        let stream = TcpStream::connect(addr).unwrap();
+        let mut ws = ws_connect(&format!("ws://{addr}/"), stream).unwrap();
+        ws_send_envelope(&mut ws, &session, &request, AAD).unwrap();
+        let client_resp = ws_recv_envelope(&mut ws, &session, AAD).unwrap();
+        let server_resp = server.join().unwrap();
+
+        assert_eq!(
+            server_resp.message,
+            Message::PairAck {
+                accepted: true,
+                error_code: None,
+            }
+        );
+        assert_eq!(
+            client_resp.message,
+            Message::PairAck {
+                accepted: true,
+                error_code: None,
+            }
+        );
+        let db = Db::open_hub(tmp.path()).unwrap();
+        assert_eq!(db.count("trusted_device").unwrap(), 1);
     }
 }
