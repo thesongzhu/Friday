@@ -95,6 +95,11 @@ pub mod workflow_exec;
 /// dispatches provider/model calls.
 pub mod pair_runtime;
 
+/// Provider Workspace runtime projection — maps Codex/Claude UI actions to
+/// provider capabilities, sync modes, native actions, and exact blockers before
+/// any UI can look ready. Pure projection only; no provider/model calls.
+pub mod provider_workspace;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,
