@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 
 use friday_protocol::{
+    ProviderWorkspaceActionRequestWire, ProviderWorkspaceActionResultWire,
     ProviderWorkspaceActionWire, ProviderWorkspaceNativeActionWire, ProviderWorkspaceNeedsMeWire,
     ProviderWorkspaceProjectionWire, ProviderWorkspaceSessionWire,
 };
@@ -31,6 +32,12 @@ pub enum ProviderWorkspaceError {
         capability_id: String,
         expected_id: String,
     },
+
+    #[error("unknown provider workspace provider: {provider}")]
+    UnknownProvider { provider: String },
+
+    #[error("unknown provider workspace action: {action}")]
+    UnknownAction { action: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -62,6 +69,23 @@ impl ProviderWorkspaceAction {
             ProviderWorkspaceAction::ApproveOrReject => "approve_or_reject",
             ProviderWorkspaceAction::AnswerQuestion => "answer_question",
             ProviderWorkspaceAction::OpenProviderNative => "open_provider_native",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "list_sessions" => Some(ProviderWorkspaceAction::ListSessions),
+            "read_session" => Some(ProviderWorkspaceAction::ReadSession),
+            "start_session" => Some(ProviderWorkspaceAction::StartSession),
+            "resume_session" => Some(ProviderWorkspaceAction::ResumeSession),
+            "fork_session" => Some(ProviderWorkspaceAction::ForkSession),
+            "send_turn" => Some(ProviderWorkspaceAction::SendTurn),
+            "steer_turn" => Some(ProviderWorkspaceAction::SteerTurn),
+            "interrupt_turn" => Some(ProviderWorkspaceAction::InterruptTurn),
+            "approve_or_reject" => Some(ProviderWorkspaceAction::ApproveOrReject),
+            "answer_question" => Some(ProviderWorkspaceAction::AnswerQuestion),
+            "open_provider_native" => Some(ProviderWorkspaceAction::OpenProviderNative),
+            _ => None,
         }
     }
 }
@@ -169,6 +193,14 @@ impl ProviderWorkspaceCatalog {
             .map(projection_to_wire)
     }
 
+    pub fn guard_action_request(
+        &self,
+        session: &ProviderSession,
+        request: ProviderWorkspaceActionRequestWire,
+    ) -> ProviderWorkspaceActionResultWire {
+        guard_action_request(self, session, request)
+    }
+
     /// Current Friday truth-labeled provider workspace catalog. It is not a
     /// provider parity claim: unproven actions are disabled with exact blockers.
     pub fn friday_current() -> Self {
@@ -185,6 +217,124 @@ impl ProviderWorkspaceCatalog {
         }
         catalog
     }
+}
+
+pub fn guard_action_request(
+    catalog: &ProviderWorkspaceCatalog,
+    session: &ProviderSession,
+    request: ProviderWorkspaceActionRequestWire,
+) -> ProviderWorkspaceActionResultWire {
+    let provider = match parse_provider(&request.provider) {
+        Some(provider) => provider,
+        None => {
+            let blocker = format!("unknown provider '{}'", request.provider);
+            return rejected_action_result(request, "unknown", blocker);
+        }
+    };
+    if provider != session.provider {
+        return rejected_action_result(
+            request,
+            "provider_mismatch",
+            "request provider does not match session provider".to_string(),
+        );
+    }
+    if request.friday_session_id != session.friday_session_id {
+        return rejected_action_result(
+            request,
+            "session_mismatch",
+            "request session id does not match Provider Workspace session".to_string(),
+        );
+    }
+    let action = match ProviderWorkspaceAction::parse(&request.action) {
+        Some(action) => action,
+        None => {
+            let blocker = format!("unknown Provider Workspace action '{}'", request.action);
+            return rejected_action_result(request, "unknown", blocker);
+        }
+    };
+    let expected_id = capability_id(provider, action);
+    if request.capability_id != expected_id {
+        return rejected_action_result(
+            request,
+            "capability_mismatch",
+            format!("capability id must be '{expected_id}'"),
+        );
+    }
+    let Some(projected) = catalog.resolve(provider, action) else {
+        return rejected_action_result(
+            request,
+            "missing_capability",
+            "no provider capability row exists for requested action".to_string(),
+        );
+    };
+    let projected = match projected {
+        Ok(projected) => projected,
+        Err(err) => return rejected_action_result(request, "invalid_capability", err.to_string()),
+    };
+    if !projected.routed {
+        return ProviderWorkspaceActionResultWire {
+            request_id: request.request_id,
+            friday_session_id: request.friday_session_id,
+            provider: request.provider,
+            action: request.action,
+            capability_id: request.capability_id,
+            accepted: false,
+            routed: false,
+            status: capability_status_str(projected.status).to_string(),
+            truth_label: projected.truth_label,
+            blocker: projected.blocker,
+            proof_ref: projected.proof_ref,
+            dispatch_ref: None,
+        };
+    }
+    ProviderWorkspaceActionResultWire {
+        request_id: request.request_id,
+        friday_session_id: request.friday_session_id,
+        provider: request.provider,
+        action: request.action,
+        capability_id: request.capability_id,
+        accepted: true,
+        routed: true,
+        status: capability_status_str(projected.status).to_string(),
+        truth_label: projected.truth_label,
+        blocker: None,
+        proof_ref: projected.proof_ref,
+        dispatch_ref: Some(dispatch_ref(session, provider, action)),
+    }
+}
+
+fn rejected_action_result(
+    request: ProviderWorkspaceActionRequestWire,
+    status: &str,
+    blocker: String,
+) -> ProviderWorkspaceActionResultWire {
+    ProviderWorkspaceActionResultWire {
+        request_id: request.request_id,
+        friday_session_id: request.friday_session_id,
+        provider: request.provider,
+        action: request.action,
+        capability_id: request.capability_id,
+        accepted: false,
+        routed: false,
+        status: status.to_string(),
+        truth_label: "provider_workspace_action_refused_before_dispatch".to_string(),
+        blocker: Some(blocker),
+        proof_ref: None,
+        dispatch_ref: None,
+    }
+}
+
+fn dispatch_ref(
+    session: &ProviderSession,
+    provider: PlatformProvider,
+    action: ProviderWorkspaceAction,
+) -> String {
+    format!(
+        "friday://provider-dispatch/{}/{}/{}",
+        provider.as_str(),
+        session.friday_session_id,
+        action.as_str()
+    )
 }
 
 pub fn projection_to_wire(
@@ -275,6 +425,14 @@ pub const PROVIDER_WORKSPACE_ACTIONS: &[ProviderWorkspaceAction] = &[
 
 fn capability_id(provider: PlatformProvider, action: ProviderWorkspaceAction) -> String {
     format!("provider.{}.{}", provider.as_str(), action.as_str())
+}
+
+fn parse_provider(value: &str) -> Option<PlatformProvider> {
+    match value {
+        "codex" => Some(PlatformProvider::Codex),
+        "claude" => Some(PlatformProvider::Claude),
+        _ => None,
+    }
 }
 
 fn session_status_str(status: SessionStatus) -> &'static str {
@@ -808,6 +966,45 @@ mod tests {
         }
     }
 
+    fn action_request(
+        provider: &str,
+        friday_session_id: &str,
+        action: &str,
+        capability_id: &str,
+    ) -> ProviderWorkspaceActionRequestWire {
+        ProviderWorkspaceActionRequestWire {
+            request_id: "request-1".to_string(),
+            friday_session_id: friday_session_id.to_string(),
+            provider: provider.to_string(),
+            action: action.to_string(),
+            capability_id: capability_id.to_string(),
+            payload_ref: Some("friday://body/request/1".to_string()),
+        }
+    }
+
+    fn verified_list_catalog() -> ProviderWorkspaceCatalog {
+        let mut catalog = ProviderWorkspaceCatalog::new();
+        catalog
+            .register(
+                ProviderWorkspaceAction::ListSessions,
+                ProviderCapability {
+                    capability_id: "provider.codex.list_sessions".to_string(),
+                    provider: PlatformProvider::Codex,
+                    status: CapabilityStatus::Verified,
+                    sync_mode: ProviderSyncMode::ProviderAppServerLocal,
+                    truth_label: "verified app-server list".to_string(),
+                    blocker: None,
+                    proof_ref: Some("proof-1".to_string()),
+                    native_action: Some(ProviderNativeAction::CodexAppServer {
+                        method: friday_providers::unified::CodexAppServerMethod::ThreadList,
+                        schema_ref: "schema".to_string(),
+                    }),
+                },
+            )
+            .unwrap();
+        catalog
+    }
+
     #[test]
     fn current_catalog_has_no_orphan_provider_workspace_actions() {
         let catalog = ProviderWorkspaceCatalog::friday_current();
@@ -1018,7 +1215,7 @@ mod tests {
         );
         let json = env.encode().unwrap();
         assert!(json.contains("\"kind\":\"ProviderWorkspaceSnapshot\""));
-        assert!(json.contains("\"schema_version\":2"));
+        assert!(json.contains("\"schema_version\":3"));
         assert!(json.contains("\"capability_id\":\"provider.codex.send_turn\""));
         assert!(json.contains("\"provider_action\":\"codex_app_server\""));
         for forbidden in [
@@ -1037,5 +1234,124 @@ mod tests {
         }
         let decoded = Envelope::decode(&json).unwrap();
         assert_eq!(decoded, env);
+    }
+
+    #[test]
+    fn guard_refuses_unproven_codex_action_before_provider_dispatch() {
+        let catalog = ProviderWorkspaceCatalog::friday_current();
+        let result = catalog.guard_action_request(
+            &session(PlatformProvider::Codex),
+            action_request(
+                "codex",
+                "friday-codex",
+                "send_turn",
+                "provider.codex.send_turn",
+            ),
+        );
+        assert!(!result.accepted);
+        assert!(!result.routed);
+        assert_eq!(result.status, "implemented_unproven");
+        assert!(result
+            .blocker
+            .as_deref()
+            .unwrap()
+            .contains("official-history"));
+        assert!(result.dispatch_ref.is_none());
+
+        let env = Envelope::new(
+            "provider-action-result-1",
+            100,
+            Message::ProviderWorkspaceActionResult { result },
+        );
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"schema_version\":3"));
+        assert!(!json.contains("sk-"));
+        assert!(!json.contains("raw user prompt"));
+        assert!(!json.contains("provider-token"));
+        assert_eq!(Envelope::decode(&json).unwrap(), env);
+    }
+
+    #[test]
+    fn guard_rejects_mismatched_or_unknown_action_requests() {
+        let catalog = ProviderWorkspaceCatalog::friday_current();
+        let session = session(PlatformProvider::Codex);
+        let cases = [
+            (
+                action_request(
+                    "claude",
+                    "friday-codex",
+                    "send_turn",
+                    "provider.claude.send_turn",
+                ),
+                "provider_mismatch",
+            ),
+            (
+                action_request(
+                    "codex",
+                    "friday-other",
+                    "send_turn",
+                    "provider.codex.send_turn",
+                ),
+                "session_mismatch",
+            ),
+            (
+                action_request(
+                    "codex",
+                    "friday-codex",
+                    "teleport",
+                    "provider.codex.teleport",
+                ),
+                "unknown",
+            ),
+            (
+                action_request(
+                    "codex",
+                    "friday-codex",
+                    "send_turn",
+                    "provider.codex.list_sessions",
+                ),
+                "capability_mismatch",
+            ),
+            (
+                action_request(
+                    "opencode",
+                    "friday-codex",
+                    "send_turn",
+                    "provider.opencode.send_turn",
+                ),
+                "unknown",
+            ),
+        ];
+        for (request, expected_status) in cases {
+            let result = catalog.guard_action_request(&session, request);
+            assert!(!result.accepted);
+            assert!(!result.routed);
+            assert_eq!(result.status, expected_status);
+            assert!(result.blocker.as_deref().is_some_and(|b| !b.is_empty()));
+            assert!(result.dispatch_ref.is_none());
+        }
+    }
+
+    #[test]
+    fn guard_accepts_only_verified_capability_with_dispatch_ref() {
+        let catalog = verified_list_catalog();
+        let result = catalog.guard_action_request(
+            &session(PlatformProvider::Codex),
+            action_request(
+                "codex",
+                "friday-codex",
+                "list_sessions",
+                "provider.codex.list_sessions",
+            ),
+        );
+        assert!(result.accepted);
+        assert!(result.routed);
+        assert_eq!(result.status, "verified");
+        assert_eq!(result.proof_ref.as_deref(), Some("proof-1"));
+        assert!(result.blocker.is_none());
+        assert_eq!(
+            result.dispatch_ref.as_deref(),
+            Some("friday://provider-dispatch/codex/friday-codex/list_sessions")
+        );
     }
 }

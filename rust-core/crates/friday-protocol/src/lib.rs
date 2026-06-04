@@ -16,9 +16,9 @@ use std::fmt;
 use thiserror::Error;
 
 /// Highest wire schema version this build speaks.
-pub const CURRENT_SCHEMA_VERSION: u16 = 2;
+pub const CURRENT_SCHEMA_VERSION: u16 = 3;
 /// The inclusive range of versions this build supports.
-pub const SUPPORTED: VersionRange = VersionRange { min: 1, max: 2 };
+pub const SUPPORTED: VersionRange = VersionRange { min: 1, max: 3 };
 
 /// Redacted provider-session projection safe to carry to phone/channel clients.
 /// Hub-only fields such as account hashes, cwd, external URLs, provider tokens,
@@ -128,6 +128,42 @@ pub struct ProviderWorkspaceProjectionWire {
     pub session: ProviderWorkspaceSessionWire,
     pub actions: Vec<ProviderWorkspaceActionWire>,
     pub needs_me: Vec<ProviderWorkspaceNeedsMeWire>,
+}
+
+/// A UI/client request to perform one Provider Workspace action. The Hub must
+/// validate this against the capability catalog before any provider process or
+/// model call can happen.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProviderWorkspaceActionRequestWire {
+    pub request_id: String,
+    pub friday_session_id: String,
+    pub provider: String,
+    pub action: String,
+    pub capability_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_ref: Option<String>,
+}
+
+/// The Hub's pre-dispatch decision for a Provider Workspace action. `accepted`
+/// means the request may enter the provider adapter. It is not a provider
+/// completion claim.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProviderWorkspaceActionResultWire {
+    pub request_id: String,
+    pub friday_session_id: String,
+    pub provider: String,
+    pub action: String,
+    pub capability_id: String,
+    pub accepted: bool,
+    pub routed: bool,
+    pub status: String,
+    pub truth_label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatch_ref: Option<String>,
 }
 
 /// Structured QR payload for Hub/device pairing. This is the JSON that can be
@@ -351,6 +387,15 @@ pub enum Message {
     ProviderWorkspaceSnapshot {
         projection: ProviderWorkspaceProjectionWire,
     },
+    /// phone/desktop/channel->hub: request one Provider Workspace action. The
+    /// Hub must answer with a guard result before any provider dispatch.
+    ProviderWorkspaceActionRequest {
+        request: ProviderWorkspaceActionRequestWire,
+    },
+    /// hub->client: pre-dispatch result for a Provider Workspace action request.
+    ProviderWorkspaceActionResult {
+        result: ProviderWorkspaceActionResultWire,
+    },
     /// either: explicit error code + message.
     Error { code: ErrorCode, message: String },
 }
@@ -540,6 +585,38 @@ mod tests {
         }
     }
 
+    fn provider_workspace_action_request() -> Message {
+        Message::ProviderWorkspaceActionRequest {
+            request: ProviderWorkspaceActionRequestWire {
+                request_id: "request-1".into(),
+                friday_session_id: "friday-codex-1".into(),
+                provider: "codex".into(),
+                action: "send_turn".into(),
+                capability_id: "provider.codex.send_turn".into(),
+                payload_ref: Some("friday://body/user-message/1".into()),
+            },
+        }
+    }
+
+    fn provider_workspace_action_result() -> Message {
+        Message::ProviderWorkspaceActionResult {
+            result: ProviderWorkspaceActionResultWire {
+                request_id: "request-1".into(),
+                friday_session_id: "friday-codex-1".into(),
+                provider: "codex".into(),
+                action: "send_turn".into(),
+                capability_id: "provider.codex.send_turn".into(),
+                accepted: false,
+                routed: false,
+                status: "implemented_unproven".into(),
+                truth_label: "codex_app_server_local_turn_start_unproven_for_ui".into(),
+                blocker: Some("official-history behavior is not fully proven".into()),
+                proof_ref: None,
+                dispatch_ref: None,
+            },
+        }
+    }
+
     #[test]
     fn envelope_round_trips_for_each_kind() {
         let cases = vec![
@@ -568,11 +645,13 @@ mod tests {
                 message: "down".into(),
             },
             provider_workspace_snapshot(),
+            provider_workspace_action_request(),
+            provider_workspace_action_result(),
         ];
         for msg in cases {
             let env = Envelope::new("m1", 1000, msg).with_correlation("c1");
             let json = env.encode().unwrap();
-            assert!(json.contains("\"schema_version\":2"));
+            assert!(json.contains("\"schema_version\":3"));
             let back = Envelope::decode(&json).unwrap();
             assert_eq!(back, env);
         }
@@ -602,6 +681,40 @@ mod tests {
         }
         let decoded = Envelope::decode(&json).unwrap();
         assert_eq!(decoded, env);
+    }
+
+    #[test]
+    fn provider_workspace_action_request_and_result_are_metadata_only() {
+        let request = Envelope::new(
+            "provider-action-1",
+            1000,
+            provider_workspace_action_request(),
+        );
+        let result = Envelope::new(
+            "provider-action-2",
+            1001,
+            provider_workspace_action_result(),
+        );
+        for env in [request, result] {
+            let json = env.encode().unwrap();
+            assert!(json.contains("ProviderWorkspaceAction"));
+            assert!(json.contains("\"schema_version\":3"));
+            assert!(json.contains("\"capability_id\":\"provider.codex.send_turn\""));
+            for forbidden in [
+                "raw user prompt",
+                "rm -rf",
+                "sk-",
+                "provider-token",
+                "/Users/jarvis/private",
+                "https://provider.example/private",
+            ] {
+                assert!(
+                    !json.contains(forbidden),
+                    "provider workspace action wire leaked {forbidden}: {json}"
+                );
+            }
+            assert_eq!(Envelope::decode(&json).unwrap(), env);
+        }
     }
 
     #[test]
