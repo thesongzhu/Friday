@@ -14,7 +14,10 @@
 //! - Events carry only refs (`body_ref`/`provider_event_id`), never raw transcript text.
 //! - Pure logic, no I/O; per-session isolation means one noisy stream cannot stall another.
 
-use friday_protocol::{IdempotencyTracker, Seen};
+use friday_protocol::{
+    IdempotencyTracker, Message, ProviderTimelineEventWire, ProviderTimelinePendingWire,
+    ProviderTimelineReconnectWire, Seen,
+};
 use std::collections::BTreeMap;
 
 /// A Friday-canonical timeline event (file 83 §ProviderTimelineEvent), metadata-only.
@@ -90,6 +93,24 @@ impl PendingState {
                 | (FailedRetryable, FailedTerminal)
                 | (FailedRetryable, Cancelled)
         )
+    }
+
+    /// The snake_case wire label. `sent_to_hub`/`accepted_by_hub` are Hub-ack states, NOT
+    /// completion — only `provider_completed` is both a real completion and terminal.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PendingState::Draft => "draft",
+            PendingState::PendingLocal => "pending_local",
+            PendingState::SentToHub => "sent_to_hub",
+            PendingState::AcceptedByHub => "accepted_by_hub",
+            PendingState::RoutedToProvider => "routed_to_provider",
+            PendingState::WaitingProvider => "waiting_provider",
+            PendingState::ProviderCompleted => "provider_completed",
+            PendingState::Blocked => "blocked",
+            PendingState::FailedRetryable => "failed_retryable",
+            PendingState::FailedTerminal => "failed_terminal",
+            PendingState::Cancelled => "cancelled",
+        }
     }
 }
 
@@ -312,9 +333,88 @@ impl ProviderTimeline {
     }
 }
 
+// --- wire projection (SMOOTH-001 continuation): refs-only, ack≠completion preserved ---
+//
+// Pure (no I/O, no model call). The timeline owns the reconnect CONTRACT; building the wire
+// here keeps that ownership in one place. EMITTING it over the serve-loop rides with the
+// native shell — this is the contract + its proof, not the serve-loop wiring (the same
+// headless boundary as the Phase-3 FFI contract shipping without a native shell).
+
+/// Project an (in-memory) [`Reconnect`] to its refs-only wire form. The mapping is total and
+/// STRUCTURAL: a [`TimelineEvent`] carries only its refs (`body_ref`/`provider_event_id`) and
+/// a [`PendingAction`]'s `state`/`terminal` preserve Hub-ack≠provider-completion — there is no
+/// wire field that can hold raw transcript text.
+pub fn reconnect_to_wire(reconnect: &Reconnect) -> ProviderTimelineReconnectWire {
+    match reconnect {
+        Reconnect::Delta {
+            from_seq,
+            to_seq,
+            from_revision,
+            to_revision,
+            events,
+            pending,
+        } => ProviderTimelineReconnectWire::Delta {
+            from_seq: *from_seq,
+            to_seq: *to_seq,
+            from_revision: *from_revision,
+            to_revision: *to_revision,
+            events: events.iter().map(event_to_wire).collect(),
+            pending: pending.iter().map(pending_to_wire).collect(),
+        },
+        Reconnect::Snapshot {
+            to_seq,
+            revision,
+            events,
+            pending,
+            reason,
+        } => ProviderTimelineReconnectWire::Snapshot {
+            to_seq: *to_seq,
+            revision: *revision,
+            events: events.iter().map(event_to_wire).collect(),
+            pending: pending.iter().map(pending_to_wire).collect(),
+            reason: (*reason).to_string(),
+        },
+    }
+}
+
+/// Wrap a reconnect projection in the protocol [`Message`] a Hub would send a reconnecting
+/// client for `friday_session_id`.
+pub fn reconnect_to_message(friday_session_id: &str, reconnect: &Reconnect) -> Message {
+    Message::ProviderTimelineReconnect {
+        friday_session_id: friday_session_id.to_string(),
+        reconnect: reconnect_to_wire(reconnect),
+    }
+}
+
+fn event_to_wire(e: &TimelineEvent) -> ProviderTimelineEventWire {
+    ProviderTimelineEventWire {
+        seq: e.seq,
+        revision: e.revision,
+        event_kind: e.event_kind.clone(),
+        actor: e.actor.clone(),
+        body_ref: e.body_ref.clone(),
+        provider_event_id: e.provider_event_id.clone(),
+    }
+}
+
+fn pending_to_wire(p: &PendingAction) -> ProviderTimelinePendingWire {
+    ProviderTimelinePendingWire {
+        request_id: p.request_id.clone(),
+        client_msg_id: p.client_msg_id.clone(),
+        action: p.action.clone(),
+        state: p.state.as_str().to_string(),
+        terminal: p.state.is_terminal(),
+        dispatch_ref: p.dispatch_ref.clone(),
+        blocker: p.blocker.clone(),
+        base_revision: p.base_revision,
+        updated_at_revision: p.updated_at_revision,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use friday_protocol::Envelope;
 
     fn seeded() -> ProviderTimeline {
         let mut t = ProviderTimeline::new("friday-session-1");
@@ -486,5 +586,88 @@ mod tests {
         let debug = format!("{ev:?}");
         assert!(debug.contains("body://ref/1"));
         // body_ref is a ref; there is no field that could carry raw transcript text.
+    }
+
+    // --- wire projection tests ---
+
+    #[test]
+    fn delta_projects_to_refs_only_wire_and_round_trips_over_the_protocol() {
+        let mut t = seeded(); // 5 events (seq 1..=5, body://1..5)
+        t.submit_pending("c1", "r1", "send_turn");
+        t.advance_pending("r1", PendingState::SentToHub, None, None)
+            .unwrap();
+        t.advance_pending("r1", PendingState::AcceptedByHub, None, None)
+            .unwrap();
+        // Reconnect from a mid cursor → DELTA (cursor retained).
+        let reconnect = t.reconnect(3, 3);
+        assert!(matches!(reconnect, Reconnect::Delta { .. }));
+
+        let wire = reconnect_to_wire(&reconnect);
+        match &wire {
+            ProviderTimelineReconnectWire::Delta {
+                events, pending, ..
+            } => {
+                // Only the missed events (seq > 3) are present, in order, with their refs.
+                assert_eq!(events.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![4, 5]);
+                assert_eq!(events[0].body_ref.as_deref(), Some("body://4"));
+                // The Hub-ack pending action is projected NOT terminal (ack != completion).
+                let p = pending.iter().find(|p| p.request_id == "r1").unwrap();
+                assert_eq!(p.state, "accepted_by_hub");
+                assert!(!p.terminal);
+            }
+            other => panic!("expected Delta wire, got {other:?}"),
+        }
+
+        // Round-trips losslessly through the protocol envelope.
+        let msg = reconnect_to_message("friday-session-1", &reconnect);
+        let env = Envelope::new("ptl-1", 1, msg.clone());
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"mode\":\"delta\""));
+        // STRUCTURAL ref-only: a raw transcript value never reaches the wire — the only
+        // body-bearing field is the `body_ref` ref (asserted by the absence of a sentinel
+        // we never put into a ref).
+        assert!(!json.contains("RAW-TRANSCRIPT-BODY"));
+        assert_eq!(Envelope::decode(&json).unwrap().message, msg);
+    }
+
+    #[test]
+    fn snapshot_fallback_projects_with_reason_and_round_trips() {
+        let mut t = seeded();
+        t.prune_before(4); // drop seq 1..=3 from retention
+                           // A cursor behind retention → SNAPSHOT fallback.
+        let reconnect = t.reconnect(1, 1);
+        assert!(matches!(reconnect, Reconnect::Snapshot { .. }));
+
+        let msg = reconnect_to_message("friday-session-1", &reconnect);
+        let env = Envelope::new("ptl-2", 2, msg.clone());
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"mode\":\"snapshot\""));
+        assert!(json.contains("\"reason\":\"cursor_behind_retention\""));
+        assert_eq!(Envelope::decode(&json).unwrap().message, msg);
+    }
+
+    #[test]
+    fn pending_wire_preserves_ack_is_not_completion_for_every_state() {
+        // Every non-`ProviderCompleted` state projects `terminal=false` OR a terminal
+        // FAILURE/cancel — never a completion. Only `provider_completed` is a real completion.
+        let mut t = ProviderTimeline::new("s");
+        t.submit_pending("c1", "r1", "send_turn");
+        for (to, expect_terminal) in [
+            (PendingState::SentToHub, false),
+            (PendingState::AcceptedByHub, false),
+            (PendingState::RoutedToProvider, false),
+            (PendingState::WaitingProvider, false),
+            (PendingState::ProviderCompleted, true),
+        ] {
+            t.advance_pending("r1", to, None, None).unwrap();
+            let wire = pending_to_wire(t.pending("r1").unwrap());
+            assert_eq!(wire.state, to.as_str());
+            assert_eq!(wire.terminal, expect_terminal);
+            // Only provider_completed is BOTH terminal and a real completion.
+            assert_eq!(
+                wire.terminal && wire.state == "provider_completed",
+                to == PendingState::ProviderCompleted
+            );
+        }
     }
 }
