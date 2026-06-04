@@ -7,9 +7,14 @@
 
 use std::collections::BTreeMap;
 
+use friday_protocol::{
+    ProviderWorkspaceActionWire, ProviderWorkspaceNativeActionWire, ProviderWorkspaceNeedsMeWire,
+    ProviderWorkspaceProjectionWire, ProviderWorkspaceSessionWire,
+};
 use friday_providers::unified::{
-    CapabilityStatus, NeedsMeItem, NeedsMePriority, PlatformProvider, ProviderCapability,
-    ProviderNativeAction, ProviderSession, ProviderSyncMode, SessionEvent,
+    CapabilityStatus, ClaudeRemoteControlAction, CodexAppServerMethod, FallbackStatus, NeedsMeItem,
+    NeedsMeKind, NeedsMePriority, PlatformProvider, ProviderCapability, ProviderNativeAction,
+    ProviderSession, ProviderSyncMode, SessionEvent, SessionStatus,
 };
 use thiserror::Error;
 
@@ -155,6 +160,15 @@ impl ProviderWorkspaceCatalog {
         })
     }
 
+    pub fn project_session_wire(
+        &self,
+        session: ProviderSession,
+        events: &[SessionEvent],
+    ) -> Result<ProviderWorkspaceProjectionWire, ProviderWorkspaceError> {
+        self.project_session(session, events)
+            .map(projection_to_wire)
+    }
+
     /// Current Friday truth-labeled provider workspace catalog. It is not a
     /// provider parity claim: unproven actions are disabled with exact blockers.
     pub fn friday_current() -> Self {
@@ -170,6 +184,78 @@ impl ProviderWorkspaceCatalog {
                 .expect("valid claude row");
         }
         catalog
+    }
+}
+
+pub fn projection_to_wire(
+    projection: ProviderWorkspaceProjection,
+) -> ProviderWorkspaceProjectionWire {
+    ProviderWorkspaceProjectionWire {
+        session: ProviderWorkspaceSessionWire {
+            friday_session_id: projection.session.friday_session_id,
+            provider: projection.session.provider.as_str().to_string(),
+            workspace_id: projection.session.workspace_id,
+            sync_mode: projection.session.sync_mode.as_str().to_string(),
+            status: session_status_str(projection.session.status).to_string(),
+            active_turn_id: projection.session.active_turn_id,
+            last_event_seq: projection.session.last_event_seq,
+            truth_label: projection.session.truth_label,
+            fallback_status: fallback_status_str(projection.session.fallback_status).to_string(),
+        },
+        actions: projection.actions.into_iter().map(action_to_wire).collect(),
+        needs_me: projection
+            .needs_me
+            .into_iter()
+            .map(needs_me_to_wire)
+            .collect(),
+    }
+}
+
+fn action_to_wire(action: ProviderWorkspaceActionProjection) -> ProviderWorkspaceActionWire {
+    ProviderWorkspaceActionWire {
+        provider: action.provider.as_str().to_string(),
+        action: action.action.as_str().to_string(),
+        capability_id: action.capability_id,
+        sync_mode: action.sync_mode.as_str().to_string(),
+        status: capability_status_str(action.status).to_string(),
+        truth_label: action.truth_label,
+        routed: action.routed,
+        blocker: action.blocker,
+        proof_ref: action.proof_ref,
+        native_action: action.native_action.map(native_action_to_wire),
+    }
+}
+
+fn native_action_to_wire(action: ProviderNativeAction) -> ProviderWorkspaceNativeActionWire {
+    match action {
+        ProviderNativeAction::CodexAppServer { method, schema_ref } => {
+            ProviderWorkspaceNativeActionWire::CodexAppServer {
+                method: codex_method_str(method).to_string(),
+                schema_ref,
+            }
+        }
+        ProviderNativeAction::ClaudeRemoteControl {
+            action,
+            proof_required,
+        } => ProviderWorkspaceNativeActionWire::ClaudeRemoteControl {
+            action: claude_remote_action_str(action).to_string(),
+            proof_required,
+        },
+        ProviderNativeAction::ClaudeStreamJson { event_type } => {
+            ProviderWorkspaceNativeActionWire::ClaudeStreamJson { event_type }
+        }
+    }
+}
+
+fn needs_me_to_wire(item: NeedsMeItem) -> ProviderWorkspaceNeedsMeWire {
+    ProviderWorkspaceNeedsMeWire {
+        item_id: item.item_id,
+        provider: item.provider.as_str().to_string(),
+        friday_session_id: item.friday_session_id,
+        kind: needs_me_kind_str(item.kind).to_string(),
+        priority: needs_me_priority_str(item.priority).to_string(),
+        ref_id: item.ref_id,
+        status: session_status_str(item.status).to_string(),
     }
 }
 
@@ -189,6 +275,79 @@ pub const PROVIDER_WORKSPACE_ACTIONS: &[ProviderWorkspaceAction] = &[
 
 fn capability_id(provider: PlatformProvider, action: ProviderWorkspaceAction) -> String {
     format!("provider.{}.{}", provider.as_str(), action.as_str())
+}
+
+fn session_status_str(status: SessionStatus) -> &'static str {
+    match status {
+        SessionStatus::Idle => "idle",
+        SessionStatus::Running => "running",
+        SessionStatus::AwaitingApproval => "awaiting_approval",
+        SessionStatus::AwaitingUserInput => "awaiting_user_input",
+        SessionStatus::Interrupted => "interrupted",
+        SessionStatus::Completed => "completed",
+        SessionStatus::Errored => "errored",
+        SessionStatus::Disconnected => "disconnected",
+        SessionStatus::Unknown => "unknown",
+    }
+}
+
+fn fallback_status_str(status: FallbackStatus) -> &'static str {
+    match status {
+        FallbackStatus::NoFallback => "no_fallback",
+        FallbackStatus::UnavailableNoFallback => "unavailable_no_fallback",
+        FallbackStatus::FallbackDisabled => "fallback_disabled",
+    }
+}
+
+fn capability_status_str(status: CapabilityStatus) -> &'static str {
+    match status {
+        CapabilityStatus::Verified => "verified",
+        CapabilityStatus::ImplementedUnproven => "implemented_unproven",
+        CapabilityStatus::OperatorGated => "operator_gated",
+        CapabilityStatus::ExternalBlocked => "external_blocked",
+        CapabilityStatus::Blocked => "blocked",
+        CapabilityStatus::Unsupported => "unsupported",
+    }
+}
+
+fn codex_method_str(method: CodexAppServerMethod) -> &'static str {
+    match method {
+        CodexAppServerMethod::ThreadList => "thread_list",
+        CodexAppServerMethod::ThreadRead => "thread_read",
+        CodexAppServerMethod::ThreadStart => "thread_start",
+        CodexAppServerMethod::ThreadResume => "thread_resume",
+        CodexAppServerMethod::ThreadFork => "thread_fork",
+        CodexAppServerMethod::TurnStart => "turn_start",
+        CodexAppServerMethod::TurnSteer => "turn_steer",
+        CodexAppServerMethod::TurnInterrupt => "turn_interrupt",
+        CodexAppServerMethod::ApprovalResponse => "approval_response",
+        CodexAppServerMethod::UserInputResponse => "user_input_response",
+    }
+}
+
+fn claude_remote_action_str(action: ClaudeRemoteControlAction) -> &'static str {
+    match action {
+        ClaudeRemoteControlAction::Launch => "launch",
+        ClaudeRemoteControlAction::OpenSessionUrl => "open_session_url",
+        ClaudeRemoteControlAction::ShowQr => "show_qr",
+        ClaudeRemoteControlAction::Disconnect => "disconnect",
+    }
+}
+
+fn needs_me_kind_str(kind: NeedsMeKind) -> &'static str {
+    match kind {
+        NeedsMeKind::Approval => "approval",
+        NeedsMeKind::UserQuestion => "user_question",
+    }
+}
+
+fn needs_me_priority_str(priority: NeedsMePriority) -> &'static str {
+    match priority {
+        NeedsMePriority::Low => "low",
+        NeedsMePriority::Normal => "normal",
+        NeedsMePriority::High => "high",
+        NeedsMePriority::Critical => "critical",
+    }
 }
 
 fn project_action(
@@ -594,6 +753,7 @@ fn claude_current_capabilities() -> Vec<(ProviderWorkspaceAction, ProviderCapabi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use friday_protocol::{Envelope, Message};
     use friday_providers::unified::{
         ApprovalKind, ApprovalRequest, BodyRef, RedactionLevel, RiskLabel, SessionEvent,
         SessionEventKind, SessionStatus,
@@ -614,6 +774,37 @@ mod tests {
             last_event_seq: 0,
             truth_label: "provider workspace test".to_string(),
             fallback_status: friday_providers::unified::FallbackStatus::NoFallback,
+        }
+    }
+
+    fn approval_event(provider: PlatformProvider) -> SessionEvent {
+        SessionEvent {
+            event_id: "event-1".to_string(),
+            provider,
+            friday_session_id: format!("friday-{}", provider.as_str()),
+            provider_event_id: Some("provider-event-1".to_string()),
+            seq: 1,
+            kind: SessionEventKind::ApprovalRequested,
+            status: SessionStatus::AwaitingApproval,
+            transcript_item: None,
+            tool_call: None,
+            approval_request: Some(ApprovalRequest {
+                approval_ref: "approval-1".to_string(),
+                kind: ApprovalKind::CommandExecution,
+                tool_call_id: Some("tool-1".to_string()),
+                summary_ref: BodyRef {
+                    uri: "friday://body/approval/1".to_string(),
+                    redaction_level: RedactionLevel::MetadataOnly,
+                },
+                risk_label: RiskLabel::HighRisk,
+            }),
+            user_question: None,
+            file_change: None,
+            command_output: None,
+            diff_summary: None,
+            attachment: None,
+            token_ledger_ref: None,
+            audit_receipt_ref: Some("audit-1".to_string()),
         }
     }
 
@@ -777,36 +968,11 @@ mod tests {
     #[test]
     fn project_session_collects_needs_me_without_raw_provider_body() {
         let catalog = ProviderWorkspaceCatalog::friday_current();
-        let event = SessionEvent {
-            event_id: "event-1".to_string(),
-            provider: PlatformProvider::Codex,
-            friday_session_id: "friday-codex".to_string(),
-            provider_event_id: Some("provider-event-1".to_string()),
-            seq: 1,
-            kind: SessionEventKind::ApprovalRequested,
-            status: SessionStatus::AwaitingApproval,
-            transcript_item: None,
-            tool_call: None,
-            approval_request: Some(ApprovalRequest {
-                approval_ref: "approval-1".to_string(),
-                kind: ApprovalKind::CommandExecution,
-                tool_call_id: Some("tool-1".to_string()),
-                summary_ref: BodyRef {
-                    uri: "friday://body/approval/1".to_string(),
-                    redaction_level: RedactionLevel::MetadataOnly,
-                },
-                risk_label: RiskLabel::HighRisk,
-            }),
-            user_question: None,
-            file_change: None,
-            command_output: None,
-            diff_summary: None,
-            attachment: None,
-            token_ledger_ref: None,
-            audit_receipt_ref: Some("audit-1".to_string()),
-        };
         let projection = catalog
-            .project_session(session(PlatformProvider::Codex), &[event])
+            .project_session(
+                session(PlatformProvider::Codex),
+                &[approval_event(PlatformProvider::Codex)],
+            )
             .unwrap();
         assert_eq!(projection.needs_me.len(), 1);
         assert_eq!(projection.needs_me[0].ref_id, "approval-1");
@@ -814,5 +980,62 @@ mod tests {
         assert!(!debug.contains("rm -rf"));
         assert!(!debug.contains("sk-"));
         assert!(!debug.contains("provider-token"));
+    }
+
+    #[test]
+    fn project_session_wire_round_trips_as_protocol_snapshot() {
+        let catalog = ProviderWorkspaceCatalog::friday_current();
+        let projection = catalog
+            .project_session_wire(
+                session(PlatformProvider::Codex),
+                &[approval_event(PlatformProvider::Codex)],
+            )
+            .unwrap();
+        assert_eq!(projection.session.provider, "codex");
+        assert_eq!(
+            projection.session.sync_mode,
+            ProviderSyncMode::ProviderAppServerLocal.as_str()
+        );
+        assert_eq!(projection.actions.len(), PROVIDER_WORKSPACE_ACTIONS.len());
+        assert_eq!(projection.needs_me.len(), 1);
+        let send = projection
+            .actions
+            .iter()
+            .find(|action| action.action == "send_turn")
+            .expect("send_turn action present");
+        assert!(!send.routed);
+        assert_eq!(send.status, "implemented_unproven");
+        assert!(send
+            .blocker
+            .as_deref()
+            .unwrap()
+            .contains("official-history"));
+
+        let env = Envelope::new(
+            "provider-workspace-1",
+            100,
+            Message::ProviderWorkspaceSnapshot { projection },
+        );
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"ProviderWorkspaceSnapshot\""));
+        assert!(json.contains("\"schema_version\":2"));
+        assert!(json.contains("\"capability_id\":\"provider.codex.send_turn\""));
+        assert!(json.contains("\"provider_action\":\"codex_app_server\""));
+        for forbidden in [
+            "sk-",
+            "provider-token",
+            "account-hash",
+            "/Users/jarvis/private",
+            "external-thread",
+            "https://provider.example/private",
+            "rm -rf",
+        ] {
+            assert!(
+                !json.contains(forbidden),
+                "provider workspace wire leaked {forbidden}: {json}"
+            );
+        }
+        let decoded = Envelope::decode(&json).unwrap();
+        assert_eq!(decoded, env);
     }
 }

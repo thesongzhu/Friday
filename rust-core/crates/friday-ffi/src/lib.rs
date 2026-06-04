@@ -569,7 +569,7 @@ mod tests {
 
     #[test]
     fn ffi_protocol_version_helpers() {
-        assert_eq!(protocol_schema_version(), 1);
+        assert_eq!(protocol_schema_version(), 2);
         assert_eq!(negotiate_schema_version(1, 3, 2, 5), Some(3));
         assert_eq!(negotiate_schema_version(1, 1, 2, 4), None);
     }

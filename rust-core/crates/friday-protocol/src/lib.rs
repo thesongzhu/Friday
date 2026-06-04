@@ -16,9 +16,9 @@ use std::fmt;
 use thiserror::Error;
 
 /// Highest wire schema version this build speaks.
-pub const CURRENT_SCHEMA_VERSION: u16 = 1;
+pub const CURRENT_SCHEMA_VERSION: u16 = 2;
 /// The inclusive range of versions this build supports.
-pub const SUPPORTED: VersionRange = VersionRange { min: 1, max: 1 };
+pub const SUPPORTED: VersionRange = VersionRange { min: 1, max: 2 };
 
 /// Redacted provider-session projection safe to carry to phone/channel clients.
 /// Hub-only fields such as account hashes, cwd, external URLs, provider tokens,
@@ -50,6 +50,84 @@ impl From<friday_core::ProviderSessionProjection> for ProviderSessionProjectionW
             truth_label: value.truth_label,
         }
     }
+}
+
+/// Provider Workspace session state safe for phone/desktop/channel clients.
+/// This is Friday's redacted mirror shape, not a raw provider transcript or
+/// credential-bearing session object.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProviderWorkspaceSessionWire {
+    pub friday_session_id: String,
+    pub provider: String,
+    pub workspace_id: String,
+    pub sync_mode: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_turn_id: Option<String>,
+    pub last_event_seq: u64,
+    pub truth_label: String,
+    pub fallback_status: String,
+}
+
+/// Provider-native operation metadata safe to show to UI. This preserves the
+/// distinction between Codex app-server, Claude Remote Control, and Claude
+/// stream-json without linking phone code to provider/secret crates.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "provider_action", rename_all = "snake_case")]
+pub enum ProviderWorkspaceNativeActionWire {
+    CodexAppServer {
+        method: String,
+        schema_ref: String,
+    },
+    ClaudeRemoteControl {
+        action: String,
+        proof_required: bool,
+    },
+    ClaudeStreamJson {
+        event_type: String,
+    },
+}
+
+/// One UI action row in Provider Workspace. `routed=false` means the UI may show
+/// the action with its blocker/proof state, but must not dispatch it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProviderWorkspaceActionWire {
+    pub provider: String,
+    pub action: String,
+    pub capability_id: String,
+    pub sync_mode: String,
+    pub status: String,
+    pub truth_label: String,
+    pub routed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_action: Option<ProviderWorkspaceNativeActionWire>,
+}
+
+/// Metadata-only Needs-Me row derived from provider events. Raw command bodies,
+/// transcript text, provider tokens, and provider account ids are absent.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProviderWorkspaceNeedsMeWire {
+    pub item_id: String,
+    pub provider: String,
+    pub friday_session_id: String,
+    pub kind: String,
+    pub priority: String,
+    pub ref_id: String,
+    pub status: String,
+}
+
+/// Snapshot message body for the Provider Workspace screen. Deltas can be added
+/// later; this first wire shape gives UI clients a single canonical contract and
+/// prevents surface-specific private action ids.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProviderWorkspaceProjectionWire {
+    pub session: ProviderWorkspaceSessionWire,
+    pub actions: Vec<ProviderWorkspaceActionWire>,
+    pub needs_me: Vec<ProviderWorkspaceNeedsMeWire>,
 }
 
 /// Structured QR payload for Hub/device pairing. This is the JSON that can be
@@ -268,6 +346,11 @@ pub enum Message {
     },
     /// hub->phone: ack of a queued offline action on reconnect. NOT completion.
     OfflineQueueAck { acked_msg_id: String },
+    /// hub->phone: redacted Provider Workspace state/action snapshot. No model
+    /// call, no provider credential, and blocked actions remain blocked.
+    ProviderWorkspaceSnapshot {
+        projection: ProviderWorkspaceProjectionWire,
+    },
     /// either: explicit error code + message.
     Error { code: ErrorCode, message: String },
 }
@@ -415,6 +498,48 @@ impl ResumableStream {
 mod tests {
     use super::*;
 
+    fn provider_workspace_snapshot() -> Message {
+        Message::ProviderWorkspaceSnapshot {
+            projection: ProviderWorkspaceProjectionWire {
+                session: ProviderWorkspaceSessionWire {
+                    friday_session_id: "friday-codex-1".into(),
+                    provider: "codex".into(),
+                    workspace_id: "workspace-1".into(),
+                    sync_mode: "provider_app_server_local".into(),
+                    status: "awaiting_approval".into(),
+                    active_turn_id: Some("turn-1".into()),
+                    last_event_seq: 7,
+                    truth_label: "codex app-server local, official history unproven".into(),
+                    fallback_status: "no_fallback".into(),
+                },
+                actions: vec![ProviderWorkspaceActionWire {
+                    provider: "codex".into(),
+                    action: "send_turn".into(),
+                    capability_id: "provider.codex.send_turn".into(),
+                    sync_mode: "provider_app_server_local".into(),
+                    status: "implemented_unproven".into(),
+                    truth_label: "codex_app_server_local_turn_start_unproven_for_ui".into(),
+                    routed: false,
+                    blocker: Some("official-history behavior is not fully proven".into()),
+                    proof_ref: None,
+                    native_action: Some(ProviderWorkspaceNativeActionWire::CodexAppServer {
+                        method: "turn_start".into(),
+                        schema_ref: "codex-app-server-generated-schema".into(),
+                    }),
+                }],
+                needs_me: vec![ProviderWorkspaceNeedsMeWire {
+                    item_id: "needs-me:friday-codex-1:approval-1".into(),
+                    provider: "codex".into(),
+                    friday_session_id: "friday-codex-1".into(),
+                    kind: "approval".into(),
+                    priority: "high".into(),
+                    ref_id: "approval-1".into(),
+                    status: "awaiting_approval".into(),
+                }],
+            },
+        }
+    }
+
     #[test]
     fn envelope_round_trips_for_each_kind() {
         let cases = vec![
@@ -442,14 +567,41 @@ mod tests {
                 code: ErrorCode::ProviderUnavailable,
                 message: "down".into(),
             },
+            provider_workspace_snapshot(),
         ];
         for msg in cases {
             let env = Envelope::new("m1", 1000, msg).with_correlation("c1");
             let json = env.encode().unwrap();
-            assert!(json.contains("\"schema_version\":1"));
+            assert!(json.contains("\"schema_version\":2"));
             let back = Envelope::decode(&json).unwrap();
             assert_eq!(back, env);
         }
+    }
+
+    #[test]
+    fn provider_workspace_snapshot_wire_is_redacted_and_truth_labeled() {
+        let env = Envelope::new("provider-workspace-1", 1000, provider_workspace_snapshot());
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"ProviderWorkspaceSnapshot\""));
+        assert!(json.contains("\"capability_id\":\"provider.codex.send_turn\""));
+        assert!(json.contains("official-history"));
+        assert!(json.contains("\"routed\":false"));
+        assert!(json.contains("\"provider_action\":\"codex_app_server\""));
+        for forbidden in [
+            "sk-",
+            "account-hash",
+            "/Users/jarvis/private",
+            "external-thread",
+            "https://provider.example/private",
+            "raw command body",
+        ] {
+            assert!(
+                !json.contains(forbidden),
+                "provider workspace snapshot leaked {forbidden}: {json}"
+            );
+        }
+        let decoded = Envelope::decode(&json).unwrap();
+        assert_eq!(decoded, env);
     }
 
     #[test]

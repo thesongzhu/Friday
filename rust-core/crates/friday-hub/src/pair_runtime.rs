@@ -148,7 +148,7 @@ mod tests {
         PairAuthority, PairTransportHint, PairTransportKind, CURRENT_PAIR_PAYLOAD_VERSION,
     };
     use friday_crypto::{pairing_proof, DeviceKeypair};
-    use friday_protocol::CURRENT_SCHEMA_VERSION;
+    use friday_protocol::SUPPORTED;
     use friday_storage::StorageError;
     use friday_transport::{
         seal_envelope, ws_accept, ws_connect, ws_recv_envelope, ws_send_envelope,
@@ -220,8 +220,8 @@ mod tests {
             } => {
                 assert!(online);
                 assert_eq!(capabilities, vec!["pairing", "provider_workspace"]);
-                assert_eq!(min_version, CURRENT_SCHEMA_VERSION);
-                assert_eq!(max_version, CURRENT_SCHEMA_VERSION);
+                assert_eq!(min_version, SUPPORTED.min);
+                assert_eq!(max_version, SUPPORTED.max);
             }
             other => panic!("unexpected {other:?}"),
         }
