@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use std::collections::{BTreeSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use thiserror::Error;
 
 use friday_core::ProviderSessionEvent;
@@ -252,6 +253,14 @@ pub struct JsonRpcErrorEnvelope {
 
 pub trait CodexAppServerTransport {
     fn request(&mut self, request: JsonRpcRequest) -> Result<JsonRpcResponse, CodexAppServerError>;
+
+    /// Send a fire-and-forget JSON-RPC notification (no id, no response wait). Default
+    /// no-op so in-memory / mocked transports need not implement it; the real
+    /// [`JsonLineTransport`] overrides it. Used for the post-`initialize` `initialized`
+    /// handshake the app-server expects before thread/turn calls.
+    fn notify(&mut self, _method: &str, _params: Option<Value>) -> Result<(), CodexAppServerError> {
+        Ok(())
+    }
 }
 
 pub struct JsonLineTransport<R, W> {
@@ -273,6 +282,26 @@ impl<R: Read, W: Write> JsonLineTransport<R, W> {
 }
 
 impl<R: Read, W: Write> CodexAppServerTransport for JsonLineTransport<R, W> {
+    fn notify(&mut self, method: &str, params: Option<Value>) -> Result<(), CodexAppServerError> {
+        let mut msg = serde_json::Map::new();
+        msg.insert("jsonrpc".to_string(), json!("2.0"));
+        msg.insert("method".to_string(), json!(method));
+        if let Some(p) = params {
+            msg.insert("params".to_string(), p);
+        }
+        let encoded =
+            serde_json::to_vec(&Value::Object(msg)).map_err(|_| CodexAppServerError::Protocol {
+                code: "notify-encode",
+            })?;
+        self.writer
+            .write_all(&encoded)
+            .and_then(|_| self.writer.write_all(b"\n"))
+            .and_then(|_| self.writer.flush())
+            .map_err(|_| CodexAppServerError::Transport {
+                code: "notify-write",
+            })
+    }
+
     fn request(&mut self, request: JsonRpcRequest) -> Result<JsonRpcResponse, CodexAppServerError> {
         let request_id = request.id;
         let encoded = serde_json::to_vec(&json!({
@@ -372,6 +401,13 @@ impl<T: CodexAppServerTransport> CodexAppServerClient<T> {
             platform_os: required_string(&result, "platformOs")?,
             user_agent: required_string(&result, "userAgent")?,
         })
+    }
+
+    /// Send the post-`initialize` `initialized` notification (JSON-RPC fire-and-forget).
+    /// The app-server expects it before thread/turn calls. A no-op for transports that do
+    /// not override `notify` (the in-memory test transports).
+    pub fn initialized(&mut self) -> Result<(), CodexAppServerError> {
+        self.transport.notify("initialized", None)
     }
 
     /// Non-model health probe. `thread/list` is a metadata read; it must not be
@@ -572,6 +608,64 @@ impl<T: CodexAppServerTransport> CodexAppServerClient<T> {
         response.result.ok_or(CodexAppServerError::Protocol {
             code: "missing-result",
         })
+    }
+}
+
+/// A locally-spawned `codex app-server` process speaking JSON-RPC over stdio, wrapped in a
+/// [`CodexAppServerClient`] (CODEX-LIVE-001). Hub-side only. The lane label is ALWAYS
+/// [`CODEX_APP_SERVER_SYNC_MODE`] = `provider_app_server_local` — this is Friday's LOCAL
+/// Codex control (initialize / thread list-read / turn-control), NOT official
+/// ChatGPT/Codex same-account history sync, which it must never claim. The child process
+/// is killed on drop. Spawning requires the Codex CLI installed + logged in; a failure is
+/// surfaced as an exact [`CodexAppServerError`], never faked.
+pub struct LocalCodexAppServer {
+    child: Child,
+    client: CodexAppServerClient<JsonLineTransport<ChildStdout, ChildStdin>>,
+}
+
+impl LocalCodexAppServer {
+    /// Spawn `<program> app-server` (default `program` = `"codex"`) over piped stdio.
+    pub fn spawn(program: &str) -> Result<Self, CodexAppServerError> {
+        let mut child = Command::new(program)
+            .arg("app-server")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| CodexAppServerError::Transport {
+                code: "app-server-spawn",
+            })?;
+        let stdin = child.stdin.take().ok_or(CodexAppServerError::Transport {
+            code: "app-server-stdin",
+        })?;
+        let stdout = child.stdout.take().ok_or(CodexAppServerError::Transport {
+            code: "app-server-stdout",
+        })?;
+        let client = CodexAppServerClient::new(JsonLineTransport::new(stdout, stdin));
+        Ok(Self { child, client })
+    }
+
+    /// The OS pid of the spawned app-server (for an external watchdog kill).
+    pub fn child_id(&self) -> u32 {
+        self.child.id()
+    }
+
+    pub fn client(
+        &mut self,
+    ) -> &mut CodexAppServerClient<JsonLineTransport<ChildStdout, ChildStdin>> {
+        &mut self.client
+    }
+
+    /// Terminate the app-server process (idempotent).
+    pub fn kill(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Drop for LocalCodexAppServer {
+    fn drop(&mut self) {
+        self.kill();
     }
 }
 
