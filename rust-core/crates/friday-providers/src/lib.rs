@@ -1,5 +1,4 @@
-//! Codex/Claude provider adapters — Unit 6/7 **auth-readiness detection**
-//! (`04` §2/§3/§4.5; `31-PROVIDER-AUTH-READINESS`).
+//! Codex/Claude provider adapters — Hub-only provider control surfaces.
 //!
 //! This is the first required provider capability: detect whether each provider
 //! CLI is installed and authenticated. It runs ONLY each provider's official,
@@ -8,10 +7,10 @@
 //! Provider credentials live in the CLIs' own Hub-side config; this crate reads
 //! only boolean auth signals and never surfaces account email/org/tokens.
 //!
-//! Scope: auth-readiness detection only. Session control (list/open/send/stop/
-//! approve), transcript streaming, and post-login Friday smoke — which DO consume
-//! the account — are later Unit 6/7 slices, not implemented here. No fallback:
-//! a failed/absent provider is truth-labeled, never substituted.
+//! Scope: auth-readiness detection, Codex app-server contract plumbing, and
+//! Claude control-surface truth labels. Live model turns and post-login Friday
+//! smoke consume the account and remain separately gated. No fallback: a failed
+//! or absent provider is truth-labeled, never substituted.
 //!
 //! Hub-only: must stay OUT of `friday-ffi`'s (phone) dependency graph
 //! (asserted by `friday-arch-tests`).
@@ -19,7 +18,10 @@
 use std::process::Command;
 use thiserror::Error;
 
+pub mod claude_control;
+pub mod codex_appserver;
 pub mod session;
+pub mod unified;
 pub use session::{send_to_provider, CliSession, MockSession, SessionOutcome, SessionRunner};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

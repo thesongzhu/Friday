@@ -89,6 +89,32 @@ pub mod planner;
 /// only (no skill/plugin exec). Resume-after-approval is a deferred follow-up.
 pub mod workflow_exec;
 
+/// PAIR-002 — Hub-side local pairing message handler. It consumes the structured
+/// QR payload from PAIR-001 and the first-slice protocol `Pair` message, writes a
+/// trusted device through the existing authenticated pairing proof, and never
+/// dispatches provider/model calls.
+pub mod pair_runtime;
+
+/// Provider Workspace runtime projection — maps Codex/Claude UI actions to
+/// provider capabilities, sync modes, native actions, and exact blockers before
+/// any UI can look ready. Pure projection only; no provider/model calls.
+pub mod provider_workspace;
+
+/// PWS-004 — Provider Workspace dispatch adapter seam. Gates an action through
+/// [`provider_workspace::guard_action_request`] FIRST, then dispatches an accepted +
+/// routed action to a `ProviderDispatchAdapter`, returning dispatch_ref / truth_label /
+/// blocker. No adapter call on a non-accepted request; the capability truth_label is
+/// never upgraded by a dispatch; secrets stay Hub-side. Real Codex/Claude adapters land
+/// in CODEX-LIVE-001 / CLAUDE-MIRROR-001.
+pub mod provider_dispatch;
+
+/// SMOOTH-001 — provider session timeline + reconnect harness. One Friday-canonical
+/// timeline per session with strictly-monotonic seq + revision-on-every-mutation, a
+/// PendingAction state machine where Hub-ack is never provider-completion, dedup by
+/// client_msg_id, and a reconnect that returns a bounded delta when the cursor is retained
+/// and a snapshot only when it is behind retention (no full-history reload by default).
+pub mod provider_timeline;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,

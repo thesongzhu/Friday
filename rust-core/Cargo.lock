@@ -484,11 +484,14 @@ dependencies = [
  "friday-crypto",
  "friday-deepseek",
  "friday-fs",
+ "friday-protocol",
  "friday-providers",
  "friday-storage",
+ "friday-transport",
  "regex",
  "rusqlite",
  "serde_json",
+ "thiserror 1.0.69",
  "ureq",
 ]
 
@@ -506,7 +509,10 @@ dependencies = [
 name = "friday-providers"
 version = "0.0.1"
 dependencies = [
+ "friday-core",
  "friday-storage",
+ "serde",
+ "serde_json",
  "thiserror 1.0.69",
 ]
 

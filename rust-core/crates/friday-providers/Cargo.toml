@@ -1,6 +1,6 @@
 [package]
 name = "friday-providers"
-description = "Friday Rust Core — Codex/Claude provider adapters (Hub-only). Unit 6/7: auth-readiness detection via official provider status commands."
+description = "Friday Rust Core — Codex/Claude provider adapters and Hub-only control-surface contracts."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
@@ -13,6 +13,9 @@ rust-version.workspace = true
 # by friday-arch-tests.
 [dependencies]
 thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+friday-core.workspace = true
 
 [dev-dependencies]
 # Token-safety regression lock only: a provider SEND returns reply text and must

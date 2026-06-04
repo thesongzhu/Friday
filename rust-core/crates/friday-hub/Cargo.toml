@@ -10,7 +10,9 @@ rust-version.workspace = true
 [dependencies]
 friday-core.workspace = true
 friday-crypto.workspace = true
+friday-protocol.workspace = true
 friday-storage.workspace = true
+friday-transport.workspace = true
 # The composition layer (`authorize_mutating_action`, `agent_run`) operates on a
 # `rusqlite::Connection`, so the turn-loop signatures name it directly.
 rusqlite.workspace = true
@@ -25,6 +27,7 @@ friday-fs.workspace = true
 # The live model returns free-text content; the tool-call protocol is a JSON object
 # the Hub parses back into a RawToolCall. serde_json is the strict parser for that.
 serde_json.workspace = true
+thiserror.workspace = true
 # Memory-recall PII redaction (Hub-only — recall is Hub-side, the phone never
 # recalls). Pure computation, no I/O. NOT depended on by friday-ffi (phone).
 regex.workspace = true
@@ -35,4 +38,3 @@ regex.workspace = true
 # part of the production dependency graph (friday-arch-tests scans dependencies /
 # build-dependencies only) and never reach the phone (friday-ffi).
 ureq = { version = "2", features = ["json"] }
-
