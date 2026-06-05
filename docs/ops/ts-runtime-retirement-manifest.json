@@ -1,0 +1,370 @@
+{
+  "schemaVersion": 1,
+  "kind": "friday.ts_runtime_retirement_manifest",
+  "status": "phase_1_inventory_gate_only",
+  "authority": {
+    "branch": "merged-main-post-pr-521",
+    "commit": "0fa22545",
+    "default_machine_db_mutation": "forbidden"
+  },
+  "discovery": {
+    "routeSourceDir": "src/api/http/routes",
+    "includeMethods": ["GET", "POST", "PATCH", "PUT", "DELETE"]
+  },
+  "classificationValues": [
+    "ui_shell",
+    "test_oracle",
+    "release_tooling",
+    "compat_shim",
+    "rust_delegated",
+    "operator_external_adapter",
+    "fail_closed",
+    "ts_runtime_blocker"
+  ],
+  "forbiddenCompletionSources": [
+    "provider_ack",
+    "timeline_read",
+    "process_exit",
+    "skill_run",
+    "channel_receipt"
+  ],
+  "defaultCompletionSemantics": {
+    "provider_ack": false,
+    "timeline_read": false,
+    "process_exit": false,
+    "skill_run": false,
+    "channel_receipt": false
+  },
+  "requiredLeakControls": [
+    "raw_transcripts",
+    "secrets",
+    "private_paths",
+    "provider_ids",
+    "channel_ids",
+    "raw_commands",
+    "private_reasoning"
+  ],
+  "routeFamilies": [
+    {
+      "id": "mission_spine_rust_projection",
+      "match": {
+        "sourceFile": "src/api/http/routes/friday-mission-spine-routes.ts"
+      },
+      "classification": "rust_delegated",
+      "user_triggerable": true,
+      "rust_entrypoint": "rust-core/crates/friday-hub/src/mission_workbench.rs",
+      "proof": "post-merge UI/device proof and closure status use real Rust Hub Workbench projection for mission_workbench_probe_20260605",
+      "next_action": "Keep TypeScript as a redacted HTTP adapter over Rust Mission Spine projections."
+    },
+    {
+      "id": "agent_runtime_blockers",
+      "match": {
+        "sourceFile": "src/api/http/routes/friday-agent-routes.ts"
+      },
+      "classification": "ts_runtime_blocker",
+      "user_triggerable": true,
+      "owner": "ts-runtime-retirement",
+      "blocker": "Agent routes still call TypeScript runtime dependencies for starting, cancelling, rolling back, approval, and automation execution.",
+      "next_action": "Retire POST /v1/agent/runs first by delegating execution truth to a Rust-owned entrypoint or leaving the route fail-closed until Rust ownership exists."
+    },
+    {
+      "id": "agent_loop_runtime_blockers",
+      "match": {
+        "sourceFile": "src/api/http/routes/friday-agent-loop-routes.ts"
+      },
+      "classification": "ts_runtime_blocker",
+      "user_triggerable": true,
+      "owner": "ts-runtime-retirement",
+      "blocker": "Agent loop policy and loop controls remain TypeScript-owned runtime surfaces.",
+      "next_action": "Move loop execution and run-control truth to Rust or fail-close controls that cannot complete work from TypeScript-only signals."
+    },
+    {
+      "id": "workflow_runtime_blockers",
+      "match": {
+        "sourceFile": "src/api/http/routes/friday-workflow-run-routes.ts"
+      },
+      "classification": "ts_runtime_blocker",
+      "user_triggerable": true,
+      "owner": "ts-runtime-retirement",
+      "blocker": "Workflow run routes still wire TypeScript workflow runtime execution.",
+      "next_action": "Delegate POST /v1/workflow-runs and run controls to Rust-owned workflow execution or fail-close them with an operator-visible retirement label."
+    },
+    {
+      "id": "workflow_catalog_and_builder_runtime_blockers",
+      "match": {
+        "operationIdPrefix": [
+          "workflows.",
+          "workflow.",
+          "runs.",
+          "task.workflow.",
+          "workflow.builder.",
+          "workflow.generator."
+        ]
+      },
+      "classification": "ts_runtime_blocker",
+      "user_triggerable": true,
+      "owner": "ts-runtime-retirement",
+      "blocker": "Workflow authoring, import, generator, and task-workflow controls can still shape user-triggerable runtime behavior from TypeScript.",
+      "next_action": "Classify each workflow control as Rust-delegated, fail-closed, or compatibility-only after POST /v1/workflow-runs is retired."
+    },
+    {
+      "id": "skill_runtime_blockers",
+      "match": {
+        "operationIdPrefix": [
+          "skills.run",
+          "skills.verify",
+          "skills.generator.",
+          "skills.converter."
+        ]
+      },
+      "classification": "ts_runtime_blocker",
+      "user_triggerable": true,
+      "owner": "ts-runtime-retirement",
+      "blocker": "Skill execution and generation routes still operate from TypeScript services.",
+      "next_action": "Retire POST /v1/skills/:skillId/run by routing to Rust-owned execution truth or fail-closing execution while preserving catalog/UI compatibility."
+    },
+    {
+      "id": "skill_catalog_compatibility",
+      "match": {
+        "sourceFile": "src/api/http/routes/friday-skill-routes.ts"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep skill catalog, install, update, delete, and manifest validation as compatibility surfaces while skill execution ownership is retired separately.",
+      "next_action": "After skill execution is retired, split remaining skill lifecycle routes into release tooling or Rust-delegated lifecycle surfaces."
+    },
+    {
+      "id": "auto_fix_runtime_blockers",
+      "match": {
+        "sourceFile": "src/api/http/routes/friday-auto-fix-routes.ts"
+      },
+      "classification": "ts_runtime_blocker",
+      "user_triggerable": true,
+      "owner": "ts-runtime-retirement",
+      "blocker": "Auto-fix execute, run-ready, and rollback routes still execute product-changing logic from TypeScript.",
+      "next_action": "Move execute/rollback truth to Rust or fail-close TypeScript execution routes with preserved review/approval reads."
+    },
+    {
+      "id": "channel_webhook_external_adapters",
+      "match": {
+        "sourceFile": "src/api/http/routes/friday-channel-webhook-routes.ts"
+      },
+      "classification": "operator_external_adapter",
+      "user_triggerable": true,
+      "trust_boundary": "External channel ingress adapter only; channel receipt is not completion.",
+      "leak_controls": {
+        "raw_private_data_allowed": false,
+        "forbidden": [
+          "raw_transcripts",
+          "secrets",
+          "private_paths",
+          "provider_ids",
+          "channel_ids",
+          "raw_commands",
+          "private_reasoning"
+        ]
+      },
+      "next_action": "Keep ingress as external adapter and move any resulting runtime execution truth into Rust-owned mission/workflow surfaces."
+    },
+    {
+      "id": "channel_management_external_adapters",
+      "match": {
+        "sourceFile": "src/api/http/routes/friday-channel-routes.ts"
+      },
+      "classification": "operator_external_adapter",
+      "user_triggerable": true,
+      "trust_boundary": "Channel configuration adapter only; channel state or receipt is not completion.",
+      "leak_controls": {
+        "raw_private_data_allowed": false,
+        "forbidden": [
+          "raw_transcripts",
+          "secrets",
+          "private_paths",
+          "provider_ids",
+          "channel_ids",
+          "raw_commands",
+          "private_reasoning"
+        ]
+      },
+      "next_action": "Retain redacted configuration adapter until channel runtime handoff is Rust-owned."
+    },
+    {
+      "id": "desktop_runtime_blockers",
+      "match": {
+        "sourceFile": "src/api/http/routes/friday-desktop-routes.ts"
+      },
+      "classification": "ts_runtime_blocker",
+      "user_triggerable": true,
+      "owner": "ts-runtime-retirement",
+      "blocker": "Desktop action, recording, replay, and permission routes remain mixed TypeScript-owned runtime surfaces.",
+      "next_action": "Retire desktop action execution and replay routes after channel runtime, preserving permission and policy routes as operator adapters."
+    },
+    {
+      "id": "provider_external_adapters",
+      "match": {
+        "sourceFile": [
+          "src/api/http/routes/friday-provider-routes.ts",
+          "src/api/http/routes/friday-provider-usage-routes.ts"
+        ]
+      },
+      "classification": "operator_external_adapter",
+      "user_triggerable": true,
+      "trust_boundary": "Provider configuration and OAuth adapter only; provider acknowledgements are not completion.",
+      "leak_controls": {
+        "raw_private_data_allowed": false,
+        "forbidden": [
+          "raw_transcripts",
+          "secrets",
+          "private_paths",
+          "provider_ids",
+          "channel_ids",
+          "raw_commands",
+          "private_reasoning"
+        ]
+      },
+      "next_action": "Keep provider-native remote proof out of scope until TS runtime blockers are retired or precisely externally blocked."
+    },
+    {
+      "id": "release_and_packaging_tooling",
+      "match": {
+        "sourceFile": [
+          "src/api/http/routes/friday-packaging-routes.ts",
+          "src/api/http/routes/friday-runtime-admin-routes.ts"
+        ]
+      },
+      "classification": "release_tooling",
+      "user_triggerable": true,
+      "migration_intent": "Release, packaging, and runtime-admin controls are not Friday v1 runtime completion truth.",
+      "next_action": "Keep out of provider-native/release claims until runtime retirement passes."
+    },
+    {
+      "id": "security_auth_setup_compatibility",
+      "match": {
+        "operationIdPrefix": [
+          "auth.",
+          "security.",
+          "setup.",
+          "grants.",
+          "secrets."
+        ]
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Security, auth, setup, grant, and secret APIs remain compatibility surfaces and do not own task completion truth.",
+      "next_action": "Reclassify individual mutating security routes if they begin owning user task execution."
+    },
+    {
+      "id": "ui_control_shell",
+      "match": {
+        "operationIdPrefix": [
+          "uix.",
+          "studio.",
+          "reflex.",
+          "guidelens."
+        ]
+      },
+      "classification": "ui_shell",
+      "user_triggerable": true,
+      "migration_intent": "UI and guidance controls remain shell surfaces and must not become completion truth.",
+      "next_action": "Keep UI shell separated from Rust-owned runtime truth."
+    },
+    {
+      "id": "memory_review_only_compatibility",
+      "match": {
+        "sourceFile": "src/api/http/routes/friday-memory-routes.ts"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Memory candidates remain review-only; memory routes must not mark task completion.",
+      "next_action": "Reclassify memory writes if they become runtime completion signals."
+    },
+    {
+      "id": "general_runtime_blocker_inventory",
+      "match": {
+        "method": ["POST", "PATCH", "PUT", "DELETE"]
+      },
+      "classification": "ts_runtime_blocker",
+      "user_triggerable": true,
+      "owner": "ts-runtime-retirement",
+      "blocker": "Mutating TypeScript route is not yet proven to be UI-only, release-only, Rust-delegated, fail-closed, or an external adapter.",
+      "next_action": "Review and split into a narrower classification before claiming TS runtime retirement done."
+    },
+    {
+      "id": "read_route_compatibility_inventory",
+      "match": {
+        "method": ["GET"]
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Read-only TypeScript HTTP route remains an inventory compatibility surface unless a narrower Rust-delegated or external-adapter rule applies.",
+      "next_action": "Keep read surfaces bounded/redacted and split any runtime-owner reads into explicit blockers."
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "agent_runs_start",
+      "route": {
+        "method": "POST",
+        "path": "/v1/agent/runs",
+        "operationId": "agent.runs.start"
+      },
+      "classification": "ts_runtime_blocker",
+      "user_triggerable": true,
+      "owner": "ts-runtime-retirement",
+      "blocker": "Starts agent runtime through TypeScript dependencies.",
+      "next_action": "Redirect execution truth to Rust-owned agent entrypoint or return fail-closed unavailable response."
+    },
+    {
+      "id": "workflow_runs_start",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflow-runs",
+        "operationId": "runs.start"
+      },
+      "classification": "ts_runtime_blocker",
+      "user_triggerable": true,
+      "owner": "ts-runtime-retirement",
+      "blocker": "Starts workflow runtime through TypeScript execution service.",
+      "next_action": "Redirect run creation/execution truth to Rust-owned workflow entrypoint or fail-close the route."
+    },
+    {
+      "id": "skills_run",
+      "route": {
+        "method": "POST",
+        "path": "/v1/skills/:skillId/run",
+        "operationId": "skills.run"
+      },
+      "classification": "ts_runtime_blocker",
+      "user_triggerable": true,
+      "owner": "ts-runtime-retirement",
+      "blocker": "Executes skill through TypeScript skill executor.",
+      "next_action": "Replace TypeScript skill execution with Rust-owned execution truth or fail-close skill runs."
+    },
+    {
+      "id": "autofix_execute",
+      "route": {
+        "method": "POST",
+        "path": "/v1/auto-fix/actions/:actionId/execute",
+        "operationId": "autofix.actions.execute"
+      },
+      "classification": "ts_runtime_blocker",
+      "user_triggerable": true,
+      "owner": "ts-runtime-retirement",
+      "blocker": "Executes auto-fix action through TypeScript service.",
+      "next_action": "Move auto-fix execute/rollback truth to Rust or fail-close execution."
+    },
+    {
+      "id": "desktop_actions_execute",
+      "route": {
+        "method": "POST",
+        "path": "/v1/desktop/actions/execute",
+        "operationId": "desktop.actions.execute"
+      },
+      "classification": "ts_runtime_blocker",
+      "user_triggerable": true,
+      "owner": "ts-runtime-retirement",
+      "blocker": "Desktop action execution remains TypeScript-owned.",
+      "next_action": "Route desktop execution through Rust-owned action authority or fail-close action execution."
+    }
+  ]
+}
