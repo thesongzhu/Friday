@@ -86,7 +86,7 @@ fn run() -> Result<(), String> {
         .iter()
         .filter_map(|event| event.get("id").and_then(Value::as_str).map(str::to_string))
         .collect::<Vec<_>>();
-    let split = (timeline_event_refs.len().max(2) + 1) / 2;
+    let split = timeline_event_refs.len().max(2).div_ceil(2);
     let page_one_refs = timeline_event_refs
         .iter()
         .take(split)
@@ -626,13 +626,13 @@ fn append_work_item_events(events: &mut Vec<Value>, work_items: &[WorkItem]) {
         ) {
             refs.push((
                 "providerRef",
-                format!("{}", redacted_ref("provider-work-item", &item.work_item_id)),
+                redacted_ref("provider-work-item", &item.work_item_id),
             ));
         }
         if item.lane == WorkLane::Workflow {
             refs.push((
                 "workflowRef",
-                format!("{}", redacted_ref("workflow-work-item", &item.work_item_id)),
+                redacted_ref("workflow-work-item", &item.work_item_id),
             ));
         }
         if let Some(capability_id) = item.capability_id.as_ref() {
@@ -675,7 +675,7 @@ fn timeline_read_event(mission_id: &str, _work_item_id: &str, index: usize) -> V
         "timeline_read",
         "friday_owned",
         "This Workbench read is bounded and is not completion proof.",
-        Some(format!("{}", redacted_ref("timeline-read", mission_id))),
+        Some(redacted_ref("timeline-read", mission_id)),
         evidence_refs(vec![
             (
                 "workflowRef",
@@ -693,6 +693,7 @@ fn timeline_read_event(mission_id: &str, _work_item_id: &str, index: usize) -> V
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn event_json(
     id: String,
     mission_id: &str,
