@@ -1852,6 +1852,8 @@ export interface FridayHubConfig {
   allowTestOnlyWorkflowRunExecution?: boolean;
   /** Test-oracle only; production hub creation must leave skill run execution fail-closed. */
   allowTestOnlySkillRunExecution?: boolean;
+  /** Test-oracle only; production hub creation must leave auto-fix execution fail-closed. */
+  allowTestOnlyAutoFixExecution?: boolean;
   /** Test-oracle only; production hub creation must leave POST /v1/agent/runs fail-closed. */
   allowTestOnlyAgentRunStartExecution?: boolean;
   /** Test-oracle only; production hub creation must leave agent run controls fail-closed. */

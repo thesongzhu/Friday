@@ -328,7 +328,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Home supervised self-repair real-br
   });
 
   it("runs and rolls back ready low-risk repair actions from Home and denies unbound repair mutations", { timeout: 180_000 }, async () => {
-    env = await createFridayRealBrowserE2eEnv();
+    env = await createFridayRealBrowserE2eEnv({ allowTestOnlyAutoFixExecution: true });
     await completeSetup(env);
     const userId = await readUserId(env);
     const actionId = seedReadyRollbackableLowRiskAutoFixAction({ env, userId });

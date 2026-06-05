@@ -143,6 +143,11 @@ export interface CreateFridayApiTestEnvOptions {
    * leaves skill run execution fail-closed while Rust ownership lands.
    */
   allowTestOnlySkillRunExecution?: boolean;
+  /**
+   * Test-oracle opt-in for legacy TS auto-fix execution. Default/live runtime
+   * leaves auto-fix run/execute/rollback surfaces fail-closed while Rust ownership lands.
+   */
+  allowTestOnlyAutoFixExecution?: boolean;
   resolveSkill?: (skillId: string) => unknown | null;
   invokeSkill?: (
     skillId: string,
@@ -237,7 +242,12 @@ export async function createFridayApiTestEnv(
     skillGenerator: options.skillGenerator,
     skillRegistry: options.skillRegistry,
     diagnosis: selfHealingService ? { service: selfHealingService } : undefined,
-    autoFix: selfHealingService ? { service: selfHealingService } : undefined,
+    autoFix: selfHealingService
+      ? {
+          service: selfHealingService,
+          allowTestOnlyAutoFixExecution: options.allowTestOnlyAutoFixExecution ?? true,
+        }
+      : undefined,
     uix: uixService ? { service: uixService } : undefined,
     pluginService: options.pluginService,
     pluginManifestLoader: options.pluginManifestLoader,

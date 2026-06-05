@@ -363,7 +363,7 @@ describe("Phase 14.5B module_28b: one-click repair / recovery doctor acceptance"
     void diagnosisRepo;
     const configManager = makeConfigManager();
     const service = buildAcceptanceSelfHealingApiService(db, configManager);
-    const routes = createFridayAutoFixRoutes({ service });
+    const routes = createFridayAutoFixRoutes({ service, allowTestOnlyAutoFixExecution: true });
     const executeRoute = routes.find((r) => r.operationId === "autofix.actions.execute")!;
 
     const plan = buildConfigPatchPlan("verified-route", { withPatch: true });
@@ -421,7 +421,7 @@ describe("Phase 14.5B module_28b: one-click repair / recovery doctor acceptance"
     void diagnosisRepo;
     const configManager = makeConfigManager();
     const service = buildAcceptanceSelfHealingApiService(db, configManager);
-    const routes = createFridayAutoFixRoutes({ service });
+    const routes = createFridayAutoFixRoutes({ service, allowTestOnlyAutoFixExecution: true });
     const executeRoute = routes.find((r) => r.operationId === "autofix.actions.execute")!;
     const rollbackRoute = routes.find((r) => r.operationId === "autofix.actions.rollback")!;
 
@@ -504,7 +504,7 @@ describe("Phase 14.5B module_28b: one-click repair / recovery doctor acceptance"
     void diagnosisRepo;
     const configManager = makeConfigManager();
     const service = buildAcceptanceSelfHealingApiService(db, configManager);
-    const routes = createFridayAutoFixRoutes({ service });
+    const routes = createFridayAutoFixRoutes({ service, allowTestOnlyAutoFixExecution: true });
     const executeRoute = routes.find((r) => r.operationId === "autofix.actions.execute")!;
 
     const plan = buildConfigPatchPlan("diagnostic-route", { withPatch: false });

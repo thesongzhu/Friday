@@ -15,6 +15,7 @@ import { toFridayFixPlanRecord } from "./friday-self-healing-route-mappers.js";
 
 export interface FridayAutoFixRoutesDeps {
   service: FridaySelfHealingApiService;
+  allowTestOnlyAutoFixExecution?: boolean;
   agentLoop?: {
     findRunByActionId(actionId: string): { loopRunId: string } | null;
   };
@@ -40,6 +41,20 @@ function requireUserId(principal: { userId?: string } | null): string {
     });
   }
   return principal.userId;
+}
+
+function throwRetiredAutoFixExecution(): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_AUTOFIX_EXECUTION_RETIRED",
+    "Auto-fix execution is fail-closed while runtime ownership is being moved out of TypeScript.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_autofix_execution_entrypoint_required",
+      },
+    },
+  );
 }
 
 function readReason(body: unknown): string | undefined {
@@ -154,6 +169,9 @@ export function createFridayAutoFixRoutes(
         // principal. One-click self-repair cannot fire from a channel/API
         // message that lacks a bound owner/session/channel principal.
         assertBoundPrincipalForOperation(ctx.principal ?? null, "autofix.actions.run.ready", "api");
+        if (deps.allowTestOnlyAutoFixExecution !== true) {
+          throwRetiredAutoFixExecution();
+        }
         const userId = requireUserId(ctx.principal);
         const body = (ctx.body ?? {}) as Record<string, unknown>;
         const run = await deps.service.runReadyActions({
@@ -252,6 +270,9 @@ export function createFridayAutoFixRoutes(
         // synthetic public principal must be refused even though it carries
         // hub.admin scope for read-only routes.
         assertBoundPrincipalForOperation(ctx.principal ?? null, "autofix.actions.execute", "api");
+        if (deps.allowTestOnlyAutoFixExecution !== true) {
+          throwRetiredAutoFixExecution();
+        }
         const userId = requireUserId(ctx.principal);
         const { actionId } = ctx.params as { actionId: string };
         const updated = await deps.service.executeAction({ actionId, userId });
@@ -277,6 +298,9 @@ export function createFridayAutoFixRoutes(
         // Phase 14.5B module_28b: rollback also mutates runtime state, so
         // the same bound-principal gate applies as execute.
         assertBoundPrincipalForOperation(ctx.principal ?? null, "autofix.actions.rollback", "api");
+        if (deps.allowTestOnlyAutoFixExecution !== true) {
+          throwRetiredAutoFixExecution();
+        }
         const userId = requireUserId(ctx.principal);
         const { actionId } = ctx.params as { actionId: string };
         const reason = readReason(ctx.body);
