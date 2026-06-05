@@ -57,6 +57,20 @@ function throwRetiredAutoFixExecution(): never {
   );
 }
 
+function throwRetiredAutoFixApprovalControl(): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_AUTOFIX_CONTROLS_RETIRED",
+    "Auto-fix approval controls are fail-closed while runtime ownership is being moved out of TypeScript.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_autofix_approval_entrypoint_required",
+      },
+    },
+  );
+}
+
 function readReason(body: unknown): string | undefined {
   if (!body || typeof body !== "object") {
     return undefined;
@@ -217,6 +231,9 @@ export function createFridayAutoFixRoutes(
         // Phase 14.5B module_28b: approval boundary must carry a bound owner
         // principal; the synthetic public principal cannot approve a repair.
         assertBoundPrincipalForOperation(ctx.principal ?? null, "autofix.actions.approve", "api");
+        if (deps.allowTestOnlyAutoFixExecution !== true) {
+          throwRetiredAutoFixApprovalControl();
+        }
         const respondedBy = requireUserId(ctx.principal);
         const { actionId } = ctx.params as { actionId: string };
         const updated = await deps.service.approveAction({
@@ -241,6 +258,9 @@ export function createFridayAutoFixRoutes(
         // Phase 14.5B module_28b: denial carries learning signals so it must
         // also be authored by a bound owner/session/channel principal.
         assertBoundPrincipalForOperation(ctx.principal ?? null, "autofix.actions.deny", "api");
+        if (deps.allowTestOnlyAutoFixExecution !== true) {
+          throwRetiredAutoFixApprovalControl();
+        }
         const respondedBy = requireUserId(ctx.principal);
         const { actionId } = ctx.params as { actionId: string };
         const updated = await deps.service.denyAction({

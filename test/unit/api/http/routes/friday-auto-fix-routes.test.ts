@@ -266,11 +266,13 @@ describe("FridayAutoFixRoutes", () => {
     expect(result.items[0]?.summary.loopRunId).toBe("loop-run-1");
   });
 
-  it("fail-closes auto-fix execution routes by default without invoking TypeScript services", async () => {
+  it("fail-closes auto-fix execution and approval-control routes by default without invoking TypeScript services", async () => {
     const service = makeService();
     const routes = createFridayAutoFixRoutes({ service });
     const executionRoutes = [
       ["autofix.actions.run.ready", {}, { maxRiskTier: 1 }],
+      ["autofix.actions.approve", { actionId: "action-1" }, { reason: "Looks safe" }],
+      ["autofix.actions.deny", { actionId: "action-1" }, { reason: "Too risky" }],
       ["autofix.actions.execute", { actionId: "action-1" }, {}],
       ["autofix.actions.rollback", { actionId: "action-1" }, { reason: "test rollback" }],
     ] as const;
@@ -279,17 +281,30 @@ describe("FridayAutoFixRoutes", () => {
       const route = routes.find((entry) => entry.operationId === operationId)!;
       await expect(
         route.handler(makeCtx({ params, body })),
-      ).rejects.toMatchObject({
-        code: "TS_RUNTIME_AUTOFIX_EXECUTION_RETIRED",
-        httpStatus: 503,
-        details: {
-          classification: "fail_closed",
-          replacement: "rust_owned_autofix_execution_entrypoint_required",
-        },
-      });
+      ).rejects.toMatchObject(
+        operationId === "autofix.actions.approve" || operationId === "autofix.actions.deny"
+          ? {
+            code: "TS_RUNTIME_AUTOFIX_CONTROLS_RETIRED",
+            httpStatus: 503,
+            details: {
+              classification: "fail_closed",
+              replacement: "rust_owned_autofix_approval_entrypoint_required",
+            },
+          }
+          : {
+            code: "TS_RUNTIME_AUTOFIX_EXECUTION_RETIRED",
+            httpStatus: 503,
+            details: {
+              classification: "fail_closed",
+              replacement: "rust_owned_autofix_execution_entrypoint_required",
+            },
+          },
+      );
     }
 
     expect(service.runReadyActions).not.toHaveBeenCalled();
+    expect(service.approveAction).not.toHaveBeenCalled();
+    expect(service.denyAction).not.toHaveBeenCalled();
     expect(service.executeAction).not.toHaveBeenCalled();
     expect(service.rollbackAction).not.toHaveBeenCalled();
   });
@@ -335,7 +350,7 @@ describe("FridayAutoFixRoutes", () => {
 
   it("approves an action with the authenticated user", async () => {
     const service = makeService();
-    const routes = createFridayAutoFixRoutes({ service });
+    const routes = createFridayAutoFixRoutes({ service, allowTestOnlyAutoFixExecution: true });
     const route = routes.find((entry) => entry.operationId === "autofix.actions.approve")!;
 
     await route.handler(
@@ -367,7 +382,7 @@ describe("FridayAutoFixRoutes", () => {
 
   it("passes a structured denial reason code when provided", async () => {
     const service = makeService();
-    const routes = createFridayAutoFixRoutes({ service });
+    const routes = createFridayAutoFixRoutes({ service, allowTestOnlyAutoFixExecution: true });
     const route = routes.find((entry) => entry.operationId === "autofix.actions.deny")!;
 
     await route.handler(
