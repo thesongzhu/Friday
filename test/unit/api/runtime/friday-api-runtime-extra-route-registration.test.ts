@@ -476,6 +476,69 @@ describe("API Runtime — Extended Route Registration", () => {
 
   for (const scenario of [
     {
+      name: "create",
+      operationId: "agent.automations.create",
+      params: {},
+      body: {
+        name: "Daily digest",
+        taskTemplate: "send digest",
+      },
+    },
+    {
+      name: "update",
+      operationId: "agent.automations.update",
+      params: { automationId: "automation-does-not-matter" },
+      body: { name: "Updated digest" },
+    },
+    {
+      name: "delete",
+      operationId: "agent.automations.delete",
+      params: { automationId: "automation-does-not-matter" },
+      body: {},
+    },
+  ]) {
+    it(`fail-closes live agent automation ${scenario.name} wiring before TypeScript automation asset mutation`, async () => {
+      const runtime = createFridayApiRuntime({
+        ...makeBaseDeps(),
+        agentRuntime: {
+          executeRun: vi.fn(),
+          rollbackRun: vi.fn(),
+          registerTool: vi.fn(),
+          resumeStaleRunsOnBoot: vi.fn(() => 0),
+          hasRollbackCheckpoint: vi.fn(() => false),
+        } as unknown as FridayAgentRuntime,
+        agentEventEmitter: {
+          on: vi.fn(),
+          off: vi.fn(),
+          emit: vi.fn(),
+        } satisfies FridayAgentEventEmitter,
+      });
+      const route = runtime.routes.getRoutes().find((r) => r.operationId === scenario.operationId);
+      expect(route).toBeDefined();
+
+      let thrown: unknown = null;
+      try {
+        await route!.handler({
+          requestId: `req-agent-automation-${scenario.name}-retired`,
+          receivedAt: NOW,
+          params: scenario.params,
+          query: {},
+          body: scenario.body,
+          headers: {},
+          principal: makePrincipal({ role: "admin", scopes: ["agent.write"] }),
+        });
+      } catch (err) {
+        thrown = err;
+      }
+
+      expect(thrown).toBeInstanceOf(FridayDomainError);
+      expect((thrown as FridayDomainError).code).toBe("TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED");
+      expect((thrown as FridayDomainError).httpStatus).toBe(503);
+    });
+  }
+
+  for (const scenario of [
+    {
       name: "approve plan",
       operationId: "agent.runs.approve.plan",
       runId: "run-control-retired-approve-plan",
