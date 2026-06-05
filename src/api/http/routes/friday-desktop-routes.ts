@@ -63,6 +63,27 @@ import type { UUID } from "../../../desktop/model/friday-desktop.types.js";
 
 export interface FridayDesktopRoutesDeps {
   allowTestOnlyDesktopActionExecution?: boolean;
+  /**
+   * Test-oracle only: allows legacy TypeScript desktop action control/audit
+   * surfaces (cancel, action log) in isolated validation. Default/live runtime
+   * must leave these unset so they stay fail-closed until Rust owns desktop
+   * action control truth.
+   */
+  allowTestOnlyDesktopActionControlExecution?: boolean;
+  /**
+   * Test-oracle only: allows legacy TypeScript desktop recording
+   * lifecycle/replay/step-stream surfaces in isolated validation. Default/live
+   * runtime must leave this unset so desktop recording stays fail-closed until
+   * Rust owns desktop recording truth.
+   */
+  allowTestOnlyDesktopRecordingExecution?: boolean;
+  /**
+   * Test-oracle only: allows legacy TypeScript live desktop element
+   * inspection/search in isolated validation. Default/live runtime must leave
+   * this unset so live desktop element queries stay fail-closed until Rust owns
+   * desktop element-inspection truth.
+   */
+  allowTestOnlyDesktopElementInspectionExecution?: boolean;
   actions: {
     execute(req: FridayExecuteDesktopActionRequest): Promise<FridayExecuteDesktopActionResponse>;
     batch(req: FridayBatchDesktopActionsRequest): Promise<FridayBatchDesktopActionsResponse>;
@@ -141,6 +162,48 @@ function throwRetiredDesktopActionExecution(): never {
   );
 }
 
+function throwRetiredDesktopActionControl(): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_DESKTOP_ACTION_CONTROL_RETIRED",
+    "Desktop action control and action-log read surfaces are fail-closed while runtime ownership is being moved out of TypeScript.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_desktop_action_control_entrypoint_required",
+      },
+    },
+  );
+}
+
+function throwRetiredDesktopRecording(): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_DESKTOP_RECORDING_RETIRED",
+    "Desktop recording lifecycle, replay, and step-stream surfaces are fail-closed while runtime ownership is being moved out of TypeScript.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_desktop_recording_entrypoint_required",
+      },
+    },
+  );
+}
+
+function throwRetiredDesktopElementInspection(): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_DESKTOP_ELEMENT_INSPECTION_RETIRED",
+    "Live desktop element inspection and search are fail-closed while runtime ownership is being moved out of TypeScript.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_desktop_element_inspection_entrypoint_required",
+      },
+    },
+  );
+}
+
 // ─── Factory ───
 
 export function createFridayDesktopRoutes(
@@ -192,6 +255,9 @@ export function createFridayDesktopRoutes(
         const { actionId } = ctx.params as { actionId: string };
         const body = ctx.body as FridayCancelDesktopActionRequest;
         requireIdempotencyKey(body);
+        if (deps.allowTestOnlyDesktopActionControlExecution !== true) {
+          throwRetiredDesktopActionControl();
+        }
         return deps.actions.cancel(actionId, body);
       },
     },
@@ -201,6 +267,9 @@ export function createFridayDesktopRoutes(
       path: "/v1/desktop/actions/log",
       auth: { public: true },
       async handler(ctx) {
+        if (deps.allowTestOnlyDesktopActionControlExecution !== true) {
+          throwRetiredDesktopActionControl();
+        }
         return deps.actions.log(ctx.query as FridayListDesktopActionLogQuery);
       },
     },
@@ -218,6 +287,9 @@ export function createFridayDesktopRoutes(
         const body = ctx.body as FridayStartDesktopRecordingRequest;
         requireString(body, "name");
         requireIdempotencyKey(body);
+        if (deps.allowTestOnlyDesktopRecordingExecution !== true) {
+          throwRetiredDesktopRecording();
+        }
         return deps.recordings.start(body);
       },
     },
@@ -249,6 +321,9 @@ export function createFridayDesktopRoutes(
         const { recordingId } = ctx.params as { recordingId: string };
         const body = ctx.body as FridayStopDesktopRecordingRequest;
         requireIdempotencyKey(body);
+        if (deps.allowTestOnlyDesktopRecordingExecution !== true) {
+          throwRetiredDesktopRecording();
+        }
         return deps.recordings.stop(recordingId, body);
       },
     },
@@ -261,6 +336,9 @@ export function createFridayDesktopRoutes(
         const { recordingId } = ctx.params as { recordingId: string };
         const body = ctx.body as FridayPauseDesktopRecordingRequest;
         requireIdempotencyKey(body);
+        if (deps.allowTestOnlyDesktopRecordingExecution !== true) {
+          throwRetiredDesktopRecording();
+        }
         return deps.recordings.pause(recordingId, body);
       },
     },
@@ -273,6 +351,9 @@ export function createFridayDesktopRoutes(
         const { recordingId } = ctx.params as { recordingId: string };
         const body = ctx.body as FridayResumeDesktopRecordingRequest;
         requireIdempotencyKey(body);
+        if (deps.allowTestOnlyDesktopRecordingExecution !== true) {
+          throwRetiredDesktopRecording();
+        }
         return deps.recordings.resume(recordingId, body);
       },
     },
@@ -283,6 +364,9 @@ export function createFridayDesktopRoutes(
       auth: { public: true },
       async handler(ctx) {
         const { recordingId } = ctx.params as { recordingId: string };
+        if (deps.allowTestOnlyDesktopRecordingExecution !== true) {
+          throwRetiredDesktopRecording();
+        }
         return deps.recordings.listSteps(recordingId, ctx.query as FridayListDesktopRecordingStepsQuery);
       },
     },
@@ -295,6 +379,9 @@ export function createFridayDesktopRoutes(
         const { recordingId } = ctx.params as { recordingId: string };
         const body = ctx.body as FridayReplayDesktopRecordingRequest;
         requireIdempotencyKey(body);
+        if (deps.allowTestOnlyDesktopRecordingExecution !== true) {
+          throwRetiredDesktopRecording();
+        }
         return deps.recordings.replay(recordingId, body);
       },
     },
@@ -307,6 +394,9 @@ export function createFridayDesktopRoutes(
         const { recordingId } = ctx.params as { recordingId: string };
         const body = ctx.body as FridayDeleteDesktopRecordingRequest;
         requireIdempotencyKey(body);
+        if (deps.allowTestOnlyDesktopRecordingExecution !== true) {
+          throwRetiredDesktopRecording();
+        }
         return deps.recordings.delete(recordingId, body);
       },
     },
@@ -459,6 +549,9 @@ export function createFridayDesktopRoutes(
       async handler(ctx) {
         const body = ctx.body as FridayInspectDesktopElementRequest;
         requirePresent(body, "selector");
+        if (deps.allowTestOnlyDesktopElementInspectionExecution !== true) {
+          throwRetiredDesktopElementInspection();
+        }
         return deps.elements.inspect(body);
       },
     },
@@ -471,6 +564,9 @@ export function createFridayDesktopRoutes(
         const query = ctx.query as FridaySearchDesktopElementsQuery;
         if (!query.query) {
           throw new FridayDomainError("VALIDATION_ERROR", "query is required");
+        }
+        if (deps.allowTestOnlyDesktopElementInspectionExecution !== true) {
+          throwRetiredDesktopElementInspection();
         }
         return deps.elements.search(query);
       },

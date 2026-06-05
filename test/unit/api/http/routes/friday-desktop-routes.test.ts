@@ -164,7 +164,7 @@ describe("createFridayDesktopRoutes", () => {
     });
 
     it("cancels an action", async () => {
-      const deps = makeDeps();
+      const deps = makeDeps({ allowTestOnlyDesktopActionControlExecution: true });
       const routes = createFridayDesktopRoutes(deps);
       const route = findRoute(routes, "desktop.actions.cancel");
       expect(route.method).toBe("POST");
@@ -176,7 +176,7 @@ describe("createFridayDesktopRoutes", () => {
     });
 
     it("lists action log", async () => {
-      const deps = makeDeps();
+      const deps = makeDeps({ allowTestOnlyDesktopActionControlExecution: true });
       const routes = createFridayDesktopRoutes(deps);
       const route = findRoute(routes, "desktop.actions.log");
       expect(route.method).toBe("GET");
@@ -185,13 +185,30 @@ describe("createFridayDesktopRoutes", () => {
       await route.handler(ctx);
       expect(deps.actions.log).toHaveBeenCalledWith(ctx.query);
     });
+
+    it("fail-closes desktop action control/log by default without invoking TypeScript services", async () => {
+      const deps = makeDeps();
+      const routes = createFridayDesktopRoutes(deps);
+      const cancelRoute = findRoute(routes, "desktop.actions.cancel");
+      const logRoute = findRoute(routes, "desktop.actions.log");
+
+      await expect(
+        cancelRoute.handler(makeCtx({ params: { actionId: "a-1" }, body: { idempotencyKey: "k-fc-cancel" } })),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_DESKTOP_ACTION_CONTROL_RETIRED", httpStatus: 503 });
+      await expect(
+        logRoute.handler(makeCtx({ query: { status: "success" } })),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_DESKTOP_ACTION_CONTROL_RETIRED", httpStatus: 503 });
+
+      expect(deps.actions.cancel).not.toHaveBeenCalled();
+      expect(deps.actions.log).not.toHaveBeenCalled();
+    });
   });
 
   // ─── Recordings ───
 
   describe("recordings", () => {
     it("starts a recording", async () => {
-      const deps = makeDeps();
+      const deps = makeDeps({ allowTestOnlyDesktopRecordingExecution: true });
       const routes = createFridayDesktopRoutes(deps);
       const route = findRoute(routes, "desktop.recordings.start");
       expect(route.method).toBe("POST");
@@ -228,7 +245,7 @@ describe("createFridayDesktopRoutes", () => {
     });
 
     it("stops a recording", async () => {
-      const deps = makeDeps();
+      const deps = makeDeps({ allowTestOnlyDesktopRecordingExecution: true });
       const routes = createFridayDesktopRoutes(deps);
       const route = findRoute(routes, "desktop.recordings.stop");
 
@@ -237,7 +254,7 @@ describe("createFridayDesktopRoutes", () => {
     });
 
     it("pauses a recording", async () => {
-      const deps = makeDeps();
+      const deps = makeDeps({ allowTestOnlyDesktopRecordingExecution: true });
       const routes = createFridayDesktopRoutes(deps);
       const route = findRoute(routes, "desktop.recordings.pause");
 
@@ -246,7 +263,7 @@ describe("createFridayDesktopRoutes", () => {
     });
 
     it("resumes a recording", async () => {
-      const deps = makeDeps();
+      const deps = makeDeps({ allowTestOnlyDesktopRecordingExecution: true });
       const routes = createFridayDesktopRoutes(deps);
       const route = findRoute(routes, "desktop.recordings.resume");
 
@@ -255,7 +272,7 @@ describe("createFridayDesktopRoutes", () => {
     });
 
     it("lists recording steps", async () => {
-      const deps = makeDeps();
+      const deps = makeDeps({ allowTestOnlyDesktopRecordingExecution: true });
       const routes = createFridayDesktopRoutes(deps);
       const route = findRoute(routes, "desktop.recordings.steps.list");
 
@@ -264,7 +281,7 @@ describe("createFridayDesktopRoutes", () => {
     });
 
     it("replays a recording", async () => {
-      const deps = makeDeps();
+      const deps = makeDeps({ allowTestOnlyDesktopRecordingExecution: true });
       const routes = createFridayDesktopRoutes(deps);
       const route = findRoute(routes, "desktop.recordings.replay");
 
@@ -276,13 +293,38 @@ describe("createFridayDesktopRoutes", () => {
     });
 
     it("deletes a recording", async () => {
-      const deps = makeDeps();
+      const deps = makeDeps({ allowTestOnlyDesktopRecordingExecution: true });
       const routes = createFridayDesktopRoutes(deps);
       const route = findRoute(routes, "desktop.recordings.delete");
       expect(route.method).toBe("DELETE");
 
       await route.handler(makeCtx({ params: { recordingId: "rec-1" }, body: { idempotencyKey: "k9" } }));
       expect(deps.recordings.delete).toHaveBeenCalledWith("rec-1", { idempotencyKey: "k9" });
+    });
+
+    it("fail-closes desktop recording lifecycle/replay/steps by default without invoking TypeScript services", async () => {
+      const deps = makeDeps();
+      const routes = createFridayDesktopRoutes(deps);
+
+      await expect(
+        findRoute(routes, "desktop.recordings.start").handler(
+          makeCtx({ body: { name: "Flow", idempotencyKey: "k-fc-start" } }),
+        ),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_DESKTOP_RECORDING_RETIRED", httpStatus: 503 });
+      await expect(
+        findRoute(routes, "desktop.recordings.replay").handler(
+          makeCtx({ params: { recordingId: "rec-1" }, body: { idempotencyKey: "k-fc-replay" } }),
+        ),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_DESKTOP_RECORDING_RETIRED", httpStatus: 503 });
+      await expect(
+        findRoute(routes, "desktop.recordings.steps.list").handler(
+          makeCtx({ params: { recordingId: "rec-1" }, query: {} }),
+        ),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_DESKTOP_RECORDING_RETIRED", httpStatus: 503 });
+
+      expect(deps.recordings.start).not.toHaveBeenCalled();
+      expect(deps.recordings.replay).not.toHaveBeenCalled();
+      expect(deps.recordings.listSteps).not.toHaveBeenCalled();
     });
   });
 
@@ -450,7 +492,7 @@ describe("createFridayDesktopRoutes", () => {
 
   describe("elements", () => {
     it("inspects an element", async () => {
-      const deps = makeDeps();
+      const deps = makeDeps({ allowTestOnlyDesktopElementInspectionExecution: true });
       const routes = createFridayDesktopRoutes(deps);
       const route = findRoute(routes, "desktop.elements.inspect");
       expect(route.method).toBe("POST");
@@ -462,7 +504,7 @@ describe("createFridayDesktopRoutes", () => {
     });
 
     it("searches elements", async () => {
-      const deps = makeDeps();
+      const deps = makeDeps({ allowTestOnlyDesktopElementInspectionExecution: true });
       const routes = createFridayDesktopRoutes(deps);
       const route = findRoute(routes, "desktop.elements.search");
       expect(route.method).toBe("GET");
@@ -476,6 +518,23 @@ describe("createFridayDesktopRoutes", () => {
       const route = findRoute(routes, "desktop.elements.search");
       const ctx = makeCtx({ query: {} });
       await expect(route.handler(ctx)).rejects.toThrow("query is required");
+    });
+
+    it("fail-closes live desktop element inspect/search by default without invoking TypeScript services", async () => {
+      const deps = makeDeps();
+      const routes = createFridayDesktopRoutes(deps);
+
+      await expect(
+        findRoute(routes, "desktop.elements.inspect").handler(
+          makeCtx({ body: { selector: { strategy: "accessibility_id", value: "btn-ok" } } }),
+        ),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_DESKTOP_ELEMENT_INSPECTION_RETIRED", httpStatus: 503 });
+      await expect(
+        findRoute(routes, "desktop.elements.search").handler(makeCtx({ query: { query: "Submit" } })),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_DESKTOP_ELEMENT_INSPECTION_RETIRED", httpStatus: 503 });
+
+      expect(deps.elements.inspect).not.toHaveBeenCalled();
+      expect(deps.elements.search).not.toHaveBeenCalled();
     });
   });
 
