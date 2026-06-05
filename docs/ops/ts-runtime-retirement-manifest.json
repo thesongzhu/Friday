@@ -419,17 +419,43 @@
       "next_action": "Replace fail-closed response with a Rust-owned skill execution entrypoint when available."
     },
     {
+      "id": "autofix_run_ready",
+      "route": {
+        "method": "POST",
+        "path": "/v1/auto-fix/actions/run-ready",
+        "operationId": "autofix.actions.run.ready"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-auto-fix-routes.ts wires default/live autofix.actions.run.ready to TS_RUNTIME_AUTOFIX_EXECUTION_RETIRED after the bound-principal gate and before calling the TypeScript runReadyActions service; legacy TS execution is reachable only through explicit allowTestOnlyAutoFixExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned auto-fix run-ready execution entrypoint when available."
+    },
+    {
       "id": "autofix_execute",
       "route": {
         "method": "POST",
         "path": "/v1/auto-fix/actions/:actionId/execute",
         "operationId": "autofix.actions.execute"
       },
-      "classification": "ts_runtime_blocker",
+      "classification": "fail_closed",
       "user_triggerable": true,
-      "owner": "ts-runtime-retirement",
-      "blocker": "Executes auto-fix action through TypeScript service.",
-      "next_action": "Move auto-fix execute/rollback truth to Rust or fail-close execution."
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-auto-fix-routes.ts wires default/live autofix.actions.execute to TS_RUNTIME_AUTOFIX_EXECUTION_RETIRED after the bound-principal gate and before calling the TypeScript executeAction service; legacy TS execution is reachable only through explicit allowTestOnlyAutoFixExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned auto-fix execute entrypoint when available."
+    },
+    {
+      "id": "autofix_rollback",
+      "route": {
+        "method": "POST",
+        "path": "/v1/auto-fix/actions/:actionId/rollback",
+        "operationId": "autofix.actions.rollback"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-auto-fix-routes.ts wires default/live autofix.actions.rollback to TS_RUNTIME_AUTOFIX_EXECUTION_RETIRED after the bound-principal gate and before calling the TypeScript rollbackAction service; legacy TS rollback is reachable only through explicit allowTestOnlyAutoFixExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned auto-fix rollback entrypoint when available."
     },
     {
       "id": "desktop_actions_execute",

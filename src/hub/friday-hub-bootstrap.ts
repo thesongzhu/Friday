@@ -6711,7 +6711,11 @@ export async function createFridayHub(
     pluginManifestLoader,
     deterministicPipeline,
     diagnosis: { service: selfHealingApiService, agentLoop: agentLoopService },
-    autoFix: { service: selfHealingApiService, agentLoop: agentLoopService },
+    autoFix: {
+      service: selfHealingApiService,
+      agentLoop: agentLoopService,
+      allowTestOnlyAutoFixExecution: config.allowTestOnlyAutoFixExecution,
+    },
     agentLoop: { service: agentLoopService },
     observability: observabilityService.routes,
     observabilityService,
