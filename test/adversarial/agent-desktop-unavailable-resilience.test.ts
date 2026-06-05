@@ -47,7 +47,10 @@ describe("Agent dependency-missing resilience", () => {
   it("fail-closes retired TS agent run start and avoids runaway provider retries", async () =>
     withTemporaryEnv("FRIDAY_DESKTOP_ENABLED", undefined, async () => {
       const startedAt = Date.now();
-      const env = await createMockHubEnv({ providerKinds: ["anthropic"] });
+      const env = await createMockHubEnv({
+        providerKinds: ["anthropic"],
+        allowTestOnlyAgentRunStartExecution: false,
+      });
       try {
         const provider = env.providers.anthropic;
         expect(provider).toBeDefined();
