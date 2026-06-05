@@ -42,6 +42,7 @@ export interface FridaySkillRoutesDeps {
 	  lifecycle?: FridaySkillLifecycleService;
 	  skillExecutor?: FridaySkillExecutor;
 	  allowTestOnlySkillRunExecution?: boolean;
+	  allowTestOnlySkillVerifyExecution?: boolean;
 	  managedSkillsDir?: string;
 	  getSkillLifecycleStatus?: (skillId: string) => string | null | undefined;
 	  canonicalMutationGate?: FridayMutatingActionGate;
@@ -58,6 +59,20 @@ function throwRetiredSkillRunExecution(): never {
       details: {
         classification: "fail_closed",
         replacement: "rust_owned_skill_run_entrypoint_required",
+      },
+    },
+  );
+}
+
+function throwRetiredSkillVerifyExecution(): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_SKILL_VERIFY_RETIRED",
+    "Skill verification is fail-closed while verification ownership is being moved out of TypeScript.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_skill_verification_entrypoint_required",
       },
     },
   );
@@ -565,6 +580,9 @@ export function createFridaySkillRoutes(
         path: "/v1/skills/:skillId/verify",
         auth: { public: true },
         async handler(ctx) {
+          if (deps.allowTestOnlySkillVerifyExecution !== true) {
+            throwRetiredSkillVerifyExecution();
+          }
           const skillId = String((ctx.params as Record<string, unknown>).skillId ?? "");
           const evidence = await deps.lifecycle!.verifySkill({
             skillId,

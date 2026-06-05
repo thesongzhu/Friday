@@ -421,26 +421,32 @@ describe("SGEN-003: Skill generator rejects non-object generate body", () => {
     stopWatching: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
   };
+  function createGeneratorOracleRoutes() {
+    return createFridaySkillGeneratorRoutes({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      skillGenerator: skillGen as any,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      registry: registry as any,
+      allowTestOnlySkillGeneratorExecution: true,
+    });
+  }
 
   it("rejects string body", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const routes = createFridaySkillGeneratorRoutes({ skillGenerator: skillGen as any, registry: registry as any });
+    const routes = createGeneratorOracleRoutes();
     const route = routes.find((r) => r.operationId === "skills.generator.sessions.generate")!;
     const ctx = makeCtx({ params: { sessionId: "sess-1" }, body: "not-an-object" });
     await expect(route.handler(ctx)).rejects.toThrow("plain object");
   });
 
   it("rejects array body", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const routes = createFridaySkillGeneratorRoutes({ skillGenerator: skillGen as any, registry: registry as any });
+    const routes = createGeneratorOracleRoutes();
     const route = routes.find((r) => r.operationId === "skills.generator.sessions.generate")!;
     const ctx = makeCtx({ params: { sessionId: "sess-1" }, body: [1, 2, 3] });
     await expect(route.handler(ctx)).rejects.toThrow("plain object");
   });
 
   it("accepts null body (no options)", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const routes = createFridaySkillGeneratorRoutes({ skillGenerator: skillGen as any, registry: registry as any });
+    const routes = createGeneratorOracleRoutes();
     const route = routes.find((r) => r.operationId === "skills.generator.sessions.generate")!;
     const ctx = makeCtx({ params: { sessionId: "sess-1" }, body: null });
     const result = await route.handler(ctx);

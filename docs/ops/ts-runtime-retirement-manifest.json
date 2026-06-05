@@ -828,6 +828,123 @@
       "next_action": "Replace fail-closed response with a Rust-owned skill execution entrypoint when available."
     },
     {
+      "id": "skills_verify",
+      "route": {
+        "method": "POST",
+        "path": "/v1/skills/:skillId/verify",
+        "operationId": "skills.verify"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-skill-routes.ts wires default/live skills.verify to TS_RUNTIME_SKILL_VERIFY_RETIRED before calling the TypeScript lifecycle.verifySkill service; the legacy TS verification path is reachable only through explicit allowTestOnlySkillVerifyExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned skill verification entrypoint when available."
+    },
+    {
+      "id": "skills_generator_sessions_create",
+      "route": {
+        "method": "POST",
+        "path": "/v1/skills/generator/sessions",
+        "operationId": "skills.generator.sessions.create"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-skill-generator-routes.ts wires default/live skill generator session routes to TS_RUNTIME_SKILL_GENERATOR_RETIRED before invoking the TypeScript skillGenerator service; legacy generator behavior is reachable only through explicit allowTestOnlySkillGeneratorExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned skill generator entrypoint when available."
+    },
+    {
+      "id": "skills_generator_sessions_get",
+      "route": {
+        "method": "GET",
+        "path": "/v1/skills/generator/sessions/:sessionId",
+        "operationId": "skills.generator.sessions.get"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-skill-generator-routes.ts wires default/live skill generator session routes to TS_RUNTIME_SKILL_GENERATOR_RETIRED before reading TypeScript generator session state; legacy generator reads are reachable only through explicit allowTestOnlySkillGeneratorExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned redacted skill generator session projection when available."
+    },
+    {
+      "id": "skills_generator_sessions_messages_create",
+      "route": {
+        "method": "POST",
+        "path": "/v1/skills/generator/sessions/:sessionId/messages",
+        "operationId": "skills.generator.sessions.messages.create"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-skill-generator-routes.ts wires default/live skill generator message submission to TS_RUNTIME_SKILL_GENERATOR_RETIRED before invoking the TypeScript skillGenerator service; legacy generator behavior is reachable only through explicit allowTestOnlySkillGeneratorExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned skill generator turn entrypoint when available."
+    },
+    {
+      "id": "skills_generator_sessions_generate",
+      "route": {
+        "method": "POST",
+        "path": "/v1/skills/generator/sessions/:sessionId/generate",
+        "operationId": "skills.generator.sessions.generate"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-skill-generator-routes.ts wires default/live skill draft generation to TS_RUNTIME_SKILL_GENERATOR_RETIRED before invoking the TypeScript skillGenerator service; legacy generator behavior is reachable only through explicit allowTestOnlySkillGeneratorExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned skill draft generation entrypoint when available."
+    },
+    {
+      "id": "skills_generator_sessions_test",
+      "route": {
+        "method": "POST",
+        "path": "/v1/skills/generator/sessions/:sessionId/test",
+        "operationId": "skills.generator.sessions.test"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-skill-generator-routes.ts wires default/live skill draft self-test to TS_RUNTIME_SKILL_GENERATOR_RETIRED before writing temp files or executing the TypeScript draft test path; legacy self-test behavior is reachable only through explicit allowTestOnlySkillGeneratorExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned skill draft validation/test entrypoint when available."
+    },
+    {
+      "id": "skills_generator_sessions_evidence_get",
+      "route": {
+        "method": "GET",
+        "path": "/v1/skills/generator/sessions/:sessionId/evidence",
+        "operationId": "skills.generator.sessions.evidence.get"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-skill-generator-routes.ts wires default/live skill generator evidence reads to TS_RUNTIME_SKILL_GENERATOR_RETIRED before reading TypeScript generator evidence state; legacy generator evidence reads are reachable only through explicit allowTestOnlySkillGeneratorExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned redacted skill generator evidence projection when available."
+    },
+    {
+      "id": "skills_generator_sessions_approve",
+      "route": {
+        "method": "POST",
+        "path": "/v1/skills/generator/sessions/:sessionId/approve",
+        "operationId": "skills.generator.sessions.approve"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-skill-generator-routes.ts wires default/live generated skill approval to TS_RUNTIME_SKILL_GENERATOR_RETIRED before evaluating TypeScript candidate approval or staging a candidate; legacy generator approval is reachable only through explicit allowTestOnlySkillGeneratorExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned generated skill candidate approval entrypoint when available."
+    },
+    {
+      "id": "skills_generator_sessions_cancel",
+      "route": {
+        "method": "DELETE",
+        "path": "/v1/skills/generator/sessions/:sessionId",
+        "operationId": "skills.generator.sessions.cancel"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-skill-generator-routes.ts wires default/live skill generator cancellation to TS_RUNTIME_SKILL_GENERATOR_RETIRED before invoking the TypeScript skillGenerator service; legacy generator cancellation is reachable only through explicit allowTestOnlySkillGeneratorExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned skill generator cancellation entrypoint when available."
+    },
+    {
       "id": "autofix_run_ready",
       "route": {
         "method": "POST",

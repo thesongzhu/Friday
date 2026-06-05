@@ -304,7 +304,7 @@ describe("createFridaySkillRoutes", () => {
 	    ).rejects.toMatchObject({ code: "SKILL_LEGACY_LIFECYCLE_ROUTE_RETIRED" });
 	  });
 
-	  it("blocks legacy install/update/delete for managed external skills while keeping read verification routes active", async () => {
+	  it("blocks legacy install/update/delete and skill verification by default while keeping manifest validation active", async () => {
     const lifecycle = makeLifecycle();
     const routes = createFridaySkillRoutes({
       skillRegistry: { list: () => [] } as never,
@@ -323,17 +323,39 @@ describe("createFridaySkillRoutes", () => {
       .rejects.toMatchObject({ code: "SKILL_LEGACY_LIFECYCLE_ROUTE_RETIRED" });
     await expect(remove.handler(makeCtx({ params: { skillId: "skill.alpha" } })))
       .rejects.toMatchObject({ code: "SKILL_LEGACY_LIFECYCLE_ROUTE_RETIRED" });
-    await verify.handler(makeCtx({ params: { skillId: "skill.alpha" } }));
+    await expect(verify.handler(makeCtx({ params: { skillId: "skill.alpha" } })))
+      .rejects.toMatchObject({
+        code: "TS_RUNTIME_SKILL_VERIFY_RETIRED",
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_skill_verification_entrypoint_required",
+        },
+      });
     await validate.handler(makeCtx({ body: { manifest: { id: "skill.alpha" } } }));
 
     expect(lifecycle.install).not.toHaveBeenCalled();
     expect(lifecycle.update).not.toHaveBeenCalled();
     expect(lifecycle.deleteSkill).not.toHaveBeenCalled();
+    expect(lifecycle.verifySkill).not.toHaveBeenCalled();
+    expect(lifecycle.validateManifest).toHaveBeenCalledWith({ id: "skill.alpha" });
+  });
+
+  it("allows legacy skill verification only when the test oracle opts in", async () => {
+    const lifecycle = makeLifecycle();
+    const routes = createFridaySkillRoutes({
+      skillRegistry: { list: () => [] } as never,
+      lifecycle: lifecycle as never,
+      allowTestOnlySkillVerifyExecution: true,
+    });
+
+    const verify = routes.find((item) => item.operationId === "skills.verify")!;
+    await verify.handler(makeCtx({ params: { skillId: "skill.alpha" } }));
+
     expect(lifecycle.verifySkill).toHaveBeenCalledWith({
       skillId: "skill.alpha",
       userId: "user-1",
     });
-    expect(lifecycle.validateManifest).toHaveBeenCalledWith({ id: "skill.alpha" });
   });
 
   it("requires canonical approval before non-managed lifecycle update/delete", async () => {

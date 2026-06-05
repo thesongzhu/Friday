@@ -290,6 +290,21 @@ export interface FridaySkillGeneratorRoutesDeps {
   selfHealing?: FridaySelfHealingApiService;
   observability?: FridayObservabilityApiService;
   canonicalMutationGate?: FridayMutatingActionGate;
+  allowTestOnlySkillGeneratorExecution?: boolean;
+}
+
+function throwRetiredSkillGeneratorExecution(): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_SKILL_GENERATOR_RETIRED",
+    "Skill generator execution is fail-closed while generator ownership is being moved out of TypeScript.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_skill_generator_entrypoint_required",
+      },
+    },
+  );
 }
 
 const GENERATED_SKILL_HUB_VERSION = "1.0.0";
@@ -558,6 +573,12 @@ async function executeDraftFromTempDir(
 export function createFridaySkillGeneratorRoutes(
   deps: FridaySkillGeneratorRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
+  function assertSkillGeneratorTestOracleAllowed(): void {
+    if (deps.allowTestOnlySkillGeneratorExecution !== true) {
+      throwRetiredSkillGeneratorExecution();
+    }
+  }
+
   async function reportGenerationFailure(input: {
     sessionId: string;
     userId: string;
@@ -816,6 +837,7 @@ export function createFridaySkillGeneratorRoutes(
       auth: { public: true },
       rateLimitPolicyId: "skill_generator.write",
       async handler(ctx): Promise<FridayStartSessionResponse> {
+        assertSkillGeneratorTestOracleAllowed();
         validateStartSessionBody(ctx.body);
         const body = ctx.body;
         const principalUserId = requireUserId(ctx.principal);
@@ -858,6 +880,7 @@ export function createFridaySkillGeneratorRoutes(
       path: "/v1/skills/generator/sessions/:sessionId",
       auth: { public: true },
       async handler(ctx): Promise<FridayGetSessionResponse> {
+        assertSkillGeneratorTestOracleAllowed();
         const { sessionId } = ctx.params as { sessionId: string };
         const result = await deps.skillGenerator.getSession(sessionId);
         if (!result) {
@@ -879,6 +902,7 @@ export function createFridaySkillGeneratorRoutes(
       auth: { public: true },
       rateLimitPolicyId: "skill_generator.llm",
       async handler(ctx): Promise<FridaySubmitTurnResponse> {
+        assertSkillGeneratorTestOracleAllowed();
         const { sessionId } = ctx.params as { sessionId: string };
         validateSubmitTurnBody(ctx.body);
         const body = ctx.body;
@@ -905,6 +929,7 @@ export function createFridaySkillGeneratorRoutes(
       auth: { public: true },
       rateLimitPolicyId: "skill_generator.llm",
       async handler(ctx): Promise<FridayGenerateResponse> {
+        assertSkillGeneratorTestOracleAllowed();
         const { sessionId } = ctx.params as { sessionId: string };
         validateGenerateBody(ctx.body);
         const body = (ctx.body ?? {}) as { requestedModel?: string };
@@ -946,6 +971,7 @@ export function createFridaySkillGeneratorRoutes(
       auth: { public: true },
       rateLimitPolicyId: "skill_generator.write",
       async handler(ctx): Promise<FridaySkillGeneratorTestResponse> {
+        assertSkillGeneratorTestOracleAllowed();
         const { sessionId } = ctx.params as { sessionId: string };
         const session = await deps.skillGenerator.getSession(sessionId);
         if (!session) {
@@ -984,6 +1010,7 @@ export function createFridaySkillGeneratorRoutes(
       path: "/v1/skills/generator/sessions/:sessionId/evidence",
       auth: { public: true },
       async handler(ctx): Promise<FridaySkillGeneratorEvidenceResponse> {
+        assertSkillGeneratorTestOracleAllowed();
         const { sessionId } = ctx.params as { sessionId: string };
         const evidence = await buildEvidence(sessionId);
         return { evidence };
@@ -1005,6 +1032,7 @@ export function createFridaySkillGeneratorRoutes(
       auth: { public: true, allowUnauthenticatedMutation: true },
       rateLimitPolicyId: "skill_generator.write",
       async handler(ctx): Promise<FridayApproveResponse> {
+        assertSkillGeneratorTestOracleAllowed();
         const { sessionId } = ctx.params as { sessionId: string };
         validateApproveBody(ctx.body);
         const body = ctx.body ?? {};
@@ -1080,6 +1108,7 @@ export function createFridaySkillGeneratorRoutes(
       path: "/v1/skills/generator/sessions/:sessionId",
       auth: { public: true },
       async handler(ctx): Promise<FridayCancelSessionResponse> {
+        assertSkillGeneratorTestOracleAllowed();
         const { sessionId } = ctx.params as { sessionId: string };
         await deps.skillGenerator.cancelSession(sessionId);
         return { cancelled: true };

@@ -3006,6 +3006,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       lifecycle: deps.skillLifecycle,
       skillExecutor: deps.skillExecutor,
       allowTestOnlySkillRunExecution: deps.allowTestOnlySkillRunExecution,
+      allowTestOnlySkillVerifyExecution: deps.allowTestOnlySkillVerifyExecution,
 	      managedSkillsDir: deps.managedSkillsDir,
 	      getSkillLifecycleStatus: (skillId) => skillRepo.getSkillById(deps.db.writer, skillId)?.status,
 	      canonicalMutationGate,
@@ -3024,6 +3025,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       selfHealing: deps.diagnosis?.service,
       observability: deps.observabilityService,
       canonicalMutationGate,
+      allowTestOnlySkillGeneratorExecution: deps.allowTestOnlySkillGeneratorExecution,
     })) {
       routes.register(route);
     }
