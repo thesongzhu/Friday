@@ -3436,6 +3436,10 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         }
       },
       approvePlan: async (input) => {
+        if (deps.allowTestOnlyAgentRunControlExecution !== true) {
+          void input;
+          throwRetiredAgentRunControl();
+        }
         if (!agentPlanningGate) {
           throw new FridayDomainError("AGENT_PLAN_NOT_AVAILABLE", "Planning gate is not available", { httpStatus: 501 });
         }
@@ -3472,6 +3476,10 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         return result;
       },
       rejectPlan: async (input) => {
+        if (deps.allowTestOnlyAgentRunControlExecution !== true) {
+          void input;
+          throwRetiredAgentRunControl();
+        }
         if (!agentPlanningGate) {
           throw new FridayDomainError("AGENT_PLAN_NOT_AVAILABLE", "Planning gate is not available", { httpStatus: 501 });
         }
@@ -3497,10 +3505,18 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         }
         return result;
       },
-      resolveToolApproval: deps.resolveToolApproval
-        ? (runId, toolCallId, approved, options) =>
-          deps.resolveToolApproval!(runId, toolCallId, approved, options)
-        : (/* _runId, _toolCallId, _approved, _reason */) => ({ resolved: false }),
+      resolveToolApproval: (runId, toolCallId, approved, options) => {
+        if (deps.allowTestOnlyAgentRunControlExecution !== true) {
+          void runId;
+          void toolCallId;
+          void approved;
+          void options;
+          throwRetiredAgentRunControl();
+        }
+        return deps.resolveToolApproval
+          ? deps.resolveToolApproval(runId, toolCallId, approved, options)
+          : { resolved: false };
+      },
       rollbackRun: (runId) => {
         if (deps.allowTestOnlyAgentRunControlExecution !== true) {
           void runId;

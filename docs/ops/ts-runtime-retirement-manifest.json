@@ -354,6 +354,58 @@
       "next_action": "Replace fail-closed response with a Rust-owned automation execution/control entrypoint when available."
     },
     {
+      "id": "agent_runs_approve_plan",
+      "route": {
+        "method": "POST",
+        "path": "/v1/agent/runs/:runId/approve-plan",
+        "operationId": "agent.runs.approve.plan"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/runtime/friday-api-runtime.ts wires default/live agent.runs.approve.plan to TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED after route visibility/principal checks and before calling the TypeScript planning gate or mirroring session state; the legacy TS approval path is reachable only through explicit allowTestOnlyAgentRunControlExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned agent plan approval/control entrypoint when available."
+    },
+    {
+      "id": "agent_runs_reject_plan",
+      "route": {
+        "method": "POST",
+        "path": "/v1/agent/runs/:runId/reject-plan",
+        "operationId": "agent.runs.reject.plan"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/runtime/friday-api-runtime.ts wires default/live agent.runs.reject.plan to TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED after route visibility/principal checks and before calling the TypeScript planning gate or mirroring session state; the legacy TS rejection path is reachable only through explicit allowTestOnlyAgentRunControlExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned agent plan rejection/control entrypoint when available."
+    },
+    {
+      "id": "agent_runs_approve_tool",
+      "route": {
+        "method": "POST",
+        "path": "/v1/agent/runs/:runId/approve-tool",
+        "operationId": "agent.runs.approve.tool"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/runtime/friday-api-runtime.ts wires default/live agent.runs.approve.tool to TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED after route visibility/principal/body checks and before resolving the TypeScript tool approval gate; the legacy TS tool approval path is reachable only through explicit allowTestOnlyAgentRunControlExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned agent tool approval/control entrypoint when available."
+    },
+    {
+      "id": "agent_runs_reject_tool",
+      "route": {
+        "method": "POST",
+        "path": "/v1/agent/runs/:runId/reject-tool",
+        "operationId": "agent.runs.reject.tool"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/runtime/friday-api-runtime.ts wires default/live agent.runs.reject.tool to TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED after route visibility/principal/body checks and before resolving the TypeScript tool approval gate; the legacy TS tool rejection path is reachable only through explicit allowTestOnlyAgentRunControlExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned agent tool rejection/control entrypoint when available."
+    },
+    {
       "id": "agent_loop_expertmode_update",
       "route": {
         "method": "PUT",

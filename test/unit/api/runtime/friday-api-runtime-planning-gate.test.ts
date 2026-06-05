@@ -315,6 +315,7 @@ describe("FridayApiRuntime — planning gate session loop", () => {
       resolveSkill: () => null,
       invokeSkill: async () => ({}),
       allowTestOnlyAgentRunStartExecution: true,
+      allowTestOnlyAgentRunControlExecution: true,
     });
     sessionServiceRef = runtime.sessionService;
 
