@@ -308,11 +308,11 @@
         "path": "/v1/agent/runs",
         "operationId": "agent.runs.start"
       },
-      "classification": "ts_runtime_blocker",
+      "classification": "fail_closed",
       "user_triggerable": true,
-      "owner": "ts-runtime-retirement",
-      "blocker": "Starts agent runtime through TypeScript dependencies.",
-      "next_action": "Redirect execution truth to Rust-owned agent entrypoint or return fail-closed unavailable response."
+      "executes_product_logic": false,
+      "proof": "src/api/runtime/friday-api-runtime.ts wires agent.runs.start to TS_RUNTIME_AGENT_RUNS_RETIRED before idempotency replay, state mutation, provider validation, or agent runtime execution.",
+      "next_action": "Replace fail-closed response with a Rust-owned agent run entrypoint when available."
     },
     {
       "id": "workflow_runs_start",

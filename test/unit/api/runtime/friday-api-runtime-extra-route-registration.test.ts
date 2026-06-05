@@ -20,6 +20,7 @@ import type {
   FridayUixRoutesDeps,
 } from "#api";
 import { FridayDomainError } from "#errors";
+import type { FridayAgentEventEmitter, FridayAgentRuntime } from "#agent";
 import type { FridayProviderService } from "#providers";
 import type { FridayProviderProfile } from "#providers";
 import type { FridaySqliteLayer } from "#state";
@@ -226,6 +227,49 @@ describe("API Runtime — Extended Route Registration", () => {
     expect((thrown as FridayDomainError).code).toBe("MISSION_SPINE_WORKBENCH_UNAVAILABLE");
     expect((thrown as FridayDomainError).httpStatus).toBe(503);
     expect((thrown as FridayDomainError).message).toMatch(/projection deps not provided/);
+  });
+
+  it("fail-closes live POST /v1/agent/runs wiring without executing the TypeScript agent runtime", async () => {
+    const executeRun = vi.fn<FridayAgentRuntime["executeRun"]>().mockResolvedValue({
+      runId: "run-should-not-execute",
+      status: "completed",
+      response: "should not execute",
+      toolCallCount: 0,
+      durationMs: 0,
+      usageInput: 0,
+      usageOutput: 0,
+    });
+    const runtime = createFridayApiRuntime({
+      ...makeBaseDeps(),
+      agentRuntime: { executeRun },
+      agentEventEmitter: {
+        on: vi.fn(),
+        off: vi.fn(),
+        emit: vi.fn(),
+      } satisfies FridayAgentEventEmitter,
+    });
+    const route = runtime.routes.getRoutes().find((r) => r.operationId === "agent.runs.start");
+    expect(route).toBeDefined();
+
+    let thrown: unknown = null;
+    try {
+      await route!.handler({
+        requestId: "req-agent-run-retired",
+        receivedAt: NOW,
+        params: {},
+        query: {},
+        body: { task: "Do not execute from TypeScript" },
+        headers: {},
+        principal: makePrincipal({ role: "admin", scopes: ["agent.run"] }),
+      });
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(FridayDomainError);
+    expect((thrown as FridayDomainError).code).toBe("TS_RUNTIME_AGENT_RUNS_RETIRED");
+    expect((thrown as FridayDomainError).httpStatus).toBe(503);
+    expect(executeRun).not.toHaveBeenCalled();
   });
 
   it("registers skills.social.import in disabled state when deps.socialImport is omitted", async () => {
