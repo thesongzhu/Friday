@@ -474,6 +474,123 @@ describe("API Runtime — Extended Route Registration", () => {
     expect(executeRun).not.toHaveBeenCalled();
   });
 
+  for (const scenario of [
+    {
+      name: "approve plan",
+      operationId: "agent.runs.approve.plan",
+      runId: "run-control-retired-approve-plan",
+      body: {},
+    },
+    {
+      name: "reject plan",
+      operationId: "agent.runs.reject.plan",
+      runId: "run-control-retired-reject-plan",
+      body: {},
+    },
+  ]) {
+    it(`fail-closes live agent run ${scenario.name} wiring before TypeScript planning control`, async () => {
+      const deps = makeBaseDeps();
+      seedAgentRun(deps.db, { id: scenario.runId, status: "awaiting_plan_approval" });
+      const executeRun = vi.fn<FridayAgentRuntime["executeRun"]>();
+      const runtime = createFridayApiRuntime({
+        ...deps,
+        agentRuntime: {
+          executeRun,
+          rollbackRun: vi.fn(),
+          registerTool: vi.fn(),
+          resumeStaleRunsOnBoot: vi.fn(() => 0),
+          hasRollbackCheckpoint: vi.fn(() => false),
+        } as unknown as FridayAgentRuntime,
+        agentEventEmitter: {
+          on: vi.fn(),
+          off: vi.fn(),
+          emit: vi.fn(),
+        } satisfies FridayAgentEventEmitter,
+      });
+      const route = runtime.routes.getRoutes().find((r) => r.operationId === scenario.operationId);
+      expect(route).toBeDefined();
+
+      let thrown: unknown = null;
+      try {
+        await route!.handler({
+          requestId: `req-${scenario.runId}`,
+          receivedAt: NOW,
+          params: { runId: scenario.runId },
+          query: {},
+          body: scenario.body,
+          headers: {},
+          principal: makePrincipal({ role: "admin", scopes: ["agent.run"] }),
+        });
+      } catch (err) {
+        thrown = err;
+      }
+
+      expect(thrown).toBeInstanceOf(FridayDomainError);
+      expect((thrown as FridayDomainError).code).toBe("TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED");
+      expect((thrown as FridayDomainError).httpStatus).toBe(503);
+      expect(executeRun).not.toHaveBeenCalled();
+    });
+  }
+
+  for (const scenario of [
+    {
+      name: "approve tool",
+      operationId: "agent.runs.approve.tool",
+      runId: "run-control-retired-approve-tool",
+      body: { toolCallId: "tool-call-1" },
+    },
+    {
+      name: "reject tool",
+      operationId: "agent.runs.reject.tool",
+      runId: "run-control-retired-reject-tool",
+      body: { toolCallId: "tool-call-1", reason: "not approved" },
+    },
+  ]) {
+    it(`fail-closes live agent run ${scenario.name} wiring before TypeScript tool approval resolution`, async () => {
+      const deps = makeBaseDeps();
+      seedAgentRun(deps.db, { id: scenario.runId, status: "awaiting_tool_approval" });
+      const resolveToolApproval = vi.fn(() => ({ resolved: true }));
+      const runtime = createFridayApiRuntime({
+        ...deps,
+        agentRuntime: {
+          executeRun: vi.fn(),
+          rollbackRun: vi.fn(),
+          registerTool: vi.fn(),
+          resumeStaleRunsOnBoot: vi.fn(() => 0),
+          hasRollbackCheckpoint: vi.fn(() => false),
+        } as unknown as FridayAgentRuntime,
+        agentEventEmitter: {
+          on: vi.fn(),
+          off: vi.fn(),
+          emit: vi.fn(),
+        } satisfies FridayAgentEventEmitter,
+        resolveToolApproval,
+      });
+      const route = runtime.routes.getRoutes().find((r) => r.operationId === scenario.operationId);
+      expect(route).toBeDefined();
+
+      let thrown: unknown = null;
+      try {
+        await route!.handler({
+          requestId: `req-${scenario.runId}`,
+          receivedAt: NOW,
+          params: { runId: scenario.runId },
+          query: {},
+          body: scenario.body,
+          headers: {},
+          principal: makePrincipal({ role: "admin", scopes: ["agent.run"] }),
+        });
+      } catch (err) {
+        thrown = err;
+      }
+
+      expect(thrown).toBeInstanceOf(FridayDomainError);
+      expect((thrown as FridayDomainError).code).toBe("TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED");
+      expect((thrown as FridayDomainError).httpStatus).toBe(503);
+      expect(resolveToolApproval).not.toHaveBeenCalled();
+    });
+  }
+
   it("fail-closes live workflow run start wiring without executing the TypeScript workflow runtime", async () => {
     const { workflowRuntime, execution } = makeWorkflowRuntimeSpies();
     const runtime = createFridayApiRuntime({

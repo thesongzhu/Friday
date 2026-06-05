@@ -220,8 +220,8 @@ export interface CreateFridayApiRuntimeDeps {
   /**
    * Test-oracle only: allows legacy TypeScript agent run controls in isolated
    * mock/unit validation. Production/runtime callers must leave this unset so
-   * agent cancel, rollback, and automation-run controls stay fail-closed until
-   * Rust owns execution/control truth.
+   * agent cancel, rollback, automation-run, plan approval, and tool approval
+   * controls stay fail-closed until Rust owns execution/control truth.
    */
   allowTestOnlyAgentRunControlExecution?: boolean;
   /** Optional: Reflex service for deterministic preference writes before agent runs. */
