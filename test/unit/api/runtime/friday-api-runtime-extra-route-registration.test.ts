@@ -198,6 +198,34 @@ describe("API Runtime — Extended Route Registration", () => {
     // deps.socialImport is omitted. Disabled deployments return 503
     // SOCIAL_IMPORT_DISABLED, never 404.
     expect(operationIds).toContain("skills.social.import");
+    // Mission Spine workbench route is ALWAYS registered. Disabled
+    // deployments return 503 MISSION_SPINE_WORKBENCH_UNAVAILABLE, never 404 or
+    // a prep snapshot pretending to be live.
+    expect(operationIds).toContain("mission.spine.workbench.get");
+  });
+
+  it("registers mission.spine.workbench.get in disabled state when deps.missionSpine is omitted", async () => {
+    const runtime = createFridayApiRuntime(makeBaseDeps());
+    const route = runtime.routes.getRoutes().find((r) => r.operationId === "mission.spine.workbench.get");
+    expect(route).toBeDefined();
+    let thrown: unknown = null;
+    try {
+      await route!.handler({
+        requestId: "req-mission-spine-workbench-disabled",
+        receivedAt: NOW,
+        params: {},
+        query: {},
+        body: null,
+        headers: {},
+        principal: makePrincipal({ role: "admin", scopes: ["hub.admin"] }),
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(FridayDomainError);
+    expect((thrown as FridayDomainError).code).toBe("MISSION_SPINE_WORKBENCH_UNAVAILABLE");
+    expect((thrown as FridayDomainError).httpStatus).toBe(503);
+    expect((thrown as FridayDomainError).message).toMatch(/projection deps not provided/);
   });
 
   it("registers skills.social.import in disabled state when deps.socialImport is omitted", async () => {

@@ -70,6 +70,7 @@ import type { FridayAgentLoopRoutesDeps } from "../http/routes/friday-agent-loop
 import type { FridaySystemRoutesDeps } from "../http/routes/friday-system-routes.js";
 import type { FridayGuideLensRoutesDeps } from "../http/routes/friday-guide-lens-routes.js";
 import type { FridayUixRoutesDeps } from "../http/routes/friday-uix-routes.js";
+import type { FridayMissionSpineRoutesDeps } from "../http/routes/friday-mission-spine-routes.js";
 import type { FridayCrossBorderPackRoutesDeps } from "../http/routes/friday-cross-border-pack-routes.js";
 import type { FridayPackagingRoutesDeps } from "../http/routes/friday-packaging-routes.js";
 import type {
@@ -115,6 +116,7 @@ export interface FridayApiRuntime {
   autoFix?: FridayAutoFixRoutesDeps;
   agentLoop?: FridayAgentLoopRoutesDeps;
   uix?: FridayUixRoutesDeps;
+  missionSpine?: FridayMissionSpineRoutesDeps;
   crossBorderPack?: FridayCrossBorderPackRoutesDeps;
   system?: FridaySystemRoutesDeps;
   guideLens?: FridayGuideLensRoutesDeps;
@@ -259,6 +261,15 @@ export interface CreateFridayApiRuntimeDeps {
   canonicalMutatingActionGate?: boolean;
   /** Optional: beginner-friendly UIX route surface. */
   uix?: FridayUixRoutesDeps;
+  /**
+   * Optional Mission Spine workbench projection route surface.
+   *
+   * The route is always registered. When omitted, GET
+   * `/v1/mission-spine/workbench` fails closed with
+   * `503 MISSION_SPINE_WORKBENCH_UNAVAILABLE` instead of returning a prep
+   * snapshot as live proof.
+   */
+  missionSpine?: FridayMissionSpineRoutesDeps;
   /** Optional: cross-border operating pack route surface. */
   crossBorderPack?: FridayCrossBorderPackRoutesDeps;
   /**

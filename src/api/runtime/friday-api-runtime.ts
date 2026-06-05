@@ -104,6 +104,10 @@ import { createFridayGrantRoutes } from "../http/routes/friday-grant-routes.js";
 import { createFridaySystemRoutes } from "../http/routes/friday-system-routes.js";
 import { createFridayGuideLensRoutes } from "../http/routes/friday-guide-lens-routes.js";
 import { createFridayUixRoutes } from "../http/routes/friday-uix-routes.js";
+import {
+  createFridayMissionSpineRoutes,
+  type FridayMissionSpineRoutesDeps,
+} from "../http/routes/friday-mission-spine-routes.js";
 import { createFridayCrossBorderPackRoutes } from "../http/routes/friday-cross-border-pack-routes.js";
 import { createFridayAssetInventoryRoutes } from "../http/routes/friday-asset-inventory-routes.js";
 import { createFridayStudioRoutes } from "../http/routes/friday-studio-routes.js";
@@ -2629,6 +2633,15 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     routes.register(route);
   }
 
+  const missionSpineDeps: FridayMissionSpineRoutesDeps =
+    deps.missionSpine ?? {
+      workbench: null,
+      disabledReason: "mission spine workbench projection deps not provided",
+    };
+  for (const route of createFridayMissionSpineRoutes(missionSpineDeps)) {
+    routes.register(route);
+  }
+
   // Register realtime routes
   for (const route of createFridayRealtimeRoutes({
     subscriptionService: subscriptions,
@@ -3489,6 +3502,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     autoFix: deps.autoFix,
     agentLoop: deps.agentLoop,
     uix: deps.uix,
+    missionSpine: deps.missionSpine,
     system: deps.system,
     guideLens: deps.guideLens,
   };
