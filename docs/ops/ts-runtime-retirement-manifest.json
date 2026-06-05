@@ -417,6 +417,66 @@
       "next_action": "Replace this compatibility read with a Rust-owned redacted automation detail projection when available."
     },
     {
+      "id": "agent_runs_list_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/agent/runs",
+        "operationId": "agent.runs.list"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep agent run list as a bounded redacted compatibility projection while TypeScript agent execution and controls are fail-closed or moved to Rust-owned product truth. This read filters internal/subagent runs, caps list size, redacts private paths/provider ids/raw commands, and does not execute tools or mark completion.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted agent run projection when available."
+    },
+    {
+      "id": "agent_runs_summary_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/agent/runs/summary",
+        "operationId": "agent.runs.summary"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep agent run summary as a bounded aggregate compatibility projection while TypeScript agent execution and controls are fail-closed or moved to Rust-owned product truth. This aggregate filters internal/subagent runs, caps sampled rows, and does not execute tools or mark completion.",
+      "next_action": "Replace this compatibility aggregate with a Rust-owned agent run summary projection when available."
+    },
+    {
+      "id": "agent_runs_get_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/agent/runs/:runId",
+        "operationId": "agent.runs.get"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep agent run detail as a redacted compatibility projection while TypeScript agent execution and controls are fail-closed or moved to Rust-owned product truth. This read hides internal/subagent runs, redacts private paths/provider ids/raw commands, and does not execute tools or mark completion.",
+      "next_action": "Replace this compatibility detail with a Rust-owned redacted agent run projection when available."
+    },
+    {
+      "id": "agent_runs_audit_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/agent/runs/:runId/audit",
+        "operationId": "agent.runs.audit"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep agent run audit as a redacted proof-ref compatibility projection while TypeScript agent execution and controls are fail-closed or moved to Rust-owned product truth. This read exposes sanitized event metadata, decision pointers, and path-redacted replay refs only; it does not execute tools or mark completion.",
+      "next_action": "Replace this compatibility audit projection with a Rust-owned redacted run audit projection when available."
+    },
+    {
+      "id": "agent_runs_events_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/agent/runs/:runId/events",
+        "operationId": "agent.runs.events"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep agent run event stream as a redacted compatibility projection while TypeScript agent execution and controls are fail-closed or moved to Rust-owned product truth. This stream sanitizes replay/live payloads, redacts private paths/provider ids/raw commands, and does not execute tools or mark completion.",
+      "next_action": "Replace this compatibility event stream with a Rust-owned bounded event/timeline projection when available."
+    },
+    {
       "id": "agent_runs_approve_plan",
       "route": {
         "method": "POST",

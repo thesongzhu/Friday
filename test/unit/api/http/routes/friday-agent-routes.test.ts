@@ -1009,8 +1009,12 @@ describe("FridayAgentRoutes", () => {
     expect(result.replayReceipt.evidence.auditEventCount).toBe(1);
     expect(result.replayReceipt.replay.auditEndpoint).toBe("/v1/agent/runs/run-1/audit");
     expect(result.replayReceipt.replay.files).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: "evidence_receipt", path: expect.stringContaining("evidence-receipt.json") }),
+      expect.objectContaining({ kind: "evidence_receipt" }),
     ]));
+    expect(JSON.stringify(result.replayReceipt)).not.toContain("/tmp/friday");
+    for (const file of result.replayReceipt.replay.files) {
+      expect(file.path).toBeUndefined();
+    }
     expect(result.replayReceipt.proofBoundary).toContain("not release proof");
   });
 
@@ -1703,6 +1707,64 @@ describe("FridayAgentRoutes", () => {
       expect(result.items[0]?.responseText).not.toContain("sessionKey");
     });
 
+    it("redacts private run fields from list projections", async () => {
+      const run = createStubRun({
+        id: "run-private-1",
+        providerId: "provider-secret-1",
+        model: "provider-model-secret",
+        artifactDir: "/Users/jarvis/private/friday/run-private-1",
+        artifacts: [
+          { type: "response", path: "/Users/jarvis/private/friday/run-private-1/response.md" },
+        ],
+        actualExecution: {
+          requestedProviderId: "provider-secret-1",
+          actualProviderId: "provider-secret-2",
+          actualModel: "provider-model-secret",
+          turns: [
+            { providerId: "provider-secret-2", model: "provider-model-secret", inputTokens: 1, outputTokens: 1 },
+          ],
+        },
+        metadata: {
+          surface: "api",
+          apiRequest: {
+            operationId: "agent.runs.start",
+            idempotencyKey: "idem-secret",
+            payloadHash: "hash-secret",
+            receivedAt: "2026-01-01T00:00:00.000Z",
+            principalId: "principal-secret",
+          },
+        },
+      });
+      stubDeps.listRuns = vi.fn().mockReturnValue([run]);
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.list")!;
+
+      const result = await route.handler({
+        body: null,
+        params: {},
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-private-list",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      const encoded = JSON.stringify(result);
+      expect(encoded).not.toContain("provider-secret");
+      expect(encoded).not.toContain("provider-model-secret");
+      expect(encoded).not.toContain("/Users/jarvis/private");
+      expect(encoded).not.toContain("idem-secret");
+      expect(encoded).not.toContain("principal-secret");
+      expect(result).toMatchObject({
+        items: [
+          expect.objectContaining({
+            id: "run-private-1",
+            metadata: { surface: "api" },
+          }),
+        ],
+      });
+    });
+
     it("validates limit is a positive integer", async () => {
       const routes = createFridayAgentRoutes(stubDeps);
       const route = routes.find((r) => r.operationId === "agent.runs.list")!;
@@ -1977,8 +2039,63 @@ describe("FridayAgentRoutes", () => {
         receivedAt: "2026-01-01T00:00:00.000Z",
       };
       const result = await route.handler(ctx) as { run: FridayAgentRunRecord; streaming: boolean };
-      expect(result.run).toEqual(run);
+      expect(result.run).toEqual(expect.objectContaining({
+        id: run.id,
+        status: run.status,
+      }));
       expect(result.streaming).toBe(false);
+    });
+
+    it("returns a redacted fallback JSON projection when no raw response is available", async () => {
+      const run = createStubRun({
+        status: "executing",
+        providerId: "provider-secret-1",
+        artifactDir: "/Users/jarvis/private/friday/run-1",
+        artifacts: [
+          { type: "response", path: "/Users/jarvis/private/friday/run-1/response.md" },
+        ],
+      });
+      stubDeps.getRun = vi.fn().mockReturnValue(run);
+      stubDeps.listRunEvents = vi.fn().mockReturnValue([
+        {
+          eventId: "evt-private",
+          runId: "run-1",
+          seq: 1,
+          eventName: "agent.run.tool_start",
+          payload: {
+            runId: "run-1",
+            toolCallId: "call-1",
+            toolName: "shell",
+            params: { command: "cat /Users/jarvis/private/secret.txt" },
+          },
+          emittedAt: "2026-01-01T00:00:01.000Z",
+          createdAt: "2026-01-01T00:00:01.000Z",
+        },
+      ]);
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.events")!;
+
+      const result = await route.handler({
+        body: null,
+        params: { runId: "run-1" },
+        query: {},
+        headers: {},
+        principal: null,
+        requestId: "req-fallback-redacted",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      const encoded = JSON.stringify(result);
+      expect(encoded).not.toContain("provider-secret");
+      expect(encoded).not.toContain("/Users/jarvis/private");
+      expect(encoded).not.toContain("secret.txt");
+      expect(result).toMatchObject({
+        streaming: false,
+        run: expect.objectContaining({
+          id: "run-1",
+          unifiedTaskState: expect.any(Object),
+        }),
+      });
     });
 
     it("replays persisted events and closes for terminal runs with raw response", async () => {
@@ -2050,6 +2167,10 @@ describe("FridayAgentRoutes", () => {
       expect(mockRes.write).toHaveBeenCalledWith(
         expect.stringContaining('"type":"agent.run.completed"'),
       );
+      const streamOutput = mockRes.write.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(streamOutput).toContain('"payload"');
+      expect(streamOutput).toContain('"hasSummary":true');
+      expect(streamOutput).not.toContain("facebook.com · visible desktop");
       expect(mockRes.end).toHaveBeenCalled();
     });
 

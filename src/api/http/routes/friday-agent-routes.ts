@@ -17,6 +17,7 @@ import type {
   FridayAgentEventMap,
   FridayAgentEventName,
   FridayAgentExecutionContext,
+  FridayAgentReplayableEvidenceReceipt,
   FridayAgentRunConstraints,
   FridayAgentRunRecord,
   FridayAgentRunStatus,
@@ -180,6 +181,99 @@ function sanitizeUserVisibleRun(run: FridayAgentRunRecord): FridayAgentRunRecord
   };
 }
 
+function sanitizePlanReviewForPublicRead(
+  planReview: FridayAgentRunRecord["planReview"],
+): FridayAgentRunRecord["planReview"] | undefined {
+  if (!planReview) {
+    return undefined;
+  }
+  return {
+    plan: {
+      task: planReview.plan.task,
+      stepCount: planReview.plan.stepCount,
+      description: planReview.plan.description,
+    },
+    ...(planReview.gate
+      ? {
+        gate: {
+          kind: planReview.gate.kind,
+          state: planReview.gate.state,
+          ...(Array.isArray(planReview.gate.clarificationQuestions)
+            ? { clarificationQuestions: planReview.gate.clarificationQuestions.map(() => "[redacted]") }
+            : {}),
+          ...(planReview.gate.planSummary ? { planSummary: "[redacted]" } : {}),
+          ...(planReview.gate.approvalUpdatedAt ? { approvalUpdatedAt: planReview.gate.approvalUpdatedAt } : {}),
+        },
+      }
+      : {}),
+    ...(planReview.decision
+      ? {
+        decision: {
+          approved: planReview.decision.approved,
+          mode: planReview.decision.mode,
+          reviewedAt: planReview.decision.reviewedAt,
+        },
+      }
+      : {}),
+  };
+}
+
+function sanitizePublicAgentRunRecord(run: FridayAgentRunRecord): FridayAgentRunRecord {
+  const sanitized = sanitizeUserVisibleRun(run);
+  return {
+    id: sanitized.id,
+    task: sanitized.task,
+    status: sanitized.status,
+    sessionKey: sanitized.sessionKey,
+    attempt: sanitized.attempt,
+    maxAttempts: sanitized.maxAttempts,
+    createdAt: sanitized.createdAt,
+    ...(sanitized.startedAt ? { startedAt: sanitized.startedAt } : {}),
+    ...(sanitized.completedAt ? { completedAt: sanitized.completedAt } : {}),
+    ...(typeof sanitized.durationMs === "number" ? { durationMs: sanitized.durationMs } : {}),
+    ...(typeof sanitized.usageInput === "number" ? { usageInput: sanitized.usageInput } : {}),
+    ...(typeof sanitized.usageOutput === "number" ? { usageOutput: sanitized.usageOutput } : {}),
+    ...(typeof sanitized.costUsd === "number" ? { costUsd: sanitized.costUsd } : {}),
+    ...(sanitized.errorCode ? { errorCode: sanitized.errorCode } : {}),
+    ...(sanitized.errorMessage ? { errorMessage: sanitized.errorMessage } : {}),
+    ...(sanitized.responseText ? { responseText: sanitized.responseText } : {}),
+    ...(sanitized.summary ? { summary: sanitized.summary } : {}),
+    ...(sanitized.planReview ? { planReview: sanitizePlanReviewForPublicRead(sanitized.planReview) } : {}),
+    ...(sanitized.constraints
+      ? {
+        constraints: {
+          ...(typeof sanitized.constraints.readOnly === "boolean" ? { readOnly: sanitized.constraints.readOnly } : {}),
+          ...(sanitized.constraints.operationalMode ? { operationalMode: sanitized.constraints.operationalMode } : {}),
+          ...(sanitized.constraints.dataSensitivity ? { dataSensitivity: sanitized.constraints.dataSensitivity } : {}),
+          ...(typeof sanitized.constraints.localOnly === "boolean" ? { localOnly: sanitized.constraints.localOnly } : {}),
+          ...(typeof sanitized.constraints.noEgress === "boolean" ? { noEgress: sanitized.constraints.noEgress } : {}),
+        },
+      }
+      : {}),
+    ...(sanitized.taskProfile
+      ? {
+        taskProfile: {
+          id: sanitized.taskProfile.id,
+          label: sanitized.taskProfile.label,
+          description: sanitized.taskProfile.description,
+          reasoningEffort: sanitized.taskProfile.reasoningEffort,
+          ...(typeof sanitized.taskProfile.temperature === "number" ? { temperature: sanitized.taskProfile.temperature } : {}),
+        },
+      }
+      : {}),
+    ...(sanitized.metadata?.surface
+      ? {
+        metadata: {
+          surface: sanitized.metadata.surface,
+        },
+      }
+      : {}),
+    ...(sanitized.health ? { health: sanitized.health } : {}),
+    ...(sanitized.contextSummary ? { contextSummary: sanitized.contextSummary } : {}),
+    ...(typeof sanitized.rollbackAvailable === "boolean" ? { rollbackAvailable: sanitized.rollbackAvailable } : {}),
+  };
+}
+
 // D1 fix: reconstruct tool-call outcomes from the durable event stream so the
 // API-rebuilt receipt counts real tool failures. Without this, toolCalls was never
 // passed to the receipt builder, so countToolCalls(undefined).failed was always 0 and
@@ -256,18 +350,39 @@ function buildReplayableEvidenceReceiptForRun(
   });
 }
 
+function sanitizeReplayReceiptForPublicRead(
+  receipt: FridayAgentReplayableEvidenceReceipt,
+): FridayAgentReplayableEvidenceReceipt {
+  return {
+    ...receipt,
+    replay: {
+      auditEndpoint: receipt.replay.auditEndpoint,
+      files: receipt.replay.files.map((file) => ({
+        label: file.label,
+        kind: file.kind,
+        ...(file.kind === "audit_endpoint" && file.href ? { href: file.href } : {}),
+      })),
+    },
+    limitations: [
+      "Replay file entries are proof refs; private filesystem paths are redacted from this public API surface.",
+      ...receipt.limitations.filter((limitation) => !/file paths|tool-calls\.json/i.test(limitation)),
+    ],
+  };
+}
+
 function buildVisibleRunWithUnifiedTaskState(
   run: FridayAgentRunRecord,
   events: FridayAgentRunEventRecord[],
   issuedAt: string,
 ): FridayAgentRunWithUnifiedTaskState {
   const replayReceipt = buildReplayableEvidenceReceiptForRun(run, events, issuedAt);
+  const publicReplayReceipt = sanitizeReplayReceiptForPublicRead(replayReceipt);
   return {
-    ...sanitizeUserVisibleRun(run),
+    ...sanitizePublicAgentRunRecord(run),
     unifiedTaskState: buildFridayAgentUnifiedTaskState({
       run,
       events,
-      replayReceipt,
+      replayReceipt: publicReplayReceipt,
     }),
   };
 }
@@ -595,6 +710,30 @@ function sanitizeAuditEventPayload(event: FridayAgentRunEventRecord): unknown {
   if (!payload) {
     return event.payload;
   }
+  if (event.eventName === "agent.run.started") {
+    const contextSelection = asRecord(payload.contextSelection);
+    const selectedBlocks = Array.isArray(contextSelection?.selectedBlocks)
+      ? contextSelection.selectedBlocks
+      : [];
+    return {
+      ...(readStringField(payload, "runId") ? { runId: readStringField(payload, "runId") } : {}),
+      hasTask: typeof payload.task === "string" && payload.task.length > 0,
+      hasModel: typeof payload.model === "string" && payload.model.length > 0,
+      providerRouted: typeof payload.providerId === "string" && payload.providerId.length > 0,
+      ...(asRecord(payload.taskProfile)?.id ? { taskProfileId: readStringField(asRecord(payload.taskProfile), "id") } : {}),
+      contextSelection: {
+        selectedBlockCount: selectedBlocks.length,
+        hasSelectionReasons: Array.isArray(contextSelection?.selectionReasons) && contextSelection.selectionReasons.length > 0,
+      },
+    };
+  }
+  if (event.eventName === "agent.run.planning") {
+    return {
+      ...(readStringField(payload, "runId") ? { runId: readStringField(payload, "runId") } : {}),
+      status: "planning",
+      hasMessage: typeof payload.message === "string" && payload.message.length > 0,
+    };
+  }
   if (event.eventName === "agent.run.plan_ready") {
     return {
       ...(readStringField(payload, "runId") ? { runId: readStringField(payload, "runId") } : {}),
@@ -655,6 +794,22 @@ function sanitizeAuditEventPayload(event: FridayAgentRunEventRecord): unknown {
       ...(guardrail ? { guardrail } : {}),
     };
   }
+  if (event.eventName === "agent.run.executing") {
+    return {
+      ...(readStringField(payload, "runId") ? { runId: readStringField(payload, "runId") } : {}),
+      status: "executing",
+      ...(typeof payload.step === "number" ? { step: payload.step } : {}),
+      ...(typeof payload.totalSteps === "number" ? { totalSteps: payload.totalSteps } : {}),
+      hasDescription: typeof payload.description === "string" && payload.description.length > 0,
+    };
+  }
+  if (event.eventName === "agent.run.text_delta") {
+    return {
+      ...(readStringField(payload, "runId") ? { runId: readStringField(payload, "runId") } : {}),
+      type: "agent.run.text_delta",
+      hasDelta: typeof payload.delta === "string" && payload.delta.length > 0,
+    };
+  }
   if (
     event.eventName === "agent.run.context_replay_loaded"
     || event.eventName === "agent.run.compaction_persisted"
@@ -676,7 +831,45 @@ function sanitizeAuditEventPayload(event: FridayAgentRunEventRecord): unknown {
       ...(typeof payload.redactionCount === "number" ? { redactionCount: payload.redactionCount } : {}),
     };
   }
-  return event.payload;
+  if (
+    event.eventName === "agent.run.completed"
+    || event.eventName === "agent.run.failed"
+    || event.eventName === "agent.run.failed_tests"
+    || event.eventName === "agent.run.cancelled"
+    || event.eventName === "agent.run.degraded"
+    || event.eventName === "agent.run.mode_changed"
+    || event.eventName === "agent.run.route_selected"
+    || event.eventName === "agent.run.route_fallback"
+    || event.eventName === "agent.run.route_mismatch"
+    || event.eventName.startsWith("autonomous.")
+    || event.eventName.startsWith("agent.subagent.")
+    || event.eventName.startsWith("agent.run.capability_grant_")
+    || event.eventName === "agent.run.plan_approved"
+    || event.eventName === "agent.run.plan_rejected"
+  ) {
+    return {
+      ...(readStringField(payload, "runId") ? { runId: readStringField(payload, "runId") } : {}),
+      ...(readStringField(payload, "parentRunId") ? { parentRunId: readStringField(payload, "parentRunId") } : {}),
+      ...(readStringField(payload, "goalId") ? { goalId: readStringField(payload, "goalId") } : {}),
+      ...(readStringField(payload, "toolCallId") ? { toolCallId: readStringField(payload, "toolCallId") } : {}),
+      ...(readStringField(payload, "toolName") ? { toolName: readStringField(payload, "toolName") } : {}),
+      ...(readStringField(payload, "grantId") ? { grantId: readStringField(payload, "grantId") } : {}),
+      ...(readStringField(payload, "routeId") ? { routeId: readStringField(payload, "routeId") } : {}),
+      ...(readStringField(payload, "correlationId") ? { correlationId: readStringField(payload, "correlationId") } : {}),
+      ...(typeof payload.durationMs === "number" ? { durationMs: payload.durationMs } : {}),
+      ...(typeof payload.toolCallCount === "number" ? { toolCallCount: payload.toolCallCount } : {}),
+      ...(typeof payload.isError === "boolean" ? { isError: payload.isError } : {}),
+      hasMessage: typeof payload.message === "string" && payload.message.length > 0,
+      hasSummary: typeof payload.summary === "string" && payload.summary.length > 0,
+      hasReason: typeof payload.reason === "string" && payload.reason.length > 0,
+      hasErrorMessage: typeof payload.errorMessage === "string" && payload.errorMessage.length > 0,
+    };
+  }
+  return {
+    ...(readStringField(payload, "runId") ? { runId: readStringField(payload, "runId") } : {}),
+    redacted: true,
+    payloadKeys: Object.keys(payload).sort(),
+  };
 }
 
 // ─── Deps ───
@@ -998,7 +1191,7 @@ export function createFridayAgentRoutes(
   ): string {
     return JSON.stringify({
       type: event.eventName,
-      ...event.payload,
+      payload: sanitizeAuditEventPayload(event),
       seq: event.seq,
       emittedAt: event.emittedAt,
       replayed,
@@ -1395,10 +1588,11 @@ export function createFridayAgentRoutes(
         );
         const decisionTrace = buildAgentRunDecisionTrace(run, auditEvents);
         const replayReceipt = buildReplayableEvidenceReceiptForRun(run, auditEvents, ctx.receivedAt, decisionTrace);
+        const publicReplayReceipt = sanitizeReplayReceiptForPublicRead(replayReceipt);
         const unifiedTaskState = buildFridayAgentUnifiedTaskState({
           run,
           events: auditEvents,
-          replayReceipt,
+          replayReceipt: publicReplayReceipt,
         });
         return {
           runId,
@@ -1409,7 +1603,7 @@ export function createFridayAgentRoutes(
             payload: sanitizeAuditEventPayload(e),
           })),
           decisionTrace,
-          replayReceipt,
+          replayReceipt: publicReplayReceipt,
           unifiedTaskState,
         };
       },
@@ -1546,7 +1740,10 @@ export function createFridayAgentRoutes(
         const rawRes = (ctx as unknown as Record<string, unknown>)._raw as FridaySseResponse | undefined;
         if (!rawRes) {
           // Fallback: if no raw response, return the current run state as JSON.
-          return { run, streaming: false };
+          return {
+            run: buildVisibleRunWithUnifiedTaskState(run, deps.listRunEvents(runId), ctx.receivedAt),
+            streaming: false,
+          };
         }
 
         // Set SSE headers
