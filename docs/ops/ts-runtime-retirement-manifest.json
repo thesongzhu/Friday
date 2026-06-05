@@ -469,6 +469,18 @@
       "next_action": "Replace fail-closed response with a Rust-owned agent tool rejection/control entrypoint when available."
     },
     {
+      "id": "agent_loop_expertmode_get_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/agent-loop/expert-mode",
+        "operationId": "agent.loop.expertmode.get"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep agent-loop expert-mode status as a bounded compatibility read while policy mutation is fail-closed or moved to Rust-owned product truth. This read does not update policy, run controls, or mark loop completion.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted agent-loop expert-mode projection when available."
+    },
+    {
       "id": "agent_loop_expertmode_update",
       "route": {
         "method": "PUT",
@@ -482,6 +494,18 @@
       "next_action": "Replace fail-closed response with a Rust-owned agent-loop expert-mode policy entrypoint when available."
     },
     {
+      "id": "agent_loop_policy_get_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/agent-loop/policy",
+        "operationId": "agent.loop.policy.get"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep agent-loop policy as a bounded compatibility read while policy mutation is fail-closed or moved to Rust-owned product truth. This read does not update policy, run controls, or mark loop completion.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted agent-loop policy projection when available."
+    },
+    {
       "id": "agent_loop_policy_update",
       "route": {
         "method": "PUT",
@@ -493,6 +517,54 @@
       "executes_product_logic": false,
       "proof": "src/api/http/routes/friday-agent-loop-routes.ts wires default/live agent.loop.policy.update to TS_RUNTIME_AGENT_LOOP_POLICY_MUTATIONS_RETIRED after user-principal validation and before mutating TypeScript agent-loop policy; legacy TS mutation is reachable only through explicit allowTestOnlyAgentLoopPolicyMutation test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned agent-loop policy entrypoint when available."
+    },
+    {
+      "id": "agent_loop_runs_list_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/agent-loop/runs",
+        "operationId": "agent.loop.runs.list"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep agent-loop run list as a bounded compatibility read while run controls are fail-closed or moved to Rust-owned product truth. This read does not pause, resume, cancel, execute, or mark loop completion.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted agent-loop run-list projection when available."
+    },
+    {
+      "id": "agent_loop_runs_get_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/agent-loop/runs/:loopRunId",
+        "operationId": "agent.loop.runs.get"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep agent-loop run detail as a bounded compatibility read while run controls are fail-closed or moved to Rust-owned product truth. This read does not pause, resume, cancel, execute, or mark loop completion.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted agent-loop run-detail projection when available."
+    },
+    {
+      "id": "agent_loop_expertruns_list_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/agent-loop/expert-runs",
+        "operationId": "agent.loop.expertruns.list"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep expert agent-loop run list as a bounded compatibility read while run controls are fail-closed or moved to Rust-owned product truth. This read does not pause, resume, cancel, execute, or mark loop completion.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted expert agent-loop run-list projection when available."
+    },
+    {
+      "id": "agent_loop_expertruns_get_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/agent-loop/expert-runs/:loopRunId",
+        "operationId": "agent.loop.expertruns.get"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep expert agent-loop run detail as a bounded compatibility read while run controls are fail-closed or moved to Rust-owned product truth. This read does not pause, resume, cancel, execute, or mark loop completion.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted expert agent-loop run-detail projection when available."
     },
     {
       "id": "agent_loop_runs_pause",
