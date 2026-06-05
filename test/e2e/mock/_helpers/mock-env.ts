@@ -328,6 +328,8 @@ export async function createMockHubEnv(opts?: {
   ssrfPolicy?: { allowPrivateNetwork?: boolean; hostnameAllowlist?: string[] };
   /** Enable the canonical mutating-action gate for this mock hub. */
   canonicalGate?: boolean;
+  /** Test-oracle opt-in for legacy TS workflow-run execution; set false to prove default fail-closed behavior. */
+  allowTestOnlyWorkflowRunExecution?: boolean;
   /** Test-oracle opt-in for legacy TS agent-run execution; set false to prove default fail-closed behavior. */
   allowTestOnlyAgentRunStartExecution?: boolean;
   /** Test-oracle opt-in for legacy TS agent-run controls; set false to prove default fail-closed behavior. */
@@ -373,6 +375,7 @@ export async function createMockHubEnv(opts?: {
       logRequests: false,
       channels: opts?.channels,
       tokenSecret: MOCK_E2E_TOKEN_SECRET,
+      allowTestOnlyWorkflowRunExecution: opts?.allowTestOnlyWorkflowRunExecution ?? true,
       allowTestOnlyAgentRunStartExecution: opts?.allowTestOnlyAgentRunStartExecution ?? true,
       allowTestOnlyAgentRunControlExecution: opts?.allowTestOnlyAgentRunControlExecution ?? true,
       // Allow private-network targets so mock E2E tests don't require DNS resolution

@@ -839,6 +839,19 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   ) => {
     return resolveAuthorizedRun(runId, principal, { evidence: true });
   };
+  const throwRetiredWorkflowRunExecution = (): never => {
+    throw new FridayDomainError(
+      "TS_RUNTIME_WORKFLOW_RUNS_RETIRED",
+      "Workflow run execution and controls are fail-closed while runtime ownership is being moved out of TypeScript.",
+      {
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_workflow_run_entrypoint_required",
+        },
+      },
+    );
+  };
 
   const requireWorkflowBuilderOperator = (
     principal: FridayAuthPrincipal | null,
@@ -1965,6 +1978,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   // Register run routes (real service wiring)
   for (const route of createFridayWorkflowRunRoutes({
     startRun: async (input, principal) => {
+      if (deps.allowTestOnlyWorkflowRunExecution !== true) {
+        void input;
+        void principal;
+        throwRetiredWorkflowRunExecution();
+      }
       const runSecurityContext = principal
         ? {
           security: {
@@ -2086,6 +2104,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       });
     },
     cancelRun: async (runId, input, principal) => {
+      if (deps.allowTestOnlyWorkflowRunExecution !== true) {
+        void runId;
+        void input;
+        void principal;
+        throwRetiredWorkflowRunExecution();
+      }
       resolveAuthorizedRun(runId, principal);
       const run = await workflowRuntime.execution.cancelRun(
         runId,
@@ -2094,6 +2118,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       return { run };
     },
     retryRun: async (runId, input = {}, principal) => {
+      if (deps.allowTestOnlyWorkflowRunExecution !== true) {
+        void runId;
+        void input;
+        void principal;
+        throwRetiredWorkflowRunExecution();
+      }
       resolveAuthorizedRun(runId, principal);
       const latestAttempts = new Map<string, { nodeId: string; status: string; attempt: number }>();
       for (const node of workflowRuntime.execution.getRunNodes(runId)) {
@@ -2120,6 +2150,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       return { run, retriedNodes };
     },
     resumeRun: async (runId, principal) => {
+      if (deps.allowTestOnlyWorkflowRunExecution !== true) {
+        void runId;
+        void principal;
+        throwRetiredWorkflowRunExecution();
+      }
       resolveAuthorizedRun(runId, principal);
       const run = await workflowRuntime.execution.resumeRun(runId);
       return { run };

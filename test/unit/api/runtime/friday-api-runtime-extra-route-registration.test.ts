@@ -24,6 +24,7 @@ import type { FridayAgentEventEmitter, FridayAgentRuntime } from "#agent";
 import type { FridayProviderService } from "#providers";
 import type { FridayProviderProfile } from "#providers";
 import type { FridaySqliteLayer } from "#state";
+import type { FridayWorkflowRuntime } from "#workflows";
 import { signFridayCanonicalApproval } from "../../../../src/security/friday-mutating-action-gate.js";
 import { createTestDb } from "../../../helpers/friday-test-db.helper.js";
 
@@ -175,6 +176,50 @@ function seedAgentRun(
       NOW,
     );
   });
+}
+
+function makeWorkflowRuntimeSpies(): {
+  workflowRuntime: FridayWorkflowRuntime;
+  execution: {
+    startRun: ReturnType<typeof vi.fn>;
+    getRun: ReturnType<typeof vi.fn>;
+    cancelRun: ReturnType<typeof vi.fn>;
+    retryRun: ReturnType<typeof vi.fn>;
+    resumeRun: ReturnType<typeof vi.fn>;
+  };
+} {
+  const run = {
+    id: "workflow-run-1",
+    workflowId: "workflow-1",
+    workflowVersionId: "version-1",
+    status: "running",
+    triggerType: "manual",
+    startedAt: NOW,
+    startedByUserId: "user-1",
+  };
+  const execution = {
+    startRun: vi.fn(async () => run),
+    getRun: vi.fn(() => run),
+    getRunNodes: vi.fn(() => []),
+    cancelRun: vi.fn(async () => ({ ...run, status: "cancelled" })),
+    retryRun: vi.fn(async () => ({ ...run, status: "running" })),
+    resumeRun: vi.fn(async () => ({ ...run, status: "running" })),
+  };
+  const workflowRuntime = {
+    execution,
+    evidence: {
+      getRunEvidenceStatus: vi.fn(() => ({ state: "not_required" })),
+      getRunEvidence: vi.fn(),
+      listRunEvidenceExports: vi.fn(() => []),
+      exportRunEvidence: vi.fn(),
+      getRunEvidenceExport: vi.fn(() => null),
+      downloadRunEvidenceExport: vi.fn(() => null),
+    },
+    crud: {},
+    approval: {},
+    triggers: {},
+  } as unknown as FridayWorkflowRuntime;
+  return { workflowRuntime, execution };
 }
 
 describe("API Runtime — Extended Route Registration", () => {
@@ -428,6 +473,75 @@ describe("API Runtime — Extended Route Registration", () => {
     expect((thrown as FridayDomainError).httpStatus).toBe(503);
     expect(executeRun).not.toHaveBeenCalled();
   });
+
+  it("fail-closes live workflow run start wiring without executing the TypeScript workflow runtime", async () => {
+    const { workflowRuntime, execution } = makeWorkflowRuntimeSpies();
+    const runtime = createFridayApiRuntime({
+      ...makeBaseDeps(),
+      workflowRuntime,
+    });
+    const route = runtime.routes.getRoutes().find((r) => r.operationId === "runs.start");
+    expect(route).toBeDefined();
+
+    let thrown: unknown = null;
+    try {
+      await route!.handler({
+        requestId: "req-workflow-run-retired",
+        receivedAt: NOW,
+        params: {},
+        query: {},
+        body: { workflowId: "workflow-1" },
+        headers: {},
+        principal: makePrincipal({ role: "admin", scopes: ["workflow.write"] }),
+      });
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(FridayDomainError);
+    expect((thrown as FridayDomainError).code).toBe("TS_RUNTIME_WORKFLOW_RUNS_RETIRED");
+    expect((thrown as FridayDomainError).httpStatus).toBe(503);
+    expect(execution.startRun).not.toHaveBeenCalled();
+    expect(execution.getRun).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["runs.cancel", { reason: "operator requested" }, "cancelRun"],
+    ["runs.retry", { nodeIds: ["node-1"] }, "retryRun"],
+    ["workflows.runs.resume", {}, "resumeRun"],
+  ] as const)(
+    "fail-closes live workflow control wiring for %s without TypeScript execution",
+    async (operationId, body, methodName) => {
+      const { workflowRuntime, execution } = makeWorkflowRuntimeSpies();
+      const runtime = createFridayApiRuntime({
+        ...makeBaseDeps(),
+        workflowRuntime,
+      });
+      const route = runtime.routes.getRoutes().find((r) => r.operationId === operationId);
+      expect(route).toBeDefined();
+
+      let thrown: unknown = null;
+      try {
+        await route!.handler({
+          requestId: `req-${operationId}-retired`,
+          receivedAt: NOW,
+          params: { runId: "workflow-run-1" },
+          query: {},
+          body,
+          headers: {},
+          principal: makePrincipal({ role: "admin", scopes: ["workflow.write"] }),
+        });
+      } catch (err) {
+        thrown = err;
+      }
+
+      expect(thrown).toBeInstanceOf(FridayDomainError);
+      expect((thrown as FridayDomainError).code).toBe("TS_RUNTIME_WORKFLOW_RUNS_RETIRED");
+      expect((thrown as FridayDomainError).httpStatus).toBe(503);
+      expect(execution.getRun).not.toHaveBeenCalled();
+      expect(execution[methodName]).not.toHaveBeenCalled();
+    },
+  );
 
   it("registers skills.social.import in disabled state when deps.socialImport is omitted", async () => {
     const runtime = createFridayApiRuntime(makeBaseDeps());
