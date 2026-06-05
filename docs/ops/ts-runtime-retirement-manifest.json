@@ -354,6 +354,69 @@
       "next_action": "Replace fail-closed response with a Rust-owned automation execution/control entrypoint when available."
     },
     {
+      "id": "agent_automations_create",
+      "route": {
+        "method": "POST",
+        "path": "/v1/agent/automations",
+        "operationId": "agent.automations.create"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/runtime/friday-api-runtime.ts wires default/live agent.automations.create to TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED before invoking the TypeScript automation save service; the legacy TS automation-create path is reachable only through explicit allowTestOnlyAgentRunControlExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned automation asset create entrypoint when available."
+    },
+    {
+      "id": "agent_automations_update",
+      "route": {
+        "method": "PATCH",
+        "path": "/v1/agent/automations/:automationId",
+        "operationId": "agent.automations.update"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/runtime/friday-api-runtime.ts wires default/live agent.automations.update to TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED before invoking the TypeScript automation update service; the legacy TS automation-update path is reachable only through explicit allowTestOnlyAgentRunControlExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned automation asset update entrypoint when available."
+    },
+    {
+      "id": "agent_automations_delete",
+      "route": {
+        "method": "DELETE",
+        "path": "/v1/agent/automations/:automationId",
+        "operationId": "agent.automations.delete"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/runtime/friday-api-runtime.ts wires default/live agent.automations.delete to TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED before invoking the TypeScript automation remove service; the legacy TS automation-delete path is reachable only through explicit allowTestOnlyAgentRunControlExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned automation asset delete entrypoint when available."
+    },
+    {
+      "id": "agent_automations_list_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/agent/automations",
+        "operationId": "agent.automations.list"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep agent automation list as a bounded compatibility read while automation asset mutation and execution are fail-closed or moved to Rust-owned product truth. This read does not create, update, delete, run, or mark automation completion.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted automation projection when available."
+    },
+    {
+      "id": "agent_automations_get_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/agent/automations/:automationId",
+        "operationId": "agent.automations.get"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep agent automation detail as a bounded compatibility read while automation asset mutation and execution are fail-closed or moved to Rust-owned product truth. This read does not create, update, delete, run, or mark automation completion.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted automation detail projection when available."
+    },
+    {
       "id": "agent_runs_approve_plan",
       "route": {
         "method": "POST",

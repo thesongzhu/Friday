@@ -3398,6 +3398,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         ? agentAutomationService
         : {
           ...agentAutomationService,
+          save: () => throwRetiredAgentRunControl(),
+          update: () => throwRetiredAgentRunControl(),
+          remove: () => throwRetiredAgentRunControl(),
           run: async () => throwRetiredAgentRunControl(),
         };
 
