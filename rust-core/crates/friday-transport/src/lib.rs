@@ -207,6 +207,7 @@ mod tests {
             1,
             Message::AskFridayRequest {
                 prompt: "secret prompt".into(),
+                mission_context: None,
             },
         );
         let wire = seal_envelope(&key, &env, b"aad").unwrap();
@@ -220,7 +221,14 @@ mod tests {
     fn wrong_session_key_cannot_open() {
         let k1 = DataKey::generate();
         let k2 = DataKey::generate();
-        let env = Envelope::new("m1", 1, Message::AskFridayRequest { prompt: "p".into() });
+        let env = Envelope::new(
+            "m1",
+            1,
+            Message::AskFridayRequest {
+                prompt: "p".into(),
+                mission_context: None,
+            },
+        );
         let wire = seal_envelope(&k1, &env, b"aad").unwrap();
         assert!(open_envelope(&k2, &wire, b"aad").is_err());
     }

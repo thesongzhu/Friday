@@ -285,6 +285,7 @@ pub fn guard_action_request(
             blocker: projected.blocker,
             proof_ref: projected.proof_ref,
             dispatch_ref: None,
+            mission_context: request.mission_context,
         };
     }
     ProviderWorkspaceActionResultWire {
@@ -300,6 +301,7 @@ pub fn guard_action_request(
         blocker: None,
         proof_ref: projected.proof_ref,
         dispatch_ref: Some(dispatch_ref(session, provider, action)),
+        mission_context: request.mission_context,
     }
 }
 
@@ -321,6 +323,7 @@ fn rejected_action_result(
         blocker: Some(blocker),
         proof_ref: None,
         dispatch_ref: None,
+        mission_context: request.mission_context,
     }
 }
 
@@ -979,6 +982,7 @@ mod tests {
             action: action.to_string(),
             capability_id: capability_id.to_string(),
             payload_ref: Some("friday://body/request/1".to_string()),
+            mission_context: None,
         }
     }
 
@@ -1215,7 +1219,10 @@ mod tests {
         );
         let json = env.encode().unwrap();
         assert!(json.contains("\"kind\":\"ProviderWorkspaceSnapshot\""));
-        assert!(json.contains("\"schema_version\":3"));
+        assert!(json.contains(&format!(
+            "\"schema_version\":{}",
+            friday_protocol::CURRENT_SCHEMA_VERSION
+        )));
         assert!(json.contains("\"capability_id\":\"provider.codex.send_turn\""));
         assert!(json.contains("\"provider_action\":\"codex_app_server\""));
         for forbidden in [
@@ -1264,7 +1271,10 @@ mod tests {
             Message::ProviderWorkspaceActionResult { result },
         );
         let json = env.encode().unwrap();
-        assert!(json.contains("\"schema_version\":3"));
+        assert!(json.contains(&format!(
+            "\"schema_version\":{}",
+            friday_protocol::CURRENT_SCHEMA_VERSION
+        )));
         assert!(!json.contains("sk-"));
         assert!(!json.contains("raw user prompt"));
         assert!(!json.contains("provider-token"));

@@ -337,6 +337,7 @@ mod tests {
             1001,
             Message::AskFridayRequest {
                 prompt: "do not run".into(),
+                mission_context: None,
             },
         );
         let response = hub.handle_envelope(&mut db, ask);
@@ -495,6 +496,7 @@ mod tests {
             1000,
             Message::AskFridayRequest {
                 prompt: "hidden model call must not happen".into(),
+                mission_context: None,
             },
         );
         let stream = TcpStream::connect(addr).unwrap();
@@ -615,6 +617,7 @@ mod tests {
                 1000,
                 Message::AskFridayRequest {
                     prompt: "leak my history".into(),
+                    mission_context: None,
                 },
             ),
         );

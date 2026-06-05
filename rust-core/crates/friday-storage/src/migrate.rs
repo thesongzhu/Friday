@@ -6,7 +6,7 @@
 //!   bumps `schema_version` in the **same** transaction (apply + bump atomic).
 //! - If the on-disk version is newer than the code's max, we refuse to open.
 //! - Before any migration flagged `destructive`, the DB file is copied to
-//!   `<dir>/backups/v<version>-<ts>.sqlite` and the backup is verified openable
+//!   `<dir>/backups/v<version>-<ts>-<unique>.sqlite` and the backup is verified openable
 //!   (PRAGMA integrity_check == "ok") before the destructive step proceeds.
 //!
 //! Concurrency note: the foundation uses the default (rollback-journal) mode and
@@ -17,9 +17,12 @@
 use crate::error::{Result, StorageError};
 use rusqlite::{Connection, Transaction};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub type MigrationFn = fn(&Transaction) -> rusqlite::Result<()>;
+
+static BACKUP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone)]
 pub struct Migration {
@@ -117,7 +120,7 @@ pub fn apply_migrations(
     Ok(report)
 }
 
-/// Copy the live DB file to `<dir>/backups/v<version>-<ts>.sqlite`.
+/// Copy the live DB file to `<dir>/backups/v<version>-<ts>-<unique>.sqlite`.
 fn backup_db(db_path: &str, version: i64) -> Result<String> {
     if db_path == ":memory:" || db_path.is_empty() {
         return Err(StorageError::BackupVerify(
@@ -128,9 +131,18 @@ fn backup_db(db_path: &str, version: i64) -> Result<String> {
     let dir = src.parent().unwrap_or_else(|| Path::new("."));
     let backups = dir.join("backups");
     std::fs::create_dir_all(&backups)?;
-    let dest = backups.join(format!("v{}-{}.sqlite", version, now_ms()));
+    let dest = backups.join(format!("v{}-{}.sqlite", version, backup_stamp()));
     std::fs::copy(src, &dest)?;
     Ok(dest.to_string_lossy().to_string())
+}
+
+fn backup_stamp() -> String {
+    let seq = BACKUP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{}-{nanos}-{}-{seq}", now_ms(), std::process::id())
 }
 
 /// Confirm the backup is a healthy, openable SQLite file before proceeding.

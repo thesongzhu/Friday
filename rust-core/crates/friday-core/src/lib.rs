@@ -18,28 +18,51 @@ mod error;
 /// Canonical mutating-action gate decision core (PR-3a). Public module (rather than
 /// flat re-export) so the generically-named `gate::evaluate` is unambiguous.
 pub mod gate;
+mod global_work_graph;
 mod identity;
 mod ledger;
+mod mechanism_matrix;
 mod memory;
+mod mission;
 mod offline;
 mod pairing;
 mod pathsafe;
 mod planning;
+mod process_registry;
 mod provider_session;
 mod session;
 mod skill;
+mod skill_catalog;
 mod tool_policy;
 mod workflow;
 
 pub use activity::{ActivityState, ActivityType};
 pub use conn::ConnState;
 pub use error::CoreError;
+pub use global_work_graph::{
+    AdoptionCommandResult, AdoptionCommandStatus, AdoptionProposal, AdoptionProposalStatus,
+    AdvisorPreflight, AdvisorRecommendation, GlobalWorkGraphSnapshot, WorkGraphConflict,
+    WorkGraphConflictKind, WorkGraphConflictSeverity, WorkGraphNode, WorkGraphNodeKind,
+    WorkGraphTruthLabel,
+};
 pub use identity::{DeviceIdentity, DeviceRole};
 pub use ledger::{LedgerEntry, ProviderKind};
+pub use mechanism_matrix::{
+    friday_v1_mechanism_matrix, friday_v1_no_go_blockers, MechanismOwner, MechanismRow,
+    MechanismStatus,
+};
 pub use memory::{
     decide_candidate, gate_transfer, redact_passport_for_projection, resolve_conflict, Confidence,
     ConflictResolution, MemoryScope, MemoryState, PassportItem, PassportItemKind,
     RedactedPassportItem,
+};
+pub use mission::{
+    find_duplicate_mission, find_duplicate_work_item, requires_context_passport,
+    validate_friday_conversation_id, ApprovalState, FridayConversation, HandoffJudgmentMemory,
+    Mission, MissionLink, MissionLinkKind, MissionSpineError, MissionStatus,
+    MissionSurfaceProjection, RouteDecisionCard, RouteDecisionProjection, SurfaceEvent,
+    SurfaceEventKind, SurfaceKind, SurfaceThread, TruthStatus, VisibilityPolicy, WorkItem,
+    WorkItemStatus, WorkLane,
 };
 pub use offline::OfflineQueueState;
 pub use pairing::{
@@ -48,11 +71,19 @@ pub use pairing::{
 };
 pub use pathsafe::{contained, PathError};
 pub use planning::{classify_kind, PlanState, PlanningKind};
+pub use process_registry::{
+    ClaimState, LeaseState, OwnershipStatus, ProcessKind, ProcessLease, ProcessObservation,
+    WorkspaceClaim, WorkspaceClaimKind,
+};
 pub use provider_session::{
     ProviderSessionEvent, ProviderSessionLink, ProviderSessionProjection, SyncMode, ALL_SYNC_MODES,
 };
 pub use session::SessionState;
 pub use skill::SkillState;
+pub use skill_catalog::{
+    advise_skill, SkillAdvisorDecision, SkillAdvisorRecommendationKind, SkillAdvisorRequest,
+    SkillCatalogEntry, SkillCatalogSnapshot, SkillCatalogSource,
+};
 pub use tool_policy::{
     contains_blocked_shell_char, contains_sensitive_assignment, contains_sensitive_material,
     is_destructive_request, shell_risk, touches_protected_artifact, Risk, ShellRisk,

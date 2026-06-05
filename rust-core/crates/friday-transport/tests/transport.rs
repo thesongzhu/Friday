@@ -26,7 +26,13 @@ fn direct_e2e_round_trip_over_loopback() {
         let (mut sock, _) = listener.accept().unwrap();
         let req = recv_envelope(&mut sock, &session, AAD).unwrap();
         match &req.message {
-            Message::AskFridayRequest { prompt } => assert_eq!(prompt, "ping"),
+            Message::AskFridayRequest {
+                prompt,
+                mission_context,
+            } => {
+                assert_eq!(prompt, "ping");
+                assert!(mission_context.is_none());
+            }
             other => panic!("unexpected {other:?}"),
         }
         let resp = Envelope::new(
@@ -48,6 +54,7 @@ fn direct_e2e_round_trip_over_loopback() {
         1,
         Message::AskFridayRequest {
             prompt: "ping".into(),
+            mission_context: None,
         },
     );
     send_envelope(&mut sock, &session, &ask, AAD).unwrap();
@@ -114,6 +121,7 @@ fn relay_forwards_ciphertext_but_cannot_decrypt() {
         1,
         Message::AskFridayRequest {
             prompt: prompt.into(),
+            mission_context: None,
         },
     );
     send_envelope(&mut sock, &session, &ask, AAD).unwrap();

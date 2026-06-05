@@ -206,6 +206,36 @@ mod tests {
     }
 
     #[test]
+    fn surface_status_labels_are_stable_and_only_executed_means_done() {
+        let stale = evaluate_stale(ConnState::Direct, 10_000, 12_001, 2_000);
+        assert_eq!(PresentationTruth::for_connection(stale).as_str(), "stale");
+        assert_eq!(
+            PresentationTruth::for_connection(ConnState::Disconnected).as_str(),
+            "offline"
+        );
+        assert_eq!(
+            PresentationTruth::for_connection(ConnState::Connecting).as_str(),
+            "reconnecting"
+        );
+
+        for (state, label) in [
+            (OfflineQueueState::Queued, "queued"),
+            (OfflineQueueState::Acked, "queued"),
+            (OfflineQueueState::Failed, "failed"),
+        ] {
+            let truth = PresentationTruth::for_offline_action(state);
+            assert_eq!(truth.as_str(), label);
+            assert!(
+                !truth.implies_completion(),
+                "{label} must never be rendered as done"
+            );
+        }
+        let executed = PresentationTruth::for_offline_action(OfflineQueueState::Executed);
+        assert_eq!(executed.as_str(), "executed");
+        assert!(executed.implies_completion());
+    }
+
+    #[test]
     fn queued_is_not_executed_and_ack_is_not_completion() {
         let db = Db::open_phone(&tmp()).unwrap();
         enqueue(

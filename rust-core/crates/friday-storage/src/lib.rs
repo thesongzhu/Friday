@@ -17,8 +17,10 @@ pub mod channel;
 mod error;
 pub mod memory;
 mod migrate;
+pub mod mission;
 pub mod offline;
 pub mod pairing;
+pub mod process_registry;
 pub mod provider_session;
 mod schema;
 pub mod workflow;
@@ -31,10 +33,12 @@ pub use migrate::{
 pub use schema::{hub_migrations, phone_migrations, HUB_ONLY_TABLES, PHONE_ONLY_TABLES};
 
 use friday_core::{
-    ActivityState, ActivityType, DeviceIdentity, FridayPairPayload, LedgerEntry,
-    ProviderSessionEvent, ProviderSessionLink, ProviderSessionProjection, SessionState,
-    TrustedDeviceProjection,
+    ActivityState, ActivityType, DeviceIdentity, FridayConversation, FridayPairPayload,
+    LedgerEntry, Mission, MissionLink, MissionSurfaceProjection, ProviderSessionEvent,
+    ProviderSessionLink, ProviderSessionProjection, RouteDecisionCard, RouteDecisionProjection,
+    SessionState, SurfaceEvent, SurfaceThread, TrustedDeviceProjection, WorkItem,
 };
+use friday_core::{ProcessLease, ProcessObservation, WorkspaceClaim};
 use rusqlite::Connection;
 
 /// Which process this database belongs to. Determines the schema (a phone DB
@@ -282,6 +286,353 @@ impl Db {
             ));
         }
         provider_session::list_events(&self.conn, friday_session_id)
+    }
+
+    pub fn upsert_friday_conversation(&self, conversation: &FridayConversation) -> Result<()> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Friday conversations are Hub-only".into(),
+            ));
+        }
+        mission::upsert_conversation(&self.conn, conversation)
+    }
+
+    pub fn get_friday_conversation(
+        &self,
+        friday_conversation_id: &str,
+    ) -> Result<Option<FridayConversation>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Friday conversations are Hub-only".into(),
+            ));
+        }
+        mission::get_conversation(&self.conn, friday_conversation_id)
+    }
+
+    pub fn upsert_mission(&self, item: &Mission) -> Result<()> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported("Missions are Hub-only".into()));
+        }
+        mission::upsert_mission(&self.conn, item)
+    }
+
+    pub fn get_mission(&self, mission_id: &str) -> Result<Option<Mission>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported("Missions are Hub-only".into()));
+        }
+        mission::get_mission(&self.conn, mission_id)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn transition_mission_status(
+        &self,
+        friday_conversation_id: &str,
+        mission_id: &str,
+        next_status: friday_core::MissionStatus,
+        actor_ref: &str,
+        reason: &str,
+        proof_ref: Option<&str>,
+        merged_into_mission_id: Option<&str>,
+        now_ms: i64,
+    ) -> Result<(Mission, friday_core::MissionStatus, Vec<String>)> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported("Missions are Hub-only".into()));
+        }
+        mission::transition_mission_status(
+            &self.conn,
+            friday_conversation_id,
+            mission_id,
+            next_status,
+            actor_ref,
+            reason,
+            proof_ref,
+            merged_into_mission_id,
+            now_ms,
+        )
+    }
+
+    pub fn list_missions_for_conversation(
+        &self,
+        friday_conversation_id: &str,
+    ) -> Result<Vec<Mission>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported("Missions are Hub-only".into()));
+        }
+        mission::list_missions_for_conversation(&self.conn, friday_conversation_id)
+    }
+
+    pub fn list_active_missions(&self) -> Result<Vec<Mission>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported("Missions are Hub-only".into()));
+        }
+        mission::list_active_missions(&self.conn)
+    }
+
+    pub fn find_duplicate_mission(&self, candidate: &Mission) -> Result<Option<Mission>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported("Missions are Hub-only".into()));
+        }
+        mission::find_duplicate_mission(&self.conn, candidate)
+    }
+
+    pub fn upsert_work_item(&self, item: &WorkItem) -> Result<()> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported("WorkItems are Hub-only".into()));
+        }
+        mission::upsert_work_item(&self.conn, item)
+    }
+
+    pub fn get_work_item(&self, work_item_id: &str) -> Result<Option<WorkItem>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported("WorkItems are Hub-only".into()));
+        }
+        mission::get_work_item(&self.conn, work_item_id)
+    }
+
+    pub fn list_work_items_for_mission(&self, mission_id: &str) -> Result<Vec<WorkItem>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported("WorkItems are Hub-only".into()));
+        }
+        mission::list_work_items_for_mission(&self.conn, mission_id)
+    }
+
+    pub fn list_active_work_items(&self) -> Result<Vec<WorkItem>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported("WorkItems are Hub-only".into()));
+        }
+        mission::list_active_work_items(&self.conn)
+    }
+
+    pub fn find_duplicate_work_item(&self, candidate: &WorkItem) -> Result<Option<WorkItem>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported("WorkItems are Hub-only".into()));
+        }
+        mission::find_duplicate_work_item(&self.conn, candidate)
+    }
+
+    pub fn upsert_surface_thread(&self, surface_thread: &SurfaceThread) -> Result<()> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "SurfaceThread records are Hub-only".into(),
+            ));
+        }
+        mission::upsert_surface_thread(&self.conn, surface_thread)
+    }
+
+    pub fn get_surface_thread(&self, surface_thread_id: &str) -> Result<Option<SurfaceThread>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "SurfaceThread records are Hub-only".into(),
+            ));
+        }
+        mission::get_surface_thread(&self.conn, surface_thread_id)
+    }
+
+    pub fn upsert_surface_event(&self, event: &SurfaceEvent) -> Result<()> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "SurfaceEvent records are Hub-only".into(),
+            ));
+        }
+        mission::upsert_surface_event(&self.conn, event)
+    }
+
+    pub fn list_surface_events_for_mission(&self, mission_id: &str) -> Result<Vec<SurfaceEvent>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "SurfaceEvent records are Hub-only".into(),
+            ));
+        }
+        mission::list_surface_events_for_mission(&self.conn, mission_id)
+    }
+
+    pub fn list_surface_events_for_conversation(
+        &self,
+        friday_conversation_id: &str,
+    ) -> Result<Vec<SurfaceEvent>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "SurfaceEvent records are Hub-only".into(),
+            ));
+        }
+        mission::list_surface_events_for_conversation(&self.conn, friday_conversation_id)
+    }
+
+    pub fn upsert_mission_link(&self, link: &MissionLink) -> Result<()> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Mission links are Hub-only".into(),
+            ));
+        }
+        mission::upsert_mission_link(&self.conn, link)
+    }
+
+    pub fn list_mission_links(&self, mission_id: &str) -> Result<Vec<MissionLink>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Mission links are Hub-only".into(),
+            ));
+        }
+        mission::list_mission_links(&self.conn, mission_id)
+    }
+
+    pub fn upsert_route_decision(&self, card: &RouteDecisionCard) -> Result<()> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Route decisions are Hub-only".into(),
+            ));
+        }
+        mission::upsert_route_decision(&self.conn, card)
+    }
+
+    pub fn get_route_decision(&self, decision_id: &str) -> Result<Option<RouteDecisionCard>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Route decisions are Hub-only".into(),
+            ));
+        }
+        mission::get_route_decision(&self.conn, decision_id)
+    }
+
+    pub fn list_route_decisions_for_mission(
+        &self,
+        mission_id: &str,
+    ) -> Result<Vec<RouteDecisionCard>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Route decisions are Hub-only".into(),
+            ));
+        }
+        mission::list_route_decisions_for_mission(&self.conn, mission_id)
+    }
+
+    pub fn list_route_decision_projections_for_mission(
+        &self,
+        mission_id: &str,
+    ) -> Result<Vec<RouteDecisionProjection>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Route decision projections are Hub-only".into(),
+            ));
+        }
+        mission::list_route_decision_projections_for_mission(&self.conn, mission_id)
+    }
+
+    pub fn list_mission_surface_projections(
+        &self,
+        friday_conversation_id: &str,
+    ) -> Result<Vec<MissionSurfaceProjection>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Mission surface projections are Hub-only".into(),
+            ));
+        }
+        mission::list_mission_surface_projections(&self.conn, friday_conversation_id)
+    }
+
+    pub fn upsert_workspace_claim(&self, claim: &WorkspaceClaim) -> Result<()> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Workspace claims are Hub-only".into(),
+            ));
+        }
+        process_registry::upsert_workspace_claim(&self.conn, claim)
+    }
+
+    pub fn get_workspace_claim(&self, claim_id: &str) -> Result<Option<WorkspaceClaim>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Workspace claims are Hub-only".into(),
+            ));
+        }
+        process_registry::get_workspace_claim(&self.conn, claim_id)
+    }
+
+    pub fn list_active_workspace_claims(&self) -> Result<Vec<WorkspaceClaim>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Workspace claims are Hub-only".into(),
+            ));
+        }
+        process_registry::list_active_workspace_claims(&self.conn)
+    }
+
+    pub fn find_active_workspace_conflict(
+        &self,
+        workspace_ref: &str,
+    ) -> Result<Option<WorkspaceClaim>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Workspace claims are Hub-only".into(),
+            ));
+        }
+        process_registry::find_active_workspace_conflict(&self.conn, workspace_ref)
+    }
+
+    pub fn upsert_process_lease(&self, lease: &ProcessLease) -> Result<()> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Process leases are Hub-only".into(),
+            ));
+        }
+        process_registry::upsert_process_lease(&self.conn, lease)
+    }
+
+    pub fn get_process_lease(&self, lease_id: &str) -> Result<Option<ProcessLease>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Process leases are Hub-only".into(),
+            ));
+        }
+        process_registry::get_process_lease(&self.conn, lease_id)
+    }
+
+    pub fn list_active_process_leases(&self) -> Result<Vec<ProcessLease>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Process leases are Hub-only".into(),
+            ));
+        }
+        process_registry::list_active_process_leases(&self.conn)
+    }
+
+    pub fn find_active_port_conflict(&self, port_binding: &str) -> Result<Option<ProcessLease>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Process leases are Hub-only".into(),
+            ));
+        }
+        process_registry::find_active_port_conflict(&self.conn, port_binding)
+    }
+
+    pub fn upsert_process_observation(&self, observation: &ProcessObservation) -> Result<()> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Process observations are Hub-only".into(),
+            ));
+        }
+        process_registry::upsert_process_observation(&self.conn, observation)
+    }
+
+    pub fn get_process_observation(
+        &self,
+        observation_id: &str,
+    ) -> Result<Option<ProcessObservation>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Process observations are Hub-only".into(),
+            ));
+        }
+        process_registry::get_process_observation(&self.conn, observation_id)
+    }
+
+    pub fn list_process_observations(&self) -> Result<Vec<ProcessObservation>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Process observations are Hub-only".into(),
+            ));
+        }
+        process_registry::list_process_observations(&self.conn)
     }
 
     pub fn list_trusted_device_projections(&self) -> Result<Vec<TrustedDeviceProjection>> {

@@ -16,12 +16,11 @@
 //!   rolled back to the terminal `RolledBack`; a not-yet-installed one (`Candidate`/
 //!   `Staged`) is `Rejected` instead.
 //!
-//! **HONEST SCOPE (PROOF-SKILLS-001 stays NO-GO):** `Runnable` is an INERT label —
-//! there is NO executor in this crate (or anywhere yet). Actually running an
-//! imported skill is code execution: a separate, operator-gated unit that must
-//! route through the UNW-001 mutating-action gate + ToolExecutor with a receipt.
-//! Until that exists, a `Runnable` skill is "reviewed and eligible to run", not
-//! "has run" — the promotion proof is NOT closed by reaching this state.
+//! **HONEST SCOPE:** `Runnable` is an eligibility label, not execution. The Hub
+//! owns the receipt bridge that records an operator-approved skill-run proof
+//! against a Mission/WorkItem, but this core state machine still performs no I/O
+//! and executes no imported skill code. A `Runnable` skill is "reviewed and
+//! eligible for the gated run path", not "has run".
 //!
 //! **Where the no-skip invariant holds (future-wiring constraint):** the ladder
 //! guarantee is a property of [`SkillState::try_transition`]/[`SkillState::next_rung`],
@@ -69,8 +68,7 @@ impl SkillState {
         matches!(self, SkillState::Rejected | SkillState::RolledBack)
     }
 
-    /// Eligible to run. NOTE: this is an eligibility label only — there is no
-    /// executor; reaching it does NOT mean the skill has run (PROOF-SKILLS-001 open).
+    /// Eligible for the gated run path. Reaching it does NOT mean the skill has run.
     pub fn is_runnable(&self) -> bool {
         matches!(self, SkillState::Runnable)
     }
@@ -209,8 +207,8 @@ mod tests {
 
     #[test]
     fn runnable_is_eligibility_only_not_execution() {
-        // Honest: Runnable is an eligibility label; there is no executor here, so
-        // is_runnable() does not mean the skill has run (PROOF-SKILLS-001 open).
+        // Honest: Runnable is an eligibility label in core; the Hub receipt bridge
+        // is still separate, so is_runnable() does not mean the skill has run.
         assert!(SkillState::Runnable.is_runnable());
         assert!(!SkillState::Promoted.is_runnable());
         assert!(!SkillState::Runnable.is_terminal());

@@ -178,6 +178,7 @@ pub fn select_model(available: &[String]) -> Option<String> {
 pub struct DeepSeekClient<T: Transport> {
     transport: T,
     api_key: String,
+    base_url: String,
 }
 
 impl DeepSeekClient<UreqTransport> {
@@ -187,6 +188,7 @@ impl DeepSeekClient<UreqTransport> {
         Ok(DeepSeekClient {
             transport: UreqTransport::new(),
             api_key,
+            base_url: BASE_URL.to_string(),
         })
     }
 }
@@ -194,14 +196,37 @@ impl DeepSeekClient<UreqTransport> {
 impl<T: Transport> DeepSeekClient<T> {
     /// For tests / alternate transports. (`api_key` is never logged.)
     pub fn with_transport(transport: T, api_key: String) -> Self {
-        DeepSeekClient { transport, api_key }
+        DeepSeekClient {
+            transport,
+            api_key,
+            base_url: BASE_URL.to_string(),
+        }
+    }
+
+    /// For tests that need the real transport against a local HTTP endpoint.
+    /// Production construction uses [`DeepSeekClient::from_env`] and the fixed
+    /// DeepSeek base URL above.
+    pub fn with_transport_and_base_url(
+        transport: T,
+        api_key: String,
+        base_url: impl Into<String>,
+    ) -> Self {
+        DeepSeekClient {
+            transport,
+            api_key,
+            base_url: base_url.into().trim_end_matches('/').to_string(),
+        }
+    }
+
+    fn endpoint(&self, path: &str) -> String {
+        format!("{}{}", self.base_url, path)
     }
 
     /// `GET /models` — discover available model ids at runtime.
     pub fn discover_models(&self) -> Result<Vec<String>, DeepSeekError> {
         let v = self
             .transport
-            .get_json(&format!("{BASE_URL}/models"), &self.api_key)?;
+            .get_json(&self.endpoint("/models"), &self.api_key)?;
         let data = v
             .get("data")
             .and_then(Value::as_array)
@@ -229,11 +254,9 @@ impl<T: Transport> DeepSeekClient<T> {
             "max_tokens": max_tokens,
             "stream": false,
         });
-        let v = self.transport.post_json(
-            &format!("{BASE_URL}/chat/completions"),
-            &self.api_key,
-            &body,
-        )?;
+        let v =
+            self.transport
+                .post_json(&self.endpoint("/chat/completions"), &self.api_key, &body)?;
 
         let usage = v
             .get("usage")
@@ -317,6 +340,9 @@ impl<T: Transport> DeepSeekClient<T> {
 mod tests {
     use super::*;
     use std::cell::Cell;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
 
     /// Mock transport that counts calls and returns canned results. Lets us
     /// prove (offline) the call discipline and no-fallback behavior.
@@ -395,6 +421,26 @@ mod tests {
 
     fn client(mock: MockTransport) -> DeepSeekClient<MockTransport> {
         DeepSeekClient::with_transport(mock, "test-key-not-real".to_string())
+    }
+
+    fn serve_http_once(
+        status: u16,
+        reason: &'static str,
+        body: &'static str,
+    ) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut req = [0u8; 2048];
+            let _ = stream.read(&mut req);
+            let response = format!(
+                "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        (format!("http://{addr}"), handle)
     }
 
     #[test]
@@ -542,6 +588,62 @@ mod tests {
             c.chat("deepseek-v4-flash", "hi", 64).unwrap_err(),
             DeepSeekError::Auth(401)
         ));
+    }
+
+    #[test]
+    fn real_transport_maps_rate_limit_to_provider_unavailable_without_body_or_secret() {
+        let (base_url, handle) = serve_http_once(
+            429,
+            "Too Many Requests",
+            r#"{"error":"quota hit for SECRET-QUOTA-BODY"}"#,
+        );
+        let c = DeepSeekClient::with_transport_and_base_url(
+            UreqTransport::new(),
+            "test-key-not-real".to_string(),
+            base_url,
+        );
+        let err = c.discover_models().unwrap_err();
+        handle.join().unwrap();
+        assert!(matches!(
+            err,
+            DeepSeekError::ProviderUnavailable(ref reason) if reason == "HTTP 429"
+        ));
+        let rendered = format!("{err:?}");
+        for forbidden in [
+            "SECRET-QUOTA-BODY",
+            "test-key-not-real",
+            "Authorization",
+            "Bearer",
+        ] {
+            assert!(
+                !rendered.contains(forbidden),
+                "rate-limit error leaked {forbidden}: {rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn real_transport_maps_tcp_network_fail_without_secret() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let c = DeepSeekClient::with_transport_and_base_url(
+            UreqTransport::new(),
+            "test-key-not-real".to_string(),
+            format!("http://{addr}"),
+        );
+        let err = c.discover_models().unwrap_err();
+        assert!(matches!(
+            err,
+            DeepSeekError::ProviderUnavailable(ref reason) if reason.starts_with("transport:")
+        ));
+        let rendered = format!("{err:?}");
+        for forbidden in ["test-key-not-real", "Authorization", "Bearer"] {
+            assert!(
+                !rendered.contains(forbidden),
+                "network-fail error leaked {forbidden}: {rendered}"
+            );
+        }
     }
 
     #[test]
