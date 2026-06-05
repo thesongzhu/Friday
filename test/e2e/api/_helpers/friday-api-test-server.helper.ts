@@ -133,6 +133,11 @@ export interface CreateFridayApiTestEnvOptions {
   enableDefaultMemoryService?: boolean;
   enableSelfHealing?: boolean;
   channels?: FridayChannelRoutesDeps;
+  /**
+   * Test-oracle opt-in for legacy TS workflow-run execution. Default/live runtime
+   * leaves workflow start/control surfaces fail-closed while Rust ownership lands.
+   */
+  allowTestOnlyWorkflowRunExecution?: boolean;
   resolveSkill?: (skillId: string) => unknown | null;
   invokeSkill?: (
     skillId: string,
@@ -232,6 +237,7 @@ export async function createFridayApiTestEnv(
     pluginService: options.pluginService,
     pluginManifestLoader: options.pluginManifestLoader,
     channels: options.channels,
+    allowTestOnlyWorkflowRunExecution: options.allowTestOnlyWorkflowRunExecution ?? true,
     computeChecksum: (content: string) =>
       crypto.createHash("sha256").update(content).digest("hex"),
     resolveSkill: options.resolveSkill ?? ((_skillId: string) => ({ id: _skillId })),

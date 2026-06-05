@@ -39,6 +39,10 @@ export interface FridayRealBrowserE2eEnv {
   cleanup(): Promise<void>;
 }
 
+export interface FridayRealBrowserE2eEnvOptions {
+  allowTestOnlyWorkflowRunExecution?: boolean;
+}
+
 function resolveUiStaticDir(): string {
   const uiStaticDir = path.resolve(process.cwd(), "dist/ui");
   const indexPath = path.join(uiStaticDir, "index.html");
@@ -50,12 +54,18 @@ function resolveUiStaticDir(): string {
   return uiStaticDir;
 }
 
-export async function createFridayRealBrowserE2eEnv(): Promise<FridayRealBrowserE2eEnv> {
+export async function createFridayRealBrowserE2eEnv(
+  options: FridayRealBrowserE2eEnvOptions = {},
+): Promise<FridayRealBrowserE2eEnv> {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-real-browser-e2e-"));
   let runtime: RealHubEnv;
+  const hubConfig = {
+    allowTestOnlyWorkflowRunExecution: options.allowTestOnlyWorkflowRunExecution,
+  };
   try {
     runtime = await createRealHubEnvFromStateDir(stateDir, {
       uiStaticDir: resolveUiStaticDir(),
+      hubConfig,
     });
   } catch (error) {
     fs.rmSync(stateDir, { recursive: true, force: true });
@@ -139,6 +149,7 @@ export async function createFridayRealBrowserE2eEnv(): Promise<FridayRealBrowser
       await shutdownRealHubEnv(runtime, { removeStateDir: false });
       runtime = await createRealHubEnvFromStateDir(stateDirToPreserve, {
         uiStaticDir,
+        hubConfig,
       });
     },
     async cleanup() {

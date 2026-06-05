@@ -6889,6 +6889,7 @@ export async function createFridayHub(
       return skill ?? null;
     },
     invokeSkill: invokeSkillForWorkflow,
+    allowTestOnlyWorkflowRunExecution: config.allowTestOnlyWorkflowRunExecution,
     agentRuntime,
     allowTestOnlyAgentRunStartExecution: config.allowTestOnlyAgentRunStartExecution,
     allowTestOnlyAgentRunControlExecution: config.allowTestOnlyAgentRunControlExecution,

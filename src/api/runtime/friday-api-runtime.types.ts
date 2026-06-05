@@ -191,6 +191,13 @@ export interface CreateFridayApiRuntimeDeps {
   ) => Promise<unknown>;
   /** Optional: pass the hub's workflow runtime to avoid creating a duplicate. */
   workflowRuntime?: FridayWorkflowRuntime;
+  /**
+   * Test-oracle only: allows legacy TypeScript workflow run execution/control
+   * in isolated mock/unit validation. Production/runtime callers must leave
+   * this unset so workflow run start, cancel, retry, and resume stay
+   * fail-closed until Rust owns workflow execution truth.
+   */
+  allowTestOnlyWorkflowRunExecution?: boolean;
   /** Optional: user/project prompt-guidance provider for fallback workflow runtime creation. */
   userRulesContextProvider?: CreateFridayWorkflowRuntimeDeps["userRulesContextProvider"];
   /** Optional: reuse hub's session service instead of creating a new one. */

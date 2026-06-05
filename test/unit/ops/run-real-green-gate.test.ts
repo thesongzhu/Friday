@@ -4,9 +4,11 @@ import { describe, expect, it } from "vitest";
 import {
   buildSummary,
   isAgentRunStartFailClosed,
+  isWorkflowRunStartFailClosed,
   normalizeLiveProviderMode,
   resolveGateSuiteReportRoot,
   resolveRetiredAgentRunScenarioExclusions,
+  resolveRetiredWorkflowRunScenarioExclusions,
   shouldExcludeProviderScenarios,
   summarizeRun,
 } from "../../../scripts/ops/run-real-green-gate.mjs";
@@ -79,7 +81,37 @@ describe("run-real-green-gate helpers", () => {
     ]);
   });
 
-  it("preserves retired agent-run scenario exclusions in the terminal summary", () => {
+  it("detects fail-closed workflow run start retirement from the manifest", () => {
+    expect(isWorkflowRunStartFailClosed({
+      surfaces: [
+        {
+          id: "workflow_runs_start",
+          classification: "fail_closed",
+          executes_product_logic: false,
+        },
+      ],
+    })).toBe(true);
+    expect(isWorkflowRunStartFailClosed({
+      surfaces: [
+        {
+          id: "workflow_runs_start",
+          classification: "ts_runtime_blocker",
+          executes_product_logic: true,
+        },
+      ],
+    })).toBe(false);
+  });
+
+  it("excludes workflow-run-start-dependent RGG scenarios while the route is fail-closed", () => {
+    expect(resolveRetiredWorkflowRunScenarioExclusions(process.cwd())).toEqual([
+      {
+        scenarioId: "l5-workflow-approval-roundtrip",
+        reason: "POST /v1/workflow-runs is classified fail_closed in the TS runtime retirement manifest.",
+      },
+    ]);
+  });
+
+  it("preserves retired runtime scenario exclusions in the terminal summary", () => {
     const summary = buildSummary({
       runId: "run-1",
       repoRoot: "/tmp/friday",
@@ -114,12 +146,24 @@ describe("run-real-green-gate helpers", () => {
           reason: "POST /v1/agent/runs is classified fail_closed in the TS runtime retirement manifest.",
         },
       ],
+      retiredWorkflowRunScenarioExclusions: [
+        {
+          scenarioId: "l5-workflow-approval-roundtrip",
+          reason: "POST /v1/workflow-runs is classified fail_closed in the TS runtime retirement manifest.",
+        },
+      ],
     });
 
     expect(summary.retiredAgentRunScenarioExclusions).toEqual([
       {
         scenarioId: "l3-channel-origin-unified-task-state-contract",
         reason: "POST /v1/agent/runs is classified fail_closed in the TS runtime retirement manifest.",
+      },
+    ]);
+    expect(summary.retiredWorkflowRunScenarioExclusions).toEqual([
+      {
+        scenarioId: "l5-workflow-approval-roundtrip",
+        reason: "POST /v1/workflow-runs is classified fail_closed in the TS runtime retirement manifest.",
       },
     ]);
     expect(summary.gate).toEqual({

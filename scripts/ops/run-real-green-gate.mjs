@@ -131,6 +131,10 @@ const AGENT_RUN_START_DEPENDENT_SCENARIOS = [
   "l3-channel-origin-unified-task-state-contract",
 ];
 
+const WORKFLOW_RUN_START_DEPENDENT_SCENARIOS = [
+  "l5-workflow-approval-roundtrip",
+];
+
 const CLAUDE_SKILL_TESTS = [
   "test/unit/skills/registry/friday-skill-discovery.test.ts",
   "test/unit/skills/manifest/friday-skill-package-loader.test.ts",
@@ -249,6 +253,26 @@ export function resolveRetiredAgentRunScenarioExclusions(repoRoot) {
   return AGENT_RUN_START_DEPENDENT_SCENARIOS.map((scenarioId) => ({
     scenarioId,
     reason: "POST /v1/agent/runs is classified fail_closed in the TS runtime retirement manifest.",
+  }));
+}
+
+export function isWorkflowRunStartFailClosed(manifest) {
+  const surfaces = Array.isArray(manifest?.surfaces) ? manifest.surfaces : [];
+  return surfaces.some((surface) =>
+    surface?.id === "workflow_runs_start"
+    && surface?.classification === "fail_closed"
+    && surface?.executes_product_logic === false
+  );
+}
+
+export function resolveRetiredWorkflowRunScenarioExclusions(repoRoot) {
+  const manifest = readJsonFile(path.join(repoRoot, "docs", "ops", "ts-runtime-retirement-manifest.json"));
+  if (!isWorkflowRunStartFailClosed(manifest)) {
+    return [];
+  }
+  return WORKFLOW_RUN_START_DEPENDENT_SCENARIOS.map((scenarioId) => ({
+    scenarioId,
+    reason: "POST /v1/workflow-runs is classified fail_closed in the TS runtime retirement manifest.",
   }));
 }
 
@@ -501,6 +525,7 @@ function deriveGateReasons({
   branchConformance,
   skillConformance,
   retiredAgentRunScenarioExclusions,
+  retiredWorkflowRunScenarioExclusions,
   error,
 }) {
   const reasons = [];
@@ -572,6 +597,7 @@ export function buildSummary({
   branchConformance,
   skillConformance,
   retiredAgentRunScenarioExclusions,
+  retiredWorkflowRunScenarioExclusions,
   error,
 }) {
   const summary = {
@@ -591,6 +617,7 @@ export function buildSummary({
     branchConformance: branchConformance ?? null,
     skillConformance: skillConformance ?? null,
     retiredAgentRunScenarioExclusions: retiredAgentRunScenarioExclusions ?? [],
+    retiredWorkflowRunScenarioExclusions: retiredWorkflowRunScenarioExclusions ?? [],
     error: error ?? null,
   };
   summary.gate = {
@@ -625,7 +652,11 @@ async function main() {
   const liveProviderMode = normalizeLiveProviderMode(options.liveProviderMode);
   const excludeProviderScenarios = shouldExcludeProviderScenarios(liveProviderMode);
   const retiredAgentRunScenarioExclusions = resolveRetiredAgentRunScenarioExclusions(repoRoot);
-  const excludedScenarioIds = retiredAgentRunScenarioExclusions.map((entry) => entry.scenarioId);
+  const retiredWorkflowRunScenarioExclusions = resolveRetiredWorkflowRunScenarioExclusions(repoRoot);
+  const excludedScenarioIds = [
+    ...retiredAgentRunScenarioExclusions,
+    ...retiredWorkflowRunScenarioExclusions,
+  ].map((entry) => entry.scenarioId);
   const runId = createRunId();
   const reportRoot = options.reportRoot
     ?? path.join(repoRoot, "docs", "reports", "ops", "real-green-gate", runId);
@@ -827,6 +858,7 @@ async function main() {
       branchConformance,
       skillConformance,
       retiredAgentRunScenarioExclusions,
+      retiredWorkflowRunScenarioExclusions,
       error: terminalError,
     });
     flushTerminalArtifacts(reportRoot, summary);

@@ -86,8 +86,8 @@
       "classification": "ts_runtime_blocker",
       "user_triggerable": true,
       "owner": "ts-runtime-retirement",
-      "blocker": "Workflow run routes still wire TypeScript workflow runtime execution.",
-      "next_action": "Delegate POST /v1/workflow-runs and run controls to Rust-owned workflow execution or fail-close them with an operator-visible retirement label."
+      "blocker": "Workflow run routes still expose TypeScript-owned run reads, evidence export, and evidence download behavior.",
+      "next_action": "Continue splitting remaining workflow run surfaces into Rust delegation, bounded compatibility reads, fail-closed controls, or owned blockers before claiming TS retirement."
     },
     {
       "id": "workflow_catalog_and_builder_runtime_blockers",
@@ -360,11 +360,50 @@
         "path": "/v1/workflow-runs",
         "operationId": "runs.start"
       },
-      "classification": "ts_runtime_blocker",
+      "classification": "fail_closed",
       "user_triggerable": true,
-      "owner": "ts-runtime-retirement",
-      "blocker": "Starts workflow runtime through TypeScript execution service.",
-      "next_action": "Redirect run creation/execution truth to Rust-owned workflow entrypoint or fail-close the route."
+      "executes_product_logic": false,
+      "proof": "src/api/runtime/friday-api-runtime.ts wires default/live runs.start to TS_RUNTIME_WORKFLOW_RUNS_RETIRED before building run security context or calling TypeScript workflowRuntime.execution.startRun; the legacy TS workflow run path is reachable only through explicit allowTestOnlyWorkflowRunExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow run entrypoint when available."
+    },
+    {
+      "id": "workflow_runs_cancel",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflow-runs/:runId/cancel",
+        "operationId": "runs.cancel"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/runtime/friday-api-runtime.ts wires default/live runs.cancel to TS_RUNTIME_WORKFLOW_RUNS_RETIRED before resolving TypeScript workflow run state or calling workflowRuntime.execution.cancelRun; the legacy TS control path is reachable only through explicit allowTestOnlyWorkflowRunExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow run control entrypoint when available."
+    },
+    {
+      "id": "workflow_runs_retry",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflow-runs/:runId/retry",
+        "operationId": "runs.retry"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/runtime/friday-api-runtime.ts wires default/live runs.retry to TS_RUNTIME_WORKFLOW_RUNS_RETIRED before resolving TypeScript workflow run state, enumerating nodes, or calling workflowRuntime.execution.retryRun; the legacy TS control path is reachable only through explicit allowTestOnlyWorkflowRunExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow retry/control entrypoint when available."
+    },
+    {
+      "id": "workflow_runs_resume",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflow-runs/:runId/resume",
+        "operationId": "workflows.runs.resume"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/runtime/friday-api-runtime.ts wires default/live workflows.runs.resume to TS_RUNTIME_WORKFLOW_RUNS_RETIRED before resolving TypeScript workflow run state or calling workflowRuntime.execution.resumeRun; the legacy TS control path is reachable only through explicit allowTestOnlyWorkflowRunExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow resume/control entrypoint when available."
     },
     {
       "id": "skills_run",

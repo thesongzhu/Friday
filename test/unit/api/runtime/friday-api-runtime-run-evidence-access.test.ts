@@ -58,6 +58,7 @@ function makeDeps(): CreateFridayApiRuntimeDeps {
     computeChecksum: (content: string) => createHash("sha256").update(content).digest("hex"),
     resolveSkill: () => ({ id: "test-skill" }),
     invokeSkill: async () => ({ ok: true }),
+    allowTestOnlyWorkflowRunExecution: true,
   };
 }
 
