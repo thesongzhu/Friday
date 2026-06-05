@@ -43,6 +43,7 @@ const UsagePage = lazy(async () => import("@/routes/usage-page").then((module) =
 const SessionsPage = lazy(async () => import("@/routes/sessions-page").then((module) => ({ default: module.SessionsPage })));
 const ChatPage = lazy(async () => import("@/routes/chat-page").then((module) => ({ default: module.ChatPage })));
 const MemoryPage = lazy(async () => import("@/routes/memory-page").then((module) => ({ default: module.MemoryPage })));
+const MissionWorkbenchPage = lazy(async () => import("@/routes/mission-workbench-page").then((module) => ({ default: module.MissionWorkbenchPage })));
 const AssetsPage = lazy(async () => import("@/routes/assets-page").then((module) => ({ default: module.AssetsPage })));
 const StudioPage = lazy(async () => import("@/routes/studio-page").then((module) => ({ default: module.StudioPage })));
 const WorkflowsPage = lazy(async () => import("@/routes/workflows-page").then((module) => ({ default: module.WorkflowsPage })));
@@ -511,6 +512,14 @@ export const router = createBrowserRouter([
             element: (
               <RouteSuspense title={localizedText("加载任务工作流", "Loading task workflows")} detail={localizedText("Friday 正在准备监督员视图和证据浏览器。", "Friday is preparing the supervisor view and evidence explorer.")}>
                 <TaskWorkflowsPage />
+              </RouteSuspense>
+            ),
+          },
+          {
+            path: "mission-workbench",
+            element: (
+              <RouteSuspense title={localizedText("加载任务工作台", "Loading mission workbench")} detail={localizedText("Friday 正在准备任务、证据和时间线视图。", "Friday is preparing the mission, evidence, and timeline view.")}>
+                <MissionWorkbenchPage />
               </RouteSuspense>
             ),
           },

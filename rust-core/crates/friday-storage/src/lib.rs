@@ -39,7 +39,7 @@ use friday_core::{
     SessionState, SurfaceEvent, SurfaceThread, TrustedDeviceProjection, WorkItem,
 };
 use friday_core::{ProcessLease, ProcessObservation, WorkspaceClaim};
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 
 /// Which process this database belongs to. Determines the schema (a phone DB
 /// omits the secret-/sensitive-bearing tables, gate 21 §2/§3).
@@ -120,6 +120,15 @@ impl Db {
         )
     }
 
+    /// Open a Hub database for pure-read projections without applying migrations.
+    ///
+    /// GET/read-model adapters use this so a projection route can never mutate an
+    /// operator DB just because a UI asks for state. The DB must already be at
+    /// the current Hub schema version; older/newer versions fail closed.
+    pub fn open_hub_readonly(path: &str) -> Result<Db> {
+        Db::open_readonly(path, Profile::Hub, &schema::hub_migrations())
+    }
+
     /// Open (and migrate) a phone-profile database.
     pub fn open_phone(path: &str) -> Result<Db> {
         Db::open(
@@ -141,6 +150,33 @@ impl Db {
         let mut conn = Connection::open(path)?;
         conn.pragma_update(None, "foreign_keys", true)?;
         apply_migrations(&mut conn, path, migrations, app_build)?;
+        Ok(Db {
+            conn,
+            path: path.to_string(),
+            profile,
+        })
+    }
+
+    fn open_readonly(path: &str, profile: Profile, migrations: &[Migration]) -> Result<Db> {
+        let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        conn.pragma_update(None, "foreign_keys", true)?;
+        let disk_version = conn.query_row(
+            "SELECT version FROM schema_version WHERE id = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        let code_version = migrations.iter().map(|m| m.version).max().unwrap_or(0);
+        if disk_version > code_version {
+            return Err(StorageError::SchemaTooNew {
+                disk: disk_version,
+                code: code_version,
+            });
+        }
+        if disk_version < code_version {
+            return Err(StorageError::Unsupported(format!(
+                "database schema is older than this Friday build: disk version {disk_version}, code version {code_version}"
+            )));
+        }
         Ok(Db {
             conn,
             path: path.to_string(),

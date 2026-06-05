@@ -119,6 +119,7 @@ import {
 } from "#media-understanding";
 import { createFridaySocialImportService } from "#skills/social-import";
 import { parseFridaySecretInput, resolveFridaySecretInput } from "../security/friday-secret-ref.js";
+import { createFridayRustHubWorkbenchProjectionService } from "../api/mission-spine/friday-rust-hub-workbench-projection-service.js";
 import type { FridayChannelPersonaConfig, FridayGuideLensRoutesDeps, FridaySystemRoutesDeps } from "#api";
 import type { FridayPackagingRoutesDeps } from "../api/http/routes/friday-packaging-routes.js";
 import {
@@ -6660,6 +6661,10 @@ export async function createFridayHub(
   hydrateChannelPersonaStore(persistedChannelPersonas);
   savePersistedChannelPersonas(persistedChannelPersonas);
 
+  const missionSpineWorkbenchProjectionService = createFridayRustHubWorkbenchProjectionService({
+    stateDir: stateRuntime.stateDir,
+  });
+
   const runtimeSupportedChannelKinds = FRIDAY_SUPPORTED_CHANNEL_KINDS.filter(isFridayChannelKindSupported);
 
   const apiRuntime = createFridayApiRuntime({
@@ -6727,6 +6732,10 @@ export async function createFridayHub(
     system: systemRouteDeps,
     guideLens: guideLensRouteDeps,
     canonicalMutatingActionGate: canonicalMutatingActionGateEnabled,
+    missionSpine: {
+      workbench: missionSpineWorkbenchProjectionService,
+      disabledReason: null,
+    },
     uix: {
       service: uixService,
       readSetupCompletedAt,
