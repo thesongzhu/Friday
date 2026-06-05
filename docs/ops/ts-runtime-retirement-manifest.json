@@ -354,6 +354,45 @@
       "next_action": "Replace fail-closed response with a Rust-owned automation execution/control entrypoint when available."
     },
     {
+      "id": "agent_loop_runs_pause",
+      "route": {
+        "method": "POST",
+        "path": "/v1/agent-loop/runs/:loopRunId/pause",
+        "operationId": "agent.loop.runs.pause"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-agent-loop-routes.ts wires default/live agent.loop.runs.pause to TS_RUNTIME_AGENT_LOOP_CONTROLS_RETIRED after user-principal validation and before calling the TypeScript agent loop service; legacy TS pause is reachable only through explicit allowTestOnlyAgentLoopRunControlExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned agent-loop pause/control entrypoint when available."
+    },
+    {
+      "id": "agent_loop_runs_resume",
+      "route": {
+        "method": "POST",
+        "path": "/v1/agent-loop/runs/:loopRunId/resume",
+        "operationId": "agent.loop.runs.resume"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-agent-loop-routes.ts wires default/live agent.loop.runs.resume to TS_RUNTIME_AGENT_LOOP_CONTROLS_RETIRED after user-principal validation and before calling the TypeScript agent loop service; legacy TS resume is reachable only through explicit allowTestOnlyAgentLoopRunControlExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned agent-loop resume/control entrypoint when available."
+    },
+    {
+      "id": "agent_loop_runs_cancel",
+      "route": {
+        "method": "POST",
+        "path": "/v1/agent-loop/runs/:loopRunId/cancel",
+        "operationId": "agent.loop.runs.cancel"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-agent-loop-routes.ts wires default/live agent.loop.runs.cancel to TS_RUNTIME_AGENT_LOOP_CONTROLS_RETIRED after user-principal validation and before calling the TypeScript agent loop service; legacy TS cancel is reachable only through explicit allowTestOnlyAgentLoopRunControlExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned agent-loop cancel/control entrypoint when available."
+    },
+    {
       "id": "workflow_runs_start",
       "route": {
         "method": "POST",
