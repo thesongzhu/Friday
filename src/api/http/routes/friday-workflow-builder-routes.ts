@@ -1,3 +1,4 @@
+import { FridayDomainError } from "#errors";
 import type {
   FridayAuthPrincipal,
   FridayPaginationQuery,
@@ -120,6 +121,33 @@ export interface FridayWorkflowBuilderRoutesDeps {
     input: FridayReleaseWorkflowLockRequest,
     principal: FridayAuthPrincipal | null,
   ) => FridayReleaseWorkflowLockResponse;
+  /**
+   * Test-oracle only: allows the legacy TypeScript workflow bundle import
+   * mutation in isolated route/runtime validation. Default/live runtime must
+   * leave bundle import fail-closed until Rust owns workflow bundle import
+   * truth.
+   */
+  allowTestOnlyWorkflowBundleImportExecution?: boolean;
+}
+
+function throwRetiredWorkflowBundleImport(): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_WORKFLOW_BUNDLE_IMPORT_RETIRED",
+    "TypeScript workflow bundle import is retired in default/live runtime; use the Rust-owned workflow bundle import entrypoint.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_workflow_bundle_import_entrypoint_required",
+      },
+    },
+  );
+}
+
+function assertWorkflowBundleImportTestOracleAllowed(deps: FridayWorkflowBuilderRoutesDeps): void {
+  if (deps.allowTestOnlyWorkflowBundleImportExecution !== true) {
+    throwRetiredWorkflowBundleImport();
+  }
 }
 
 export function createFridayWorkflowBuilderRoutes(
@@ -173,6 +201,7 @@ export function createFridayWorkflowBuilderRoutes(
       path: "/v1/workflows/:workflowId/import",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowBundleImportTestOracleAllowed(deps);
         assertWorkflowBuilderWritePrincipal(ctx.principal ?? null, "workflow.bundle.import");
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.importWorkflowBundle(workflowId, ctx.body as FridayImportWorkflowBundleRequest);

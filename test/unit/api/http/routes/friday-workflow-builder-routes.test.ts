@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   createFridayWorkflowBuilderRoutes,
   createFridayWorkflowBuilderTemplateRoutes,
@@ -72,6 +72,10 @@ describe("FridayWorkflowBuilderRoutes", () => {
     acquireLock: () => ({ acquired: true }),
     renewLock: () => ({ lock: null }),
     releaseLock: () => ({ released: true as const }),
+    // Opt isolated builder route tests into the legacy import oracle so the
+    // shared `routes` fixture still exercises the principal-authority path.
+    // Default/live runtime leaves this unset (proven below).
+    allowTestOnlyWorkflowBundleImportExecution: true,
   };
   const stubTemplateDeps: FridayWorkflowBuilderTemplateRoutesDeps = {
     listTemplates: () => ({ items: [] }),
@@ -178,5 +182,29 @@ describe("FridayWorkflowBuilderRoutes", () => {
     await expect(route.handler(makeCtx({ body: { title: "Draft" } }))).resolves.toEqual({
       draft: stubDraft,
     });
+  });
+
+  it("fail-closes workflows.bundles.import by default and never calls importWorkflowBundle", async () => {
+    const importSpy = vi.fn(() => ({ result: {} as never }));
+    const failClosedRoutes = createFridayWorkflowBuilderRoutes({
+      ...stubDeps,
+      allowTestOnlyWorkflowBundleImportExecution: false,
+      importWorkflowBundle: importSpy,
+    });
+    const route = failClosedRoutes.find((r) => r.operationId === "workflows.bundles.import")!;
+
+    // Guard fires before the principal check, so even a bound workflow writer
+    // is fail-closed in default/live runtime.
+    await expect(
+      route.handler(makeCtx({ body: { bundle: { schemaVersion: "1.0" } } })),
+    ).rejects.toMatchObject({
+      code: "TS_RUNTIME_WORKFLOW_BUNDLE_IMPORT_RETIRED",
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_workflow_bundle_import_entrypoint_required",
+      },
+    });
+    expect(importSpy).not.toHaveBeenCalled();
   });
 });
