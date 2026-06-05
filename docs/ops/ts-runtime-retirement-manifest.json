@@ -575,6 +575,68 @@
       "next_action": "Replace fail-closed response with a Rust-owned auto-fix rollback entrypoint when available."
     },
     {
+      "id": "autofix_actions_list_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/auto-fix/actions",
+        "operationId": "autofix.actions.list"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep the user-scoped auto-fix action list as a bounded review/read surface while auto-fix execution and approval controls are fail-closed or moved to Rust-owned product truth. This read does not execute, approve, deny, roll back, or mark repair completion.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted auto-fix projection when available."
+    },
+    {
+      "id": "autofix_actions_get_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/auto-fix/actions/:actionId",
+        "operationId": "autofix.actions.get"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep the user-scoped auto-fix action detail as a bounded review/read surface while auto-fix execution and approval controls are fail-closed or moved to Rust-owned product truth. This read does not execute, approve, deny, roll back, or mark repair completion.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted auto-fix action projection when available."
+    },
+    {
+      "id": "autofix_actions_approve",
+      "route": {
+        "method": "POST",
+        "path": "/v1/auto-fix/actions/:actionId/approve",
+        "operationId": "autofix.actions.approve"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-auto-fix-routes.ts wires default/live autofix.actions.approve to TS_RUNTIME_AUTOFIX_CONTROLS_RETIRED after the bound-principal gate and before calling the TypeScript approveAction service; legacy TS approval is reachable only through explicit allowTestOnlyAutoFixExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned auto-fix approval/control entrypoint when available."
+    },
+    {
+      "id": "autofix_actions_deny",
+      "route": {
+        "method": "POST",
+        "path": "/v1/auto-fix/actions/:actionId/deny",
+        "operationId": "autofix.actions.deny"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-auto-fix-routes.ts wires default/live autofix.actions.deny to TS_RUNTIME_AUTOFIX_CONTROLS_RETIRED after the bound-principal gate and before calling the TypeScript denyAction service; legacy TS denial is reachable only through explicit allowTestOnlyAutoFixExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned auto-fix denial/control entrypoint when available."
+    },
+    {
+      "id": "autofix_metrics_get_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/auto-fix/metrics",
+        "operationId": "autofix.metrics.get"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep auto-fix metrics as a bounded compatibility read while execution and approval controls are fail-closed or moved to Rust-owned product truth. Metrics reads do not execute, approve, deny, roll back, or mark repair completion.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted auto-fix metrics projection when available."
+    },
+    {
       "id": "desktop_actions_execute",
       "route": {
         "method": "POST",
