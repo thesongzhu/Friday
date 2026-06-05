@@ -266,16 +266,46 @@ describe("FridayAgentLoopRoutes", () => {
     ).rejects.toMatchObject({ code: "AGENT_LOOP_RUN_NOT_FOUND" });
   });
 
-  it("reads and updates expert mode", async () => {
+  it("reads expert mode without mutating TypeScript policy state", async () => {
     const service = makeService();
     const routes = createFridayAgentLoopRoutes({ service });
     const getRoute = routes.find((entry) => entry.operationId === "agent.loop.expertmode.get")!;
-    const putRoute = routes.find((entry) => entry.operationId === "agent.loop.expertmode.update")!;
 
     const getResult = await getRoute.handler(makeCtx()) as { expertMode: { enabled: boolean } };
     expect(getResult.expertMode.enabled).toBe(true);
+    expect(service.updateExpertMode).not.toHaveBeenCalled();
+  });
 
-    const putResult = await putRoute.handler(makeCtx({
+  it("fail-closes default agent-loop policy mutations before calling TypeScript services", async () => {
+    const service = makeService();
+    const routes = createFridayAgentLoopRoutes({ service });
+    const updateRoutes = [
+      ["agent.loop.expertmode.update", service.updateExpertMode, { enabled: true, probeBudget: 6 }],
+      ["agent.loop.policy.update", service.updatePolicy, { paused: true }],
+    ] as const;
+
+    for (const [operationId, serviceCall, body] of updateRoutes) {
+      const route = routes.find((entry) => entry.operationId === operationId)!;
+      await expect(
+        route.handler(makeCtx({ body })),
+      ).rejects.toMatchObject({
+        code: "TS_RUNTIME_AGENT_LOOP_POLICY_MUTATIONS_RETIRED",
+        httpStatus: 503,
+      });
+      expect(serviceCall).not.toHaveBeenCalled();
+    }
+  });
+
+  it("allows legacy agent-loop policy mutations only through explicit test-only oracle wiring", async () => {
+    const service = makeService();
+    const routes = createFridayAgentLoopRoutes({
+      service,
+      allowTestOnlyAgentLoopPolicyMutation: true,
+    });
+    const expertModeRoute = routes.find((entry) => entry.operationId === "agent.loop.expertmode.update")!;
+    const policyRoute = routes.find((entry) => entry.operationId === "agent.loop.policy.update")!;
+
+    const expertModeResult = await expertModeRoute.handler(makeCtx({
       body: {
         enabled: true,
         probeBudget: 6,
@@ -288,7 +318,14 @@ describe("FridayAgentLoopRoutes", () => {
         probeBudget: 6,
       }),
     );
-    expect(putResult.expertMode.probeBudget).toBe(4);
+    expect(expertModeResult.expertMode.probeBudget).toBe(4);
+
+    const policyResult = await policyRoute.handler(makeCtx({
+      body: { paused: true },
+    })) as { policy: { paused: boolean } };
+
+    expect(service.updatePolicy).toHaveBeenCalledWith({ paused: true });
+    expect(policyResult.policy.paused).toBe(true);
   });
 
   it("rejects synthetic public principals from expert mode routes", async () => {
