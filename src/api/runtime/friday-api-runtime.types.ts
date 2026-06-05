@@ -227,6 +227,20 @@ export interface CreateFridayApiRuntimeDeps {
    * owns generator truth.
    */
   allowTestOnlyWorkflowGeneratorExecution?: boolean;
+  /**
+   * Test-oracle only: allows legacy TypeScript workflow catalog mutations in
+   * isolated mock/unit validation. Production/runtime callers must leave this
+   * unset so workflow create/update/archive/publish stays fail-closed until
+   * Rust owns workflow catalog write truth.
+   */
+  allowTestOnlyWorkflowCatalogMutationExecution?: boolean;
+  /**
+   * Test-oracle only: allows legacy TypeScript workflow deploy execution in
+   * isolated mock/unit validation. Production/runtime callers must leave this
+   * unset so workflow deploy stays fail-closed until Rust owns deployment
+   * truth.
+   */
+  allowTestOnlyWorkflowDeployExecution?: boolean;
   /** Optional: user/project prompt-guidance provider for fallback workflow runtime creation. */
   userRulesContextProvider?: CreateFridayWorkflowRuntimeDeps["userRulesContextProvider"];
   /** Optional: reuse hub's session service instead of creating a new one. */

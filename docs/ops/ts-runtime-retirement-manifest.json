@@ -1036,6 +1036,71 @@
       "next_action": "Replace fail-closed response with a Rust-owned workflow generator cancellation entrypoint when available."
     },
     {
+      "id": "workflows_create",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflows",
+        "operationId": "workflows.create"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-routes.ts wires default/live workflows.create to TS_RUNTIME_WORKFLOW_CATALOG_MUTATION_RETIRED before principal authority checks, validation side effects, or calling the TypeScript workflow CRUD service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowCatalogMutationExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow catalog create entrypoint when available."
+    },
+    {
+      "id": "workflows_update",
+      "route": {
+        "method": "PATCH",
+        "path": "/v1/workflows/:workflowId",
+        "operationId": "workflows.update"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-routes.ts wires default/live workflows.update to TS_RUNTIME_WORKFLOW_CATALOG_MUTATION_RETIRED before principal authority checks, revision validation, or calling the TypeScript workflow CRUD service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowCatalogMutationExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow catalog update entrypoint when available."
+    },
+    {
+      "id": "workflows_archive",
+      "route": {
+        "method": "DELETE",
+        "path": "/v1/workflows/:workflowId",
+        "operationId": "workflows.archive"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-routes.ts wires default/live workflows.archive to TS_RUNTIME_WORKFLOW_CATALOG_MUTATION_RETIRED before principal authority checks or calling the TypeScript workflow archive service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowCatalogMutationExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow catalog archive entrypoint when available."
+    },
+    {
+      "id": "workflows_publish",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflows/:workflowId/publish",
+        "operationId": "workflows.publish"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-routes.ts wires default/live workflows.publish to TS_RUNTIME_WORKFLOW_CATALOG_MUTATION_RETIRED before principal authority checks or calling the TypeScript workflow publish service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowCatalogMutationExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow catalog publish entrypoint when available."
+    },
+    {
+      "id": "workflows_deploy",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflows/:workflowId/drafts/:draftId/deploy",
+        "operationId": "workflows.deploy"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-product-routes.ts wires default/live workflows.deploy to TS_RUNTIME_WORKFLOW_DEPLOY_RETIRED before principal authority checks, deployment option handling, or calling the TypeScript workflow product service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowDeployExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow deployment entrypoint when available."
+    },
+    {
       "id": "autofix_run_ready",
       "route": {
         "method": "POST",

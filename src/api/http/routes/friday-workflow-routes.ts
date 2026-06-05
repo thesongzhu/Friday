@@ -33,6 +33,32 @@ export interface FridayWorkflowRoutesDeps {
   publishWorkflow: (workflowId: UUID, input: FridayPublishWorkflowRequest) => FridayPublishWorkflowResponse;
   listVersions: (workflowId: UUID, query: FridayListVersionsQuery) => FridayListVersionsResponse;
   getVersion: (versionId: UUID) => FridayGetWorkflowVersionResponse;
+  /**
+   * Test-oracle only: allows legacy TypeScript workflow catalog mutations in
+   * isolated route/runtime validation. Default/live runtime must leave these
+   * surfaces fail-closed until Rust owns workflow catalog write truth.
+   */
+  allowTestOnlyWorkflowCatalogMutationExecution?: boolean;
+}
+
+function throwRetiredWorkflowCatalogMutation(): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_WORKFLOW_CATALOG_MUTATION_RETIRED",
+    "TypeScript workflow catalog mutations are retired in default/live runtime; use the Rust-owned workflow catalog write entrypoint.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_workflow_catalog_write_entrypoint_required",
+      },
+    },
+  );
+}
+
+function assertWorkflowCatalogMutationTestOracleAllowed(deps: FridayWorkflowRoutesDeps): void {
+  if (deps.allowTestOnlyWorkflowCatalogMutationExecution !== true) {
+    throwRetiredWorkflowCatalogMutation();
+  }
 }
 
 function assertWorkflowWritePrincipal(
@@ -82,6 +108,7 @@ export function createFridayWorkflowRoutes(
       path: "/v1/workflows",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowCatalogMutationTestOracleAllowed(deps);
         assertWorkflowWritePrincipal(ctx.principal ?? null, "workflow.create");
         const body = ctx.body as Record<string, unknown> | null;
         if (!body || typeof body.slug !== "string" || body.slug.trim() === "") {
@@ -131,6 +158,7 @@ export function createFridayWorkflowRoutes(
       path: "/v1/workflows/:workflowId",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowCatalogMutationTestOracleAllowed(deps);
         assertWorkflowWritePrincipal(ctx.principal ?? null, "workflow.update");
         const { workflowId } = ctx.params as { workflowId: UUID };
         const body = ctx.body as Record<string, unknown> | null;
@@ -162,6 +190,7 @@ export function createFridayWorkflowRoutes(
       path: "/v1/workflows/:workflowId",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowCatalogMutationTestOracleAllowed(deps);
         assertWorkflowWritePrincipal(ctx.principal ?? null, "workflow.archive");
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.archiveWorkflow(workflowId);
@@ -174,6 +203,7 @@ export function createFridayWorkflowRoutes(
       auth: { public: true },
       rateLimitPolicyId: "workflow.publish",
       async handler(ctx) {
+        assertWorkflowCatalogMutationTestOracleAllowed(deps);
         assertWorkflowWritePrincipal(ctx.principal ?? null, "workflow.publish");
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.publishWorkflow(workflowId, ctx.body as FridayPublishWorkflowRequest);

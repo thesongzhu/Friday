@@ -11,6 +11,32 @@ import type { FridayWorkflowProductService } from "../../../workflows/services/f
 
 export interface FridayWorkflowProductRoutesDeps {
   service: FridayWorkflowProductService;
+  /**
+   * Test-oracle only: allows legacy TypeScript workflow deploy mutations in
+   * isolated route/runtime validation. Default/live runtime must leave deploy
+   * fail-closed until Rust owns deployment truth.
+   */
+  allowTestOnlyWorkflowDeployExecution?: boolean;
+}
+
+function throwRetiredWorkflowDeployExecution(): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_WORKFLOW_DEPLOY_RETIRED",
+    "TypeScript workflow deploy execution is retired in default/live runtime; use the Rust-owned workflow deployment entrypoint.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_workflow_deployment_entrypoint_required",
+      },
+    },
+  );
+}
+
+function assertWorkflowDeployTestOracleAllowed(deps: FridayWorkflowProductRoutesDeps): void {
+  if (deps.allowTestOnlyWorkflowDeployExecution !== true) {
+    throwRetiredWorkflowDeployExecution();
+  }
 }
 
 export function createFridayWorkflowProductRoutes(
@@ -63,6 +89,7 @@ export function createFridayWorkflowProductRoutes(
       auth: { public: true },
       rateLimitPolicyId: "workflow.publish",
       async handler(ctx): Promise<{ deployment: FridayWorkflowDeployResult }> {
+        assertWorkflowDeployTestOracleAllowed(deps);
         const bound = assertBoundPrincipalAuthorityForOperation(
           ctx.principal ?? null,
           "workflow.deploy",
