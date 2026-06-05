@@ -94,8 +94,30 @@ describe("createFridayDesktopRoutes", () => {
   // ─── Actions ───
 
   describe("actions", () => {
-    it("executes an action", async () => {
+    it("fail-closes desktop action execution routes by default without invoking TypeScript services", async () => {
       const deps = makeDeps();
+      const routes = createFridayDesktopRoutes(deps);
+      const executeRoute = findRoute(routes, "desktop.actions.execute");
+      const batchRoute = findRoute(routes, "desktop.actions.batch");
+
+      await expect(
+        executeRoute.handler(makeCtx({ body: { action: { type: "click" }, idempotencyKey: "k-retired-1" } })),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_DESKTOP_ACTION_EXECUTION_RETIRED" });
+      await expect(
+        batchRoute.handler(makeCtx({
+          body: {
+            actions: [{ clientId: "c1", action: { type: "click" } }],
+            idempotencyKey: "k-retired-2",
+          },
+        })),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_DESKTOP_ACTION_EXECUTION_RETIRED" });
+
+      expect(deps.actions.execute).not.toHaveBeenCalled();
+      expect(deps.actions.batch).not.toHaveBeenCalled();
+    });
+
+    it("executes an action", async () => {
+      const deps = makeDeps({ allowTestOnlyDesktopActionExecution: true });
       const routes = createFridayDesktopRoutes(deps);
       const route = findRoute(routes, "desktop.actions.execute");
       expect(route.method).toBe("POST");
@@ -122,7 +144,7 @@ describe("createFridayDesktopRoutes", () => {
     });
 
     it("batches actions", async () => {
-      const deps = makeDeps();
+      const deps = makeDeps({ allowTestOnlyDesktopActionExecution: true });
       const routes = createFridayDesktopRoutes(deps);
       const route = findRoute(routes, "desktop.actions.batch");
       expect(route.method).toBe("POST");

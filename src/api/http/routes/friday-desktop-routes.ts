@@ -62,6 +62,7 @@ import type { UUID } from "../../../desktop/model/friday-desktop.types.js";
 // ─── Service Dependencies ───
 
 export interface FridayDesktopRoutesDeps {
+  allowTestOnlyDesktopActionExecution?: boolean;
   actions: {
     execute(req: FridayExecuteDesktopActionRequest): Promise<FridayExecuteDesktopActionResponse>;
     batch(req: FridayBatchDesktopActionsRequest): Promise<FridayBatchDesktopActionsResponse>;
@@ -126,6 +127,20 @@ function requireEtag(body: unknown): void {
   requireString(body, "etag");
 }
 
+function throwRetiredDesktopActionExecution(): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_DESKTOP_ACTION_EXECUTION_RETIRED",
+    "Desktop action execution is fail-closed while runtime ownership is being moved out of TypeScript.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_desktop_action_execution_entrypoint_required",
+      },
+    },
+  );
+}
+
 // ─── Factory ───
 
 export function createFridayDesktopRoutes(
@@ -145,6 +160,9 @@ export function createFridayDesktopRoutes(
         const body = ctx.body as FridayExecuteDesktopActionRequest;
         requirePresent(body, "action");
         requireIdempotencyKey(body);
+        if (deps.allowTestOnlyDesktopActionExecution !== true) {
+          throwRetiredDesktopActionExecution();
+        }
         return deps.actions.execute(body);
       },
     },
@@ -159,6 +177,9 @@ export function createFridayDesktopRoutes(
           throw new FridayDomainError("VALIDATION_ERROR", "actions array is required");
         }
         requireIdempotencyKey(body);
+        if (deps.allowTestOnlyDesktopActionExecution !== true) {
+          throwRetiredDesktopActionExecution();
+        }
         return deps.actions.batch(body);
       },
     },

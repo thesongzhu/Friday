@@ -6531,6 +6531,7 @@ export async function createFridayHub(
   // ── Desktop route deps (opt-in, wired from desktopSessionManager) ──
   const desktopRouteDeps: Parameters<typeof createFridayApiRuntime>[0]["desktop"] = desktopSessionManager
     ? {
+      allowTestOnlyDesktopActionExecution: config.allowTestOnlyDesktopActionExecution,
       actions: {
         async execute(req) { return desktopSessionManager!.executeAction(req.action as never) as never; },
         async batch(req) {
