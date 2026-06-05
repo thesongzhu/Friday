@@ -385,7 +385,7 @@ describe("createFridayHub", () => {
   });
 
   it("wires canonical skill lifecycle routes into the API runtime", async () => {
-    hub = await createIsolatedHub();
+    hub = await createIsolatedHub({ allowTestOnlySkillVerifyExecution: true });
     const routes = hub.apiRuntime.routes.getRoutes();
     const operationIds = routes.map((route) => route.operationId);
 

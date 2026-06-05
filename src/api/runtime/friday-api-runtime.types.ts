@@ -206,6 +206,20 @@ export interface CreateFridayApiRuntimeDeps {
    * execution truth.
    */
   allowTestOnlySkillRunExecution?: boolean;
+  /**
+   * Test-oracle only: allows legacy TypeScript skill verification in isolated
+   * mock/unit validation. Production/runtime callers must leave this unset so
+   * POST /v1/skills/:skillId/verify remains fail-closed until Rust owns skill
+   * verification truth.
+   */
+  allowTestOnlySkillVerifyExecution?: boolean;
+  /**
+   * Test-oracle only: allows legacy TypeScript skill generator sessions in
+   * isolated mock/unit validation. Production/runtime callers must leave this
+   * unset so skill generator session create/read/message/generate/test/approve/
+   * cancel routes remain fail-closed until Rust owns generator truth.
+   */
+  allowTestOnlySkillGeneratorExecution?: boolean;
   /** Optional: user/project prompt-guidance provider for fallback workflow runtime creation. */
   userRulesContextProvider?: CreateFridayWorkflowRuntimeDeps["userRulesContextProvider"];
   /** Optional: reuse hub's session service instead of creating a new one. */

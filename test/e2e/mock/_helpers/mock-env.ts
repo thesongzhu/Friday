@@ -332,6 +332,10 @@ export async function createMockHubEnv(opts?: {
   allowTestOnlyWorkflowRunExecution?: boolean;
   /** Test-oracle opt-in for legacy TS skill-run execution; set false to prove default fail-closed behavior. */
   allowTestOnlySkillRunExecution?: boolean;
+  /** Test-oracle opt-in for legacy TS skill verification; set false to prove default fail-closed behavior. */
+  allowTestOnlySkillVerifyExecution?: boolean;
+  /** Test-oracle opt-in for legacy TS skill generator sessions; set false to prove default fail-closed behavior. */
+  allowTestOnlySkillGeneratorExecution?: boolean;
   /** Test-oracle opt-in for legacy TS agent-run execution; set false to prove default fail-closed behavior. */
   allowTestOnlyAgentRunStartExecution?: boolean;
   /** Test-oracle opt-in for legacy TS agent-run controls; set false to prove default fail-closed behavior. */
@@ -379,6 +383,8 @@ export async function createMockHubEnv(opts?: {
       tokenSecret: MOCK_E2E_TOKEN_SECRET,
       allowTestOnlyWorkflowRunExecution: opts?.allowTestOnlyWorkflowRunExecution ?? true,
       allowTestOnlySkillRunExecution: opts?.allowTestOnlySkillRunExecution ?? true,
+      allowTestOnlySkillVerifyExecution: opts?.allowTestOnlySkillVerifyExecution ?? true,
+      allowTestOnlySkillGeneratorExecution: opts?.allowTestOnlySkillGeneratorExecution ?? true,
       allowTestOnlyAgentRunStartExecution: opts?.allowTestOnlyAgentRunStartExecution ?? true,
       allowTestOnlyAgentRunControlExecution: opts?.allowTestOnlyAgentRunControlExecution ?? true,
       // Allow private-network targets so mock E2E tests don't require DNS resolution

@@ -260,9 +260,34 @@ describe("FridaySkillGeneratorRoutes", () => {
       skillGenerator: generatorService,
       registry,
       canonicalMutationGate,
+      allowTestOnlySkillGeneratorExecution: true,
     });
     return { routes, generatorService, registry };
   }
+
+  it("fail-closes skill generator sessions by default without invoking the TypeScript generator", async () => {
+    const generatorService = makeMockGeneratorService();
+    const routes = createFridaySkillGeneratorRoutes({
+      skillGenerator: generatorService,
+      registry: makeMockRegistry(),
+    });
+    const route = routes.find((r) => r.operationId === "skills.generator.sessions.create")!;
+
+    await expect(
+      route.handler(makeCtx({
+        body: { goal: "Build a timer", userId: "user-1", channel: "discord" },
+        principal: { userId: "user-1", principalId: "user-1", tenantId: "tenant-1" },
+      })),
+    ).rejects.toMatchObject({
+      code: "TS_RUNTIME_SKILL_GENERATOR_RETIRED",
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_skill_generator_entrypoint_required",
+      },
+    });
+    expect(generatorService.startSession).not.toHaveBeenCalled();
+  });
 
   function withCanonicalApproval(body: {
     idempotencyKey?: string;
@@ -773,6 +798,7 @@ describe("FridaySkillGeneratorRoutes", () => {
         const routes = createFridaySkillGeneratorRoutes({
           skillGenerator: generatorService,
           registry: makeMockRegistry(),
+          allowTestOnlySkillGeneratorExecution: true,
         });
         const route = routes.find(
           (r) => r.operationId === "skills.generator.sessions.test",
@@ -843,6 +869,7 @@ describe("FridaySkillGeneratorRoutes", () => {
         const routes = createFridaySkillGeneratorRoutes({
           skillGenerator: generatorService,
           registry: makeMockRegistry(),
+          allowTestOnlySkillGeneratorExecution: true,
         });
         const route = routes.find(
           (r) => r.operationId === "skills.generator.sessions.test",
