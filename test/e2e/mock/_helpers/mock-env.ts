@@ -338,6 +338,10 @@ export async function createMockHubEnv(opts?: {
   allowTestOnlySkillGeneratorExecution?: boolean;
   /** Test-oracle opt-in for legacy TS workflow generator sessions; set false to prove default fail-closed behavior. */
   allowTestOnlyWorkflowGeneratorExecution?: boolean;
+  /** Test-oracle opt-in for legacy TS workflow catalog mutations; set false to prove default fail-closed behavior. */
+  allowTestOnlyWorkflowCatalogMutationExecution?: boolean;
+  /** Test-oracle opt-in for legacy TS workflow deploy execution; set false to prove default fail-closed behavior. */
+  allowTestOnlyWorkflowDeployExecution?: boolean;
   /** Test-oracle opt-in for legacy TS agent-run execution; set false to prove default fail-closed behavior. */
   allowTestOnlyAgentRunStartExecution?: boolean;
   /** Test-oracle opt-in for legacy TS agent-run controls; set false to prove default fail-closed behavior. */
@@ -388,6 +392,8 @@ export async function createMockHubEnv(opts?: {
       allowTestOnlySkillVerifyExecution: opts?.allowTestOnlySkillVerifyExecution ?? true,
       allowTestOnlySkillGeneratorExecution: opts?.allowTestOnlySkillGeneratorExecution ?? true,
       allowTestOnlyWorkflowGeneratorExecution: opts?.allowTestOnlyWorkflowGeneratorExecution ?? true,
+      allowTestOnlyWorkflowCatalogMutationExecution: opts?.allowTestOnlyWorkflowCatalogMutationExecution ?? true,
+      allowTestOnlyWorkflowDeployExecution: opts?.allowTestOnlyWorkflowDeployExecution ?? true,
       allowTestOnlyAgentRunStartExecution: opts?.allowTestOnlyAgentRunStartExecution ?? true,
       allowTestOnlyAgentRunControlExecution: opts?.allowTestOnlyAgentRunControlExecution ?? true,
       // Allow private-network targets so mock E2E tests don't require DNS resolution

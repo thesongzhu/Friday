@@ -70,7 +70,10 @@ function makeService(): FridayWorkflowProductService {
 
 describe("createFridayWorkflowProductRoutes", () => {
   it("registers overview, visualization, and deploy routes", () => {
-    const routes = createFridayWorkflowProductRoutes({ service: makeService() });
+    const routes = createFridayWorkflowProductRoutes({
+      service: makeService(),
+      allowTestOnlyWorkflowDeployExecution: true,
+    });
     expect(routes.map((route) => route.operationId)).toEqual([
       "workflows.overview",
       "workflows.visualization",
@@ -80,7 +83,10 @@ describe("createFridayWorkflowProductRoutes", () => {
 
   it("passes query options to overview and visualization", async () => {
     const service = makeService();
-    const routes = createFridayWorkflowProductRoutes({ service });
+    const routes = createFridayWorkflowProductRoutes({
+      service,
+      allowTestOnlyWorkflowDeployExecution: true,
+    });
 
     await routes[0]!.handler(
       makeCtx({
@@ -106,7 +112,10 @@ describe("createFridayWorkflowProductRoutes", () => {
 
   it("deploys a draft with the authenticated actor", async () => {
     const service = makeService();
-    const routes = createFridayWorkflowProductRoutes({ service });
+    const routes = createFridayWorkflowProductRoutes({
+      service,
+      allowTestOnlyWorkflowDeployExecution: true,
+    });
 
     const result = await routes[2]!.handler(
       makeCtx({
@@ -132,7 +141,10 @@ describe("createFridayWorkflowProductRoutes", () => {
 
   it("rejects synthetic public deploy before side effects", async () => {
     const service = makeService();
-    const routes = createFridayWorkflowProductRoutes({ service });
+    const routes = createFridayWorkflowProductRoutes({
+      service,
+      allowTestOnlyWorkflowDeployExecution: true,
+    });
 
     await expect(
       routes[2]!.handler(
@@ -150,7 +162,10 @@ describe("createFridayWorkflowProductRoutes", () => {
 
   it("passes external review confirmation to deploy when present", async () => {
     const service = makeService();
-    const routes = createFridayWorkflowProductRoutes({ service });
+    const routes = createFridayWorkflowProductRoutes({
+      service,
+      allowTestOnlyWorkflowDeployExecution: true,
+    });
 
     await routes[2]!.handler(
       makeCtx({
@@ -164,5 +179,27 @@ describe("createFridayWorkflowProductRoutes", () => {
       draftId: "draft-1",
       externalReviewConfirmed: true,
     }));
+  });
+
+  it("fail-closes workflow deploy by default before TS service calls", async () => {
+    const service = makeService();
+    const routes = createFridayWorkflowProductRoutes({ service });
+
+    await expect(
+      routes[2]!.handler(
+        makeCtx({
+          params: { workflowId: "wf-1", draftId: "draft-1" },
+          body: { runNow: true },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "TS_RUNTIME_WORKFLOW_DEPLOY_RETIRED",
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_workflow_deployment_entrypoint_required",
+      },
+    });
+    expect(service.deployDraft).not.toHaveBeenCalled();
   });
 });

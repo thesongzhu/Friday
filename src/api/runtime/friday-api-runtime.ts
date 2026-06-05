@@ -1875,6 +1875,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   // Register workflow routes (real service wiring)
   for (const route of createFridayWorkflowRoutes({
+    allowTestOnlyWorkflowCatalogMutationExecution: deps.allowTestOnlyWorkflowCatalogMutationExecution,
     listWorkflows: (query) => {
       const workflows = workflowRuntime.crud.listWorkflows({
         tag: query.tag,
@@ -2169,6 +2170,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   for (const route of createFridayWorkflowProductRoutes({
     service: workflowProductService,
+    allowTestOnlyWorkflowDeployExecution: deps.allowTestOnlyWorkflowDeployExecution,
   })) {
     routes.register(route);
   }

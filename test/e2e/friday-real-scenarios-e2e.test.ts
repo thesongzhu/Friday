@@ -140,6 +140,8 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Real Scenarios E2E (NON-LLM)", () => 
       logRequests: false,
       tokenSecret: TEST_TOKEN_SECRET,
       allowTestOnlyWorkflowRunExecution: true,
+      allowTestOnlyWorkflowCatalogMutationExecution: true,
+      allowTestOnlyWorkflowDeployExecution: true,
     });
     await hub.start();
 
@@ -1659,6 +1661,8 @@ describe.skipIf(!ANTHROPIC_E2E_ENABLED || !HAS_LLM_CREDENTIAL)(
         port: 0,
         logRequests: false,
         allowTestOnlyWorkflowRunExecution: true,
+        allowTestOnlyWorkflowCatalogMutationExecution: true,
+        allowTestOnlyWorkflowDeployExecution: true,
       });
       await hub.start();
 

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createFridayWorkflowRoutes } from "#api";
 import type { FridayAuthPrincipal, FridayHttpContext, FridayWorkflowRoutesDeps } from "#api";
 import { createFridayDefaultPublicHttpPrincipal } from "../../../../../src/api/http/friday-default-public-principal.js";
@@ -53,7 +53,10 @@ describe("FridayWorkflowRoutes", () => {
     getVersion: () => ({ version: stubVersion }),
   };
 
-  const routes = createFridayWorkflowRoutes(stubDeps);
+  const routes = createFridayWorkflowRoutes({
+    ...stubDeps,
+    allowTestOnlyWorkflowCatalogMutationExecution: true,
+  });
 
   it("registers 8 workflow routes", () => {
     expect(routes).toHaveLength(8);
@@ -132,5 +135,28 @@ describe("FridayWorkflowRoutes", () => {
         body: { slug: "wf", name: "Workflow", graph: {} },
       })),
     ).resolves.toEqual({ workflow: stubWorkflow, version: stubVersion });
+  });
+
+  it("fail-closes workflow catalog mutations by default before TS service calls", async () => {
+    const createWorkflow = vi.fn(() => ({ workflow: stubWorkflow, version: stubVersion }));
+    const defaultRoutes = createFridayWorkflowRoutes({
+      ...stubDeps,
+      createWorkflow,
+    });
+    const route = defaultRoutes.find((r) => r.operationId === "workflows.create")!;
+
+    await expect(
+      route.handler(makeCtx({
+        body: { slug: "wf", name: "Workflow", graph: {} },
+      })),
+    ).rejects.toMatchObject({
+      code: "TS_RUNTIME_WORKFLOW_CATALOG_MUTATION_RETIRED",
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_workflow_catalog_write_entrypoint_required",
+      },
+    });
+    expect(createWorkflow).not.toHaveBeenCalled();
   });
 });

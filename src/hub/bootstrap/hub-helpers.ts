@@ -1858,6 +1858,10 @@ export interface FridayHubConfig {
   allowTestOnlySkillGeneratorExecution?: boolean;
   /** Test-oracle only; production hub creation must leave workflow generator sessions fail-closed. */
   allowTestOnlyWorkflowGeneratorExecution?: boolean;
+  /** Test-oracle only; production hub creation must leave workflow catalog mutations fail-closed. */
+  allowTestOnlyWorkflowCatalogMutationExecution?: boolean;
+  /** Test-oracle only; production hub creation must leave workflow deploy fail-closed. */
+  allowTestOnlyWorkflowDeployExecution?: boolean;
   /** Test-oracle only; production hub creation must leave auto-fix execution fail-closed. */
   allowTestOnlyAutoFixExecution?: boolean;
   /** Test-oracle only; production hub creation must leave desktop action execution fail-closed. */
