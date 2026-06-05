@@ -451,7 +451,7 @@ describe("createFridaySkillRoutes", () => {
     ).rejects.toThrow(FridayDomainError);
   });
 
-  it("executes a skill through the runtime executor instead of returning a dispatch-only placeholder", async () => {
+  it("fail-closes skill execution by default without invoking the TypeScript executor", async () => {
     const lifecycle = makeLifecycle();
     const executor = makeExecutor();
     const routes = createFridaySkillRoutes({
@@ -474,6 +474,52 @@ describe("createFridaySkillRoutes", () => {
       } as never,
       lifecycle: lifecycle as never,
       skillExecutor: executor as never,
+    });
+
+    await expect(
+      routes.find((item) => item.operationId === "skills.run")!.handler(makeCtx({
+        params: { skillId: "skill.alpha" },
+        body: {
+          input: { name: "world" },
+          channel: "api",
+          timeoutMs: 1000,
+        },
+      })),
+    ).rejects.toMatchObject({
+      code: "TS_RUNTIME_SKILL_RUNS_RETIRED",
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_skill_run_entrypoint_required",
+      },
+    });
+    expect(executor.execute).not.toHaveBeenCalled();
+  });
+
+  it("executes a skill through the runtime executor instead of returning a dispatch-only placeholder when the test oracle opts in", async () => {
+    const lifecycle = makeLifecycle();
+    const executor = makeExecutor();
+    const routes = createFridaySkillRoutes({
+      skillRegistry: {
+        list: () => [],
+        get: vi.fn(() => ({
+          source: "bundled",
+          origin: "bundled",
+          manifest: {
+            id: "skill.alpha",
+            kind: "conversation",
+            runtime: { kind: "shell" },
+            requirements: { bins: [], env: [], config: [], os: [] },
+            executionTargets: {
+              allowedSatelliteTypes: ["desktop"],
+              requiredCapabilities: [],
+            },
+          },
+        })),
+      } as never,
+      lifecycle: lifecycle as never,
+      skillExecutor: executor as never,
+      allowTestOnlySkillRunExecution: true,
     });
 
     const result = await routes.find((item) => item.operationId === "skills.run")!.handler(makeCtx({
@@ -518,6 +564,7 @@ describe("createFridaySkillRoutes", () => {
       } as never,
       lifecycle: lifecycle as never,
       skillExecutor: executor as never,
+      allowTestOnlySkillRunExecution: true,
     });
 
     const result = await routes.find((item) => item.operationId === "skills.run")!.handler(makeCtx({
@@ -559,6 +606,7 @@ describe("createFridaySkillRoutes", () => {
       } as never,
       lifecycle: lifecycle as never,
       skillExecutor: executor as never,
+      allowTestOnlySkillRunExecution: true,
     });
 
     await expect(
@@ -599,6 +647,7 @@ describe("createFridaySkillRoutes", () => {
       getSkillLifecycleStatus: (skillId) =>
         skillId === "skill.alpha" ? "not_installed" : undefined,
       skillExecutor: executor as never,
+      allowTestOnlySkillRunExecution: true,
     });
 
     await expect(
@@ -635,6 +684,7 @@ describe("createFridaySkillRoutes", () => {
         } as never,
         lifecycle: lifecycle as never,
         skillExecutor: executor as never,
+        allowTestOnlySkillRunExecution: true,
       });
 
       await expect(
@@ -677,6 +727,7 @@ describe("createFridaySkillRoutes", () => {
         } as never,
         lifecycle: lifecycle as never,
         skillExecutor: executor as never,
+        allowTestOnlySkillRunExecution: true,
       });
 
       const result = await routes.find((item) => item.operationId === "skills.run")!.handler(makeCtx({

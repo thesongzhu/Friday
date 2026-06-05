@@ -41,12 +41,27 @@ export interface FridaySkillRoutesDeps {
   skillRegistry?: FridaySkillRegistry;
 	  lifecycle?: FridaySkillLifecycleService;
 	  skillExecutor?: FridaySkillExecutor;
+	  allowTestOnlySkillRunExecution?: boolean;
 	  managedSkillsDir?: string;
 	  getSkillLifecycleStatus?: (skillId: string) => string | null | undefined;
 	  canonicalMutationGate?: FridayMutatingActionGate;
 	  registerRetiredLegacySkillMutationRoutes?: boolean;
 	  upgradeAnalysis?: FridaySkillUpgradeAnalysisService;
 	}
+
+function throwRetiredSkillRunExecution(): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_SKILL_RUNS_RETIRED",
+    "Skill run execution is fail-closed while runtime ownership is being moved out of TypeScript.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_skill_run_entrypoint_required",
+      },
+    },
+  );
+}
 
 function createFridaySkillContentUpdateMutatingActionRequest(input: {
   skillId: string;
@@ -824,6 +839,9 @@ export function createFridaySkillRoutes(
         throw new FridayDomainError("VALIDATION_ERROR", "\"skillId\" is required", {
           httpStatus: 400,
         });
+      }
+      if (deps.allowTestOnlySkillRunExecution !== true) {
+        throwRetiredSkillRunExecution();
       }
       const body = asRecord(ctx.body);
       const input = (body.input ?? {}) as Record<string, string>;
