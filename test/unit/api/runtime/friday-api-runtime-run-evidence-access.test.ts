@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { createFridayApiRuntime } from "#api";
 import type { CreateFridayApiRuntimeDeps, FridayAuthPrincipal } from "#api";
+import type { FridayHttpRawTextResponse } from "../../../../src/api/http/friday-http-raw-response.js";
 import type { FridayProviderService } from "#providers";
 import type { FridayCompiledWorkflowGraphV2 } from "#workflows";
 import { createTestDb, createTestIdGenerator } from "../../../helpers/friday-test-db.helper.js";
@@ -516,6 +517,158 @@ describe("API runtime run evidence access control", () => {
       code: "WORKFLOW_RUN_EVIDENCE_FORBIDDEN",
       httpStatus: 403,
     });
+
+    deps.db.close();
+  });
+
+  it("redacts workflow run read, timeline, evidence export, and download projections", async () => {
+    const deps = makeDeps();
+    const runtime = createFridayApiRuntime(deps);
+
+    const workflow = runtime.workflowCrud.createWorkflow({
+      slug: "redacted-workflow-run-read-test",
+      name: "Redacted Workflow Run Read Test",
+    });
+    const version = runtime.workflowCrud.createVersion(
+      workflow.id,
+      makeMinimalGraph(workflow.id, "placeholder"),
+    );
+
+    const ownerPrincipal: FridayAuthPrincipal = {
+      principalType: "user",
+      principalId: "tenant-owner",
+      userId: "test-user",
+      role: "viewer",
+      scopes: ["workflow.write", "workflow.read"],
+      tokenId: "token-owner",
+      tokenKind: "access",
+      issuedAt: NOW,
+    };
+
+    const route = (operationId: string) => {
+      const found = runtime.routes.getRoutes().find((candidate) => candidate.operationId === operationId);
+      expect(found).toBeDefined();
+      return found!;
+    };
+    const invoke = (operationId: string, overrides: Record<string, unknown>) =>
+      route(operationId).handler({
+        params: {},
+        query: {},
+        body: null,
+        headers: {},
+        principal: ownerPrincipal,
+        requestId: `req-${operationId}`,
+        receivedAt: NOW,
+        ...overrides,
+      } as never);
+
+    const started = await invoke("runs.start", {
+      body: {
+        workflowId: workflow.id,
+        workflowVersionId: version.id,
+        triggerType: "manual",
+        triggerPayload: {
+          privateTranscript: "raw-transcript-secret",
+          providerId: "provider-secret",
+        },
+        dryRun: true,
+      },
+    }) as { run: { id: string } };
+    const runId = started.run.id;
+
+    deps.db.withWriteTransaction((db) => {
+      db.prepare(
+        `INSERT INTO realtime_events (
+           event_id, stream_id, seq, event, payload_json, emitted_at,
+           correlation_id, state_version_json, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "evt-private-timeline",
+        `run:${runId}`,
+        999,
+        "workflow.node.private",
+        JSON.stringify({
+          nodeId: "trigger",
+          attempt: 1,
+          status: "completed",
+          privateTranscript: "raw-transcript-secret",
+          filePath: "/private/tmp/friday/private-evidence.json",
+          providerId: "provider-secret",
+        }),
+        NOW,
+        "correlation-secret",
+        null,
+        NOW,
+      );
+    });
+
+    const runRead = await invoke("runs.get", {
+      params: { runId },
+    }) as { run: Record<string, unknown> };
+    expect(runRead.run.triggerPayload).toBeUndefined();
+    expect(runRead.run.context).toBeUndefined();
+    expect(runRead.run.startedByUserId).toBeUndefined();
+    expect(JSON.stringify(runRead)).not.toContain("raw-transcript-secret");
+    expect(JSON.stringify(runRead)).not.toContain("token-owner");
+
+    const nodesRead = await invoke("runs.list.nodes", {
+      params: { runId },
+    }) as { items: Array<Record<string, unknown>> };
+    for (const node of nodesRead.items) {
+      expect(node.input).toBeUndefined();
+      expect(node.output).toBeUndefined();
+      expect(node.satelliteId).toBeUndefined();
+      expect(node.leaseOwner).toBeUndefined();
+      expect(node.idempotencyKey).toBe("redacted");
+    }
+
+    const timelineRead = await invoke("runs.timeline", {
+      params: { runId },
+      query: { afterSeq: 998, limit: 5 },
+    }) as { items: Array<Record<string, unknown>> };
+    expect(timelineRead.items).toHaveLength(1);
+    expect(timelineRead.items[0]!.payload).toMatchObject({
+      redacted: true,
+      shape: {
+        kind: "object",
+      },
+    });
+    expect(JSON.stringify(timelineRead)).not.toContain("raw-transcript-secret");
+    expect(JSON.stringify(timelineRead)).not.toContain("/private/tmp/friday");
+    expect(JSON.stringify(timelineRead)).not.toContain("provider-secret");
+
+    await invoke("runs.evidence.export", {
+      params: { runId },
+      body: {},
+    });
+
+    const exportsList = await invoke("runs.evidence.exports.list", {
+      params: { runId },
+    }) as { items: Array<Record<string, unknown>> };
+    expect(exportsList.items).toHaveLength(1);
+    const exportId = exportsList.items[0]!.exportId as string;
+    expect(exportsList.items[0]!.artifactId).toBe("redacted");
+    expect(exportsList.items[0]!.uri).toBe(`friday://workflow-runs/${runId}/evidence-exports/${exportId}.json`);
+    expect(exportsList.items[0]!.filePersisted).toBe(false);
+    expect(JSON.stringify(exportsList)).not.toContain("file://");
+
+    const exportDetail = await invoke("runs.evidence.exports.get", {
+      params: { runId, exportId },
+    }) as { export: Record<string, unknown>; evidence: Record<string, unknown> };
+    expect(exportDetail.export.artifactId).toBe("redacted");
+    expect(exportDetail.export.uri).toBe(`friday://workflow-runs/${runId}/evidence-exports/${exportId}.json`);
+    expect(JSON.stringify(exportDetail)).not.toContain("file://");
+
+    const download = await invoke("runs.evidence.exports.download", {
+      params: { runId, exportId },
+    }) as FridayHttpRawTextResponse;
+    expect(download.__fridayRawTextResponse).toBe(true);
+    expect(download.headers?.["X-Friday-Evidence-File-Persisted"]).toBe("false");
+    const downloaded = JSON.parse(download.body) as Record<string, unknown>;
+    expect(JSON.stringify(downloaded)).not.toContain("file://");
+    expect(JSON.stringify(downloaded)).not.toContain("/private/tmp/friday");
+    expect(JSON.stringify(downloaded)).not.toContain("raw-transcript-secret");
+    expect((downloaded.export as Record<string, unknown>).artifactId).toBe("redacted");
 
     deps.db.close();
   });

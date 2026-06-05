@@ -718,6 +718,90 @@
       "next_action": "Replace fail-closed response with a Rust-owned workflow resume/control entrypoint when available."
     },
     {
+      "id": "workflow_runs_get_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/workflow-runs/:runId",
+        "operationId": "runs.get"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep workflow run detail as a bounded redacted compatibility projection while TypeScript workflow execution and controls are fail-closed or moved to Rust-owned product truth. This read omits trigger payload, principal context, satellite/user ids, correlation ids, and raw failure details; it does not start, retry, resume, cancel, export evidence, or mark completion.",
+      "next_action": "Replace this compatibility read with a Rust-owned workflow run projection when available."
+    },
+    {
+      "id": "workflow_runs_nodes_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/workflow-runs/:runId/nodes",
+        "operationId": "runs.list.nodes"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep workflow run node list as a bounded redacted compatibility projection while TypeScript workflow execution and controls are fail-closed or moved to Rust-owned product truth. This read omits node input/output, idempotency keys, lease owners, satellite ids, and raw error details; it does not execute or complete workflow nodes.",
+      "next_action": "Replace this compatibility read with a Rust-owned workflow node projection when available."
+    },
+    {
+      "id": "workflow_runs_timeline_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/workflow-runs/:runId/timeline",
+        "operationId": "runs.timeline"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep workflow run timeline as a bounded redacted compatibility projection while TypeScript workflow execution and controls are fail-closed or moved to Rust-owned product truth. This read preserves cursorable event metadata but replaces raw event payloads with shape summaries; it does not treat timeline reads as completion.",
+      "next_action": "Replace this compatibility read with a Rust-owned bounded timeline projection when available."
+    },
+    {
+      "id": "workflow_runs_evidence_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/workflow-runs/:runId/evidence",
+        "operationId": "runs.evidence"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep workflow run evidence as a bounded redacted compatibility projection while TypeScript workflow execution and controls are fail-closed or moved to Rust-owned product truth. This read preserves proof status and summaries while redacting raw event payloads, trace messages, principal context, file paths, and private artifact ids.",
+      "next_action": "Replace this compatibility read with a Rust-owned evidence projection when available."
+    },
+    {
+      "id": "workflow_runs_evidence_exports_list_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/workflow-runs/:runId/evidence/exports",
+        "operationId": "runs.evidence.exports.list"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep workflow run evidence export list as a bounded redacted compatibility projection while TypeScript workflow execution and evidence-export mutation remain blocked or separately owned. This read exposes proof refs and checksums but rewrites file URIs and private artifact ids.",
+      "next_action": "Replace this compatibility read with a Rust-owned evidence export index when available."
+    },
+    {
+      "id": "workflow_runs_evidence_exports_get_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/workflow-runs/:runId/evidence/exports/:exportId",
+        "operationId": "runs.evidence.exports.get"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep workflow run evidence export detail as a bounded redacted compatibility projection while TypeScript workflow execution and evidence-export mutation remain blocked or separately owned. This read exposes proof refs and sanitized evidence but rewrites file URIs, private artifact ids, raw event payloads, and trace messages.",
+      "next_action": "Replace this compatibility read with a Rust-owned evidence export detail projection when available."
+    },
+    {
+      "id": "workflow_runs_evidence_exports_download_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/workflow-runs/:runId/evidence/exports/:exportId/download",
+        "operationId": "runs.evidence.exports.download"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep workflow run evidence export download as a bounded redacted compatibility projection while TypeScript workflow execution and evidence-export mutation remain blocked or separately owned. This download serializes sanitized evidence JSON instead of raw persisted file content or private filesystem paths.",
+      "next_action": "Replace this compatibility read with a Rust-owned evidence export download projection when available."
+    },
+    {
       "id": "skills_run",
       "route": {
         "method": "POST",
