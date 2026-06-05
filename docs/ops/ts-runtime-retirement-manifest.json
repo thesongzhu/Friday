@@ -718,6 +718,19 @@
       "next_action": "Replace fail-closed response with a Rust-owned workflow resume/control entrypoint when available."
     },
     {
+      "id": "workflow_runs_evidence_export",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflow-runs/:runId/evidence/exports",
+        "operationId": "runs.evidence.export"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/runtime/friday-api-runtime.ts wires default/live runs.evidence.export to TS_RUNTIME_WORKFLOW_RUN_EVIDENCE_EXPORT_RETIRED before resolving TypeScript workflow run evidence state or calling workflowRuntime.evidence.exportRunEvidence; the legacy TS evidence export path is reachable only through explicit allowTestOnlyWorkflowRunExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow run evidence export entrypoint when available."
+    },
+    {
       "id": "workflow_runs_get_compat",
       "route": {
         "method": "GET",

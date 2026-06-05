@@ -194,8 +194,9 @@ export interface CreateFridayApiRuntimeDeps {
   /**
    * Test-oracle only: allows legacy TypeScript workflow run execution/control
    * in isolated mock/unit validation. Production/runtime callers must leave
-   * this unset so workflow run start, cancel, retry, and resume stay
-   * fail-closed until Rust owns workflow execution truth.
+   * this unset so workflow run start, cancel, retry, resume, and evidence
+   * export mutation stay fail-closed until Rust owns workflow execution and
+   * evidence-export truth.
    */
   allowTestOnlyWorkflowRunExecution?: boolean;
   /**
