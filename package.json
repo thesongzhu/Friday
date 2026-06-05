@@ -109,6 +109,7 @@
     "check:security-doctor": "node scripts/ops/check-friday-security-doctor.mjs",
     "check:secret-patterns": "node scripts/quality/check-provider-key-patterns.mjs",
     "check:public-source-hygiene": "node scripts/quality/check-public-source-hygiene.mjs",
+    "check:ts-runtime-retirement": "node scripts/quality/check-ts-runtime-retirement.mjs",
     "check:audit-integrity": "node scripts/ops/check-friday-audit-integrity.mjs",
     "setup:hooks": "bash scripts/setup-hooks.sh",
     "ops:converge-runtime": "bash scripts/ops/friday-converge-runtime.sh",
