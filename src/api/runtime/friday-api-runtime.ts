@@ -1037,6 +1037,19 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       },
     );
   };
+  const throwRetiredWorkflowRunEvidenceExport = (): never => {
+    throw new FridayDomainError(
+      "TS_RUNTIME_WORKFLOW_RUN_EVIDENCE_EXPORT_RETIRED",
+      "Workflow run evidence export mutation is fail-closed while evidence-export ownership is being moved out of TypeScript.",
+      {
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_workflow_run_evidence_export_entrypoint_required",
+        },
+      },
+    );
+  };
 
   const requireWorkflowBuilderOperator = (
     principal: FridayAuthPrincipal | null,
@@ -2260,6 +2273,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       };
     },
     exportRunEvidence: (runId, input, principal) => {
+      if (deps.allowTestOnlyWorkflowRunExecution !== true) {
+        void runId;
+        void input;
+        void principal;
+        throwRetiredWorkflowRunEvidenceExport();
+      }
       resolveAuthorizedRunForEvidence(runId, principal);
       return workflowRuntime.evidence.exportRunEvidence(
         runId,

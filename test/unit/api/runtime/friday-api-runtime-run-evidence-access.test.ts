@@ -49,7 +49,9 @@ function makeProviderService(): FridayProviderService {
   } as FridayProviderService;
 }
 
-function makeDeps(): CreateFridayApiRuntimeDeps {
+function makeDeps(options: { allowTestOnlyWorkflowRunExecution?: boolean } = {
+  allowTestOnlyWorkflowRunExecution: true,
+}): CreateFridayApiRuntimeDeps {
   return {
     db: createTestDb(),
     idGenerator: createTestIdGenerator(),
@@ -59,7 +61,9 @@ function makeDeps(): CreateFridayApiRuntimeDeps {
     computeChecksum: (content: string) => createHash("sha256").update(content).digest("hex"),
     resolveSkill: () => ({ id: "test-skill" }),
     invokeSkill: async () => ({ ok: true }),
-    allowTestOnlyWorkflowRunExecution: true,
+    ...(options.allowTestOnlyWorkflowRunExecution === true
+      ? { allowTestOnlyWorkflowRunExecution: true }
+      : {}),
   };
 }
 
@@ -85,6 +89,41 @@ function makeMinimalGraph(
 }
 
 describe("API runtime run evidence access control", () => {
+  it("keeps workflow evidence export mutation fail-closed outside test-oracle wiring", async () => {
+    const deps = makeDeps({ allowTestOnlyWorkflowRunExecution: false });
+    const runtime = createFridayApiRuntime(deps);
+    const route = runtime.routes.getRoutes().find((candidate) => candidate.operationId === "runs.evidence.export");
+    expect(route).toBeDefined();
+
+    await expect(route!.handler({
+      params: { runId: "run-retired" },
+      query: {},
+      body: {},
+      headers: {},
+      principal: {
+        principalType: "user",
+        principalId: "tenant-owner",
+        userId: "test-user",
+        role: "operator",
+        scopes: ["workflow.write", "workflow.read"],
+        tokenId: "token-owner",
+        tokenKind: "access",
+        issuedAt: NOW,
+      },
+      requestId: "req-retired-export",
+      receivedAt: NOW,
+    } as never)).rejects.toMatchObject({
+      code: "TS_RUNTIME_WORKFLOW_RUN_EVIDENCE_EXPORT_RETIRED",
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_workflow_run_evidence_export_entrypoint_required",
+      },
+    });
+
+    deps.db.close();
+  });
+
   it("blocks non-owner principal from run metadata route as well", async () => {
     const deps = makeDeps();
     const runtime = createFridayApiRuntime(deps);
