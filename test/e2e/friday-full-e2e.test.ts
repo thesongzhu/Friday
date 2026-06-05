@@ -122,6 +122,7 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
       skillDirs: [],
       port: 0,
       logRequests: false,
+      allowTestOnlyWorkflowRunExecution: true,
     });
     await hub.start();
 
