@@ -464,11 +464,24 @@
         "path": "/v1/desktop/actions/execute",
         "operationId": "desktop.actions.execute"
       },
-      "classification": "ts_runtime_blocker",
+      "classification": "fail_closed",
       "user_triggerable": true,
-      "owner": "ts-runtime-retirement",
-      "blocker": "Desktop action execution remains TypeScript-owned.",
-      "next_action": "Route desktop execution through Rust-owned action authority or fail-close action execution."
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.actions.execute to TS_RUNTIME_DESKTOP_ACTION_EXECUTION_RETIRED after request validation and before calling the TypeScript desktop action service; legacy TS execution is reachable only through explicit allowTestOnlyDesktopActionExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned desktop action execution entrypoint when available."
+    },
+    {
+      "id": "desktop_actions_batch",
+      "route": {
+        "method": "POST",
+        "path": "/v1/desktop/actions/batch",
+        "operationId": "desktop.actions.batch"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.actions.batch to TS_RUNTIME_DESKTOP_ACTION_EXECUTION_RETIRED after request validation and before calling the TypeScript desktop batch action service; legacy TS execution is reachable only through explicit allowTestOnlyDesktopActionExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned desktop batch action execution entrypoint when available."
     }
   ]
 }
