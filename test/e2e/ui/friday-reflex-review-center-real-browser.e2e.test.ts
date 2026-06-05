@@ -667,7 +667,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Reflex Review Center real-browser f
   });
 
   it("approves a workflow candidate in the real Review Center UI and runs the published workflow", { timeout: 180_000 }, async () => {
-    env = await createFridayRealBrowserE2eEnv();
+    env = await createFridayRealBrowserE2eEnv({ allowTestOnlyWorkflowRunExecution: true });
     await completeSetup(env);
     const userId = await readUserId(env);
 
@@ -805,7 +805,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Reflex Review Center real-browser f
   });
 
   it("keeps a Review Center approved workflow executable after a hub restart", { timeout: 180_000 }, async () => {
-    env = await createFridayRealBrowserE2eEnv();
+    env = await createFridayRealBrowserE2eEnv({ allowTestOnlyWorkflowRunExecution: true });
     await completeSetup(env);
     const userId = await readUserId(env);
 
