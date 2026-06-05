@@ -41,6 +41,7 @@ export interface FridayRealBrowserE2eEnv {
 
 export interface FridayRealBrowserE2eEnvOptions {
   allowTestOnlyWorkflowRunExecution?: boolean;
+  allowTestOnlySkillRunExecution?: boolean;
 }
 
 function resolveUiStaticDir(): string {
@@ -61,6 +62,7 @@ export async function createFridayRealBrowserE2eEnv(
   let runtime: RealHubEnv;
   const hubConfig = {
     allowTestOnlyWorkflowRunExecution: options.allowTestOnlyWorkflowRunExecution,
+    allowTestOnlySkillRunExecution: options.allowTestOnlySkillRunExecution,
   };
   try {
     runtime = await createRealHubEnvFromStateDir(stateDir, {

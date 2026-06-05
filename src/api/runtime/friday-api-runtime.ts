@@ -2794,6 +2794,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       skillRegistry: deps.skillRegistry,
       lifecycle: deps.skillLifecycle,
       skillExecutor: deps.skillExecutor,
+      allowTestOnlySkillRunExecution: deps.allowTestOnlySkillRunExecution,
 	      managedSkillsDir: deps.managedSkillsDir,
 	      getSkillLifecycleStatus: (skillId) => skillRepo.getSkillById(deps.db.writer, skillId)?.status,
 	      canonicalMutationGate,

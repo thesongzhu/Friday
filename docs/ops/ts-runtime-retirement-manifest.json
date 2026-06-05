@@ -412,11 +412,11 @@
         "path": "/v1/skills/:skillId/run",
         "operationId": "skills.run"
       },
-      "classification": "ts_runtime_blocker",
+      "classification": "fail_closed",
       "user_triggerable": true,
-      "owner": "ts-runtime-retirement",
-      "blocker": "Executes skill through TypeScript skill executor.",
-      "next_action": "Replace TypeScript skill execution with Rust-owned execution truth or fail-close skill runs."
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-skill-routes.ts wires default/live skills.run to TS_RUNTIME_SKILL_RUNS_RETIRED before resolving lifecycle state or calling the TypeScript skillExecutor; the legacy TS execution path is reachable only through explicit allowTestOnlySkillRunExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned skill execution entrypoint when available."
     },
     {
       "id": "autofix_execute",
