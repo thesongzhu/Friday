@@ -1311,6 +1311,149 @@
       "executes_product_logic": false,
       "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.actions.batch to TS_RUNTIME_DESKTOP_ACTION_EXECUTION_RETIRED after request validation and before calling the TypeScript desktop batch action service; legacy TS execution is reachable only through explicit allowTestOnlyDesktopActionExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned desktop batch action execution entrypoint when available."
+    },
+    {
+      "id": "desktop_actions_cancel",
+      "route": {
+        "method": "POST",
+        "path": "/v1/desktop/actions/:actionId/cancel",
+        "operationId": "desktop.actions.cancel"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.actions.cancel to TS_RUNTIME_DESKTOP_ACTION_CONTROL_RETIRED after request validation and before calling the TypeScript desktop action cancel service (which aborts an in-flight live action); legacy TS execution is reachable only through explicit allowTestOnlyDesktopActionControlExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned desktop action control entrypoint when available."
+    },
+    {
+      "id": "desktop_actions_log",
+      "route": {
+        "method": "GET",
+        "path": "/v1/desktop/actions/log",
+        "operationId": "desktop.actions.log"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.actions.log to TS_RUNTIME_DESKTOP_ACTION_CONTROL_RETIRED before reading the TypeScript desktop action log, whose entries carry raw action payloads (typed text, file paths/contents, clipboard, screenshots, element values) with no safe bounded projection; legacy TS reads are reachable only through explicit allowTestOnlyDesktopActionControlExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned redacted desktop action audit projection when available."
+    },
+    {
+      "id": "desktop_recordings_start",
+      "route": {
+        "method": "POST",
+        "path": "/v1/desktop/recordings",
+        "operationId": "desktop.recordings.start"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.recordings.start to TS_RUNTIME_DESKTOP_RECORDING_RETIRED after request validation and before calling the TypeScript desktop recording service; legacy TS execution is reachable only through explicit allowTestOnlyDesktopRecordingExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned desktop recording entrypoint when available."
+    },
+    {
+      "id": "desktop_recordings_stop",
+      "route": {
+        "method": "POST",
+        "path": "/v1/desktop/recordings/:recordingId/stop",
+        "operationId": "desktop.recordings.stop"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.recordings.stop to TS_RUNTIME_DESKTOP_RECORDING_RETIRED after request validation and before calling the TypeScript desktop recording service; legacy TS execution is reachable only through explicit allowTestOnlyDesktopRecordingExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned desktop recording entrypoint when available."
+    },
+    {
+      "id": "desktop_recordings_pause",
+      "route": {
+        "method": "POST",
+        "path": "/v1/desktop/recordings/:recordingId/pause",
+        "operationId": "desktop.recordings.pause"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.recordings.pause to TS_RUNTIME_DESKTOP_RECORDING_RETIRED after request validation and before calling the TypeScript desktop recording service; legacy TS execution is reachable only through explicit allowTestOnlyDesktopRecordingExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned desktop recording entrypoint when available."
+    },
+    {
+      "id": "desktop_recordings_resume",
+      "route": {
+        "method": "POST",
+        "path": "/v1/desktop/recordings/:recordingId/resume",
+        "operationId": "desktop.recordings.resume"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.recordings.resume to TS_RUNTIME_DESKTOP_RECORDING_RETIRED after request validation and before calling the TypeScript desktop recording service; legacy TS execution is reachable only through explicit allowTestOnlyDesktopRecordingExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned desktop recording entrypoint when available."
+    },
+    {
+      "id": "desktop_recordings_replay",
+      "route": {
+        "method": "POST",
+        "path": "/v1/desktop/recordings/:recordingId/replay",
+        "operationId": "desktop.recordings.replay"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.recordings.replay to TS_RUNTIME_DESKTOP_RECORDING_RETIRED after request validation and before calling the TypeScript desktop recording service (which re-executes recorded steps against the live desktop); legacy TS execution is reachable only through explicit allowTestOnlyDesktopRecordingExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned desktop recording replay entrypoint when available."
+    },
+    {
+      "id": "desktop_recordings_delete",
+      "route": {
+        "method": "DELETE",
+        "path": "/v1/desktop/recordings/:recordingId",
+        "operationId": "desktop.recordings.delete"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.recordings.delete to TS_RUNTIME_DESKTOP_RECORDING_RETIRED after request validation and before calling the TypeScript desktop recording service; legacy TS execution is reachable only through explicit allowTestOnlyDesktopRecordingExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned desktop recording entrypoint when available."
+    },
+    {
+      "id": "desktop_recordings_steps_list",
+      "route": {
+        "method": "GET",
+        "path": "/v1/desktop/recordings/:recordingId/steps",
+        "operationId": "desktop.recordings.steps.list"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.recordings.steps.list to TS_RUNTIME_DESKTOP_RECORDING_RETIRED before reading the TypeScript recording step stream, whose steps carry raw captured actions, element values, results, and parameter bindings (typed text, file paths, coordinates) with no safe bounded projection; legacy TS reads are reachable only through explicit allowTestOnlyDesktopRecordingExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned redacted desktop recording step projection when available."
+    },
+    {
+      "id": "desktop_elements_inspect",
+      "route": {
+        "method": "POST",
+        "path": "/v1/desktop/elements/inspect",
+        "operationId": "desktop.elements.inspect"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.elements.inspect to TS_RUNTIME_DESKTOP_ELEMENT_INSPECTION_RETIRED after request validation and before calling the TypeScript desktop adapter, which actively queries the live desktop accessibility tree and returns raw element name/value/window title/accessibility attributes; legacy TS execution is reachable only through explicit allowTestOnlyDesktopElementInspectionExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned desktop element inspection entrypoint when available."
+    },
+    {
+      "id": "desktop_elements_search",
+      "route": {
+        "method": "GET",
+        "path": "/v1/desktop/elements/search",
+        "operationId": "desktop.elements.search"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-desktop-routes.ts wires default/live desktop.elements.search to TS_RUNTIME_DESKTOP_ELEMENT_INSPECTION_RETIRED after request validation and before calling the TypeScript desktop adapter, which actively queries the live desktop accessibility tree and returns raw element name/value/window title/accessibility attributes; legacy TS execution is reachable only through explicit allowTestOnlyDesktopElementInspectionExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned desktop element search entrypoint when available."
     }
   ]
 }
