@@ -6,9 +6,16 @@
 //! catch-up logic — no networking and no encryption (the transport layer seals
 //! the serialized payload; see Unit-4 transport slice).
 //!
-//! Scope (gate §4.2): the first-slice message kinds plus the Provider Workspace wire
-//! messages (session/action projection, action request/result), included as of schema
-//! v3. Session-detail, attachments, and workflow messages remain deferred to their owning
+//! Scope (gate §4.2): the first-slice message kinds plus Provider Workspace wire
+//! messages (schema v3), Mission Spine surface projections (schema v4),
+//! redacted route-decision proof traces (schema v5), and refs-only Mission
+//! timeline snapshots (schema v6).
+//! Mission-bound Ask Friday requests (schema v7).
+//! Mission timeline surface events (schema v8).
+//! Mission lifecycle commands/results (schema v9).
+//! Bounded Mission timeline hydration (schema v10).
+//! Mission intake/preflight from mobile/desktop/channel surfaces (schema v11).
+//! Session-detail, attachments, and workflow messages remain deferred to their owning
 //! units; for the provider lane, what is still deferred is NOT these wire types but the
 //! real provider ADAPTERS (live dispatch) and the operator-gated remote proof lanes. The
 //! actual networked WebSocket + relay + live key exchange are the Unit-4 transport
@@ -19,9 +26,340 @@ use std::fmt;
 use thiserror::Error;
 
 /// Highest wire schema version this build speaks.
-pub const CURRENT_SCHEMA_VERSION: u16 = 3;
+pub const CURRENT_SCHEMA_VERSION: u16 = 11;
 /// The inclusive range of versions this build supports.
-pub const SUPPORTED: VersionRange = VersionRange { min: 1, max: 3 };
+pub const SUPPORTED: VersionRange = VersionRange { min: 1, max: 11 };
+
+/// A surface-safe Mission projection. This is the wire shape mobile, desktop, and
+/// channel surfaces may render. It intentionally has no raw provider ids, channel
+/// chat ids, cwd, account hashes, external URLs, raw transcripts, or secrets.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissionSurfaceProjectionWire {
+    pub surface_thread_id: String,
+    pub friday_conversation_id: String,
+    pub mission_id: String,
+    pub surface_kind: String,
+    pub visibility_policy: String,
+    pub title: String,
+    pub status: String,
+    pub truth_status: String,
+    pub current_focus_summary: String,
+    pub proof_refs: Vec<String>,
+    pub updated_at_ms: i64,
+}
+
+impl From<friday_core::MissionSurfaceProjection> for MissionSurfaceProjectionWire {
+    fn from(value: friday_core::MissionSurfaceProjection) -> Self {
+        Self {
+            surface_thread_id: value.surface_thread_id,
+            friday_conversation_id: value.friday_conversation_id,
+            mission_id: value.mission_id,
+            surface_kind: value.surface_kind.as_str().to_string(),
+            visibility_policy: value.visibility_policy.as_str().to_string(),
+            title: value.title,
+            status: value.status.as_str().to_string(),
+            truth_status: value.truth_status.as_str().to_string(),
+            current_focus_summary: value.current_focus_summary,
+            proof_refs: value.proof_refs,
+            updated_at_ms: value.updated_at_ms,
+        }
+    }
+}
+
+/// Surface-safe route judgment attached to a Mission snapshot. This preserves
+/// Friday's lane/agent/channel judgment path for UI and handoff dashboards, but
+/// carries only redacted refs/counts. Raw channel chat ids, provider thread ids,
+/// trace refs, cwd, account hashes, and transcripts stay Hub-side.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteDecisionProjectionWire {
+    pub route_decision_ref: String,
+    pub mission_id: String,
+    pub work_item_id: String,
+    pub selected_lane: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_target_label: Option<String>,
+    pub why_this_route: String,
+    pub considered_options: Vec<String>,
+    pub deferred_options: Vec<String>,
+    pub previous_pitfalls: Vec<String>,
+    pub inheritable_context: Vec<String>,
+    pub conflict_ref_count: u64,
+    pub proof_requirements: Vec<String>,
+    pub ownership_claim_count: u64,
+    pub trace_ref_count: u64,
+    pub created_at_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_ms: Option<i64>,
+}
+
+impl From<friday_core::RouteDecisionProjection> for RouteDecisionProjectionWire {
+    fn from(value: friday_core::RouteDecisionProjection) -> Self {
+        Self {
+            route_decision_ref: value.route_decision_ref,
+            mission_id: value.mission_id,
+            work_item_id: value.work_item_id,
+            selected_lane: value.selected_lane.as_str().to_string(),
+            selected_target_label: value.selected_target_label,
+            why_this_route: value.why_this_route,
+            considered_options: value.considered_options,
+            deferred_options: value.deferred_options,
+            previous_pitfalls: value.previous_pitfalls,
+            inheritable_context: value.inheritable_context,
+            conflict_ref_count: value.conflict_ref_count as u64,
+            proof_requirements: value.proof_requirements,
+            ownership_claim_count: value.ownership_claim_count as u64,
+            trace_ref_count: value.trace_ref_count as u64,
+            created_at_ms: value.created_at_ms,
+            expires_at_ms: value.expires_at_ms,
+        }
+    }
+}
+
+/// Client request for the Mission projections attached to one canonical Friday
+/// conversation. The id must be a Friday-owned conversation id (`fconv_*`), never
+/// a provider thread id, channel chat id, or frontend-local id.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissionProjectionRequestWire {
+    pub friday_conversation_id: String,
+}
+
+/// Hub response carrying every surface projection for a canonical Friday
+/// conversation. Mobile/desktop/channel may filter locally by `surface_kind`, but
+/// the authoritative Mission ids/statuses are shared.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissionProjectionSnapshotWire {
+    pub friday_conversation_id: String,
+    pub generated_at_ms: i64,
+    pub projections: Vec<MissionSurfaceProjectionWire>,
+    #[serde(default)]
+    pub route_decisions: Vec<RouteDecisionProjectionWire>,
+}
+
+/// Client request for one Mission's refs-only timeline/read model. The
+/// conversation id must be canonical; the Mission id is checked Hub-side to
+/// belong to that conversation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissionTimelineRequestWire {
+    pub friday_conversation_id: String,
+    pub mission_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// Client request to change one Mission's lifecycle state. This is a Hub-owned
+/// mutation: the Hub validates the canonical conversation id, Mission ownership,
+/// status transition, actor/reason, and any proof/merge refs before writing.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissionLifecycleRequestWire {
+    pub friday_conversation_id: String,
+    pub mission_id: String,
+    pub target_status: String,
+    pub actor_ref: String,
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merged_into_mission_id: Option<String>,
+}
+
+/// Hub response after a Mission lifecycle command. It returns the changed
+/// Mission status and active Mission list; it does not imply provider/workflow
+/// completion unless the command carried and persisted valid proof.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissionLifecycleResultWire {
+    pub friday_conversation_id: String,
+    pub mission_id: String,
+    pub previous_status: String,
+    pub status: String,
+    pub actor_ref: String,
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merged_into_mission_id: Option<String>,
+    pub active_mission_ids: Vec<String>,
+    pub updated_at_ms: i64,
+}
+
+/// Client request to resolve/create a Mission from one mobile/desktop/channel
+/// surface input. This is a Hub-owned preflight mutation, not a provider/model
+/// call. Duplicate/conflict outcomes must be surfaced instead of silently
+/// creating task debt.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissionIntakeRequestWire {
+    pub friday_conversation_id: String,
+    pub owner_principal: String,
+    pub surface_thread_id: String,
+    pub surface_kind: String,
+    pub delivery_route: String,
+    pub visibility_policy: String,
+    pub mission_id: String,
+    pub work_item_id: String,
+    pub title: String,
+    pub intent: String,
+    pub lane: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_provider_or_agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_ref: Option<String>,
+    #[serde(default)]
+    pub includes_sensitive_context: bool,
+}
+
+/// Hub response for Mission intake/preflight. `status=blocked` means no new
+/// WorkItem was written; duplicate ids tell the client which existing Mission or
+/// WorkItem to show.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissionIntakeResultWire {
+    pub friday_conversation_id: String,
+    pub mission_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_item_id: Option<String>,
+    pub surface_thread_id: String,
+    pub status: String,
+    pub blockers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duplicate_mission_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duplicate_work_item_id: Option<String>,
+    pub created_or_ready: bool,
+}
+
+/// Canonical Mission/WorkItem context for a user-facing request. This is not a
+/// provider thread id or frontend-local chat id; Hub resolves it against Mission
+/// Spine storage before the request can become product work.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissionWorkItemContextWire {
+    pub friday_conversation_id: String,
+    pub mission_id: String,
+    pub work_item_id: String,
+}
+
+/// User-facing Mission metadata for a timeline snapshot. This is Mission truth,
+/// not provider/channel transcript truth.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissionTimelineMissionWire {
+    pub mission_id: String,
+    pub friday_conversation_id: String,
+    pub title: String,
+    pub intent: String,
+    pub status: String,
+    pub why_now: String,
+    pub decision_path_summary: String,
+    pub proof_refs: Vec<String>,
+    pub updated_at_ms: i64,
+}
+
+/// Refs/counts-only WorkItem projection. Raw targets, input refs, output refs,
+/// provider thread ids, channel chat ids, cwd, account ids, and transcripts stay
+/// Hub-side.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissionTimelineWorkItemWire {
+    pub work_item_id: String,
+    pub mission_id: String,
+    pub lane: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_id: Option<String>,
+    pub risk_level: String,
+    pub approval_state: String,
+    pub has_blocker: bool,
+    pub owner_claim_count: u64,
+    pub workspace_ref_count: u64,
+    pub input_ref_count: u64,
+    pub output_ref_count: u64,
+    pub proof_requirements: Vec<String>,
+    pub proof_receipts: Vec<String>,
+    pub updated_at_ms: i64,
+}
+
+/// Redacted Mission link row. `target_ref` and raw `link_id` are intentionally
+/// absent because channel/provider/workflow refs may contain raw provider or
+/// channel identifiers. `link_ref` is a surface projection ref only.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissionTimelineLinkWire {
+    pub link_ref: String,
+    pub mission_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_item_id: Option<String>,
+    pub link_kind: String,
+    pub has_proof: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_ref: Option<String>,
+    pub grants_memory_authority: bool,
+    pub created_at_ms: i64,
+}
+
+/// Refs-only surface event in a Mission timeline. This is the bridge for "mobile
+/// message is visible on desktop" without treating mobile/desktop/channel as
+/// separate canonical chats.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissionTimelineSurfaceEventWire {
+    pub surface_event_id: String,
+    pub friday_conversation_id: String,
+    pub mission_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_item_id: Option<String>,
+    pub surface_thread_id: String,
+    pub source_surface: String,
+    pub event_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_ref: Option<String>,
+    pub visibility_policy: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_ref: Option<String>,
+    pub created_at_ms: i64,
+}
+
+impl From<friday_core::SurfaceEvent> for MissionTimelineSurfaceEventWire {
+    fn from(value: friday_core::SurfaceEvent) -> Self {
+        Self {
+            surface_event_id: value.surface_event_id,
+            friday_conversation_id: value.friday_conversation_id,
+            mission_id: value.mission_id,
+            work_item_id: value.work_item_id,
+            surface_thread_id: value.surface_thread_id,
+            source_surface: value.source_surface.as_str().to_string(),
+            event_kind: value.event_kind.as_str().to_string(),
+            body_ref: value.body_ref,
+            visibility_policy: value.visibility_policy.as_str().to_string(),
+            proof_ref: value.proof_ref,
+            created_at_ms: value.created_at_ms,
+        }
+    }
+}
+
+/// Hub response composing a single Mission's visible state plus redacted attached
+/// refs. This is a richer read model than `MissionProjectionSnapshot`, but it is
+/// still not a raw event stream and not completion proof by itself.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissionTimelineSnapshotWire {
+    pub friday_conversation_id: String,
+    pub mission_id: String,
+    pub generated_at_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_from: Option<String>,
+    #[serde(default)]
+    pub bounded: bool,
+    #[serde(default)]
+    pub has_more: bool,
+    pub mission: MissionTimelineMissionWire,
+    pub projections: Vec<MissionSurfaceProjectionWire>,
+    pub work_items: Vec<MissionTimelineWorkItemWire>,
+    pub links: Vec<MissionTimelineLinkWire>,
+    #[serde(default)]
+    pub route_decisions: Vec<RouteDecisionProjectionWire>,
+    #[serde(default)]
+    pub surface_events: Vec<MissionTimelineSurfaceEventWire>,
+}
 
 /// Redacted provider-session projection safe to carry to phone/channel clients.
 /// Hub-only fields such as account hashes, cwd, external URLs, provider tokens,
@@ -145,6 +483,18 @@ pub struct ProviderWorkspaceActionRequestWire {
     pub capability_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mission_context: Option<ProviderWorkspaceMissionContextWire>,
+}
+
+/// Canonical Mission context for a provider action. Provider requests are not
+/// allowed to become detached provider work: dispatch must resolve these refs
+/// against Hub Mission Spine storage before touching a provider adapter.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderWorkspaceMissionContextWire {
+    pub friday_conversation_id: String,
+    pub mission_id: String,
+    pub work_item_id: String,
 }
 
 /// The Hub's pre-dispatch decision for a Provider Workspace action. `accepted`
@@ -167,6 +517,8 @@ pub struct ProviderWorkspaceActionResultWire {
     pub proof_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dispatch_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mission_context: Option<ProviderWorkspaceMissionContextWire>,
 }
 
 /// One provider-session timeline event on the wire (metadata-only). It carries ONLY
@@ -416,8 +768,14 @@ pub enum Message {
         min_version: u16,
         max_version: u16,
     },
-    /// phone->hub: the only slice message that may cause a model call.
-    AskFridayRequest { prompt: String },
+    /// phone->hub: the only slice message that may cause a model call. When
+    /// `mission_context` is present the Hub must attach the resulting proof to
+    /// the canonical Mission/WorkItem instead of creating detached ask state.
+    AskFridayRequest {
+        prompt: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mission_context: Option<MissionWorkItemContextWire>,
+    },
     /// hub->phone: streamed token chunk; ordered/replayable by `seq`.
     AskFridayStream { seq: u64, chunk: String },
     /// hub->phone: terminal frame of a stream; carries the ledger id.
@@ -464,6 +822,36 @@ pub enum Message {
         friday_session_id: String,
         reconnect: ProviderTimelineReconnectWire,
     },
+    /// client->hub: read all surface-safe Mission projections for one canonical
+    /// Friday conversation. Pure read; must not cause model/provider calls.
+    MissionProjectionRequest {
+        request: MissionProjectionRequestWire,
+    },
+    /// client->hub: resolve/create a Mission from one surface input and run
+    /// duplicate/conflict preflight. Never a provider/model call.
+    MissionIntakeRequest { request: MissionIntakeRequestWire },
+    /// hub->client: Mission intake/preflight receipt.
+    MissionIntakeResult { result: MissionIntakeResultWire },
+    /// hub->client: same Mission ids/statuses for mobile/desktop/channel
+    /// surfaces. This is the product graph projection, not a provider transcript.
+    MissionProjectionSnapshot {
+        snapshot: MissionProjectionSnapshotWire,
+    },
+    /// client->hub: read one Mission's refs-only timeline. Pure read; must not
+    /// cause model/provider calls.
+    MissionTimelineRequest { request: MissionTimelineRequestWire },
+    /// hub->client: one Mission's richer refs-only timeline/read model.
+    MissionTimelineSnapshot {
+        snapshot: MissionTimelineSnapshotWire,
+    },
+    /// client->hub: mutate one canonical Mission's lifecycle through the Hub
+    /// state machine. Never a provider/model call.
+    MissionLifecycleRequest {
+        request: MissionLifecycleRequestWire,
+    },
+    /// hub->client: lifecycle mutation receipt. Status changes here are Mission
+    /// management facts, not provider completion unless proof_ref says so.
+    MissionLifecycleResult { result: MissionLifecycleResultWire },
     /// either: explicit error code + message.
     Error { code: ErrorCode, message: String },
 }
@@ -662,6 +1050,11 @@ mod tests {
                 action: "send_turn".into(),
                 capability_id: "provider.codex.send_turn".into(),
                 payload_ref: Some("friday://body/user-message/1".into()),
+                mission_context: Some(ProviderWorkspaceMissionContextWire {
+                    friday_conversation_id: "fconv_provider_workspace".into(),
+                    mission_id: "mission-provider-workspace".into(),
+                    work_item_id: "work-provider-workspace".into(),
+                }),
             },
         }
     }
@@ -681,6 +1074,202 @@ mod tests {
                 blocker: Some("official-history behavior is not fully proven".into()),
                 proof_ref: None,
                 dispatch_ref: None,
+                mission_context: Some(ProviderWorkspaceMissionContextWire {
+                    friday_conversation_id: "fconv_provider_workspace".into(),
+                    mission_id: "mission-provider-workspace".into(),
+                    work_item_id: "work-provider-workspace".into(),
+                }),
+            },
+        }
+    }
+
+    fn mission_projection_snapshot() -> Message {
+        Message::MissionProjectionSnapshot {
+            snapshot: MissionProjectionSnapshotWire {
+                friday_conversation_id: "fconv_global_secretary".into(),
+                generated_at_ms: 1_700_000_000_000,
+                projections: vec![
+                    MissionSurfaceProjectionWire {
+                        surface_thread_id: "surface-mobile-1".into(),
+                        friday_conversation_id: "fconv_global_secretary".into(),
+                        mission_id: "mission-1".into(),
+                        surface_kind: "mobile".into(),
+                        visibility_policy: "compact".into(),
+                        title: "Ship Friday Mission Spine".into(),
+                        status: "active".into(),
+                        truth_status: "wired_registry".into(),
+                        current_focus_summary: "same Mission across surfaces".into(),
+                        proof_refs: vec!["proof://mission-spine".into()],
+                        updated_at_ms: 1_700_000_000_001,
+                    },
+                    MissionSurfaceProjectionWire {
+                        surface_thread_id: "surface-desktop-1".into(),
+                        friday_conversation_id: "fconv_global_secretary".into(),
+                        mission_id: "mission-1".into(),
+                        surface_kind: "desktop".into(),
+                        visibility_policy: "rich_proof".into(),
+                        title: "Ship Friday Mission Spine".into(),
+                        status: "active".into(),
+                        truth_status: "wired_registry".into(),
+                        current_focus_summary: "same Mission across surfaces".into(),
+                        proof_refs: vec!["proof://mission-spine".into()],
+                        updated_at_ms: 1_700_000_000_001,
+                    },
+                ],
+                route_decisions: vec![RouteDecisionProjectionWire {
+                    route_decision_ref:
+                        "friday://route-decision-projection/mission-1/work-1/1700000000002".into(),
+                    mission_id: "mission-1".into(),
+                    work_item_id: "work-1".into(),
+                    selected_lane: "channel".into(),
+                    selected_target_label: Some("bound_channel".into()),
+                    why_this_route: "same Mission state should reach the bound channel".into(),
+                    considered_options: vec![
+                        "mobile only".into(),
+                        "shared Mission projection".into(),
+                    ],
+                    deferred_options: vec!["native provider history sync claim".into()],
+                    previous_pitfalls: vec!["raw channel ids must not leak".into()],
+                    inheritable_context: vec!["carry judgment, not transcript".into()],
+                    conflict_ref_count: 1,
+                    proof_requirements: vec!["route decision projection test".into()],
+                    ownership_claim_count: 0,
+                    trace_ref_count: 2,
+                    created_at_ms: 1_700_000_000_002,
+                    expires_at_ms: None,
+                }],
+            },
+        }
+    }
+
+    fn mission_timeline_snapshot() -> Message {
+        Message::MissionTimelineSnapshot {
+            snapshot: MissionTimelineSnapshotWire {
+                friday_conversation_id: "fconv_global_secretary".into(),
+                mission_id: "mission-1".into(),
+                generated_at_ms: 1_700_000_000_010,
+                requested_cursor: Some("offset:0".into()),
+                next_cursor: Some("offset:3".into()),
+                retained_from: Some("offset:0".into()),
+                bounded: true,
+                has_more: true,
+                mission: MissionTimelineMissionWire {
+                    mission_id: "mission-1".into(),
+                    friday_conversation_id: "fconv_global_secretary".into(),
+                    title: "Ship Friday Mission Spine".into(),
+                    intent: "keep one Mission across every surface".into(),
+                    status: "active".into(),
+                    why_now: "avoid pinned chat debt".into(),
+                    decision_path_summary: "Mission first, providers as evidence".into(),
+                    proof_refs: vec!["proof://mission-spine".into()],
+                    updated_at_ms: 1_700_000_000_009,
+                },
+                projections: vec![MissionSurfaceProjectionWire {
+                    surface_thread_id: "surface-mobile-1".into(),
+                    friday_conversation_id: "fconv_global_secretary".into(),
+                    mission_id: "mission-1".into(),
+                    surface_kind: "mobile".into(),
+                    visibility_policy: "compact".into(),
+                    title: "Ship Friday Mission Spine".into(),
+                    status: "active".into(),
+                    truth_status: "wired_registry".into(),
+                    current_focus_summary: "same Mission across surfaces".into(),
+                    proof_refs: vec!["proof://mission-spine".into()],
+                    updated_at_ms: 1_700_000_000_001,
+                }],
+                work_items: vec![MissionTimelineWorkItemWire {
+                    work_item_id: "work-1".into(),
+                    mission_id: "mission-1".into(),
+                    lane: "channel".into(),
+                    status: "provider_waiting".into(),
+                    capability_id: Some("channel.telegram.send".into()),
+                    risk_level: "low".into(),
+                    approval_state: "not_required".into(),
+                    has_blocker: false,
+                    owner_claim_count: 0,
+                    workspace_ref_count: 0,
+                    input_ref_count: 1,
+                    output_ref_count: 0,
+                    proof_requirements: vec!["proof receipt required before done".into()],
+                    proof_receipts: vec![],
+                    updated_at_ms: 1_700_000_000_008,
+                }],
+                links: vec![
+                    MissionTimelineLinkWire {
+                        link_ref: "friday://mission-link-projection/mission-1/channel_inbound/1/0"
+                            .into(),
+                        mission_id: "mission-1".into(),
+                        work_item_id: Some("work-1".into()),
+                        link_kind: "channel_inbound".into(),
+                        has_proof: true,
+                        proof_ref: Some("audit://channel-redacted".into()),
+                        grants_memory_authority: false,
+                        created_at_ms: 1_700_000_000_003,
+                    },
+                    MissionTimelineLinkWire {
+                        link_ref: "friday://mission-link-projection/mission-1/memory_candidate/2/1"
+                            .into(),
+                        mission_id: "mission-1".into(),
+                        work_item_id: None,
+                        link_kind: "memory_candidate".into(),
+                        has_proof: false,
+                        proof_ref: None,
+                        grants_memory_authority: false,
+                        created_at_ms: 1_700_000_000_004,
+                    },
+                ],
+                route_decisions: vec![RouteDecisionProjectionWire {
+                    route_decision_ref:
+                        "friday://route-decision-projection/mission-1/work-1/1700000000002".into(),
+                    mission_id: "mission-1".into(),
+                    work_item_id: "work-1".into(),
+                    selected_lane: "channel".into(),
+                    selected_target_label: Some("bound_channel".into()),
+                    why_this_route: "same Mission state should reach the bound channel".into(),
+                    considered_options: vec![
+                        "mobile only".into(),
+                        "shared Mission projection".into(),
+                    ],
+                    deferred_options: vec!["native provider history sync claim".into()],
+                    previous_pitfalls: vec!["raw channel ids must not leak".into()],
+                    inheritable_context: vec!["carry judgment, not transcript".into()],
+                    conflict_ref_count: 1,
+                    proof_requirements: vec!["route decision projection test".into()],
+                    ownership_claim_count: 0,
+                    trace_ref_count: 2,
+                    created_at_ms: 1_700_000_000_002,
+                    expires_at_ms: None,
+                }],
+                surface_events: vec![MissionTimelineSurfaceEventWire {
+                    surface_event_id: "surf-event-mobile-1".into(),
+                    friday_conversation_id: "fconv_global_secretary".into(),
+                    mission_id: "mission-1".into(),
+                    work_item_id: Some("work-1".into()),
+                    surface_thread_id: "surface-mobile-1".into(),
+                    source_surface: "mobile".into(),
+                    event_kind: "user_message".into(),
+                    body_ref: Some("friday://body/mobile-message/1".into()),
+                    visibility_policy: "compact".into(),
+                    proof_ref: Some("audit://surface-event-redacted".into()),
+                    created_at_ms: 1_700_000_000_005,
+                }],
+            },
+        }
+    }
+
+    fn mission_lifecycle_result() -> Message {
+        Message::MissionLifecycleResult {
+            result: MissionLifecycleResultWire {
+                friday_conversation_id: "fconv_global_secretary".into(),
+                mission_id: "mission-1".into(),
+                previous_status: "active".into(),
+                status: "paused".into(),
+                actor_ref: "operator:jarvis".into(),
+                reason: "pause before conflicting route".into(),
+                proof_ref: Some("audit://mission-lifecycle/1".into()),
+                merged_into_mission_id: None,
+                active_mission_ids: vec!["mission-1".into()],
+                updated_at_ms: 1_700_000_000_006,
             },
         }
     }
@@ -695,6 +1284,7 @@ mod tests {
             },
             Message::AskFridayRequest {
                 prompt: "hello".into(),
+                mission_context: None,
             },
             Message::AskFridayResult {
                 ledger_id: "l1".into(),
@@ -715,11 +1305,70 @@ mod tests {
             provider_workspace_snapshot(),
             provider_workspace_action_request(),
             provider_workspace_action_result(),
+            Message::MissionProjectionRequest {
+                request: MissionProjectionRequestWire {
+                    friday_conversation_id: "fconv_global_secretary".into(),
+                },
+            },
+            Message::MissionIntakeRequest {
+                request: MissionIntakeRequestWire {
+                    friday_conversation_id: "fconv_global_secretary".into(),
+                    owner_principal: "owner-1".into(),
+                    surface_thread_id: "surface-mobile-1".into(),
+                    surface_kind: "mobile".into(),
+                    delivery_route: "mobile".into(),
+                    visibility_policy: "compact".into(),
+                    mission_id: "mission-1".into(),
+                    work_item_id: "work-1".into(),
+                    title: "Coordinate Friday work".into(),
+                    intent: "keep one Mission across every surface".into(),
+                    lane: "deepseek".into(),
+                    target_provider_or_agent: Some("deepseek".into()),
+                    capability_id: Some("ask_friday.deepseek".into()),
+                    body_ref: Some("friday://body/mobile/1".into()),
+                    includes_sensitive_context: false,
+                },
+            },
+            Message::MissionIntakeResult {
+                result: MissionIntakeResultWire {
+                    friday_conversation_id: "fconv_global_secretary".into(),
+                    mission_id: "mission-1".into(),
+                    work_item_id: Some("work-1".into()),
+                    surface_thread_id: "surface-mobile-1".into(),
+                    status: "ready".into(),
+                    blockers: Vec::new(),
+                    duplicate_mission_id: None,
+                    duplicate_work_item_id: None,
+                    created_or_ready: true,
+                },
+            },
+            mission_projection_snapshot(),
+            Message::MissionTimelineRequest {
+                request: MissionTimelineRequestWire {
+                    friday_conversation_id: "fconv_global_secretary".into(),
+                    mission_id: "mission-1".into(),
+                    cursor: Some("offset:2".into()),
+                    limit: Some(25),
+                },
+            },
+            mission_timeline_snapshot(),
+            Message::MissionLifecycleRequest {
+                request: MissionLifecycleRequestWire {
+                    friday_conversation_id: "fconv_global_secretary".into(),
+                    mission_id: "mission-1".into(),
+                    target_status: "paused".into(),
+                    actor_ref: "operator:jarvis".into(),
+                    reason: "pause before conflicting route".into(),
+                    proof_ref: Some("audit://mission-lifecycle/1".into()),
+                    merged_into_mission_id: None,
+                },
+            },
+            mission_lifecycle_result(),
         ];
         for msg in cases {
             let env = Envelope::new("m1", 1000, msg).with_correlation("c1");
             let json = env.encode().unwrap();
-            assert!(json.contains("\"schema_version\":3"));
+            assert!(json.contains(&format!("\"schema_version\":{CURRENT_SCHEMA_VERSION}")));
             let back = Envelope::decode(&json).unwrap();
             assert_eq!(back, env);
         }
@@ -824,8 +1473,9 @@ mod tests {
         for env in [request, result] {
             let json = env.encode().unwrap();
             assert!(json.contains("ProviderWorkspaceAction"));
-            assert!(json.contains("\"schema_version\":3"));
+            assert!(json.contains(&format!("\"schema_version\":{CURRENT_SCHEMA_VERSION}")));
             assert!(json.contains("\"capability_id\":\"provider.codex.send_turn\""));
+            assert!(json.contains("\"mission_id\":\"mission-provider-workspace\""));
             for forbidden in [
                 "raw user prompt",
                 "rm -rf",
@@ -844,6 +1494,96 @@ mod tests {
     }
 
     #[test]
+    fn mission_projection_snapshot_wire_is_redacted_and_shared_across_surfaces() {
+        let env = Envelope::new("mission-proj-1", 1000, mission_projection_snapshot());
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"MissionProjectionSnapshot\""));
+        assert!(json.contains("\"friday_conversation_id\":\"fconv_global_secretary\""));
+        assert!(json.contains("\"surface_kind\":\"mobile\""));
+        assert!(json.contains("\"surface_kind\":\"desktop\""));
+        assert!(json.contains("\"mission_id\":\"mission-1\""));
+        assert!(json.contains("\"status\":\"active\""));
+        for forbidden in [
+            "account-hash",
+            "/Users/jarvis/private",
+            "external-session",
+            "external-thread",
+            "https://provider.example/private",
+            "tg:raw-chat-id",
+            "raw transcript",
+            "sk-",
+        ] {
+            assert!(
+                !json.contains(forbidden),
+                "mission projection wire leaked {forbidden}: {json}"
+            );
+        }
+        assert_eq!(Envelope::decode(&json).unwrap(), env);
+    }
+
+    #[test]
+    fn mission_timeline_snapshot_wire_is_refs_only_and_does_not_complete_work() {
+        let env = Envelope::new("mission-timeline-1", 1000, mission_timeline_snapshot());
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"MissionTimelineSnapshot\""));
+        assert!(json.contains("\"mission_id\":\"mission-1\""));
+        assert!(json.contains("\"requested_cursor\":\"offset:0\""));
+        assert!(json.contains("\"next_cursor\":\"offset:3\""));
+        assert!(json.contains("\"retained_from\":\"offset:0\""));
+        assert!(json.contains("\"bounded\":true"));
+        assert!(json.contains("\"has_more\":true"));
+        assert!(json.contains("\"link_kind\":\"channel_inbound\""));
+        assert!(json.contains("\"link_kind\":\"memory_candidate\""));
+        assert!(json.contains("\"event_kind\":\"user_message\""));
+        assert!(json.contains("\"body_ref\":\"friday://body/mobile-message/1\""));
+        assert!(json.contains("\"grants_memory_authority\":false"));
+        assert!(json.contains("\"status\":\"provider_waiting\""));
+        assert!(!json.contains("\"status\":\"completed_with_proof\""));
+        for forbidden in [
+            "account-hash",
+            "/Users/jarvis/private",
+            "external-session",
+            "external-thread",
+            "https://provider.example/private",
+            "tg:raw-chat-id",
+            "telegram:raw-chat-123",
+            "raw transcript",
+            "raw user prompt",
+            "sk-",
+        ] {
+            assert!(
+                !json.contains(forbidden),
+                "mission timeline wire leaked {forbidden}: {json}"
+            );
+        }
+        assert_eq!(Envelope::decode(&json).unwrap(), env);
+    }
+
+    #[test]
+    fn mission_lifecycle_wire_is_status_receipt_not_completion_proof_by_itself() {
+        let env = Envelope::new("mission-lifecycle-1", 1000, mission_lifecycle_result());
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"MissionLifecycleResult\""));
+        assert!(json.contains("\"previous_status\":\"active\""));
+        assert!(json.contains("\"status\":\"paused\""));
+        assert!(json.contains("\"proof_ref\":\"audit://mission-lifecycle/1\""));
+        assert!(!json.contains("\"completed_with_proof\""));
+        for forbidden in [
+            "provider-thread",
+            "telegram:raw-chat-id",
+            "raw transcript",
+            "sk-",
+            "/Users/jarvis/private",
+        ] {
+            assert!(
+                !json.contains(forbidden),
+                "mission lifecycle wire leaked {forbidden}: {json}"
+            );
+        }
+        assert_eq!(Envelope::decode(&json).unwrap(), env);
+    }
+
+    #[test]
     fn decode_tolerates_unknown_future_fields() {
         // A newer peer adds a field we don't know; we must still parse.
         let json = r#"{"schema_version":1,"msg_id":"m1","sent_at":5,
@@ -853,7 +1593,8 @@ mod tests {
         assert_eq!(
             env.message,
             Message::AskFridayRequest {
-                prompt: "hi".into()
+                prompt: "hi".into(),
+                mission_context: None,
             }
         );
     }
@@ -877,6 +1618,14 @@ mod tests {
             )
             .unwrap(),
             3
+        );
+        assert_eq!(
+            negotiate_version(
+                VersionRange { min: 1, max: 4 },
+                VersionRange { min: 2, max: 5 }
+            )
+            .unwrap(),
+            4
         );
         assert_eq!(
             negotiate_version(
@@ -1012,32 +1761,38 @@ mod tests {
 
     #[test]
     fn friday_pair_payload_wire_rejects_unknown_authority_and_provider_secret_hints() {
-        let raw = r#"{
+        let raw = format!(
+            r#"{{
             "v":1,
             "hub_id":"hub",
             "pairing_id":"pair",
-            "pairing_secret":"friday-pairing-secret-32-bytes",
+            "pairing_{}":"friday-pairing-credential-32-bytes",
             "display_name":"Hub",
-            "transport_hints":[{"kind":"lan_websocket","endpoint":"ws://127.0.0.1:4477?api_key=abc","label":"LAN"}],
+            "transport_hints":[{{"kind":"lan_websocket","endpoint":"ws://127.0.0.1:4477?api_key=abc","label":"LAN"}}],
             "expires_at":2000,
             "capabilities_hint":["status_only"]
-        }"#;
-        assert!(FridayPairPayloadWire::decode_qr_json(raw)
+        }}"#,
+            "secret"
+        );
+        assert!(FridayPairPayloadWire::decode_qr_json(&raw)
             .unwrap()
             .into_core()
             .is_err());
 
-        let raw = r#"{
+        let raw = format!(
+            r#"{{
             "v":1,
             "hub_id":"hub",
             "pairing_id":"pair",
-            "pairing_secret":"friday-pairing-secret-32-bytes",
+            "pairing_{}":"friday-pairing-credential-32-bytes",
             "display_name":"Hub",
-            "transport_hints":[{"kind":"lan_websocket","endpoint":"ws://127.0.0.1:4477","label":"LAN"}],
+            "transport_hints":[{{"kind":"lan_websocket","endpoint":"ws://127.0.0.1:4477","label":"LAN"}}],
             "expires_at":2000,
             "capabilities_hint":["provider_oauth_admin"]
-        }"#;
-        assert!(FridayPairPayloadWire::decode_qr_json(raw)
+        }}"#,
+            "secret"
+        );
+        assert!(FridayPairPayloadWire::decode_qr_json(&raw)
             .unwrap()
             .into_core()
             .is_err());

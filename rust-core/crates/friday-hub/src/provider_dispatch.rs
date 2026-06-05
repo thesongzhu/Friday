@@ -2,7 +2,8 @@
 //!
 //! PWS-003 ([`crate::provider_workspace::guard_action_request`]) DECIDES
 //! accepted/routed/blocker but never dispatches. This seam wires an
-//! ACCEPTED + ROUTED action to a provider adapter and returns the
+//! ACCEPTED + ROUTED action to a provider adapter only after canonical Mission
+//! context resolution and route-decision derivation, then returns the
 //! `dispatch_ref` / `truth_label` / `blocker`.
 //!
 //! Invariants (file 60 §6, file 81 PWS-004, file 83):
@@ -18,16 +19,30 @@
 //!   provider output.
 //! - NO FALLBACK. A failed dispatch returns an exact blocker; it never silently reroutes
 //!   to another provider.
+//! - ROUTE JUDGMENT FIRST. Accepted provider work must carry the WorkItem's
+//!   `RouteDecisionCard` into the adapter context, so the live adapter cannot receive
+//!   task facts without the "why this route / what was considered / proof needed" path.
 //!
 //! Sync by design — the core is blocking (ureq, no tokio). PWS-004 defines the trait +
 //! the gate-then-dispatch flow and is proven with an injected fake adapter (no real
 //! process / network in tests). The real Codex app-server and Claude mirror adapters
 //! land in CODEX-LIVE-001 / CLAUDE-MIRROR-001 as `ProviderDispatchAdapter` impls.
 
-use friday_protocol::{ProviderWorkspaceActionRequestWire, ProviderWorkspaceActionResultWire};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use friday_core::RouteDecisionCard;
+use friday_protocol::{
+    ProviderWorkspaceActionRequestWire, ProviderWorkspaceActionResultWire,
+    ProviderWorkspaceMissionContextWire,
+};
 use friday_providers::unified::ProviderSession;
+use friday_storage::Db;
 use thiserror::Error;
 
+use crate::mission_context::{
+    resolve_mission_context, route_decision_card_for_context, MissionContextLookup,
+    MissionContextResolution, ResolvedMissionContext,
+};
 use crate::provider_workspace::{guard_action_request, ProviderWorkspaceCatalog};
 
 /// What the adapter is given for an action the guard has ALREADY accepted + routed.
@@ -41,6 +56,8 @@ pub struct DispatchContext<'a> {
     pub dispatch_ref: &'a str,
     pub truth_label: &'a str,
     pub payload_ref: Option<&'a str>,
+    pub mission_context: &'a ResolvedMissionContext,
+    pub route_decision: &'a RouteDecisionCard,
 }
 
 /// Coarse dispatch lifecycle. `Errored` is represented as `Err(DispatchError)`, not a
@@ -93,15 +110,29 @@ pub fn dispatch_provider_action(
     catalog: &ProviderWorkspaceCatalog,
     adapter: &dyn ProviderDispatchAdapter,
     session: &ProviderSession,
+    db: &Db,
     request: ProviderWorkspaceActionRequestWire,
 ) -> ProviderWorkspaceActionResultWire {
-    // Capture what the adapter needs before the guard consumes the request.
+    // Mission context is the first product boundary. Even an unproven or malformed
+    // Provider Workspace action cannot use stale/bogus Mission context to reach an
+    // accepted-looking guard result.
     let payload_ref = request.payload_ref.clone();
+    let mission_context = request.mission_context.clone();
+    let resolved_context = match resolve_provider_mission_context(db, mission_context.as_ref()) {
+        Ok(context) => context,
+        Err(blocker) => return mission_context_blocked_request(request, blocker),
+    };
 
     // GATE FIRST — any refusal returns verbatim, adapter untouched.
     let guard = guard_action_request(catalog, session, request);
     if !guard.accepted || !guard.routed {
         return guard;
+    }
+
+    if let Err(blocker) =
+        validate_resolved_provider_context(db, session, &guard.provider, &resolved_context)
+    {
+        return mission_context_blocked_result(guard, blocker);
     }
 
     // An accepted + routed guard result always carries a dispatch_ref; fail closed
@@ -118,6 +149,34 @@ pub fn dispatch_provider_action(
         }
     };
 
+    let route_decision = match route_decision_card_for_context(
+        db,
+        &resolved_context,
+        format!("route-decision:{}", guard.request_id),
+        route_trace_refs(&guard, &dispatch_ref),
+        current_unix_ms(),
+        None,
+    ) {
+        Ok(card) => card,
+        Err(err) => {
+            return mission_context_blocked_result(
+                guard,
+                format!("provider dispatch route decision invalid: {err}"),
+            );
+        }
+    };
+    if let Err(blocker) =
+        validate_route_decision_for_provider(&route_decision, session, &guard.provider)
+    {
+        return mission_context_blocked_result(guard, blocker);
+    }
+    if let Err(err) = db.upsert_route_decision(&route_decision) {
+        return mission_context_blocked_result(
+            guard,
+            format!("provider dispatch route decision persistence failed: {err}"),
+        );
+    }
+
     // Dispatch. Scope the borrow of `guard` so the struct-update below can move it.
     let outcome = {
         let ctx = DispatchContext {
@@ -128,6 +187,8 @@ pub fn dispatch_provider_action(
             dispatch_ref: &dispatch_ref,
             truth_label: &guard.truth_label,
             payload_ref: payload_ref.as_deref(),
+            mission_context: &resolved_context,
+            route_decision: &route_decision,
         };
         adapter.execute_action(&ctx)
     };
@@ -156,6 +217,123 @@ pub fn dispatch_provider_action(
     }
 }
 
+fn resolve_provider_mission_context(
+    db: &Db,
+    mission_context: Option<&ProviderWorkspaceMissionContextWire>,
+) -> Result<ResolvedMissionContext, String> {
+    let Some(context) = mission_context else {
+        return Err("provider dispatch requires Mission context".to_string());
+    };
+    match resolve_mission_context(
+        db,
+        MissionContextLookup::by_work_item(
+            context.friday_conversation_id.clone(),
+            context.mission_id.clone(),
+            context.work_item_id.clone(),
+        ),
+    )
+    .map_err(|err| format!("provider dispatch Mission context read failed: {err}"))?
+    {
+        MissionContextResolution::Resolved(context) => Ok(context),
+        MissionContextResolution::Blocked { blockers } => Err(format!(
+            "provider dispatch Mission context blocked: {}",
+            blockers.join(",")
+        )),
+    }
+}
+
+fn validate_resolved_provider_context(
+    db: &Db,
+    session: &ProviderSession,
+    provider: &str,
+    context: &ResolvedMissionContext,
+) -> Result<(), String> {
+    let work_item = db
+        .get_work_item(&context.work_item_id)
+        .map_err(|err| format!("provider dispatch Mission context read failed: {err}"))?
+        .ok_or_else(|| "provider dispatch Mission context work item not found".to_string())?;
+    if work_item.mission_id != context.mission_id {
+        return Err("provider dispatch Mission context work item mismatch".to_string());
+    }
+    if work_item.target_provider_or_agent.as_deref() != Some(provider) {
+        return Err("provider dispatch Mission context provider mismatch".to_string());
+    }
+    if provider != session.provider.as_str() {
+        return Err("provider dispatch provider/session mismatch".to_string());
+    }
+    if !work_item.is_active_like() {
+        return Err("provider dispatch Mission context work item is terminal".to_string());
+    }
+    Ok(())
+}
+
+fn mission_context_blocked_result(
+    guard: ProviderWorkspaceActionResultWire,
+    blocker: String,
+) -> ProviderWorkspaceActionResultWire {
+    ProviderWorkspaceActionResultWire {
+        accepted: false,
+        routed: false,
+        status: "mission_context_required".to_string(),
+        blocker: Some(blocker),
+        dispatch_ref: None,
+        ..guard
+    }
+}
+
+fn mission_context_blocked_request(
+    request: ProviderWorkspaceActionRequestWire,
+    blocker: String,
+) -> ProviderWorkspaceActionResultWire {
+    ProviderWorkspaceActionResultWire {
+        request_id: request.request_id,
+        friday_session_id: request.friday_session_id,
+        provider: request.provider,
+        action: request.action,
+        capability_id: request.capability_id,
+        accepted: false,
+        routed: false,
+        status: "mission_context_required".to_string(),
+        truth_label: "provider_workspace_action_refused_before_dispatch".to_string(),
+        blocker: Some(blocker),
+        proof_ref: None,
+        dispatch_ref: None,
+        mission_context: request.mission_context,
+    }
+}
+
+fn validate_route_decision_for_provider(
+    route_decision: &RouteDecisionCard,
+    session: &ProviderSession,
+    provider: &str,
+) -> Result<(), String> {
+    if route_decision.selected_provider_or_agent.as_deref() != Some(provider) {
+        return Err("provider dispatch route decision provider mismatch".to_string());
+    }
+    if provider != session.provider.as_str() {
+        return Err("provider dispatch route decision provider/session mismatch".to_string());
+    }
+    Ok(())
+}
+
+fn route_trace_refs(guard: &ProviderWorkspaceActionResultWire, dispatch_ref: &str) -> Vec<String> {
+    let mut refs = vec![
+        format!("provider_action_request:{}", guard.request_id),
+        dispatch_ref.to_string(),
+    ];
+    if let Some(proof_ref) = guard.proof_ref.as_ref() {
+        refs.push(proof_ref.clone());
+    }
+    refs
+}
+
+fn current_unix_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
+        .unwrap_or(0)
+}
+
 /// The fixed, operator-safe wire blocker for a dispatch failure. Deliberately coarse and
 /// free of any adapter-supplied text so a provider secret / raw output can never reach a
 /// projected surface (file 60 §6, file 83 channel-redaction discipline).
@@ -169,11 +347,125 @@ fn wire_blocker(err: &DispatchError) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use friday_core::{
+        ApprovalState, FridayConversation, HandoffJudgmentMemory, Mission, MissionStatus,
+        TruthStatus, WorkItem, WorkItemStatus, WorkLane,
+    };
     use friday_providers::unified::{
         CapabilityStatus, FallbackStatus, PlatformProvider, ProviderCapability,
         ProviderNativeAction, ProviderSyncMode, SessionStatus,
     };
+    use friday_storage::Db;
     use std::cell::Cell;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static C: AtomicU64 = AtomicU64::new(0);
+
+    fn tmp_db() -> String {
+        std::env::temp_dir()
+            .join(format!(
+                "friday-provider-dispatch-{}-{}.sqlite",
+                std::process::id(),
+                C.fetch_add(1, Ordering::Relaxed)
+            ))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    fn empty_db() -> Db {
+        Db::open_hub(&tmp_db()).unwrap()
+    }
+
+    fn mission_context() -> ProviderWorkspaceMissionContextWire {
+        ProviderWorkspaceMissionContextWire {
+            friday_conversation_id: "fconv_provider_dispatch".to_string(),
+            mission_id: "mission-provider-dispatch".to_string(),
+            work_item_id: "work-provider-dispatch".to_string(),
+        }
+    }
+
+    fn judgment(provider: PlatformProvider) -> HandoffJudgmentMemory {
+        HandoffJudgmentMemory {
+            task: "Dispatch provider action through Mission context".to_string(),
+            current_blocker: None,
+            target_lane_thread_agent_provider: provider.as_str().to_string(),
+            read_first_files: vec!["rust-core/crates/friday-hub/src/provider_dispatch.rs".into()],
+            required_output: "provider dispatch result".to_string(),
+            done_criteria: vec!["adapter called only after Mission context resolves".into()],
+            red_lines: vec!["do not dispatch detached provider work".into()],
+            why_this_route: "Provider action must attach to a WorkItem.".into(),
+            considered_options: vec![
+                "detached provider dispatch".into(),
+                "Mission context".into(),
+            ],
+            deferred_options: vec!["native UI".into()],
+            previous_pitfalls: vec!["provider ack looked like completion".into()],
+            inheritable_context: vec!["Mission Spine owns product state".into()],
+            proof_requirements: vec!["provider dispatch test".into()],
+            ownership_claim_ids: vec!["own-test".into()],
+        }
+    }
+
+    fn db_with_mission_context(provider: PlatformProvider) -> Db {
+        let db = empty_db();
+        let now = 1_700_000_000_000;
+        db.upsert_friday_conversation(&FridayConversation {
+            friday_conversation_id: "fconv_provider_dispatch".into(),
+            owner_principal: "owner-1".into(),
+            title: "Provider dispatch Mission".into(),
+            current_focus_summary: "provider action attached to WorkItem".into(),
+            active_mission_ids: vec!["mission-provider-dispatch".into()],
+            surface_thread_ids: Vec::new(),
+            memory_scope_ref: None,
+            truth_status: TruthStatus::WiredRegistry,
+            proof_refs: vec!["proof://provider-dispatch".into()],
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        db.upsert_mission(&Mission {
+            mission_id: "mission-provider-dispatch".into(),
+            friday_conversation_id: "fconv_provider_dispatch".into(),
+            title: "Provider dispatch Mission".into(),
+            intent: "dispatch provider action with Mission context".into(),
+            status: MissionStatus::Active,
+            why_now: "Provider work must not detach from Friday global state.".into(),
+            decision_path_summary: "Resolve Mission context before adapter call.".into(),
+            considered_options: vec!["detached dispatch".into(), "mission-bound dispatch".into()],
+            deferred_options: vec!["provider live proof".into()],
+            known_pitfalls: vec!["ack is not completion".into()],
+            handoff_inheritance: vec!["preserve judgment".into()],
+            work_item_ids: vec!["work-provider-dispatch".into()],
+            memory_candidate_refs: Vec::new(),
+            context_passport_refs: Vec::new(),
+            proof_refs: vec!["proof://provider-dispatch".into()],
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        db.upsert_work_item(&WorkItem {
+            work_item_id: "work-provider-dispatch".into(),
+            mission_id: "mission-provider-dispatch".into(),
+            lane: WorkLane::Codex,
+            target_provider_or_agent: Some(provider.as_str().to_string()),
+            status: WorkItemStatus::ReadyToDispatch,
+            owner_claim_ids: Vec::new(),
+            workspace_refs: Vec::new(),
+            capability_id: Some("provider.codex.list_sessions".into()),
+            risk_level: friday_core::Risk::Low,
+            approval_state: ApprovalState::NotRequired,
+            blocking_reason: None,
+            input_refs: vec!["friday://body/request/1".into()],
+            output_refs: Vec::new(),
+            proof_requirements: vec!["provider dispatch test".into()],
+            proof_receipts: Vec::new(),
+            judgment_memory: judgment(provider),
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        db
+    }
 
     fn session(provider: PlatformProvider) -> ProviderSession {
         ProviderSession {
@@ -203,6 +495,19 @@ mod tests {
             action: action.to_string(),
             capability_id: capability_id.to_string(),
             payload_ref: Some("friday://body/request/1".to_string()),
+            mission_context: None,
+        }
+    }
+
+    fn req_with_mission_context(
+        provider: &str,
+        friday_session_id: &str,
+        action: &str,
+        capability_id: &str,
+    ) -> ProviderWorkspaceActionRequestWire {
+        ProviderWorkspaceActionRequestWire {
+            mission_context: Some(mission_context()),
+            ..req(provider, friday_session_id, action, capability_id)
         }
     }
 
@@ -297,6 +602,28 @@ mod tests {
             self.calls.set(self.calls.get() + 1);
             // The seam must pass the deterministic guard dispatch_ref through.
             assert!(ctx.dispatch_ref.starts_with("friday://provider-dispatch/"));
+            assert_eq!(ctx.mission_context.mission_id, "mission-provider-dispatch");
+            assert_eq!(ctx.mission_context.work_item_id, "work-provider-dispatch");
+            assert_eq!(ctx.route_decision.mission_id, "mission-provider-dispatch");
+            assert_eq!(ctx.route_decision.work_item_id, "work-provider-dispatch");
+            assert_eq!(
+                ctx.route_decision.selected_provider_or_agent.as_deref(),
+                Some(ctx.provider)
+            );
+            assert_eq!(
+                ctx.route_decision.why_this_route,
+                "Provider action must attach to a WorkItem."
+            );
+            assert!(ctx
+                .route_decision
+                .considered_options
+                .iter()
+                .any(|option| option == "detached provider dispatch"));
+            assert!(ctx
+                .route_decision
+                .trace_refs
+                .iter()
+                .any(|trace_ref| trace_ref == ctx.dispatch_ref));
             match &self.behavior {
                 Behavior::Ok(status) => Ok(DispatchOutcome {
                     status: *status,
@@ -312,11 +639,13 @@ mod tests {
     fn unproven_action_is_not_dispatched() {
         let adapter = FakeAdapter::ok();
         let s = session(PlatformProvider::Codex);
+        let db = db_with_mission_context(PlatformProvider::Codex);
         let result = dispatch_provider_action(
             &unproven_catalog(),
             &adapter,
             &s,
-            req(
+            &db,
+            req_with_mission_context(
                 "codex",
                 &s.friday_session_id,
                 "list_sessions",
@@ -338,11 +667,13 @@ mod tests {
     fn wrong_provider_is_refused_before_dispatch() {
         let adapter = FakeAdapter::ok();
         let s = session(PlatformProvider::Codex);
+        let db = db_with_mission_context(PlatformProvider::Codex);
         let result = dispatch_provider_action(
             &verified_catalog(),
             &adapter,
             &s,
-            req(
+            &db,
+            req_with_mission_context(
                 "claude",
                 &s.friday_session_id,
                 "list_sessions",
@@ -358,11 +689,13 @@ mod tests {
     fn wrong_session_is_refused_before_dispatch() {
         let adapter = FakeAdapter::ok();
         let s = session(PlatformProvider::Codex);
+        let db = db_with_mission_context(PlatformProvider::Codex);
         let result = dispatch_provider_action(
             &verified_catalog(),
             &adapter,
             &s,
-            req(
+            &db,
+            req_with_mission_context(
                 "codex",
                 "friday-other",
                 "list_sessions",
@@ -378,11 +711,13 @@ mod tests {
     fn unknown_action_is_refused_before_dispatch() {
         let adapter = FakeAdapter::ok();
         let s = session(PlatformProvider::Codex);
+        let db = db_with_mission_context(PlatformProvider::Codex);
         let result = dispatch_provider_action(
             &verified_catalog(),
             &adapter,
             &s,
-            req(
+            &db,
+            req_with_mission_context(
                 "codex",
                 &s.friday_session_id,
                 "teleport",
@@ -398,11 +733,13 @@ mod tests {
     fn missing_capability_row_is_refused_before_dispatch() {
         let adapter = FakeAdapter::ok();
         let s = session(PlatformProvider::Codex);
+        let db = db_with_mission_context(PlatformProvider::Codex);
         let result = dispatch_provider_action(
             &ProviderWorkspaceCatalog::new(), // empty
             &adapter,
             &s,
-            req(
+            &db,
+            req_with_mission_context(
                 "codex",
                 &s.friday_session_id,
                 "list_sessions",
@@ -415,14 +752,108 @@ mod tests {
     }
 
     #[test]
-    fn verified_action_is_dispatched_with_dispatch_ref_and_preserved_truth_label() {
+    fn verified_action_without_mission_context_is_blocked_before_adapter() {
         let adapter = FakeAdapter::ok();
         let s = session(PlatformProvider::Codex);
         let result = dispatch_provider_action(
             &verified_catalog(),
             &adapter,
             &s,
+            &empty_db(),
             req(
+                "codex",
+                &s.friday_session_id,
+                "list_sessions",
+                "provider.codex.list_sessions",
+            ),
+        );
+        assert!(!result.accepted);
+        assert!(!result.routed);
+        assert_eq!(result.status, "mission_context_required");
+        assert_eq!(
+            result.blocker.as_deref(),
+            Some("provider dispatch requires Mission context")
+        );
+        assert!(result.dispatch_ref.is_none());
+        assert_eq!(
+            adapter.count(),
+            0,
+            "accepted provider guard still must not dispatch detached provider work"
+        );
+    }
+
+    #[test]
+    fn verified_action_with_unresolved_mission_context_is_blocked_before_adapter() {
+        let adapter = FakeAdapter::ok();
+        let s = session(PlatformProvider::Codex);
+        let result = dispatch_provider_action(
+            &verified_catalog(),
+            &adapter,
+            &s,
+            &empty_db(),
+            req_with_mission_context(
+                "codex",
+                &s.friday_session_id,
+                "list_sessions",
+                "provider.codex.list_sessions",
+            ),
+        );
+        assert!(!result.accepted);
+        assert!(!result.routed);
+        assert_eq!(result.status, "mission_context_required");
+        assert_eq!(
+            result.blocker.as_deref(),
+            Some("provider dispatch Mission context blocked: unknown_work_item,unknown_mission")
+        );
+        assert_eq!(
+            adapter.count(),
+            0,
+            "unresolved Mission context must not reach the provider adapter"
+        );
+    }
+
+    #[test]
+    fn verified_action_with_provider_mismatched_mission_context_is_blocked_before_adapter() {
+        let adapter = FakeAdapter::ok();
+        let s = session(PlatformProvider::Codex);
+        let db = db_with_mission_context(PlatformProvider::Claude);
+        let result = dispatch_provider_action(
+            &verified_catalog(),
+            &adapter,
+            &s,
+            &db,
+            req_with_mission_context(
+                "codex",
+                &s.friday_session_id,
+                "list_sessions",
+                "provider.codex.list_sessions",
+            ),
+        );
+        assert!(!result.accepted);
+        assert!(!result.routed);
+        assert_eq!(result.status, "mission_context_required");
+        assert_eq!(
+            result.blocker.as_deref(),
+            Some("provider dispatch Mission context provider mismatch")
+        );
+        assert_eq!(
+            adapter.count(),
+            0,
+            "resolved Mission context must match the target provider before dispatch"
+        );
+    }
+
+    #[test]
+    fn verified_action_is_dispatched_with_dispatch_ref_and_preserved_truth_label() {
+        let adapter = FakeAdapter::ok();
+        let s = session(PlatformProvider::Codex);
+        let db = db_with_mission_context(PlatformProvider::Codex);
+        let result = dispatch_provider_action(
+            &verified_catalog(),
+            &adapter,
+            &s,
+            &db,
+            req_with_mission_context(
                 "codex",
                 &s.friday_session_id,
                 "list_sessions",
@@ -442,6 +873,32 @@ mod tests {
         );
         // The truth label is the CAPABILITY's, not upgraded by the dispatch.
         assert_eq!(result.truth_label, VERIFIED_TRUTH);
+        assert_eq!(
+            result.mission_context.as_ref().unwrap().mission_id,
+            "mission-provider-dispatch"
+        );
+        let route_decision = db
+            .get_route_decision("route-decision:request-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(route_decision.mission_id, "mission-provider-dispatch");
+        assert_eq!(route_decision.work_item_id, "work-provider-dispatch");
+        assert_eq!(
+            route_decision.selected_provider_or_agent.as_deref(),
+            Some("codex")
+        );
+        assert_eq!(
+            route_decision.why_this_route,
+            "Provider action must attach to a WorkItem."
+        );
+        assert!(db
+            .list_mission_links("mission-provider-dispatch")
+            .unwrap()
+            .iter()
+            .any(
+                |link| link.link_kind == friday_core::MissionLinkKind::RouteDecision
+                    && !link.link_kind.grants_memory_authority()
+            ));
         assert_eq!(adapter.count(), 1);
     }
 
@@ -449,11 +906,13 @@ mod tests {
     fn adapter_failure_is_an_exact_blocker_not_a_completion() {
         let adapter = FakeAdapter::failing();
         let s = session(PlatformProvider::Codex);
+        let db = db_with_mission_context(PlatformProvider::Codex);
         let result = dispatch_provider_action(
             &verified_catalog(),
             &adapter,
             &s,
-            req(
+            &db,
+            req_with_mission_context(
                 "codex",
                 &s.friday_session_id,
                 "list_sessions",
@@ -477,11 +936,13 @@ mod tests {
         // string; the seam must NOT surface any of it on the wire blocker.
         let adapter = FakeAdapter::failing_leaky();
         let s = session(PlatformProvider::Codex);
+        let db = db_with_mission_context(PlatformProvider::Codex);
         let result = dispatch_provider_action(
             &verified_catalog(),
             &adapter,
             &s,
-            req(
+            &db,
+            req_with_mission_context(
                 "codex",
                 &s.friday_session_id,
                 "list_sessions",
@@ -506,11 +967,13 @@ mod tests {
             (DispatchStatus::Completed, "dispatched_completed"),
         ] {
             let adapter = FakeAdapter::ok_status(status);
+            let db = db_with_mission_context(PlatformProvider::Codex);
             let result = dispatch_provider_action(
                 &verified_catalog(),
                 &adapter,
                 &s,
-                req(
+                &db,
+                req_with_mission_context(
                     "codex",
                     &s.friday_session_id,
                     "list_sessions",
@@ -527,13 +990,15 @@ mod tests {
     #[test]
     fn unknown_provider_and_capability_mismatch_are_refused_before_dispatch() {
         let s = session(PlatformProvider::Codex);
+        let db = db_with_mission_context(PlatformProvider::Codex);
         // Unknown provider string.
         let a1 = FakeAdapter::ok();
         let r1 = dispatch_provider_action(
             &verified_catalog(),
             &a1,
             &s,
-            req(
+            &db,
+            req_with_mission_context(
                 "frobnicator",
                 &s.friday_session_id,
                 "list_sessions",
@@ -549,7 +1014,8 @@ mod tests {
             &verified_catalog(),
             &a2,
             &s,
-            req(
+            &db,
+            req_with_mission_context(
                 "codex",
                 &s.friday_session_id,
                 "list_sessions",

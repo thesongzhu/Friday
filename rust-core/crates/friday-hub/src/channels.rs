@@ -263,12 +263,17 @@ mod tests {
 
     static C: AtomicU64 = AtomicU64::new(0);
     fn tmp(tag: &str) -> String {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         std::env::temp_dir()
             .join(format!(
-                "friday-chauth-{}-{}-{}.sqlite",
+                "friday-chauth-{}-{}-{}-{}.sqlite",
                 std::process::id(),
                 tag,
-                C.fetch_add(1, Ordering::Relaxed)
+                C.fetch_add(1, Ordering::Relaxed),
+                nanos
             ))
             .to_string_lossy()
             .into_owned()

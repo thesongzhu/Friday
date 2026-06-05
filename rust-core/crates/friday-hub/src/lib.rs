@@ -124,12 +124,38 @@ pub mod provider_workspace;
 /// in CODEX-LIVE-001 / CLAUDE-MIRROR-001.
 pub mod provider_dispatch;
 
+/// Global work graph / session adoption / advisor preflight. Reads stored
+/// process/workspace/provider/channel metadata as truth-labeled refs, proposes
+/// operator-gated adoption, and blocks duplicate/conflicting work before dispatch.
+pub mod global_work_graph;
+
+/// Mission context resolver — fail-closed conversion from surface/provider/workflow hints
+/// into canonical `FridayConversation -> Mission -> WorkItem` context, plus a route
+/// decision card projection from WorkItem judgment memory. Future live call sites should
+/// use this before dispatch instead of guessing from provider/channel ids.
+pub mod mission_context;
+
+/// Mission-bound runtime producer wrappers. Channel/workflow product entrypoints use
+/// these to require a resolved Mission context + RouteDecisionCard before recording or
+/// executing work.
+pub mod mission_runtime;
+
 /// SMOOTH-001 — provider session timeline + reconnect harness. One Friday-canonical
 /// timeline per session with strictly-monotonic seq + revision-on-every-mutation, a
 /// PendingAction state machine where Hub-ack is never provider-completion, dedup by
 /// client_msg_id, and a reconnect that returns a bounded delta when the cursor is retained
 /// and a snapshot only when it is behind retention (no full-history reload by default).
 pub mod provider_timeline;
+
+/// Mission Spine Hub preflight and attachment seam. Stages routed work through the
+/// canonical `FridayConversation -> Mission -> WorkItem` graph before dispatch and
+/// attaches provider/channel evidence as trace refs, not independent product state.
+pub mod mission_preflight;
+
+/// Skill / Capability Catalog / Advisor Bridge. Reads managed skill manifests as
+/// truth-labeled catalog entries and advisor inputs; it does not execute skills
+/// or grant control.
+pub mod skill_catalog;
 
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
@@ -1559,7 +1585,11 @@ mod tests {
         let dir = std::env::temp_dir();
         let pid = std::process::id();
         let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        dir.join(format!("friday-hub-tracer-{pid}-{tag}-{n}.sqlite"))
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        dir.join(format!("friday-hub-tracer-{pid}-{tag}-{n}-{nanos}.sqlite"))
             .to_string_lossy()
             .into_owned()
     }
@@ -2707,12 +2737,17 @@ mod ask_coupling_tests {
 
     static C: AtomicU64 = AtomicU64::new(0);
     fn tmp(tag: &str) -> String {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         std::env::temp_dir()
             .join(format!(
-                "friday-hub-ask-{}-{}-{}.sqlite",
+                "friday-hub-ask-{}-{}-{}-{}.sqlite",
                 std::process::id(),
                 tag,
-                C.fetch_add(1, Ordering::Relaxed)
+                C.fetch_add(1, Ordering::Relaxed),
+                nanos
             ))
             .to_string_lossy()
             .into_owned()

@@ -8,10 +8,11 @@
 //!
 //! Call discipline (the load-bearing invariant): the non-model operations
 //! (connect / status / refresh / list / reconnect) are **pure Hub reads and produce ZERO
-//! provider/model calls**. ONLY [`Message::AskFridayRequest`] reaches the Hub-owned
-//! DeepSeek route — via [`crate::record_friday_ask`], which is the single atomic
-//! ask→token_ledger+Activity(AskReceipt)+audit coupling. There is **no fallback** to
-//! Codex/Claude/OpenAI/local/mock: a route failure is surfaced as an exact blocker.
+//! provider/model calls**. ONLY a Mission-bound [`Message::AskFridayRequest`] reaches the
+//! Hub-owned DeepSeek route — via [`crate::mission_runtime::ask_friday_for_mission`],
+//! which attaches proof to the canonical Mission/WorkItem. Detached asks fail closed.
+//! There is **no fallback** to Codex/Claude/OpenAI/local/mock: a route failure is
+//! surfaced as an exact blocker.
 //!
 //! Safe outbound projection: an ask returns only **refs** ([`Message::AskFridayResult`]
 //! = `ledger_id` + a `result_link`) — never the raw answer text, provider account ids,
@@ -19,12 +20,30 @@
 //! usage live Hub-side in the token_ledger / Activity receipt. No UI code here.
 
 use friday_deepseek::{DeepSeekClient, Transport};
-use friday_protocol::{Envelope, ErrorCode, Message, SUPPORTED};
+use friday_protocol::{
+    Envelope, ErrorCode, Message, MissionIntakeRequestWire, MissionIntakeResultWire,
+    MissionLifecycleRequestWire, MissionLifecycleResultWire, MissionProjectionSnapshotWire,
+    MissionTimelineLinkWire, MissionTimelineMissionWire, MissionTimelineRequestWire,
+    MissionTimelineSnapshotWire, MissionTimelineSurfaceEventWire, MissionTimelineWorkItemWire,
+    MissionWorkItemContextWire, ProviderWorkspaceActionRequestWire,
+    ProviderWorkspaceActionResultWire, RouteDecisionProjectionWire, SUPPORTED,
+};
+use friday_providers::unified::{FallbackStatus, PlatformProvider, ProviderSession, SessionStatus};
 use friday_storage::Db;
 use friday_transport::{ws_recv_envelope, ws_send_envelope, TransportError, WireWebSocket};
+use std::collections::BTreeSet;
 use std::io::{Read, Write};
 
-use crate::{record_friday_ask, RecordAskError};
+use crate::mission_context::MissionContextLookup;
+use crate::mission_preflight::{
+    preflight_and_stage_work_item, MissionPreflightOutcome, MissionPreflightRequest,
+};
+use crate::mission_runtime::{ask_friday_for_mission, MissionBoundAskOutcome};
+use crate::provider_dispatch::{
+    dispatch_provider_action, DispatchContext, DispatchError, ProviderDispatchAdapter,
+};
+use crate::provider_workspace::ProviderWorkspaceCatalog;
+use crate::RecordAskError;
 
 /// A headless Hub runtime serving one or more trusted client sessions. Generic over the
 /// DeepSeek [`Transport`] so tests inject a scripted mock and a live build uses
@@ -37,6 +56,51 @@ pub struct HubServer<T: Transport> {
     /// Monotonic per-ask id source (a fresh ledger_id per ask — reuse fails CLOSED on the
     /// token_ledger PK).
     next_ask: u64,
+}
+
+fn provider_workspace_session_from_link(
+    link: &friday_core::ProviderSessionLink,
+) -> Option<ProviderSession> {
+    let provider = match link.provider.as_str() {
+        "codex" => PlatformProvider::Codex,
+        "claude" => PlatformProvider::Claude,
+        _ => return None,
+    };
+    Some(ProviderSession {
+        friday_session_id: link.friday_session_id.clone(),
+        provider,
+        workspace_id: link.workspace_id.clone(),
+        sync_mode: link.sync_mode.into(),
+        status: SessionStatus::Idle,
+        capability_snapshot: Vec::new(),
+        active_turn_id: None,
+        last_event_seq: 0,
+        truth_label: link.truth_label.clone(),
+        fallback_status: FallbackStatus::NoFallback,
+    })
+}
+
+struct NoProviderWorkspaceDispatchAdapter;
+
+impl ProviderDispatchAdapter for NoProviderWorkspaceDispatchAdapter {
+    fn execute_action(
+        &self,
+        _ctx: &DispatchContext<'_>,
+    ) -> Result<crate::provider_dispatch::DispatchOutcome, DispatchError> {
+        Err(DispatchError::AdapterNotReady(
+            "provider adapter unavailable from Hub metadata gate".to_string(),
+        ))
+    }
+}
+
+struct MissionAskDispatch<'a> {
+    msg_id: &'a str,
+    prompt: &'a str,
+    context: MissionWorkItemContextWire,
+    ledger_id: &'a str,
+    session_id: &'a str,
+    activity_id: &'a str,
+    now_ms: i64,
 }
 
 impl<T: Transport> HubServer<T> {
@@ -67,10 +131,33 @@ impl<T: Transport> HubServer<T> {
         match env.message {
             // Pure Hub read — NO provider/model call.
             Message::HubStatus { .. } => self.status(&corr).with_correlation(corr),
+            // Hub-owned Mission intake/preflight mutation — NO provider/model call.
+            Message::MissionIntakeRequest { request } => self
+                .mission_intake_result(&corr, request, now_ms)
+                .with_correlation(corr),
+            // Pure Hub read — canonical Mission projections, NO provider/model call.
+            Message::MissionProjectionRequest { request } => self
+                .mission_projection_snapshot(&corr, &request.friday_conversation_id, now_ms)
+                .with_correlation(corr),
+            // Pure Hub read — one Mission timeline/read model, NO provider/model call.
+            Message::MissionTimelineRequest { request } => self
+                .mission_timeline_snapshot(&corr, request, now_ms)
+                .with_correlation(corr),
+            // Hub-owned Mission lifecycle mutation — NO provider/model call.
+            Message::MissionLifecycleRequest { request } => self
+                .mission_lifecycle_result(&corr, request, now_ms)
+                .with_correlation(corr),
+            // Provider Workspace action pre-dispatch guard. No provider adapter call here.
+            Message::ProviderWorkspaceActionRequest { request } => self
+                .provider_workspace_action_result(&corr, request, now_ms)
+                .with_correlation(corr),
             // The ONLY model path: Hub-owned DeepSeek route + ledger/audit/activity.
-            Message::AskFridayRequest { prompt } => {
-                self.ask(&corr, &prompt, now_ms).with_correlation(corr)
-            }
+            Message::AskFridayRequest {
+                prompt,
+                mission_context,
+            } => self
+                .ask(&corr, &prompt, mission_context, now_ms)
+                .with_correlation(corr),
             // The pairing channel established the session; a Pair here is out of place.
             Message::Pair { .. } => Self::error(
                 &corr,
@@ -100,44 +187,665 @@ impl<T: Transport> HubServer<T> {
         )
     }
 
-    fn ask(&mut self, msg_id: &str, prompt: &str, now_ms: i64) -> Envelope {
+    fn mission_intake_result(
+        &mut self,
+        msg_id: &str,
+        request: MissionIntakeRequestWire,
+        now_ms: i64,
+    ) -> Envelope {
+        if let Err(err) =
+            friday_core::validate_friday_conversation_id(&request.friday_conversation_id)
+        {
+            return Self::error(msg_id, now_ms, ErrorCode::Internal, &err.to_string());
+        }
+        if request.owner_principal.trim().is_empty()
+            || request.surface_thread_id.trim().is_empty()
+            || request.delivery_route.trim().is_empty()
+            || request.mission_id.trim().is_empty()
+            || request.work_item_id.trim().is_empty()
+            || request.intent.trim().is_empty()
+        {
+            return Self::error(
+                msg_id,
+                now_ms,
+                ErrorCode::Internal,
+                "mission intake required field missing",
+            );
+        }
+        let surface_kind = match surface_kind_from_wire(&request.surface_kind) {
+            Ok(kind) => kind,
+            Err(message) => return Self::error(msg_id, now_ms, ErrorCode::Internal, message),
+        };
+        let visibility_policy = match visibility_policy_from_wire(&request.visibility_policy) {
+            Ok(policy) => policy,
+            Err(message) => return Self::error(msg_id, now_ms, ErrorCode::Internal, message),
+        };
+        let lane = match work_lane_from_wire(&request.lane) {
+            Ok(lane) => lane,
+            Err(message) => return Self::error(msg_id, now_ms, ErrorCode::Internal, message),
+        };
+        if let Some(body_ref) = request.body_ref.as_deref() {
+            if !is_safe_body_ref(body_ref) {
+                return Self::error(
+                    msg_id,
+                    now_ms,
+                    ErrorCode::Internal,
+                    "mission intake body_ref must be a Friday-owned body/blob ref",
+                );
+            }
+        }
+
+        let target = request
+            .target_provider_or_agent
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| Some(lane.as_str().to_string()));
+        let capability_id = request
+            .capability_id
+            .clone()
+            .filter(|value| !value.trim().is_empty());
+        let title = if request.title.trim().is_empty() {
+            "Friday Mission".to_string()
+        } else {
+            request.title.clone()
+        };
+        let input_ref = request.body_ref.clone().unwrap_or_else(|| {
+            format!(
+                "friday://body/mission-intake/{}",
+                projection_ref_part(&request.work_item_id)
+            )
+        });
+
+        let conversation = friday_core::FridayConversation {
+            friday_conversation_id: request.friday_conversation_id.clone(),
+            owner_principal: request.owner_principal.clone(),
+            title: title.clone(),
+            current_focus_summary: request.intent.clone(),
+            active_mission_ids: Vec::new(),
+            surface_thread_ids: Vec::new(),
+            memory_scope_ref: None,
+            truth_status: friday_core::TruthStatus::WiredRegistry,
+            proof_refs: vec![format!(
+                "proof://mission-intake/{}",
+                projection_ref_part(&request.mission_id)
+            )],
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+        };
+        let mission = friday_core::Mission {
+            mission_id: request.mission_id.clone(),
+            friday_conversation_id: request.friday_conversation_id.clone(),
+            title,
+            intent: request.intent.clone(),
+            status: friday_core::MissionStatus::Active,
+            why_now: "Surface input requested Friday coordination.".into(),
+            decision_path_summary:
+                "Mission intake resolved the surface input through Hub preflight.".into(),
+            considered_options: vec!["detached surface chat".into(), "Mission Spine".into()],
+            deferred_options: vec!["native UI rendering".into()],
+            known_pitfalls: vec!["duplicate input can create task debt".into()],
+            handoff_inheritance: vec!["carry canonical Mission id across surfaces".into()],
+            work_item_ids: Vec::new(),
+            memory_candidate_refs: Vec::new(),
+            context_passport_refs: Vec::new(),
+            proof_refs: Vec::new(),
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+        };
+        let surface_thread = friday_core::SurfaceThread {
+            surface_thread_id: request.surface_thread_id.clone(),
+            friday_conversation_id: request.friday_conversation_id.clone(),
+            mission_id: Some(request.mission_id.clone()),
+            surface_kind,
+            channel_binding_id: None,
+            delivery_route: request.delivery_route.clone(),
+            visibility_policy,
+            allowed_actions: vec!["open_mission".into(), "ask_friday".into()],
+            last_seen_at_ms: Some(now_ms),
+            last_delivered_event_seq: None,
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+        };
+        let work_item = friday_core::WorkItem {
+            work_item_id: request.work_item_id.clone(),
+            mission_id: request.mission_id.clone(),
+            lane,
+            target_provider_or_agent: target,
+            status: friday_core::WorkItemStatus::Draft,
+            owner_claim_ids: Vec::new(),
+            workspace_refs: Vec::new(),
+            capability_id,
+            risk_level: friday_core::Risk::Low,
+            approval_state: friday_core::ApprovalState::NotRequired,
+            blocking_reason: None,
+            input_refs: vec![input_ref],
+            output_refs: Vec::new(),
+            proof_requirements: vec!["Mission-bound provider proof receipt".into()],
+            proof_receipts: Vec::new(),
+            judgment_memory: friday_core::HandoffJudgmentMemory {
+                task: request.intent.clone(),
+                current_blocker: None,
+                target_lane_thread_agent_provider: request.lane.clone(),
+                read_first_files: Vec::new(),
+                required_output: "Mission-bound result with proof receipt".into(),
+                done_criteria: vec!["WorkItem completes only after proof".into()],
+                red_lines: vec!["do not create detached provider state".into()],
+                why_this_route: "Surface input must resolve to a canonical Mission.".into(),
+                considered_options: vec!["surface-local chat".into(), "Mission Spine".into()],
+                deferred_options: vec!["native UI implementation".into()],
+                previous_pitfalls: vec!["provider ack looked like done".into()],
+                inheritable_context: vec!["same Mission renders across surfaces".into()],
+                proof_requirements: vec!["ledger/activity/audit proof".into()],
+                ownership_claim_ids: Vec::new(),
+            },
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+        };
+        let route_decision = friday_core::RouteDecisionCard::from_work_item(
+            format!(
+                "route-intake-{}-{}",
+                projection_ref_part(&request.mission_id),
+                projection_ref_part(&request.work_item_id)
+            ),
+            &work_item,
+            vec![format!(
+                "friday://surface-thread/{}",
+                projection_ref_part(&request.surface_thread_id)
+            )],
+            now_ms,
+            None,
+        );
+
+        let outcome = match preflight_and_stage_work_item(
+            &self.db,
+            MissionPreflightRequest {
+                conversation,
+                mission,
+                surface_thread: Some(surface_thread),
+                work_item,
+                includes_sensitive_context: request.includes_sensitive_context,
+            },
+        ) {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                return Self::error(
+                    msg_id,
+                    now_ms,
+                    ErrorCode::Internal,
+                    &format!("mission intake blocked: {err}"),
+                );
+            }
+        };
+
+        if outcome.is_ready() {
+            if let Err(err) = self.db.upsert_route_decision(&route_decision) {
+                return Self::error(
+                    msg_id,
+                    now_ms,
+                    ErrorCode::Internal,
+                    &format!("mission intake route decision write failed: {err}"),
+                );
+            }
+        }
+
+        let result = match outcome {
+            MissionPreflightOutcome::Ready {
+                mission_id,
+                work_item_id,
+            } => MissionIntakeResultWire {
+                friday_conversation_id: request.friday_conversation_id,
+                mission_id,
+                work_item_id: Some(work_item_id),
+                surface_thread_id: request.surface_thread_id,
+                status: "ready".into(),
+                blockers: Vec::new(),
+                duplicate_mission_id: None,
+                duplicate_work_item_id: None,
+                created_or_ready: true,
+            },
+            MissionPreflightOutcome::Blocked {
+                blockers,
+                duplicate_mission_id,
+                duplicate_work_item_id,
+            } => {
+                let mission_id = duplicate_mission_id
+                    .clone()
+                    .unwrap_or_else(|| request.mission_id.clone());
+                let work_item_id = duplicate_work_item_id.clone();
+                MissionIntakeResultWire {
+                    friday_conversation_id: request.friday_conversation_id,
+                    mission_id,
+                    work_item_id,
+                    surface_thread_id: request.surface_thread_id,
+                    status: "blocked".into(),
+                    blockers,
+                    duplicate_mission_id,
+                    duplicate_work_item_id,
+                    created_or_ready: false,
+                }
+            }
+        };
+        Envelope::new(
+            format!("{msg_id}-mission-intake"),
+            now_ms,
+            Message::MissionIntakeResult { result },
+        )
+    }
+
+    fn ask(
+        &mut self,
+        msg_id: &str,
+        prompt: &str,
+        mission_context: Option<MissionWorkItemContextWire>,
+        now_ms: i64,
+    ) -> Envelope {
         self.next_ask += 1;
         let ledger_id = format!("ask-{msg_id}-{}", self.next_ask);
         let activity_id = format!("{ledger_id}:activity");
         let session_id = "friday-hub-session";
-        match record_friday_ask(
+        if let Some(context) = mission_context {
+            return self.mission_bound_ask(MissionAskDispatch {
+                msg_id,
+                prompt,
+                context,
+                ledger_id: &ledger_id,
+                session_id,
+                activity_id: &activity_id,
+                now_ms,
+            });
+        }
+        Self::error(
+            msg_id,
+            now_ms,
+            ErrorCode::Internal,
+            "ask_friday requires Mission context; detached asks are blocked",
+        )
+    }
+
+    fn provider_workspace_action_result(
+        &self,
+        msg_id: &str,
+        request: ProviderWorkspaceActionRequestWire,
+        now_ms: i64,
+    ) -> Envelope {
+        let result = if request.mission_context.is_none() {
+            Self::provider_workspace_rejected_result(
+                request,
+                "mission_context_required",
+                "provider workspace action requires Mission context".to_string(),
+            )
+        } else {
+            match self
+                .db
+                .get_provider_session_link(&request.friday_session_id)
+            {
+                Ok(Some(link)) => match provider_workspace_session_from_link(&link) {
+                    Some(session) => dispatch_provider_action(
+                        &ProviderWorkspaceCatalog::friday_current(),
+                        &NoProviderWorkspaceDispatchAdapter,
+                        &session,
+                        &self.db,
+                        request,
+                    ),
+                    None => Self::provider_workspace_rejected_result(
+                        request,
+                        "unknown_provider",
+                        "provider session has unknown provider".to_string(),
+                    ),
+                },
+                Ok(None) => Self::provider_workspace_rejected_result(
+                    request,
+                    "missing_session",
+                    "provider workspace session not found".to_string(),
+                ),
+                Err(_) => Self::provider_workspace_rejected_result(
+                    request,
+                    "session_read_failed",
+                    "provider workspace session read failed".to_string(),
+                ),
+            }
+        };
+        Envelope::new(
+            format!("{msg_id}-provider-workspace-action"),
+            now_ms,
+            Message::ProviderWorkspaceActionResult { result },
+        )
+    }
+
+    fn provider_workspace_rejected_result(
+        request: ProviderWorkspaceActionRequestWire,
+        status: &str,
+        blocker: String,
+    ) -> ProviderWorkspaceActionResultWire {
+        ProviderWorkspaceActionResultWire {
+            request_id: request.request_id,
+            friday_session_id: request.friday_session_id,
+            provider: request.provider,
+            action: request.action,
+            capability_id: request.capability_id,
+            accepted: false,
+            routed: false,
+            status: status.to_string(),
+            truth_label: "provider_workspace_action_refused_before_dispatch".to_string(),
+            blocker: Some(blocker),
+            proof_ref: None,
+            dispatch_ref: None,
+            mission_context: request.mission_context,
+        }
+    }
+
+    fn mission_bound_ask(&mut self, dispatch: MissionAskDispatch<'_>) -> Envelope {
+        match ask_friday_for_mission(
             &mut self.db,
             &self.deepseek,
-            &ledger_id,
-            session_id,
-            &activity_id,
-            prompt,
+            MissionContextLookup::by_work_item(
+                dispatch.context.friday_conversation_id,
+                dispatch.context.mission_id,
+                dispatch.context.work_item_id,
+            ),
+            dispatch.ledger_id,
+            dispatch.session_id,
+            dispatch.activity_id,
+            dispatch.prompt,
             self.max_tokens,
-            now_ms,
+            dispatch.now_ms,
         ) {
-            // Safe projection: refs ONLY. The answer text + usage stay Hub-side in the
-            // token_ledger / Activity(AskReceipt) row, never on the wire.
-            Ok(_outcome) => Envelope::new(
-                format!("{msg_id}-result"),
-                now_ms,
+            Ok(MissionBoundAskOutcome::Answered {
+                ledger_id,
+                result_link,
+                ..
+            }) => Envelope::new(
+                format!("{}-result", dispatch.msg_id),
+                dispatch.now_ms,
                 Message::AskFridayResult {
-                    ledger_id: ledger_id.clone(),
-                    result_link: Some(format!("friday://activity/{activity_id}")),
+                    ledger_id,
+                    result_link: Some(result_link),
                 },
             ),
-            // Route failure → exact blocker, NO fallback, NO half-billed row (record_friday_ask
-            // persists nothing on a Route error).
+            Ok(MissionBoundAskOutcome::Blocked { blockers }) => Self::error(
+                dispatch.msg_id,
+                dispatch.now_ms,
+                ErrorCode::Internal,
+                &format!("ask mission context blocked: {}", blockers.join(",")),
+            ),
             Err(RecordAskError::Route(_)) => Self::error(
-                msg_id,
-                now_ms,
+                dispatch.msg_id,
+                dispatch.now_ms,
                 ErrorCode::ProviderUnavailable,
                 "ask route unavailable (Hub-owned DeepSeek; no fallback)",
             ),
             Err(RecordAskError::Storage(_)) => Self::error(
+                dispatch.msg_id,
+                dispatch.now_ms,
+                ErrorCode::Internal,
+                "ask mission attachment/ledger write failed",
+            ),
+        }
+    }
+
+    fn mission_projection_snapshot(
+        &self,
+        msg_id: &str,
+        friday_conversation_id: &str,
+        now_ms: i64,
+    ) -> Envelope {
+        if let Err(err) = friday_core::validate_friday_conversation_id(friday_conversation_id) {
+            return Self::error(msg_id, now_ms, ErrorCode::Internal, &err.to_string());
+        }
+        match self
+            .db
+            .list_mission_surface_projections(friday_conversation_id)
+        {
+            Ok(projections) => {
+                let mission_ids: BTreeSet<_> = projections
+                    .iter()
+                    .map(|projection| projection.mission_id.clone())
+                    .collect();
+                let mut route_decisions = Vec::new();
+                for mission_id in mission_ids {
+                    let Ok(mission_route_decisions) = self
+                        .db
+                        .list_route_decision_projections_for_mission(&mission_id)
+                    else {
+                        return Self::error(
+                            msg_id,
+                            now_ms,
+                            ErrorCode::Internal,
+                            "mission route decision projection read failed",
+                        );
+                    };
+                    route_decisions.extend(
+                        mission_route_decisions
+                            .into_iter()
+                            .map(RouteDecisionProjectionWire::from),
+                    );
+                }
+                Envelope::new(
+                    format!("{msg_id}-mission-projection"),
+                    now_ms,
+                    Message::MissionProjectionSnapshot {
+                        snapshot: MissionProjectionSnapshotWire {
+                            friday_conversation_id: friday_conversation_id.to_string(),
+                            generated_at_ms: now_ms,
+                            projections: projections.into_iter().map(Into::into).collect(),
+                            route_decisions,
+                        },
+                    },
+                )
+            }
+            Err(_) => Self::error(
                 msg_id,
                 now_ms,
                 ErrorCode::Internal,
-                "ask ledger write failed (rolled back)",
+                "mission projection read failed",
+            ),
+        }
+    }
+
+    fn mission_timeline_snapshot(
+        &self,
+        msg_id: &str,
+        request: MissionTimelineRequestWire,
+        now_ms: i64,
+    ) -> Envelope {
+        let friday_conversation_id = request.friday_conversation_id.clone();
+        let mission_id = request.mission_id.clone();
+        if let Err(err) = friday_core::validate_friday_conversation_id(&friday_conversation_id) {
+            return Self::error(msg_id, now_ms, ErrorCode::Internal, &err.to_string());
+        }
+        if mission_id.trim().is_empty() {
+            return Self::error(
+                msg_id,
+                now_ms,
+                ErrorCode::Internal,
+                "mission timeline mission_id required",
+            );
+        }
+        let timeline_window = match parse_timeline_window(request.cursor.clone(), request.limit) {
+            Ok(window) => window,
+            Err(err) => return Self::error(msg_id, now_ms, ErrorCode::Internal, &err),
+        };
+
+        let mission = match self.db.get_mission(&mission_id) {
+            Ok(Some(mission)) => mission,
+            Ok(None) => {
+                return Self::error(
+                    msg_id,
+                    now_ms,
+                    ErrorCode::Internal,
+                    "mission timeline unknown mission",
+                )
+            }
+            Err(_) => {
+                return Self::error(
+                    msg_id,
+                    now_ms,
+                    ErrorCode::Internal,
+                    "mission timeline mission read failed",
+                )
+            }
+        };
+        if mission.friday_conversation_id != friday_conversation_id {
+            return Self::error(
+                msg_id,
+                now_ms,
+                ErrorCode::Internal,
+                "mission timeline conversation mismatch",
+            );
+        }
+
+        let projections = match self
+            .db
+            .list_mission_surface_projections(&friday_conversation_id)
+        {
+            Ok(projections) => projections
+                .into_iter()
+                .filter(|projection| projection.mission_id == mission_id)
+                .map(Into::into)
+                .collect(),
+            Err(_) => {
+                return Self::error(
+                    msg_id,
+                    now_ms,
+                    ErrorCode::Internal,
+                    "mission timeline projection read failed",
+                )
+            }
+        };
+        let work_items = match self.db.list_work_items_for_mission(&mission_id) {
+            Ok(items) => items.into_iter().map(work_item_timeline_wire).collect(),
+            Err(_) => {
+                return Self::error(
+                    msg_id,
+                    now_ms,
+                    ErrorCode::Internal,
+                    "mission timeline work item read failed",
+                )
+            }
+        };
+        let raw_links = match self.db.list_mission_links(&mission_id) {
+            Ok(links) => links,
+            Err(_) => {
+                return Self::error(
+                    msg_id,
+                    now_ms,
+                    ErrorCode::Internal,
+                    "mission timeline link read failed",
+                )
+            }
+        };
+        let raw_route_decisions = match self
+            .db
+            .list_route_decision_projections_for_mission(&mission_id)
+        {
+            Ok(route_decisions) => route_decisions,
+            Err(_) => {
+                return Self::error(
+                    msg_id,
+                    now_ms,
+                    ErrorCode::Internal,
+                    "mission timeline route decision read failed",
+                )
+            }
+        };
+        let raw_surface_events = match self.db.list_surface_events_for_mission(&mission_id) {
+            Ok(events) => events,
+            Err(_) => {
+                return Self::error(
+                    msg_id,
+                    now_ms,
+                    ErrorCode::Internal,
+                    "mission timeline surface event read failed",
+                )
+            }
+        };
+        let timeline = apply_timeline_window(
+            raw_links,
+            raw_route_decisions,
+            raw_surface_events,
+            timeline_window,
+        );
+
+        Envelope::new(
+            format!("{msg_id}-mission-timeline"),
+            now_ms,
+            Message::MissionTimelineSnapshot {
+                snapshot: MissionTimelineSnapshotWire {
+                    friday_conversation_id: friday_conversation_id.to_string(),
+                    mission_id: mission_id.to_string(),
+                    generated_at_ms: now_ms,
+                    mission: MissionTimelineMissionWire {
+                        mission_id: mission.mission_id,
+                        friday_conversation_id: mission.friday_conversation_id,
+                        title: mission.title,
+                        intent: mission.intent,
+                        status: mission.status.as_str().to_string(),
+                        why_now: mission.why_now,
+                        decision_path_summary: mission.decision_path_summary,
+                        proof_refs: mission.proof_refs,
+                        updated_at_ms: mission.updated_at_ms,
+                    },
+                    projections,
+                    work_items,
+                    requested_cursor: timeline.requested_cursor,
+                    next_cursor: timeline.next_cursor,
+                    retained_from: timeline.retained_from,
+                    bounded: timeline.bounded,
+                    has_more: timeline.has_more,
+                    links: timeline.links,
+                    route_decisions: timeline.route_decisions,
+                    surface_events: timeline.surface_events,
+                },
+            },
+        )
+    }
+
+    fn mission_lifecycle_result(
+        &self,
+        msg_id: &str,
+        request: MissionLifecycleRequestWire,
+        now_ms: i64,
+    ) -> Envelope {
+        let next_status = match mission_status_from_wire(&request.target_status) {
+            Ok(status) => status,
+            Err(message) => {
+                return Self::error(msg_id, now_ms, ErrorCode::Internal, message);
+            }
+        };
+
+        match self.db.transition_mission_status(
+            &request.friday_conversation_id,
+            &request.mission_id,
+            next_status,
+            &request.actor_ref,
+            &request.reason,
+            request.proof_ref.as_deref(),
+            request.merged_into_mission_id.as_deref(),
+            now_ms,
+        ) {
+            Ok((mission, previous_status, active_mission_ids)) => Envelope::new(
+                format!("{msg_id}-mission-lifecycle"),
+                now_ms,
+                Message::MissionLifecycleResult {
+                    result: MissionLifecycleResultWire {
+                        friday_conversation_id: mission.friday_conversation_id,
+                        mission_id: mission.mission_id,
+                        previous_status: previous_status.as_str().to_string(),
+                        status: mission.status.as_str().to_string(),
+                        actor_ref: request.actor_ref,
+                        reason: request.reason,
+                        proof_ref: request.proof_ref,
+                        merged_into_mission_id: request.merged_into_mission_id,
+                        active_mission_ids,
+                        updated_at_ms: mission.updated_at_ms,
+                    },
+                },
+            ),
+            Err(err) => Self::error(
+                msg_id,
+                now_ms,
+                ErrorCode::Internal,
+                &format!("mission lifecycle blocked: {err}"),
             ),
         }
     }
@@ -176,34 +884,545 @@ impl<T: Transport> HubServer<T> {
     }
 }
 
+fn work_item_timeline_wire(item: friday_core::WorkItem) -> MissionTimelineWorkItemWire {
+    MissionTimelineWorkItemWire {
+        work_item_id: item.work_item_id,
+        mission_id: item.mission_id,
+        lane: item.lane.as_str().to_string(),
+        status: item.status.as_str().to_string(),
+        capability_id: item.capability_id,
+        risk_level: item.risk_level.as_str().to_string(),
+        approval_state: item.approval_state.as_str().to_string(),
+        has_blocker: item.blocking_reason.is_some(),
+        owner_claim_count: item.owner_claim_ids.len() as u64,
+        workspace_ref_count: item.workspace_refs.len() as u64,
+        input_ref_count: item.input_refs.len() as u64,
+        output_ref_count: item.output_refs.len() as u64,
+        proof_requirements: item.proof_requirements,
+        proof_receipts: item.proof_receipts,
+        updated_at_ms: item.updated_at_ms,
+    }
+}
+
+const MISSION_TIMELINE_DEFAULT_LIMIT: usize = 50;
+const MISSION_TIMELINE_MAX_LIMIT: usize = 200;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TimelineWindow {
+    requested_cursor: Option<String>,
+    start: usize,
+    limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MissionTimelinePage {
+    requested_cursor: Option<String>,
+    next_cursor: Option<String>,
+    retained_from: Option<String>,
+    bounded: bool,
+    has_more: bool,
+    links: Vec<MissionTimelineLinkWire>,
+    route_decisions: Vec<RouteDecisionProjectionWire>,
+    surface_events: Vec<MissionTimelineSurfaceEventWire>,
+}
+
+enum TimelineItem {
+    Link {
+        projection_index: usize,
+        link: friday_core::MissionLink,
+    },
+    Route(friday_core::RouteDecisionProjection),
+    Surface(friday_core::SurfaceEvent),
+}
+
+impl TimelineItem {
+    fn created_at_ms(&self) -> i64 {
+        match self {
+            TimelineItem::Link { link, .. } => link.created_at_ms,
+            TimelineItem::Route(route) => route.created_at_ms,
+            TimelineItem::Surface(event) => event.created_at_ms,
+        }
+    }
+
+    fn kind_order(&self) -> u8 {
+        match self {
+            TimelineItem::Route(_) => 0,
+            TimelineItem::Link { .. } => 1,
+            TimelineItem::Surface(_) => 2,
+        }
+    }
+
+    fn stable_id(&self) -> &str {
+        match self {
+            TimelineItem::Link { link, .. } => &link.link_id,
+            TimelineItem::Route(route) => &route.route_decision_ref,
+            TimelineItem::Surface(event) => &event.surface_event_id,
+        }
+    }
+}
+
+fn parse_timeline_window(
+    cursor: Option<String>,
+    limit: Option<u32>,
+) -> Result<Option<TimelineWindow>, String> {
+    if cursor.is_none() && limit.is_none() {
+        return Ok(None);
+    }
+    let limit = match limit {
+        Some(0) => return Err("mission timeline limit must be greater than 0".to_string()),
+        Some(limit) => (limit as usize).min(MISSION_TIMELINE_MAX_LIMIT),
+        None => MISSION_TIMELINE_DEFAULT_LIMIT,
+    };
+    let start = match cursor.as_deref() {
+        None | Some("start") => 0,
+        Some(raw) => {
+            let raw = raw.trim();
+            if raw == "start" {
+                0
+            } else if let Some(offset) = raw.strip_prefix("offset:") {
+                offset.parse::<usize>().map_err(|_| {
+                    "mission timeline cursor must be start or offset:<n>".to_string()
+                })?
+            } else {
+                return Err("mission timeline cursor must be start or offset:<n>".to_string());
+            }
+        }
+    };
+    Ok(Some(TimelineWindow {
+        requested_cursor: cursor,
+        start,
+        limit,
+    }))
+}
+
+fn apply_timeline_window(
+    links: Vec<friday_core::MissionLink>,
+    route_decisions: Vec<friday_core::RouteDecisionProjection>,
+    surface_events: Vec<friday_core::SurfaceEvent>,
+    window: Option<TimelineWindow>,
+) -> MissionTimelinePage {
+    let Some(window) = window else {
+        return MissionTimelinePage {
+            requested_cursor: None,
+            next_cursor: None,
+            retained_from: None,
+            bounded: false,
+            has_more: false,
+            links: links
+                .into_iter()
+                .enumerate()
+                .map(|(index, link)| mission_link_timeline_wire(index, link))
+                .collect(),
+            route_decisions: route_decisions.into_iter().map(Into::into).collect(),
+            surface_events: surface_events
+                .into_iter()
+                .map(MissionTimelineSurfaceEventWire::from)
+                .collect(),
+        };
+    };
+
+    let mut items = Vec::new();
+    for (index, link) in links.into_iter().enumerate() {
+        items.push(TimelineItem::Link {
+            projection_index: index,
+            link,
+        });
+    }
+    items.extend(route_decisions.into_iter().map(TimelineItem::Route));
+    items.extend(surface_events.into_iter().map(TimelineItem::Surface));
+    items.sort_by(|left, right| {
+        left.created_at_ms()
+            .cmp(&right.created_at_ms())
+            .then_with(|| left.kind_order().cmp(&right.kind_order()))
+            .then_with(|| left.stable_id().cmp(right.stable_id()))
+    });
+
+    let total = items.len();
+    let start = window.start.min(total);
+    let end = start.saturating_add(window.limit).min(total);
+    let has_more = end < total;
+    let mut page = MissionTimelinePage {
+        requested_cursor: window.requested_cursor,
+        next_cursor: has_more.then(|| format!("offset:{end}")),
+        retained_from: Some(format!("offset:{start}")),
+        bounded: true,
+        has_more,
+        links: Vec::new(),
+        route_decisions: Vec::new(),
+        surface_events: Vec::new(),
+    };
+
+    for item in items.into_iter().skip(start).take(end - start) {
+        match item {
+            TimelineItem::Link {
+                projection_index,
+                link,
+            } => page
+                .links
+                .push(mission_link_timeline_wire(projection_index, link)),
+            TimelineItem::Route(route) => page.route_decisions.push(route.into()),
+            TimelineItem::Surface(event) => page
+                .surface_events
+                .push(MissionTimelineSurfaceEventWire::from(event)),
+        }
+    }
+    page
+}
+
+fn mission_link_timeline_wire(
+    index: usize,
+    link: friday_core::MissionLink,
+) -> MissionTimelineLinkWire {
+    let link_kind = link.link_kind.as_str().to_string();
+    MissionTimelineLinkWire {
+        link_ref: format!(
+            "friday://mission-link-projection/{}/{}/{}/{}",
+            projection_ref_part(&link.mission_id),
+            link_kind,
+            link.created_at_ms,
+            index
+        ),
+        mission_id: link.mission_id,
+        work_item_id: link.work_item_id,
+        link_kind,
+        has_proof: link.proof_ref.is_some(),
+        proof_ref: link.proof_ref,
+        grants_memory_authority: link.link_kind.grants_memory_authority(),
+        created_at_ms: link.created_at_ms,
+    }
+}
+
+fn projection_ref_part(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn surface_kind_from_wire(value: &str) -> Result<friday_core::SurfaceKind, &'static str> {
+    match value {
+        "mobile" => Ok(friday_core::SurfaceKind::Mobile),
+        "desktop" => Ok(friday_core::SurfaceKind::Desktop),
+        "telegram" => Ok(friday_core::SurfaceKind::Telegram),
+        "discord" => Ok(friday_core::SurfaceKind::Discord),
+        "lark" => Ok(friday_core::SurfaceKind::Lark),
+        "web_chat" => Ok(friday_core::SurfaceKind::WebChat),
+        "provider_workspace" => Ok(friday_core::SurfaceKind::ProviderWorkspace),
+        "future_channel" => Ok(friday_core::SurfaceKind::FutureChannel),
+        _ => Err("mission intake surface_kind is unknown"),
+    }
+}
+
+fn visibility_policy_from_wire(value: &str) -> Result<friday_core::VisibilityPolicy, &'static str> {
+    match value {
+        "compact" => Ok(friday_core::VisibilityPolicy::Compact),
+        "rich_proof" => Ok(friday_core::VisibilityPolicy::RichProof),
+        "status_only" => Ok(friday_core::VisibilityPolicy::StatusOnly),
+        "hidden_trace_only" => Ok(friday_core::VisibilityPolicy::HiddenTraceOnly),
+        _ => Err("mission intake visibility_policy is unknown"),
+    }
+}
+
+fn work_lane_from_wire(value: &str) -> Result<friday_core::WorkLane, &'static str> {
+    match value {
+        "friday_hub" => Ok(friday_core::WorkLane::FridayHub),
+        "codex" => Ok(friday_core::WorkLane::Codex),
+        "claude" => Ok(friday_core::WorkLane::Claude),
+        "deepseek" => Ok(friday_core::WorkLane::DeepSeek),
+        "workflow" => Ok(friday_core::WorkLane::Workflow),
+        "channel" => Ok(friday_core::WorkLane::Channel),
+        "human" => Ok(friday_core::WorkLane::Human),
+        "future_api" => Ok(friday_core::WorkLane::FutureApi),
+        _ => Err("mission intake lane is unknown"),
+    }
+}
+
+fn is_safe_body_ref(value: &str) -> bool {
+    value.starts_with("friday://body/")
+        || value.starts_with("friday://surface-event-body/")
+        || value.starts_with("blob://")
+}
+
+fn mission_status_from_wire(value: &str) -> Result<friday_core::MissionStatus, &'static str> {
+    match value {
+        "active" => Ok(friday_core::MissionStatus::Active),
+        "waiting_for_user" => Ok(friday_core::MissionStatus::WaitingForUser),
+        "blocked" => Ok(friday_core::MissionStatus::Blocked),
+        "paused" => Ok(friday_core::MissionStatus::Paused),
+        "done" => Ok(friday_core::MissionStatus::Done),
+        "archived" => Ok(friday_core::MissionStatus::Archived),
+        "merged" => Ok(friday_core::MissionStatus::Merged),
+        _ => Err("mission lifecycle target_status is unknown"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use friday_core::{
+        ApprovalState, FridayConversation, HandoffJudgmentMemory, MemoryScope, Mission,
+        MissionLink, MissionLinkKind, MissionStatus, ProviderSessionLink, RouteDecisionCard,
+        SurfaceEvent, SurfaceEventKind, SurfaceKind, SurfaceThread, SyncMode, TruthStatus,
+        VisibilityPolicy, WorkItem, WorkItemStatus, WorkLane,
+    };
     use friday_crypto::DeviceKeypair;
     use friday_deepseek::{DeepSeekError, Transport};
+    use friday_storage::memory;
     use friday_transport::{ws_accept, ws_connect, ws_recv_envelope, ws_send_envelope};
     use serde_json::{json, Value};
     use std::net::{TcpListener, TcpStream};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::thread;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     const AAD: &[u8] = b"friday-runtime-bridge-v1";
+    static TMP_DB_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn tmp_db() -> String {
+        let seq = TMP_DB_COUNTER.fetch_add(1, Ordering::Relaxed);
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
         std::env::temp_dir()
             .join(format!(
-                "friday-hubserver-{}-{}.sqlite",
+                "friday-hubserver-{}-{seq}-{}.sqlite",
                 std::process::id(),
                 nanos
             ))
             .to_string_lossy()
             .into_owned()
+    }
+
+    fn provider_session_link() -> ProviderSessionLink {
+        ProviderSessionLink {
+            friday_session_id: "friday-session-1".into(),
+            provider: "codex".into(),
+            account_key_hash: "account-hash-never-project".into(), // pragma: allowlist secret
+            workspace_id: "workspace-alpha".into(),
+            cwd: Some("/Users/jarvis/private/project".into()),
+            external_session_id: Some("provider-session-id".into()),
+            external_thread_id: Some("provider-thread-id".into()),
+            external_url: Some("https://provider.example/private/thread".into()),
+            sync_mode: SyncMode::ProviderAppServerLocal,
+            capability_snapshot: "thread/start,thread/read,turn/start".into(),
+            last_provider_seen_at: Some(30),
+            last_friday_event_id: Some("friday-event-9".into()),
+            truth_label: "provider_workspace_test_link".into(),
+        }
+    }
+
+    fn seed_provider_workspace_mission(db: &Db) {
+        db.upsert_friday_conversation(&FridayConversation {
+            friday_conversation_id: "fconv_provider_workspace".into(),
+            owner_principal: "owner-1".into(),
+            title: "Provider Workspace Conversation".into(),
+            current_focus_summary: "Provider Workspace action attached to Mission".into(),
+            active_mission_ids: vec!["mission-provider-workspace".into()],
+            surface_thread_ids: Vec::new(),
+            memory_scope_ref: None,
+            truth_status: TruthStatus::WiredRegistry,
+            proof_refs: Vec::new(),
+            created_at_ms: 1_700_000_100_000,
+            updated_at_ms: 1_700_000_100_000,
+        })
+        .unwrap();
+        db.upsert_mission(&Mission {
+            mission_id: "mission-provider-workspace".into(),
+            friday_conversation_id: "fconv_provider_workspace".into(),
+            title: "Provider Workspace Mission".into(),
+            intent: "Dispatch provider workspace action through Mission context".into(),
+            status: MissionStatus::Active,
+            why_now: "Provider actions must not detach from Friday Mission state.".into(),
+            decision_path_summary: "Resolve Mission context before provider capability guard."
+                .into(),
+            considered_options: vec![
+                "detached provider action".into(),
+                "mission-bound action".into(),
+            ],
+            deferred_options: vec!["live provider execution".into()],
+            known_pitfalls: vec!["provider ack is not completion".into()],
+            handoff_inheritance: vec!["Mission context is required".into()],
+            work_item_ids: vec!["work-provider-workspace".into()],
+            memory_candidate_refs: Vec::new(),
+            context_passport_refs: Vec::new(),
+            proof_refs: Vec::new(),
+            created_at_ms: 1_700_000_100_000,
+            updated_at_ms: 1_700_000_100_000,
+        })
+        .unwrap();
+        db.upsert_work_item(&WorkItem {
+            work_item_id: "work-provider-workspace".into(),
+            mission_id: "mission-provider-workspace".into(),
+            lane: WorkLane::Codex,
+            target_provider_or_agent: Some("codex".into()),
+            status: WorkItemStatus::ReadyToDispatch,
+            owner_claim_ids: Vec::new(),
+            workspace_refs: Vec::new(),
+            capability_id: Some("provider.codex.list_sessions".into()),
+            risk_level: friday_core::Risk::Low,
+            approval_state: ApprovalState::NotRequired,
+            blocking_reason: None,
+            input_refs: vec!["friday://provider-workspace/request".into()],
+            output_refs: Vec::new(),
+            proof_requirements: vec!["provider workspace guard".into()],
+            proof_receipts: Vec::new(),
+            judgment_memory: HandoffJudgmentMemory {
+                task: "Guard provider workspace action".into(),
+                current_blocker: None,
+                target_lane_thread_agent_provider: "codex".into(),
+                read_first_files: vec![
+                    "rust-core/crates/friday-hub/src/provider_dispatch.rs".into()
+                ],
+                required_output: "guarded provider action result".into(),
+                done_criteria: vec!["Mission context resolves before dispatch".into()],
+                red_lines: vec!["detached provider action".into()],
+                why_this_route: "Provider action must remain attached to a WorkItem.".into(),
+                considered_options: vec![
+                    "detached dispatch".into(),
+                    "Mission-bound dispatch".into(),
+                ],
+                deferred_options: vec!["provider adapter live proof".into()],
+                previous_pitfalls: vec!["provider ack looked like done".into()],
+                inheritable_context: vec!["same Mission id across surfaces".into()],
+                proof_requirements: vec!["hub dispatch test".into()],
+                ownership_claim_ids: Vec::new(),
+            },
+            created_at_ms: 1_700_000_100_000,
+            updated_at_ms: 1_700_000_100_000,
+        })
+        .unwrap();
+    }
+
+    #[derive(Debug)]
+    struct HttpProviderRequest {
+        method: String,
+        path: String,
+        authorization: Option<String>,
+        body: String,
+    }
+
+    fn serve_deepseek_http_models_and_chat_once() -> (
+        String,
+        Arc<Mutex<Vec<HttpProviderRequest>>>,
+        thread::JoinHandle<()>,
+    ) {
+        serve_deepseek_http_models_and_chat_requests(2)
+    }
+
+    fn serve_deepseek_http_models_and_chat_requests(
+        expected_requests: usize,
+    ) -> (
+        String,
+        Arc<Mutex<Vec<HttpProviderRequest>>>,
+        thread::JoinHandle<()>,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let server_requests = requests.clone();
+        let handle = thread::spawn(move || {
+            for _ in 0..expected_requests {
+                let (mut stream, _) = listener.accept().unwrap();
+                let request = read_http_provider_request(&mut stream);
+                let body = match (request.method.as_str(), request.path.as_str()) {
+                    ("GET", "/models") => {
+                        r#"{"object":"list","data":[{"id":"deepseek-v4-flash","object":"model","owned_by":"deepseek"}]}"#
+                    }
+                    ("POST", "/chat/completions") => {
+                        r#"{"model":"deepseek-v4-flash","choices":[{"index":0,"message":{"role":"assistant","content":"SECRET-HTTP-ANSWER-TEXT"},"finish_reason":"stop"}],"usage":{"prompt_tokens":13,"completion_tokens":5,"total_tokens":18}}"#
+                    }
+                    _ => r#"{"error":"unexpected path"}"#,
+                };
+                let status = if request.path == "/models" || request.path == "/chat/completions" {
+                    "200 OK"
+                } else {
+                    "404 Not Found"
+                };
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+                server_requests.lock().unwrap().push(request);
+            }
+        });
+        (base_url, requests, handle)
+    }
+
+    fn read_http_provider_request(stream: &mut TcpStream) -> HttpProviderRequest {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut bytes = Vec::new();
+        let mut chunk = [0u8; 1024];
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    bytes.extend_from_slice(&chunk[..n]);
+                    if http_request_complete(&bytes) {
+                        break;
+                    }
+                }
+                Err(err)
+                    if err.kind() == std::io::ErrorKind::WouldBlock
+                        || err.kind() == std::io::ErrorKind::TimedOut =>
+                {
+                    break
+                }
+                Err(err) => panic!("provider HTTP read failed: {err}"),
+            }
+        }
+        let header_end = find_subslice(&bytes, b"\r\n\r\n").expect("HTTP header terminator");
+        let header = String::from_utf8_lossy(&bytes[..header_end]).to_string();
+        let body = String::from_utf8_lossy(&bytes[header_end + 4..]).to_string();
+        let mut lines = header.lines();
+        let request_line = lines.next().unwrap_or_default();
+        let mut request_parts = request_line.split_whitespace();
+        let method = request_parts.next().unwrap_or_default().to_string();
+        let path = request_parts.next().unwrap_or_default().to_string();
+        let authorization = header.lines().find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            key.eq_ignore_ascii_case("authorization")
+                .then(|| value.trim().to_string())
+        });
+        HttpProviderRequest {
+            method,
+            path,
+            authorization,
+            body,
+        }
+    }
+
+    fn http_request_complete(bytes: &[u8]) -> bool {
+        let Some(header_end) = find_subslice(bytes, b"\r\n\r\n") else {
+            return false;
+        };
+        let header = String::from_utf8_lossy(&bytes[..header_end]);
+        let content_length = header
+            .lines()
+            .find_map(|line| {
+                let (key, value) = line.split_once(':')?;
+                key.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().ok())
+                    .flatten()
+            })
+            .unwrap_or(0);
+        bytes.len() >= header_end + 4 + content_length
+    }
+
+    fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        haystack
+            .windows(needle.len())
+            .position(|window| window == needle)
     }
 
     /// Scripted DeepSeek transport: returns canned models + chat, and counts EVERY
@@ -234,6 +1453,55 @@ mod tests {
         }
     }
 
+    struct FailingMock {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl Transport for FailingMock {
+        fn get_json(&self, _url: &str, _bearer: &str) -> Result<Value, DeepSeekError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(DeepSeekError::ProviderUnavailable(
+                "forced test outage".into(),
+            ))
+        }
+
+        fn post_json(
+            &self,
+            _url: &str,
+            _bearer: &str,
+            _body: &Value,
+        ) -> Result<Value, DeepSeekError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(DeepSeekError::ProviderUnavailable(
+                "post should not run after discovery failure".into(),
+            ))
+        }
+    }
+
+    struct PostFailingMock {
+        calls: Arc<AtomicUsize>,
+        reason: &'static str,
+    }
+
+    impl Transport for PostFailingMock {
+        fn get_json(&self, _url: &str, _bearer: &str) -> Result<Value, DeepSeekError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(json!({"object":"list","data":[
+                {"id":"deepseek-v4-flash","object":"model","owned_by":"deepseek"}
+            ]}))
+        }
+
+        fn post_json(
+            &self,
+            _url: &str,
+            _bearer: &str,
+            _body: &Value,
+        ) -> Result<Value, DeepSeekError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(DeepSeekError::ProviderUnavailable(self.reason.into()))
+        }
+    }
+
     fn server(calls: Arc<AtomicUsize>, db_path: &str) -> HubServer<CountingMock> {
         let db = Db::open_hub(db_path).unwrap();
         let client =
@@ -241,12 +1509,429 @@ mod tests {
         HubServer::new(db, client, vec!["ask_friday".into(), "status".into()], 256)
     }
 
+    fn seed_mission_projection(db: &Db) {
+        let now = 1_700_000_000_000;
+        let conversation = FridayConversation {
+            friday_conversation_id: "fconv_hub_projection".into(),
+            owner_principal: "owner-1".into(),
+            title: "Friday global secretary".into(),
+            current_focus_summary: "same Mission state on mobile and desktop".into(),
+            active_mission_ids: vec!["mission-hub-projection".into()],
+            surface_thread_ids: vec!["surface-mobile".into(), "surface-desktop".into()],
+            memory_scope_ref: None,
+            truth_status: TruthStatus::WiredRegistry,
+            proof_refs: vec!["proof://mission-projection".into()],
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        db.upsert_friday_conversation(&conversation).unwrap();
+        db.upsert_mission(&Mission {
+            mission_id: "mission-hub-projection".into(),
+            friday_conversation_id: "fconv_hub_projection".into(),
+            title: "Coordinate Friday surfaces".into(),
+            intent: "one mission across surfaces".into(),
+            status: MissionStatus::Active,
+            why_now: "The user should not manage separate chat truth.".into(),
+            decision_path_summary: "Project one Mission into different surfaces.".into(),
+            considered_options: vec!["provider chat as source".into(), "Mission Spine".into()],
+            deferred_options: vec!["native UI implementation".into()],
+            known_pitfalls: vec!["provider ack is not completion".into()],
+            handoff_inheritance: vec!["carry judgment path".into()],
+            work_item_ids: vec!["work-hub-route".into()],
+            memory_candidate_refs: Vec::new(),
+            context_passport_refs: Vec::new(),
+            proof_refs: vec!["proof://mission-projection".into()],
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        let work_item = WorkItem {
+            work_item_id: "work-hub-route".into(),
+            mission_id: "mission-hub-projection".into(),
+            lane: WorkLane::Channel,
+            target_provider_or_agent: Some("telegram:raw-chat-123".into()),
+            status: WorkItemStatus::ProviderWaiting,
+            owner_claim_ids: Vec::new(),
+            workspace_refs: Vec::new(),
+            capability_id: Some("channel.telegram.send".into()),
+            risk_level: friday_core::Risk::Low,
+            approval_state: ApprovalState::NotRequired,
+            blocking_reason: Some("duplicate channel route found and resolved".into()),
+            input_refs: vec!["friday://body/channel-request".into()],
+            output_refs: Vec::new(),
+            proof_requirements: vec!["route decision projection is visible".into()],
+            proof_receipts: Vec::new(),
+            judgment_memory: HandoffJudgmentMemory {
+                task: "Show the same Mission decision on every surface".into(),
+                current_blocker: None,
+                target_lane_thread_agent_provider: "bound telegram channel".into(),
+                read_first_files: Vec::new(),
+                required_output: "redacted route decision projection".into(),
+                done_criteria: vec!["Hub snapshot includes route decision trace".into()],
+                red_lines: vec!["never leak raw channel ids".into()],
+                why_this_route: "The channel should receive the Mission-bound reply without becoming the source of truth.".into(),
+                considered_options: vec!["mobile-only reply".into(), "Mission-bound channel route".into()],
+                deferred_options: vec!["provider-native history sync proof".into()],
+                previous_pitfalls: vec!["provider ack is not completion".into()],
+                inheritable_context: vec!["carry judgment and proof refs across surfaces".into()],
+                proof_requirements: vec!["pure Hub read exposes redacted trace".into()],
+                ownership_claim_ids: Vec::new(),
+            },
+            created_at_ms: now + 1,
+            updated_at_ms: now + 1,
+        };
+        db.upsert_work_item(&work_item).unwrap();
+        db.upsert_route_decision(&RouteDecisionCard::from_work_item(
+            "route-decision-hub".into(),
+            &work_item,
+            vec![
+                "telegram:raw-chat-123".into(),
+                "provider-thread:external-thread".into(),
+            ],
+            now + 2,
+            None,
+        ))
+        .unwrap();
+        db.upsert_mission_link(&MissionLink {
+            link_id: "link-with-raw-channel-id-telegram-raw-chat-123".into(),
+            mission_id: "mission-hub-projection".into(),
+            work_item_id: Some("work-hub-route".into()),
+            link_kind: MissionLinkKind::ChannelInbound,
+            target_ref: "telegram:raw-chat-123:message-99".into(),
+            proof_ref: Some("audit://channel-redacted".into()),
+            created_at_ms: now + 3,
+        })
+        .unwrap();
+        db.upsert_mission_link(&MissionLink {
+            link_id: "link-memory-candidate".into(),
+            mission_id: "mission-hub-projection".into(),
+            work_item_id: None,
+            link_kind: MissionLinkKind::MemoryCandidate,
+            target_ref: "memory-candidate://raw-private-candidate".into(),
+            proof_ref: None,
+            created_at_ms: now + 4,
+        })
+        .unwrap();
+        for (surface_thread_id, surface_kind, visibility_policy) in [
+            (
+                "surface-mobile",
+                SurfaceKind::Mobile,
+                VisibilityPolicy::Compact,
+            ),
+            (
+                "surface-desktop",
+                SurfaceKind::Desktop,
+                VisibilityPolicy::RichProof,
+            ),
+        ] {
+            db.upsert_surface_thread(&SurfaceThread {
+                surface_thread_id: surface_thread_id.into(),
+                friday_conversation_id: "fconv_hub_projection".into(),
+                mission_id: Some("mission-hub-projection".into()),
+                surface_kind,
+                channel_binding_id: None,
+                delivery_route: surface_thread_id.into(),
+                visibility_policy,
+                allowed_actions: vec!["open".into()],
+                last_seen_at_ms: Some(now),
+                last_delivered_event_seq: None,
+                created_at_ms: now,
+                updated_at_ms: now,
+            })
+            .unwrap();
+        }
+        db.upsert_surface_event(&SurfaceEvent {
+            surface_event_id: "surf-event-mobile-1".into(),
+            friday_conversation_id: "fconv_hub_projection".into(),
+            mission_id: "mission-hub-projection".into(),
+            work_item_id: Some("work-hub-route".into()),
+            surface_thread_id: "surface-mobile".into(),
+            source_surface: SurfaceKind::Mobile,
+            event_kind: SurfaceEventKind::UserMessage,
+            body_ref: Some("friday://body/mobile-message/1".into()),
+            visibility_policy: VisibilityPolicy::Compact,
+            proof_ref: Some("audit://surface-event-redacted".into()),
+            created_at_ms: now + 5,
+        })
+        .unwrap();
+    }
+
+    fn seed_mission_ask(db: &Db) {
+        let now = 1_700_000_100_000;
+        db.upsert_friday_conversation(&FridayConversation {
+            friday_conversation_id: "fconv_hub_ask".into(),
+            owner_principal: "owner-1".into(),
+            title: "Ask Friday from Mission".into(),
+            current_focus_summary: "Ask should attach to the Mission timeline".into(),
+            active_mission_ids: vec!["mission-hub-ask".into()],
+            surface_thread_ids: vec!["surface-mobile-ask".into(), "surface-desktop-ask".into()],
+            memory_scope_ref: None,
+            truth_status: TruthStatus::WiredRegistry,
+            proof_refs: Vec::new(),
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        db.upsert_mission(&Mission {
+            mission_id: "mission-hub-ask".into(),
+            friday_conversation_id: "fconv_hub_ask".into(),
+            title: "Mission-bound Ask Friday".into(),
+            intent: "prove Ask Friday is not detached ledger state".into(),
+            status: MissionStatus::Active,
+            why_now: "mobile and desktop need the same Mission proof after an ask".into(),
+            decision_path_summary: "Route DeepSeek ask through Mission context".into(),
+            considered_options: vec!["detached ask ledger".into(), "Mission-bound ask".into()],
+            deferred_options: vec!["native UI rendering".into()],
+            known_pitfalls: vec!["token ledger alone is not product timeline".into()],
+            handoff_inheritance: vec!["ask proof attaches to WorkItem".into()],
+            work_item_ids: vec!["work-hub-ask".into()],
+            memory_candidate_refs: Vec::new(),
+            context_passport_refs: Vec::new(),
+            proof_refs: Vec::new(),
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        db.upsert_work_item(&WorkItem {
+            work_item_id: "work-hub-ask".into(),
+            mission_id: "mission-hub-ask".into(),
+            lane: WorkLane::DeepSeek,
+            target_provider_or_agent: Some("deepseek".into()),
+            status: WorkItemStatus::ReadyToDispatch,
+            owner_claim_ids: Vec::new(),
+            workspace_refs: Vec::new(),
+            capability_id: Some("ask_friday.deepseek".into()),
+            risk_level: friday_core::Risk::Low,
+            approval_state: ApprovalState::NotRequired,
+            blocking_reason: None,
+            input_refs: vec!["friday://body/ask".into()],
+            output_refs: Vec::new(),
+            proof_requirements: vec!["ledgered ask receipt".into()],
+            proof_receipts: Vec::new(),
+            judgment_memory: HandoffJudgmentMemory {
+                task: "Answer through Friday's DeepSeek route".into(),
+                current_blocker: None,
+                target_lane_thread_agent_provider: "deepseek".into(),
+                read_first_files: Vec::new(),
+                required_output: "ledgered ask result attached to Mission".into(),
+                done_criteria: vec!["WorkItem completed only with proof".into()],
+                red_lines: vec!["do not create detached ask state".into()],
+                why_this_route: "The user's ask is part of this Mission's decision path.".into(),
+                considered_options: vec![
+                    "plain AskFridayRequest".into(),
+                    "Mission-bound ask".into(),
+                ],
+                deferred_options: vec!["provider-native sync".into()],
+                previous_pitfalls: vec!["ledger without Mission proof is hard to inspect".into()],
+                inheritable_context: vec!["same Mission must render on mobile and desktop".into()],
+                proof_requirements: vec!["ledgered ask receipt".into()],
+                ownership_claim_ids: Vec::new(),
+            },
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        for (surface_thread_id, surface_kind, visibility_policy) in [
+            (
+                "surface-mobile-ask",
+                SurfaceKind::Mobile,
+                VisibilityPolicy::Compact,
+            ),
+            (
+                "surface-desktop-ask",
+                SurfaceKind::Desktop,
+                VisibilityPolicy::RichProof,
+            ),
+        ] {
+            db.upsert_surface_thread(&SurfaceThread {
+                surface_thread_id: surface_thread_id.into(),
+                friday_conversation_id: "fconv_hub_ask".into(),
+                mission_id: Some("mission-hub-ask".into()),
+                surface_kind,
+                channel_binding_id: None,
+                delivery_route: surface_thread_id.into(),
+                visibility_policy,
+                allowed_actions: vec!["ask_friday".into()],
+                last_seen_at_ms: Some(now),
+                last_delivered_event_seq: None,
+                created_at_ms: now,
+                updated_at_ms: now,
+            })
+            .unwrap();
+        }
+    }
+
+    fn pressure_judgment(index: usize) -> HandoffJudgmentMemory {
+        HandoffJudgmentMemory {
+            task: format!("Mission-bound pressure ask {index}"),
+            current_blocker: None,
+            target_lane_thread_agent_provider: "deepseek".into(),
+            read_first_files: vec!["rust-core/crates/friday-hub/src/hub_server.rs".into()],
+            required_output: "proof-backed ask receipt".into(),
+            done_criteria: vec!["WorkItem reaches completed_with_proof only after proof".into()],
+            red_lines: vec!["do not fallback to another provider".into()],
+            why_this_route: "Pressure asks must remain attached to one Mission.".into(),
+            considered_options: vec!["detached ask ledger".into(), "Mission-bound ask".into()],
+            deferred_options: vec!["provider-native sync".into()],
+            previous_pitfalls: vec!["provider ack looked like done".into()],
+            inheritable_context: vec!["same Mission renders on mobile and desktop".into()],
+            proof_requirements: vec!["ledger/activity/audit proof".into()],
+            ownership_claim_ids: Vec::new(),
+        }
+    }
+
+    fn seed_pressure_mission(db: &Db, asks: usize) {
+        let now = 1_700_000_300_000;
+        let work_item_ids: Vec<String> = (0..asks)
+            .map(|index| format!("work-pressure-{index:02}"))
+            .collect();
+        db.upsert_friday_conversation(&FridayConversation {
+            friday_conversation_id: "fconv_pressure".into(),
+            owner_principal: "owner-1".into(),
+            title: "Mission pressure proof".into(),
+            current_focus_summary: "mobile/desktop/channel inputs resolve to one Mission".into(),
+            active_mission_ids: vec!["mission-pressure".into()],
+            surface_thread_ids: vec![
+                "surface-pressure-mobile".into(),
+                "surface-pressure-desktop".into(),
+                "surface-pressure-channel".into(),
+            ],
+            memory_scope_ref: Some("memory-scope://pressure".into()),
+            truth_status: TruthStatus::WiredRegistry,
+            proof_refs: Vec::new(),
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        db.upsert_mission(&Mission {
+            mission_id: "mission-pressure".into(),
+            friday_conversation_id: "fconv_pressure".into(),
+            title: "Pressure Mission-bound asks".into(),
+            intent: "prove repeated asks attach to one Friday Mission".into(),
+            status: MissionStatus::Active,
+            why_now: "Long-running Friday work needs pressure proof, not one happy path.".into(),
+            decision_path_summary: "Route every ask through Mission context and proof receipts."
+                .into(),
+            considered_options: vec![
+                "chat-first pressure".into(),
+                "Mission-bound pressure".into(),
+            ],
+            deferred_options: vec!["native UI screenshots".into()],
+            known_pitfalls: vec![
+                "long timeline hydration".into(),
+                "candidate memory drift".into(),
+            ],
+            handoff_inheritance: vec!["bounded timeline is the read contract".into()],
+            work_item_ids: work_item_ids.clone(),
+            memory_candidate_refs: Vec::new(),
+            context_passport_refs: Vec::new(),
+            proof_refs: Vec::new(),
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        for (surface_thread_id, surface_kind, visibility_policy, route) in [
+            (
+                "surface-pressure-mobile",
+                SurfaceKind::Mobile,
+                VisibilityPolicy::Compact,
+                "mobile",
+            ),
+            (
+                "surface-pressure-desktop",
+                SurfaceKind::Desktop,
+                VisibilityPolicy::RichProof,
+                "desktop",
+            ),
+            (
+                "surface-pressure-channel",
+                SurfaceKind::Telegram,
+                VisibilityPolicy::StatusOnly,
+                "telegram",
+            ),
+        ] {
+            db.upsert_surface_thread(&SurfaceThread {
+                surface_thread_id: surface_thread_id.into(),
+                friday_conversation_id: "fconv_pressure".into(),
+                mission_id: Some("mission-pressure".into()),
+                surface_kind,
+                channel_binding_id: (surface_kind == SurfaceKind::Telegram)
+                    .then(|| "tg:pressure-room".into()),
+                delivery_route: route.into(),
+                visibility_policy,
+                allowed_actions: vec!["ask_friday".into(), "open_mission".into()],
+                last_seen_at_ms: Some(now),
+                last_delivered_event_seq: Some(0),
+                created_at_ms: now,
+                updated_at_ms: now,
+            })
+            .unwrap();
+        }
+        for (index, work_item_id) in work_item_ids.iter().enumerate() {
+            db.upsert_work_item(&WorkItem {
+                work_item_id: work_item_id.clone(),
+                mission_id: "mission-pressure".into(),
+                lane: WorkLane::DeepSeek,
+                target_provider_or_agent: Some("deepseek".into()),
+                status: WorkItemStatus::ReadyToDispatch,
+                owner_claim_ids: Vec::new(),
+                workspace_refs: Vec::new(),
+                capability_id: Some("ask_friday.deepseek".into()),
+                risk_level: friday_core::Risk::Low,
+                approval_state: ApprovalState::NotRequired,
+                blocking_reason: None,
+                input_refs: vec![format!("friday://body/pressure-ask/{index:02}")],
+                output_refs: Vec::new(),
+                proof_requirements: vec!["ledgered ask receipt".into()],
+                proof_receipts: Vec::new(),
+                judgment_memory: pressure_judgment(index),
+                created_at_ms: now + index as i64,
+                updated_at_ms: now + index as i64,
+            })
+            .unwrap();
+        }
+        db.upsert_surface_event(&SurfaceEvent {
+            surface_event_id: "surface-pressure-mobile-msg".into(),
+            friday_conversation_id: "fconv_pressure".into(),
+            mission_id: "mission-pressure".into(),
+            work_item_id: Some("work-pressure-00".into()),
+            surface_thread_id: "surface-pressure-mobile".into(),
+            source_surface: SurfaceKind::Mobile,
+            event_kind: SurfaceEventKind::UserMessage,
+            body_ref: Some("friday://body/mobile-pressure-input".into()),
+            visibility_policy: VisibilityPolicy::Compact,
+            proof_ref: Some("audit://surface/pressure-mobile".into()),
+            created_at_ms: now + 10_000,
+        })
+        .unwrap();
+        memory::record_candidate(
+            db.conn(),
+            &memory::NewMemoryCandidate {
+                memory_id: "mem-pressure-candidate",
+                scope: MemoryScope::Project,
+                content_ref: Some("friday://memory-candidate/pressure"),
+                content: Some("Candidate pressure fact; must not become durable automatically."),
+                principal_id: Some("owner-1"),
+                sensitive: false,
+                created_at: now + 11_000,
+            },
+        )
+        .unwrap();
+        crate::mission_preflight::attach_memory_candidate_ref(
+            db,
+            "mission-pressure",
+            "mem-pressure-candidate",
+            now + 11_100,
+        )
+        .unwrap();
+    }
+
     /// Headless e2e over real loopback TCP + the sealed WS transport + a mock DeepSeek:
     /// connect → status (no model call) → ask (one model call → ledger/activity/audit) →
     /// reconnect → status (still no extra model call). Proves the call discipline + safe
     /// projection end to end.
     #[test]
-    fn headless_e2e_status_is_pure_ask_routes_to_deepseek_with_safe_projection() {
+    fn headless_e2e_status_is_pure_detached_ask_is_blocked() {
         let db_path = tmp_db();
         let calls = Arc::new(AtomicUsize::new(0));
         let hub_kp = DeviceKeypair::generate();
@@ -301,37 +1986,33 @@ mod tests {
                 "status must make ZERO provider calls"
             );
 
-            // ask → routes to DeepSeek; result is refs-only (no raw answer on the wire)
+            // Detached ask → explicit blocker; no provider call, no ledger/activity.
             let ask_req = Envelope::new(
                 "c1-ask",
                 2,
                 Message::AskFridayRequest {
                     prompt: "hello friday".into(),
+                    mission_context: None,
                 },
             );
             ws_send_envelope(&mut ws, &session, &ask_req, AAD).unwrap();
             let ask_resp = ws_recv_envelope(&mut ws, &session, AAD).unwrap();
             match &ask_resp.message {
-                Message::AskFridayResult {
-                    ledger_id,
-                    result_link,
-                } => {
-                    assert!(ledger_id.starts_with("ask-"));
-                    assert!(result_link
-                        .as_deref()
-                        .unwrap()
-                        .starts_with("friday://activity/"));
+                Message::Error { code, message } => {
+                    assert_eq!(*code, ErrorCode::Internal);
+                    assert!(message.contains("requires Mission context"));
                 }
-                other => panic!("expected AskFridayResult, got {other:?}"),
+                other => panic!("expected detached-ask blocker, got {other:?}"),
             }
             // SAFE PROJECTION: the raw answer text must NOT appear anywhere in the wire response.
             assert!(
                 !format!("{ask_resp:?}").contains("SECRET-ANSWER-TEXT"),
                 "raw answer leaked to the wire"
             );
-            assert!(
-                calls.load(Ordering::SeqCst) >= 1,
-                "ask must reach the DeepSeek route"
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                0,
+                "detached ask must not reach the DeepSeek route"
             );
         } // client 1 disconnects → serve_connection returns
 
@@ -365,11 +2046,2493 @@ mod tests {
             "reconnect/status must make NO extra provider call"
         );
 
-        // Hub-side: exactly one ask → one token_ledger row + one AskReceipt activity + audit.
+        // Hub-side: detached ask is blocked before provider/ledger/audit state.
+        let db = Db::open_hub(&db_path).unwrap();
+        assert_eq!(db.count("token_ledger").unwrap(), 0);
+        assert_eq!(db.count("activity_item").unwrap(), 0);
+        assert_eq!(db.count("audit_ledger").unwrap(), 0);
+    }
+
+    /// Headless Mission E2E over real loopback TCP + sealed WS transport:
+    /// mobile sends a Mission-bound ask; desktop reconnects and reads the same
+    /// Mission projection + bounded timeline. Projection/timeline/status are pure
+    /// reads, so the only provider calls are the ask's discover+post.
+    #[test]
+    fn headless_e2e_mission_bound_mobile_ask_desktop_reconnect_reads_same_result() {
+        let db_path = tmp_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        {
+            let db = Db::open_hub(&db_path).unwrap();
+            seed_pressure_mission(&db, 2);
+        }
+        let hub_kp = DeviceKeypair::generate();
+        let phone_kp = DeviceKeypair::generate();
+        let hub_pub = hub_kp.public_bytes();
+        let phone_pub = phone_kp.public_bytes();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server_calls = calls.clone();
+        let server_db = db_path.clone();
+        let srv = thread::spawn(move || {
+            let session = hub_kp.agree(&phone_pub);
+            let db = Db::open_hub(&server_db).unwrap();
+            let client = DeepSeekClient::with_transport(
+                CountingMock {
+                    calls: server_calls,
+                },
+                "test-key-not-real".to_string(), // pragma: allowlist secret
+            );
+            let mut hub = HubServer::new(
+                db,
+                client,
+                vec![
+                    "ask_friday".into(),
+                    "mission_projection".into(),
+                    "mission_timeline".into(),
+                    "status".into(),
+                ],
+                64,
+            );
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().unwrap();
+                let mut ws = ws_accept(stream).unwrap();
+                let mut now = 1_700_000_900_000i64;
+                let mut clock = || {
+                    now += 1;
+                    now
+                };
+                hub.serve_connection(&mut ws, &session, AAD, &mut clock)
+                    .unwrap();
+            }
+        });
+
+        let session = phone_kp.agree(&hub_pub);
+
+        // Connection 1: mobile input asks through a concrete Mission context.
+        let proof_ref = {
+            let stream = TcpStream::connect(addr).unwrap();
+            let mut ws = ws_connect(&format!("ws://{addr}/"), stream).unwrap();
+            let ask_req = Envelope::new(
+                "wire-mobile-ask",
+                1,
+                Message::AskFridayRequest {
+                    prompt: "Mobile Mission input: answer with proof only.".into(),
+                    mission_context: Some(MissionWorkItemContextWire {
+                        friday_conversation_id: "fconv_pressure".into(),
+                        mission_id: "mission-pressure".into(),
+                        work_item_id: "work-pressure-00".into(),
+                    }),
+                },
+            );
+            ws_send_envelope(&mut ws, &session, &ask_req, AAD).unwrap();
+            let ask_resp = ws_recv_envelope(&mut ws, &session, AAD).unwrap();
+            let debug = format!("{ask_resp:?}");
+            let Message::AskFridayResult {
+                ledger_id,
+                result_link,
+            } = ask_resp.message
+            else {
+                panic!("expected Mission-bound ask result, got {ask_resp:?}");
+            };
+            assert_eq!(ledger_id, "ask-wire-mobile-ask-1");
+            let proof_ref = result_link.expect("Mission-bound ask proof link");
+            assert_eq!(
+                proof_ref,
+                "friday://activity/ask-wire-mobile-ask-1:activity"
+            );
+            for forbidden in ["SECRET-ANSWER-TEXT", "test-key-not-real", "Authorization"] {
+                assert!(
+                    !debug.contains(forbidden),
+                    "wire Mission-bound ask leaked {forbidden}: {debug}"
+                );
+            }
+            proof_ref
+        };
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "mobile Mission-bound ask should discover + post exactly once"
+        );
+        let calls_after_mobile_ask = calls.load(Ordering::SeqCst);
+
+        // Connection 2: desktop/reconnect reads status + shared Mission proof.
+        {
+            let stream = TcpStream::connect(addr).unwrap();
+            let mut ws = ws_connect(&format!("ws://{addr}/"), stream).unwrap();
+            let status_req = Envelope::new(
+                "wire-desktop-status",
+                2,
+                Message::HubStatus {
+                    online: false,
+                    capabilities: vec![],
+                    min_version: SUPPORTED.min,
+                    max_version: SUPPORTED.max,
+                },
+            );
+            ws_send_envelope(&mut ws, &session, &status_req, AAD).unwrap();
+            let status_resp = ws_recv_envelope(&mut ws, &session, AAD).unwrap();
+            assert!(matches!(
+                status_resp.message,
+                Message::HubStatus { online: true, .. }
+            ));
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                calls_after_mobile_ask,
+                "reconnect status must not call provider/model"
+            );
+
+            let projection_req = Envelope::new(
+                "wire-desktop-projection",
+                3,
+                Message::MissionProjectionRequest {
+                    request: friday_protocol::MissionProjectionRequestWire {
+                        friday_conversation_id: "fconv_pressure".into(),
+                    },
+                },
+            );
+            ws_send_envelope(&mut ws, &session, &projection_req, AAD).unwrap();
+            let projection_resp = ws_recv_envelope(&mut ws, &session, AAD).unwrap();
+            let Message::MissionProjectionSnapshot { snapshot } = projection_resp.message else {
+                panic!("expected Mission projection after reconnect, got {projection_resp:?}");
+            };
+            assert_eq!(snapshot.projections.len(), 3);
+            for surface in ["mobile", "desktop", "telegram"] {
+                assert!(
+                    snapshot.projections.iter().any(|projection| {
+                        projection.surface_kind == surface
+                            && projection.mission_id == "mission-pressure"
+                            && projection.status == "active"
+                    }),
+                    "{surface} should read the same Mission after mobile ask"
+                );
+            }
+            assert!(snapshot.route_decisions.iter().any(|route| {
+                route.work_item_id == "work-pressure-00"
+                    && route.selected_lane == "deepseek"
+                    && route.selected_target_label.as_deref() == Some("deepseek")
+            }));
+            let debug = format!("{snapshot:?}");
+            for forbidden in [
+                "SECRET-ANSWER-TEXT",
+                "test-key-not-real",
+                "tg:pressure-room",
+                "Candidate pressure fact",
+                "raw transcript",
+                "sk-test",
+            ] {
+                assert!(
+                    !debug.contains(forbidden),
+                    "wire Mission projection leaked {forbidden}: {debug}"
+                );
+            }
+
+            let mut cursor = None;
+            let mut pages = 0usize;
+            let mut provider_link_seen = false;
+            let mut memory_candidate_seen = false;
+            let mut mobile_event_seen = false;
+            let mut completed_work_seen = false;
+            loop {
+                let timeline_req = Envelope::new(
+                    format!("wire-desktop-timeline-{pages}"),
+                    4 + pages as i64,
+                    Message::MissionTimelineRequest {
+                        request: friday_protocol::MissionTimelineRequestWire {
+                            friday_conversation_id: "fconv_pressure".into(),
+                            mission_id: "mission-pressure".into(),
+                            cursor: cursor.clone(),
+                            limit: Some(2),
+                        },
+                    },
+                );
+                ws_send_envelope(&mut ws, &session, &timeline_req, AAD).unwrap();
+                let timeline_resp = ws_recv_envelope(&mut ws, &session, AAD).unwrap();
+                let Message::MissionTimelineSnapshot { snapshot } = timeline_resp.message else {
+                    panic!("expected bounded Mission timeline, got {timeline_resp:?}");
+                };
+                assert!(snapshot.bounded);
+                assert_eq!(snapshot.work_items.len(), 2);
+                completed_work_seen |= snapshot.work_items.iter().any(|item| {
+                    item.work_item_id == "work-pressure-00"
+                        && item.status == "completed_with_proof"
+                        && item.proof_receipts.contains(&proof_ref)
+                });
+                provider_link_seen |= snapshot.links.iter().any(|link| {
+                    link.link_kind == "provider_timeline"
+                        && link.has_proof
+                        && link.proof_ref.as_deref() == Some(proof_ref.as_str())
+                });
+                memory_candidate_seen |= snapshot.links.iter().any(|link| {
+                    link.link_kind == "memory_candidate" && !link.grants_memory_authority
+                });
+                mobile_event_seen |= snapshot
+                    .surface_events
+                    .iter()
+                    .any(|event| event.source_surface == "mobile");
+                let debug = format!("{snapshot:?}");
+                for forbidden in [
+                    "SECRET-ANSWER-TEXT",
+                    "test-key-not-real",
+                    "Candidate pressure fact",
+                    "raw transcript",
+                    "sk-test",
+                ] {
+                    assert!(
+                        !debug.contains(forbidden),
+                        "wire Mission timeline leaked {forbidden}: {debug}"
+                    );
+                }
+                pages += 1;
+                if snapshot.has_more {
+                    cursor = snapshot.next_cursor.clone();
+                    assert!(cursor.is_some());
+                } else {
+                    assert_eq!(snapshot.next_cursor, None);
+                    break;
+                }
+            }
+            assert!(pages > 1, "bounded wire timeline should page");
+            assert!(completed_work_seen);
+            assert!(provider_link_seen);
+            assert!(memory_candidate_seen);
+            assert!(mobile_event_seen);
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                calls_after_mobile_ask,
+                "desktop projection/timeline reads must make zero provider/model calls"
+            );
+        }
+        srv.join().unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), calls_after_mobile_ask);
+
         let db = Db::open_hub(&db_path).unwrap();
         assert_eq!(db.count("token_ledger").unwrap(), 1);
         assert_eq!(db.count("activity_item").unwrap(), 1);
-        assert!(db.count("audit_ledger").unwrap() >= 1);
+        assert_eq!(memory::auto_usable(db.conn()).unwrap().len(), 0);
+        assert_eq!(
+            db.get_work_item("work-pressure-00")
+                .unwrap()
+                .unwrap()
+                .status,
+            WorkItemStatus::CompletedWithProof
+        );
+        assert_eq!(
+            db.get_work_item("work-pressure-01")
+                .unwrap()
+                .unwrap()
+                .status,
+            WorkItemStatus::ReadyToDispatch
+        );
+    }
+
+    /// Headless Mission-bound ask over sealed WS + the real `UreqTransport`
+    /// pointed at a DeepSeek-compatible loopback HTTP provider. This is not a
+    /// live DeepSeek account proof, but it proves the Hub success path crosses
+    /// the actual HTTP transport, JSON provider response parsing, ledger write,
+    /// proof attachment, and refs-only timeline projection.
+    #[test]
+    fn headless_e2e_mission_bound_ask_uses_real_ureq_transport_loopback_provider() {
+        let db_path = tmp_db();
+        {
+            let db = Db::open_hub(&db_path).unwrap();
+            seed_mission_ask(&db);
+        }
+        let (provider_base_url, provider_requests, provider_srv) =
+            serve_deepseek_http_models_and_chat_once();
+        let hub_kp = DeviceKeypair::generate();
+        let phone_kp = DeviceKeypair::generate();
+        let hub_pub = hub_kp.public_bytes();
+        let phone_pub = phone_kp.public_bytes();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server_db = db_path.clone();
+        let srv = thread::spawn(move || {
+            let session = hub_kp.agree(&phone_pub);
+            let db = Db::open_hub(&server_db).unwrap();
+            let client = DeepSeekClient::with_transport_and_base_url(
+                friday_deepseek::UreqTransport::new(),
+                "test-key-not-real".to_string(), // pragma: allowlist secret
+                provider_base_url,
+            );
+            let mut hub = HubServer::new(
+                db,
+                client,
+                vec!["ask_friday".into(), "mission_timeline".into()],
+                64,
+            );
+            let (stream, _) = listener.accept().unwrap();
+            let mut ws = ws_accept(stream).unwrap();
+            let mut now = 1_700_001_200_000i64;
+            let mut clock = || {
+                now += 1;
+                now
+            };
+            hub.serve_connection(&mut ws, &session, AAD, &mut clock)
+                .unwrap();
+        });
+
+        let session = phone_kp.agree(&hub_pub);
+        let proof_ref = {
+            let stream = TcpStream::connect(addr).unwrap();
+            let mut ws = ws_connect(&format!("ws://{addr}/"), stream).unwrap();
+            let ask_req = Envelope::new(
+                "wire-real-http-mobile-ask",
+                1,
+                Message::AskFridayRequest {
+                    prompt: "Real Ureq loopback provider proof. Keep output refs-only.".into(),
+                    mission_context: Some(MissionWorkItemContextWire {
+                        friday_conversation_id: "fconv_hub_ask".into(),
+                        mission_id: "mission-hub-ask".into(),
+                        work_item_id: "work-hub-ask".into(),
+                    }),
+                },
+            );
+            ws_send_envelope(&mut ws, &session, &ask_req, AAD).unwrap();
+            let ask_resp = ws_recv_envelope(&mut ws, &session, AAD).unwrap();
+            let debug = format!("{ask_resp:?}");
+            let Message::AskFridayResult {
+                ledger_id,
+                result_link,
+            } = ask_resp.message
+            else {
+                panic!("expected real-transport Mission ask result, got {ask_resp:?}");
+            };
+            assert_eq!(ledger_id, "ask-wire-real-http-mobile-ask-1");
+            let proof_ref = result_link.expect("proof activity link");
+            assert_eq!(
+                proof_ref,
+                "friday://activity/ask-wire-real-http-mobile-ask-1:activity"
+            );
+            for forbidden in [
+                "SECRET-HTTP-ANSWER-TEXT",
+                "test-key-not-real",
+                "Authorization",
+                "Bearer",
+            ] {
+                assert!(
+                    !debug.contains(forbidden),
+                    "real HTTP ask response leaked {forbidden}: {debug}"
+                );
+            }
+
+            let timeline_req = Envelope::new(
+                "wire-real-http-timeline",
+                2,
+                Message::MissionTimelineRequest {
+                    request: friday_protocol::MissionTimelineRequestWire {
+                        friday_conversation_id: "fconv_hub_ask".into(),
+                        mission_id: "mission-hub-ask".into(),
+                        cursor: None,
+                        limit: Some(10),
+                    },
+                },
+            );
+            ws_send_envelope(&mut ws, &session, &timeline_req, AAD).unwrap();
+            let timeline_resp = ws_recv_envelope(&mut ws, &session, AAD).unwrap();
+            let Message::MissionTimelineSnapshot { snapshot } = timeline_resp.message else {
+                panic!("expected real-transport timeline, got {timeline_resp:?}");
+            };
+            assert!(snapshot.bounded);
+            assert_eq!(snapshot.work_items.len(), 1);
+            assert!(snapshot.work_items.iter().any(|item| {
+                item.work_item_id == "work-hub-ask"
+                    && item.status == "completed_with_proof"
+                    && item.proof_receipts.contains(&proof_ref)
+            }));
+            assert!(snapshot.links.iter().any(|link| {
+                link.link_kind == "provider_timeline"
+                    && link.has_proof
+                    && link.proof_ref.as_deref() == Some(proof_ref.as_str())
+            }));
+            let debug = format!("{snapshot:?}");
+            for forbidden in [
+                "SECRET-HTTP-ANSWER-TEXT",
+                "test-key-not-real",
+                "Authorization",
+                "Bearer",
+            ] {
+                assert!(
+                    !debug.contains(forbidden),
+                    "real HTTP timeline leaked {forbidden}: {debug}"
+                );
+            }
+            proof_ref
+        };
+        srv.join().unwrap();
+        provider_srv.join().unwrap();
+
+        let requests = provider_requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].method, "GET");
+        assert_eq!(requests[0].path, "/models");
+        assert_eq!(
+            requests[0].authorization.as_deref(),
+            Some("Bearer test-key-not-real")
+        );
+        assert_eq!(requests[1].method, "POST");
+        assert_eq!(requests[1].path, "/chat/completions");
+        assert_eq!(
+            requests[1].authorization.as_deref(),
+            Some("Bearer test-key-not-real")
+        );
+        assert!(requests[1].body.contains("deepseek-v4-flash"));
+        assert!(requests[1]
+            .body
+            .contains("Real Ureq loopback provider proof"));
+        assert!(requests[1].body.contains("\"stream\":false"));
+        drop(requests);
+
+        let db = Db::open_hub(&db_path).unwrap();
+        assert_eq!(db.count("token_ledger").unwrap(), 1);
+        assert_eq!(db.count("activity_item").unwrap(), 1);
+        assert_eq!(memory::auto_usable(db.conn()).unwrap().len(), 0);
+        let work = db
+            .get_work_item("work-hub-ask")
+            .unwrap()
+            .expect("real HTTP work item");
+        assert_eq!(work.status, WorkItemStatus::CompletedWithProof);
+        assert_eq!(work.proof_receipts, vec![proof_ref]);
+    }
+
+    /// Real HTTP transport pressure proof: 20 Mission-bound asks through the
+    /// actual `UreqTransport` against a DeepSeek-compatible loopback provider.
+    /// This keeps the pressure/no-leak/no-fallback/timeline guarantees while
+    /// replacing the scripted provider transport with real HTTP request/response
+    /// parsing. It is still not an external DeepSeek-account live proof.
+    #[test]
+    fn mission_bound_ask_real_ureq_transport_pressure_loop_paginates_and_redacts() {
+        const ASK_COUNT: usize = 50;
+        let db_path = tmp_db();
+        let db = Db::open_hub(&db_path).unwrap();
+        seed_pressure_mission(&db, ASK_COUNT);
+        let (provider_base_url, provider_requests, provider_srv) =
+            serve_deepseek_http_models_and_chat_requests(ASK_COUNT * 2);
+        let client = DeepSeekClient::with_transport_and_base_url(
+            friday_deepseek::UreqTransport::new(),
+            "test-key-not-real".to_string(), // pragma: allowlist secret
+            provider_base_url,
+        );
+        let mut hub = HubServer::new(
+            db,
+            client,
+            vec![
+                "ask_friday".into(),
+                "mission_projection".into(),
+                "mission_timeline".into(),
+            ],
+            64,
+        );
+
+        let mut proof_refs = Vec::new();
+        for index in 0..ASK_COUNT {
+            let response = hub.dispatch(
+                Envelope::new(
+                    format!("real-http-pressure-ask-{index:02}"),
+                    index as i64,
+                    Message::AskFridayRequest {
+                        prompt: format!(
+                            "Real HTTP Mission pressure ask {index:02}. Return refs only."
+                        ),
+                        mission_context: Some(MissionWorkItemContextWire {
+                            friday_conversation_id: "fconv_pressure".into(),
+                            mission_id: "mission-pressure".into(),
+                            work_item_id: format!("work-pressure-{index:02}"),
+                        }),
+                    },
+                ),
+                1_700_001_300_000 + index as i64,
+            );
+            let debug = format!("{response:?}");
+            let Message::AskFridayResult {
+                ledger_id,
+                result_link,
+            } = response.message
+            else {
+                panic!("expected real HTTP pressure ask result, got {response:?}");
+            };
+            assert_eq!(
+                ledger_id,
+                format!("ask-real-http-pressure-ask-{index:02}-{}", index + 1)
+            );
+            let proof_ref = result_link.expect("proof activity link");
+            assert!(proof_ref.starts_with("friday://activity/"));
+            proof_refs.push(proof_ref);
+            for forbidden in [
+                "SECRET-HTTP-ANSWER-TEXT",
+                "test-key-not-real",
+                "Authorization",
+                "Bearer",
+                "sk-test",
+            ] {
+                assert!(
+                    !debug.contains(forbidden),
+                    "real HTTP pressure ask leaked {forbidden}: {debug}"
+                );
+            }
+        }
+        provider_srv.join().unwrap();
+
+        {
+            let requests = provider_requests.lock().unwrap();
+            assert_eq!(requests.len(), ASK_COUNT * 2);
+            for index in 0..ASK_COUNT {
+                let get = &requests[index * 2];
+                let post = &requests[index * 2 + 1];
+                assert_eq!(get.method, "GET");
+                assert_eq!(get.path, "/models");
+                assert_eq!(
+                    get.authorization.as_deref(),
+                    Some("Bearer test-key-not-real")
+                );
+                assert_eq!(post.method, "POST");
+                assert_eq!(post.path, "/chat/completions");
+                assert_eq!(
+                    post.authorization.as_deref(),
+                    Some("Bearer test-key-not-real")
+                );
+                assert!(post.body.contains("deepseek-v4-flash"));
+                assert!(post
+                    .body
+                    .contains(&format!("Real HTTP Mission pressure ask {index:02}")));
+                assert!(post.body.contains("\"stream\":false"));
+            }
+        }
+
+        assert_eq!(hub.db().count("token_ledger").unwrap(), ASK_COUNT as i64);
+        assert_eq!(hub.db().count("activity_item").unwrap(), ASK_COUNT as i64);
+        assert_eq!(memory::auto_usable(hub.db().conn()).unwrap().len(), 0);
+
+        let projection = hub.dispatch(
+            Envelope::new(
+                "real-http-pressure-projection",
+                500,
+                Message::MissionProjectionRequest {
+                    request: friday_protocol::MissionProjectionRequestWire {
+                        friday_conversation_id: "fconv_pressure".into(),
+                    },
+                },
+            ),
+            1_700_001_400_000,
+        );
+        let Message::MissionProjectionSnapshot { snapshot } = projection.message else {
+            panic!("expected real HTTP pressure projection, got {projection:?}");
+        };
+        assert_eq!(snapshot.projections.len(), 3);
+        for surface in ["mobile", "desktop", "telegram"] {
+            assert!(
+                snapshot.projections.iter().any(|projection| {
+                    projection.surface_kind == surface
+                        && projection.mission_id == "mission-pressure"
+                        && projection.status == "active"
+                }),
+                "{surface} projection should see one Mission after real HTTP pressure asks"
+            );
+        }
+        let debug = format!("{snapshot:?}");
+        for forbidden in [
+            "SECRET-HTTP-ANSWER-TEXT",
+            "test-key-not-real",
+            "Authorization",
+            "Bearer",
+            "raw transcript",
+            "sk-test",
+        ] {
+            assert!(
+                !debug.contains(forbidden),
+                "real HTTP pressure projection leaked {forbidden}: {debug}"
+            );
+        }
+
+        let mut cursor = None;
+        let mut pages = 0usize;
+        let mut provider_link_count = 0usize;
+        let mut memory_candidate_seen = false;
+        loop {
+            let timeline = hub.dispatch(
+                Envelope::new(
+                    format!("real-http-pressure-timeline-{pages}"),
+                    600 + pages as i64,
+                    Message::MissionTimelineRequest {
+                        request: friday_protocol::MissionTimelineRequestWire {
+                            friday_conversation_id: "fconv_pressure".into(),
+                            mission_id: "mission-pressure".into(),
+                            cursor: cursor.clone(),
+                            limit: Some(17),
+                        },
+                    },
+                ),
+                1_700_001_500_000 + pages as i64,
+            );
+            let Message::MissionTimelineSnapshot { snapshot } = timeline.message else {
+                panic!("expected real HTTP pressure timeline, got {timeline:?}");
+            };
+            assert!(snapshot.bounded);
+            assert_eq!(snapshot.work_items.len(), ASK_COUNT);
+            assert!(snapshot.work_items.iter().all(|item| {
+                item.status == "completed_with_proof" && !item.proof_receipts.is_empty()
+            }));
+            provider_link_count += snapshot
+                .links
+                .iter()
+                .filter(|link| link.link_kind == "provider_timeline" && link.has_proof)
+                .count();
+            memory_candidate_seen |= snapshot
+                .links
+                .iter()
+                .any(|link| link.link_kind == "memory_candidate" && !link.grants_memory_authority);
+            let debug = format!("{snapshot:?}");
+            for forbidden in [
+                "SECRET-HTTP-ANSWER-TEXT",
+                "test-key-not-real",
+                "Authorization",
+                "Bearer",
+                "raw transcript",
+                "sk-test",
+            ] {
+                assert!(
+                    !debug.contains(forbidden),
+                    "real HTTP pressure timeline leaked {forbidden}: {debug}"
+                );
+            }
+            pages += 1;
+            if snapshot.has_more {
+                cursor = snapshot.next_cursor.clone();
+                assert!(cursor.is_some());
+            } else {
+                assert_eq!(snapshot.next_cursor, None);
+                break;
+            }
+        }
+        assert!(pages > 1, "real HTTP pressure timeline should page");
+        assert_eq!(provider_link_count, ASK_COUNT);
+        assert!(memory_candidate_seen);
+        for proof_ref in proof_refs {
+            let work_item_id = proof_ref
+                .strip_prefix("friday://activity/ask-real-http-pressure-ask-")
+                .and_then(|suffix| suffix.get(..2))
+                .map(|index| format!("work-pressure-{index}"))
+                .expect("proof ref index");
+            let work = hub.db().get_work_item(&work_item_id).unwrap().unwrap();
+            assert!(work.proof_receipts.contains(&proof_ref));
+        }
+    }
+
+    /// Headless Mission intake E2E over real loopback TCP + sealed WS transport:
+    /// mobile creates the Mission/WorkItem, then desktop + channel repeat the
+    /// same intent and are bound to the existing Mission instead of writing task
+    /// debt. This is pure Hub preflight: no provider/model calls.
+    #[test]
+    fn headless_e2e_mission_intake_mobile_create_desktop_channel_duplicate_bind_same_mission() {
+        let db_path = tmp_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let hub_kp = DeviceKeypair::generate();
+        let phone_kp = DeviceKeypair::generate();
+        let hub_pub = hub_kp.public_bytes();
+        let phone_pub = phone_kp.public_bytes();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server_calls = calls.clone();
+        let server_db = db_path.clone();
+        let srv = thread::spawn(move || {
+            let session = hub_kp.agree(&phone_pub);
+            let db = Db::open_hub(&server_db).unwrap();
+            let client = DeepSeekClient::with_transport(
+                CountingMock {
+                    calls: server_calls,
+                },
+                "test-key-not-real".to_string(), // pragma: allowlist secret
+            );
+            let mut hub = HubServer::new(
+                db,
+                client,
+                vec![
+                    "ask_friday".into(),
+                    "mission_intake".into(),
+                    "mission_projection".into(),
+                    "status".into(),
+                ],
+                64,
+            );
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().unwrap();
+                let mut ws = ws_accept(stream).unwrap();
+                let mut now = 1_700_001_000_000i64;
+                let mut clock = || {
+                    now += 1;
+                    now
+                };
+                hub.serve_connection(&mut ws, &session, AAD, &mut clock)
+                    .unwrap();
+            }
+        });
+
+        let session = phone_kp.agree(&hub_pub);
+        let shared_intent = "resolve the Friday mobile desktop channel mission";
+
+        // Connection 1: mobile creates the canonical Mission and first WorkItem.
+        {
+            let stream = TcpStream::connect(addr).unwrap();
+            let mut ws = ws_connect(&format!("ws://{addr}/"), stream).unwrap();
+            let intake_req = Envelope::new(
+                "wire-mobile-intake",
+                1,
+                Message::MissionIntakeRequest {
+                    request: MissionIntakeRequestWire {
+                        friday_conversation_id: "fconv_intake_ws".into(),
+                        owner_principal: "principal:jarvis".into(),
+                        surface_thread_id: "surface-mobile-intake".into(),
+                        surface_kind: "mobile".into(),
+                        delivery_route: "mobile://local/thread/intake".into(),
+                        visibility_policy: "compact".into(),
+                        mission_id: "mission-intake".into(),
+                        work_item_id: "work-intake-mobile".into(),
+                        title: "Mission intake".into(),
+                        intent: shared_intent.into(),
+                        lane: "deepseek".into(),
+                        target_provider_or_agent: Some("deepseek".into()),
+                        capability_id: Some("ask_friday.deepseek".into()),
+                        body_ref: Some("friday://body/mobile/intake-1".into()),
+                        includes_sensitive_context: false,
+                    },
+                },
+            );
+            ws_send_envelope(&mut ws, &session, &intake_req, AAD).unwrap();
+            let intake_resp = ws_recv_envelope(&mut ws, &session, AAD).unwrap();
+            let Message::MissionIntakeResult { result } = intake_resp.message else {
+                panic!("expected mobile Mission intake result, got {intake_resp:?}");
+            };
+            assert_eq!(result.friday_conversation_id, "fconv_intake_ws");
+            assert_eq!(result.mission_id, "mission-intake");
+            assert_eq!(result.work_item_id.as_deref(), Some("work-intake-mobile"));
+            assert_eq!(result.surface_thread_id, "surface-mobile-intake");
+            assert_eq!(result.status, "ready");
+            assert!(result.blockers.is_empty());
+            assert!(result.created_or_ready);
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                0,
+                "Mission intake must not call provider/model"
+            );
+        }
+
+        // Connection 2: desktop and channel repeat the same intent, then read one
+        // shared projection.
+        {
+            let stream = TcpStream::connect(addr).unwrap();
+            let mut ws = ws_connect(&format!("ws://{addr}/"), stream).unwrap();
+
+            let desktop_req = Envelope::new(
+                "wire-desktop-intake-duplicate",
+                2,
+                Message::MissionIntakeRequest {
+                    request: MissionIntakeRequestWire {
+                        friday_conversation_id: "fconv_intake_ws".into(),
+                        owner_principal: "principal:jarvis".into(),
+                        surface_thread_id: "surface-desktop-intake".into(),
+                        surface_kind: "desktop".into(),
+                        delivery_route: "desktop://local/window/intake".into(),
+                        visibility_policy: "rich_proof".into(),
+                        mission_id: "mission-intake-desktop-duplicate".into(),
+                        work_item_id: "work-intake-desktop-duplicate".into(),
+                        title: "Desktop duplicate".into(),
+                        intent: shared_intent.into(),
+                        lane: "deepseek".into(),
+                        target_provider_or_agent: Some("deepseek".into()),
+                        capability_id: Some("ask_friday.deepseek".into()),
+                        body_ref: Some("friday://body/desktop/intake-duplicate".into()),
+                        includes_sensitive_context: false,
+                    },
+                },
+            );
+            ws_send_envelope(&mut ws, &session, &desktop_req, AAD).unwrap();
+            let desktop_resp = ws_recv_envelope(&mut ws, &session, AAD).unwrap();
+            let Message::MissionIntakeResult { result } = desktop_resp.message else {
+                panic!("expected desktop duplicate intake result, got {desktop_resp:?}");
+            };
+            assert_eq!(result.friday_conversation_id, "fconv_intake_ws");
+            assert_eq!(result.mission_id, "mission-intake");
+            assert_eq!(result.work_item_id, None);
+            assert_eq!(result.surface_thread_id, "surface-desktop-intake");
+            assert_eq!(result.status, "blocked");
+            assert_eq!(
+                result.duplicate_mission_id.as_deref(),
+                Some("mission-intake")
+            );
+            assert_eq!(result.duplicate_work_item_id, None);
+            assert!(result
+                .blockers
+                .contains(&"duplicate_active_mission_before_dispatch".to_string()));
+            assert!(!result.created_or_ready);
+
+            let channel_req = Envelope::new(
+                "wire-channel-intake-duplicate",
+                3,
+                Message::MissionIntakeRequest {
+                    request: MissionIntakeRequestWire {
+                        friday_conversation_id: "fconv_intake_ws".into(),
+                        owner_principal: "principal:jarvis".into(),
+                        surface_thread_id: "surface-telegram-intake".into(),
+                        surface_kind: "telegram".into(),
+                        delivery_route: "telegram://bound/channel/intake".into(),
+                        visibility_policy: "status_only".into(),
+                        mission_id: "mission-intake-channel-duplicate".into(),
+                        work_item_id: "work-intake-channel-duplicate".into(),
+                        title: "Channel duplicate".into(),
+                        intent: shared_intent.into(),
+                        lane: "deepseek".into(),
+                        target_provider_or_agent: Some("deepseek".into()),
+                        capability_id: Some("ask_friday.deepseek".into()),
+                        body_ref: Some("friday://surface-event-body/telegram/intake".into()),
+                        includes_sensitive_context: false,
+                    },
+                },
+            );
+            ws_send_envelope(&mut ws, &session, &channel_req, AAD).unwrap();
+            let channel_resp = ws_recv_envelope(&mut ws, &session, AAD).unwrap();
+            let Message::MissionIntakeResult { result } = channel_resp.message else {
+                panic!("expected channel duplicate intake result, got {channel_resp:?}");
+            };
+            assert_eq!(result.mission_id, "mission-intake");
+            assert_eq!(result.surface_thread_id, "surface-telegram-intake");
+            assert_eq!(result.status, "blocked");
+            assert_eq!(
+                result.duplicate_mission_id.as_deref(),
+                Some("mission-intake")
+            );
+
+            let projection_req = Envelope::new(
+                "wire-intake-projection",
+                4,
+                Message::MissionProjectionRequest {
+                    request: friday_protocol::MissionProjectionRequestWire {
+                        friday_conversation_id: "fconv_intake_ws".into(),
+                    },
+                },
+            );
+            ws_send_envelope(&mut ws, &session, &projection_req, AAD).unwrap();
+            let projection_resp = ws_recv_envelope(&mut ws, &session, AAD).unwrap();
+            let Message::MissionProjectionSnapshot { snapshot } = projection_resp.message else {
+                panic!("expected intake Mission projection, got {projection_resp:?}");
+            };
+            assert_eq!(snapshot.friday_conversation_id, "fconv_intake_ws");
+            assert_eq!(snapshot.projections.len(), 3);
+            for (surface_thread_id, surface_kind, visibility_policy) in [
+                ("surface-mobile-intake", "mobile", "compact"),
+                ("surface-desktop-intake", "desktop", "rich_proof"),
+                ("surface-telegram-intake", "telegram", "status_only"),
+            ] {
+                assert!(
+                    snapshot.projections.iter().any(|projection| {
+                        projection.surface_thread_id == surface_thread_id
+                            && projection.surface_kind == surface_kind
+                            && projection.visibility_policy == visibility_policy
+                            && projection.mission_id == "mission-intake"
+                            && projection.status == "active"
+                    }),
+                    "{surface_kind} should be bound to the same Mission projection"
+                );
+            }
+            assert!(snapshot.route_decisions.iter().any(|route| {
+                route.mission_id == "mission-intake"
+                    && route.work_item_id == "work-intake-mobile"
+                    && route.selected_lane == "deepseek"
+                    && route.selected_target_label.as_deref() == Some("deepseek")
+            }));
+            let debug = format!("{snapshot:?}");
+            for forbidden in [
+                "test-key-not-real",
+                "telegram://bound/channel/intake",
+                "friday://body/mobile/intake-1",
+                "raw transcript",
+                "sk-test",
+            ] {
+                assert!(
+                    !debug.contains(forbidden),
+                    "Mission intake projection leaked {forbidden}: {debug}"
+                );
+            }
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                0,
+                "intake duplicate/projection must not call provider/model"
+            );
+        }
+        srv.join().unwrap();
+
+        let db = Db::open_hub(&db_path).unwrap();
+        assert_eq!(db.count("mission").unwrap(), 1);
+        assert_eq!(db.count("work_item").unwrap(), 1);
+        assert_eq!(db.count("surface_thread").unwrap(), 3);
+        assert_eq!(db.count("token_ledger").unwrap(), 0);
+        assert_eq!(db.count("activity_item").unwrap(), 0);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let conversation = db
+            .get_friday_conversation("fconv_intake_ws")
+            .unwrap()
+            .expect("conversation");
+        assert_eq!(
+            conversation.active_mission_ids,
+            vec!["mission-intake".to_string()]
+        );
+        for surface_thread_id in [
+            "surface-mobile-intake",
+            "surface-desktop-intake",
+            "surface-telegram-intake",
+        ] {
+            assert!(
+                conversation
+                    .surface_thread_ids
+                    .contains(&surface_thread_id.to_string()),
+                "{surface_thread_id} should be attached to the conversation"
+            );
+            let surface = db
+                .get_surface_thread(surface_thread_id)
+                .unwrap()
+                .expect("surface thread");
+            assert_eq!(surface.mission_id.as_deref(), Some("mission-intake"));
+            assert_eq!(surface.friday_conversation_id, "fconv_intake_ws");
+        }
+        let mission = db.get_mission("mission-intake").unwrap().expect("mission");
+        assert_eq!(
+            mission.work_item_ids,
+            vec!["work-intake-mobile".to_string()]
+        );
+        let work = db
+            .get_work_item("work-intake-mobile")
+            .unwrap()
+            .expect("work item");
+        assert_eq!(work.status, WorkItemStatus::ReadyToDispatch);
+        assert_eq!(work.input_refs, vec!["friday://body/mobile/intake-1"]);
+    }
+
+    /// One sealed-WS proof chain in the user-requested order:
+    /// mobile input -> Mission intake -> Mission-bound ask -> proof receipt ->
+    /// desktop/channel duplicate binding -> desktop projection + bounded timeline.
+    /// The provider is scripted, but the transport, Hub dispatch, storage writes,
+    /// proof attachment, pagination, no-fallback discipline, and redacted wire
+    /// projections are all exercised in one flow.
+    #[test]
+    fn headless_e2e_intake_then_mission_bound_ask_then_duplicate_projection_timeline() {
+        let db_path = tmp_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let hub_kp = DeviceKeypair::generate();
+        let phone_kp = DeviceKeypair::generate();
+        let hub_pub = hub_kp.public_bytes();
+        let phone_pub = phone_kp.public_bytes();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server_calls = calls.clone();
+        let server_db = db_path.clone();
+        let srv = thread::spawn(move || {
+            let session = hub_kp.agree(&phone_pub);
+            let db = Db::open_hub(&server_db).unwrap();
+            let client = DeepSeekClient::with_transport(
+                CountingMock {
+                    calls: server_calls,
+                },
+                "test-key-not-real".to_string(), // pragma: allowlist secret
+            );
+            let mut hub = HubServer::new(
+                db,
+                client,
+                vec![
+                    "ask_friday".into(),
+                    "mission_intake".into(),
+                    "mission_projection".into(),
+                    "mission_timeline".into(),
+                    "status".into(),
+                ],
+                64,
+            );
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().unwrap();
+                let mut ws = ws_accept(stream).unwrap();
+                let mut now = 1_700_001_100_000i64;
+                let mut clock = || {
+                    now += 1;
+                    now
+                };
+                hub.serve_connection(&mut ws, &session, AAD, &mut clock)
+                    .unwrap();
+            }
+        });
+
+        let session = phone_kp.agree(&hub_pub);
+        let shared_intent = "ship one Friday Mission across mobile desktop channel";
+        let proof_ref = {
+            let stream = TcpStream::connect(addr).unwrap();
+            let mut ws = ws_connect(&format!("ws://{addr}/"), stream).unwrap();
+            let intake_req = Envelope::new(
+                "wire-chain-mobile-intake",
+                1,
+                Message::MissionIntakeRequest {
+                    request: MissionIntakeRequestWire {
+                        friday_conversation_id: "fconv_chain_ws".into(),
+                        owner_principal: "principal:jarvis".into(),
+                        surface_thread_id: "surface-chain-mobile".into(),
+                        surface_kind: "mobile".into(),
+                        delivery_route: "mobile://local/thread/chain".into(),
+                        visibility_policy: "compact".into(),
+                        mission_id: "mission-chain".into(),
+                        work_item_id: "work-chain-mobile".into(),
+                        title: "Chain Mission".into(),
+                        intent: shared_intent.into(),
+                        lane: "deepseek".into(),
+                        target_provider_or_agent: Some("deepseek".into()),
+                        capability_id: Some("ask_friday.deepseek".into()),
+                        body_ref: Some("friday://body/mobile/chain".into()),
+                        includes_sensitive_context: false,
+                    },
+                },
+            );
+            ws_send_envelope(&mut ws, &session, &intake_req, AAD).unwrap();
+            let intake_resp = ws_recv_envelope(&mut ws, &session, AAD).unwrap();
+            let Message::MissionIntakeResult { result } = intake_resp.message else {
+                panic!("expected chain intake result, got {intake_resp:?}");
+            };
+            assert_eq!(result.status, "ready");
+            assert_eq!(result.mission_id, "mission-chain");
+            assert_eq!(result.work_item_id.as_deref(), Some("work-chain-mobile"));
+            assert!(result.created_or_ready);
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                0,
+                "Mission intake must not call provider/model"
+            );
+
+            let ask_req = Envelope::new(
+                "wire-chain-mobile-ask",
+                2,
+                Message::AskFridayRequest {
+                    prompt: "Use the canonical Mission context and attach proof.".into(),
+                    mission_context: Some(MissionWorkItemContextWire {
+                        friday_conversation_id: result.friday_conversation_id,
+                        mission_id: result.mission_id,
+                        work_item_id: result.work_item_id.expect("ready work item id"),
+                    }),
+                },
+            );
+            ws_send_envelope(&mut ws, &session, &ask_req, AAD).unwrap();
+            let ask_resp = ws_recv_envelope(&mut ws, &session, AAD).unwrap();
+            let debug = format!("{ask_resp:?}");
+            let Message::AskFridayResult {
+                ledger_id,
+                result_link,
+            } = ask_resp.message
+            else {
+                panic!("expected chain Mission-bound ask result, got {ask_resp:?}");
+            };
+            assert_eq!(ledger_id, "ask-wire-chain-mobile-ask-1");
+            let proof_ref = result_link.expect("proof activity link");
+            assert_eq!(
+                proof_ref,
+                "friday://activity/ask-wire-chain-mobile-ask-1:activity"
+            );
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                2,
+                "Mission-bound ask should discover + post exactly once"
+            );
+            for forbidden in ["SECRET-ANSWER-TEXT", "test-key-not-real", "Authorization"] {
+                assert!(
+                    !debug.contains(forbidden),
+                    "chain ask response leaked {forbidden}: {debug}"
+                );
+            }
+            proof_ref
+        };
+
+        let calls_after_ask = calls.load(Ordering::SeqCst);
+        {
+            let stream = TcpStream::connect(addr).unwrap();
+            let mut ws = ws_connect(&format!("ws://{addr}/"), stream).unwrap();
+            for (
+                msg_id,
+                surface_thread_id,
+                surface_kind,
+                delivery_route,
+                visibility_policy,
+                mission_id,
+                work_item_id,
+                body_ref,
+            ) in [
+                (
+                    "wire-chain-desktop-duplicate",
+                    "surface-chain-desktop",
+                    "desktop",
+                    "desktop://local/window/chain",
+                    "rich_proof",
+                    "mission-chain-desktop-dupe",
+                    "work-chain-desktop-dupe",
+                    "friday://body/desktop/chain-dupe",
+                ),
+                (
+                    "wire-chain-channel-duplicate",
+                    "surface-chain-telegram",
+                    "telegram",
+                    "telegram://bound/channel/chain",
+                    "status_only",
+                    "mission-chain-channel-dupe",
+                    "work-chain-channel-dupe",
+                    "friday://surface-event-body/telegram/chain-dupe",
+                ),
+            ] {
+                let duplicate_req = Envelope::new(
+                    msg_id,
+                    3,
+                    Message::MissionIntakeRequest {
+                        request: MissionIntakeRequestWire {
+                            friday_conversation_id: "fconv_chain_ws".into(),
+                            owner_principal: "principal:jarvis".into(),
+                            surface_thread_id: surface_thread_id.into(),
+                            surface_kind: surface_kind.into(),
+                            delivery_route: delivery_route.into(),
+                            visibility_policy: visibility_policy.into(),
+                            mission_id: mission_id.into(),
+                            work_item_id: work_item_id.into(),
+                            title: "Duplicate chain Mission".into(),
+                            intent: shared_intent.into(),
+                            lane: "deepseek".into(),
+                            target_provider_or_agent: Some("deepseek".into()),
+                            capability_id: Some("ask_friday.deepseek".into()),
+                            body_ref: Some(body_ref.into()),
+                            includes_sensitive_context: false,
+                        },
+                    },
+                );
+                ws_send_envelope(&mut ws, &session, &duplicate_req, AAD).unwrap();
+                let duplicate_resp = ws_recv_envelope(&mut ws, &session, AAD).unwrap();
+                let Message::MissionIntakeResult { result } = duplicate_resp.message else {
+                    panic!("expected chain duplicate intake result, got {duplicate_resp:?}");
+                };
+                assert_eq!(result.status, "blocked");
+                assert_eq!(result.mission_id, "mission-chain");
+                assert_eq!(result.surface_thread_id, surface_thread_id);
+                assert_eq!(
+                    result.duplicate_mission_id.as_deref(),
+                    Some("mission-chain")
+                );
+                assert!(!result.created_or_ready);
+                assert_eq!(
+                    calls.load(Ordering::SeqCst),
+                    calls_after_ask,
+                    "duplicate intake must not call provider/model"
+                );
+            }
+
+            let projection_req = Envelope::new(
+                "wire-chain-desktop-projection",
+                5,
+                Message::MissionProjectionRequest {
+                    request: friday_protocol::MissionProjectionRequestWire {
+                        friday_conversation_id: "fconv_chain_ws".into(),
+                    },
+                },
+            );
+            ws_send_envelope(&mut ws, &session, &projection_req, AAD).unwrap();
+            let projection_resp = ws_recv_envelope(&mut ws, &session, AAD).unwrap();
+            let Message::MissionProjectionSnapshot { snapshot } = projection_resp.message else {
+                panic!("expected chain projection, got {projection_resp:?}");
+            };
+            assert_eq!(snapshot.projections.len(), 3);
+            for surface in ["mobile", "desktop", "telegram"] {
+                assert!(
+                    snapshot.projections.iter().any(|projection| {
+                        projection.surface_kind == surface
+                            && projection.mission_id == "mission-chain"
+                            && projection.status == "active"
+                    }),
+                    "{surface} should see the same chain Mission"
+                );
+            }
+            assert!(snapshot.route_decisions.iter().any(|route| {
+                route.mission_id == "mission-chain"
+                    && route.work_item_id == "work-chain-mobile"
+                    && route.selected_lane == "deepseek"
+                    && route.selected_target_label.as_deref() == Some("deepseek")
+            }));
+            let debug = format!("{snapshot:?}");
+            for forbidden in [
+                "SECRET-ANSWER-TEXT",
+                "test-key-not-real",
+                "mobile://local/thread/chain",
+                "telegram://bound/channel/chain",
+                "friday://body/mobile/chain",
+                "raw transcript",
+                "sk-test",
+            ] {
+                assert!(
+                    !debug.contains(forbidden),
+                    "chain projection leaked {forbidden}: {debug}"
+                );
+            }
+
+            let mut cursor = None;
+            let mut pages = 0usize;
+            let mut provider_link_seen = false;
+            let mut route_decision_seen = false;
+            let mut completed_work_seen = false;
+            loop {
+                let timeline_req = Envelope::new(
+                    format!("wire-chain-desktop-timeline-{pages}"),
+                    6 + pages as i64,
+                    Message::MissionTimelineRequest {
+                        request: friday_protocol::MissionTimelineRequestWire {
+                            friday_conversation_id: "fconv_chain_ws".into(),
+                            mission_id: "mission-chain".into(),
+                            cursor: cursor.clone(),
+                            limit: Some(1),
+                        },
+                    },
+                );
+                ws_send_envelope(&mut ws, &session, &timeline_req, AAD).unwrap();
+                let timeline_resp = ws_recv_envelope(&mut ws, &session, AAD).unwrap();
+                let Message::MissionTimelineSnapshot { snapshot } = timeline_resp.message else {
+                    panic!("expected chain bounded timeline, got {timeline_resp:?}");
+                };
+                assert!(snapshot.bounded);
+                assert_eq!(snapshot.work_items.len(), 1);
+                completed_work_seen |= snapshot.work_items.iter().any(|item| {
+                    item.work_item_id == "work-chain-mobile"
+                        && item.status == "completed_with_proof"
+                        && item.proof_receipts.contains(&proof_ref)
+                });
+                provider_link_seen |= snapshot.links.iter().any(|link| {
+                    link.link_kind == "provider_timeline"
+                        && link.has_proof
+                        && link.proof_ref.as_deref() == Some(proof_ref.as_str())
+                });
+                route_decision_seen |= snapshot.links.iter().any(|link| {
+                    link.link_kind == "route_decision" && !link.grants_memory_authority
+                });
+                let debug = format!("{snapshot:?}");
+                for forbidden in [
+                    "SECRET-ANSWER-TEXT",
+                    "test-key-not-real",
+                    "mobile://local/thread/chain",
+                    "telegram://bound/channel/chain",
+                    "friday://body/mobile/chain",
+                    "raw transcript",
+                    "sk-test",
+                ] {
+                    assert!(
+                        !debug.contains(forbidden),
+                        "chain timeline leaked {forbidden}: {debug}"
+                    );
+                }
+                pages += 1;
+                if snapshot.has_more {
+                    cursor = snapshot.next_cursor.clone();
+                    assert!(cursor.is_some());
+                } else {
+                    assert_eq!(snapshot.next_cursor, None);
+                    break;
+                }
+            }
+            assert!(pages > 1, "chain bounded timeline should page");
+            assert!(completed_work_seen);
+            assert!(provider_link_seen);
+            assert!(route_decision_seen);
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                calls_after_ask,
+                "desktop duplicate/projection/timeline reads must not call provider/model"
+            );
+        }
+        srv.join().unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), calls_after_ask);
+
+        let db = Db::open_hub(&db_path).unwrap();
+        assert_eq!(db.count("mission").unwrap(), 1);
+        assert_eq!(db.count("work_item").unwrap(), 1);
+        assert_eq!(db.count("surface_thread").unwrap(), 3);
+        assert_eq!(db.count("token_ledger").unwrap(), 1);
+        assert_eq!(db.count("activity_item").unwrap(), 1);
+        assert_eq!(memory::auto_usable(db.conn()).unwrap().len(), 0);
+        let work = db
+            .get_work_item("work-chain-mobile")
+            .unwrap()
+            .expect("chain work item");
+        assert_eq!(work.status, WorkItemStatus::CompletedWithProof);
+        assert_eq!(work.proof_receipts, vec![proof_ref]);
+        for missing in ["work-chain-desktop-dupe", "work-chain-channel-dupe"] {
+            assert!(
+                db.get_work_item(missing).unwrap().is_none(),
+                "duplicate work item {missing} should not exist"
+            );
+        }
+    }
+
+    #[test]
+    fn mission_projection_request_is_pure_and_shares_mission_across_surfaces() {
+        let db_path = tmp_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let db = Db::open_hub(&db_path).unwrap();
+        seed_mission_projection(&db);
+        let client = DeepSeekClient::with_transport(
+            CountingMock {
+                calls: calls.clone(),
+            },
+            "test-key-not-real".to_string(), // pragma: allowlist secret
+        );
+        let mut hub = HubServer::new(db, client, vec!["mission_projection".into()], 256);
+
+        let response = hub.dispatch(
+            Envelope::new(
+                "mission-projection-1",
+                1,
+                Message::MissionProjectionRequest {
+                    request: friday_protocol::MissionProjectionRequestWire {
+                        friday_conversation_id: "fconv_hub_projection".into(),
+                    },
+                },
+            ),
+            1_700_000_000_500,
+        );
+        let Message::MissionProjectionSnapshot { snapshot } = response.message else {
+            panic!("expected mission projection snapshot, got {response:?}");
+        };
+        assert_eq!(snapshot.friday_conversation_id, "fconv_hub_projection");
+        assert_eq!(snapshot.generated_at_ms, 1_700_000_000_500);
+        assert_eq!(snapshot.projections.len(), 2);
+        let mission_ids: std::collections::BTreeSet<_> = snapshot
+            .projections
+            .iter()
+            .map(|projection| projection.mission_id.as_str())
+            .collect();
+        assert_eq!(
+            mission_ids,
+            std::collections::BTreeSet::from(["mission-hub-projection"])
+        );
+        assert!(snapshot
+            .projections
+            .iter()
+            .any(|projection| projection.surface_kind == "mobile"
+                && projection.visibility_policy == "compact"
+                && projection.status == "active"));
+        assert!(snapshot
+            .projections
+            .iter()
+            .any(|projection| projection.surface_kind == "desktop"
+                && projection.visibility_policy == "rich_proof"
+                && projection.status == "active"));
+        assert_eq!(snapshot.route_decisions.len(), 1);
+        let route = &snapshot.route_decisions[0];
+        assert_eq!(route.mission_id, "mission-hub-projection");
+        assert_eq!(route.work_item_id, "work-hub-route");
+        assert_eq!(route.selected_lane, "channel");
+        assert_eq!(
+            route.selected_target_label.as_deref(),
+            Some("bound_channel")
+        );
+        assert_eq!(route.conflict_ref_count, 1);
+        assert_eq!(route.trace_ref_count, 2);
+        assert!(route
+            .route_decision_ref
+            .starts_with("friday://route-decision-projection/"));
+        let debug = format!("{snapshot:?}");
+        for forbidden in [
+            "external-thread",
+            "provider-token",
+            "raw-chat-123",
+            "telegram:raw",
+            "/Users/jarvis/private",
+            "raw transcript",
+            "sk-",
+        ] {
+            assert!(
+                !debug.contains(forbidden),
+                "Mission projection leaked {forbidden}: {debug}"
+            );
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "mission projection is a pure Hub read"
+        );
+    }
+
+    #[test]
+    fn provider_workspace_action_request_is_guarded_by_hub_dispatch() {
+        let db_path = tmp_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let db = Db::open_hub(&db_path).unwrap();
+        seed_provider_workspace_mission(&db);
+        db.upsert_provider_session_link(&provider_session_link())
+            .unwrap();
+        let client = DeepSeekClient::with_transport(
+            CountingMock {
+                calls: calls.clone(),
+            },
+            "test-key-not-real".to_string(), // pragma: allowlist secret
+        );
+        let mut hub = HubServer::new(db, client, vec!["provider_workspace".into()], 256);
+
+        let response = hub.dispatch(
+            Envelope::new(
+                "provider-action",
+                1,
+                Message::ProviderWorkspaceActionRequest {
+                    request: ProviderWorkspaceActionRequestWire {
+                        request_id: "provider-action-1".into(),
+                        friday_session_id: "friday-session-1".into(),
+                        provider: "codex".into(),
+                        action: "list_sessions".into(),
+                        capability_id: "provider.codex.list_sessions".into(),
+                        payload_ref: None,
+                        mission_context: Some(
+                            friday_protocol::ProviderWorkspaceMissionContextWire {
+                                friday_conversation_id: "fconv_provider_workspace".into(),
+                                mission_id: "mission-provider-workspace".into(),
+                                work_item_id: "work-provider-workspace".into(),
+                            },
+                        ),
+                    },
+                },
+            ),
+            1_700_000_100_300,
+        );
+        let rendered = format!("{response:?}");
+        let Message::ProviderWorkspaceActionResult { result } = response.message else {
+            panic!("expected provider workspace action result, got {response:?}");
+        };
+        assert_eq!(result.request_id, "provider-action-1");
+        assert_eq!(result.status, "implemented_unproven");
+        assert!(!result.accepted);
+        assert!(!result.routed);
+        assert!(result.blocker.is_some());
+        assert!(result.mission_context.is_some());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        for forbidden in [
+            "account-hash-never-project",
+            "/Users/jarvis/private/project",
+            "provider-session-id",
+            "provider-thread-id",
+            "provider.example/private",
+        ] {
+            assert!(
+                !rendered.contains(forbidden),
+                "provider workspace guard leaked private value {forbidden}: {rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn provider_workspace_action_with_stale_mission_context_is_refused_before_catalog_acceptance() {
+        let db_path = tmp_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let db = Db::open_hub(&db_path).unwrap();
+        db.upsert_provider_session_link(&provider_session_link())
+            .unwrap();
+        let client = DeepSeekClient::with_transport(
+            CountingMock {
+                calls: calls.clone(),
+            },
+            "test-key-not-real".to_string(), // pragma: allowlist secret
+        );
+        let mut hub = HubServer::new(db, client, vec!["provider_workspace".into()], 256);
+
+        let response = hub.dispatch(
+            Envelope::new(
+                "provider-action-stale-mission",
+                1,
+                Message::ProviderWorkspaceActionRequest {
+                    request: ProviderWorkspaceActionRequestWire {
+                        request_id: "provider-action-stale-mission".into(),
+                        friday_session_id: "friday-session-1".into(),
+                        provider: "codex".into(),
+                        action: "list_sessions".into(),
+                        capability_id: "provider.codex.list_sessions".into(),
+                        payload_ref: None,
+                        mission_context: Some(
+                            friday_protocol::ProviderWorkspaceMissionContextWire {
+                                friday_conversation_id: "fconv_provider_workspace".into(),
+                                mission_id: "mission-provider-workspace".into(),
+                                work_item_id: "work-provider-workspace".into(),
+                            },
+                        ),
+                    },
+                },
+            ),
+            1_700_000_100_320,
+        );
+        let Message::ProviderWorkspaceActionResult { result } = response.message else {
+            panic!("expected provider workspace action result, got {response:?}");
+        };
+        assert_eq!(result.status, "mission_context_required");
+        assert!(!result.accepted);
+        assert!(!result.routed);
+        assert!(result
+            .blocker
+            .as_deref()
+            .unwrap()
+            .contains("provider dispatch Mission context blocked"));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn provider_workspace_action_without_mission_context_is_refused() {
+        let db_path = tmp_db();
+        let db = Db::open_hub(&db_path).unwrap();
+        let client = DeepSeekClient::with_transport(
+            CountingMock {
+                calls: Arc::new(AtomicUsize::new(0)),
+            },
+            "test-key-not-real".to_string(), // pragma: allowlist secret
+        );
+        let mut hub = HubServer::new(db, client, vec!["provider_workspace".into()], 256);
+
+        let response = hub.dispatch(
+            Envelope::new(
+                "provider-action-detached",
+                1,
+                Message::ProviderWorkspaceActionRequest {
+                    request: ProviderWorkspaceActionRequestWire {
+                        request_id: "provider-action-detached".into(),
+                        friday_session_id: "friday-session-1".into(),
+                        provider: "codex".into(),
+                        action: "list_sessions".into(),
+                        capability_id: "provider.codex.list_sessions".into(),
+                        payload_ref: None,
+                        mission_context: None,
+                    },
+                },
+            ),
+            1_700_000_100_350,
+        );
+        let Message::ProviderWorkspaceActionResult { result } = response.message else {
+            panic!("expected provider workspace action result, got {response:?}");
+        };
+        assert_eq!(result.status, "mission_context_required");
+        assert!(!result.accepted);
+        assert!(!result.routed);
+        assert!(result
+            .blocker
+            .as_deref()
+            .unwrap()
+            .contains("requires Mission context"));
+    }
+
+    #[test]
+    fn ask_without_mission_context_is_blocked_before_provider_or_ledger() {
+        let db_path = tmp_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let db = Db::open_hub(&db_path).unwrap();
+        let client = DeepSeekClient::with_transport(
+            CountingMock {
+                calls: calls.clone(),
+            },
+            "test-key-not-real".to_string(), // pragma: allowlist secret
+        );
+        let mut hub = HubServer::new(db, client, vec!["ask_friday".into()], 256);
+
+        let response = hub.dispatch(
+            Envelope::new(
+                "detached-ask",
+                1,
+                Message::AskFridayRequest {
+                    prompt: "This must not create detached provider state.".into(),
+                    mission_context: None,
+                },
+            ),
+            1_700_000_100_400,
+        );
+
+        let Message::Error { code, message } = response.message else {
+            panic!("expected missing-context error, got {response:?}");
+        };
+        assert_eq!(code, ErrorCode::Internal);
+        assert!(message.contains("requires Mission context"));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(hub.db().count("token_ledger").unwrap(), 0);
+        assert_eq!(hub.db().count("activity_item").unwrap(), 0);
+    }
+
+    #[test]
+    fn mission_bound_ask_attaches_proof_to_timeline_and_completion() {
+        let db_path = tmp_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let db = Db::open_hub(&db_path).unwrap();
+        seed_mission_ask(&db);
+        let client = DeepSeekClient::with_transport(
+            CountingMock {
+                calls: calls.clone(),
+            },
+            "test-key-not-real".to_string(), // pragma: allowlist secret
+        );
+        let mut hub = HubServer::new(db, client, vec!["ask_friday".into()], 256);
+
+        let response = hub.dispatch(
+            Envelope::new(
+                "mission-ask-1",
+                1,
+                Message::AskFridayRequest {
+                    prompt: "What should Friday do next?".into(),
+                    mission_context: Some(MissionWorkItemContextWire {
+                        friday_conversation_id: "fconv_hub_ask".into(),
+                        mission_id: "mission-hub-ask".into(),
+                        work_item_id: "work-hub-ask".into(),
+                    }),
+                },
+            ),
+            1_700_000_100_500,
+        );
+        let Message::AskFridayResult {
+            ledger_id,
+            result_link,
+        } = response.message
+        else {
+            panic!("expected mission-bound ask result, got {response:?}");
+        };
+        assert_eq!(ledger_id, "ask-mission-ask-1-1");
+        let proof_ref = result_link.expect("proof/activity ref");
+        assert_eq!(proof_ref, "friday://activity/ask-mission-ask-1-1:activity");
+        assert!(
+            calls.load(Ordering::SeqCst) >= 1,
+            "mission-bound ask must call DeepSeek only after context resolves"
+        );
+
+        let response = hub.dispatch(
+            Envelope::new(
+                "mission-ask-timeline",
+                2,
+                Message::MissionTimelineRequest {
+                    request: friday_protocol::MissionTimelineRequestWire {
+                        friday_conversation_id: "fconv_hub_ask".into(),
+                        mission_id: "mission-hub-ask".into(),
+                        cursor: None,
+                        limit: None,
+                    },
+                },
+            ),
+            1_700_000_100_600,
+        );
+        let Message::MissionTimelineSnapshot { snapshot } = response.message else {
+            panic!("expected mission timeline snapshot, got {response:?}");
+        };
+        assert_eq!(snapshot.work_items.len(), 1);
+        let item = &snapshot.work_items[0];
+        assert_eq!(item.work_item_id, "work-hub-ask");
+        assert_eq!(item.status, "completed_with_proof");
+        assert!(item.proof_receipts.contains(&proof_ref));
+        assert!(snapshot.mission.proof_refs.contains(&proof_ref));
+        assert!(snapshot
+            .links
+            .iter()
+            .any(|link| link.link_kind == "provider_timeline"
+                && link.has_proof
+                && link.proof_ref.as_deref() == Some(proof_ref.as_str())));
+        assert!(snapshot
+            .route_decisions
+            .iter()
+            .any(|route| route.selected_lane == "deepseek"
+                && route.selected_target_label.as_deref() == Some("deepseek")));
+        let debug = format!("{snapshot:?}");
+        for forbidden in ["SECRET-ANSWER-TEXT", "test-key-not-real", "raw user prompt"] {
+            assert!(
+                !debug.contains(forbidden),
+                "Mission-bound ask leaked {forbidden}: {debug}"
+            );
+        }
+    }
+
+    #[test]
+    fn mission_bound_ask_pressure_loop_paginates_and_preserves_memory_boundary() {
+        const ASK_COUNT: usize = 25;
+        let db_path = tmp_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let db = Db::open_hub(&db_path).unwrap();
+        seed_pressure_mission(&db, ASK_COUNT);
+        let client = DeepSeekClient::with_transport(
+            CountingMock {
+                calls: calls.clone(),
+            },
+            "test-key-not-real".to_string(), // pragma: allowlist secret
+        );
+        let mut hub = HubServer::new(db, client, vec!["ask_friday".into()], 32);
+
+        for index in 0..ASK_COUNT {
+            let response = hub.dispatch(
+                Envelope::new(
+                    format!("pressure-ask-{index:02}"),
+                    index as i64,
+                    Message::AskFridayRequest {
+                        prompt: format!("Pressure ask {index:02}: reply with OK."),
+                        mission_context: Some(MissionWorkItemContextWire {
+                            friday_conversation_id: "fconv_pressure".into(),
+                            mission_id: "mission-pressure".into(),
+                            work_item_id: format!("work-pressure-{index:02}"),
+                        }),
+                    },
+                ),
+                1_700_000_400_000 + index as i64,
+            );
+            let Message::AskFridayResult {
+                ledger_id,
+                result_link,
+            } = response.message
+            else {
+                panic!("expected pressure ask result {index}, got {response:?}");
+            };
+            assert_eq!(
+                ledger_id,
+                format!("ask-pressure-ask-{index:02}-{}", index + 1)
+            );
+            let expected_result_link = format!(
+                "friday://activity/ask-pressure-ask-{index:02}-{}:activity",
+                index + 1
+            );
+            assert_eq!(result_link.as_deref(), Some(expected_result_link.as_str()));
+        }
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            ASK_COUNT * 2,
+            "each Mission-bound ask should discover + call exactly once; no hidden fallback"
+        );
+        assert_eq!(hub.db().count("token_ledger").unwrap(), ASK_COUNT as i64);
+        assert_eq!(hub.db().count("activity_item").unwrap(), ASK_COUNT as i64);
+        assert_eq!(
+            memory::auto_usable(hub.db().conn()).unwrap().len(),
+            0,
+            "candidate memory must not become confirmed/auto-usable during ask pressure"
+        );
+
+        let projection = hub.dispatch(
+            Envelope::new(
+                "pressure-projection",
+                100,
+                Message::MissionProjectionRequest {
+                    request: friday_protocol::MissionProjectionRequestWire {
+                        friday_conversation_id: "fconv_pressure".into(),
+                    },
+                },
+            ),
+            1_700_000_500_000,
+        );
+        let Message::MissionProjectionSnapshot { snapshot } = projection.message else {
+            panic!("expected pressure projection, got {projection:?}");
+        };
+        assert_eq!(snapshot.projections.len(), 3);
+        for surface in ["mobile", "desktop", "telegram"] {
+            assert!(
+                snapshot.projections.iter().any(|projection| {
+                    projection.surface_kind == surface
+                        && projection.mission_id == "mission-pressure"
+                        && projection.status == "active"
+                }),
+                "{surface} projection should see the same Mission"
+            );
+        }
+
+        let mut cursor = None;
+        let mut pages = 0usize;
+        let mut route_count = 0usize;
+        let mut provider_link_count = 0usize;
+        let mut memory_candidate_seen = false;
+        let mut mobile_event_seen = false;
+        loop {
+            let response = hub.dispatch(
+                Envelope::new(
+                    format!("pressure-timeline-page-{pages}"),
+                    200 + pages as i64,
+                    Message::MissionTimelineRequest {
+                        request: friday_protocol::MissionTimelineRequestWire {
+                            friday_conversation_id: "fconv_pressure".into(),
+                            mission_id: "mission-pressure".into(),
+                            cursor: cursor.clone(),
+                            limit: Some(17),
+                        },
+                    },
+                ),
+                1_700_000_600_000 + pages as i64,
+            );
+            let Message::MissionTimelineSnapshot { snapshot } = response.message else {
+                panic!("expected pressure timeline page, got {response:?}");
+            };
+            assert!(snapshot.bounded);
+            assert_eq!(snapshot.work_items.len(), ASK_COUNT);
+            assert!(
+                snapshot
+                    .work_items
+                    .iter()
+                    .all(|item| item.status == "completed_with_proof"),
+                "all pressure WorkItems should be proof-completed"
+            );
+            route_count += snapshot.route_decisions.len();
+            provider_link_count += snapshot
+                .links
+                .iter()
+                .filter(|link| link.link_kind == "provider_timeline" && link.has_proof)
+                .count();
+            memory_candidate_seen |= snapshot
+                .links
+                .iter()
+                .any(|link| link.link_kind == "memory_candidate" && !link.grants_memory_authority);
+            mobile_event_seen |= snapshot
+                .surface_events
+                .iter()
+                .any(|event| event.source_surface == "mobile");
+            let debug = format!("{snapshot:?}");
+            for forbidden in [
+                "SECRET-ANSWER-TEXT",
+                "test-key-not-real",
+                "Candidate pressure fact",
+                "raw transcript",
+                "sk-test",
+            ] {
+                assert!(
+                    !debug.contains(forbidden),
+                    "pressure timeline leaked {forbidden}: {debug}"
+                );
+            }
+            pages += 1;
+            if snapshot.has_more {
+                cursor = snapshot.next_cursor.clone();
+                assert!(cursor.is_some(), "has_more must carry next_cursor");
+            } else {
+                assert_eq!(snapshot.next_cursor, None);
+                break;
+            }
+        }
+        assert!(pages > 1, "bounded read should require multiple pages");
+        assert_eq!(route_count, ASK_COUNT);
+        assert_eq!(provider_link_count, ASK_COUNT);
+        assert!(memory_candidate_seen);
+        assert!(mobile_event_seen);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            ASK_COUNT * 2,
+            "projection/timeline reads must make zero additional provider/model calls"
+        );
+    }
+
+    #[test]
+    fn mission_bound_ask_provider_error_is_explicit_no_fallback_no_ledger() {
+        let db_path = tmp_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let db = Db::open_hub(&db_path).unwrap();
+        seed_mission_ask(&db);
+        let client = DeepSeekClient::with_transport(
+            FailingMock {
+                calls: calls.clone(),
+            },
+            "test-key-not-real".to_string(), // pragma: allowlist secret
+        );
+        let mut hub = HubServer::new(db, client, vec!["ask_friday".into()], 256);
+
+        let response = hub.dispatch(
+            Envelope::new(
+                "mission-ask-provider-down",
+                1,
+                Message::AskFridayRequest {
+                    prompt: "Should surface provider outage without fallback.".into(),
+                    mission_context: Some(MissionWorkItemContextWire {
+                        friday_conversation_id: "fconv_hub_ask".into(),
+                        mission_id: "mission-hub-ask".into(),
+                        work_item_id: "work-hub-ask".into(),
+                    }),
+                },
+            ),
+            1_700_000_100_900,
+        );
+        let Message::Error { code, message } = response.message else {
+            panic!("expected provider error, got {response:?}");
+        };
+        assert_eq!(code, ErrorCode::ProviderUnavailable);
+        assert!(message.contains("no fallback"));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "provider discovery failed once; no post call and no fallback provider"
+        );
+        assert_eq!(hub.db().count("token_ledger").unwrap(), 0);
+        assert_eq!(hub.db().count("activity_item").unwrap(), 0);
+        assert_eq!(
+            hub.db()
+                .get_work_item("work-hub-ask")
+                .unwrap()
+                .unwrap()
+                .status,
+            WorkItemStatus::ReadyToDispatch,
+            "provider outage must not mark the WorkItem done"
+        );
+    }
+
+    #[test]
+    fn mission_bound_ask_quota_post_error_is_no_fallback_no_ledger_or_secret_leak() {
+        let db_path = tmp_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let db = Db::open_hub(&db_path).unwrap();
+        seed_mission_ask(&db);
+        let client = DeepSeekClient::with_transport(
+            PostFailingMock {
+                calls: calls.clone(),
+                reason: "HTTP 429 quota exhausted for SECRET-QUOTA-BODY",
+            },
+            "test-key-not-real".to_string(), // pragma: allowlist secret
+        );
+        let mut hub = HubServer::new(db, client, vec!["ask_friday".into()], 256);
+
+        let response = hub.dispatch(
+            Envelope::new(
+                "mission-ask-quota-down",
+                1,
+                Message::AskFridayRequest {
+                    prompt: "Should surface quota outage without fallback.".into(),
+                    mission_context: Some(MissionWorkItemContextWire {
+                        friday_conversation_id: "fconv_hub_ask".into(),
+                        mission_id: "mission-hub-ask".into(),
+                        work_item_id: "work-hub-ask".into(),
+                    }),
+                },
+            ),
+            1_700_000_100_950,
+        );
+        let rendered = format!("{response:?}");
+        let Message::Error { code, message } = response.message else {
+            panic!("expected quota provider error, got {response:?}");
+        };
+        assert_eq!(code, ErrorCode::ProviderUnavailable);
+        assert!(message.contains("no fallback"));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "quota failure should be one discovery + one post, with no fallback provider"
+        );
+        assert_eq!(hub.db().count("token_ledger").unwrap(), 0);
+        assert_eq!(hub.db().count("activity_item").unwrap(), 0);
+        assert_eq!(
+            hub.db()
+                .get_work_item("work-hub-ask")
+                .unwrap()
+                .unwrap()
+                .status,
+            WorkItemStatus::ReadyToDispatch,
+            "quota failure must not mark the WorkItem done"
+        );
+        for forbidden in [
+            "SECRET-QUOTA-BODY",
+            "test-key-not-real",
+            "Authorization",
+            "Bearer",
+            "sk-test",
+        ] {
+            assert!(
+                !rendered.contains(forbidden),
+                "quota provider error leaked {forbidden}: {rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn mission_bound_ask_network_discovery_error_is_no_fallback_no_ledger_or_completion() {
+        let db_path = tmp_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let db = Db::open_hub(&db_path).unwrap();
+        seed_mission_ask(&db);
+        let client = DeepSeekClient::with_transport(
+            FailingMock {
+                calls: calls.clone(),
+            },
+            "test-key-not-real".to_string(), // pragma: allowlist secret
+        );
+        let mut hub = HubServer::new(db, client, vec!["ask_friday".into()], 256);
+
+        let response = hub.dispatch(
+            Envelope::new(
+                "mission-ask-network-down",
+                1,
+                Message::AskFridayRequest {
+                    prompt: "Should surface network outage without fallback.".into(),
+                    mission_context: Some(MissionWorkItemContextWire {
+                        friday_conversation_id: "fconv_hub_ask".into(),
+                        mission_id: "mission-hub-ask".into(),
+                        work_item_id: "work-hub-ask".into(),
+                    }),
+                },
+            ),
+            1_700_000_100_980,
+        );
+        let rendered = format!("{response:?}");
+        let Message::Error { code, message } = response.message else {
+            panic!("expected network provider error, got {response:?}");
+        };
+        assert_eq!(code, ErrorCode::ProviderUnavailable);
+        assert!(message.contains("no fallback"));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "network discovery failed once; no post call and no fallback provider"
+        );
+        assert_eq!(hub.db().count("token_ledger").unwrap(), 0);
+        assert_eq!(hub.db().count("activity_item").unwrap(), 0);
+        assert_eq!(
+            hub.db()
+                .get_work_item("work-hub-ask")
+                .unwrap()
+                .unwrap()
+                .status,
+            WorkItemStatus::ReadyToDispatch,
+            "network failure must not mark the WorkItem done"
+        );
+        for forbidden in [
+            "forced test outage",
+            "test-key-not-real",
+            "Authorization",
+            "Bearer",
+            "sk-test",
+        ] {
+            assert!(
+                !rendered.contains(forbidden),
+                "network provider error leaked {forbidden}: {rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn mission_bound_ask_blocks_bad_context_before_provider_call() {
+        let db_path = tmp_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let db = Db::open_hub(&db_path).unwrap();
+        let client = DeepSeekClient::with_transport(
+            CountingMock {
+                calls: calls.clone(),
+            },
+            "test-key-not-real".to_string(), // pragma: allowlist secret
+        );
+        let mut hub = HubServer::new(db, client, vec!["ask_friday".into()], 256);
+
+        let response = hub.dispatch(
+            Envelope::new(
+                "mission-ask-blocked",
+                1,
+                Message::AskFridayRequest {
+                    prompt: "Should not call model".into(),
+                    mission_context: Some(MissionWorkItemContextWire {
+                        friday_conversation_id: "fconv_missing".into(),
+                        mission_id: "mission-missing".into(),
+                        work_item_id: "work-missing".into(),
+                    }),
+                },
+            ),
+            1_700_000_100_700,
+        );
+        let Message::Error { code, message } = response.message else {
+            panic!("expected blocked mission ask error, got {response:?}");
+        };
+        assert_eq!(code, ErrorCode::Internal);
+        assert!(message.contains("unknown_mission"));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "blocked mission ask must not make a provider/model call"
+        );
+        assert_eq!(hub.db().count("token_ledger").unwrap(), 0);
+        assert_eq!(hub.db().count("activity_item").unwrap(), 0);
+    }
+
+    #[test]
+    fn mission_timeline_request_is_refs_only_and_composes_mission_state() {
+        let db_path = tmp_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let db = Db::open_hub(&db_path).unwrap();
+        seed_mission_projection(&db);
+        let client = DeepSeekClient::with_transport(
+            CountingMock {
+                calls: calls.clone(),
+            },
+            "test-key-not-real".to_string(), // pragma: allowlist secret
+        );
+        let mut hub = HubServer::new(db, client, vec!["mission_timeline".into()], 256);
+
+        let response = hub.dispatch(
+            Envelope::new(
+                "mission-timeline-1",
+                1,
+                Message::MissionTimelineRequest {
+                    request: friday_protocol::MissionTimelineRequestWire {
+                        friday_conversation_id: "fconv_hub_projection".into(),
+                        mission_id: "mission-hub-projection".into(),
+                        cursor: None,
+                        limit: None,
+                    },
+                },
+            ),
+            1_700_000_000_600,
+        );
+        let Message::MissionTimelineSnapshot { snapshot } = response.message else {
+            panic!("expected mission timeline snapshot, got {response:?}");
+        };
+        assert_eq!(snapshot.friday_conversation_id, "fconv_hub_projection");
+        assert_eq!(snapshot.mission_id, "mission-hub-projection");
+        assert_eq!(snapshot.generated_at_ms, 1_700_000_000_600);
+        assert!(!snapshot.bounded);
+        assert!(!snapshot.has_more);
+        assert_eq!(snapshot.requested_cursor, None);
+        assert_eq!(snapshot.next_cursor, None);
+        assert_eq!(snapshot.retained_from, None);
+        assert_eq!(snapshot.mission.status, "active");
+        assert_eq!(snapshot.projections.len(), 2);
+        assert_eq!(snapshot.work_items.len(), 1);
+        let item = &snapshot.work_items[0];
+        assert_eq!(item.work_item_id, "work-hub-route");
+        assert_eq!(item.lane, "channel");
+        assert_eq!(item.status, "provider_waiting");
+        assert!(item.proof_receipts.is_empty());
+        assert!(
+            item.status != "completed_with_proof",
+            "provider_waiting must not be rendered as completion"
+        );
+        assert!(snapshot
+            .links
+            .iter()
+            .any(|link| link.link_kind == "channel_inbound"
+                && link.has_proof
+                && !link.grants_memory_authority));
+        assert!(snapshot
+            .links
+            .iter()
+            .any(|link| link.link_kind == "memory_candidate"
+                && !link.has_proof
+                && !link.grants_memory_authority));
+        assert_eq!(snapshot.route_decisions.len(), 1);
+        assert_eq!(snapshot.surface_events.len(), 1);
+        let event = &snapshot.surface_events[0];
+        assert_eq!(event.source_surface, "mobile");
+        assert_eq!(event.mission_id, "mission-hub-projection");
+        assert_eq!(event.surface_thread_id, "surface-mobile");
+        assert_eq!(
+            event.body_ref.as_deref(),
+            Some("friday://body/mobile-message/1")
+        );
+        let debug = format!("{snapshot:?}");
+        for forbidden in [
+            "external-thread",
+            "provider-token",
+            "raw-chat-123",
+            "telegram:raw",
+            "message-99",
+            "raw-private-candidate",
+            "link-with-raw-channel-id",
+            "/Users/jarvis/private",
+            "raw transcript",
+            "sk-",
+        ] {
+            assert!(
+                !debug.contains(forbidden),
+                "Mission timeline leaked {forbidden}: {debug}"
+            );
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "mission timeline is a pure Hub read"
+        );
+    }
+
+    #[test]
+    fn mission_timeline_request_can_page_surface_safe_refs_without_provider_call() {
+        let db_path = tmp_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let db = Db::open_hub(&db_path).unwrap();
+        seed_mission_projection(&db);
+        let client = DeepSeekClient::with_transport(
+            CountingMock {
+                calls: calls.clone(),
+            },
+            "test-key-not-real".to_string(), // pragma: allowlist secret
+        );
+        let mut hub = HubServer::new(db, client, vec!["mission_timeline".into()], 256);
+
+        let first = hub.dispatch(
+            Envelope::new(
+                "mission-timeline-page-1",
+                1,
+                Message::MissionTimelineRequest {
+                    request: friday_protocol::MissionTimelineRequestWire {
+                        friday_conversation_id: "fconv_hub_projection".into(),
+                        mission_id: "mission-hub-projection".into(),
+                        cursor: None,
+                        limit: Some(3),
+                    },
+                },
+            ),
+            1_700_000_000_610,
+        );
+        let Message::MissionTimelineSnapshot { snapshot: first } = first.message else {
+            panic!("expected first mission timeline page, got {first:?}");
+        };
+        assert!(first.bounded);
+        assert!(first.has_more);
+        assert_eq!(first.requested_cursor, None);
+        assert_eq!(first.retained_from.as_deref(), Some("offset:0"));
+        assert_eq!(first.next_cursor.as_deref(), Some("offset:3"));
+        assert_eq!(first.route_decisions.len(), 1);
+        assert_eq!(first.links.len(), 2);
+        assert!(first
+            .links
+            .iter()
+            .any(|link| link.link_kind == "route_decision"));
+        assert!(first
+            .links
+            .iter()
+            .any(|link| link.link_kind == "channel_inbound"));
+        assert!(first.surface_events.is_empty());
+
+        let second = hub.dispatch(
+            Envelope::new(
+                "mission-timeline-page-2",
+                2,
+                Message::MissionTimelineRequest {
+                    request: friday_protocol::MissionTimelineRequestWire {
+                        friday_conversation_id: "fconv_hub_projection".into(),
+                        mission_id: "mission-hub-projection".into(),
+                        cursor: first.next_cursor.clone(),
+                        limit: Some(2),
+                    },
+                },
+            ),
+            1_700_000_000_620,
+        );
+        let Message::MissionTimelineSnapshot { snapshot: second } = second.message else {
+            panic!("expected second mission timeline page, got {second:?}");
+        };
+        assert!(second.bounded);
+        assert!(!second.has_more);
+        assert_eq!(second.requested_cursor.as_deref(), Some("offset:3"));
+        assert_eq!(second.retained_from.as_deref(), Some("offset:3"));
+        assert_eq!(second.next_cursor, None);
+        assert_eq!(second.route_decisions.len(), 0);
+        assert_eq!(second.links.len(), 1);
+        assert_eq!(second.links[0].link_kind, "memory_candidate");
+        assert_eq!(second.surface_events.len(), 1);
+        assert_eq!(second.surface_events[0].source_surface, "mobile");
+
+        let debug = format!("{first:?}{second:?}");
+        for forbidden in [
+            "telegram:raw-chat-123",
+            "raw-private-candidate",
+            "link-with-raw-channel-id",
+            "message-99",
+            "test-key-not-real",
+        ] {
+            assert!(
+                !debug.contains(forbidden),
+                "bounded mission timeline leaked {forbidden}: {debug}"
+            );
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "bounded mission timeline is a pure Hub read"
+        );
+    }
+
+    #[test]
+    fn mission_lifecycle_request_updates_mission_without_provider_call() {
+        let db_path = tmp_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let db = Db::open_hub(&db_path).unwrap();
+        seed_mission_projection(&db);
+        let client = DeepSeekClient::with_transport(
+            CountingMock {
+                calls: calls.clone(),
+            },
+            "test-key-not-real".to_string(), // pragma: allowlist secret
+        );
+        let mut hub = HubServer::new(db, client, vec!["mission_lifecycle".into()], 256);
+
+        let response = hub.dispatch(
+            Envelope::new(
+                "mission-lifecycle-archive",
+                1,
+                Message::MissionLifecycleRequest {
+                    request: MissionLifecycleRequestWire {
+                        friday_conversation_id: "fconv_hub_projection".into(),
+                        mission_id: "mission-hub-projection".into(),
+                        target_status: "archived".into(),
+                        actor_ref: "operator:jarvis".into(),
+                        reason: "archive after duplicate Mission resolved".into(),
+                        proof_ref: Some("audit://mission-lifecycle/archive".into()),
+                        merged_into_mission_id: None,
+                    },
+                },
+            ),
+            1_700_000_000_700,
+        );
+        let Message::MissionLifecycleResult { result } = response.message else {
+            panic!("expected mission lifecycle result, got {response:?}");
+        };
+        assert_eq!(result.friday_conversation_id, "fconv_hub_projection");
+        assert_eq!(result.mission_id, "mission-hub-projection");
+        assert_eq!(result.previous_status, "active");
+        assert_eq!(result.status, "archived");
+        assert_eq!(result.actor_ref, "operator:jarvis");
+        assert_eq!(result.updated_at_ms, 1_700_000_000_700);
+        assert!(!result
+            .active_mission_ids
+            .contains(&"mission-hub-projection".to_string()));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "Mission lifecycle mutation must not call a provider/model"
+        );
+        assert_eq!(hub.db().count("token_ledger").unwrap(), 0);
+
+        let timeline = hub.dispatch(
+            Envelope::new(
+                "mission-lifecycle-timeline",
+                2,
+                Message::MissionTimelineRequest {
+                    request: friday_protocol::MissionTimelineRequestWire {
+                        friday_conversation_id: "fconv_hub_projection".into(),
+                        mission_id: "mission-hub-projection".into(),
+                        cursor: None,
+                        limit: None,
+                    },
+                },
+            ),
+            1_700_000_000_710,
+        );
+        let Message::MissionTimelineSnapshot { snapshot } = timeline.message else {
+            panic!("expected mission timeline snapshot, got {timeline:?}");
+        };
+        assert_eq!(snapshot.mission.status, "archived");
+        assert!(snapshot
+            .mission
+            .proof_refs
+            .contains(&"audit://mission-lifecycle/archive".to_string()));
+    }
+
+    #[test]
+    fn mission_lifecycle_blocks_fake_done_before_provider_call() {
+        let db_path = tmp_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let db = Db::open_hub(&db_path).unwrap();
+        seed_mission_projection(&db);
+        let client = DeepSeekClient::with_transport(
+            CountingMock {
+                calls: calls.clone(),
+            },
+            "test-key-not-real".to_string(), // pragma: allowlist secret
+        );
+        let mut hub = HubServer::new(db, client, vec!["mission_lifecycle".into()], 256);
+
+        let response = hub.dispatch(
+            Envelope::new(
+                "mission-lifecycle-fake-done",
+                1,
+                Message::MissionLifecycleRequest {
+                    request: MissionLifecycleRequestWire {
+                        friday_conversation_id: "fconv_hub_projection".into(),
+                        mission_id: "mission-hub-projection".into(),
+                        target_status: "done".into(),
+                        actor_ref: "operator:jarvis".into(),
+                        reason: "no proof should not complete Mission".into(),
+                        proof_ref: None,
+                        merged_into_mission_id: None,
+                    },
+                },
+            ),
+            1_700_000_000_800,
+        );
+        let Message::Error { code, message } = response.message else {
+            panic!("expected mission lifecycle block, got {response:?}");
+        };
+        assert_eq!(code, ErrorCode::Internal);
+        assert!(message.contains("done requires proof_ref"));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "blocked Mission lifecycle mutation must not call a provider/model"
+        );
+        assert_eq!(
+            hub.db()
+                .get_mission("mission-hub-projection")
+                .unwrap()
+                .unwrap()
+                .status,
+            MissionStatus::Active
+        );
+    }
+
+    #[test]
+    fn mission_timeline_rejects_mismatched_conversation_without_provider_call() {
+        let db_path = tmp_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let db = Db::open_hub(&db_path).unwrap();
+        seed_mission_projection(&db);
+        let client = DeepSeekClient::with_transport(
+            CountingMock {
+                calls: calls.clone(),
+            },
+            "test-key-not-real".to_string(), // pragma: allowlist secret
+        );
+        let mut hub = HubServer::new(db, client, vec!["mission_timeline".into()], 256);
+
+        let response = hub.dispatch(
+            Envelope::new(
+                "mission-timeline-bad",
+                1,
+                Message::MissionTimelineRequest {
+                    request: friday_protocol::MissionTimelineRequestWire {
+                        friday_conversation_id: "fconv_other".into(),
+                        mission_id: "mission-hub-projection".into(),
+                        cursor: None,
+                        limit: None,
+                    },
+                },
+            ),
+            2,
+        );
+        match response.message {
+            Message::Error { code, message } => {
+                assert_eq!(code, ErrorCode::Internal);
+                assert!(message.contains("conversation mismatch"));
+            }
+            other => panic!("expected error for mismatched conversation, got {other:?}"),
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "invalid mission timeline request must not reach provider/model"
+        );
+    }
+
+    #[test]
+    fn mission_projection_rejects_provider_thread_like_id() {
+        let db_path = tmp_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut hub = server(calls.clone(), &db_path);
+        let response = hub.dispatch(
+            Envelope::new(
+                "mission-projection-bad-id",
+                1,
+                Message::MissionProjectionRequest {
+                    request: friday_protocol::MissionProjectionRequestWire {
+                        friday_conversation_id: "provider-thread-123".into(),
+                    },
+                },
+            ),
+            2,
+        );
+        match response.message {
+            Message::Error { code, message } => {
+                assert_eq!(code, ErrorCode::Internal);
+                assert!(message.contains("non-canonical Friday conversation id"));
+            }
+            other => panic!("expected error for provider-like id, got {other:?}"),
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "invalid mission projection request must not reach provider/model"
+        );
     }
 
     #[test]
@@ -407,6 +4570,7 @@ mod tests {
             1,
             Message::AskFridayRequest {
                 prompt: "exfiltrate".into(),
+                mission_context: None,
             },
         );
         // The send may encode, but the Hub cannot open it → no dispatch, no model call.
@@ -442,18 +4606,20 @@ mod tests {
         }
         let db_path = tmp_db();
         let client = DeepSeekClient::from_env().expect("live DeepSeek client");
-        let mut hub = HubServer::new(
-            Db::open_hub(&db_path).unwrap(),
-            client,
-            vec!["ask_friday".into()],
-            64,
-        );
+        let db = Db::open_hub(&db_path).unwrap();
+        seed_mission_ask(&db);
+        let mut hub = HubServer::new(db, client, vec!["ask_friday".into()], 64);
         let resp = hub.dispatch(
             Envelope::new(
                 "live-1",
                 1,
                 Message::AskFridayRequest {
                     prompt: "Reply with the single word: OK".into(),
+                    mission_context: Some(MissionWorkItemContextWire {
+                        friday_conversation_id: "fconv_hub_ask".into(),
+                        mission_id: "mission-hub-ask".into(),
+                        work_item_id: "work-hub-ask".into(),
+                    }),
                 },
             ),
             1_700_000_000_000,
@@ -471,8 +4637,192 @@ mod tests {
         assert_eq!(
             db.count("token_ledger").unwrap(),
             1,
-            "live ask must write exactly one ledger row"
+            "live Mission-bound ask must write exactly one ledger row"
         );
         assert_eq!(db.count("activity_item").unwrap(), 1);
+        assert_eq!(
+            db.get_work_item("work-hub-ask").unwrap().unwrap().status,
+            WorkItemStatus::CompletedWithProof
+        );
+    }
+
+    /// LIVE negative provider proof: use an intentionally invalid DeepSeek key
+    /// against the real provider endpoint. This proves an auth/provider failure
+    /// is surfaced as a blocker with no fallback, no ledger row, and no fake
+    /// WorkItem completion. It does not require a real secret.
+    #[test]
+    #[ignore = "live-negative: calls DeepSeek with an intentionally invalid key; no secret required"]
+    fn live_invalid_deepseek_key_is_no_fallback_no_ledger_or_completion() {
+        let db_path = tmp_db();
+        let db = Db::open_hub(&db_path).unwrap();
+        seed_mission_ask(&db);
+        let client = DeepSeekClient::with_transport(
+            friday_deepseek::UreqTransport::new(),
+            "friday-invalid-key-for-negative-proof".to_string(),
+        );
+        let mut hub = HubServer::new(db, client, vec!["ask_friday".into()], 16);
+
+        let response = hub.dispatch(
+            Envelope::new(
+                "live-invalid-key-ask",
+                1,
+                Message::AskFridayRequest {
+                    prompt: "This should fail before any proof is written.".into(),
+                    mission_context: Some(MissionWorkItemContextWire {
+                        friday_conversation_id: "fconv_hub_ask".into(),
+                        mission_id: "mission-hub-ask".into(),
+                        work_item_id: "work-hub-ask".into(),
+                    }),
+                },
+            ),
+            1_700_000_650_000,
+        );
+        let rendered = format!("{response:?}");
+        let Message::Error { code, message } = response.message else {
+            panic!("expected invalid-key provider error, got {response:?}");
+        };
+        eprintln!("[live-negative] invalid DeepSeek key surfaced: {code:?} {message}");
+        assert_eq!(code, ErrorCode::ProviderUnavailable);
+        assert!(message.contains("no fallback"));
+        assert_eq!(hub.db().count("token_ledger").unwrap(), 0);
+        assert_eq!(hub.db().count("activity_item").unwrap(), 0);
+        assert_eq!(
+            hub.db()
+                .get_work_item("work-hub-ask")
+                .unwrap()
+                .unwrap()
+                .status,
+            WorkItemStatus::ReadyToDispatch,
+            "invalid provider key must not mark the WorkItem done"
+        );
+        for forbidden in [
+            "friday-invalid-key-for-negative-proof",
+            "Authorization",
+            "Bearer",
+            "sk-test",
+        ] {
+            assert!(
+                !rendered.contains(forbidden),
+                "invalid-key error leaked {forbidden}: {rendered}"
+            );
+        }
+    }
+
+    /// LIVE pressure proof for the operator's requested closed loop:
+    /// Mission context -> real provider execution -> proof receipts -> bounded
+    /// timeline -> same Mission projections. This intentionally FAILS with an
+    /// exact blocker when the Hub-only DeepSeek key is missing; missing key is not
+    /// a fake pass.
+    #[test]
+    #[ignore = "live/stress: requires FRIDAY_DEEPSEEK_API_KEY; runs 20-50 real Mission-bound asks"]
+    fn live_mission_bound_deepseek_pressure_asks_write_proof_and_bounded_timeline() {
+        if std::env::var(friday_deepseek::ENV_KEY)
+            .map(|k| k.trim().is_empty())
+            .unwrap_or(true)
+        {
+            panic!(
+                "BLOCKER: {} not set — cannot run real Mission-bound provider pressure proof",
+                friday_deepseek::ENV_KEY
+            );
+        }
+        let ask_count = std::env::var("FRIDAY_MISSION_LIVE_ASKS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(20)
+            .clamp(20, 50);
+        let db_path = tmp_db();
+        let db = Db::open_hub(&db_path).unwrap();
+        seed_pressure_mission(&db, ask_count);
+        let client = DeepSeekClient::from_env().expect("live DeepSeek client");
+        let mut hub = HubServer::new(db, client, vec!["ask_friday".into()], 16);
+
+        for index in 0..ask_count {
+            let response = hub.dispatch(
+                Envelope::new(
+                    format!("live-pressure-ask-{index:02}"),
+                    index as i64,
+                    Message::AskFridayRequest {
+                        prompt: format!("Live pressure ask {index:02}. Reply with only OK."),
+                        mission_context: Some(MissionWorkItemContextWire {
+                            friday_conversation_id: "fconv_pressure".into(),
+                            mission_id: "mission-pressure".into(),
+                            work_item_id: format!("work-pressure-{index:02}"),
+                        }),
+                    },
+                ),
+                1_700_000_700_000 + index as i64,
+            );
+            match response.message {
+                Message::AskFridayResult { ledger_id, .. } => {
+                    eprintln!("[live-pressure] {index:02} ledger={ledger_id}");
+                }
+                Message::Error { code, message } => {
+                    panic!(
+                        "BLOCKER: live Mission-bound ask {index:02} errored: {code:?} {message}"
+                    );
+                }
+                other => panic!("unexpected live pressure response: {other:?}"),
+            }
+        }
+        assert_eq!(hub.db().count("token_ledger").unwrap(), ask_count as i64);
+        assert_eq!(hub.db().count("activity_item").unwrap(), ask_count as i64);
+        assert_eq!(memory::auto_usable(hub.db().conn()).unwrap().len(), 0);
+
+        let mut cursor = None;
+        let mut pages = 0usize;
+        let mut provider_link_count = 0usize;
+        loop {
+            let response = hub.dispatch(
+                Envelope::new(
+                    format!("live-pressure-timeline-{pages}"),
+                    200 + pages as i64,
+                    Message::MissionTimelineRequest {
+                        request: friday_protocol::MissionTimelineRequestWire {
+                            friday_conversation_id: "fconv_pressure".into(),
+                            mission_id: "mission-pressure".into(),
+                            cursor: cursor.clone(),
+                            limit: Some(25),
+                        },
+                    },
+                ),
+                1_700_000_800_000 + pages as i64,
+            );
+            let Message::MissionTimelineSnapshot { snapshot } = response.message else {
+                panic!("expected live pressure timeline, got {response:?}");
+            };
+            assert!(snapshot.bounded);
+            assert_eq!(snapshot.work_items.len(), ask_count);
+            assert!(snapshot
+                .work_items
+                .iter()
+                .all(|item| item.status == "completed_with_proof"));
+            provider_link_count += snapshot
+                .links
+                .iter()
+                .filter(|link| link.link_kind == "provider_timeline" && link.has_proof)
+                .count();
+            let rendered = format!("{snapshot:?}");
+            for forbidden in [
+                "FRIDAY_DEEPSEEK_API_KEY",
+                "sk-test",
+                "SECRET",
+                "Candidate pressure fact",
+                "raw transcript",
+            ] {
+                assert!(
+                    !rendered.contains(forbidden),
+                    "live pressure timeline leaked {forbidden}: {rendered}"
+                );
+            }
+            pages += 1;
+            if snapshot.has_more {
+                cursor = snapshot.next_cursor;
+                assert!(cursor.is_some());
+            } else {
+                break;
+            }
+        }
+        assert!(pages > 1);
+        assert_eq!(provider_link_count, ask_count);
     }
 }

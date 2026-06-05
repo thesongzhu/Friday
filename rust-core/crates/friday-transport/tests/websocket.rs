@@ -46,6 +46,7 @@ fn websocket_e2e_round_trip_over_loopback() {
         1,
         Message::AskFridayRequest {
             prompt: "ws-ping".into(),
+            mission_context: None,
         },
     );
     // Ciphertext-on-the-wire: the Binary payload the WS layer frames is the

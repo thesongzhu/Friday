@@ -53,16 +53,19 @@ fn telegram_inbound_through_rust_channels_pipeline() {
         .unwrap_or(300);
 
     // 1) getMe — prove the token is live + capture the bot identity.
-    let me: serde_json::Value = ureq::get(&url(&token, "getMe"))
+    let me_response = match ureq::get(&url(&token, "getMe"))
         .timeout(Duration::from_secs(15))
         .call()
-        .expect("getMe call failed")
-        .into_json()
-        .expect("getMe json");
+    {
+        Ok(response) => response,
+        Err(_) => panic!("getMe call failed (token-bearing URL redacted)"),
+    };
+    let me: serde_json::Value = me_response.into_json().expect("getMe json");
     assert_eq!(me["ok"], serde_json::json!(true), "getMe not ok");
     let bot_id = me["result"]["id"].as_i64().expect("bot id");
-    let bot_username = me["result"]["username"].as_str().unwrap_or("?").to_string();
-    eprintln!("bot=@{bot_username} (id={bot_id}); waiting up to {window_secs}s for a DM from trusted user {allowed} — SEND ONE NOW");
+    eprintln!(
+        "Telegram bot identity verified; waiting up to {window_secs}s for a DM from the trusted allowlisted user - SEND ONE NOW"
+    );
 
     // 2) getUpdates long-poll until a text message from the allowed user (or timeout).
     let deadline = Instant::now() + Duration::from_secs(window_secs);
@@ -76,8 +79,8 @@ fn telegram_inbound_through_rust_channels_pipeline() {
         );
         let resp: serde_json::Value = match ureq::get(&u).timeout(Duration::from_secs(30)).call() {
             Ok(r) => r.into_json().expect("getUpdates json"),
-            Err(e) => {
-                eprintln!("getUpdates transient error (retrying): {e}");
+            Err(_) => {
+                eprintln!("getUpdates transient error (retrying; token-bearing URL redacted)");
                 std::thread::sleep(Duration::from_secs(2));
                 continue;
             }
@@ -100,7 +103,7 @@ fn telegram_inbound_through_rust_channels_pipeline() {
                     break 'poll;
                 }
             } else if !from_id.is_empty() {
-                eprintln!("ignoring message from non-allowlisted user {from_id}");
+                eprintln!("ignoring message from non-allowlisted user");
             }
         }
     }
@@ -149,17 +152,16 @@ fn telegram_inbound_through_rust_channels_pipeline() {
     // The redacted text must not echo any redaction-marker-free raw PII (sanity: the
     // markers, if any, prove redaction ran; the raw values are gone by construction).
     eprintln!(
-        "LIVE PROOF OK: bot=@{bot_username} sender={from_id} allowlisted; bearer-auth pass + forged/non-allowlisted rejected; pii_redacted={:?}",
+        "LIVE PROOF OK: sender=allowlisted; bearer-auth pass + forged/non-allowlisted rejected; pii_redacted={:?}",
         redacted.pii_redacted
     );
 
-    // 5) Evidence artifact — redacted text + kinds only (no token, no raw PII).
+    // 5) Evidence artifact — redacted text + booleans/kinds only (no token, ids, or raw PII).
     let evidence = serde_json::json!({
         "proof": "telegram_inbound_through_rust_channels_pipeline",
-        "bot_username": bot_username,
-        "bot_id": bot_id,
-        "channel_id": channel_id,
-        "sender_id": from_id,
+        "bot_identity_verified": true,
+        "channel_binding_created": true,
+        "sender_id_present": !from_id.is_empty(),
         "sender_allowlisted": true,
         "bound_principal_id": "owner",
         "bearer_auth_accepted_correct": true,

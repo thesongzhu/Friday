@@ -31,6 +31,20 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     // account hashes, cwd, external urls/ids — never created on a phone).
     "provider_session_link",
     "provider_session_event",
+    // Mission Spine: Hub-owned product conversation truth. Phone/channel surfaces
+    // consume projections only; they do not own canonical conversations/missions.
+    "friday_conversation",
+    "mission",
+    "work_item",
+    "surface_thread",
+    "surface_event",
+    "mission_link",
+    "route_decision",
+    // Process Registry: Hub-owned workspace/process/port truth. Phone/channel
+    // surfaces may see projections; only the Hub can own/control claims.
+    "workspace_claim",
+    "process_lease",
+    "process_observation",
 ];
 
 /// Tables present only on a phone (never created on the Hub).
@@ -107,6 +121,41 @@ pub fn hub_migrations() -> Vec<Migration> {
             name: "provider_session_contract",
             destructive: false,
             up: m0008_provider_session_contract,
+        },
+        // Mission Spine slice 2: Hub-only canonical conversation/mission/work-item
+        // graph. Purely additive; provider/channel/memory/proof streams attach by refs.
+        Migration {
+            version: 9,
+            name: "mission_spine",
+            destructive: false,
+            up: m0009_mission_spine,
+        },
+        // Process Registry slice 7: Hub-only workspace/process ownership and
+        // observation tables. Purely additive; observed processes are inspect-only
+        // until a Hub-owned claim/lease exists with safe-stop/release proof.
+        Migration {
+            version: 10,
+            name: "process_registry",
+            destructive: false,
+            up: m0010_process_registry,
+        },
+        // Mission Spine slice 11: durable route-decision trace. Rebuilds the
+        // `mission_link` CHECK constraint to admit route_decision links while
+        // preserving existing rows in-transaction; guarded with a verified backup.
+        Migration {
+            version: 11,
+            name: "route_decision_trace",
+            destructive: true,
+            up: m0011_route_decision_trace,
+        },
+        // Mission Spine slice 16A: refs-only surface events. This lets mobile,
+        // desktop, and channels share one Mission timeline without copying raw
+        // provider/channel transcripts into product conversation state.
+        Migration {
+            version: 12,
+            name: "surface_event_trace",
+            destructive: false,
+            up: m0012_surface_event_trace,
         },
     ]
 }
@@ -333,6 +382,456 @@ CREATE TABLE provider_session_event (
 CREATE INDEX idx_provider_session_event_session_seen
     ON provider_session_event(friday_session_id, observed_at, provider_event_id);";
 
+// --- Mission Spine fragments (Hub-only) -------------------------------------
+
+const DDL_MISSION_SPINE: &str = "
+CREATE TABLE friday_conversation (
+    friday_conversation_id TEXT PRIMARY KEY
+        CHECK(friday_conversation_id LIKE 'fconv_%'),
+    owner_principal        TEXT NOT NULL CHECK(length(trim(owner_principal)) > 0),
+    title                  TEXT NOT NULL DEFAULT '',
+    current_focus_summary  TEXT NOT NULL DEFAULT '',
+    active_mission_ids     TEXT NOT NULL DEFAULT '[]',
+    surface_thread_ids     TEXT NOT NULL DEFAULT '[]',
+    memory_scope_ref       TEXT,
+    truth_status           TEXT NOT NULL CHECK(truth_status IN (
+        'proven',
+        'design_proof',
+        'wired_registry',
+        'NO-GO',
+        'operator_gated',
+        'external_blocked',
+        'historical'
+    )),
+    proof_refs             TEXT NOT NULL DEFAULT '[]',
+    created_at_ms          INTEGER NOT NULL,
+    updated_at_ms          INTEGER NOT NULL
+);
+CREATE INDEX idx_friday_conversation_owner_updated
+    ON friday_conversation(owner_principal, updated_at_ms);
+
+CREATE TABLE mission (
+    mission_id              TEXT PRIMARY KEY,
+    friday_conversation_id  TEXT NOT NULL,
+    title                   TEXT NOT NULL DEFAULT '',
+    intent                  TEXT NOT NULL CHECK(length(trim(intent)) > 0),
+    status                  TEXT NOT NULL CHECK(status IN (
+        'active',
+        'waiting_for_user',
+        'blocked',
+        'paused',
+        'done',
+        'archived',
+        'merged'
+    )),
+    why_now                 TEXT NOT NULL DEFAULT '',
+    decision_path_summary   TEXT NOT NULL DEFAULT '',
+    considered_options      TEXT NOT NULL DEFAULT '[]',
+    deferred_options        TEXT NOT NULL DEFAULT '[]',
+    known_pitfalls          TEXT NOT NULL DEFAULT '[]',
+    handoff_inheritance     TEXT NOT NULL DEFAULT '[]',
+    work_item_ids           TEXT NOT NULL DEFAULT '[]',
+    memory_candidate_refs   TEXT NOT NULL DEFAULT '[]',
+    context_passport_refs   TEXT NOT NULL DEFAULT '[]',
+    proof_refs              TEXT NOT NULL DEFAULT '[]',
+    created_at_ms           INTEGER NOT NULL,
+    updated_at_ms           INTEGER NOT NULL,
+    FOREIGN KEY(friday_conversation_id)
+        REFERENCES friday_conversation(friday_conversation_id)
+);
+CREATE INDEX idx_mission_conversation_status
+    ON mission(friday_conversation_id, status, updated_at_ms);
+CREATE INDEX idx_mission_conversation_intent
+    ON mission(friday_conversation_id, intent);
+
+CREATE TABLE work_item (
+    work_item_id                           TEXT PRIMARY KEY,
+    mission_id                             TEXT NOT NULL,
+    lane                                   TEXT NOT NULL CHECK(lane IN (
+        'friday_hub',
+        'codex',
+        'claude',
+        'deepseek',
+        'workflow',
+        'channel',
+        'human',
+        'future_api'
+    )),
+    target_provider_or_agent               TEXT,
+    status                                 TEXT NOT NULL CHECK(status IN (
+        'draft',
+        'preflight_blocked',
+        'waiting_for_user',
+        'ready_to_dispatch',
+        'dispatched',
+        'hub_accepted',
+        'provider_routed',
+        'provider_waiting',
+        'completed_with_proof',
+        'failed_retryable',
+        'failed_terminal',
+        'cancelled',
+        'merged',
+        'archived'
+    )),
+    owner_claim_ids                        TEXT NOT NULL DEFAULT '[]',
+    workspace_refs                         TEXT NOT NULL DEFAULT '[]',
+    capability_id                          TEXT,
+    risk_level                             TEXT NOT NULL CHECK(risk_level IN (
+        'read_only',
+        'low',
+        'medium',
+        'high',
+        'critical'
+    )),
+    approval_state                         TEXT NOT NULL CHECK(approval_state IN (
+        'not_required',
+        'required',
+        'approved',
+        'rejected'
+    )),
+    blocking_reason                        TEXT,
+    input_refs                             TEXT NOT NULL DEFAULT '[]',
+    output_refs                            TEXT NOT NULL DEFAULT '[]',
+    proof_requirements                     TEXT NOT NULL DEFAULT '[]',
+    proof_receipts                         TEXT NOT NULL DEFAULT '[]',
+    judgment_task                          TEXT NOT NULL DEFAULT '',
+    judgment_current_blocker               TEXT,
+    judgment_target_lane_thread_agent_provider TEXT NOT NULL DEFAULT '',
+    judgment_read_first_files              TEXT NOT NULL DEFAULT '[]',
+    judgment_required_output               TEXT NOT NULL DEFAULT '',
+    judgment_done_criteria                 TEXT NOT NULL DEFAULT '[]',
+    judgment_red_lines                     TEXT NOT NULL DEFAULT '[]',
+    judgment_why_this_route                TEXT NOT NULL DEFAULT '',
+    judgment_considered_options            TEXT NOT NULL DEFAULT '[]',
+    judgment_deferred_options              TEXT NOT NULL DEFAULT '[]',
+    judgment_previous_pitfalls             TEXT NOT NULL DEFAULT '[]',
+    judgment_inheritable_context           TEXT NOT NULL DEFAULT '[]',
+    judgment_proof_requirements            TEXT NOT NULL DEFAULT '[]',
+    judgment_ownership_claim_ids           TEXT NOT NULL DEFAULT '[]',
+    created_at_ms                          INTEGER NOT NULL,
+    updated_at_ms                          INTEGER NOT NULL,
+    FOREIGN KEY(mission_id) REFERENCES mission(mission_id)
+);
+CREATE INDEX idx_work_item_mission_status
+    ON work_item(mission_id, status, updated_at_ms);
+CREATE INDEX idx_work_item_duplicate_preflight
+    ON work_item(mission_id, lane, target_provider_or_agent, status);
+
+CREATE TABLE surface_thread (
+    surface_thread_id          TEXT PRIMARY KEY,
+    friday_conversation_id     TEXT NOT NULL,
+    mission_id                 TEXT,
+    surface_kind               TEXT NOT NULL CHECK(surface_kind IN (
+        'mobile',
+        'desktop',
+        'telegram',
+        'discord',
+        'lark',
+        'web_chat',
+        'provider_workspace',
+        'future_channel'
+    )),
+    channel_binding_id         TEXT,
+    delivery_route             TEXT NOT NULL DEFAULT '',
+    visibility_policy          TEXT NOT NULL CHECK(visibility_policy IN (
+        'compact',
+        'rich_proof',
+        'status_only',
+        'hidden_trace_only'
+    )),
+    allowed_actions            TEXT NOT NULL DEFAULT '[]',
+    last_seen_at_ms            INTEGER,
+    last_delivered_event_seq   INTEGER,
+    created_at_ms              INTEGER NOT NULL,
+    updated_at_ms              INTEGER NOT NULL,
+    FOREIGN KEY(friday_conversation_id)
+        REFERENCES friday_conversation(friday_conversation_id),
+    FOREIGN KEY(mission_id) REFERENCES mission(mission_id)
+);
+CREATE INDEX idx_surface_thread_conversation
+    ON surface_thread(friday_conversation_id, surface_kind, updated_at_ms);
+CREATE INDEX idx_surface_thread_mission
+    ON surface_thread(mission_id, surface_kind);
+
+CREATE TABLE mission_link (
+    link_id        TEXT PRIMARY KEY,
+    mission_id     TEXT NOT NULL,
+    work_item_id   TEXT,
+    link_kind      TEXT NOT NULL CHECK(link_kind IN (
+        'provider_session',
+        'provider_timeline',
+        'channel_inbound',
+        'workflow_run',
+        'memory_candidate',
+        'memory_decision',
+        'confirmed_memory',
+        'context_passport',
+        'proof_receipt',
+        'workspace_claim',
+        'handoff_artifact'
+    )),
+    target_ref     TEXT NOT NULL CHECK(length(trim(target_ref)) > 0),
+    proof_ref      TEXT,
+    created_at_ms  INTEGER NOT NULL,
+    FOREIGN KEY(mission_id) REFERENCES mission(mission_id),
+    FOREIGN KEY(work_item_id) REFERENCES work_item(work_item_id)
+);
+CREATE INDEX idx_mission_link_mission_kind
+    ON mission_link(mission_id, link_kind, created_at_ms);";
+
+const DDL_ROUTE_DECISION_TRACE: &str = "
+CREATE TABLE route_decision (
+    decision_id                  TEXT PRIMARY KEY,
+    mission_id                   TEXT NOT NULL,
+    work_item_id                 TEXT NOT NULL,
+    selected_lane                TEXT NOT NULL CHECK(selected_lane IN (
+        'friday_hub',
+        'codex',
+        'claude',
+        'deepseek',
+        'workflow',
+        'channel',
+        'human',
+        'future_api'
+    )),
+    selected_provider_or_agent   TEXT,
+    why_this_route               TEXT NOT NULL CHECK(length(trim(why_this_route)) > 0),
+    considered_options           TEXT NOT NULL DEFAULT '[]',
+    deferred_options             TEXT NOT NULL DEFAULT '[]',
+    previous_pitfalls            TEXT NOT NULL DEFAULT '[]',
+    inheritable_context          TEXT NOT NULL DEFAULT '[]',
+    conflict_refs                TEXT NOT NULL DEFAULT '[]',
+    proof_requirements           TEXT NOT NULL DEFAULT '[]',
+    ownership_claim_ids          TEXT NOT NULL DEFAULT '[]',
+    trace_refs                   TEXT NOT NULL DEFAULT '[]',
+    created_at_ms                INTEGER NOT NULL,
+    expires_at_ms                INTEGER,
+    FOREIGN KEY(mission_id) REFERENCES mission(mission_id),
+    FOREIGN KEY(work_item_id) REFERENCES work_item(work_item_id)
+);
+CREATE INDEX idx_route_decision_mission_created
+    ON route_decision(mission_id, created_at_ms, decision_id);
+CREATE INDEX idx_route_decision_work_item_created
+    ON route_decision(work_item_id, created_at_ms, decision_id);";
+
+const DDL_REBUILD_MISSION_LINK_WITH_ROUTE_DECISION: &str = "
+CREATE TABLE mission_link_new (
+    link_id        TEXT PRIMARY KEY,
+    mission_id     TEXT NOT NULL,
+    work_item_id   TEXT,
+    link_kind      TEXT NOT NULL CHECK(link_kind IN (
+        'route_decision',
+        'provider_session',
+        'provider_timeline',
+        'channel_inbound',
+        'workflow_run',
+        'memory_candidate',
+        'memory_decision',
+        'confirmed_memory',
+        'context_passport',
+        'proof_receipt',
+        'workspace_claim',
+        'handoff_artifact'
+    )),
+    target_ref     TEXT NOT NULL CHECK(length(trim(target_ref)) > 0),
+    proof_ref      TEXT,
+    created_at_ms  INTEGER NOT NULL,
+    FOREIGN KEY(mission_id) REFERENCES mission(mission_id),
+    FOREIGN KEY(work_item_id) REFERENCES work_item(work_item_id)
+);
+INSERT INTO mission_link_new
+    (link_id, mission_id, work_item_id, link_kind, target_ref, proof_ref, created_at_ms)
+SELECT link_id, mission_id, work_item_id, link_kind, target_ref, proof_ref, created_at_ms
+FROM mission_link;
+DROP TABLE mission_link;
+ALTER TABLE mission_link_new RENAME TO mission_link;
+CREATE INDEX idx_mission_link_mission_kind
+    ON mission_link(mission_id, link_kind, created_at_ms);";
+
+const DDL_SURFACE_EVENT_TRACE: &str = "
+CREATE TABLE surface_event (
+    surface_event_id       TEXT PRIMARY KEY,
+    friday_conversation_id TEXT NOT NULL
+        CHECK(friday_conversation_id LIKE 'fconv_%'),
+    mission_id             TEXT NOT NULL,
+    work_item_id           TEXT,
+    surface_thread_id      TEXT NOT NULL,
+    source_surface         TEXT NOT NULL CHECK(source_surface IN (
+        'mobile',
+        'desktop',
+        'telegram',
+        'discord',
+        'lark',
+        'web_chat',
+        'provider_workspace',
+        'future_channel'
+    )),
+    event_kind             TEXT NOT NULL CHECK(event_kind IN (
+        'user_message',
+        'friday_reply',
+        'system_status',
+        'channel_inbound',
+        'provider_trace',
+        'proof_receipt',
+        'memory_decision',
+        'needs_me',
+        'handoff'
+    )),
+    body_ref               TEXT,
+    visibility_policy      TEXT NOT NULL CHECK(visibility_policy IN (
+        'compact',
+        'rich_proof',
+        'status_only',
+        'hidden_trace_only'
+    )),
+    proof_ref              TEXT,
+    created_at_ms          INTEGER NOT NULL,
+    FOREIGN KEY(friday_conversation_id)
+        REFERENCES friday_conversation(friday_conversation_id),
+    FOREIGN KEY(mission_id) REFERENCES mission(mission_id),
+    FOREIGN KEY(work_item_id) REFERENCES work_item(work_item_id),
+    FOREIGN KEY(surface_thread_id) REFERENCES surface_thread(surface_thread_id)
+);
+CREATE INDEX idx_surface_event_conversation_created
+    ON surface_event(friday_conversation_id, created_at_ms, surface_event_id);
+CREATE INDEX idx_surface_event_mission_created
+    ON surface_event(mission_id, created_at_ms, surface_event_id);
+CREATE INDEX idx_surface_event_surface_thread_created
+    ON surface_event(surface_thread_id, created_at_ms, surface_event_id);";
+
+// --- Process Registry fragments (Hub-only) ---------------------------------
+
+const DDL_PROCESS_REGISTRY: &str = "
+CREATE TABLE workspace_claim (
+    claim_id              TEXT PRIMARY KEY,
+    mission_id            TEXT NOT NULL,
+    work_item_id          TEXT,
+    owner_principal       TEXT NOT NULL CHECK(length(trim(owner_principal)) > 0),
+    owner_agent           TEXT NOT NULL CHECK(length(trim(owner_agent)) > 0),
+    workspace_ref         TEXT NOT NULL CHECK(length(trim(workspace_ref)) > 0),
+    claim_kind            TEXT NOT NULL CHECK(claim_kind IN (
+        'workspace',
+        'worktree',
+        'port',
+        'process',
+        'provider_session',
+        'design_server',
+        'friday_launchd_service'
+    )),
+    state                 TEXT NOT NULL CHECK(state IN (
+        'active',
+        'pending_adoption',
+        'needs_owner_decision',
+        'released',
+        'stale',
+        'blocked'
+    )),
+    reason                TEXT NOT NULL DEFAULT '',
+    safe_release_policy   TEXT NOT NULL DEFAULT '',
+    proof_requirements    TEXT NOT NULL DEFAULT '[]',
+    proof_refs            TEXT NOT NULL DEFAULT '[]',
+    created_at_ms         INTEGER NOT NULL,
+    updated_at_ms         INTEGER NOT NULL,
+    released_at_ms        INTEGER,
+    FOREIGN KEY(mission_id) REFERENCES mission(mission_id),
+    FOREIGN KEY(work_item_id) REFERENCES work_item(work_item_id)
+);
+CREATE INDEX idx_workspace_claim_mission_state
+    ON workspace_claim(mission_id, state, updated_at_ms);
+CREATE INDEX idx_workspace_claim_workspace_state
+    ON workspace_claim(workspace_ref, state, updated_at_ms);
+
+CREATE TABLE process_lease (
+    lease_id                       TEXT PRIMARY KEY,
+    claim_id                       TEXT NOT NULL,
+    mission_id                     TEXT NOT NULL,
+    work_item_id                   TEXT,
+    pid                            INTEGER,
+    process_group_id               INTEGER,
+    process_kind                   TEXT NOT NULL CHECK(process_kind IN (
+        'codex_cli',
+        'codex_app_server',
+        'claude',
+        'friday_hub',
+        'friday_companion',
+        'design_save_server',
+        'dev_server',
+        'workflow_worker',
+        'other_observed'
+    )),
+    command_ref                    TEXT,
+    command_hash                   TEXT,
+    cwd_ref                        TEXT NOT NULL CHECK(length(trim(cwd_ref)) > 0),
+    port_bindings                  TEXT NOT NULL DEFAULT '[]',
+    started_by_surface_thread_id   TEXT,
+    started_by_provider_session_id TEXT,
+    health_check_ref               TEXT,
+    safe_stop_ref                  TEXT,
+    last_observed_at_ms            INTEGER,
+    stale_after_ms                 INTEGER,
+    state                          TEXT NOT NULL CHECK(state IN (
+        'claimed',
+        'running',
+        'healthy',
+        'needs_owner_decision',
+        'stopping_requested',
+        'stopped_with_proof',
+        'stale',
+        'blocked'
+    )),
+    proof_refs                     TEXT NOT NULL DEFAULT '[]',
+    created_at_ms                  INTEGER NOT NULL,
+    updated_at_ms                  INTEGER NOT NULL,
+    FOREIGN KEY(claim_id) REFERENCES workspace_claim(claim_id),
+    FOREIGN KEY(mission_id) REFERENCES mission(mission_id),
+    FOREIGN KEY(work_item_id) REFERENCES work_item(work_item_id),
+    FOREIGN KEY(started_by_surface_thread_id)
+        REFERENCES surface_thread(surface_thread_id),
+    FOREIGN KEY(started_by_provider_session_id)
+        REFERENCES provider_session_link(friday_session_id)
+);
+CREATE INDEX idx_process_lease_claim_state
+    ON process_lease(claim_id, state, updated_at_ms);
+CREATE INDEX idx_process_lease_pid_state
+    ON process_lease(pid, state, updated_at_ms);
+CREATE INDEX idx_process_lease_mission_state
+    ON process_lease(mission_id, state, updated_at_ms);
+
+CREATE TABLE process_observation (
+    observation_id      TEXT PRIMARY KEY,
+    pid                 INTEGER NOT NULL,
+    ppid                INTEGER,
+    process_kind        TEXT NOT NULL CHECK(process_kind IN (
+        'codex_cli',
+        'codex_app_server',
+        'claude',
+        'friday_hub',
+        'friday_companion',
+        'design_save_server',
+        'dev_server',
+        'workflow_worker',
+        'other_observed'
+    )),
+    cwd_ref             TEXT NOT NULL CHECK(length(trim(cwd_ref)) > 0),
+    port_bindings       TEXT NOT NULL DEFAULT '[]',
+    command_hash        TEXT,
+    observed_at_ms      INTEGER NOT NULL,
+    matched_claim_id    TEXT,
+    ownership_status    TEXT NOT NULL CHECK(ownership_status IN (
+        'observed_unowned',
+        'unowned_agent_process',
+        'unowned_friday_process',
+        'friday_owned_launchd',
+        'friday_owned_claimed'
+    )),
+    FOREIGN KEY(matched_claim_id) REFERENCES workspace_claim(claim_id)
+);
+CREATE INDEX idx_process_observation_pid_seen
+    ON process_observation(pid, observed_at_ms);
+CREATE INDEX idx_process_observation_owner_seen
+    ON process_observation(ownership_status, observed_at_ms);";
+
 // --- migration bodies -------------------------------------------------------
 
 fn m0001_init_hub(tx: &Transaction) -> rusqlite::Result<()> {
@@ -449,5 +948,34 @@ fn m0007_channel_binding(tx: &Transaction) -> rusqlite::Result<()> {
 // pre-PR rebase; channel_binding took v7 on main). Purely additive.
 fn m0008_provider_session_contract(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(DDL_PROVIDER_SESSION)?;
+    Ok(())
+}
+
+// Mission Spine slice 2: additive Hub-owned conversation graph tables.
+fn m0009_mission_spine(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_MISSION_SPINE)?;
+    Ok(())
+}
+
+// Process Registry slice 7: additive Hub-owned workspace/process registry.
+fn m0010_process_registry(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_PROCESS_REGISTRY)?;
+    Ok(())
+}
+
+// Mission Spine route-decision trace. The route_decision row is not memory and
+// not completion proof; it is the durable "why this route now" evidence a later
+// agent/UI can inspect before continuing work.
+fn m0011_route_decision_trace(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_ROUTE_DECISION_TRACE)?;
+    tx.execute_batch(DDL_REBUILD_MISSION_LINK_WITH_ROUTE_DECISION)?;
+    Ok(())
+}
+
+// Mission Spine surface-event trace. This is the refs-only bridge that lets a
+// mobile/channel event appear in the same Mission timeline on desktop without
+// turning raw external chat ids into Friday conversation ids.
+fn m0012_surface_event_trace(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_SURFACE_EVENT_TRACE)?;
     Ok(())
 }
