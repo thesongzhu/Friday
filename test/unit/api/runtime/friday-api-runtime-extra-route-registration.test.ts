@@ -152,6 +152,31 @@ function makePrincipal(overrides: Partial<FridayAuthPrincipal> = {}): FridayAuth
   };
 }
 
+function seedAgentRun(
+  db: FridaySqliteLayer,
+  input: {
+    id: string;
+    status?: string;
+    sessionKey?: string;
+    task?: string;
+  },
+): void {
+  db.withWriteTransaction((writer) => {
+    writer.prepare(
+      `INSERT INTO friday_agent_runs (
+        id, task, status, session_key, attempt, max_attempts, created_at,
+        constraints_json, metadata_json
+      ) VALUES (?, ?, ?, ?, 0, 1, ?, '{}', '{}')`,
+    ).run(
+      input.id,
+      input.task ?? "Seeded test run",
+      input.status ?? "executing",
+      input.sessionKey ?? "agent:run:seeded",
+      NOW,
+    );
+  });
+}
+
 describe("API Runtime — Extended Route Registration", () => {
   afterEach(() => {
     while (allocatedDbs.length > 0) {
@@ -268,6 +293,138 @@ describe("API Runtime — Extended Route Registration", () => {
 
     expect(thrown).toBeInstanceOf(FridayDomainError);
     expect((thrown as FridayDomainError).code).toBe("TS_RUNTIME_AGENT_RUNS_RETIRED");
+    expect((thrown as FridayDomainError).httpStatus).toBe(503);
+    expect(executeRun).not.toHaveBeenCalled();
+  });
+
+  it("fail-closes live agent run cancel wiring without aborting TypeScript controllers", async () => {
+    const deps = makeBaseDeps();
+    seedAgentRun(deps.db, { id: "run-control-retired-cancel", status: "executing" });
+    const executeRun = vi.fn<FridayAgentRuntime["executeRun"]>();
+    const rollbackRun = vi.fn<FridayAgentRuntime["rollbackRun"]>();
+    const runtime = createFridayApiRuntime({
+      ...deps,
+      agentRuntime: {
+        executeRun,
+        rollbackRun,
+        registerTool: vi.fn(),
+        resumeStaleRunsOnBoot: vi.fn(() => 0),
+        hasRollbackCheckpoint: vi.fn(() => false),
+      } as unknown as FridayAgentRuntime,
+      agentEventEmitter: {
+        on: vi.fn(),
+        off: vi.fn(),
+        emit: vi.fn(),
+      } satisfies FridayAgentEventEmitter,
+    });
+    const route = runtime.routes.getRoutes().find((r) => r.operationId === "agent.runs.cancel");
+    expect(route).toBeDefined();
+
+    let thrown: unknown = null;
+    try {
+      await route!.handler({
+        requestId: "req-agent-run-cancel-retired",
+        receivedAt: NOW,
+        params: { runId: "run-control-retired-cancel" },
+        query: {},
+        body: {},
+        headers: {},
+        principal: makePrincipal({ role: "admin", scopes: ["agent.run"] }),
+      });
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(FridayDomainError);
+    expect((thrown as FridayDomainError).code).toBe("TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED");
+    expect((thrown as FridayDomainError).httpStatus).toBe(503);
+    expect(executeRun).not.toHaveBeenCalled();
+    expect(rollbackRun).not.toHaveBeenCalled();
+  });
+
+  it("fail-closes live agent run rollback wiring without calling TypeScript rollback", async () => {
+    const deps = makeBaseDeps();
+    seedAgentRun(deps.db, { id: "run-control-retired-rollback", status: "completed" });
+    const rollbackRun = vi.fn<FridayAgentRuntime["rollbackRun"]>(() => ({
+      restoredCount: 1,
+      errors: [],
+    }));
+    const runtime = createFridayApiRuntime({
+      ...deps,
+      agentRuntime: {
+        executeRun: vi.fn(),
+        rollbackRun,
+        registerTool: vi.fn(),
+        resumeStaleRunsOnBoot: vi.fn(() => 0),
+        hasRollbackCheckpoint: vi.fn(() => true),
+      } as unknown as FridayAgentRuntime,
+      agentEventEmitter: {
+        on: vi.fn(),
+        off: vi.fn(),
+        emit: vi.fn(),
+      } satisfies FridayAgentEventEmitter,
+    });
+    const route = runtime.routes.getRoutes().find((r) => r.operationId === "agent.runs.rollback");
+    expect(route).toBeDefined();
+
+    let thrown: unknown = null;
+    try {
+      await route!.handler({
+        requestId: "req-agent-run-rollback-retired",
+        receivedAt: NOW,
+        params: { runId: "run-control-retired-rollback" },
+        query: {},
+        body: {},
+        headers: {},
+        principal: makePrincipal({ role: "admin", scopes: ["agent.run"] }),
+      });
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(FridayDomainError);
+    expect((thrown as FridayDomainError).code).toBe("TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED");
+    expect((thrown as FridayDomainError).httpStatus).toBe(503);
+    expect(rollbackRun).not.toHaveBeenCalled();
+  });
+
+  it("fail-closes live agent automation run wiring before TypeScript automation execution", async () => {
+    const executeRun = vi.fn<FridayAgentRuntime["executeRun"]>();
+    const runtime = createFridayApiRuntime({
+      ...makeBaseDeps(),
+      agentRuntime: {
+        executeRun,
+        rollbackRun: vi.fn(),
+        registerTool: vi.fn(),
+        resumeStaleRunsOnBoot: vi.fn(() => 0),
+        hasRollbackCheckpoint: vi.fn(() => false),
+      } as unknown as FridayAgentRuntime,
+      agentEventEmitter: {
+        on: vi.fn(),
+        off: vi.fn(),
+        emit: vi.fn(),
+      } satisfies FridayAgentEventEmitter,
+    });
+    const route = runtime.routes.getRoutes().find((r) => r.operationId === "agent.automations.run");
+    expect(route).toBeDefined();
+
+    let thrown: unknown = null;
+    try {
+      await route!.handler({
+        requestId: "req-agent-automation-run-retired",
+        receivedAt: NOW,
+        params: { automationId: "automation-does-not-matter" },
+        query: {},
+        body: {},
+        headers: {},
+        principal: makePrincipal({ role: "admin", scopes: ["agent.run"] }),
+      });
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(FridayDomainError);
+    expect((thrown as FridayDomainError).code).toBe("TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED");
     expect((thrown as FridayDomainError).httpStatus).toBe(503);
     expect(executeRun).not.toHaveBeenCalled();
   });

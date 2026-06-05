@@ -1850,6 +1850,8 @@ export interface FridayHubConfig {
   ssrfPolicy?: FridaySsrfPolicy;
   /** Test-oracle only; production hub creation must leave POST /v1/agent/runs fail-closed. */
   allowTestOnlyAgentRunStartExecution?: boolean;
+  /** Test-oracle only; production hub creation must leave agent run controls fail-closed. */
+  allowTestOnlyAgentRunControlExecution?: boolean;
 }
 
 // ─── Resolved Hub Config ───

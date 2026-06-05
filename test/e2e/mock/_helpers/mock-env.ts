@@ -330,6 +330,8 @@ export async function createMockHubEnv(opts?: {
   canonicalGate?: boolean;
   /** Test-oracle opt-in for legacy TS agent-run execution; set false to prove default fail-closed behavior. */
   allowTestOnlyAgentRunStartExecution?: boolean;
+  /** Test-oracle opt-in for legacy TS agent-run controls; set false to prove default fail-closed behavior. */
+  allowTestOnlyAgentRunControlExecution?: boolean;
 }): Promise<MockHubEnv> {
   // Reset deterministic counters
   resetMockCounters();
@@ -372,6 +374,7 @@ export async function createMockHubEnv(opts?: {
       channels: opts?.channels,
       tokenSecret: MOCK_E2E_TOKEN_SECRET,
       allowTestOnlyAgentRunStartExecution: opts?.allowTestOnlyAgentRunStartExecution ?? true,
+      allowTestOnlyAgentRunControlExecution: opts?.allowTestOnlyAgentRunControlExecution ?? true,
       // Allow private-network targets so mock E2E tests don't require DNS resolution
       ssrfPolicy: opts?.ssrfPolicy ?? { allowPrivateNetwork: true },
     });
