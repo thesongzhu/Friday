@@ -945,6 +945,97 @@
       "next_action": "Replace fail-closed response with a Rust-owned skill generator cancellation entrypoint when available."
     },
     {
+      "id": "workflows_generator_sessions_create",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflows/generator/sessions",
+        "operationId": "workflows.generator.sessions.create"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-generator-routes.ts wires default/live workflow generator session routes to TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED before invoking the TypeScript workflowGenerator service; legacy generator behavior is reachable only through explicit allowTestOnlyWorkflowGeneratorExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow generator entrypoint when available."
+    },
+    {
+      "id": "workflows_generator_sessions_get",
+      "route": {
+        "method": "GET",
+        "path": "/v1/workflows/generator/sessions/:sessionId",
+        "operationId": "workflows.generator.sessions.get"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-generator-routes.ts wires default/live workflow generator session reads to TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED before reading TypeScript generator session state; legacy generator reads are reachable only through explicit allowTestOnlyWorkflowGeneratorExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned redacted workflow generator session projection when available."
+    },
+    {
+      "id": "workflows_generator_sessions_messages_create",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflows/generator/sessions/:sessionId/messages",
+        "operationId": "workflows.generator.sessions.messages.create"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-generator-routes.ts wires default/live workflow generator message submission to TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED before invoking the TypeScript workflowGenerator service; legacy generator behavior is reachable only through explicit allowTestOnlyWorkflowGeneratorExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow generator turn entrypoint when available."
+    },
+    {
+      "id": "workflows_generator_sessions_generate",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflows/generator/sessions/:sessionId/generate",
+        "operationId": "workflows.generator.sessions.generate"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-generator-routes.ts wires default/live workflow draft generation to TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED before invoking the TypeScript workflowGenerator service; legacy generator behavior is reachable only through explicit allowTestOnlyWorkflowGeneratorExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow draft generation entrypoint when available."
+    },
+    {
+      "id": "workflows_generator_sessions_evidence_get",
+      "route": {
+        "method": "GET",
+        "path": "/v1/workflows/generator/sessions/:sessionId/evidence",
+        "operationId": "workflows.generator.sessions.evidence.get"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-generator-routes.ts wires default/live workflow generator evidence reads to TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED before reading TypeScript generator evidence state; legacy generator evidence reads are reachable only through explicit allowTestOnlyWorkflowGeneratorExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned redacted workflow generator evidence projection when available."
+    },
+    {
+      "id": "workflows_generator_sessions_approve",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflows/generator/sessions/:sessionId/approve",
+        "operationId": "workflows.generator.sessions.approve"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-generator-routes.ts wires default/live generated workflow approval to TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED before reading evidence, publishing through TypeScript Workflow CRUD, or recording observability; legacy generator approval is reachable only through explicit allowTestOnlyWorkflowGeneratorExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned generated workflow approval entrypoint when available."
+    },
+    {
+      "id": "workflows_generator_sessions_cancel",
+      "route": {
+        "method": "DELETE",
+        "path": "/v1/workflows/generator/sessions/:sessionId",
+        "operationId": "workflows.generator.sessions.cancel"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-generator-routes.ts wires default/live workflow generator cancellation to TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED before invoking the TypeScript workflowGenerator service; legacy generator cancellation is reachable only through explicit allowTestOnlyWorkflowGeneratorExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow generator cancellation entrypoint when available."
+    },
+    {
       "id": "autofix_run_ready",
       "route": {
         "method": "POST",

@@ -134,6 +134,31 @@ describe("FridayWorkflowGeneratorRoutes", () => {
   const service = makeMockService();
   const routes = createFridayWorkflowGeneratorRoutes({
     workflowGenerator: service,
+    allowTestOnlyWorkflowGeneratorExecution: true,
+  });
+
+  it("fail-closes workflow generator sessions by default without invoking the TypeScript generator", async () => {
+    const localService = makeMockService();
+    const localRoutes = createFridayWorkflowGeneratorRoutes({
+      workflowGenerator: localService,
+    });
+    const createRoute = localRoutes.find((r) => r.operationId === "workflows.generator.sessions.create")!;
+
+    await expect(
+      createRoute.handler(
+        makeCtx({
+          body: { goal: "Build workflow", userId: "u-1", channel: "test" },
+        }) as never,
+      ),
+    ).rejects.toMatchObject({
+      code: "TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED",
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_workflow_generator_entrypoint_required",
+      },
+    });
+    expect(localService.startSession).not.toHaveBeenCalled();
   });
 
   it("creates exactly 7 routes", () => {
@@ -210,7 +235,10 @@ describe("FridayWorkflowGeneratorRoutes", () => {
     ["workflows.generator.sessions.cancel", { params: { sessionId: "s-1" }, body: {} }],
   ])("%s rejects synthetic public principals from generator mutations", async (operationId, ctxOverrides) => {
     const localService = makeMockService();
-    const localRoutes = createFridayWorkflowGeneratorRoutes({ workflowGenerator: localService });
+    const localRoutes = createFridayWorkflowGeneratorRoutes({
+      workflowGenerator: localService,
+      allowTestOnlyWorkflowGeneratorExecution: true,
+    });
     const route = localRoutes.find((r) => r.operationId === operationId)!;
     await expect(
       route.handler(makeCtx({

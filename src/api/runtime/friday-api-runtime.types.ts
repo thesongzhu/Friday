@@ -220,6 +220,13 @@ export interface CreateFridayApiRuntimeDeps {
    * cancel routes remain fail-closed until Rust owns generator truth.
    */
   allowTestOnlySkillGeneratorExecution?: boolean;
+  /**
+   * Test-oracle only: allows legacy TypeScript workflow generator sessions in
+   * isolated mock/unit validation. Production/runtime callers must leave this
+   * unset so workflow generator session routes remain fail-closed until Rust
+   * owns generator truth.
+   */
+  allowTestOnlyWorkflowGeneratorExecution?: boolean;
   /** Optional: user/project prompt-guidance provider for fallback workflow runtime creation. */
   userRulesContextProvider?: CreateFridayWorkflowRuntimeDeps["userRulesContextProvider"];
   /** Optional: reuse hub's session service instead of creating a new one. */

@@ -124,6 +124,7 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
       logRequests: false,
       allowTestOnlyWorkflowRunExecution: true,
       allowTestOnlySkillGeneratorExecution: true,
+      allowTestOnlyWorkflowGeneratorExecution: true,
     });
     await hub.start();
 

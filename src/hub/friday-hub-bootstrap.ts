@@ -6898,6 +6898,7 @@ export async function createFridayHub(
     allowTestOnlySkillRunExecution: config.allowTestOnlySkillRunExecution,
     allowTestOnlySkillVerifyExecution: config.allowTestOnlySkillVerifyExecution,
     allowTestOnlySkillGeneratorExecution: config.allowTestOnlySkillGeneratorExecution,
+    allowTestOnlyWorkflowGeneratorExecution: config.allowTestOnlyWorkflowGeneratorExecution,
     agentRuntime,
     allowTestOnlyAgentRunStartExecution: config.allowTestOnlyAgentRunStartExecution,
     allowTestOnlyAgentRunControlExecution: config.allowTestOnlyAgentRunControlExecution,

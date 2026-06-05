@@ -3058,6 +3058,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   if (deps.workflowGenerator) {
     for (const route of createFridayWorkflowGeneratorRoutes({
       workflowGenerator: deps.workflowGenerator,
+      allowTestOnlyWorkflowGeneratorExecution: deps.allowTestOnlyWorkflowGeneratorExecution,
     })) {
       routes.register(route);
     }
