@@ -46,6 +46,9 @@ function matchesFilter(scenario, options) {
   if (options.scenarioIds?.length && !options.scenarioIds.includes(scenario.id)) {
     return false;
   }
+  if (options.excludedScenarioIds?.length && options.excludedScenarioIds.includes(scenario.id)) {
+    return false;
+  }
   if (options.layers?.length && !options.layers.includes(scenario.layer)) {
     return false;
   }

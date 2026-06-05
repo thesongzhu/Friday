@@ -3257,6 +3257,21 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       apiIdempotencyPayloadHash?: string;
       apiIdempotencyReceivedAt?: string;
     }) => {
+      if (deps.allowTestOnlyAgentRunStartExecution !== true) {
+        void input;
+        throw new FridayDomainError(
+          "TS_RUNTIME_AGENT_RUNS_RETIRED",
+          "Agent run execution is fail-closed while runtime ownership is being moved out of TypeScript.",
+          {
+            httpStatus: 503,
+            details: {
+              classification: "fail_closed",
+              replacement: "rust_owned_agent_run_entrypoint_required",
+            },
+          },
+        );
+      }
+
       const principalId =
         typeof input.principalId === "string" && input.principalId.trim().length > 0
           ? input.principalId.trim()
@@ -3276,8 +3291,6 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           return replayAgentRunResult(existingRun);
         }
       }
-      // Create the AbortController and pre-generate the runId BEFORE starting
-      // the run so that cancelRun can abort in-flight execution.
       const abortController = new AbortController();
       const runId = deps.idGenerator();
       agentAbortControllers.set(runId, abortController);

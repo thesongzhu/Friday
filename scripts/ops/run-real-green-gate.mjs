@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { FridayClient } from "../../validation/real-world/lib/client.mjs";
@@ -125,6 +126,11 @@ const EXTERNAL_CHANNEL_SCENARIOS = [
   "l6-discord-channel-roundtrip",
 ];
 
+const AGENT_RUN_START_DEPENDENT_SCENARIOS = [
+  "l3-destructive-request-visible-approval-gate",
+  "l3-channel-origin-unified-task-state-contract",
+];
+
 const CLAUDE_SKILL_TESTS = [
   "test/unit/skills/registry/friday-skill-discovery.test.ts",
   "test/unit/skills/manifest/friday-skill-package-loader.test.ts",
@@ -216,6 +222,34 @@ export function normalizeLiveProviderMode(value) {
 
 export function shouldExcludeProviderScenarios(liveProviderMode) {
   return normalizeLiveProviderMode(liveProviderMode) === "economy";
+}
+
+function readJsonFile(filePath) {
+  try {
+    return JSON.parse(readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+export function isAgentRunStartFailClosed(manifest) {
+  const surfaces = Array.isArray(manifest?.surfaces) ? manifest.surfaces : [];
+  return surfaces.some((surface) =>
+    surface?.id === "agent_runs_start"
+    && surface?.classification === "fail_closed"
+    && surface?.executes_product_logic === false
+  );
+}
+
+export function resolveRetiredAgentRunScenarioExclusions(repoRoot) {
+  const manifest = readJsonFile(path.join(repoRoot, "docs", "ops", "ts-runtime-retirement-manifest.json"));
+  if (!isAgentRunStartFailClosed(manifest)) {
+    return [];
+  }
+  return AGENT_RUN_START_DEPENDENT_SCENARIOS.map((scenarioId) => ({
+    scenarioId,
+    reason: "POST /v1/agent/runs is classified fail_closed in the TS runtime retirement manifest.",
+  }));
 }
 
 function parseBooleanFlag(value) {
@@ -466,6 +500,7 @@ function deriveGateReasons({
   externalChannels,
   branchConformance,
   skillConformance,
+  retiredAgentRunScenarioExclusions,
   error,
 }) {
   const reasons = [];
@@ -523,7 +558,7 @@ function deriveGateReasons({
   return reasons;
 }
 
-function buildSummary({
+export function buildSummary({
   runId,
   repoRoot,
   branch,
@@ -536,6 +571,7 @@ function buildSummary({
   externalChannels,
   branchConformance,
   skillConformance,
+  retiredAgentRunScenarioExclusions,
   error,
 }) {
   const summary = {
@@ -554,6 +590,7 @@ function buildSummary({
     externalChannels: externalChannels ? summarizeRun(externalChannels) : null,
     branchConformance: branchConformance ?? null,
     skillConformance: skillConformance ?? null,
+    retiredAgentRunScenarioExclusions: retiredAgentRunScenarioExclusions ?? [],
     error: error ?? null,
   };
   summary.gate = {
@@ -587,6 +624,8 @@ async function main() {
   const repoRoot = options.repoRoot;
   const liveProviderMode = normalizeLiveProviderMode(options.liveProviderMode);
   const excludeProviderScenarios = shouldExcludeProviderScenarios(liveProviderMode);
+  const retiredAgentRunScenarioExclusions = resolveRetiredAgentRunScenarioExclusions(repoRoot);
+  const excludedScenarioIds = retiredAgentRunScenarioExclusions.map((entry) => entry.scenarioId);
   const runId = createRunId();
   const reportRoot = options.reportRoot
     ?? path.join(repoRoot, "docs", "reports", "ops", "real-green-gate", runId);
@@ -611,6 +650,7 @@ async function main() {
     mintUserEmail: clientOptions.mintUserEmail,
     mintTenantId: clientOptions.mintTenantId,
     mintAccessTokenTtlSec: clientOptions.mintAccessTokenTtlSec,
+    excludedScenarioIds,
   };
   let preflight = null;
   let smoke = null;
@@ -786,6 +826,7 @@ async function main() {
       externalChannels,
       branchConformance,
       skillConformance,
+      retiredAgentRunScenarioExclusions,
       error: terminalError,
     });
     flushTerminalArtifacts(reportRoot, summary);

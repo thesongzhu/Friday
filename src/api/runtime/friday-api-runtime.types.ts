@@ -197,6 +197,12 @@ export interface CreateFridayApiRuntimeDeps {
   sessionService?: FridaySessionService;
   /** Optional: agent runtime for agent run endpoints. */
   agentRuntime?: FridayAgentRuntime;
+  /**
+   * Test-oracle only: allows legacy TypeScript agent run execution in isolated
+   * mock/unit validation. Production/runtime callers must leave this unset so
+   * POST /v1/agent/runs remains fail-closed until Rust owns execution.
+   */
+  allowTestOnlyAgentRunStartExecution?: boolean;
   /** Optional: Reflex service for deterministic preference writes before agent runs. */
   reflexService?: FridayReflexService;
   /** Optional deterministic runtime capability getter used by context evidence selection. */
