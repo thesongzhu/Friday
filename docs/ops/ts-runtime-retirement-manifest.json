@@ -64,8 +64,8 @@
       "classification": "ts_runtime_blocker",
       "user_triggerable": true,
       "owner": "ts-runtime-retirement",
-      "blocker": "Agent routes still call TypeScript runtime dependencies for starting, cancelling, rolling back, approval, and automation execution.",
-      "next_action": "Retire POST /v1/agent/runs first by delegating execution truth to a Rust-owned entrypoint or leaving the route fail-closed until Rust ownership exists."
+      "blocker": "Agent routes still call TypeScript runtime dependencies for approval, automation asset CRUD, and other remaining agent runtime behavior.",
+      "next_action": "Continue splitting remaining agent route surfaces into Rust delegation, explicit fail-closed controls, compatibility shims, or owned blockers before claiming TS retirement."
     },
     {
       "id": "agent_loop_runtime_blockers",
@@ -313,6 +313,45 @@
       "executes_product_logic": false,
       "proof": "src/api/runtime/friday-api-runtime.ts wires default/live agent.runs.start to TS_RUNTIME_AGENT_RUNS_RETIRED before idempotency replay, state mutation, provider validation, or agent runtime execution; the legacy TS path is reachable only through explicit allowTestOnlyAgentRunStartExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned agent run entrypoint when available."
+    },
+    {
+      "id": "agent_runs_cancel",
+      "route": {
+        "method": "POST",
+        "path": "/v1/agent/runs/:runId/cancel",
+        "operationId": "agent.runs.cancel"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/runtime/friday-api-runtime.ts wires default/live agent.runs.cancel to TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED before aborting TypeScript run controllers; the legacy TS cancel path is reachable only through explicit allowTestOnlyAgentRunControlExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned agent run control entrypoint when available."
+    },
+    {
+      "id": "agent_runs_rollback",
+      "route": {
+        "method": "POST",
+        "path": "/v1/agent/runs/:runId/rollback",
+        "operationId": "agent.runs.rollback"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/runtime/friday-api-runtime.ts wires default/live agent.runs.rollback to TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED before calling TypeScript rollbackRun; the legacy TS rollback path is reachable only through explicit allowTestOnlyAgentRunControlExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned agent rollback/control entrypoint when available."
+    },
+    {
+      "id": "agent_automations_run",
+      "route": {
+        "method": "POST",
+        "path": "/v1/agent/automations/:automationId/run",
+        "operationId": "agent.automations.run"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/runtime/friday-api-runtime.ts wires default/live agent.automations.run to TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED before invoking the TypeScript automation run service; the legacy TS automation-run path is reachable only through explicit allowTestOnlyAgentRunControlExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned automation execution/control entrypoint when available."
     },
     {
       "id": "workflow_runs_start",

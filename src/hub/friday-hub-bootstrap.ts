@@ -6891,6 +6891,7 @@ export async function createFridayHub(
     invokeSkill: invokeSkillForWorkflow,
     agentRuntime,
     allowTestOnlyAgentRunStartExecution: config.allowTestOnlyAgentRunStartExecution,
+    allowTestOnlyAgentRunControlExecution: config.allowTestOnlyAgentRunControlExecution,
     reflexService,
     agentEventEmitter,
     resolveToolApproval,

@@ -3223,6 +3223,19 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   let agentAutomationService: FridayAgentAutomationService | undefined;
   if (deps.agentRuntime && deps.agentEventEmitter && agentRepo && agentRunEventRepo) {
     const agentAbortControllers = new Map<string, AbortController>();
+    const throwRetiredAgentRunControl = (): never => {
+      throw new FridayDomainError(
+        "TS_RUNTIME_AGENT_RUN_CONTROLS_RETIRED",
+        "Agent run controls are fail-closed while runtime control ownership is being moved out of TypeScript.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_agent_run_control_entrypoint_required",
+          },
+        },
+      );
+    };
     const replayAgentRunResult = (run: FridayAgentRunRecord): FridayAgentRuntimeResult => ({
       runId: run.id,
       status: run.status,
@@ -3344,6 +3357,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       resolveSourceSessionKey: (sourceRunId) =>
         deps.db.withReadConnection((db) => agentRepo.getById(db, sourceRunId)?.sessionKey ?? null),
     });
+    const routeAutomationService: FridayAgentAutomationService =
+      deps.allowTestOnlyAgentRunControlExecution === true
+        ? agentAutomationService
+        : {
+          ...agentAutomationService,
+          run: async () => throwRetiredAgentRunControl(),
+        };
 
     for (const route of createFridayAgentRoutes({
       validateRequestedRoute: async (providerId, model, tenantContext) => {
@@ -3369,6 +3389,10 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         );
       },
       cancelRun: (runId) => {
+        if (deps.allowTestOnlyAgentRunControlExecution !== true) {
+          void runId;
+          throwRetiredAgentRunControl();
+        }
         const controller = agentAbortControllers.get(runId);
         if (controller) {
           controller.abort(new Error("Cancelled via API"));
@@ -3441,11 +3465,15 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         ? (runId, toolCallId, approved, options) =>
           deps.resolveToolApproval!(runId, toolCallId, approved, options)
         : (/* _runId, _toolCallId, _approved, _reason */) => ({ resolved: false }),
-      rollbackRun: deps.agentRuntime
-        ? (runId) => deps.agentRuntime!.rollbackRun(runId)
-        : undefined,
+      rollbackRun: (runId) => {
+        if (deps.allowTestOnlyAgentRunControlExecution !== true) {
+          void runId;
+          throwRetiredAgentRunControl();
+        }
+        return deps.agentRuntime!.rollbackRun?.(runId) ?? null;
+      },
       eventEmitter: deps.agentEventEmitter,
-      automationService: agentAutomationService,
+      automationService: routeAutomationService,
     })) {
       routes.register(route);
     }
