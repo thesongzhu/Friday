@@ -1328,7 +1328,7 @@ echo '{"greeting": "hello from converted skill"}'
           items: Array<{
             nodeId: string;
             status: string;
-            output: unknown;
+            output?: unknown;
           }>;
         };
       };
@@ -1338,8 +1338,7 @@ echo '{"greeting": "hello from converted skill"}'
       const condNode = nodesJson.data.items.find((n) => n.nodeId === "check_score");
       expect(condNode).toBeTruthy();
       expect(condNode!.status).toBe("completed");
-      const condOutput = condNode!.output as { result: boolean } | null;
-      expect(condOutput?.result).toBe(true);
+      expect(condNode!.output).toBeUndefined();
 
       // pass_node should have executed
       const passNode = nodesJson.data.items.find((n) => n.nodeId === "pass_node");
@@ -1400,7 +1399,7 @@ echo '{"greeting": "hello from converted skill"}'
           items: Array<{
             nodeId: string;
             status: string;
-            output: unknown;
+            output?: unknown;
           }>;
         };
       };
@@ -1410,8 +1409,7 @@ echo '{"greeting": "hello from converted skill"}'
       const condNode = nodesJson.data.items.find((n) => n.nodeId === "check_score");
       expect(condNode).toBeTruthy();
       expect(condNode!.status).toBe("completed");
-      const condOutput = condNode!.output as { result: boolean } | null;
-      expect(condOutput?.result).toBe(false);
+      expect(condNode!.output).toBeUndefined();
 
       // fail_node should have executed
       const failNode = nodesJson.data.items.find((n) => n.nodeId === "fail_node");
@@ -1620,7 +1618,7 @@ echo '{"greeting": "hello from converted skill"}'
           items: Array<{
             nodeId: string;
             status: string;
-            output: unknown;
+            output?: unknown;
           }>;
         };
       };
@@ -1630,8 +1628,7 @@ echo '{"greeting": "hello from converted skill"}'
       const deployNode = json.data.items.find((n) => n.nodeId === "deploy");
       expect(deployNode).toBeTruthy();
       expect(deployNode!.status).toBe("completed");
-      const output = deployNode!.output as { deployed: boolean } | null;
-      expect(output?.deployed).toBe(true);
+      expect(deployNode!.output).toBeUndefined();
     });
   });
 });

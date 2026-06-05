@@ -26,7 +26,17 @@ import {
   createFridayWorkflowTriggerRepository,
   listFridayStableWorkflowTemplates,
 } from "#workflows";
-import type { JsonObject } from "#workflows";
+import type {
+  FridayWorkflowEvidenceEvent,
+  FridayWorkflowPlaybookEvidenceTrace,
+  FridayWorkflowRetryEvidenceTrace,
+  FridayWorkflowRunEntity,
+  FridayWorkflowRunEvidenceExport,
+  FridayWorkflowRunEvidenceExportRecord,
+  FridayWorkflowRunEvidenceResponse,
+  FridayWorkflowRunNodeEntity,
+  JsonObject,
+} from "#workflows";
 
 import { classifyFridayExecution } from "../../sessions/services/friday-execution-classifier.js";
 import { dispatchDeterministic } from "../../sessions/services/friday-deterministic-dispatch.js";
@@ -202,6 +212,181 @@ const DEFAULT_REFRESH_TTL = 604_800; // 7 days
 const CURRENT_EPOCH = 1;
 const SESSION_CONTEXT_HISTORY_LIMIT = 24;
 const WORKFLOW_WEBHOOK_SECRET_SCOPES = ["workflow-webhook", "workflow"] as const;
+
+function summarizePublicJsonShape(value: unknown): JsonObject {
+  if (value === null || value === undefined) {
+    return { kind: "empty" };
+  }
+  if (Array.isArray(value)) {
+    return { kind: "array", itemCount: value.length };
+  }
+  if (typeof value === "object") {
+    const keys = Object.keys(value as Record<string, unknown>).sort();
+    return {
+      kind: "object",
+      keyCount: keys.length,
+      keys: keys.slice(0, 20),
+      truncated: keys.length > 20,
+    };
+  }
+  return { kind: typeof value };
+}
+
+function sanitizePublicWorkflowRun(run: FridayWorkflowRunEntity): FridayWorkflowRunEntity {
+  return {
+    id: run.id,
+    workflowId: run.workflowId,
+    workflowVersionId: run.workflowVersionId,
+    status: run.status,
+    triggerType: run.triggerType,
+    startedAt: run.startedAt,
+    deadlineAt: run.deadlineAt,
+    pausedAt: run.pausedAt,
+    resumedAt: run.resumedAt,
+    finishedAt: run.finishedAt,
+    createdAt: run.createdAt,
+    updatedAt: run.updatedAt,
+    proofRequired: run.proofRequired,
+    evidenceStatus: run.evidenceStatus,
+    completionVerification: run.completionVerification,
+    failure: run.failure
+      ? {
+        code: run.failure.code,
+        message: "redacted",
+      }
+      : undefined,
+  };
+}
+
+function sanitizePublicWorkflowRunNode(node: FridayWorkflowRunNodeEntity): FridayWorkflowRunNodeEntity {
+  return {
+    id: node.id,
+    runId: node.runId,
+    nodeId: node.nodeId,
+    attempt: node.attempt,
+    attemptId: node.attemptId,
+    status: node.status,
+    startedAt: node.startedAt,
+    finishedAt: node.finishedAt,
+    error: node.error
+      ? {
+        code: node.error.code,
+        message: "redacted",
+        retryable: node.error.retryable,
+      }
+      : undefined,
+    idempotencyKey: "redacted",
+    createdAt: node.createdAt,
+    updatedAt: node.updatedAt,
+  };
+}
+
+function sanitizePublicWorkflowEvidenceEvent(event: FridayWorkflowEvidenceEvent): FridayWorkflowEvidenceEvent {
+  return {
+    eventId: event.eventId,
+    event: event.event,
+    module: event.module,
+    emittedAt: event.emittedAt,
+    redacted: true,
+    correlation: {
+      runId: event.correlation.runId,
+      workflowId: event.correlation.workflowId,
+      nodeId: event.correlation.nodeId,
+      attempt: event.correlation.attempt,
+    },
+    payload: {
+      redacted: true,
+      shape: summarizePublicJsonShape(event.payload),
+    },
+  };
+}
+
+function sanitizePublicWorkflowRetryTrace(
+  trace: FridayWorkflowRetryEvidenceTrace,
+): FridayWorkflowRetryEvidenceTrace {
+  return {
+    ...trace,
+    errorMessage: trace.errorMessage ? "redacted" : undefined,
+    decision: {
+      shouldRetry: trace.decision.shouldRetry,
+      delayMs: trace.decision.delayMs,
+      reason: trace.decision.reason,
+      maxAttempts: trace.decision.maxAttempts,
+      budgetExhausted: trace.decision.budgetExhausted,
+      circuitOpen: trace.decision.circuitOpen,
+      escalateToDlq: trace.decision.escalateToDlq,
+    },
+  };
+}
+
+function sanitizePublicWorkflowPlaybookTrace(
+  trace: FridayWorkflowPlaybookEvidenceTrace,
+): FridayWorkflowPlaybookEvidenceTrace {
+  return {
+    runId: trace.runId,
+    workflowId: trace.workflowId,
+    phase: trace.phase,
+    timestamp: trace.timestamp,
+    intake: trace.intake
+      ? {
+        decision: trace.intake.decision,
+        playbookId: trace.intake.playbookId ? "redacted" : null,
+        versionNumber: trace.intake.versionNumber,
+        matchScore: trace.intake.matchScore,
+        evaluatedAt: trace.intake.evaluatedAt,
+      }
+      : undefined,
+    feedback: trace.feedback
+      ? {
+        candidateId: trace.feedback.candidateId ? "redacted" : null,
+        promotedPlaybookId: trace.feedback.promotedPlaybookId ? "redacted" : null,
+        promotionDecision: trace.feedback.promotionDecision,
+        scoreRecalculated: trace.feedback.scoreRecalculated,
+        recordedAt: trace.feedback.recordedAt,
+      }
+      : undefined,
+  };
+}
+
+function sanitizePublicWorkflowEvidence(
+  evidence: FridayWorkflowRunEvidenceResponse,
+): FridayWorkflowRunEvidenceResponse {
+  return {
+    ...evidence,
+    run: evidence.run ? sanitizePublicWorkflowRun(evidence.run) : null,
+    events: evidence.events.map(sanitizePublicWorkflowEvidenceEvent),
+    playbook: {
+      traces: evidence.playbook.traces.map(sanitizePublicWorkflowPlaybookTrace),
+    },
+    acceptance: {
+      events: evidence.acceptance.events.map(sanitizePublicWorkflowEvidenceEvent),
+    },
+    retry: {
+      events: evidence.retry.events.map(sanitizePublicWorkflowEvidenceEvent),
+      traces: evidence.retry.traces.map(sanitizePublicWorkflowRetryTrace),
+    },
+  };
+}
+
+function sanitizePublicWorkflowEvidenceExport(
+  evidenceExport: FridayWorkflowRunEvidenceExport,
+): FridayWorkflowRunEvidenceExport {
+  return {
+    ...evidenceExport,
+    artifactId: "redacted",
+    uri: `friday://workflow-runs/${evidenceExport.runId}/evidence-exports/${evidenceExport.exportId}.json`,
+    filePersisted: false,
+  };
+}
+
+function sanitizePublicWorkflowEvidenceExportRecord(
+  record: FridayWorkflowRunEvidenceExportRecord,
+): FridayWorkflowRunEvidenceExportRecord {
+  return {
+    export: sanitizePublicWorkflowEvidenceExport(record.export),
+    evidence: sanitizePublicWorkflowEvidence(record.evidence),
+  };
+}
 
 function createFridayPluginReviewEnablePlanDigest(input: {
   plugin: FridayPluginEntity;
@@ -2017,10 +2202,10 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     getRun: (runId, principal) => {
       const run = resolveAuthorizedRun(runId, principal);
       return {
-        run: {
+        run: sanitizePublicWorkflowRun({
           ...run,
           evidenceStatus: workflowRuntime.evidence.getRunEvidenceStatus(run.id),
-        },
+        }),
       };
     },
     listRunNodes: (runId, query, principal) => {
@@ -2029,7 +2214,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         runId,
         query.status,
       );
-      return { items: nodes };
+      return { items: nodes.map(sanitizePublicWorkflowRunNode) };
     },
     getRunTimeline: (runId, query, principal) => {
       resolveAuthorizedRun(runId, principal);
@@ -2049,23 +2234,29 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           nodeId: p.nodeId as string | undefined,
           attempt: p.attempt as number | undefined,
           status: p.status as FridayRunTimelineEntry["status"] | undefined,
-          payload: p,
+          payload: {
+            redacted: true,
+            shape: summarizePublicJsonShape(p),
+          },
         };
       });
       return { items };
     },
     getRunEvidence: (runId, query, principal) => {
       resolveAuthorizedRunForEvidence(runId, principal);
-      return workflowRuntime.evidence.getRunEvidence(
-        runId,
-        parseRunEvidenceQuery(query as Record<string, unknown>),
+      return sanitizePublicWorkflowEvidence(
+        workflowRuntime.evidence.getRunEvidence(
+          runId,
+          parseRunEvidenceQuery(query as Record<string, unknown>),
+        ),
       );
     },
     listRunEvidenceExports: (runId, query, principal) => {
       resolveAuthorizedRunForEvidence(runId, principal);
       const limit = readPositiveIntQuery((query as Record<string, unknown>).limit) ?? 20;
       return {
-        items: workflowRuntime.evidence.listRunEvidenceExports(runId, limit),
+        items: workflowRuntime.evidence.listRunEvidenceExports(runId, limit)
+          .map(sanitizePublicWorkflowEvidenceExport),
       };
     },
     exportRunEvidence: (runId, input, principal) => {
@@ -2083,23 +2274,24 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           httpStatus: 404,
         });
       }
-      return record;
+      return sanitizePublicWorkflowEvidenceExportRecord(record);
     },
     downloadRunEvidenceExport: (runId, exportId, principal) => {
       resolveAuthorizedRunForEvidence(runId, principal);
-      const download = workflowRuntime.evidence.downloadRunEvidenceExport(runId, exportId);
-      if (!download) {
+      const record = workflowRuntime.evidence.getRunEvidenceExport(runId, exportId);
+      if (!record) {
         throw new FridayDomainError("WORKFLOW_RUN_EVIDENCE_EXPORT_NOT_FOUND", "Workflow run evidence export not found", {
           httpStatus: 404,
         });
       }
-      return createFridayHttpRawTextResponse(download.content, {
+      const sanitized = sanitizePublicWorkflowEvidenceExportRecord(record);
+      return createFridayHttpRawTextResponse(JSON.stringify(sanitized, null, 2), {
         contentType: "application/json; charset=utf-8",
         headers: {
           "Content-Disposition": `attachment; filename=\"workflow-run-evidence-${exportId}.json\"`,
-          ETag: `"${download.export.checksum}"`,
-          "X-Friday-Evidence-Checksum": download.export.checksum,
-          "X-Friday-Evidence-File-Persisted": download.export.filePersisted ? "true" : "false",
+          ETag: `"${sanitized.export.checksum}"`,
+          "X-Friday-Evidence-Checksum": sanitized.export.checksum,
+          "X-Friday-Evidence-File-Persisted": "false",
         },
       });
     },

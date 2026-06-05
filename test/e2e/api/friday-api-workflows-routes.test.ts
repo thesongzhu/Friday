@@ -854,9 +854,25 @@ describe("API — Workflow routes", () => {
     );
     const downloadBody = await downloadRes.text();
     expect(downloadBody.length).toBeGreaterThan(0);
-    expect(createHash("sha256").update(downloadBody).digest("hex")).toBe(
-      getExportJson.data.export.checksum,
+    const downloadJson = JSON.parse(downloadBody) as {
+      export: {
+        exportId: string;
+        runId: string;
+        checksum: string;
+        artifactId?: string;
+        uri?: string;
+        filePersisted?: boolean;
+      };
+    };
+    expect(downloadJson.export.exportId).toBe(exportId);
+    expect(downloadJson.export.runId).toBe(runId);
+    expect(downloadJson.export.checksum).toBe(getExportJson.data.export.checksum);
+    expect(downloadJson.export.artifactId).toBe("redacted");
+    expect(downloadJson.export.uri).toBe(
+      `friday://workflow-runs/${runId}/evidence-exports/${exportId}.json`,
     );
+    expect(downloadJson.export.filePersisted).toBe(false);
+    expect(downloadBody).not.toContain("file://");
 
     const missingRes = await fetch(
       `${env.baseUrl}/v1/workflow-runs/${runId}/evidence/exports/not-found-export/download`,
