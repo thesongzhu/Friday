@@ -558,7 +558,7 @@ function deriveGateReasons({
   return reasons;
 }
 
-function buildSummary({
+export function buildSummary({
   runId,
   repoRoot,
   branch,
@@ -571,6 +571,7 @@ function buildSummary({
   externalChannels,
   branchConformance,
   skillConformance,
+  retiredAgentRunScenarioExclusions,
   error,
 }) {
   const summary = {
