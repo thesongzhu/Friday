@@ -354,6 +354,32 @@
       "next_action": "Replace fail-closed response with a Rust-owned automation execution/control entrypoint when available."
     },
     {
+      "id": "agent_loop_expertmode_update",
+      "route": {
+        "method": "PUT",
+        "path": "/v1/agent-loop/expert-mode",
+        "operationId": "agent.loop.expertmode.update"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-agent-loop-routes.ts wires default/live agent.loop.expertmode.update to TS_RUNTIME_AGENT_LOOP_POLICY_MUTATIONS_RETIRED after user-principal validation and before mutating TypeScript agent-loop expert-mode policy; legacy TS mutation is reachable only through explicit allowTestOnlyAgentLoopPolicyMutation test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned agent-loop expert-mode policy entrypoint when available."
+    },
+    {
+      "id": "agent_loop_policy_update",
+      "route": {
+        "method": "PUT",
+        "path": "/v1/agent-loop/policy",
+        "operationId": "agent.loop.policy.update"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-agent-loop-routes.ts wires default/live agent.loop.policy.update to TS_RUNTIME_AGENT_LOOP_POLICY_MUTATIONS_RETIRED after user-principal validation and before mutating TypeScript agent-loop policy; legacy TS mutation is reachable only through explicit allowTestOnlyAgentLoopPolicyMutation test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned agent-loop policy entrypoint when available."
+    },
+    {
       "id": "agent_loop_runs_pause",
       "route": {
         "method": "POST",

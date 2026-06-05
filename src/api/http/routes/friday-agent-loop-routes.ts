@@ -28,6 +28,7 @@ import {
 export interface FridayAgentLoopRoutesDeps {
   service: FridayAgentLoopService;
   allowTestOnlyAgentLoopRunControlExecution?: boolean;
+  allowTestOnlyAgentLoopPolicyMutation?: boolean;
 }
 
 function throwRetiredAgentLoopRunControl(): never {
@@ -39,6 +40,20 @@ function throwRetiredAgentLoopRunControl(): never {
       details: {
         classification: "fail_closed",
         replacement: "rust_owned_agent_loop_control_entrypoint_required",
+      },
+    },
+  );
+}
+
+function throwRetiredAgentLoopPolicyMutation(): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_AGENT_LOOP_POLICY_MUTATIONS_RETIRED",
+    "Agent loop policy mutations are fail-closed while runtime ownership is being moved out of TypeScript.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_agent_loop_policy_entrypoint_required",
       },
     },
   );
@@ -100,6 +115,9 @@ export function createFridayAgentLoopRoutes(
       auth: { public: true },
       async handler(ctx): Promise<FridayUpdateAgentLoopExpertModeResponse> {
         requireUserId(ctx.principal);
+        if (deps.allowTestOnlyAgentLoopPolicyMutation !== true) {
+          throwRetiredAgentLoopPolicyMutation();
+        }
         const body = (ctx.body ?? {}) as FridayUpdateAgentLoopExpertModeRequest;
         return {
           expertMode: deps.service.updateExpertMode({
@@ -138,6 +156,9 @@ export function createFridayAgentLoopRoutes(
       auth: { public: true },
       async handler(ctx): Promise<FridayUpdateAgentLoopPolicyResponse> {
         requireUserId(ctx.principal);
+        if (deps.allowTestOnlyAgentLoopPolicyMutation !== true) {
+          throwRetiredAgentLoopPolicyMutation();
+        }
         const body = (ctx.body ?? {}) as FridayUpdateAgentLoopPolicyRequest;
         return {
           policy: deps.service.updatePolicy(body),
