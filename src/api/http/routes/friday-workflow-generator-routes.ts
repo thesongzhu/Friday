@@ -32,6 +32,26 @@ const WORKFLOW_GENERATOR_PUBLICATION_BOUNDARY: FridayWorkflowGeneratorPublicatio
 export interface FridayWorkflowGeneratorRoutesDeps {
   workflowGenerator: FridayWorkflowGeneratorService;
   observability?: FridayObservabilityApiService;
+  /**
+   * Test-oracle only: allows legacy TypeScript workflow generator sessions in
+   * isolated validation. Default/live runtime must leave generator sessions
+   * fail-closed until Rust owns workflow generator truth.
+   */
+  allowTestOnlyWorkflowGeneratorExecution?: boolean;
+}
+
+function throwRetiredWorkflowGeneratorExecution(): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED",
+    "TypeScript workflow generator sessions are retired in default/live runtime; use the Rust-owned workflow generator entrypoint.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_workflow_generator_entrypoint_required",
+      },
+    },
+  );
 }
 
 function buildTenantContext(principal: unknown, fallbackUserId: string, fallbackChannel: string): FridayProviderTenantContext {
@@ -250,6 +270,12 @@ export function createFridayWorkflowGeneratorRoutes(
     }
   }
 
+  function assertWorkflowGeneratorTestOracleAllowed(): void {
+    if (deps.allowTestOnlyWorkflowGeneratorExecution !== true) {
+      throwRetiredWorkflowGeneratorExecution();
+    }
+  }
+
   return [
     // 1. Create session
     {
@@ -259,6 +285,7 @@ export function createFridayWorkflowGeneratorRoutes(
       auth: { public: true },
       rateLimitPolicyId: "generator.write",
       async handler(ctx): Promise<FridayWorkflowGeneratorStartSessionResponse> {
+        assertWorkflowGeneratorTestOracleAllowed();
         const bound = assertWorkflowGeneratorPrincipal(ctx.principal ?? null, "workflow.generator.session.create");
         validateCreateSessionBody(ctx.body);
         const body = ctx.body;
@@ -303,6 +330,7 @@ export function createFridayWorkflowGeneratorRoutes(
       path: "/v1/workflows/generator/sessions/:sessionId",
       auth: { public: true },
       async handler(ctx): Promise<FridayWorkflowGeneratorGetSessionResponse> {
+        assertWorkflowGeneratorTestOracleAllowed();
         const { sessionId } = ctx.params as { sessionId: string };
         const result = await workflowGenerator.getSession(sessionId);
         if (!result) {
@@ -324,6 +352,7 @@ export function createFridayWorkflowGeneratorRoutes(
       auth: { public: true },
       rateLimitPolicyId: "generator.llm",
       async handler(ctx): Promise<FridayWorkflowGeneratorSubmitMessageResponse> {
+        assertWorkflowGeneratorTestOracleAllowed();
         const { sessionId } = ctx.params as { sessionId: string };
         const bound = assertWorkflowGeneratorPrincipal(ctx.principal ?? null, "workflow.generator.message.create");
         await assertSessionOwner(sessionId, bound);
@@ -352,6 +381,7 @@ export function createFridayWorkflowGeneratorRoutes(
       auth: { public: true },
       rateLimitPolicyId: "generator.llm",
       async handler(ctx): Promise<FridayWorkflowGeneratorGenerateResponse> {
+        assertWorkflowGeneratorTestOracleAllowed();
         const { sessionId } = ctx.params as { sessionId: string };
         const bound = assertWorkflowGeneratorPrincipal(ctx.principal ?? null, "workflow.generator.generate");
         await assertSessionOwner(sessionId, bound);
@@ -407,6 +437,7 @@ export function createFridayWorkflowGeneratorRoutes(
       path: "/v1/workflows/generator/sessions/:sessionId/evidence",
       auth: { public: true },
       async handler(ctx): Promise<FridayWorkflowGeneratorEvidenceResponse> {
+        assertWorkflowGeneratorTestOracleAllowed();
         const { sessionId } = ctx.params as { sessionId: string };
         const evidence = await buildEvidence(sessionId);
         return { evidence };
@@ -421,6 +452,7 @@ export function createFridayWorkflowGeneratorRoutes(
       auth: { public: true },
       rateLimitPolicyId: "workflow.publish",
       async handler(ctx): Promise<FridayWorkflowGeneratorApproveResponse> {
+        assertWorkflowGeneratorTestOracleAllowed();
         const { sessionId } = ctx.params as { sessionId: string };
         const bound = assertWorkflowGeneratorPrincipal(ctx.principal ?? null, "workflow.generator.approve");
         await assertSessionOwner(sessionId, bound);
@@ -477,6 +509,7 @@ export function createFridayWorkflowGeneratorRoutes(
       path: "/v1/workflows/generator/sessions/:sessionId",
       auth: { public: true },
       async handler(ctx): Promise<FridayWorkflowGeneratorCancelResponse> {
+        assertWorkflowGeneratorTestOracleAllowed();
         const { sessionId } = ctx.params as { sessionId: string };
         const bound = assertWorkflowGeneratorPrincipal(ctx.principal ?? null, "workflow.generator.cancel");
         await assertSessionOwner(sessionId, bound);

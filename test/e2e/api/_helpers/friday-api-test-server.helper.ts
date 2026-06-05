@@ -155,6 +155,12 @@ export interface CreateFridayApiTestEnvOptions {
    */
   allowTestOnlySkillGeneratorExecution?: boolean;
   /**
+   * Test-oracle opt-in for legacy TS workflow generator sessions. Default/live
+   * runtime leaves generator session routes fail-closed while Rust ownership
+   * lands.
+   */
+  allowTestOnlyWorkflowGeneratorExecution?: boolean;
+  /**
    * Test-oracle opt-in for legacy TS auto-fix execution. Default/live runtime
    * leaves auto-fix run/execute/rollback surfaces fail-closed while Rust ownership lands.
    */
@@ -267,6 +273,7 @@ export async function createFridayApiTestEnv(
     allowTestOnlySkillRunExecution: options.allowTestOnlySkillRunExecution ?? true,
     allowTestOnlySkillVerifyExecution: options.allowTestOnlySkillVerifyExecution ?? true,
     allowTestOnlySkillGeneratorExecution: options.allowTestOnlySkillGeneratorExecution ?? true,
+    allowTestOnlyWorkflowGeneratorExecution: options.allowTestOnlyWorkflowGeneratorExecution ?? true,
     computeChecksum: (content: string) =>
       crypto.createHash("sha256").update(content).digest("hex"),
     resolveSkill: options.resolveSkill ?? ((_skillId: string) => ({ id: _skillId })),
