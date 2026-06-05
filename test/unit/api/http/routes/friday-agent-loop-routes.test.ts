@@ -276,6 +276,57 @@ describe("FridayAgentLoopRoutes", () => {
     expect(service.updateExpertMode).not.toHaveBeenCalled();
   });
 
+  it("keeps agent-loop compatibility reads bounded and free of mutation/control calls", async () => {
+    const service = makeService();
+    const routes = createFridayAgentLoopRoutes({ service });
+    const scenarios = [
+      {
+        operationId: "agent.loop.expertmode.get",
+        ctx: makeCtx(),
+        expectedRead: service.getExpertMode,
+      },
+      {
+        operationId: "agent.loop.policy.get",
+        ctx: makeCtx(),
+        expectedRead: service.getPolicy,
+      },
+      {
+        operationId: "agent.loop.runs.list",
+        ctx: makeCtx({ query: { limit: "2" } }),
+        expectedRead: service.listRuns,
+      },
+      {
+        operationId: "agent.loop.expertruns.list",
+        ctx: makeCtx({ query: { limit: "2" } }),
+        expectedRead: service.listExpertRuns,
+      },
+      {
+        operationId: "agent.loop.runs.get",
+        ctx: makeCtx({ params: { loopRunId: "loop-run-1" } }),
+        expectedRead: service.getRun,
+      },
+      {
+        operationId: "agent.loop.expertruns.get",
+        ctx: makeCtx({ params: { loopRunId: "loop-run-1" } }),
+        expectedRead: service.getExpertRun,
+      },
+    ] as const;
+
+    for (const scenario of scenarios) {
+      const route = routes.find((entry) => entry.operationId === scenario.operationId)!;
+      await route.handler(scenario.ctx);
+      expect(scenario.expectedRead).toHaveBeenCalled();
+    }
+
+    expect(service.updatePolicy).not.toHaveBeenCalled();
+    expect(service.updateExpertMode).not.toHaveBeenCalled();
+    expect(service.pauseRun).not.toHaveBeenCalled();
+    expect(service.resumeRun).not.toHaveBeenCalled();
+    expect(service.cancelRun).not.toHaveBeenCalled();
+    expect(service.handleProcessResults).not.toHaveBeenCalled();
+    expect(service.syncAction).not.toHaveBeenCalled();
+  });
+
   it("fail-closes default agent-loop policy mutations before calling TypeScript services", async () => {
     const service = makeService();
     const routes = createFridayAgentLoopRoutes({ service });
