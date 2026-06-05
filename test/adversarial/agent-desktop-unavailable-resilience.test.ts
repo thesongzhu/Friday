@@ -3,10 +3,14 @@ import { createMockHubEnv } from "../e2e/mock/_helpers/mock-env.js";
 
 interface AgentRunEnvelope {
   ok: boolean;
-  data: {
+  data?: {
     status: "completed" | "failed" | "cancelled";
     response?: string;
     responseText?: string;
+  };
+  error?: {
+    code: string;
+    message: string;
   };
 }
 
@@ -40,7 +44,7 @@ async function withTemporaryEnv<T>(
 }
 
 describe("Agent dependency-missing resilience", () => {
-  it("fails fast with desktop enablement hint and avoids runaway provider retries", async () =>
+  it("fail-closes retired TS agent run start and avoids runaway provider retries", async () =>
     withTemporaryEnv("FRIDAY_DESKTOP_ENABLED", undefined, async () => {
       const startedAt = Date.now();
       const env = await createMockHubEnv({ providerKinds: ["anthropic"] });
@@ -69,11 +73,10 @@ describe("Agent dependency-missing resilience", () => {
           }),
         });
         const body = (await response.json()) as AgentRunEnvelope;
-        expect(response.status).toBe(200);
-        expect(body.ok).toBe(true);
-        expect(body.data.status).toBe("failed");
-        expect(body.data.responseText ?? body.data.response ?? "").toContain("FRIDAY_DESKTOP_ENABLED=true");
-        expect(mock.calls.length).toBe(2);
+        expect(response.status).toBe(503);
+        expect(body.ok).toBe(false);
+        expect(body.error?.code).toBe("TS_RUNTIME_AGENT_RUNS_RETIRED");
+        expect(mock.calls.length).toBe(0);
         expect(Date.now() - startedAt).toBeLessThan(15_000);
       } finally {
         await env.cleanup();
