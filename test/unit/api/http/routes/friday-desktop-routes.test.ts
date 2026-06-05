@@ -226,7 +226,7 @@ describe("createFridayDesktopRoutes", () => {
     });
 
     it("lists recordings", async () => {
-      const deps = makeDeps();
+      const deps = makeDeps({ allowTestOnlyDesktopRecordingExecution: true });
       const routes = createFridayDesktopRoutes(deps);
       const route = findRoute(routes, "desktop.recordings.list");
       expect(route.method).toBe("GET");
@@ -236,12 +236,27 @@ describe("createFridayDesktopRoutes", () => {
     });
 
     it("gets a recording by ID", async () => {
-      const deps = makeDeps();
+      const deps = makeDeps({ allowTestOnlyDesktopRecordingExecution: true });
       const routes = createFridayDesktopRoutes(deps);
       const route = findRoute(routes, "desktop.recordings.get");
 
       await route.handler(makeCtx({ params: { recordingId: "rec-1" } }));
       expect(deps.recordings.get).toHaveBeenCalledWith("rec-1");
+    });
+
+    it("fail-closes desktop recording reads (list/get) by default without invoking TypeScript services", async () => {
+      const deps = makeDeps();
+      const routes = createFridayDesktopRoutes(deps);
+
+      await expect(
+        findRoute(routes, "desktop.recordings.list").handler(makeCtx({ query: {} })),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_DESKTOP_RECORDING_RETIRED", httpStatus: 503 });
+      await expect(
+        findRoute(routes, "desktop.recordings.get").handler(makeCtx({ params: { recordingId: "rec-1" } })),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_DESKTOP_RECORDING_RETIRED", httpStatus: 503 });
+
+      expect(deps.recordings.list).not.toHaveBeenCalled();
+      expect(deps.recordings.get).not.toHaveBeenCalled();
     });
 
     it("stops a recording", async () => {

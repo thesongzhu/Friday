@@ -299,6 +299,9 @@ export function createFridayDesktopRoutes(
       path: "/v1/desktop/recordings",
       auth: { public: true },
       async handler(ctx) {
+        if (deps.allowTestOnlyDesktopRecordingExecution !== true) {
+          throwRetiredDesktopRecording();
+        }
         return deps.recordings.list(ctx.query as FridayListDesktopRecordingsQuery);
       },
     },
@@ -309,6 +312,9 @@ export function createFridayDesktopRoutes(
       auth: { public: true },
       async handler(ctx) {
         const { recordingId } = ctx.params as { recordingId: string };
+        if (deps.allowTestOnlyDesktopRecordingExecution !== true) {
+          throwRetiredDesktopRecording();
+        }
         return deps.recordings.get(recordingId);
       },
     },
