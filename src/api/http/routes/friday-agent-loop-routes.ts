@@ -27,6 +27,21 @@ import {
 
 export interface FridayAgentLoopRoutesDeps {
   service: FridayAgentLoopService;
+  allowTestOnlyAgentLoopRunControlExecution?: boolean;
+}
+
+function throwRetiredAgentLoopRunControl(): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_AGENT_LOOP_CONTROLS_RETIRED",
+    "Agent loop run controls are fail-closed while runtime ownership is being moved out of TypeScript.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_agent_loop_control_entrypoint_required",
+      },
+    },
+  );
 }
 
 function requireUserId(principal: FridayAuthPrincipal | null): string {
@@ -205,6 +220,9 @@ export function createFridayAgentLoopRoutes(
       async handler(ctx): Promise<FridayAgentLoopRunControlResponse> {
         requireUserId(ctx.principal);
         const { loopRunId } = ctx.params as { loopRunId: string };
+        if (deps.allowTestOnlyAgentLoopRunControlExecution !== true) {
+          throwRetiredAgentLoopRunControl();
+        }
         return {
           run: toRunRecord(deps.service.pauseRun({ loopRunId })),
         };
@@ -218,6 +236,9 @@ export function createFridayAgentLoopRoutes(
       async handler(ctx): Promise<FridayAgentLoopRunControlResponse> {
         requireUserId(ctx.principal);
         const { loopRunId } = ctx.params as { loopRunId: string };
+        if (deps.allowTestOnlyAgentLoopRunControlExecution !== true) {
+          throwRetiredAgentLoopRunControl();
+        }
         return {
           run: toRunRecord(await deps.service.resumeRun({ loopRunId })),
         };
@@ -231,6 +252,9 @@ export function createFridayAgentLoopRoutes(
       async handler(ctx): Promise<FridayAgentLoopRunControlResponse> {
         requireUserId(ctx.principal);
         const { loopRunId } = ctx.params as { loopRunId: string };
+        if (deps.allowTestOnlyAgentLoopRunControlExecution !== true) {
+          throwRetiredAgentLoopRunControl();
+        }
         return {
           run: toRunRecord(deps.service.cancelRun({ loopRunId })),
         };

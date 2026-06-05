@@ -329,4 +329,41 @@ describe("FridayAgentLoopRoutes", () => {
     });
     expect(service.updatePolicy).not.toHaveBeenCalled();
   });
+
+  it("fail-closes default agent-loop run controls before calling TypeScript services", async () => {
+    const service = makeService();
+    const routes = createFridayAgentLoopRoutes({ service });
+    const controlRoutes = [
+      ["agent.loop.runs.pause", service.pauseRun],
+      ["agent.loop.runs.resume", service.resumeRun],
+      ["agent.loop.runs.cancel", service.cancelRun],
+    ] as const;
+
+    for (const [operationId, serviceCall] of controlRoutes) {
+      const route = routes.find((entry) => entry.operationId === operationId)!;
+      await expect(
+        route.handler(makeCtx({ params: { loopRunId: "loop-run-1" } })),
+      ).rejects.toMatchObject({
+        code: "TS_RUNTIME_AGENT_LOOP_CONTROLS_RETIRED",
+        httpStatus: 503,
+      });
+      expect(serviceCall).not.toHaveBeenCalled();
+    }
+  });
+
+  it("allows legacy agent-loop run controls only through explicit test-only oracle wiring", async () => {
+    const service = makeService();
+    const routes = createFridayAgentLoopRoutes({
+      service,
+      allowTestOnlyAgentLoopRunControlExecution: true,
+    });
+    const route = routes.find((entry) => entry.operationId === "agent.loop.runs.pause")!;
+
+    const result = await route.handler(makeCtx({ params: { loopRunId: "loop-run-1" } })) as {
+      run: { run: { loopRunId: string } };
+    };
+
+    expect(service.pauseRun).toHaveBeenCalledWith({ loopRunId: "loop-run-1" });
+    expect(result.run.run.loopRunId).toBe("loop-run-1");
+  });
 });
