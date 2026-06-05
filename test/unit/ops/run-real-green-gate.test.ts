@@ -2,8 +2,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  isAgentRunStartFailClosed,
   normalizeLiveProviderMode,
   resolveGateSuiteReportRoot,
+  resolveRetiredAgentRunScenarioExclusions,
   shouldExcludeProviderScenarios,
   summarizeRun,
 } from "../../../scripts/ops/run-real-green-gate.mjs";
@@ -40,5 +42,39 @@ describe("run-real-green-gate helpers", () => {
     expect(normalizeLiveProviderMode("unknown")).toBe("full");
     expect(shouldExcludeProviderScenarios("full")).toBe(false);
     expect(shouldExcludeProviderScenarios("economy")).toBe(true);
+  });
+
+  it("detects fail-closed agent run start retirement from the manifest", () => {
+    expect(isAgentRunStartFailClosed({
+      surfaces: [
+        {
+          id: "agent_runs_start",
+          classification: "fail_closed",
+          executes_product_logic: false,
+        },
+      ],
+    })).toBe(true);
+    expect(isAgentRunStartFailClosed({
+      surfaces: [
+        {
+          id: "agent_runs_start",
+          classification: "ts_runtime_blocker",
+          executes_product_logic: true,
+        },
+      ],
+    })).toBe(false);
+  });
+
+  it("excludes agent-run-start-dependent RGG scenarios while the route is fail-closed", () => {
+    expect(resolveRetiredAgentRunScenarioExclusions(process.cwd())).toEqual([
+      {
+        scenarioId: "l3-destructive-request-visible-approval-gate",
+        reason: "POST /v1/agent/runs is classified fail_closed in the TS runtime retirement manifest.",
+      },
+      {
+        scenarioId: "l3-channel-origin-unified-task-state-contract",
+        reason: "POST /v1/agent/runs is classified fail_closed in the TS runtime retirement manifest.",
+      },
+    ]);
   });
 });

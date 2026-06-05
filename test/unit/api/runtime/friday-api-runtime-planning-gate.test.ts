@@ -158,6 +158,7 @@ describe("FridayApiRuntime — planning gate session loop", () => {
       computeChecksum: (content: string) => `checksum-${content.length}`,
       resolveSkill: () => null,
       invokeSkill: async () => ({}),
+      allowTestOnlyAgentRunStartExecution: true,
     });
     sessionServiceRef = runtime.sessionService;
 
@@ -313,6 +314,7 @@ describe("FridayApiRuntime — planning gate session loop", () => {
       computeChecksum: (content: string) => `checksum-${content.length}`,
       resolveSkill: () => null,
       invokeSkill: async () => ({}),
+      allowTestOnlyAgentRunStartExecution: true,
     });
     sessionServiceRef = runtime.sessionService;
 
@@ -382,6 +384,7 @@ describe("FridayApiRuntime — planning gate session loop", () => {
       computeChecksum: (content: string) => `checksum-${content.length}`,
       resolveSkill: () => null,
       invokeSkill: async () => ({}),
+      allowTestOnlyAgentRunStartExecution: true,
     });
 
     const startRoute = runtime.routes.getRoutes().find((route) => route.operationId === "agent.runs.start");
@@ -447,6 +450,7 @@ describe("FridayApiRuntime — planning gate session loop", () => {
       computeChecksum: (content: string) => `checksum-${content.length}`,
       resolveSkill: () => null,
       invokeSkill: async () => ({}),
+      allowTestOnlyAgentRunStartExecution: true,
     });
 
     const startRoute = runtime.routes.getRoutes().find((route) => route.operationId === "agent.runs.start");

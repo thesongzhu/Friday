@@ -3257,18 +3257,80 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       apiIdempotencyPayloadHash?: string;
       apiIdempotencyReceivedAt?: string;
     }) => {
-      void input;
-      throw new FridayDomainError(
-        "TS_RUNTIME_AGENT_RUNS_RETIRED",
-        "Agent run execution is fail-closed while runtime ownership is being moved out of TypeScript.",
-        {
-          httpStatus: 503,
-          details: {
-            classification: "fail_closed",
-            replacement: "rust_owned_agent_run_entrypoint_required",
+      if (deps.allowTestOnlyAgentRunStartExecution !== true) {
+        void input;
+        throw new FridayDomainError(
+          "TS_RUNTIME_AGENT_RUNS_RETIRED",
+          "Agent run execution is fail-closed while runtime ownership is being moved out of TypeScript.",
+          {
+            httpStatus: 503,
+            details: {
+              classification: "fail_closed",
+              replacement: "rust_owned_agent_run_entrypoint_required",
+            },
           },
-        },
-      );
+        );
+      }
+
+      const principalId =
+        typeof input.principalId === "string" && input.principalId.trim().length > 0
+          ? input.principalId.trim()
+          : undefined;
+      if (input.apiIdempotencyKey && input.apiIdempotencyPayloadHash) {
+        const scopedPrincipalId = principalId ?? "anonymous";
+        const existingRun = deps.db.withReadConnection((db) =>
+          agentRepo.findLatestByApiRequestIdempotencyKey(db, {
+            principalId: scopedPrincipalId,
+            idempotencyKey: input.apiIdempotencyKey!,
+          }));
+        if (existingRun) {
+          const existingHash = readStoredIdempotencyPayloadHash(existingRun.metadata);
+          if (existingHash && existingHash !== input.apiIdempotencyPayloadHash) {
+            throwIdempotencyConflict(input.apiIdempotencyKey, "agent.runs.start");
+          }
+          return replayAgentRunResult(existingRun);
+        }
+      }
+      const abortController = new AbortController();
+      const runId = deps.idGenerator();
+      agentAbortControllers.set(runId, abortController);
+
+      try {
+        return await executeAgentRunWithSessionContext!({
+          task: input.task,
+          taskPrompt: input.taskPrompt,
+          runId,
+          sessionKey: input.sessionKey,
+          providerId: input.providerId,
+          model: input.model,
+          replyToMessageId: input.replyToMessageId,
+          timezone: input.timezone,
+          timeoutMs: input.timeoutMs,
+          signal: abortController.signal,
+          reviewRequired: input.requireReview,
+          constraints: input.constraints,
+          disabledToolNames: input.disabledToolNames,
+          principalId,
+          scopes: input.scopes,
+          tenantContext: input.tenantContext,
+          executionContext: input.executionContext,
+          taskProfile: input.taskProfile,
+          ...(input.apiIdempotencyKey && input.apiIdempotencyPayloadHash
+            ? {
+              apiRequestIdempotency: {
+                operationId: "agent.runs.start",
+                idempotencyKey: input.apiIdempotencyKey,
+                payloadHash: input.apiIdempotencyPayloadHash,
+                receivedAt: input.apiIdempotencyReceivedAt ?? deps.nowIso(),
+                principalId: principalId ?? "anonymous",
+              },
+            }
+            : {}),
+          idempotencyPrefix: "api-agent-run",
+        });
+      } finally {
+        agentAbortControllers.delete(runId);
+      }
     };
 
     agentAutomationService = createFridayAgentAutomationService({

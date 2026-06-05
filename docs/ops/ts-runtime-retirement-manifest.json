@@ -311,7 +311,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
-      "proof": "src/api/runtime/friday-api-runtime.ts wires agent.runs.start to TS_RUNTIME_AGENT_RUNS_RETIRED before idempotency replay, state mutation, provider validation, or agent runtime execution.",
+      "proof": "src/api/runtime/friday-api-runtime.ts wires default/live agent.runs.start to TS_RUNTIME_AGENT_RUNS_RETIRED before idempotency replay, state mutation, provider validation, or agent runtime execution; the legacy TS path is reachable only through explicit allowTestOnlyAgentRunStartExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned agent run entrypoint when available."
     },
     {

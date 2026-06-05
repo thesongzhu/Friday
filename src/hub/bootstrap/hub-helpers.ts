@@ -1848,6 +1848,8 @@ export interface FridayHubConfig {
   channels?: Record<string, unknown>;
   /** Optional SSRF guard policy (e.g. `{ allowPrivateNetwork: true }` for test environments). */
   ssrfPolicy?: FridaySsrfPolicy;
+  /** Test-oracle only; production hub creation must leave POST /v1/agent/runs fail-closed. */
+  allowTestOnlyAgentRunStartExecution?: boolean;
 }
 
 // ─── Resolved Hub Config ───

@@ -88,6 +88,7 @@ describe("FridayApiRuntime deterministic dispatch", () => {
       computeChecksum: (content: string) => `checksum-${content.length}`,
       resolveSkill: () => null,
       invokeSkill: async () => ({}),
+      allowTestOnlyAgentRunStartExecution: true,
     });
 
     const startRoute = runtime.routes.getRoutes().find((route) => route.operationId === "agent.runs.start");
@@ -208,6 +209,7 @@ describe("FridayApiRuntime deterministic dispatch", () => {
       computeChecksum: (content: string) => `checksum-${content.length}`,
       resolveSkill: () => null,
       invokeSkill: async () => ({}),
+      allowTestOnlyAgentRunStartExecution: true,
     });
 
     const startRoute = runtime.routes.getRoutes().find((route) => route.operationId === "agent.runs.start");
@@ -289,6 +291,7 @@ describe("FridayApiRuntime deterministic dispatch", () => {
       computeChecksum: (content: string) => `checksum-${content.length}`,
       resolveSkill: () => null,
       invokeSkill: async () => ({}),
+      allowTestOnlyAgentRunStartExecution: true,
     });
 
     const runRoute = runtime.routes.getRoutes().find((route) => route.operationId === "sessions.run");

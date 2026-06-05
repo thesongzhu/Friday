@@ -369,6 +369,7 @@ export async function createMockHubEnv(opts?: {
       logRequests: false,
       channels: opts?.channels,
       tokenSecret: MOCK_E2E_TOKEN_SECRET,
+      allowTestOnlyAgentRunStartExecution: true,
       // Allow private-network targets so mock E2E tests don't require DNS resolution
       ssrfPolicy: opts?.ssrfPolicy ?? { allowPrivateNetwork: true },
     });
