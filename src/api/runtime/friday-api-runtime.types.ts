@@ -241,6 +241,13 @@ export interface CreateFridayApiRuntimeDeps {
    * truth.
    */
   allowTestOnlyWorkflowDeployExecution?: boolean;
+  /**
+   * Test-oracle only: allows the legacy TypeScript workflow bundle import
+   * mutation in isolated mock/unit validation. Production/runtime callers must
+   * leave this unset so `POST /v1/workflows/:workflowId/import` stays
+   * fail-closed until Rust owns workflow bundle import truth.
+   */
+  allowTestOnlyWorkflowBundleImportExecution?: boolean;
   /** Optional: user/project prompt-guidance provider for fallback workflow runtime creation. */
   userRulesContextProvider?: CreateFridayWorkflowRuntimeDeps["userRulesContextProvider"];
   /** Optional: reuse hub's session service instead of creating a new one. */

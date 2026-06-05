@@ -27,6 +27,8 @@ import {
   listFridayStableWorkflowTemplates,
 } from "#workflows";
 import type {
+  FridayWorkflowDraftEntity,
+  FridayWorkflowEntity,
   FridayWorkflowEvidenceEvent,
   FridayWorkflowPlaybookEvidenceTrace,
   FridayWorkflowRetryEvidenceTrace,
@@ -35,6 +37,8 @@ import type {
   FridayWorkflowRunEvidenceExportRecord,
   FridayWorkflowRunEvidenceResponse,
   FridayWorkflowRunNodeEntity,
+  FridayWorkflowSpecV1,
+  FridayWorkflowVersionEntity,
   JsonObject,
 } from "#workflows";
 
@@ -203,6 +207,8 @@ import type { FridayRole } from "../model/friday-api-auth.types.js";
 import type {
   FridayGetRunEvidenceQuery,
   FridayRunTimelineEntry,
+  FridayWorkflowOverview,
+  FridayWorkflowVisualization,
 } from "../model/friday-api-workflow.types.js";
 import { createFridayDeepLinkApplyService } from "./friday-deep-link-apply-service.js";
 import { installFridayApiRuntimeBaseRoutes } from "./friday-api-runtime-base-routes.js";
@@ -385,6 +391,172 @@ function sanitizePublicWorkflowEvidenceExportRecord(
   return {
     export: sanitizePublicWorkflowEvidenceExport(record.export),
     evidence: sanitizePublicWorkflowEvidence(record.evidence),
+  };
+}
+
+// ─── Workflow catalog/builder compatibility read projections ───
+//
+// These bounded redacted projections back the `compat_shim` classification for
+// the workflow catalog/builder read surfaces (`workflows.list`, `workflows.get`,
+// `workflows.list.versions`, `workflow.versions.get`, `workflows.overview`,
+// `workflows.visualization`). They are not authoritative: the authoritative
+// workflow graph/version/draft truth must move to a Rust-owned entrypoint. Each
+// projection drops private user ids, provider/runtime model fields, and raw
+// graph/spec config (which can carry commands or secrets), so the compatibility
+// read cannot leak `requiredLeakControls` data.
+
+function sanitizePublicWorkflowEntity(workflow: FridayWorkflowEntity): FridayWorkflowEntity {
+  return {
+    id: workflow.id,
+    slug: workflow.slug,
+    name: workflow.name,
+    description: workflow.description,
+    tags: workflow.tags,
+    latestVersionNumber: workflow.latestVersionNumber,
+    publishedVersionNumber: workflow.publishedVersionNumber,
+    isArchived: workflow.isArchived,
+    revision: workflow.revision,
+    etag: workflow.etag,
+    lastVerifiedAt: workflow.lastVerifiedAt,
+    compatibilityStatus: workflow.compatibilityStatus,
+    promotionChannel: workflow.promotionChannel,
+    canaryStats: workflow.canaryStats,
+    createdAt: workflow.createdAt,
+    updatedAt: workflow.updatedAt,
+    deletedAt: workflow.deletedAt,
+  };
+}
+
+function sanitizePublicWorkflowVersion(version: FridayWorkflowVersionEntity): FridayWorkflowVersionEntity {
+  return {
+    id: version.id,
+    workflowId: version.workflowId,
+    versionNumber: version.versionNumber,
+    checksum: version.checksum,
+    graphJson: {
+      redacted: true,
+      shape: summarizePublicJsonShape(version.graphJson),
+    },
+    isPublished: version.isPublished,
+    changeNote: version.changeNote,
+    createdAt: version.createdAt,
+    updatedAt: version.updatedAt,
+  };
+}
+
+function sanitizePublicWorkflowSpec(spec: FridayWorkflowSpecV1): FridayWorkflowSpecV1 {
+  return {
+    schemaVersion: spec.schemaVersion,
+    workflowId: spec.workflowId,
+    name: spec.name,
+    description: spec.description,
+    startStepId: spec.startStepId,
+    trigger: spec.trigger,
+    inputs: spec.inputs.map((input) => ({
+      key: input.key,
+      type: input.type,
+      required: input.required,
+    })),
+    steps: spec.steps.map((step) => ({
+      id: step.id,
+      type: step.type,
+      ref: step.ref,
+      condition: step.condition,
+      timeoutSec: step.timeoutSec,
+      retry: step.retry,
+    })),
+    edges: spec.edges.map((edge) => ({
+      from: edge.from,
+      to: edge.to,
+      when: edge.when,
+    })),
+    outputs: spec.outputs.map((output) => ({
+      key: output.key,
+      fromStep: output.fromStep,
+      path: output.path,
+    })),
+    errorPolicy: spec.errorPolicy,
+    tests: [],
+  };
+}
+
+function sanitizePublicWorkflowDraft(draft: FridayWorkflowDraftEntity): FridayWorkflowDraftEntity {
+  return {
+    draftId: draft.draftId,
+    workflowId: draft.workflowId,
+    title: draft.title,
+    status: draft.status,
+    revision: draft.revision,
+    baseWorkflowVersionId: draft.baseWorkflowVersionId,
+    spec: sanitizePublicWorkflowSpec(draft.spec),
+    visual: draft.visual,
+    createdAt: draft.createdAt,
+    updatedAt: draft.updatedAt,
+    publishedVersionId: draft.publishedVersionId,
+    autosave: draft.autosave,
+    sourceReview: draft.sourceReview
+      ? {
+        source: draft.sourceReview.source,
+        importedAt: draft.sourceReview.importedAt,
+        requiresReviewBeforePublish: draft.sourceReview.requiresReviewBeforePublish,
+      }
+      : undefined,
+  };
+}
+
+function sanitizePublicWorkflowNodeTimeline(
+  timeline: FridayWorkflowOverview["latestRunNodeTimeline"],
+): FridayWorkflowOverview["latestRunNodeTimeline"] {
+  return timeline.map((entry) => ({
+    nodeId: entry.nodeId,
+    attempt: entry.attempt,
+    status: entry.status,
+    finishedAt: entry.finishedAt,
+    message: entry.message !== undefined ? "redacted" : undefined,
+  }));
+}
+
+function sanitizePublicWorkflowOverview(overview: FridayWorkflowOverview): FridayWorkflowOverview {
+  return {
+    workflow: sanitizePublicWorkflowEntity(overview.workflow),
+    latestVersion: overview.latestVersion
+      ? sanitizePublicWorkflowVersion(overview.latestVersion)
+      : undefined,
+    publishedVersion: overview.publishedVersion
+      ? sanitizePublicWorkflowVersion(overview.publishedVersion)
+      : undefined,
+    drafts: overview.drafts.map(sanitizePublicWorkflowDraft),
+    latestDraft: overview.latestDraft
+      ? sanitizePublicWorkflowDraft(overview.latestDraft)
+      : undefined,
+    recentRuns: overview.recentRuns.map(sanitizePublicWorkflowRun),
+    latestRun: overview.latestRun ? sanitizePublicWorkflowRun(overview.latestRun) : undefined,
+    latestRunNodeTimeline: sanitizePublicWorkflowNodeTimeline(overview.latestRunNodeTimeline),
+    latestEvidenceExports: overview.latestEvidenceExports.map(sanitizePublicWorkflowEvidenceExport),
+    versionHistory: overview.versionHistory.map(sanitizePublicWorkflowVersion),
+  };
+}
+
+function sanitizePublicWorkflowVisualization(
+  visualization: FridayWorkflowVisualization,
+): FridayWorkflowVisualization {
+  return {
+    workflow: sanitizePublicWorkflowEntity(visualization.workflow),
+    targetKind: visualization.targetKind,
+    draft: visualization.draft ? sanitizePublicWorkflowDraft(visualization.draft) : undefined,
+    version: visualization.version
+      ? sanitizePublicWorkflowVersion(visualization.version)
+      : undefined,
+    spec: sanitizePublicWorkflowSpec(visualization.spec),
+    visual: visualization.visual,
+    latestRun: visualization.latestRun
+      ? sanitizePublicWorkflowRun(visualization.latestRun)
+      : undefined,
+    recentRuns: visualization.recentRuns.map(sanitizePublicWorkflowRun),
+    nodeTimeline: sanitizePublicWorkflowNodeTimeline(visualization.nodeTimeline),
+    latestEvidenceExports: visualization.latestEvidenceExports.map(
+      sanitizePublicWorkflowEvidenceExport,
+    ),
   };
 }
 
@@ -1883,7 +2055,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         cursor: query.cursor,
         limit: query.limit,
       });
-      return { items: workflows };
+      return { items: workflows.map(sanitizePublicWorkflowEntity) };
     },
     createWorkflow: (input) => {
       return workflowRuntime.crud.createWorkflowWithVersion(
@@ -1908,7 +2080,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       }
       const publishedVersion =
         workflowRuntime.crud.getPublishedVersion(workflowId) ?? undefined;
-      return { workflow, latestVersion, publishedVersion };
+      return {
+        workflow: sanitizePublicWorkflowEntity(workflow),
+        latestVersion: sanitizePublicWorkflowVersion(latestVersion),
+        publishedVersion: publishedVersion
+          ? sanitizePublicWorkflowVersion(publishedVersion)
+          : undefined,
+      };
     },
     updateWorkflow: (workflowId, input) => {
       const updateInput = {
@@ -1941,7 +2119,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         workflowId,
         query.limit,
       );
-      return { items: versions };
+      return { items: versions.map(sanitizePublicWorkflowVersion) };
     },
     getVersion: (versionId) => {
       const version = workflowRuntime.crud.getVersion(versionId);
@@ -1950,7 +2128,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           httpStatus: 404,
         });
       }
-      return { version };
+      return { version: sanitizePublicWorkflowVersion(version) };
     },
   })) {
     routes.register(route);
@@ -2017,6 +2195,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   }
 
   for (const route of createFridayWorkflowBuilderRoutes({
+    allowTestOnlyWorkflowBundleImportExecution: deps.allowTestOnlyWorkflowBundleImportExecution,
     createDraft: (workflowId, input) => {
       const draft = builderRuntime.drafts.createDraft({
         workflowId,
@@ -2169,7 +2348,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   }
 
   for (const route of createFridayWorkflowProductRoutes({
-    service: workflowProductService,
+    service: {
+      ...workflowProductService,
+      getOverview: (input) =>
+        sanitizePublicWorkflowOverview(workflowProductService.getOverview(input)),
+      getVisualization: (input) =>
+        sanitizePublicWorkflowVisualization(workflowProductService.getVisualization(input)),
+    },
     allowTestOnlyWorkflowDeployExecution: deps.allowTestOnlyWorkflowDeployExecution,
   })) {
     routes.register(route);

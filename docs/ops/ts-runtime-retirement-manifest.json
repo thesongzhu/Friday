@@ -1101,6 +1101,91 @@
       "next_action": "Replace fail-closed response with a Rust-owned workflow deployment entrypoint when available."
     },
     {
+      "id": "workflows_bundles_import",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflows/:workflowId/import",
+        "operationId": "workflows.bundles.import"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-builder-routes.ts wires default/live workflows.bundles.import to TS_RUNTIME_WORKFLOW_BUNDLE_IMPORT_RETIRED before principal authority checks or calling the TypeScript importWorkflowBundle service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowBundleImportExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow bundle import entrypoint when available."
+    },
+    {
+      "id": "workflows_list_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/workflows",
+        "operationId": "workflows.list"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep workflow catalog list as a bounded redacted compatibility projection while TypeScript workflow catalog mutations are fail-closed or moved to Rust-owned product truth. src/api/runtime/friday-api-runtime.ts maps each workflow through sanitizePublicWorkflowEntity, which drops ownerUserId, lastVerifiedProviderModel, lastVerifiedRuntimeVersion, shadowVersionId, and deletedBy; this read owns no product truth and cannot create, update, publish, or mark workflow completion.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted workflow catalog projection when available."
+    },
+    {
+      "id": "workflows_get_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/workflows/:workflowId",
+        "operationId": "workflows.get"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep workflow detail read as a bounded redacted compatibility projection. src/api/runtime/friday-api-runtime.ts maps the workflow through sanitizePublicWorkflowEntity and each version through sanitizePublicWorkflowVersion, which redacts the raw graphJson (commands/secrets) to a bounded shape summary and drops createdByUserId; this read owns no product truth.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted workflow detail projection when available."
+    },
+    {
+      "id": "workflows_list_versions_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/workflows/:workflowId/versions",
+        "operationId": "workflows.list.versions"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep workflow version list as a bounded redacted compatibility projection. src/api/runtime/friday-api-runtime.ts maps each version through sanitizePublicWorkflowVersion, which redacts the raw graphJson to a bounded shape summary and drops createdByUserId; this read owns no product truth.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted workflow version projection when available."
+    },
+    {
+      "id": "workflow_versions_get_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/workflow-versions/:versionId",
+        "operationId": "workflow.versions.get"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep workflow version detail read as a bounded redacted compatibility projection. src/api/runtime/friday-api-runtime.ts maps the version through sanitizePublicWorkflowVersion, which redacts the raw graphJson to a bounded shape summary and drops createdByUserId; this read owns no product truth.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted workflow version projection when available."
+    },
+    {
+      "id": "workflows_overview_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/workflows/:workflowId/overview",
+        "operationId": "workflows.overview"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep workflow overview as a bounded redacted compatibility projection. src/api/runtime/friday-api-runtime.ts wraps the product service with sanitizePublicWorkflowOverview, which redacts workflow/version/draft graph and spec config, run trigger payloads/context/failure detail, node-timeline messages, and evidence export artifact ids/paths, and drops owner/creator user ids; this read owns no product truth and cannot mark workflow completion.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted workflow overview projection when available."
+    },
+    {
+      "id": "workflows_visualization_compat",
+      "route": {
+        "method": "GET",
+        "path": "/v1/workflows/:workflowId/visualization",
+        "operationId": "workflows.visualization"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep workflow visualization as a bounded redacted compatibility projection. src/api/runtime/friday-api-runtime.ts wraps the product service with sanitizePublicWorkflowVisualization, which redacts raw spec step args/test cases and version graphJson, run trigger payloads/context/failure detail, node-timeline messages, and evidence export artifact ids/paths while keeping pure canvas layout; this read owns no product truth and cannot mark workflow completion.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted workflow visualization projection when available."
+    },
+    {
       "id": "autofix_run_ready",
       "route": {
         "method": "POST",
