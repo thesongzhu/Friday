@@ -148,6 +148,16 @@ const WORKFLOW_CATALOG_AUTHORING_DEPENDENT_SCENARIOS = [
   "l8-workflow-approval-soak",
 ];
 
+// When autonomy.skills.{shadow,canary,promote,rollback} become fail_closed in
+// the TS runtime retirement manifest the route returns 503
+// TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED before any product logic, so the live
+// skill-upgrade-lifecycle scenario (which POSTs those routes via the
+// skill_upgrade_lifecycle executor) cannot drive the lifecycle and is honestly
+// recorded as excluded (not a fake pass).
+const AUTONOMY_SKILL_LIFECYCLE_DEPENDENT_SCENARIOS = [
+  "l5-phase-06-skill-upgrade-lifecycle",
+];
+
 const CLAUDE_SKILL_TESTS = [
   "test/unit/skills/registry/friday-skill-discovery.test.ts",
   "test/unit/skills/manifest/friday-skill-package-loader.test.ts",
@@ -306,6 +316,26 @@ export function resolveRetiredWorkflowCatalogScenarioExclusions(repoRoot) {
   return WORKFLOW_CATALOG_AUTHORING_DEPENDENT_SCENARIOS.map((scenarioId) => ({
     scenarioId,
     reason: "POST /v1/workflows is classified fail_closed in the TS runtime retirement manifest.",
+  }));
+}
+
+export function isAutonomySkillLifecycleFailClosed(manifest) {
+  const surfaces = Array.isArray(manifest?.surfaces) ? manifest.surfaces : [];
+  return surfaces.some((surface) =>
+    surface?.id === "autonomy_skills_promote"
+    && surface?.classification === "fail_closed"
+    && surface?.executes_product_logic === false
+  );
+}
+
+export function resolveRetiredAutonomySkillLifecycleScenarioExclusions(repoRoot) {
+  const manifest = readJsonFile(path.join(repoRoot, "docs", "ops", "ts-runtime-retirement-manifest.json"));
+  if (!isAutonomySkillLifecycleFailClosed(manifest)) {
+    return [];
+  }
+  return AUTONOMY_SKILL_LIFECYCLE_DEPENDENT_SCENARIOS.map((scenarioId) => ({
+    scenarioId,
+    reason: "POST /v1/autonomy/skills/:skillId/{shadow,canary,promote,rollback} is classified fail_closed in the TS runtime retirement manifest.",
   }));
 }
 
@@ -632,6 +662,7 @@ export function buildSummary({
   retiredAgentRunScenarioExclusions,
   retiredWorkflowRunScenarioExclusions,
   retiredWorkflowCatalogScenarioExclusions,
+  retiredAutonomySkillLifecycleScenarioExclusions,
   error,
 }) {
   const summary = {
@@ -653,6 +684,7 @@ export function buildSummary({
     retiredAgentRunScenarioExclusions: retiredAgentRunScenarioExclusions ?? [],
     retiredWorkflowRunScenarioExclusions: retiredWorkflowRunScenarioExclusions ?? [],
     retiredWorkflowCatalogScenarioExclusions: retiredWorkflowCatalogScenarioExclusions ?? [],
+    retiredAutonomySkillLifecycleScenarioExclusions: retiredAutonomySkillLifecycleScenarioExclusions ?? [],
     error: error ?? null,
   };
   summary.gate = {
@@ -689,10 +721,12 @@ async function main() {
   const retiredAgentRunScenarioExclusions = resolveRetiredAgentRunScenarioExclusions(repoRoot);
   const retiredWorkflowRunScenarioExclusions = resolveRetiredWorkflowRunScenarioExclusions(repoRoot);
   const retiredWorkflowCatalogScenarioExclusions = resolveRetiredWorkflowCatalogScenarioExclusions(repoRoot);
+  const retiredAutonomySkillLifecycleScenarioExclusions = resolveRetiredAutonomySkillLifecycleScenarioExclusions(repoRoot);
   const excludedScenarioIds = [
     ...retiredAgentRunScenarioExclusions,
     ...retiredWorkflowRunScenarioExclusions,
     ...retiredWorkflowCatalogScenarioExclusions,
+    ...retiredAutonomySkillLifecycleScenarioExclusions,
   ].map((entry) => entry.scenarioId);
   const runId = createRunId();
   const reportRoot = options.reportRoot
@@ -897,6 +931,7 @@ async function main() {
       retiredAgentRunScenarioExclusions,
       retiredWorkflowRunScenarioExclusions,
       retiredWorkflowCatalogScenarioExclusions,
+      retiredAutonomySkillLifecycleScenarioExclusions,
       error: terminalError,
     });
     flushTerminalArtifacts(reportRoot, summary);

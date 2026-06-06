@@ -4,11 +4,13 @@ import { describe, expect, it } from "vitest";
 import {
   buildSummary,
   isAgentRunStartFailClosed,
+  isAutonomySkillLifecycleFailClosed,
   isWorkflowCatalogCreateFailClosed,
   isWorkflowRunStartFailClosed,
   normalizeLiveProviderMode,
   resolveGateSuiteReportRoot,
   resolveRetiredAgentRunScenarioExclusions,
+  resolveRetiredAutonomySkillLifecycleScenarioExclusions,
   resolveRetiredWorkflowCatalogScenarioExclusions,
   resolveRetiredWorkflowRunScenarioExclusions,
   shouldExcludeProviderScenarios,
@@ -148,6 +150,37 @@ describe("run-real-green-gate helpers", () => {
     ]);
   });
 
+  it("detects fail-closed autonomy skill upgrade-lifecycle retirement from the manifest", () => {
+    expect(isAutonomySkillLifecycleFailClosed({
+      surfaces: [
+        {
+          id: "autonomy_skills_promote",
+          classification: "fail_closed",
+          executes_product_logic: false,
+        },
+      ],
+    })).toBe(true);
+    expect(isAutonomySkillLifecycleFailClosed({
+      surfaces: [
+        {
+          id: "autonomy_skills_promote",
+          classification: "ts_runtime_blocker",
+          executes_product_logic: true,
+        },
+      ],
+    })).toBe(false);
+    expect(isAutonomySkillLifecycleFailClosed({ surfaces: [] })).toBe(false);
+  });
+
+  it("excludes the live skill-upgrade-lifecycle RGG scenario while autonomy.skills.* is fail-closed", () => {
+    expect(resolveRetiredAutonomySkillLifecycleScenarioExclusions(process.cwd())).toEqual([
+      {
+        scenarioId: "l5-phase-06-skill-upgrade-lifecycle",
+        reason: "POST /v1/autonomy/skills/:skillId/{shadow,canary,promote,rollback} is classified fail_closed in the TS runtime retirement manifest.",
+      },
+    ]);
+  });
+
   it("preserves retired runtime scenario exclusions in the terminal summary", () => {
     const summary = buildSummary({
       runId: "run-1",
@@ -195,12 +228,24 @@ describe("run-real-green-gate helpers", () => {
           reason: "POST /v1/workflows is classified fail_closed in the TS runtime retirement manifest.",
         },
       ],
+      retiredAutonomySkillLifecycleScenarioExclusions: [
+        {
+          scenarioId: "l5-phase-06-skill-upgrade-lifecycle",
+          reason: "POST /v1/autonomy/skills/:skillId/{shadow,canary,promote,rollback} is classified fail_closed in the TS runtime retirement manifest.",
+        },
+      ],
     });
 
     expect(summary.retiredWorkflowCatalogScenarioExclusions).toEqual([
       {
         scenarioId: "l3-workflow-browser-authoring",
         reason: "POST /v1/workflows is classified fail_closed in the TS runtime retirement manifest.",
+      },
+    ]);
+    expect(summary.retiredAutonomySkillLifecycleScenarioExclusions).toEqual([
+      {
+        scenarioId: "l5-phase-06-skill-upgrade-lifecycle",
+        reason: "POST /v1/autonomy/skills/:skillId/{shadow,canary,promote,rollback} is classified fail_closed in the TS runtime retirement manifest.",
       },
     ]);
     expect(summary.retiredAgentRunScenarioExclusions).toEqual([

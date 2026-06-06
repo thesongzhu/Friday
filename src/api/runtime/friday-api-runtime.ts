@@ -2030,6 +2030,10 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           channelAdapterUpgradeLifecycle.getLifecycleEvidence(input) as Record<string, unknown> | null,
       }
       : undefined,
+    allowTestOnlyAutonomyLifecycleExecution: deps.allowTestOnlyAutonomyLifecycleExecution,
+    allowTestOnlyStandingAgendaExecution: deps.allowTestOnlyStandingAgendaExecution,
+    allowTestOnlyAutonomyPolicyMutation: deps.allowTestOnlyAutonomyPolicyMutation,
+    allowTestOnlyCapabilityAcquisitionExecution: deps.allowTestOnlyCapabilityAcquisitionExecution,
   })) {
     routes.register(route);
   }

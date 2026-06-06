@@ -317,6 +317,10 @@ async function startLocalRealHubEnv(
       port: 0,
       logRequests: false,
       allowTestOnlyWorkflowBuilderDraftExecution: true,
+      allowTestOnlyAutonomyLifecycleExecution: true,
+      allowTestOnlyStandingAgendaExecution: true,
+      allowTestOnlyAutonomyPolicyMutation: true,
+      allowTestOnlyCapabilityAcquisitionExecution: true,
       ...opts?.hubConfig,
     });
     await createdHub.start();

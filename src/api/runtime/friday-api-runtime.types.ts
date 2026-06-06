@@ -274,6 +274,33 @@ export interface CreateFridayApiRuntimeDeps {
    * it.
    */
   allowTestOnlyWorkflowConflictResolution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript autonomy subject upgrade-
+   * lifecycle mutations (workflow/skill/plugin/provider/mcp-server/channel-
+   * adapter shadow/canary/promote/rollback + plugin review-enable) in isolated
+   * mock/unit/e2e validation. Production/runtime callers must leave this unset
+   * so autonomy upgrade-lifecycle stays fail-closed until Rust owns it.
+   */
+  allowTestOnlyAutonomyLifecycleExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript standing-goal/agenda
+   * mutations in isolated validation. Production/runtime callers must leave
+   * this unset so standing-agenda stays fail-closed until Rust owns it.
+   */
+  allowTestOnlyStandingAgendaExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript autonomy-policy patch
+   * mutation in isolated validation. Production/runtime callers must leave this
+   * unset so autonomy policy mutation stays fail-closed until Rust owns it.
+   */
+  allowTestOnlyAutonomyPolicyMutation?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript capability-acquisition run
+   * mutations (start/approve/cancel) in isolated validation. Production/runtime
+   * callers must leave this unset so capability acquisition stays fail-closed
+   * until Rust owns it.
+   */
+  allowTestOnlyCapabilityAcquisitionExecution?: boolean;
   /** Optional: user/project prompt-guidance provider for fallback workflow runtime creation. */
   userRulesContextProvider?: CreateFridayWorkflowRuntimeDeps["userRulesContextProvider"];
   /** Optional: reuse hub's session service instead of creating a new one. */
