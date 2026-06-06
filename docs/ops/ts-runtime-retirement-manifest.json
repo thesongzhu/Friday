@@ -2776,6 +2776,212 @@
         ]
       },
       "next_action": "Keep operator alert test-dispatch as an external egress adapter and move any resulting runtime/alerting truth into Rust-owned observability surfaces."
+    },
+    {
+      "id": "sessions_create",
+      "route": {
+        "method": "POST",
+        "path": "/v1/sessions",
+        "operationId": "sessions.create"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.create to TS_RUNTIME_SESSION_RETIRED after request-body validation and metadata sanitization and immediately before the TypeScript sessionService.createSession mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned session lifecycle entrypoint when available."
+    },
+    {
+      "id": "sessions_messages_create",
+      "route": {
+        "method": "POST",
+        "path": "/v1/sessions/:sessionKey/messages",
+        "operationId": "sessions.messages.create"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.messages.create to TS_RUNTIME_SESSION_RETIRED after session-key decode and request-body validation and immediately before the TypeScript sessionService.getOrCreateSession/addMessage mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned session lifecycle entrypoint when available."
+    },
+    {
+      "id": "sessions_archive",
+      "route": {
+        "method": "POST",
+        "path": "/v1/sessions/:sessionKey/archive",
+        "operationId": "sessions.archive"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.archive to TS_RUNTIME_SESSION_RETIRED after session-key decode and immediately before the TypeScript sessionService.archiveSession mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned session lifecycle entrypoint when available."
+    },
+    {
+      "id": "sessions_reset",
+      "route": {
+        "method": "POST",
+        "path": "/v1/sessions/:sessionKey/reset",
+        "operationId": "sessions.reset"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.reset to TS_RUNTIME_SESSION_RETIRED after session-key decode and immediately before the TypeScript sessionService.resetSession mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned session lifecycle entrypoint when available."
+    },
+    {
+      "id": "sessions_delete",
+      "route": {
+        "method": "DELETE",
+        "path": "/v1/sessions/:sessionKey",
+        "operationId": "sessions.delete"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.delete to TS_RUNTIME_SESSION_RETIRED after session-key decode and immediately before the TypeScript sessionService.archiveSession mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned session lifecycle entrypoint when available."
+    },
+    {
+      "id": "sessions_prune",
+      "route": {
+        "method": "POST",
+        "path": "/v1/sessions/prune",
+        "operationId": "sessions.prune"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.prune to TS_RUNTIME_SESSION_RETIRED after request-body validation and immediately before the TypeScript sessionService.pruneOldSessions mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned session lifecycle entrypoint when available."
+    },
+    {
+      "id": "sessions_sweep",
+      "route": {
+        "method": "POST",
+        "path": "/v1/sessions/sweep",
+        "operationId": "sessions.sweep"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.sweep to TS_RUNTIME_SESSION_RETIRED as the first handler statement, before the TypeScript sessionService.sweepLifecycle mutation; the route is public/unauthenticated (no bound-principal step) and has no request body; legacy behavior is reachable only through explicit allowTestOnlySessionExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned session lifecycle entrypoint when available."
+    },
+    {
+      "id": "sessions_compact",
+      "route": {
+        "method": "POST",
+        "path": "/v1/sessions/:sessionKey/compact",
+        "operationId": "sessions.compact"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.compact to TS_RUNTIME_SESSION_RETIRED after session-key decode and request-body validation and immediately before the first TypeScript sessionService read/mutation (getMessages, then setConversationFocus/mergeMetadata); the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned session lifecycle entrypoint when available."
+    },
+    {
+      "id": "sessions_forks_create",
+      "route": {
+        "method": "POST",
+        "path": "/v1/sessions/:sessionKey/fork",
+        "operationId": "sessions.forks.create"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.forks.create to TS_RUNTIME_SESSION_RETIRED after request-body validation and metadata sanitization and immediately before the TypeScript sessionService.forkSession mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned session lifecycle entrypoint when available."
+    },
+    {
+      "id": "sessions_forks_merge",
+      "route": {
+        "method": "POST",
+        "path": "/v1/sessions/:sessionKey/merge",
+        "operationId": "sessions.forks.merge"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.forks.merge to TS_RUNTIME_SESSION_RETIRED after request-body validation and metadata sanitization and immediately before the TypeScript sessionService.mergeForkSummary mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned session lifecycle entrypoint when available."
+    },
+    {
+      "id": "sessions_run",
+      "route": {
+        "method": "POST",
+        "path": "/v1/sessions/:sessionKey/run",
+        "operationId": "sessions.run"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.run to TS_RUNTIME_SESSION_RUN_RETIRED after the agent-runtime availability check (501), session-key decode, request-body validation, and the task-required check (400), and immediately before resolving session context and invoking the TypeScript agent runtime via runSession; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionRunExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned session agent-run entrypoint when available."
+    },
+    {
+      "id": "sessions_memory_extract",
+      "route": {
+        "method": "POST",
+        "path": "/v1/sessions/:sessionKey/memory/extract",
+        "operationId": "sessions.memory.extract"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.memory.extract to TS_RUNTIME_SESSION_MEMORY_EXTRACTION_RETIRED after the memory-extraction availability check (501), session-key decode, and request-body validation (hoisted above the principal-alignment write), and immediately before the TypeScript principal alignment and extractionService.extractFromSession mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionMemoryExtractionExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned session memory extraction entrypoint when available."
+    },
+    {
+      "id": "sessions_memory_remember",
+      "route": {
+        "method": "POST",
+        "path": "/v1/sessions/:sessionKey/memory/remember",
+        "operationId": "sessions.memory.remember"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.memory.remember to TS_RUNTIME_SESSION_MEMORY_EXTRACTION_RETIRED after the memory-extraction availability check (501), session-key decode, and request-body validation (hoisted above the principal-alignment write), and immediately before the TypeScript principal alignment and extractionService.extractSpecificMessages mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionMemoryExtractionExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned session memory extraction entrypoint when available."
+    },
+    {
+      "id": "sessions_memory_extraction_retry",
+      "route": {
+        "method": "POST",
+        "path": "/v1/sessions/memory/extraction/retry",
+        "operationId": "sessions.memory.extraction.retry"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.memory.extraction.retry to TS_RUNTIME_SESSION_MEMORY_EXTRACTION_RETIRED after the memory-extraction availability check (501) and request-body validation, and immediately before the TypeScript extractionService.retryFailedExtractions mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionMemoryExtractionExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned session memory extraction entrypoint when available."
+    },
+    {
+      "id": "sessions_outbound_send",
+      "route": {
+        "method": "POST",
+        "path": "/v1/sessions/:sessionKey/outbound",
+        "operationId": "sessions.outbound.send"
+      },
+      "classification": "operator_external_adapter",
+      "user_triggerable": true,
+      "trust_boundary": "Operator/session-driven external channel egress (Discord/Slack/Telegram); channel send is not completion and carries no runtime execution truth.",
+      "leak_controls": {
+        "raw_private_data_allowed": false,
+        "forbidden": [
+          "raw_transcripts",
+          "secrets",
+          "private_paths",
+          "provider_ids",
+          "channel_ids",
+          "raw_commands",
+          "private_reasoning"
+        ]
+      },
+      "next_action": "Keep session outbound as an external egress adapter and move resulting runtime truth into Rust-owned session/mission surfaces."
     }
   ]
 }

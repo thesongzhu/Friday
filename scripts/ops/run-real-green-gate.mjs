@@ -169,6 +169,16 @@ const OBSERVABILITY_ALERT_DEPENDENT_SCENARIOS = [
   "l2-observability-alert-destination-create-invalid-fails-closed",
 ];
 
+// When sessions.create becomes fail_closed in the TS runtime retirement
+// manifest the route returns 503 TS_RUNTIME_SESSION_RETIRED before any product
+// logic, so the live discord channel roundtrip scenario (which authors a
+// session via POST /v1/sessions before driving the external channel send)
+// cannot create a session and is honestly recorded as excluded (not a fake
+// pass).
+const SESSION_CREATE_DEPENDENT_SCENARIOS = [
+  "l6-discord-channel-roundtrip",
+];
+
 const CLAUDE_SKILL_TESTS = [
   "test/unit/skills/registry/friday-skill-discovery.test.ts",
   "test/unit/skills/manifest/friday-skill-package-loader.test.ts",
@@ -367,6 +377,26 @@ export function resolveRetiredObservabilityScenarioExclusions(repoRoot) {
   return OBSERVABILITY_ALERT_DEPENDENT_SCENARIOS.map((scenarioId) => ({
     scenarioId,
     reason: "POST /v1/observability/alert-destinations is classified fail_closed in the TS runtime retirement manifest.",
+  }));
+}
+
+export function isSessionCreateFailClosed(manifest) {
+  const surfaces = Array.isArray(manifest?.surfaces) ? manifest.surfaces : [];
+  return surfaces.some((surface) =>
+    surface?.id === "sessions_create"
+    && surface?.classification === "fail_closed"
+    && surface?.executes_product_logic === false
+  );
+}
+
+export function resolveRetiredSessionScenarioExclusions(repoRoot) {
+  const manifest = readJsonFile(path.join(repoRoot, "docs", "ops", "ts-runtime-retirement-manifest.json"));
+  if (!isSessionCreateFailClosed(manifest)) {
+    return [];
+  }
+  return SESSION_CREATE_DEPENDENT_SCENARIOS.map((scenarioId) => ({
+    scenarioId,
+    reason: "POST /v1/sessions is classified fail_closed in the TS runtime retirement manifest.",
   }));
 }
 
@@ -695,6 +725,7 @@ export function buildSummary({
   retiredWorkflowCatalogScenarioExclusions,
   retiredAutonomySkillLifecycleScenarioExclusions,
   retiredObservabilityScenarioExclusions,
+  retiredSessionScenarioExclusions,
   error,
 }) {
   const summary = {
@@ -718,6 +749,7 @@ export function buildSummary({
     retiredWorkflowCatalogScenarioExclusions: retiredWorkflowCatalogScenarioExclusions ?? [],
     retiredAutonomySkillLifecycleScenarioExclusions: retiredAutonomySkillLifecycleScenarioExclusions ?? [],
     retiredObservabilityScenarioExclusions: retiredObservabilityScenarioExclusions ?? [],
+    retiredSessionScenarioExclusions: retiredSessionScenarioExclusions ?? [],
     error: error ?? null,
   };
   summary.gate = {
@@ -756,12 +788,14 @@ async function main() {
   const retiredWorkflowCatalogScenarioExclusions = resolveRetiredWorkflowCatalogScenarioExclusions(repoRoot);
   const retiredAutonomySkillLifecycleScenarioExclusions = resolveRetiredAutonomySkillLifecycleScenarioExclusions(repoRoot);
   const retiredObservabilityScenarioExclusions = resolveRetiredObservabilityScenarioExclusions(repoRoot);
+  const retiredSessionScenarioExclusions = resolveRetiredSessionScenarioExclusions(repoRoot);
   const excludedScenarioIds = [
     ...retiredAgentRunScenarioExclusions,
     ...retiredWorkflowRunScenarioExclusions,
     ...retiredWorkflowCatalogScenarioExclusions,
     ...retiredAutonomySkillLifecycleScenarioExclusions,
     ...retiredObservabilityScenarioExclusions,
+    ...retiredSessionScenarioExclusions,
   ].map((entry) => entry.scenarioId);
   const runId = createRunId();
   const reportRoot = options.reportRoot
@@ -968,6 +1002,7 @@ async function main() {
       retiredWorkflowCatalogScenarioExclusions,
       retiredAutonomySkillLifecycleScenarioExclusions,
       retiredObservabilityScenarioExclusions,
+      retiredSessionScenarioExclusions,
       error: terminalError,
     });
     flushTerminalArtifacts(reportRoot, summary);

@@ -1311,6 +1311,9 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Reflex Review Center real-browser f
           skillRegistry: createDp10DogfoodSkillRegistry(),
           tokenSecret: DP10_DOGFOOD_AUTH_TOKEN_TEST_KEY,
           computeChecksum: sha256,
+          allowTestOnlySessionExecution: true,
+          allowTestOnlySessionRunExecution: true,
+          allowTestOnlySessionMemoryExtractionExecution: true,
         });
         for (const route of createFridayReflexRoutes({ service: reflexService })) {
           runtime.routes.register(route);

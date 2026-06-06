@@ -1880,6 +1880,12 @@ export interface FridayHubConfig {
   allowTestOnlyAutonomyPolicyMutation?: boolean;
   /** Test-oracle only; production hub creation must leave capability-acquisition runs fail-closed. */
   allowTestOnlyCapabilityAcquisitionExecution?: boolean;
+  /** Test-oracle only; production hub creation must leave session lifecycle/message mutations fail-closed. */
+  allowTestOnlySessionExecution?: boolean;
+  /** Test-oracle only; production hub creation must leave POST /v1/sessions/:sessionKey/run fail-closed. */
+  allowTestOnlySessionRunExecution?: boolean;
+  /** Test-oracle only; production hub creation must leave session memory extraction mutations fail-closed. */
+  allowTestOnlySessionMemoryExtractionExecution?: boolean;
 }
 
 // ─── Resolved Hub Config ───

@@ -176,6 +176,14 @@ export interface CreateFridayApiTestEnvOptions {
    * leaves auto-fix run/execute/rollback surfaces fail-closed while Rust ownership lands.
    */
   allowTestOnlyAutoFixExecution?: boolean;
+  /**
+   * Test-oracle opt-in for legacy TS session lifecycle/agent-run/memory
+   * mutations. Default/live runtime leaves these fail-closed while Rust
+   * ownership lands.
+   */
+  allowTestOnlySessionExecution?: boolean;
+  allowTestOnlySessionRunExecution?: boolean;
+  allowTestOnlySessionMemoryExtractionExecution?: boolean;
   resolveSkill?: (skillId: string) => unknown | null;
   invokeSkill?: (
     skillId: string,
@@ -288,6 +296,9 @@ export async function createFridayApiTestEnv(
     allowTestOnlyWorkflowCatalogMutationExecution: options.allowTestOnlyWorkflowCatalogMutationExecution ?? true,
     allowTestOnlyWorkflowBuilderDraftExecution: options.allowTestOnlyWorkflowBuilderDraftExecution ?? true,
     allowTestOnlyWorkflowDeployExecution: options.allowTestOnlyWorkflowDeployExecution ?? true,
+    allowTestOnlySessionExecution: options.allowTestOnlySessionExecution ?? true,
+    allowTestOnlySessionRunExecution: options.allowTestOnlySessionRunExecution ?? true,
+    allowTestOnlySessionMemoryExtractionExecution: options.allowTestOnlySessionMemoryExtractionExecution ?? true,
     computeChecksum: (content: string) =>
       crypto.createHash("sha256").update(content).digest("hex"),
     resolveSkill: options.resolveSkill ?? ((_skillId: string) => ({ id: _skillId })),

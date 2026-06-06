@@ -110,20 +110,20 @@ async function expectRouteError(fn: Promise<unknown>, code: string): Promise<voi
 describe("FridaySessionRoutes", () => {
   it("creates 22 routes (10 core + compact + delete + export + reset + outbound + 3 fork + 4 extraction)", () => {
     const svc = createMockService();
-    const routes = createFridaySessionRoutes({ sessionService: svc });
+    const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
     expect(routes).toHaveLength(22);
   });
 
   it("all routes have unique operationIds", () => {
     const svc = createMockService();
-    const routes = createFridaySessionRoutes({ sessionService: svc });
+    const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
     const ids = routes.map((r) => r.operationId);
     expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("all routes require auth", () => {
     const svc = createMockService();
-    const routes = createFridaySessionRoutes({ sessionService: svc });
+    const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
     for (const route of routes) {
       expect(route.auth).toEqual({ public: true });
     }
@@ -137,7 +137,7 @@ describe("FridaySessionRoutes", () => {
       const sessions = [makeMockSession()];
       vi.mocked(svc.listSessions).mockResolvedValue(sessions);
 
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const listRoute = routes.find((r) => r.operationId === "sessions.list")!;
 
       const result = await listRoute.handler(makeMockCtx({ query: {} }) as never);
@@ -156,7 +156,7 @@ describe("FridaySessionRoutes", () => {
       const svc = createMockService();
       vi.mocked(svc.listSessions).mockResolvedValue([]);
 
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const listRoute = routes.find((r) => r.operationId === "sessions.list")!;
 
       await listRoute.handler(
@@ -177,7 +177,7 @@ describe("FridaySessionRoutes", () => {
 
     it("validates invalid limit", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const listRoute = routes.find((r) => r.operationId === "sessions.list")!;
 
       await expectRouteError(
@@ -188,7 +188,7 @@ describe("FridaySessionRoutes", () => {
 
     it("validates invalid status", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const listRoute = routes.find((r) => r.operationId === "sessions.list")!;
 
       await expectRouteError(
@@ -203,7 +203,7 @@ describe("FridaySessionRoutes", () => {
   describe("sessions.create", () => {
     it("validates missing body", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const createRoute = routes.find((r) => r.operationId === "sessions.create")!;
 
       await expectRouteError(
@@ -214,7 +214,7 @@ describe("FridaySessionRoutes", () => {
 
     it("validates missing channel", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const createRoute = routes.find((r) => r.operationId === "sessions.create")!;
 
       await expectRouteError(
@@ -228,7 +228,7 @@ describe("FridaySessionRoutes", () => {
       const mockSession = makeMockSession();
       vi.mocked(svc.createSession).mockResolvedValue(mockSession);
 
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const createRoute = routes.find((r) => r.operationId === "sessions.create")!;
 
       const result = await createRoute.handler(
@@ -265,7 +265,7 @@ describe("FridaySessionRoutes", () => {
         .mockResolvedValueOnce(createdSession)
         .mockResolvedValueOnce(alignedSession);
 
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const createRoute = routes.find((r) => r.operationId === "sessions.create")!;
 
       const result = await createRoute.handler(
@@ -301,7 +301,7 @@ describe("FridaySessionRoutes", () => {
       const svc = createMockService();
       vi.mocked(svc.getSession).mockResolvedValue(null);
 
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const getRoute = routes.find((r) => r.operationId === "sessions.get")!;
 
       await expectRouteError(
@@ -315,7 +315,7 @@ describe("FridaySessionRoutes", () => {
       const mockSession = makeMockSession();
       vi.mocked(svc.getSession).mockResolvedValue(mockSession);
 
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const getRoute = routes.find((r) => r.operationId === "sessions.get")!;
 
       const result = await getRoute.handler(
@@ -327,7 +327,7 @@ describe("FridaySessionRoutes", () => {
 
     it("throws FridayDomainError on malformed URL-encoded key", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const getRoute = routes.find((r) => r.operationId === "sessions.get")!;
 
       await expectRouteError(
@@ -345,7 +345,7 @@ describe("FridaySessionRoutes", () => {
       const archived = makeMockSession({ status: "archived" });
       vi.mocked(svc.archiveSession).mockResolvedValue(archived);
 
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const archiveRoute = routes.find((r) => r.operationId === "sessions.archive")!;
 
       const result = await archiveRoute.handler(
@@ -361,7 +361,7 @@ describe("FridaySessionRoutes", () => {
   describe("sessions.prune", () => {
     it("validates missing body", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const pruneRoute = routes.find((r) => r.operationId === "sessions.prune")!;
 
       await expectRouteError(
@@ -372,7 +372,7 @@ describe("FridaySessionRoutes", () => {
 
     it("validates missing olderThan", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const pruneRoute = routes.find((r) => r.operationId === "sessions.prune")!;
 
       await expectRouteError(
@@ -383,7 +383,7 @@ describe("FridaySessionRoutes", () => {
 
     it("validates invalid ISO date in olderThan", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const pruneRoute = routes.find((r) => r.operationId === "sessions.prune")!;
 
       await expectRouteError(
@@ -400,7 +400,7 @@ describe("FridaySessionRoutes", () => {
         sessionKeys: [],
       });
 
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const pruneRoute = routes.find((r) => r.operationId === "sessions.prune")!;
 
       await pruneRoute.handler(
@@ -423,7 +423,7 @@ describe("FridaySessionRoutes", () => {
         hardDeletedCount: 0,
       });
 
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const sweepRoute = routes.find((r) => r.operationId === "sessions.sweep")!;
 
       const result = await sweepRoute.handler(makeMockCtx() as never);
@@ -443,7 +443,7 @@ describe("FridaySessionRoutes", () => {
       vi.mocked(svc.getConversationFocus).mockResolvedValue(null);
       vi.mocked(svc.setConversationFocus).mockResolvedValue(makeMockSession());
       vi.mocked(svc.mergeMetadata).mockResolvedValue(makeMockSession());
-      const routes = createFridaySessionRoutes({
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true,
         sessionService: svc,
         nowIso: () => "2026-01-01T00:00:05.000Z",
       });
@@ -489,7 +489,7 @@ describe("FridaySessionRoutes", () => {
   describe("sessions.messages.create", () => {
     it("validates missing message body", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.messages.create")!;
 
       await expectRouteError(
@@ -502,7 +502,7 @@ describe("FridaySessionRoutes", () => {
 
     it("validates missing role", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.messages.create")!;
 
       await expectRouteError(
@@ -526,7 +526,7 @@ describe("FridaySessionRoutes", () => {
       }));
       vi.mocked(svc.addMessage).mockResolvedValue(mockMsg);
 
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.messages.create")!;
 
       const result = await route.handler(
@@ -575,7 +575,7 @@ describe("FridaySessionRoutes", () => {
         send: vi.fn().mockResolvedValue({ messageId: "discord-msg-1" }),
       };
 
-      const routes = createFridaySessionRoutes({
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true,
         sessionService: svc,
         channelRegistry: channelRegistry as never,
         nowIso: () => "2026-01-01T00:00:00.000Z",
@@ -629,7 +629,7 @@ describe("FridaySessionRoutes", () => {
       vi.mocked(svc.evaluateSendPolicy).mockResolvedValue("block");
       const channelRegistry = { send: vi.fn() };
 
-      const routes = createFridaySessionRoutes({
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true,
         sessionService: svc,
         channelRegistry: channelRegistry as never,
       });
@@ -650,7 +650,7 @@ describe("FridaySessionRoutes", () => {
 
     it("requires a configured channel registry", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.outbound.send")!;
 
       await expectRouteError(
@@ -672,7 +672,7 @@ describe("FridaySessionRoutes", () => {
       const svc = createMockService();
       vi.mocked(svc.getMessages).mockResolvedValue([makeMockMessage()]);
 
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.messages.list")!;
 
       const result = await route.handler(
@@ -684,7 +684,7 @@ describe("FridaySessionRoutes", () => {
 
     it("validates invalid limit", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.messages.list")!;
 
       await expectRouteError(
@@ -708,7 +708,7 @@ describe("FridaySessionRoutes", () => {
         "tenant.default.channel.discord.user.user1.shared",
       );
 
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.memory.namespace.get")!;
 
       const result = await route.handler(
@@ -733,7 +733,7 @@ describe("FridaySessionRoutes", () => {
         forkedFromMessageId: "msg-100",
       });
 
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.forks.create")!;
 
       const result = await route.handler(
@@ -755,7 +755,7 @@ describe("FridaySessionRoutes", () => {
 
     it("rejects invalid inheritMessageCount", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.forks.create")!;
 
       await expectRouteError(
@@ -771,7 +771,7 @@ describe("FridaySessionRoutes", () => {
 
     it("rejects empty taskId string", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.forks.create")!;
 
       await expectRouteError(
@@ -787,7 +787,7 @@ describe("FridaySessionRoutes", () => {
 
     it("rejects empty forkFromMessageId string", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.forks.create")!;
 
       await expectRouteError(
@@ -809,7 +809,7 @@ describe("FridaySessionRoutes", () => {
       const svc = createMockService();
       vi.mocked(svc.listForks).mockResolvedValue([makeMockSession()]);
 
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.forks.list")!;
 
       const result = await route.handler(
@@ -825,7 +825,7 @@ describe("FridaySessionRoutes", () => {
 
     it("validates invalid status", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.forks.list")!;
 
       await expectRouteError(
@@ -845,7 +845,7 @@ describe("FridaySessionRoutes", () => {
   describe("sessions.forks.merge", () => {
     it("validates missing body", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.forks.merge")!;
 
       await expectRouteError(
@@ -858,7 +858,7 @@ describe("FridaySessionRoutes", () => {
 
     it("validates missing summary", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.forks.merge")!;
 
       await expectRouteError(
@@ -874,7 +874,7 @@ describe("FridaySessionRoutes", () => {
 
     it("validates missing forkSessionKey", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.forks.merge")!;
 
       await expectRouteError(
@@ -895,7 +895,7 @@ describe("FridaySessionRoutes", () => {
         forkSession: makeMockSession({ status: "archived" }),
       });
 
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.forks.merge")!;
 
       const result = await route.handler(
@@ -926,7 +926,7 @@ describe("FridaySessionRoutes", () => {
       const svc = createMockService();
       vi.mocked(svc.getMessages).mockResolvedValue([makeMockMessage()]);
 
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.run")!;
 
       await expectRouteError(
@@ -966,7 +966,7 @@ describe("FridaySessionRoutes", () => {
         .mockResolvedValueOnce([userMessage])
         .mockResolvedValueOnce([userMessage, assistantMessage]);
 
-      const routes = createFridaySessionRoutes({
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true,
         sessionService: svc,
         runSession,
       });
@@ -1009,7 +1009,7 @@ describe("FridaySessionRoutes", () => {
     it("rejects omitted task unless latest-message reuse is explicit", async () => {
       const svc = createMockService();
       const runSession = vi.fn();
-      const routes = createFridaySessionRoutes({
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true,
         sessionService: svc,
         runSession,
       });
@@ -1043,7 +1043,7 @@ describe("FridaySessionRoutes", () => {
         makeMockMessage({ role: "user", contentText: "hello" }),
       ]);
 
-      const routes = createFridaySessionRoutes({
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true,
         sessionService: svc,
         runSession,
       });
@@ -1084,7 +1084,7 @@ describe("FridaySessionRoutes", () => {
         makeMockMessage({ role: "user", contentText: "hello" }),
       ]);
 
-      const routes = createFridaySessionRoutes({
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true,
         sessionService: svc,
         runSession,
       });
@@ -1154,7 +1154,7 @@ describe("FridaySessionRoutes", () => {
         makeMockMessage({ role: "user", contentText: "PRIVATE_CONTEXT_SHOULD_NOT_REPLAY" }),
       ]);
 
-      const routes = createFridaySessionRoutes({
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true,
         sessionService: svc,
         runSession,
       });
@@ -1189,7 +1189,7 @@ describe("FridaySessionRoutes", () => {
         makeMockMessage({ role: "user", contentText: "hello" }),
       ]);
 
-      const routes = createFridaySessionRoutes({
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true,
         sessionService: svc,
         runSession,
       });
@@ -1256,7 +1256,7 @@ describe("FridaySessionRoutes", () => {
         makeMockMessage({ role: "user", contentText: "hello" }),
       ]);
 
-      const routes = createFridaySessionRoutes({
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true,
         sessionService: svc,
         runSession,
       });
@@ -1292,7 +1292,7 @@ describe("FridaySessionRoutes", () => {
         .mockResolvedValueOnce([makeMockMessage({ role: "user", contentText: "hello" })])
         .mockResolvedValueOnce([makeMockMessage({ role: "user", contentText: "hello" })]);
 
-      const routes = createFridaySessionRoutes({
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true,
         sessionService: svc,
         runSession,
       });
@@ -1340,7 +1340,7 @@ describe("FridaySessionRoutes", () => {
         .mockResolvedValueOnce([makeMockMessage({ role: "user", contentText: "hello" })])
         .mockResolvedValueOnce([makeMockMessage({ role: "user", contentText: "hello" })]);
 
-      const routes = createFridaySessionRoutes({
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true,
         sessionService: svc,
         runSession,
       });
@@ -1392,7 +1392,7 @@ describe("FridaySessionRoutes", () => {
         contentText: "hello",
       }));
 
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.messages.create")!;
 
       await route.handler(
@@ -1424,7 +1424,7 @@ describe("FridaySessionRoutes", () => {
     it("validates timeoutMs in run body", async () => {
       const svc = createMockService();
       const runSession = vi.fn();
-      const routes = createFridaySessionRoutes({ sessionService: svc, runSession });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc, runSession });
       const route = routes.find((r) => r.operationId === "sessions.run")!;
 
       await expectRouteError(
@@ -1444,7 +1444,7 @@ describe("FridaySessionRoutes", () => {
   describe("route configuration", () => {
     it("has correct paths and methods", () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const routeMap = routes.map((r) => ({ id: r.operationId, method: r.method, path: r.path }));
 
       expect(routeMap).toContainEqual({ id: "sessions.list", method: "GET", path: "/v1/sessions" });
@@ -1510,7 +1510,7 @@ describe("FridaySessionRoutes", () => {
   describe("sessions.memory.extract", () => {
     it("throws 501 when extraction service not configured", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.memory.extract")!;
 
       await expectRouteError(
@@ -1524,7 +1524,7 @@ describe("FridaySessionRoutes", () => {
     it("rejects invalid trigger value", async () => {
       const svc = createMockService();
       const extractSvc = createMockExtractionService();
-      const routes = createFridaySessionRoutes({ sessionService: svc, extractionService: extractSvc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc, extractionService: extractSvc });
       const route = routes.find((r) => r.operationId === "sessions.memory.extract")!;
 
       await expectRouteError(
@@ -1541,7 +1541,7 @@ describe("FridaySessionRoutes", () => {
     it("rejects invalid mode value", async () => {
       const svc = createMockService();
       const extractSvc = createMockExtractionService();
-      const routes = createFridaySessionRoutes({ sessionService: svc, extractionService: extractSvc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc, extractionService: extractSvc });
       const route = routes.find((r) => r.operationId === "sessions.memory.extract")!;
 
       await expectRouteError(
@@ -1558,7 +1558,7 @@ describe("FridaySessionRoutes", () => {
     it("rejects non-integer batchSize", async () => {
       const svc = createMockService();
       const extractSvc = createMockExtractionService();
-      const routes = createFridaySessionRoutes({ sessionService: svc, extractionService: extractSvc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc, extractionService: extractSvc });
       const route = routes.find((r) => r.operationId === "sessions.memory.extract")!;
 
       await expectRouteError(
@@ -1575,7 +1575,7 @@ describe("FridaySessionRoutes", () => {
     it("rejects non-integer maxBatches", async () => {
       const svc = createMockService();
       const extractSvc = createMockExtractionService();
-      const routes = createFridaySessionRoutes({ sessionService: svc, extractionService: extractSvc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc, extractionService: extractSvc });
       const route = routes.find((r) => r.operationId === "sessions.memory.extract")!;
 
       await expectRouteError(
@@ -1597,7 +1597,7 @@ describe("FridaySessionRoutes", () => {
         userId: "admin-001",
         memoryNamespace: "tenant.admin-001.channel.discord.user.admin-001.shared",
       }));
-      const routes = createFridaySessionRoutes({ sessionService: svc, extractionService: extractSvc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc, extractionService: extractSvc });
       const route = routes.find((r) => r.operationId === "sessions.memory.extract")!;
 
       const result = await route.handler(
@@ -1631,7 +1631,7 @@ describe("FridaySessionRoutes", () => {
     it("accepts empty body (all defaults)", async () => {
       const svc = createMockService();
       const extractSvc = createMockExtractionService();
-      const routes = createFridaySessionRoutes({ sessionService: svc, extractionService: extractSvc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc, extractionService: extractSvc });
       const route = routes.find((r) => r.operationId === "sessions.memory.extract")!;
 
       const result = await route.handler(
@@ -1648,7 +1648,7 @@ describe("FridaySessionRoutes", () => {
   describe("sessions.memory.extraction.retry", () => {
     it("throws 501 when extraction service not configured", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.memory.extraction.retry")!;
 
       await expectRouteError(
@@ -1660,7 +1660,7 @@ describe("FridaySessionRoutes", () => {
     it("rejects empty string sessionKey", async () => {
       const svc = createMockService();
       const extractSvc = createMockExtractionService();
-      const routes = createFridaySessionRoutes({ sessionService: svc, extractionService: extractSvc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc, extractionService: extractSvc });
       const route = routes.find((r) => r.operationId === "sessions.memory.extraction.retry")!;
 
       await expectRouteError(
@@ -1672,7 +1672,7 @@ describe("FridaySessionRoutes", () => {
     it("accepts valid retry body", async () => {
       const svc = createMockService();
       const extractSvc = createMockExtractionService();
-      const routes = createFridaySessionRoutes({ sessionService: svc, extractionService: extractSvc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc, extractionService: extractSvc });
       const route = routes.find((r) => r.operationId === "sessions.memory.extraction.retry")!;
 
       const result = await route.handler(
@@ -1686,7 +1686,7 @@ describe("FridaySessionRoutes", () => {
     it("accepts empty body (retry all)", async () => {
       const svc = createMockService();
       const extractSvc = createMockExtractionService();
-      const routes = createFridaySessionRoutes({ sessionService: svc, extractionService: extractSvc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc, extractionService: extractSvc });
       const route = routes.find((r) => r.operationId === "sessions.memory.extraction.retry")!;
 
       const result = await route.handler(makeMockCtx({ body: {} }) as never);
@@ -1699,7 +1699,7 @@ describe("FridaySessionRoutes", () => {
   describe("sessions.memory.extraction.get", () => {
     it("throws 501 when extraction service not configured", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.memory.extraction.get")!;
 
       await expectRouteError(
@@ -1713,7 +1713,7 @@ describe("FridaySessionRoutes", () => {
     it("returns status when extraction service is configured", async () => {
       const svc = createMockService();
       const extractSvc = createMockExtractionService();
-      const routes = createFridaySessionRoutes({ sessionService: svc, extractionService: extractSvc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc, extractionService: extractSvc });
       const route = routes.find((r) => r.operationId === "sessions.memory.extraction.get")!;
 
       const result = await route.handler(
@@ -1727,7 +1727,7 @@ describe("FridaySessionRoutes", () => {
   describe("sessions.memory.remember", () => {
     it("throws 501 when extraction service not configured", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.memory.remember")!;
 
       await expectRouteError(
@@ -1748,7 +1748,7 @@ describe("FridaySessionRoutes", () => {
         userId: "admin-001",
       }));
       const extractSvc = createMockExtractionService();
-      const routes = createFridaySessionRoutes({ sessionService: svc, extractionService: extractSvc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc, extractionService: extractSvc });
       const route = routes.find((r) => r.operationId === "sessions.memory.remember")!;
 
       await route.handler(
@@ -1780,7 +1780,7 @@ describe("FridaySessionRoutes", () => {
   describe("sessions.create — metadata sanitization", () => {
     it("rejects __proto__ key in metadata with VALIDATION_ERROR (400)", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const createRoute = routes.find((r) => r.operationId === "sessions.create")!;
 
       // Use JSON.parse to create an actual own-property __proto__ key (like HTTP body parsing does)
@@ -1798,7 +1798,7 @@ describe("FridaySessionRoutes", () => {
 
     it("rejects constructor key in metadata with VALIDATION_ERROR (400)", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const createRoute = routes.find((r) => r.operationId === "sessions.create")!;
 
       await expectRouteError(
@@ -1813,7 +1813,7 @@ describe("FridaySessionRoutes", () => {
 
     it("rejects prototype key in metadata with VALIDATION_ERROR (400)", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const createRoute = routes.find((r) => r.operationId === "sessions.create")!;
 
       await expectRouteError(
@@ -1828,7 +1828,7 @@ describe("FridaySessionRoutes", () => {
 
     it("rejects deeply nested forbidden keys in metadata", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const createRoute = routes.find((r) => r.operationId === "sessions.create")!;
 
       // Use JSON.parse for nested __proto__ key
@@ -1846,7 +1846,7 @@ describe("FridaySessionRoutes", () => {
 
     it("rejects non-object metadata (e.g. array)", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const createRoute = routes.find((r) => r.operationId === "sessions.create")!;
 
       await expectRouteError(
@@ -1863,7 +1863,7 @@ describe("FridaySessionRoutes", () => {
       const svc = createMockService();
       vi.mocked(svc.createSession).mockResolvedValue(makeMockSession());
 
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const createRoute = routes.find((r) => r.operationId === "sessions.create")!;
 
       await createRoute.handler(
@@ -1882,7 +1882,7 @@ describe("FridaySessionRoutes", () => {
   describe("sessions.forks.create — metadata sanitization", () => {
     it("rejects __proto__ key in fork metadata", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.forks.create")!;
 
       const metadata = JSON.parse('{"__proto__": {"polluted": true}}');
@@ -1902,7 +1902,7 @@ describe("FridaySessionRoutes", () => {
   describe("sessions.forks.merge — metadata sanitization", () => {
     it("rejects __proto__ key in merge metadata", async () => {
       const svc = createMockService();
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const route = routes.find((r) => r.operationId === "sessions.forks.merge")!;
 
       const metadata = JSON.parse('{"__proto__": {"polluted": true}}');
@@ -1930,7 +1930,7 @@ describe("FridaySessionRoutes", () => {
       const svc = createMockService();
       vi.mocked(svc.listSessions).mockResolvedValue([]);
 
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const listRoute = routes.find((r) => r.operationId === "sessions.list")!;
 
       await listRoute.handler(
@@ -1948,7 +1948,7 @@ describe("FridaySessionRoutes", () => {
       const svc = createMockService();
       vi.mocked(svc.getMessages).mockResolvedValue([]);
 
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const messagesRoute = routes.find((r) => r.operationId === "sessions.messages.list")!;
 
       await messagesRoute.handler(
@@ -1967,7 +1967,7 @@ describe("FridaySessionRoutes", () => {
       const svc = createMockService();
       vi.mocked(svc.listForks).mockResolvedValue([]);
 
-      const routes = createFridaySessionRoutes({ sessionService: svc });
+      const routes = createFridaySessionRoutes({ allowTestOnlySessionExecution: true, allowTestOnlySessionRunExecution: true, allowTestOnlySessionMemoryExtractionExecution: true, sessionService: svc });
       const forksRoute = routes.find((r) => r.operationId === "sessions.forks.list")!;
 
       await forksRoute.handler(
@@ -1979,5 +1979,145 @@ describe("FridaySessionRoutes", () => {
 
       expect(svc.listForks).toHaveBeenCalledWith("discord:default:user1", expect.objectContaining({ limit: 100 }));
     });
+  });
+});
+
+describe("TS runtime retirement — session mutations fail-close by default", () => {
+  function makeRetiredExtractionService(): FridaySessionMemoryExtractionService {
+    return {
+      extractFromSession: vi.fn(),
+      extractSpecificMessages: vi.fn(),
+      getExtractionStatus: vi.fn(),
+      retryFailedExtractions: vi.fn(),
+    };
+  }
+
+  function buildRetiredRoutes() {
+    const sessionService = createMockService();
+    const extractionService = makeRetiredExtractionService();
+    const channelRegistry = { send: vi.fn().mockResolvedValue({ messageId: "discord-msg-1" }) };
+    const runSession = vi.fn();
+    const routes = createFridaySessionRoutes({
+      sessionService,
+      extractionService,
+      channelRegistry: channelRegistry as never,
+      runSession,
+      allowTestOnlySessionExecution: false,
+      allowTestOnlySessionRunExecution: false,
+      allowTestOnlySessionMemoryExtractionExecution: false,
+    });
+    return { routes, sessionService, extractionService, channelRegistry, runSession };
+  }
+
+  async function expectFailClosed(fn: Promise<unknown>, code: string): Promise<void> {
+    try {
+      await fn;
+      expect.fail("Expected FridayDomainError to be thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(FridayDomainError);
+      expect((err as FridayDomainError).code).toBe(code);
+      expect((err as FridayDomainError).httpStatus).toBe(503);
+    }
+  }
+
+  it("(a) fail-closes sessions.create with TS_RUNTIME_SESSION_RETIRED before calling the service", async () => {
+    const { routes, sessionService } = buildRetiredRoutes();
+    const route = routes.find((r) => r.operationId === "sessions.create")!;
+
+    await expectFailClosed(
+      route.handler(
+        makeMockCtx({
+          body: { channel: "discord", chatId: "user1" },
+          principal: makeBoundPrincipal(),
+        }) as never,
+      ),
+      "TS_RUNTIME_SESSION_RETIRED",
+    );
+    expect(sessionService.createSession).not.toHaveBeenCalled();
+  });
+
+  it("(b) fail-closes sessions.run with TS_RUNTIME_SESSION_RUN_RETIRED before invoking runSession", async () => {
+    const { routes, runSession } = buildRetiredRoutes();
+    const route = routes.find((r) => r.operationId === "sessions.run")!;
+
+    await expectFailClosed(
+      route.handler(
+        makeMockCtx({
+          params: { sessionKey: "discord:default:user1" },
+          body: { task: "do something" },
+          principal: makeBoundPrincipal(),
+        }) as never,
+      ),
+      "TS_RUNTIME_SESSION_RUN_RETIRED",
+    );
+    expect(runSession).not.toHaveBeenCalled();
+  });
+
+  it("(c) fail-closes sessions.memory.extract with TS_RUNTIME_SESSION_MEMORY_EXTRACTION_RETIRED before extracting", async () => {
+    const { routes, extractionService, sessionService } = buildRetiredRoutes();
+    const route = routes.find((r) => r.operationId === "sessions.memory.extract")!;
+
+    await expectFailClosed(
+      route.handler(
+        makeMockCtx({
+          params: { sessionKey: "discord:default:user1" },
+          body: {},
+          principal: makeBoundPrincipal(),
+        }) as never,
+      ),
+      "TS_RUNTIME_SESSION_MEMORY_EXTRACTION_RETIRED",
+    );
+    expect(extractionService.extractFromSession).not.toHaveBeenCalled();
+    expect(sessionService.alignSessionContext).not.toHaveBeenCalled();
+  });
+
+  it("(d) still rejects a malformed sessions.memory.extract body with the validation error (hoist proof, not 503)", async () => {
+    const { routes, extractionService } = buildRetiredRoutes();
+    const route = routes.find((r) => r.operationId === "sessions.memory.extract")!;
+
+    try {
+      await route.handler(
+        makeMockCtx({
+          params: { sessionKey: "discord:default:user1" },
+          body: { trigger: "invalid_trigger" },
+          principal: makeBoundPrincipal(),
+        }) as never,
+      );
+      expect.fail("Expected FridayDomainError to be thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(FridayDomainError);
+      expect((err as FridayDomainError).code).toBe(
+        FRIDAY_SESSION_MEMORY_EXTRACTION_ERROR_CODES.INVALID_INPUT,
+      );
+      expect((err as FridayDomainError).code).not.toBe(
+        "TS_RUNTIME_SESSION_MEMORY_EXTRACTION_RETIRED",
+      );
+    }
+    expect(extractionService.extractFromSession).not.toHaveBeenCalled();
+  });
+
+  it("(e) keeps sessions.outbound.send functional (operator_external_adapter, no fail-close)", async () => {
+    const { routes, sessionService, channelRegistry } = buildRetiredRoutes();
+    vi.mocked(sessionService.getSession).mockResolvedValue(
+      makeMockSession({ channel: "discord", chatId: "discord-channel-1" }),
+    );
+    vi.mocked(sessionService.addMessage).mockResolvedValue(
+      makeMockMessage({ role: "assistant", content: "marker", contentText: "marker" }),
+    );
+    const route = routes.find((r) => r.operationId === "sessions.outbound.send")!;
+
+    const result = await route.handler(
+      makeMockCtx({
+        params: { sessionKey: "discord:default:user1" },
+        body: { text: "marker" },
+        principal: makeBoundPrincipal(),
+      }) as never,
+    );
+
+    expect(channelRegistry.send).toHaveBeenCalledWith(
+      "discord",
+      expect.objectContaining({ chatId: "discord-channel-1", text: "marker" }),
+    );
+    expect(result).toHaveProperty("delivery");
   });
 });
