@@ -156,6 +156,7 @@ describe("Setup Wizard E2E", () => {
         port: 0,
         logRequests: false,
         tokenSecret: TEST_TOKEN_SECRET,
+        allowTestOnlyWorkflowBuilderDraftExecution: true,
       });
       await hub.start();
     } finally {

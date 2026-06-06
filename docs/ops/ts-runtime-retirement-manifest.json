@@ -1855,6 +1855,136 @@
       "executes_product_logic": false,
       "proof": "src/api/http/routes/friday-deterministic-pipeline-routes.ts wires default/live playbook.rollback to TS_RUNTIME_PLAYBOOK_PIPELINE_RETIRED after request validation and before calling the TypeScript playbook version rollback service; legacy behavior is reachable only through explicit allowTestOnlyPlaybookPipelineExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned deterministic playbook entrypoint when available."
+    },
+    {
+      "id": "workflow_builder_drafts_create",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflows/:workflowId/drafts",
+        "operationId": "drafts.create"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-builder-routes.ts wires default/live drafts.create to TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED before principal authority checks and before calling the TypeScript createDraft service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowBuilderDraftExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow builder draft create entrypoint when available."
+    },
+    {
+      "id": "workflow_builder_drafts_save",
+      "route": {
+        "method": "PATCH",
+        "path": "/v1/workflows/:workflowId/drafts/:draftId",
+        "operationId": "drafts.save"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-builder-routes.ts wires default/live drafts.save to TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED before principal authority checks and before calling the TypeScript saveDraft service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowBuilderDraftExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow builder draft save entrypoint when available."
+    },
+    {
+      "id": "workflow_builder_drafts_autosave",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflows/:workflowId/drafts/:draftId/autosave",
+        "operationId": "drafts.autosave"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-builder-routes.ts wires default/live drafts.autosave to TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED before principal authority checks and before calling the TypeScript autosaveDraft service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowBuilderDraftExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow builder draft autosave entrypoint when available."
+    },
+    {
+      "id": "workflow_builder_drafts_compile",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflows/:workflowId/drafts/:draftId/compile",
+        "operationId": "drafts.compile"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-builder-routes.ts wires default/live drafts.compile to TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED before principal authority checks and before calling the TypeScript compileDraft service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowBuilderDraftExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow builder draft compile entrypoint when available."
+    },
+    {
+      "id": "workflow_builder_drafts_publish",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflows/:workflowId/drafts/:draftId/publish",
+        "operationId": "drafts.publish"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-builder-routes.ts wires default/live drafts.publish to TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED before principal authority checks and before calling the TypeScript publishDraft service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowBuilderDraftExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow builder draft publish entrypoint when available."
+    },
+    {
+      "id": "workflow_builder_templates_instantiate",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflow-builder/templates/:templateId/instantiate",
+        "operationId": "templates.instantiate"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-builder-routes.ts wires default/live templates.instantiate to TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED before principal authority checks and before calling the TypeScript instantiateTemplate service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowBuilderDraftExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow builder template instantiate entrypoint when available."
+    },
+    {
+      "id": "workflow_locks_acquire",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflows/:workflowId/locks/acquire",
+        "operationId": "locks.acquire"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-builder-routes.ts wires default/live locks.acquire to TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED before principal authority checks and before calling the TypeScript acquireLock service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowBuilderDraftExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow builder lock acquire entrypoint when available."
+    },
+    {
+      "id": "workflow_locks_renew",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflows/:workflowId/locks/renew",
+        "operationId": "locks.renew"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-builder-routes.ts wires default/live locks.renew to TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED before principal authority checks and before calling the TypeScript renewLock service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowBuilderDraftExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow builder lock renew entrypoint when available."
+    },
+    {
+      "id": "workflow_locks_release",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflows/:workflowId/locks/release",
+        "operationId": "locks.release"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-builder-routes.ts wires default/live locks.release to TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED before principal authority checks and before calling the TypeScript releaseLock service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowBuilderDraftExecution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow builder lock release entrypoint when available."
+    },
+    {
+      "id": "workflow_conflicts_resolve",
+      "route": {
+        "method": "POST",
+        "path": "/v1/workflows/:workflowId/conflicts/:conflictId/resolve",
+        "operationId": "conflicts.resolve"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-workflow-conflict-routes.ts wires default/live conflicts.resolve to TS_RUNTIME_WORKFLOW_CONFLICT_RESOLVE_RETIRED before principal authority checks and before calling the TypeScript resolveConflict service; legacy behavior is reachable only through explicit allowTestOnlyWorkflowConflictResolution test-oracle wiring.",
+      "next_action": "Replace fail-closed response with a Rust-owned workflow conflict resolution entrypoint when available."
     }
   ]
 }

@@ -6901,6 +6901,7 @@ export async function createFridayHub(
     allowTestOnlyWorkflowGeneratorExecution: config.allowTestOnlyWorkflowGeneratorExecution,
     allowTestOnlyWorkflowCatalogMutationExecution: config.allowTestOnlyWorkflowCatalogMutationExecution,
     allowTestOnlyWorkflowDeployExecution: config.allowTestOnlyWorkflowDeployExecution,
+    allowTestOnlyWorkflowBuilderDraftExecution: config.allowTestOnlyWorkflowBuilderDraftExecution,
     agentRuntime,
     allowTestOnlyAgentRunStartExecution: config.allowTestOnlyAgentRunStartExecution,
     allowTestOnlyAgentRunControlExecution: config.allowTestOnlyAgentRunControlExecution,

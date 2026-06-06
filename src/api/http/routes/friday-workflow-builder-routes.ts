@@ -43,6 +43,33 @@ export interface FridayWorkflowBuilderTemplateRoutesDeps {
     templateId: string,
     body: FridayInstantiateWorkflowBuilderTemplateRequest,
   ) => FridayInstantiateWorkflowBuilderTemplateResponse;
+  /**
+   * Test-oracle only: allows the legacy TypeScript workflow builder draft/lock/
+   * template-instantiate mutations in isolated route/runtime validation.
+   * Default/live runtime must leave these fail-closed until Rust owns workflow
+   * builder draft authoring truth.
+   */
+  allowTestOnlyWorkflowBuilderDraftExecution?: boolean;
+}
+
+function throwRetiredWorkflowBuilderDraft(): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED",
+    "TypeScript workflow builder draft/lock/template authoring is retired in default/live runtime; use the Rust-owned workflow builder draft entrypoint.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_workflow_builder_draft_entrypoint_required",
+      },
+    },
+  );
+}
+
+function assertWorkflowBuilderDraftTestOracleAllowed(allow: boolean | undefined): void {
+  if (allow !== true) {
+    throwRetiredWorkflowBuilderDraft();
+  }
 }
 
 function assertWorkflowBuilderWritePrincipal(
@@ -87,6 +114,7 @@ export function createFridayWorkflowBuilderTemplateRoutes(
       path: "/v1/workflow-builder/templates/:templateId/instantiate",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowBuilderDraftTestOracleAllowed(deps.allowTestOnlyWorkflowBuilderDraftExecution);
         assertWorkflowBuilderWritePrincipal(ctx.principal ?? null, "workflow.template.instantiate");
         const { templateId } = ctx.params as { templateId: string };
         const body = ctx.body as FridayInstantiateWorkflowBuilderTemplateRequest;
@@ -128,6 +156,13 @@ export interface FridayWorkflowBuilderRoutesDeps {
    * truth.
    */
   allowTestOnlyWorkflowBundleImportExecution?: boolean;
+  /**
+   * Test-oracle only: allows the legacy TypeScript workflow builder draft/lock
+   * mutations in isolated route/runtime validation. Default/live runtime must
+   * leave these fail-closed until Rust owns workflow builder draft authoring
+   * truth.
+   */
+  allowTestOnlyWorkflowBuilderDraftExecution?: boolean;
 }
 
 function throwRetiredWorkflowBundleImport(): never {
@@ -170,6 +205,7 @@ export function createFridayWorkflowBuilderRoutes(
       path: "/v1/workflows/:workflowId/drafts",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowBuilderDraftTestOracleAllowed(deps.allowTestOnlyWorkflowBuilderDraftExecution);
         assertWorkflowBuilderWritePrincipal(ctx.principal ?? null, "workflow.draft.create");
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.createDraft(workflowId, ctx.body as FridayCreateDraftRequest);
@@ -213,6 +249,7 @@ export function createFridayWorkflowBuilderRoutes(
       path: "/v1/workflows/:workflowId/drafts/:draftId",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowBuilderDraftTestOracleAllowed(deps.allowTestOnlyWorkflowBuilderDraftExecution);
         assertWorkflowBuilderWritePrincipal(ctx.principal ?? null, "workflow.draft.save");
         const { workflowId, draftId } = ctx.params as { workflowId: UUID; draftId: UUID };
         return deps.saveDraft(workflowId, draftId, ctx.body as FridaySaveDraftRequest);
@@ -224,6 +261,7 @@ export function createFridayWorkflowBuilderRoutes(
       path: "/v1/workflows/:workflowId/drafts/:draftId/autosave",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowBuilderDraftTestOracleAllowed(deps.allowTestOnlyWorkflowBuilderDraftExecution);
         assertWorkflowBuilderWritePrincipal(ctx.principal ?? null, "workflow.draft.autosave");
         const { workflowId, draftId } = ctx.params as { workflowId: UUID; draftId: UUID };
         return deps.autosaveDraft(workflowId, draftId, ctx.body as FridayAutosaveDraftRequest);
@@ -235,6 +273,7 @@ export function createFridayWorkflowBuilderRoutes(
       path: "/v1/workflows/:workflowId/drafts/:draftId/compile",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowBuilderDraftTestOracleAllowed(deps.allowTestOnlyWorkflowBuilderDraftExecution);
         assertWorkflowBuilderWritePrincipal(ctx.principal ?? null, "workflow.draft.compile");
         const { workflowId, draftId } = ctx.params as { workflowId: UUID; draftId: UUID };
         return deps.compileDraft(workflowId, draftId);
@@ -247,6 +286,7 @@ export function createFridayWorkflowBuilderRoutes(
       auth: { public: true },
       rateLimitPolicyId: "workflow.publish",
       async handler(ctx) {
+        assertWorkflowBuilderDraftTestOracleAllowed(deps.allowTestOnlyWorkflowBuilderDraftExecution);
         assertWorkflowBuilderWritePrincipal(ctx.principal ?? null, "workflow.draft.publish");
         const { workflowId, draftId } = ctx.params as { workflowId: UUID; draftId: UUID };
         return deps.publishDraft(workflowId, draftId, ctx.body as FridayPublishDraftRequest);
@@ -258,6 +298,7 @@ export function createFridayWorkflowBuilderRoutes(
       path: "/v1/workflows/:workflowId/locks/acquire",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowBuilderDraftTestOracleAllowed(deps.allowTestOnlyWorkflowBuilderDraftExecution);
         assertWorkflowBuilderWritePrincipal(ctx.principal ?? null, "workflow.lock.acquire");
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.acquireLock(workflowId, ctx.body as FridayAcquireWorkflowLockRequest, ctx.principal);
@@ -269,6 +310,7 @@ export function createFridayWorkflowBuilderRoutes(
       path: "/v1/workflows/:workflowId/locks/renew",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowBuilderDraftTestOracleAllowed(deps.allowTestOnlyWorkflowBuilderDraftExecution);
         assertWorkflowBuilderWritePrincipal(ctx.principal ?? null, "workflow.lock.renew");
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.renewLock(workflowId, ctx.body as FridayRenewWorkflowLockRequest, ctx.principal);
@@ -280,6 +322,7 @@ export function createFridayWorkflowBuilderRoutes(
       path: "/v1/workflows/:workflowId/locks/release",
       auth: { public: true },
       async handler(ctx) {
+        assertWorkflowBuilderDraftTestOracleAllowed(deps.allowTestOnlyWorkflowBuilderDraftExecution);
         assertWorkflowBuilderWritePrincipal(ctx.principal ?? null, "workflow.lock.release");
         const { workflowId } = ctx.params as { workflowId: UUID };
         return deps.releaseLock(workflowId, ctx.body as FridayReleaseWorkflowLockRequest, ctx.principal);

@@ -76,11 +76,13 @@ describe("FridayWorkflowBuilderRoutes", () => {
     // shared `routes` fixture still exercises the principal-authority path.
     // Default/live runtime leaves this unset (proven below).
     allowTestOnlyWorkflowBundleImportExecution: true,
+    allowTestOnlyWorkflowBuilderDraftExecution: true,
   };
   const stubTemplateDeps: FridayWorkflowBuilderTemplateRoutesDeps = {
     listTemplates: () => ({ items: [] }),
     getTemplate: () => ({ template: {} as never }),
     instantiateTemplate: () => ({ draft: stubDraft }),
+    allowTestOnlyWorkflowBuilderDraftExecution: true,
   };
 
   const routes = createFridayWorkflowBuilderRoutes(stubDeps);
@@ -206,5 +208,41 @@ describe("FridayWorkflowBuilderRoutes", () => {
       },
     });
     expect(importSpy).not.toHaveBeenCalled();
+  });
+
+  it("fail-closes workflow builder draft/lock mutations by default", async () => {
+    const createSpy = vi.fn(() => ({ draft: stubDraft }));
+    const acquireSpy = vi.fn(() => ({ acquired: true }));
+    const failClosedRoutes = createFridayWorkflowBuilderRoutes({
+      ...stubDeps,
+      allowTestOnlyWorkflowBuilderDraftExecution: false,
+      createDraft: createSpy,
+      acquireLock: acquireSpy,
+    });
+    await expect(
+      failClosedRoutes.find((r) => r.operationId === "drafts.create")!.handler(makeCtx({ body: { title: "D" } })),
+    ).rejects.toMatchObject({
+      code: "TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED",
+      httpStatus: 503,
+      details: { classification: "fail_closed" },
+    });
+    await expect(
+      failClosedRoutes.find((r) => r.operationId === "locks.acquire")!.handler(makeCtx({ body: {} })),
+    ).rejects.toMatchObject({ code: "TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED", httpStatus: 503 });
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(acquireSpy).not.toHaveBeenCalled();
+  });
+
+  it("fail-closes templates.instantiate by default", async () => {
+    const instSpy = vi.fn(() => ({ draft: stubDraft }));
+    const failClosedTemplateRoutes = createFridayWorkflowBuilderTemplateRoutes({
+      ...stubTemplateDeps,
+      allowTestOnlyWorkflowBuilderDraftExecution: false,
+      instantiateTemplate: instSpy,
+    });
+    await expect(
+      failClosedTemplateRoutes.find((r) => r.operationId === "templates.instantiate")!.handler(makeCtx({ body: {} })),
+    ).rejects.toMatchObject({ code: "TS_RUNTIME_WORKFLOW_BUILDER_DRAFT_RETIRED", httpStatus: 503 });
+    expect(instSpy).not.toHaveBeenCalled();
   });
 });

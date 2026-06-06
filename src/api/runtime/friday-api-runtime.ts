@@ -2136,6 +2136,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   // Register builder routes (real service wiring)
   for (const route of createFridayWorkflowBuilderTemplateRoutes({
+    allowTestOnlyWorkflowBuilderDraftExecution: deps.allowTestOnlyWorkflowBuilderDraftExecution,
     listTemplates: ({ scope }) => ({
       items: builderRuntime.templates.listTemplates(
         scope === "user" || scope === "global" ? scope : undefined,
@@ -2196,6 +2197,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   for (const route of createFridayWorkflowBuilderRoutes({
     allowTestOnlyWorkflowBundleImportExecution: deps.allowTestOnlyWorkflowBundleImportExecution,
+    allowTestOnlyWorkflowBuilderDraftExecution: deps.allowTestOnlyWorkflowBuilderDraftExecution,
     createDraft: (workflowId, input) => {
       const draft = builderRuntime.drafts.createDraft({
         workflowId,
@@ -2808,6 +2810,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   // Register conflict routes
   for (const route of createFridayWorkflowConflictRoutes({
+    allowTestOnlyWorkflowConflictResolution: deps.allowTestOnlyWorkflowConflictResolution,
     listConflicts: (workflowId, query) => ({
       items: conflicts.listConflicts(workflowId, query.status, query.limit),
     }),

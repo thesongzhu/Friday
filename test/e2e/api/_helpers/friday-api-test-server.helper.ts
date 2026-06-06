@@ -165,6 +165,7 @@ export interface CreateFridayApiTestEnvOptions {
    * runtime leaves workflow catalog writes fail-closed while Rust ownership lands.
    */
   allowTestOnlyWorkflowCatalogMutationExecution?: boolean;
+  allowTestOnlyWorkflowBuilderDraftExecution?: boolean;
   /**
    * Test-oracle opt-in for legacy TS workflow deploy execution. Default/live
    * runtime leaves workflow deploy fail-closed while Rust ownership lands.
@@ -285,6 +286,7 @@ export async function createFridayApiTestEnv(
     allowTestOnlySkillGeneratorExecution: options.allowTestOnlySkillGeneratorExecution ?? true,
     allowTestOnlyWorkflowGeneratorExecution: options.allowTestOnlyWorkflowGeneratorExecution ?? true,
     allowTestOnlyWorkflowCatalogMutationExecution: options.allowTestOnlyWorkflowCatalogMutationExecution ?? true,
+    allowTestOnlyWorkflowBuilderDraftExecution: options.allowTestOnlyWorkflowBuilderDraftExecution ?? true,
     allowTestOnlyWorkflowDeployExecution: options.allowTestOnlyWorkflowDeployExecution ?? true,
     computeChecksum: (content: string) =>
       crypto.createHash("sha256").update(content).digest("hex"),

@@ -260,6 +260,20 @@ export interface CreateFridayApiRuntimeDeps {
   allowTestOnlyAcceptancePipelineExecution?: boolean;
   allowTestOnlyRetryPipelineExecution?: boolean;
   allowTestOnlyPlaybookPipelineExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript workflow builder draft/lock/
+   * template-instantiate mutations in isolated mock/unit/e2e validation.
+   * Production/runtime callers must leave this unset so workflow builder draft
+   * authoring stays fail-closed until Rust owns it.
+   */
+  allowTestOnlyWorkflowBuilderDraftExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript workflow conflict resolution
+   * mutation in isolated mock/unit validation. Production/runtime callers must
+   * leave this unset so conflict resolution stays fail-closed until Rust owns
+   * it.
+   */
+  allowTestOnlyWorkflowConflictResolution?: boolean;
   /** Optional: user/project prompt-guidance provider for fallback workflow runtime creation. */
   userRulesContextProvider?: CreateFridayWorkflowRuntimeDeps["userRulesContextProvider"];
   /** Optional: reuse hub's session service instead of creating a new one. */
