@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createFridayDiagnosisRoutes } from "#api";
 import type { FridayHttpContext } from "#api";
 import type { FridaySelfHealingApiService } from "#learning";
+import { FridayDomainError } from "#errors";
 
 const NOW = "2026-03-07T10:00:00.000Z";
 
@@ -189,7 +190,7 @@ describe("FridayDiagnosisRoutes", () => {
 
   it("manually resolves an incident with the authenticated user", async () => {
     const service = makeService();
-    const routes = createFridayDiagnosisRoutes({ service });
+    const routes = createFridayDiagnosisRoutes({ service, allowTestOnlyDiagnosisExecution: true });
     const route = routes.find((entry) => entry.operationId === "diagnosis.incidents.manual.resolve")!;
 
     const result = await route.handler(
@@ -274,7 +275,7 @@ describe("FridayDiagnosisRoutes", () => {
 
   it("toggles lesson enabled state with a boolean body", async () => {
     const service = makeService();
-    const routes = createFridayDiagnosisRoutes({ service });
+    const routes = createFridayDiagnosisRoutes({ service, allowTestOnlyDiagnosisExecution: true });
     const route = routes.find((entry) => entry.operationId === "diagnosis.lessons.enabled.set")!;
 
     const result = await route.handler(
@@ -299,7 +300,7 @@ describe("FridayDiagnosisRoutes", () => {
 
   it("demotes a learned pattern with bounded factor", async () => {
     const service = makeService();
-    const routes = createFridayDiagnosisRoutes({ service });
+    const routes = createFridayDiagnosisRoutes({ service, allowTestOnlyDiagnosisExecution: true });
     const route = routes.find((entry) => entry.operationId === "diagnosis.patterns.demote")!;
 
     const result = await route.handler(
@@ -320,5 +321,46 @@ describe("FridayDiagnosisRoutes", () => {
     });
     expect(result.pattern.patternId).toBe("pattern-1");
     expect(result.pattern.factor).toBe(0.25);
+  });
+
+  describe("TS runtime retirement (allowTestOnlyDiagnosisExecution unset)", () => {
+    function retiredRoute(operationId: string, service: FridaySelfHealingApiService) {
+      const route = createFridayDiagnosisRoutes({ service }).find((entry) => entry.operationId === operationId);
+      if (!route) throw new Error(`route not found: ${operationId}`);
+      return route;
+    }
+
+    const cases: Array<{ op: string; ctx: Partial<FridayHttpContext<unknown, unknown, unknown>>; svc: string }> = [
+      { op: "diagnosis.incidents.manual.resolve", ctx: { params: { incidentId: "incident-1" } as never, body: { fix: "patched" } as never }, svc: "manualResolveIncident" },
+      { op: "diagnosis.lessons.enabled.set", ctx: { params: { lessonId: "lesson-1" } as never, body: { enabled: false } as never }, svc: "setLessonEnabled" },
+      { op: "diagnosis.patterns.demote", ctx: { params: { patternId: "pattern-1" } as never, body: { factor: 0.25 } as never }, svc: "demotePattern" },
+    ];
+
+    for (const { op, ctx, svc } of cases) {
+      it(`fail-closes ${op} with 503 and never calls the service`, async () => {
+        const service = makeService();
+        await expect(retiredRoute(op, service).handler(makeCtx(ctx))).rejects.toMatchObject({
+          code: "TS_RUNTIME_DIAGNOSIS_RETIRED",
+          httpStatus: 503,
+        } satisfies Partial<FridayDomainError>);
+        expect((service as unknown as Record<string, ReturnType<typeof vi.fn>>)[svc]).not.toHaveBeenCalled();
+      });
+    }
+
+    it("validates the body (400) before the retirement guard (manual.resolve missing fix)", async () => {
+      const service = makeService();
+      await expect(retiredRoute("diagnosis.incidents.manual.resolve", service).handler(
+        makeCtx({ params: { incidentId: "incident-1" } as never, body: {} as never }),
+      )).rejects.toMatchObject({ code: "VALIDATION_ERROR", httpStatus: 400 } satisfies Partial<FridayDomainError>);
+      expect(service.manualResolveIncident).not.toHaveBeenCalled();
+    });
+
+    it("requires a user-scoped principal (401) before the retirement guard", async () => {
+      const service = makeService();
+      await expect(retiredRoute("diagnosis.incidents.manual.resolve", service).handler(
+        makeCtx({ principal: null as never, params: { incidentId: "incident-1" } as never, body: { fix: "patched" } as never }),
+      )).rejects.toMatchObject({ code: "UNAUTHORIZED", httpStatus: 401 } satisfies Partial<FridayDomainError>);
+      expect(service.manualResolveIncident).not.toHaveBeenCalled();
+    });
   });
 });

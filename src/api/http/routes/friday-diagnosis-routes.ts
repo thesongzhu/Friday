@@ -22,6 +22,40 @@ export interface FridayDiagnosisRoutesDeps {
   agentLoop?: {
     findRunByIncidentId(incidentId: string): { loopRunId: string } | null;
   };
+  /**
+   * Test-oracle only: allow the legacy TypeScript diagnosis mutations (manual
+   * incident resolve, lesson enable/disable, pattern demote) in isolated
+   * mock/unit validation. Production/runtime callers must leave this unset so
+   * these surfaces fail-close until Rust owns the self-healing diagnosis engine.
+   * The GET incident/diagnosis/learning reads are never gated.
+   */
+  allowTestOnlyDiagnosisExecution?: boolean;
+}
+
+// ─── Retirement helper ───
+//
+// The diagnosis mutation surfaces (manual incident resolve, lesson
+// enable/disable, pattern demote) write user-scoped self-healing state inside a
+// write transaction (incident status + diagnosis + lessons + rejected actions;
+// lesson_disabled facts; pattern_demotion facts). They fail-close by
+// default/live until Rust owns the diagnosis entrypoint; legacy behavior is
+// reachable only through the explicit allowTestOnlyDiagnosisExecution
+// test-oracle flag. The GET incident/diagnosis/learning reads stay compat_shim.
+
+function assertDiagnosisTestOracleAllowed(deps: FridayDiagnosisRoutesDeps): void {
+  if (deps.allowTestOnlyDiagnosisExecution !== true) {
+    throw new FridayDomainError(
+      "TS_RUNTIME_DIAGNOSIS_RETIRED",
+      "TypeScript diagnosis mutation is fail-closed in default/live runtime; use the Rust-owned diagnosis entrypoint.",
+      {
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_diagnosis_entrypoint_required",
+        },
+      },
+    );
+  }
 }
 
 function readPositiveInt(value: unknown): number | undefined {
@@ -228,6 +262,7 @@ export function createFridayDiagnosisRoutes(
             httpStatus: 400,
           });
         }
+        assertDiagnosisTestOracleAllowed(deps);
         const details = deps.service.manualResolveIncident({
           incidentId,
           userId: resolvedBy,
@@ -260,6 +295,7 @@ export function createFridayDiagnosisRoutes(
             httpStatus: 400,
           });
         }
+        assertDiagnosisTestOracleAllowed(deps);
         return {
           lesson: deps.service.setLessonEnabled({
             userId,
@@ -285,6 +321,7 @@ export function createFridayDiagnosisRoutes(
             httpStatus: 400,
           });
         }
+        assertDiagnosisTestOracleAllowed(deps);
         return {
           pattern: deps.service.demotePattern({
             userId,

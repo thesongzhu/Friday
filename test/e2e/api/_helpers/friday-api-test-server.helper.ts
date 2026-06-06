@@ -278,7 +278,7 @@ export async function createFridayApiTestEnv(
     converterService: options.converterService,
     skillGenerator: options.skillGenerator,
     skillRegistry: options.skillRegistry,
-    diagnosis: selfHealingService ? { service: selfHealingService } : undefined,
+    diagnosis: selfHealingService ? { service: selfHealingService, allowTestOnlyDiagnosisExecution: true } : undefined,
     autoFix: selfHealingService
       ? {
           service: selfHealingService,

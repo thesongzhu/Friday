@@ -3422,6 +3422,45 @@
       "executes_product_logic": false,
       "proof": "src/api/http/routes/friday-cloud-worker-setup-routes.ts fail-closes default/live cloud.workers.teardown.receipt to TS_RUNTIME_CLOUD_WORKER_SETUP_RETIRED after the bound-principal gate and the providerId/ownerRunId/resourceTag validation, immediately before the TypeScript teardown.issueReceipt compute (friday-cloud-worker-teardown.ts: in-memory receipt with sha256 receiptId + manual cleanup steps; no DB write and no external egress). Legacy behavior is reachable only through explicit allowTestOnlyCloudWorkerSetupExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned cloud-worker setup entrypoint when available."
+    },
+    {
+      "id": "diagnosis_incidents_manual_resolve",
+      "route": {
+        "method": "POST",
+        "path": "/v1/diagnosis/incidents/:incidentId/manual-resolve",
+        "operationId": "diagnosis.incidents.manual.resolve"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-diagnosis-routes.ts fail-closes default/live diagnosis.incidents.manual.resolve to TS_RUNTIME_DIAGNOSIS_RETIRED after requireUserId and the required-fix validation, immediately before the TypeScript manualResolveIncident write (friday-self-healing-api-service.ts withWriteTransaction: actionRepo.markRejected, lessonRepo.upsertByFingerprint, incidentRepo.updateStatus). Legacy behavior is reachable only through explicit allowTestOnlyDiagnosisExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned diagnosis entrypoint when available."
+    },
+    {
+      "id": "diagnosis_lessons_enabled_set",
+      "route": {
+        "method": "POST",
+        "path": "/v1/diagnosis/lessons/:lessonId/enabled",
+        "operationId": "diagnosis.lessons.enabled.set"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-diagnosis-routes.ts fail-closes default/live diagnosis.lessons.enabled.set to TS_RUNTIME_DIAGNOSIS_RETIRED after requireUserId and the enabled-boolean validation, immediately before the TypeScript setLessonEnabled write (friday-self-healing-api-service.ts withWriteTransaction: factRepo delete/upsert of the lesson_disabled fact). Legacy behavior is reachable only through explicit allowTestOnlyDiagnosisExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned diagnosis entrypoint when available."
+    },
+    {
+      "id": "diagnosis_patterns_demote",
+      "route": {
+        "method": "POST",
+        "path": "/v1/diagnosis/patterns/:patternId/demote",
+        "operationId": "diagnosis.patterns.demote"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-diagnosis-routes.ts fail-closes default/live diagnosis.patterns.demote to TS_RUNTIME_DIAGNOSIS_RETIRED after requireUserId and the factor-finite-number validation, immediately before the TypeScript demotePattern write (friday-self-healing-api-service.ts withWriteTransaction: factRepo.upsert of the pattern_demotion fact). Legacy behavior is reachable only through explicit allowTestOnlyDiagnosisExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned diagnosis entrypoint when available."
     }
   ]
 }
