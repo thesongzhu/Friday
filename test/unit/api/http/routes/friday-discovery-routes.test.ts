@@ -55,6 +55,58 @@ describe("createFridayDiscoveryRoutes", () => {
     expect(byId.get("discovery.policy.get")?.auth).toMatchObject({ public: true });
     expect(byId.get("discovery.policy.update")?.auth).toMatchObject({ public: true });
   });
+
+  describe("TS-runtime retirement (default/live fail-close)", () => {
+    function makeDiscoveryStub() {
+      return {
+        discover: vi.fn(async () => ({ id: "c1", platform: "darwin", generatedAt: "t", scanDurationMs: 1, scanErrors: [], programs: [] })),
+        getCachedCatalog: vi.fn(() => null),
+        recommend: vi.fn(async () => ({ catalogId: "c1", generatedAt: "t", recommendations: [] })),
+        getPolicy: vi.fn(() => ({ enabled: true, scheduledRefreshEnabled: false, refreshIntervalMs: 0, excludedPaths: [], excludedProgramIds: [], redactSensitiveDetails: true })),
+        setPolicy: vi.fn(),
+        isEnabled: vi.fn(() => true),
+      };
+    }
+    const ctx = { params: {}, query: {}, body: {}, headers: {}, principal: { principalId: "u1" } } as never;
+
+    it("fail-closes discovery.scan with 503 TS_RUNTIME_DISCOVERY_RETIRED and does not scan", async () => {
+      const discovery = makeDiscoveryStub();
+      const routes = createFridayDiscoveryRoutes({ discovery });
+      const scan = routes.find((r) => r.operationId === "discovery.scan")!;
+      await expect(scan.handler(ctx)).rejects.toMatchObject({ code: "TS_RUNTIME_DISCOVERY_RETIRED", httpStatus: 503 });
+      expect(discovery.discover).not.toHaveBeenCalled();
+    });
+
+    it("fail-closes discovery.policy.update with 503 and does not mutate policy", async () => {
+      const discovery = makeDiscoveryStub();
+      const routes = createFridayDiscoveryRoutes({ discovery });
+      const policy = routes.find((r) => r.operationId === "discovery.policy.update")!;
+      await expect(policy.handler({ ...ctx, body: { enabled: false } } as never)).rejects.toMatchObject({ code: "TS_RUNTIME_DISCOVERY_RETIRED", httpStatus: 503 });
+      expect(discovery.setPolicy).not.toHaveBeenCalled();
+    });
+
+    it("runs scan + policy + recommendations when the test-oracle flag is set", async () => {
+      const discovery = makeDiscoveryStub();
+      const routes = createFridayDiscoveryRoutes({ discovery, allowTestOnlyDiscoveryExecution: true });
+      const scan = routes.find((r) => r.operationId === "discovery.scan")!;
+      await scan.handler(ctx);
+      expect(discovery.discover).toHaveBeenCalledOnce();
+      const recommend = routes.find((r) => r.operationId === "discovery.recommend")!;
+      const res = await recommend.handler(ctx) as { status: number };
+      expect(res.status).toBe(200);
+    });
+
+    it("fail-closes the GET recommendations (it falls back to discover() on cache-miss, which is the retired scan)", async () => {
+      // recommend() -> cachedCatalog ?? this.discover(): with scan retired the cache
+      // can never warm in default/live, so an unguarded GET would execute the scan.
+      const discovery = makeDiscoveryStub();
+      const routes = createFridayDiscoveryRoutes({ discovery });
+      const recommend = routes.find((r) => r.operationId === "discovery.recommend")!;
+      await expect(recommend.handler(ctx)).rejects.toMatchObject({ code: "TS_RUNTIME_DISCOVERY_RETIRED", httpStatus: 503 });
+      expect(discovery.recommend).not.toHaveBeenCalled();
+      expect(discovery.discover).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("createFridayDiscoveryDisabledRoutes", () => {

@@ -3580,6 +3580,42 @@
       "next_action": "Replace the fail-closed response with the Rust-owned fleet remediation entrypoint when available."
     },
     {
+      "id": "discovery_scan",
+      "route": { "method": "POST", "path": "/v1/discovery/scan", "operationId": "discovery.scan" },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-discovery-routes.ts discovery.scan wires default/live to assertDiscoveryTestOracleAllowed(deps) as the FIRST handler statement, immediately before deps.discovery.discover(). 503 TS_RUNTIME_DISCOVERY_RETIRED (classification fail_closed, replacement rust_owned_discovery_entrypoint_required). Non-mutating but fail_closed not compat_shim: discover() runs a multi-source local-program DISCOVERY algorithm (FS enumeration + recommendation engine) — Rust-ownable product-logic compute, not a thin read of Friday stored state (same precedent as skills.scan-local #559). No third-party egress. executes_product_logic:false: the scanner FS-enumeration runs ONLY via discovery.discover(), whose callers are this scan route + recommend()'s cache-miss fallback (reached by the GET /v1/discovery/recommendations, ALSO gated under this flag — surface discovery_recommend) + integrate (which 404s on a cold cache before reaching recommend) — ALL gated, so no scan runs in default/live. Reachable only through explicit allowTestOnlyDiscoveryExecution test-oracle wiring (inline createFridayDiscoveryRoutes).",
+      "next_action": "Replace the fail-closed response with the Rust-owned program-discovery scan entrypoint when available."
+    },
+    {
+      "id": "discovery_policy_update",
+      "route": { "method": "PATCH", "path": "/v1/discovery/policy", "operationId": "discovery.policy.update" },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-discovery-routes.ts discovery.policy.update wires default/live to assertDiscoveryTestOracleAllowed(deps) AFTER the body field-validation (typed enabled/refresh/excluded-paths updates) and IMMEDIATELY BEFORE deps.discovery.setPolicy(updates). 503 TS_RUNTIME_DISCOVERY_RETIRED. User-triggerable mutation of the discovery policy (controls enable/disable of the discovery product logic), so fail_closed; GET /v1/discovery/policy read stays compat_shim. executes_product_logic:false: no policy mutation in default/live. setPolicy has one user-triggerable call site (this route). Reachable only through explicit allowTestOnlyDiscoveryExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned discovery policy entrypoint when available."
+    },
+    {
+      "id": "discovery_integrate",
+      "route": { "method": "POST", "path": "/v1/discovery/integrate", "operationId": "discovery.integrate" },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-discovery-integration-routes.ts discovery.integrate wires default/live to a TS_RUNTIME_DISCOVERY_RETIRED guard AFTER the availability check (!discovery/!converterService/!canonicalMutationGate -> 503 DISCOVERY_INTEGRATION_DISABLED), the catalog/program 404s, the recommend() lookup, AND the canonicalMutationGate.evaluate -> 403 (unapproved), IMMEDIATELY BEFORE deps.converterService.import (candidate staging). 503 TS_RUNTIME_DISCOVERY_RETIRED. fail_closed. SCOPE NOTE (route-scoped): the underlying converterService.import method is ALSO reached by /v1/skills/import (#558 GATED), /v1/skills/social-import, and /v1/deeplink/apply (their own slices) — this surface gates ONLY /v1/discovery/integrate and does NOT claim converterService.import globally unreachable. The GET /v1/discovery/recommendations (operationId discovery.recommend) is ALSO gated under this same flag (see surface discovery_recommend) because recommend() falls back to this.discover() (the scanner FS-enumeration) on a cache miss and scan can no longer warm the cache in default/live — so the discovery scan product logic is FULLY closed across scan + recommend-GET + integrate. Reachable only through explicit allowTestOnlyDiscoveryExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned discovery integration entrypoint when available; retire the sibling converterService.import routes (social-import, deeplink/apply) in their own slices to fully gate the method."
+    },
+    {
+      "id": "discovery_recommend",
+      "route": { "method": "GET", "path": "/v1/discovery/recommendations", "operationId": "discovery.recommend" },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-discovery-routes.ts discovery.recommend (GET /v1/discovery/recommendations) is EXACT-classified fail_closed (overriding the default GET=compat_shim family rule) because it is NOT a thin read: deps.discovery.recommend(filter) falls back to this.discover() (the scanner FS-enumeration product logic) on a cache MISS (friday-program-discovery-service.ts recommend -> cachedCatalog ?? this.discover()), and since discovery.scan is now fail-closed it can never warm the cache in default/live — so an unguarded GET would deterministically EXECUTE the retired scan after every restart. The handler wires assertDiscoveryTestOracleAllowed(deps) after the query-filter parse and IMMEDIATELY BEFORE deps.discovery.recommend(filter); 503 TS_RUNTIME_DISCOVERY_RETIRED. This closes the last default/live path to the scan product logic (so the discovery_scan proof's executes_product_logic:false holds). Caught by the slice's adversarial integrity review. With a warm cache (test-oracle flag set) it is a recommendation read-derive; in default/live it fail-closes. Reachable only through explicit allowTestOnlyDiscoveryExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned discovery recommendation entrypoint when available."
+    },
+    {
       "id": "realtime_subscribe_read",
       "route": {
         "method": "POST",

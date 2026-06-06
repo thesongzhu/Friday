@@ -462,6 +462,9 @@ describe("FridayDiscoveryRoutes", () => {
           }),
           isEnabled: vi.fn().mockReturnValue(true),
         },
+        // Test-oracle flag: these route tests exercise the live scan/policy
+        // product logic. Production wiring leaves it unset (TS-runtime retirement).
+        allowTestOnlyDiscoveryExecution: true,
       },
       setCachedCatalog: (cat: typeof catalog | null) => { cachedCatalog = cat; },
     };

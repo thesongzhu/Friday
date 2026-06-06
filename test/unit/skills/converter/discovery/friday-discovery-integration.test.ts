@@ -467,6 +467,9 @@ describe("createFridayDiscoveryIntegrationRoutes", () => {
       converterService,
       canonicalMutationGate: gate,
       disabledReason: null,
+      // Test-oracle flag: this success test exercises the live integrate staging.
+      // Production wiring leaves it unset (TS-runtime retirement).
+      allowTestOnlyDiscoveryExecution: true,
     };
     const routes = createFridayDiscoveryIntegrationRoutes(deps);
     const route = routes.find((r) => r.path === "/v1/discovery/integrate")!;
@@ -539,6 +542,7 @@ describe("createFridayDiscoveryIntegrationRoutes", () => {
       converterService,
       canonicalMutationGate: gate,
       disabledReason: null,
+      allowTestOnlyDiscoveryExecution: true,
     };
     const routes = createFridayDiscoveryIntegrationRoutes(deps);
     const route = routes.find((r) => r.path === "/v1/discovery/integrate")!;
@@ -583,6 +587,7 @@ describe("createFridayDiscoveryIntegrationRoutes", () => {
       converterService,
       canonicalMutationGate: gate,
       disabledReason: null,
+      allowTestOnlyDiscoveryExecution: true,
     };
     const routes = createFridayDiscoveryIntegrationRoutes(deps);
     const route = routes.find((r) => r.path === "/v1/discovery/integrate")!;
@@ -623,5 +628,41 @@ describe("createFridayDiscoveryIntegrationRoutes", () => {
 
     const paths = nextSteps.map((s) => s.path);
     expect(paths.some((p) => p.includes("/v1/autonomy/skills/"))).toBe(true);
+  });
+
+  it("TS-runtime retirement: fail-closes with 503 after a VALID approval and does not import", async () => {
+    const gate = makeGate();
+    const converterService = makeConverterService();
+    const discoveryService = makeDiscoveryService();
+    // Enabled deps WITHOUT the test-oracle flag = production/live wiring.
+    const deps: FridayDiscoveryIntegrationRoutesDeps = {
+      discovery: discoveryService,
+      converterService,
+      canonicalMutationGate: gate,
+      disabledReason: null,
+    };
+    const routes = createFridayDiscoveryIntegrationRoutes(deps);
+    const route = routes.find((r) => r.path === "/v1/discovery/integrate")!;
+
+    const program = makeProgram();
+    const recommendation = makeRecommendation({ programId: program.id });
+    const bridgeResult = buildDiscoveryIntegrationSource({ program, recommendation });
+    const stageRequest = createFridaySkillStageMutatingActionRequest({
+      source: bridgeResult.source,
+      formatHint: "friday-package",
+      actor: { kind: "api", id: "user-1", principalId: "user-1" },
+      surface: "api:/v1/discovery/integrate",
+      canonicalApproval: undefined,
+    });
+    const preEval = gate.evaluate(stageRequest);
+    const approval = signFridayCanonicalApproval(
+      { actionDigest: preEval.actionDigest, decision: "approved", decidedByPrincipalId: "user-1", approvalId: "approval-1", expiresAt: "2026-05-15T00:00:00.000Z" },
+      TOKEN_SECRET,
+    );
+    await expect(route.handler(makeCtx({ programId: "com.example.testapp", canonicalApproval: approval }))).rejects.toMatchObject({
+      code: "TS_RUNTIME_DISCOVERY_RETIRED",
+      httpStatus: 503,
+    });
+    expect(converterService.import).not.toHaveBeenCalled();
   });
 });
