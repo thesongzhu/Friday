@@ -3616,6 +3616,15 @@
       "next_action": "Replace the fail-closed response with the Rust-owned discovery recommendation entrypoint when available."
     },
     {
+      "id": "mcp_server_rpc",
+      "route": { "method": "POST", "path": "/v1/mcp", "operationId": "mcp.server.rpc" },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-mcp-server-routes.ts mcp.server.rpc is a JSON-RPC dispatcher (POST /v1/mcp). The TS-runtime retirement guard is METHOD-SCOPED to the EXECUTION path: inside case 'tools/call', AFTER the name/params validation (-32602 on missing name) and IMMEDIATELY BEFORE services.callTool (which runs a safe-catalog tool incl. web_fetch/web_search egress = the product logic), it fail-closes by returning a JSON-RPC error frame (code -32000, errorCode TS_RUNTIME_MCP_TOOLS_CALL_RETIRED) — a frame, not a 503, because the dispatcher's outer catch maps thrown errors to JSON-RPC -32603 (same rationale as the realtime WS ack error frame). callTool is NOT invoked, so executes_product_logic:false for the tool-execution path. The READ/metadata sub-methods (initialize, tools/list, resources/list, resources/read, prompts/list, prompts/get) are INTENTIONALLY ungated and remain available — they serve catalog/metadata reads, not the Rust-ownable tool execution. So this fail_closed classification is scoped to the route's product-logic-EXECUTION path (tools/call), which is the only sub-method that runs Rust-ownable compute. fail_closed not operator_external_adapter: the tools' web_fetch/web_search is an env-allowlisted, audit-logged safe-catalog compute that Rust will reimplement, not a permanent egress-delivery conduit. Reachable only through explicit allowTestOnlyMcpToolCallExecution test-oracle wiring (set on the FridayMcpServerRoutesDeps / mcpServer object; production bootstrap leaves it unset).",
+      "next_action": "Replace the fail-closed tools/call response with the Rust-owned MCP tool-execution entrypoint when available; the read/metadata sub-methods can stay or move to Rust independently."
+    },
+    {
       "id": "realtime_subscribe_read",
       "route": {
         "method": "POST",

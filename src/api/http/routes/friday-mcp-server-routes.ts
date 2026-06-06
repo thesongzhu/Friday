@@ -84,6 +84,15 @@ export interface FridayMcpServerRoutesDeps {
       }>;
     }>;
   }>;
+  /**
+   * Test-oracle only: allow the legacy TypeScript MCP `tools/call` EXECUTION
+   * (services.callTool runs a safe-catalog tool incl. web_fetch/web_search).
+   * Production/runtime callers must leave this unset so tools/call fail-closes
+   * (JSON-RPC error TS_RUNTIME_MCP_TOOLS_CALL_RETIRED) until Rust owns MCP tool
+   * execution. The READ/metadata methods (initialize, tools/list, resources/*,
+   * prompts/*) are NOT gated — they remain available.
+   */
+  allowTestOnlyMcpToolCallExecution?: boolean;
 }
 
 type JsonRpcId = string | number | null;
@@ -282,6 +291,31 @@ export function createFridayMcpServerRoutes(
               const args = rawArgs && typeof rawArgs === "object" && !Array.isArray(rawArgs)
                 ? rawArgs as Record<string, unknown>
                 : {};
+
+              // TS-runtime retirement: the MCP tool EXECUTION path (callTool ->
+              // safe-catalog tool incl. web_fetch/web_search egress) fail-closes
+              // by default/live, returning a JSON-RPC error (the dispatcher maps
+              // thrown errors to -32603, so a frame is the correct shape here —
+              // analogous to the realtime WS ack frame). callTool is NOT invoked,
+              // so executes_product_logic:false. The read/metadata methods
+              // (initialize/tools.list/resources/prompts) are intentionally
+              // ungated. Reachable only through allowTestOnlyMcpToolCallExecution.
+              if (services.allowTestOnlyMcpToolCallExecution !== true) {
+                return {
+                  status: 200,
+                  body: makeJsonRpcError(
+                    id,
+                    -32000,
+                    "MCP tool execution is fail-closed in the default/live runtime (TS_RUNTIME_MCP_TOOLS_CALL_RETIRED); the Rust-owned MCP tool entrypoint is required.",
+                    makeErrorData({
+                      requestId: ctx.requestId,
+                      routeId,
+                      correlationId,
+                      errorCode: "TS_RUNTIME_MCP_TOOLS_CALL_RETIRED",
+                    }),
+                  ),
+                };
+              }
 
               const toolResult = await services.callTool({
                 name,
