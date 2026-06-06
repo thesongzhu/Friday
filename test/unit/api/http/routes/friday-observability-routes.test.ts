@@ -115,6 +115,8 @@ function makeDeps(): FridayObservabilityRoutesDeps {
         },
       }),
     },
+    allowTestOnlyObservabilityExecution: true,
+    allowTestOnlyHeartbeatExecution: true,
   };
 }
 
@@ -477,6 +479,78 @@ describe("B-005 FridayObservabilityRoutes", () => {
       expect(routes.filter((r) => r.method === "PATCH").length).toBe(1);
       expect(routes.filter((r) => r.method === "DELETE").length).toBe(3);
       expect(routes.length).toBe(26);
+    });
+  });
+
+  describe("TS runtime retirement — observability mutations fail-close by default", () => {
+    function failClosedDeps(): FridayObservabilityRoutesDeps {
+      return {
+        ...makeDeps(),
+        allowTestOnlyObservabilityExecution: false,
+        allowTestOnlyHeartbeatExecution: false,
+      };
+    }
+
+    it("alert/SLO mutations fail-close with TS_RUNTIME_OBSERVABILITY_RETIRED (503) when the flag is unset", async () => {
+      const deps = failClosedDeps();
+      const routes = createFridayObservabilityRoutes(deps);
+      const cases: Array<[string, FridayHttpContext<unknown, unknown, unknown>]> = [
+        ["observability.slos.create", makeCtx({ body: { name: "x", target: 99, sliMetric: {} } })],
+        ["observability.slos.update", makeCtx({ params: { sloId: "slo-1" }, body: { etag: "e" } })],
+        ["observability.slos.delete", makeCtx({ params: { sloId: "slo-1" }, query: { etag: "e" } })],
+        ["observability.alerts.acknowledge", makeCtx({ params: { alertId: "a-1" }, body: {} })],
+        ["observability.alert.destinations.create", makeCtx({ body: { type: "slack", name: "n", webhookUrl: "https://x" } })],
+        ["observability.alert.destinations.update", makeCtx({ params: { destinationId: "d-1" }, body: {} })],
+        ["observability.alert.destinations.delete", makeCtx({ params: { destinationId: "d-1" } })],
+        ["observability.alert.rules.create", makeCtx({ body: { name: "n", condition: { metric: "m" } } })],
+        ["observability.alert.rules.update", makeCtx({ params: { ruleId: "r-1" }, body: { etag: "e" } })],
+        ["observability.alert.rules.delete", makeCtx({ params: { ruleId: "r-1" }, body: { etag: "e" } })],
+      ];
+      for (const [op, ctx] of cases) {
+        await expect(findRoute(routes, op).handler(ctx)).rejects.toMatchObject({
+          code: "TS_RUNTIME_OBSERVABILITY_RETIRED",
+          httpStatus: 503,
+        });
+      }
+      // The TS service mutations were never reached.
+      expect(deps.slos.create).not.toHaveBeenCalled();
+      expect(deps.alerts.acknowledge).not.toHaveBeenCalled();
+      expect(deps.alertDestinations.create).not.toHaveBeenCalled();
+      expect(deps.alertRules.create).not.toHaveBeenCalled();
+    });
+
+    it("heartbeat.trigger fail-closes with TS_RUNTIME_HEARTBEAT_TRIGGER_RETIRED (503) when the flag is unset", async () => {
+      const deps = failClosedDeps();
+      const routes = createFridayObservabilityRoutes(deps);
+      await expect(findRoute(routes, "observability.heartbeat.trigger").handler(makeCtx())).rejects.toMatchObject({
+        code: "TS_RUNTIME_HEARTBEAT_TRIGGER_RETIRED",
+        httpStatus: 503,
+      });
+      expect(deps.heartbeat!.trigger).not.toHaveBeenCalled();
+    });
+
+    it("keeps alert test-dispatch functional (operator_external_adapter, not fail-closed)", async () => {
+      const deps = failClosedDeps();
+      const routes = createFridayObservabilityRoutes(deps);
+      await findRoute(routes, "observability.alerts.test.dispatch").handler(
+        makeCtx({ params: { alertId: "a-1" }, body: { destinationId: "dest-1" } }),
+      );
+      expect(deps.alerts.testDispatch).toHaveBeenCalledWith("a-1", { destinationId: "dest-1" });
+    });
+
+    it("still rejects with the validation error BEFORE the retirement guard (validation precedes the guard)", async () => {
+      const deps = failClosedDeps();
+      const routes = createFridayObservabilityRoutes(deps);
+      // The validation error (not the retirement 503) is what surfaces, proving
+      // request-body validation runs before the retirement guard. SLO create
+      // uses an explicit httpStatus 400; alert-rule create has no explicit
+      // status so VALIDATION_ERROR defaults to 422 (matches the manifest proofs).
+      await expect(
+        findRoute(routes, "observability.slos.create").handler(makeCtx({ body: { target: 99 } })),
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR", httpStatus: 400 });
+      await expect(
+        findRoute(routes, "observability.alert.rules.create").handler(makeCtx({ body: {} })),
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR", httpStatus: 422 });
     });
   });
 });
