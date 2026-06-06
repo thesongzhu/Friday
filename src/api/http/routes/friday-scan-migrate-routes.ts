@@ -10,6 +10,7 @@
 import type { FridayHttpContext, FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type { LocalSkillScanResult } from "../../../skills/converter/discovery/friday-local-skill-scanner.js";
 import type { CommunitySkillItem } from "../../../skills/converter/discovery/friday-community-skill-catalog.js";
+import { FridayDomainError } from "#errors";
 import {
   redactFridaySkillCandidateSourceUri,
   redactFridaySkillSourceText,
@@ -26,6 +27,41 @@ export interface FridayScanMigrateRoutesDeps {
     mode?: "preview";
     error?: string;
   }>;
+  /**
+   * Test-oracle only: allow the legacy TypeScript scan-migrate product logic
+   * (local-skill discovery scan + batch convert preview). Production/runtime
+   * callers must leave this unset so the two POST routes fail-close
+   * (503 TS_RUNTIME_SCAN_MIGRATE_RETIRED) until Rust owns local skill discovery
+   * and batch conversion. The GET community catalog is a pure read, never gated.
+   */
+  allowTestOnlyScanMigrateExecution?: boolean;
+}
+
+/**
+ * TS-runtime retirement guard for the scan-migrate product-logic routes. Both
+ * surfaces are non-mutating but execute Rust-ownable product logic
+ * (scanLocalSkills runs a multi-source filesystem discovery algorithm;
+ * convert-batch runs converterService.convert per item), so they fail-close
+ * rather than serve as compat_shim reads. Each underlying method has exactly one
+ * user-triggerable call site (its route), so the retirement is complete.
+ */
+function assertScanMigrateTestOracleAllowed(
+  deps: FridayScanMigrateRoutesDeps,
+): void {
+  if (deps.allowTestOnlyScanMigrateExecution === true) {
+    return;
+  }
+  throw new FridayDomainError(
+    "TS_RUNTIME_SCAN_MIGRATE_RETIRED",
+    "Local skill discovery scan and batch convert preview are fail-closed in the default/live runtime; the Rust-owned scan-migrate entrypoint is required.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_scan_migrate_entrypoint_required",
+      },
+    },
+  );
 }
 
 // ─── Helpers ───
@@ -46,6 +82,7 @@ export function createFridayScanMigrateRoutes(
       path: "/v1/skills/scan-local",
       auth: { public: true },
       handler: async (_ctx: Ctx) => {
+        assertScanMigrateTestOracleAllowed(deps);
         const result = deps.scanLocal();
         return { status: 200, body: result };
       },
@@ -72,6 +109,7 @@ export function createFridayScanMigrateRoutes(
       path: "/v1/skills/convert-batch",
       auth: { public: true },
       handler: async (ctx: Ctx) => {
+        assertScanMigrateTestOracleAllowed(deps);
         const body = (ctx.body ?? {}) as {
           items?: Array<{ sourcePath: string; formatHint?: string }>;
         };

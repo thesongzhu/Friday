@@ -3515,6 +3515,32 @@
       "next_action": "Replace the fail-closed response with the Rust-owned skill-pack entrypoint when available."
     },
     {
+      "id": "skills_scan_local",
+      "route": {
+        "method": "POST",
+        "path": "/v1/skills/scan-local",
+        "operationId": "skills.scan.local"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-scan-migrate-routes.ts skills.scan.local wires default/live to assertScanMigrateTestOracleAllowed(deps) as the FIRST statement of the handler, immediately before deps.scanLocal() -> scanLocalSkills (src/skills/converter/discovery/friday-local-skill-scanner.ts). 503 TS_RUNTIME_SCAN_MIGRATE_RETIRED (classification fail_closed, replacement rust_owned_scan_migrate_entrypoint_required). This route is NON-mutating but classified fail_closed not compat_shim because scanLocalSkills executes Rust-ownable PRODUCT LOGIC — a multi-source filesystem DISCOVERY algorithm (scans ~/.claude, ~/.cursor, ~/.n8n, ~/.codex, ~/Projects, parses + format-detects skill candidates); it is not a thin read of Friday's own stored state, so a compat_shim 'does not execute product logic' assertion would be false (same precedent as cloud-worker package.generate, a stateless compute classified fail_closed). executes_product_logic:false: the scan does not run in default/live. scanLocalSkills has exactly ONE user-triggerable call site (this route — verified by grep), so legacy behavior is reachable only through explicit allowTestOnlyScanMigrateExecution test-oracle wiring (FridayHubConfig -> friday-hub-bootstrap createFridayScanMigrateRoutes).",
+      "next_action": "Replace the fail-closed response with the Rust-owned local-skill discovery entrypoint when available."
+    },
+    {
+      "id": "skills_convert_batch",
+      "route": {
+        "method": "POST",
+        "path": "/v1/skills/convert-batch",
+        "operationId": "skills.convert.batch"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-scan-migrate-routes.ts skills.convert.batch wires default/live to assertScanMigrateTestOracleAllowed(deps) as the FIRST statement of the handler, before the per-item deps.convertSkill loop (-> friday-hub-bootstrap converterService.convert dryRun preview). 503 TS_RUNTIME_SCAN_MIGRATE_RETIRED. fail_closed (transform/product logic, no third-party egress — same generated-code rationale as skills.convert); executes_product_logic:false: no conversion runs in default/live. deps.convertSkill has exactly ONE user-triggerable call site (this route — verified by grep), so legacy behavior is reachable only through explicit allowTestOnlyScanMigrateExecution test-oracle wiring. NOTE (route-scoped): this gates the convert-batch surface of converterService.convert; the /v1/skills/convert surface was retired in #558 (allowTestOnlySkillConverterExecution). With both ROUTES gated, the remaining callers of converterService.convert are NON-route: the operator-local CLI (friday-cli.ts), and the agent skill-import tool (src/agent/tools/friday-agent-skill-import-tool.ts -> converterService.convert dryRun), which is registered unconditionally on the agent runtime (friday-hub-bootstrap.ts agentRuntime.registerTool(skillImportTool)) and runs DURING an agent run. The agent-tool path is the TS runtime executing downstream of agentRuntime.executeRun, NOT a sibling user-triggerable route — whether it stays live in default/live is the POST-TS-TRUTH-RECONCILIATION question (is agentRuntime.executeRun reachable from an ungated user surface in production), already logged in the closure ledger; it is out of scope for this route retirement.",
+      "next_action": "Replace the fail-closed response with the Rust-owned batch-convert entrypoint when available."
+    },
+    {
       "id": "realtime_subscribe_read",
       "route": {
         "method": "POST",

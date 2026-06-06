@@ -7128,6 +7128,7 @@ export async function createFridayHub(
         };
       }
     },
+    allowTestOnlyScanMigrateExecution: config.allowTestOnlyScanMigrateExecution,
   });
   for (const route of scanMigrateRoutes) {
     apiRuntime.routes.register(route as Parameters<typeof apiRuntime.routes.register>[0]);

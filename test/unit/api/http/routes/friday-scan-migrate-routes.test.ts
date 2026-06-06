@@ -41,6 +41,7 @@ describe("createFridayScanMigrateRoutes", () => {
       scanLocal: () => ({ items: [], scannedAt: "now", scanDurationMs: 0, directoriesScanned: [] }),
       getCommunitySkills: () => [],
       convertSkill,
+      allowTestOnlyScanMigrateExecution: true,
     });
     const route = routes.find((candidate) => candidate.operationId === "skills.convert.batch");
     expect(route).toBeTruthy();
@@ -76,6 +77,7 @@ describe("createFridayScanMigrateRoutes", () => {
       scanLocal: () => ({ items: [], scannedAt: "now", scanDurationMs: 0, directoriesScanned: [] }),
       getCommunitySkills: () => [],
       convertSkill,
+      allowTestOnlyScanMigrateExecution: true,
     });
     const route = routes.find((candidate) => candidate.operationId === "skills.convert.batch");
     expect(route).toBeTruthy();
@@ -99,6 +101,44 @@ describe("createFridayScanMigrateRoutes", () => {
       ],
       convertedCount: 0,
       failedCount: 1,
+    });
+  });
+
+  describe("TS-runtime retirement (default/live fail-close)", () => {
+    // Build routes WITHOUT the test-oracle flag = production/live wiring.
+    function makeRetiredDeps() {
+      const scanLocal = vi.fn(() => ({ items: [], scannedAt: "now", scanDurationMs: 0, directoriesScanned: [] }));
+      const convertSkill = vi.fn(async () => ({ success: true, skillId: "x", mode: "preview" as const }));
+      const getCommunitySkills = vi.fn(() => [{ id: "c1", name: "Community Skill" } as never]);
+      const routes = createFridayScanMigrateRoutes({ scanLocal, getCommunitySkills, convertSkill });
+      return { routes, scanLocal, convertSkill, getCommunitySkills };
+    }
+
+    it("fail-closes scan-local with 503 TS_RUNTIME_SCAN_MIGRATE_RETIRED and does not scan", async () => {
+      const { routes, scanLocal } = makeRetiredDeps();
+      const route = routes.find((r) => r.operationId === "skills.scan.local")!;
+      await expect(route.handler(makeCtx({}))).rejects.toMatchObject({
+        code: "TS_RUNTIME_SCAN_MIGRATE_RETIRED",
+        httpStatus: 503,
+      });
+      expect(scanLocal).not.toHaveBeenCalled();
+    });
+
+    it("fail-closes convert-batch with 503 and does not convert", async () => {
+      const { routes, convertSkill } = makeRetiredDeps();
+      const route = routes.find((r) => r.operationId === "skills.convert.batch")!;
+      await expect(
+        route.handler(makeCtx({ items: [{ sourcePath: "/tmp/SKILL.md" }] })),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_SCAN_MIGRATE_RETIRED", httpStatus: 503 });
+      expect(convertSkill).not.toHaveBeenCalled();
+    });
+
+    it("leaves the GET community catalog ungated (pure read)", async () => {
+      const { routes, getCommunitySkills } = makeRetiredDeps();
+      const route = routes.find((r) => r.operationId === "skills.catalog.community")!;
+      const response = await route.handler(makeCtx({}));
+      expect(response.status).toBe(200);
+      expect(getCommunitySkills).toHaveBeenCalledOnce();
     });
   });
 });
