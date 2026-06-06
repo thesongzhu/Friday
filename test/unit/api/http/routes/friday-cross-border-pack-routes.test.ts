@@ -101,7 +101,11 @@ function makeService() {
 
 function findRoute(operationId: string) {
   const service = makeService();
-  const route = createFridayCrossBorderPackRoutes({ service }).find((entry) => entry.operationId === operationId);
+  // Test-oracle: exercise the real TypeScript logic. Default/live wiring leaves
+  // this unset so the mutation surfaces fail-close (see the TS-runtime-retirement
+  // regression block below).
+  const route = createFridayCrossBorderPackRoutes({ service, allowTestOnlyCrossBorderPackExecution: true })
+    .find((entry) => entry.operationId === operationId);
   if (!route) {
     throw new Error(`Route ${operationId} not found`);
   }
@@ -276,5 +280,62 @@ describe("createFridayCrossBorderPackRoutes", () => {
       userId: "test-user",
     });
     expect(result.snapshot.generatedAt).toBe("2026-04-08T12:00:00.000Z");
+  });
+
+  describe("TS runtime retirement (allowTestOnlyCrossBorderPackExecution unset)", () => {
+    function retiredRoute(operationId: string) {
+      const service = makeService();
+      const route = createFridayCrossBorderPackRoutes({ service })
+        .find((entry) => entry.operationId === operationId);
+      if (!route) {
+        throw new Error(`Route ${operationId} not found`);
+      }
+      return { route, service };
+    }
+
+    const cases: Array<{ op: string; ctx: Record<string, unknown>; svc: string }> = [
+      { op: "packs.cross.border.profile.put", ctx: { body: { regionFocus: "sea_tiktok", storeStage: "scaling", categoryL1: "Beauty", categoryL2: "Hair Dryers", fulfillmentMode: "platform_fulfilled", priceBand: "US$19-29", adUsage: "active", customerServiceMode: "solo_inbox", monitoringDepth: "standard" } }, svc: "upsertProfile" },
+      { op: "packs.cross.border.import.post", ctx: { body: { kind: "store_report", source: "paste", title: "x" } }, svc: "importBatch" },
+      { op: "packs.cross.border.workflow.presets.apply", ctx: { body: { timezone: "America/Los_Angeles" } }, svc: "applyWorkflowPreset" },
+      { op: "packs.cross.border.workflow.presets.toggle", ctx: { params: { workflowId: "daily-price-gap-watch" }, body: { enabled: false } }, svc: "setWorkflowPresetEnabled" },
+      { op: "packs.cross.border.run.evidence.capture", ctx: { body: { workflowId: "daily-store-health-check", managedWorkflowId: "wf-1", status: "completed", summary: "s" } }, svc: "captureRunEvidence" },
+      { op: "packs.cross.border.import.stale", ctx: { params: { importBatchId: "import-1" } }, svc: "markImportStale" },
+      { op: "packs.cross.border.workflows.disable.all", ctx: {}, svc: "disableAllWorkflows" },
+    ];
+
+    for (const { op, ctx, svc } of cases) {
+      it(`fail-closes ${op} with 503 and never calls the service`, async () => {
+        const { route, service } = retiredRoute(op);
+        await expect(route.handler(makeCtx(ctx))).rejects.toMatchObject({
+          code: "TS_RUNTIME_CROSS_BORDER_PACK_RETIRED",
+          httpStatus: 503,
+        } satisfies Partial<FridayDomainError>);
+        expect((service as Record<string, ReturnType<typeof vi.fn>>)[svc]).not.toHaveBeenCalled();
+      });
+    }
+
+    it("validates the body (400) before the retirement guard (profile.put missing regionFocus)", async () => {
+      const { route, service } = retiredRoute("packs.cross.border.profile.put");
+      await expect(route.handler(makeCtx({ body: { storeStage: "scaling" } }))).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+        httpStatus: 400,
+      } satisfies Partial<FridayDomainError>);
+      expect(service.upsertProfile).not.toHaveBeenCalled();
+    });
+
+    it("enforces the user-principal check (401) before the retirement guard (import.post, no principal)", async () => {
+      const { route, service } = retiredRoute("packs.cross.border.import.post");
+      await expect(route.handler(makeCtx({ principal: null, body: { kind: "store_report", source: "paste", title: "x" } }))).rejects.toMatchObject({
+        code: "UNAUTHORIZED",
+        httpStatus: 401,
+      } satisfies Partial<FridayDomainError>);
+      expect(service.importBatch).not.toHaveBeenCalled();
+    });
+
+    it("still serves the GET profile read (compat_shim, not gated by retirement)", async () => {
+      const { route, service } = retiredRoute("packs.cross.border.profile.get");
+      await route.handler(makeCtx());
+      expect(service.getProfile).toHaveBeenCalledWith({ userId: "test-user" });
+    });
   });
 });

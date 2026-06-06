@@ -6778,6 +6778,11 @@ export async function createFridayHub(
     },
     crossBorderPack: {
       service: crossBorderPackService,
+      // Test-oracle only: production/live config leaves this unset, so the
+      // cross-border pack mutation surfaces fail-close. Test harnesses
+      // (mock-env/browser-env/api-test-server) set it true to exercise legacy
+      // logic.
+      allowTestOnlyCrossBorderPackExecution: config.allowTestOnlyCrossBorderPackExecution,
     },
     searchHealth: resolveWebSearchHealth,
     systemHealth: getPublicSystemHealth,
