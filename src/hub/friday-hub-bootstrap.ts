@@ -6711,7 +6711,14 @@ export async function createFridayHub(
     pluginService: runtimePluginService,
     pluginManifestLoader,
     deterministicPipeline,
-    diagnosis: { service: selfHealingApiService, agentLoop: agentLoopService },
+    diagnosis: {
+      service: selfHealingApiService,
+      agentLoop: agentLoopService,
+      // Test-oracle only: production/live config leaves this unset, so the
+      // diagnosis mutation surfaces fail-close. Test harnesses (real-env live
+      // proof, mock-env) set it true to exercise legacy logic.
+      allowTestOnlyDiagnosisExecution: config.allowTestOnlyDiagnosisExecution,
+    },
     autoFix: {
       service: selfHealingApiService,
       agentLoop: agentLoopService,

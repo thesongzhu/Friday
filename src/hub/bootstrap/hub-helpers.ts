@@ -1888,6 +1888,8 @@ export interface FridayHubConfig {
   allowTestOnlySessionMemoryExtractionExecution?: boolean;
   /** Test-oracle only; production hub creation must leave cross-border pack mutations fail-closed. */
   allowTestOnlyCrossBorderPackExecution?: boolean;
+  /** Test-oracle only; production hub creation must leave self-healing diagnosis mutations fail-closed. */
+  allowTestOnlyDiagnosisExecution?: boolean;
 }
 
 // ─── Resolved Hub Config ───
