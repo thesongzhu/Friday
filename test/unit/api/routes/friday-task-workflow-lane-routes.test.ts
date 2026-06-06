@@ -312,6 +312,7 @@ describe("Phase 13.5B lane route delegation to service", () => {
       updatedAt: "2026-05-15T00:00:00.000Z",
     };
     const routes = createFridayTaskWorkflowRoutes({
+      allowTestOnlyTaskWorkflowExecution: true,
       service: makeStubServiceWithLanes({
         openExecutorLane: () => fakeLane,
       }),

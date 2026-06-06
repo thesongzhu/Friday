@@ -252,6 +252,7 @@ describe("Phase 13.5A read-only catalogs", () => {
       },
     };
     const routes = createFridayTaskWorkflowRoutes({
+      allowTestOnlyTaskWorkflowExecution: true,
       service: observable,
       disabledReason: null,
     });
@@ -301,6 +302,7 @@ describe("Phase 13.5A B.2.1 route surface — refSource incompatibility error sh
 
   it("attach route surfaces TASK_WORKFLOW_EVIDENCE_REFSOURCE_INCOMPATIBLE as HTTP 400 with details", async () => {
     const routes = createFridayTaskWorkflowRoutes({
+      allowTestOnlyTaskWorkflowExecution: true,
       service: makeServiceForCompatRoute(),
       disabledReason: null,
     });
@@ -633,6 +635,7 @@ describe("Phase 14.5A WP-001: task-workflow public mutating routes require bound
 
   it("keeps preview as a non-mutating public route", async () => {
     const routes = createFridayTaskWorkflowRoutes({
+      allowTestOnlyTaskWorkflowExecution: true,
       service: makeStubService(),
       disabledReason: null,
     });
@@ -642,5 +645,78 @@ describe("Phase 14.5A WP-001: task-workflow public mutating routes require bound
       principal: syntheticPublic(),
     }) as never)) as { preview: { specHash: string } };
     expect(response.preview.specHash).toBe("stub-hash");
+  });
+});
+
+describe("TS runtime retirement — task-workflow mutations fail-close by default", () => {
+  it("fail-close with TS_RUNTIME_TASK_WORKFLOW_RETIRED (503) when the test-oracle flag is unset, even for otherwise-valid bound-principal requests", async () => {
+    // No allowTestOnlyTaskWorkflowExecution => production/runtime default.
+    const routes = createFridayTaskWorkflowRoutes({
+      service: makeStubService(),
+      disabledReason: null,
+    });
+
+    // Pattern C: public, non-mutating preview still fail-closes (after body validation).
+    await expect(
+      findRoute(routes, "task.workflows.preview").handler(
+        makeCtx({ body: { charter: "x", taskKind: "general", contextPackage: {} } }) as never,
+      ),
+    ).rejects.toMatchObject({ code: "TS_RUNTIME_TASK_WORKFLOW_RETIRED", httpStatus: 503 });
+
+    // Pattern A: principal-gated create fail-closes for a valid bound principal + valid body.
+    await expect(
+      findRoute(routes, "task.workflows.create").handler(
+        makeCtx({ body: { charter: "x", taskKind: "general", contextPackage: {} } }) as never,
+      ),
+    ).rejects.toMatchObject({ code: "TS_RUNTIME_TASK_WORKFLOW_RETIRED", httpStatus: 503 });
+
+    // Pattern A with params + body: evidence-ref attach fail-closes after validation.
+    await expect(
+      findRoute(routes, "task.workflows.claims.evidence.attach").handler(
+        makeCtx({
+          params: { workflowId: "w-1", claimId: "c-1" },
+          body: { refKind: "docs.start_here", refId: "START_HERE_PROMPT.md", refSource: "docs_intent_reference" },
+        }) as never,
+      ),
+    ).rejects.toMatchObject({ code: "TS_RUNTIME_TASK_WORKFLOW_RETIRED", httpStatus: 503 });
+
+    // Pattern B: no-body closeout fail-closes after the bound-principal check.
+    await expect(
+      findRoute(routes, "task.workflows.closeout").handler(
+        makeCtx({ params: { workflowId: "w-1" } }) as never,
+      ),
+    ).rejects.toMatchObject({ code: "TS_RUNTIME_TASK_WORKFLOW_RETIRED", httpStatus: 503 });
+  });
+
+  it("still enforces availability (503 DISABLED) and bound-principal (401) BEFORE the retirement guard", async () => {
+    // Disabled service => availability check fires first (not the retirement guard).
+    await expect(
+      findRoute(makeDisabledRoutes(), "task.workflows.create").handler(
+        makeCtx({ body: { charter: "x", taskKind: "general", contextPackage: {} } }) as never,
+      ),
+    ).rejects.toMatchObject({ code: "TASK_WORKFLOWS_DISABLED", httpStatus: 503 });
+
+    // Unbound (synthetic public) principal => 401 fires before the retirement guard.
+    const routes = createFridayTaskWorkflowRoutes({
+      service: makeStubService(),
+      disabledReason: null,
+    });
+    await expect(
+      findRoute(routes, "task.workflows.create").handler(
+        makeCtx({
+          body: { charter: "x", taskKind: "general", contextPackage: {} },
+          principal: {
+            principalType: "user" as const,
+            principalId: "public:default",
+            tokenId: "00000000-0000-0000-0000-000000000002",
+            userId: "00000000-0000-0000-0000-000000000001",
+            role: "admin" as const,
+            scopes: [],
+            tokenKind: "access" as const,
+            issuedAt: "2026-05-16T00:00:00Z",
+          },
+        }) as never,
+      ),
+    ).rejects.toMatchObject({ httpStatus: 401 });
   });
 });

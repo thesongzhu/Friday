@@ -60,6 +60,14 @@ export interface FridayTaskWorkflowRoutesDeps {
   /** Structured short reason from bootstrap explaining why task workflows
    *  are disabled. Must never echo secret material. */
   readonly disabledReason: string | null;
+  /**
+   * Test-oracle only: allow the legacy TypeScript task-workflow mutations
+   * (create/preview/revise/closeout, claim draft/block/evidence/verify, lane
+   * open/complete/verdict/cli-handoff, channel-command issue/confirm) in
+   * isolated mock/unit validation. Production/runtime callers must leave this
+   * unset so task-workflow execution stays fail-closed until Rust owns it.
+   */
+  readonly allowTestOnlyTaskWorkflowExecution?: boolean;
 }
 
 const DEFAULT_DISABLED_MESSAGE =
@@ -688,6 +696,43 @@ function parseEvidenceExplorerQuery(
   };
 }
 
+// ─── Retirement helpers ───
+//
+// The task-workflow mutation surfaces (create/preview/revise/closeout, claim
+// draft/block/evidence/verify, lane open/complete/verdict/cli-handoff, and
+// channel-command issue/confirm) run TypeScript product logic or write
+// task-workflow state. They fail-close by default/live until Rust owns the
+// task-workflow execution entrypoint; legacy behavior is reachable only
+// through the explicit allowTestOnlyTaskWorkflowExecution test-oracle flag.
+
+function throwRetiredTaskWorkflow(
+  code: string,
+  label: string,
+  replacement: string,
+): never {
+  throw new FridayDomainError(
+    code,
+    `${label} is fail-closed in default/live runtime; use the Rust-owned ${replacement} entrypoint.`,
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: `rust_owned_${replacement}_entrypoint_required`,
+      },
+    },
+  );
+}
+
+function assertTaskWorkflowTestOracleAllowed(deps: FridayTaskWorkflowRoutesDeps): void {
+  if (deps.allowTestOnlyTaskWorkflowExecution !== true) {
+    throwRetiredTaskWorkflow(
+      "TS_RUNTIME_TASK_WORKFLOW_RETIRED",
+      "TypeScript task-workflow execution",
+      "task_workflow_execution",
+    );
+  }
+}
+
 export function createFridayTaskWorkflowRoutes(
   deps: FridayTaskWorkflowRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
@@ -718,6 +763,7 @@ export function createFridayTaskWorkflowRoutes(
       async handler(ctx) {
         const service = requireService(deps);
         const input = parseCreateBody(ctx.body);
+        assertTaskWorkflowTestOracleAllowed(deps);
         return { preview: service.preview(input) };
       },
     },
@@ -730,6 +776,7 @@ export function createFridayTaskWorkflowRoutes(
         const service = requireService(deps);
         assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.create");
         const input = parseCreateBody(ctx.body);
+        assertTaskWorkflowTestOracleAllowed(deps);
         return { workflow: service.create(input) };
       },
     },
@@ -769,6 +816,7 @@ export function createFridayTaskWorkflowRoutes(
         assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.revise");
         const { workflowId } = ctx.params as { workflowId: string };
         const input = parseReviseBody(ctx.body);
+        assertTaskWorkflowTestOracleAllowed(deps);
         return service.revise(workflowId, input);
       },
     },
@@ -793,6 +841,7 @@ export function createFridayTaskWorkflowRoutes(
         assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.claim.create");
         const { workflowId } = ctx.params as { workflowId: string };
         const input = parseDraftClaimBody(ctx.body);
+        assertTaskWorkflowTestOracleAllowed(deps);
         return { claim: service.draftClaim(workflowId, input) };
       },
     },
@@ -840,6 +889,7 @@ export function createFridayTaskWorkflowRoutes(
           claimId: string;
         };
         const input = parseAttachEvidenceRefBody(ctx.body);
+        assertTaskWorkflowTestOracleAllowed(deps);
         return service.attachEvidenceRef(workflowId, claimId, input);
       },
     },
@@ -870,6 +920,7 @@ export function createFridayTaskWorkflowRoutes(
           claimId: string;
         };
         const input = parseVerifyClaimBody(ctx.body);
+        assertTaskWorkflowTestOracleAllowed(deps);
         return { claim: service.verifyClaim(workflowId, claimId, input) };
       },
     },
@@ -886,6 +937,7 @@ export function createFridayTaskWorkflowRoutes(
           claimId: string;
         };
         const input = parseBlockClaimBody(ctx.body);
+        assertTaskWorkflowTestOracleAllowed(deps);
         return { claim: service.blockClaim(workflowId, claimId, input) };
       },
     },
@@ -898,6 +950,7 @@ export function createFridayTaskWorkflowRoutes(
         const service = requireService(deps);
         assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.closeout");
         const { workflowId } = ctx.params as { workflowId: string };
+        assertTaskWorkflowTestOracleAllowed(deps);
         return { receipt: service.closeout(workflowId) };
       },
     },
@@ -911,6 +964,7 @@ export function createFridayTaskWorkflowRoutes(
         assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.lane.executor.open");
         const { workflowId } = ctx.params as { workflowId: string };
         const input = parseOpenExecutorLaneBody(ctx.body);
+        assertTaskWorkflowTestOracleAllowed(deps);
         return { lane: service.openExecutorLane(workflowId, input) };
       },
     },
@@ -924,6 +978,7 @@ export function createFridayTaskWorkflowRoutes(
         assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.lane.verifier.open");
         const { workflowId } = ctx.params as { workflowId: string };
         const input = parseOpenVerifierLaneBody(ctx.body);
+        assertTaskWorkflowTestOracleAllowed(deps);
         return { lane: service.openVerifierLane(workflowId, input) };
       },
     },
@@ -940,6 +995,7 @@ export function createFridayTaskWorkflowRoutes(
           laneId: string;
         };
         const input = parseCompleteLaneBody(ctx.body);
+        assertTaskWorkflowTestOracleAllowed(deps);
         return { lane: service.completeLane(workflowId, laneId, input) };
       },
     },
@@ -956,6 +1012,7 @@ export function createFridayTaskWorkflowRoutes(
           laneId: string;
         };
         const input = parseSubmitVerifierVerdictBody(ctx.body);
+        assertTaskWorkflowTestOracleAllowed(deps);
         return { claim: service.submitVerifierVerdict(workflowId, laneId, input) };
       },
     },
@@ -997,6 +1054,7 @@ export function createFridayTaskWorkflowRoutes(
           laneId: string;
         };
         const input = parseRecordCliHandoffBody(ctx.body);
+        assertTaskWorkflowTestOracleAllowed(deps);
         const handoff = await service.recordCliHandoff(workflowId, laneId, input);
         return { handoff };
       },
@@ -1047,6 +1105,7 @@ export function createFridayTaskWorkflowRoutes(
         assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.channel.command.issue");
         const { workflowId } = ctx.params as { workflowId: string };
         const input = parseIssueChannelCommandBody(ctx.body);
+        assertTaskWorkflowTestOracleAllowed(deps);
         return service.issueChannelCommand(workflowId, input);
       },
     },
@@ -1071,6 +1130,7 @@ export function createFridayTaskWorkflowRoutes(
         assertTaskWorkflowMutationPrincipal(ctx.principal ?? null, "task.workflow.channel.command.confirm");
         const { workflowId } = ctx.params as { workflowId: string };
         const input = parseConfirmChannelCommandBody(ctx.body);
+        assertTaskWorkflowTestOracleAllowed(deps);
         return service.confirmChannelCommand(workflowId, input);
       },
     },

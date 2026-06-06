@@ -125,6 +125,7 @@ describe("Phase 13.5C laneRole='cli' route validation", () => {
     };
     let received: { laneRole?: string } = {};
     const routes = createFridayTaskWorkflowRoutes({
+      allowTestOnlyTaskWorkflowExecution: true,
       service: makeStubServiceWithLanes({
         openExecutorLane: (_workflowId, input) => {
           received = { laneRole: input.laneRole };
@@ -188,6 +189,7 @@ describe("Phase 13.5C laneRole='cli' route validation", () => {
       updatedAt: "2026-05-16T00:00:00.000Z",
     };
     const routes = createFridayTaskWorkflowRoutes({
+      allowTestOnlyTaskWorkflowExecution: true,
       service: makeStubServiceWithLanes({
         openVerifierLane: () => fakeLane,
       }),
