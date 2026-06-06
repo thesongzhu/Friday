@@ -118,6 +118,69 @@ export interface FridayObservabilityRoutesDeps {
     getStatus?(): unknown | Promise<unknown>;
     trigger?(): unknown | Promise<unknown>;
   };
+  /**
+   * Test-oracle only: allow the legacy TypeScript observability alert/SLO
+   * mutations (SLO create/update/delete, alert acknowledge, alert-destination
+   * create/update/delete, alert-rule create/update/delete) in isolated
+   * mock/unit validation. Production/runtime callers must leave this unset so
+   * the observability alert engine stays fail-closed until Rust owns it.
+   */
+  allowTestOnlyObservabilityExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript heartbeat trigger (which runs
+   * an agent run via the heartbeat job) in isolated mock/unit validation.
+   * Production/runtime callers must leave this unset so heartbeat execution
+   * stays fail-closed until Rust owns it.
+   */
+  allowTestOnlyHeartbeatExecution?: boolean;
+}
+
+// ─── Retirement helpers ───
+//
+// The observability alert/SLO mutation surfaces write alert-engine state
+// (SecureStore destinations, alert rules, SLO records, acknowledgements) and
+// the heartbeat trigger runs an agent run; both fail-close by default/live
+// until Rust owns the corresponding entrypoints. The alert test-dispatch route
+// is a separate operator_external_adapter (real Slack/SMTP egress) and is NOT
+// guarded here. Legacy behavior is reachable only through the explicit
+// per-engine test-oracle flags above.
+
+function throwRetiredObservability(
+  code: string,
+  label: string,
+  replacement: string,
+): never {
+  throw new FridayDomainError(
+    code,
+    `${label} is fail-closed in default/live runtime; use the Rust-owned ${replacement} entrypoint.`,
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: `rust_owned_${replacement}_entrypoint_required`,
+      },
+    },
+  );
+}
+
+function assertObservabilityTestOracleAllowed(deps: FridayObservabilityRoutesDeps): void {
+  if (deps.allowTestOnlyObservabilityExecution !== true) {
+    throwRetiredObservability(
+      "TS_RUNTIME_OBSERVABILITY_RETIRED",
+      "TypeScript observability alert/SLO mutation",
+      "observability_alert_engine",
+    );
+  }
+}
+
+function assertHeartbeatTestOracleAllowed(deps: FridayObservabilityRoutesDeps): void {
+  if (deps.allowTestOnlyHeartbeatExecution !== true) {
+    throwRetiredObservability(
+      "TS_RUNTIME_HEARTBEAT_TRIGGER_RETIRED",
+      "TypeScript heartbeat trigger execution",
+      "heartbeat_trigger",
+    );
+  }
 }
 
 // ─── Factory ───
@@ -228,6 +291,7 @@ export function createFridayObservabilityRoutes(
         if (typeof body.target !== "number" || body.target <= 0 || body.target > 100) {
           throw new FridayDomainError("VALIDATION_ERROR", "target must be between 0 and 100", { httpStatus: 400 });
         }
+        assertObservabilityTestOracleAllowed(deps);
         return deps.slos.create(body);
       },
     },
@@ -242,6 +306,7 @@ export function createFridayObservabilityRoutes(
         if (!body || typeof body.etag !== "string") {
           throw new FridayDomainError("VALIDATION_ERROR", "etag is required", { httpStatus: 400 });
         }
+        assertObservabilityTestOracleAllowed(deps);
         return deps.slos.update(sloId, body);
       },
     },
@@ -256,6 +321,7 @@ export function createFridayObservabilityRoutes(
         if (typeof etag !== "string" || etag.trim() === "") {
           throw new FridayDomainError("VALIDATION_ERROR", "etag is required", { httpStatus: 400 });
         }
+        assertObservabilityTestOracleAllowed(deps);
         return deps.slos.delete(sloId, etag);
       },
     },
@@ -291,6 +357,7 @@ export function createFridayObservabilityRoutes(
       async handler(ctx) {
         const { alertId } = ctx.params as { alertId: UUID };
         const body = (ctx.body ?? {}) as FridayAcknowledgeAlertRequest;
+        assertObservabilityTestOracleAllowed(deps);
         return deps.alerts.acknowledge(alertId, body);
       },
     },
@@ -327,6 +394,7 @@ export function createFridayObservabilityRoutes(
       path: "/v1/observability/alert-destinations",
       auth: { public: true },
       async handler(ctx) {
+        assertObservabilityTestOracleAllowed(deps);
         return deps.alertDestinations.create(ctx.body as FridayCreateAlertDestinationRequest);
       },
     },
@@ -337,6 +405,7 @@ export function createFridayObservabilityRoutes(
       auth: { public: true },
       async handler(ctx) {
         const { destinationId } = ctx.params as { destinationId: UUID };
+        assertObservabilityTestOracleAllowed(deps);
         return deps.alertDestinations.update(
           destinationId,
           ctx.body as FridayUpdateAlertDestinationRequest,
@@ -350,6 +419,7 @@ export function createFridayObservabilityRoutes(
       auth: { public: true },
       async handler(ctx) {
         const { destinationId } = ctx.params as { destinationId: UUID };
+        assertObservabilityTestOracleAllowed(deps);
         return deps.alertDestinations.delete(destinationId);
       },
     },
@@ -390,6 +460,7 @@ export function createFridayObservabilityRoutes(
         if (!body.condition) {
           throw new FridayDomainError("VALIDATION_ERROR", "condition is required");
         }
+        assertObservabilityTestOracleAllowed(deps);
         return deps.alertRules.create(body);
       },
     },
@@ -404,6 +475,7 @@ export function createFridayObservabilityRoutes(
         if (!body || typeof body.etag !== "string" || body.etag.trim() === "") {
           throw new FridayDomainError("VALIDATION_ERROR", "etag is required");
         }
+        assertObservabilityTestOracleAllowed(deps);
         return deps.alertRules.update(ruleId, body);
       },
     },
@@ -418,6 +490,7 @@ export function createFridayObservabilityRoutes(
         if (!body || typeof body.etag !== "string" || body.etag.trim() === "") {
           throw new FridayDomainError("VALIDATION_ERROR", "etag is required");
         }
+        assertObservabilityTestOracleAllowed(deps);
         return deps.alertRules.delete(ruleId, body);
       },
     },
@@ -457,6 +530,7 @@ export function createFridayObservabilityRoutes(
             path: "/v1/heartbeat/trigger",
             auth: { public: true } as const,
             async handler() {
+              assertHeartbeatTestOracleAllowed(deps);
               return deps.heartbeat!.trigger!();
             },
           },

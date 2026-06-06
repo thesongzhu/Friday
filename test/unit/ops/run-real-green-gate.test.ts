@@ -5,12 +5,14 @@ import {
   buildSummary,
   isAgentRunStartFailClosed,
   isAutonomySkillLifecycleFailClosed,
+  isObservabilityAlertDestinationCreateFailClosed,
   isWorkflowCatalogCreateFailClosed,
   isWorkflowRunStartFailClosed,
   normalizeLiveProviderMode,
   resolveGateSuiteReportRoot,
   resolveRetiredAgentRunScenarioExclusions,
   resolveRetiredAutonomySkillLifecycleScenarioExclusions,
+  resolveRetiredObservabilityScenarioExclusions,
   resolveRetiredWorkflowCatalogScenarioExclusions,
   resolveRetiredWorkflowRunScenarioExclusions,
   shouldExcludeProviderScenarios,
@@ -181,6 +183,37 @@ describe("run-real-green-gate helpers", () => {
     ]);
   });
 
+  it("detects fail-closed observability alert-destination create retirement from the manifest", () => {
+    expect(isObservabilityAlertDestinationCreateFailClosed({
+      surfaces: [
+        {
+          id: "observability_alert_destinations_create",
+          classification: "fail_closed",
+          executes_product_logic: false,
+        },
+      ],
+    })).toBe(true);
+    expect(isObservabilityAlertDestinationCreateFailClosed({
+      surfaces: [
+        {
+          id: "observability_alert_destinations_create",
+          classification: "ts_runtime_blocker",
+          executes_product_logic: true,
+        },
+      ],
+    })).toBe(false);
+    expect(isObservabilityAlertDestinationCreateFailClosed({ surfaces: [] })).toBe(false);
+  });
+
+  it("excludes the invalid-alert-destination-create RGG scenario while observability alert create is fail-closed", () => {
+    expect(resolveRetiredObservabilityScenarioExclusions(process.cwd())).toEqual([
+      {
+        scenarioId: "l2-observability-alert-destination-create-invalid-fails-closed",
+        reason: "POST /v1/observability/alert-destinations is classified fail_closed in the TS runtime retirement manifest.",
+      },
+    ]);
+  });
+
   it("preserves retired runtime scenario exclusions in the terminal summary", () => {
     const summary = buildSummary({
       runId: "run-1",
@@ -234,8 +267,20 @@ describe("run-real-green-gate helpers", () => {
           reason: "POST /v1/autonomy/skills/:skillId/{shadow,canary,promote,rollback} is classified fail_closed in the TS runtime retirement manifest.",
         },
       ],
+      retiredObservabilityScenarioExclusions: [
+        {
+          scenarioId: "l2-observability-alert-destination-create-invalid-fails-closed",
+          reason: "POST /v1/observability/alert-destinations is classified fail_closed in the TS runtime retirement manifest.",
+        },
+      ],
     });
 
+    expect(summary.retiredObservabilityScenarioExclusions).toEqual([
+      {
+        scenarioId: "l2-observability-alert-destination-create-invalid-fails-closed",
+        reason: "POST /v1/observability/alert-destinations is classified fail_closed in the TS runtime retirement manifest.",
+      },
+    ]);
     expect(summary.retiredWorkflowCatalogScenarioExclusions).toEqual([
       {
         scenarioId: "l3-workflow-browser-authoring",

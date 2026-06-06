@@ -2609,6 +2609,173 @@
       "executes_product_logic": false,
       "proof": "src/api/http/routes/friday-task-workflow-routes.ts fail-closes default/live task.workflows.channel.command.confirm to TS_RUNTIME_TASK_WORKFLOW_RETIRED after the TASK_WORKFLOWS_DISABLED availability check, the bound-principal owner/session/channel check (401), and request-body validation (400), and immediately before the TypeScript task-workflow service mutation; legacy behavior is reachable only through explicit allowTestOnlyTaskWorkflowExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned task-workflow execution entrypoint when available."
+    },
+    {
+      "id": "observability_slos_create",
+      "route": {
+        "method": "POST",
+        "path": "/v1/observability/slos",
+        "operationId": "observability.slos.create"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-observability-routes.ts fail-closes default/live observability.slos.create to TS_RUNTIME_OBSERVABILITY_RETIRED after request-body validation (400) and immediately before the TypeScript observability service mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlyObservabilityExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned observability alert-engine entrypoint when available."
+    },
+    {
+      "id": "observability_slos_update",
+      "route": {
+        "method": "PUT",
+        "path": "/v1/observability/slos/:sloId",
+        "operationId": "observability.slos.update"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-observability-routes.ts fail-closes default/live observability.slos.update to TS_RUNTIME_OBSERVABILITY_RETIRED after request-body validation (400) and immediately before the TypeScript observability service mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlyObservabilityExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned observability alert-engine entrypoint when available."
+    },
+    {
+      "id": "observability_slos_delete",
+      "route": {
+        "method": "DELETE",
+        "path": "/v1/observability/slos/:sloId",
+        "operationId": "observability.slos.delete"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-observability-routes.ts fail-closes default/live observability.slos.delete to TS_RUNTIME_OBSERVABILITY_RETIRED after request-body validation (400) and immediately before the TypeScript observability service mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlyObservabilityExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned observability alert-engine entrypoint when available."
+    },
+    {
+      "id": "observability_alert_rules_create",
+      "route": {
+        "method": "POST",
+        "path": "/v1/observability/alert-rules",
+        "operationId": "observability.alert.rules.create"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-observability-routes.ts fail-closes default/live observability.alert.rules.create to TS_RUNTIME_OBSERVABILITY_RETIRED after request-body validation (422) and immediately before the TypeScript observability service mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlyObservabilityExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned observability alert-engine entrypoint when available."
+    },
+    {
+      "id": "observability_alert_rules_update",
+      "route": {
+        "method": "PUT",
+        "path": "/v1/observability/alert-rules/:ruleId",
+        "operationId": "observability.alert.rules.update"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-observability-routes.ts fail-closes default/live observability.alert.rules.update to TS_RUNTIME_OBSERVABILITY_RETIRED after request-body validation (422) and immediately before the TypeScript observability service mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlyObservabilityExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned observability alert-engine entrypoint when available."
+    },
+    {
+      "id": "observability_alert_rules_delete",
+      "route": {
+        "method": "DELETE",
+        "path": "/v1/observability/alert-rules/:ruleId",
+        "operationId": "observability.alert.rules.delete"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-observability-routes.ts fail-closes default/live observability.alert.rules.delete to TS_RUNTIME_OBSERVABILITY_RETIRED after request-body validation (422) and immediately before the TypeScript observability service mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlyObservabilityExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned observability alert-engine entrypoint when available."
+    },
+    {
+      "id": "observability_alerts_acknowledge",
+      "route": {
+        "method": "POST",
+        "path": "/v1/observability/alerts/:alertId/acknowledge",
+        "operationId": "observability.alerts.acknowledge"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-observability-routes.ts fail-closes default/live observability.alerts.acknowledge to TS_RUNTIME_OBSERVABILITY_RETIRED immediately before the TypeScript observability service mutation (the route performs no route-level body validation); the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlyObservabilityExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned observability alert-engine entrypoint when available."
+    },
+    {
+      "id": "observability_alert_destinations_create",
+      "route": {
+        "method": "POST",
+        "path": "/v1/observability/alert-destinations",
+        "operationId": "observability.alert.destinations.create"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-observability-routes.ts fail-closes default/live observability.alert.destinations.create to TS_RUNTIME_OBSERVABILITY_RETIRED immediately before the TypeScript observability service mutation (the route performs no route-level body validation); the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlyObservabilityExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned observability alert-engine entrypoint when available."
+    },
+    {
+      "id": "observability_alert_destinations_update",
+      "route": {
+        "method": "PATCH",
+        "path": "/v1/observability/alert-destinations/:destinationId",
+        "operationId": "observability.alert.destinations.update"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-observability-routes.ts fail-closes default/live observability.alert.destinations.update to TS_RUNTIME_OBSERVABILITY_RETIRED immediately before the TypeScript observability service mutation (the route performs no route-level body validation); the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlyObservabilityExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned observability alert-engine entrypoint when available."
+    },
+    {
+      "id": "observability_alert_destinations_delete",
+      "route": {
+        "method": "DELETE",
+        "path": "/v1/observability/alert-destinations/:destinationId",
+        "operationId": "observability.alert.destinations.delete"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-observability-routes.ts fail-closes default/live observability.alert.destinations.delete to TS_RUNTIME_OBSERVABILITY_RETIRED immediately before the TypeScript observability service mutation (the route performs no route-level body validation); the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlyObservabilityExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned observability alert-engine entrypoint when available."
+    },
+    {
+      "id": "observability_heartbeat_trigger",
+      "route": {
+        "method": "POST",
+        "path": "/v1/heartbeat/trigger",
+        "operationId": "observability.heartbeat.trigger"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-observability-routes.ts fail-closes default/live observability.heartbeat.trigger to TS_RUNTIME_HEARTBEAT_TRIGGER_RETIRED as the first handler statement, before invoking the TypeScript heartbeat job that runs the agent runtime via executeRun; the route is public/unauthenticated, has no request body, and is only registered when deps.heartbeat.trigger is present; legacy behavior is reachable only through explicit allowTestOnlyHeartbeatExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned heartbeat trigger entrypoint when available."
+    },
+    {
+      "id": "observability_alerts_test_dispatch",
+      "route": {
+        "method": "POST",
+        "path": "/v1/observability/alerts/:alertId/test-dispatch",
+        "operationId": "observability.alerts.test.dispatch"
+      },
+      "classification": "operator_external_adapter",
+      "user_triggerable": true,
+      "trust_boundary": "Operator-triggered external alert egress (Slack webhook / SMTP); a test dispatch send is not completion and carries no runtime execution truth.",
+      "leak_controls": {
+        "raw_private_data_allowed": false,
+        "forbidden": [
+          "raw_transcripts",
+          "secrets",
+          "private_paths",
+          "provider_ids",
+          "channel_ids",
+          "raw_commands",
+          "private_reasoning"
+        ]
+      },
+      "next_action": "Keep operator alert test-dispatch as an external egress adapter and move any resulting runtime/alerting truth into Rust-owned observability surfaces."
     }
   ]
 }

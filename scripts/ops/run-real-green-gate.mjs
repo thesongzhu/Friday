@@ -158,6 +158,17 @@ const AUTONOMY_SKILL_LIFECYCLE_DEPENDENT_SCENARIOS = [
   "l5-phase-06-skill-upgrade-lifecycle",
 ];
 
+// When observability.alert.destinations.create becomes fail_closed in the TS
+// runtime retirement manifest the route returns 503
+// TS_RUNTIME_OBSERVABILITY_RETIRED before the service-side webhook validation,
+// so the invalid-create contract scenario (which POSTs an empty webhookUrl and
+// asserts 400) now sees a fail-closed 503 envelope instead. The substantive
+// evidence still holds (fail-closed, no external send, nothing persisted); only
+// the status digit changed, so the scenario is honestly recorded as excluded.
+const OBSERVABILITY_ALERT_DEPENDENT_SCENARIOS = [
+  "l2-observability-alert-destination-create-invalid-fails-closed",
+];
+
 const CLAUDE_SKILL_TESTS = [
   "test/unit/skills/registry/friday-skill-discovery.test.ts",
   "test/unit/skills/manifest/friday-skill-package-loader.test.ts",
@@ -336,6 +347,26 @@ export function resolveRetiredAutonomySkillLifecycleScenarioExclusions(repoRoot)
   return AUTONOMY_SKILL_LIFECYCLE_DEPENDENT_SCENARIOS.map((scenarioId) => ({
     scenarioId,
     reason: "POST /v1/autonomy/skills/:skillId/{shadow,canary,promote,rollback} is classified fail_closed in the TS runtime retirement manifest.",
+  }));
+}
+
+export function isObservabilityAlertDestinationCreateFailClosed(manifest) {
+  const surfaces = Array.isArray(manifest?.surfaces) ? manifest.surfaces : [];
+  return surfaces.some((surface) =>
+    surface?.id === "observability_alert_destinations_create"
+    && surface?.classification === "fail_closed"
+    && surface?.executes_product_logic === false
+  );
+}
+
+export function resolveRetiredObservabilityScenarioExclusions(repoRoot) {
+  const manifest = readJsonFile(path.join(repoRoot, "docs", "ops", "ts-runtime-retirement-manifest.json"));
+  if (!isObservabilityAlertDestinationCreateFailClosed(manifest)) {
+    return [];
+  }
+  return OBSERVABILITY_ALERT_DEPENDENT_SCENARIOS.map((scenarioId) => ({
+    scenarioId,
+    reason: "POST /v1/observability/alert-destinations is classified fail_closed in the TS runtime retirement manifest.",
   }));
 }
 
@@ -663,6 +694,7 @@ export function buildSummary({
   retiredWorkflowRunScenarioExclusions,
   retiredWorkflowCatalogScenarioExclusions,
   retiredAutonomySkillLifecycleScenarioExclusions,
+  retiredObservabilityScenarioExclusions,
   error,
 }) {
   const summary = {
@@ -685,6 +717,7 @@ export function buildSummary({
     retiredWorkflowRunScenarioExclusions: retiredWorkflowRunScenarioExclusions ?? [],
     retiredWorkflowCatalogScenarioExclusions: retiredWorkflowCatalogScenarioExclusions ?? [],
     retiredAutonomySkillLifecycleScenarioExclusions: retiredAutonomySkillLifecycleScenarioExclusions ?? [],
+    retiredObservabilityScenarioExclusions: retiredObservabilityScenarioExclusions ?? [],
     error: error ?? null,
   };
   summary.gate = {
@@ -722,11 +755,13 @@ async function main() {
   const retiredWorkflowRunScenarioExclusions = resolveRetiredWorkflowRunScenarioExclusions(repoRoot);
   const retiredWorkflowCatalogScenarioExclusions = resolveRetiredWorkflowCatalogScenarioExclusions(repoRoot);
   const retiredAutonomySkillLifecycleScenarioExclusions = resolveRetiredAutonomySkillLifecycleScenarioExclusions(repoRoot);
+  const retiredObservabilityScenarioExclusions = resolveRetiredObservabilityScenarioExclusions(repoRoot);
   const excludedScenarioIds = [
     ...retiredAgentRunScenarioExclusions,
     ...retiredWorkflowRunScenarioExclusions,
     ...retiredWorkflowCatalogScenarioExclusions,
     ...retiredAutonomySkillLifecycleScenarioExclusions,
+    ...retiredObservabilityScenarioExclusions,
   ].map((entry) => entry.scenarioId);
   const runId = createRunId();
   const reportRoot = options.reportRoot
@@ -932,6 +967,7 @@ async function main() {
       retiredWorkflowRunScenarioExclusions,
       retiredWorkflowCatalogScenarioExclusions,
       retiredAutonomySkillLifecycleScenarioExclusions,
+      retiredObservabilityScenarioExclusions,
       error: terminalError,
     });
     flushTerminalArtifacts(reportRoot, summary);
