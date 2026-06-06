@@ -362,6 +362,13 @@ export interface CreateFridayApiRuntimeDeps {
    * media understanding.
    */
   allowTestOnlyMediaUnderstandingExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript fleet satellite remediation
+   * execute mutation (POST /v1/fleet/satellites/:id/remediation/:actionId/execute).
+   * Production/runtime callers must leave this unset so the route fail-closes
+   * until Rust owns fleet remediation.
+   */
+  allowTestOnlyFleetRemediationExecution?: boolean;
   /** Optional: Reflex service for deterministic preference writes before agent runs. */
   reflexService?: FridayReflexService;
   /** Optional deterministic runtime capability getter used by context evidence selection. */

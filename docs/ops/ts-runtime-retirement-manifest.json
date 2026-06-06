@@ -3567,6 +3567,19 @@
       "next_action": "Replace the fail-closed response with the Rust-owned media-understanding doctor entrypoint when available."
     },
     {
+      "id": "fleet_satellite_remediation_execute",
+      "route": {
+        "method": "POST",
+        "path": "/v1/fleet/satellites/:satelliteId/remediation/:actionId/execute",
+        "operationId": "fleet.execute.satellite.remediation"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-fleet-routes.ts fleet.execute.satellite.remediation wires default/live to assertFleetRemediationTestOracleAllowed(deps) AFTER the canonical-approval gate requireFleetRemediationTicket (unapproved -> 403 CANONICAL_APPROVAL_REQUIRED/DENIED) and IMMEDIATELY BEFORE deps.fleetService.executeSatelliteRemediationAction. 503 TS_RUNTIME_FLEET_REMEDIATION_RETIRED (classification fail_closed, replacement rust_owned_fleet_remediation_entrypoint_required). The mutation performs non-destructive local SQLite remediation status updates (requeue/expire leases) — a user-triggerable mutation, no third-party egress, so fail_closed not operator_external_adapter; GET fleet reads stay compat_shim. executes_product_logic:false: no remediation runs in default/live. executeSatelliteRemediationAction has exactly ONE user-triggerable call site (this route — verified by grep; the full-e2e + closure fleet steps are GET reads, they do NOT POST remediation), so legacy behavior is reachable only through explicit allowTestOnlyFleetRemediationExecution test-oracle wiring (threaded CreateFridayApiRuntimeDeps -> inline createFridayFleetRoutes).",
+      "next_action": "Replace the fail-closed response with the Rust-owned fleet remediation entrypoint when available."
+    },
+    {
       "id": "realtime_subscribe_read",
       "route": {
         "method": "POST",
