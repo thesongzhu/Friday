@@ -3253,7 +3253,14 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   // Register deterministic pipeline routes (optional — only if service is provided)
   if (deps.deterministicPipeline) {
-    for (const route of createFridayDeterministicPipelineRoutes(deps.deterministicPipeline)) {
+    for (const route of createFridayDeterministicPipelineRoutes({
+      ...deps.deterministicPipeline,
+      allowTestOnlyRulesPipelineExecution: deps.allowTestOnlyRulesPipelineExecution,
+      allowTestOnlyNodeRunnerExecution: deps.allowTestOnlyNodeRunnerExecution,
+      allowTestOnlyAcceptancePipelineExecution: deps.allowTestOnlyAcceptancePipelineExecution,
+      allowTestOnlyRetryPipelineExecution: deps.allowTestOnlyRetryPipelineExecution,
+      allowTestOnlyPlaybookPipelineExecution: deps.allowTestOnlyPlaybookPipelineExecution,
+    })) {
       routes.register(route);
     }
   }

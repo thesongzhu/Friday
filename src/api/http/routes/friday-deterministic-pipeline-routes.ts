@@ -80,6 +80,95 @@ export interface FridayDeterministicPipelineRoutesDeps {
     rollbackPlaybook: (playbookId: string, body: unknown) => Promise<unknown>;
     getScoreHistory: (playbookId: string, query: Record<string, unknown>) => unknown;
   };
+
+  // ─ Test-oracle flags ─
+  // Each flag opts isolated tests into the legacy TypeScript pipeline behavior
+  // for one sub-family. Default/live runtime must leave them unset so the
+  // deterministic-pipeline mutation/engine surfaces stay fail-closed until Rust
+  // owns the corresponding entrypoints.
+  allowTestOnlyRulesPipelineExecution?: boolean;
+  allowTestOnlyNodeRunnerExecution?: boolean;
+  allowTestOnlyAcceptancePipelineExecution?: boolean;
+  allowTestOnlyRetryPipelineExecution?: boolean;
+  allowTestOnlyPlaybookPipelineExecution?: boolean;
+}
+
+// ─── Retirement helpers ───
+//
+// The deterministic-pipeline mutation and engine-execution surfaces (rule
+// bundle create/update + evaluate/simulate, node-runner execute, acceptance
+// run + test create/update/delete, retry policy create/update/delete +
+// classify/decide/escalation acknowledge, playbook select/promote/rollback)
+// run TypeScript product logic or write state. They fail-close by default/live
+// until Rust owns the corresponding entrypoints; legacy behavior is reachable
+// only through the explicit per-sub-family test-oracle flags above.
+
+function throwRetiredDeterministicPipeline(
+  code: string,
+  label: string,
+  replacement: string,
+): never {
+  throw new FridayDomainError(
+    code,
+    `${label} is fail-closed in default/live runtime; use the Rust-owned ${replacement} entrypoint.`,
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: `rust_owned_${replacement}_entrypoint_required`,
+      },
+    },
+  );
+}
+
+function assertRulesPipelineTestOracleAllowed(deps: FridayDeterministicPipelineRoutesDeps): void {
+  if (deps.allowTestOnlyRulesPipelineExecution !== true) {
+    throwRetiredDeterministicPipeline(
+      "TS_RUNTIME_RULES_PIPELINE_RETIRED",
+      "TypeScript rules pipeline execution",
+      "deterministic_rules_pipeline",
+    );
+  }
+}
+
+function assertNodeRunnerTestOracleAllowed(deps: FridayDeterministicPipelineRoutesDeps): void {
+  if (deps.allowTestOnlyNodeRunnerExecution !== true) {
+    throwRetiredDeterministicPipeline(
+      "TS_RUNTIME_NODE_RUNNER_EXECUTION_RETIRED",
+      "TypeScript node-runner execution",
+      "deterministic_node_runner",
+    );
+  }
+}
+
+function assertAcceptancePipelineTestOracleAllowed(deps: FridayDeterministicPipelineRoutesDeps): void {
+  if (deps.allowTestOnlyAcceptancePipelineExecution !== true) {
+    throwRetiredDeterministicPipeline(
+      "TS_RUNTIME_ACCEPTANCE_PIPELINE_RETIRED",
+      "TypeScript acceptance pipeline execution",
+      "deterministic_acceptance_pipeline",
+    );
+  }
+}
+
+function assertRetryPipelineTestOracleAllowed(deps: FridayDeterministicPipelineRoutesDeps): void {
+  if (deps.allowTestOnlyRetryPipelineExecution !== true) {
+    throwRetiredDeterministicPipeline(
+      "TS_RUNTIME_RETRY_PIPELINE_RETIRED",
+      "TypeScript retry pipeline execution",
+      "deterministic_retry_pipeline",
+    );
+  }
+}
+
+function assertPlaybookPipelineTestOracleAllowed(deps: FridayDeterministicPipelineRoutesDeps): void {
+  if (deps.allowTestOnlyPlaybookPipelineExecution !== true) {
+    throwRetiredDeterministicPipeline(
+      "TS_RUNTIME_PLAYBOOK_PIPELINE_RETIRED",
+      "TypeScript playbook pipeline execution",
+      "deterministic_playbook_pipeline",
+    );
+  }
 }
 
 // ─── Route Factory ───
@@ -127,6 +216,7 @@ export function createFridayDeterministicPipelineRoutes(
             { httpStatus: 400 },
           );
         }
+        assertRulesPipelineTestOracleAllowed(deps);
         return deps.rules.createBundle(body);
       },
     },
@@ -145,6 +235,7 @@ export function createFridayDeterministicPipelineRoutes(
             { httpStatus: 400 },
           );
         }
+        assertRulesPipelineTestOracleAllowed(deps);
         return deps.rules.updateBundle(bundleId, body);
       },
     },
@@ -184,6 +275,7 @@ export function createFridayDeterministicPipelineRoutes(
             { httpStatus: 400 },
           );
         }
+        assertRulesPipelineTestOracleAllowed(deps);
         return deps.rules.evaluateRules(body);
       },
     },
@@ -202,6 +294,7 @@ export function createFridayDeterministicPipelineRoutes(
             { httpStatus: 400 },
           );
         }
+        assertRulesPipelineTestOracleAllowed(deps);
         return deps.rules.simulateRules(body);
       },
     },
@@ -245,6 +338,7 @@ export function createFridayDeterministicPipelineRoutes(
             { httpStatus: 400 },
           );
         }
+        assertNodeRunnerTestOracleAllowed(deps);
         return deps.nodeRunner.executeNode(body);
       },
     },
@@ -288,6 +382,7 @@ export function createFridayDeterministicPipelineRoutes(
             { httpStatus: 400 },
           );
         }
+        assertAcceptancePipelineTestOracleAllowed(deps);
         return deps.acceptance.runChecks(body);
       },
     },
@@ -359,6 +454,7 @@ export function createFridayDeterministicPipelineRoutes(
             { httpStatus: 400 },
           );
         }
+        assertAcceptancePipelineTestOracleAllowed(deps);
         return deps.acceptance.createTest(body);
       },
     },
@@ -378,6 +474,7 @@ export function createFridayDeterministicPipelineRoutes(
           );
         }
         const { testId } = ctx.params as { testId: string };
+        assertAcceptancePipelineTestOracleAllowed(deps);
         return deps.acceptance.updateTest(testId, body);
       },
     },
@@ -397,6 +494,7 @@ export function createFridayDeterministicPipelineRoutes(
           );
         }
         const { testId } = ctx.params as { testId: string };
+        assertAcceptancePipelineTestOracleAllowed(deps);
         return deps.acceptance.deleteTest(testId, body);
       },
     },
@@ -468,6 +566,7 @@ export function createFridayDeterministicPipelineRoutes(
             { httpStatus: 400 },
           );
         }
+        assertRetryPipelineTestOracleAllowed(deps);
         return deps.retry.createPolicy(body);
       },
     },
@@ -487,6 +586,7 @@ export function createFridayDeterministicPipelineRoutes(
           );
         }
         const { policyId } = ctx.params as { policyId: string };
+        assertRetryPipelineTestOracleAllowed(deps);
         return deps.retry.updatePolicy(policyId, body);
       },
     },
@@ -506,6 +606,7 @@ export function createFridayDeterministicPipelineRoutes(
           );
         }
         const { policyId } = ctx.params as { policyId: string };
+        assertRetryPipelineTestOracleAllowed(deps);
         return deps.retry.deletePolicy(policyId, body);
       },
     },
@@ -524,6 +625,7 @@ export function createFridayDeterministicPipelineRoutes(
             { httpStatus: 400 },
           );
         }
+        assertRetryPipelineTestOracleAllowed(deps);
         return deps.retry.classifyFailure(body);
       },
     },
@@ -542,6 +644,7 @@ export function createFridayDeterministicPipelineRoutes(
             { httpStatus: 400 },
           );
         }
+        assertRetryPipelineTestOracleAllowed(deps);
         return deps.retry.decideRetry(body);
       },
     },
@@ -594,6 +697,7 @@ export function createFridayDeterministicPipelineRoutes(
       auth: { public: true },
       async handler(ctx) {
         const { escalationId } = ctx.params as { escalationId: string };
+        assertRetryPipelineTestOracleAllowed(deps);
         return deps.retry.acknowledgeEscalation(escalationId, ctx.body);
       },
     },
@@ -647,6 +751,7 @@ export function createFridayDeterministicPipelineRoutes(
             { httpStatus: 400 },
           );
         }
+        assertPlaybookPipelineTestOracleAllowed(deps);
         return deps.playbook.selectPlaybook(body);
       },
     },
@@ -668,6 +773,7 @@ export function createFridayDeterministicPipelineRoutes(
       auth: { public: true },
       async handler(ctx) {
         const { candidateId } = ctx.params as { candidateId: string };
+        assertPlaybookPipelineTestOracleAllowed(deps);
         return deps.playbook.promoteCandidate(candidateId, ctx.body);
       },
     },
@@ -687,6 +793,7 @@ export function createFridayDeterministicPipelineRoutes(
             { httpStatus: 400 },
           );
         }
+        assertPlaybookPipelineTestOracleAllowed(deps);
         return deps.playbook.rollbackPlaybook(playbookId, body);
       },
     },

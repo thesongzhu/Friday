@@ -248,6 +248,18 @@ export interface CreateFridayApiRuntimeDeps {
    * fail-closed until Rust owns workflow bundle import truth.
    */
   allowTestOnlyWorkflowBundleImportExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript deterministic-pipeline
+   * surfaces (rules, node-runner, acceptance, retry, playbook) in isolated
+   * mock/unit validation. Production/runtime callers must leave these unset so
+   * the corresponding mutation/engine-execution routes stay fail-closed until
+   * Rust owns the deterministic-pipeline entrypoints.
+   */
+  allowTestOnlyRulesPipelineExecution?: boolean;
+  allowTestOnlyNodeRunnerExecution?: boolean;
+  allowTestOnlyAcceptancePipelineExecution?: boolean;
+  allowTestOnlyRetryPipelineExecution?: boolean;
+  allowTestOnlyPlaybookPipelineExecution?: boolean;
   /** Optional: user/project prompt-guidance provider for fallback workflow runtime creation. */
   userRulesContextProvider?: CreateFridayWorkflowRuntimeDeps["userRulesContextProvider"];
   /** Optional: reuse hub's session service instead of creating a new one. */
