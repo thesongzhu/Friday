@@ -252,6 +252,78 @@ export interface FridayAutonomyRoutesDeps {
     getStatus: (channelKind: string) => FridayChannelAdapterUpgradeActionResponse["status"];
     getEvidence?: (input: { channelKind: string }) => FridayChannelAdapterUpgradeActionResponse["evidence"] | null;
   };
+  allowTestOnlyAutonomyLifecycleExecution?: boolean;
+  allowTestOnlyStandingAgendaExecution?: boolean;
+  allowTestOnlyAutonomyPolicyMutation?: boolean;
+  allowTestOnlyCapabilityAcquisitionExecution?: boolean;
+}
+
+// ─── Retirement helpers ───
+//
+// The autonomy capability-acquisition, autonomy-policy mutation,
+// standing-agenda, and subject upgrade-lifecycle (workflow/skill/plugin/
+// provider/mcp-server/channel-adapter shadow/canary/promote/rollback +
+// plugin review-enable) surfaces run TypeScript product logic or write
+// autonomy state. They fail-close by default/live until Rust owns the
+// corresponding entrypoints; legacy behavior is reachable only through the
+// explicit per-group test-oracle flags above.
+
+function throwRetiredAutonomyRuntime(
+  code: string,
+  label: string,
+  replacement: string,
+): never {
+  throw new FridayDomainError(
+    code,
+    `${label} is fail-closed in default/live runtime; use the Rust-owned ${replacement} entrypoint.`,
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: `rust_owned_${replacement}_entrypoint_required`,
+      },
+    },
+  );
+}
+
+function assertAutonomyLifecycleTestOracleAllowed(deps: FridayAutonomyRoutesDeps): void {
+  if (deps.allowTestOnlyAutonomyLifecycleExecution !== true) {
+    throwRetiredAutonomyRuntime(
+      "TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED",
+      "TypeScript autonomy subject upgrade-lifecycle execution",
+      "autonomy_subject_upgrade_lifecycle",
+    );
+  }
+}
+
+function assertStandingAgendaTestOracleAllowed(deps: FridayAutonomyRoutesDeps): void {
+  if (deps.allowTestOnlyStandingAgendaExecution !== true) {
+    throwRetiredAutonomyRuntime(
+      "TS_RUNTIME_STANDING_AGENDA_RETIRED",
+      "TypeScript standing-agenda execution",
+      "autonomy_standing_agenda",
+    );
+  }
+}
+
+function assertAutonomyPolicyMutationTestOracleAllowed(deps: FridayAutonomyRoutesDeps): void {
+  if (deps.allowTestOnlyAutonomyPolicyMutation !== true) {
+    throwRetiredAutonomyRuntime(
+      "TS_RUNTIME_AUTONOMY_POLICY_MUTATION_RETIRED",
+      "TypeScript autonomy policy mutation",
+      "autonomy_policy_mutation",
+    );
+  }
+}
+
+function assertCapabilityAcquisitionTestOracleAllowed(deps: FridayAutonomyRoutesDeps): void {
+  if (deps.allowTestOnlyCapabilityAcquisitionExecution !== true) {
+    throwRetiredAutonomyRuntime(
+      "TS_RUNTIME_CAPABILITY_ACQUISITION_RETIRED",
+      "TypeScript capability-acquisition execution",
+      "capability_acquisition",
+    );
+  }
 }
 
 function buildSkillUpgradeActionPayload(
@@ -714,6 +786,7 @@ export function createFridayAutonomyRoutes(
         const body = (ctx.body ?? {}) as Record<string, unknown>;
         const goal = requireNonEmptyString(body.goal, "goal");
         const userId = requireUserId(ctx.principal, body);
+        assertCapabilityAcquisitionTestOracleAllowed(deps);
         const run = await deps.acquisitionService.startRun({
           userId,
           goal,
@@ -736,6 +809,7 @@ export function createFridayAutonomyRoutes(
         }
         requireUserId(ctx.principal);
         const { id } = ctx.params as { id: string };
+        assertCapabilityAcquisitionTestOracleAllowed(deps);
         return { run: await deps.acquisitionService.approveRun(id) };
       },
     },
@@ -750,6 +824,7 @@ export function createFridayAutonomyRoutes(
         }
         requireUserId(ctx.principal);
         const { id } = ctx.params as { id: string };
+        assertCapabilityAcquisitionTestOracleAllowed(deps);
         return { run: deps.acquisitionService.cancelRun(id) };
       },
     },
@@ -776,6 +851,7 @@ export function createFridayAutonomyRoutes(
         }
         requireUserId(ctx.principal);
         const body = (ctx.body ?? {}) as FridayPatchAutonomyPolicyRequest;
+        assertAutonomyPolicyMutationTestOracleAllowed(deps);
         return { policy: deps.policyService.updatePolicy(body) };
       },
     },
@@ -810,10 +886,12 @@ export function createFridayAutonomyRoutes(
         }
         const body = (ctx.body ?? {}) as FridayCreateStandingGoalRequest;
         const userId = requireUserId(ctx.principal, body as unknown as Record<string, unknown>);
+        const objective = requireNonEmptyString(body.objective, "objective");
+        assertStandingAgendaTestOracleAllowed(deps);
         const result = await deps.standingAgendaService.createStandingGoal({
           ...body,
           userId,
-          objective: requireNonEmptyString(body.objective, "objective"),
+          objective,
         });
         return { goal: result.goal, agendaItem: result.agendaItem };
       },
@@ -830,6 +908,7 @@ export function createFridayAutonomyRoutes(
         requireUserId(ctx.principal);
         const { id } = ctx.params as { id: string };
         const body = (ctx.body ?? {}) as FridayPatchStandingGoalRequest;
+        assertStandingAgendaTestOracleAllowed(deps);
         return { goal: deps.standingAgendaService.updateStandingGoal(id, body) };
       },
     },
@@ -864,6 +943,7 @@ export function createFridayAutonomyRoutes(
         }
         const userId = requireUserId(ctx.principal);
         const { id } = ctx.params as { id: string };
+        assertStandingAgendaTestOracleAllowed(deps);
         return { item: deps.standingAgendaService.approveAgendaItem({ agendaItemId: id, userId }) };
       },
     },
@@ -879,6 +959,7 @@ export function createFridayAutonomyRoutes(
         }
         const userId = requireUserId(ctx.principal);
         const { id } = ctx.params as { id: string };
+        assertStandingAgendaTestOracleAllowed(deps);
         return { run: await deps.standingAgendaService.runAgendaItem({ agendaItemId: id, userId }) };
       },
     },
@@ -899,6 +980,7 @@ export function createFridayAutonomyRoutes(
             "shadow",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           const workflow = await deps.workflowActions!.registerShadow({
             workflowId,
             workflowVersionId: requireNonEmptyString(body.workflowVersionId, "workflowVersionId"),
@@ -931,6 +1013,7 @@ export function createFridayAutonomyRoutes(
             "canary",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           const workflow = await deps.workflowActions!.recordCanary({
             workflowId,
             success: body.success,
@@ -959,6 +1042,7 @@ export function createFridayAutonomyRoutes(
             "promote",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           const workflow = await deps.workflowActions!.promote({
             workflowId,
             versionNumber: requirePositiveInteger(body.versionNumber, "versionNumber"),
@@ -986,6 +1070,7 @@ export function createFridayAutonomyRoutes(
             "rollback",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           const workflow = await deps.workflowActions!.rollback({
             workflowId,
             targetVersionNumber: requirePositiveInteger(body.targetVersionNumber, "targetVersionNumber"),
@@ -1025,6 +1110,7 @@ export function createFridayAutonomyRoutes(
             "shadow",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           const skill = await deps.skillActions!.registerShadow({
             skillId,
             candidateId,
@@ -1069,6 +1155,7 @@ export function createFridayAutonomyRoutes(
             "canary",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           const skill = await deps.skillActions!.recordCanary({
             skillId,
             candidateId,
@@ -1106,6 +1193,7 @@ export function createFridayAutonomyRoutes(
             "promote",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           const skill = await deps.skillActions!.promote({
             skillId,
             candidateId,
@@ -1142,6 +1230,7 @@ export function createFridayAutonomyRoutes(
             "rollback",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           const skill = await deps.skillActions!.rollback({
             skillId,
             candidateId,
@@ -1182,6 +1271,7 @@ export function createFridayAutonomyRoutes(
           }
           const { pluginId } = ctx.params as { pluginId: string };
           const body = (ctx.body ?? {}) as Record<string, unknown>;
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           const plugin = await deps.pluginActions!.reviewEnable({
             pluginId,
             runtimeVersion: typeof body.runtimeVersion === "string" ? body.runtimeVersion : undefined,
@@ -1212,6 +1302,7 @@ export function createFridayAutonomyRoutes(
             "shadow",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           const plugin = await deps.pluginActions!.registerShadow({
             pluginId,
             shadowVersionId: requireNonEmptyString(body.shadowVersionId, "shadowVersionId"),
@@ -1252,6 +1343,7 @@ export function createFridayAutonomyRoutes(
             "canary",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           const plugin = await deps.pluginActions!.recordCanary({
             pluginId,
             runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
@@ -1284,6 +1376,7 @@ export function createFridayAutonomyRoutes(
             "promote",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           const plugin = await deps.pluginActions!.promote({
             pluginId,
             runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
@@ -1316,6 +1409,7 @@ export function createFridayAutonomyRoutes(
             "rollback",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           const plugin = await deps.pluginActions!.rollback({
             pluginId,
             runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
@@ -1354,6 +1448,7 @@ export function createFridayAutonomyRoutes(
             "shadow",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           const provider = await deps.providerProfileActions!.registerShadow({
             providerId,
             shadowVersionId: requireNonEmptyString(body.shadowVersionId, "shadowVersionId"),
@@ -1396,6 +1491,7 @@ export function createFridayAutonomyRoutes(
             "canary",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           const provider = await deps.providerProfileActions!.recordCanary({
             providerId,
             runtimeVersion,
@@ -1429,6 +1525,7 @@ export function createFridayAutonomyRoutes(
             "promote",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           const provider = await deps.providerProfileActions!.promote({
             providerId,
             runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
@@ -1461,6 +1558,7 @@ export function createFridayAutonomyRoutes(
             "rollback",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           const provider = await deps.providerProfileActions!.rollback({
             providerId,
             runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
@@ -1499,6 +1597,7 @@ export function createFridayAutonomyRoutes(
             "shadow",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           await deps.mcpServerActions!.registerShadow({
             serverId,
             shadowVersionId: requireNonEmptyString(body.shadowVersionId, "shadowVersionId"),
@@ -1537,6 +1636,7 @@ export function createFridayAutonomyRoutes(
             "canary",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           await deps.mcpServerActions!.recordCanary({
             serverId,
             runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
@@ -1569,6 +1669,7 @@ export function createFridayAutonomyRoutes(
             "promote",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           await deps.mcpServerActions!.promote({
             serverId,
             runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
@@ -1601,6 +1702,7 @@ export function createFridayAutonomyRoutes(
             "rollback",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           await deps.mcpServerActions!.rollback({
             serverId,
             runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
@@ -1639,6 +1741,7 @@ export function createFridayAutonomyRoutes(
             "shadow",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           await deps.channelAdapterActions!.registerShadow({
             channelKind,
             shadowVersionId: requireNonEmptyString(body.shadowVersionId, "shadowVersionId"),
@@ -1679,6 +1782,7 @@ export function createFridayAutonomyRoutes(
             "canary",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           await deps.channelAdapterActions!.recordCanary({
             channelKind,
             runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
@@ -1711,6 +1815,7 @@ export function createFridayAutonomyRoutes(
             "promote",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           await deps.channelAdapterActions!.promote({
             channelKind,
             runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),
@@ -1743,6 +1848,7 @@ export function createFridayAutonomyRoutes(
             "rollback",
             readCanonicalApproval(body.canonicalApproval),
           );
+          assertAutonomyLifecycleTestOracleAllowed(deps);
           await deps.channelAdapterActions!.rollback({
             channelKind,
             runtimeVersion: requireNonEmptyString(body.runtimeVersion, "runtimeVersion"),

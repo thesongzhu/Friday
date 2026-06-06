@@ -1872,6 +1872,14 @@ export interface FridayHubConfig {
   allowTestOnlyAgentRunStartExecution?: boolean;
   /** Test-oracle only; production hub creation must leave agent run controls fail-closed. */
   allowTestOnlyAgentRunControlExecution?: boolean;
+  /** Test-oracle only; production hub creation must leave autonomy subject upgrade-lifecycle fail-closed. */
+  allowTestOnlyAutonomyLifecycleExecution?: boolean;
+  /** Test-oracle only; production hub creation must leave standing-goal/agenda mutations fail-closed. */
+  allowTestOnlyStandingAgendaExecution?: boolean;
+  /** Test-oracle only; production hub creation must leave autonomy-policy patch fail-closed. */
+  allowTestOnlyAutonomyPolicyMutation?: boolean;
+  /** Test-oracle only; production hub creation must leave capability-acquisition runs fail-closed. */
+  allowTestOnlyCapabilityAcquisitionExecution?: boolean;
 }
 
 // ─── Resolved Hub Config ───

@@ -675,6 +675,7 @@ describe("FridayHub Bootstrap Integration", () => {
       skillDirs: [bundledSkillsDir, managedSkillsDir],
       tokenSecret: PHASE32_TOKEN_SECRET,
       allowTestOnlySkillRunExecution: true,
+      allowTestOnlyAutonomyLifecycleExecution: true,
     });
     hubs.push(hub);
 
@@ -887,6 +888,7 @@ describe("FridayHub Bootstrap Integration", () => {
         stateDir,
         skillDirs: [bundledSkillsDir, managedSkillsDir],
         tokenSecret: PHASE32_TOKEN_SECRET,
+        allowTestOnlyAutonomyLifecycleExecution: true,
       });
       hubs.push(hub);
 
@@ -1004,6 +1006,7 @@ describe("FridayHub Bootstrap Integration", () => {
         stateDir,
         skillDirs: [bundledSkillsDir, managedSkillsDir],
         tokenSecret: PHASE32_TOKEN_SECRET,
+        allowTestOnlyAutonomyLifecycleExecution: true,
       });
       hubs.push(restarted);
       const restartedProvider = await restarted.providerService.getProvider(provider.id);

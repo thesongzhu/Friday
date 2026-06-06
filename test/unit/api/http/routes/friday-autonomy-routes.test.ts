@@ -276,6 +276,7 @@ function createRoutes() {
     tags: [],
   }));
   const routes = createFridayAutonomyRoutes({
+    allowTestOnlyAutonomyLifecycleExecution: true,
     canonicalMutationGate: createFridayMutatingActionGate({
       nowIso: () => "2026-05-07T18:00:00.000Z",
       ticketIdGenerator: () => "ticket-1",
@@ -327,6 +328,7 @@ function createProviderRoutes() {
     },
   }));
   const routes = createFridayAutonomyRoutes({
+    allowTestOnlyAutonomyLifecycleExecution: true,
     listUpgradeStatus: () => ({ items: [] }),
     providerProfileActions: {
       registerShadow,
@@ -366,6 +368,7 @@ function createMcpRoutes() {
   const registerShadow = vi.fn(async () => undefined);
   const recordCanary = vi.fn(async () => undefined);
   const routes = createFridayAutonomyRoutes({
+    allowTestOnlyAutonomyLifecycleExecution: true,
     listUpgradeStatus: () => ({ items: [] }),
     mcpServerActions: {
       registerShadow,
@@ -455,6 +458,7 @@ function createPluginRoutes() {
     compatibilityStatus: "compatible",
   }));
   const routes = createFridayAutonomyRoutes({
+    allowTestOnlyAutonomyLifecycleExecution: true,
     listUpgradeStatus: () => ({ items: [] }),
     pluginActions: {
       registerShadow,
@@ -491,6 +495,7 @@ function createChannelRoutes() {
   const registerShadow = vi.fn(async () => undefined);
   const recordCanary = vi.fn(async () => undefined);
   const routes = createFridayAutonomyRoutes({
+    allowTestOnlyAutonomyLifecycleExecution: true,
     listUpgradeStatus: () => ({ items: [] }),
     channelAdapterActions: {
       registerShadow,

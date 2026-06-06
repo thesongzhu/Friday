@@ -141,6 +141,7 @@ function createRuntimeDeps(input: {
     invokeSkill: async () => ({}),
     pluginService: input.pluginService,
     serverVersion: "runtime-v1",
+    allowTestOnlyAutonomyLifecycleExecution: true,
   };
 }
 
