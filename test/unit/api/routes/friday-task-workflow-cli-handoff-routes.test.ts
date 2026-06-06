@@ -179,6 +179,7 @@ describe("Phase 13.5C CLI handoff record route behavior", () => {
       | { workflowId: string; laneId: string; backendId: string }
       | null = null;
     const routes = createFridayTaskWorkflowRoutes({
+      allowTestOnlyTaskWorkflowExecution: true,
       service: makeStubService({
         recordCliHandoff: async (workflowId, laneId, input) => {
           received = {
