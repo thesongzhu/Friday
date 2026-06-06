@@ -30,6 +30,40 @@ type Route = FridayRouteDefinition<unknown, Record<string, string>, unknown, unk
 
 export interface FridayCloudWorkerSetupRoutesDeps {
   readonly setupService: FridayCloudWorkerSetupService;
+  /**
+   * Test-oracle only: allow the legacy TypeScript cloud-worker setup compute
+   * (DNS acceptance validation, deployment package generation, teardown receipt
+   * issuance) in isolated mock/unit validation. Production/runtime callers must
+   * leave this unset so these surfaces fail-close until Rust owns the cloud-worker
+   * setup engine. The GET catalog/preview/doctor reads are never gated.
+   */
+  readonly allowTestOnlyCloudWorkerSetupExecution?: boolean;
+}
+
+// ─── Retirement helper ───
+//
+// The cloud-worker setup POST surfaces (DNS validate, package generate, teardown
+// receipt) run user-triggerable TS-runtime product logic that produces the
+// cloud-worker setup deliverables (acceptance verdicts, deployment bundles,
+// teardown receipts). They fail-close by default/live until Rust owns the
+// cloud-worker setup entrypoint; legacy behavior is reachable only through the
+// explicit allowTestOnlyCloudWorkerSetupExecution test-oracle flag. The GET
+// catalog/preview/doctor reads stay compat_shim and are NOT gated.
+
+function assertCloudWorkerSetupTestOracleAllowed(deps: FridayCloudWorkerSetupRoutesDeps): void {
+  if (deps.allowTestOnlyCloudWorkerSetupExecution !== true) {
+    throw new FridayDomainError(
+      "TS_RUNTIME_CLOUD_WORKER_SETUP_RETIRED",
+      "TypeScript cloud-worker setup is fail-closed in default/live runtime; use the Rust-owned cloud-worker setup entrypoint.",
+      {
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_cloud_worker_setup_entrypoint_required",
+        },
+      },
+    );
+  }
 }
 
 function asString(value: unknown): string {
@@ -136,6 +170,7 @@ export function createFridayCloudWorkerSetupRoutes(
         const dnsProviderId = asString(body.dnsProviderId);
         const dnsName = asString(body.dnsName);
         const rootDomain = asString(body.rootDomain);
+        assertCloudWorkerSetupTestOracleAllowed(deps);
         return deps.setupService.dnsValidator.validate({
           dnsProviderId,
           dnsName,
@@ -162,6 +197,9 @@ export function createFridayCloudWorkerSetupRoutes(
           dnsProviderId: asDnsProviderId(body.dnsProviderId),
           ownerRunId: asString(body.ownerRunId),
         };
+        // Guard ABOVE the try: the catch below maps any thrown FridayDomainError
+        // to a 400 VALIDATION_ERROR, which would otherwise swallow this 503.
+        assertCloudWorkerSetupTestOracleAllowed(deps);
         try {
           return deps.setupService.packageService.generate(input);
         } catch (error) {
@@ -192,6 +230,7 @@ export function createFridayCloudWorkerSetupRoutes(
           typeof body.satelliteId === "string" && body.satelliteId.trim().length > 0
             ? body.satelliteId.trim()
             : undefined;
+        assertCloudWorkerSetupTestOracleAllowed(deps);
         return deps.setupService.teardown.issueReceipt({
           providerId,
           ownerRunId,

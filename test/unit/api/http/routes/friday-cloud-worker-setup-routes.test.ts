@@ -17,11 +17,22 @@ const NOW = "2026-05-17T20:00:00.000Z";
 const setupService = createFridayCloudWorkerSetupService({ nowIso: () => NOW });
 
 function makeDeps(): FridayCloudWorkerSetupRoutesDeps {
-  return { setupService };
+  // Test-oracle: exercise the real TypeScript logic. Default/live wiring leaves
+  // this unset so the mutation surfaces fail-close (see the TS-runtime-retirement
+  // regression block below).
+  return { setupService, allowTestOnlyCloudWorkerSetupExecution: true };
 }
 
 function findRoute(operationId: string) {
   const routes = createFridayCloudWorkerSetupRoutes(makeDeps());
+  const route = routes.find((r) => r.operationId === operationId);
+  if (!route) throw new Error(`route not found: ${operationId}`);
+  return route;
+}
+
+function retiredFindRoute(operationId: string) {
+  // No allowTestOnlyCloudWorkerSetupExecution → default/live fail-closed.
+  const routes = createFridayCloudWorkerSetupRoutes({ setupService });
   const route = routes.find((r) => r.operationId === operationId);
   if (!route) throw new Error(`route not found: ${operationId}`);
   return route;
@@ -157,5 +168,48 @@ describe("Phase 17A — cloud-worker setup routes", () => {
     })) as { proofTier: string; liveTeardownStatus: string };
     expect(result.proofTier).toBe("fixture");
     expect(result.liveTeardownStatus).toBe("blocked_by_env");
+  });
+
+  describe("TS runtime retirement (allowTestOnlyCloudWorkerSetupExecution unset)", () => {
+    const cases: Array<{ op: string; body: Record<string, unknown> }> = [
+      { op: "cloud.workers.dns.validate", body: { dnsProviderId: "dnspod", dnsName: "worker.friday-test.example.com", rootDomain: "example.com" } },
+      { op: "cloud.workers.package.generate", body: { providerId: "aliyun-ecs", httpsHost: "https://worker.friday-test.example.com", dnsName: "worker.friday-test.example.com", dnsProviderId: "dnspod", ownerRunId: "owner-run-1" } },
+      { op: "cloud.workers.teardown.receipt", body: { providerId: "aliyun-ecs", ownerRunId: "r", resourceTag: "t" } },
+    ];
+
+    for (const { op, body } of cases) {
+      it(`fail-closes ${op} with 503`, async () => {
+        await expect(retiredFindRoute(op).handler(boundCtx({ body }))).rejects.toMatchObject({
+          code: "TS_RUNTIME_CLOUD_WORKER_SETUP_RETIRED",
+          httpStatus: 503,
+        } satisfies Partial<FridayDomainError>);
+      });
+    }
+
+    it("package.generate fail-close is a real 503 (NOT swallowed to 400 by the wrapping catch — guard sits above the try)", async () => {
+      await expect(retiredFindRoute("cloud.workers.package.generate").handler(boundCtx({
+        body: { providerId: "aliyun-ecs", httpsHost: "https://worker.friday-test.example.com", dnsName: "worker.friday-test.example.com", dnsProviderId: "dnspod", ownerRunId: "owner-run-1" },
+      }))).rejects.toMatchObject({ code: "TS_RUNTIME_CLOUD_WORKER_SETUP_RETIRED", httpStatus: 503 } satisfies Partial<FridayDomainError>);
+    });
+
+    it("enforces the bound-principal gate BEFORE the retirement guard (synthetic public principal → not 503)", async () => {
+      let caught: unknown;
+      try {
+        await retiredFindRoute("cloud.workers.dns.validate").handler(unauthenticatedCtx({
+          body: { dnsProviderId: "dnspod", dnsName: "worker.friday-test.example.com", rootDomain: "example.com" },
+        }));
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(FridayDomainError);
+      expect((caught as FridayDomainError).code).not.toBe("TS_RUNTIME_CLOUD_WORKER_SETUP_RETIRED");
+      expect((caught as FridayDomainError).code).toBe("OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED");
+    });
+
+    it("validates the body (400) BEFORE the retirement guard (dns.validate missing rootDomain)", async () => {
+      await expect(retiredFindRoute("cloud.workers.dns.validate").handler(boundCtx({
+        body: { dnsProviderId: "dnspod", dnsName: "worker.friday-test.example.com" },
+      }))).rejects.toMatchObject({ code: "VALIDATION_ERROR", httpStatus: 400 } satisfies Partial<FridayDomainError>);
+    });
   });
 });

@@ -3383,6 +3383,45 @@
       "executes_product_logic": false,
       "proof": "src/api/http/routes/friday-cross-border-pack-routes.ts fail-closes default/live packs.cross.border.workflows.disable.all to TS_RUNTIME_CROSS_BORDER_PACK_RETIRED after requireUserId, immediately before the TypeScript disableAllWorkflows write (friday-cross-border-pack-service.ts disable cron trigger registrations + writeWorkflowAutomations). Legacy behavior is reachable only through explicit allowTestOnlyCrossBorderPackExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned cross-border pack entrypoint when available."
+    },
+    {
+      "id": "cloud_worker_dns_validate",
+      "route": {
+        "method": "POST",
+        "path": "/v1/cloud-workers/dns/validate",
+        "operationId": "cloud.workers.dns.validate"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-cloud-worker-setup-routes.ts fail-closes default/live cloud.workers.dns.validate to TS_RUNTIME_CLOUD_WORKER_SETUP_RETIRED after the bound-principal gate and the dnsProviderId/dnsName/rootDomain validation, immediately before the TypeScript dnsValidator.validate compute (friday-cloud-worker-dns-validator.ts: stateless acceptance-policy verdict; no DB write and no external DNS/network egress). Legacy behavior is reachable only through explicit allowTestOnlyCloudWorkerSetupExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned cloud-worker setup entrypoint when available."
+    },
+    {
+      "id": "cloud_worker_package_generate",
+      "route": {
+        "method": "POST",
+        "path": "/v1/cloud-workers/package",
+        "operationId": "cloud.workers.package.generate"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-cloud-worker-setup-routes.ts fail-closes default/live cloud.workers.package.generate to TS_RUNTIME_CLOUD_WORKER_SETUP_RETIRED after the bound-principal gate and the providerId/httpsHost/dnsName/dnsProviderId/ownerRunId validation, immediately before (and ABOVE the try/catch that maps errors to 400) the TypeScript packageService.generate compute (friday-cloud-worker-package.ts: in-memory deployment bundle render + secret-leak scan + sha256 bundleId; no DB write and no external egress). Legacy behavior is reachable only through explicit allowTestOnlyCloudWorkerSetupExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned cloud-worker setup entrypoint when available."
+    },
+    {
+      "id": "cloud_worker_teardown_receipt",
+      "route": {
+        "method": "POST",
+        "path": "/v1/cloud-workers/teardown-receipt",
+        "operationId": "cloud.workers.teardown.receipt"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-cloud-worker-setup-routes.ts fail-closes default/live cloud.workers.teardown.receipt to TS_RUNTIME_CLOUD_WORKER_SETUP_RETIRED after the bound-principal gate and the providerId/ownerRunId/resourceTag validation, immediately before the TypeScript teardown.issueReceipt compute (friday-cloud-worker-teardown.ts: in-memory receipt with sha256 receiptId + manual cleanup steps; no DB write and no external egress). Legacy behavior is reachable only through explicit allowTestOnlyCloudWorkerSetupExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned cloud-worker setup entrypoint when available."
     }
   ]
 }
