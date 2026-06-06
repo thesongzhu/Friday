@@ -30,6 +30,10 @@ describe("FridaySatelliteRuntimeRoutes", () => {
     reportCommandResult: vi.fn(async () => undefined),
     pullEvents: vi.fn(async () => []),
     getCheckpoint: vi.fn(async () => ({ lastAckedSeq: 4, epoch: 1, cursor: "cursor-1" })),
+    // Test-oracle: exercise the real TypeScript runtime logic in these unit
+    // tests. Default/live hub wiring leaves this unset so the surfaces fail-close
+    // (see the TS-runtime-retirement regression block below).
+    allowTestOnlySatelliteRuntimeExecution: true,
   };
 
   function makeCtx(
@@ -301,6 +305,70 @@ describe("FridaySatelliteRuntimeRoutes", () => {
       streamId: "fleet",
       checkpoint: { lastAckedSeq: 4, epoch: 1, cursor: "cursor-1" },
       events: [{ seq: 5, event: "fleet.summary.updated" }],
+    });
+  });
+
+  describe("TS runtime retirement (allowTestOnlySatelliteRuntimeExecution unset)", () => {
+    const retiredDeps = {
+      recordHeartbeat: vi.fn(async () => ({ accepted: true as const, now: NOW, expectedIntervalMs: 15_000, status: "online" })),
+      updateCapabilities: vi.fn(async () => ({ accepted: true })),
+      pullSync: vi.fn(async () => ({ streamId: "fleet", events: [], queueItems: [], nextCursor: undefined })),
+      pushSync: vi.fn(async () => ({ acceptedAcks: [], acceptedNodeResults: [], conflicts: [] })),
+      pollCommands: vi.fn(async () => []),
+      ackCommand: vi.fn(async () => ({ acked: true })),
+      reportCommandResult: vi.fn(async () => undefined),
+      pullEvents: vi.fn(async () => []),
+      getCheckpoint: vi.fn(async () => ({ lastAckedSeq: 4, epoch: 1, cursor: "cursor-1" })),
+      // allowTestOnlySatelliteRuntimeExecution intentionally unset → fail-closed.
+    };
+    let retiredRoutes: FridayRouteDefinition<unknown, unknown, unknown, unknown>[];
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      retiredRoutes = createFridaySatelliteRuntimeRoutes(retiredDeps);
+    });
+
+    function retiredRoute(operationId: string) {
+      return retiredRoutes.find((route) => route.operationId === operationId)!;
+    }
+
+    const cases: Array<{ op: string; body: Record<string, unknown>; service: keyof typeof retiredDeps }> = [
+      { op: "satellites.heartbeat", body: { ts: NOW }, service: "recordHeartbeat" },
+      { op: "satellites.capabilities.update", body: { revision: 1, generatedAt: NOW, capabilities: [{ key: "shell", available: true }] }, service: "updateCapabilities" },
+      { op: "satellites.sync.pull", body: { streamId: "fleet", lastAckedSeq: 0 }, service: "pullSync" },
+      { op: "satellites.sync.push", body: { acks: [] }, service: "pushSync" },
+      { op: "satellites.commands.poll", body: { limit: 10 }, service: "pollCommands" },
+      { op: "satellites.commands.ack", body: { status: "completed", runId: "r", nodeId: "n", attemptId: "a", attempt: 1 }, service: "ackCommand" },
+    ];
+
+    for (const { op, body, service } of cases) {
+      it(`fail-closes ${op} with 503 and never calls the service`, async () => {
+        await expect(
+          retiredRoute(op).handler(makeCtx("sat-1", { params: { satelliteId: "sat-1", commandId: "cmd-1" }, body })),
+        ).rejects.toMatchObject({
+          code: "TS_RUNTIME_SATELLITE_RUNTIME_RETIRED",
+          httpStatus: 503,
+        } satisfies Partial<FridayDomainError>);
+        expect(retiredDeps[service]).not.toHaveBeenCalled();
+        if (op === "satellites.commands.ack") {
+          expect(retiredDeps.reportCommandResult).not.toHaveBeenCalled();
+        }
+      });
+    }
+
+    it("validates the request body (400) before the retirement guard (heartbeat missing ts)", async () => {
+      await expect(
+        retiredRoute("satellites.heartbeat").handler(makeCtx("sat-1", { body: {} })),
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR", httpStatus: 400 } satisfies Partial<FridayDomainError>);
+      expect(retiredDeps.recordHeartbeat).not.toHaveBeenCalled();
+    });
+
+    it("still serves the read-only events poll (compat_shim, not gated by retirement)", async () => {
+      const result = await retiredRoute("satellites.events.poll").handler(
+        makeCtx("sat-1", { body: { streamId: "fleet", afterSeq: 0, limit: 10 } }),
+      );
+      expect(retiredDeps.pullEvents).toHaveBeenCalled();
+      expect(result).toMatchObject({ streamId: "fleet" });
     });
   });
 });

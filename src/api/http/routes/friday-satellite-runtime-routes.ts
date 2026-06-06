@@ -65,6 +65,40 @@ export interface FridaySatelliteRuntimeRoutesDeps {
     principalId: string;
     streamId: string;
   }) => Awaitable<{ lastAckedSeq: number; epoch: number; cursor?: string } | null>;
+  /**
+   * Test-oracle only: allow the legacy TypeScript satellite runtime mutations
+   * (heartbeat, capability report, sync pull/push, command poll/ack) in isolated
+   * mock/unit validation. Production/runtime callers must leave this unset so the
+   * satellite runtime engine stays fail-closed until Rust owns it. The read-only
+   * events poll surface is never gated.
+   */
+  allowTestOnlySatelliteRuntimeExecution?: boolean;
+}
+
+// ─── Retirement helper ───
+//
+// The satellite runtime mutation surfaces (heartbeat, capability report, sync
+// pull/push, command poll/ack) write hub state inside withWriteTransaction
+// (heartbeat/pairing status, capability revisions, outbox leases/acks, sync
+// checkpoints, remote node results). They fail-close by default/live until Rust
+// owns the satellite runtime entrypoint; legacy behavior is reachable only
+// through the explicit allowTestOnlySatelliteRuntimeExecution test-oracle flag.
+// satellites.events.poll is a pure read (withReadConnection) and is NOT gated.
+
+function assertSatelliteRuntimeTestOracleAllowed(deps: FridaySatelliteRuntimeRoutesDeps): void {
+  if (deps.allowTestOnlySatelliteRuntimeExecution !== true) {
+    throw new FridayDomainError(
+      "TS_RUNTIME_SATELLITE_RUNTIME_RETIRED",
+      "TypeScript satellite runtime mutation is fail-closed in default/live runtime; use the Rust-owned satellite runtime entrypoint.",
+      {
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_satellite_runtime_entrypoint_required",
+        },
+      },
+    );
+  }
 }
 
 const MAX_POLL_LIMIT = 100;
@@ -204,9 +238,11 @@ export function createFridaySatelliteRuntimeRoutes(
         const params = ctx.params as Record<string, string>;
         requireSatellitePrincipal(ctx as Ctx, params.satelliteId);
         const body = ctx.body as Record<string, unknown>;
+        const ts = requireString(body, "ts");
+        assertSatelliteRuntimeTestOracleAllowed(deps);
         return deps.recordHeartbeat({
           satelliteId: params.satelliteId,
-          ts: requireString(body, "ts"),
+          ts,
           metrics: body.metrics as FridaySatelliteHeartbeatInput["metrics"],
           queueDepth: typeof body.queueDepth === "number" ? body.queueDepth : undefined,
           activeRuns: typeof body.activeRuns === "number" ? body.activeRuns : undefined,
@@ -226,12 +262,16 @@ export function createFridaySatelliteRuntimeRoutes(
         const params = ctx.params as Record<string, string>;
         requireSatellitePrincipal(ctx as Ctx, params.satelliteId);
         const body = ctx.body as Record<string, unknown>;
+        const revision = requirePositiveInteger(body.revision, "revision");
+        const generatedAt = requireString(body, "generatedAt");
+        const capabilities = parseCapabilities(body);
+        assertSatelliteRuntimeTestOracleAllowed(deps);
         return deps.updateCapabilities({
           satelliteId: params.satelliteId,
-          revision: requirePositiveInteger(body.revision, "revision"),
-          generatedAt: requireString(body, "generatedAt"),
+          revision,
+          generatedAt,
           runtime: body.runtime as FridaySatelliteCapabilityReport["runtime"],
-          capabilities: parseCapabilities(body),
+          capabilities,
         });
       },
     },
@@ -244,10 +284,13 @@ export function createFridaySatelliteRuntimeRoutes(
         const params = ctx.params as Record<string, string>;
         requireSatellitePrincipal(ctx as Ctx, params.satelliteId);
         const body = ctx.body as Record<string, unknown>;
+        const streamId = requireString(body, "streamId");
+        const lastAckedSeq = requirePositiveInteger(body.lastAckedSeq, "lastAckedSeq", 0);
+        assertSatelliteRuntimeTestOracleAllowed(deps);
         return deps.pullSync({
           satelliteId: params.satelliteId,
-          streamId: requireString(body, "streamId"),
-          lastAckedSeq: requirePositiveInteger(body.lastAckedSeq, "lastAckedSeq", 0),
+          streamId,
+          lastAckedSeq,
           subscriptions: Array.isArray(body.subscriptions)
             ? body.subscriptions.filter((entry): entry is string => typeof entry === "string")
             : [],
@@ -264,6 +307,7 @@ export function createFridaySatelliteRuntimeRoutes(
         const params = ctx.params as Record<string, string>;
         requireSatellitePrincipal(ctx as Ctx, params.satelliteId);
         const body = ctx.body as Record<string, unknown>;
+        assertSatelliteRuntimeTestOracleAllowed(deps);
         return deps.pushSync({
           satelliteId: params.satelliteId,
           acks: Array.isArray(body.acks)
@@ -295,6 +339,7 @@ export function createFridaySatelliteRuntimeRoutes(
           5_000,
           requirePositiveInteger(body.leaseMs, "leaseMs", DEFAULT_COMMAND_LEASE_MS),
         );
+        assertSatelliteRuntimeTestOracleAllowed(deps);
         const commands = await deps.pollCommands({
           satelliteId: params.satelliteId,
           limit,
@@ -321,15 +366,24 @@ export function createFridaySatelliteRuntimeRoutes(
         const body = ctx.body as Record<string, unknown>;
         const status = requireString(body, "status");
         const hasTerminalResult = status === "completed" || status === "failed";
+        const reportTerminal = deps.reportCommandResult !== undefined && hasTerminalResult;
+        // Hoist terminal-ack field validation above the retirement guard so a
+        // malformed terminal ack still returns 400 (not 503) when the flag is unset.
+        const terminalRunId = reportTerminal ? requireString(body, "runId") : undefined;
+        const terminalNodeId = reportTerminal ? requireString(body, "nodeId") : undefined;
+        const terminalAttemptId = reportTerminal ? requireString(body, "attemptId") : undefined;
+        const terminalAttempt = reportTerminal ? requirePositiveInteger(body.attempt, "attempt") : undefined;
 
-        if (deps.reportCommandResult && hasTerminalResult) {
-          await deps.reportCommandResult({
+        assertSatelliteRuntimeTestOracleAllowed(deps);
+
+        if (reportTerminal) {
+          await deps.reportCommandResult!({
             satelliteId: params.satelliteId,
             commandId: params.commandId,
-            runId: requireString(body, "runId"),
-            nodeId: requireString(body, "nodeId"),
-            attemptId: requireString(body, "attemptId"),
-            attempt: requirePositiveInteger(body.attempt, "attempt"),
+            runId: terminalRunId!,
+            nodeId: terminalNodeId!,
+            attemptId: terminalAttemptId!,
+            attempt: terminalAttempt!,
             status: status as "completed" | "failed",
             output: body.output,
             error: status === "failed"

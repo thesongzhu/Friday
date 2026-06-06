@@ -53,6 +53,10 @@ function makeDeps(overrides: Partial<FridaySatellitePairingRoutesDeps> = {}): Fr
       createdAt: "2026-02-25T00:00:00Z",
       expiresAt: "2026-02-26T00:00:00Z",
     }),
+    // Test-oracle: exercise the real TypeScript pairing logic. Default/live hub
+    // wiring leaves this unset so the surfaces fail-close (see the
+    // TS-runtime-retirement regression block below).
+    allowTestOnlySatellitePairingExecution: true,
     ...overrides,
   };
 }
@@ -428,6 +432,86 @@ describe("createFridaySatellitePairingRoutes", () => {
       }) as any)).rejects.toMatchObject({ code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED" });
 
       expect(deps.revokeSatellite).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── TS runtime retirement ───
+
+  describe("TS runtime retirement (allowTestOnlySatellitePairingExecution unset)", () => {
+    function retiredDeps(overrides: Partial<FridaySatellitePairingRoutesDeps> = {}): FridaySatellitePairingRoutesDeps {
+      return makeDeps({ allowTestOnlySatellitePairingExecution: false, ...overrides });
+    }
+
+    it("fail-closes satellites.register with 503 and never calls registerSatellite", async () => {
+      const d = retiredDeps();
+      const route = findRoute(createFridaySatellitePairingRoutes(d), "satellites.register");
+      await expect(route.handler(makeCtx({
+        body: { type: "edge", displayName: "Test", publicKey: "pk-abc" },
+      }) as any)).rejects.toMatchObject({ code: "TS_RUNTIME_SATELLITE_PAIRING_RETIRED", httpStatus: 503 });
+      expect(d.registerSatellite).not.toHaveBeenCalled();
+    });
+
+    it("fail-closes satellites.handshake with 503 and never calls completeHandshake", async () => {
+      const d = retiredDeps();
+      const route = findRoute(createFridaySatellitePairingRoutes(d), "satellites.handshake");
+      await expect(route.handler(makeCtx({
+        params: { satelliteId: "sat-001" },
+        body: { token: "t", signedChallenge: "s", challengeNonce: "n", clientEphemeralPublicKey: "c" },
+      }) as any)).rejects.toMatchObject({ code: "TS_RUNTIME_SATELLITE_PAIRING_RETIRED", httpStatus: 503 });
+      expect(d.completeHandshake).not.toHaveBeenCalled();
+    });
+
+    it("fail-closes satellites.pairing.approve (after the owner check, before the pairing lookup)", async () => {
+      const d = retiredDeps();
+      const route = findRoute(createFridaySatellitePairingRoutes(d), "satellites.pairing.approve");
+      await expect(route.handler(makeCtx({
+        params: { satelliteId: "sat-001" },
+        body: {},
+        principal: { principalId: "user-001" },
+      }) as any)).rejects.toMatchObject({ code: "TS_RUNTIME_SATELLITE_PAIRING_RETIRED", httpStatus: 503 });
+      expect(d.approvePairing).not.toHaveBeenCalled();
+      expect(d.getPairingRequest).not.toHaveBeenCalled();
+    });
+
+    it("fail-closes satellites.pairing.reject (after the owner check) and never calls rejectPairing", async () => {
+      const d = retiredDeps();
+      const route = findRoute(createFridaySatellitePairingRoutes(d), "satellites.pairing.reject");
+      await expect(route.handler(makeCtx({
+        params: { satelliteId: "sat-001" },
+        body: {},
+        principal: { principalId: "user-001" },
+      }) as any)).rejects.toMatchObject({ code: "TS_RUNTIME_SATELLITE_PAIRING_RETIRED", httpStatus: 503 });
+      expect(d.rejectPairing).not.toHaveBeenCalled();
+    });
+
+    it("fail-closes satellites.revoke (after the owner check) and never calls revokeSatellite", async () => {
+      const d = retiredDeps();
+      const route = findRoute(createFridaySatellitePairingRoutes(d), "satellites.revoke");
+      await expect(route.handler(makeCtx({
+        params: { satelliteId: "sat-001" },
+        body: { reason: "x" },
+        principal: { principalId: "user-001" },
+      }) as any)).rejects.toMatchObject({ code: "TS_RUNTIME_SATELLITE_PAIRING_RETIRED", httpStatus: 503 });
+      expect(d.revokeSatellite).not.toHaveBeenCalled();
+    });
+
+    it("enforces the owner-binding check BEFORE the retirement guard on approve (synthetic public principal still rejected, not 503)", async () => {
+      const d = retiredDeps();
+      const route = findRoute(createFridaySatellitePairingRoutes(d), "satellites.pairing.approve");
+      await expect(route.handler(makeCtx({
+        params: { satelliteId: "sat-001" },
+        body: {},
+        principal: { principalId: "public:default" },
+      }) as any)).rejects.toMatchObject({ code: "OWNER_SESSION_CHANNEL_PRINCIPAL_REQUIRED" });
+      expect(d.approvePairing).not.toHaveBeenCalled();
+    });
+
+    it("returns the register validation error BEFORE the retirement guard (missing fields)", async () => {
+      const d = retiredDeps();
+      const route = findRoute(createFridaySatellitePairingRoutes(d), "satellites.register");
+      const result = await route.handler(makeCtx({ body: { type: "edge" } }) as any);
+      expect(result).toEqual({ error: expect.objectContaining({ code: "VALIDATION_FAILED" }) });
+      expect(d.registerSatellite).not.toHaveBeenCalled();
     });
   });
 });
