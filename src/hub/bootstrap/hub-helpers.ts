@@ -1890,6 +1890,8 @@ export interface FridayHubConfig {
   allowTestOnlyCrossBorderPackExecution?: boolean;
   /** Test-oracle only; production hub creation must leave self-healing diagnosis mutations fail-closed. */
   allowTestOnlyDiagnosisExecution?: boolean;
+  /** Test-oracle only; production hub creation must leave the realtime checkpoint-ack mutation fail-closed. */
+  allowTestOnlyRealtimeExecution?: boolean;
 }
 
 // ─── Resolved Hub Config ───

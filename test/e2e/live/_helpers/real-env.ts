@@ -325,6 +325,7 @@ async function startLocalRealHubEnv(
       allowTestOnlySessionRunExecution: true,
       allowTestOnlySessionMemoryExtractionExecution: true,
       allowTestOnlyDiagnosisExecution: true,
+      allowTestOnlyRealtimeExecution: true,
       ...opts?.hubConfig,
     });
     await createdHub.start();
