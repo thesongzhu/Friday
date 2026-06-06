@@ -146,6 +146,7 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Real Scenarios E2E (NON-LLM)", () => 
       allowTestOnlySessionExecution: true,
       allowTestOnlySessionRunExecution: true,
       allowTestOnlySessionMemoryExtractionExecution: true,
+      allowTestOnlySkillConverterExecution: true,
     });
     await hub.start();
 

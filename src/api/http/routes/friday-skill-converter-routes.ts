@@ -297,6 +297,43 @@ export interface FridaySkillConverterRoutesDeps {
   converterService: FridaySkillConverterService;
   canonicalMutationGate?: FridayMutatingActionGate;
   packOutputDir?: string;
+  /**
+   * Test-oracle only: allow the legacy TypeScript skill-converter mutations
+   * (convert / import-staging / pack) to execute. Production/runtime callers
+   * must leave this unset so the three POST routes fail-close (503,
+   * TS_RUNTIME_SKILL_CONVERTER_RETIRED) until Rust owns skill conversion.
+   * The GET converters list is a pure read and is never gated. Reachability of
+   * the underlying converterService.import mutation via OTHER routes
+   * (/v1/deeplink/apply, /v1/discovery/integrate, /v1/skills/social-import) is
+   * out of scope for this surface — each of those is its own ts_runtime_blocker
+   * retired in its own slice; this flag gates ONLY the converter routes.
+   */
+  allowTestOnlySkillConverterExecution?: boolean;
+}
+
+/**
+ * TS-runtime retirement guard for the skill-converter mutation routes. Placed
+ * AFTER body validation (and, for import, after the canonical-approval gate) and
+ * IMMEDIATELY BEFORE the converterService mutation, so malformed/unapproved
+ * requests still surface their 400/403 rather than this 503.
+ */
+function assertSkillConverterTestOracleAllowed(
+  deps: FridaySkillConverterRoutesDeps,
+): void {
+  if (deps.allowTestOnlySkillConverterExecution === true) {
+    return;
+  }
+  throw new FridayDomainError(
+    "TS_RUNTIME_SKILL_CONVERTER_RETIRED",
+    "Skill conversion/import/pack is fail-closed in the default/live runtime; the Rust-owned skill-converter entrypoint is required.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_skill_converter_entrypoint_required",
+      },
+    },
+  );
 }
 
 function createActorFromPrincipal(
@@ -404,6 +441,7 @@ export function createFridaySkillConverterRoutes(
       rateLimitPolicyId: "skill_converter.write",
       async handler(ctx): Promise<FridayApiConvertResponse> {
         validateConvertBody(ctx.body);
+        assertSkillConverterTestOracleAllowed(deps);
         const body = ctx.body;
         const result = await convertWithRedactedSkillSourceErrors(deps, body);
         const safeResult = redactFridaySkillSourceValue(result, body.source) as typeof result;
@@ -435,6 +473,7 @@ export function createFridaySkillConverterRoutes(
           requestId: ctx.requestId,
           body,
         });
+        assertSkillConverterTestOracleAllowed(deps);
         const result = await importWithRedactedSkillSourceErrors(deps, body, canonicalApprovalTicket);
         const safeResult = redactFridaySkillSourceValue(result, body.source) as typeof result;
         const quality = safeResult.quality
@@ -468,6 +507,7 @@ export function createFridaySkillConverterRoutes(
           );
         }
         const outputFile = join(deps.packOutputDir, readContainedPackOutputName(body));
+        assertSkillConverterTestOracleAllowed(deps);
         const result = await deps.converterService.pack({
           skillDir: body.skillDir,
           outputFile,

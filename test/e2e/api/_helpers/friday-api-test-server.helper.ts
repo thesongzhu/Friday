@@ -186,6 +186,7 @@ export interface CreateFridayApiTestEnvOptions {
   allowTestOnlySessionMemoryExtractionExecution?: boolean;
   allowTestOnlyCrossBorderPackExecution?: boolean;
   allowTestOnlyRealtimeExecution?: boolean;
+  allowTestOnlySkillConverterExecution?: boolean;
   resolveSkill?: (skillId: string) => unknown | null;
   invokeSkill?: (
     skillId: string,
@@ -303,6 +304,7 @@ export async function createFridayApiTestEnv(
     allowTestOnlySessionMemoryExtractionExecution: options.allowTestOnlySessionMemoryExtractionExecution ?? true,
     allowTestOnlyCrossBorderPackExecution: options.allowTestOnlyCrossBorderPackExecution ?? true,
     allowTestOnlyRealtimeExecution: options.allowTestOnlyRealtimeExecution ?? true,
+    allowTestOnlySkillConverterExecution: options.allowTestOnlySkillConverterExecution ?? true,
     computeChecksum: (content: string) =>
       crypto.createHash("sha256").update(content).digest("hex"),
     resolveSkill: options.resolveSkill ?? ((_skillId: string) => ({ id: _skillId })),

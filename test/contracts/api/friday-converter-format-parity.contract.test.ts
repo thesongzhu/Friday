@@ -67,7 +67,10 @@ describe("Converter format parity contract", () => {
 
   it("route validator accepts all declared format hints", async () => {
     const converterService = makeMockConverterService();
-    const routes = createFridaySkillConverterRoutes({ converterService });
+    // Test-oracle flag so the convert route exercises the format-hint validator
+    // instead of fail-closing (TS-runtime retirement: convert is fail_closed in
+    // default/live wiring).
+    const routes = createFridaySkillConverterRoutes({ converterService, allowTestOnlySkillConverterExecution: true });
     const route = routes.find((entry) => entry.operationId === "skills.convert");
     expect(route).toBeDefined();
 

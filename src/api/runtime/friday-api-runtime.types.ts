@@ -348,6 +348,13 @@ export interface CreateFridayApiRuntimeDeps {
    * unset so the ack surface stays fail-closed until Rust owns realtime delivery.
    */
   allowTestOnlyRealtimeExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript skill-converter mutations
+   * (POST /v1/skills/convert, /v1/skills/import, /v1/skills/pack). Production/
+   * runtime callers must leave this unset so those surfaces fail-close until
+   * Rust owns skill conversion.
+   */
+  allowTestOnlySkillConverterExecution?: boolean;
   /** Optional: Reflex service for deterministic preference writes before agent runs. */
   reflexService?: FridayReflexService;
   /** Optional deterministic runtime capability getter used by context evidence selection. */

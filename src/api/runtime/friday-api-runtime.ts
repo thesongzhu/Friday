@@ -3249,6 +3249,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       converterService: deps.converterService,
       canonicalMutationGate,
       packOutputDir: join(stateDir, "artifacts", "skill-packs"),
+      allowTestOnlySkillConverterExecution: deps.allowTestOnlySkillConverterExecution,
     })) {
       routes.register(route);
     }

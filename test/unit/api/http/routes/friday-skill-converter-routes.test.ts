@@ -124,7 +124,7 @@ describe("FridaySkillConverterRoutes", () => {
       nowIso: () => NOW,
       ticketIdGenerator: () => "ticket-1",
     });
-    const routes = createFridaySkillConverterRoutes({ converterService, canonicalMutationGate, packOutputDir: PACK_OUTPUT_DIR });
+    const routes = createFridaySkillConverterRoutes({ converterService, canonicalMutationGate, packOutputDir: PACK_OUTPUT_DIR, allowTestOnlySkillConverterExecution: true });
     return { routes, converterService };
   }
 
@@ -135,7 +135,7 @@ describe("FridaySkillConverterRoutes", () => {
       ticketIdGenerator: () => "signed-ticket-1",
       approvalSignatureSecret: secret,
     });
-    const routes = createFridaySkillConverterRoutes({ converterService, canonicalMutationGate, packOutputDir: PACK_OUTPUT_DIR });
+    const routes = createFridaySkillConverterRoutes({ converterService, canonicalMutationGate, packOutputDir: PACK_OUTPUT_DIR, allowTestOnlySkillConverterExecution: true });
     return { routes, converterService };
   }
 
@@ -246,6 +246,86 @@ describe("FridaySkillConverterRoutes", () => {
 
     const packRoute = find("skills.pack")!;
     expect(packRoute.auth).toEqual({ public: true });
+  });
+
+  describe("TS-runtime retirement (default/live fail-close)", () => {
+    // Build routes WITHOUT the test-oracle flag = production/live wiring.
+    function createRetiredRoutes() {
+      const converterService = makeMockConverterService();
+      const canonicalMutationGate = createFridayMutatingActionGate({
+        nowIso: () => NOW,
+        ticketIdGenerator: () => "ticket-1",
+      });
+      const routes = createFridaySkillConverterRoutes({ converterService, canonicalMutationGate, packOutputDir: PACK_OUTPUT_DIR });
+      return { routes, converterService };
+    }
+
+    it("fail-closes convert with 503 TS_RUNTIME_SKILL_CONVERTER_RETIRED and does not call the service", async () => {
+      const { routes, converterService } = createRetiredRoutes();
+      const route = routes.find((r) => r.operationId === "skills.convert")!;
+      await expect(
+        route.handler(makeCtx({ body: { source: { uri: "/path/to/skill" }, formatHint: "auto", dryRun: true } })),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_SKILL_CONVERTER_RETIRED", httpStatus: 503 });
+      expect(converterService.convert).not.toHaveBeenCalled();
+    });
+
+    it("still validates the convert body (400) BEFORE the retirement guard", async () => {
+      const { routes } = createRetiredRoutes();
+      const route = routes.find((r) => r.operationId === "skills.convert")!;
+      await expect(route.handler(makeCtx({ body: {} }))).rejects.toThrow("source is required");
+    });
+
+    it("fail-closes import with 503 after a VALID canonical approval, without staging", async () => {
+      const { routes, converterService } = createRetiredRoutes();
+      const route = routes.find((r) => r.operationId === "skills.import")!;
+      const body = withCanonicalApproval({
+        source: { uri: "/path/to/skill.md" },
+        target: "managed",
+        replace: true,
+        refreshRegistry: true,
+        idempotencyKey: "stage-managed-1",
+      });
+      await expect(
+        route.handler(makeCtx({ principal: PRINCIPAL, body })),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_SKILL_CONVERTER_RETIRED", httpStatus: 503 });
+      expect(converterService.import).not.toHaveBeenCalled();
+    });
+
+    it("still enforces the canonical approval gate (403) BEFORE the retirement guard", async () => {
+      const { routes, converterService } = createRetiredRoutes();
+      const route = routes.find((r) => r.operationId === "skills.import")!;
+      // No canonicalApproval on the body -> approval gate rejects before the 503.
+      await expect(
+        route.handler(makeCtx({ principal: PRINCIPAL, body: { source: { uri: "/path/to/skill.md" }, target: "managed" } })),
+      ).rejects.toMatchObject({ httpStatus: 403 });
+      expect(converterService.import).not.toHaveBeenCalled();
+    });
+
+    it("fail-closes pack with 503 and does not write a package", async () => {
+      const { routes, converterService } = createRetiredRoutes();
+      const route = routes.find((r) => r.operationId === "skills.pack")!;
+      await expect(
+        route.handler(makeCtx({ body: { skillDir: "/skills/test-skill" } })),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_SKILL_CONVERTER_RETIRED", httpStatus: 503 });
+      expect(converterService.pack).not.toHaveBeenCalled();
+    });
+
+    it("still rejects path-escape pack output (400) BEFORE the retirement guard", async () => {
+      const { routes, converterService } = createRetiredRoutes();
+      const route = routes.find((r) => r.operationId === "skills.pack")!;
+      await expect(
+        route.handler(makeCtx({ body: { skillDir: "/path/to/skill", outputFile: "/tmp/skill.friday.tgz" } })),
+      ).rejects.toThrow("outputFile must be a contained filename");
+      expect(converterService.pack).not.toHaveBeenCalled();
+    });
+
+    it("leaves the GET converters list ungated (pure read)", async () => {
+      const { routes, converterService } = createRetiredRoutes();
+      const route = routes.find((r) => r.operationId === "skills.converters.list")!;
+      const result = await route.handler(makeCtx()) as { converters: unknown[] };
+      expect(converterService.listConverters).toHaveBeenCalledOnce();
+      expect(result.converters).toHaveLength(2);
+    });
   });
 
   describe("GET /v1/skills/converters", () => {
