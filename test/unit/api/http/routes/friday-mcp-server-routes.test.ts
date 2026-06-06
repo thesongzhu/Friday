@@ -54,6 +54,9 @@ function createDeps(): FridayMcpServerRoutesDeps {
         },
       ],
     }),
+    // Test-oracle flag: the tools/call proxy test exercises live tool execution.
+    // Production wiring leaves it unset (TS-runtime retirement of MCP tool exec).
+    allowTestOnlyMcpToolCallExecution: true,
   };
 }
 
@@ -152,6 +155,35 @@ describe("createFridayMcpServerRoutes", () => {
       requestId: "req-1",
       correlationId: "mcp.server:req-1:tools/call:3",
     }));
+  });
+
+  describe("TS-runtime retirement (tools/call fail-close; reads stay live)", () => {
+    it("fail-closes tools/call with a JSON-RPC error (TS_RUNTIME_MCP_TOOLS_CALL_RETIRED) and does not call the tool", async () => {
+      // Enabled deps WITHOUT the test-oracle flag = production/live wiring.
+      const deps = { ...createDeps(), allowTestOnlyMcpToolCallExecution: false };
+      const route = createFridayMcpServerRoutes(deps)[0]!;
+      const response = await route.handler(buildCtx({
+        jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "echo", arguments: { text: "hi" } },
+      }) as never);
+      // Dispatcher maps errors to JSON-RPC frames, so the fail-close is a frame (HTTP 200 envelope).
+      expect(response.status).toBe(200);
+      const body = response.body as { error?: { code?: number } };
+      expect(body.error?.code).toBe(-32000);
+      expect(JSON.stringify(body)).toContain("TS_RUNTIME_MCP_TOOLS_CALL_RETIRED");
+      expect(deps.callTool).not.toHaveBeenCalled();
+    });
+
+    it("leaves tools/list and initialize UNGATED even without the flag (reads stay live)", async () => {
+      const deps = { ...createDeps(), allowTestOnlyMcpToolCallExecution: false };
+      const route = createFridayMcpServerRoutes(deps)[0]!;
+      const listResponse = await route.handler(buildCtx({ jsonrpc: "2.0", id: 8, method: "tools/list", params: {} }) as never);
+      expect(listResponse.status).toBe(200);
+      expect((listResponse.body as { error?: unknown }).error).toBeUndefined();
+      expect(deps.listTools).toHaveBeenCalledTimes(1);
+      const initResponse = await route.handler(buildCtx({ jsonrpc: "2.0", id: 9, method: "initialize", params: {} }) as never);
+      expect(initResponse.status).toBe(200);
+      expect((initResponse.body as { error?: unknown }).error).toBeUndefined();
+    });
   });
 
   it("validates required params", async () => {
