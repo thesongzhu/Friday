@@ -355,6 +355,13 @@ export interface CreateFridayApiRuntimeDeps {
    * Rust owns skill conversion.
    */
   allowTestOnlySkillConverterExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript media-understanding product
+   * logic (POST /v1/media-understanding/analyze + /doctor). Production/runtime
+   * callers must leave this unset so those surfaces fail-close until Rust owns
+   * media understanding.
+   */
+  allowTestOnlyMediaUnderstandingExecution?: boolean;
   /** Optional: Reflex service for deterministic preference writes before agent runs. */
   reflexService?: FridayReflexService;
   /** Optional deterministic runtime capability getter used by context evidence selection. */

@@ -3135,6 +3135,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     doctorProvider: mediaUnderstandingDeps.doctorProvider,
     disabledReason: mediaUnderstandingDeps.disabledReason,
     nowIso: deps.nowIso,
+    allowTestOnlyMediaUnderstandingExecution: deps.allowTestOnlyMediaUnderstandingExecution,
   })) {
     routes.register(route);
   }

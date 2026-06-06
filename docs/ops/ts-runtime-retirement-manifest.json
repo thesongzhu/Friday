@@ -3541,6 +3541,32 @@
       "next_action": "Replace the fail-closed response with the Rust-owned batch-convert entrypoint when available."
     },
     {
+      "id": "media_understanding_analyze",
+      "route": {
+        "method": "POST",
+        "path": "/v1/media-understanding/analyze",
+        "operationId": "media.understanding.analyze"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-media-understanding-routes.ts media.understanding.analyze wires default/live to assertMediaTestOracleAllowed() AFTER the availability check (if !deps.service -> throwDisabled MEDIA_UNDERSTANDING_DISABLED) and AFTER parseAnalyzeBody + per-attachment normalizeAttachment (so disabled -> its 503 and malformed/non-http(s)/data: scheme -> 400 still win), IMMEDIATELY BEFORE deps.service.processAttachments. 503 TS_RUNTIME_MEDIA_UNDERSTANDING_RETIRED (classification fail_closed, replacement rust_owned_media_understanding_entrypoint_required). fail_closed NOT operator_external_adapter: processAttachments is a media-understanding PIPELINE (applyAttachmentPolicy -> runProviderChain over deps.providers + deps.fetchContent -> enrichment/decisions) — Rust-ownable product logic that Rust will reimplement (the provider calls move INTO Rust), the same shape as agent runs which call LLM providers and are fail_closed; it is NOT a permanent authorized egress-delivery conduit (the only operator_external_adapter exact surfaces are alert test-dispatch + session outbound). When retired it 503s and nothing egresses, so no un-redacted user media leaves. executes_product_logic:false: the pipeline does not run in default/live. processAttachments has exactly ONE user-triggerable call site (this route — verified by grep), so legacy behavior is reachable only through explicit allowTestOnlyMediaUnderstandingExecution test-oracle wiring (threaded CreateFridayApiRuntimeDeps -> inline createFridayMediaUnderstandingRoutes).",
+      "next_action": "Replace the fail-closed response with the Rust-owned media-understanding analyze entrypoint when available."
+    },
+    {
+      "id": "media_understanding_doctor",
+      "route": {
+        "method": "POST",
+        "path": "/v1/media-understanding/doctor",
+        "operationId": "media.understanding.doctor"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-media-understanding-routes.ts media.understanding.doctor wires default/live to assertMediaTestOracleAllowed() AFTER the availability check (if !deps.doctorProvider -> throwDisabled) and AFTER parseDoctorBody (malformed -> 400), IMMEDIATELY BEFORE probeMediaUnderstandingProvider. 503 TS_RUNTIME_MEDIA_UNDERSTANDING_RETIRED. fail_closed: a provider CONNECTIVITY/capability probe is product logic (verifying the media-understanding capability), not a read of Friday's own stored state (so not compat_shim) and not an egress-delivery conduit (so not operator_external_adapter) — same fail_closed rule as the analyze pipeline. executes_product_logic:false: no probe runs in default/live. probeMediaUnderstandingProvider has exactly ONE user-triggerable call site (this route — verified by grep). Reachable only through explicit allowTestOnlyMediaUnderstandingExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned media-understanding doctor entrypoint when available."
+    },
+    {
       "id": "realtime_subscribe_read",
       "route": {
         "method": "POST",
