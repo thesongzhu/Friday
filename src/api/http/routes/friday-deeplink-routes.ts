@@ -17,6 +17,41 @@ import type { FridayDeepLinkApplyOptions } from "../../runtime/friday-deep-link-
 
 export interface FridayDeepLinkRoutesDeps {
   applyDeepLink?: (payload: FridayDeepLinkPayload, options: FridayDeepLinkApplyOptions) => Promise<FridayDeepLinkApplyResult>;
+  /**
+   * Test-oracle only: allow the legacy TypeScript deep-link product logic —
+   * preview (validateFridayDeepLink verdict compute) and apply (applyDeepLink
+   * dispatch -> converterService.import / workflowCrud.createWorkflow /
+   * workflowImportExport.importBundle / mcpConfigStore.addServer). Production/
+   * runtime callers must leave this unset so both POST routes fail-close
+   * (503 TS_RUNTIME_DEEPLINK_RETIRED) until Rust owns deep-link handling.
+   */
+  allowTestOnlyDeepLinkExecution?: boolean;
+}
+
+/**
+ * TS-runtime retirement guard for the deep-link product-logic routes. Placed
+ * AFTER body validation (and, for apply, the confirmed-check) and IMMEDIATELY
+ * BEFORE the validateFridayDeepLink verdict compute, so malformed -> 400 and
+ * unconfirmed -> 400 still win, but the Rust-ownable verdict compute does NOT
+ * run when retired. Consequence: a confirmed+blocked payload fail-closes with
+ * this 503 (the blocked -> 422 path only fires under the test-oracle flag, when
+ * the guard is a no-op and validateFridayDeepLink runs).
+ */
+function assertDeepLinkTestOracleAllowed(deps: FridayDeepLinkRoutesDeps): void {
+  if (deps.allowTestOnlyDeepLinkExecution === true) {
+    return;
+  }
+  throw new FridayDomainError(
+    "TS_RUNTIME_DEEPLINK_RETIRED",
+    "Deep-link preview/apply is fail-closed in the default/live runtime; the Rust-owned deep-link entrypoint is required.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_deeplink_entrypoint_required",
+      },
+    },
+  );
 }
 
 interface FridayDeepLinkPreviewRequest {
@@ -93,6 +128,7 @@ export function createFridayDeepLinkRoutes(
           );
         }
 
+        assertDeepLinkTestOracleAllowed(deps);
         const preview = validateFridayDeepLink(parsed.payload);
         return { preview };
       },
@@ -134,6 +170,13 @@ export function createFridayDeepLinkRoutes(
             { httpStatus: 400 },
           );
         }
+
+        // TS-runtime retirement: fail-close the apply route BEFORE the
+        // validateFridayDeepLink verdict compute (the same Rust-ownable product
+        // logic gated in preview) so it does not execute in default/live — a
+        // confirmed+blocked payload also fail-closes (503), not 422. Placed after
+        // the confirmed-check (400) + body validation (400) so those still win.
+        assertDeepLinkTestOracleAllowed(deps);
 
         const preview = validateFridayDeepLink(parsed.payload);
         if (preview.verdict === "blocked") {

@@ -383,6 +383,13 @@ export interface CreateFridayApiRuntimeDeps {
    * Rust owns social import.
    */
   allowTestOnlySocialImportExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript deep-link product logic
+   * (POST /v1/deeplink/preview verdict compute + POST /v1/deeplink/apply
+   * dispatch). Production/runtime callers must leave this unset so both routes
+   * fail-close until Rust owns deep-link handling.
+   */
+  allowTestOnlyDeepLinkExecution?: boolean;
   /** Optional: Reflex service for deterministic preference writes before agent runs. */
   reflexService?: FridayReflexService;
   /** Optional deterministic runtime capability getter used by context evidence selection. */

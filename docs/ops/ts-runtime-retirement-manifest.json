@@ -3634,6 +3634,24 @@
       "next_action": "Replace the fail-closed response with the Rust-owned social-import entrypoint when available; with skills.import (#558) + discovery.integrate (#562) + social-import gated, only /v1/deeplink/apply remains to fully gate converterService.import (then CLI + agent-tool reconciliation-scope)."
     },
     {
+      "id": "deeplink_preview",
+      "route": { "method": "POST", "path": "/v1/deeplink/preview", "operationId": "deeplink.preview" },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-deeplink-routes.ts deeplink.preview wires default/live to assertDeepLinkTestOracleAllowed(deps) AFTER body validation (missing uri/payload or unparseable -> 400 VALIDATION_FAILED) and IMMEDIATELY BEFORE validateFridayDeepLink(parsed.payload) (the deep-link verdict/safety compute). 503 TS_RUNTIME_DEEPLINK_RETIRED (classification fail_closed, replacement rust_owned_deeplink_entrypoint_required). Non-mutating but fail_closed not compat_shim: validateFridayDeepLink is a Rust-ownable product-logic verdict computation (a security/policy decision over a user-supplied deep-link payload), not a thin read of Friday stored state. No third-party egress. executes_product_logic:false: no verdict compute runs in default/live. Reachable only through explicit allowTestOnlyDeepLinkExecution test-oracle wiring (inline createFridayDeepLinkRoutes).",
+      "next_action": "Replace the fail-closed response with the Rust-owned deep-link preview/verdict entrypoint when available."
+    },
+    {
+      "id": "deeplink_apply",
+      "route": { "method": "POST", "path": "/v1/deeplink/apply", "operationId": "deeplink.apply" },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-deeplink-routes.ts deeplink.apply wires default/live to assertDeepLinkTestOracleAllowed(deps) AFTER the confirmed-check (unconfirmed -> 400) and body validation (-> 400), and IMMEDIATELY BEFORE the validateFridayDeepLink verdict compute (so a confirmed+blocked payload also fail-closes 503, NOT 422 — the verdict compute does not run in default/live). This placement matches the preview guard and closes the second default/live path to the retired verdict compute that the slice's adversarial integrity reviewer (Stage-5 Reviewer B) caught (the apply handler would otherwise run validateFridayDeepLink ahead of the guard — the same shape as the discovery recommend()-cache-miss trap). 503 TS_RUNTIME_DEEPLINK_RETIRED. The apply mutation (deepLinkApplyService.apply) dispatches by resource type to converterService.import (skill), workflowCrud.createWorkflow + workflowImportExport.importBundle (workflow; the workflow-template path does an SSRF-guarded outbound import-fetch of a user URL — still product-logic import, not a permanent egress conduit, and it does not run when retired), and mcpConfigStore.addServer (mcp) — all local-import mutations, so fail_closed. executes_product_logic:false: neither validateFridayDeepLink nor the apply dispatch runs in default/live (the guard fail-closes the whole route, before the verdict compute and the not-wired fallback). SCOPE NOTE (route-scoped): the underlying methods are reached by OTHER user-triggerable routes — converterService.import via /v1/skills/import (#558 gated), /v1/discovery/integrate (#562 gated), /v1/skills/social-import (#564 gated); workflowCrud.createWorkflow via /v1/workflows (workflow.create, a separate ts_runtime_blocker, NOT yet retired) — this surface gates ONLY /v1/deeplink/apply and does NOT claim any of those methods globally retired. With deeplink/apply gated, converterService.import's 4 ROUTE surfaces are all gated (only the CLI + agent-tool reconciliation-scope callers remain). Reachable only through explicit allowTestOnlyDeepLinkExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned deep-link apply entrypoint when available."
+    },
+    {
       "id": "realtime_subscribe_read",
       "route": {
         "method": "POST",
