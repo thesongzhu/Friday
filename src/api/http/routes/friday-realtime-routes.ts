@@ -16,6 +16,39 @@ const REALTIME_MAX_PULL_LIMIT = 200;
 export interface FridayRealtimeRoutesDeps {
   subscriptionService: FridayRealtimeSubscriptionService;
   currentEpoch: number;
+  /**
+   * Test-oracle only: allow the legacy TypeScript realtime checkpoint-ack
+   * mutation (POST /v1/realtime/ack) in isolated mock/unit validation.
+   * Production/runtime callers must leave this unset so the ack surface
+   * fail-closes until Rust owns the realtime delivery engine. The
+   * subscribe/pull surfaces are pure reads and are never gated.
+   */
+  allowTestOnlyRealtimeExecution?: boolean;
+}
+
+// ─── Retirement helper ───
+//
+// POST /v1/realtime/ack advances/persists the realtime checkpoint cursor via
+// withWriteTransaction (checkpointRepo.upsert). It fail-closes by default/live
+// until Rust owns the realtime delivery entrypoint; legacy behavior is reachable
+// only through the explicit allowTestOnlyRealtimeExecution test-oracle flag. The
+// realtime.subscribe (in-memory RBAC validation) and realtime.pull (read via
+// withReadConnection) surfaces are pure reads and stay compat_shim, NOT gated.
+
+function assertRealtimeTestOracleAllowed(deps: FridayRealtimeRoutesDeps): void {
+  if (deps.allowTestOnlyRealtimeExecution !== true) {
+    throw new FridayDomainError(
+      "TS_RUNTIME_REALTIME_RETIRED",
+      "TypeScript realtime checkpoint-ack is fail-closed in default/live runtime; use the Rust-owned realtime delivery entrypoint.",
+      {
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_realtime_delivery_entrypoint_required",
+        },
+      },
+    );
+  }
 }
 
 export function createFridayRealtimeRoutes(
@@ -140,6 +173,7 @@ export function createFridayRealtimeRoutes(
           });
         }
 
+        assertRealtimeTestOracleAllowed(deps);
         const ackResult = deps.subscriptionService.ackEvent(
           ctx.principal!.principalId,
           streamId,

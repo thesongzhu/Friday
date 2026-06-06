@@ -1079,6 +1079,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     nowIso: deps.nowIso,
     serverVersion,
     currentEpoch: CURRENT_EPOCH,
+    // Test-oracle only: undefined in default/live runtime, so the WS ack frame
+    // fail-closes (matching POST /v1/realtime/ack). Same top-level flag.
+    allowTestOnlyRealtimeExecution: deps.allowTestOnlyRealtimeExecution,
   });
 
   const publishWorkflowRealtimeEvent = async (
@@ -3086,6 +3089,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   for (const route of createFridayRealtimeRoutes({
     subscriptionService: subscriptions,
     currentEpoch: CURRENT_EPOCH,
+    // Test-oracle only: undefined in default/live runtime, so realtime.ack
+    // fail-closes; test harnesses thread it true via hub config.
+    allowTestOnlyRealtimeExecution: deps.allowTestOnlyRealtimeExecution,
   })) {
     routes.register(route);
   }

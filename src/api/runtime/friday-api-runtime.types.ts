@@ -342,6 +342,12 @@ export interface CreateFridayApiRuntimeDeps {
    * fail-closed until Rust owns the session memory extraction entrypoint.
    */
   allowTestOnlySessionMemoryExtractionExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript realtime checkpoint-ack
+   * mutation (POST /v1/realtime/ack). Production/runtime callers must leave this
+   * unset so the ack surface stays fail-closed until Rust owns realtime delivery.
+   */
+  allowTestOnlyRealtimeExecution?: boolean;
   /** Optional: Reflex service for deterministic preference writes before agent runs. */
   reflexService?: FridayReflexService;
   /** Optional deterministic runtime capability getter used by context evidence selection. */

@@ -8,6 +8,7 @@ import {
   createFridayRealtimeCheckpointRepository,
 } from "#api";
 import type { FridayAuthPrincipal } from "#api";
+import { FridayDomainError } from "#errors";
 
 describe("FridayRealtimeRoutes", () => {
   let db: FridaySqliteLayer;
@@ -159,5 +160,73 @@ describe("FridayRealtimeRoutes", () => {
     expect(result.streamId).toBe("workflow:wf-1");
     expect(result.epoch).toBe(EPOCH);
     expect(result.items.map((item) => item.eventId)).toEqual(["evt-offline-1", "evt-offline-2"]);
+  });
+
+  describe("TS runtime retirement (allowTestOnlyRealtimeExecution)", () => {
+    function makeAckRoute(allow?: boolean) {
+      const subscriptionService = createFridayRealtimeSubscriptionService({
+        db,
+        eventRepo: createFridayRealtimeEventRepository(),
+        checkpointRepo: createFridayRealtimeCheckpointRepository(),
+        nowIso: () => NOW,
+        currentEpoch: EPOCH,
+        cursorSecret: "test-secret",
+      });
+      return createFridayRealtimeRoutes({ subscriptionService, currentEpoch: EPOCH, allowTestOnlyRealtimeExecution: allow })
+        .find((r) => r.operationId === "realtime.ack")!;
+    }
+
+    const ackCtx = {
+      requestId: "req-ack",
+      receivedAt: NOW,
+      params: {},
+      query: {},
+      body: { streamId: "workflow:wf-1", seq: 1, epoch: EPOCH },
+      headers: {},
+      principal: adminPrincipal,
+    };
+
+    it("fail-closes realtime.ack with 503 for an authorized request when the flag is unset", async () => {
+      await expect(makeAckRoute(undefined).handler({ ...ackCtx })).rejects.toMatchObject({
+        code: "TS_RUNTIME_REALTIME_RETIRED",
+        httpStatus: 503,
+      } satisfies Partial<FridayDomainError>);
+    });
+
+    it("does NOT fail-close realtime.ack when the flag is true (reaches ackEvent, accepted)", async () => {
+      const result = await makeAckRoute(true).handler({ ...ackCtx }) as { accepted: boolean };
+      expect(result.accepted).toBe(true);
+    });
+
+    it("enforces stream authorization (403) BEFORE the retirement guard (flag unset)", async () => {
+      const restrictedPrincipal: FridayAuthPrincipal = { ...adminPrincipal, scopes: ["fleet.read"] };
+      await expect(makeAckRoute(undefined).handler({ ...ackCtx, principal: restrictedPrincipal }))
+        .rejects.toThrow(/Not authorized/);
+    });
+
+    it("leaves the read surfaces (subscribe/pull) ungated when the flag is unset", async () => {
+      const routes = createFridayRealtimeRoutes({
+        subscriptionService: createFridayRealtimeSubscriptionService({
+          db,
+          eventRepo: createFridayRealtimeEventRepository(),
+          checkpointRepo: createFridayRealtimeCheckpointRepository(),
+          nowIso: () => NOW,
+          currentEpoch: EPOCH,
+          cursorSecret: "test-secret",
+        }),
+        currentEpoch: EPOCH,
+      });
+      const pull = routes.find((r) => r.operationId === "realtime.pull")!;
+      const result = await pull.handler({
+        requestId: "req-pull",
+        receivedAt: NOW,
+        params: {},
+        query: {},
+        body: { streamId: "workflow:wf-1", afterSeq: 0, limit: 10 },
+        headers: {},
+        principal: adminPrincipal,
+      }) as { streamId: string };
+      expect(result.streamId).toBe("workflow:wf-1");
+    });
   });
 });

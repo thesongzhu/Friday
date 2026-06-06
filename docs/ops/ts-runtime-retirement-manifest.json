@@ -3461,6 +3461,41 @@
       "executes_product_logic": false,
       "proof": "src/api/http/routes/friday-diagnosis-routes.ts fail-closes default/live diagnosis.patterns.demote to TS_RUNTIME_DIAGNOSIS_RETIRED after requireUserId and the factor-finite-number validation, immediately before the TypeScript demotePattern write (friday-self-healing-api-service.ts withWriteTransaction: factRepo.upsert of the pattern_demotion fact). Legacy behavior is reachable only through explicit allowTestOnlyDiagnosisExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned diagnosis entrypoint when available."
+    },
+    {
+      "id": "realtime_ack",
+      "route": {
+        "method": "POST",
+        "path": "/v1/realtime/ack",
+        "operationId": "realtime.ack"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "The TypeScript checkpoint-ack mutation (friday-realtime-subscription-service.ts ackEvent -> withWriteTransaction checkpointRepo.upsert advances/persists the delivery cursor) has TWO user-triggerable call sites and BOTH fail-close by default/live: (1) the HTTP route src/api/http/routes/friday-realtime-routes.ts realtime.ack -> assertRealtimeTestOracleAllowed(deps) after streamId/seq/epoch validation + isStreamAuthorized + cursor HMAC, immediately before ackEvent (503 TS_RUNTIME_REALTIME_RETIRED); (2) the WS gateway ack frame src/api/realtime/friday-realtime-ws-gateway.ts (createFridayRealtimeWsGateway, served at /v1/realtime/ws) returns a DEGRADED_MODE error frame (TS_RUNTIME_REALTIME_RETIRED) after the same auth/epoch/cursor checks, immediately before ackEvent. Both call sites are gated by the single top-level allowTestOnlyRealtimeExecution flag (threaded into CreateFridayApiRuntimeDeps -> both the inline createFridayRealtimeRoutes and createFridayRealtimeWsGateway). executes_product_logic:false: no checkpoint write occurs in default/live. Legacy behavior is reachable only through explicit allowTestOnlyRealtimeExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned realtime delivery entrypoint when available."
+    },
+    {
+      "id": "realtime_subscribe_read",
+      "route": {
+        "method": "POST",
+        "path": "/v1/realtime/subscriptions",
+        "operationId": "realtime.subscribe"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "proof": "src/api/http/routes/friday-realtime-routes.ts realtime.subscribe is a pure read: deps.subscriptionService.validateSubscriptions performs in-memory RBAC scope + topic->stream-prefix binding validation only (friday-realtime-subscription-service.ts:145-183) and returns the resolved bindings; it reads/writes NO persisted state (the live subscription set lives in the WS-gateway connection map, not this route). It stays a redacting compat_shim and is intentionally NOT gated by the retirement guard."
+    },
+    {
+      "id": "realtime_pull_read",
+      "route": {
+        "method": "POST",
+        "path": "/v1/realtime/pull",
+        "operationId": "realtime.pull"
+      },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "proof": "src/api/http/routes/friday-realtime-routes.ts realtime.pull is a pure read: deps.subscriptionService.pullEvents runs via withReadConnection (eventRepo.listAfterSeq) and the handler returns the events with no lease, cursor advance, or write (cursor advancement is the separate ackEvent method, used by realtime.ack). It stays a redacting compat_shim and is intentionally NOT gated by the retirement guard."
     }
   ]
 }

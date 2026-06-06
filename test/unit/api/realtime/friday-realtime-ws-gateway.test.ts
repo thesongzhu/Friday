@@ -25,6 +25,9 @@ import type { FridayAccessTokenClaims } from "#api";
 describe("FridayRealtimeWsGateway", () => {
   let db: FridaySqliteLayer;
   let gateway: FridayRealtimeWsGateway;
+  let subscriptionService: ReturnType<typeof createFridayRealtimeSubscriptionService>;
+  let eventBus: ReturnType<typeof createFridayRealtimeEventBus>;
+  let tokenValidator: ReturnType<typeof createFridayTokenValidator>;
   const NOW = "2025-06-15T10:00:00.000Z";
   const NOW_MS = new Date(NOW).getTime();
   const TOKEN_SECRET = "test-secret-for-ws";
@@ -60,18 +63,18 @@ describe("FridayRealtimeWsGateway", () => {
     db = createTestDb();
     const eventRepo = createFridayRealtimeEventRepository();
     const checkpointRepo = createFridayRealtimeCheckpointRepository();
-    const subscriptionService = createFridayRealtimeSubscriptionService({
+    subscriptionService = createFridayRealtimeSubscriptionService({
       db,
       eventRepo,
       checkpointRepo,
       nowIso: () => NOW,
       currentEpoch: EPOCH,
     });
-    const eventBus = createFridayRealtimeEventBus({
+    eventBus = createFridayRealtimeEventBus({
       idGenerator: () => "bus-evt-1",
       nowIso: () => NOW,
     });
-    const tokenValidator = createFridayTokenValidator({
+    tokenValidator = createFridayTokenValidator({
       tokenSecret: TOKEN_SECRET,
       nowMs: () => NOW_MS,
       lookupTokenRevocation: () => false,
@@ -84,6 +87,9 @@ describe("FridayRealtimeWsGateway", () => {
       nowIso: () => NOW,
       serverVersion: "1.0.0-test",
       currentEpoch: EPOCH,
+      // Test-oracle: exercise the real WS checkpoint-ack logic. Default/live
+      // leaves this unset so the ack frame fail-closes (see retirement test).
+      allowTestOnlyRealtimeExecution: true,
     });
   });
 
@@ -156,6 +162,7 @@ describe("FridayRealtimeWsGateway", () => {
       serverVersion: "1.0.0-test",
       currentEpoch: EPOCH,
       frameCrypto,
+      allowTestOnlyRealtimeExecution: true,
     });
     const conn = encryptedGateway.createConnection("conn-encrypted");
 
@@ -319,6 +326,58 @@ describe("FridayRealtimeWsGateway", () => {
     const ackOk = responses[0] as Extract<FridayRealtimeServerFrame, { type: "ack_ok" }>;
     expect(ackOk.streamId).toBe("workflow:wf-1");
     expect(ackOk.seq).toBe(5);
+  });
+
+  it("TS runtime retirement: ack frame fail-closes (error frame) when allowTestOnlyRealtimeExecution is unset", () => {
+    // Default/live wiring leaves the flag unset; the WS ack frame is the second
+    // ackEvent call site (the first is POST /v1/realtime/ack) and must also
+    // fail-close so the checkpoint-cursor mutation is fully retired.
+    const retiredGateway = createFridayRealtimeWsGateway({
+      tokenValidator,
+      subscriptionService,
+      eventBus,
+      nowIso: () => NOW,
+      serverVersion: "1.0.0-test",
+      currentEpoch: EPOCH,
+      // allowTestOnlyRealtimeExecution intentionally unset.
+    });
+    const conn = retiredGateway.createConnection("conn-retired");
+    retiredGateway.handleClientFrame(conn, { type: "hello", token: makeToken() });
+    retiredGateway.handleClientFrame(conn, {
+      type: "subscribe",
+      subscriptions: [
+        { subscriptionId: "sub-1", streamId: "workflow:wf-1", topic: "workflow" },
+      ],
+    });
+
+    const responses = retiredGateway.handleClientFrame(conn, {
+      type: "ack",
+      streamId: "workflow:wf-1",
+      seq: 5,
+      epoch: EPOCH,
+    });
+
+    expect(responses).toHaveLength(1);
+    expect(responses[0].type).toBe("error");
+    expect((responses[0] as Extract<FridayRealtimeServerFrame, { type: "error" }>).message)
+      .toContain("TS_RUNTIME_REALTIME_RETIRED");
+    // The cursor was NOT advanced: a fresh authorized ack via a flag-enabled
+    // gateway still succeeds (proving the retirement is the only thing blocking).
+    const okConn = gateway.createConnection("conn-ok");
+    gateway.handleClientFrame(okConn, { type: "hello", token: makeToken() });
+    gateway.handleClientFrame(okConn, {
+      type: "subscribe",
+      subscriptions: [
+        { subscriptionId: "sub-1", streamId: "workflow:wf-1", topic: "workflow" },
+      ],
+    });
+    const okResponses = gateway.handleClientFrame(okConn, {
+      type: "ack",
+      streamId: "workflow:wf-1",
+      seq: 5,
+      epoch: EPOCH,
+    });
+    expect(okResponses[0].type).toBe("ack_ok");
   });
 
   it("ack with stale epoch returns resync_required", () => {

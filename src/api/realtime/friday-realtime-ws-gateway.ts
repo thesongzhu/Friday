@@ -49,6 +49,14 @@ export interface CreateFridayRealtimeWsGatewayDeps {
   serverVersion: string;
   currentEpoch: number;
   frameCrypto?: FridayRealtimeFrameCrypto;
+  /**
+   * Test-oracle only: allow the legacy TypeScript realtime checkpoint-ack
+   * mutation via the WS ack frame. Production/runtime callers must leave this
+   * unset so the ack frame fail-closes (matching POST /v1/realtime/ack) until
+   * Rust owns realtime delivery. Hello/subscribe/pull frames are reads and are
+   * never gated.
+   */
+  allowTestOnlyRealtimeExecution?: boolean;
 }
 
 // ─── Factory ───
@@ -222,6 +230,24 @@ export function createFridayRealtimeWsGateway(
                 streamId: frame.streamId,
                 reason: "CURSOR_INVALID",
                 snapshotEndpoint: `/v1/realtime/pull?streamId=${frame.streamId}`,
+              },
+            ];
+          }
+
+          // TS-runtime retirement: the checkpoint-ack mutation (ackEvent ->
+          // withWriteTransaction checkpointRepo.upsert) fail-closes by
+          // default/live, matching POST /v1/realtime/ack. This is the second
+          // call site of ackEvent; both are gated so the mutation is fully
+          // retired. Legacy behavior is reachable only through the explicit
+          // allowTestOnlyRealtimeExecution test-oracle flag.
+          if (deps.allowTestOnlyRealtimeExecution !== true) {
+            return [
+              {
+                type: "error",
+                code: FRIDAY_ERROR_CODES.DEGRADED_MODE,
+                message:
+                  "Realtime checkpoint-ack is fail-closed in default/live runtime (TS_RUNTIME_REALTIME_RETIRED); use the Rust-owned realtime delivery entrypoint.",
+                retryable: false,
               },
             ];
           }
