@@ -75,6 +75,9 @@ function makeDeps(overrides?: Partial<FridaySystemRoutesDeps>): FridaySystemRout
         verifiedAt: "2026-03-06T00:01:00.000Z",
       }),
     },
+    allowTestOnlySystemIntentExecution: true,
+    allowTestOnlySystemApprovalExecution: true,
+    allowTestOnlySystemRemoteExecution: true,
     ...overrides,
   };
 }
@@ -747,5 +750,74 @@ describe("createFridaySystemRoutes", () => {
     expect(deps.remoteAuth.beginAssertion).toHaveBeenCalledTimes(1);
     expect(deps.remote.heartbeatSession).toHaveBeenCalledTimes(1);
     expect(deps.remote.closeSession).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("TS runtime retirement — system mutations fail-close by default", () => {
+  function failClosedDeps() {
+    return makeDeps({
+      allowTestOnlySystemIntentExecution: false,
+      allowTestOnlySystemApprovalExecution: false,
+      allowTestOnlySystemRemoteExecution: false,
+    });
+  }
+
+  it("intents.execute fail-closes with TS_RUNTIME_SYSTEM_INTENT_RETIRED (503) when the flag is unset", async () => {
+    const deps = failClosedDeps();
+    const routes = createFridaySystemRoutes(deps);
+    await expect(
+      findRoute(routes, "system.intents.execute").handler(
+        makeCtx({ body: { action: "open_url", target: "https://example.com", idempotencyKey: "k-1" } }),
+      ),
+    ).rejects.toMatchObject({ code: "TS_RUNTIME_SYSTEM_INTENT_RETIRED", httpStatus: 503 });
+    expect(deps.intents.execute).not.toHaveBeenCalled();
+  });
+
+  it("approvals.update fail-closes with TS_RUNTIME_SYSTEM_APPROVAL_RETIRED (503) when the flag is unset", async () => {
+    const deps = failClosedDeps();
+    const routes = createFridaySystemRoutes(deps);
+    await expect(
+      findRoute(routes, "system.approvals.update").handler(
+        makeCtx({ params: { approvalId: "approval-1" }, body: { idempotencyKey: "k-1", decision: "approved" } }),
+      ),
+    ).rejects.toMatchObject({ code: "TS_RUNTIME_SYSTEM_APPROVAL_RETIRED", httpStatus: 503 });
+    expect(deps.approvals.update).not.toHaveBeenCalled();
+  });
+
+  it("remote device/session/WebAuthn mutations fail-close with TS_RUNTIME_SYSTEM_REMOTE_RETIRED (503) when the flag is unset", async () => {
+    const deps = failClosedDeps();
+    const routes = createFridaySystemRoutes(deps);
+    const cases: Array<[string, Record<string, unknown>]> = [
+      ["system.remote.devices.register", { body: { label: "iPhone", fingerprint: "fp-ios", platform: "ios", idempotencyKey: "k-1" } }],
+      ["system.remote.devices.delete", { params: { deviceId: "device-1" } }],
+      ["system.remote.devices.passkey.delete", { params: { deviceId: "device-1" } }],
+      ["system.remote.auth.register.options", { body: { deviceId: "device-1", idempotencyKey: "reg-options-key" } }],
+      ["system.remote.auth.assert.options", { body: { deviceId: "device-1", idempotencyKey: "assert-options-key" } }],
+      ["system.remote.sessions.create", { body: { deviceId: "device-1", assertionToken: "assertion-token", idempotencyKey: "create-key" } }],
+      ["system.remote.sessions.heartbeat", { params: { sessionId: "remote-session-1" }, body: { idempotencyKey: "hb-key" } }],
+      ["system.remote.sessions.delete", { params: { sessionId: "remote-session-1" } }],
+    ];
+    for (const [op, ctx] of cases) {
+      await expect(findRoute(routes, op).handler(makeCtx(ctx))).rejects.toMatchObject({
+        code: "TS_RUNTIME_SYSTEM_REMOTE_RETIRED",
+        httpStatus: 503,
+      });
+    }
+    // The remote service mutations were never reached.
+    expect(deps.remote.register).not.toHaveBeenCalled();
+    expect(deps.remoteAuth.beginRegistration).not.toHaveBeenCalled();
+    expect(deps.remote.openSession).not.toHaveBeenCalled();
+  });
+
+  it("still 400s on invalid input BEFORE the retirement guard (validation precedes the guard)", async () => {
+    const routes = createFridaySystemRoutes(failClosedDeps());
+    // intents.execute missing action => 400, not 503
+    await expect(
+      findRoute(routes, "system.intents.execute").handler(makeCtx({ body: { idempotencyKey: "k-1" } })),
+    ).rejects.toMatchObject({ httpStatus: 400 });
+    // remote.auth.register.options missing deviceId => 400, not 503
+    await expect(
+      findRoute(routes, "system.remote.auth.register.options").handler(makeCtx({ body: { idempotencyKey: "k-1" } })),
+    ).rejects.toMatchObject({ httpStatus: 400 });
   });
 });

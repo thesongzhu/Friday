@@ -1070,7 +1070,11 @@ describe("FridayHub Bootstrap Integration", () => {
         headers: {},
         principal: null,
       } as never)).rejects.toMatchObject({
-        code: "SYSTEM_CANONICAL_APPROVAL_REQUIRED",
+        // TS runtime retirement: the route-level fail-close guard now rejects
+        // system.approvals.update (503) BEFORE the hub canonical-approval stub
+        // (deps.approvals.update) would run; the route is blocked even harder.
+        code: "TS_RUNTIME_SYSTEM_APPROVAL_RETIRED",
+        httpStatus: 503,
       });
     } finally {
       if (previousEnabled === undefined) {
@@ -1091,11 +1095,16 @@ describe("FridayHub Bootstrap Integration", () => {
     }
   });
 
-  it("enforces canonical system mutation gate by default in production profile", async () => {
+  it("fail-closes the system approval-rule route by default in the production profile (retirement guard precedes the canonical gate)", async () => {
     const previousNodeEnv = process.env.NODE_ENV;
     const previousEnabled = process.env.FRIDAY_SYSTEM_ENABLED;
     const previousTransport = process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT;
     const previousCanonicalGate = process.env.FRIDAY_CANONICAL_GATE;
+    // NODE_ENV=production with FRIDAY_CANONICAL_GATE unset previously asserted the
+    // canonical-approval default; after TS runtime retirement the route-level
+    // fail-close guard rejects the route regardless of these env vars, so this
+    // env scaffolding is retained only to prove the production profile is still
+    // blocked (now by the retirement guard, not the canonical gate).
     process.env.NODE_ENV = "production";
     process.env.FRIDAY_SYSTEM_ENABLED = "true";
     process.env.FRIDAY_SYSTEM_COMPANION_TRANSPORT = "in_process";
@@ -1115,7 +1124,8 @@ describe("FridayHub Bootstrap Integration", () => {
         headers: {},
         principal: null,
       } as never)).rejects.toMatchObject({
-        code: "SYSTEM_CANONICAL_APPROVAL_REQUIRED",
+        code: "TS_RUNTIME_SYSTEM_APPROVAL_RETIRED",
+        httpStatus: 503,
       });
     } finally {
       if (previousNodeEnv === undefined) {

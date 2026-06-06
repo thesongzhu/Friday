@@ -101,6 +101,83 @@ export interface FridaySystemRoutesDeps {
       meta: { origin?: string; ipAddress?: string; userAgent?: string },
     ): Promise<FridayVerifySystemRemotePasskeyAssertionResponse>;
   };
+  /**
+   * Test-oracle only: allow the legacy TypeScript system-intent execution in
+   * isolated mock/unit validation. Production/runtime callers must leave this
+   * unset so POST /v1/system/intents stays fail-closed until Rust owns it.
+   */
+  allowTestOnlySystemIntentExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript system approval-rule mutation
+   * in isolated validation. Production/runtime callers must leave this unset so
+   * PATCH /v1/system/approvals/:id stays fail-closed until Rust owns it.
+   */
+  allowTestOnlySystemApprovalExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript remote device/session/WebAuthn
+   * mutations (register/revoke/passkey, register/assert options+verify, session
+   * open/heartbeat/close) in isolated validation. Production/runtime callers must
+   * leave this unset so the remote-access engine stays fail-closed until Rust
+   * owns it.
+   */
+  allowTestOnlySystemRemoteExecution?: boolean;
+}
+
+// ─── Retirement helpers ───
+//
+// The system intent execution, approval-rule mutation, and remote
+// device/session/WebAuthn surfaces run TypeScript product logic or write
+// system state (control leases, approval rules, remote device/session/challenge
+// records). They fail-close by default/live until Rust owns the corresponding
+// entrypoints; legacy behavior is reachable only through the explicit
+// per-engine test-oracle flags above.
+
+function throwRetiredSystem(
+  code: string,
+  label: string,
+  replacement: string,
+): never {
+  throw new FridayDomainError(
+    code,
+    `${label} is fail-closed in default/live runtime; use the Rust-owned ${replacement} entrypoint.`,
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: `rust_owned_${replacement}_entrypoint_required`,
+      },
+    },
+  );
+}
+
+function assertSystemIntentTestOracleAllowed(deps: FridaySystemRoutesDeps): void {
+  if (deps.allowTestOnlySystemIntentExecution !== true) {
+    throwRetiredSystem(
+      "TS_RUNTIME_SYSTEM_INTENT_RETIRED",
+      "TypeScript system intent execution",
+      "system_intent_execution",
+    );
+  }
+}
+
+function assertSystemApprovalTestOracleAllowed(deps: FridaySystemRoutesDeps): void {
+  if (deps.allowTestOnlySystemApprovalExecution !== true) {
+    throwRetiredSystem(
+      "TS_RUNTIME_SYSTEM_APPROVAL_RETIRED",
+      "TypeScript system approval-rule mutation",
+      "system_approval_rule",
+    );
+  }
+}
+
+function assertSystemRemoteTestOracleAllowed(deps: FridaySystemRoutesDeps): void {
+  if (deps.allowTestOnlySystemRemoteExecution !== true) {
+    throwRetiredSystem(
+      "TS_RUNTIME_SYSTEM_REMOTE_RETIRED",
+      "TypeScript system remote device/session/WebAuthn execution",
+      "system_remote_access",
+    );
+  }
 }
 
 function requireString(body: unknown, field: string): void {
@@ -198,6 +275,7 @@ export function createFridaySystemRoutes(
         requireIdempotencyKey(body);
         const { canonicalApproval: _ignoredCanonicalApproval, ...safeBody } =
           body as FridayExecuteSystemIntentRequest & { canonicalApproval?: unknown };
+        assertSystemIntentTestOracleAllowed(deps);
         return deps.intents.execute(safeBody);
       },
     },
@@ -223,6 +301,7 @@ export function createFridaySystemRoutes(
         const { approvalId } = ctx.params as { approvalId: string };
         const body = ctx.body as FridayUpdateSystemApprovalRequest;
         requireIdempotencyKey(body);
+        assertSystemApprovalTestOracleAllowed(deps);
         return deps.approvals.update(approvalId, body);
       },
     },
@@ -301,6 +380,7 @@ export function createFridaySystemRoutes(
         requireString(body, "fingerprint");
         requireTrustedDevicePlatform(body, "platform");
         requireIdempotencyKey(body);
+        assertSystemRemoteTestOracleAllowed(deps);
         return deps.remote.register(body);
       },
     },
@@ -311,6 +391,7 @@ export function createFridaySystemRoutes(
       auth: { public: true },
       async handler(ctx) {
         const { deviceId } = ctx.params as { deviceId: string };
+        assertSystemRemoteTestOracleAllowed(deps);
         return deps.remote.revoke(deviceId);
       },
     },
@@ -321,6 +402,7 @@ export function createFridaySystemRoutes(
       auth: { public: true },
       async handler(ctx) {
         const { deviceId } = ctx.params as { deviceId: string };
+        assertSystemRemoteTestOracleAllowed(deps);
         return deps.remote.clearPasskey(deviceId);
       },
     },
@@ -342,6 +424,7 @@ export function createFridaySystemRoutes(
         const body = ctx.body as FridayBeginSystemRemotePasskeyRegistrationRequest;
         requireString(body, "deviceId");
         requireIdempotencyKey(body);
+        assertSystemRemoteTestOracleAllowed(deps);
         return deps.remoteAuth.beginRegistration(body, {
           origin: readOrigin(ctx),
         });
@@ -364,6 +447,7 @@ export function createFridaySystemRoutes(
         requireString(body, "deviceId");
         requireString(body, "challengeId");
         requireIdempotencyKey(body);
+        assertSystemRemoteTestOracleAllowed(deps);
         return deps.remoteAuth.verifyRegistration(body, {
           origin: readOrigin(ctx),
         });
@@ -384,6 +468,7 @@ export function createFridaySystemRoutes(
         const body = ctx.body as FridayBeginSystemRemotePasskeyAssertionRequest;
         requireString(body, "deviceId");
         requireIdempotencyKey(body);
+        assertSystemRemoteTestOracleAllowed(deps);
         return deps.remoteAuth.beginAssertion(body, {
           origin: readOrigin(ctx),
         });
@@ -406,6 +491,7 @@ export function createFridaySystemRoutes(
         requireString(body, "deviceId");
         requireString(body, "challengeId");
         requireIdempotencyKey(body);
+        assertSystemRemoteTestOracleAllowed(deps);
         return deps.remoteAuth.verifyAssertion(body, {
           origin: readOrigin(ctx),
           ipAddress: readClientIp(ctx),
@@ -442,6 +528,7 @@ export function createFridaySystemRoutes(
         requireString(body, "deviceId");
         requireString(body, "assertionToken");
         requireIdempotencyKey(body);
+        assertSystemRemoteTestOracleAllowed(deps);
         return deps.remote.openSession(body, {
           ipAddress: readClientIp(ctx),
           userAgent: readUserAgent(ctx),
@@ -470,6 +557,7 @@ export function createFridaySystemRoutes(
         const { sessionId } = ctx.params as { sessionId: string };
         const body = ctx.body as FridayHeartbeatSystemRemoteSessionRequest;
         requireIdempotencyKey(body);
+        assertSystemRemoteTestOracleAllowed(deps);
         return deps.remote.heartbeatSession(sessionId, body, {
           ipAddress: readClientIp(ctx),
           userAgent: readUserAgent(ctx),
@@ -492,6 +580,7 @@ export function createFridaySystemRoutes(
       auth: { public: true, allowUnauthenticatedMutation: true },
       async handler(ctx) {
         const { sessionId } = ctx.params as { sessionId: string };
+        assertSystemRemoteTestOracleAllowed(deps);
         return deps.remote.closeSession(sessionId);
       },
     },
