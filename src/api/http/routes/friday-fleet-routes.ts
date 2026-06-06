@@ -20,6 +20,36 @@ const FLEET_MAX_LIST_LIMIT = 100;
 export interface FridayFleetRoutesDeps {
   fleetService: FridayFleetDashboardService;
   canonicalMutationGate?: FridayMutatingActionGate;
+  /**
+   * Test-oracle only: allow the legacy TypeScript fleet satellite remediation
+   * execute mutation. Production/runtime callers must leave this unset so the
+   * route fail-closes (503 TS_RUNTIME_FLEET_REMEDIATION_RETIRED) until Rust owns
+   * fleet remediation. GET fleet reads are never gated.
+   */
+  allowTestOnlyFleetRemediationExecution?: boolean;
+}
+
+/**
+ * TS-runtime retirement guard for the fleet remediation execute mutation.
+ * Placed AFTER the canonical-approval gate (requireFleetRemediationTicket -> 403)
+ * and IMMEDIATELY BEFORE executeSatelliteRemediationAction, so an unapproved
+ * request still surfaces its 403 rather than this 503.
+ */
+function assertFleetRemediationTestOracleAllowed(deps: FridayFleetRoutesDeps): void {
+  if (deps.allowTestOnlyFleetRemediationExecution === true) {
+    return;
+  }
+  throw new FridayDomainError(
+    "TS_RUNTIME_FLEET_REMEDIATION_RETIRED",
+    "Fleet satellite remediation execution is fail-closed in the default/live runtime; the Rust-owned fleet remediation entrypoint is required.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_fleet_remediation_entrypoint_required",
+      },
+    },
+  );
 }
 
 export function createFridayFleetRemediationMutatingActionRequest(input: {
@@ -239,6 +269,7 @@ export function createFridayFleetRoutes(
           actor: createActorFromPrincipal(ctx.principal, `api:${ctx.requestId}`),
           surface: "api:/v1/fleet/satellites/remediation/execute",
         });
+        assertFleetRemediationTestOracleAllowed(deps);
         const result = await deps.fleetService.executeSatelliteRemediationAction({
           satelliteId,
           actionId,

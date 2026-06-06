@@ -2828,7 +2828,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   }
 
   // Register fleet routes
-  for (const route of createFridayFleetRoutes({ fleetService: fleet, canonicalMutationGate })) {
+  for (const route of createFridayFleetRoutes({ fleetService: fleet, canonicalMutationGate, allowTestOnlyFleetRemediationExecution: deps.allowTestOnlyFleetRemediationExecution })) {
     routes.register(route);
   }
 

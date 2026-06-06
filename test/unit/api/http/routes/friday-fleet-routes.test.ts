@@ -141,6 +141,9 @@ describe("FridayFleetRoutes", () => {
         nowIso: () => NOW,
         ticketIdGenerator: () => "ticket-1",
       }),
+      // Test-oracle flag: the remediation-execute success test below exercises the
+      // live mutation. Production wiring leaves this unset (TS-runtime retirement).
+      allowTestOnlyFleetRemediationExecution: true,
     });
   });
 
@@ -315,5 +318,62 @@ describe("FridayFleetRoutes", () => {
     expect((result as FridayFleetRemediationActionExecutionResult).status).toBe("completed");
     expect((result as FridayFleetRemediationActionExecutionResult).canonicalGate?.ticketId).toBe("ticket-1");
     expect(outboxQueueService.requeueExpiredLeases).toHaveBeenCalledTimes(1);
+  });
+
+  describe("TS-runtime retirement (default/live fail-close)", () => {
+    // Build routes WITHOUT the test-oracle flag = production/live wiring.
+    function makeRetiredRoutes() {
+      return createFridayFleetRoutes({
+        fleetService,
+        canonicalMutationGate: createFridayMutatingActionGate({
+          nowIso: () => NOW,
+          ticketIdGenerator: () => "ticket-1",
+        }),
+      });
+    }
+
+    it("fail-closes remediation execute with 503 (after a VALID approval) and does not run the action", async () => {
+      insertSatellite("sat-1", "degraded");
+      insertOutboxMessage("msg-exec", "sat-1", "failed");
+      const retiredRoutes = makeRetiredRoutes();
+      const route = retiredRoutes.find((r) => r.operationId === "fleet.execute.satellite.remediation")!;
+      const ctx = makeCtx({
+        params: { satelliteId: "sat-1", actionId: "requeue_expired_leases" },
+        body: {
+          planDigest: PLAN_DIGEST,
+          canonicalApproval: makeApproval({
+            satelliteId: "sat-1",
+            actionId: "requeue_expired_leases",
+            surface: "api:/v1/fleet/satellites/remediation/execute",
+          }),
+        },
+        principal: {
+          principalType: "user", principalId: "user-1", userId: "user-1", role: "admin",
+          scopes: ["hub.admin"], tokenId: "tok-1", tokenKind: "access", issuedAt: NOW,
+        },
+      });
+      await expect(route.handler(ctx)).rejects.toMatchObject({
+        code: "TS_RUNTIME_FLEET_REMEDIATION_RETIRED",
+        httpStatus: 503,
+      });
+      expect(outboxQueueService.requeueExpiredLeases).not.toHaveBeenCalled();
+    });
+
+    it("still enforces canonical approval (403) BEFORE the retirement guard", async () => {
+      insertSatellite("sat-1", "degraded");
+      const retiredRoutes = makeRetiredRoutes();
+      const route = retiredRoutes.find((r) => r.operationId === "fleet.execute.satellite.remediation")!;
+      // No canonicalApproval -> approval gate rejects before the 503.
+      const ctx = makeCtx({
+        params: { satelliteId: "sat-1", actionId: "requeue_expired_leases" },
+        body: { planDigest: PLAN_DIGEST },
+        principal: {
+          principalType: "user", principalId: "user-1", userId: "user-1", role: "admin",
+          scopes: ["hub.admin"], tokenId: "tok-1", tokenKind: "access", issuedAt: NOW,
+        },
+      });
+      await expect(route.handler(ctx)).rejects.toMatchObject({ httpStatus: 403 });
+      expect(outboxQueueService.requeueExpiredLeases).not.toHaveBeenCalled();
+    });
   });
 });
