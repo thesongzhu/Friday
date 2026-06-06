@@ -340,6 +340,7 @@ export async function createMockHubEnv(opts?: {
   allowTestOnlyWorkflowGeneratorExecution?: boolean;
   /** Test-oracle opt-in for legacy TS workflow catalog mutations; set false to prove default fail-closed behavior. */
   allowTestOnlyWorkflowCatalogMutationExecution?: boolean;
+  allowTestOnlyWorkflowBuilderDraftExecution?: boolean;
   /** Test-oracle opt-in for legacy TS workflow deploy execution; set false to prove default fail-closed behavior. */
   allowTestOnlyWorkflowDeployExecution?: boolean;
   /** Test-oracle opt-in for legacy TS agent-run execution; set false to prove default fail-closed behavior. */
@@ -393,6 +394,7 @@ export async function createMockHubEnv(opts?: {
       allowTestOnlySkillGeneratorExecution: opts?.allowTestOnlySkillGeneratorExecution ?? true,
       allowTestOnlyWorkflowGeneratorExecution: opts?.allowTestOnlyWorkflowGeneratorExecution ?? true,
       allowTestOnlyWorkflowCatalogMutationExecution: opts?.allowTestOnlyWorkflowCatalogMutationExecution ?? true,
+      allowTestOnlyWorkflowBuilderDraftExecution: opts?.allowTestOnlyWorkflowBuilderDraftExecution ?? true,
       allowTestOnlyWorkflowDeployExecution: opts?.allowTestOnlyWorkflowDeployExecution ?? true,
       allowTestOnlyAgentRunStartExecution: opts?.allowTestOnlyAgentRunStartExecution ?? true,
       allowTestOnlyAgentRunControlExecution: opts?.allowTestOnlyAgentRunControlExecution ?? true,

@@ -316,6 +316,7 @@ async function startLocalRealHubEnv(
       skillDirs: [],
       port: 0,
       logRequests: false,
+      allowTestOnlyWorkflowBuilderDraftExecution: true,
       ...opts?.hubConfig,
     });
     await createdHub.start();

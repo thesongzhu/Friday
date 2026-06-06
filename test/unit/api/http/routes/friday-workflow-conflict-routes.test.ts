@@ -45,6 +45,9 @@ describe("FridayWorkflowConflictRoutes", () => {
   const stubDeps: FridayWorkflowConflictRoutesDeps = {
     listConflicts: () => ({ items: [] }),
     resolveConflict: () => ({ conflict: stubConflict, draft: stubDraft }),
+    // Opt isolated tests into the legacy oracle so the principal-authority path
+    // is still exercised. Default/live runtime leaves this unset (proven below).
+    allowTestOnlyWorkflowConflictResolution: true,
   };
 
   const routes = createFridayWorkflowConflictRoutes(stubDeps);
@@ -83,9 +86,25 @@ describe("FridayWorkflowConflictRoutes", () => {
     const route = createFridayWorkflowConflictRoutes({
       listConflicts: () => ({ items: [] }),
       resolveConflict,
+      allowTestOnlyWorkflowConflictResolution: true,
     }).find((r) => r.operationId === "conflicts.resolve")!;
     const result = await route.handler(makeCtx());
     expect(result).toEqual({ conflict: stubConflict, draft: stubDraft });
     expect(resolveConflict).toHaveBeenCalledWith("wf-1", "conflict-1", {}, "user-1");
+  });
+
+  it("fail-closes conflicts.resolve by default and never calls resolveConflict", async () => {
+    const resolveConflict = vi.fn(() => ({ conflict: stubConflict, draft: stubDraft }));
+    const route = createFridayWorkflowConflictRoutes({
+      listConflicts: () => ({ items: [] }),
+      resolveConflict,
+      allowTestOnlyWorkflowConflictResolution: false,
+    }).find((r) => r.operationId === "conflicts.resolve")!;
+    await expect(route.handler(makeCtx())).rejects.toMatchObject({
+      code: "TS_RUNTIME_WORKFLOW_CONFLICT_RESOLVE_RETIRED",
+      httpStatus: 503,
+      details: { classification: "fail_closed" },
+    });
+    expect(resolveConflict).not.toHaveBeenCalled();
   });
 });
