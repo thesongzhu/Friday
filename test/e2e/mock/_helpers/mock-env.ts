@@ -359,6 +359,8 @@ export async function createMockHubEnv(opts?: {
   allowTestOnlyDiagnosisExecution?: boolean;
   /** Test-oracle opt-in for legacy TS realtime checkpoint-ack mutation; set false to prove default fail-closed behavior. */
   allowTestOnlyRealtimeExecution?: boolean;
+  /** Test-oracle opt-in for legacy TS skill-converter convert/import/pack mutations; set false to prove default fail-closed behavior. */
+  allowTestOnlySkillConverterExecution?: boolean;
 }): Promise<MockHubEnv> {
   // Reset deterministic counters
   resetMockCounters();
@@ -416,6 +418,7 @@ export async function createMockHubEnv(opts?: {
       allowTestOnlyCrossBorderPackExecution: opts?.allowTestOnlyCrossBorderPackExecution ?? true,
       allowTestOnlyDiagnosisExecution: opts?.allowTestOnlyDiagnosisExecution ?? true,
       allowTestOnlyRealtimeExecution: opts?.allowTestOnlyRealtimeExecution ?? true,
+      allowTestOnlySkillConverterExecution: opts?.allowTestOnlySkillConverterExecution ?? true,
       // Allow private-network targets so mock E2E tests don't require DNS resolution
       ssrfPolicy: opts?.ssrfPolicy ?? { allowPrivateNetwork: true },
     });

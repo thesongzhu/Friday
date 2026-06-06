@@ -1892,6 +1892,8 @@ export interface FridayHubConfig {
   allowTestOnlyDiagnosisExecution?: boolean;
   /** Test-oracle only; production hub creation must leave the realtime checkpoint-ack mutation fail-closed. */
   allowTestOnlyRealtimeExecution?: boolean;
+  /** Test-oracle only; production hub creation must leave skill-converter convert/import/pack mutations fail-closed. */
+  allowTestOnlySkillConverterExecution?: boolean;
 }
 
 // ─── Resolved Hub Config ───

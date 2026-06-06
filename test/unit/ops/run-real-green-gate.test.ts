@@ -7,6 +7,7 @@ import {
   isAutonomySkillLifecycleFailClosed,
   isObservabilityAlertDestinationCreateFailClosed,
   isSessionCreateFailClosed,
+  isSkillImportFailClosed,
   isWorkflowCatalogCreateFailClosed,
   isWorkflowRunStartFailClosed,
   normalizeLiveProviderMode,
@@ -16,6 +17,7 @@ import {
   resolveRetiredAutonomySkillLifecycleScenarioExclusions,
   resolveRetiredObservabilityScenarioExclusions,
   resolveRetiredSessionScenarioExclusions,
+  resolveRetiredSkillImportScenarioExclusions,
   resolveRetiredWorkflowCatalogScenarioExclusions,
   resolveRetiredWorkflowRunScenarioExclusions,
   shouldExcludeProviderScenarios,
@@ -290,6 +292,37 @@ describe("run-real-green-gate helpers", () => {
       {
         scenarioId: "l6-discord-channel-roundtrip",
         reason: "POST /v1/sessions is classified fail_closed in the TS runtime retirement manifest.",
+      },
+    ]);
+  });
+
+  it("detects fail-closed skill import retirement from the manifest", () => {
+    expect(isSkillImportFailClosed({
+      surfaces: [
+        {
+          id: "skills_import",
+          classification: "fail_closed",
+          executes_product_logic: false,
+        },
+      ],
+    })).toBe(true);
+    expect(isSkillImportFailClosed({
+      surfaces: [
+        {
+          id: "skills_import",
+          classification: "ts_runtime_blocker",
+          executes_product_logic: true,
+        },
+      ],
+    })).toBe(false);
+    expect(isSkillImportFailClosed({ surfaces: [] })).toBe(false);
+  });
+
+  it("excludes the skill-upgrade-lifecycle RGG scenario while skill import is fail-closed", () => {
+    expect(resolveRetiredSkillImportScenarioExclusions(process.cwd())).toEqual([
+      {
+        scenarioId: "l5-phase-06-skill-upgrade-lifecycle",
+        reason: "POST /v1/skills/import is classified fail_closed in the TS runtime retirement manifest.",
       },
     ]);
   });

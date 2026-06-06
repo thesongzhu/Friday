@@ -3476,6 +3476,45 @@
       "next_action": "Replace the fail-closed response with the Rust-owned realtime delivery entrypoint when available."
     },
     {
+      "id": "skills_convert",
+      "route": {
+        "method": "POST",
+        "path": "/v1/skills/convert",
+        "operationId": "skills.convert"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-skill-converter-routes.ts skills.convert wires default/live to assertSkillConverterTestOracleAllowed(deps) AFTER validateConvertBody(ctx.body) and IMMEDIATELY BEFORE converterService.convert (the parse-source-to-drafts transform), so a malformed body still 400s and a valid request fail-closes with 503 TS_RUNTIME_SKILL_CONVERTER_RETIRED (classification fail_closed, replacement rust_owned_skill_converter_entrypoint_required). executes_product_logic:false: no conversion runs in default/live via THIS route. The conversion is a pure transform (it GENERATES skill code; any fetch() in a generated n8n-node executor is template-literal output that only runs when the produced skill is later executed via the already-fail_closed /v1/skills/:skillId/run surface), so no third-party egress occurs here and this is fail_closed rather than operator_external_adapter. SCOPE NOTE (route-scoped proof): the underlying converterService.convert method is ALSO reached LIVE/UNGATED by POST /v1/skills/convert-batch (operationId skills.convert.batch, src/api/http/routes/friday-scan-migrate-routes.ts -> deps.convertSkill -> friday-hub-bootstrap.ts converterService.convert with dryRun) and by the operator-local CLI (friday-cli.ts); this surface gates ONLY the /v1/skills/convert route. /v1/skills/convert-batch is itself a ts_runtime_blocker retired in its own (scan-migrate) slice, so this proof does NOT claim the convert method is globally unreachable — only that THIS route fail-closes. Legacy behavior of THIS route is reachable only through explicit allowTestOnlySkillConverterExecution test-oracle wiring (threaded CreateFridayApiRuntimeDeps -> inline createFridaySkillConverterRoutes; hub-config FridayHubConfig.allowTestOnlySkillConverterExecution for hub-driven e2e).",
+      "next_action": "Replace the fail-closed response with the Rust-owned skill-converter entrypoint when available."
+    },
+    {
+      "id": "skills_import",
+      "route": {
+        "method": "POST",
+        "path": "/v1/skills/import",
+        "operationId": "skills.import"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-skill-converter-routes.ts skills.import wires default/live to assertSkillConverterTestOracleAllowed(deps) AFTER validateImportBody and AFTER assertSkillImportCanonicalApproval (so malformed -> 400 and unapproved -> 403 CANONICAL_APPROVAL_REQUIRED/DENIED still fire), IMMEDIATELY BEFORE importWithRedactedSkillSourceErrors -> converterService.import (the candidate-staging write that creates staged candidates + may refresh the registry); 503 TS_RUNTIME_SKILL_CONVERTER_RETIRED. executes_product_logic:false: no candidate is staged in default/live. SCOPE NOTE (route-scoped proof): the underlying converterService.import method is ALSO reached by three OTHER user-triggerable routes — /v1/deeplink/apply (src/api/runtime/friday-deep-link-apply-service.ts), /v1/discovery/integrate, /v1/skills/social-import — and by the controlled agent skill-import tool; this surface gates ONLY the /v1/skills/import route. Each of those other routes is its own ts_runtime_blocker retired in its own slice, so this proof does NOT claim the import method is globally unreachable — only that this route fail-closes. Legacy behavior of THIS route is reachable only through explicit allowTestOnlySkillConverterExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned skill-import entrypoint when available; retire the sibling import routes (deeplink/apply, discovery/integrate, social-import) in their own slices to fully gate converterService.import."
+    },
+    {
+      "id": "skills_pack",
+      "route": {
+        "method": "POST",
+        "path": "/v1/skills/pack",
+        "operationId": "skills.pack"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-skill-converter-routes.ts skills.pack wires default/live to assertSkillConverterTestOracleAllowed(deps) AFTER validatePackBody + the packOutputDir-configured precondition + readContainedPackOutputName path-containment check (so malformed -> 400 and path-escape still rejected), IMMEDIATELY BEFORE converterService.pack (the filesystem write that emits a .friday.tgz package + checksum into the contained skill-packs artifacts dir); 503 TS_RUNTIME_SKILL_CONVERTER_RETIRED. executes_product_logic:false: no package file is written in default/live. Local filesystem artifact only, no third-party egress, so fail_closed not operator_external_adapter. SCOPE NOTE (route-scoped proof): converterService.pack is also reachable via the operator-local CLI (friday-cli.ts), which is not a tracked HTTP surface; this surface gates ONLY the /v1/skills/pack route. Legacy behavior of THIS route is reachable only through explicit allowTestOnlySkillConverterExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned skill-pack entrypoint when available."
+    },
+    {
       "id": "realtime_subscribe_read",
       "route": {
         "method": "POST",

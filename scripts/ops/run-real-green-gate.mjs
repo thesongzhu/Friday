@@ -191,6 +191,16 @@ const SESSION_CREATE_DEPENDENT_SCENARIOS = [
   "l6-discord-channel-roundtrip",
 ];
 
+// The skill-upgrade-lifecycle scenario self-stages v1/v2 skill candidates by
+// POSTing to the production /v1/skills/import route (validation/real-world/
+// lib/executors.mjs surface "api:/v1/skills/import"). Once /v1/skills/import is
+// classified fail_closed in the TS-runtime retirement manifest, that route 503s
+// and the scenario can no longer self-stage a candidate, so it is honestly
+// recorded as excluded (not a fake pass) rather than failing the gate.
+const SKILL_IMPORT_DEPENDENT_SCENARIOS = [
+  "l5-phase-06-skill-upgrade-lifecycle",
+];
+
 const CLAUDE_SKILL_TESTS = [
   "test/unit/skills/registry/friday-skill-discovery.test.ts",
   "test/unit/skills/manifest/friday-skill-package-loader.test.ts",
@@ -409,6 +419,26 @@ export function resolveRetiredSessionScenarioExclusions(repoRoot) {
   return SESSION_CREATE_DEPENDENT_SCENARIOS.map((scenarioId) => ({
     scenarioId,
     reason: "POST /v1/sessions is classified fail_closed in the TS runtime retirement manifest.",
+  }));
+}
+
+export function isSkillImportFailClosed(manifest) {
+  const surfaces = Array.isArray(manifest?.surfaces) ? manifest.surfaces : [];
+  return surfaces.some((surface) =>
+    surface?.id === "skills_import"
+    && surface?.classification === "fail_closed"
+    && surface?.executes_product_logic === false
+  );
+}
+
+export function resolveRetiredSkillImportScenarioExclusions(repoRoot) {
+  const manifest = readJsonFile(path.join(repoRoot, "docs", "ops", "ts-runtime-retirement-manifest.json"));
+  if (!isSkillImportFailClosed(manifest)) {
+    return [];
+  }
+  return SKILL_IMPORT_DEPENDENT_SCENARIOS.map((scenarioId) => ({
+    scenarioId,
+    reason: "POST /v1/skills/import is classified fail_closed in the TS runtime retirement manifest.",
   }));
 }
 
@@ -738,6 +768,7 @@ export function buildSummary({
   retiredAutonomySkillLifecycleScenarioExclusions,
   retiredObservabilityScenarioExclusions,
   retiredSessionScenarioExclusions,
+  retiredSkillImportScenarioExclusions,
   error,
 }) {
   const summary = {
@@ -762,6 +793,7 @@ export function buildSummary({
     retiredAutonomySkillLifecycleScenarioExclusions: retiredAutonomySkillLifecycleScenarioExclusions ?? [],
     retiredObservabilityScenarioExclusions: retiredObservabilityScenarioExclusions ?? [],
     retiredSessionScenarioExclusions: retiredSessionScenarioExclusions ?? [],
+    retiredSkillImportScenarioExclusions: retiredSkillImportScenarioExclusions ?? [],
     error: error ?? null,
   };
   summary.gate = {
@@ -801,6 +833,7 @@ async function main() {
   const retiredAutonomySkillLifecycleScenarioExclusions = resolveRetiredAutonomySkillLifecycleScenarioExclusions(repoRoot);
   const retiredObservabilityScenarioExclusions = resolveRetiredObservabilityScenarioExclusions(repoRoot);
   const retiredSessionScenarioExclusions = resolveRetiredSessionScenarioExclusions(repoRoot);
+  const retiredSkillImportScenarioExclusions = resolveRetiredSkillImportScenarioExclusions(repoRoot);
   const excludedScenarioIds = [
     ...retiredAgentRunScenarioExclusions,
     ...retiredWorkflowRunScenarioExclusions,
@@ -808,6 +841,7 @@ async function main() {
     ...retiredAutonomySkillLifecycleScenarioExclusions,
     ...retiredObservabilityScenarioExclusions,
     ...retiredSessionScenarioExclusions,
+    ...retiredSkillImportScenarioExclusions,
   ].map((entry) => entry.scenarioId);
   const runId = createRunId();
   const reportRoot = options.reportRoot
@@ -1035,6 +1069,7 @@ async function main() {
       retiredAutonomySkillLifecycleScenarioExclusions,
       retiredObservabilityScenarioExclusions,
       retiredSessionScenarioExclusions,
+      retiredSkillImportScenarioExclusions,
       error: terminalError,
     });
     flushTerminalArtifacts(reportRoot, summary);
