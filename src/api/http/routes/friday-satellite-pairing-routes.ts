@@ -97,6 +97,40 @@ export interface FridaySatellitePairingRoutesDeps {
     createdAt: string;
     expiresAt: string;
   } | null>;
+  /**
+   * Test-oracle only: allow the legacy TypeScript satellite pairing mutations
+   * (register, approve, reject, handshake, revoke) in isolated mock/unit
+   * validation. Production/runtime callers must leave this unset so the satellite
+   * pairing engine stays fail-closed until Rust owns it. The read-only pairing
+   * list/get surfaces are never gated.
+   */
+  allowTestOnlySatellitePairingExecution?: boolean;
+}
+
+// ─── Retirement helper ───
+//
+// The satellite pairing mutation surfaces (register, approve, reject, handshake,
+// revoke) write hub pairing/token state inside withWriteTransaction (satellite
+// registration + pairing requests, pairing status transitions, API token
+// issuance/revocation, epoch bumps). They fail-close by default/live until Rust
+// owns the satellite pairing entrypoint; legacy behavior is reachable only
+// through the explicit allowTestOnlySatellitePairingExecution test-oracle flag.
+// The GET pairing list/get surfaces are pure reads and are NOT gated.
+
+function assertSatellitePairingTestOracleAllowed(deps: FridaySatellitePairingRoutesDeps): void {
+  if (deps.allowTestOnlySatellitePairingExecution !== true) {
+    throw new FridayDomainError(
+      "TS_RUNTIME_SATELLITE_PAIRING_RETIRED",
+      "TypeScript satellite pairing mutation is fail-closed in default/live runtime; use the Rust-owned satellite pairing entrypoint.",
+      {
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_satellite_pairing_entrypoint_required",
+        },
+      },
+    );
+  }
 }
 
 // ─── Factory ───
@@ -123,6 +157,8 @@ export function createFridaySatellitePairingRoutes(
             error: { code: "VALIDATION_FAILED", message: "type, displayName, publicKey are required" },
           };
         }
+
+        assertSatellitePairingTestOracleAllowed(deps);
 
         const rawRuntime = body.runtime as Record<string, unknown> | undefined;
         const runtime = {
@@ -191,6 +227,7 @@ export function createFridaySatellitePairingRoutes(
           "satellite.pairing.approve",
           "api",
         );
+        assertSatellitePairingTestOracleAllowed(deps);
         const pairingReq = await deps.getPairingRequest(params.satelliteId);
         if (!pairingReq) {
           throw new FridayDomainError("NOT_FOUND", "No pending pairing request", { httpStatus: 404 });
@@ -222,6 +259,7 @@ export function createFridaySatellitePairingRoutes(
           "satellite.pairing.reject",
           "api",
         );
+        assertSatellitePairingTestOracleAllowed(deps);
         const pairingReq = await deps.getPairingRequest(params.satelliteId);
         if (!pairingReq) {
           throw new FridayDomainError("NOT_FOUND", "No pending pairing request", { httpStatus: 404 });
@@ -264,6 +302,8 @@ export function createFridaySatellitePairingRoutes(
           };
         }
 
+        assertSatellitePairingTestOracleAllowed(deps);
+
         const result = await deps.completeHandshake({
           satelliteId: params.satelliteId,
           token,
@@ -291,6 +331,8 @@ export function createFridaySatellitePairingRoutes(
           "satellite.revoke",
           "api",
         );
+
+        assertSatellitePairingTestOracleAllowed(deps);
 
         const result = await deps.revokeSatellite({
           satelliteId: params.satelliteId,
