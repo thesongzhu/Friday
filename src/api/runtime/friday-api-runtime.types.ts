@@ -369,6 +369,13 @@ export interface CreateFridayApiRuntimeDeps {
    * until Rust owns fleet remediation.
    */
   allowTestOnlyFleetRemediationExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript discovery product-logic
+   * routes (POST /v1/discovery/scan, PATCH /v1/discovery/policy, POST
+   * /v1/discovery/integrate). Production/runtime callers must leave this unset
+   * so those surfaces fail-close until Rust owns discovery.
+   */
+  allowTestOnlyDiscoveryExecution?: boolean;
   /** Optional: Reflex service for deterministic preference writes before agent runs. */
   reflexService?: FridayReflexService;
   /** Optional deterministic runtime capability getter used by context evidence selection. */

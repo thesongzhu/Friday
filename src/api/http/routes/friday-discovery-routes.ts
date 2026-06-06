@@ -28,12 +28,45 @@ export interface FridayDiscoveryRoutesDeps {
     setPolicy(policy: Partial<FridayDiscoveryPolicy>): void;
     isEnabled(): boolean;
   };
+  /**
+   * Test-oracle only: allow the legacy TypeScript discovery product-logic
+   * mutations (scan = local-program discovery algorithm; policy.update =
+   * in-memory policy mutation; integrate is in friday-discovery-integration-
+   * routes.ts under the same flag). Production/runtime callers must leave this
+   * unset so those POST/PATCH routes fail-close (503 TS_RUNTIME_DISCOVERY_RETIRED)
+   * until Rust owns discovery. The GET catalog/programs/recommendations/policy/
+   * status reads are never gated (recommend() product-logic is still reachable
+   * via the GET /v1/discovery/recommendations read-derive — route-scoped).
+   */
+  allowTestOnlyDiscoveryExecution?: boolean;
 }
 
 // ─── Helpers ───
 
 type Ctx = FridayHttpContext<unknown, Record<string, string>, unknown>;
 type Route = FridayRouteDefinition<unknown, Record<string, string>, unknown, unknown>;
+
+/**
+ * TS-runtime retirement guard for the discovery product-logic routes (scan +
+ * policy.update here; integrate in the integration-routes file). Placed AFTER
+ * any body validation and IMMEDIATELY BEFORE the discovery service call.
+ */
+function assertDiscoveryTestOracleAllowed(deps: { allowTestOnlyDiscoveryExecution?: boolean }): void {
+  if (deps.allowTestOnlyDiscoveryExecution === true) {
+    return;
+  }
+  throw new FridayDomainError(
+    "TS_RUNTIME_DISCOVERY_RETIRED",
+    "Program discovery scan and policy mutation are fail-closed in the default/live runtime; the Rust-owned discovery entrypoint is required.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_discovery_entrypoint_required",
+      },
+    },
+  );
+}
 
 // ─── Factory ───
 
@@ -48,6 +81,7 @@ export function createFridayDiscoveryRoutes(
       path: "/v1/discovery/scan",
       auth: { public: true },
       handler: async (_ctx: Ctx) => {
+        assertDiscoveryTestOracleAllowed(deps);
         const catalog = await deps.discovery.discover();
         return {
           status: 200,
@@ -140,6 +174,13 @@ export function createFridayDiscoveryRoutes(
         if (query.integrationPath) filter.integrationPath = query.integrationPath as FridayDiscoveryFilterOptions["integrationPath"];
         if (query.q) filter.query = query.q;
 
+        // TS-runtime retirement: this GET is normally a read, but recommend() falls
+        // back to this.discover() (the scanner FS-enumeration) on a cache MISS — and
+        // since discovery.scan is now fail-closed it can never warm the cache in
+        // default/live, so an unguarded GET would deterministically execute the
+        // retired scan product logic after every restart. Gate it under the same
+        // discovery flag so the scan algorithm is fully closed in default/live.
+        assertDiscoveryTestOracleAllowed(deps);
         const result = await deps.discovery.recommend(filter);
         return { status: 200, body: result };
       },
@@ -174,6 +215,7 @@ export function createFridayDiscoveryRoutes(
         if (Array.isArray(body.excludedProgramIds)) updates.excludedProgramIds = body.excludedProgramIds;
         if (typeof body.redactSensitiveDetails === "boolean") updates.redactSensitiveDetails = body.redactSensitiveDetails;
 
+        assertDiscoveryTestOracleAllowed(deps);
         deps.discovery.setPolicy(updates as Partial<FridayDiscoveryPolicy>);
         const policy = deps.discovery.getPolicy();
         return { status: 200, body: { policy } };

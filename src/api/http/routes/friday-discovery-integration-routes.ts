@@ -30,6 +30,13 @@ export interface FridayDiscoveryIntegrationRoutesDeps {
   readonly converterService: FridaySkillConverterService | null;
   readonly canonicalMutationGate: FridayMutatingActionGate | null;
   readonly disabledReason: string | null;
+  /**
+   * Test-oracle only (shares the discovery flag): allow the legacy TypeScript
+   * discovery.integrate mutation (recommend + converterService.import staging).
+   * Production/runtime callers must leave this unset so the route fail-closes
+   * (503 TS_RUNTIME_DISCOVERY_RETIRED) until Rust owns discovery integration.
+   */
+  readonly allowTestOnlyDiscoveryExecution?: boolean;
 }
 
 const SURFACE = "api:/v1/discovery/integrate";
@@ -137,6 +144,25 @@ export function createFridayDiscoveryIntegrationRoutes(
           });
         }
 
+        // TS-runtime retirement: fail-close the integrate staging mutation AFTER
+        // the canonical-approval gate (above) and IMMEDIATELY BEFORE the
+        // converterService.import write. Route-scoped: this gates ONLY
+        // /v1/discovery/integrate; the same converterService.import method is
+        // reached by /v1/skills/import (#558, gated) + /v1/skills/social-import +
+        // /v1/deeplink/apply (their own slices). Shares allowTestOnlyDiscoveryExecution.
+        if (deps.allowTestOnlyDiscoveryExecution !== true) {
+          throw new FridayDomainError(
+            "TS_RUNTIME_DISCOVERY_RETIRED",
+            "Discovery program integration is fail-closed in the default/live runtime; the Rust-owned discovery entrypoint is required.",
+            {
+              httpStatus: 503,
+              details: {
+                classification: "fail_closed",
+                replacement: "rust_owned_discovery_entrypoint_required",
+              },
+            },
+          );
+        }
         const importResult = await deps.converterService.import({
           source: bridgeResult.source,
           formatHint: "friday-package",

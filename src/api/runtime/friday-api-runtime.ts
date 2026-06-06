@@ -3007,7 +3007,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   // Register local discovery routes (optional)
   for (const route of deps.discovery
-    ? createFridayDiscoveryRoutes(deps.discovery)
+    ? createFridayDiscoveryRoutes({ ...deps.discovery, allowTestOnlyDiscoveryExecution: deps.allowTestOnlyDiscoveryExecution })
     : createFridayDiscoveryDisabledRoutes()) {
     routes.register(route as unknown as Parameters<typeof routes.register>[0]);
   }
@@ -3018,6 +3018,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     converterService: deps.converterService ?? null,
     canonicalMutationGate: deps.discovery ? canonicalMutationGate : null,
     disabledReason: deps.discovery ? null : "discovery service not provided",
+    allowTestOnlyDiscoveryExecution: deps.allowTestOnlyDiscoveryExecution,
   })) {
     routes.register(route as unknown as Parameters<typeof routes.register>[0]);
   }
