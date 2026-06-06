@@ -3292,6 +3292,97 @@
       "executes_product_logic": false,
       "proof": "src/api/http/routes/friday-satellite-pairing-routes.ts fail-closes default/live satellites.revoke to TS_RUNTIME_SATELLITE_PAIRING_RETIRED after assertBoundPrincipalForOperation and immediately before the TypeScript revokeSatellite write (friday-satellite-pairing-service.ts withWriteTransaction: pairing->revoked, revokeAllForSatellite, token version bump); the bound-principal owner check still runs first; legacy behavior is reachable only through explicit allowTestOnlySatellitePairingExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned satellite pairing entrypoint when available."
+    },
+    {
+      "id": "cross_border_profile_put",
+      "route": {
+        "method": "PUT",
+        "path": "/v1/packs/cross-border/profile",
+        "operationId": "packs.cross.border.profile.put"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-cross-border-pack-routes.ts fail-closes default/live packs.cross.border.profile.put to TS_RUNTIME_CROSS_BORDER_PACK_RETIRED after requireUserId and the hoisted profile-body validation, immediately before the TypeScript upsertProfile write (friday-cross-border-pack-service.ts writePreference PROFILE_KEY); legacy behavior is reachable only through explicit allowTestOnlyCrossBorderPackExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned cross-border pack entrypoint when available."
+    },
+    {
+      "id": "cross_border_import_post",
+      "route": {
+        "method": "POST",
+        "path": "/v1/packs/cross-border/import",
+        "operationId": "packs.cross.border.import.post"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-cross-border-pack-routes.ts fail-closes default/live packs.cross.border.import.post to TS_RUNTIME_CROSS_BORDER_PACK_RETIRED after requireUserId and the hoisted batch-body validation, immediately before the TypeScript importBatch write (friday-cross-border-pack-service.ts writePreference IMPORTS_KEY). publicLinks/fileNames/rawText are RECORDED locally, never fetched or sent — no third-party egress. Legacy behavior is reachable only through explicit allowTestOnlyCrossBorderPackExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned cross-border pack entrypoint when available."
+    },
+    {
+      "id": "cross_border_workflow_presets_apply",
+      "route": {
+        "method": "POST",
+        "path": "/v1/packs/cross-border/workflow-presets/apply",
+        "operationId": "packs.cross.border.workflow.presets.apply"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-cross-border-pack-routes.ts fail-closes default/live packs.cross.border.workflow.presets.apply to TS_RUNTIME_CROSS_BORDER_PACK_RETIRED after requireUserId and the hoisted preset-body validation (timezone), immediately before the TypeScript applyWorkflowPreset write (friday-cross-border-pack-service.ts managed-workflow create/deployDraft + writeWorkflowAutomations — product-internal workflow-runtime orchestration, not a third-party send). Legacy behavior is reachable only through explicit allowTestOnlyCrossBorderPackExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned cross-border pack entrypoint when available."
+    },
+    {
+      "id": "cross_border_workflow_presets_toggle",
+      "route": {
+        "method": "PATCH",
+        "path": "/v1/packs/cross-border/workflow-presets/:workflowId",
+        "operationId": "packs.cross.border.workflow.presets.toggle"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-cross-border-pack-routes.ts fail-closes default/live packs.cross.border.workflow.presets.toggle to TS_RUNTIME_CROSS_BORDER_PACK_RETIRED after requireUserId, the enabled-boolean check, and the hoisted workflowId param validation, immediately before the TypeScript setWorkflowPresetEnabled write (friday-cross-border-pack-service.ts cron trigger setRegistrationEnabled + writeWorkflowAutomations). Legacy behavior is reachable only through explicit allowTestOnlyCrossBorderPackExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned cross-border pack entrypoint when available."
+    },
+    {
+      "id": "cross_border_run_evidence_capture",
+      "route": {
+        "method": "POST",
+        "path": "/v1/packs/cross-border/run-evidence",
+        "operationId": "packs.cross.border.run.evidence.capture"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-cross-border-pack-routes.ts fail-closes default/live packs.cross.border.run.evidence.capture to TS_RUNTIME_CROSS_BORDER_PACK_RETIRED after requireUserId and the hoisted evidence-body validation, immediately before the TypeScript captureRunEvidence write (friday-cross-border-pack-service.ts writePreference RUN_EVIDENCE_KEY + profile adaptationState update). Records locally, no external egress. Legacy behavior is reachable only through explicit allowTestOnlyCrossBorderPackExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned cross-border pack entrypoint when available."
+    },
+    {
+      "id": "cross_border_import_stale",
+      "route": {
+        "method": "PATCH",
+        "path": "/v1/packs/cross-border/imports/:importBatchId/stale",
+        "operationId": "packs.cross.border.import.stale"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-cross-border-pack-routes.ts fail-closes default/live packs.cross.border.import.stale to TS_RUNTIME_CROSS_BORDER_PACK_RETIRED after requireUserId and the hoisted importBatchId param validation, immediately before the TypeScript markImportStale write (friday-cross-border-pack-service.ts writePreference IMPORTS_KEY). Legacy behavior is reachable only through explicit allowTestOnlyCrossBorderPackExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned cross-border pack entrypoint when available."
+    },
+    {
+      "id": "cross_border_workflows_disable_all",
+      "route": {
+        "method": "POST",
+        "path": "/v1/packs/cross-border/workflows/disable-all",
+        "operationId": "packs.cross.border.workflows.disable.all"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-cross-border-pack-routes.ts fail-closes default/live packs.cross.border.workflows.disable.all to TS_RUNTIME_CROSS_BORDER_PACK_RETIRED after requireUserId, immediately before the TypeScript disableAllWorkflows write (friday-cross-border-pack-service.ts disable cron trigger registrations + writeWorkflowAutomations). Legacy behavior is reachable only through explicit allowTestOnlyCrossBorderPackExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned cross-border pack entrypoint when available."
     }
   ]
 }

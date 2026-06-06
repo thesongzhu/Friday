@@ -353,6 +353,8 @@ export async function createMockHubEnv(opts?: {
   allowTestOnlySessionRunExecution?: boolean;
   /** Test-oracle opt-in for legacy TS session memory extraction mutations; set false to prove default fail-closed behavior. */
   allowTestOnlySessionMemoryExtractionExecution?: boolean;
+  /** Test-oracle opt-in for legacy TS cross-border pack mutations; set false to prove default fail-closed behavior. */
+  allowTestOnlyCrossBorderPackExecution?: boolean;
 }): Promise<MockHubEnv> {
   // Reset deterministic counters
   resetMockCounters();
@@ -407,6 +409,7 @@ export async function createMockHubEnv(opts?: {
       allowTestOnlySessionExecution: opts?.allowTestOnlySessionExecution ?? true,
       allowTestOnlySessionRunExecution: opts?.allowTestOnlySessionRunExecution ?? true,
       allowTestOnlySessionMemoryExtractionExecution: opts?.allowTestOnlySessionMemoryExtractionExecution ?? true,
+      allowTestOnlyCrossBorderPackExecution: opts?.allowTestOnlyCrossBorderPackExecution ?? true,
       // Allow private-network targets so mock E2E tests don't require DNS resolution
       ssrfPolicy: opts?.ssrfPolicy ?? { allowPrivateNetwork: true },
     });
