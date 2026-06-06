@@ -135,6 +135,19 @@ const WORKFLOW_RUN_START_DEPENDENT_SCENARIOS = [
   "l5-workflow-approval-roundtrip",
 ];
 
+// Scenarios that author a workflow through the TypeScript catalog create
+// surface (POST /v1/workflows). Once workflows.create is classified
+// fail_closed in the TS runtime retirement manifest the route returns 503
+// TS_RUNTIME_WORKFLOW_CATALOG_MUTATION_RETIRED before any product logic, so
+// these scenarios cannot author a workflow and are honestly recorded as
+// excluded (not a fake pass). l3-workflow-browser-authoring clicks "Blank
+// draft" which calls workflows.create; l8-workflow-approval-soak uses the same
+// create-then-run executor as the already-excluded l5-workflow-approval-roundtrip.
+const WORKFLOW_CATALOG_AUTHORING_DEPENDENT_SCENARIOS = [
+  "l3-workflow-browser-authoring",
+  "l8-workflow-approval-soak",
+];
+
 const CLAUDE_SKILL_TESTS = [
   "test/unit/skills/registry/friday-skill-discovery.test.ts",
   "test/unit/skills/manifest/friday-skill-package-loader.test.ts",
@@ -273,6 +286,26 @@ export function resolveRetiredWorkflowRunScenarioExclusions(repoRoot) {
   return WORKFLOW_RUN_START_DEPENDENT_SCENARIOS.map((scenarioId) => ({
     scenarioId,
     reason: "POST /v1/workflow-runs is classified fail_closed in the TS runtime retirement manifest.",
+  }));
+}
+
+export function isWorkflowCatalogCreateFailClosed(manifest) {
+  const surfaces = Array.isArray(manifest?.surfaces) ? manifest.surfaces : [];
+  return surfaces.some((surface) =>
+    surface?.id === "workflows_create"
+    && surface?.classification === "fail_closed"
+    && surface?.executes_product_logic === false
+  );
+}
+
+export function resolveRetiredWorkflowCatalogScenarioExclusions(repoRoot) {
+  const manifest = readJsonFile(path.join(repoRoot, "docs", "ops", "ts-runtime-retirement-manifest.json"));
+  if (!isWorkflowCatalogCreateFailClosed(manifest)) {
+    return [];
+  }
+  return WORKFLOW_CATALOG_AUTHORING_DEPENDENT_SCENARIOS.map((scenarioId) => ({
+    scenarioId,
+    reason: "POST /v1/workflows is classified fail_closed in the TS runtime retirement manifest.",
   }));
 }
 
@@ -598,6 +631,7 @@ export function buildSummary({
   skillConformance,
   retiredAgentRunScenarioExclusions,
   retiredWorkflowRunScenarioExclusions,
+  retiredWorkflowCatalogScenarioExclusions,
   error,
 }) {
   const summary = {
@@ -618,6 +652,7 @@ export function buildSummary({
     skillConformance: skillConformance ?? null,
     retiredAgentRunScenarioExclusions: retiredAgentRunScenarioExclusions ?? [],
     retiredWorkflowRunScenarioExclusions: retiredWorkflowRunScenarioExclusions ?? [],
+    retiredWorkflowCatalogScenarioExclusions: retiredWorkflowCatalogScenarioExclusions ?? [],
     error: error ?? null,
   };
   summary.gate = {
@@ -653,9 +688,11 @@ async function main() {
   const excludeProviderScenarios = shouldExcludeProviderScenarios(liveProviderMode);
   const retiredAgentRunScenarioExclusions = resolveRetiredAgentRunScenarioExclusions(repoRoot);
   const retiredWorkflowRunScenarioExclusions = resolveRetiredWorkflowRunScenarioExclusions(repoRoot);
+  const retiredWorkflowCatalogScenarioExclusions = resolveRetiredWorkflowCatalogScenarioExclusions(repoRoot);
   const excludedScenarioIds = [
     ...retiredAgentRunScenarioExclusions,
     ...retiredWorkflowRunScenarioExclusions,
+    ...retiredWorkflowCatalogScenarioExclusions,
   ].map((entry) => entry.scenarioId);
   const runId = createRunId();
   const reportRoot = options.reportRoot
@@ -859,6 +896,7 @@ async function main() {
       skillConformance,
       retiredAgentRunScenarioExclusions,
       retiredWorkflowRunScenarioExclusions,
+      retiredWorkflowCatalogScenarioExclusions,
       error: terminalError,
     });
     flushTerminalArtifacts(reportRoot, summary);

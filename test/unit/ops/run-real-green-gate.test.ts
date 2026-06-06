@@ -4,10 +4,12 @@ import { describe, expect, it } from "vitest";
 import {
   buildSummary,
   isAgentRunStartFailClosed,
+  isWorkflowCatalogCreateFailClosed,
   isWorkflowRunStartFailClosed,
   normalizeLiveProviderMode,
   resolveGateSuiteReportRoot,
   resolveRetiredAgentRunScenarioExclusions,
+  resolveRetiredWorkflowCatalogScenarioExclusions,
   resolveRetiredWorkflowRunScenarioExclusions,
   shouldExcludeProviderScenarios,
   summarizeRun,
@@ -111,6 +113,41 @@ describe("run-real-green-gate helpers", () => {
     ]);
   });
 
+  it("detects fail-closed workflow catalog create retirement from the manifest", () => {
+    expect(isWorkflowCatalogCreateFailClosed({
+      surfaces: [
+        {
+          id: "workflows_create",
+          classification: "fail_closed",
+          executes_product_logic: false,
+        },
+      ],
+    })).toBe(true);
+    expect(isWorkflowCatalogCreateFailClosed({
+      surfaces: [
+        {
+          id: "workflows_create",
+          classification: "ts_runtime_blocker",
+          executes_product_logic: true,
+        },
+      ],
+    })).toBe(false);
+    expect(isWorkflowCatalogCreateFailClosed({ surfaces: [] })).toBe(false);
+  });
+
+  it("excludes workflow-catalog-authoring-dependent RGG scenarios while workflows.create is fail-closed", () => {
+    expect(resolveRetiredWorkflowCatalogScenarioExclusions(process.cwd())).toEqual([
+      {
+        scenarioId: "l3-workflow-browser-authoring",
+        reason: "POST /v1/workflows is classified fail_closed in the TS runtime retirement manifest.",
+      },
+      {
+        scenarioId: "l8-workflow-approval-soak",
+        reason: "POST /v1/workflows is classified fail_closed in the TS runtime retirement manifest.",
+      },
+    ]);
+  });
+
   it("preserves retired runtime scenario exclusions in the terminal summary", () => {
     const summary = buildSummary({
       runId: "run-1",
@@ -152,8 +189,20 @@ describe("run-real-green-gate helpers", () => {
           reason: "POST /v1/workflow-runs is classified fail_closed in the TS runtime retirement manifest.",
         },
       ],
+      retiredWorkflowCatalogScenarioExclusions: [
+        {
+          scenarioId: "l3-workflow-browser-authoring",
+          reason: "POST /v1/workflows is classified fail_closed in the TS runtime retirement manifest.",
+        },
+      ],
     });
 
+    expect(summary.retiredWorkflowCatalogScenarioExclusions).toEqual([
+      {
+        scenarioId: "l3-workflow-browser-authoring",
+        reason: "POST /v1/workflows is classified fail_closed in the TS runtime retirement manifest.",
+      },
+    ]);
     expect(summary.retiredAgentRunScenarioExclusions).toEqual([
       {
         scenarioId: "l3-channel-origin-unified-task-state-contract",
