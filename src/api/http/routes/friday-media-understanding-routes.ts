@@ -43,6 +43,18 @@ export interface FridayMediaUnderstandingRoutesDeps {
   readonly disabledReason: string | null;
   /** Optional clock injection for tests / determinism. */
   readonly nowIso?: () => string;
+  /**
+   * Test-oracle only: allow the legacy TypeScript media-understanding product
+   * logic (provider-orchestrating analyze pipeline + provider connectivity
+   * doctor probe) to execute. Production/runtime callers must leave this unset
+   * so both POST routes fail-close (503 TS_RUNTIME_MEDIA_UNDERSTANDING_RETIRED)
+   * until Rust owns media understanding. fail_closed (not operator_external_
+   * adapter): the route's purpose is media understanding product logic that
+   * Rust will reimplement — calling providers does NOT make it an external
+   * egress conduit (same as agent runs, which call LLM providers and are
+   * fail_closed); when retired it 503s and nothing egresses.
+   */
+  readonly allowTestOnlyMediaUnderstandingExecution?: boolean;
 }
 
 // ─── Request / response shapes ───
@@ -100,6 +112,27 @@ export function createFridayMediaUnderstandingRoutes(
     );
   }
 
+  // TS-runtime retirement: the media-understanding product logic (analyze
+  // pipeline + doctor provider probe) fail-closes by default/live. Placed AFTER
+  // the availability check and body parse, immediately before the provider call,
+  // so disabled -> MEDIA_UNDERSTANDING_DISABLED and malformed -> 400 still win.
+  function assertMediaTestOracleAllowed(): never | void {
+    if (deps.allowTestOnlyMediaUnderstandingExecution === true) {
+      return;
+    }
+    throw new FridayDomainError(
+      "TS_RUNTIME_MEDIA_UNDERSTANDING_RETIRED",
+      "Media understanding (attachment analysis + provider doctor) is fail-closed in the default/live runtime; the Rust-owned media-understanding entrypoint is required.",
+      {
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_media_understanding_entrypoint_required",
+        },
+      },
+    );
+  }
+
   return [
     {
       operationId: "media.understanding.doctor",
@@ -111,6 +144,7 @@ export function createFridayMediaUnderstandingRoutes(
           throwDisabled();
         }
         const body = parseDoctorBody(ctx.body);
+        assertMediaTestOracleAllowed();
         const report = await probeMediaUnderstandingProvider(deps.doctorProvider, {
           testImageBase64: body.testImageBase64,
           testImageMimeType: body.testImageMimeType,
@@ -133,6 +167,7 @@ export function createFridayMediaUnderstandingRoutes(
         const attachments = body.attachments.map((raw, index) =>
           normalizeAttachment(raw, index),
         );
+        assertMediaTestOracleAllowed();
         const result = await deps.service.processAttachments(attachments);
         return { result };
       },

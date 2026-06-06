@@ -43,6 +43,9 @@ function makeDeps(overrides: Partial<FridayMediaUnderstandingRoutesDeps> = {}): 
     doctorProvider: makeStubProvider(),
     disabledReason: null,
     nowIso: () => "2026-05-13T00:00:00Z",
+    // Test-oracle flag: the enabled-path tests below exercise the live provider
+    // pipeline. Production wiring leaves this unset (TS-runtime retirement).
+    allowTestOnlyMediaUnderstandingExecution: true,
     ...overrides,
   };
 }
@@ -390,5 +393,92 @@ describe("createFridayMediaUnderstandingRoutes — analyze enabled", () => {
     }) as never);
     const calledWith = (deps.service!.processAttachments as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(calledWith[0].mediaType).toBe("audio");
+  });
+});
+
+// ─── TS-runtime retirement (default/live fail-close) ───
+
+describe("createFridayMediaUnderstandingRoutes — TS-runtime retirement", () => {
+  // ENABLED deps but WITHOUT the test-oracle flag = production/live wiring.
+  function makeRetiredDeps(): FridayMediaUnderstandingRoutesDeps {
+    return {
+      service: makeStubService(),
+      doctorProvider: makeStubProvider(),
+      disabledReason: null,
+      nowIso: () => "2026-05-13T00:00:00Z",
+    };
+  }
+
+  it("fail-closes doctor with 503 TS_RUNTIME_MEDIA_UNDERSTANDING_RETIRED and does not probe", async () => {
+    const deps = makeRetiredDeps();
+    const routes = createFridayMediaUnderstandingRoutes(deps);
+    const doctor = findRoute(routes, "media.understanding.doctor");
+    let thrown: unknown = null;
+    try {
+      await doctor.handler(makeCtx({ body: {} }) as never);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(FridayDomainError);
+    const e = thrown as FridayDomainError;
+    expect(e.code).toBe("TS_RUNTIME_MEDIA_UNDERSTANDING_RETIRED");
+    expect(e.httpStatus).toBe(503);
+    expect(deps.doctorProvider!.process).not.toHaveBeenCalled();
+  });
+
+  it("fail-closes analyze with 503 and does not call processAttachments", async () => {
+    const deps = makeRetiredDeps();
+    const routes = createFridayMediaUnderstandingRoutes(deps);
+    const analyze = findRoute(routes, "media.understanding.analyze");
+    let thrown: unknown = null;
+    try {
+      await analyze.handler(makeCtx({
+        body: { attachments: [{ mimeType: "image/png", sizeBytes: 1, sourceUrl: "https://x/img.png" }] },
+      }) as never);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(FridayDomainError);
+    const e = thrown as FridayDomainError;
+    expect(e.code).toBe("TS_RUNTIME_MEDIA_UNDERSTANDING_RETIRED");
+    expect(e.httpStatus).toBe(503);
+    expect(deps.service!.processAttachments).not.toHaveBeenCalled();
+  });
+
+  it("still validates the analyze body (400) BEFORE the retirement guard", async () => {
+    const deps = makeRetiredDeps();
+    const routes = createFridayMediaUnderstandingRoutes(deps);
+    const analyze = findRoute(routes, "media.understanding.analyze");
+    let thrown: unknown = null;
+    try {
+      // non-http(s) scheme -> VALIDATION_ERROR 400 before the 503 guard
+      await analyze.handler(makeCtx({
+        body: { attachments: [{ mimeType: "image/png", sizeBytes: 1, sourceUrl: "file:///etc/passwd" }] },
+      }) as never);
+    } catch (err) {
+      thrown = err;
+    }
+    const e = thrown as FridayDomainError;
+    expect(e.code).toBe("VALIDATION_ERROR");
+    expect(e.httpStatus).toBe(400);
+    expect(deps.service!.processAttachments).not.toHaveBeenCalled();
+  });
+
+  it("still surfaces MEDIA_UNDERSTANDING_DISABLED (not the retirement 503) when disabled", async () => {
+    // Disabled (service/provider null) WITHOUT the flag: the availability check
+    // throws before the retirement guard.
+    const routes = createFridayMediaUnderstandingRoutes(makeDisabledDeps("FRIDAY_MEDIA_UNDERSTANDING_ENABLED is not set to true"));
+    const analyze = findRoute(routes, "media.understanding.analyze");
+    let thrown: unknown = null;
+    try {
+      await analyze.handler(makeCtx({
+        body: { attachments: [{ mimeType: "image/png", sizeBytes: 1, sourceUrl: "https://x/img.png" }] },
+      }) as never);
+    } catch (err) {
+      thrown = err;
+    }
+    const e = thrown as FridayDomainError;
+    expect(e.code).toBe("MEDIA_UNDERSTANDING_DISABLED");
+    expect(e.httpStatus).toBe(503);
   });
 });
