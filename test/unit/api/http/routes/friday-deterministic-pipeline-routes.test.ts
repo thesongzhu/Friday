@@ -33,8 +33,19 @@ function findRoute(routes: FridayRouteDefinition<unknown, unknown, unknown, unkn
   return routes.find((r) => r.operationId === operationId)!;
 }
 
-function makeDeps(): FridayDeterministicPipelineRoutesDeps {
+function makeDeps(
+  overrides?: Partial<FridayDeterministicPipelineRoutesDeps>,
+): FridayDeterministicPipelineRoutesDeps {
   return {
+    // Default isolated unit deps opt into the legacy pipeline test-oracle so the
+    // delegate/validation tests below still exercise the dep contract.
+    // Default/live runtime leaves these unset; the "fail-closes by default"
+    // tests pass them as false to prove the 503 boundary.
+    allowTestOnlyRulesPipelineExecution: true,
+    allowTestOnlyNodeRunnerExecution: true,
+    allowTestOnlyAcceptancePipelineExecution: true,
+    allowTestOnlyRetryPipelineExecution: true,
+    allowTestOnlyPlaybookPipelineExecution: true,
     rules: {
       listBundles: vi.fn().mockReturnValue({ bundles: [], total: 0 }),
       getBundle: vi.fn().mockReturnValue({ bundle: { id: "b-1" } }),
@@ -88,6 +99,7 @@ function makeDeps(): FridayDeterministicPipelineRoutesDeps {
       rollbackPlaybook: vi.fn().mockResolvedValue({ playbook: { id: "pb-1" } }),
       getScoreHistory: vi.fn().mockReturnValue({ scores: [] }),
     },
+    ...overrides,
   };
 }
 
@@ -434,6 +446,87 @@ describe("A-007 FridayDeterministicPipelineRoutes", () => {
 
       await route.handler(makeCtx({ params: { playbookId: "pb-1" } }));
       expect(deps.playbook.getScoreHistory).toHaveBeenCalledWith("pb-1", {});
+    });
+  });
+
+  describe("fail-closed by default without the test-oracle", () => {
+    it("rules pipeline mutations/engines fail-close with TS_RUNTIME_RULES_PIPELINE_RETIRED", async () => {
+      const deps = makeDeps({ allowTestOnlyRulesPipelineExecution: false });
+      const routes = createFridayDeterministicPipelineRoutes(deps);
+      await expect(findRoute(routes, "rules.bundles.create").handler(makeCtx({ body: { name: "B" } })))
+        .rejects.toMatchObject({ code: "TS_RUNTIME_RULES_PIPELINE_RETIRED", httpStatus: 503 });
+      await expect(findRoute(routes, "rules.evaluate").handler(makeCtx({ body: { bundleId: "b-1" } })))
+        .rejects.toMatchObject({ code: "TS_RUNTIME_RULES_PIPELINE_RETIRED", httpStatus: 503 });
+      await expect(findRoute(routes, "rules.simulate").handler(makeCtx({ body: { bundleId: "b-1" } })))
+        .rejects.toMatchObject({ code: "TS_RUNTIME_RULES_PIPELINE_RETIRED", httpStatus: 503 });
+      await expect(findRoute(routes, "rules.bundles.update").handler(makeCtx({ params: { bundleId: "b-1" }, body: { name: "X" } })))
+        .rejects.toMatchObject({ code: "TS_RUNTIME_RULES_PIPELINE_RETIRED", httpStatus: 503 });
+      expect(deps.rules.createBundle).not.toHaveBeenCalled();
+      expect(deps.rules.updateBundle).not.toHaveBeenCalled();
+      expect(deps.rules.evaluateRules).not.toHaveBeenCalled();
+      expect(deps.rules.simulateRules).not.toHaveBeenCalled();
+    });
+
+    it("node-runner execute fail-closes with TS_RUNTIME_NODE_RUNNER_EXECUTION_RETIRED", async () => {
+      const deps = makeDeps({ allowTestOnlyNodeRunnerExecution: false });
+      const routes = createFridayDeterministicPipelineRoutes(deps);
+      await expect(findRoute(routes, "node.runner.execute").handler(makeCtx({ body: { nodeId: "n-1" } })))
+        .rejects.toMatchObject({ code: "TS_RUNTIME_NODE_RUNNER_EXECUTION_RETIRED", httpStatus: 503 });
+      expect(deps.nodeRunner.executeNode).not.toHaveBeenCalled();
+    });
+
+    it("acceptance run + test mutations fail-close with TS_RUNTIME_ACCEPTANCE_PIPELINE_RETIRED", async () => {
+      const deps = makeDeps({ allowTestOnlyAcceptancePipelineExecution: false });
+      const routes = createFridayDeterministicPipelineRoutes(deps);
+      await expect(findRoute(routes, "acceptance.run").handler(makeCtx({ body: { artifactType: "workflow_output" } })))
+        .rejects.toMatchObject({ code: "TS_RUNTIME_ACCEPTANCE_PIPELINE_RETIRED", httpStatus: 503 });
+      await expect(findRoute(routes, "acceptance.tests.create").handler(makeCtx({ body: { name: "t", artifactType: "x" } })))
+        .rejects.toMatchObject({ code: "TS_RUNTIME_ACCEPTANCE_PIPELINE_RETIRED", httpStatus: 503 });
+      await expect(findRoute(routes, "acceptance.tests.delete").handler(makeCtx({ params: { testId: "t-1" }, body: { etag: "e" } })))
+        .rejects.toMatchObject({ code: "TS_RUNTIME_ACCEPTANCE_PIPELINE_RETIRED", httpStatus: 503 });
+      await expect(findRoute(routes, "acceptance.tests.update").handler(makeCtx({ params: { testId: "t-1" }, body: { etag: "e" } })))
+        .rejects.toMatchObject({ code: "TS_RUNTIME_ACCEPTANCE_PIPELINE_RETIRED", httpStatus: 503 });
+      expect(deps.acceptance.runChecks).not.toHaveBeenCalled();
+      expect(deps.acceptance.createTest).not.toHaveBeenCalled();
+      expect(deps.acceptance.updateTest).not.toHaveBeenCalled();
+      expect(deps.acceptance.deleteTest).not.toHaveBeenCalled();
+    });
+
+    it("retry policy mutations + engines fail-close with TS_RUNTIME_RETRY_PIPELINE_RETIRED", async () => {
+      const deps = makeDeps({ allowTestOnlyRetryPipelineExecution: false });
+      const routes = createFridayDeterministicPipelineRoutes(deps);
+      await expect(findRoute(routes, "retry.policies.create").handler(makeCtx({ body: { name: "p" } })))
+        .rejects.toMatchObject({ code: "TS_RUNTIME_RETRY_PIPELINE_RETIRED", httpStatus: 503 });
+      await expect(findRoute(routes, "retry.classify").handler(makeCtx({ body: { error: { message: "x" } } })))
+        .rejects.toMatchObject({ code: "TS_RUNTIME_RETRY_PIPELINE_RETIRED", httpStatus: 503 });
+      await expect(findRoute(routes, "retry.decide").handler(makeCtx({ body: { runId: "r", workflowId: "w", nodeId: "n" } })))
+        .rejects.toMatchObject({ code: "TS_RUNTIME_RETRY_PIPELINE_RETIRED", httpStatus: 503 });
+      await expect(findRoute(routes, "retry.escalations.acknowledge").handler(makeCtx({ params: { escalationId: "e-1" }, body: {} })))
+        .rejects.toMatchObject({ code: "TS_RUNTIME_RETRY_PIPELINE_RETIRED", httpStatus: 503 });
+      await expect(findRoute(routes, "retry.policies.update").handler(makeCtx({ params: { policyId: "p-1" }, body: { etag: "e" } })))
+        .rejects.toMatchObject({ code: "TS_RUNTIME_RETRY_PIPELINE_RETIRED", httpStatus: 503 });
+      await expect(findRoute(routes, "retry.policies.delete").handler(makeCtx({ params: { policyId: "p-1" }, body: { etag: "e" } })))
+        .rejects.toMatchObject({ code: "TS_RUNTIME_RETRY_PIPELINE_RETIRED", httpStatus: 503 });
+      expect(deps.retry.createPolicy).not.toHaveBeenCalled();
+      expect(deps.retry.updatePolicy).not.toHaveBeenCalled();
+      expect(deps.retry.deletePolicy).not.toHaveBeenCalled();
+      expect(deps.retry.classifyFailure).not.toHaveBeenCalled();
+      expect(deps.retry.decideRetry).not.toHaveBeenCalled();
+      expect(deps.retry.acknowledgeEscalation).not.toHaveBeenCalled();
+    });
+
+    it("playbook select/promote/rollback fail-close with TS_RUNTIME_PLAYBOOK_PIPELINE_RETIRED", async () => {
+      const deps = makeDeps({ allowTestOnlyPlaybookPipelineExecution: false });
+      const routes = createFridayDeterministicPipelineRoutes(deps);
+      await expect(findRoute(routes, "playbook.select").handler(makeCtx({ body: { workflowType: "wt" } })))
+        .rejects.toMatchObject({ code: "TS_RUNTIME_PLAYBOOK_PIPELINE_RETIRED", httpStatus: 503 });
+      await expect(findRoute(routes, "playbook.candidates.promote").handler(makeCtx({ params: { candidateId: "c-1" }, body: {} })))
+        .rejects.toMatchObject({ code: "TS_RUNTIME_PLAYBOOK_PIPELINE_RETIRED", httpStatus: 503 });
+      await expect(findRoute(routes, "playbook.rollback").handler(makeCtx({ params: { playbookId: "pb-1" }, body: { targetVersionNumber: 1 } })))
+        .rejects.toMatchObject({ code: "TS_RUNTIME_PLAYBOOK_PIPELINE_RETIRED", httpStatus: 503 });
+      expect(deps.playbook.selectPlaybook).not.toHaveBeenCalled();
+      expect(deps.playbook.promoteCandidate).not.toHaveBeenCalled();
+      expect(deps.playbook.rollbackPlaybook).not.toHaveBeenCalled();
     });
   });
 
