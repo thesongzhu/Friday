@@ -3625,6 +3625,15 @@
       "next_action": "Replace the fail-closed tools/call response with the Rust-owned MCP tool-execution entrypoint when available; the read/metadata sub-methods can stay or move to Rust independently."
     },
     {
+      "id": "skills_social_import",
+      "route": { "method": "POST", "path": "/v1/skills/social-import", "operationId": "skills.social.import" },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-social-import-routes.ts skills.social.import wires default/live to assertSocialImportTestOracleAllowed(deps) AFTER the availability check (!service/!converterService/!canonicalMutationGate -> 503 SOCIAL_IMPORT_DISABLED) and parseSocialImportBody (malformed -> 400), and IMMEDIATELY BEFORE deps.service.prepareStageContext — i.e. HOISTED above the XHS real-browser extraction so NO extraction/egress occurs when retired. 503 TS_RUNTIME_SOCIAL_IMPORT_RETIRED (classification fail_closed, replacement rust_owned_social_import_entrypoint_required). executes_product_logic:false: neither the XHS extraction nor converterService.import runs in default/live. TRADEOFF (accepted): an unapproved request now gets this 503 rather than the downstream canonical-approval 403 — 'retired' is the correct response for a retired route regardless of approval state, and hoisting keeps the egress from running (the alternative, guarding after the approval gate, would let prepareStageContext navigate XHS before fail-closing). SCOPE NOTE (route-scoped): the underlying converterService.import is ALSO reached by /v1/skills/import (#558 GATED), /v1/discovery/integrate (#562 GATED), /v1/deeplink/apply (its own slice) — this surface gates ONLY /v1/skills/social-import and does NOT claim the import method globally unreachable. The GET /v1/skills/converters read stays compat_shim. Reachable only through explicit allowTestOnlySocialImportExecution test-oracle wiring (inline createFridaySocialImportRoutes).",
+      "next_action": "Replace the fail-closed response with the Rust-owned social-import entrypoint when available; with skills.import (#558) + discovery.integrate (#562) + social-import gated, only /v1/deeplink/apply remains to fully gate converterService.import (then CLI + agent-tool reconciliation-scope)."
+    },
+    {
       "id": "realtime_subscribe_read",
       "route": {
         "method": "POST",

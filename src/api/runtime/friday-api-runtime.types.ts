@@ -376,6 +376,13 @@ export interface CreateFridayApiRuntimeDeps {
    * so those surfaces fail-close until Rust owns discovery.
    */
   allowTestOnlyDiscoveryExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript social-import mutation
+   * (POST /v1/skills/social-import). Production/runtime callers must leave this
+   * unset so the route fail-closes (and the XHS extraction never runs) until
+   * Rust owns social import.
+   */
+  allowTestOnlySocialImportExecution?: boolean;
   /** Optional: Reflex service for deterministic preference writes before agent runs. */
   reflexService?: FridayReflexService;
   /** Optional deterministic runtime capability getter used by context evidence selection. */

@@ -129,6 +129,9 @@ function makeDeps(overrides: Partial<FridaySocialImportRoutesRegistrationDeps> =
     converterService: makeConverter(),
     canonicalMutationGate: makeGate(),
     disabledReason: null,
+    // Test-oracle flag: success-path tests exercise the live staging pipeline.
+    // Production wiring leaves it unset (TS-runtime retirement; no XHS egress).
+    allowTestOnlySocialImportExecution: true,
     ...overrides,
   };
 }
@@ -444,5 +447,31 @@ describe("createFridaySocialImportRoutes — denied gate", () => {
       code: "CANONICAL_APPROVAL_DENIED",
       httpStatus: 403,
     });
+  });
+});
+
+describe("createFridaySocialImportRoutes — TS-runtime retirement (default/live fail-close)", () => {
+  it("fail-closes with 503 and runs NO XHS extraction (prepareStageContext) or import", async () => {
+    const service = makeService();
+    const converterService = makeConverter();
+    // Enabled deps WITHOUT the test-oracle flag = production/live wiring.
+    const deps = makeDeps({ service, converterService, allowTestOnlySocialImportExecution: false });
+    const route = findRoute(createFridaySocialImportRoutes(deps), "skills.social.import");
+    await expect(route.handler(makeCtx() as never)).rejects.toMatchObject({
+      code: "TS_RUNTIME_SOCIAL_IMPORT_RETIRED",
+      httpStatus: 503,
+    });
+    // The guard is hoisted above prepareStageContext, so the XHS extraction never runs.
+    expect(service.prepareStageContext).not.toHaveBeenCalled();
+    expect(converterService.import).not.toHaveBeenCalled();
+  });
+
+  it("still 503 SOCIAL_IMPORT_DISABLED (not the retirement code) when disabled, and 400 on malformed body before the guard", async () => {
+    const disabledRoute = findRoute(createFridaySocialImportRoutes(makeDisabledDeps("deps absent")), "skills.social.import");
+    await expect(disabledRoute.handler(makeCtx() as never)).rejects.toMatchObject({ code: "SOCIAL_IMPORT_DISABLED", httpStatus: 503 });
+
+    const enabledNoFlag = makeDeps({ allowTestOnlySocialImportExecution: false });
+    const route = findRoute(createFridaySocialImportRoutes(enabledNoFlag), "skills.social.import");
+    await expect(route.handler(makeCtx({ body: "not-an-object" }) as never)).rejects.toMatchObject({ code: "VALIDATION_ERROR", httpStatus: 400 });
   });
 });

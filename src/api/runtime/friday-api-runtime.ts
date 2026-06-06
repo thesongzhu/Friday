@@ -3178,6 +3178,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     disabledReason: socialImportDeps.disabledReason,
     converterService: deps.converterService ?? null,
     canonicalMutationGate: socialImportDeps.service ? canonicalMutationGate : null,
+    allowTestOnlySocialImportExecution: deps.allowTestOnlySocialImportExecution,
   })) {
     routes.register(route);
   }

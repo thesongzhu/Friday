@@ -54,6 +54,41 @@ export interface FridaySocialImportRoutesRegistrationDeps extends FridaySocialIm
   readonly converterService: FridaySkillConverterService | null;
   /** Canonical mutation gate used to evaluate the stage-candidate request. */
   readonly canonicalMutationGate: FridayMutatingActionGate | null;
+  /**
+   * Test-oracle only: allow the legacy TypeScript social-import mutation
+   * (prepareStageContext XHS browser extraction -> canonical approval ->
+   * converterService.import candidate staging). Production/runtime callers must
+   * leave this unset so the route fail-closes (503 TS_RUNTIME_SOCIAL_IMPORT_RETIRED)
+   * until Rust owns social import. The guard is HOISTED above prepareStageContext
+   * so NO XHS browser extraction / egress occurs when retired.
+   */
+  readonly allowTestOnlySocialImportExecution?: boolean;
+}
+
+/**
+ * TS-runtime retirement guard for the social-import mutation. Placed AFTER the
+ * availability check + body parse and IMMEDIATELY BEFORE prepareStageContext
+ * (the XHS browser extraction / egress) so that when retired NOTHING is
+ * extracted or staged. Tradeoff (accepted): an unapproved request gets this
+ * 503 rather than the downstream canonical-approval 403 — but "retired" is the
+ * correct response for a retired route regardless of approval state, and this
+ * keeps the egress from running.
+ */
+function assertSocialImportTestOracleAllowed(deps: { allowTestOnlySocialImportExecution?: boolean }): void {
+  if (deps.allowTestOnlySocialImportExecution === true) {
+    return;
+  }
+  throw new FridayDomainError(
+    "TS_RUNTIME_SOCIAL_IMPORT_RETIRED",
+    "Social skill import is fail-closed in the default/live runtime; the Rust-owned social-import entrypoint is required.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_social_import_entrypoint_required",
+      },
+    },
+  );
 }
 
 // ─── Defaults ───
@@ -94,6 +129,10 @@ export function createFridaySocialImportRoutes(
         const request = parseSocialImportBody(ctx.body);
         const actorPrincipalId = ctx.principal?.principalId ?? "public:default";
         const actorPrincipalKind = ctx.principal?.principalType ?? "api";
+
+        // TS-runtime retirement: fail-close BEFORE prepareStageContext so the XHS
+        // browser extraction / egress never runs in default/live.
+        assertSocialImportTestOracleAllowed(deps);
 
         // 1. Pre-staging: URL allowlist, session check, real-browser
         //    extraction, source provenance, social-aware planDigest.
