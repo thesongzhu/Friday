@@ -157,6 +157,9 @@ describe("Setup Wizard E2E", () => {
         logRequests: false,
         tokenSecret: TEST_TOKEN_SECRET,
         allowTestOnlyWorkflowBuilderDraftExecution: true,
+        allowTestOnlySessionExecution: true,
+        allowTestOnlySessionRunExecution: true,
+        allowTestOnlySessionMemoryExtractionExecution: true,
       });
       await hub.start();
     } finally {

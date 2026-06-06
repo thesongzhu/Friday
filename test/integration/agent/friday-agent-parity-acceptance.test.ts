@@ -246,6 +246,7 @@ describe("Agent parity acceptance (integration)", () => {
       resolveSkill: () => null,
       invokeSkill: async () => ({}),
       agentRuntime,
+      allowTestOnlySessionRunExecution: true,
     });
 
     await apiRuntime.sessionService.addMessage("discord:default:user-ctx", {

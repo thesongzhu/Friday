@@ -181,6 +181,9 @@ describe("DP-10 probe — cross-session SOP trigger memory", () => {
       computeChecksum: (content) => crypto.createHash("sha256").update(content).digest("hex"),
       resolveSkill: () => null,
       invokeSkill: async () => ({}),
+      allowTestOnlySessionExecution: true,
+      allowTestOnlySessionRunExecution: true,
+      allowTestOnlySessionMemoryExtractionExecution: true,
     });
 
     const port = await findFreePort();

@@ -320,6 +320,28 @@ export interface CreateFridayApiRuntimeDeps {
    * controls stay fail-closed until Rust owns execution/control truth.
    */
   allowTestOnlyAgentRunControlExecution?: boolean;
+  /**
+   * Test-oracle only: allows legacy TypeScript session lifecycle/message
+   * mutations in isolated mock/unit validation. Production/runtime callers must
+   * leave this unset so session create/messages.create/archive/reset/delete/
+   * prune/sweep/compact and fork create/merge stay fail-closed until Rust owns
+   * the session lifecycle entrypoint.
+   */
+  allowTestOnlySessionExecution?: boolean;
+  /**
+   * Test-oracle only: allows legacy TypeScript session agent-run execution in
+   * isolated mock/unit validation. Production/runtime callers must leave this
+   * unset so POST /v1/sessions/:sessionKey/run stays fail-closed until Rust owns
+   * the session agent-run entrypoint.
+   */
+  allowTestOnlySessionRunExecution?: boolean;
+  /**
+   * Test-oracle only: allows legacy TypeScript session memory extraction
+   * mutations in isolated mock/unit validation. Production/runtime callers must
+   * leave this unset so memory extract/remember/extraction-retry stay
+   * fail-closed until Rust owns the session memory extraction entrypoint.
+   */
+  allowTestOnlySessionMemoryExtractionExecution?: boolean;
   /** Optional: Reflex service for deterministic preference writes before agent runs. */
   reflexService?: FridayReflexService;
   /** Optional deterministic runtime capability getter used by context evidence selection. */

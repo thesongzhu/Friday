@@ -74,6 +74,29 @@ export interface FridaySessionRoutesDeps {
     persistTaskMessage?: boolean;
     taskAlreadyInHistory?: boolean;
   }) => Promise<FridaySessionRunResponse["run"]>;
+  /**
+   * Test-oracle only: allow the legacy TypeScript session lifecycle/message
+   * mutations (create/messages.create/archive/reset/delete/prune/sweep/compact,
+   * fork create/merge) in isolated mock/unit/e2e validation. Production/runtime
+   * callers must leave this unset so session execution stays fail-closed until
+   * Rust owns the session lifecycle entrypoint.
+   */
+  allowTestOnlySessionExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript session agent-run execution
+   * (POST /v1/sessions/:sessionKey/run) in isolated mock/unit/e2e validation.
+   * Production/runtime callers must leave this unset so session agent-run
+   * execution stays fail-closed until Rust owns the session run entrypoint.
+   */
+  allowTestOnlySessionRunExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript session memory extraction
+   * mutations (memory/extract, memory/remember, memory/extraction/retry) in
+   * isolated mock/unit/e2e validation. Production/runtime callers must leave
+   * this unset so session memory extraction stays fail-closed until Rust owns
+   * the session memory extraction entrypoint.
+   */
+  allowTestOnlySessionMemoryExtractionExecution?: boolean;
 }
 
 // ─── Metadata sanitization (VULN-1: Prototype Pollution DoS) ───
@@ -610,6 +633,66 @@ const FRIDAY_MAX_LIST_LIMIT = 100;
 
 const VALID_SESSION_STATUSES = new Set<string>(["active", "idle", "archived", "pruned"]);
 
+// ─── Retirement helpers ───
+//
+// The session mutation surfaces (create/messages.create/archive/reset/delete/
+// prune/sweep/compact, fork create/merge, the session agent-run, and the memory
+// extraction mutations) run TypeScript product logic or write session/memory
+// state. They fail-close by default/live until Rust owns the corresponding
+// session lifecycle / agent-run / memory-extraction entrypoints; legacy
+// behavior is reachable only through the explicit per-engine test-oracle flags
+// above. The outbound channel send (sessions.outbound.send) is a separate
+// operator_external_adapter (genuine external channel egress) and is NOT
+// guarded here.
+
+function throwRetiredSession(
+  code: string,
+  label: string,
+  replacement: string,
+): never {
+  throw new FridayDomainError(
+    code,
+    `${label} is fail-closed in default/live runtime; use the Rust-owned ${replacement} entrypoint.`,
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: `rust_owned_${replacement}_entrypoint_required`,
+      },
+    },
+  );
+}
+
+function assertSessionTestOracleAllowed(deps: FridaySessionRoutesDeps): void {
+  if (deps.allowTestOnlySessionExecution !== true) {
+    throwRetiredSession(
+      "TS_RUNTIME_SESSION_RETIRED",
+      "TypeScript session execution",
+      "session_lifecycle",
+    );
+  }
+}
+
+function assertSessionRunTestOracleAllowed(deps: FridaySessionRoutesDeps): void {
+  if (deps.allowTestOnlySessionRunExecution !== true) {
+    throwRetiredSession(
+      "TS_RUNTIME_SESSION_RUN_RETIRED",
+      "TypeScript session agent-run execution",
+      "session_run",
+    );
+  }
+}
+
+function assertSessionMemoryExtractionTestOracleAllowed(deps: FridaySessionRoutesDeps): void {
+  if (deps.allowTestOnlySessionMemoryExtractionExecution !== true) {
+    throwRetiredSession(
+      "TS_RUNTIME_SESSION_MEMORY_EXTRACTION_RETIRED",
+      "TypeScript session memory extraction",
+      "session_memory_extraction",
+    );
+  }
+}
+
 // ─── Factory ───
 
 export function createFridaySessionRoutes(
@@ -674,6 +757,7 @@ export function createFridaySessionRoutes(
         validateCreateSessionBody(ctx.body);
         const body = ctx.body;
         const metadata = sanitizeMetadata(body.metadata);
+        assertSessionTestOracleAllowed(deps);
         let session = await deps.sessionService.createSession({
           channel: body.channel,
           chatId: body.chatId,
@@ -718,6 +802,7 @@ export function createFridaySessionRoutes(
       async handler(ctx): Promise<FridaySessionArchiveResponse> {
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
+        assertSessionTestOracleAllowed(deps);
         const session = await deps.sessionService.archiveSession(key);
         return { session };
       },
@@ -732,6 +817,7 @@ export function createFridaySessionRoutes(
       async handler(ctx): Promise<FridaySessionArchiveResponse> {
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
+        assertSessionTestOracleAllowed(deps);
         const session = await deps.sessionService.archiveSession(key);
         return { session };
       },
@@ -746,6 +832,7 @@ export function createFridaySessionRoutes(
       async handler(ctx) {
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
+        assertSessionTestOracleAllowed(deps);
         const session = await deps.sessionService.resetSession(key);
         return { session };
       },
@@ -760,6 +847,7 @@ export function createFridaySessionRoutes(
       async handler(ctx): Promise<FridaySessionPruneResponse> {
         validatePruneBody(ctx.body);
         const body = ctx.body;
+        assertSessionTestOracleAllowed(deps);
         const result = await deps.sessionService.pruneOldSessions(body.olderThan);
         return { result };
       },
@@ -772,6 +860,7 @@ export function createFridaySessionRoutes(
       path: "/v1/sessions/sweep",
       auth: { public: true },
       async handler(): Promise<FridaySessionSweepResponse> {
+        assertSessionTestOracleAllowed(deps);
         const result = await deps.sessionService.sweepLifecycle();
         return { result };
       },
@@ -790,6 +879,7 @@ export function createFridaySessionRoutes(
         const body = (ctx.body ?? {}) as FridaySessionCompactRequest;
         const keepRecent = Math.min(body.keepRecent ?? 8, FRIDAY_MAX_LIST_LIMIT);
         const maxMessages = Math.min(body.maxMessages ?? FRIDAY_MAX_LIST_LIMIT, FRIDAY_MAX_LIST_LIMIT);
+        assertSessionTestOracleAllowed(deps);
         const messages = await deps.sessionService.getMessages(key, maxMessages);
         const compactableCount = Math.max(0, messages.length - keepRecent);
         const compactableMessages = messages.slice(0, compactableCount);
@@ -897,6 +987,7 @@ export function createFridaySessionRoutes(
         const key = decodeSessionKeyParam(sessionKey);
         validateCreateMessageBody(ctx.body);
         const body = ctx.body;
+        assertSessionTestOracleAllowed(deps);
         await deps.sessionService.getOrCreateSession(key).catch(() => undefined);
         await alignSessionWithPrincipalContext(deps.sessionService, key, ctx.principal).catch(() => undefined);
         const message = await deps.sessionService.addMessage(key, body);
@@ -1027,6 +1118,8 @@ export function createFridaySessionRoutes(
           );
         }
 
+        assertSessionRunTestOracleAllowed(deps);
+
         const existingSession = publicIsolation
           ? null
           : await deps.sessionService.getOrCreateSession(key).catch(() => null);
@@ -1120,6 +1213,7 @@ export function createFridaySessionRoutes(
         validateForkBody(ctx.body);
         const body = (ctx.body ?? {}) as FridaySessionForkRequest;
         const metadata = sanitizeMetadata(body.metadata);
+        assertSessionTestOracleAllowed(deps);
         const result = await deps.sessionService.forkSession(key, {
           taskId: body.taskId,
           inheritMessageCount: body.inheritMessageCount,
@@ -1183,6 +1277,7 @@ export function createFridaySessionRoutes(
         validateMergeBody(ctx.body);
         const body = ctx.body;
         const metadata = sanitizeMetadata(body.metadata);
+        assertSessionTestOracleAllowed(deps);
         const result = await deps.sessionService.mergeForkSummary(key, {
           forkSessionKey: body.forkSessionKey,
           summary: body.summary,
@@ -1212,8 +1307,9 @@ export function createFridaySessionRoutes(
         }
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
-        await alignSessionWithPrincipalContext(deps.sessionService, key, ctx.principal).catch(() => undefined);
         validateExtractBody(ctx.body);
+        assertSessionMemoryExtractionTestOracleAllowed(deps);
+        await alignSessionWithPrincipalContext(deps.sessionService, key, ctx.principal).catch(() => undefined);
         const body = (ctx.body ?? {}) as FridaySessionMemoryExtractRequest;
         const result = await deps.extractionService.extractFromSession(key, {
           trigger: body.trigger,
@@ -1241,8 +1337,9 @@ export function createFridaySessionRoutes(
         }
         const { sessionKey } = ctx.params as { sessionKey: string };
         const key = decodeSessionKeyParam(sessionKey);
-        await alignSessionWithPrincipalContext(deps.sessionService, key, ctx.principal).catch(() => undefined);
         validateRememberBody(ctx.body);
+        assertSessionMemoryExtractionTestOracleAllowed(deps);
+        await alignSessionWithPrincipalContext(deps.sessionService, key, ctx.principal).catch(() => undefined);
         const body = ctx.body;
         const result = await deps.extractionService.extractSpecificMessages(
           key,
@@ -1290,6 +1387,7 @@ export function createFridaySessionRoutes(
         }
         validateRetryBody(ctx.body);
         const body = (ctx.body ?? {}) as { sessionKey?: string };
+        assertSessionMemoryExtractionTestOracleAllowed(deps);
         const result = await deps.extractionService.retryFailedExtractions(body.sessionKey);
         return { result };
       },

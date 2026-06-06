@@ -89,6 +89,7 @@ describe("FridayApiRuntime deterministic dispatch", () => {
       resolveSkill: () => null,
       invokeSkill: async () => ({}),
       allowTestOnlyAgentRunStartExecution: true,
+      allowTestOnlySessionRunExecution: true,
     });
 
     const startRoute = runtime.routes.getRoutes().find((route) => route.operationId === "agent.runs.start");
@@ -210,6 +211,7 @@ describe("FridayApiRuntime deterministic dispatch", () => {
       resolveSkill: () => null,
       invokeSkill: async () => ({}),
       allowTestOnlyAgentRunStartExecution: true,
+      allowTestOnlySessionRunExecution: true,
     });
 
     const startRoute = runtime.routes.getRoutes().find((route) => route.operationId === "agent.runs.start");
@@ -292,6 +294,7 @@ describe("FridayApiRuntime deterministic dispatch", () => {
       resolveSkill: () => null,
       invokeSkill: async () => ({}),
       allowTestOnlyAgentRunStartExecution: true,
+      allowTestOnlySessionRunExecution: true,
     });
 
     const runRoute = runtime.routes.getRoutes().find((route) => route.operationId === "sessions.run");

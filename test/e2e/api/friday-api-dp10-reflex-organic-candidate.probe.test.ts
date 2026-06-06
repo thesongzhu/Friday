@@ -387,6 +387,9 @@ describe("DP-10 probe — repeated sessions.run tasks create Reflex candidates b
       reflexService,
       tokenSecret: AUTH_TOKEN_TEST_KEY,
       computeChecksum: sha256,
+      allowTestOnlySessionExecution: true,
+      allowTestOnlySessionRunExecution: true,
+      allowTestOnlySessionMemoryExtractionExecution: true,
     });
 
     const port = await findFreePort();
@@ -807,6 +810,9 @@ describe("DP-10 probe — repeated sessions.run tasks create Reflex candidates b
       reflexService,
       tokenSecret: AUTH_TOKEN_TEST_KEY,
       computeChecksum: sha256,
+      allowTestOnlySessionExecution: true,
+      allowTestOnlySessionRunExecution: true,
+      allowTestOnlySessionMemoryExtractionExecution: true,
     });
 
     const port = await findFreePort();

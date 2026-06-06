@@ -6,6 +6,7 @@ import {
   isAgentRunStartFailClosed,
   isAutonomySkillLifecycleFailClosed,
   isObservabilityAlertDestinationCreateFailClosed,
+  isSessionCreateFailClosed,
   isWorkflowCatalogCreateFailClosed,
   isWorkflowRunStartFailClosed,
   normalizeLiveProviderMode,
@@ -13,6 +14,7 @@ import {
   resolveRetiredAgentRunScenarioExclusions,
   resolveRetiredAutonomySkillLifecycleScenarioExclusions,
   resolveRetiredObservabilityScenarioExclusions,
+  resolveRetiredSessionScenarioExclusions,
   resolveRetiredWorkflowCatalogScenarioExclusions,
   resolveRetiredWorkflowRunScenarioExclusions,
   shouldExcludeProviderScenarios,
@@ -214,6 +216,37 @@ describe("run-real-green-gate helpers", () => {
     ]);
   });
 
+  it("detects fail-closed session create retirement from the manifest", () => {
+    expect(isSessionCreateFailClosed({
+      surfaces: [
+        {
+          id: "sessions_create",
+          classification: "fail_closed",
+          executes_product_logic: false,
+        },
+      ],
+    })).toBe(true);
+    expect(isSessionCreateFailClosed({
+      surfaces: [
+        {
+          id: "sessions_create",
+          classification: "ts_runtime_blocker",
+          executes_product_logic: true,
+        },
+      ],
+    })).toBe(false);
+    expect(isSessionCreateFailClosed({ surfaces: [] })).toBe(false);
+  });
+
+  it("excludes the discord channel roundtrip RGG scenario while session create is fail-closed", () => {
+    expect(resolveRetiredSessionScenarioExclusions(process.cwd())).toEqual([
+      {
+        scenarioId: "l6-discord-channel-roundtrip",
+        reason: "POST /v1/sessions is classified fail_closed in the TS runtime retirement manifest.",
+      },
+    ]);
+  });
+
   it("preserves retired runtime scenario exclusions in the terminal summary", () => {
     const summary = buildSummary({
       runId: "run-1",
@@ -273,8 +306,20 @@ describe("run-real-green-gate helpers", () => {
           reason: "POST /v1/observability/alert-destinations is classified fail_closed in the TS runtime retirement manifest.",
         },
       ],
+      retiredSessionScenarioExclusions: [
+        {
+          scenarioId: "l6-discord-channel-roundtrip",
+          reason: "POST /v1/sessions is classified fail_closed in the TS runtime retirement manifest.",
+        },
+      ],
     });
 
+    expect(summary.retiredSessionScenarioExclusions).toEqual([
+      {
+        scenarioId: "l6-discord-channel-roundtrip",
+        reason: "POST /v1/sessions is classified fail_closed in the TS runtime retirement manifest.",
+      },
+    ]);
     expect(summary.retiredObservabilityScenarioExclusions).toEqual([
       {
         scenarioId: "l2-observability-alert-destination-create-invalid-fails-closed",

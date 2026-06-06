@@ -3656,6 +3656,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     channelRegistry: deps.channels?.registry,
     nowIso: deps.nowIso,
     runSession,
+    allowTestOnlySessionExecution: deps.allowTestOnlySessionExecution,
+    allowTestOnlySessionRunExecution: deps.allowTestOnlySessionRunExecution,
+    allowTestOnlySessionMemoryExtractionExecution: deps.allowTestOnlySessionMemoryExtractionExecution,
   })) {
     routes.register(route);
   }
