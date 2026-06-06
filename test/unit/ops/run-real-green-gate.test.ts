@@ -10,6 +10,7 @@ import {
   isWorkflowCatalogCreateFailClosed,
   isWorkflowRunStartFailClosed,
   normalizeLiveProviderMode,
+  resolveEffectiveExternalChannelScenarios,
   resolveGateSuiteReportRoot,
   resolveRetiredAgentRunScenarioExclusions,
   resolveRetiredAutonomySkillLifecycleScenarioExclusions,
@@ -183,6 +184,52 @@ describe("run-real-green-gate helpers", () => {
         reason: "POST /v1/autonomy/skills/:skillId/{shadow,canary,promote,rollback} is classified fail_closed in the TS runtime retirement manifest.",
       },
     ]);
+  });
+
+  it("drops external-channel scenarios that are retirement-excluded, leaving the suite empty when all are excluded", () => {
+    // No exclusions -> the full external-channel scenario set remains.
+    expect(resolveEffectiveExternalChannelScenarios([])).toEqual(["l6-discord-channel-roundtrip"]);
+    expect(resolveEffectiveExternalChannelScenarios(undefined)).toEqual(["l6-discord-channel-roundtrip"]);
+    // Excluding l6-discord-channel-roundtrip (sessions.create fail-closed) empties
+    // the external-channel suite; the gate must treat this as trivially passed
+    // rather than letting the runner throw "No scenarios selected".
+    expect(resolveEffectiveExternalChannelScenarios(["l6-discord-channel-roundtrip"])).toEqual([]);
+    expect(
+      resolveEffectiveExternalChannelScenarios(["unrelated-scenario", "l6-discord-channel-roundtrip"]),
+    ).toEqual([]);
+  });
+
+  it("passes the gate when external channels are ready but every scenario is retirement-excluded (0 passed)", () => {
+    const summary = buildSummary({
+      runId: "run-extch-empty",
+      repoRoot: "/tmp/friday",
+      branch: "main",
+      liveProviderMode: "economy",
+      phaseStatus: {
+        preflight: { status: "completed" },
+        smoke: { status: "completed" },
+        dailyCore: { status: "completed" },
+        publicSurface: { status: "completed" },
+        externalChannels: { status: "completed" },
+        branchConformance: { status: "completed" },
+        skillConformance: { status: "completed" },
+      },
+      preflight: {
+        envTruth: {
+          auth: { ok: true },
+          providerLaneRequirements: { fallbackRequired: false },
+          providerLanes: { default: true },
+          prerequisites: { externalChannels: { status: "ready" } },
+        },
+      },
+      smoke: { resultCounts: { passed: 1 } },
+      dailyCore: { resultCounts: { passed: 1 } },
+      publicSurface: { resultCounts: { passed: 1 } },
+      externalChannels: { resultCounts: { passed: 0 }, allExternalChannelScenariosExcludedByRetirement: true },
+      branchConformance: { shouldMerge: true },
+      skillConformance: { ok: true },
+    });
+    expect(summary.gate).toEqual({ passed: true, reasons: [] });
   });
 
   it("detects fail-closed observability alert-destination create retirement from the manifest", () => {

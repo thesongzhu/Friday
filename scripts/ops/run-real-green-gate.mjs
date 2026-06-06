@@ -126,6 +126,18 @@ const EXTERNAL_CHANNEL_SCENARIOS = [
   "l6-discord-channel-roundtrip",
 ];
 
+// The external-channel suite is the fixed EXTERNAL_CHANNEL_SCENARIOS list minus
+// any scenarios excluded by TS-runtime-retirement resolvers (e.g.
+// l6-discord-channel-roundtrip depends on sessions.create, which is now
+// fail-closed). When EVERY external-channel scenario is excluded the suite has
+// nothing left to run; the scenario runner throws "No scenarios selected" on an
+// empty selection, so the gate must detect this and record the suite as
+// trivially passed instead of letting the run terminate.
+export function resolveEffectiveExternalChannelScenarios(excludedScenarioIds) {
+  const excluded = new Set(excludedScenarioIds ?? []);
+  return EXTERNAL_CHANNEL_SCENARIOS.filter((id) => !excluded.has(id));
+}
+
 const AGENT_RUN_START_DEPENDENT_SCENARIOS = [
   "l3-destructive-request-visible-approval-gate",
   "l3-channel-origin-unified-task-state-contract",
@@ -922,22 +934,42 @@ async function main() {
     completePhase("publicSurface", { reportRoot: publicSurface.reportRoot });
 
     if (preflight?.envTruth?.prerequisites?.externalChannels?.status === "ready") {
-      startPhase("externalChannels");
-      externalChannels = await withTimeout(
-        "external channel validation",
-        options.validationTimeoutMs,
-        () => runRealWorldValidation({
-          ...validationBaseOptions,
+      const effectiveExternalChannelScenarios = resolveEffectiveExternalChannelScenarios(excludedScenarioIds);
+      const externalChannelsReportRoot = resolveGateSuiteReportRoot(reportRoot, "external-channels");
+      if (effectiveExternalChannelScenarios.length === 0) {
+        // Every external-channel scenario is excluded by TS runtime retirement
+        // (l6-discord-channel-roundtrip depends on the now-fail-closed
+        // sessions.create). Record the suite as trivially passed (0 scenarios)
+        // rather than invoking the runner, which throws "No scenarios selected"
+        // on an empty selection and terminates the whole gate.
+        startPhase("externalChannels");
+        externalChannels = {
+          runId,
           suite: "weekly",
-          scenarioIds: EXTERNAL_CHANNEL_SCENARIOS,
-          repetitions: 1,
-          reportRoot: resolveGateSuiteReportRoot(reportRoot, "external-channels"),
-        }),
-        async () => {
-          await closeSharedUiProbeSession();
-        },
-      );
-      completePhase("externalChannels", { reportRoot: externalChannels.reportRoot });
+          reportRoot: externalChannelsReportRoot,
+          scenarioCount: 0,
+          resultCounts: { passed: 0 },
+          allExternalChannelScenariosExcludedByRetirement: true,
+        };
+        completePhase("externalChannels", { reportRoot: externalChannelsReportRoot });
+      } else {
+        startPhase("externalChannels");
+        externalChannels = await withTimeout(
+          "external channel validation",
+          options.validationTimeoutMs,
+          () => runRealWorldValidation({
+            ...validationBaseOptions,
+            suite: "weekly",
+            scenarioIds: effectiveExternalChannelScenarios,
+            repetitions: 1,
+            reportRoot: externalChannelsReportRoot,
+          }),
+          async () => {
+            await closeSharedUiProbeSession();
+          },
+        );
+        completePhase("externalChannels", { reportRoot: externalChannels.reportRoot });
+      }
     } else {
       markPhase(phaseStatus, "externalChannels", "skipped", {
         reason: "external_channels.ready is not true",
