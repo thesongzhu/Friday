@@ -1846,15 +1846,19 @@ export const REAL_WORLD_SCENARIOS = [
     routeFamily: "workflow-evidence-fail-closed",
     providerLane: "none",
     preconditions: ["auth.ready"],
+    // TS-runtime-retirement adaptation (PR #568): workflow run execution is now
+    // fail-closed at the startRun METHOD, so the legacy evidence-durability
+    // end-to-end coverage (which needed real runs) can no longer execute in TS.
+    // Per the operator Option-B decision this scenario now ASSERTS the
+    // fail-closed retirement behavior; the evidence-durability downstream
+    // coverage is honestly shifted to a FUTURE Rust workflow-runtime lane and is
+    // NOT claimed here. Scenario id is intentionally unchanged.
     expectedEvidence: [
-      "isolated in-memory SQLite database is bootstrapped with the canonical Friday migration stack including v086 (proof_required + evidenceDurability + proofClaimable)",
-      "workflow_run_pipeline_events table is dropped post-migration to simulate live evidence-store unreach (no mocks of the evidence repository or runtime)",
-      "healthy ordinary run before the table drop reports evidenceStatus available via runtime.evidence.getRunEvidenceStatus and runtime.evidence.getRunEvidence",
-      "proof-required run after the table drop reaches terminal status=failed with failure.code=WORKFLOW_EVIDENCE_UNAVAILABLE and a failure.message naming durable evidence persistence loss; evidenceStatus is off available",
-      "ordinary run after the table drop reaches terminal status=completed (not failed for evidence reasons) while evidenceStatus resolves to degraded/unavailable so no proof claim can be made",
-      "task-workflow verifyClaim against a workflow_run_evidence ref from a degraded run throws TASK_WORKFLOW_CLAIM_WORKFLOW_RUN_EVIDENCE_UNAVAILABLE with HTTP 409",
-      "closeout receipt on the degraded path reports status=partial and carries an evidenceDurability field",
-      "healthy-path closeout receipt reports status=complete with evidenceDurability=available, proofClaimable=true, and the workflow_run_evidence_durable required gate=pass",
+      "isolated in-memory SQLite database is bootstrapped with the canonical Friday migration stack (no mocks of the workflow runtime)",
+      "in-process workflow create + version publish still succeed, proving the PR #568 TS-runtime-retirement guard is method-scoped to run execution (not a blanket workflow shutdown)",
+      "workflow run execution (runtime.execution.startRun) fails closed with FridayDomainError TS_RUNTIME_WORKFLOW_RUNS_RETIRED and HTTP 503 before any run row, node execution, provider call, or evidence write",
+      "the fail-closed envelope classifies classification=fail_closed (replacement=rust_owned_workflow_run_entrypoint_required)",
+      "legacy evidence-durability coverage (WORKFLOW_EVIDENCE_UNAVAILABLE proof-required failure, degraded ordinary runs, task-workflow verifyClaim refusal of degraded workflow_run_evidence refs, closeout evidenceDurability/proofClaimable/workflow_run_evidence_durable gate) is honestly shifted to a future Rust workflow-runtime lane and is NOT claimed here",
       "live external-channel transcript proof remains forwarded to Phase 14.5E for configured channels",
     ],
     execution: {
@@ -1862,17 +1866,29 @@ export const REAL_WORLD_SCENARIOS = [
     },
     suites: ["daily", "nightly", "weekly"],
     severityOnFailure: "P0",
-    tags: ["phase-14-5c", "module-28c", "workflow-evidence-fail-closed", "proof-required"],
+    tags: ["phase-14-5c", "module-28c", "workflow-evidence-fail-closed", "ts-runtime-retirement", "fail-closed"],
   }),
   // Phase 14.5D module_28d — rollback matrix and closeout receipt RGG slice.
   //
   // Same-SHA RGG vehicle for the rollback matrix disclosure contract. The
   // executor stages an isolated in-memory SQLite database (canonical Friday
   // migration stack including v087-rollback-matrix-closeout-receipt) and
-  // drives the real workflow runtime and the real task-workflow service
-  // in-process (no mocks) to assert each of the four rollback class
-  // outcomes plus the no-overclaim invariant carried by the new required
-  // gate `rollback_class_disclosure_required`.
+  // drives the real task-workflow service in-process (no mocks) to assert the
+  // rollback class outcomes plus the no-overclaim invariant carried by the new
+  // required gate `rollback_class_disclosure_required`.
+  //
+  // TS-runtime-retirement adaptation (PR #568): the
+  // `compensating_action_required` rollback class previously required a healthy
+  // upstream workflow RUN (a verified claim backed by a workflow_run_evidence
+  // ref). Workflow run execution is now fail-closed at the startRun METHOD, so
+  // that one class can no longer be staged in-process. Per the operator
+  // Option-B decision this scenario now ASSERTS that startRun fails closed
+  // (retirement conformance) and retains the still-valid not_applicable /
+  // reversible_local / non_reversible_external classes + persistence + the
+  // disclosure gate, which do NOT depend on a workflow run. The
+  // compensating_action_required disclosure coverage is honestly shifted to a
+  // FUTURE Rust workflow-runtime lane and is NOT claimed here. Scenario id is
+  // intentionally unchanged.
   //
   // Honesty notes:
   //   * Rollback proof is part of user trust but is NOT release proof on
@@ -1900,9 +1916,10 @@ export const REAL_WORLD_SCENARIOS = [
       "isolated in-memory SQLite database is bootstrapped with the canonical Friday migration stack including v087-rollback-matrix-closeout-receipt (additive nullable rollback_class, compensating_action, non_reversible_reason columns on task_workflow_closeout_receipts)",
       "task-workflow closeout receipt reports rollbackClass='not_applicable' with null disclosure summaries when no verified or blocked claim exists",
       "task-workflow closeout receipt reports rollbackClass='reversible_local' with null disclosure summaries when verified claim is backed by an agent_run_event ref (local-only operation)",
-      "task-workflow closeout receipt reports rollbackClass='compensating_action_required' with a non-empty compensatingAction string when verified claim is backed by a workflow_run_evidence ref to a healthy upstream workflow run",
+      "compensating_action_required PREVIOUSLY required a healthy upstream workflow run; PR #568 fails workflow run execution closed (runtime.execution.startRun throws TS_RUNTIME_WORKFLOW_RUNS_RETIRED HTTP 503), so this rollback class is now asserted as fail-closed and its disclosure coverage is honestly shifted to a future Rust workflow-runtime lane (NOT claimed here)",
       "task-workflow closeout receipt reports rollbackClass='non_reversible_external' with a non-empty nonReversibleReason string when verified claim references manual_external evidence (closeout-time disclosure surface; verify-time evidence-bearing invariant preserved)",
-      "rollback_class_disclosure_required required closeout gate passes on each of the four valid outcomes and blocks an overclaim of reversible_local when a non-local ref is observed",
+      "rollback_class_disclosure_required required closeout gate passes on the not_applicable, reversible_local, and non_reversible_external outcomes (which do not depend on a workflow run)",
+      "in-process workflow authoring (create + publish) still succeeds, proving the #568 guard is method-scoped to run execution",
       "rollback fields persist via the repository and rehydrate identically through getLatestCloseoutReceipt",
       "rollback proof itself is not release proof; release-proof eligibility remains gated by Phase 14.5C proofClaimable",
       "live external-channel transcript proof remains forwarded to Phase 14.5E for configured channels",
@@ -1917,6 +1934,8 @@ export const REAL_WORLD_SCENARIOS = [
       "module-28d",
       "rollback-matrix",
       "closeout-receipt",
+      "ts-runtime-retirement",
+      "fail-closed",
     ],
   }),
   baseScenario({
