@@ -99,6 +99,9 @@ function makeDeps(opts: DepsOptions = {}): DepsAndSpies {
     activateSavedChannels,
     onChannelsSaved,
     onSetupCompleted,
+    // Test-oracle flag: detect handler tests exercise the live provider probe.
+    // Production wiring leaves it unset (TS-runtime retirement).
+    allowTestOnlyProviderDetectExecution: true,
   } as unknown as FridaySetupRoutesDeps;
 
   return { deps, writeTxn, listProviders, activateSavedChannels, onChannelsSaved, onSetupCompleted };
@@ -576,5 +579,28 @@ describe("createFridaySetupRoutes — B0 Slice A3 bootstrap boundary", () => {
     expect(writeTxn).not.toHaveBeenCalled();
     expect(activateSavedChannels).not.toHaveBeenCalled();
     expect(onChannelsSaved).not.toHaveBeenCalled();
+  });
+});
+
+describe("createFridaySetupRoutes — providers.detect TS-runtime retirement", () => {
+  // Enabled deps but WITHOUT the test-oracle flag = production/live wiring.
+  function retiredRoutes() {
+    const { deps } = makeDeps({ setupCompletedAt: null });
+    return createFridaySetupRoutes({ ...deps, allowTestOnlyProviderDetectExecution: false } as FridaySetupRoutesDeps);
+  }
+
+  it("fail-closes providers.detect with 503 TS_RUNTIME_PROVIDERS_DETECT_RETIRED (before any provider fetch)", async () => {
+    const route = findMutatingRoute(retiredRoutes(), "providers.detect");
+    // Valid body + localhost (bootstrap boundary holds) -> reaches the guard, not a 400/boundary error.
+    await expect(route.handler(makeCtx({ body: { kind: "ollama" }, ip: "127.0.0.1" }))).rejects.toMatchObject({
+      code: "TS_RUNTIME_PROVIDERS_DETECT_RETIRED",
+      httpStatus: 503,
+    });
+  });
+
+  it("still 400s a malformed detect body BEFORE the retirement guard", async () => {
+    const route = findMutatingRoute(retiredRoutes(), "providers.detect");
+    // No apiKey/kind/baseUrl -> VALIDATION_ERROR 400 fires before the 503.
+    await expect(route.handler(makeCtx({ body: {}, ip: "127.0.0.1" }))).rejects.toMatchObject({ httpStatus: 400 });
   });
 });
