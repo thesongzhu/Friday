@@ -223,8 +223,12 @@ pub enum AgentStep {
 }
 
 /// A record of one completed turn, threaded back to the model as conversation history
-/// so the next step is informed by what already happened. `outcome` is a short,
-/// Hub-authored summary (never raw secret material).
+/// so the next step is informed by what already happened. `outcome` is the Hub-authored
+/// per-turn result: the short summary PLUS, for read-type tools, a BOUNDED head slice of
+/// the actual tool-result content (so the model can ground its answer on what it read —
+/// see [`format_executed_outcome`]). It is MODEL-CONTEXT only: it is never persisted and
+/// never carries Hub secret/approval-key material; the compact `summary` (not `outcome`)
+/// is what reaches the event log and the hash-chained audit ledger.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TurnTrace {
     pub action: String,
@@ -433,7 +437,11 @@ pub fn parse_tool_call(content: &str) -> Result<RawToolCall, AgentError> {
 pub fn build_loop_prompt(task: &str, history: &[TurnTrace]) -> String {
     let mut s = build_tool_prompt(task);
     if !history.is_empty() {
-        s.push_str("\nSo far this run:\n");
+        s.push_str(
+            "\nSo far this run (each line is a completed step; any text after \"content:\" \
+             is the ACTUAL tool result — read and USE it to answer, do NOT re-run the same \
+             tool just to see it again):\n",
+        );
         for (i, t) in history.iter().enumerate() {
             s.push_str(&format!("{}. {} → {}\n", i + 1, t.action, t.outcome));
         }
@@ -1030,12 +1038,23 @@ pub fn run_one_turn(
 
 // --- the tool executor (real, friday-fs-backed dispatch) ---------------------
 
-/// A receipt of a tool execution: what ran + a short outcome summary. Recorded to the
-/// agent_run event log AND the hash-chained audit ledger.
+/// A receipt of a tool execution: what ran + a short outcome `summary`, plus the OPTIONAL
+/// real tool-result `content` (e.g. the bytes a `read_file` produced).
+///
+/// `summary` is the short, Hub-authored, log-safe line ("read 47 bytes from notes.md");
+/// it — and ONLY it — is recorded to the agent_run event log AND the hash-chained audit
+/// ledger. `content` is the actual result the model needs to USE what a tool produced;
+/// it is fed back into the model's next-turn context (bounded) via [`TurnTrace::outcome`]
+/// and is NEVER written to the event log or audit ledger (so the ledger stays a compact,
+/// content-free chain). `content` is `None` for tools with nothing meaningful to feed
+/// back (e.g. `write_file`, whose `summary` already says what happened).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolReceipt {
     pub action: String,
     pub summary: String,
+    /// The real tool-result payload to thread back to the model (bounded at feed-back
+    /// time, see [`MAX_FEEDBACK_CONTENT_BYTES`]); `None` when there is nothing to feed back.
+    pub content: Option<String>,
 }
 
 /// Why a tool EXECUTION failed — distinct from the GATE refusing it. The gate runs
@@ -1108,6 +1127,10 @@ impl ToolExecutor for FsToolExecutor {
                 Ok(ToolReceipt {
                     action: action.to_string(),
                     summary: format!("read {n} bytes from {path}"),
+                    // Carry the ACTUAL file content so the loop can feed it back to the
+                    // model (bounded at feed-back time); the byte-count `summary` alone is
+                    // what made the model re-read & hallucinate (S1.2 grounding bug).
+                    content: Some(buf),
                 })
             }
             "write_file" => {
@@ -1121,6 +1144,8 @@ impl ToolExecutor for FsToolExecutor {
                 Ok(ToolReceipt {
                     action: action.to_string(),
                     summary: format!("wrote {} bytes to {path}", content.len()),
+                    // A write has no result payload to feed back; the summary suffices.
+                    content: None,
                 })
             }
             other => Err(ExecError::Unsupported(other.to_string())),
@@ -1373,6 +1398,59 @@ pub(crate) fn gate_dispatch(
     })
 }
 
+/// Max bytes of real tool-result CONTENT fed back into the model's next-turn context
+/// (the [`TurnTrace::outcome`] history). Read-type tools (e.g. `read_file`) load the
+/// whole file, but only this BOUNDED head slice is threaded back so the model can USE
+/// what it read WITHOUT re-creating the completion-budget / cost blow-up an unbounded
+/// feedback would cause. 2 KiB comfortably covers a notes / config file's salient head;
+/// anything larger is truncated with [`FEEDBACK_TRUNCATION_MARKER`].
+const MAX_FEEDBACK_CONTENT_BYTES: usize = 2048;
+
+/// Appended to fed-back content when it was truncated to [`MAX_FEEDBACK_CONTENT_BYTES`],
+/// so the model knows the file continues beyond what it can see.
+const FEEDBACK_TRUNCATION_MARKER: &str = " …[content truncated]";
+
+/// The largest UTF-8 prefix of `s` whose byte length is `<= max_bytes`, and whether any
+/// bytes were dropped. Never splits a multi-byte char: walks back to the nearest char
+/// boundary, so the returned slice is always valid `&str` and never panics.
+fn head_slice(s: &str, max_bytes: usize) -> (&str, bool) {
+    if s.len() <= max_bytes {
+        return (s, false);
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    (&s[..end], true)
+}
+
+/// Format a completed tool execution into the [`TurnTrace::outcome`] threaded back to the
+/// model as conversation history. The byte-count `summary` is ALWAYS included (it is what
+/// the audit ledger also records). When the executor returned real `content` (e.g. the
+/// bytes a `read_file` produced), a BOUNDED head slice of that content is appended so the
+/// model can actually USE what it read — WITHOUT this the model sees only "read N bytes
+/// from X", re-reads the same file, and hallucinates (the S1.2 grounding bug). The content
+/// is capped at [`MAX_FEEDBACK_CONTENT_BYTES`] on a UTF-8 char boundary, with a clear
+/// truncation marker. `summary` (and thus the audit/event log) is NEVER widened — raw
+/// content lives ONLY in the model-facing history outcome, never on the hash-chained ledger.
+fn format_executed_outcome(receipt: &ToolReceipt) -> String {
+    match receipt.content.as_deref() {
+        Some(content) => {
+            let (head, truncated) = head_slice(content, MAX_FEEDBACK_CONTENT_BYTES);
+            if truncated {
+                format!(
+                    "executed: {} | content (first {} bytes shown):\n{head}{FEEDBACK_TRUNCATION_MARKER}",
+                    receipt.summary,
+                    head.len()
+                )
+            } else {
+                format!("executed: {} | content:\n{head}", receipt.summary)
+            }
+        }
+        None => format!("executed: {}", receipt.summary),
+    }
+}
+
 /// Drive a MULTI-TURN agent loop: repeatedly ask the model for the next step (with
 /// conversation history), and for each proposed tool run the SAME gate-mandatory
 /// dispatch as [`run_one_turn_with_executor`] (authorize → execute only on `Allow` →
@@ -1425,6 +1503,11 @@ pub fn run_loop(
     // surface. The backstop is genuine: the UNW-001 mutating-action gate evaluates EVERY
     // tool call regardless of prompt text, and the recalled memory is user-CONFIRMED
     // (not raw channel text), so it is trusted context, not arbitrary injection.
+    // The bounded tool-result CONTENT now threaded back into history (the S1.2 grounding
+    // fix, see `format_executed_outcome`) is ANOTHER prompt-injection-inward surface — a
+    // read file could contain adversarial instructions. The SAME backstop holds: that
+    // content only ever reaches the prompt, and the gate still evaluates every subsequent
+    // tool call regardless of what the file said; it is not a new mutation path.
     let prompt_task = if recall_preamble.is_empty() {
         task.to_string()
     } else {
@@ -1515,7 +1598,10 @@ pub fn run_loop(
                     history.push(TurnTrace {
                         action: raw.action.clone(),
                         params: raw.params.clone(),
-                        outcome: format!("executed: {}", receipt.summary),
+                        // Feed the REAL (bounded) tool-result content back to the model so it
+                        // can ground its answer on what the tool produced — not just the
+                        // byte-count summary recorded above to the event log / audit ledger.
+                        outcome: format_executed_outcome(&receipt),
                     });
                 }
             }
@@ -2417,6 +2503,143 @@ mod tests {
         // an instant owner approval). Distinct requests → distinct digests → distinct
         // single-use keys.
         |req| Some(mint_approval(req, "ap-loop", SECRET, 1_000_000))
+    }
+
+    /// A scripted client that ALSO captures the exact loop prompt
+    /// (`build_loop_prompt(task, history)`) it is handed each turn — so a test can assert
+    /// what the model actually SEES, including tool-result content threaded back into
+    /// history. (The live `next_step` renders precisely this prompt before calling `chat`.)
+    struct CapturingAgentLlmClient {
+        steps: Vec<AgentStep>,
+        calls: std::cell::Cell<usize>,
+        prompts: std::cell::RefCell<Vec<String>>,
+    }
+    impl CapturingAgentLlmClient {
+        fn new(steps: Vec<AgentStep>) -> Self {
+            Self {
+                steps,
+                calls: std::cell::Cell::new(0),
+                prompts: std::cell::RefCell::new(Vec::new()),
+            }
+        }
+    }
+    impl AgentLlmClient for CapturingAgentLlmClient {
+        fn propose_tool_call(&self, _task: &str) -> Result<RawToolCall, AgentError> {
+            Err(AgentError::Parse(
+                "capturing: single-turn path unused by run_loop".to_string(),
+            ))
+        }
+        fn next_step(&self, task: &str, history: &[TurnTrace]) -> Result<AgentStep, AgentError> {
+            self.prompts
+                .borrow_mut()
+                .push(build_loop_prompt(task, history));
+            let i = self.calls.get();
+            self.calls.set(i + 1);
+            Ok(self.steps.get(i).cloned().unwrap_or(AgentStep::Finish {
+                message: "script exhausted".to_string(),
+            }))
+        }
+    }
+
+    #[test]
+    fn head_slice_respects_utf8_boundary() {
+        // Under cap: returned whole, not truncated.
+        let (whole, t0) = head_slice("hello", 10);
+        assert_eq!(whole, "hello");
+        assert!(!t0);
+        // 'é' is 2 bytes; a cap that lands mid-char must walk back, never split / panic.
+        let s = "aé"; // 'a'(1) + 'é'(2) = 3 bytes
+        let (slice, truncated) = head_slice(s, 2);
+        assert_eq!(slice, "a"); // dropped the partial 'é'
+        assert!(truncated);
+        let (exact, t2) = head_slice(s, 3);
+        assert_eq!(exact, "aé");
+        assert!(!t2);
+    }
+
+    #[test]
+    fn format_executed_outcome_carries_bounded_content() {
+        // read-type receipt under cap: summary + the ACTUAL content, no truncation marker.
+        let r = ToolReceipt {
+            action: "read_file".to_string(),
+            summary: "read 26 bytes from notes.md".to_string(),
+            content: Some("...Remember the number 47.".to_string()),
+        };
+        let out = format_executed_outcome(&r);
+        assert!(out.contains("read 26 bytes from notes.md"));
+        assert!(out.contains("Remember the number 47."));
+        assert!(!out.contains(FEEDBACK_TRUNCATION_MARKER));
+
+        // oversized content: capped to <= MAX_FEEDBACK_CONTENT_BYTES, truncation marker present.
+        // Sentinel 'Z' is absent from the boilerplate ("executed"/"content"/... ) so its
+        // count == exactly the number of fed-back content bytes.
+        let big = "Z".repeat(MAX_FEEDBACK_CONTENT_BYTES + 500);
+        let r2 = ToolReceipt {
+            action: "read_file".to_string(),
+            summary: format!("read {} bytes from big.md", big.len()),
+            content: Some(big),
+        };
+        let out2 = format_executed_outcome(&r2);
+        assert!(out2.contains(FEEDBACK_TRUNCATION_MARKER));
+        // The fed-back content slice never exceeds the cap.
+        let fed = out2.chars().filter(|&c| c == 'Z').count();
+        assert!(fed > 0 && fed <= MAX_FEEDBACK_CONTENT_BYTES, "fed={fed}");
+
+        // no-content receipt (e.g. write): plain summary only, unchanged from before.
+        let r3 = ToolReceipt {
+            action: "write_file".to_string(),
+            summary: "wrote 8 bytes to out.md".to_string(),
+            content: None,
+        };
+        assert_eq!(
+            format_executed_outcome(&r3),
+            "executed: wrote 8 bytes to out.md"
+        );
+    }
+
+    #[test]
+    fn loop_feeds_bounded_tool_content_back_into_model_prompt() {
+        // The S1.2 grounding fix end-to-end: after a read, the NEXT model turn's prompt
+        // must contain the file's ACTUAL content (not just the byte-count summary).
+        let root = TempDir::new("loop-grounding");
+        std::fs::write(root.0.join("notes.md"), b"...Remember the number 47.").unwrap();
+        let db = Db::open_hub(&temp_path("loop-grounding")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "what is the number in notes.md", 1).unwrap();
+        let client = CapturingAgentLlmClient::new(vec![
+            AgentStep::Tool(raw("read_file", &[("path", "notes.md")])),
+            AgentStep::Finish {
+                message: "47".to_string(),
+            },
+        ]);
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "what is the number in notes.md",
+            "",
+            SECRET,
+            &no_approval(),
+            10,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.status, LoopStatus::Finished);
+        assert_eq!(out.final_message.as_deref(), Some("47"));
+
+        let prompts = client.prompts.borrow();
+        assert_eq!(prompts.len(), 2); // turn 1 (read) + turn 2 (finish)
+                                      // Turn 1 had no history → no content yet.
+        assert!(!prompts[0].contains("Remember the number 47."));
+        // Turn 2 (AFTER the read) sees the real file content AND the summary.
+        assert!(
+            prompts[1].contains("Remember the number 47."),
+            "second prompt must carry the read content, got: {}",
+            prompts[1]
+        );
+        assert!(prompts[1].contains("from notes.md"));
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
     }
 
     #[test]
