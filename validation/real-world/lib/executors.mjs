@@ -26,10 +26,6 @@ export const LIFECYCLE_UNIT_PROOF_TEST_FILES = Object.freeze([
   "test/unit/agent/tools/friday-agent-skill-tool.test.ts",
 ]);
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function nowIso() {
   return new Date().toISOString();
 }
@@ -1120,47 +1116,31 @@ export const AUTO_FIX_DOCTOR_ROUTES = Object.freeze([
   }),
 ]);
 
-// Phase 14.5C module_28c: same-SHA RGG vehicle for the workflow evidence
-// fail-closed contract. The executor stages an isolated in-memory SQLite
-// database (created fresh per run), applies the canonical Friday migration
-// stack including v086, drops the `workflow_run_pipeline_events` table to
-// simulate live evidence-store unreachability, then drives the real workflow
-// runtime and the real task-workflow service in-process — with no mocks of
-// the workflow runtime, evidence repository, task-workflow repository, or
-// task-workflow service — and asserts the four behaviors named by the Stage
-// 2 scope reconciliation matrix:
-//   * proof-required run fails closed (run-level evidence status flips off
-//     of "available" once the first pipeline-event write would have hit the
-//     missing table);
-//   * ordinary run continues but its evidence status honestly resolves to
-//     "degraded"/"unavailable", so the receipt cannot claim proof;
-//   * verifyClaim refuses any `workflow_run_evidence` ref whose source run
-//     reports non-available status with HTTP 409
-//     TASK_WORKFLOW_CLAIM_WORKFLOW_RUN_EVIDENCE_UNAVAILABLE;
-//   * closeout receipt populates `evidenceDurability` + `proofClaimable`
-//     and the new `workflow_run_evidence_durable` required gate passes on
-//     the healthy path.
-// The runtime, state, errors, and task-workflows modules are loaded lazily
-// from the compiled dist/ tree so other RGG scenarios are unaffected when
-// this executor is not in play; a missing build is reported as blocked
-// (failureClass=environment) rather than silently degrading the proof.
-const WORKFLOW_EVIDENCE_FAIL_CLOSED_DROPPED_TABLE = "workflow_run_pipeline_events";
+// Phase 14.5C module_28c -> TS-runtime-retirement conformance (PR #568).
+//
+// HISTORY: this scenario formerly drove the real workflow runtime in-process
+// to prove the workflow EVIDENCE fail-closed contract — proof-required runs
+// failing with WORKFLOW_EVIDENCE_UNAVAILABLE when the evidence store is
+// unreachable, ordinary runs continuing degraded, verifyClaim refusing
+// degraded workflow_run_evidence refs (409), and closeout receipts surfacing
+// evidenceDurability + proofClaimable + the workflow_run_evidence_durable gate.
+//
+// PR #568 moved the TS-runtime-retirement guard to the workflow execution
+// service `startRun` METHOD, so EVERY in-process caller (not just the HTTP
+// route) now fails closed with 503 TS_RUNTIME_WORKFLOW_RUNS_RETIRED unless the
+// explicit test-oracle flag is set (default-off in production, and left unset
+// here). That guard fences the workflow RUN this scenario depended on, so the
+// legacy evidence-durability end-to-end coverage can no longer execute in TS.
+//
+// Per the operator Option-B decision this scenario is REWRITTEN to ASSERT the
+// new fail-closed behavior (retirement conformance): in-process catalog
+// authoring still succeeds (proving the guard is method-scoped to run
+// execution), while `startRun` fails closed. The legacy evidence-durability
+// downstream coverage is honestly shifted to a FUTURE Rust workflow-runtime
+// lane — it is NOT retained here and is NOT claimed. The runtime/state/errors
+// modules are loaded lazily from the compiled dist/ tree; a missing build is
+// reported as blocked (failureClass=environment) rather than a fake pass.
 const WORKFLOW_EVIDENCE_FAIL_CLOSED_NOW = "2026-05-17T00:00:00.000Z";
-const WORKFLOW_EVIDENCE_FAIL_CLOSED_WAIT_MS = 150;
-const WORKFLOW_EVIDENCE_FAIL_CLOSED_SETTLE_POLL_MS = 20;
-const WORKFLOW_EVIDENCE_FAIL_CLOSED_SETTLE_MAX_TRIES = 250;
-
-async function waitForWorkflowRunSettled(runtime, runId) {
-  const terminal = new Set(["completed", "failed", "cancelled"]);
-  for (let i = 0; i < WORKFLOW_EVIDENCE_FAIL_CLOSED_SETTLE_MAX_TRIES; i += 1) {
-    const run = runtime.execution.getRun(runId);
-    if (run && terminal.has(run.status)) {
-      return run;
-    }
-    await sleep(WORKFLOW_EVIDENCE_FAIL_CLOSED_SETTLE_POLL_MS);
-  }
-  return null;
-}
 
 async function loadWorkflowEvidenceFailClosedModules() {
   // Lazy import so the executors module does not require a built dist/
@@ -1281,14 +1261,7 @@ async function executeWorkflowEvidenceFailClosed({ artifact, scenario }) {
     runFridayMigrations,
     FRIDAY_SQLITE_MIGRATIONS,
     FridayDomainError,
-    createFridayTaskWorkflowRepository,
-    createFridayTaskWorkflowService,
   } = modules;
-
-  const originalPipelineEnable = process.env.FRIDAY_PIPELINE_ENABLE;
-  const originalPipelineMode = process.env.FRIDAY_PIPELINE_MODE;
-  process.env.FRIDAY_PIPELINE_ENABLE = "true";
-  process.env.FRIDAY_PIPELINE_MODE = "enforce";
 
   const db = createWorkflowEvidenceFailClosedDb({
     Database,
@@ -1302,30 +1275,13 @@ async function executeWorkflowEvidenceFailClosed({ artifact, scenario }) {
     idGenerator,
     nowIso: () => WORKFLOW_EVIDENCE_FAIL_CLOSED_NOW,
     computeChecksum: (content) => crypto.createHash("sha256").update(content).digest("hex"),
-    // Audit C: this scenario exercises evidence-PERSISTENCE fail-closed; its
-    // action node is a benign informational placeholder, so it declares a
-    // read-only manifest → completion `verified` (without one it would
-    // fail-closed to a side-effect `proof_pending` run, which is correct but
-    // orthogonal to what this scenario proves).
     resolveSkill: () => ({
       id: "rgg-evidence-fail-closed-skill",
       manifest: { permissions: { grants: [{ action: "read" }] } },
     }),
     invokeSkill: async () => ({ ok: true }),
-  });
-  const taskWorkflowRepository = createFridayTaskWorkflowRepository();
-  let taskWorkflowIdCounter = 0;
-  const taskWorkflowService = createFridayTaskWorkflowService({
-    db,
-    repository: taskWorkflowRepository,
-    idGenerator: () => `rgg-tw-${String(++taskWorkflowIdCounter).padStart(6, "0")}`,
-    nowIso: () => WORKFLOW_EVIDENCE_FAIL_CLOSED_NOW,
-    getWorkflowRunEvidenceStatus: (runId) => runtime.evidence.getRunEvidenceStatus(runId),
-    // Audit C: wire the orthogonal completion lookup exactly as the hub does
-    // (verifyClaim is fail-closed and requires it). The read-only run is
-    // `verified`, so the workflow_run_evidence claim still reaches verified.
-    getWorkflowRunCompletionVerification: (runId) =>
-      runtime.evidence.getRunCompletionVerification(runId),
+    // Intentionally NOT setting allowTestOnlyWorkflowRunExecution: this scenario
+    // asserts the production-default (fail-closed) behavior of the #568 guard.
   });
 
   const failures = [];
@@ -1342,258 +1298,84 @@ async function executeWorkflowEvidenceFailClosed({ artifact, scenario }) {
   }
 
   try {
-    // Publish a baseline workflow used by every run below.
+    // (a) Catalog authoring is NOT run execution. The PR #568 retirement guard
+    // is method-scoped to startRun, so creating + publishing a workflow version
+    // in-process still succeeds. Asserting this proves the guard fences run
+    // execution specifically — it is not a blanket workflow shutdown.
     const workflow = runtime.crud.createWorkflow({
       slug: "rgg-phase-14-5c-evidence-fail-closed",
       name: "RGG phase 14.5C evidence fail closed",
     });
+    assert(
+      "(a) in-process workflow create still succeeds (authoring is not run execution)",
+      typeof workflow.id === "string" && workflow.id.length > 0,
+      `workflowId=${workflow.id}`,
+    );
     const version = runtime.crud.createVersion(
       workflow.id,
       makeWorkflowEvidenceFailClosedGraph(workflow.id, "placeholder"),
     );
     runtime.crud.publishVersion(workflow.id, version.versionNumber);
-
-    // (a) Healthy ordinary run while the evidence table is present.
-    const healthyRun = await runtime.execution.startRun({
-      workflowId: workflow.id,
-      workflowVersionId: version.id,
-      triggerType: "manual",
-      proofRequired: false,
-    });
-    await sleep(WORKFLOW_EVIDENCE_FAIL_CLOSED_WAIT_MS);
-    const healthyStatus = runtime.evidence.getRunEvidenceStatus(healthyRun.id);
     assert(
-      "(a) healthy ordinary run evidenceStatus",
-      healthyStatus === "available",
-      `runId=${healthyRun.id} status=${healthyStatus}`,
-    );
-    const healthyEvidence = runtime.evidence.getRunEvidence(healthyRun.id);
-    assert(
-      "(a) healthy run getRunEvidence reports available",
-      healthyEvidence.evidenceStatus === "available",
-      `getRunEvidence.evidenceStatus=${healthyEvidence.evidenceStatus}`,
+      "(a) in-process workflow version publish still succeeds",
+      typeof version.id === "string" && version.id.length > 0,
+      `versionId=${version.id}`,
     );
 
-    // Drop the evidence persistence table — simulates live store unreach.
-    db.withWriteTransaction((conn) => {
-      conn.exec(`DROP TABLE IF EXISTS ${WORKFLOW_EVIDENCE_FAIL_CLOSED_DROPPED_TABLE}`);
-    });
-    record(
-      `staged isolated SQLite degrade by DROP TABLE ${WORKFLOW_EVIDENCE_FAIL_CLOSED_DROPPED_TABLE}`,
-    );
-
-    // (b) Proof-required run after table drop — fails closed. The
-    // load-bearing assertion is the terminal run record: status === "failed"
-    // and failure.code === "WORKFLOW_EVIDENCE_UNAVAILABLE". A flip in
-    // evidenceStatus alone would not prove the run was refused; it could
-    // remain queued or paused. We wait for terminal state before asserting.
-    const proofRequiredRun = await runtime.execution.startRun({
-      workflowId: workflow.id,
-      workflowVersionId: version.id,
-      triggerType: "manual",
-      proofRequired: true,
-    });
-    const proofRequiredSettled = await waitForWorkflowRunSettled(
-      runtime,
-      proofRequiredRun.id,
-    );
-    assert(
-      "(b) proof-required run settles in terminal state",
-      proofRequiredSettled !== null,
-      `runId=${proofRequiredRun.id} did not settle within ${WORKFLOW_EVIDENCE_FAIL_CLOSED_SETTLE_POLL_MS * WORKFLOW_EVIDENCE_FAIL_CLOSED_SETTLE_MAX_TRIES}ms`,
-    );
-    assert(
-      "(b) proof-required run terminal status is failed",
-      proofRequiredSettled?.status === "failed",
-      `runId=${proofRequiredRun.id} status=${proofRequiredSettled?.status ?? "missing"}`,
-    );
-    assert(
-      "(b) proof-required run failure code is WORKFLOW_EVIDENCE_UNAVAILABLE",
-      proofRequiredSettled?.failure?.code === "WORKFLOW_EVIDENCE_UNAVAILABLE",
-      `failure.code=${proofRequiredSettled?.failure?.code ?? "missing"}`,
-    );
-    assert(
-      "(b) proof-required run failure message names durable-evidence-persistence loss",
-      typeof proofRequiredSettled?.failure?.message === "string"
-        && /durable evidence persistence/i.test(proofRequiredSettled.failure.message),
-      `failure.message=${proofRequiredSettled?.failure?.message ?? "missing"}`,
-    );
-    const proofRequiredStatus = runtime.evidence.getRunEvidenceStatus(proofRequiredRun.id);
-    assert(
-      "(b) proof-required run evidenceStatus is non-available",
-      proofRequiredStatus === "unavailable" || proofRequiredStatus === "degraded",
-      `runId=${proofRequiredRun.id} status=${proofRequiredStatus}`,
-    );
-
-    // (c) Ordinary run after table drop — continues. It must NOT be
-    // terminal-failed for evidence reasons; receipts may still call out
-    // degraded persistence so no proof claim can be made.
-    const ordinaryDegradedRun = await runtime.execution.startRun({
-      workflowId: workflow.id,
-      workflowVersionId: version.id,
-      triggerType: "manual",
-      proofRequired: false,
-    });
-    const ordinaryDegradedSettled = await waitForWorkflowRunSettled(
-      runtime,
-      ordinaryDegradedRun.id,
-    );
-    assert(
-      "(c) ordinary run settles in terminal state",
-      ordinaryDegradedSettled !== null,
-      `runId=${ordinaryDegradedRun.id} did not settle within ${WORKFLOW_EVIDENCE_FAIL_CLOSED_SETTLE_POLL_MS * WORKFLOW_EVIDENCE_FAIL_CLOSED_SETTLE_MAX_TRIES}ms`,
-    );
-    assert(
-      "(c) ordinary run terminal status is completed (not failed for evidence)",
-      ordinaryDegradedSettled?.status === "completed",
-      `runId=${ordinaryDegradedRun.id} status=${ordinaryDegradedSettled?.status ?? "missing"}`,
-    );
-    assert(
-      "(c) ordinary run failure code is not WORKFLOW_EVIDENCE_UNAVAILABLE",
-      ordinaryDegradedSettled?.failure?.code !== "WORKFLOW_EVIDENCE_UNAVAILABLE",
-      `failure.code=${ordinaryDegradedSettled?.failure?.code ?? "none"}`,
-    );
-    const ordinaryStatus = runtime.evidence.getRunEvidenceStatus(ordinaryDegradedRun.id);
-    assert(
-      "(c) ordinary run reports degraded/unavailable (no proof claim)",
-      ordinaryStatus === "degraded" || ordinaryStatus === "unavailable",
-      `runId=${ordinaryDegradedRun.id} status=${ordinaryStatus}`,
-    );
-    const ordinaryEvidence = runtime.evidence.getRunEvidence(ordinaryDegradedRun.id);
-    assert(
-      "(c) ordinary run getRunEvidence not-available",
-      ordinaryEvidence.evidenceStatus !== "available",
-      `getRunEvidence.evidenceStatus=${ordinaryEvidence.evidenceStatus}`,
-    );
-
-    // (d) verifyClaim refuses a workflow_run_evidence ref from the degraded run.
-    const degradedTw = taskWorkflowService.create({
-      charter: "rgg phase 14.5C module_28c degraded path",
-      taskKind: "general",
-      contextPackage: {
-        allowedFiles: ["src/x.ts"],
-        allowedTools: [],
-        allowedApis: [],
-        boundaryIds: ["api.task_workflows.core"],
-      },
-    });
-    const degradedClaim = taskWorkflowService.draftClaim(degradedTw.id, {
-      claimText: "claim backed by degraded run",
-      claimKind: "runtime_evidence",
-    });
-    taskWorkflowService.attachEvidenceRef(degradedTw.id, degradedClaim.id, {
-      refKind: "workflow_run_evidence",
-      refId: ordinaryDegradedRun.id,
-      refSource: "workflow_run_evidence",
-    });
-    let verifyError = null;
+    // (b) Workflow RUN execution is fail-closed under the TS runtime retirement
+    // guard (#568). startRun must throw FridayDomainError
+    // TS_RUNTIME_WORKFLOW_RUNS_RETIRED with HTTP 503 BEFORE any run row, node
+    // execution, provider call, or evidence write. The legacy
+    // evidence-durability end-to-end coverage that depended on a real run
+    // (WORKFLOW_EVIDENCE_UNAVAILABLE proof-required failure, degraded ordinary
+    // runs, verifyClaim refusal of degraded workflow_run_evidence refs, closeout
+    // evidenceDurability/proofClaimable/workflow_run_evidence_durable gate) is
+    // honestly shifted to a FUTURE Rust workflow-runtime lane — NOT retained.
+    let startRunError = null;
     try {
-      taskWorkflowService.verifyClaim(degradedTw.id, degradedClaim.id, {
-        verifierVerdict: "fresh-read",
+      await runtime.execution.startRun({
+        workflowId: workflow.id,
+        workflowVersionId: version.id,
+        triggerType: "manual",
+        proofRequired: true,
       });
     } catch (caught) {
-      verifyError = caught;
+      startRunError = caught;
     }
-    const verifyDomainErrorObserved = verifyError instanceof FridayDomainError;
+    const startRunDomainError = startRunError instanceof FridayDomainError;
     assert(
-      "(d) verifyClaim refuses degraded run ref",
-      verifyDomainErrorObserved
-        && verifyError.code === "TASK_WORKFLOW_CLAIM_WORKFLOW_RUN_EVIDENCE_UNAVAILABLE"
-        && verifyError.httpStatus === 409,
-      verifyDomainErrorObserved
-        ? `code=${verifyError.code} httpStatus=${String(verifyError.httpStatus)}`
-        : `error=${verifyError ? (verifyError.message ?? String(verifyError)) : "no error thrown"}`,
-    );
-
-    // (e) Closeout on the degraded task workflow — claim stays unverified
-    // because (d) refused promotion. Receipt status is "partial"; the
-    // proofClaimable signal is read alongside the partial status surface.
-    const degradedReceipt = taskWorkflowService.closeout(degradedTw.id);
-    assert(
-      "(e) degraded path closeout reports partial",
-      degradedReceipt.status === "partial",
-      `receipt.status=${degradedReceipt.status}`,
+      "(b) workflow startRun fails closed with TS_RUNTIME_WORKFLOW_RUNS_RETIRED 503",
+      startRunDomainError
+        && startRunError.code === "TS_RUNTIME_WORKFLOW_RUNS_RETIRED"
+        && startRunError.httpStatus === 503,
+      startRunDomainError
+        ? `code=${startRunError.code} httpStatus=${String(startRunError.httpStatus)}`
+        : `error=${startRunError ? (startRunError.message ?? String(startRunError)) : "no error thrown"}`,
     );
     assert(
-      "(e) degraded receipt carries evidenceDurability field",
-      typeof degradedReceipt.evidenceDurability === "string",
-      `evidenceDurability=${String(degradedReceipt.evidenceDurability)}`,
-    );
-
-    // (f) Healthy path — new task workflow, ref to the healthy run, verify
-    // succeeds, closeout=complete + proofClaimable=true + gate pass.
-    const happyTw = taskWorkflowService.create({
-      charter: "rgg phase 14.5C module_28c happy path",
-      taskKind: "general",
-      contextPackage: {
-        allowedFiles: ["src/x.ts"],
-        allowedTools: [],
-        allowedApis: [],
-        boundaryIds: ["api.task_workflows.core"],
-      },
-    });
-    const happyClaim = taskWorkflowService.draftClaim(happyTw.id, {
-      claimText: "claim backed by healthy run",
-      claimKind: "runtime_evidence",
-    });
-    taskWorkflowService.attachEvidenceRef(happyTw.id, happyClaim.id, {
-      refKind: "workflow_run_evidence",
-      refId: healthyRun.id,
-      refSource: "workflow_run_evidence",
-    });
-    const verifiedHappyClaim = taskWorkflowService.verifyClaim(
-      happyTw.id,
-      happyClaim.id,
-      { verifierVerdict: "fresh-read" },
-    );
-    assert(
-      "(f) verifyClaim succeeds on healthy ref",
-      verifiedHappyClaim.status === "verified",
-      `claim.status=${verifiedHappyClaim.status}`,
-    );
-    const happyReceipt = taskWorkflowService.closeout(happyTw.id);
-    assert(
-      "(f) healthy closeout is complete",
-      happyReceipt.status === "complete",
-      `receipt.status=${happyReceipt.status}`,
-    );
-    assert(
-      "(f) healthy receipt evidenceDurability is available",
-      happyReceipt.evidenceDurability === "available",
-      `evidenceDurability=${happyReceipt.evidenceDurability}`,
-    );
-    assert(
-      "(f) healthy receipt proofClaimable is true",
-      happyReceipt.proofClaimable === true,
-      `proofClaimable=${String(happyReceipt.proofClaimable)}`,
-    );
-    const durableGate = happyReceipt.gateOutcomes.find(
-      (entry) => entry.gateId === "workflow_run_evidence_durable",
-    );
-    assert(
-      "(f) workflow_run_evidence_durable gate passed on healthy path",
-      durableGate?.status === "pass",
-      `gate=${durableGate ? `${durableGate.gateId}:${durableGate.status}` : "missing"}`,
+      "(b) startRun fail-closed envelope classifies fail_closed",
+      startRunDomainError && startRunError.details?.classification === "fail_closed",
+      startRunDomainError
+        ? `classification=${String(startRunError.details?.classification)}`
+        : "no domain error observed",
     );
 
     artifact.metrics = {
       ...(artifact.metrics ?? {}),
       assertionsTotal: subSummary.total,
       assertionsPassed: subSummary.passed,
-      droppedTable: WORKFLOW_EVIDENCE_FAIL_CLOSED_DROPPED_TABLE,
     };
     artifact.raw = {
       ...(artifact.raw ?? {}),
       observations: observationLog,
-      runIds: {
-        healthy: healthyRun.id,
-        proofRequired: proofRequiredRun.id,
-        ordinaryDegraded: ordinaryDegradedRun.id,
-      },
-      taskWorkflowIds: {
-        degraded: degradedTw.id,
-        happy: happyTw.id,
-      },
+      workflowId: workflow.id,
+      retirementGuard: "TS_RUNTIME_WORKFLOW_RUNS_RETIRED",
+      coverageShiftedToRustLane: [
+        "workflow proof-required run -> WORKFLOW_EVIDENCE_UNAVAILABLE fail-closed",
+        "ordinary run continues with degraded/unavailable evidenceStatus",
+        "task-workflow verifyClaim refuses degraded workflow_run_evidence refs (409)",
+        "closeout evidenceDurability + proofClaimable + workflow_run_evidence_durable gate",
+      ],
     };
 
     if (failures.length === 0) {
@@ -1619,22 +1401,11 @@ async function executeWorkflowEvidenceFailClosed({ artifact, scenario }) {
     } catch {
       // best-effort
     }
-    if (originalPipelineEnable === undefined) {
-      delete process.env.FRIDAY_PIPELINE_ENABLE;
-    } else {
-      process.env.FRIDAY_PIPELINE_ENABLE = originalPipelineEnable;
-    }
-    if (originalPipelineMode === undefined) {
-      delete process.env.FRIDAY_PIPELINE_MODE;
-    } else {
-      process.env.FRIDAY_PIPELINE_MODE = originalPipelineMode;
-    }
   }
   return artifact;
 }
 
 const TASK_WORKFLOW_ROLLBACK_MATRIX_NOW = "2026-05-17T05:30:00.000Z";
-const TASK_WORKFLOW_ROLLBACK_MATRIX_WAIT_MS = 120;
 
 async function executeTaskWorkflowRollbackMatrix({ artifact, scenario }) {
   void scenario;
@@ -1662,6 +1433,7 @@ async function executeTaskWorkflowRollbackMatrix({ artifact, scenario }) {
     createFridayWorkflowRuntime,
     runFridayMigrations,
     FRIDAY_SQLITE_MIGRATIONS,
+    FridayDomainError,
     createFridayTaskWorkflowRepository,
     createFridayTaskWorkflowService,
   } = modules;
@@ -1795,7 +1567,14 @@ async function executeTaskWorkflowRollbackMatrix({ artifact, scenario }) {
       `gate=${localGate ? `${localGate.gateId}:${localGate.status}` : "missing"}`,
     );
 
-    // (c) compensating_action_required — workflow_run_evidence ref to a healthy run.
+    // (c) compensating_action_required PREVIOUSLY required a healthy upstream
+    // workflow RUN (a verified claim backed by a workflow_run_evidence ref).
+    // PR #568 fails workflow run execution closed in the TS runtime (method-
+    // level guard on startRun), so this rollback class can no longer be staged
+    // in-process. In-process catalog authoring is method-scoped-safe and still
+    // succeeds; assert the retirement-conformance behavior on startRun instead.
+    // The compensating_action_required rollback-class disclosure coverage is
+    // honestly shifted to a FUTURE Rust workflow-runtime lane — NOT retained.
     const compWorkflow = runtime.crud.createWorkflow({
       slug: "rgg-rollback-matrix-comp",
       name: "RGG rollback matrix compensating",
@@ -1805,50 +1584,32 @@ async function executeTaskWorkflowRollbackMatrix({ artifact, scenario }) {
       makeWorkflowEvidenceFailClosedGraph(compWorkflow.id, "placeholder"),
     );
     runtime.crud.publishVersion(compWorkflow.id, compVersion.versionNumber);
-    const healthyRun = await runtime.execution.startRun({
-      workflowId: compWorkflow.id,
-      workflowVersionId: compVersion.id,
-      triggerType: "manual",
-      proofRequired: false,
-    });
-    await sleep(TASK_WORKFLOW_ROLLBACK_MATRIX_WAIT_MS);
-    const compTw = taskWorkflowService.create({
-      charter: "rgg phase 14.5D rollback matrix compensating",
-      taskKind: "general",
-      contextPackage: makeContextPackage(),
-    });
-    const compClaim = taskWorkflowService.draftClaim(compTw.id, {
-      claimText: "verified by workflow_run_evidence",
-      claimKind: "runtime_evidence",
-    });
-    taskWorkflowService.attachEvidenceRef(compTw.id, compClaim.id, {
-      refKind: "workflow_run_evidence",
-      refId: healthyRun.id,
-      refSource: "workflow_run_evidence",
-    });
-    taskWorkflowService.verifyClaim(compTw.id, compClaim.id, {
-      verifierVerdict: "fresh-read healthy workflow_run",
-    });
-    const compReceipt = taskWorkflowService.closeout(compTw.id);
     assert(
-      "(c) closeout reports rollbackClass=compensating_action_required with workflow_run_evidence-backed verified claim",
-      compReceipt.rollbackClass === "compensating_action_required",
-      `rollbackClass=${compReceipt.rollbackClass}`,
+      "(c) in-process workflow authoring still succeeds (guard is method-scoped to run execution)",
+      typeof compWorkflow.id === "string" && typeof compVersion.id === "string"
+        && compWorkflow.id.length > 0 && compVersion.id.length > 0,
+      `workflowId=${compWorkflow.id} versionId=${compVersion.id}`,
     );
+    let compStartRunError = null;
+    try {
+      await runtime.execution.startRun({
+        workflowId: compWorkflow.id,
+        workflowVersionId: compVersion.id,
+        triggerType: "manual",
+        proofRequired: false,
+      });
+    } catch (caught) {
+      compStartRunError = caught;
+    }
+    const compStartRunDomainError = compStartRunError instanceof FridayDomainError;
     assert(
-      "(c) compensatingAction is a non-empty string naming workflow_run_evidence",
-      typeof compReceipt.compensatingAction === "string"
-        && compReceipt.compensatingAction.length > 0
-        && /workflow_run_evidence/.test(compReceipt.compensatingAction),
-      `compensatingAction=${String(compReceipt.compensatingAction)}`,
-    );
-    const compGate = compReceipt.gateOutcomes.find(
-      (g) => g.gateId === "rollback_class_disclosure_required",
-    );
-    assert(
-      "(c) rollback_class_disclosure_required gate passes on compensating_action_required with action populated",
-      compGate?.status === "pass",
-      `gate=${compGate ? `${compGate.gateId}:${compGate.status}` : "missing"}`,
+      "(c) workflow startRun for the compensating-class fixture fails closed (TS_RUNTIME_WORKFLOW_RUNS_RETIRED 503)",
+      compStartRunDomainError
+        && compStartRunError.code === "TS_RUNTIME_WORKFLOW_RUNS_RETIRED"
+        && compStartRunError.httpStatus === 503,
+      compStartRunDomainError
+        ? `code=${compStartRunError.code} httpStatus=${String(compStartRunError.httpStatus)}`
+        : `error=${compStartRunError ? (compStartRunError.message ?? String(compStartRunError)) : "no error thrown"}`,
     );
 
     // (d) non_reversible_external — verified claim with manual_external ref
@@ -1936,9 +1697,10 @@ async function executeTaskWorkflowRollbackMatrix({ artifact, scenario }) {
       receipts: {
         not_applicable: { id: naReceipt.id, rollbackClass: naReceipt.rollbackClass },
         reversible_local: { id: localReceipt.id, rollbackClass: localReceipt.rollbackClass },
-        compensating_action_required: { id: compReceipt.id, rollbackClass: compReceipt.rollbackClass },
         non_reversible_external: { id: extReceipt.id, rollbackClass: extReceipt.rollbackClass },
       },
+      compensatingActionClassCoverageShiftedToRustLane: true,
+      retirementGuard: "TS_RUNTIME_WORKFLOW_RUNS_RETIRED",
     };
 
     if (failures.length === 0) {
