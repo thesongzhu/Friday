@@ -3198,6 +3198,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       activateSavedChannels: deps.activateSavedChannels,
       onChannelsSaved: deps.onSetupChannelsSaved,
       onSetupCompleted: deps.onSetupCompleted,
+      allowTestOnlyProviderDetectExecution: deps.allowTestOnlyProviderDetectExecution,
     })) {
       routes.register(route);
     }

@@ -328,6 +328,7 @@ async function startLocalRealHubEnv(
       allowTestOnlyRealtimeExecution: true,
       allowTestOnlySkillConverterExecution: true,
       allowTestOnlyPluginExecution: true,
+      allowTestOnlyProviderDetectExecution: true,
       ...opts?.hubConfig,
     });
     await createdHub.start();

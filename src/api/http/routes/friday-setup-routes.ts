@@ -1911,9 +1911,43 @@ export interface FridaySetupRoutesDeps {
   onSetupCompleted?: (input: {
     userId: string;
   }) => Promise<void> | void;
+  /**
+   * Test-oracle only: allow the legacy TypeScript provider-detect probe
+   * (POST /v1/providers/detect -> fetchOpenAiModels/Anthropic/Google/Ollama/
+   * Compatible: a capability/key-validation probe that egresses to provider
+   * /v1/models). Production/runtime callers must leave this unset so the route
+   * fail-closes (503 TS_RUNTIME_PROVIDERS_DETECT_RETIRED) until Rust owns provider
+   * detection. NOTE: retiring this 503s the onboarding/setup-wizard model
+   * detection AND the release-GO closure harness — see the closeout / operator
+   * reconciliation note.
+   */
+  allowTestOnlyProviderDetectExecution?: boolean;
 }
 
 // ─── Factory ───
+
+/**
+ * TS-runtime retirement guard for the provider-detect probe. Placed AFTER all
+ * the request validation (bootstrap boundary, body, kind/authMode/key/baseUrl)
+ * and IMMEDIATELY BEFORE the provider model-fetch egress, so malformed requests
+ * still 400 and NO provider egress occurs when retired.
+ */
+function assertProviderDetectTestOracleAllowed(deps: FridaySetupRoutesDeps): void {
+  if (deps.allowTestOnlyProviderDetectExecution === true) {
+    return;
+  }
+  throw new FridayDomainError(
+    "TS_RUNTIME_PROVIDERS_DETECT_RETIRED",
+    "Provider detection is fail-closed in the default/live runtime; the Rust-owned provider-detect entrypoint is required.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_provider_detect_entrypoint_required",
+      },
+    },
+  );
+}
 
 export function createFridaySetupRoutes(
   deps: FridaySetupRoutesDeps,
@@ -2152,6 +2186,12 @@ export function createFridaySetupRoutes(
             { httpStatus: 400 },
           );
         }
+
+        // TS-runtime retirement: fail-close BEFORE the provider model-fetch
+        // egress (fetchOpenAiModels/Anthropic/Google/Ollama/Compatible), after
+        // all the request validation above, so no provider egress occurs when
+        // retired and malformed requests still 400.
+        assertProviderDetectTestOracleAllowed(deps);
 
         // Fetch models
         const warnings: string[] = [];

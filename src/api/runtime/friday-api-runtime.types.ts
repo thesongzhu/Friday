@@ -396,6 +396,14 @@ export interface CreateFridayApiRuntimeDeps {
    * this unset so those routes fail-close until Rust owns the plugin lifecycle.
    */
   allowTestOnlyPluginExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript provider-detect probe
+   * (POST /v1/providers/detect). Production/runtime callers must leave this
+   * unset so the route fail-closes until Rust owns provider detection. NOTE:
+   * retiring this 503s onboarding model-detection + the release-GO closure
+   * harness (operator reconciliation item).
+   */
+  allowTestOnlyProviderDetectExecution?: boolean;
   /** Optional: Reflex service for deterministic preference writes before agent runs. */
   reflexService?: FridayReflexService;
   /** Optional deterministic runtime capability getter used by context evidence selection. */

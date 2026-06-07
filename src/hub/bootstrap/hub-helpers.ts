@@ -1898,6 +1898,8 @@ export interface FridayHubConfig {
   allowTestOnlyScanMigrateExecution?: boolean;
   /** Test-oracle only; production hub creation must leave plugin install/enable/disable/uninstall fail-closed. */
   allowTestOnlyPluginExecution?: boolean;
+  /** Test-oracle only; production hub creation must leave the provider-detect probe fail-closed. */
+  allowTestOnlyProviderDetectExecution?: boolean;
 }
 
 // ─── Resolved Hub Config ───

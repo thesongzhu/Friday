@@ -3688,6 +3688,15 @@
       "next_action": "Replace the fail-closed response with the Rust-owned plugin uninstall entrypoint when available."
     },
     {
+      "id": "providers_detect",
+      "route": { "method": "POST", "path": "/v1/providers/detect", "operationId": "providers.detect" },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-setup-routes.ts providers.detect wires default/live to assertProviderDetectTestOracleAllowed(deps) AFTER all request validation (assertSetupBootstrapBoundary; body presence -> 400; kind/authMode/key/baseUrl validation -> 400) and IMMEDIATELY BEFORE the provider model-fetch egress (fetchOpenAiModels / fetchCompatibleModels / fetchAnthropicModels / fetchGoogleModels / fetchOllamaModels to the provider /v1/models). 503 TS_RUNTIME_PROVIDERS_DETECT_RETIRED (classification fail_closed, replacement rust_owned_provider_detect_entrypoint_required). fail_closed NOT operator_external_adapter: detect is a transient capability/key-validation PROBE (enumerate models + validate the key), Rust-ownable product logic whose provider calls move into Rust — the same shape as media-understanding/agent runs that call providers; it is not a permanent egress-delivery conduit, and when retired the guard fail-closes BEFORE any fetch so nothing egresses. executes_product_logic:false: no provider fetch runs in default/live. Flag allowTestOnlyProviderDetectExecution threaded inline (CreateFridayApiRuntimeDeps -> createFridaySetupRoutes) + hub-config (FridayHubConfig -> friday-hub-bootstrap) so the onboarding setup-wizard e2e (createFridayHub), the mock-parity e2e (createMockHubEnv), and the live real-journeys e2e (real-env) set it. OPERATOR/RECONCILIATION NOTE: retiring this route 503s the production onboarding/setup-wizard model-detection AND the release-GO closure harness scripts/e2e/run-friday-closure.mjs (POSTs /v1/providers/detect, throws on non-200) — these are NOT CI gates but need the Rust detect entrypoint (or an operator decision) before production onboarding/release-verify; recorded in the closure ledger. Reachable only through explicit allowTestOnlyProviderDetectExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned provider-detect entrypoint when available; this route is on the production onboarding + release-GO path — coordinate the Rust entrypoint with operator sign-off (see reconciliation note)."
+    },
+    {
       "id": "realtime_subscribe_read",
       "route": {
         "method": "POST",

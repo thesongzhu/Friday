@@ -161,6 +161,7 @@ describe("Setup Wizard E2E", () => {
         allowTestOnlySessionRunExecution: true,
         allowTestOnlySessionMemoryExtractionExecution: true,
         allowTestOnlySkillConverterExecution: true,
+        allowTestOnlyProviderDetectExecution: true,
       });
       await hub.start();
     } finally {
