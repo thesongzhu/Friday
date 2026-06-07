@@ -210,12 +210,15 @@ impl std::fmt::Display for AgentError {
 
 /// One step the model takes in a multi-turn loop: either propose a tool call
 /// (untrusted) or declare the task finished. Termination is the model's `Finish` (the
-/// `{"tool":"none"}` contract), bounded by `max_turns` in [`run_loop`].
+/// `{"tool":"none","answer":"<final answer>"}` contract), bounded by `max_turns` in
+/// [`run_loop`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentStep {
     /// Propose an (untrusted) tool call — classified by the Hub, not trusted as-is.
     Tool(RawToolCall),
     /// The model considers the task complete; the loop stops (not a tool, not a no-op).
+    /// `message` carries the model's final natural-language answer (the `answer` field of
+    /// the finish object); it is empty if the model omitted one.
     Finish { message: String },
 }
 
@@ -279,6 +282,18 @@ impl<T: friday_deepseek::Transport> DeepSeekAgentLlmClient<T> {
     }
 }
 
+/// Completion-token budget for the agent-loop reasoning calls (`propose_tool_call` and
+/// `next_step`). The routed `deepseek-v4-*` models are REASONING models: their
+/// chain-of-thought goes in `reasoning_content` and the answer in `content`, but BOTH
+/// share this single `max_tokens` completion budget. At 512, reasoning routinely
+/// exhausted the budget → the response truncated (`finish_reason="length"`) with an EMPTY
+/// `content`, so parsing `""` produced `agent.error:parse_error: not a single JSON object:
+/// EOF`. 4096 is coordinator-proven (flash & pro live matrix) to eliminate the truncation
+/// — it comfortably holds the reasoning plus a tool-call object or a short finish answer.
+/// This is the agent-loop path ONLY; the single-shot mission-ask (`run_friday_ask`)
+/// carries its own caller-supplied budget and is unaffected.
+const AGENTLOOP_MAX_TOKENS: u32 = 4096;
+
 impl<T: friday_deepseek::Transport> AgentLlmClient for DeepSeekAgentLlmClient<T> {
     fn propose_tool_call(&self, task: &str) -> Result<RawToolCall, AgentError> {
         let models = self
@@ -288,16 +303,16 @@ impl<T: friday_deepseek::Transport> AgentLlmClient for DeepSeekAgentLlmClient<T>
         let model = friday_deepseek::select_model(&models)
             .ok_or_else(|| AgentError::Model("no model available".to_string()))?;
         let prompt = build_tool_prompt(task);
-        // 512 tokens is ample for one tool-call JSON object.
         let outcome = self
             .client
-            .chat(&model, &prompt, 512)
+            .chat(&model, &prompt, AGENTLOOP_MAX_TOKENS)
             .map_err(|e| AgentError::Model(format!("{e:?}")))?;
         parse_tool_call(&outcome.content)
     }
 
     /// History-aware multi-turn step: the prompt includes prior turns + their outcomes
-    /// so the model can build on them or finish. `{"tool":"none"}` parses to `Finish`.
+    /// so the model can build on them or finish. `{"tool":"none","answer":"<final answer>"}`
+    /// parses to `Finish { message: "<final answer>" }`.
     fn next_step(&self, task: &str, history: &[TurnTrace]) -> Result<AgentStep, AgentError> {
         let models = self
             .client
@@ -308,7 +323,7 @@ impl<T: friday_deepseek::Transport> AgentLlmClient for DeepSeekAgentLlmClient<T>
         let prompt = build_loop_prompt(task, history);
         let outcome = self
             .client
-            .chat(&model, &prompt, 512)
+            .chat(&model, &prompt, AGENTLOOP_MAX_TOKENS)
             .map_err(|e| AgentError::Model(format!("{e:?}")))?;
         parse_agent_step(&outcome.content)
     }
@@ -347,7 +362,9 @@ pub fn build_tool_prompt_with(task: &str, registry: &ToolRegistry) -> String {
         "\nReply with EXACTLY ONE JSON object and nothing else (no prose, no code fence \
          is required but tolerated), of the form:\n\
          {\"tool\": \"<tool name>\", \"parameters\": {\"<key>\": \"<value>\"}}\n\
-         All parameter values must be strings. If no tool is needed, reply {\"tool\": \"none\"}.\n\n",
+         All parameter values must be strings. When the task is complete (or no tool is \
+         needed), reply with a finish object that INCLUDES your final answer:\n\
+         {\"tool\": \"none\", \"answer\": \"<your final answer in natural language>\"}\n\n",
     );
     s.push_str("Task: ");
     s.push_str(task);
@@ -420,21 +437,36 @@ pub fn build_loop_prompt(task: &str, history: &[TurnTrace]) -> String {
         for (i, t) in history.iter().enumerate() {
             s.push_str(&format!("{}. {} → {}\n", i + 1, t.action, t.outcome));
         }
-        s.push_str("If the task is now complete, reply {\"tool\": \"none\"}.\n");
+        s.push_str(
+            "If the task is now complete, reply with your final answer in a finish object: \
+             {\"tool\": \"none\", \"answer\": \"<your final answer>\"}.\n",
+        );
     }
     s
 }
 
 /// Parse a model reply into an [`AgentStep`]: a strict [`parse_tool_call`] whose
-/// sentinel `"none"` action (the finish contract) maps to [`AgentStep::Finish`];
+/// sentinel `"none"` action (the finish contract) maps to [`AgentStep::Finish`], with the
+/// model's final answer lifted from the top-level `answer` field into `Finish.message`;
 /// every other (parsed) tool is a [`AgentStep::Tool`]. Fail-closed identically to
 /// `parse_tool_call` on any contract violation.
+///
+/// The `answer` extraction is deliberately LENIENT (and never panics): a finish object
+/// that omits `answer`, or whose `answer` is non-string, still parses to a `Finish` with
+/// an empty `message` — a missing answer is an honest empty answer, not a parse error.
+/// (`parse_tool_call` already validated the de-fenced content is exactly one JSON object,
+/// so the second parse here is guaranteed to succeed; `.ok()` keeps it total regardless.)
 pub fn parse_agent_step(content: &str) -> Result<AgentStep, AgentError> {
     let raw = parse_tool_call(content)?;
     if raw.action == "none" {
-        Ok(AgentStep::Finish {
-            message: String::new(),
-        })
+        let message = serde_json::from_str::<serde_json::Value>(strip_code_fence(content))
+            .ok()
+            .as_ref()
+            .and_then(|v| v.get("answer"))
+            .and_then(|a| a.as_str())
+            .unwrap_or_default()
+            .to_string();
+        Ok(AgentStep::Finish { message })
     } else {
         Ok(AgentStep::Tool(raw))
     }
@@ -1856,6 +1888,8 @@ mod tests {
         assert!(p.contains("delete_file"));
         assert!(p.contains("\"tool\""));
         assert!(p.contains("\"parameters\""));
+        // The finish contract advertises the answer-carrying shape (Fix 2).
+        assert!(p.contains("\"answer\""));
         assert!(p.contains("read notes.md")); // the task is included
     }
 
@@ -1908,6 +1942,69 @@ mod tests {
                 "must fail-closed on: {bad:?}"
             );
         }
+    }
+
+    #[test]
+    fn parse_agent_step_finish_carries_the_answer() {
+        // The finish contract `{"tool":"none","answer":"<text>"}` lifts the model's final
+        // natural-language answer into `Finish.message` (Fix 2 — the loop's `final_message`
+        // is no longer always empty on success).
+        let step = parse_agent_step("{\"tool\":\"none\",\"answer\":\"all done: 3 files read\"}")
+            .unwrap();
+        assert_eq!(
+            step,
+            AgentStep::Finish {
+                message: "all done: 3 files read".to_string()
+            }
+        );
+        // A code-fenced finish object is tolerated too (same as tool calls).
+        let fenced =
+            parse_agent_step("```json\n{\"tool\":\"none\",\"answer\":\"ok\"}\n```").unwrap();
+        assert_eq!(
+            fenced,
+            AgentStep::Finish {
+                message: "ok".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn parse_agent_step_finish_is_robust_to_missing_or_nonstring_answer() {
+        // ROBUST: a finish object missing `answer`, or whose `answer` is non-string, still
+        // parses to a `Finish` with an EMPTY message — never a panic, never a parse error.
+        for c in [
+            "{\"tool\":\"none\"}",                 // no answer field (old contract shape)
+            "{\"tool\":\"none\",\"answer\":42}",   // non-string answer
+            "{\"tool\":\"none\",\"answer\":null}", // null answer
+        ] {
+            assert_eq!(
+                parse_agent_step(c).unwrap(),
+                AgentStep::Finish {
+                    message: String::new()
+                },
+                "must parse to an empty-message Finish: {c:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_agent_step_tool_branch_is_unchanged() {
+        // A non-`none` tool call is still a `Tool` step (the answer extraction touches only
+        // the finish branch); an `answer` field on a tool call is ignored, not an error.
+        let step =
+            parse_agent_step("{\"tool\":\"read_file\",\"parameters\":{\"path\":\"a.md\"}}").unwrap();
+        assert_eq!(
+            step,
+            AgentStep::Tool(RawToolCall {
+                action: "read_file".to_string(),
+                params: vec![("path".to_string(), "a.md".to_string())],
+            })
+        );
+        // Contract violations still fail-closed through `parse_agent_step`.
+        assert!(matches!(
+            parse_agent_step("Sure! {\"tool\":\"none\"}"),
+            Err(AgentError::Parse(_))
+        ));
     }
 
     #[test]
