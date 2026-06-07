@@ -323,6 +323,8 @@ async function startLocalRealHubEnv(
       allowTestOnlyCapabilityAcquisitionExecution: true,
       allowTestOnlySessionExecution: true,
       allowTestOnlySessionRunExecution: true,
+      // Session-run reaches the agent loop executeRun method, now method-guarded.
+      allowTestOnlyAgentRunExecution: true,
       allowTestOnlySessionMemoryExtractionExecution: true,
       allowTestOnlyDiagnosisExecution: true,
       allowTestOnlyRealtimeExecution: true,

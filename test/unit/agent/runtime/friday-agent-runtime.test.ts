@@ -629,6 +629,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -660,6 +661,7 @@ describe("FridayAgentRuntime", () => {
     const llmClient: FridayAgentLlmClient = { stream: streamSpy };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "default",
@@ -704,6 +706,7 @@ describe("FridayAgentRuntime", () => {
     const llmClient: FridayAgentLlmClient = { stream: streamSpy };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "route-default-model",
@@ -760,6 +763,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -803,6 +807,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -861,6 +866,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -916,6 +922,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -1001,6 +1008,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -1044,6 +1052,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -1124,6 +1133,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -1183,6 +1193,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -1243,6 +1254,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -1293,6 +1305,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -1358,6 +1371,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -1442,6 +1456,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -1513,6 +1528,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -1597,6 +1613,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -1681,6 +1698,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -1762,6 +1780,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -1832,6 +1851,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -1909,6 +1929,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -1966,6 +1987,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -2036,6 +2058,7 @@ describe("FridayAgentRuntime", () => {
     const usageRecorder = vi.fn(async () => {});
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -2071,6 +2094,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -2098,6 +2122,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -2129,6 +2154,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -2170,6 +2196,7 @@ describe("FridayAgentRuntime", () => {
     const webFetchSpy = vi.fn();
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -2208,6 +2235,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -2250,6 +2278,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -2298,6 +2327,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -2348,6 +2378,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -2404,6 +2435,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -2445,6 +2477,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -2509,6 +2542,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -2583,6 +2617,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -2660,6 +2695,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -2727,6 +2763,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -2770,6 +2807,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -2819,6 +2857,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -2868,6 +2907,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -2938,6 +2978,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -2992,6 +3033,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -3053,6 +3095,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -3120,6 +3163,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -3172,6 +3216,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -3235,6 +3280,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -3278,6 +3324,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -3316,6 +3363,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -3372,6 +3420,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -3434,6 +3483,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -3484,6 +3534,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -3530,6 +3581,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -3577,6 +3629,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -3614,6 +3667,7 @@ describe("FridayAgentRuntime", () => {
     const feedbackSpy = vi.fn();
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -3658,6 +3712,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -3703,6 +3758,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -3751,6 +3807,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -3795,6 +3852,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -3839,6 +3897,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -3883,6 +3942,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -3927,6 +3987,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -3968,6 +4029,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -4024,6 +4086,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -4056,6 +4119,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -4115,6 +4179,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -4208,6 +4273,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -4265,6 +4331,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -4311,6 +4378,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -4363,6 +4431,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -4410,6 +4479,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -4462,6 +4532,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -4553,6 +4624,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -4614,6 +4686,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -4661,6 +4734,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -4706,6 +4780,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -4790,6 +4865,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -4833,6 +4909,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -4866,6 +4943,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -4905,6 +4983,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -4943,6 +5022,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -4974,6 +5054,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -5013,6 +5094,7 @@ describe("FridayAgentRuntime", () => {
     emitter.on("agent.run.mode_changed", (p) => modeChangedEvents.push(p));
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -5049,6 +5131,7 @@ describe("FridayAgentRuntime", () => {
     emitter.on("agent.run.completed", (p) => events.push({ event: "completed", payload: p }));
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -5099,6 +5182,7 @@ describe("FridayAgentRuntime", () => {
       });
 
       const runtime = createFridayAgentRuntime({
+        allowTestOnlyAgentRunExecution: true,
         db,
         llmClient,
         model: "test-model",
@@ -5160,6 +5244,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient: createMockLlmClient([]),
       model: "test-model",
@@ -5219,6 +5304,7 @@ describe("FridayAgentRuntime", () => {
     }));
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient: createMockLlmClient([]),
       model: "test-model",
@@ -5325,6 +5411,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient: createMockLlmClient([]),
       model: "test-model",
@@ -5404,6 +5491,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -5440,6 +5528,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -5485,6 +5574,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -5540,6 +5630,7 @@ describe("FridayAgentRuntime", () => {
       },
     };
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -5603,6 +5694,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -5653,6 +5745,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -5710,6 +5803,7 @@ describe("FridayAgentRuntime", () => {
 
     const desktopSpy = vi.fn();
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -5750,6 +5844,7 @@ describe("FridayAgentRuntime", () => {
 
     const desktopSpy = vi.fn();
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -5797,6 +5892,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -5845,6 +5941,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -5891,6 +5988,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -5945,6 +6043,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -5992,6 +6091,7 @@ describe("FridayAgentRuntime", () => {
     emitter.on("agent.run.tool_end", (p) => toolEndEvents.push({ content: p.summary ?? "" }));
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -6031,6 +6131,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -6059,6 +6160,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -6091,6 +6193,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -6140,6 +6243,7 @@ describe("FridayAgentRuntime", () => {
     const eventRepo = createFridayAgentRunEventRepository();
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -6204,6 +6308,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -6303,6 +6408,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -6418,6 +6524,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -6487,6 +6594,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -6539,6 +6647,7 @@ describe("FridayAgentRuntime", () => {
       }));
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -6590,6 +6699,7 @@ describe("FridayAgentRuntime", () => {
     const repo = createFridayAgentRunRepository();
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -6624,6 +6734,7 @@ describe("FridayAgentRuntime", () => {
     const repo = createFridayAgentRunRepository();
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -6702,6 +6813,7 @@ describe("FridayAgentRuntime", () => {
     const toolApprovalResolver = vi.fn(async () => ({ approved: true }));
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -6747,6 +6859,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -6816,6 +6929,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -6894,6 +7008,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -6928,6 +7043,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -7001,6 +7117,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -7069,6 +7186,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -7126,6 +7244,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -7178,6 +7297,7 @@ describe("FridayAgentRuntime", () => {
     let selfTestCalls = 0;
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -7231,6 +7351,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -7265,6 +7386,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -7307,6 +7429,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -7388,6 +7511,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -7491,6 +7615,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -7601,6 +7726,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -7680,6 +7806,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -7737,6 +7864,7 @@ describe("FridayAgentRuntime", () => {
     const autonomousSpy = vi.fn(async () => ({ content: "autonomous should not be invoked during planning" }));
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -7805,6 +7933,7 @@ describe("FridayAgentRuntime", () => {
     const autonomousSpy = vi.fn(async () => ({ content: "autonomous should not be invoked for internal action runs" }));
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -7920,6 +8049,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -8042,6 +8172,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -8164,6 +8295,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -8225,6 +8357,7 @@ describe("FridayAgentRuntime", () => {
     emitter.on("agent.run.completed", (p) => completedEvents.push({ testsPassed: p.testsPassed }));
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -8258,6 +8391,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -8294,6 +8428,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -8334,6 +8469,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -8380,6 +8516,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -8442,6 +8579,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -8483,6 +8621,7 @@ describe("FridayAgentRuntime", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "route-default-model",
@@ -8518,6 +8657,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "route-default-model",
@@ -8584,6 +8724,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -8611,6 +8752,7 @@ describe("FridayAgentRuntime", () => {
     const llmClient = createMockLlmClient([]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -8650,6 +8792,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient: infiniteToolClient,
       model: "test-model",
@@ -8693,6 +8836,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -8743,6 +8887,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -8780,6 +8925,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -8812,6 +8958,7 @@ describe("FridayAgentRuntime", () => {
     const communicationPromptBuilder = vi.fn().mockResolvedValue("[Learned Preferences]\n- Remember canary: COMPACTION_CANARY");
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -8860,6 +9007,7 @@ describe("FridayAgentRuntime", () => {
     const eventRepo = createFridayAgentRunEventRepository();
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -8919,6 +9067,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -9022,6 +9171,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -9104,6 +9254,7 @@ describe("FridayAgentRuntime", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -9172,6 +9323,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -9218,6 +9370,7 @@ describe("FridayAgentRuntime", () => {
     const learningContextBuilder = vi.fn();
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -9246,6 +9399,7 @@ describe("FridayAgentRuntime", () => {
     const afterTurn = vi.fn();
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -9290,6 +9444,7 @@ describe("FridayAgentRuntime", () => {
     const learningContextBuilder = vi.fn().mockReturnValue({ preferences: {} });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -9324,6 +9479,7 @@ describe("FridayAgentRuntime", () => {
     });
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -9376,6 +9532,7 @@ describe("FridayAgentRuntime", () => {
 
     try {
       const runtimeA = createFridayAgentRuntime({
+        allowTestOnlyAgentRunExecution: true,
         db,
         llmClient,
         model: "test-model",
@@ -9394,6 +9551,7 @@ describe("FridayAgentRuntime", () => {
       expect(runtimeA.hasRollbackCheckpoint(result.runId)).toBe(true);
 
       const runtimeB = createFridayAgentRuntime({
+        allowTestOnlyAgentRunExecution: true,
         db,
         llmClient: createMockLlmClient([]),
         model: "test-model",
@@ -9429,6 +9587,7 @@ describe("FridayAgentRuntime", () => {
     const runRepo = createFridayAgentRunRepository();
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -9470,6 +9629,7 @@ describe("FridayAgentRuntime", () => {
     const runRepo = createFridayAgentRunRepository();
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",

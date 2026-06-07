@@ -35,6 +35,7 @@ describe("FridayAgentRuntime delegation", () => {
       },
     }));
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",

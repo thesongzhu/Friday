@@ -155,6 +155,7 @@ describe("DP-10 probe — cross-session SOP trigger memory", () => {
     };
 
     const agentRuntime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "dp10-deterministic-model",

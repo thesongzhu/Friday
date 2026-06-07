@@ -929,7 +929,10 @@ describe("createFridayHub", () => {
       return mockLlmFetch(input, init);
     }) as typeof fetch;
 
-    hub = await createIsolatedHub({ allowTestOnlyWorkflowRunExecution: true });
+    hub = await createIsolatedHub({
+      allowTestOnlyWorkflowRunExecution: true,
+      allowTestOnlyAgentRunExecution: true,
+    });
     const channel = createTestChannelPlugin();
     hub.channelRegistry.register(channel.plugin);
 

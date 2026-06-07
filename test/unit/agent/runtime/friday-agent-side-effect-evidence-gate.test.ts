@@ -39,6 +39,7 @@ describe("FridayAgentRuntime side-effect evidence gate", () => {
         }
       : {};
     return createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db, llmClient: mockLlm(events), model: "test-model", providerId: "test-provider",
       systemPrompt: "You are a test agent.",
       tools: [namedTool("write"), namedTool("edit"), namedTool("message"), namedTool("web_search")],

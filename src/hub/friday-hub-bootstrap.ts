@@ -4786,6 +4786,10 @@ export async function createFridayHub(
   });
 
   const agentRuntime = createFridayAgentRuntime({
+    // TS Runtime Retirement (method-level guard): production leaves this unset
+    // (config flag undefined) so the agent run loop `executeRun` method is
+    // fail-closed for every non-route caller. Test-oracle hub configs set it true.
+    allowTestOnlyAgentRunExecution: config.allowTestOnlyAgentRunExecution,
     db: stateRuntime!.sqlite,
     llmClient: agentLlmClient,
     model: agentDefaultModel,
@@ -5101,6 +5105,12 @@ export async function createFridayHub(
         subagentForkModeEnabled,
       });
       const childRuntime = createFridayAgentRuntime({
+        // TS Runtime Retirement (method-level guard): the child/subagent runtime
+        // must receive the SAME test-oracle flag as the parent factory, otherwise
+        // a flag-on parent run would fail-closed mid-run when it spawns a
+        // subagent (child `executeChildRun` -> childRuntime.executeRun).
+        // Production leaves config undefined → fail-closed.
+        allowTestOnlyAgentRunExecution: config.allowTestOnlyAgentRunExecution,
         db: stateRuntime!.sqlite,
         llmClient: agentLlmClient,
         model: params.model ?? agentDefaultModel,

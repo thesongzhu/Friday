@@ -40,6 +40,7 @@ describe("FridayAgentRuntime evidence-durability fail-closed", () => {
           toolApprovalResolver: vi.fn(async () => ({ approved: true, decidedByPrincipalId: "p1" })) }
       : {};
     return createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db, llmClient: mockLlm(events), model: "m", providerId: "p", systemPrompt: "test",
       tools: [namedTool("write")],
       eventEmitter: createFridayAgentEventEmitter(), idGenerator, nowIso: () => NOW,

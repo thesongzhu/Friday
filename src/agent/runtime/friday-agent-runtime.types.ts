@@ -439,6 +439,19 @@ export interface CreateFridayAgentRuntimeDeps {
     decidedByPrincipalType?: string;
     approvalSurface?: string;
   }>;
+  /**
+   * Test-oracle ONLY. When not explicitly `true`, the agent run loop
+   * `executeRun` method fails closed at the METHOD boundary (not just the HTTP
+   * agent-run / session-run routes), so every non-route caller — heartbeat
+   * runner, channel entry adapter, cron dynamic-job runner, autonomous engine,
+   * planning gate, subagent child runtime, and any future autonomous caller — is
+   * fenced out of the TypeScript agent runtime while runtime ownership is moved
+   * to Rust. Production hub bootstrap leaves this unset → fail-closed. Mirrors
+   * the route-level `allowTestOnlyAgentRunStartExecution` /
+   * `allowTestOnlySessionRunExecution` guards so the method honors the same
+   * test-oracle contract. NEVER default this on in production.
+   */
+  allowTestOnlyAgentRunExecution?: boolean;
   /** Enforce the canonical mutating action gate for tool calls before side effects. */
   canonicalMutatingActionGate?: boolean;
   /** Server-owned secret used to sign canonical approvals passed to downstream runtimes. */

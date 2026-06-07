@@ -135,6 +135,7 @@ describe("Structural truth alignment adversarial coverage", () => {
       ]);
 
       const runtime = createFridayAgentRuntime({
+        allowTestOnlyAgentRunExecution: true,
         db,
         llmClient,
         model: "test-model",
@@ -226,6 +227,7 @@ describe("Structural truth alignment adversarial coverage", () => {
       ]);
 
       const runtime = createFridayAgentRuntime({
+        allowTestOnlyAgentRunExecution: true,
         db,
         llmClient,
         model: "test-model",

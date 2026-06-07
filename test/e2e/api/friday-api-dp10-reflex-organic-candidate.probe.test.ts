@@ -349,6 +349,7 @@ describe("DP-10 probe — repeated sessions.run tasks create Reflex candidates b
 
     const eventEmitter = createFridayAgentEventEmitter();
     const agentRuntime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "dp10-c2-deterministic-model",
@@ -766,6 +767,7 @@ describe("DP-10 probe — repeated sessions.run tasks create Reflex candidates b
 
     const eventEmitter = createFridayAgentEventEmitter();
     const agentRuntime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "dp10-c5-deterministic-model",

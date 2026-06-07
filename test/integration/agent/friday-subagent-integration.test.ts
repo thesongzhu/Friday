@@ -81,6 +81,7 @@ describe("FridaySubagentIntegration", () => {
         });
 
         const childRuntime = createFridayAgentRuntime({
+          allowTestOnlyAgentRunExecution: true,
           db,
           llmClient: childLlmClient,
           model: params.model ?? "test-model",
@@ -114,6 +115,7 @@ describe("FridaySubagentIntegration", () => {
 
     // Parent runtime
     const parentRuntime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient: parentLlmClient,
       model: "test-model",

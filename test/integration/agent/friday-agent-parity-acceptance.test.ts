@@ -118,6 +118,7 @@ describe("Agent parity acceptance (integration)", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -193,6 +194,7 @@ describe("Agent parity acceptance (integration)", () => {
     };
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -225,6 +227,7 @@ describe("Agent parity acceptance (integration)", () => {
     };
 
     const agentRuntime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",

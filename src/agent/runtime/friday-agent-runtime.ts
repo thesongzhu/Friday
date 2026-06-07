@@ -789,6 +789,31 @@ export function createFridayAgentRuntime(
     emitRunEvent,
 
     async executeRun(params) {
+      // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+      // Phase 3b reconciliation: the agent-run retirement was ROUTE-only
+      // (POST /v1/agent/runs and POST /v1/sessions/:sessionKey/run). Every
+      // non-route caller reaches this method directly via
+      // `agentRuntime.executeRun(...)` / child `executeChildRun`, bypassing the
+      // HTTP route guards: heartbeat runner, channel entry adapter, cron
+      // dynamic-job runner, autonomous engine, planning gate, subagent child
+      // runtime, and the agent-sessions tool. Guarding here fails ALL non-route
+      // callers closed BEFORE any DB read, run-row creation, provider call, or
+      // tool call — unless the explicit test-oracle flag is set. Never default
+      // this flag on in production.
+      if (deps.allowTestOnlyAgentRunExecution !== true) {
+        void params;
+        throw new FridayDomainError(
+          "TS_RUNTIME_AGENT_RUN_RETIRED",
+          "Agent run execution is fail-closed while runtime ownership is being moved out of TypeScript.",
+          {
+            httpStatus: 503,
+            details: {
+              classification: "fail_closed",
+              replacement: "rust_owned_agent_run_entrypoint_required",
+            },
+          },
+        );
+      }
       const runId = params.runId ?? idGenerator();
       const runCorrelationId = runId;
       const sessionKey = params.sessionKey ?? `${FRIDAY_AGENT_SESSION_KEY_PREFIX}${runId}`;

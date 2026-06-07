@@ -110,6 +110,7 @@ describe("Friday agent benchmark regressions", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -148,6 +149,7 @@ describe("Friday agent benchmark regressions", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -225,6 +227,7 @@ describe("Friday agent benchmark regressions", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
@@ -319,6 +322,7 @@ describe("Friday agent benchmark regressions", () => {
     ]);
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "test-model",
