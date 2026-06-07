@@ -236,6 +236,20 @@ pub struct TurnTrace {
     pub outcome: String,
 }
 
+/// One metered loop step (S1.2 billing seam): the parsed-step result PLUS the model-call
+/// usage the loop ledgers. The OUTER [`AgentError`] is a route/transport/discovery failure
+/// — the model call never produced usage, so NOTHING is billed (the ask path's `Route`
+/// error). On the OUTER `Ok`, the inner [`Result<AgentStep, AgentError>`] is the *parse* of
+/// a chat that ALREADY succeeded: an inner `Err` means the chat 200'd with real, billable
+/// usage but the content failed the tool-call contract — the loop BILLS the call (usage is
+/// `Some`) and THEN fails the run closed. This split is what makes the loop bill like the
+/// ask path (which has no parse step): a chat that spends tokens is billed even when the
+/// reply is unparseable (the S1.1 `parse_error` failure mode would otherwise under-bill).
+pub type MeteredStep = (
+    Result<AgentStep, AgentError>,
+    Option<friday_deepseek::ModelCallOutcome>,
+);
+
 /// The model-client seam (mirrors `friday-deepseek`'s `Transport` DI pattern). The
 /// turn loop dispatches through this so it is unit-testable with a mock; the live impl
 /// over `friday-deepseek` is the runtime-proven slice. It returns only the untrusted
@@ -252,6 +266,24 @@ pub trait AgentLlmClient {
     /// history-aware multi-turn + `Finish` termination.
     fn next_step(&self, task: &str, _history: &[TurnTrace]) -> Result<AgentStep, AgentError> {
         Ok(AgentStep::Tool(self.propose_tool_call(task)?))
+    }
+
+    /// Like [`AgentLlmClient::next_step`], but ALSO surfaces the model-call usage
+    /// ([`friday_deepseek::ModelCallOutcome`]: tokens + reported model) so [`run_loop`] can
+    /// LEDGER the call (S1.2 usage-parity). See [`MeteredStep`] for the route-vs-parse
+    /// error split.
+    ///
+    /// The DEFAULT meters NOTHING: it delegates to [`AgentLlmClient::next_step`] and returns
+    /// `(result, None)` — a client that does not report usage (mocks / scripted tests) bills
+    /// nothing, the honest default (no usage data ⇒ no ledger row), preserving every existing
+    /// loop test. The live [`DeepSeekAgentLlmClient`] OVERRIDES this to surface the real
+    /// outcome (and routes its own `next_step` through it, so there is ONE chat call site).
+    fn next_step_metered(
+        &self,
+        task: &str,
+        history: &[TurnTrace],
+    ) -> Result<MeteredStep, AgentError> {
+        Ok((self.next_step(task, history), None))
     }
 }
 
@@ -317,7 +349,26 @@ impl<T: friday_deepseek::Transport> AgentLlmClient for DeepSeekAgentLlmClient<T>
     /// History-aware multi-turn step: the prompt includes prior turns + their outcomes
     /// so the model can build on them or finish. `{"tool":"none","answer":"<final answer>"}`
     /// parses to `Finish { message: "<final answer>" }`.
+    ///
+    /// Routed through [`DeepSeekAgentLlmClient::next_step_metered`] so there is exactly ONE
+    /// chat call site (no drift between the metered and unmetered paths); the usage is
+    /// discarded here, surfaced there.
     fn next_step(&self, task: &str, history: &[TurnTrace]) -> Result<AgentStep, AgentError> {
+        self.next_step_metered(task, history)?.0
+    }
+
+    /// Metered multi-turn step (S1.2): does the SAME discover → select → chat as
+    /// [`DeepSeekAgentLlmClient::next_step`], then parses the reply — but returns the chat's
+    /// [`friday_deepseek::ModelCallOutcome`] (tokens + reported model) ALONGSIDE the parse
+    /// result so [`run_loop`] can ledger the call. A discover/select/chat failure is an OUTER
+    /// `Err` (route failure: nothing billed). A successful chat whose content does not parse
+    /// is an INNER `Err` with `Some(outcome)` — the chat spent tokens, so the loop bills it
+    /// and then fails the run closed. See [`MeteredStep`].
+    fn next_step_metered(
+        &self,
+        task: &str,
+        history: &[TurnTrace],
+    ) -> Result<MeteredStep, AgentError> {
         let models = self
             .client
             .discover_models()
@@ -329,7 +380,10 @@ impl<T: friday_deepseek::Transport> AgentLlmClient for DeepSeekAgentLlmClient<T>
             .client
             .chat(&model, &prompt, AGENTLOOP_MAX_TOKENS)
             .map_err(|e| AgentError::Model(format!("{e:?}")))?;
-        parse_agent_step(&outcome.content)
+        // The chat SUCCEEDED — `outcome` carries real, billable usage even if the content
+        // below fails to parse. Surface it so the loop bills the call regardless of parse.
+        let step = parse_agent_step(&outcome.content);
+        Ok((step, Some(outcome)))
     }
 }
 
@@ -1451,6 +1505,60 @@ fn format_executed_outcome(receipt: &ToolReceipt) -> String {
     }
 }
 
+/// Ledger ONE agent-loop model call exactly as the ask path ledgers a single ask
+/// (`record_friday_ask`): build a Friday-route [`friday_core::LedgerEntry`] from the call's
+/// reported usage (`ModelCallOutcome::to_ledger_entry` ledgers the RESPONSE-reported model,
+/// never the requested one — no stale-model claims), an [`ActivityType::AskReceipt`] receipt
+/// (the same receipt shape the ask surface emits), and an `agent_loop.model_call` audit
+/// event, then write all three ATOMICALLY with the owning `run_id` via
+/// [`friday_storage::record_run_model_call`]. Per-turn ids are derived from
+/// `run_id`/`turn_index`, so N model calls leave N distinct, run-attributed rows.
+///
+/// The loop run is used as the ledger `session_id` (a loop run has no separate session; the
+/// AUTHORITATIVE run-attribution is the dedicated `run_id` column added in S1.2). Cost is
+/// left unestimated (`None`), matching the ask path. A construction failure (only possible
+/// on negative/overflowing usage — a hostile/buggy provider response) maps to a
+/// [`StorageError`] and fails the run closed; it never persists a malformed bill.
+fn bill_model_call(
+    conn: &Connection,
+    run_id: &str,
+    turn_index: u64,
+    outcome: &friday_deepseek::ModelCallOutcome,
+    now_ms: i64,
+) -> Result<(), StorageError> {
+    let ledger_id = format!("{run_id}:t{turn_index}:ledger");
+    let activity_id = format!("{run_id}:t{turn_index}:askreceipt");
+    let audit_id = format!("{run_id}:t{turn_index}:modelcall");
+    let entry = outcome
+        .to_ledger_entry(
+            ledger_id.as_str(),
+            run_id,
+            activity_id.as_str(),
+            None,
+            None,
+            now_ms,
+        )
+        .map_err(|e| StorageError::Unsupported(format!("loop ledger entry: {e:?}")))?;
+    let activity = ActivityRow {
+        activity_id,
+        session_id: Some(run_id.to_string()),
+        kind: ActivityType::AskReceipt,
+        state: ActivityState::Done,
+        summary: format!("{} tokens via {}", entry.total_tokens, entry.model),
+        created_at: now_ms,
+        updated_at: now_ms,
+        deep_link: None,
+    };
+    let audit = AuditEvent {
+        audit_id,
+        actor: "hub-agent".to_string(),
+        action: "agent_loop.model_call".to_string(),
+        payload_ref: Some(ledger_id),
+        created_at: now_ms,
+    };
+    friday_storage::record_run_model_call(conn, run_id, &entry, &activity, &audit)
+}
+
 /// Drive a MULTI-TURN agent loop: repeatedly ask the model for the next step (with
 /// conversation history), and for each proposed tool run the SAME gate-mandatory
 /// dispatch as [`run_one_turn_with_executor`] (authorize → execute only on `Allow` →
@@ -1520,9 +1628,45 @@ pub fn run_loop(
     for turn_index in 0..max_turns {
         let ev = |suffix: &str| format!("{run_id}:t{turn_index}:{suffix}");
 
-        let step = match client.next_step(&prompt_task, &history) {
+        // S1.2 usage-parity: ONE metered model call per turn. An OUTER `Err` is a
+        // route/transport/discovery failure — the chat produced no usage, so NOTHING is
+        // billed (exactly the ask path's `Route` error: no half-billed row). The inner
+        // parse result is handled AFTER billing below.
+        let (step_result, usage) = match client.next_step_metered(&prompt_task, &history) {
+            Ok(metered) => metered,
+            Err(e) => {
+                agent_run::record_event(
+                    conn,
+                    &ev("outcome"),
+                    run_id,
+                    &format!("agent.error:{e}"),
+                    now_ms,
+                )?;
+                return Ok(LoopOutcome {
+                    status: LoopStatus::Errored,
+                    turns: turn_index + 1,
+                    executed_tools,
+                    final_message: None,
+                    detail: format!("agent_error:{e}"),
+                });
+            }
+        };
+
+        // BILL the call like the ask path: a chat that returned usage writes exactly ONE
+        // run-attributed token_ledger row + ONE AskReceipt receipt + ONE hash-chained audit
+        // event, atomically — REGARDLESS of how the loop then treats the step (finish, tool,
+        // block) or whether the reply even parsed (the S1.1 parse-error mode still spent
+        // tokens). A client that does not meter (mocks/tests) yields `None` and bills
+        // nothing — the honest default (no usage data ⇒ no ledger row).
+        if let Some(outcome) = usage {
+            bill_model_call(conn, run_id, turn_index, &outcome, now_ms)?;
+        }
+
+        let step = match step_result {
             Ok(step) => step,
             Err(e) => {
+                // Chat SUCCEEDED (already billed above) but the reply violated the tool-call
+                // contract — fail the run closed; the model call stays ledgered.
                 agent_run::record_event(
                     conn,
                     &ev("outcome"),
@@ -2541,6 +2685,231 @@ mod tests {
         }
     }
 
+    /// A scripted client that ALSO meters each turn (overrides `next_step_metered`) — the
+    /// S1.2 billing harness. Each turn returns the next scripted (parse) result PLUS a
+    /// synthetic `ModelCallOutcome` with fixed usage, so the loop bills exactly as the live
+    /// path would, without a network call. Scripting a `Err(parse)` step with `Some(outcome)`
+    /// models a chat that 200'd (billable) but produced unparseable content.
+    struct MeteringScriptedClient {
+        steps: Vec<Result<AgentStep, AgentError>>,
+        calls: std::cell::Cell<usize>,
+        prompt_tokens: i64,
+        completion_tokens: i64,
+    }
+    impl MeteringScriptedClient {
+        fn new(
+            steps: Vec<Result<AgentStep, AgentError>>,
+            prompt_tokens: i64,
+            completion_tokens: i64,
+        ) -> Self {
+            Self {
+                steps,
+                calls: std::cell::Cell::new(0),
+                prompt_tokens,
+                completion_tokens,
+            }
+        }
+    }
+    impl AgentLlmClient for MeteringScriptedClient {
+        fn propose_tool_call(&self, _task: &str) -> Result<RawToolCall, AgentError> {
+            Err(AgentError::Parse(
+                "metering: single-turn path unused by run_loop".to_string(),
+            ))
+        }
+        fn next_step_metered(
+            &self,
+            _task: &str,
+            _history: &[TurnTrace],
+        ) -> Result<MeteredStep, AgentError> {
+            let i = self.calls.get();
+            self.calls.set(i + 1);
+            let step = self.steps.get(i).cloned().unwrap_or(Ok(AgentStep::Finish {
+                message: "script exhausted".to_string(),
+            }));
+            let outcome = friday_deepseek::ModelCallOutcome {
+                model: "deepseek-v4-flash".to_string(),
+                prompt_tokens: self.prompt_tokens,
+                completion_tokens: self.completion_tokens,
+                total_tokens: self.prompt_tokens + self.completion_tokens,
+                content: String::new(),
+                finish_reason: "stop".to_string(),
+            };
+            Ok((step, Some(outcome)))
+        }
+    }
+
+    #[test]
+    fn loop_bills_each_model_call_run_attributed_like_ask_path() {
+        // S1.2 usage-parity FLOOR: a loop run with N model calls writes N run-attributed
+        // token_ledger rows + N AskReceipt receipts + a verifying hash-chained audit —
+        // the same accounting the single-shot ask path produces per call.
+        let root = TempDir::new("loop-bill");
+        std::fs::write(root.0.join("notes.md"), b"answer is 47").unwrap();
+        let db = Db::open_hub(&temp_path("loop-bill")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "read notes.md", 1).unwrap();
+        // Two model calls: a read tool turn, then a finish turn.
+        let client = MeteringScriptedClient::new(
+            vec![
+                Ok(AgentStep::Tool(raw("read_file", &[("path", "notes.md")]))),
+                Ok(AgentStep::Finish {
+                    message: "47".to_string(),
+                }),
+            ],
+            10,
+            5,
+        );
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "read notes.md",
+            "",
+            SECRET,
+            &no_approval(),
+            10,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.status, LoopStatus::Finished);
+        // N model calls (2) -> N run-attributed token_ledger rows.
+        assert_eq!(
+            db.count("token_ledger").unwrap(),
+            2,
+            "one ledger row per model call"
+        );
+        let n_for_run: i64 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM token_ledger WHERE run_id = 'r1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n_for_run, 2, "both rows attributed to the run");
+        // N AskReceipt receipts (the same shape the ask surface emits).
+        assert_eq!(db.count("activity_item").unwrap(), 2);
+        let n_receipts: i64 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM activity_item WHERE type = 'ask_receipt'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n_receipts, 2);
+        // Hash-chained audit verifies (2 model-call audits + the tool-receipt audit).
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).unwrap() >= 2);
+        let n_modelcall_audits: i64 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM audit_ledger WHERE action = 'agent_loop.model_call'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n_modelcall_audits, 2);
+        // Run-attributed total == 2 calls * (10 prompt + 5 completion).
+        let run_tot = friday_storage::agent_run_read::run_token_totals(db.conn(), "r1").unwrap();
+        assert_eq!(run_tot.total, 30);
+        assert_eq!(run_tot.prompt, 20);
+        assert_eq!(run_tot.completion, 10);
+        // Ledgered the RESPONSE-reported model (not the requested one).
+        let model: String = db
+            .conn()
+            .query_row(
+                "SELECT model FROM token_ledger WHERE ledger_id = 'r1:t0:ledger'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(model, "deepseek-v4-flash");
+    }
+
+    #[test]
+    fn loop_bills_a_chat_that_then_failed_to_parse() {
+        // A chat that 200'd with usage but produced unparseable content (the S1.1 mode) is
+        // STILL billed — the call spent tokens — then the run fails closed. Billing must not
+        // hinge on the loop's parse, exactly like the ask path (which has no parse step).
+        let root = TempDir::new("loop-bill-parsefail");
+        let db = Db::open_hub(&temp_path("loop-bill-parsefail")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "do a thing", 1).unwrap();
+        let client = MeteringScriptedClient::new(
+            vec![Err(AgentError::Parse(
+                "not a single JSON object".to_string(),
+            ))],
+            7,
+            3,
+        );
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "do a thing",
+            "",
+            SECRET,
+            &no_approval(),
+            10,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(
+            out.status,
+            LoopStatus::Errored,
+            "unparseable reply fails the run closed"
+        );
+        // ...but the spent call WAS billed (one run-attributed row); audit chain intact.
+        assert_eq!(
+            db.count("token_ledger").unwrap(),
+            1,
+            "the chat that spent tokens is billed even though it didn't parse"
+        );
+        let tot = friday_storage::agent_run_read::run_token_totals(db.conn(), "r1").unwrap();
+        assert_eq!(tot.total, 10);
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).unwrap() >= 1);
+    }
+
+    #[test]
+    fn loop_with_non_metering_client_bills_nothing() {
+        // The honest default: a client without a `next_step_metered` override reports no
+        // usage, so the loop writes NO token_ledger rows — billing requires real usage data.
+        // (This is why every pre-S1.2 loop test stays green.)
+        let root = TempDir::new("loop-nobill");
+        std::fs::write(root.0.join("a.md"), b"alpha").unwrap();
+        let db = Db::open_hub(&temp_path("loop-nobill")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "read a", 1).unwrap();
+        let client = ScriptedAgentLlmClient::new(vec![
+            AgentStep::Tool(raw("read_file", &[("path", "a.md")])),
+            AgentStep::Finish {
+                message: "ok".to_string(),
+            },
+        ]);
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "read a",
+            "",
+            SECRET,
+            &no_approval(),
+            10,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.status, LoopStatus::Finished);
+        assert_eq!(
+            db.count("token_ledger").unwrap(),
+            0,
+            "non-metering client bills nothing"
+        );
+        assert_eq!(db.count("activity_item").unwrap(), 0);
+    }
+
     #[test]
     fn head_slice_respects_utf8_boundary() {
         // Under cap: returned whole, not truncated.
@@ -3109,6 +3478,42 @@ mod ask_coupling_tests {
         fn new(post_fails: bool) -> Self {
             Self { post_fails }
         }
+    }
+
+    #[test]
+    fn deepseek_metered_surfaces_usage_even_when_content_does_not_parse() {
+        // DeepSeek-client-level proof of bill-on-chat-success: MockTransport's chat 200s
+        // with usage {10,5,15} but content "hello" — NOT a tool-call object. The metered
+        // seam returns (Err(parse), Some(outcome)) so the loop bills the spent call (the
+        // S1.1 parse-error mode) instead of dropping the usage with the parse error.
+        let client = DeepSeekAgentLlmClient::new(friday_deepseek::DeepSeekClient::with_transport(
+            MockTransport::new(false),
+            "k".into(),
+        ));
+        let (parsed, usage) = client.next_step_metered("task", &[]).unwrap();
+        assert!(
+            matches!(parsed, Err(AgentError::Parse(_))),
+            "non-tool-call content must fail the contract parse"
+        );
+        let outcome = usage.expect("a successful chat must surface usage to bill");
+        assert_eq!(outcome.prompt_tokens, 10);
+        assert_eq!(outcome.completion_tokens, 5);
+        assert_eq!(outcome.total_tokens, 15);
+        assert_eq!(outcome.model, "deepseek-v4-flash");
+    }
+
+    #[test]
+    fn deepseek_metered_route_failure_surfaces_no_usage() {
+        // A transport/route failure is an OUTER Err: no usage produced, nothing to bill
+        // (the ask path's `Route` error — no half-billed row).
+        let client = DeepSeekAgentLlmClient::new(friday_deepseek::DeepSeekClient::with_transport(
+            MockTransport::new(true),
+            "k".into(),
+        ));
+        assert!(matches!(
+            client.next_step_metered("task", &[]),
+            Err(AgentError::Model(_))
+        ));
     }
 
     #[test]

@@ -30,11 +30,12 @@ pub struct AgentRunSummary {
 
 /// DB-wide token totals summed over `token_ledger`.
 ///
-/// HONEST SCOPE: these are **DB-wide**, NOT run-attributable. `token_ledger` has
-/// no `run_id` column, and the agent loop does not write `token_ledger` rows
-/// (loop-level token ledgering is a known gap — see `friday_hub::runtime`). For a
-/// run-only Hub DB these are therefore `0`. Surfaced anyway so the readback shape
-/// is stable, but the caller must label them as DB-wide, never as this run's cost.
+/// HONEST SCOPE: these are **DB-wide**, NOT run-attributable — every ledger row
+/// across all runs and the single-shot ask path. As of S1.2 the agent loop DOES
+/// write `token_ledger` rows (each carries the owning `run_id`); for per-run cost
+/// use [`run_token_totals`], not this. For a run-only Hub DB with no model calls
+/// these are still `0`. Surfaced anyway so the readback shape is stable, but the
+/// caller must label them as DB-wide, never as one run's cost.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct DbWideTokenTotals {
     pub prompt: i64,
@@ -86,6 +87,30 @@ pub fn db_wide_token_totals(conn: &Connection) -> Result<DbWideTokenTotals> {
                 COALESCE(SUM(total_tokens), 0)
          FROM token_ledger",
         [],
+        |r| {
+            Ok(DbWideTokenTotals {
+                prompt: r.get(0)?,
+                completion: r.get(1)?,
+                total: r.get(2)?,
+            })
+        },
+    )?;
+    Ok(totals)
+}
+
+/// Run-attributable token totals over `token_ledger` for a single `run_id` (S1.2).
+///
+/// Sums ONLY the rows the agent loop billed for this run (`WHERE run_id = ?1`), so —
+/// unlike [`db_wide_token_totals`] — this IS this run's cost. Ask-path rows (NULL
+/// `run_id`) are excluded. `COALESCE(..., 0)` so an unknown / not-yet-billed run reads
+/// `0`, never NULL. Read-only.
+pub fn run_token_totals(conn: &Connection, run_id: &str) -> Result<DbWideTokenTotals> {
+    let totals = conn.query_row(
+        "SELECT COALESCE(SUM(prompt_tokens), 0),
+                COALESCE(SUM(completion_tokens), 0),
+                COALESCE(SUM(total_tokens), 0)
+         FROM token_ledger WHERE run_id = ?1",
+        [run_id],
         |r| {
             Ok(DbWideTokenTotals {
                 prompt: r.get(0)?,

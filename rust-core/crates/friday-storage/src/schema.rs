@@ -157,16 +157,40 @@ pub fn hub_migrations() -> Vec<Migration> {
             destructive: false,
             up: m0012_surface_event_trace,
         },
+        // S1.2 loop-billing: run-attributable `token_ledger`. Adds a nullable `run_id`
+        // column so an agent-loop model call's ledger row can be attributed to its run
+        // (S2 readback flagged `token_ledger` had NO run_id ⇒ DB-wide, not
+        // run-attributable). Purely additive: the ask path keeps writing rows with a
+        // NULL `run_id` (no run), pre-existing rows backfill to NULL, and every existing
+        // query (incl. `db_wide_token_totals` / `list_token_usage`) is unchanged.
+        Migration {
+            version: 13,
+            name: "token_ledger_run_id",
+            destructive: false,
+            up: m0013_token_ledger_run_id,
+        },
     ]
 }
 
 pub fn phone_migrations() -> Vec<Migration> {
-    vec![Migration {
-        version: 1,
-        name: "init_phone",
-        destructive: false,
-        up: m0001_init_phone,
-    }]
+    vec![
+        Migration {
+            version: 1,
+            name: "init_phone",
+            destructive: false,
+            up: m0001_init_phone,
+        },
+        // S1.2: `token_ledger` is a SHARED table (both profiles) and the single insert
+        // chokepoint now writes a `run_id` column. The phone never runs the agent loop, so
+        // its rows always carry `run_id = NULL` — the column exists ONLY so the shared insert
+        // has the same shape on both profiles. Same additive ALTER as hub v13.
+        Migration {
+            version: 2,
+            name: "token_ledger_run_id",
+            destructive: false,
+            up: m0013_token_ledger_run_id,
+        },
+    ]
 }
 
 // --- shared table fragments -------------------------------------------------
@@ -978,4 +1002,18 @@ fn m0011_route_decision_trace(tx: &Transaction) -> rusqlite::Result<()> {
 fn m0012_surface_event_trace(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(DDL_SURFACE_EVENT_TRACE)?;
     Ok(())
+}
+
+// S1.2: run-attributable token ledger. `ALTER TABLE ... ADD COLUMN` appends a
+// nullable `run_id` at the END of the row, so positional reads of the existing 13
+// columns are unaffected and every existing explicit-column query keeps working.
+// The ask path (single-shot `record_model_call`) writes NULL `run_id` (no run); the
+// agent loop (`record_run_model_call`) writes the owning `run_id` so per-run billing
+// becomes queryable. Pre-existing rows backfill to NULL. The index keeps the
+// per-run total (`run_token_totals`) cheap.
+fn m0013_token_ledger_run_id(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "ALTER TABLE token_ledger ADD COLUMN run_id TEXT;
+         CREATE INDEX idx_ledger_run ON token_ledger(run_id);",
+    )
 }

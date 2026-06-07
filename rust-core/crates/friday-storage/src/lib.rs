@@ -767,7 +767,9 @@ impl Db {
     }
 
     pub fn insert_token_ledger(&self, e: &LedgerEntry) -> Result<()> {
-        insert_token_ledger_conn(&self.conn, e)?;
+        // No run attribution on the raw single-row insert (the run-scoped loop path is
+        // `record_run_model_call`); the row's `run_id` is NULL.
+        insert_token_ledger_conn(&self.conn, e, None)?;
         Ok(())
     }
 
@@ -787,7 +789,8 @@ impl Db {
             ));
         }
         let tx = self.conn.transaction()?;
-        insert_token_ledger_conn(&tx, entry)?;
+        // Ask path: DB-wide ledger row (no owning run) — `run_id` is NULL.
+        insert_token_ledger_conn(&tx, entry, None)?;
         insert_activity_conn(&tx, activity)?;
         audit::append_audit(
             &tx,
@@ -842,6 +845,43 @@ impl Db {
     }
 }
 
+/// Atomic write performed by ONE agent-loop model call — the run-attributed sibling of
+/// [`Db::record_model_call`] (the ask path). Writes a `token_ledger` row (with the owning
+/// `run_id`, S1.2 attribution), an `activity_item` receipt, and a hash-chained
+/// `audit_ledger` event in ONE transaction; if any insert fails, none persist (gate 21
+/// §2.3), so the loop can never half-bill a turn.
+///
+/// It takes a bare `&Connection` (not `&mut Db`) because the agent loop holds the Hub
+/// connection by shared reference — so it opens an `unchecked_transaction` (the same
+/// mechanism `run_loop`'s receipt writes already use). Reuses the SAME insert chokepoints
+/// as the ask path (`insert_token_ledger_conn`/`insert_activity_conn`/`append_audit`), so
+/// the loop's billing can never drift from the single-shot path's invariants
+/// (total==prompt+completion, non-negative tokens, the audit hash chain).
+///
+/// Hub-only: `audit_ledger` does not exist on a phone, so a phone connection fails closed
+/// on the audit insert. The agent loop runs only on a Hub DB by construction.
+pub fn record_run_model_call(
+    conn: &Connection,
+    run_id: &str,
+    entry: &LedgerEntry,
+    activity: &ActivityRow,
+    audit: &AuditEvent,
+) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    insert_token_ledger_conn(&tx, entry, Some(run_id))?;
+    insert_activity_conn(&tx, activity)?;
+    audit::append_audit(
+        &tx,
+        &audit.audit_id,
+        &audit.actor,
+        &audit.action,
+        audit.payload_ref.as_deref(),
+        audit.created_at,
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
 fn quote_existing_table(conn: &Connection, table: &str) -> Result<String> {
     if table.is_empty()
         || !table
@@ -871,7 +911,11 @@ fn quote_existing_table(conn: &Connection, table: &str) -> Result<String> {
 // Free fns so the same insert logic runs against either a Connection or a
 // Transaction (Transaction derefs to Connection).
 
-fn insert_token_ledger_conn(conn: &Connection, e: &LedgerEntry) -> Result<()> {
+fn insert_token_ledger_conn(
+    conn: &Connection,
+    e: &LedgerEntry,
+    run_id: Option<&str>,
+) -> Result<()> {
     // Persistence-boundary invariant (audit 10A Q3 / finding 3c): REJECT any row whose
     // `total_tokens` is not exactly `prompt_tokens + completion_tokens`. The
     // `LedgerEntry` constructors already recompute the total, but the struct has `pub`
@@ -920,8 +964,8 @@ fn insert_token_ledger_conn(conn: &Connection, e: &LedgerEntry) -> Result<()> {
         "INSERT INTO token_ledger
             (ledger_id, session_id, activity_id, provider_kind, model, base_url_host,
              prompt_tokens, completion_tokens, total_tokens, cost_estimate, fallback,
-             result_link, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             result_link, created_at, run_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         rusqlite::params![
             e.ledger_id,
             e.session_id,
@@ -935,7 +979,8 @@ fn insert_token_ledger_conn(conn: &Connection, e: &LedgerEntry) -> Result<()> {
             e.cost_estimate,
             e.fallback as i64,
             e.result_link,
-            e.created_at
+            e.created_at,
+            run_id
         ],
     )?;
     Ok(())
