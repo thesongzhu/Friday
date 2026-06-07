@@ -542,6 +542,7 @@ mod tests {
             Ok(ToolReceipt {
                 action: action.to_string(),
                 summary: format!("ran {action}"),
+                content: None,
             })
         }
     }
