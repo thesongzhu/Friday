@@ -3652,6 +3652,42 @@
       "next_action": "Replace the fail-closed response with the Rust-owned deep-link apply entrypoint when available."
     },
     {
+      "id": "plugins_install",
+      "route": { "method": "POST", "path": "/v1/plugins/:id/install", "operationId": "plugins.install" },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-plugin-routes.ts plugins.install wires default/live to assertPluginTestOracleAllowed(deps) AFTER validateInstallBody (malformed/missing installPath -> 400) and IMMEDIATELY BEFORE the manifest filesystem load (manifestLoader.loadFromDirectory) AND pluginService.installPlugin — so when retired NOTHING is read from the install dir or installed. 503 TS_RUNTIME_PLUGIN_RETIRED (classification fail_closed, replacement rust_owned_plugin_lifecycle_entrypoint_required). Local plugin-registry mutation + manifest FS read, no third-party egress, so fail_closed; GET plugin reads (list/get/versions) stay compat_shim. executes_product_logic:false: no install (and no manifest FS read) in default/live. Flag allowTestOnlyPluginExecution threaded inline (CreateFridayApiRuntimeDeps -> createFridayPluginRoutes) + hub-config (FridayHubConfig -> friday-hub-bootstrap, for the live self-upgrade-plugin e2e which boots a real hub via createFridayDeepProofHubEnv -> real-env). Reachable only through explicit allowTestOnlyPluginExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned plugin install entrypoint when available."
+    },
+    {
+      "id": "plugins_enable",
+      "route": { "method": "POST", "path": "/v1/plugins/:id/enable", "operationId": "plugins.enable" },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-plugin-routes.ts plugins.enable wires default/live to assertPluginTestOracleAllowed(deps) as the first handler statement, before pluginService.enablePlugin(id) (loads/activates the plugin). 503 TS_RUNTIME_PLUGIN_RETIRED. Local mutation, no egress, fail_closed. executes_product_logic:false. SCOPE NOTE (route-scoped): pluginService.enablePlugin/disablePlugin are ALSO reached by the autonomy lifecycle routes /v1/autonomy/plugins/:id/{review-enable,canary,promote,rollback} (via pluginRuntime=deps.pluginService) — but those are INDEPENDENTLY gated under allowTestOnlyAutonomyLifecycleExecution (#547, TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED), so the enable/disable methods are fail-closed system-wide in production (both flags unset). This surface gates ONLY the /v1/plugins/:id/enable route via allowTestOnlyPluginExecution.",
+      "next_action": "Replace the fail-closed response with the Rust-owned plugin enable entrypoint when available."
+    },
+    {
+      "id": "plugins_disable",
+      "route": { "method": "POST", "path": "/v1/plugins/:id/disable", "operationId": "plugins.disable" },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-plugin-routes.ts plugins.disable wires default/live to assertPluginTestOracleAllowed(deps) as the first handler statement, before pluginService.disablePlugin(id). 503 TS_RUNTIME_PLUGIN_RETIRED. Local mutation, no egress, fail_closed. executes_product_logic:false. SCOPE NOTE (route-scoped): like plugins.enable, pluginService.disablePlugin is ALSO reached by the autonomy lifecycle routes /v1/autonomy/plugins/:id/{...} (pluginRuntime=deps.pluginService), independently gated under allowTestOnlyAutonomyLifecycleExecution (#547) — so disable is fail-closed system-wide in production. This surface gates ONLY the /v1/plugins/:id/disable route.",
+      "next_action": "Replace the fail-closed response with the Rust-owned plugin disable entrypoint when available."
+    },
+    {
+      "id": "plugins_uninstall",
+      "route": { "method": "DELETE", "path": "/v1/plugins/:id", "operationId": "plugins.uninstall" },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-plugin-routes.ts plugins.uninstall wires default/live to assertPluginTestOracleAllowed(deps) as the first handler statement, before pluginService.uninstallPlugin(id, force) (removes the plugin from the registry). 503 TS_RUNTIME_PLUGIN_RETIRED. Local mutation, no egress, fail_closed. executes_product_logic:false. Reachable only through explicit allowTestOnlyPluginExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned plugin uninstall entrypoint when available."
+    },
+    {
       "id": "realtime_subscribe_read",
       "route": {
         "method": "POST",

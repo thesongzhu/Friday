@@ -26,6 +26,37 @@ import {
 export interface FridayPluginRoutesDeps {
   pluginService: FridayPluginService;
   manifestLoader: FridayPluginManifestLoader;
+  /**
+   * Test-oracle only: allow the legacy TypeScript plugin lifecycle mutations
+   * (install / enable / disable / uninstall). Production/runtime callers must
+   * leave this unset so those POST/DELETE routes fail-close (503
+   * TS_RUNTIME_PLUGIN_RETIRED) until Rust owns the plugin lifecycle. The GET
+   * plugin reads (list / get / versions) are never gated.
+   */
+  allowTestOnlyPluginExecution?: boolean;
+}
+
+/**
+ * TS-runtime retirement guard for the plugin lifecycle mutation routes. Placed
+ * AFTER body validation and IMMEDIATELY BEFORE the pluginService mutation (for
+ * install, before the manifest filesystem load too, so nothing is read/mutated
+ * when retired).
+ */
+function assertPluginTestOracleAllowed(deps: FridayPluginRoutesDeps): void {
+  if (deps.allowTestOnlyPluginExecution === true) {
+    return;
+  }
+  throw new FridayDomainError(
+    "TS_RUNTIME_PLUGIN_RETIRED",
+    "Plugin install/enable/disable/uninstall is fail-closed in the default/live runtime; the Rust-owned plugin lifecycle entrypoint is required.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_plugin_lifecycle_entrypoint_required",
+      },
+    },
+  );
 }
 
 // ─── Validation Helpers ───
@@ -127,6 +158,7 @@ export function createFridayPluginRoutes(
       async handler(ctx): Promise<FridayInstallPluginResponse> {
         const { id } = ctx.params as { id: string };
         validateInstallBody(ctx.body);
+        assertPluginTestOracleAllowed(deps);
         const body = ctx.body;
 
         // Read and validate the real manifest from installPath
@@ -160,6 +192,7 @@ export function createFridayPluginRoutes(
       auth: { public: true },
       async handler(ctx): Promise<FridayEnablePluginResponse> {
         const { id } = ctx.params as { id: string };
+        assertPluginTestOracleAllowed(deps);
         const plugin = await pluginService.enablePlugin(id);
         return { plugin };
       },
@@ -173,6 +206,7 @@ export function createFridayPluginRoutes(
       auth: { public: true },
       async handler(ctx): Promise<FridayDisablePluginResponse> {
         const { id } = ctx.params as { id: string };
+        assertPluginTestOracleAllowed(deps);
         const plugin = await pluginService.disablePlugin(id);
         return { plugin };
       },
@@ -186,6 +220,7 @@ export function createFridayPluginRoutes(
       auth: { public: true },
       async handler(ctx): Promise<FridayUninstallPluginResponse> {
         const { id } = ctx.params as { id: string };
+        assertPluginTestOracleAllowed(deps);
         const query = ctx.query as Record<string, string | undefined>;
         const force = query.force === "true";
         await pluginService.uninstallPlugin(id, force);

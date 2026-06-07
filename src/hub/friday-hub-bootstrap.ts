@@ -6926,6 +6926,7 @@ export async function createFridayHub(
     allowTestOnlySessionMemoryExtractionExecution: config.allowTestOnlySessionMemoryExtractionExecution,
     allowTestOnlyRealtimeExecution: config.allowTestOnlyRealtimeExecution,
     allowTestOnlySkillConverterExecution: config.allowTestOnlySkillConverterExecution,
+    allowTestOnlyPluginExecution: config.allowTestOnlyPluginExecution,
     reflexService,
     agentEventEmitter,
     resolveToolApproval,

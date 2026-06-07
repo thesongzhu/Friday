@@ -1896,6 +1896,8 @@ export interface FridayHubConfig {
   allowTestOnlySkillConverterExecution?: boolean;
   /** Test-oracle only; production hub creation must leave scan-migrate local-scan + batch-convert product logic fail-closed. */
   allowTestOnlyScanMigrateExecution?: boolean;
+  /** Test-oracle only; production hub creation must leave plugin install/enable/disable/uninstall fail-closed. */
+  allowTestOnlyPluginExecution?: boolean;
 }
 
 // ─── Resolved Hub Config ───

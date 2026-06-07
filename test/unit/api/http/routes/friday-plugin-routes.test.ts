@@ -100,7 +100,10 @@ describe("FridayPluginRoutes", () => {
       validate: vi.fn((raw: unknown) => raw as FridayPluginManifest),
     };
 
-    routes = createFridayPluginRoutes({ pluginService, manifestLoader });
+    // Test-oracle flag: the install/enable/disable/uninstall handler tests below
+    // exercise the live plugin lifecycle. Production wiring leaves it unset
+    // (TS-runtime retirement).
+    routes = createFridayPluginRoutes({ pluginService, manifestLoader, allowTestOnlyPluginExecution: true });
   });
 
   // ─── Route registration ───
@@ -289,6 +292,44 @@ describe("FridayPluginRoutes", () => {
     await expect(
       route.handler(makeCtx({ query: { kind: "not_a_kind" } })),
     ).rejects.toThrow(FridayDomainError);
+  });
+
+  // ─── TS-runtime retirement (default/live fail-close) ───
+
+  describe("TS-runtime retirement", () => {
+    // Build routes WITHOUT the test-oracle flag = production/live wiring.
+    function retired() {
+      return createFridayPluginRoutes({ pluginService, manifestLoader });
+    }
+    const find = (opId: string) => retired().find((r) => r.operationId === opId)!;
+
+    it("fail-closes install with 503 (before the manifest load) and does not install", async () => {
+      const route = find("plugins.install");
+      await expect(route.handler(makeCtx({ params: { id: "friday.test.new" }, body: { installPath: "/plugins/new" } }))).rejects.toMatchObject({
+        code: "TS_RUNTIME_PLUGIN_RETIRED",
+        httpStatus: 503,
+      });
+      expect(manifestLoader.loadFromDirectory).not.toHaveBeenCalled();
+      expect(pluginService.installPlugin).not.toHaveBeenCalled();
+    });
+
+    it("fail-closes enable / disable / uninstall with 503 and does not mutate", async () => {
+      await expect(find("plugins.enable").handler(makeCtx({ params: { id: "friday.test.alpha" } }))).rejects.toMatchObject({ code: "TS_RUNTIME_PLUGIN_RETIRED", httpStatus: 503 });
+      await expect(find("plugins.disable").handler(makeCtx({ params: { id: "friday.test.alpha" } }))).rejects.toMatchObject({ code: "TS_RUNTIME_PLUGIN_RETIRED", httpStatus: 503 });
+      await expect(find("plugins.uninstall").handler(makeCtx({ params: { id: "friday.test.alpha" } }))).rejects.toMatchObject({ code: "TS_RUNTIME_PLUGIN_RETIRED", httpStatus: 503 });
+      expect(pluginService.enablePlugin).not.toHaveBeenCalled();
+      expect(pluginService.disablePlugin).not.toHaveBeenCalled();
+      expect(pluginService.uninstallPlugin).not.toHaveBeenCalled();
+    });
+
+    it("still 400s a malformed install body BEFORE the retirement guard", async () => {
+      await expect(find("plugins.install").handler(makeCtx({ params: { id: "friday.test.new" }, body: {} }))).rejects.toMatchObject({ httpStatus: 400 });
+    });
+
+    it("leaves the GET plugin reads ungated (no retirement 503)", async () => {
+      // The GET list resolves (does not throw the retirement 503) even without the flag.
+      await expect(find("plugins.list").handler(makeCtx())).resolves.toBeDefined();
+    });
   });
 
 });
