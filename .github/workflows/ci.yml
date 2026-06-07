@@ -238,11 +238,42 @@ jobs:
           echo "     detect-secrets audit .secrets.baseline"
           echo "  3. Commit the updated .secrets.baseline"
 
+  # ── MECHANISM-7: TS-Runtime-Retirement Gate — blocker==0 enforced ──
+  ts-runtime-retirement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 22
+          cache: npm
+
+      # Validator runs over the REAL src/api/http/routes + real manifest and
+      # enforces classification completeness/well-formedness. It prints its JSON
+      # report to stdout (captured via `>` so the validator's own exit code still
+      # gates this step) and exits non-zero on any unclassified/malformed route.
+      - name: Validate TS-runtime-retirement classification
+        run: node scripts/quality/check-ts-runtime-retirement.mjs > ts-runtime-retirement-report.json
+
+      - name: Show validator report
+        run: cat ts-runtime-retirement-report.json
+
+      # The validator exits 0 even for a *validly* classified ts_runtime_blocker.
+      # This assertion enforces ts_runtime_blocker == 0 against silent regression
+      # by parsing summary.blockerFamilies from the validator's report.
+      - name: Assert ts_runtime_blocker count is zero
+        run: node scripts/quality/assert-ts-runtime-blocker-zero.mjs ts-runtime-retirement-report.json
+
   # ── Terminal CI Aggregator — single required check for branch protection ──
   quality-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [build, test, migrations, security, contracts, ssd-lint, alignment-guard, agent-parity, secrets]
+    needs: [build, test, migrations, security, contracts, ssd-lint, alignment-guard, agent-parity, secrets, ts-runtime-retirement]
     if: ${{ always() }}
 
     steps:
@@ -257,6 +288,7 @@ jobs:
           echo "Alignment Guard:    ${{ needs.alignment-guard.result }}"
           echo "Agent Parity:       ${{ needs.agent-parity.result }}"
           echo "Secrets:            ${{ needs.secrets.result }}"
+          echo "TS Runtime Retire:  ${{ needs.ts-runtime-retirement.result }}"
           echo ""
 
           FAILED=0
@@ -270,6 +302,7 @@ jobs:
             "${{ needs.alignment-guard.result }}" \
             "${{ needs.agent-parity.result }}" \
             "${{ needs.secrets.result }}" \
+            "${{ needs.ts-runtime-retirement.result }}" \
           ; do
             if [ "$result" != "success" ]; then
               FAILED=1
