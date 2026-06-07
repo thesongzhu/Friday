@@ -10,6 +10,7 @@
 //! repositories for every domain are deferred to their owning units (gate 21 §9).
 
 pub mod agent_run;
+pub mod agent_run_read;
 pub mod audit;
 pub mod authorize;
 pub mod blob;

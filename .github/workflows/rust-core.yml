@@ -43,6 +43,11 @@ jobs:
         # only BUILT here; running it needs FRIDAY_DEEPSEEK_API_KEY (the separate live-proof
         # step), so it is never executed in CI.
         run: cargo build -p friday-hub --bin hub_run_task
+      - name: Build bins (incl. S2 hub_run_readback read-bridge)
+        # Read-only sibling of S0's hub_run_task: names the S2 dev read-bridge explicitly so
+        # a missing/compile-broken `hub_run_readback` reds CI loudly. Only BUILT here — the
+        # TS bridge test spawns a scripted MOCK bin instead (no DB, no key, no quota).
+        run: cargo build -p friday-hub --bin hub_run_readback
       - name: Test
         # The one live DeepSeek test is #[ignore]d, so this needs no network/secrets.
         run: cargo test --workspace
