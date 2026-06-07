@@ -73,6 +73,7 @@ describe("TEST-27: Workflow Run Double-Submit Race", () => {
     const nowIso = "2025-06-15T10:00:00.000Z";
 
     const runtime = createFridayWorkflowRuntime({
+      allowTestOnlyWorkflowRunExecution: true, // TS-retirement method guard: test-oracle opt-in
       db,
       idGenerator,
       nowIso: () => nowIso,

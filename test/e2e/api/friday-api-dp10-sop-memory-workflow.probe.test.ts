@@ -249,6 +249,7 @@ describe("DP-10 probe — SOP memory triggers workflow execution", () => {
     }> = [];
 
     const workflowRuntime = createFridayWorkflowRuntime({
+      allowTestOnlyWorkflowRunExecution: true, // TS-retirement method guard: test-oracle opt-in
       db,
       idGenerator,
       nowIso: () => NOW,

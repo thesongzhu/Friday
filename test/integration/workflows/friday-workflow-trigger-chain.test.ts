@@ -65,6 +65,7 @@ describe("Workflow Trigger Chain (Integration)", () => {
     invokeSkill = vi.fn().mockResolvedValue({ result: "ok" });
 
     runtime = createFridayWorkflowRuntime({
+      allowTestOnlyWorkflowRunExecution: true, // TS-retirement method guard: test-oracle opt-in
       db,
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,

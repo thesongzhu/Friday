@@ -120,6 +120,7 @@ describe("Audit C part-2: workflow completion-verification run-level enforcement
 
   function buildRuntime(db: FridaySqliteLayer, opts?: { gate?: Promise<void> }): FridayWorkflowRuntime {
     return createFridayWorkflowRuntime({
+      allowTestOnlyWorkflowRunExecution: true, // TS-retirement method guard: test-oracle opt-in
       db,
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,
@@ -306,6 +307,7 @@ describe("Audit C Stage 2A: filesystem-write evidence → verified, end-to-end t
 
   function buildFsRuntime(db: FridaySqliteLayer, honest: boolean): FridayWorkflowRuntime {
     return createFridayWorkflowRuntime({
+      allowTestOnlyWorkflowRunExecution: true, // TS-retirement method guard: test-oracle opt-in
       db,
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,

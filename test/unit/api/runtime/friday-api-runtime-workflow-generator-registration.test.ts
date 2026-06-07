@@ -133,6 +133,9 @@ describe("API Runtime — Workflow Generator Registration", () => {
     );
     const runtime = createFridayApiRuntime({
       ...makeBaseDeps(),
+      // TS-retirement method guard: this test exercises the fallback workflow
+      // runtime's startRun, so opt the fallback into the test-oracle path.
+      allowTestOnlyWorkflowRunExecution: true,
       idGenerator: () => `fallback-ai-id-${String(++idCounter)}`,
       invokeSkill,
       resolveSkill: () => ({ id: "ai-inference" }),

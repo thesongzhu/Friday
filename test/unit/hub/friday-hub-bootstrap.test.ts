@@ -698,7 +698,7 @@ describe("createFridayHub", () => {
   }, 20_000);
 
   it("rejects and approves workflow Reflex candidates from channel commands before running the published workflow", async () => {
-    hub = await createIsolatedHub();
+    hub = await createIsolatedHub({ allowTestOnlyWorkflowRunExecution: true });
     const channel = createTestChannelPlugin();
     hub.channelRegistry.register(channel.plugin);
 
@@ -929,7 +929,7 @@ describe("createFridayHub", () => {
       return mockLlmFetch(input, init);
     }) as typeof fetch;
 
-    hub = await createIsolatedHub();
+    hub = await createIsolatedHub({ allowTestOnlyWorkflowRunExecution: true });
     const channel = createTestChannelPlugin();
     hub.channelRegistry.register(channel.plugin);
 

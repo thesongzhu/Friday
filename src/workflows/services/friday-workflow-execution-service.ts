@@ -145,6 +145,16 @@ export interface CreateWorkflowExecutionServiceDeps {
   expressionEvaluator: FridayExpressionEvaluator;
   idGenerator: () => string;
   nowIso: () => string;
+  /**
+   * Test-oracle ONLY. When not explicitly `true`, the workflow run execution
+   * `startRun` method fails closed at the METHOD boundary (not just the HTTP
+   * route), so every non-route caller — scheduler/cron, webhook, event, channel,
+   * and any future autonomous caller — is fenced out of TS workflow runtime while
+   * runtime ownership is moved to Rust. Production hub bootstrap leaves this unset
+   * → fail-closed. Mirrors the route-level `allowTestOnlyWorkflowRunExecution`
+   * guard in `friday-api-runtime.ts` so both layers honor the same flag.
+   */
+  allowTestOnlyWorkflowRunExecution?: boolean;
   publishEvent?: (event: string, payload: unknown) => Promise<void>;
   onRunIntake?: (input: {
     runId: UUID;
@@ -1190,6 +1200,28 @@ export function createFridayWorkflowExecutionService(
     },
 
     async startRun(input) {
+      // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+      // Phase 2 reconciliation (§1) found the retirement guard was ROUTE-only
+      // (POST /v1/workflow-runs). The scheduler/cron trigger job (@60s), webhook,
+      // event, and channel trigger paths all reach this method directly via
+      // `executionService.startRun(...)`, bypassing the HTTP route guard. Guarding
+      // here fails ALL non-route callers closed BEFORE any DB read, run-row
+      // creation, node execution, provider call, or tool call — unless the
+      // explicit test-oracle flag is set. Never default this flag on in prod.
+      if (deps.allowTestOnlyWorkflowRunExecution !== true) {
+        void input;
+        throw new FridayDomainError(
+          "TS_RUNTIME_WORKFLOW_RUNS_RETIRED",
+          "Workflow run execution and controls are fail-closed while runtime ownership is being moved out of TypeScript.",
+          {
+            httpStatus: 503,
+            details: {
+              classification: "fail_closed",
+              replacement: "rust_owned_workflow_run_entrypoint_required",
+            },
+          },
+        );
+      }
       const workflowState = deps.db.withReadConnection((db) =>
         db
           .prepare("SELECT is_archived, deleted_at, owner_user_id FROM workflows WHERE id = ? LIMIT 1")

@@ -755,6 +755,7 @@ describe("Issue 3 (R2): End-to-end workflow execution flows", () => {
     });
 
     return createFridayWorkflowExecutionService({
+      allowTestOnlyWorkflowRunExecution: true, // TS-retirement method guard: test-oracle opt-in
       db,
       workflowRepo,
       runRepo,

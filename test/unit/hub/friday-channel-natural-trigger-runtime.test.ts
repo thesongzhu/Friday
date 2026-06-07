@@ -108,6 +108,7 @@ async function createIsolatedHub(stateDir: string): Promise<FridayHub> {
   const skillsDir = path.join(stateDir, "skills-empty");
   await fs.mkdir(skillsDir, { recursive: true });
   return createFridayHub({
+    allowTestOnlyWorkflowRunExecution: true, // TS-retirement method guard: test-oracle opt-in
     skillDirs: [skillsDir],
     stateDir,
     channels: { enabled: false, instances: [] },

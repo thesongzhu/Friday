@@ -1660,6 +1660,11 @@ export async function createFridayHub(
     publishEvent: publishWorkflowRealtimeEvent,
     triggerRepo,
     resolveWebhookSecretRef: resolveWorkflowWebhookSecretRef,
+    // TS Runtime Retirement (§1 method-level guard): production leaves this unset
+    // (config flag undefined) so the workflow execution `startRun` method is
+    // fail-closed for the scheduler/cron/webhook/event trigger paths, not just the
+    // HTTP route. Test-oracle hub configs set it true to exercise legacy execution.
+    allowTestOnlyWorkflowRunExecution: config.allowTestOnlyWorkflowRunExecution,
     onRunIntake: async (input) => {
       const workflow = workflowRuntimeRef?.crud.getWorkflow(input.workflowId) ?? null;
       if (!workflow?.ownerUserId || !crossBorderPackServiceRef) {

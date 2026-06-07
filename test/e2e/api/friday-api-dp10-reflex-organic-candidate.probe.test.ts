@@ -366,6 +366,7 @@ describe("DP-10 probe — repeated sessions.run tasks create Reflex candidates b
     });
 
     const workflowRuntime = createFridayWorkflowRuntime({
+      allowTestOnlyWorkflowRunExecution: true, // TS-retirement method guard: test-oracle opt-in
       db,
       idGenerator,
       nowIso: () => NOW,
@@ -513,6 +514,7 @@ describe("DP-10 probe — repeated sessions.run tasks create Reflex candidates b
     }> = [];
 
     const workflowRuntime = createFridayWorkflowRuntime({
+      allowTestOnlyWorkflowRunExecution: true, // TS-retirement method guard: test-oracle opt-in
       db,
       idGenerator,
       nowIso: () => NOW,

@@ -1130,6 +1130,10 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       publishEvent: publishWorkflowRealtimeEvent,
       triggerRepo,
       resolveWebhookSecretRef: createWorkflowWebhookSecretResolver(deps.db),
+      // Keep the fallback runtime's execution `startRun` method consistent with the
+      // route-level guard: it honors the same `allowTestOnlyWorkflowRunExecution`
+      // flag so a caller that enables the route guard also enables the method.
+      allowTestOnlyWorkflowRunExecution: deps.allowTestOnlyWorkflowRunExecution,
     });
   })();
 

@@ -120,6 +120,7 @@ describe("Workflow timeout job", () => {
 
     // Skill invocations never resolve (hang forever — simulates long-running node)
     runtime = createFridayWorkflowRuntime({
+      allowTestOnlyWorkflowRunExecution: true, // TS-retirement method guard: test-oracle opt-in
       db: sqlite,
       idGenerator: idGen,
       nowIso: () => time.get(),
