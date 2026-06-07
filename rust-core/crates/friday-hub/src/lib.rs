@@ -634,7 +634,7 @@ impl Default for ToolRegistry {
             "edit_file",
             true,
             Risk::Medium,
-            "modify part of a file (params: path, ...)",
+            "replace the first occurrence of old_text with new_text in a file (params: path, old_text, new_text)",
         );
         r.register(
             "append_file",
@@ -1145,12 +1145,21 @@ pub trait ToolExecutor {
     fn execute(&self, action: &str, params: &[(String, String)]) -> Result<ToolReceipt, ExecError>;
 }
 
-/// The real executor: file reads/writes go through `friday-fs` hardened safe-open,
-/// contained to a workspace `root` (NEVER `std::fs` on an agent-supplied path). This
-/// slice implements `read_file` + the replace-write `write_file`; higher-risk
-/// registered tools (`delete_file`, `run_command`, `list_dir`, ...) are intentionally
-/// `Unsupported` here — they get their own safe primitives + adverse tests in a later
-/// slice. Fail-closed in every arm.
+/// The real executor: every file operation goes through a `friday-fs` hardened
+/// safe-open primitive, contained to a workspace `root` (NEVER `std::fs` on an
+/// agent-supplied path). Wired tools (S3-wiring):
+///   - **read-type** (`mutating=false` in the registry → gate `Allow`s directly): `read_file`,
+///     `list_dir`, `stat_file`. Each sets [`ToolReceipt::content`] with its result (file bytes /
+///     entry names / stat line) so the loop feeds it back to the model (bounded — see
+///     [`MAX_FEEDBACK_CONTENT_BYTES`]).
+///   - **mutating** (`mutating=true` → the gate withholds them pending owner approval; under the
+///     default deny-all policy they Pause, never execute here): `write_file`, `append_file`,
+///     `edit_file`, `delete_file`, `move_file`. They set `content: None`.
+///
+/// The executor is reached ONLY on a gate `Allow` (see [`gate_dispatch`]), so a mutating arm runs
+/// IFF a signed approval was minted — the executor itself never decides; the gate does.
+/// `search` and `run_command` are registered but have no friday-fs primitive, so they remain
+/// `Unsupported` here. Fail-closed in every arm.
 pub struct FsToolExecutor {
     root: std::path::PathBuf,
 }
@@ -1199,6 +1208,96 @@ impl ToolExecutor for FsToolExecutor {
                     action: action.to_string(),
                     summary: format!("wrote {} bytes to {path}", content.len()),
                     // A write has no result payload to feed back; the summary suffices.
+                    content: None,
+                })
+            }
+            // --- read-type tools (non-mutating → gate Allows → execute here) ---
+            "list_dir" => {
+                let path = Self::param(params, "path")?;
+                let entries =
+                    friday_fs::list_dir_within_root(&self.root, path).map_err(ExecError::Fs)?;
+                let names: Vec<String> = entries
+                    .iter()
+                    .map(|e| e.to_string_lossy().into_owned())
+                    .collect();
+                Ok(ToolReceipt {
+                    action: action.to_string(),
+                    // summary = count ONLY (it reaches the hash-chained audit ledger); the
+                    // entry NAMES go in `content` (model-facing feedback, never the ledger) —
+                    // mirrors read_file keeping the file bytes out of the ledger summary.
+                    summary: format!("listed {} entries in {path}", names.len()),
+                    content: Some(names.join("\n")),
+                })
+            }
+            "stat_file" => {
+                let path = Self::param(params, "path")?;
+                let st =
+                    friday_fs::stat_file_within_root(&self.root, path).map_err(ExecError::Fs)?;
+                let kind = match st.kind {
+                    friday_fs::FileKind::File => "file",
+                    friday_fs::FileKind::Dir => "dir",
+                    friday_fs::FileKind::Other => "other",
+                };
+                // stat metadata is small + non-sensitive, so the same line is both the log
+                // summary and the model-facing content (read-type ⇒ content MUST be set).
+                let detail = format!(
+                    "{path}: {kind}, {} bytes, mode {:o}{}",
+                    st.len,
+                    st.mode,
+                    if st.readonly { ", readonly" } else { "" }
+                );
+                Ok(ToolReceipt {
+                    action: action.to_string(),
+                    summary: format!("stat {detail}"),
+                    content: Some(detail),
+                })
+            }
+            // --- mutating tools (gate withholds under deny-all; reached ONLY on Allow) ---
+            "append_file" => {
+                let path = Self::param(params, "path")?;
+                let content = Self::param(params, "content")?;
+                friday_fs::append_file_within_root(&self.root, path, content.as_bytes())
+                    .map_err(ExecError::Fs)?;
+                Ok(ToolReceipt {
+                    action: action.to_string(),
+                    summary: format!("appended {} bytes to {path}", content.len()),
+                    content: None,
+                })
+            }
+            "edit_file" => {
+                let path = Self::param(params, "path")?;
+                let old_text = Self::param(params, "old_text")?;
+                let new_text = Self::param(params, "new_text")?;
+                // First-occurrence replace via the atomic (temp+rename) friday-fs edit.
+                friday_fs::edit_file_within_root(&self.root, path, old_text, new_text)
+                    .map_err(ExecError::Fs)?;
+                Ok(ToolReceipt {
+                    action: action.to_string(),
+                    summary: format!(
+                        "edited {path}: replaced {} bytes with {} bytes",
+                        old_text.len(),
+                        new_text.len()
+                    ),
+                    content: None,
+                })
+            }
+            "delete_file" => {
+                let path = Self::param(params, "path")?;
+                friday_fs::delete_file_within_root(&self.root, path).map_err(ExecError::Fs)?;
+                Ok(ToolReceipt {
+                    action: action.to_string(),
+                    summary: format!("deleted {path}"),
+                    content: None,
+                })
+            }
+            "move_file" => {
+                let path = Self::param(params, "path")?;
+                let target = Self::param(params, "target")?;
+                friday_fs::move_file_within_root(&self.root, path, target)
+                    .map_err(ExecError::Fs)?;
+                Ok(ToolReceipt {
+                    action: action.to_string(),
+                    summary: format!("moved {path} to {target}"),
                     content: None,
                 })
             }
@@ -2121,6 +2220,21 @@ mod tests {
         // The finish contract advertises the answer-carrying shape (Fix 2).
         assert!(p.contains("\"answer\""));
         assert!(p.contains("read notes.md")); // the task is included
+
+        // S3-wiring: every newly wired fs tool is advertised to the model (the prompt menu
+        // is derived from the SAME registry the executor + gate use), so the model is told
+        // the new tools — and their params — exist.
+        for tool in [
+            "list_dir",
+            "stat_file",
+            "append_file",
+            "edit_file",
+            "move_file",
+        ] {
+            assert!(p.contains(tool), "prompt must advertise {tool}, got: {p}");
+        }
+        // edit_file's params are spelled out so the model emits the right keys.
+        assert!(p.contains("old_text") && p.contains("new_text"));
     }
 
     #[test]
@@ -2486,10 +2600,11 @@ mod tests {
     fn unsupported_tool_errors_after_allow_without_panicking() {
         let root = TempDir::new("unsup");
         let db = Db::open_hub(&temp_path("exec-unsup")).unwrap();
-        agent_run::create_run(db.conn(), "r1", "list the dir", 1).unwrap();
-        // list_dir is registered + read-only → Allow → executor returns Unsupported.
+        agent_run::create_run(db.conn(), "r1", "search the workspace", 1).unwrap();
+        // search is registered + read-only → Allow → executor has no friday-fs primitive
+        // for it → returns Unsupported (list_dir/stat_file are now wired, so they execute).
         let client = MockAgentLlmClient {
-            proposal: raw("list_dir", &[("path", ".")]),
+            proposal: raw("search", &[("query", "needle")]),
         };
         let executor = FsToolExecutor::new(&root.0);
         let out = run_one_turn_with_executor(
@@ -2540,6 +2655,129 @@ mod tests {
             matches!(err, ExecError::Fs(_)),
             "expected Fs containment error, got {err:?}"
         );
+    }
+
+    /// S3-wiring: the read-type tools just wired (`list_dir`, `stat_file`) execute via real
+    /// friday-fs and set [`ToolReceipt::content`] with their result, so the loop can feed it
+    /// back to the model (the read_file grounding contract, extended to the new read tools).
+    /// The `summary` (which reaches the audit ledger) carries a count/metadata line only —
+    /// the entry NAMES live in `content`, which never reaches the ledger.
+    #[test]
+    fn list_dir_and_stat_file_execute_and_carry_content_in_receipt() {
+        let root = TempDir::new("readtype");
+        std::fs::create_dir(root.0.join("sub")).unwrap();
+        std::fs::write(root.0.join("sub/alpha.txt"), b"a").unwrap();
+        std::fs::write(root.0.join("sub/beta.txt"), b"bb").unwrap();
+        let executor = FsToolExecutor::new(&root.0);
+
+        // list_dir → sorted entry names in `content`; summary is a count only (ledger-safe).
+        let r = executor
+            .execute("list_dir", &[("path".to_string(), "sub".to_string())])
+            .unwrap();
+        assert_eq!(r.action, "list_dir");
+        assert_eq!(r.summary, "listed 2 entries in sub");
+        let content = r.content.expect("list_dir is read-type → content set");
+        assert_eq!(content, "alpha.txt\nbeta.txt");
+        assert!(
+            !r.summary.contains("alpha.txt"),
+            "entry names must NOT be in the ledger summary, only in content"
+        );
+
+        // stat_file → metadata line in `content` (read-type ⇒ content set).
+        let s = executor
+            .execute(
+                "stat_file",
+                &[("path".to_string(), "sub/beta.txt".to_string())],
+            )
+            .unwrap();
+        assert_eq!(s.action, "stat_file");
+        let scontent = s.content.expect("stat_file is read-type → content set");
+        assert!(
+            scontent.contains("sub/beta.txt: file, 2 bytes"),
+            "stat content was {scontent:?}"
+        );
+    }
+
+    /// S3-wiring ARM CORRECTNESS: each newly wired MUTATING arm (append/edit/move/delete)
+    /// actually performs its friday-fs side effect when invoked directly (bypassing the gate
+    /// — a legitimate unit test of the arm, exactly how `write_file`'s arm is proven). The
+    /// gate-PAUSE behavior is proven separately in
+    /// `each_mutating_fs_tool_pauses_under_deny_all_and_never_executes`; this is the ONLY
+    /// place the EXECUTION wiring of these arms is verified (the coordinator's live proof
+    /// only ever PAUSES a mutation, never executes one — that is S6).
+    #[test]
+    fn mutating_fs_arms_perform_real_side_effects_when_executed() {
+        let root = TempDir::new("mutate-arms");
+        let executor = FsToolExecutor::new(&root.0);
+
+        // append_file: create-if-absent, then positional append.
+        executor
+            .execute(
+                "append_file",
+                &[
+                    ("path".to_string(), "log.txt".to_string()),
+                    ("content".to_string(), "one\n".to_string()),
+                ],
+            )
+            .unwrap();
+        executor
+            .execute(
+                "append_file",
+                &[
+                    ("path".to_string(), "log.txt".to_string()),
+                    ("content".to_string(), "two\n".to_string()),
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.0.join("log.txt")).unwrap(),
+            "one\ntwo\n"
+        );
+
+        // edit_file: replace the FIRST occurrence of old_text with new_text.
+        std::fs::write(root.0.join("doc.txt"), b"hello OLD world OLD").unwrap();
+        let e = executor
+            .execute(
+                "edit_file",
+                &[
+                    ("path".to_string(), "doc.txt".to_string()),
+                    ("old_text".to_string(), "OLD".to_string()),
+                    ("new_text".to_string(), "NEW".to_string()),
+                ],
+            )
+            .unwrap();
+        assert_eq!(e.action, "edit_file");
+        assert_eq!(
+            std::fs::read_to_string(root.0.join("doc.txt")).unwrap(),
+            "hello NEW world OLD"
+        );
+
+        // move_file: src → target (src gone, target carries the bytes).
+        std::fs::write(root.0.join("from.txt"), b"payload").unwrap();
+        executor
+            .execute(
+                "move_file",
+                &[
+                    ("path".to_string(), "from.txt".to_string()),
+                    ("target".to_string(), "to.txt".to_string()),
+                ],
+            )
+            .unwrap();
+        assert!(!root.0.join("from.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(root.0.join("to.txt")).unwrap(),
+            "payload"
+        );
+
+        // delete_file: remove the regular file.
+        std::fs::write(root.0.join("trash.txt"), b"x").unwrap();
+        executor
+            .execute(
+                "delete_file",
+                &[("path".to_string(), "trash.txt".to_string())],
+            )
+            .unwrap();
+        assert!(!root.0.join("trash.txt").exists());
     }
 
     /// LIVE end-to-end (runtime-proven, the UNW-001 read-only path). Ignored in CI (no
@@ -3011,6 +3249,168 @@ mod tests {
         assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
     }
 
+    /// S3-wiring: a read-type `list_dir` result is fed BACK into the next model turn's prompt
+    /// (bounded), exactly like `read_file` — so the model can ground its answer on the listing
+    /// instead of re-running the tool. (stat_file's content rides the SAME path; this proves
+    /// the read-type feedback wiring end-to-end through the loop.)
+    #[test]
+    fn loop_feeds_list_dir_content_back_into_model_prompt() {
+        let root = TempDir::new("loop-listdir");
+        std::fs::create_dir(root.0.join("sub")).unwrap();
+        std::fs::write(root.0.join("sub/report.md"), b"x").unwrap();
+        std::fs::write(root.0.join("sub/budget.csv"), b"y").unwrap();
+        let db = Db::open_hub(&temp_path("loop-listdir")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "what files are in sub", 1).unwrap();
+        let client = CapturingAgentLlmClient::new(vec![
+            AgentStep::Tool(raw("list_dir", &[("path", "sub")])),
+            AgentStep::Finish {
+                message: "report.md, budget.csv".to_string(),
+            },
+        ]);
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "what files are in sub",
+            "",
+            SECRET,
+            &no_approval(),
+            10,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.status, LoopStatus::Finished);
+        let prompts = client.prompts.borrow();
+        assert_eq!(prompts.len(), 2);
+        // Turn 1 had no history yet.
+        assert!(!prompts[0].contains("budget.csv"));
+        // Turn 2 (after the list_dir) sees the ACTUAL sorted entries fed back.
+        assert!(
+            prompts[1].contains("budget.csv") && prompts[1].contains("report.md"),
+            "second prompt must carry the listing, got: {}",
+            prompts[1]
+        );
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
+    }
+
+    /// S3-wiring SAFETY (the load-bearing test): EACH newly wired mutating fs tool is
+    /// classified `mutating` in the registry, so under DenyAllApprovals (`no_approval`) the
+    /// gate withholds it (`RequiresApproval`) and `run_loop` PAUSES — the executor is NEVER
+    /// invoked (the `CountingExecutor` records ZERO calls) and NO filesystem side effect
+    /// occurs. The agent can never self-complete a mutation; only a signed owner approval
+    /// (S6) ever reaches the arm. Covers write_file + the four new arms append/edit/move/delete.
+    #[test]
+    fn each_mutating_fs_tool_pauses_under_deny_all_and_never_executes() {
+        // Drive ONE proposed mutating tool through the whole loop under DenyAllApprovals,
+        // returning the outcome AND the executor-call count (must be 0 — gate before dispatch).
+        fn run_one(root: &std::path::Path, call: RawToolCall) -> (LoopOutcome, usize) {
+            let db = Db::open_hub(&temp_path("mutpause")).unwrap();
+            agent_run::create_run(db.conn(), "r1", "mutate", 1).unwrap();
+            let client = ScriptedAgentLlmClient::new(vec![AgentStep::Tool(call)]);
+            let fs_exec = FsToolExecutor::new(root);
+            let counting = CountingExecutor {
+                inner: &fs_exec,
+                calls: std::cell::Cell::new(0),
+            };
+            let out = run_loop(
+                &client,
+                &counting,
+                db.conn(),
+                "r1",
+                "mutate",
+                "",
+                SECRET,
+                &no_approval(),
+                5,
+                1000,
+            )
+            .unwrap();
+            (out, counting.calls.get())
+        }
+
+        // write_file: would create a file → must NOT exist after a pause.
+        {
+            let root = TempDir::new("pause-write");
+            let (out, calls) = run_one(
+                &root.0,
+                raw("write_file", &[("path", "w.txt"), ("content", "X")]),
+            );
+            assert_eq!(out.status, LoopStatus::Paused, "write_file must pause");
+            assert_eq!(calls, 0, "executor never invoked for a withheld mutation");
+            assert!(!root.0.join("w.txt").exists(), "no file written");
+        }
+        // append_file: create-if-absent → the file must NOT exist after a pause.
+        {
+            let root = TempDir::new("pause-append");
+            let (out, calls) = run_one(
+                &root.0,
+                raw("append_file", &[("path", "a.txt"), ("content", "X")]),
+            );
+            assert_eq!(out.status, LoopStatus::Paused, "append_file must pause");
+            assert_eq!(calls, 0);
+            assert!(
+                !root.0.join("a.txt").exists(),
+                "append must not have created the file"
+            );
+        }
+        // edit_file: an existing file must be byte-for-byte unchanged.
+        {
+            let root = TempDir::new("pause-edit");
+            std::fs::write(root.0.join("e.txt"), b"ORIGINAL").unwrap();
+            let (out, calls) = run_one(
+                &root.0,
+                raw(
+                    "edit_file",
+                    &[
+                        ("path", "e.txt"),
+                        ("old_text", "ORIGINAL"),
+                        ("new_text", "PWNED"),
+                    ],
+                ),
+            );
+            assert_eq!(out.status, LoopStatus::Paused, "edit_file must pause");
+            assert_eq!(calls, 0);
+            assert_eq!(
+                std::fs::read_to_string(root.0.join("e.txt")).unwrap(),
+                "ORIGINAL",
+                "edit must not have modified the file"
+            );
+        }
+        // delete_file: an existing file must STILL exist.
+        {
+            let root = TempDir::new("pause-delete");
+            std::fs::write(root.0.join("d.txt"), b"KEEP").unwrap();
+            let (out, calls) = run_one(&root.0, raw("delete_file", &[("path", "d.txt")]));
+            assert_eq!(out.status, LoopStatus::Paused, "delete_file must pause");
+            assert_eq!(calls, 0);
+            assert!(
+                root.0.join("d.txt").exists(),
+                "delete must not have removed the file"
+            );
+        }
+        // move_file: source must remain, target must not be created.
+        {
+            let root = TempDir::new("pause-move");
+            std::fs::write(root.0.join("m.txt"), b"DATA").unwrap();
+            let (out, calls) = run_one(
+                &root.0,
+                raw("move_file", &[("path", "m.txt"), ("target", "moved.txt")]),
+            );
+            assert_eq!(out.status, LoopStatus::Paused, "move_file must pause");
+            assert_eq!(calls, 0);
+            assert!(
+                root.0.join("m.txt").exists(),
+                "move must not have moved the source"
+            );
+            assert!(
+                !root.0.join("moved.txt").exists(),
+                "move must not have created the target"
+            );
+        }
+    }
+
     #[test]
     fn loop_multi_turn_read_only_finishes_with_no_hidden_calls() {
         let root = TempDir::new("loop-ro");
@@ -3298,9 +3698,9 @@ mod tests {
     fn loop_exec_error_threads_back_and_continues() {
         let root = TempDir::new("loop-execerr");
         let db = Db::open_hub(&temp_path("loop-execerr")).unwrap();
-        agent_run::create_run(db.conn(), "r1", "list then finish", 1).unwrap();
+        agent_run::create_run(db.conn(), "r1", "search then finish", 1).unwrap();
         let client = ScriptedAgentLlmClient::new(vec![
-            AgentStep::Tool(raw("list_dir", &[("path", ".")])), // turn 0: Allow but Unsupported → exec_error → continue
+            AgentStep::Tool(raw("search", &[("query", "needle")])), // turn 0: Allow but Unsupported (no fs primitive) → exec_error → continue
             AgentStep::Finish {
                 message: "ok".to_string(),
             }, // turn 1: finish (loop did NOT wedge on the error)
@@ -3311,7 +3711,7 @@ mod tests {
             &executor,
             db.conn(),
             "r1",
-            "list then finish",
+            "search then finish",
             "",
             SECRET,
             &no_approval(),
