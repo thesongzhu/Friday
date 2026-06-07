@@ -37,8 +37,16 @@ impl MechanismOwner {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MechanismStatus {
+    /// Rust owns the product logic AND it is proven through every product entrypoint
+    /// (the only v1-GO tier). The "RustProvenProduct" tier.
     RustOwnedProven,
     RustOwnedPartial,
+    /// Reachable in Rust ONLY via a dev/test bridge or test-only entrypoint — NOT a
+    /// production product path. STRICTLY BELOW `RustOwnedPartial`: it makes no partial
+    /// product-ownership claim, only "the mechanism runs when poked by a dev harness."
+    /// Never v1-GO. Introduced for the S0 `hub_run_task` write-bridge: it proves the
+    /// agent loop is *reachable*, not that any product entrypoint is wired.
+    RustWiredDev,
     NoGo,
     OperatorGated,
     ExternalBlocked,
@@ -51,6 +59,7 @@ impl MechanismStatus {
         match self {
             MechanismStatus::RustOwnedProven => "rust_owned_proven",
             MechanismStatus::RustOwnedPartial => "rust_owned_partial",
+            MechanismStatus::RustWiredDev => "rust_wired_dev",
             MechanismStatus::NoGo => "NO-GO",
             MechanismStatus::OperatorGated => "operator_gated",
             MechanismStatus::ExternalBlocked => "external_blocked",
@@ -133,23 +142,35 @@ pub fn friday_v1_mechanism_matrix() -> Vec<MechanismRow> {
             user_triggerable_product_logic: true,
         },
         MechanismRow {
+            // De-inflated: was RustOwnedPartial (implied partial PRODUCT ownership). The
+            // truth is the loop has only a dev write-bridge (S0 `hub_run_task`, Rust-wired-
+            // DEV) — NO production transport: the TS `executeRun`/`startRun` paths are now
+            // fail-closed-FENCED (PRs #568/#570), and only 2/10 fs tools exist. The blocker
+            // KEEPS the "real multi-turn live agent/tool execution" substring the v1 NO-GO
+            // gate asserts, so this stays a NO-GO blocker (closure semantics unchanged).
             id: "agent_tool_execution",
             title: "Agent loop + tool execution",
             owner: RustHub,
-            status: RustOwnedPartial,
+            status: RustWiredDev,
             rust_entrypoint: "friday_hub::runtime::HubRuntime::run_task",
             proof_gate: "cargo test -p friday-hub run_loop",
-            blocker: "real multi-turn live agent/tool execution is not fully proven through every product entrypoint",
+            blocker: "real multi-turn live agent/tool execution is dev-bridge-only (hub_run_task = Rust-wired-DEV); only 2/10 fs tools exist and the TS executeRun/startRun product paths stay fail-closed-fenced — no production transport, not proven through any product entrypoint",
             user_triggerable_product_logic: true,
         },
         MechanismRow {
+            // De-inflated: was RustOwnedPartial. The workflow runtime is reachable only
+            // through a TEST-ONLY entrypoint (the TS `startRun` product path is fail-closed-
+            // fenced, #570) — i.e. Rust-wired-DEV, not a production product wrapper.
+            // `user_triggerable_product_logic` stays TRUE so the row REMAINS a NO-GO blocker
+            // (flipping it to false would remove it from friday_v1_no_go_blockers() and shift
+            // the blocker set — forbidden by the S0 brief; closure semantics unchanged).
             id: "workflow_runtime",
             title: "Workflow runtime",
             owner: RustHub,
-            status: RustOwnedPartial,
+            status: RustWiredDev,
             rust_entrypoint: "friday_hub::mission_runtime::run_workflow_for_mission",
             proof_gate: "cargo test -p friday-hub mission_runtime",
-            blocker: "workflow product entrypoints must all use Mission-bound wrappers",
+            blocker: "workflow runtime is reachable only via a test-only entrypoint (TS startRun product path is fail-closed-fenced) — no production transport; product entrypoints must all use Mission-bound wrappers",
             user_triggerable_product_logic: true,
         },
         MechanismRow {
@@ -312,6 +333,48 @@ mod tests {
         assert!(
             blockers.iter().any(|b| b.contains("live supervisor")),
             "process/workspace control remains NO-GO until live control proof"
+        );
+    }
+
+    #[test]
+    fn rust_wired_dev_is_an_honest_non_go_tier_below_partial() {
+        // The new dev-bridge tier is never v1-GO and renders as the documented string.
+        assert!(!MechanismStatus::RustWiredDev.is_v1_go());
+        assert_eq!(MechanismStatus::RustWiredDev.as_str(), "rust_wired_dev");
+    }
+
+    #[test]
+    fn agent_loop_and_workflow_are_rust_wired_dev_after_s0() {
+        let rows = friday_v1_mechanism_matrix();
+        for id in ["agent_tool_execution", "workflow_runtime"] {
+            let row = rows.iter().find(|r| r.id == id).unwrap();
+            assert_eq!(
+                row.status,
+                MechanismStatus::RustWiredDev,
+                "{id} must honestly be Rust-wired-DEV (dev/test bridge only), not partial-product"
+            );
+            // Still user-triggerable product logic with a Rust owner+entrypoint, so the
+            // row keeps contributing to the v1 NO-GO blocker set.
+            assert!(row.user_triggerable_product_logic);
+            assert!(row.owner.can_own_product_logic());
+        }
+    }
+
+    #[test]
+    fn s0_does_not_shift_the_v1_no_go_blocker_set() {
+        // CLOSURE-SEMANTICS GUARD: both rebadged rows MUST remain NO-GO blockers — the
+        // truth-fix lowers the claim (RustWiredDev) without removing either from
+        // friday_v1_no_go_blockers(), so the GO/NO-GO verdict is unchanged.
+        let blockers = friday_v1_no_go_blockers();
+        assert!(
+            blockers
+                .iter()
+                .any(|b| b.contains("real multi-turn live agent/tool execution")),
+            "agent_tool_execution must stay a NO-GO blocker"
+        );
+        assert!(
+            blockers.iter().any(|b| b.contains("test-only entrypoint")),
+            "workflow_runtime must stay a NO-GO blocker (now flagged test-only)"
         );
     }
 
