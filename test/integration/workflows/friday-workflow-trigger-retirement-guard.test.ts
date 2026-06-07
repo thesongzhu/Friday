@@ -32,8 +32,8 @@ const NOW = "2026-02-18T10:00:00.000Z";
 const PAST = "2020-01-01T00:00:00.000Z"; // ensures cron registration is "due" at NOW
 const RETIRED_CODE = "TS_RUNTIME_WORKFLOW_RUNS_RETIRED";
 const WEBHOOK_TOKEN = "tok_phase3_guard_placement_webhook_token_value";
-const WEBHOOK_SECRET_REF = "ref://workflow-webhook-secret";
-const WEBHOOK_SECRET = "phase3-guard-placement-webhook-shared-secret";
+const WEBHOOK_SECRET_REF = "ref://workflow-webhook-secret"; // pragma: allowlist secret
+const WEBHOOK_SECRET = "phase3-guard-placement-webhook-shared-secret"; // pragma: allowlist secret
 
 function makeGraph(
   workflowId: string,
