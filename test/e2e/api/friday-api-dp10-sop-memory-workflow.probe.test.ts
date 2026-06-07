@@ -360,6 +360,7 @@ describe("DP-10 probe — SOP memory triggers workflow execution", () => {
     };
 
     const agentRuntime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient,
       model: "dp10-deterministic-model",

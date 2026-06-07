@@ -86,6 +86,7 @@ describe("Friday execution voice eval", () => {
       };
 
       const runtime = createFridayAgentRuntime({
+        allowTestOnlyAgentRunExecution: true,
         db,
         llmClient,
         model: "test-model",

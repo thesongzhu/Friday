@@ -120,6 +120,7 @@ describe("Browser Resilience Integration", () => {
     }
 
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient: createMockLlmClient(opts.llmEvents),
       model: "test-model",

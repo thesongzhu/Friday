@@ -164,6 +164,7 @@ describe("Structural approval-boundary adversarial coverage", () => {
       ]);
 
       const runtime = createFridayAgentRuntime({
+        allowTestOnlyAgentRunExecution: true,
         db,
         llmClient,
         model: "test-model",

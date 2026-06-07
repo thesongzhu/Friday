@@ -1265,6 +1265,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Reflex Review Center real-browser f
 
         const eventEmitter = createFridayAgentEventEmitter();
         const agentRuntime = createFridayAgentRuntime({
+          allowTestOnlyAgentRunExecution: true,
           db,
           llmClient,
           model: "dp10-dogfood-deterministic-model",

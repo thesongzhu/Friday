@@ -156,6 +156,7 @@ async function createLiveVoiceRuntime(db: FridaySqliteLayer, idGenerator: () => 
   const llmClient = createLiveVoiceLlmClient();
 
   return createFridayAgentRuntime({
+    allowTestOnlyAgentRunExecution: true,
     db,
     llmClient,
     model: FAST_MODEL,

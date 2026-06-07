@@ -130,6 +130,7 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
       allowTestOnlyWorkflowDeployExecution: true,
       allowTestOnlySessionExecution: true,
       allowTestOnlySessionRunExecution: true,
+      allowTestOnlyAgentRunExecution: true,
       allowTestOnlySessionMemoryExtractionExecution: true,
       allowTestOnlyRealtimeExecution: true,
       allowTestOnlySkillConverterExecution: true,

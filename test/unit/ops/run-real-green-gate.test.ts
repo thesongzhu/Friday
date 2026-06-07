@@ -79,16 +79,27 @@ describe("run-real-green-gate helpers", () => {
     })).toBe(false);
   });
 
-  it("excludes agent-run-start-dependent RGG scenarios while the route is fail-closed", () => {
+  it("excludes every agent-run-dependent RGG scenario while the route is fail-closed", () => {
+    const reason =
+      "POST /v1/agent/runs is classified fail_closed in the TS runtime retirement manifest.";
     expect(resolveRetiredAgentRunScenarioExclusions(process.cwd())).toEqual([
-      {
-        scenarioId: "l3-destructive-request-visible-approval-gate",
-        reason: "POST /v1/agent/runs is classified fail_closed in the TS runtime retirement manifest.",
-      },
-      {
-        scenarioId: "l3-channel-origin-unified-task-state-contract",
-        reason: "POST /v1/agent/runs is classified fail_closed in the TS runtime retirement manifest.",
-      },
+      { scenarioId: "l3-memory-api-store-agent-recall-proof", reason },
+      { scenarioId: "l3-chat-direct-answer", reason },
+      { scenarioId: "l3-agent-replayable-evidence-receipt", reason },
+      { scenarioId: "l3-summary-misroute-guard", reason },
+      { scenarioId: "l3-vague-goal-awaiting-user-state", reason },
+      { scenarioId: "l3-destructive-request-visible-approval-gate", reason },
+      { scenarioId: "l3-channel-origin-unified-task-state-contract", reason },
+      { scenarioId: "l3-long-summary-direct", reason },
+      { scenarioId: "l3-json-extraction", reason },
+      { scenarioId: "l3-multi-turn-memory", reason },
+      { scenarioId: "l4-file-tool-roundtrip", reason },
+      { scenarioId: "l4-missing-file-no-verified-success", reason },
+      { scenarioId: "l4-exec-outside-workspace-boundary", reason },
+      { scenarioId: "l4-tool-search-deferred-tool-discovery", reason },
+      { scenarioId: "l4-context-cost-control-evidence", reason },
+      { scenarioId: "l4-tool-guardrail-pre-post-evidence", reason },
+      { scenarioId: "l8-agent-core-soak", reason },
     ]);
   });
 

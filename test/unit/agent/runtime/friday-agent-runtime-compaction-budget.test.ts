@@ -57,6 +57,7 @@ describe("FridayAgentRuntime compaction budget", () => {
 
   function createRuntime(compactionBridge: { compact: ReturnType<typeof vi.fn> }) {
     return createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient: createMockLlmClient([
         [
@@ -113,6 +114,7 @@ describe("FridayAgentRuntime compaction budget", () => {
   it("returns context cost token estimates and includes them in provider routing", async () => {
     const routingContexts: Array<FridayAgentLlmStreamParams["routingContext"]> = [];
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient: createMockLlmClient(
         [
@@ -182,6 +184,7 @@ describe("FridayAgentRuntime compaction budget", () => {
       },
     }));
     const runtime = createFridayAgentRuntime({
+      allowTestOnlyAgentRunExecution: true,
       db,
       llmClient: createMockLlmClient([]),
       model: "test-model",

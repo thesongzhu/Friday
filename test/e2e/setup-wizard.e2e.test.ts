@@ -159,6 +159,7 @@ describe("Setup Wizard E2E", () => {
         allowTestOnlyWorkflowBuilderDraftExecution: true,
         allowTestOnlySessionExecution: true,
         allowTestOnlySessionRunExecution: true,
+        allowTestOnlyAgentRunExecution: true,
         allowTestOnlySessionMemoryExtractionExecution: true,
         allowTestOnlySkillConverterExecution: true,
         allowTestOnlyProviderDetectExecution: true,

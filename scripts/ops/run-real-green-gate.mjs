@@ -138,9 +138,38 @@ export function resolveEffectiveExternalChannelScenarios(excludedScenarioIds) {
   return EXTERNAL_CHANNEL_SCENARIOS.filter((id) => !excluded.has(id));
 }
 
+// Every catalog scenario whose execution depends on POST /v1/agent/runs — i.e.
+// every scenario built with execution.kind === "agent_run" (the executeAgentRun
+// executor calls client.startAgentRun -> POST /v1/agent/runs). Once
+// agent_runs_start is classified fail_closed in the TS runtime retirement
+// manifest that route returns 503 TS_RUNTIME_AGENT_RUNS_RETIRED before any
+// product logic, so these scenarios cannot drive a TS agent run and are honestly
+// recorded as excluded (not a fake pass). In economy mode the provider-lane
+// scenarios were already excluded as provider scenarios; the two lane="none"
+// scenarios (destructive-approval-gate, channel-origin-task-state) needed the
+// explicit exclusion. In full mode (LIVE_PROVIDER_MODE=full) the provider-lane
+// agent_run scenarios DO run, so every one must be enumerated here or the gate
+// reds with ~21 agent-run failures (smoke + daily-core instances). The set below
+// is the complete agent_run catalog enumeration; sessions_run has no dependent
+// scenario (no catalog scenario drives POST /v1/sessions/:sessionKey/run).
 const AGENT_RUN_START_DEPENDENT_SCENARIOS = [
+  "l3-memory-api-store-agent-recall-proof",
+  "l3-chat-direct-answer",
+  "l3-agent-replayable-evidence-receipt",
+  "l3-summary-misroute-guard",
+  "l3-vague-goal-awaiting-user-state",
   "l3-destructive-request-visible-approval-gate",
   "l3-channel-origin-unified-task-state-contract",
+  "l3-long-summary-direct",
+  "l3-json-extraction",
+  "l3-multi-turn-memory",
+  "l4-file-tool-roundtrip",
+  "l4-missing-file-no-verified-success",
+  "l4-exec-outside-workspace-boundary",
+  "l4-tool-search-deferred-tool-discovery",
+  "l4-context-cost-control-evidence",
+  "l4-tool-guardrail-pre-post-evidence",
+  "l8-agent-core-soak",
 ];
 
 const WORKFLOW_RUN_START_DEPENDENT_SCENARIOS = [
