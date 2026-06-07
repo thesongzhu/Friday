@@ -37,6 +37,13 @@ export interface FridayRustHubRunTaskBridgeReceipt {
   readonly modelSize?: string;
   readonly backendKind?: string;
   readonly loopStatus?: string;
+  /**
+   * Bounded, refs-only error-category token (one of `parse_error` | `timeout` |
+   * `provider_http_error` | `agent_error_other`). Present ONLY when the loop ran but a turn
+   * errored (`loopStatus === "Errored"`); absent otherwise. NEVER carries raw model text —
+   * the Rust bin emits a fixed token, never `outcome.detail`.
+   */
+  readonly errorCategory?: string;
   readonly turns?: number;
   readonly executedTools?: number;
   /** sha256 of the final message body (the body itself is never transported). */
@@ -150,6 +157,8 @@ function parseReceipt(payload: unknown): FridayRustHubRunTaskBridgeReceipt {
     modelSize: asString(root.model_size),
     backendKind: asString(root.backend_kind),
     loopStatus: asString(root.loop_status),
+    // Optional bounded token; coerced to undefined unless a non-empty string is present.
+    errorCategory: asString(root.error_category),
     turns: asNumber(root.turns),
     executedTools: asNumber(root.executed_tools),
     finalMessageSha256,

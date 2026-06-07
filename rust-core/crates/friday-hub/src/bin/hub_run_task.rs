@@ -29,6 +29,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use friday_hub::runtime::{HubConfig, HubRuntime};
+use friday_hub::LoopStatus;
 use friday_storage::audit::verify_audit_chain;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -145,6 +146,18 @@ fn run() -> Result<String, BridgeError> {
     // route_id is a non-secret composite of provider + model identifiers.
     let route_id = format!("{}:{}", selection.provider_id, selection.model);
 
+    // Diagnosability without leakage: when the loop RAN but a turn errored
+    // (`Ok(_)` + `LoopStatus::Errored`), surface a BOUNDED, refs-only category token so the
+    // receipt itself carries the failure cause — instead of forcing recovery from the audit
+    // DB. CRITICAL: this is the classifier's `&'static str` token ONLY; the raw
+    // `outcome.detail` (which can embed model output) is NEVER placed in the payload. Any
+    // non-error status maps to JSON `null` (explicit "no error category").
+    let error_category: Option<&'static str> = if outcome.status == LoopStatus::Errored {
+        Some(classify_error_category(&outcome.detail))
+    } else {
+        None
+    };
+
     let payload = json!({
         "truth_label": "rust_wired_dev",
         "proof_only": true,
@@ -156,6 +169,7 @@ fn run() -> Result<String, BridgeError> {
         "model_size": format!("{:?}", selection.model_size),
         "backend_kind": format!("{:?}", selection.backend_kind),
         "loop_status": format!("{:?}", outcome.status),
+        "error_category": error_category,
         "turns": outcome.turns,
         "executed_tools": outcome.executed_tools,
         "final_message_sha256": final_message_sha256,
@@ -185,6 +199,29 @@ fn routed_loop_error_kind(err: &friday_hub::routing::RoutedLoopError) -> &'stati
         Route(_) => "route_failed",
         NoClientForProvider(_) => "no_client",
         Storage(_) => "storage_failed",
+    }
+}
+
+/// Map an errored loop's free-form `detail` to ONE bounded, refs-only error-category token.
+///
+/// CRITICAL leak boundary: this returns ONLY a fixed `&'static str` drawn from a closed
+/// vocabulary. It NEVER returns or embeds any slice of `detail` — a parse/serde error
+/// message can contain a snippet of the model's output, and `reject_forbidden_output`
+/// would NOT catch that (it is not a forbidden marker). Returning a literal makes leakage
+/// structurally impossible, not merely unlikely. Substrings are matched in priority order.
+fn classify_error_category(detail: &str) -> &'static str {
+    if detail.contains("parse_error") {
+        "parse_error"
+    } else if detail.contains("timeout") || detail.contains("timed out") {
+        "timeout"
+    } else if detail.contains("http")
+        || detail.contains("status")
+        || detail.contains("request")
+        || detail.contains("reqwest")
+    {
+        "provider_http_error"
+    } else {
+        "agent_error_other"
     }
 }
 
@@ -262,6 +299,51 @@ mod tests {
     fn ephemeral_secret_is_32_bytes_and_not_a_read_key() {
         let s = ephemeral_dev_secret(123, 456);
         assert_eq!(s.len(), 32);
+    }
+
+    #[test]
+    fn classify_error_category_maps_to_bounded_tokens_and_never_leaks_detail() {
+        // Each representative detail maps to its bounded token (priority order respected).
+        assert_eq!(
+            classify_error_category("agent_error:parse_error: not a single JSON object: EOF"),
+            "parse_error"
+        );
+        assert_eq!(
+            classify_error_category("connection timed out after 30s"),
+            "timeout"
+        );
+        // `request` would also match the http branch, but the timeout branch precedes it.
+        assert_eq!(classify_error_category("request timeout"), "timeout");
+        assert_eq!(
+            classify_error_category("reqwest error: status 500"),
+            "provider_http_error"
+        );
+        assert_eq!(
+            classify_error_category("http 503 from the upstream provider"),
+            "provider_http_error"
+        );
+        assert_eq!(
+            classify_error_category("something nobody anticipated"),
+            "agent_error_other"
+        );
+
+        // Leak boundary: a raw model-body snippet embedded in `detail` must NEVER appear in
+        // the returned token, and the token must always be from the closed vocabulary.
+        let fake_model_body =
+            "parse_error: LEAK_CANARY_modeltext_9f3 {\"answer\":\"42\"} <-- raw model output";
+        let token = classify_error_category(fake_model_body);
+        assert_eq!(token, "parse_error");
+        assert!(
+            !token.contains("LEAK_CANARY_modeltext_9f3"),
+            "classifier output must never carry any slice of detail"
+        );
+        assert!(
+            matches!(
+                token,
+                "parse_error" | "timeout" | "provider_http_error" | "agent_error_other"
+            ),
+            "token must be one of the closed vocabulary"
+        );
     }
 
     #[test]
