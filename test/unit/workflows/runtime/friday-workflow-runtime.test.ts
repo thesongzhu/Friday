@@ -69,6 +69,7 @@ function makeGraph(
 
 function createRuntime(db: FridaySqliteLayer): FridayWorkflowRuntime {
   return createFridayWorkflowRuntime({
+    allowTestOnlyWorkflowRunExecution: true, // TS-retirement method guard: test-oracle opt-in
     db,
     idGenerator: createTestIdGenerator(),
     nowIso: () => NOW,
@@ -340,6 +341,7 @@ describe("audit C Stage 2A — runtime fs-write verification (real fs delta → 
 
   function buildRuntime(specs: Record<string, SkillSpec>): FridayWorkflowRuntime {
     return createFridayWorkflowRuntime({
+      allowTestOnlyWorkflowRunExecution: true, // TS-retirement method guard: test-oracle opt-in
       db: createTestDb(),
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,

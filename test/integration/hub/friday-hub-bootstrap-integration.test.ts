@@ -199,6 +199,7 @@ describe("FridayHub Bootstrap Integration", () => {
     managedSkillsDir: string,
   ): Promise<FridayHub> {
     const hub = await createFridayHub({
+      allowTestOnlyWorkflowRunExecution: true, // TS-retirement method guard: test-oracle opt-in
       stateDir,
       skillDirs: [bundledSkillsDir, managedSkillsDir],
     });
@@ -817,6 +818,7 @@ describe("FridayHub Bootstrap Integration", () => {
     });
 
     const hub = await createFridayHub({
+      allowTestOnlyWorkflowRunExecution: true, // TS-retirement method guard: test-oracle opt-in
       stateDir,
       skillDirs: [bundledSkillsDir, managedSkillsDir],
       tokenSecret: PHASE32_TOKEN_SECRET,

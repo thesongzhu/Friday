@@ -972,6 +972,7 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday Reflex Review Center real-browser f
 
       const createDogfoodWorkflowRuntime = () =>
         createFridayWorkflowRuntime({
+          allowTestOnlyWorkflowRunExecution: true, // TS-retirement method guard: test-oracle opt-in
           db,
           idGenerator,
           nowIso: () => DP10_DOGFOOD_NOW,

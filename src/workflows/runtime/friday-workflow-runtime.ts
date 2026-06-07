@@ -517,6 +517,13 @@ export interface CreateFridayWorkflowRuntimeDeps {
   }) => string | null | Promise<string | null>;
   publishEvent?: (event: string, payload: unknown) => Promise<void>;
   triggerRepo?: FridayWorkflowTriggerRepository;
+  /**
+   * Test-oracle ONLY. Threaded into the workflow execution service so its
+   * `startRun` method fails closed for every non-route caller (scheduler/cron,
+   * webhook, event, channel) unless explicitly enabled. Production hub bootstrap
+   * leaves this unset → fail-closed. Mirrors the route-level guard flag.
+   */
+  allowTestOnlyWorkflowRunExecution?: boolean;
   onRunIntake?: (input: {
     runId: string;
     workflowId: string;
@@ -1671,6 +1678,7 @@ export function createFridayWorkflowRuntime(
     expressionEvaluator,
     idGenerator: deps.idGenerator,
     nowIso: deps.nowIso,
+    allowTestOnlyWorkflowRunExecution: deps.allowTestOnlyWorkflowRunExecution,
     publishEvent: deps.publishEvent,
     onRunIntake: pipelineEnabled || deps.onRunIntake ? async (input) => {
       let contextPatch: JsonObject | undefined;

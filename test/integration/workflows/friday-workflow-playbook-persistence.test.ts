@@ -57,6 +57,7 @@ function makeGraph(
 
 function createRuntime(db: FridaySqliteLayer): FridayWorkflowRuntime {
   return createFridayWorkflowRuntime({
+    allowTestOnlyWorkflowRunExecution: true, // TS-retirement method guard: test-oracle opt-in
     db,
     idGenerator: createTestIdGenerator(),
     nowIso: () => "2026-02-28T12:00:00.000Z",

@@ -119,6 +119,7 @@ describe("FridayWorkflowExecutionService — distributed execution", () => {
     });
 
     return createFridayWorkflowExecutionService({
+      allowTestOnlyWorkflowRunExecution: true, // TS-retirement method guard: test-oracle opt-in
       db,
       workflowRepo,
       runRepo,

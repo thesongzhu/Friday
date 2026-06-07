@@ -48,6 +48,7 @@ function graph(workflowId: string): FridayCompiledWorkflowGraphV2 {
 
 function runtimeOn(db: FridaySqliteLayer, grants: Array<{ action: string }>): FridayWorkflowRuntime {
   return createFridayWorkflowRuntime({
+    allowTestOnlyWorkflowRunExecution: true, // TS-retirement method guard: test-oracle opt-in
     db, idGenerator: createTestIdGenerator(), nowIso: () => NOW,
     computeChecksum: (c: string) => createHash("sha256").update(c).digest("hex"),
     resolveSkill: () => ({ id: "the-skill", manifest: { permissions: { grants } } }),
