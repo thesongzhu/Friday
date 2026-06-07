@@ -1949,8 +1949,8 @@ mod tests {
         // The finish contract `{"tool":"none","answer":"<text>"}` lifts the model's final
         // natural-language answer into `Finish.message` (Fix 2 — the loop's `final_message`
         // is no longer always empty on success).
-        let step = parse_agent_step("{\"tool\":\"none\",\"answer\":\"all done: 3 files read\"}")
-            .unwrap();
+        let step =
+            parse_agent_step("{\"tool\":\"none\",\"answer\":\"all done: 3 files read\"}").unwrap();
         assert_eq!(
             step,
             AgentStep::Finish {
@@ -1991,8 +1991,8 @@ mod tests {
     fn parse_agent_step_tool_branch_is_unchanged() {
         // A non-`none` tool call is still a `Tool` step (the answer extraction touches only
         // the finish branch); an `answer` field on a tool call is ignored, not an error.
-        let step =
-            parse_agent_step("{\"tool\":\"read_file\",\"parameters\":{\"path\":\"a.md\"}}").unwrap();
+        let step = parse_agent_step("{\"tool\":\"read_file\",\"parameters\":{\"path\":\"a.md\"}}")
+            .unwrap();
         assert_eq!(
             step,
             AgentStep::Tool(RawToolCall {
