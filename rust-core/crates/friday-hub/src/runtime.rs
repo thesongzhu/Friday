@@ -191,9 +191,9 @@ impl<T: Transport> HubRuntime<T> {
     /// answer-carries-marker proof is the separate live e2e). `None` principal ⇒ empty
     /// preamble, no recall.
     ///
-    /// SCOPE: this records the audit RECEIPT; it does NOT ledger tokens — `run_loop` does
-    /// not write `token_ledger` rows (loop-level token ledgering is a separate gap), so no
-    /// token-accounting claim is made here.
+    /// SCOPE: this records the audit RECEIPT; it does NOT ledger tokens — the recall step
+    /// itself spends no model call, so no token-accounting claim is made here. (The loop's
+    /// per-turn MODEL calls ARE ledgered as of S1.2 by `run_loop` via `bill_model_call`.)
     fn recall_preamble(&self, run_id: &str, now_ms: i64) -> Result<String, RoutedLoopError> {
         // Delegates to the SHARED recall composition so the loop and the `friday_ask`
         // surface apply the identical per-item Passport gate (no divergence). The recall

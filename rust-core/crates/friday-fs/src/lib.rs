@@ -394,21 +394,43 @@ pub fn write_file_within_root(
 /// The ancestor-directory TOCTOU window documented on [`open_read_within_root`] (an
 /// *ancestor* swapped for an outside-pointing symlink in the check→open window) is not
 /// closed here; the **final** component IS fully closed by `O_NOFOLLOW` + the held fd.
-/// Naming the root itself (`""`/`"."`) is a lexical rejection (parity with read/write):
-/// this API lists a *sub-path* of the trusted root, not the root.
+///
+/// Listing the trusted root ITSELF is supported: a candidate that denotes the root
+/// (`""`, `.`, or `./`) lists the canonicalized root's direct entries. This is the ONE
+/// primitive that accepts the root (read/write/stat/edit/append/delete/move still reject
+/// it via [`resolve_within_root`]) — the root is the containment boundary, not a path
+/// *above* it, so listing its children is escape-safe: `readdir` on the root fd yields the
+/// root's direct children only, with `..` excluded, so nothing above the root is ever
+/// surfaced. The root case gets the SAME final-component hardening as a sub-dir (real root
+/// opened `O_NOFOLLOW | O_NONBLOCK`, post-open `fstat` is-dir, `fdopendir`/`readdir` from
+/// the validated fd). Every NON-root candidate still flows through [`resolve_within_root`],
+/// so `..` / absolute / final-component-symlink / ancestor-symlink escapes stay rejected.
 pub fn list_dir_within_root(root: &Path, candidate: &str) -> Result<Vec<OsString>, FsError> {
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::io::IntoRawFd;
 
-    let resolved = resolve_within_root(root, candidate, /* parent_must_exist */ true)?;
+    // A candidate that denotes the root (`""`, `.`, `./`) lists the root itself. We
+    // canonicalize the root — the IDENTICAL call resolve_within_root step 2 makes (handles
+    // /tmp → /private/tmp; a non-existent root is NotFound) — and open THAT. The realpath-
+    // ancestor PARENT check is skipped here ONLY because the root has no in-bound parent to
+    // validate against (it IS the boundary), NOT because containment is relaxed: every
+    // non-root candidate still flows through resolve_within_root, so `..`/absolute/symlink/
+    // sub-path escapes remain rejected exactly as before.
+    let full = if candidate.is_empty() || candidate == "." || candidate == "./" {
+        std::fs::canonicalize(root).map_err(classify_open_err)?
+    } else {
+        resolve_within_root(root, candidate, /* parent_must_exist */ true)?.full
+    };
 
     // O_NOFOLLOW rejects a final-component symlink (ELOOP → Symlink, via classify_open_err);
     // O_NONBLOCK so the open never blocks; read(true) to read the directory's entries. We do
     // NOT pass O_DIRECTORY (see the doc comment) — the post-open fstat enforces "is a dir".
+    // (For the root case `full` is the canonicalized real root — itself never a symlink — so
+    // O_NOFOLLOW on it is correct and the dir it opens IS the trusted boundary.)
     let dir = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(&resolved.full)
+        .open(&full)
         .map_err(classify_open_err)?;
 
     // Post-open fstat: open(O_NOFOLLOW) succeeds on a regular file / FIFO as well, so require

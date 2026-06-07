@@ -158,6 +158,48 @@ fn list_dir_on_a_regular_file_is_not_a_directory() {
     );
 }
 
+#[test]
+fn list_dir_root_candidate_lists_the_root_entries() {
+    let root = TempDir::new();
+    write_file(&root.path().join("b.txt"), "b");
+    write_file(&root.path().join("a.txt"), "a");
+    fs::create_dir(root.path().join("sub")).unwrap();
+
+    // All three root-denoting tokens (`.`, ``, `./`) list the ROOT's own direct entries,
+    // sorted, with `.`/`..` excluded — the workspace-root listing the agent loop needs.
+    let expected = vec!["a.txt".to_string(), "b.txt".to_string(), "sub".to_string()];
+    for token in [".", "", "./"] {
+        let entries = list_dir_within_root(root.path(), token)
+            .unwrap_or_else(|e| panic!("root token {token:?} must list the root, got {e:?}"));
+        let names: Vec<String> = entries
+            .iter()
+            .map(|e| e.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, expected, "root token {token:?}");
+    }
+
+    // Escape-safety is preserved: only the literal root tokens bypass resolve_within_root;
+    // `..` / absolute / a final-component dir-symlink are STILL rejected.
+    assert!(matches!(
+        list_dir_within_root(root.path(), "..").unwrap_err(),
+        FsError::Lexical(PathError::Traversal)
+    ));
+    assert!(matches!(
+        list_dir_within_root(root.path(), "/etc").unwrap_err(),
+        FsError::Lexical(PathError::Absolute)
+    ));
+    let outside = TempDir::new();
+    write_file(&outside.path().join("leaked.txt"), "x");
+    symlink(outside.path(), root.path().join("link")).expect("final-component dir symlink");
+    assert!(
+        matches!(
+            list_dir_within_root(root.path(), "link").unwrap_err(),
+            FsError::Symlink
+        ),
+        "a final-component dir symlink must still be rejected even with root-listing support"
+    );
+}
+
 // ════════════════════════════ stat_file ════════════════════════════
 
 #[test]
