@@ -27,6 +27,10 @@ friday-fs.workspace = true
 # The live model returns free-text content; the tool-call protocol is a JSON object
 # the Hub parses back into a RawToolCall. serde_json is the strict parser for that.
 serde_json.workspace = true
+# Refs-only hashing for the S0 dev write-bridge bin (`hub_run_task`): the final
+# message is emitted as a sha256 hash + length, never as body text. Pure hashing,
+# no I/O; already in the Hub closure via friday-storage/friday-crypto.
+sha2.workspace = true
 thiserror.workspace = true
 # Memory-recall PII redaction (Hub-only — recall is Hub-side, the phone never
 # recalls). Pure computation, no I/O. NOT depended on by friday-ffi (phone).

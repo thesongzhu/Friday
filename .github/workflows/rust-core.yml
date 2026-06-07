@@ -36,6 +36,13 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy (-D warnings)
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Build bins (incl. S0 hub_run_task write-bridge)
+        # `cargo clippy --all-targets` / `cargo test --workspace` already compile every
+        # bin, so this is technically redundant — but it names the S0 dev write-bridge
+        # explicitly so a missing/compile-broken `hub_run_task` reds CI loudly. The bin is
+        # only BUILT here; running it needs FRIDAY_DEEPSEEK_API_KEY (the separate live-proof
+        # step), so it is never executed in CI.
+        run: cargo build -p friday-hub --bin hub_run_task
       - name: Test
         # The one live DeepSeek test is #[ignore]d, so this needs no network/secrets.
         run: cargo test --workspace
