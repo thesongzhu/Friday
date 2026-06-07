@@ -390,6 +390,12 @@ export interface CreateFridayApiRuntimeDeps {
    * fail-close until Rust owns deep-link handling.
    */
   allowTestOnlyDeepLinkExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript plugin lifecycle mutations
+   * (install/enable/disable/uninstall). Production/runtime callers must leave
+   * this unset so those routes fail-close until Rust owns the plugin lifecycle.
+   */
+  allowTestOnlyPluginExecution?: boolean;
   /** Optional: Reflex service for deterministic preference writes before agent runs. */
   reflexService?: FridayReflexService;
   /** Optional deterministic runtime capability getter used by context evidence selection. */

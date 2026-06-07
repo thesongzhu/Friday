@@ -3679,6 +3679,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     for (const route of createFridayPluginRoutes({
       pluginService: deps.pluginService,
       manifestLoader: deps.pluginManifestLoader,
+      allowTestOnlyPluginExecution: deps.allowTestOnlyPluginExecution,
     })) {
       routes.register(route);
     }
