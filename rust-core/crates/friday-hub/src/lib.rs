@@ -490,6 +490,14 @@ pub fn parse_tool_call(content: &str) -> Result<RawToolCall, AgentError> {
 /// can build on what already happened or finish. Pure + deterministic.
 pub fn build_loop_prompt(task: &str, history: &[TurnTrace]) -> String {
     let mut s = build_tool_prompt(task);
+    // Root-listing hint (unconditional — the loop calls this on turn 1 with EMPTY history,
+    // which is exactly when the model first tries to list the workspace). Pass path `"."`
+    // EXPLICITLY: an omitted `path` param errors (MissingParam), so steer to `"."`/empty
+    // rather than telling the model to drop the param.
+    s.push_str(
+        "Note: to list the workspace ROOT directory, call list_dir with path \".\" \
+         (an empty path \"\" also denotes the root).\n",
+    );
     if !history.is_empty() {
         s.push_str(
             "\nSo far this run (each line is a completed step; any text after \"content:\" \
