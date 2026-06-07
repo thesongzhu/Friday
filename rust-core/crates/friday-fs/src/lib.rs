@@ -93,6 +93,7 @@
 //!   STRICTER than the oracle (which only rejects directories) — a safe hardening
 //!   for the tool surface.
 
+use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
@@ -144,9 +145,51 @@ pub enum FsError {
     #[error("root path is not valid UTF-8")]
     NonUtf8Root,
 
+    /// The resolved path is not a directory where one was required (e.g. `list_dir`
+    /// on a regular file → `open(O_DIRECTORY)` returns `ENOTDIR`). Distinct from
+    /// [`FsError::IsDirectory`], which rejects a directory where a *file* was wanted.
+    #[error("path is not a directory")]
+    NotADirectory,
+
+    /// `edit_file` could not apply its replacement: the `old_text` to replace was not
+    /// found in the file (or was empty). The file is left **byte-for-byte unchanged** —
+    /// no write is performed. (Mirrors a no-op `String::replace` on the oracle's `edit`.)
+    #[error("edit target text not found in file")]
+    EditNoMatch,
+
     /// An underlying I/O error not classified above.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+/// The kind of a [`stat_file_within_root`] target, after the no-follow `lstat`. A
+/// final-component **symlink** is never reported (it is rejected as [`FsError::Symlink`]);
+/// anything that is neither a regular file nor a directory (FIFO/socket/device) is
+/// [`FileKind::Other`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileKind {
+    /// A regular file.
+    File,
+    /// A directory.
+    Dir,
+    /// A non-regular, non-directory inode (FIFO, socket, device node, …).
+    Other,
+}
+
+/// Metadata for a contained path returned by [`stat_file_within_root`]. `mode` is the
+/// low 9 permission bits (`& 0o777`); `len` is the inode size (bytes for a file; the
+/// directory's own size for a directory). Reported from the single no-follow `lstat`,
+/// so it describes exactly the inode named (no symlink follow, no re-resolution).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileStat {
+    /// File / directory / other.
+    pub kind: FileKind,
+    /// Inode size in bytes.
+    pub len: u64,
+    /// Low 9 permission bits (`mode & 0o777`).
+    pub mode: u32,
+    /// Whether the inode is not writable by anyone (std `Permissions::readonly`).
+    pub readonly: bool,
 }
 
 /// Open a contained file for **reading**, with the full hardening pipeline.
@@ -325,6 +368,289 @@ pub fn write_file_within_root(
             Err(FsError::from(e))
         }
     }
+}
+
+/// List the entries of a contained directory, **TOCTOU-free**.
+///
+/// Containment mirrors the read path's *final-component-swap* defense (not merely the
+/// lexical gate): the directory is opened `O_NOFOLLOW | O_NONBLOCK` so a final-component
+/// **symlink** is rejected (`ELOOP` → [`FsError::Symlink`]) exactly as for [`open_read_within_root`];
+/// the realpath-ancestor parent check has already run ([`resolve_within_root`]); a post-open
+/// `fstat` then requires the fd to be a **directory** ([`FsError::NotADirectory`] otherwise —
+/// `open(O_NOFOLLOW)` succeeds on a regular file / FIFO too, so this mirrors the read path's
+/// post-open directory check); and the listing is finally read from the **validated open fd**
+/// via `fdopendir`/`readdir` — never by re-resolving the path string. So the entries returned
+/// are exactly those of the inode we validated: a name swapped *after* the open cannot redirect
+/// the listing — the parity guarantee a plain `std::fs::read_dir(path)` (which re-resolves the
+/// name) would NOT give.
+///
+/// (`O_DIRECTORY` is deliberately NOT used: combined with `O_NOFOLLOW` on a symlink-to-a-dir
+/// some platforms return `ENOTDIR` instead of `ELOOP`, which would misclassify a rejected
+/// final-component symlink. The post-open `fstat` gives a platform-stable `NotADirectory`.)
+///
+/// Returns each entry name (excluding `.` and `..`), **sorted** for deterministic output.
+///
+/// # Residual (same posture as the read/write paths)
+/// The ancestor-directory TOCTOU window documented on [`open_read_within_root`] (an
+/// *ancestor* swapped for an outside-pointing symlink in the check→open window) is not
+/// closed here; the **final** component IS fully closed by `O_NOFOLLOW` + the held fd.
+/// Naming the root itself (`""`/`"."`) is a lexical rejection (parity with read/write):
+/// this API lists a *sub-path* of the trusted root, not the root.
+pub fn list_dir_within_root(root: &Path, candidate: &str) -> Result<Vec<OsString>, FsError> {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::io::IntoRawFd;
+
+    let resolved = resolve_within_root(root, candidate, /* parent_must_exist */ true)?;
+
+    // O_NOFOLLOW rejects a final-component symlink (ELOOP → Symlink, via classify_open_err);
+    // O_NONBLOCK so the open never blocks; read(true) to read the directory's entries. We do
+    // NOT pass O_DIRECTORY (see the doc comment) — the post-open fstat enforces "is a dir".
+    let dir = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(&resolved.full)
+        .map_err(classify_open_err)?;
+
+    // Post-open fstat: open(O_NOFOLLOW) succeeds on a regular file / FIFO as well, so require
+    // the validated fd to actually be a directory (platform-stable, mirrors the read path).
+    if !dir.metadata()?.is_dir() {
+        return Err(FsError::NotADirectory);
+    }
+
+    // Hand the validated fd to fdopendir, which takes ownership of it; `closedir` (below)
+    // closes that fd. We `into_raw_fd` so the `File`'s own Drop will NOT also close it.
+    let fd = dir.into_raw_fd();
+    // SAFETY: `fd` is a freshly-opened, owned directory fd. On success fdopendir adopts it.
+    let dirp = unsafe { libc::fdopendir(fd) };
+    if dirp.is_null() {
+        let e = std::io::Error::last_os_error();
+        // fdopendir did NOT adopt the fd on failure → we must close it ourselves.
+        // SAFETY: `fd` is still our owned, open fd (fdopendir failed).
+        unsafe {
+            libc::close(fd);
+        }
+        return Err(FsError::from(e));
+    }
+
+    let mut entries: Vec<OsString> = Vec::new();
+    // Read entries directly from the validated fd — no path re-resolution, so the
+    // directory's identity cannot be swapped out from under us. A null return ends the
+    // stream (errors during iteration are rare and also surface as a null terminator).
+    loop {
+        // SAFETY: `dirp` is the live DIR* from the successful fdopendir above.
+        let ent = unsafe { libc::readdir(dirp) };
+        if ent.is_null() {
+            break;
+        }
+        // SAFETY: `ent` is a valid `*mut dirent` until the next readdir/closedir; its
+        // `d_name` is a NUL-terminated C string embedded in that record.
+        let name = unsafe { std::ffi::CStr::from_ptr((*ent).d_name.as_ptr()) };
+        let bytes = name.to_bytes();
+        if bytes == b"." || bytes == b".." {
+            continue;
+        }
+        entries.push(std::ffi::OsStr::from_bytes(bytes).to_os_string());
+    }
+    // closedir closes the underlying fd we adopted via into_raw_fd → exactly one close,
+    // no leak and no double-close.
+    // SAFETY: `dirp` is the live DIR* and is not used after this call.
+    unsafe {
+        libc::closedir(dirp);
+    }
+
+    entries.sort();
+    Ok(entries)
+}
+
+/// Metadata of a contained path (file OR directory), via a no-follow `lstat`.
+///
+/// The final component is `lstat`'d (no symlink follow): a final-component **symlink** is
+/// rejected ([`FsError::Symlink`]) exactly as the read path's `O_NOFOLLOW` would — so this
+/// never reports *through* a symlink and never escapes the root via one — and the parent is
+/// realpath-ancestor-contained (shared [`resolve_within_root`]). Because the result IS the
+/// single `lstat` we performed (not a re-resolution), there is no final-component TOCTOU:
+/// the returned [`FileStat`] describes exactly the inode named. Unlike the read path this
+/// does NOT open the file, so it can stat any kind (including FIFO/socket/device, reported
+/// as [`FileKind::Other`]) without the open-side regular-file restriction.
+pub fn stat_file_within_root(root: &Path, candidate: &str) -> Result<FileStat, FsError> {
+    let resolved = resolve_within_root(root, candidate, /* parent_must_exist */ true)?;
+    let meta = std::fs::symlink_metadata(&resolved.full).map_err(classify_open_err)?;
+    let ft = meta.file_type();
+    if ft.is_symlink() {
+        return Err(FsError::Symlink);
+    }
+    let kind = if ft.is_dir() {
+        FileKind::Dir
+    } else if ft.is_file() {
+        FileKind::File
+    } else {
+        FileKind::Other
+    };
+    Ok(FileStat {
+        kind,
+        len: meta.len(),
+        mode: meta.mode() & 0o777,
+        readonly: meta.permissions().readonly(),
+    })
+}
+
+/// Append `contents` to a contained file (creating it `0o600` if absent), with the full
+/// read/write open hardening. Mirrors [`open_write_within_root`] but opens `O_APPEND` (every
+/// write lands at the current end-of-file) and does NOT truncate.
+///
+/// # Atomicity (truth-labeled)
+/// This is a **positional append, not an atomic replace** — the slice's "atomic temp+rename
+/// where applicable" deliberately does NOT apply to append. A mid-append I/O failure can
+/// leave a partial *tail* of `contents` appended, but can never corrupt or truncate the
+/// file's pre-existing bytes (`O_APPEND` only ever extends). We intentionally do NOT
+/// implement append as read+concat+temp-rename "atomic append": that would silently
+/// normalize the file mode to `0o600` and break hardlinks on **every** append — a surprising
+/// side effect for a primitive named "append" (and a whole-file rewrite per call).
+///
+/// Safety is identical to the write path: `O_NOFOLLOW` refuses a final-component symlink
+/// (`ELOOP`), `O_NONBLOCK` avoids a FIFO hang, and [`verify_fd_identity`] rejects a
+/// directory / non-regular fd / TOCTOU swap **before** any bytes are appended.
+pub fn append_file_within_root(
+    root: &Path,
+    candidate: &str,
+    contents: &[u8],
+) -> Result<(), FsError> {
+    use std::io::Write;
+    let resolved = resolve_within_root(root, candidate, /* parent_must_exist */ true)?;
+    let mut file = OpenOptions::new()
+        .append(true) // O_APPEND (implies write); positional append, no truncate
+        .create(true) // create-if-absent
+        .mode(0o600) // owner-only on create (applied only with O_CREAT)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(&resolved.full)
+        .map_err(classify_open_err)?;
+    // Reject a directory / non-regular fd / TOCTOU swap BEFORE appending any bytes.
+    verify_fd_identity(&file, &resolved.full)?;
+    file.write_all(contents)?;
+    Ok(())
+}
+
+/// Delete a contained **regular file** (`unlink`), without following a final-component
+/// symlink.
+///
+/// Pipeline: lexical gate + canonicalized-root + realpath-ancestor parent check (shared
+/// [`resolve_within_root`]), then a no-follow `lstat` don't-clobber policy mirroring the
+/// write path — a **symlink** target is refused ([`FsError::Symlink`]) (we never remove a
+/// link the model named as a "file"), a **directory** is refused ([`FsError::IsDirectory`])
+/// (this is a file primitive; there is no `rmdir` here), and any non-regular inode is refused
+/// ([`FsError::NotRegularFile`]). A missing target is [`FsError::NotFound`].
+///
+/// The `lstat`→`unlink` TOCTOU is harmless: `unlink(2)` never follows a symlink, so even a
+/// final-component swap to an outside-pointing symlink in the window would remove only the
+/// *link*, never the outside target — there is no escape, only the don't-clobber policy.
+pub fn delete_file_within_root(root: &Path, candidate: &str) -> Result<(), FsError> {
+    let resolved = resolve_within_root(root, candidate, /* parent_must_exist */ true)?;
+    let meta = std::fs::symlink_metadata(&resolved.full).map_err(classify_open_err)?;
+    let ft = meta.file_type();
+    if ft.is_symlink() {
+        return Err(FsError::Symlink);
+    }
+    if ft.is_dir() {
+        return Err(FsError::IsDirectory);
+    }
+    if !ft.is_file() {
+        return Err(FsError::NotRegularFile);
+    }
+    std::fs::remove_file(&resolved.full)?;
+    Ok(())
+}
+
+/// Move/rename a contained **regular file** to another contained path via `rename(2)`
+/// (atomic within a filesystem). BOTH endpoints are independently hardened.
+///
+/// - **Source**: shared [`resolve_within_root`] + a no-follow `lstat` requiring a regular
+///   file — a symlink source is refused ([`FsError::Symlink`]), a directory
+///   ([`FsError::IsDirectory`]), any non-regular inode ([`FsError::NotRegularFile`]), and a
+///   missing source ([`FsError::NotFound`]).
+/// - **Destination**: shared [`resolve_within_root`] (so its parent is realpath-ancestor-
+///   contained) + a no-follow `lstat` don't-clobber — an existing **symlink** or
+///   **directory** at the destination is refused (we never replace a link/dir); an existing
+///   regular file IS replaced (the atomic same-name replace `rename` provides).
+///
+/// `rename(2)` follows no symlinks on either end (it operates on the names), is atomic, and
+/// both parents are realpath-contained, so neither endpoint can escape the root. Residual: a
+/// parent-*directory* swap between the realpath check and the rename is the same path-based
+/// TOCTOU tracked for [`open_write_within_root`] (hardening = `renameat`/dir-fd-relative ops).
+pub fn move_file_within_root(root: &Path, src: &str, dst: &str) -> Result<(), FsError> {
+    let src_res = resolve_within_root(root, src, /* parent_must_exist */ true)?;
+    let dst_res = resolve_within_root(root, dst, /* parent_must_exist */ true)?;
+
+    // Source must be an existing regular file (no symlink / dir / special).
+    let src_meta = std::fs::symlink_metadata(&src_res.full).map_err(classify_open_err)?;
+    let sft = src_meta.file_type();
+    if sft.is_symlink() {
+        return Err(FsError::Symlink);
+    }
+    if sft.is_dir() {
+        return Err(FsError::IsDirectory);
+    }
+    if !sft.is_file() {
+        return Err(FsError::NotRegularFile);
+    }
+
+    // Don't-clobber a non-regular destination (symlink / dir); a regular file is replaced.
+    match std::fs::symlink_metadata(&dst_res.full) {
+        Ok(dmeta) => {
+            let dft = dmeta.file_type();
+            if dft.is_symlink() {
+                return Err(FsError::Symlink);
+            }
+            if dft.is_dir() {
+                return Err(FsError::IsDirectory);
+            }
+            if !dft.is_file() {
+                return Err(FsError::NotRegularFile);
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(classify_open_err(e)),
+    }
+
+    std::fs::rename(&src_res.full, &dst_res.full)?;
+    Ok(())
+}
+
+/// Replace the **first** occurrence of `old_text` with `new_text` in a contained file, then
+/// write the result back **atomically** (temp+rename via [`write_file_within_root`]).
+///
+/// Faithful to the TS oracle's `edit` tool (`content.replace(oldText, newText)` — first match
+/// only). This is a thin composition: the read goes through [`open_read_within_root`] and the
+/// write through [`write_file_within_root`], so it inherits ALL of their containment + atomicity
+/// guarantees and adds no new open path of its own (no fresh attack surface).
+///
+/// # Errors
+/// - The file must be valid UTF-8; a binary file surfaces as [`FsError::Io`] (`InvalidData`).
+/// - If `old_text` is empty or not present, the file is left **byte-for-byte unchanged** and
+///   [`FsError::EditNoMatch`] is returned — no write occurs.
+/// - Containment / symlink / not-found failures surface from the underlying read or atomic
+///   write exactly as for those primitives.
+pub fn edit_file_within_root(
+    root: &Path,
+    candidate: &str,
+    old_text: &str,
+    new_text: &str,
+) -> Result<(), FsError> {
+    use std::io::Read;
+    // Hardened read (lexical gate + O_NOFOLLOW + realpath-ancestor + fd-identity).
+    let mut file = open_read_within_root(root, candidate)?;
+    let mut content = String::new();
+    // read_to_string returns ErrorKind::InvalidData for non-UTF-8 content → FsError::Io.
+    file.read_to_string(&mut content).map_err(FsError::Io)?;
+
+    // First-occurrence replace, faithful to the oracle. An empty `old_text` would otherwise
+    // prepend at every position; treat it as a no-match for predictability.
+    if old_text.is_empty() || !content.contains(old_text) {
+        return Err(FsError::EditNoMatch);
+    }
+    let updated = content.replacen(old_text, new_text, 1);
+
+    // Atomic replace (temp+rename): a mid-write failure leaves the original file intact.
+    write_file_within_root(root, candidate, updated.as_bytes())
 }
 
 /// A candidate that has passed the lexical gate + canonicalized-root +
