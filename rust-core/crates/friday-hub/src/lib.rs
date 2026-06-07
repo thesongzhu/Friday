@@ -756,9 +756,91 @@ pub fn trusted_classify(
     default_registry().classify(action, params)
 }
 
-/// Build the canonical [`MutatingActionRequest`] for a raw tool call. Deterministic:
-/// the same call always yields byte-identical `canonical_action_bytes`, so an approval
-/// minted over this request matches when the turn re-builds it.
+/// Per-run authority policy threaded into the gate-mandatory dispatch (S4): WHO the run
+/// is for (`principal_id`, bound into the gate [`friday_core::gate::Actor`] and thus the
+/// action digest — a real capability AND the S6 approval-binding prerequisite), plus the
+/// per-run RESTRICTIONS (`disabled_tools`, `read_only`) the dispatch enforces BEFORE a
+/// tool can execute.
+///
+/// **Strictly fail-safe.** [`RunPolicy::default`] (no principal, nothing disabled, not
+/// read-only) reproduces the pre-S4 behavior EXACTLY; a populated policy can only ever
+/// NARROW authority (bind a principal — which never grants approval, see
+/// [`build_request_with_policy`] — and block more tools), never widen it. An unknown
+/// principal / empty disabled-set therefore defaults to current behavior, never looser.
+///
+/// Mirrors the TS `executeRun` run-config (`principalId` / `disabledToolNames` /
+/// `constraints.readOnly`); `disabled_tools` is normalized like the oracle's
+/// `normalizeToolNameSet` (trim, drop empties). Authorization `scopes` (TS
+/// `constraints`/`scopes` for policy routing) are a DEFERRED follow-up — the Rust gate
+/// models no scope→action policy yet, so wiring one here would balloon scope.
+#[derive(Clone, Debug, Default)]
+pub struct RunPolicy {
+    principal_id: Option<String>,
+    disabled_tools: std::collections::BTreeSet<String>,
+    read_only: bool,
+}
+
+impl RunPolicy {
+    /// Build a policy. `disabled_tools` is normalized (trimmed, empties dropped) to match
+    /// the TS oracle's `normalizeToolNameSet`. A `(None, [], false)` triple is exactly
+    /// [`RunPolicy::default`] (pre-S4 behavior).
+    pub fn new(
+        principal_id: Option<String>,
+        disabled_tools: impl IntoIterator<Item = String>,
+        read_only: bool,
+    ) -> Self {
+        let disabled_tools = disabled_tools
+            .into_iter()
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
+            .collect();
+        RunPolicy {
+            principal_id,
+            disabled_tools,
+            read_only,
+        }
+    }
+
+    /// The run's bound principal (WHO the run is for). `None` ⇒ no principal bound — the
+    /// gate Actor's `principal_id` stays `None` (the pre-S4 default).
+    pub fn principal_id(&self) -> Option<&str> {
+        self.principal_id.as_deref()
+    }
+
+    /// True if `action` is disabled for this run (compared trim-insensitively against the
+    /// normalized set). A disabled tool is REJECTED before classification/execution.
+    pub fn is_tool_disabled(&self, action: &str) -> bool {
+        self.disabled_tools.contains(action.trim())
+    }
+
+    /// True if this run is constrained read-only (a mutating tool is blocked before
+    /// execution — strictly stricter than the gate's default Pause-pending-approval).
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+}
+
+/// Build the canonical [`MutatingActionRequest`] for a raw tool call with the pre-S4
+/// default policy (no principal bound). Thin wrapper over [`build_request_with_policy`];
+/// existing callers/tests that do not bind a per-run principal are unchanged.
+pub fn build_request(raw: &RawToolCall) -> Result<MutatingActionRequest, ToolError> {
+    build_request_with_policy(raw, &RunPolicy::default())
+}
+
+/// Build the canonical [`MutatingActionRequest`] for a raw tool call, binding the run's
+/// PRINCIPAL (S4) from `policy` into the gate [`friday_core::gate::Actor`]. Deterministic:
+/// the same call+policy always yields byte-identical `canonical_action_bytes`, so an
+/// approval minted over this request matches when the turn re-builds it.
+///
+/// **The principal is bound into the action digest.** `canonical_action_bytes`
+/// length-prefixes `actor.principal_id`, so a request for principal `A` and the SAME
+/// action for principal `B` (or `None`) produce DIFFERENT digests — this is both a real
+/// capability (a run is scoped to a principal) and the S6 prerequisite (an operator
+/// approval binds to a specific principal). The actor KIND stays [`ActorKind::Agent`]:
+/// S4 records WHO the run is for, it does NOT grant approval authority — an Agent actor
+/// can STILL never self-approve (the bound-principal rule in `friday-core::gate` is
+/// untouched). `policy.principal_id() == None` reproduces the pre-S4 `principal_id: None`
+/// actor exactly.
 ///
 /// **This is the single chokepoint that closes UNW-001.** `mutating`/`risk`/`resource`
 /// come from [`trusted_classify`] (the registry + param inspection), NEVER from the
@@ -768,7 +850,10 @@ pub fn trusted_classify(
 /// set from the sealed [`Classified`] via [`MutatingActionRequest::from_classification`],
 /// so no other code can construct a request that skips classification. An unregistered
 /// action is refused here ([`ToolError::UnknownTool`]) and the turn never authorizes it.
-pub fn build_request(raw: &RawToolCall) -> Result<MutatingActionRequest, ToolError> {
+pub fn build_request_with_policy(
+    raw: &RawToolCall,
+    policy: &RunPolicy,
+) -> Result<MutatingActionRequest, ToolError> {
     let classified = trusted_classify(&raw.action, &raw.params)?;
     Ok(MutatingActionRequest::from_classification(
         classified,
@@ -776,7 +861,10 @@ pub fn build_request(raw: &RawToolCall) -> Result<MutatingActionRequest, ToolErr
         friday_core::gate::Actor {
             kind: ActorKind::Agent,
             id: "hub-agent".to_string(),
-            principal_id: None,
+            // S4: bind the run's principal (WHO the run is for) — None reproduces the
+            // pre-S4 actor. This flows into `canonical_action_bytes`, so the digest binds
+            // the principal (S6 prereq). KIND stays Agent → still cannot self-approve.
+            principal_id: policy.principal_id.clone(),
         },
         "agent".to_string(),
         vec![],
@@ -1542,10 +1630,63 @@ pub(crate) fn gate_dispatch(
     approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
     now_ms: i64,
 ) -> Result<GateDispatch, StorageError> {
-    let request = match build_request(raw) {
+    // Pre-S4 default policy (no principal bound, nothing disabled): unchanged behavior.
+    gate_dispatch_with_policy(
+        conn,
+        executor,
+        raw,
+        secret,
+        approve,
+        &RunPolicy::default(),
+        now_ms,
+    )
+}
+
+/// [`gate_dispatch`] with a per-run [`RunPolicy`] (S4): binds the run's PRINCIPAL into the
+/// request (and thus the action digest) and enforces the run's RESTRICTIONS BEFORE
+/// execution. The two restriction checks are fail-closed and applied ahead of the gate, so
+/// they can only NARROW authority (block more), never widen it:
+///   1. a tool DISABLED for this run (`disabledToolNames`) is refused outright — it never
+///      reaches classification/authorization/execution (`tool_disabled_for_run:*`);
+///   2. under a READ-ONLY run constraint, a mutating tool (per the TRUSTED registry
+///      classification, never model-asserted) is refused before execution
+///      (`run_is_read_only:*`) — strictly stricter than the gate's default (Pause pending
+///      approval). Both surface as [`GateDispatch::Denied`] so the shared callers
+///      ([`run_loop_with_policy`], `workflow_exec`) need no new arm.
+///
+/// Everything else is identical to the pre-S4 path: authorize → execute ONLY on `Allow`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn gate_dispatch_with_policy(
+    conn: &Connection,
+    executor: &dyn ToolExecutor,
+    raw: &RawToolCall,
+    secret: &[u8],
+    approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
+    policy: &RunPolicy,
+    now_ms: i64,
+) -> Result<GateDispatch, StorageError> {
+    // (0) disabledToolNames — fail-closed, BEFORE classify/authorize/execute. A tool not
+    //     available to this run must never run; refusing here (it never reaches the gate)
+    //     is strictly stricter than any gate decision.
+    if policy.is_tool_disabled(&raw.action) {
+        return Ok(GateDispatch::Denied(format!(
+            "tool_disabled_for_run:{}",
+            raw.action
+        )));
+    }
+    let request = match build_request_with_policy(raw, policy) {
         Ok(request) => request,
         Err(ToolError::UnknownTool(action)) => return Ok(GateDispatch::Unregistered(action)),
     };
+    // (1) read-only run constraint — a mutating tool (TRUSTED `mutating()`, never the
+    //     model's word) is blocked before execution. Stricter than the gate (which would
+    //     Pause it); never looser.
+    if policy.is_read_only() && request.mutating() {
+        return Ok(GateDispatch::Denied(format!(
+            "run_is_read_only:{}",
+            raw.action
+        )));
+    }
     let approval = approve(&request);
     let record = authorize_mutating_action(conn, &request, approval.as_ref(), secret, now_ms)?;
     Ok(match record.decision {
@@ -1666,6 +1807,37 @@ fn bill_model_call(
     friday_storage::record_run_model_call(conn, run_id, &entry, &activity, &audit)
 }
 
+/// Drive a MULTI-TURN agent loop with the pre-S4 default policy (no per-run principal
+/// bound, no disabled tools, not read-only). Thin wrapper over [`run_loop_with_policy`];
+/// existing callers/tests are unchanged.
+#[allow(clippy::too_many_arguments)]
+pub fn run_loop(
+    client: &dyn AgentLlmClient,
+    executor: &dyn ToolExecutor,
+    conn: &Connection,
+    run_id: &str,
+    task: &str,
+    recall_preamble: &str,
+    secret: &[u8],
+    approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
+    max_turns: u64,
+    now_ms: i64,
+) -> Result<LoopOutcome, StorageError> {
+    run_loop_with_policy(
+        client,
+        executor,
+        conn,
+        run_id,
+        task,
+        recall_preamble,
+        secret,
+        approve,
+        &RunPolicy::default(),
+        max_turns,
+        now_ms,
+    )
+}
+
 /// Drive a MULTI-TURN agent loop: repeatedly ask the model for the next step (with
 /// conversation history), and for each proposed tool run the SAME gate-mandatory
 /// dispatch as [`run_one_turn_with_executor`] (authorize → execute only on `Allow` →
@@ -1673,6 +1845,12 @@ fn bill_model_call(
 /// the model `Finish`es, a tool is `Paused`(RequiresApproval)/`Blocked`(Deny/unknown),
 /// the client errors, or `max_turns` is hit (the bound — a runaway model cannot loop
 /// forever).
+///
+/// `policy` (S4) makes the loop principal/scope/constraint-aware: the run's PRINCIPAL is
+/// bound into every gate request's `Actor` (and thus the action digest), and the run's
+/// RESTRICTIONS (`disabled_tools`, `read_only`) reject a tool before it can execute —
+/// enforced inside the SHARED [`gate_dispatch_with_policy`] chokepoint. A
+/// [`RunPolicy::default`] reproduces the pre-S4 behavior exactly.
 ///
 /// `approve` is the owner-approval seam: given a mutating request, it returns a signed
 /// [`CanonicalApproval`] iff the owner approved THIS action (in production this is the
@@ -1687,7 +1865,7 @@ fn bill_model_call(
 /// `executed_tools`, by deliberate honest accounting). All observable in the
 /// `agent_run_event` log.
 #[allow(clippy::too_many_arguments)]
-pub fn run_loop(
+pub fn run_loop_with_policy(
     client: &dyn AgentLlmClient,
     executor: &dyn ToolExecutor,
     conn: &Connection,
@@ -1696,6 +1874,7 @@ pub fn run_loop(
     recall_preamble: &str,
     secret: &[u8],
     approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
+    policy: &RunPolicy,
     max_turns: u64,
     now_ms: i64,
 ) -> Result<LoopOutcome, StorageError> {
@@ -1806,8 +1985,9 @@ pub fn run_loop(
         };
 
         // Gate-mandatory dispatch via the SHARED chokepoint (same as run_workflow):
-        // classify → authorize → execute ONLY on Allow. run_loop owns the recording.
-        match gate_dispatch(conn, executor, &raw, secret, approve, now_ms)? {
+        // (disabled/read-only restriction) → bind principal → classify → authorize →
+        // execute ONLY on Allow. run_loop owns the recording.
+        match gate_dispatch_with_policy(conn, executor, &raw, secret, approve, policy, now_ms)? {
             GateDispatch::Unregistered(action) => {
                 agent_run::record_event(
                     conn,
@@ -2214,6 +2394,193 @@ mod tests {
         .unwrap();
         assert_eq!(a.resource(), b.resource());
         assert_eq!(a.resource().unwrap().id, Some("p".to_string())); // `path` wins
+    }
+
+    // ── S4: per-run principal/scope/constraint awareness ──────────────────────
+
+    /// Unique temp workspace dir for the gate-dispatch executor tests.
+    fn temp_ws(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "friday-hub-s4-ws-{}-{}-{}",
+            std::process::id(),
+            tag,
+            TMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn build_request_binds_the_run_principal_into_the_digest() {
+        // S6 PREREQUISITE: the SAME action for DIFFERENT principals yields DIFFERENT
+        // canonical bytes (so a minted approval is bound to ONE principal), and the same
+        // principal is deterministic. This is the principal→digest binding, proven here
+        // (it is NOT visible in the refs-only bin output — the coordinator verifies it here).
+        let raw = RawToolCall {
+            action: "delete_file".to_string(),
+            params: vec![("path".to_string(), "/data/x".to_string())],
+        };
+        let pol =
+            |p: Option<&str>| RunPolicy::new(p.map(|s| s.to_string()), Vec::<String>::new(), false);
+        let digest = |p: Option<&str>| {
+            canonical_action_bytes(&build_request_with_policy(&raw, &pol(p)).unwrap())
+        };
+        let alice = digest(Some("alice"));
+        let bob = digest(Some("bob"));
+        let none = digest(None);
+        assert_ne!(
+            alice, bob,
+            "different principals must produce different digests"
+        );
+        assert_ne!(
+            alice, none,
+            "a bound principal must differ from the unbound default"
+        );
+        assert_ne!(bob, none);
+        // Deterministic for the same principal (an approval minted for alice re-matches).
+        assert_eq!(alice, digest(Some("alice")));
+        // The default policy reproduces the legacy `build_request` (no principal bound).
+        assert_eq!(none, canonical_action_bytes(&build_request(&raw).unwrap()));
+    }
+
+    #[test]
+    fn bound_principal_rule_holds_even_with_a_principal_bound() {
+        use friday_core::gate::{classify, evaluate, Actor};
+        // S4 records WHO the run is for; it does NOT grant approval. An Agent actor WITH a
+        // bound principal (exactly the actor build_request_with_policy makes) attempting a
+        // reserved approval action is STILL a hard Deny — the bound-principal rule is intact.
+        let req = MutatingActionRequest::from_classification(
+            classify(false, Risk::ReadOnly, "approve", &[]),
+            "approve".to_string(),
+            Actor {
+                kind: ActorKind::Agent,
+                id: "hub-agent".to_string(),
+                principal_id: Some("alice".to_string()),
+            },
+            "agent".to_string(),
+            vec![],
+            None,
+            None,
+            None,
+        );
+        let r = evaluate(&req);
+        assert_eq!(r.decision, GateDecision::Deny);
+        assert_eq!(r.reason, "agent_cannot_execute_reserved_approval_action");
+        // And the request the loop ACTUALLY builds (a registered tool) stays Agent-kind with
+        // the principal recorded — so the rule above applies to every loop-built request.
+        let built = build_request_with_policy(
+            &RawToolCall {
+                action: "write_file".to_string(),
+                params: vec![
+                    ("path".to_string(), "x".to_string()),
+                    ("content".to_string(), "y".to_string()),
+                ],
+            },
+            &RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), false),
+        )
+        .unwrap();
+        assert_eq!(built.actor.kind, ActorKind::Agent);
+        assert_eq!(built.actor.principal_id.as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn gate_dispatch_blocks_a_disabled_tool_before_execution() {
+        let db = Db::open_hub(&temp_path("s4-disabled")).unwrap();
+        let ws = temp_ws("s4-disabled");
+        std::fs::write(ws.join("notes.md"), b"do-not-read").unwrap();
+        let fs = FsToolExecutor::new(ws.clone());
+        let exec = CountingExecutor {
+            inner: &fs,
+            calls: std::cell::Cell::new(0),
+        };
+        let approve = no_approval();
+        let raw = read_only_proposal(); // read_file notes.md (read-only → Allow by default)
+
+        // CONTROL: NOT disabled → executes (read-only Allow), executor reached exactly once.
+        let ctrl = gate_dispatch_with_policy(
+            db.conn(),
+            &exec,
+            &raw,
+            SECRET,
+            &approve,
+            &RunPolicy::default(),
+            1,
+        )
+        .unwrap();
+        assert!(matches!(ctrl, GateDispatch::Executed(_)));
+        assert_eq!(exec.calls.get(), 1);
+
+        // DISABLED: read_file disabled for this run → Denied BEFORE execution; the executor
+        // is NOT reached again (the count stays 1).
+        let policy = RunPolicy::new(None, ["read_file".to_string()], false);
+        let blocked =
+            gate_dispatch_with_policy(db.conn(), &exec, &raw, SECRET, &approve, &policy, 1)
+                .unwrap();
+        if let GateDispatch::Denied(reason) = blocked {
+            assert_eq!(reason, "tool_disabled_for_run:read_file");
+        } else {
+            panic!("a disabled tool must be Denied");
+        }
+        assert_eq!(
+            exec.calls.get(),
+            1,
+            "the disabled tool must not reach the executor"
+        );
+    }
+
+    #[test]
+    fn read_only_run_blocks_a_mutating_tool_and_deny_all_still_pauses() {
+        let db = Db::open_hub(&temp_path("s4-ro")).unwrap();
+        let ws = temp_ws("s4-ro");
+        let fs = FsToolExecutor::new(ws.clone());
+        let exec = CountingExecutor {
+            inner: &fs,
+            calls: std::cell::Cell::new(0),
+        };
+        let approve = no_approval();
+        let write = RawToolCall {
+            action: "write_file".to_string(),
+            params: vec![
+                ("path".to_string(), "out.txt".to_string()),
+                ("content".to_string(), "X".to_string()),
+            ],
+        };
+
+        // read_only run → the mutating write is Denied BEFORE execution (stricter than the
+        // gate's default Pause); the executor is never reached and no file is created.
+        let policy = RunPolicy::new(None, Vec::<String>::new(), true);
+        let ro = gate_dispatch_with_policy(db.conn(), &exec, &write, SECRET, &approve, &policy, 1)
+            .unwrap();
+        if let GateDispatch::Denied(reason) = ro {
+            assert_eq!(reason, "run_is_read_only:write_file");
+        } else {
+            panic!("a mutating tool under a read_only run must be Denied");
+        }
+        assert_eq!(exec.calls.get(), 0);
+        assert!(
+            !ws.join("out.txt").exists(),
+            "no file written under read_only"
+        );
+
+        // CONTROL (deny-all, NOT read_only): the SAME mutating write still PAUSES
+        // (RequiresApproval) — the gate's fail-safe default is unchanged; read_only is what
+        // upgrades that Pause to a hard block.
+        let pause = gate_dispatch_with_policy(
+            db.conn(),
+            &exec,
+            &write,
+            SECRET,
+            &approve,
+            &RunPolicy::default(),
+            1,
+        )
+        .unwrap();
+        assert!(matches!(pause, GateDispatch::RequiresApproval));
+        assert_eq!(
+            exec.calls.get(),
+            0,
+            "a paused mutating action never executes"
+        );
     }
 
     // --- §5-PR2: prompt + strict parse (offline) ---

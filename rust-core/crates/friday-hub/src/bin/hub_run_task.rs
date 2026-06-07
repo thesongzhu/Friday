@@ -121,13 +121,34 @@ fn run() -> Result<String, BridgeError> {
     // secret-shaped is constructed or persisted.
     let secret = ephemeral_dev_secret(pid, nanos);
 
+    // S4 (all OPTIONAL — defaults reproduce the pre-S4 dev-bridge behavior exactly, so the
+    // existing TS bridge service, which passes none of these, is unaffected):
+    //   --principal <id>      bind a run principal (also enables that owner's memory recall);
+    //                         flows into every gate request's Actor + the action digest.
+    //   --disable-tools a,b   comma-separated tool names disabled for this run (rejected
+    //                         before execution).
+    //   --read-only           block all mutating tools for this run (constraint).
+    let principal_id = arg_value(&args, "--principal").filter(|p| !p.trim().is_empty());
+    let disabled_tools: Vec<String> = arg_value(&args, "--disable-tools")
+        .map(|csv| {
+            csv.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    let read_only = args.iter().any(|a| a == "--read-only");
+
     let runtime = HubRuntime::live(HubConfig {
         db_path,
         workspace_root: PathBuf::from(&workspace_root),
         secret,
         max_turns,
-        // Memory recall stays DISABLED in this dev bridge (no owner principal bound).
-        principal_id: None,
+        // Memory recall is DISABLED unless --principal binds an owner (S4: the same
+        // principal is bound into the gate Actor + action digest for the run).
+        principal_id,
+        disabled_tools,
+        read_only,
     })
     .map_err(|_| BridgeError::new("init_failed"))?;
 

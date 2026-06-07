@@ -44,7 +44,7 @@ use friday_core::gate::{CanonicalApproval, MutatingActionRequest};
 use friday_storage::StorageError;
 use rusqlite::Connection;
 
-use crate::{run_loop, AgentLlmClient, LoopOutcome, ToolExecutor};
+use crate::{run_loop_with_policy, AgentLlmClient, LoopOutcome, ToolExecutor};
 
 /// Provider wire API. Subset of the oracle's `FRIDAY_PROVIDER_APIS` that this
 /// decision layer routes across; the registrant tags each route with its api so
@@ -438,6 +438,44 @@ pub fn run_routed_loop(
     max_turns: u64,
     now_ms: i64,
 ) -> Result<(RoutedSelection, LoopOutcome), RoutedLoopError> {
+    // Pre-S4 default policy (no principal bound, nothing disabled): unchanged behavior.
+    run_routed_loop_with_policy(
+        registry,
+        request,
+        resolver,
+        executor,
+        conn,
+        run_id,
+        task,
+        recall_preamble,
+        secret,
+        approve,
+        &crate::RunPolicy::default(),
+        max_turns,
+        now_ms,
+    )
+}
+
+/// [`run_routed_loop`] with a per-run [`crate::RunPolicy`] (S4): selects the route exactly
+/// as the default path (routing has zero authority over classification or the gate), then
+/// drives [`run_loop_with_policy`] so the run's principal binds into the action digest and
+/// its disabled/read-only restrictions are enforced before any tool executes.
+#[allow(clippy::too_many_arguments)]
+pub fn run_routed_loop_with_policy(
+    registry: &RouteRegistry,
+    request: &RouteRequest,
+    resolver: &dyn ProviderClientResolver,
+    executor: &dyn ToolExecutor,
+    conn: &Connection,
+    run_id: &str,
+    task: &str,
+    recall_preamble: &str,
+    secret: &[u8],
+    approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
+    policy: &crate::RunPolicy,
+    max_turns: u64,
+    now_ms: i64,
+) -> Result<(RoutedSelection, LoopOutcome), RoutedLoopError> {
     let route = select_route(registry, request)?;
     let selection = RoutedSelection {
         provider_id: route.provider_id.clone(),
@@ -449,7 +487,7 @@ pub fn run_routed_loop(
         .resolve(route)
         .ok_or_else(|| RoutedLoopError::NoClientForProvider(route.provider_id.clone()))?;
 
-    let outcome = run_loop(
+    let outcome = run_loop_with_policy(
         client,
         executor,
         conn,
@@ -458,6 +496,7 @@ pub fn run_routed_loop(
         recall_preamble,
         secret,
         approve,
+        policy,
         max_turns,
         now_ms,
     )?;
