@@ -5,8 +5,10 @@
 mod common;
 
 use common::temp_db_path;
-use friday_core::{ActivityState, ActivityType, SessionState};
-use friday_storage::{hub_migrations, ActivityRow, Db, Migration, Profile, StorageError};
+use friday_core::{ActivityState, ActivityType, LedgerEntry, SessionState};
+use friday_storage::{
+    hub_migrations, ActivityRow, AuditEvent, Db, Migration, Profile, StorageError,
+};
 use rusqlite::Transaction;
 
 /// The max migration version the current hub migration set reaches. Derived
@@ -41,6 +43,84 @@ fn fresh_hub_db_has_all_foundation_tables() {
             "missing table {t}: have {tables:?}"
         );
     }
+}
+
+#[test]
+fn forward_migration_adds_run_id_preserving_pre_v13_ledger_rows() {
+    // S1.2 additive migration v13: token_ledger gains a nullable run_id. A pre-v13 row
+    // (the ask path's shape) must survive forward migration with run_id backfilled to NULL
+    // (never mis-attributed to a run), and a new run-attributed loop bill must then work.
+    let p = temp_db_path("ledger-run-id-mig");
+    {
+        let mut migs = hub_migrations();
+        migs.retain(|m| m.version <= 12);
+        let db = Db::open(&p, Profile::Hub, &migs, "v12").unwrap();
+        assert_eq!(db.version().unwrap(), 12);
+        assert!(
+            db.conn()
+                .prepare("SELECT run_id FROM token_ledger")
+                .is_err(),
+            "run_id column must not exist before v13"
+        );
+        // Seed a row with the pre-v13 13-column shape (no run_id).
+        db.conn()
+            .execute(
+                "INSERT INTO token_ledger
+                    (ledger_id, session_id, activity_id, provider_kind, model, base_url_host,
+                     prompt_tokens, completion_tokens, total_tokens, cost_estimate, fallback,
+                     result_link, created_at)
+                 VALUES ('old1','s1','a1','deepseek','deepseek-v4-flash','api.deepseek.com',
+                         11, 8, 19, NULL, 0, NULL, 100)",
+                [],
+            )
+            .unwrap();
+    }
+    // Reopen with the full set -> forward-migrate to v13 (adds run_id + index).
+    let db = Db::open_hub(&p).unwrap();
+    assert_eq!(db.version().unwrap(), hub_max_version());
+    assert_eq!(db.count("token_ledger").unwrap(), 1, "pre-v13 row survived");
+    let run_id: Option<String> = db
+        .conn()
+        .query_row(
+            "SELECT run_id FROM token_ledger WHERE ledger_id = 'old1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(run_id, None, "pre-v13 row backfills to NULL run_id");
+    // A new run-attributed loop bill works against the migrated DB.
+    let entry = LedgerEntry::friday_route(
+        "new1",
+        "run-1",
+        "a2",
+        "deepseek-v4-flash",
+        5,
+        5,
+        None,
+        None,
+        200,
+    )
+    .unwrap();
+    let activity = ActivityRow {
+        activity_id: "a2".into(),
+        session_id: Some("run-1".into()),
+        kind: ActivityType::AskReceipt,
+        state: ActivityState::Done,
+        summary: "10 tokens via deepseek-v4-flash".into(),
+        created_at: 200,
+        updated_at: 200,
+        deep_link: None,
+    };
+    let audit = AuditEvent {
+        audit_id: "au-new".into(),
+        actor: "hub-agent".into(),
+        action: "agent_loop.model_call".into(),
+        payload_ref: None,
+        created_at: 200,
+    };
+    friday_storage::record_run_model_call(db.conn(), "run-1", &entry, &activity, &audit).unwrap();
+    let mine = friday_storage::agent_run_read::run_token_totals(db.conn(), "run-1").unwrap();
+    assert_eq!(mine.total, 10);
 }
 
 #[test]
