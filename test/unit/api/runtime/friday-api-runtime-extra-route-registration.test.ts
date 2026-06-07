@@ -121,6 +121,9 @@ function makeBaseDeps(): CreateFridayApiRuntimeDeps {
     idGenerator: () => "id-1",
     nowIso: () => NOW,
     providerService: makeMockProviderService(),
+    // Test-oracle flag: the deeplink.apply provider-template tests below exercise
+    // the live apply dispatch. Production wiring leaves it unset (TS-runtime retirement).
+    allowTestOnlyDeepLinkExecution: true,
     tokenSecret: "test-secret", // pragma: allowlist secret
     computeChecksum: (content: string) => `checksum-${content.length}`,
     resolveSkill: () => null,

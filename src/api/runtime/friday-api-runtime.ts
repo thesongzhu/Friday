@@ -2920,6 +2920,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   // Register deep link routes (always available)
   for (const route of createFridayDeepLinkRoutes({
     applyDeepLink: (payload, options) => deepLinkApplyService.apply(payload, options),
+    allowTestOnlyDeepLinkExecution: deps.allowTestOnlyDeepLinkExecution,
   })) {
     routes.register(route);
   }
