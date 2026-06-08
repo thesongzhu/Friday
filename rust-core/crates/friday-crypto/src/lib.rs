@@ -30,8 +30,8 @@ pub mod pairing;
 pub mod session;
 pub use approval::{action_digest, sign_approval, verify_approval_signature};
 pub use ed25519_approval::{
-    verify_ed25519_approval, ApprovalScheme, ApprovalSig, ApprovalSignature, Ed25519Error,
-    OperatorSigningKey, OperatorVerifyingKey,
+    verify_ed25519_approval, verify_ed25519_approval_hex, ApprovalScheme, ApprovalSig,
+    ApprovalSignature, Ed25519Error, OperatorSigningKey, OperatorVerifyingKey,
 };
 pub use pairing::{pairing_proof, verify_pairing_proof};
 pub use session::DeviceKeypair;

@@ -19,6 +19,11 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     "workflow_run",
     "workflow_step",
     "consumed_approval",
+    // S6b: pending operator-approval requests (the offline operator's to-sign work
+    // items). Hub-only — they reference the bound principal + paused run and exist only
+    // where the gate runs. Holds NO secret/key material (only the nonce + action digest
+    // the operator signs over).
+    "pending_approval_request",
     // PR-5: agent-loop substrate. Agent runs are Hub-coordinated (gate 21 §9),
     // so the run + its event log are Hub-only (never created on a phone).
     "agent_run",
@@ -168,6 +173,16 @@ pub fn hub_migrations() -> Vec<Migration> {
             name: "token_ledger_run_id",
             destructive: false,
             up: m0013_token_ledger_run_id,
+        },
+        // S6b: Hub-only `pending_approval_request` table. When a mutating action Pauses,
+        // the gate persists what the OFFLINE operator needs to sign an approval for THAT
+        // exact action (the nonce + action digest + expiry + context) — never any key or
+        // mint material. Purely additive (CREATE TABLE only).
+        Migration {
+            version: 14,
+            name: "pending_approval_request",
+            destructive: false,
+            up: m0014_pending_approval_request,
         },
     ]
 }
@@ -1015,5 +1030,31 @@ fn m0013_token_ledger_run_id(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(
         "ALTER TABLE token_ledger ADD COLUMN run_id TEXT;
          CREATE INDEX idx_ledger_run ON token_ledger(run_id);",
+    )
+}
+
+// S6b: additive Hub-only `pending_approval_request` table. `approval_id` (the single-use
+// nonce the operator signs over) is the PRIMARY KEY, so a duplicate nonce is a fail-closed
+// insert error — a nonce is never silently reused. The row holds NO key/secret/mint
+// material: only the nonce, the `action_digest` (which binds the exact action), the expiry
+// + issuer the eventual approval carries, and operator-facing decision context (action /
+// principal / scope / surface / run). Purely additive (CREATE TABLE only).
+fn m0014_pending_approval_request(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "CREATE TABLE pending_approval_request (
+            approval_id   TEXT PRIMARY KEY,
+            run_id        TEXT NOT NULL,
+            action        TEXT NOT NULL,
+            action_digest TEXT NOT NULL,
+            principal_id  TEXT,
+            surface       TEXT NOT NULL,
+            resource_type TEXT,
+            resource_id   TEXT,
+            expires_at    INTEGER NOT NULL,
+            issuer        TEXT NOT NULL,
+            status        TEXT NOT NULL DEFAULT 'pending',
+            created_at    INTEGER NOT NULL
+         );
+         CREATE INDEX idx_pending_approval_run ON pending_approval_request(run_id, created_at);",
     )
 }

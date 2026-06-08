@@ -156,6 +156,77 @@ impl ApprovalSig {
     pub fn from_slice(bytes: &[u8]) -> Option<Self> {
         Signature::try_from(bytes).ok().map(ApprovalSig)
     }
+
+    /// Lowercase hex of the 64 signature bytes (128 chars). The OPERATOR / S6c CLI
+    /// uses this to carry an Ed25519 signature in the existing
+    /// `CanonicalApproval.signature: Option<String>` field (same field the HMAC path
+    /// uses, only a different encoding — 128 hex chars vs the HMAC path's 64). The
+    /// gate's Ed25519 verify-only authorize path (S6b) decodes it with
+    /// [`verify_ed25519_approval_hex`].
+    pub fn to_hex(&self) -> String {
+        hex_encode(&self.to_bytes())
+    }
+}
+
+const HEX: &[u8; 16] = b"0123456789abcdef";
+
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push(HEX[(b >> 4) as usize] as char);
+        s.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    s
+}
+
+fn hex_val(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Decode an even-length hex string. `None` for an odd length or any non-hex char —
+/// fails closed (never panics) so malformed wire/storage hex is a clean upstream reject.
+fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    let b = s.as_bytes();
+    if b.len() % 2 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(b.len() / 2);
+    for pair in b.chunks_exact(2) {
+        let hi = hex_val(pair[0])?;
+        let lo = hex_val(pair[1])?;
+        out.push((hi << 4) | lo);
+    }
+    Some(out)
+}
+
+/// HUB-side verify of an Ed25519 approval signature carried as a HEX STRING (the
+/// encoding [`ApprovalSig::to_hex`] produces and the gate stores in
+/// `CanonicalApproval.signature`). Returns `false` — never panics — for malformed
+/// hex (odd length / non-hex), a hex string that does not decode to exactly 64
+/// signature bytes (e.g. a 64-char **HMAC** hex decodes to 32 bytes ⇒ rejected), a
+/// malformed verifying key, or a signature that does not verify under `vk`.
+/// Internally `verify_strict`. Fails closed.
+///
+/// This is the SINGLE entry the Ed25519 verify-only gate path calls: it ALWAYS
+/// interprets the signature as Ed25519 and verifies it under the operator's public
+/// key — there is no scheme branch and no HMAC code path, so an HMAC-signed approval
+/// over the same canonical bytes can never be accepted here.
+pub fn verify_ed25519_approval_hex(
+    canonical_bytes: &[u8],
+    verifying_key_bytes: &[u8],
+    signature_hex: &str,
+) -> bool {
+    match hex_decode(signature_hex) {
+        Some(sig_bytes) => {
+            verify_ed25519_approval(canonical_bytes, verifying_key_bytes, &sig_bytes)
+        }
+        None => false,
+    }
 }
 
 /// HUB-side robust verify directly from raw bytes (e.g. an approval carried over
@@ -452,6 +523,48 @@ mod tests {
         let vk = OperatorSigningKey::generate().verifying_key();
         // The HMAC-tagged signature fails the Ed25519 verify under any public key.
         assert!(!tagged.verify_ed25519(MSG, &vk));
+    }
+
+    // ---- hex carrier (S6b: signature stored as hex in CanonicalApproval.signature) ----
+
+    #[test]
+    fn hex_carrier_round_trips_and_verifies() {
+        let sk = OperatorSigningKey::generate();
+        let vk = sk.verifying_key();
+        let sig = sk.sign(MSG);
+        let hex = sig.to_hex();
+        assert_eq!(hex.len(), SIGNATURE_LEN * 2); // 128 hex chars
+        assert!(hex.bytes().all(|c| c.is_ascii_hexdigit()));
+        // The hex carrier verifies under the matching key...
+        assert!(verify_ed25519_approval_hex(MSG, &vk.to_bytes(), &hex));
+        // ...and uppercase hex is accepted (decoded case-insensitively).
+        assert!(verify_ed25519_approval_hex(
+            MSG,
+            &vk.to_bytes(),
+            &hex.to_uppercase()
+        ));
+        // A flipped message byte fails.
+        let mut tampered = MSG.to_vec();
+        tampered[0] ^= 0x01;
+        assert!(!verify_ed25519_approval_hex(
+            &tampered,
+            &vk.to_bytes(),
+            &hex
+        ));
+    }
+
+    #[test]
+    fn hex_carrier_rejects_hmac_length_and_malformed_hex() {
+        let vk = OperatorSigningKey::generate().verifying_key();
+        let vkb = vk.to_bytes();
+        // An HMAC hex is 64 chars (32 bytes) — NOT a 64-byte Ed25519 sig ⇒ rejected.
+        assert!(!verify_ed25519_approval_hex(MSG, &vkb, &"a".repeat(64)));
+        // Malformed hex: empty, odd-length, non-hex, over/under-long — all fail closed.
+        assert!(!verify_ed25519_approval_hex(MSG, &vkb, ""));
+        assert!(!verify_ed25519_approval_hex(MSG, &vkb, "abc")); // odd length
+        assert!(!verify_ed25519_approval_hex(MSG, &vkb, &"z".repeat(128))); // non-hex
+        assert!(!verify_ed25519_approval_hex(MSG, &vkb, &"a".repeat(126))); // 63 bytes
+        assert!(!verify_ed25519_approval_hex(MSG, &vkb, &"a".repeat(130))); // 65 bytes
     }
 
     #[test]
