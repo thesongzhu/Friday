@@ -62,6 +62,17 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     // and there is no answer-body-over-wire, so the tables are never on a phone.
     "agent_session",
     "agent_session_message",
+    // SMOOTH-001: Hub-only durable provider-session timeline (file 83). The parent
+    // `provider_timeline` row + its ordered `provider_timeline_event` log + the
+    // `provider_timeline_pending` action table persist the in-memory timeline state
+    // machine so a Friday-canonical provider timeline survives a Hub restart. The
+    // rows are refs-only (the body-bearing column is a `body_ref`, never raw
+    // transcript text, by the source module's invariant), but they may reference
+    // provider event ids / dispatch refs, so the tables are Hub-only (never on a
+    // phone).
+    "provider_timeline",
+    "provider_timeline_event",
+    "provider_timeline_pending",
 ];
 
 /// Tables present only on a phone (never created on the Hub).
@@ -242,6 +253,19 @@ pub fn hub_migrations() -> Vec<Migration> {
             name: "agent_session",
             destructive: false,
             up: m0018_agent_session,
+        },
+        // SMOOTH-001: Hub-only durable provider-session timeline tables (file 83) —
+        // the parent `provider_timeline` row (its monotonic seq/retention/revision
+        // scalars) + the ordered `provider_timeline_event` log + the
+        // `provider_timeline_pending` action table. This persists the in-memory
+        // `ProviderTimeline` state so a Friday-canonical timeline survives a Hub
+        // restart. Purely additive (CREATE TABLE + INDEX only) — touches no existing
+        // table, so v18 rows/queries are unaffected. The rows are refs-only.
+        Migration {
+            version: 19,
+            name: "provider_timeline",
+            destructive: false,
+            up: m0019_provider_timeline,
         },
     ]
 }
@@ -488,6 +512,93 @@ CREATE TABLE agent_session_message (
 );
 CREATE INDEX idx_agent_session_message_seq
     ON agent_session_message(agent_session_id, seq);";
+
+// --- SMOOTH-001 provider-timeline fragments (Hub-only) ----------------------
+
+// Durable persistence of the in-memory `friday_hub::ProviderTimeline` state machine
+// (file 83), so a Friday-canonical provider-session timeline survives a Hub restart.
+//
+// THREE tables (all keyed on `session_id` = the `friday_session_id`):
+//
+// * `provider_timeline` is the parent row holding the timeline-level SCALARS that are
+//   NOT recoverable from the event rows alone: `next_seq` (the monotonic seq counter,
+//   never reset even after pruning), `retained_from_seq` (the prune watermark — events
+//   below it were dropped from hydration), and `revision` (bumped on EVERY mutation,
+//   INCLUDING a pending submit / a status-only advance, so the live revision can be
+//   HIGHER than the last event's revision and must be persisted explicitly).
+//
+// * `provider_timeline_event` is the append-only, immutable event log: a per-session
+//   monotonic `seq` (from 1), the `revision` at which it was appended, a coarse
+//   `event_kind` + `actor` label, and the refs-only `body_ref` / `provider_event_id`.
+//   `UNIQUE(session_id, seq)` makes a duplicate ordinal a fail-closed insert.
+//
+// * `provider_timeline_pending` is the MUTABLE Friday-originated action store keyed by
+//   `(session_id, request_id)`: the action advances through the `PendingState` machine
+//   across restarts, so this table is UPSERTed (not immutable like the event log /
+//   run_result). The `state` CHECK enumerates the 11 snake_case `PendingState` labels
+//   (mirrors `provider_session_link.sync_mode`), so a hand-built INSERT with a bogus
+//   state is unrepresentable.
+//
+// REFS-ONLY discipline (mirrors run_result / provider_session_event / channel_event):
+// NO raw transcript text / message body / PII is stored. `body_ref` /
+// `provider_event_id` / `dispatch_ref` are refs/ids; `event_kind` / `actor` / `action`
+// / `state` are coarse labels; `blocker` is a coarse reason (same shape as the existing
+// `work_item.blocking_reason`). The only transcript-bearing field is `body_ref`, which
+// is a REF by the source module's invariant ("Events carry only refs, never raw
+// transcript text").
+const DDL_PROVIDER_TIMELINE: &str = "
+CREATE TABLE provider_timeline (
+    session_id        TEXT PRIMARY KEY CHECK(length(trim(session_id)) > 0),
+    next_seq          INTEGER NOT NULL CHECK(next_seq >= 1),
+    retained_from_seq INTEGER NOT NULL CHECK(retained_from_seq >= 1),
+    revision          INTEGER NOT NULL CHECK(revision >= 0),
+    created_at        INTEGER NOT NULL,
+    updated_at        INTEGER NOT NULL
+);
+
+CREATE TABLE provider_timeline_event (
+    session_id        TEXT NOT NULL,
+    seq               INTEGER NOT NULL CHECK(seq >= 1),
+    revision          INTEGER NOT NULL CHECK(revision >= 1),
+    event_kind        TEXT NOT NULL CHECK(length(trim(event_kind)) > 0),
+    actor             TEXT NOT NULL CHECK(length(trim(actor)) > 0),
+    body_ref          TEXT,
+    provider_event_id TEXT,
+    created_at        INTEGER NOT NULL,
+    PRIMARY KEY(session_id, seq),
+    FOREIGN KEY(session_id) REFERENCES provider_timeline(session_id)
+);
+CREATE INDEX idx_provider_timeline_event_seq
+    ON provider_timeline_event(session_id, seq);
+
+CREATE TABLE provider_timeline_pending (
+    session_id          TEXT NOT NULL,
+    request_id          TEXT NOT NULL CHECK(length(trim(request_id)) > 0),
+    client_msg_id       TEXT NOT NULL CHECK(length(trim(client_msg_id)) > 0),
+    action              TEXT NOT NULL CHECK(length(trim(action)) > 0),
+    state               TEXT NOT NULL CHECK(state IN (
+        'draft',
+        'pending_local',
+        'sent_to_hub',
+        'accepted_by_hub',
+        'routed_to_provider',
+        'waiting_provider',
+        'provider_completed',
+        'blocked',
+        'failed_retryable',
+        'failed_terminal',
+        'cancelled'
+    )),
+    dispatch_ref        TEXT,
+    blocker             TEXT,
+    base_revision       INTEGER NOT NULL CHECK(base_revision >= 0),
+    updated_at_revision INTEGER NOT NULL CHECK(updated_at_revision >= 0),
+    created_at          INTEGER NOT NULL,
+    PRIMARY KEY(session_id, request_id),
+    FOREIGN KEY(session_id) REFERENCES provider_timeline(session_id)
+);
+CREATE INDEX idx_provider_timeline_pending_session
+    ON provider_timeline_pending(session_id, request_id);";
 
 // --- PNS-001 provider-session fragments (Hub-only) --------------------------
 
@@ -1204,4 +1315,13 @@ fn m0017_run_result_owner_principal(tx: &Transaction) -> rusqlite::Result<()> {
 // history. Purely additive (CREATE TABLE + INDEX only) — touches no existing table.
 fn m0018_agent_session(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(DDL_AGENT_SESSION)
+}
+
+// SMOOTH-001: additive Hub-only provider-timeline tables (`provider_timeline` +
+// `provider_timeline_event` + `provider_timeline_pending`). They persist the in-memory
+// `friday_hub::ProviderTimeline` state machine so a Friday-canonical provider-session
+// timeline survives a Hub restart. Purely additive (CREATE TABLE + INDEX only) — touches
+// no existing table, so pre-existing rows/queries are unaffected.
+fn m0019_provider_timeline(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_PROVIDER_TIMELINE)
 }
