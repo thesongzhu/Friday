@@ -70,7 +70,13 @@ fn main() {
                 "ok": false,
                 "error_kind": err.kind,
             });
-            println!("{payload}");
+            // Defense-in-depth: route the error payload through the SAME guard as the
+            // success path (fail closed if a marker ever leaked). `error_kind` is a
+            // static closed-vocab token today, so this never suppresses output.
+            let rendered = payload.to_string();
+            if reject_forbidden_output(&rendered).is_ok() {
+                println!("{rendered}");
+            }
             eprintln!("hub_run_readback_unavailable: {}", err.kind);
             std::process::exit(2);
         }
@@ -176,19 +182,12 @@ fn derive_loop_status(kinds: &[String]) -> &'static str {
 /// Note: relative filenames inside a `tool.executed:` kind are NOT forbidden —
 /// only absolute paths (`/Users/`, `/private/`) and secret markers are.
 fn reject_forbidden_output(rendered: &str) -> Result<(), ReadbackError> {
-    for marker in [
-        "Authorization",
-        "Bearer",
-        "sk-",
-        "/Users/",
-        "/private/",
-        "\"task\"", // the run task body must never appear (only run_id/state/labels do)
-    ] {
-        if rendered.contains(marker) {
-            return Err(ReadbackError::new("output_guard"));
-        }
-    }
-    Ok(())
+    // Delegates to the single shared guard (common secret/path markers, now broadened
+    // to /home,/var,/tmp,/etc) and adds this bin's body-field marker. `"task"` (the run
+    // task body) must never appear (only run_id/state/labels do). Relative filenames
+    // inside a `tool.executed:` kind have no leading slash and remain permitted.
+    friday_hub::refs_guard::reject_forbidden_output(rendered, &["\"task\""])
+        .map_err(|_| ReadbackError::new("output_guard"))
 }
 
 #[cfg(test)]

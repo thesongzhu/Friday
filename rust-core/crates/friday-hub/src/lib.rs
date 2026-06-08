@@ -161,6 +161,10 @@ pub mod mission_preflight;
 /// or grant control.
 pub mod skill_catalog;
 
+/// Shared refs-only output guard for the proof bins. Single source of truth for the
+/// common secret/path marker set; each bin passes its body-field markers as `extra`.
+pub mod refs_guard;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,

@@ -74,7 +74,13 @@ fn main() {
                 "ok": false,
                 "error_kind": err.kind,
             });
-            println!("{payload}");
+            // Defense-in-depth: route the error payload through the SAME guard as the
+            // success path (fail closed if a marker ever leaked). `error_kind` is a
+            // static closed-vocab token today, so this never suppresses output.
+            let rendered = payload.to_string();
+            if reject_forbidden_output(&rendered).is_ok() {
+                println!("{rendered}");
+            }
             eprintln!("hub_resume_approval_unavailable: {}", err.kind);
             std::process::exit(2);
         }
@@ -203,19 +209,11 @@ fn resume_error_kind(err: &ResumeError) -> &'static str {
 
 /// Refuse to print if any forbidden marker leaked into the refs-only payload.
 fn reject_forbidden_output(rendered: &str) -> Result<(), BridgeError> {
-    for marker in [
-        "Authorization",
-        "Bearer",
-        "sk-",
-        "/Users/",
-        "/private/",
-        "answer\":\"", // a result body field must never appear (only the hash/len do)
-    ] {
-        if rendered.contains(marker) {
-            return Err(BridgeError::new("output_guard"));
-        }
-    }
-    Ok(())
+    // Delegates to the single shared guard (common secret/path markers, now broadened
+    // to /home,/var,/tmp,/etc) and adds this bin's body-field marker. A result body
+    // field (`answer":"`) must never appear (only the hash/len do).
+    friday_hub::refs_guard::reject_forbidden_output(rendered, &["answer\":\""])
+        .map_err(|_| BridgeError::new("output_guard"))
 }
 
 #[cfg(test)]
