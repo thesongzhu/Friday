@@ -178,6 +178,14 @@ pub mod sensitive_guard;
 /// path STAYS LIVE (parity pending); queue/auto deferred. PROOF-ONLY, NOT a v1 GO.
 pub mod memory_extraction;
 
+/// Session-memory slice-3 (ownership-binding): faithful Rust port of the TS
+/// `resolveFridaySessionMemoryNamespace` — the composite memory store SCOPE
+/// (`tenant.<account>.channel.<channel>.user.<user>.shared`) DERIVED from a session's
+/// owner axes, fail-closed when no userId. This is what binds extraction's store scope to
+/// the SESSION (not a caller-supplied principal). DM-chatId + subagent parent-walk userId
+/// fallbacks are DEFERRED-PARITY. PROOF-ONLY, NOT a v1 GO.
+pub mod session_namespace;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,

@@ -24,7 +24,7 @@
 //! PROOF-ONLY; NOT a v1 GO.
 
 use crate::error::{Result, StorageError};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 /// A conversation message as supplied to [`append_session_message`]. `seq`,
 /// `message_id` and `created_at` are assigned by the store, not the caller.
@@ -63,17 +63,42 @@ pub struct StoredSessionMessage {
     pub created_at: i64,
 }
 
+/// The session OWNER axes (slice-3 ownership-binding) — the three `agent_session`
+/// fields the memory namespace is DERIVED from, mirroring the TS `FridaySessionRecord`
+/// `accountId` / `channel` / `userId`. All optional: a pre-slice-3 session (or one
+/// created via the no-owner [`ensure_session`]) reads back `None` for each. A `None`
+/// (or empty) `user_id` is what FAILS the memory-namespace resolution closed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SessionOwner {
+    pub account_id: Option<String>,
+    pub channel: Option<String>,
+    pub user_id: Option<String>,
+}
+
 /// Ensure an `agent_session` row exists (idempotent). A new session is created at
 /// `now_ms`; an existing session has its `updated_at` bumped. Safe to call at the
 /// start of every run in the session.
+///
+/// This is the OWNER-LESS form (no `account_id`/`channel`/`user_id`): a session created
+/// this way reads back [`SessionOwner::default`] (all `None`), so its memory namespace
+/// is UNRESOLVABLE (fail-closed) until an owner is set. Existing callers (e.g. the
+/// production `run_session_loop`) keep using this unchanged. To bind an owner, use
+/// [`ensure_session_with_owner`].
+///
+/// IMPORTANT: this owner-less form references ONLY the pre-v21 columns (it never names
+/// `account_id`/`channel`/`user_id`), so it works against a DB at ANY version that has the
+/// base `agent_session` table — including a v≤20 DB seeded in a migration test BEFORE the
+/// v21 owner columns exist. Owner binding is the sole concern of
+/// [`ensure_session_with_owner`], which requires the v21 columns.
 pub fn ensure_session(conn: &Connection, agent_session_id: &str, now_ms: i64) -> Result<()> {
     if agent_session_id.trim().is_empty() {
         return Err(StorageError::Unsupported(
             "agent_session_id must be non-empty".into(),
         ));
     }
-    // INSERT-or-bump in one statement: a fresh id INSERTs, an existing id keeps its
-    // created_at and only advances updated_at (no row is ever clobbered).
+    // INSERT-or-bump in one statement, naming ONLY the base columns: a fresh id INSERTs, an
+    // existing id keeps its created_at + any already-bound owner (those columns are not
+    // touched here) and only advances updated_at — no row is ever clobbered.
     conn.execute(
         "INSERT INTO agent_session (agent_session_id, created_at, updated_at)
          VALUES (?1, ?2, ?2)
@@ -81,6 +106,85 @@ pub fn ensure_session(conn: &Connection, agent_session_id: &str, now_ms: i64) ->
         params![agent_session_id, now_ms],
     )?;
     Ok(())
+}
+
+/// Ensure an `agent_session` row exists (idempotent), binding its OWNER axes
+/// (slice-3). A fresh id INSERTs with the supplied owner fields; an existing id keeps
+/// its `created_at` AND its already-bound owner fields (never clobbered), advancing only
+/// `updated_at`. `COALESCE(existing, new)` on conflict means a later no-owner ensure
+/// never erases a previously-bound owner, and a later ensure can BACKFILL an owner that
+/// was `NULL` (e.g. a session first created owner-less). A blank owner field is stored as
+/// `NULL` so the falsy-empty case is represented identically to absent (the namespace
+/// resolver treats `None` and `Some("")` the same).
+pub fn ensure_session_with_owner(
+    conn: &Connection,
+    agent_session_id: &str,
+    owner: &SessionOwner,
+    now_ms: i64,
+) -> Result<()> {
+    if agent_session_id.trim().is_empty() {
+        return Err(StorageError::Unsupported(
+            "agent_session_id must be non-empty".into(),
+        ));
+    }
+    // Normalize blank-string owner fields to NULL so "absent" and "empty" are one case.
+    let account_id = none_if_blank(owner.account_id.as_deref());
+    let channel = none_if_blank(owner.channel.as_deref());
+    let user_id = none_if_blank(owner.user_id.as_deref());
+    // INSERT-or-bump in one statement: a fresh id INSERTs with the owner; an existing id
+    // keeps its created_at + already-bound owner (COALESCE keeps the existing non-NULL,
+    // else accepts the incoming value as a backfill) and only advances updated_at — no row
+    // is ever clobbered and no bound owner is ever erased.
+    conn.execute(
+        "INSERT INTO agent_session
+            (agent_session_id, created_at, updated_at, account_id, channel, user_id)
+         VALUES (?1, ?2, ?2, ?3, ?4, ?5)
+         ON CONFLICT(agent_session_id) DO UPDATE SET
+            updated_at = ?2,
+            account_id = COALESCE(account_id, excluded.account_id),
+            channel    = COALESCE(channel, excluded.channel),
+            user_id    = COALESCE(user_id, excluded.user_id)",
+        params![agent_session_id, now_ms, account_id, channel, user_id],
+    )?;
+    Ok(())
+}
+
+/// Load a session's OWNER axes (slice-3). Returns `None` if the session row is absent
+/// (so a caller can distinguish "no such session" from "session with no owner", which is
+/// `Some(SessionOwner::default())`). A blank-string column reads back as `None` (matching
+/// how [`ensure_session_with_owner`] stores blanks as `NULL`).
+pub fn load_session_owner(
+    conn: &Connection,
+    agent_session_id: &str,
+) -> Result<Option<SessionOwner>> {
+    // `.optional()` maps ONLY `QueryReturnedNoRows` (absent session) to `Ok(None)` and
+    // PROPAGATES any real storage error (locked/corrupt DB) — never swallowing it as
+    // "no owner" (which would mis-report as an unresolvable namespace downstream).
+    let row = conn
+        .query_row(
+            "SELECT account_id, channel, user_id FROM agent_session
+             WHERE agent_session_id = ?1",
+            [agent_session_id],
+            |r| {
+                Ok(SessionOwner {
+                    account_id: none_if_blank(r.get::<_, Option<String>>(0)?.as_deref()),
+                    channel: none_if_blank(r.get::<_, Option<String>>(1)?.as_deref()),
+                    user_id: none_if_blank(r.get::<_, Option<String>>(2)?.as_deref()),
+                })
+            },
+        )
+        .optional()?;
+    Ok(row)
+}
+
+/// `None` for an absent or strictly-empty (`""`) value; a whitespace-only value is kept
+/// VERBATIM (the strictly-empty check only — normalization/trimming is the namespace
+/// resolver's job, not the store's).
+fn none_if_blank(v: Option<&str>) -> Option<String> {
+    match v {
+        Some(s) if !s.is_empty() => Some(s.to_string()),
+        _ => None,
+    }
 }
 
 /// Whether an `agent_session` row exists.
@@ -388,16 +492,24 @@ mod tests {
     }
 
     #[test]
-    fn fresh_db_defaults_messages_to_pending_and_reaches_v20() {
+    fn fresh_db_defaults_messages_to_pending_and_reaches_latest() {
         let db = Db::open_hub(&tmp("pending-default")).unwrap();
-        // The fresh-DB migration chain reaches the slice-2 version.
+        // The fresh-DB migration chain reaches at least the slice-2 version (the
+        // `memory_extract_status` column exists). Derived from the migration set so a new
+        // additive migration (e.g. slice-3 v21) does not break this assertion.
         let v: i64 = db
             .conn()
             .query_row("SELECT version FROM schema_version WHERE id = 1", [], |r| {
                 r.get(0)
             })
             .unwrap();
-        assert_eq!(v, 20, "fresh migration reaches the slice-2 version");
+        let expected = crate::hub_migrations()
+            .iter()
+            .map(|m| m.version)
+            .max()
+            .unwrap();
+        assert_eq!(v, expected, "fresh migration reaches the latest version");
+        assert!(v >= 20, "the slice-2 memory_extract_status column exists");
 
         ensure_session(db.conn(), "s1", 1).unwrap();
         let id = append_session_message(
@@ -479,5 +591,113 @@ mod tests {
         assert!(load_pending_session_messages(db.conn(), "nope")
             .unwrap()
             .is_empty());
+    }
+
+    // --- slice-3 (ownership-binding) -----------------------------------------
+
+    #[test]
+    fn owner_less_ensure_session_reads_back_no_owner() {
+        // A session created via the owner-less `ensure_session` has all owner axes NULL —
+        // its memory namespace is UNRESOLVABLE (fail-closed) until an owner is set.
+        let db = Db::open_hub(&tmp("noowner")).unwrap();
+        ensure_session(db.conn(), "s1", 1).unwrap();
+        let owner = load_session_owner(db.conn(), "s1").unwrap();
+        assert_eq!(owner, Some(SessionOwner::default()));
+        let o = owner.unwrap();
+        assert_eq!(o.account_id, None);
+        assert_eq!(o.channel, None);
+        assert_eq!(o.user_id, None);
+    }
+
+    #[test]
+    fn ensure_with_owner_stores_and_loads_owner_axes() {
+        let db = Db::open_hub(&tmp("owner")).unwrap();
+        let owner = SessionOwner {
+            account_id: Some("acct-1".into()),
+            channel: Some("discord".into()),
+            user_id: Some("user-abc".into()),
+        };
+        ensure_session_with_owner(db.conn(), "s1", &owner, 1).unwrap();
+        assert_eq!(load_session_owner(db.conn(), "s1").unwrap(), Some(owner));
+    }
+
+    #[test]
+    fn blank_owner_fields_store_as_none() {
+        // A blank-string owner field is indistinguishable from absent (the namespace
+        // resolver treats None and Some("") identically).
+        let db = Db::open_hub(&tmp("blankowner")).unwrap();
+        let owner = SessionOwner {
+            account_id: Some("".into()),
+            channel: Some("   ".into()),
+            user_id: Some("u".into()),
+        };
+        ensure_session_with_owner(db.conn(), "s1", &owner, 1).unwrap();
+        let back = load_session_owner(db.conn(), "s1").unwrap().unwrap();
+        assert_eq!(back.account_id, None, "empty account stored as NULL");
+        // A whitespace-only value is stored verbatim (non-empty), but blank trimming is
+        // the resolver's job — here we only normalize the strictly-empty string.
+        assert_eq!(back.channel.as_deref(), Some("   "));
+        assert_eq!(back.user_id.as_deref(), Some("u"));
+    }
+
+    #[test]
+    fn re_ensure_does_not_clobber_bound_owner_but_backfills_null() {
+        // Once an owner is bound, a later no-owner ensure keeps it; a later ensure can
+        // BACKFILL a field that was NULL.
+        let db = Db::open_hub(&tmp("clobber")).unwrap();
+        let owner = SessionOwner {
+            account_id: Some("acct-1".into()),
+            channel: None,
+            user_id: Some("user-abc".into()),
+        };
+        ensure_session_with_owner(db.conn(), "s1", &owner, 1).unwrap();
+        // A no-owner re-ensure must NOT erase the bound account/user.
+        ensure_session(db.conn(), "s1", 2).unwrap();
+        let back = load_session_owner(db.conn(), "s1").unwrap().unwrap();
+        assert_eq!(back.account_id.as_deref(), Some("acct-1"));
+        assert_eq!(back.user_id.as_deref(), Some("user-abc"));
+        assert_eq!(back.channel, None);
+        // A later ensure backfills the previously-NULL channel.
+        ensure_session_with_owner(
+            db.conn(),
+            "s1",
+            &SessionOwner {
+                account_id: Some("ignored-acct".into()),
+                channel: Some("slack".into()),
+                user_id: None,
+            },
+            3,
+        )
+        .unwrap();
+        let back = load_session_owner(db.conn(), "s1").unwrap().unwrap();
+        assert_eq!(
+            back.account_id.as_deref(),
+            Some("acct-1"),
+            "bound account is not clobbered by a new ensure"
+        );
+        assert_eq!(
+            back.channel.as_deref(),
+            Some("slack"),
+            "the previously-NULL channel is backfilled"
+        );
+        assert_eq!(back.user_id.as_deref(), Some("user-abc"));
+        // created_at immutable, updated_at advanced — owner binding preserves the existing
+        // idempotency contract.
+        let (created, updated): (i64, i64) = db
+            .conn()
+            .query_row(
+                "SELECT created_at, updated_at FROM agent_session WHERE agent_session_id='s1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(created, 1, "created_at immutable across owner re-ensure");
+        assert_eq!(updated, 3, "updated_at advances");
+    }
+
+    #[test]
+    fn load_owner_of_absent_session_is_none() {
+        let db = Db::open_hub(&tmp("absent")).unwrap();
+        assert_eq!(load_session_owner(db.conn(), "ghost").unwrap(), None);
     }
 }

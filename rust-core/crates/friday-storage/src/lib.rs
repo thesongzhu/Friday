@@ -32,8 +32,9 @@ mod schema;
 pub mod workflow;
 
 pub use agent_session::{
-    append_session_message, ensure_session, load_session_messages, session_exists,
-    session_message_count, SessionMessage, StoredSessionMessage,
+    append_session_message, ensure_session, ensure_session_with_owner, load_session_messages,
+    load_session_owner, session_exists, session_message_count, SessionMessage, SessionOwner,
+    StoredSessionMessage,
 };
 pub use authorize::authorize_mutating_action;
 pub use authorize_ed25519::{authorize_mutating_action_ed25519, Ed25519VerifyOnlyPolicy};

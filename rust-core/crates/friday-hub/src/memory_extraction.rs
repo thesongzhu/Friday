@@ -60,18 +60,42 @@
 //!   time — faithful to the TS, which stores raw non-keyword PII and redacts on
 //!   recall. The sensitivity guard here drops KEYWORD-bearing items (passwords,
 //!   tokens, SSN/credit-card words, medical/financial/…), matching the TS guard.
-//! - **Queue / auto mode + ownership-binding still DEFERRED.** Only the inline manual
-//!   path; the queue/job-retry/auto machine and ownership-claim binding are follow-on
-//!   slices (the principal is a caller-supplied ref).
 //!
-//! Truth label: Rust-owned INLINE extraction, slice-2 (dedup + transactional). The TS
-//! extraction path STAYS LIVE (full parity — queue/auto + ownership-binding — pending).
-//! PROOF-ONLY — NOT a v1 GO.
+//! ## Slice-3 (ownership-binding) — the store SCOPE is DERIVED from the SESSION
+//! The extraction's memory store scope is no longer a caller-supplied principal: it is
+//! DERIVED from the session's OWNER axes via [`crate::session_namespace`], a faithful port
+//! of the TS `resolveFridaySessionMemoryNamespace`. The Rust recall axis is a single
+//! `principal_id` string, so slice-3 sets **`principal_id` := the composite namespace**
+//! `tenant.<account>.channel.<channel>.user.<user>.shared` (with `scope` still
+//! `MemoryScope::Session`). This preserves per-(account, channel, user) isolation on the
+//! existing recall axis — faithful to the TS production model where extraction is
+//! job-driven (there is NO caller principal) and the session is the source of truth.
+//!
+//! **Fail-closed on no userId (PARITY).** If the session has no `user_id`, the namespace
+//! is UNRESOLVABLE and extraction FAILS CLOSED ([`ExtractionError::NamespaceUnresolvable`])
+//! — mirroring the TS `MEMORY_NAMESPACE_UNRESOLVABLE` throw. A session is never silently
+//! bound to a default/anonymous scope.
+//!
+//! **Deferred-parity (HONEST).** Only the DIRECT `session.userId` case is ported. The TS
+//! DM-chatId fallback and subagent parent-chain userId walk are DEFERRED — the Rust
+//! `agent_session` does not model `chatKind`/`chatId`/`parentSession` yet (see
+//! [`crate::session_namespace`]). Live sessions created via the production
+//! `run_session_loop` still call the OWNER-LESS `ensure_session`, so they carry a NULL
+//! owner and CANNOT be extracted until a follow-on wires the owner through — that wiring
+//! is out of scope for this slice (it lives in the off-limits loop entrypoint).
+//!
+//! - **Queue / auto mode still DEFERRED.** Only the inline manual path; the
+//!   queue/job-retry/auto machine is a follow-on slice.
+//!
+//! Truth label: Rust-owned INLINE extraction, slice-3 (dedup + transactional +
+//! ownership-binding). The TS extraction path STAYS LIVE (full parity — queue/auto +
+//! DM/subagent userId fallbacks — pending). PROOF-ONLY — NOT a v1 GO.
 
 use friday_core::MemoryScope;
 use friday_deepseek::{DeepSeekClient, DeepSeekError, Transport};
 use friday_storage::agent_session::{
-    load_pending_session_messages, mark_messages_extracted, StoredSessionMessage,
+    load_pending_session_messages, load_session_owner, mark_messages_extracted,
+    StoredSessionMessage,
 };
 use friday_storage::memory::{record_candidate, NewMemoryCandidate};
 use friday_storage::StorageError;
@@ -79,6 +103,7 @@ use serde_json::Value;
 use std::collections::HashSet;
 
 use crate::sensitive_guard::is_sensitive_learning_candidate;
+use crate::session_namespace::{resolve_session_memory_namespace, NamespaceError};
 
 /// The valid item kinds (ported from the TS `VALID_KINDS`).
 const VALID_KINDS: &[&str] = &["fact", "decision", "preference", "action_item"];
@@ -157,6 +182,13 @@ pub struct ExtractionOutcome {
     pub total_tokens: i64,
     /// The reported model id (a safe label — never a secret).
     pub model: String,
+    /// The DERIVED memory namespace (slice-3) under which candidates were stored as
+    /// `principal_id` — `tenant.<account>.channel.<channel>.user.<user>.shared`. This is a
+    /// store-scope LABEL (composed from normalized session-owner ids), NOT a body, so it is
+    /// refs-only safe to render. ALWAYS non-empty on a successful return: it is resolved
+    /// (fail-closed if unresolvable) BEFORE the no-pending early return, so even the
+    /// nothing-to-extract path reports the namespace the session WOULD store under.
+    pub derived_namespace: String,
 }
 
 /// Errors specific to the extraction engine (provider/storage/parse). Coarse and
@@ -169,8 +201,12 @@ pub enum ExtractionError {
     /// The model output did not parse into the documented `{ "items": [...] }`
     /// shape. Carries NO model text (coarse, never echoes the body).
     Parse,
-    /// `--principal` / session id was blank.
+    /// session id was blank.
     BadInput(&'static str),
+    /// Slice-3: the session's memory namespace could not be resolved (no `user_id` on the
+    /// session). FAILS CLOSED — parity with the TS `MEMORY_NAMESPACE_UNRESOLVABLE` throw.
+    /// Carries the typed [`NamespaceError`] (coarse + secret-free by construction).
+    NamespaceUnresolvable(NamespaceError),
 }
 
 impl std::fmt::Display for ExtractionError {
@@ -180,6 +216,7 @@ impl std::fmt::Display for ExtractionError {
             ExtractionError::Provider(e) => write!(f, "provider error: {e}"),
             ExtractionError::Parse => write!(f, "model output parse error"),
             ExtractionError::BadInput(w) => write!(f, "bad input: {w}"),
+            ExtractionError::NamespaceUnresolvable(e) => write!(f, "{e}"),
         }
     }
 }
@@ -194,6 +231,11 @@ impl From<StorageError> for ExtractionError {
 impl From<DeepSeekError> for ExtractionError {
     fn from(e: DeepSeekError) -> Self {
         ExtractionError::Provider(e)
+    }
+}
+impl From<NamespaceError> for ExtractionError {
+    fn from(e: NamespaceError) -> Self {
+        ExtractionError::NamespaceUnresolvable(e)
     }
 }
 
@@ -355,8 +397,8 @@ pub fn filter_sensitive(
     (safe, dropped)
 }
 
-/// Run one INLINE manual extraction for a session: read messages → prompt →
-/// provider call (ledgered) → parse → sensitivity-filter → persist candidates.
+/// Run one INLINE manual extraction for a session: derive namespace → read messages →
+/// prompt → provider call (ledgered) → parse → sensitivity-filter → persist candidates.
 ///
 /// `client` is generic over [`Transport`] so tests inject a mock provider and the
 /// bin passes a live `DeepSeekClient::from_env()`. The call+ledger reuses
@@ -368,11 +410,20 @@ pub fn filter_sensitive(
 /// `"<session>:extract:<now_ms>"`). Slice-2 makes re-runs IDEMPOTENT at the source:
 /// only PENDING messages are read, and a successful run marks the processed messages
 /// `'extracted'`, so a second run reads no pending and creates no duplicate candidates.
+///
+/// ## Slice-3 ownership-binding (the store SCOPE is DERIVED from the SESSION)
+/// There is NO caller-supplied principal: the store scope (`principal_id`) is DERIVED
+/// from the session's OWNER axes (`account_id`/`channel`/`user_id`, loaded via
+/// [`load_session_owner`]) through [`resolve_session_memory_namespace`] —
+/// `tenant.<account>.channel.<channel>.user.<user>.shared`. If the session has no
+/// `user_id` (the namespace is unresolvable), extraction FAILS CLOSED
+/// ([`ExtractionError::NamespaceUnresolvable`]) BEFORE any provider call — parity with the
+/// TS `MEMORY_NAMESPACE_UNRESOLVABLE`. The derived namespace is echoed in
+/// [`ExtractionOutcome::derived_namespace`].
 #[allow(clippy::too_many_arguments)]
 pub fn extract_inline<T: Transport>(
     db: &mut friday_storage::Db,
     session_id: &str,
-    principal_id: &str,
     client: &DeepSeekClient<T>,
     max_items: usize,
     candidate_id_prefix: &str,
@@ -382,9 +433,21 @@ pub fn extract_inline<T: Transport>(
     if session_id.trim().is_empty() {
         return Err(ExtractionError::BadInput("session_id"));
     }
-    if principal_id.trim().is_empty() {
-        return Err(ExtractionError::BadInput("principal_id"));
-    }
+
+    // Slice-3 ownership-binding: DERIVE the store scope from the SESSION (not a caller
+    // principal). Load the session's owner axes and resolve the composite namespace. A
+    // session with no `user_id` FAILS CLOSED here — BEFORE any provider call — mirroring
+    // the TS `MEMORY_NAMESPACE_UNRESOLVABLE` throw. An absent session row also has no
+    // owner, so it fails closed identically (None owner → unresolvable).
+    let owner = load_session_owner(db.conn(), session_id)?.unwrap_or_default();
+    let derived_namespace = resolve_session_memory_namespace(
+        owner.account_id.as_deref(),
+        owner.channel.as_deref(),
+        owner.user_id.as_deref(),
+    )?;
+    // The derived namespace IS the store key (the Rust recall axis is a single
+    // `principal_id` string; slice-3 sets it to the composite namespace).
+    let principal_id = derived_namespace.as_str();
 
     // Slice-2 dedup: read only the messages not yet consumed by a prior extraction.
     let messages = load_pending_session_messages(db.conn(), session_id)?;
@@ -404,6 +467,7 @@ pub fn extract_inline<T: Transport>(
             completion_tokens: 0,
             total_tokens: 0,
             model: String::new(),
+            derived_namespace,
         });
     }
 
@@ -462,6 +526,8 @@ pub fn extract_inline<T: Transport>(
                 // The recallable inline text; raw PII (non-keyword) is redacted at
                 // RECALL time by cognition::rank_recall (parity with the TS).
                 content: Some(item.content.as_str()),
+                // Slice-3: the store scope is the SESSION-DERIVED namespace (not a caller
+                // principal). This is what makes recall isolated per (account, channel, user).
                 principal_id: Some(principal_id),
                 // Sensitive items are DROPPED above (never persisted), so the column is
                 // always false for a stored candidate.
@@ -484,6 +550,7 @@ pub fn extract_inline<T: Transport>(
         completion_tokens: outcome.completion_tokens,
         total_tokens: outcome.total_tokens,
         model: outcome.model,
+        derived_namespace,
     })
 }
 
@@ -491,10 +558,24 @@ pub fn extract_inline<T: Transport>(
 mod tests {
     use super::*;
     use friday_deepseek::{DeepSeekClient, Transport};
-    use friday_storage::agent_session::{append_session_message, ensure_session, SessionMessage};
+    use friday_storage::agent_session::{
+        append_session_message, ensure_session_with_owner, SessionMessage, SessionOwner,
+    };
     use friday_storage::memory::{confirm, pending_review, recall_confirmed};
     use serde_json::{json, Value};
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// The namespace a `seed_session`-created session resolves to (its owner is
+    /// account="default", channel="discord", user=<user_id>). Centralized so the slice-3
+    /// derived-`principal_id` assertions stay byte-aligned with the resolver.
+    fn ns_for(user_id: &str) -> String {
+        crate::session_namespace::resolve_session_memory_namespace(
+            Some("default"),
+            Some("discord"),
+            Some(user_id),
+        )
+        .unwrap()
+    }
 
     static C: AtomicU64 = AtomicU64::new(0);
     fn tmp(tag: &str) -> String {
@@ -551,8 +632,21 @@ mod tests {
         DeepSeekClient::with_transport(ScriptedTransport::new(content), "test-key-not-real".into())
     }
 
-    fn seed_session(db: &friday_storage::Db, session: &str) -> Vec<String> {
-        ensure_session(db.conn(), session, 1).unwrap();
+    /// Seed a session WITH an owner (slice-3: extraction now requires a resolvable
+    /// namespace). The owner is account="default", channel="discord", user=`user_id`, so
+    /// the derived store scope is `ns_for(user_id)`.
+    fn seed_session(db: &friday_storage::Db, session: &str, user_id: &str) -> Vec<String> {
+        ensure_session_with_owner(
+            db.conn(),
+            session,
+            &SessionOwner {
+                account_id: Some("default".into()),
+                channel: Some("discord".into()),
+                user_id: Some(user_id.into()),
+            },
+            1,
+        )
+        .unwrap();
         let m0 = append_session_message(
             db.conn(),
             session,
@@ -573,7 +667,9 @@ mod tests {
     #[test]
     fn extract_persists_candidates_and_recall_reads_them_back_after_confirm() {
         let mut db = friday_storage::Db::open_hub(&tmp("consistency")).unwrap();
-        let ids = seed_session(&db, "s1");
+        let ids = seed_session(&db, "s1", "alice");
+        // Slice-3: the store scope is the SESSION-DERIVED namespace, not a caller principal.
+        let ns = ns_for("alice");
         // Mock extraction returns one valid item referencing a real message id.
         let content = json!({
             "items": [{
@@ -589,7 +685,6 @@ mod tests {
         let out = extract_inline(
             &mut db,
             "s1",
-            "alice",
             &c,
             DEFAULT_MAX_ITEMS,
             "s1:ex:100",
@@ -605,33 +700,41 @@ mod tests {
         // single item referenced) — the dedup mark.
         assert_eq!(out.messages_marked_extracted, 2);
         assert_eq!(out.total_tokens, 55);
+        // slice-3: the outcome echoes the derived namespace (the store scope).
+        assert_eq!(out.derived_namespace, ns);
 
         // The token ledger row was written (the extraction call is ledgered).
         let ledger_rows = db.count("token_ledger").unwrap();
         assert_eq!(ledger_rows, 1);
 
-        // Existing spine: the candidate shows up as pending_review (NOT durable yet).
+        // Existing spine: the candidate shows up as pending_review (NOT durable yet), stored
+        // under the DERIVED namespace as its `principal_id` (slice-3 ownership-binding).
         let pending = pending_review(db.conn()).unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].memory_id, "s1:ex:100:c0");
-        assert_eq!(pending[0].principal_id.as_deref(), Some("alice"));
+        assert_eq!(pending[0].principal_id.as_deref(), Some(ns.as_str()));
         // recall_confirmed returns NOTHING until the candidate is confirmed.
-        assert!(recall_confirmed(db.conn(), "alice").unwrap().is_empty());
+        assert!(recall_confirmed(db.conn(), &ns).unwrap().is_empty());
 
-        // Confirm via the existing path → it becomes recallable (consistency proof).
+        // Confirm via the existing path → it becomes recallable under the namespace
+        // (consistency proof: store→confirm→recall keyed by the SESSION-derived scope).
         confirm(db.conn(), "s1:ex:100:c0", 200).unwrap();
-        let recalled = recall_confirmed(db.conn(), "alice").unwrap();
+        let recalled = recall_confirmed(db.conn(), &ns).unwrap();
         assert_eq!(recalled.len(), 1);
         assert_eq!(
             recalled[0].content.as_deref(),
             Some("User's project codename is Falcon.")
         );
+        // ISOLATION: a DIFFERENT user's namespace recalls nothing (per-(account,channel,user)).
+        assert!(recall_confirmed(db.conn(), &ns_for("mallory"))
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
     fn sensitive_item_is_dropped_not_stored() {
         let mut db = friday_storage::Db::open_hub(&tmp("sensitive")).unwrap();
-        let ids = seed_session(&db, "s2");
+        let ids = seed_session(&db, "s2", "bob");
         // Two items: one benign, one whose content carries a sensitive KEYWORD.
         let content = json!({
             "items": [
@@ -645,7 +748,6 @@ mod tests {
         let out = extract_inline(
             &mut db,
             "s2",
-            "bob",
             &c,
             DEFAULT_MAX_ITEMS,
             "s2:ex:100",
@@ -680,7 +782,8 @@ mod tests {
         // it via cognition::rank_recall. This proves the store→confirm→recall→redact
         // loop is consistent end-to-end with no new store-time redaction.
         let mut db = friday_storage::Db::open_hub(&tmp("pii")).unwrap();
-        let ids = seed_session(&db, "s3");
+        let ids = seed_session(&db, "s3", "carol");
+        let ns = ns_for("carol");
         let content = json!({
             "items": [{
                 "kind":"fact",
@@ -694,7 +797,6 @@ mod tests {
         let out = extract_inline(
             &mut db,
             "s3",
-            "carol",
             &c,
             DEFAULT_MAX_ITEMS,
             "s3:ex:100",
@@ -707,7 +809,7 @@ mod tests {
         assert_eq!(out.sensitive_dropped, 0);
 
         confirm(db.conn(), "s3:ex:100:c0", 200).unwrap();
-        let rows = recall_confirmed(db.conn(), "carol").unwrap();
+        let rows = recall_confirmed(db.conn(), &ns).unwrap();
         let ranked = crate::cognition::rank_recall(
             &rows,
             300,
@@ -723,7 +825,19 @@ mod tests {
     #[test]
     fn empty_session_extracts_nothing_without_calling_provider() {
         let mut db = friday_storage::Db::open_hub(&tmp("empty")).unwrap();
-        ensure_session(db.conn(), "s4", 1).unwrap();
+        // Slice-3: the session must have a RESOLVABLE owner (else it fails closed BEFORE
+        // the empty-message early-return). Bind an owner, then leave the session message-less.
+        ensure_session_with_owner(
+            db.conn(),
+            "s4",
+            &SessionOwner {
+                account_id: Some("default".into()),
+                channel: Some("discord".into()),
+                user_id: Some("dave".into()),
+            },
+            1,
+        )
+        .unwrap();
         // A transport that PANICS if posted to — proves the empty-session path makes
         // ZERO provider calls (it must early-return before any chat/discover).
         struct PanicTransport;
@@ -739,7 +853,6 @@ mod tests {
         let out = extract_inline(
             &mut db,
             "s4",
-            "dave",
             &c,
             DEFAULT_MAX_ITEMS,
             "s4:ex:100",
@@ -751,6 +864,68 @@ mod tests {
         assert_eq!(out.candidates_created, 0);
         assert_eq!(out.messages_marked_extracted, 0);
         assert_eq!(db.count("token_ledger").unwrap(), 0);
+        // Even with no messages, the derived namespace is echoed (it was resolved first).
+        assert_eq!(out.derived_namespace, ns_for("dave"));
+    }
+
+    #[test]
+    fn session_without_user_id_fails_closed_before_any_provider_call() {
+        // Slice-3 PARITY: a session with NO owner user_id has an UNRESOLVABLE memory
+        // namespace, so extraction FAILS CLOSED (mirrors the TS MEMORY_NAMESPACE_UNRESOLVABLE
+        // throw) BEFORE the provider is ever contacted — even though the session has messages.
+        let mut db = friday_storage::Db::open_hub(&tmp("nouser")).unwrap();
+        // Owner-less session (account/channel set but user_id absent) WITH a message.
+        ensure_session_with_owner(
+            db.conn(),
+            "s1",
+            &SessionOwner {
+                account_id: Some("default".into()),
+                channel: Some("discord".into()),
+                user_id: None,
+            },
+            1,
+        )
+        .unwrap();
+        append_session_message(
+            db.conn(),
+            "s1",
+            &SessionMessage::new("user", "remember 47", None),
+            10,
+        )
+        .unwrap();
+
+        struct PanicTransport;
+        impl Transport for PanicTransport {
+            fn get_json(&self, _u: &str, _b: &str) -> Result<Value, DeepSeekError> {
+                panic!("unresolvable namespace must fail closed before discover");
+            }
+            fn post_json(&self, _u: &str, _b: &str, _body: &Value) -> Result<Value, DeepSeekError> {
+                panic!("unresolvable namespace must fail closed before provider call");
+            }
+        }
+        let c = DeepSeekClient::with_transport(PanicTransport, "test-key-not-real".into());
+        let err = extract_inline(
+            &mut db,
+            "s1",
+            &c,
+            DEFAULT_MAX_ITEMS,
+            "s1:ex:100",
+            "led-1",
+            100,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ExtractionError::NamespaceUnresolvable(NamespaceError::UnresolvableNoUserId)
+            ),
+            "no user_id must be a fail-closed namespace error, got {err:?}"
+        );
+        // No provider call, no ledger row, no candidate.
+        assert_eq!(db.count("token_ledger").unwrap(), 0);
+        assert_eq!(db.count("memory_item").unwrap(), 0);
+        // ...and the message is NOT consumed (it stays pending for a retry once owned).
+        assert_eq!(status_of(&db, "s1:m0"), "pending");
     }
 
     /// Read one message's `memory_extract_status` (test-only helper for the slice-2
@@ -772,7 +947,7 @@ mod tests {
         // calls the provider). seed_session gives a referenced + an unreferenced message,
         // so the unchanged-ledger assertion catches "marked only the referenced id".
         let mut db = friday_storage::Db::open_hub(&tmp("dedup")).unwrap();
-        let ids = seed_session(&db, "s1");
+        let ids = seed_session(&db, "s1", "alice");
         let content = json!({
             "items": [{
                 "kind": "preference",
@@ -788,7 +963,6 @@ mod tests {
         let out1 = extract_inline(
             &mut db,
             "s1",
-            "alice",
             &c,
             DEFAULT_MAX_ITEMS,
             "s1:ex:100",
@@ -823,7 +997,6 @@ mod tests {
         let out2 = extract_inline(
             &mut db,
             "s1",
-            "alice",
             &c2,
             DEFAULT_MAX_ITEMS,
             "s1:ex:200",
@@ -855,7 +1028,7 @@ mod tests {
         // the PRIMARY KEY mid-loop → the whole tx drops → BOTH the c0 candidate AND the
         // extracted-marks roll back (all-or-nothing). No test seam in `extract_inline`.
         let mut db = friday_storage::Db::open_hub(&tmp("rollback")).unwrap();
-        let ids = seed_session(&db, "s1");
+        let ids = seed_session(&db, "s1", "alice");
         let content = json!({
             "items": [
                 {"kind":"fact","content":"first item","sourceMessageIds":[ids[0]]},
@@ -865,7 +1038,8 @@ mod tests {
         .to_string();
         let c = client(content);
 
-        // Pre-seed the row the loop will try to mint at i==1, forcing a PK collision.
+        // Pre-seed the row the loop will try to mint at i==1, forcing a PK collision. The
+        // pre-seeded `principal_id` is arbitrary (the collision is on the memory_id PK).
         record_candidate(
             db.conn(),
             &NewMemoryCandidate {
@@ -873,7 +1047,7 @@ mod tests {
                 scope: MemoryScope::Session,
                 content_ref: None,
                 content: Some("pre-existing collision row"),
-                principal_id: Some("alice"),
+                principal_id: Some("pre-seeded"),
                 sensitive: false,
                 created_at: 50,
             },
@@ -883,7 +1057,6 @@ mod tests {
         let err = extract_inline(
             &mut db,
             "s1",
-            "alice",
             &c,
             DEFAULT_MAX_ITEMS,
             "s1:ex:100",
@@ -930,7 +1103,7 @@ mod tests {
         // source messages: they are marked extracted so a re-run does not re-extract them
         // (matches the TS — a dropped item still leaves the pending set).
         let mut db = friday_storage::Db::open_hub(&tmp("dropped")).unwrap();
-        let ids = seed_session(&db, "s1");
+        let ids = seed_session(&db, "s1", "bob");
         let content = json!({
             "items": [
                 {"kind":"fact","content":"User's API key rotation is monthly.","sourceMessageIds":[ids[0]]}
@@ -942,7 +1115,6 @@ mod tests {
         let out = extract_inline(
             &mut db,
             "s1",
-            "bob",
             &c,
             DEFAULT_MAX_ITEMS,
             "s1:ex:100",
@@ -977,7 +1149,6 @@ mod tests {
         let out2 = extract_inline(
             &mut db,
             "s1",
-            "bob",
             &c2,
             DEFAULT_MAX_ITEMS,
             "s1:ex:200",
@@ -989,16 +1160,14 @@ mod tests {
     }
 
     #[test]
-    fn blank_session_or_principal_is_bad_input() {
+    fn blank_session_is_bad_input() {
+        // Slice-3 removed the caller `principal_id` arg (the store scope is now session-
+        // derived), so only the blank-session-id bad-input remains.
         let mut db = friday_storage::Db::open_hub(&tmp("blank")).unwrap();
         let c = client(r#"{"items":[]}"#);
         assert!(matches!(
-            extract_inline(&mut db, "  ", "x", &c, DEFAULT_MAX_ITEMS, "p", "l", 1),
+            extract_inline(&mut db, "  ", &c, DEFAULT_MAX_ITEMS, "p", "l", 1),
             Err(ExtractionError::BadInput("session_id"))
-        ));
-        assert!(matches!(
-            extract_inline(&mut db, "s", "  ", &c, DEFAULT_MAX_ITEMS, "p", "l", 1),
-            Err(ExtractionError::BadInput("principal_id"))
         ));
     }
 
