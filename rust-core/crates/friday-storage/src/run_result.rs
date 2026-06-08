@@ -272,7 +272,8 @@ mod tests {
         // SHA-256("") — the canonical empty-input digest.
         assert_eq!(
             sha256_hex(b""),
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            // Not a secret: the canonical SHA-256 of the empty input (a public test vector).
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" // pragma: allowlist secret
         );
         assert_eq!(sha256_hex(b"").len(), 64);
         assert!(sha256_hex(b"abc").bytes().all(|c| c.is_ascii_hexdigit()));
@@ -334,7 +335,8 @@ mod tests {
         assert_eq!(stored.answer_len, 0);
         assert_eq!(
             stored.answer_sha256,
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            // Not a secret: the canonical SHA-256 of the empty input (a public test vector).
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" // pragma: allowlist secret
         );
     }
 
