@@ -198,7 +198,19 @@ pub struct RawToolCall {
 /// failures the caller fail-closes on — never a silent default.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentError {
-    /// The model/transport call itself failed (network, auth, bad response).
+    /// The provider/route call itself failed (network / 5xx / rate-limit / auth /
+    /// bad-response / no-models), carrying the STRUCTURED [`friday_deepseek::DeepSeekError`]
+    /// instead of stringifying it. This preserves the variant so the run_loop error site can
+    /// classify it via [`crate::retry::RetryDisposition::classify_deepseek`] and BOUND-retry
+    /// only the transient (`Retryable`) cases — a `Terminal` (auth/credential/validation) one
+    /// is surfaced immediately, exactly as before. The error's `Display`/`Debug` is the
+    /// crate's own coarse, secret-free message (status code / kind only; never the API key
+    /// or response body — see `map_ureq_err`), so this leaks no more than the prior
+    /// `format!("{e:?}")` did.
+    Route(friday_deepseek::DeepSeekError),
+    /// A model/transport failure that is only available as a string (no structured
+    /// `DeepSeekError` to carry — e.g. "no model available" from discovery selection).
+    /// Never retried (it is not a transient route failure with a disposition).
     Model(String),
     /// The model replied, but its output did not parse as a single valid tool-call
     /// object per the contract (prose, multiple objects, missing `tool`, bad JSON).
@@ -208,6 +220,9 @@ pub enum AgentError {
 impl std::fmt::Display for AgentError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            // Coarse, secret-free: delegates to DeepSeekError's own thiserror `Display`
+            // (status code / kind only — no API key, no response body).
+            AgentError::Route(e) => write!(f, "model_error: {e}"),
             AgentError::Model(m) => write!(f, "model_error: {m}"),
             AgentError::Parse(m) => write!(f, "parse_error: {m}"),
         }
@@ -338,17 +353,14 @@ const AGENTLOOP_MAX_TOKENS: u32 = 4096;
 
 impl<T: friday_deepseek::Transport> AgentLlmClient for DeepSeekAgentLlmClient<T> {
     fn propose_tool_call(&self, task: &str) -> Result<RawToolCall, AgentError> {
-        let models = self
-            .client
-            .discover_models()
-            .map_err(|e| AgentError::Model(format!("{e:?}")))?;
+        let models = self.client.discover_models().map_err(AgentError::Route)?;
         let model = friday_deepseek::select_model(&models)
             .ok_or_else(|| AgentError::Model("no model available".to_string()))?;
         let prompt = build_tool_prompt(task);
         let outcome = self
             .client
             .chat(&model, &prompt, AGENTLOOP_MAX_TOKENS)
-            .map_err(|e| AgentError::Model(format!("{e:?}")))?;
+            .map_err(AgentError::Route)?;
         parse_tool_call(&outcome.content)
     }
 
@@ -375,17 +387,14 @@ impl<T: friday_deepseek::Transport> AgentLlmClient for DeepSeekAgentLlmClient<T>
         task: &str,
         history: &[TurnTrace],
     ) -> Result<MeteredStep, AgentError> {
-        let models = self
-            .client
-            .discover_models()
-            .map_err(|e| AgentError::Model(format!("{e:?}")))?;
+        let models = self.client.discover_models().map_err(AgentError::Route)?;
         let model = friday_deepseek::select_model(&models)
             .ok_or_else(|| AgentError::Model("no model available".to_string()))?;
         let prompt = build_loop_prompt(task, history);
         let outcome = self
             .client
             .chat(&model, &prompt, AGENTLOOP_MAX_TOKENS)
-            .map_err(|e| AgentError::Model(format!("{e:?}")))?;
+            .map_err(AgentError::Route)?;
         // The chat SUCCEEDED — `outcome` carries real, billable usage even if the content
         // below fails to parse. Surface it so the loop bills the call regardless of parse.
         let step = parse_agent_step(&outcome.content);
@@ -2051,6 +2060,20 @@ pub fn run_loop(
 /// only when no exec error occurs — an erroring Allow is one executor call, zero
 /// `executed_tools`, by deliberate honest accounting). All observable in the
 /// `agent_run_event` log.
+/// TOTAL provider-call attempts per loop turn before the turn fails closed. The FIRST try
+/// plus up to `N-1` BOUNDED retries — so `3` means at most 3 calls to `next_step_metered`.
+/// A retry happens ONLY when the failure is an `AgentError::Route(e)` whose
+/// [`crate::retry::RetryDisposition::classify_deepseek`] is `Retryable` (transient network /
+/// 5xx / rate-limit); `Terminal` route errors (auth / credential / bad-response / no-models),
+/// non-`Route` errors, and an exhausted budget all fail closed immediately. This wraps ONLY
+/// the provider call — it is BEFORE the gate dispatch, so no gate outcome
+/// (RequiresApproval / Pause / Deny) is ever reachable from this retry. A persistently-failing
+/// provider gives up after this many attempts (no unbounded retry / runaway spend). Retries
+/// are the SAME turn: they do NOT consume `max_turns`, and because a failed (Route) attempt
+/// produces NO usage, it bills NOTHING and writes NO audit/event — only the successful
+/// attempt (or the final exhausted failure) is recorded once, OUTSIDE this inner loop.
+const RUN_LOOP_MAX_PROVIDER_ATTEMPTS: u32 = 3;
+
 #[allow(clippy::too_many_arguments)]
 pub fn run_loop_with_policy(
     client: &dyn AgentLlmClient,
@@ -2113,7 +2136,47 @@ pub fn run_loop_with_policy(
         // route/transport/discovery failure — the chat produced no usage, so NOTHING is
         // billed (exactly the ask path's `Route` error: no half-billed row). The inner
         // parse result is handled AFTER billing below.
-        let (step_result, usage) = match client.next_step_metered(&prompt_task, &history) {
+        //
+        // BOUNDED provider retry (UNW-011 wiring): the provider call is the ONLY thing
+        // retried, and ONLY for a transient `AgentError::Route(e)` (classified `Retryable`
+        // by the SINGLE canonical classifier). This inner loop writes NO audit/event and
+        // bills NOTHING per attempt — a failed Route attempt yields no usage — so a retried
+        // turn does not double-write the hash chain or inflate the token ledger. It is the
+        // SAME turn (no `max_turns` consumption), and it is reached BEFORE the gate dispatch,
+        // so no gate outcome (RequiresApproval / Pause / Deny) is ever reachable from here.
+        // A `Terminal` route error, any non-`Route` error, or an exhausted attempt budget
+        // fails closed EXACTLY as before — the original `Err(e)` is surfaced to the single
+        // error site below. `attempts` counts attempts ALREADY made (incl. the just-failed
+        // one) so the bound is TOTAL attempts == `RUN_LOOP_MAX_PROVIDER_ATTEMPTS`.
+        let metered_result = {
+            let mut attempts: u32 = 0;
+            loop {
+                let outcome = client.next_step_metered(&prompt_task, &history);
+                match &outcome {
+                    Err(AgentError::Route(e)) => {
+                        attempts += 1;
+                        let disposition = crate::retry::RetryDisposition::classify_deepseek(e);
+                        if crate::retry::should_retry(
+                            disposition,
+                            attempts,
+                            RUN_LOOP_MAX_PROVIDER_ATTEMPTS,
+                        ) {
+                            // Transient route failure with attempts remaining: retry the SAME
+                            // provider call (never a reroute). No backoff/sleep — the path has
+                            // no injected clock, so a real sleep would only flake tests without
+                            // changing the bounded security property.
+                            continue;
+                        }
+                        // Terminal, or the attempt budget is exhausted → fail closed.
+                        break outcome;
+                    }
+                    // A successful call, an already-billed inner parse error, a non-route
+                    // `Model`/`Parse` error: never retried — surface immediately.
+                    _ => break outcome,
+                }
+            }
+        };
+        let (step_result, usage) = match metered_result {
             Ok(metered) => metered,
             Err(e) => {
                 agent_run::record_event(
@@ -4518,6 +4581,431 @@ mod tests {
         assert_eq!(out.executed_tools, 0);
     }
 
+    // --- UNW-011 wiring: BOUNDED provider-call retry via RetryDisposition -----------
+    //
+    // These six tests prove the retry slice end-to-end at the run_loop level: a transient
+    // `Route` error is bounded-retried into success; a `Terminal` route error is never
+    // retried; the bound is enforced; the gate path is unreachable from the retry; and a
+    // retried turn neither corrupts the audit chain nor double-bills.
+
+    /// A metering client whose OUTER provider result is SCRIPTED per call (drives the retry
+    /// loop). Each `next_step_metered` returns the next scripted `Result<MeteredStep, _>` and
+    /// COUNTS the call, so a test can assert how many provider attempts the loop made. An
+    /// OUTER `Err(Route(..))` exercises the retry path; an `Ok((step, Some(outcome)))` is a
+    /// billable success. Once the script is exhausted it repeats the LAST entry (so a
+    /// "succeed on attempt N" script that then needs a finish turn keeps returning that
+    /// finish). `propose_tool_call` is unused by the loop.
+    struct RetryScriptedClient {
+        outer: Vec<Result<MeteredStep, AgentError>>,
+        calls: std::cell::Cell<usize>,
+    }
+    impl RetryScriptedClient {
+        fn new(outer: Vec<Result<MeteredStep, AgentError>>) -> Self {
+            Self {
+                outer,
+                calls: std::cell::Cell::new(0),
+            }
+        }
+        fn provider_calls(&self) -> usize {
+            self.calls.get()
+        }
+    }
+    impl AgentLlmClient for RetryScriptedClient {
+        fn propose_tool_call(&self, _task: &str) -> Result<RawToolCall, AgentError> {
+            Err(AgentError::Parse(
+                "single-turn path unused by run_loop".to_string(),
+            ))
+        }
+        fn next_step_metered(
+            &self,
+            _task: &str,
+            _history: &[TurnTrace],
+        ) -> Result<MeteredStep, AgentError> {
+            let i = self.calls.get();
+            self.calls.set(i + 1);
+            let idx = i.min(self.outer.len().saturating_sub(1));
+            // `Result<MeteredStep, AgentError>` is Clone (its members all are), so each
+            // scripted attempt is reproducible.
+            self.outer[idx].clone()
+        }
+    }
+
+    /// A billable success step (synthetic usage), used to script the "eventual success" turn.
+    fn ok_step(step: AgentStep, prompt_tokens: i64, completion_tokens: i64) -> MeteredStep {
+        (
+            Ok(step),
+            Some(friday_deepseek::ModelCallOutcome {
+                model: "deepseek-v4-flash".to_string(),
+                prompt_tokens,
+                completion_tokens,
+                total_tokens: prompt_tokens + completion_tokens,
+                content: String::new(),
+                finish_reason: "stop".to_string(),
+            }),
+        )
+    }
+
+    /// A transient (Retryable) route error: `ProviderUnavailable` (network / 5xx / rate-limit).
+    fn transient_route_err() -> Result<MeteredStep, AgentError> {
+        Err(AgentError::Route(
+            friday_deepseek::DeepSeekError::ProviderUnavailable("HTTP 503".to_string()),
+        ))
+    }
+
+    /// A Terminal route error: `Auth` (credential rejected) — must NEVER be retried.
+    fn terminal_route_err() -> Result<MeteredStep, AgentError> {
+        Err(AgentError::Route(friday_deepseek::DeepSeekError::Auth(401)))
+    }
+
+    #[test]
+    fn loop_retries_transient_route_error_then_succeeds() {
+        // (Test 1) Two transient Route failures, then a billable finish → the turn recovers
+        // within the bound (3 attempts) and the run finishes. Exactly 3 provider calls; one
+        // billed turn; audit chain intact (no per-attempt writes).
+        let root = TempDir::new("retry-transient-ok");
+        let db = Db::open_hub(&temp_path("retry-transient-ok")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "do it", 1).unwrap();
+        let client = RetryScriptedClient::new(vec![
+            transient_route_err(),
+            transient_route_err(),
+            Ok(ok_step(
+                AgentStep::Finish {
+                    message: "done".to_string(),
+                },
+                10,
+                5,
+            )),
+        ]);
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "do it",
+            "",
+            SECRET,
+            &no_approval(),
+            5,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.status, LoopStatus::Finished, "recovered after retries");
+        assert_eq!(
+            out.turns, 1,
+            "retries are the SAME turn — max_turns untouched"
+        );
+        assert_eq!(
+            client.provider_calls(),
+            3,
+            "2 transient failures + 1 success = 3 provider attempts"
+        );
+        // Billed exactly once (only the successful attempt produced usage).
+        assert_eq!(
+            db.count("token_ledger").unwrap(),
+            1,
+            "failed Route attempts produce no usage ⇒ bill once"
+        );
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).unwrap() >= 1);
+    }
+
+    #[test]
+    fn loop_does_not_retry_terminal_route_error() {
+        // (Test 2) A Terminal route error (auth) fails closed IMMEDIATELY — no retry — even
+        // though attempts remain. Exactly ONE provider call; run Errored; nothing billed.
+        let root = TempDir::new("retry-terminal");
+        let db = Db::open_hub(&temp_path("retry-terminal")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "do it", 1).unwrap();
+        let client = RetryScriptedClient::new(vec![
+            terminal_route_err(),
+            // A success is scripted next, but the loop must NEVER reach it for a Terminal error.
+            Ok(ok_step(
+                AgentStep::Finish {
+                    message: "should-not-reach".to_string(),
+                },
+                10,
+                5,
+            )),
+        ]);
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "do it",
+            "",
+            SECRET,
+            &no_approval(),
+            5,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(
+            out.status,
+            LoopStatus::Errored,
+            "terminal error fails closed"
+        );
+        assert_eq!(out.turns, 1);
+        assert_eq!(
+            client.provider_calls(),
+            1,
+            "a Terminal route error is NOT retried"
+        );
+        assert_eq!(db.count("token_ledger").unwrap(), 0, "nothing billed");
+    }
+
+    #[test]
+    fn loop_bounds_a_persistently_transient_route_error() {
+        // (Test 3) A provider that ALWAYS returns a transient Route error is bounded: the loop
+        // makes EXACTLY `RUN_LOOP_MAX_PROVIDER_ATTEMPTS` calls then fails closed (no unbounded
+        // retry / runaway spend). Asserting the exact const is the bound proof.
+        let root = TempDir::new("retry-bounded");
+        let db = Db::open_hub(&temp_path("retry-bounded")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "do it", 1).unwrap();
+        // Single always-transient entry; the client repeats the last entry, so every attempt
+        // fails transiently.
+        let client = RetryScriptedClient::new(vec![transient_route_err()]);
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "do it",
+            "",
+            SECRET,
+            &no_approval(),
+            5,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(
+            out.status,
+            LoopStatus::Errored,
+            "exhausted retries fail closed"
+        );
+        assert_eq!(out.turns, 1, "all retries are the SAME (first) turn");
+        assert_eq!(
+            client.provider_calls() as u32,
+            RUN_LOOP_MAX_PROVIDER_ATTEMPTS,
+            "exactly the bounded number of provider attempts, then give up"
+        );
+        assert_eq!(
+            db.count("token_ledger").unwrap(),
+            0,
+            "no failed attempt billed"
+        );
+    }
+
+    #[test]
+    fn loop_never_retries_a_gate_pause_or_deny() {
+        // (Test 4) The retry wraps ONLY the provider call — it is BEFORE/SEPARATE from the
+        // gate dispatch. A successful provider step whose gate outcome is a PAUSE or a DENY is
+        // NOT re-driven: the provider is called EXACTLY once and the gate outcome is unchanged.
+        // The retry only ever matches `Err(AgentError::Route(..))`; a gate outcome arrives via
+        // the `Ok` provider result and the SEPARATE `gate_dispatch` branch downstream, which is
+        // structurally unreachable from the provider-only retry. Both outcomes are proven:
+        // Pause directly, and Deny via a read-only RunPolicy on the SAME mutating proposal.
+
+        // (a) PAUSE: mutating delete, no operator key → RequiresApproval → Paused, stays paused.
+        {
+            let root = TempDir::new("retry-gate-pause");
+            std::fs::write(root.0.join("d.txt"), b"KEEP").unwrap();
+            let db = Db::open_hub(&temp_path("retry-gate-pause")).unwrap();
+            agent_run::create_run(db.conn(), "r1", "delete it", 1).unwrap();
+            let client = RetryScriptedClient::new(vec![Ok(ok_step(
+                AgentStep::Tool(raw("delete_file", &[("path", "d.txt")])),
+                10,
+                5,
+            ))]);
+            let executor = FsToolExecutor::new(&root.0);
+            let out = run_loop(
+                &client,
+                &executor,
+                db.conn(),
+                "r1",
+                "delete it",
+                "",
+                SECRET,
+                &no_approval(),
+                5,
+                1000,
+            )
+            .unwrap();
+            assert_eq!(
+                out.status,
+                LoopStatus::Paused,
+                "mutating action without approval Pauses — and stays paused"
+            );
+            assert_eq!(
+                client.provider_calls(),
+                1,
+                "the gate Pause is NOT a provider error — the retry never re-calls the provider"
+            );
+            assert!(
+                root.0.join("d.txt").exists(),
+                "a paused mutation never executes (file untouched)"
+            );
+        }
+
+        // (b) DENY: a READ-ONLY RunPolicy denies the SAME mutating delete BEFORE execution
+        // (`run_is_read_only:*`) → Blocked. The Deny is reached via the single downstream
+        // gate_dispatch on the single `Ok` provider result — the retry never re-calls the
+        // provider, and the Deny outcome is unchanged.
+        {
+            let root = TempDir::new("retry-gate-deny");
+            std::fs::write(root.0.join("d.txt"), b"KEEP").unwrap();
+            let db = Db::open_hub(&temp_path("retry-gate-deny")).unwrap();
+            agent_run::create_run(db.conn(), "r1", "delete it", 1).unwrap();
+            let client = RetryScriptedClient::new(vec![Ok(ok_step(
+                AgentStep::Tool(raw("delete_file", &[("path", "d.txt")])),
+                10,
+                5,
+            ))]);
+            let executor = FsToolExecutor::new(&root.0);
+            let out = run_loop_with_policy(
+                &client,
+                &executor,
+                db.conn(),
+                "r1",
+                "delete it",
+                "",
+                None,
+                &no_approval(),
+                &RunPolicy::new(None, Vec::<String>::new(), true), // read-only ⇒ Deny mutations
+                5,
+                1000,
+            )
+            .unwrap();
+            assert_eq!(
+                out.status,
+                LoopStatus::Blocked,
+                "a read-only run DENIES the mutating tool before execution"
+            );
+            assert!(out.detail.contains("denied:run_is_read_only:delete_file"));
+            assert_eq!(
+                client.provider_calls(),
+                1,
+                "the gate Deny is NOT a provider error — the retry never re-calls the provider"
+            );
+            assert!(
+                root.0.join("d.txt").exists(),
+                "a denied mutation never executes (file untouched)"
+            );
+        }
+    }
+
+    #[test]
+    fn loop_audit_chain_consistent_across_a_retried_turn() {
+        // (Test 5) A turn that retried twice before succeeding (read tool) then finishes writes
+        // the SAME audit/event records as a non-retried turn — the retry adds NO per-attempt
+        // events and does not corrupt the hash chain. The chain verifies, and there is exactly
+        // ONE model-call audit per BILLED turn (2), not one per attempt.
+        let root = TempDir::new("retry-audit");
+        std::fs::write(root.0.join("notes.md"), b"answer is 47").unwrap();
+        let db = Db::open_hub(&temp_path("retry-audit")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "read notes", 1).unwrap();
+        let client = RetryScriptedClient::new(vec![
+            // Turn 0: two transient failures, then a successful read tool.
+            transient_route_err(),
+            transient_route_err(),
+            Ok(ok_step(
+                AgentStep::Tool(raw("read_file", &[("path", "notes.md")])),
+                10,
+                5,
+            )),
+            // Turn 1: finish (the client repeats this last entry).
+            Ok(ok_step(
+                AgentStep::Finish {
+                    message: "47".to_string(),
+                },
+                7,
+                3,
+            )),
+        ]);
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "read notes",
+            "",
+            SECRET,
+            &no_approval(),
+            5,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.status, LoopStatus::Finished);
+        assert_eq!(out.turns, 2, "two TURNS despite the retried provider calls");
+        // The hash-chained audit verifies end to end.
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).unwrap() >= 2);
+        // Exactly ONE model-call audit per BILLED turn (2), NOT one per provider attempt
+        // (there were 3 + 1 = 4 provider calls but only 2 billed successes).
+        let n_modelcall_audits: i64 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM audit_ledger WHERE action = 'agent_loop.model_call'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            n_modelcall_audits, 2,
+            "one model-call audit per BILLED turn, not per retry attempt"
+        );
+    }
+
+    #[test]
+    fn loop_billing_parity_a_retried_turn_counts_tokens_once() {
+        // (Test 6) Billing parity: a turn that failed transiently twice before succeeding
+        // counts tokens ONCE (only the successful attempt produced usage). The ledger total is
+        // the success's usage, NOT inflated by the failed attempts.
+        let root = TempDir::new("retry-billing");
+        let db = Db::open_hub(&temp_path("retry-billing")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "do it", 1).unwrap();
+        let client = RetryScriptedClient::new(vec![
+            transient_route_err(),
+            transient_route_err(),
+            Ok(ok_step(
+                AgentStep::Finish {
+                    message: "done".to_string(),
+                },
+                10,
+                5,
+            )),
+        ]);
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "do it",
+            "",
+            SECRET,
+            &no_approval(),
+            5,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.status, LoopStatus::Finished);
+        assert_eq!(client.provider_calls(), 3, "2 fails + 1 success");
+        // EXACTLY one ledger row (the success); failed Route attempts billed nothing.
+        assert_eq!(
+            db.count("token_ledger").unwrap(),
+            1,
+            "a retried turn writes ONE ledger row, not one per attempt"
+        );
+        let tot = friday_storage::agent_run_read::run_token_totals(db.conn(), "r1").unwrap();
+        assert_eq!(
+            tot.total, 15,
+            "ledger total is the success's usage (10+5), NOT inflated by retries"
+        );
+    }
+
     #[test]
     fn loop_unknown_tool_in_a_later_turn_blocks() {
         let root = TempDir::new("loop-unk");
@@ -5001,14 +5489,18 @@ mod ask_coupling_tests {
     #[test]
     fn deepseek_metered_route_failure_surfaces_no_usage() {
         // A transport/route failure is an OUTER Err: no usage produced, nothing to bill
-        // (the ask path's `Route` error — no half-billed row).
+        // (the ask path's `Route` error — no half-billed row). It now carries the STRUCTURED
+        // `DeepSeekError` (`AgentError::Route`) so the run_loop can classify it for retry —
+        // here the simulated `ProviderUnavailable` is the transient (`Retryable`) kind.
         let client = DeepSeekAgentLlmClient::new(friday_deepseek::DeepSeekClient::with_transport(
             MockTransport::new(true),
             "k".into(),
         ));
         assert!(matches!(
             client.next_step_metered("task", &[]),
-            Err(AgentError::Model(_))
+            Err(AgentError::Route(
+                friday_deepseek::DeepSeekError::ProviderUnavailable(_)
+            ))
         ));
     }
 

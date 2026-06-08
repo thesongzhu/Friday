@@ -33,7 +33,13 @@ pub const PROVIDER: ProviderKind = ProviderKind::DeepSeek;
 /// Hub-only environment variable holding the DeepSeek API key.
 pub const ENV_KEY: &str = "FRIDAY_DEEPSEEK_API_KEY";
 
-#[derive(Debug, Error)]
+// `Clone + PartialEq + Eq` so the structured error can be carried (not stringified)
+// into `friday_hub::AgentError::Route` and classified by the retry classifier at the
+// run_loop error site. All variants are trivially Clone/Eq (unit / `u16` / `String` /
+// `CoreError`, which already derives `Clone, PartialEq, Eq`). The error messages stay
+// coarse and secret-free (status code / kind only — see `map_ureq_err`), so carrying
+// the variant leaks no more than the prior `format!("{e:?}")` did.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum DeepSeekError {
     /// Env var unset/empty. Adverse path: surfaces as a blocker, never a fallback.
     #[error("DeepSeek credential missing or empty (env {ENV_KEY})")]
