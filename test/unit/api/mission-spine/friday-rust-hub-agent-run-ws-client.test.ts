@@ -157,7 +157,7 @@ describe("friday-rust-hub-agent-run-ws-client (S-D dark refs-only WS client)", (
   });
 
   it("does NOT leak a body when the server smuggles one — only refs surface", async () => {
-    const SECRET = "TOP-SECRET ANSWER BODY THAT MUST NEVER REACH THE CLIENT";
+    const SECRET = "TOP-SECRET ANSWER BODY THAT MUST NEVER REACH THE CLIENT"; // pragma: allowlist secret
     stub = await startStubServer({
       onMessage: () =>
         JSON.stringify({
@@ -271,7 +271,7 @@ describe("friday-rust-hub-agent-run-ws-client (S-D dark refs-only WS client)", (
   });
 
   it("surfaces NO body on ANY fail-closed branch (error carries no answer text)", async () => {
-    const SECRET = "leaked-body-should-never-appear";
+    const SECRET = "leaked-body-should-never-appear"; // pragma: allowlist secret
     stub = await startStubServer({
       // A body-bearing frame that ALSO has a wrong kind → fail closed, body must not leak.
       onMessage: () =>
