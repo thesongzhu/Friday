@@ -23,6 +23,7 @@
 //! rejects any forbidden marker before printing.
 
 use std::env;
+use std::ffi::OsString;
 
 use friday_providers::{detect, CliProbe, Provider, ProviderProbe};
 use serde_json::json;
@@ -44,8 +45,13 @@ impl BridgeError {
 }
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    match run(&args) {
+    // Read argv as OsString and convert fail-closed: a non-UTF-8 arg (in ANY
+    // position) maps to a coarse `bad_args` error rather than PANICKING the way
+    // `env::args()` does inside `.collect()`. This keeps the bin's "never a
+    // panic / fail-closed, coarse error kind + exit 2" contract intact for
+    // inputs like `hub_providers_detect $'\xff'` (a bare non-UTF-8 positional).
+    let parsed = parse_args(env::args_os()).and_then(|args| run(&args));
+    match parsed {
         Ok(rendered) => {
             println!("{rendered}");
         }
@@ -62,6 +68,18 @@ fn main() {
             std::process::exit(2);
         }
     }
+}
+
+/// Convert raw OS argv into UTF-8 `String`s fail-closed. `std::env::args()`
+/// PANICS (abort, exit 101) the moment any argv entry is not valid UTF-8 — it
+/// fires inside `.collect()` BEFORE the fail-closed arg-parse path can run. By
+/// reading `args_os()` and mapping each `OsString -> String` failure to a coarse
+/// `bad_args` error, any non-UTF-8 arg in any position (e.g. a bare `$'\xff'`
+/// positional, not just a `--probe` value) routes to the refs-only error + exit
+/// 2 instead of a panic.
+fn parse_args(args: impl Iterator<Item = OsString>) -> Result<Vec<String>, BridgeError> {
+    args.map(|a| a.into_string().map_err(|_| BridgeError::new("bad_args")))
+        .collect()
 }
 
 /// Parse `--probe codex|claude|both` (default `both`) into the providers to detect.
@@ -364,5 +382,29 @@ mod tests {
         let v = parse(&rendered);
         assert!(v["detected"][0].get("stdout").is_none());
         assert!(v["detected"][0].get("stderr").is_none());
+    }
+
+    /// Fail-closed argv: a NON-UTF-8 arg must route to the coarse `bad_args`
+    /// error (then exit 2 in `main`), NEVER panic. Pre-fix, `main` collected
+    /// `env::args()`, whose `.collect()` PANICS (process abort, exit 101) on the
+    /// first non-UTF-8 entry — BEFORE any fail-closed path runs. We reproduce
+    /// the bin's documented contract violation `hub_providers_detect $'\xff'`:
+    /// the bad bytes are a BARE POSITIONAL (not a `--probe` value), so a lossy
+    /// conversion would have silently defaulted to `both` + exit 0; the explicit
+    /// `OsString -> String` failure mapping correctly yields `bad_args`. The
+    /// test drives `parse_args` directly (no process spawn) for determinism.
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_argv_is_fail_closed_not_a_panic() {
+        use std::os::unix::ffi::OsStrExt;
+
+        // [prog, <invalid-UTF-8 bare positional>] — the literal defect input.
+        let argv = [
+            OsString::from("hub_providers_detect"),
+            std::ffi::OsStr::from_bytes(&[0xff]).to_os_string(),
+        ];
+        let err = parse_args(argv.into_iter())
+            .expect_err("non-UTF-8 argv must be rejected, not converted/panicked");
+        assert_eq!(err.kind, "bad_args");
     }
 }
