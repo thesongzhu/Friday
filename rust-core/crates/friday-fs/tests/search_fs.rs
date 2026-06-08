@@ -22,7 +22,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use friday_core::PathError;
-use friday_fs::{search_within_root, FsError, SearchHit, SEARCH_MAX_HITS, SEARCH_MAX_LINE_BYTES};
+use friday_fs::{
+    search_within_root, FsError, SearchHit, SEARCH_MAX_DIRS, SEARCH_MAX_FILES,
+    SEARCH_MAX_FILE_BYTES, SEARCH_MAX_HITS, SEARCH_MAX_LINE_BYTES,
+};
 
 /// A real, unique temp directory that is recursively removed on drop (std-only).
 struct TempDir {
@@ -284,5 +287,150 @@ fn search_skips_binary_and_non_utf8_files_gracefully() {
     assert!(
         !hits.iter().any(|h| h.relative_path == "bin.dat"),
         "a NUL-bearing binary file must be skipped, got {hits:?}"
+    );
+}
+
+// ════════════════════════════ cap enforcement (per-file, files, dirs) ════════════════════════════
+
+#[test]
+fn search_file_byte_cap_truncates_the_read_so_a_match_beyond_the_cap_is_not_returned() {
+    // SEARCH_MAX_FILE_BYTES: `scan_file_into` reads at most this many bytes via `Read::take`,
+    // so a match positioned BEYOND the cap is NEVER read and never returned, while a match
+    // within the cap IS. This proves `Read::take` truly bounds the read (not just the output).
+    let root = TempDir::new();
+
+    let cap = SEARCH_MAX_FILE_BYTES as usize;
+    // Line 1 holds an EARLY marker (well within the cap → must be returned).
+    let mut body: Vec<u8> = Vec::with_capacity(cap + 64);
+    body.extend_from_slice(b"EARLYMARK on line one\n");
+    // NUL-free ASCII padding ('a' lines) so the binary heuristic does NOT skip the file, and so
+    // the file's length comfortably exceeds the per-file cap. We pad until the byte offset is
+    // strictly past `cap`, THEN append the LATE marker — so every byte of LATEMARK lands beyond
+    // SEARCH_MAX_FILE_BYTES and is truncated away by `take`.
+    while body.len() <= cap {
+        // 64 'a' + newline; cheap, NUL-free, guaranteed to step past the cap.
+        body.extend_from_slice(&[b'a'; 64]);
+        body.push(b'\n');
+    }
+    assert!(
+        body.len() > cap,
+        "padding must push the file past the per-file byte cap"
+    );
+    body.extend_from_slice(b"LATEMARK beyond the cap\n");
+    write_file(&root.path().join("big.txt"), &body);
+
+    let early = search_within_root(root.path(), "EARLYMARK", None).expect("search ok");
+    assert_eq!(
+        locs(&early),
+        vec![("big.txt".to_string(), 1)],
+        "a match within the per-file byte cap must be returned"
+    );
+
+    let late = search_within_root(root.path(), "LATEMARK", None).expect("search ok");
+    assert!(
+        late.is_empty(),
+        "a match positioned BEYOND SEARCH_MAX_FILE_BYTES must NOT be returned (Read::take \
+         bounds the read), got {late:?}"
+    );
+}
+
+#[test]
+fn search_caps_files_opened_so_a_late_sorted_match_beyond_the_file_cap_is_not_scanned() {
+    // SEARCH_MAX_FILES: at most this many files are opened+scanned. We place a CONTROL match in
+    // the first file (sort order) and a SENTINEL match in a file that sorts AFTER the cap, with
+    // SEARCH_MAX_FILES non-matching filler files in between. The walk scans files in
+    // `list_dir_within_root` SORTED order and breaks at the file cap, so the control is scanned
+    // and the sentinel never is. (Filler files are non-matching, so the much smaller hit cap —
+    // SEARCH_MAX_HITS ≪ SEARCH_MAX_FILES — is NOT what stops the walk: only the file cap is.)
+    let root = TempDir::new();
+
+    // Control: sorts first, matches.
+    write_file(&root.path().join("f0000000.txt"), b"CTRLMARK control\n");
+    // Exactly SEARCH_MAX_FILES non-matching filler files, named so they sort between the control
+    // and the sentinel (f0000001 .. ). One byte each ⇒ fast even at the cap.
+    for i in 1..=SEARCH_MAX_FILES {
+        write_file(&root.path().join(format!("f{i:07}.txt")), b"x\n");
+    }
+    // Sentinel: a 'z'-prefixed name sorts AFTER every filler, so it is at sort position
+    // SEARCH_MAX_FILES + 2 — past the cap → never opened.
+    write_file(
+        &root.path().join("zzz_sentinel.txt"),
+        b"SENTMARK sentinel\n",
+    );
+
+    let ctrl = search_within_root(root.path(), "CTRLMARK", None).expect("search ok");
+    assert_eq!(
+        locs(&ctrl),
+        vec![("f0000000.txt".to_string(), 1)],
+        "the control file (within the file cap) must be scanned and matched"
+    );
+
+    let sent = search_within_root(root.path(), "SENTMARK", None).expect("search ok");
+    assert!(
+        sent.is_empty(),
+        "a match in a file sorted BEYOND SEARCH_MAX_FILES must NOT be scanned (file cap), \
+         got {sent:?}"
+    );
+}
+
+#[test]
+fn search_caps_dirs_and_keeps_the_pending_worklist_bounded() {
+    // SEARCH_MAX_DIRS: at most this many directories are listed, AND — the fix under test — the
+    // pending `worklist` is bounded because a directory is enqueued only while
+    // `dirs_enqueued < SEARCH_MAX_DIRS`. We build a WIDE FLAT tree (a deep chain would blow past
+    // PATH_MAX): SEARCH_MAX_DIRS + margin EMPTY child directories directly under the root, with
+    // exactly TWO matching files (control + sentinel) so neither the hit cap nor the file cap
+    // can interfere — only the directory enqueue cap decides what is searched.
+    //
+    // Mechanics: the walk lists `root`, enqueueing children in `list_dir_within_root` SORTED
+    // order; the root itself already consumed one enqueue slot, so only SEARCH_MAX_DIRS - 1
+    // children are enqueued — the LOWEST that-many in sort order (`d000000` … `d{cap-2}`) — and
+    // every higher-sorted directory is DROPPED at enqueue (bounded descent). The pops are LIFO,
+    // but with only two matching files no early cap fires, so EVERY enqueued directory is still
+    // visited. Therefore:
+    //   - CONTROL match lives in `d000000` (definitely enqueued) → searched & returned.
+    //   - SENTINEL match lives in the HIGHEST-sorted dir (definitely dropped) → never searched.
+    //
+    // We assert the bound via observable behavior (the dropped sentinel) rather than peeking at
+    // `worklist.len()`: if the worklist were UNbounded (the old code), every child would be
+    // enqueued and the sentinel WOULD be found. Its absence is the proof the enqueue cap held.
+    let root = TempDir::new();
+
+    // A comfortable margin past the cap so the sentinel is unambiguously in the dropped set and
+    // the test is not off-by-one fragile.
+    let total_dirs = SEARCH_MAX_DIRS + 64;
+    // Zero-padded names ⇒ lexicographic sort == numeric order (matching `list_dir`'s sort).
+    let control_rel = format!("d{:06}/m.txt", 0);
+    let sentinel_rel = format!("d{:06}/m.txt", total_dirs - 1);
+    for i in 0..total_dirs {
+        let d = root.path().join(format!("d{i:06}"));
+        fs::create_dir(&d).unwrap();
+        // Only the lowest- and highest-sorted dirs hold a matching file; the rest are empty, so
+        // neither the hit cap (SEARCH_MAX_HITS) nor the file cap (SEARCH_MAX_FILES) can fire and
+        // pre-empt the walk — the directory enqueue cap is the sole determinant.
+        if i == 0 || i == total_dirs - 1 {
+            write_file(&d.join("m.txt"), b"DIRMARK here\n");
+        }
+    }
+
+    let hits = search_within_root(root.path(), "DIRMARK", None).expect("search ok");
+
+    // The lowest-sorted directory is within the enqueue budget → its file is searched.
+    assert!(
+        hits.iter().any(|h| h.relative_path == control_rel),
+        "the control file in the lowest-sorted dir must be searched, got hits {hits:?}"
+    );
+    // The highest-sorted directory is beyond the enqueue budget → dropped → never searched.
+    assert!(
+        !hits.iter().any(|h| h.relative_path == sentinel_rel),
+        "a file in a directory beyond SEARCH_MAX_DIRS must NOT be searched (the pending \
+         worklist is bounded — enqueue cap held), but {sentinel_rel} was matched"
+    );
+    // With exactly two matching files, the control is the ONLY hit — confirming the walk neither
+    // descended the dropped sentinel dir nor blew any cap.
+    assert_eq!(
+        locs(&hits),
+        vec![(control_rel.clone(), 1)],
+        "exactly the control match (sentinel dir dropped at the enqueue cap)"
     );
 }

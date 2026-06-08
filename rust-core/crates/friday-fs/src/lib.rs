@@ -734,12 +734,36 @@ pub const SEARCH_MAX_FILE_BYTES: u64 = 1_048_576; // 1 MiB
 /// directories. The `subpath` argument itself is validated through the same pipeline, so an
 /// absolute / `..` / out-of-root / symlink `subpath` is REJECTED (`Err`).
 ///
-/// # Bounds (never unbounded memory or output)
-/// Output is hard-capped: at most [`SEARCH_MAX_HITS`] hits, each line truncated to
-/// [`SEARCH_MAX_LINE_BYTES`] bytes; at most [`SEARCH_MAX_FILES`] files are scanned and
-/// [`SEARCH_MAX_DIRS`] directories descended; and at most [`SEARCH_MAX_FILE_BYTES`] bytes
-/// are read from any one file (via `Read::take`). The walk stops the moment the hit or file
-/// cap is hit.
+/// # Bounds (truth-labeled: what is and is NOT bounded)
+/// Every accumulator and every read is hard-capped by a constant:
+/// - **Output** — at most [`SEARCH_MAX_HITS`] hits in the returned `Vec`, each
+///   [`SearchHit::line_text`] truncated to [`SEARCH_MAX_LINE_BYTES`] bytes on a char boundary.
+/// - **Files opened** — at most [`SEARCH_MAX_FILES`] files are opened+scanned.
+/// - **Per-file bytes** — at most [`SEARCH_MAX_FILE_BYTES`] bytes are read from any ONE file,
+///   enforced by `Read::take` on the open fd (so the bound holds even if the file grows after
+///   we stat it — no size TOCTOU); bytes past the cap are never read into memory.
+/// - **Directories listed** — at most [`SEARCH_MAX_DIRS`] directories are popped+listed.
+/// - **Pending worklist** — the iterative descent's `worklist` of pending directories is
+///   capped: a directory is enqueued only while `dirs_enqueued < SEARCH_MAX_DIRS`, so
+///   `worklist.len()` is O([`SEARCH_MAX_DIRS`]) at ALL times and its peak memory is a constant
+///   × the max enqueued path length — it can NEVER accumulate the full cross-directory fanout
+///   of the on-disk tree. This is **bounded descent**: search still visits up to
+///   [`SEARCH_MAX_DIRS`] directories; directories beyond the budget are simply not enqueued.
+///
+/// The walk stops the moment the hit or file cap is hit.
+///
+/// **The ONE remaining (inherited) residual — a single directory's listing.** Each directory
+/// is listed via the shared [`list_dir_within_root`] primitive, which materializes that one
+/// directory's entry names into a `Vec` in full before this walk processes them (it is the
+/// IDENTICAL allocation the `list_dir` tool itself makes — search adds no new listing path).
+/// So peak memory for processing a single directory scales with THAT directory's entry count;
+/// a single adversarial mega-directory (millions of entries) would make that one `Vec` large
+/// even though everything else here is constant-bounded. This is a pre-existing property of
+/// the shared listing primitive, NOT introduced by search, and is deliberately left to
+/// `list_dir_within_root` rather than worked around here (changing the shared primitive is
+/// riskier than documenting the inherited residual). Mitigation is operational, exactly as for
+/// the hardlink residual above: host workspace roots should not contain adversarial
+/// mega-directories.
 ///
 /// # Text handling
 /// Binary / non-UTF-8 files are skipped gracefully: a file containing a NUL byte is treated
@@ -765,17 +789,38 @@ pub fn search_within_root(
 
     let mut files_scanned: usize = 0;
     let mut dirs_visited: usize = 0;
+    // Total directories EVER enqueued onto `worklist`. Every push is guarded by
+    // `dirs_enqueued < SEARCH_MAX_DIRS`, so `worklist.len() <= dirs_enqueued <= SEARCH_MAX_DIRS`
+    // holds at ALL times — the pending worklist can never accumulate the full cross-directory
+    // fanout of the on-disk tree. Peak worklist memory is therefore bounded by a constant
+    // (SEARCH_MAX_DIRS) × the max enqueued path length, not by the size of the tree. (Before
+    // this cap the worklist was pushed to for every subdirectory child with no budget, so its
+    // peak scaled with the tree.) This is BOUNDED DESCENT: search still visits up to
+    // SEARCH_MAX_DIRS directories; deeper/wider directories beyond the budget are simply not
+    // enqueued. A `push_dir` closure centralizes the guarded push so the invariant cannot drift.
+    let mut dirs_enqueued: usize = 0;
 
     // Resolve the starting point. The root-denoting tokens start a full-tree walk; any other
     // `subpath` is validated through `stat_file_within_root` (so absolute/`..`/out-of-root/
     // symlink subpaths are rejected here) and may name either a directory (walk it) or a
     // single regular file (scan just it).
     let mut worklist: Vec<String> = Vec::new();
+    // Guarded push: enqueue `d` only if the total-ever-enqueued budget is not exhausted, so
+    // `worklist.len()` is O(SEARCH_MAX_DIRS) for the whole walk. Returns whether it enqueued
+    // (callers ignore it — a dropped directory is just not descended into).
+    let push_dir = |worklist: &mut Vec<String>, dirs_enqueued: &mut usize, d: String| {
+        if *dirs_enqueued < SEARCH_MAX_DIRS {
+            worklist.push(d);
+            *dirs_enqueued += 1;
+        }
+    };
     match subpath {
-        None => worklist.push(String::new()),
-        Some(s) if s.is_empty() || s == "." || s == "./" => worklist.push(String::new()),
+        None => push_dir(&mut worklist, &mut dirs_enqueued, String::new()),
+        Some(s) if s.is_empty() || s == "." || s == "./" => {
+            push_dir(&mut worklist, &mut dirs_enqueued, String::new())
+        }
         Some(s) => match stat_file_within_root(root, s)?.kind {
-            FileKind::Dir => worklist.push(s.to_string()),
+            FileKind::Dir => push_dir(&mut worklist, &mut dirs_enqueued, s.to_string()),
             FileKind::File => {
                 files_scanned += 1;
                 scan_file_into(root, s, query, &mut hits);
@@ -785,6 +830,9 @@ pub fn search_within_root(
     }
 
     'walk: while let Some(dir) = worklist.pop() {
+        // Now subsumed by the enqueue cap (`push_dir` enforces dirs_enqueued < SEARCH_MAX_DIRS,
+        // and we can never pop more than we pushed) — kept as a defensive floor so the visit
+        // count is bounded even if the enqueue invariant were ever weakened.
         if dirs_visited >= SEARCH_MAX_DIRS {
             break;
         }
@@ -811,7 +859,11 @@ pub fn search_within_root(
             // we never follow it, so an outside-pointing link is never read or descended.
             match stat_file_within_root(root, &child) {
                 Ok(st) => match st.kind {
-                    FileKind::Dir => worklist.push(child),
+                    // Guarded push: a child directory is enqueued only while the
+                    // total-ever-enqueued budget (SEARCH_MAX_DIRS) is not exhausted, so the
+                    // pending worklist stays O(SEARCH_MAX_DIRS). Beyond the budget the child
+                    // is simply not descended into (bounded descent).
+                    FileKind::Dir => push_dir(&mut worklist, &mut dirs_enqueued, child),
                     FileKind::File => {
                         if files_scanned >= SEARCH_MAX_FILES {
                             break 'walk;
