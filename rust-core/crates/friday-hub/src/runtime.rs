@@ -31,10 +31,10 @@ use friday_deepseek::{DeepSeekClient, DeepSeekError, Transport, UreqTransport};
 use friday_storage::{agent_run, Db, StorageError};
 
 use crate::routing::{
-    run_routed_loop, ProviderClientResolver, ProviderRoute, RouteRegistry, RouteRequest,
-    RoutedLoopError, RoutedSelection,
+    run_routed_loop_with_policy, ProviderClientResolver, ProviderRoute, RouteRegistry,
+    RouteRequest, RoutedLoopError, RoutedSelection,
 };
-use crate::{AgentLlmClient, DeepSeekAgentLlmClient, FsToolExecutor, LoopOutcome};
+use crate::{AgentLlmClient, DeepSeekAgentLlmClient, FsToolExecutor, LoopOutcome, RunPolicy};
 
 /// The owner-approval seam: given a mutating request, return a signed [`CanonicalApproval`]
 /// iff the owner approved THIS exact action. Production default is [`DenyAllApprovals`]
@@ -66,7 +66,19 @@ pub struct HubConfig {
     /// The Hub owner whose confirmed memory may be recalled into a task's prompt
     /// (PROOF-MEMORY-001). A Hub is single-owner in v1, so every run inherits this
     /// principal. `None` ⇒ memory recall is DISABLED (fail-closed: no owner, no recall).
+    ///
+    /// S4: this is ALSO the principal bound into every gate request's `Actor` (and thus
+    /// the action digest) for the run — the recall principal and the gate principal are
+    /// now the SAME source (they no longer silently diverge). Binding it confers no
+    /// approval authority (the run actor stays Agent-kind; it can never self-approve).
     pub principal_id: Option<String>,
+    /// S4: tool names DISABLED for every run on this Hub (`disabledToolNames`). A disabled
+    /// tool is rejected before it can execute. Empty ⇒ nothing disabled (pre-S4 behavior).
+    pub disabled_tools: Vec<String>,
+    /// S4: a read-only run constraint (`constraints.readOnly`). When `true`, a mutating
+    /// tool is blocked before execution (strictly stricter than the default Pause). `false`
+    /// ⇒ pre-S4 behavior.
+    pub read_only: bool,
 }
 
 /// Why the live runtime failed to assemble.
@@ -98,8 +110,9 @@ pub struct HubRuntime<T: Transport> {
     secret: Vec<u8>,
     approval: Box<dyn ApprovalPolicy>,
     max_turns: u64,
-    /// Hub owner for memory recall; `None` disables recall (see [`HubConfig::principal_id`]).
-    principal_id: Option<String>,
+    /// S4 per-run policy: the bound principal (also the memory-recall owner — ONE source,
+    /// see [`HubConfig::principal_id`]) + the run's disabled-tool / read-only restrictions.
+    policy: RunPolicy,
 }
 
 impl<T: Transport> HubRuntime<T> {
@@ -114,6 +127,8 @@ impl<T: Transport> HubRuntime<T> {
         let db = Db::open_hub(&config.db_path)?;
         let executor = FsToolExecutor::new(config.workspace_root);
         let routes = Self::dispatchable_routes();
+        // S4: ONE policy carries the run's principal (also the recall owner) + restrictions.
+        let policy = RunPolicy::new(config.principal_id, config.disabled_tools, config.read_only);
         Ok(Self {
             db,
             routes,
@@ -122,7 +137,7 @@ impl<T: Transport> HubRuntime<T> {
             secret: config.secret,
             approval,
             max_turns: config.max_turns,
-            principal_id: config.principal_id,
+            policy,
         })
     }
 
@@ -164,7 +179,10 @@ impl<T: Transport> HubRuntime<T> {
         // selection here.
         let request = RouteRequest::any();
         let approve = |req: &MutatingActionRequest| self.approval.approve(req);
-        run_routed_loop(
+        // S4: thread the run policy so the bound principal reaches every gate request's
+        // Actor (and the action digest) and the disabled/read-only restrictions are
+        // enforced before any tool executes.
+        run_routed_loop_with_policy(
             &self.routes,
             &request,
             self,
@@ -175,6 +193,7 @@ impl<T: Transport> HubRuntime<T> {
             &recall_preamble,
             &self.secret,
             &approve,
+            &self.policy,
             self.max_turns,
             now_ms,
         )
@@ -196,13 +215,12 @@ impl<T: Transport> HubRuntime<T> {
     /// per-turn MODEL calls ARE ledgered as of S1.2 by `run_loop` via `bill_model_call`.)
     fn recall_preamble(&self, run_id: &str, now_ms: i64) -> Result<String, RoutedLoopError> {
         // Delegates to the SHARED recall composition so the loop and the `friday_ask`
-        // surface apply the identical per-item Passport gate (no divergence). The recall
-        // principal and the gate Actor's principal (still `None` in the loop) are the SAME
-        // v1 owner conceptually — flagged so they don't silently diverge when per-run
-        // principal binding lands.
+        // surface apply the identical per-item Passport gate (no divergence). As of S4 the
+        // recall principal and the gate Actor's principal are the SAME source
+        // (`self.policy.principal_id()`) — they can no longer silently diverge.
         let preamble = crate::recall_preamble_for(
             &self.db,
-            self.principal_id.as_deref(),
+            self.policy.principal_id(),
             &format!("{run_id}:memory-recall"),
             now_ms,
         )?;
@@ -364,6 +382,8 @@ mod tests {
                 secret: SECRET.to_vec(),
                 max_turns: 6,
                 principal_id: None, // recall disabled by default; the recall test sets it
+                disabled_tools: vec![],
+                read_only: false,
             },
             agent,
             approval,
@@ -421,6 +441,8 @@ mod tests {
                 secret: SECRET.to_vec(),
                 max_turns: 4,
                 principal_id: principal.map(|p| p.to_string()),
+                disabled_tools: vec![],
+                read_only: false,
             },
             agent,
             Box::new(DenyAllApprovals),
@@ -626,6 +648,58 @@ mod tests {
         );
     }
 
+    /// S4: a tool DISABLED for the run is rejected through the composed entry — it is
+    /// Blocked, executes nothing, and writes no file (the disabled `read_file` never reads).
+    /// The control (`composed_read_only_task_executes_via_gate_and_audit`, identical script
+    /// minus the disable) proves this is the disable doing the blocking, not a broken read.
+    #[test]
+    fn composed_disabled_tool_is_blocked_through_run_task() {
+        let ws = TempDir::new("disabled");
+        std::fs::write(ws.0.join("notes.md"), b"secret-do-not-read").unwrap();
+        let transport = ScriptTransport::new(&[
+            "{\"tool\":\"read_file\",\"parameters\":{\"path\":\"notes.md\"}}",
+            "{\"tool\":\"none\"}",
+        ]);
+        let client = DeepSeekClient::with_transport(transport, "k".into());
+        let agent = DeepSeekAgentLlmClient::new(client);
+        let rt = HubRuntime::new(
+            HubConfig {
+                db_path: tmp("disabled"),
+                workspace_root: ws.0.clone(),
+                secret: SECRET.to_vec(),
+                max_turns: 6,
+                principal_id: None,
+                disabled_tools: vec!["read_file".to_string()], // <- disabled for this run
+                read_only: false,
+            },
+            agent,
+            Box::new(DenyAllApprovals),
+        )
+        .unwrap();
+        let (_sel, out) = rt.run_task("run-disabled", "read the notes", 1000).unwrap();
+        assert_eq!(
+            out.status,
+            LoopStatus::Blocked,
+            "a disabled tool must Block the run"
+        );
+        assert_eq!(out.executed_tools, 0, "the disabled tool must not execute");
+        // The block is observable on the hash-chained audit/event log with the S4 reason.
+        let blocked: i64 = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM agent_run_event WHERE kind LIKE 'tool.blocked:deny:tool_disabled_for_run:read_file%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            blocked, 1,
+            "the disabled-tool block is recorded with its reason"
+        );
+        assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
+    }
+
     /// With a minting owner policy, the mutating write executes ONCE; a replay of the same
     /// single-use approval on the next turn is refused (Blocked) — one execution, one receipt.
     #[test]
@@ -713,6 +787,8 @@ mod tests {
             secret: SECRET.to_vec(),
             max_turns: 5,
             principal_id: None, // the live save→recall→answer-carries-marker e2e is a separate proof (PR4)
+            disabled_tools: vec![],
+            read_only: false,
         })
         .expect("live runtime assembles (FRIDAY_DEEPSEEK_API_KEY set)");
         let (sel, out) = rt
