@@ -1,0 +1,25 @@
+[package]
+name = "friday-operator-cli"
+description = "Friday Rust Core — OFFLINE operator-signing CLI (slice S6c). Holds the operator's PRIVATE Ed25519 key and emits operator-signed CanonicalApprovals; the Hub holds ONLY the public verify key. Deliberately depends on just friday-core + friday-crypto (NOT the Hub's secret-bearing graph), so the operator tool is decoupled from the Hub at compile time. Not wired to a live resume (S6d). PROOF-ONLY."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+
+[dependencies]
+# CanonicalApproval + canonical_approval_signature_bytes (the EXACT bytes the Hub
+# recomputes at verify time). friday-core deps only thiserror, so this stays light.
+friday-core.workspace = true
+# OperatorSigningKey (S6a Ed25519 primitive). This crate is the OPERATOR side that
+# holds the PRIVATE key; the Hub holds only OperatorVerifyingKey.
+friday-crypto.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+# Wipe transient secret buffers (decoded seed / hex) after use.
+zeroize.workspace = true
+
+[[bin]]
+name = "friday-operator-approve"
+path = "src/main.rs"
