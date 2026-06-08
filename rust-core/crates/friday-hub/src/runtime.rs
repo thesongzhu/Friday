@@ -27,15 +27,44 @@
 use std::path::PathBuf;
 
 use friday_core::gate::{CanonicalApproval, MutatingActionRequest};
+use friday_core::WorkLane;
 use friday_crypto::OperatorVerifyingKey;
 use friday_deepseek::{DeepSeekClient, DeepSeekError, Transport, UreqTransport};
 use friday_storage::{agent_run, Db, StorageError};
 
+use crate::mission_context::MissionContextLookup;
+use crate::mission_preflight::MissionAttachmentOutcome;
+use crate::mission_runtime::{
+    attach_agent_loop_provider_state, resolve_mission_runtime_envelope, MissionRuntimeEnvelope,
+    MissionRuntimeOutcome, MissionRuntimeRequest,
+};
 use crate::routing::{
     run_routed_loop_with_policy, ProviderClientResolver, ProviderRoute, RouteRegistry,
     RouteRequest, RoutedLoopError, RoutedSelection,
 };
-use crate::{AgentLlmClient, DeepSeekAgentLlmClient, FsToolExecutor, LoopOutcome, RunPolicy};
+use crate::{
+    AgentLlmClient, DeepSeekAgentLlmClient, FsToolExecutor, LoopOutcome, LoopStatus, RunPolicy,
+};
+
+/// S1.3 — the outcome of [`HubRuntime::run_agent_loop_for_mission`], mirroring
+/// [`crate::mission_runtime::MissionBoundAskOutcome`] for the agent loop.
+#[derive(Debug)]
+pub enum MissionBoundLoopOutcome {
+    /// The Mission/work-item preflight failed CLOSED — the loop NEVER ran (no `agent_run`
+    /// row was created, no model call, no route_decision for an invalid Mission). Mirrors
+    /// the ask path's `Blocked`.
+    Blocked { blockers: Vec<String> },
+    /// The Mission was valid: the composed loop ran and the run was bound to the Mission.
+    Ran {
+        envelope: Box<MissionRuntimeEnvelope>,
+        selection: RoutedSelection,
+        outcome: LoopOutcome,
+        /// `friday://agent-run/{run_id}` — the run's result link, bound into the Mission
+        /// (the run's proof of work on `Finished`).
+        result_link: String,
+        attachment: MissionAttachmentOutcome,
+    },
+}
 
 /// The owner-approval seam: given a mutating request, return a signed [`CanonicalApproval`]
 /// iff the owner approved THIS exact action. Production default is [`DenyAllApprovals`]
@@ -225,6 +254,90 @@ impl<T: Transport> HubRuntime<T> {
             self.max_turns,
             now_ms,
         )
+    }
+
+    /// S1.3 — the Mission-BOUND agent-loop entry (the `executeRun` Mission-context parity,
+    /// deferred from S1.2). Mirrors [`crate::mission_runtime::ask_friday_for_mission`]'s
+    /// preflight for the loop:
+    ///
+    /// 1. Resolve + validate the Mission/work-item envelope FAIL-CLOSED. An invalid/unknown
+    ///    Mission or work-item (wrong lane/target, terminal, missing context) → `Blocked`,
+    ///    and the loop NEVER runs — no `agent_run` row is created, no model is called, and no
+    ///    route_decision is persisted for the invalid Mission (the resolve step returns
+    ///    before `run_task` and before its own `upsert_route_decision`).
+    /// 2. Run the SAME composed loop as [`Self::run_task`] (create run → memory recall →
+    ///    routed gate-mandatory loop). Reusing `run_task` keeps the unbound dev bridge and
+    ///    the Mission-bound path on ONE loop — no divergence.
+    /// 3. Record the run's Mission binding (a `MissionLink` tying THIS run to the Mission)
+    ///    via the SAME provider-timeline attachment the ask path uses, so the run's
+    ///    result/billing/approval tie to that Mission.
+    ///
+    /// Lane choice (auditable): the agent loop is a Hub-orchestrated run that routes to
+    /// DeepSeek (the only live provider in this build), so the envelope is validated against
+    /// `WorkLane::DeepSeek` + target `deepseek` — the SAME lane/target the single-shot ask
+    /// path uses. A future multi-provider loop would generalize `expected_target`; a "pure
+    /// Hub orchestration" model would instead use `WorkLane::FridayHub` + no target.
+    ///
+    /// The S1.2 result/ledger/audit + S6 approval flows are UNCHANGED — this only BINDS the
+    /// run to a Mission. [`Self::run_task`] (the unbound entry) is left working untouched.
+    pub fn run_agent_loop_for_mission(
+        &self,
+        mission_lookup: MissionContextLookup,
+        session_id: &str,
+        run_id: &str,
+        task: &str,
+        now_ms: i64,
+    ) -> Result<MissionBoundLoopOutcome, RoutedLoopError> {
+        // PREFLIGHT (fail-closed): validate the Mission/work-item BEFORE any run exists. On
+        // Blocked we return without ever calling `run_task`, so no `agent_run` row and no
+        // model call happen for an invalid Mission — mirroring the ask path's preflight.
+        let envelope = match resolve_mission_runtime_envelope(
+            &self.db,
+            MissionRuntimeRequest {
+                lookup: mission_lookup,
+                expected_lane: WorkLane::DeepSeek,
+                expected_target: Some("deepseek".to_string()),
+                decision_id: format!("route-decision:agent-loop:{run_id}"),
+                trace_refs: vec![
+                    format!("agent-run:{run_id}"),
+                    format!("friday://agent-run/{run_id}"),
+                ],
+                now_ms,
+                expires_at_ms: None,
+            },
+        )? {
+            MissionRuntimeOutcome::Ready(envelope) => envelope,
+            MissionRuntimeOutcome::Blocked { blockers } => {
+                return Ok(MissionBoundLoopOutcome::Blocked { blockers });
+            }
+        };
+
+        // Run the SAME composed loop as the unbound entry (no divergence).
+        let (selection, outcome) = self.run_task(run_id, task, now_ms)?;
+
+        // Bind the run to the Mission via the ask path's provider-timeline attachment.
+        // Truth-honest: complete the WorkItem with the run as proof ONLY when the loop
+        // Finished; otherwise bind at RoutedToProvider without over-claiming completion.
+        let completed = outcome.status == LoopStatus::Finished;
+        let result_link = format!("friday://agent-run/{run_id}");
+        let attachment = attach_agent_loop_provider_state(
+            &self.db,
+            &envelope.context.mission_id,
+            &envelope.context.work_item_id,
+            session_id,
+            run_id,
+            completed,
+            &result_link,
+            now_ms,
+        )?;
+
+        Ok(MissionBoundLoopOutcome::Ran {
+            envelope,
+            selection,
+            outcome,
+            result_link,
+            attachment,
+        })
     }
 
     /// Build the memory-recall prompt preamble for this run and record its receipt.
@@ -830,6 +943,382 @@ mod tests {
             post.get(),
             out.turns as usize,
             "exactly one model chat/POST per loop turn — no hidden model call"
+        );
+    }
+
+    // ---- S1.3 Mission-bound agent loop --------------------------------------
+
+    use friday_core::{
+        ApprovalState, FridayConversation, HandoffJudgmentMemory, Mission, MissionStatus, Risk,
+        SurfaceKind, SurfaceThread, TruthStatus, VisibilityPolicy, WorkItem, WorkItemStatus,
+    };
+
+    fn judgment_loop() -> HandoffJudgmentMemory {
+        HandoffJudgmentMemory {
+            task: "Run the Mission-bound agent loop".into(),
+            current_blocker: None,
+            target_lane_thread_agent_provider: WorkLane::DeepSeek.as_str().into(),
+            read_first_files: vec!["rust-core/crates/friday-hub/src/runtime.rs".into()],
+            required_output: "Mission-bound loop run".into(),
+            done_criteria: vec!["loop bound to mission".into()],
+            red_lines: vec!["do not run before mission context".into()],
+            why_this_route: "The WorkItem lane owns the agent loop.".into(),
+            considered_options: vec!["unbound run_task".into()],
+            deferred_options: vec!["multi-provider loop".into()],
+            previous_pitfalls: vec!["detached run looked bound".into()],
+            inheritable_context: vec!["Mission is product truth".into()],
+            proof_requirements: vec!["mission loop tests".into()],
+            ownership_claim_ids: Vec::new(),
+        }
+    }
+
+    /// Seed a `FridayConversation -> Mission -> WorkItem` graph the loop's preflight resolves.
+    fn seed_loop_mission(db: &Db, lane: WorkLane, target: Option<&str>, status: WorkItemStatus) {
+        let now = 1_700_000_000_000;
+        db.upsert_friday_conversation(&FridayConversation {
+            friday_conversation_id: "fconv_loop".into(),
+            owner_principal: "owner-1".into(),
+            title: "Mission loop".into(),
+            current_focus_summary: "Mission-bound agent loop".into(),
+            active_mission_ids: vec!["mission-loop".into()],
+            surface_thread_ids: vec!["surface-mobile-loop".into()],
+            memory_scope_ref: None,
+            truth_status: TruthStatus::WiredRegistry,
+            proof_refs: vec!["proof://mission-loop-test".into()],
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        db.upsert_mission(&Mission {
+            mission_id: "mission-loop".into(),
+            friday_conversation_id: "fconv_loop".into(),
+            title: "Mission loop".into(),
+            intent: "bind the agent loop to a mission".into(),
+            status: MissionStatus::Active,
+            why_now: "loop runs must tie to a mission".into(),
+            decision_path_summary: "resolve mission context before the loop".into(),
+            considered_options: vec!["unbound run".into()],
+            deferred_options: vec!["multi-provider".into()],
+            known_pitfalls: vec!["unbound run looked bound".into()],
+            handoff_inheritance: vec!["preserve route judgment".into()],
+            work_item_ids: vec!["work-loop".into()],
+            memory_candidate_refs: Vec::new(),
+            context_passport_refs: Vec::new(),
+            proof_refs: vec!["proof://mission-loop-test".into()],
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        db.upsert_surface_thread(&SurfaceThread {
+            surface_thread_id: "surface-mobile-loop".into(),
+            friday_conversation_id: "fconv_loop".into(),
+            mission_id: Some("mission-loop".into()),
+            surface_kind: SurfaceKind::Mobile,
+            channel_binding_id: None,
+            delivery_route: "mobile".into(),
+            visibility_policy: VisibilityPolicy::Compact,
+            allowed_actions: vec!["open_mission".into()],
+            last_seen_at_ms: Some(now),
+            last_delivered_event_seq: Some(1),
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        db.upsert_work_item(&WorkItem {
+            work_item_id: "work-loop".into(),
+            mission_id: "mission-loop".into(),
+            lane,
+            target_provider_or_agent: target.map(str::to_string),
+            status,
+            owner_claim_ids: Vec::new(),
+            workspace_refs: Vec::new(),
+            capability_id: Some("mission.loop".into()),
+            risk_level: Risk::Medium,
+            approval_state: ApprovalState::NotRequired,
+            blocking_reason: None,
+            input_refs: vec!["input://loop".into()],
+            output_refs: Vec::new(),
+            proof_requirements: vec!["mission loop tests".into()],
+            proof_receipts: Vec::new(),
+            judgment_memory: judgment_loop(),
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+    }
+
+    fn loop_lookup() -> MissionContextLookup {
+        MissionContextLookup::by_work_item("fconv_loop", "mission-loop", "work-loop")
+    }
+
+    fn agent_run_count(rt: &HubRuntime<ScriptTransport>, run_id: &str) -> i64 {
+        rt.db()
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM agent_run WHERE run_id = ?1",
+                [run_id],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    fn table_count(rt: &HubRuntime<ScriptTransport>, table: &str) -> i64 {
+        rt.db()
+            .conn()
+            .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap()
+    }
+
+    /// VALID Mission: the loop runs through the composed entry AND records a `MissionLink`
+    /// binding tied to THIS run_id; a Finished loop completes the WorkItem with the run as
+    /// proof (result tied to the Mission).
+    #[test]
+    fn mission_bound_loop_runs_and_records_binding_tied_to_run_id() {
+        let (rt, root, _post) = runtime_with(
+            "mloop-ok",
+            &[
+                "{\"tool\":\"read_file\",\"parameters\":{\"path\":\"notes.md\"}}",
+                "{\"tool\":\"none\"}",
+            ],
+            Box::new(DenyAllApprovals),
+        );
+        std::fs::write(root.join("notes.md"), b"mission-bound note").unwrap();
+        seed_loop_mission(
+            rt.db(),
+            WorkLane::DeepSeek,
+            Some("deepseek"),
+            WorkItemStatus::ReadyToDispatch,
+        );
+
+        let outcome = rt
+            .run_agent_loop_for_mission(
+                loop_lookup(),
+                "friday-hub-session",
+                "run-mloop",
+                "read the notes",
+                1000,
+            )
+            .unwrap();
+
+        let MissionBoundLoopOutcome::Ran {
+            envelope,
+            selection,
+            outcome,
+            result_link,
+            attachment,
+        } = outcome
+        else {
+            panic!("expected a Mission-bound loop run");
+        };
+        assert_eq!(selection.provider_id, "deepseek");
+        assert_eq!(outcome.status, LoopStatus::Finished);
+        assert_eq!(outcome.executed_tools, 1);
+        assert_eq!(result_link, "friday://agent-run/run-mloop");
+        assert_eq!(envelope.route_decision.selected_lane, WorkLane::DeepSeek);
+        assert!(matches!(
+            attachment,
+            MissionAttachmentOutcome::Attached {
+                work_item_status: WorkItemStatus::CompletedWithProof,
+                ..
+            }
+        ));
+        // the loop actually ran (the run row exists)
+        assert_eq!(agent_run_count(&rt, "run-mloop"), 1);
+        // the binding exists, tied to THIS run_id
+        let links = rt.db().list_mission_links("mission-loop").unwrap();
+        assert!(
+            links.iter().any(|link| link.target_ref
+                == "friday://provider-timeline/friday-hub-session#run-mloop"
+                && link.work_item_id.as_deref() == Some("work-loop")),
+            "a mission_link must bind the run to the mission: {links:?}"
+        );
+        // the run's result ties to the Mission (proof on the WorkItem)
+        let work_item = rt.db().get_work_item("work-loop").unwrap().unwrap();
+        assert_eq!(work_item.status, WorkItemStatus::CompletedWithProof);
+        assert!(work_item
+            .proof_receipts
+            .contains(&"friday://agent-run/run-mloop".to_string()));
+        assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
+    }
+
+    /// A NON-Finished (Paused) loop is still bound to the Mission (link tied to run_id) but
+    /// the binding is TRUTH-honest: it does NOT over-claim `CompletedWithProof` — it stops at
+    /// `ProviderRouted` (true for any Ok loop outcome).
+    #[test]
+    fn mission_bound_loop_paused_binds_run_without_claiming_completion() {
+        let (rt, root, _post) = runtime_with(
+            "mloop-paused",
+            &["{\"tool\":\"write_file\",\"parameters\":{\"path\":\"out.txt\",\"content\":\"X\"}}"],
+            Box::new(DenyAllApprovals),
+        );
+        seed_loop_mission(
+            rt.db(),
+            WorkLane::DeepSeek,
+            Some("deepseek"),
+            WorkItemStatus::ReadyToDispatch,
+        );
+
+        let outcome = rt
+            .run_agent_loop_for_mission(
+                loop_lookup(),
+                "friday-hub-session",
+                "run-mloop-p",
+                "write a file",
+                2000,
+            )
+            .unwrap();
+
+        let MissionBoundLoopOutcome::Ran {
+            outcome,
+            attachment,
+            ..
+        } = outcome
+        else {
+            panic!("expected a Mission-bound loop run");
+        };
+        assert!(matches!(
+            outcome.status,
+            LoopStatus::Paused | LoopStatus::Blocked
+        ));
+        assert_eq!(outcome.executed_tools, 0);
+        assert!(!root.join("out.txt").exists());
+        // bound (link tied to run_id) ...
+        let links = rt.db().list_mission_links("mission-loop").unwrap();
+        assert!(links
+            .iter()
+            .any(|link| link.target_ref
+                == "friday://provider-timeline/friday-hub-session#run-mloop-p"));
+        // ... but NOT over-claimed as completed.
+        assert!(matches!(
+            attachment,
+            MissionAttachmentOutcome::Attached {
+                work_item_status: WorkItemStatus::ProviderRouted,
+                ..
+            }
+        ));
+        let work_item = rt.db().get_work_item("work-loop").unwrap().unwrap();
+        assert_eq!(work_item.status, WorkItemStatus::ProviderRouted);
+        assert!(
+            !work_item
+                .proof_receipts
+                .iter()
+                .any(|p| p.contains("run-mloop-p")),
+            "a paused run must not record a completion proof"
+        );
+    }
+
+    /// FAIL-CLOSED (missing context): an empty lookup blocks before any run — no `agent_run`
+    /// row, no model call, no route_decision, no binding. Mirrors the ask path's
+    /// `mission_bound_ask_blocks_missing_context_before_model_call`.
+    #[test]
+    fn mission_bound_loop_missing_context_fails_closed_no_run() {
+        let (rt, root, post) = runtime_with(
+            "mloop-fc",
+            &["{\"tool\":\"none\"}"],
+            Box::new(DenyAllApprovals),
+        );
+        std::fs::write(root.join("notes.md"), b"x").unwrap();
+
+        let outcome = rt
+            .run_agent_loop_for_mission(
+                MissionContextLookup::default(),
+                "friday-hub-session",
+                "run-fc",
+                "do work",
+                1000,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            outcome,
+            MissionBoundLoopOutcome::Blocked { blockers }
+                if blockers.contains(&"mission_context_lookup_required".to_string())
+        ));
+        assert_eq!(
+            agent_run_count(&rt, "run-fc"),
+            0,
+            "no run created on invalid mission"
+        );
+        assert_eq!(post.get(), 0, "no model call on invalid mission");
+        assert_eq!(
+            table_count(&rt, "route_decision"),
+            0,
+            "no route_decision for an invalid mission"
+        );
+        assert_eq!(
+            table_count(&rt, "mission_link"),
+            0,
+            "no binding for an invalid mission"
+        );
+    }
+
+    /// FAIL-CLOSED (wrong lane): a real-but-wrong Mission (Channel-lane WorkItem) blocks the
+    /// DeepSeek-lane loop — the loop never runs. Proves the preflight VALIDATES (not just the
+    /// empty-lookup guard).
+    #[test]
+    fn mission_bound_loop_wrong_lane_fails_closed_no_run() {
+        let (rt, _root, post) = runtime_with(
+            "mloop-lane",
+            &["{\"tool\":\"none\"}"],
+            Box::new(DenyAllApprovals),
+        );
+        seed_loop_mission(
+            rt.db(),
+            WorkLane::Channel,
+            Some("tg:room"),
+            WorkItemStatus::ReadyToDispatch,
+        );
+
+        let outcome = rt
+            .run_agent_loop_for_mission(
+                loop_lookup(),
+                "friday-hub-session",
+                "run-lane",
+                "do work",
+                1000,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            outcome,
+            MissionBoundLoopOutcome::Blocked { blockers }
+                if blockers.contains(&"mission_runtime_lane_mismatch".to_string())
+        ));
+        assert_eq!(agent_run_count(&rt, "run-lane"), 0);
+        assert_eq!(post.get(), 0, "no model call on a lane-mismatched mission");
+        assert_eq!(table_count(&rt, "mission_link"), 0);
+    }
+
+    /// NO REGRESSION: the unbound `run_task` entry still drives the loop end-to-end AND binds
+    /// to no Mission — even when a Mission is present, the unbound entry writes no
+    /// `mission_link`.
+    #[test]
+    fn run_task_unbound_still_works_and_creates_no_mission_binding() {
+        let (rt, root, _post) = runtime_with(
+            "unbound",
+            &[
+                "{\"tool\":\"read_file\",\"parameters\":{\"path\":\"n.md\"}}",
+                "{\"tool\":\"none\"}",
+            ],
+            Box::new(DenyAllApprovals),
+        );
+        std::fs::write(root.join("n.md"), b"x").unwrap();
+        seed_loop_mission(
+            rt.db(),
+            WorkLane::DeepSeek,
+            Some("deepseek"),
+            WorkItemStatus::ReadyToDispatch,
+        );
+
+        let (sel, out) = rt.run_task("run-unbound", "read n.md", 1000).unwrap();
+        assert_eq!(sel.provider_id, "deepseek");
+        assert_eq!(out.status, LoopStatus::Finished);
+        assert_eq!(out.executed_tools, 1);
+        assert_eq!(agent_run_count(&rt, "run-unbound"), 1);
+        assert_eq!(
+            table_count(&rt, "mission_link"),
+            0,
+            "the unbound run_task must not bind to any mission"
         );
     }
 
