@@ -115,11 +115,19 @@ impl RunResult {
 /// A full Hub-side run-result record, INCLUDING the answer body. Returned by
 /// [`get_run_result`] for Hub-internal callers only — never the wire. Also the
 /// payload of an ownership-GRANTED authenticated read ([`RunAnswerAccess::Granted`]).
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// `Debug` is implemented MANUALLY (not derived) so that a stray `{:?}` on this
+/// record — or transitively on a [`RunAnswerAccess::Granted`] that wraps it — can
+/// NEVER leak the plaintext answer body; the body field renders as a fixed redaction
+/// marker while every SAFE field (run_id / status / fingerprint / owner) stays
+/// visible for diagnostics. Mirrors the body-redacting `Debug` on
+/// `friday_hub::AuthedAnswer`. See the manual `impl` below.
+#[derive(Clone, PartialEq, Eq)]
 pub struct StoredRunResult {
     pub run_id: String,
     pub status: String,
-    /// The answer body (Hub-side only).
+    /// The answer body (Hub-side only). Redacted in `Debug` output — see the manual
+    /// `impl std::fmt::Debug` below.
     pub answer: String,
     /// Lowercase-hex SHA-256 of the answer bytes.
     pub answer_sha256: String,
@@ -130,6 +138,29 @@ pub struct StoredRunResult {
     /// D1-Q1: the run's bound OWNER principal (the axis the authenticated body read
     /// keys on). `None` ⇒ no owner recorded ⇒ fail-closed on the body read.
     pub owner_principal: Option<String>,
+}
+
+impl std::fmt::Debug for StoredRunResult {
+    /// Body-redacting `Debug`: renders every SAFE field (so the record stays useful
+    /// for diagnostics) but NEVER the plaintext `answer` — it shows a fixed marker.
+    /// This is the structural guard behind the "the answer body is owner-only" rule:
+    /// even an accidental future `{:?}` on a [`StoredRunResult`] (or on the
+    /// [`RunAnswerAccess::Granted`] that wraps it, whose derived `Debug` delegates
+    /// here) cannot leak the body. The fingerprint (`answer_sha256` + `answer_len`)
+    /// remains visible — it is the body-free reference, never the body. Mirrors the
+    /// `friday_hub::AuthedAnswer` redacting `Debug` marker for consistency.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StoredRunResult")
+            .field("run_id", &self.run_id)
+            .field("status", &self.status)
+            .field("answer", &"<redacted: owner-only body>")
+            .field("answer_sha256", &self.answer_sha256)
+            .field("answer_len", &self.answer_len)
+            .field("audit_ref", &self.audit_ref)
+            .field("created_at", &self.created_at)
+            .field("owner_principal", &self.owner_principal)
+            .finish()
+    }
 }
 
 /// A REFS-ONLY projection of a run result: status + the answer fingerprint
@@ -164,6 +195,12 @@ pub enum PersistRunResultOutcome {
 /// released ONLY in [`RunAnswerAccess::Granted`]; every other variant is BODY-free
 /// AND OWNER-ID-free, so a denied (non-owner / anonymous) caller learns nothing
 /// about the answer or who owns it.
+///
+/// `Debug` is intentionally left DERIVED: the only variant carrying the body is
+/// `Granted(StoredRunResult)`, and a derived enum `Debug` formats that inner value
+/// via [`StoredRunResult`]'s own `Debug` — which is the manual, body-redacting impl
+/// above. So `{:?}` on a `Granted` renders the redaction marker, not the plaintext
+/// (locked in by a unit test). The `Denied` / `NotFound` arms carry no body.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunAnswerAccess {
     /// The caller's principal matched the run's bound owner principal: the full
@@ -670,5 +707,54 @@ mod tests {
         );
         // It does still expose the body-free fingerprint.
         assert_eq!(refs.answer_sha256, sha256_hex(Q1_BODY.as_bytes()));
+    }
+
+    #[test]
+    fn debug_of_stored_result_and_granted_redacts_body_but_keeps_safe_fields() {
+        // Defense-in-depth (#587 adversarial LOW finding): a stray `{:?}` on the
+        // body-bearing [`StoredRunResult`] — or transitively on the
+        // [`RunAnswerAccess::Granted`] that wraps it — must NEVER render the plaintext
+        // answer, while still surfacing the SAFE fields for diagnostics.
+        const CANARY: &str = "CANARY-SECRET-BODY-must-never-appear-in-Debug";
+        let stored = StoredRunResult {
+            run_id: "run-canary".to_string(),
+            status: "finished".to_string(),
+            answer: CANARY.to_string(),
+            answer_sha256: sha256_hex(CANARY.as_bytes()),
+            answer_len: CANARY.len() as i64,
+            audit_ref: Some("audit-canary".to_string()),
+            created_at: 7777,
+            owner_principal: Some("principal:owner-canary".to_string()),
+        };
+
+        // (1) Direct `Debug` on the body-bearing record.
+        let rendered = format!("{stored:?}");
+        assert!(
+            !rendered.contains(CANARY),
+            "StoredRunResult Debug leaked the answer body: {rendered}"
+        );
+        // ...and it is NOT vacuously empty — a SAFE field IS present (the run_id).
+        assert!(
+            rendered.contains("run-canary"),
+            "StoredRunResult Debug must still surface the safe run_id: {rendered}"
+        );
+        // The redaction marker is present (mirrors the AuthedAnswer marker).
+        assert!(
+            rendered.contains("<redacted: owner-only body>"),
+            "StoredRunResult Debug must render the body as the redaction marker: {rendered}"
+        );
+
+        // (2) Transitive `Debug` through the wrapping enum's Granted variant: its
+        // derived Debug delegates to the redacting StoredRunResult Debug above.
+        let granted = RunAnswerAccess::Granted(stored);
+        let granted_rendered = format!("{granted:?}");
+        assert!(
+            !granted_rendered.contains(CANARY),
+            "RunAnswerAccess::Granted Debug leaked the answer body: {granted_rendered}"
+        );
+        assert!(
+            granted_rendered.contains("run-canary"),
+            "RunAnswerAccess::Granted Debug must still surface the safe run_id: {granted_rendered}"
+        );
     }
 }
