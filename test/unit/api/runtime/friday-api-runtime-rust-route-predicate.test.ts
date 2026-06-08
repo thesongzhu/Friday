@@ -114,11 +114,15 @@ describe("qualifiesForRustReadOnlyRoute (execrun slice 4, dark predicate)", () =
   });
 
   // ── Clause 5: no plan-review ────────────────────────────────────────────────
-  it("disqualifies a plan-review run (requireReview / review profile / resume / skip)", () => {
+  it("disqualifies a plan-review run (requireReview / review profile / resume / skip / override)", () => {
     expect(qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), requireReview: true })).toBe(false);
     expect(qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), taskProfile: { id: "review" } })).toBe(false);
     expect(qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), skipPlanningReview: true })).toBe(false);
     expect(qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), resumeExistingRun: true })).toBe(false);
+    // 4th plan-review disqualifier (0h): planReviewOverride is independently sufficient — PRESENCE
+    // alone disqualifies, even with skip/resume unset (the lossy-projection over-admit the verify caught).
+    expect(qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), planReviewOverride: { mode: "manual" } })).toBe(false);
+    expect(qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), planReviewOverride: {} })).toBe(false);
   });
 
   // ── Clause 5: no session-mirror dependency ──────────────────────────────────

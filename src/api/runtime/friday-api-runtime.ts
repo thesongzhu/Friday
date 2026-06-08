@@ -983,6 +983,14 @@ export interface RustRouteQualificationInput {
   allowedRustRouteTools?: string[];
   skipPlanningReview?: boolean;
   resumeExistingRun?: boolean;
+  /**
+   * Plan-review OVERRIDE (0h clause-5 disqualifier). An independently-sufficient plan-review
+   * marker: friday-agent-runtime honors a supplied `planReviewOverride` standalone (precedence
+   * over an existing `planReview`, no dependency on skip/resume). PRESENCE → disqualified.
+   * Typed `unknown` because the predicate only checks PRESENCE, never the payload. The
+   * composition slice wires the body-parse that populates this from the real startRun input.
+   */
+  planReviewOverride?: unknown;
 }
 
 /**
@@ -1038,6 +1046,11 @@ export function qualifiesForRustReadOnlyRoute(input: RustRouteQualificationInput
     return false;
   }
   if (input.skipPlanningReview === true || input.resumeExistingRun === true) {
+    return false;
+  }
+  // The 4th plan-review disqualifier (0h): planReviewOverride is independently sufficient —
+  // PRESENCE alone disqualifies (matches the clause-5 contract above), regardless of skip/resume.
+  if (input.planReviewOverride !== undefined) {
     return false;
   }
 
