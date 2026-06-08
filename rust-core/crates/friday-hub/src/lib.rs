@@ -1251,17 +1251,18 @@ pub trait ToolExecutor {
 /// safe-open primitive, contained to a workspace `root` (NEVER `std::fs` on an
 /// agent-supplied path). Wired tools (S3-wiring):
 ///   - **read-type** (`mutating=false` in the registry → gate `Allow`s directly): `read_file`,
-///     `list_dir`, `stat_file`. Each sets [`ToolReceipt::content`] with its result (file bytes /
-///     entry names / stat line) so the loop feeds it back to the model (bounded — see
-///     [`MAX_FEEDBACK_CONTENT_BYTES`]).
+///     `list_dir`, `stat_file`, `search`. Each sets [`ToolReceipt::content`] with its result (file
+///     bytes / entry names / stat line / matching lines) so the loop feeds it back to the model
+///     (bounded — see [`MAX_FEEDBACK_CONTENT_BYTES`]).
 ///   - **mutating** (`mutating=true` → the gate withholds them pending owner approval; under the
 ///     default deny-all policy they Pause, never execute here): `write_file`, `append_file`,
 ///     `edit_file`, `delete_file`, `move_file`. They set `content: None`.
 ///
 /// The executor is reached ONLY on a gate `Allow` (see [`gate_dispatch`]), so a mutating arm runs
 /// IFF a signed approval was minted — the executor itself never decides; the gate does.
-/// `search` and `run_command` are registered but have no friday-fs primitive, so they remain
-/// `Unsupported` here. Fail-closed in every arm.
+/// `search` is a read-type tool wired to `friday_fs::search_within_root` (sets `content` with the
+/// matches; `summary` is a count only). `run_command` is registered but has no friday-fs primitive,
+/// so it remains `Unsupported` here. Fail-closed in every arm.
 pub struct FsToolExecutor {
     root: std::path::PathBuf,
 }
@@ -1352,6 +1353,30 @@ impl ToolExecutor for FsToolExecutor {
                     action: action.to_string(),
                     summary: format!("stat {detail}"),
                     content: Some(detail),
+                })
+            }
+            "search" => {
+                let query = Self::param(params, "query")?;
+                // Optional scope: a contained sub-directory or single file. Absent ⇒ whole
+                // workspace root. (The backend REJECTS an absolute/`..`/out-of-root/symlink
+                // subpath via the same containment pipeline.)
+                let subpath = Self::param(params, "path").ok();
+                let hits = friday_fs::search_within_root(&self.root, query, subpath)
+                    .map_err(ExecError::Fs)?;
+                // Read-type ⇒ the matches are model-facing `content`; the `summary` (which
+                // reaches the hash-chained audit ledger) is a COUNT ONLY — the matched lines
+                // never enter the ledger, mirroring list_dir/read_file keeping their payload
+                // out of the summary. Each match renders as `relpath:line:text` (the model's
+                // grep-style grounding; bounded by the backend caps + feed-back truncation).
+                let content = hits
+                    .iter()
+                    .map(|h| format!("{}:{}:{}", h.relative_path, h.line_number, h.line_text))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Ok(ToolReceipt {
+                    action: action.to_string(),
+                    summary: format!("search matched {} line(s)", hits.len()),
+                    content: Some(content),
                 })
             }
             // --- mutating tools (gate withholds under deny-all; reached ONLY on Allow) ---
@@ -3282,14 +3307,18 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_tool_errors_after_allow_without_panicking() {
-        let root = TempDir::new("unsup");
-        let db = Db::open_hub(&temp_path("exec-unsup")).unwrap();
-        agent_run::create_run(db.conn(), "r1", "search the workspace", 1).unwrap();
-        // search is registered + read-only → Allow → executor has no friday-fs primitive
-        // for it → returns Unsupported (list_dir/stat_file are now wired, so they execute).
+    fn read_tool_exec_error_after_allow_records_failed_receipt() {
+        let root = TempDir::new("execerr");
+        let db = Db::open_hub(&temp_path("exec-execerr")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "read a missing file", 1).unwrap();
+        // A read-only tool (read_file) is gate-Allowed, reaches the executor, then FAILS at
+        // execution because the named file does not exist (the root exists → resolve_within_root
+        // succeeds → open ENOENT → FsError::NotFound → ExecError::Fs). This exercises the
+        // gate-Allowed-but-exec-FAILED path: an exec_error is recorded AND a hash-chained
+        // exec_failed audit receipt is written atomically with it, and the chain still verifies.
+        // (search is now WIRED and would succeed, so it is no longer the exec-failure example.)
         let client = MockAgentLlmClient {
-            proposal: raw("search", &[("query", "needle")]),
+            proposal: raw("read_file", &[("path", "does-not-exist.txt")]),
         };
         let executor = FsToolExecutor::new(&root.0);
         let out = run_one_turn_with_executor(
@@ -3305,10 +3334,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out.decision, GateDecision::Allow);
-        assert!(!out.executed, "unsupported tool did not complete");
+        assert!(!out.executed, "the exec failure did not complete");
         assert!(
-            out.reason.starts_with("exec_error:"),
-            "reason was {:?}",
+            out.reason.starts_with("exec_error:") && out.reason.contains("fs_error"),
+            "expected an fs exec_error, reason was {:?}",
             out.reason
         );
         // #30: the gate-Allowed-but-failed dispatch records a hash-chained exec_failed
@@ -3380,6 +3409,117 @@ mod tests {
         assert!(
             scontent.contains("sub/beta.txt: file, 2 bytes"),
             "stat content was {scontent:?}"
+        );
+    }
+
+    /// `search` wiring (this slice): a direct execute returns the matching lines in `content`
+    /// (model-facing, `relpath:line:text`) and a COUNT-ONLY `summary` — the matched text never
+    /// enters the ledger summary, mirroring list_dir/read_file. Containment is honored by the
+    /// underlying friday-fs primitive (proven exhaustively in friday-fs/tests/search_fs.rs).
+    #[test]
+    fn search_arm_executes_and_carries_matches_in_content_with_count_summary() {
+        let root = TempDir::new("search-arm");
+        std::fs::create_dir(root.0.join("sub")).unwrap();
+        std::fs::write(root.0.join("a.txt"), b"alpha needle one\nbeta\n").unwrap();
+        std::fs::write(
+            root.0.join("sub/b.txt"),
+            b"no match here\nanother needle line\n",
+        )
+        .unwrap();
+        let executor = FsToolExecutor::new(&root.0);
+
+        let r = executor
+            .execute("search", &[("query".to_string(), "needle".to_string())])
+            .unwrap();
+        assert_eq!(r.action, "search");
+        // summary is a COUNT ONLY (ledger-safe) — never the matched line text.
+        assert_eq!(r.summary, "search matched 2 line(s)");
+        assert!(
+            !r.summary.contains("needle"),
+            "matched text must NOT be in the ledger summary, only in content"
+        );
+        let content = r.content.expect("search is read-type → content set");
+        // Deterministic (sorted by relative_path, then line): a.txt before sub/b.txt.
+        assert_eq!(
+            content,
+            "a.txt:1:alpha needle one\nsub/b.txt:2:another needle line"
+        );
+
+        // A query with no matches → empty content, zero count (still a clean read-type receipt).
+        let none = executor
+            .execute("search", &[("query".to_string(), "zzz-absent".to_string())])
+            .unwrap();
+        assert_eq!(none.summary, "search matched 0 line(s)");
+        assert_eq!(none.content.as_deref(), Some(""));
+
+        // Optional `path` scopes the search to a contained sub-directory.
+        let scoped = executor
+            .execute(
+                "search",
+                &[
+                    ("query".to_string(), "needle".to_string()),
+                    ("path".to_string(), "sub".to_string()),
+                ],
+            )
+            .unwrap();
+        assert_eq!(scoped.summary, "search matched 1 line(s)");
+        assert_eq!(
+            scoped.content.as_deref(),
+            Some("sub/b.txt:2:another needle line")
+        );
+    }
+
+    /// `search` is registered non-mutating + read-only, so it reaches the gate as `Allow` AND
+    /// now EXECUTES (the wiring this slice adds) — proven through the FULL turn loop, not just a
+    /// direct call. (This replaces the prior `search`-as-Unsupported coverage now that it runs.)
+    #[test]
+    fn search_through_loop_is_allowed_and_executes() {
+        let root = TempDir::new("search-loop");
+        std::fs::write(root.0.join("notes.txt"), b"todo: needle here\n").unwrap();
+        let db = Db::open_hub(&temp_path("exec-search-loop")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "search the workspace", 1).unwrap();
+        let client = MockAgentLlmClient {
+            proposal: raw("search", &[("query", "needle")]),
+        };
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_one_turn_with_executor(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            0,
+            "search the workspace",
+            SECRET,
+            None,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(
+            out.decision,
+            GateDecision::Allow,
+            "search is read-only → Allow"
+        );
+        assert!(
+            out.executed,
+            "search is wired → it executes (no longer Unsupported)"
+        );
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
+    }
+
+    /// `run_command` is registered but has NO friday-fs primitive, so the executor's fall-through
+    /// arm still returns `Unsupported`. (After wiring `search`, this arm is no longer reachable
+    /// through the loop — run_command is mutating and Pauses — so this DIRECT call is the only
+    /// remaining coverage of the fail-closed `other =>` arm.)
+    #[test]
+    fn executor_run_command_is_unsupported() {
+        let root = TempDir::new("unsup-runcmd");
+        let executor = FsToolExecutor::new(&root.0);
+        let err = executor
+            .execute("run_command", &[("command".to_string(), "ls".to_string())])
+            .unwrap_err();
+        assert!(
+            matches!(err, ExecError::Unsupported(ref a) if a == "run_command"),
+            "run_command must be Unsupported (no fs primitive), got {err:?}"
         );
     }
 
@@ -4411,9 +4551,12 @@ mod tests {
     fn loop_exec_error_threads_back_and_continues() {
         let root = TempDir::new("loop-execerr");
         let db = Db::open_hub(&temp_path("loop-execerr")).unwrap();
-        agent_run::create_run(db.conn(), "r1", "search then finish", 1).unwrap();
+        agent_run::create_run(db.conn(), "r1", "read missing then finish", 1).unwrap();
         let client = ScriptedAgentLlmClient::new(vec![
-            AgentStep::Tool(raw("search", &[("query", "needle")])), // turn 0: Allow but Unsupported (no fs primitive) → exec_error → continue
+            // turn 0: a read-only tool that is Allowed but FAILS at execution (missing file →
+            // FsError::NotFound → exec_error) — the loop threads the error back and continues.
+            // (search is now wired and would succeed, so read_file-on-missing is the failure.)
+            AgentStep::Tool(raw("read_file", &[("path", "does-not-exist.txt")])),
             AgentStep::Finish {
                 message: "ok".to_string(),
             }, // turn 1: finish (loop did NOT wedge on the error)
@@ -4424,7 +4567,7 @@ mod tests {
             &executor,
             db.conn(),
             "r1",
-            "search then finish",
+            "read missing then finish",
             "",
             SECRET,
             &no_approval(),

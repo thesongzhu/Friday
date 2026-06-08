@@ -675,6 +675,279 @@ pub fn edit_file_within_root(
     write_file_within_root(root, candidate, updated.as_bytes())
 }
 
+/// A single line that matched a [`search_within_root`] query.
+///
+/// `relative_path` is the path of the matching file **relative to the root**, with `/`
+/// separators (never absolute, never containing `..` — it is built only from `readdir`
+/// entry names under the contained root). `line_number` is 1-based. `line_text` is the
+/// matching line with its terminator stripped, **truncated to at most
+/// [`SEARCH_MAX_LINE_BYTES`] bytes on a UTF-8 char boundary** (so a single pathological
+/// long line can never blow the output bound).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SearchHit {
+    /// Path of the matching file, relative to the root (`/`-separated, no `..`/absolute).
+    pub relative_path: String,
+    /// 1-based line number of the match within the file.
+    pub line_number: u64,
+    /// The matching line (terminator stripped), truncated to [`SEARCH_MAX_LINE_BYTES`].
+    pub line_text: String,
+}
+
+/// Hard cap on the total number of [`SearchHit`]s a single search returns. The walk stops
+/// the instant this is reached, so output (and the `Vec` backing it) is bounded regardless
+/// of how many lines match across the tree.
+pub const SEARCH_MAX_HITS: usize = 200;
+/// Hard cap on the byte length of each [`SearchHit::line_text`] (truncated on a char
+/// boundary). Defends against a single multi-megabyte line.
+pub const SEARCH_MAX_LINE_BYTES: usize = 512;
+/// Hard cap on the number of files OPENED+scanned in a single search. Once reached the walk
+/// stops, so a tree with millions of files cannot make the search unbounded.
+pub const SEARCH_MAX_FILES: usize = 2_000;
+/// Hard cap on the number of directories DESCENDED into in a single search. Bounds traversal
+/// over a pathologically wide/deep tree.
+pub const SEARCH_MAX_DIRS: usize = 4_096;
+/// Hard cap on the bytes read from any ONE file (via `Read::take`, so it holds even if the
+/// file grows after we stat it — no TOCTOU on the size). Bounds per-file memory; bytes past
+/// this point are not scanned.
+pub const SEARCH_MAX_FILE_BYTES: u64 = 1_048_576; // 1 MiB
+
+/// READ-ONLY literal-substring search over the UTF-8 text files contained in `root`,
+/// recursive from the root (or, when `subpath` is `Some`, from that contained sub-directory
+/// or single file).
+///
+/// # Containment (no new attack surface)
+/// Every on-disk access goes through the EXISTING hardened primitives — there is no fresh
+/// `open`/`readdir` path here:
+/// - directory listing via [`list_dir_within_root`] (lexical gate + `O_NOFOLLOW` +
+///   realpath-ancestor; never lists *through* a symlink),
+/// - per-entry classification via [`stat_file_within_root`] (no-follow `lstat`; a
+///   final-component **symlink** is `Err(`[`FsError::Symlink`]`)`),
+/// - file reads via [`open_read_within_root`] (`O_NOFOLLOW` + fd-identity TOCTOU check).
+///
+/// Candidate paths are built ONLY from `readdir` entry names joined under the contained
+/// root, so each access is independently re-validated by `resolve_within_root`. We **stat
+/// every entry before touching it** and SKIP anything that is not a real regular file or
+/// real directory: a symlink (`Err(Symlink)`) is skipped — **we never follow it**, so a
+/// symlink pointing outside the root is never read and never descended into; FIFOs/sockets/
+/// devices ([`FileKind::Other`]) are skipped; and a non-UTF-8 entry name (which cannot form
+/// a `&str` candidate) is skipped. We therefore only ever call `list_dir` on REAL
+/// directories. The `subpath` argument itself is validated through the same pipeline, so an
+/// absolute / `..` / out-of-root / symlink `subpath` is REJECTED (`Err`).
+///
+/// # Bounds (truth-labeled: what is and is NOT bounded)
+/// Every accumulator and every read is hard-capped by a constant:
+/// - **Output** — at most [`SEARCH_MAX_HITS`] hits in the returned `Vec`, each
+///   [`SearchHit::line_text`] truncated to [`SEARCH_MAX_LINE_BYTES`] bytes on a char boundary.
+/// - **Files opened** — at most [`SEARCH_MAX_FILES`] files are opened+scanned.
+/// - **Per-file bytes** — at most [`SEARCH_MAX_FILE_BYTES`] bytes are read from any ONE file,
+///   enforced by `Read::take` on the open fd (so the bound holds even if the file grows after
+///   we stat it — no size TOCTOU); bytes past the cap are never read into memory.
+/// - **Directories listed** — at most [`SEARCH_MAX_DIRS`] directories are popped+listed.
+/// - **Pending worklist** — the iterative descent's `worklist` of pending directories is
+///   capped: a directory is enqueued only while `dirs_enqueued < SEARCH_MAX_DIRS`, so
+///   `worklist.len()` is O([`SEARCH_MAX_DIRS`]) at ALL times and its peak memory is a constant
+///   × the max enqueued path length — it can NEVER accumulate the full cross-directory fanout
+///   of the on-disk tree. This is **bounded descent**: search still visits up to
+///   [`SEARCH_MAX_DIRS`] directories; directories beyond the budget are simply not enqueued.
+///
+/// The walk stops the moment the hit or file cap is hit.
+///
+/// **The ONE remaining (inherited) residual — a single directory's listing.** Each directory
+/// is listed via the shared [`list_dir_within_root`] primitive, which materializes that one
+/// directory's entry names into a `Vec` in full before this walk processes them (it is the
+/// IDENTICAL allocation the `list_dir` tool itself makes — search adds no new listing path).
+/// So peak memory for processing a single directory scales with THAT directory's entry count;
+/// a single adversarial mega-directory (millions of entries) would make that one `Vec` large
+/// even though everything else here is constant-bounded. This is a pre-existing property of
+/// the shared listing primitive, NOT introduced by search, and is deliberately left to
+/// `list_dir_within_root` rather than worked around here (changing the shared primitive is
+/// riskier than documenting the inherited residual). Mitigation is operational, exactly as for
+/// the hardlink residual above: host workspace roots should not contain adversarial
+/// mega-directories.
+///
+/// # Text handling
+/// Binary / non-UTF-8 files are skipped gracefully: a file containing a NUL byte is treated
+/// as binary, and otherwise only the valid UTF-8 prefix is scanned (a multibyte char split
+/// by the size cap is tolerated). An empty `query` matches nothing and returns `Ok(vec![])`
+/// (an empty needle would otherwise match every line). Matching is a plain literal
+/// substring (`str::contains`), case-sensitive.
+///
+/// Results are sorted by `(relative_path, line_number)` for a deterministic order.
+pub fn search_within_root(
+    root: &Path,
+    query: &str,
+    subpath: Option<&str>,
+) -> Result<Vec<SearchHit>, FsError> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut hits: Vec<SearchHit> = Vec::new();
+    // An empty needle would match every line — nothing meaningful to search for, and a
+    // guaranteed cap blow. Treat it as "no matches" (bounded, safe).
+    if query.is_empty() {
+        return Ok(hits);
+    }
+
+    let mut files_scanned: usize = 0;
+    let mut dirs_visited: usize = 0;
+    // Total directories EVER enqueued onto `worklist`. Every push is guarded by
+    // `dirs_enqueued < SEARCH_MAX_DIRS`, so `worklist.len() <= dirs_enqueued <= SEARCH_MAX_DIRS`
+    // holds at ALL times — the pending worklist can never accumulate the full cross-directory
+    // fanout of the on-disk tree. Peak worklist memory is therefore bounded by a constant
+    // (SEARCH_MAX_DIRS) × the max enqueued path length, not by the size of the tree. (Before
+    // this cap the worklist was pushed to for every subdirectory child with no budget, so its
+    // peak scaled with the tree.) This is BOUNDED DESCENT: search still visits up to
+    // SEARCH_MAX_DIRS directories; deeper/wider directories beyond the budget are simply not
+    // enqueued. A `push_dir` closure centralizes the guarded push so the invariant cannot drift.
+    let mut dirs_enqueued: usize = 0;
+
+    // Resolve the starting point. The root-denoting tokens start a full-tree walk; any other
+    // `subpath` is validated through `stat_file_within_root` (so absolute/`..`/out-of-root/
+    // symlink subpaths are rejected here) and may name either a directory (walk it) or a
+    // single regular file (scan just it).
+    let mut worklist: Vec<String> = Vec::new();
+    // Guarded push: enqueue `d` only if the total-ever-enqueued budget is not exhausted, so
+    // `worklist.len()` is O(SEARCH_MAX_DIRS) for the whole walk. Returns whether it enqueued
+    // (callers ignore it — a dropped directory is just not descended into).
+    let push_dir = |worklist: &mut Vec<String>, dirs_enqueued: &mut usize, d: String| {
+        if *dirs_enqueued < SEARCH_MAX_DIRS {
+            worklist.push(d);
+            *dirs_enqueued += 1;
+        }
+    };
+    match subpath {
+        None => push_dir(&mut worklist, &mut dirs_enqueued, String::new()),
+        Some(s) if s.is_empty() || s == "." || s == "./" => {
+            push_dir(&mut worklist, &mut dirs_enqueued, String::new())
+        }
+        Some(s) => match stat_file_within_root(root, s)?.kind {
+            FileKind::Dir => push_dir(&mut worklist, &mut dirs_enqueued, s.to_string()),
+            FileKind::File => {
+                files_scanned += 1;
+                scan_file_into(root, s, query, &mut hits);
+            }
+            FileKind::Other => {}
+        },
+    }
+
+    'walk: while let Some(dir) = worklist.pop() {
+        // Now subsumed by the enqueue cap (`push_dir` enforces dirs_enqueued < SEARCH_MAX_DIRS,
+        // and we can never pop more than we pushed) — kept as a defensive floor so the visit
+        // count is bounded even if the enqueue invariant were ever weakened.
+        if dirs_visited >= SEARCH_MAX_DIRS {
+            break;
+        }
+        dirs_visited += 1;
+        // A directory that races out from under us (removed / perms) is skipped, not fatal —
+        // best-effort search. `dir == ""` lists the root itself (the contained root case).
+        let entries = match list_dir_within_root(root, &dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for name_os in entries {
+            // A non-UTF-8 entry name cannot form a `&str` candidate for the lexical gate;
+            // skip it (the file is simply not searchable by this text tool).
+            let name = match std::str::from_utf8(name_os.as_bytes()) {
+                Ok(n) => n,
+                Err(_) => continue,
+            };
+            let child = if dir.is_empty() {
+                name.to_string()
+            } else {
+                format!("{dir}/{name}")
+            };
+            // Stat (no-follow) classifies the entry. A SYMLINK is `Err(Symlink)` → skipped:
+            // we never follow it, so an outside-pointing link is never read or descended.
+            match stat_file_within_root(root, &child) {
+                Ok(st) => match st.kind {
+                    // Guarded push: a child directory is enqueued only while the
+                    // total-ever-enqueued budget (SEARCH_MAX_DIRS) is not exhausted, so the
+                    // pending worklist stays O(SEARCH_MAX_DIRS). Beyond the budget the child
+                    // is simply not descended into (bounded descent).
+                    FileKind::Dir => push_dir(&mut worklist, &mut dirs_enqueued, child),
+                    FileKind::File => {
+                        if files_scanned >= SEARCH_MAX_FILES {
+                            break 'walk;
+                        }
+                        files_scanned += 1;
+                        scan_file_into(root, &child, query, &mut hits);
+                        if hits.len() >= SEARCH_MAX_HITS {
+                            break 'walk;
+                        }
+                    }
+                    FileKind::Other => {}
+                },
+                Err(_) => continue,
+            }
+        }
+    }
+
+    hits.sort_by(|a, b| {
+        (a.relative_path.as_str(), a.line_number).cmp(&(b.relative_path.as_str(), b.line_number))
+    });
+    hits.truncate(SEARCH_MAX_HITS);
+    Ok(hits)
+}
+
+/// Scan ONE contained regular file (named by `rel`, relative to `root`) for literal
+/// `query`, appending up to the global [`SEARCH_MAX_HITS`] cap into `hits`. The read goes
+/// through [`open_read_within_root`] (full hardening) and is byte-capped via `Read::take`,
+/// so this opens no new path and bounds per-file memory. Any read/containment error (e.g. a
+/// TOCTOU swap detected by the hardened open) skips the file silently — best-effort, never
+/// fatal to the overall search.
+fn scan_file_into(root: &Path, rel: &str, query: &str, hits: &mut Vec<SearchHit>) {
+    use std::io::Read;
+    let file = match open_read_within_root(root, rel) {
+        Ok(f) => f,
+        Err(_) => return,
+    };
+    let mut bytes: Vec<u8> = Vec::new();
+    // HARD per-file byte cap via take — holds even if the file grew after we stat'd it.
+    if file
+        .take(SEARCH_MAX_FILE_BYTES)
+        .read_to_end(&mut bytes)
+        .is_err()
+    {
+        return;
+    }
+    // Binary heuristic: a NUL byte ⇒ treat as binary and skip (same screen git uses).
+    if bytes.contains(&0) {
+        return;
+    }
+    // Decode UTF-8; if the size cap split a trailing multibyte char, scan the valid prefix.
+    let text = match std::str::from_utf8(&bytes) {
+        Ok(s) => s,
+        Err(e) => match std::str::from_utf8(&bytes[..e.valid_up_to()]) {
+            Ok(s) => s,
+            Err(_) => return,
+        },
+    };
+    for (idx, line) in text.lines().enumerate() {
+        if hits.len() >= SEARCH_MAX_HITS {
+            return;
+        }
+        if line.contains(query) {
+            hits.push(SearchHit {
+                relative_path: rel.to_string(),
+                line_number: (idx as u64) + 1,
+                line_text: truncate_to_char_boundary(line, SEARCH_MAX_LINE_BYTES),
+            });
+        }
+    }
+}
+
+/// Truncate `s` to at most `max` bytes, backing up to the nearest UTF-8 char boundary so the
+/// result is always valid UTF-8 (never splits a multibyte char).
+fn truncate_to_char_boundary(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s[..end].to_string()
+}
+
 /// A candidate that has passed the lexical gate + canonicalized-root +
 /// realpath-ancestor containment checks. `full` is the absolute path to open
 /// (built from the *real* root so it is safe to hand to `open`).
