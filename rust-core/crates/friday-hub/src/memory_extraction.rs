@@ -25,33 +25,54 @@
 //! [`crate::cognition::rank_recall`] (which redacts PII at RECALL time — the same
 //! point the TS does, so this slice adds NO store-time redaction; parity is clean).
 //!
+//! ## Slice-2 (dedup + transactional) — closes slice-1's two caveats
+//! - **Dedup via extraction-status.** The `agent_session_message` table now carries a
+//!   `memory_extract_status` column (v20 migration; mirrors the TS
+//!   `session_messages.memory_extract_status`). This slice reads only PENDING messages
+//!   ([`friday_storage::agent_session::load_pending_session_messages`]) and, after a
+//!   successful run, marks EVERY processed message `'extracted'`
+//!   ([`friday_storage::agent_session::mark_messages_extracted`]). So a RE-RUN reads no
+//!   pending → 0 new candidates, 0 provider calls (no duplicate candidates).
+//! - **Atomic persist.** The candidate inserts AND the extracted-marks run in ONE
+//!   `unchecked_transaction`: a mid-persist error rolls BOTH back (no partial candidates,
+//!   no orphaned marks). The token-ledger row is written BEFORE the tx (the call's cost
+//!   is real regardless of the persist outcome).
+//!
 //! ## Honest scope (disclosed deviations from the TS oracle)
-//! - **Source table.** The Rust schema has no `session_messages` table (with the
-//!   `memory_extract_status`/`is_inherited` columns the TS reads). This slice reads
-//!   `agent_session_message` via `load_session_messages` — ALL messages in `seq`
-//!   order. Consequences (disclosed): there is NO pending/inherited pre-filter, and
-//!   messages are NOT marked extracted/skipped after a run, so a RE-RUN may
-//!   re-extract + duplicate candidates. Idempotency / status-marking is a follow-on
-//!   slice (it would need a storage change, which is out of scope here).
+//! - **Source table.** The Rust schema has no full `session_messages` table (with the
+//!   TS `is_inherited` column etc.); this slice adds only the `memory_extract_status`
+//!   column to `agent_session_message`. There is no `is_inherited` pre-filter — every
+//!   message is extractable. The TS extracted/skipped distinction is collapsed to one
+//!   terminal `'extracted'` status (a processed message — referenced, unreferenced, or
+//!   sensitivity-dropped — is consumed and not re-extracted, matching the TS "still
+//!   leaves the pending set" semantics).
+//! - **No `'failed'`/retry transition.** On a persist error the tx rolls back, leaving
+//!   the messages `'pending'`, and that attempt's ledger row persists — so a retry
+//!   re-calls the provider. The TS `'failed'`-status + queue/retry machine is DEFERRED
+//!   to a follow-on slice.
 //! - **No tags / metadata persisted.** The Rust `memory_item` row has no
 //!   tags/metadata columns; the TS tags/metadata are simply not stored in slice-1.
 //! - **One concatenated prompt.** The Rust [`DeepSeekClient::chat`] takes a single
 //!   prompt (no system/user split, no `response_format`/`temperature`); the system
 //!   + user prompt are concatenated. The JSON-only contract is carried in the
 //!   prompt text, and parsing tolerates fenced / surrounded JSON like the TS.
-//! - **Queue / auto mode NOT included.** Only the inline manual path. The
-//!   queue/job-retry machine is a follow-on slice.
 //! - **PII redaction stays at RECALL time** (cognition::rank_recall), NOT at store
 //!   time — faithful to the TS, which stores raw non-keyword PII and redacts on
 //!   recall. The sensitivity guard here drops KEYWORD-bearing items (passwords,
 //!   tokens, SSN/credit-card words, medical/financial/…), matching the TS guard.
+//! - **Queue / auto mode + ownership-binding still DEFERRED.** Only the inline manual
+//!   path; the queue/job-retry/auto machine and ownership-claim binding are follow-on
+//!   slices (the principal is a caller-supplied ref).
 //!
-//! Truth label: Rust-owned INLINE extraction, FIRST slice. The TS extraction path
-//! STAYS LIVE (parity pending). PROOF-ONLY — NOT a v1 GO.
+//! Truth label: Rust-owned INLINE extraction, slice-2 (dedup + transactional). The TS
+//! extraction path STAYS LIVE (full parity — queue/auto + ownership-binding — pending).
+//! PROOF-ONLY — NOT a v1 GO.
 
 use friday_core::MemoryScope;
 use friday_deepseek::{DeepSeekClient, DeepSeekError, Transport};
-use friday_storage::agent_session::{load_session_messages, StoredSessionMessage};
+use friday_storage::agent_session::{
+    load_pending_session_messages, mark_messages_extracted, StoredSessionMessage,
+};
 use friday_storage::memory::{record_candidate, NewMemoryCandidate};
 use friday_storage::StorageError;
 use serde_json::Value;
@@ -126,6 +147,10 @@ pub struct ExtractionOutcome {
     pub sensitive_dropped: usize,
     /// Candidates actually persisted via `record_candidate` (`state = Candidate`).
     pub candidates_created: usize,
+    /// Source messages marked `'extracted'` this run (the dedup mark). Equals the
+    /// number of PENDING messages read — every processed message is consumed so a
+    /// re-run reads no pending and creates no duplicate candidates.
+    pub messages_marked_extracted: usize,
     /// Token usage of the single extraction call (ledgered separately).
     pub prompt_tokens: i64,
     pub completion_tokens: i64,
@@ -340,8 +365,9 @@ pub fn filter_sensitive(
 /// the ask path writes (`fallback = false`).
 ///
 /// `candidate_id_prefix` namespaces the minted `memory_id`s (e.g.
-/// `"<session>:extract:<now_ms>"`), so a re-run mints distinct ids (idempotency
-/// across re-runs is a follow-on slice — disclosed in the module docs).
+/// `"<session>:extract:<now_ms>"`). Slice-2 makes re-runs IDEMPOTENT at the source:
+/// only PENDING messages are read, and a successful run marks the processed messages
+/// `'extracted'`, so a second run reads no pending and creates no duplicate candidates.
 #[allow(clippy::too_many_arguments)]
 pub fn extract_inline<T: Transport>(
     db: &mut friday_storage::Db,
@@ -360,16 +386,20 @@ pub fn extract_inline<T: Transport>(
         return Err(ExtractionError::BadInput("principal_id"));
     }
 
-    let messages = load_session_messages(db.conn(), session_id)?;
+    // Slice-2 dedup: read only the messages not yet consumed by a prior extraction.
+    let messages = load_pending_session_messages(db.conn(), session_id)?;
     let messages_read = messages.len();
 
-    // Empty session: nothing to extract (TS `messages.length === 0` early return).
+    // No PENDING messages: nothing to extract — and CRUCIALLY no provider call. On a
+    // second run of an already-extracted session every message is terminal, so this is
+    // the empty early-return (TS `messages.length === 0`), and the provider is never hit.
     if messages.is_empty() {
         return Ok(ExtractionOutcome {
             messages_read: 0,
             items_parsed: 0,
             sensitive_dropped: 0,
             candidates_created: 0,
+            messages_marked_extracted: 0,
             prompt_tokens: 0,
             completion_tokens: 0,
             total_tokens: 0,
@@ -400,13 +430,31 @@ pub fn extract_inline<T: Transport>(
 
     let (safe_items, sensitive_dropped) = filter_sensitive(items, &messages);
 
-    // Persist each surviving item as a CANDIDATE (state = Candidate). Reuses the
-    // existing memory spine — nothing here makes it durable.
+    // ATOMIC persist (slice-2): record every surviving candidate AND mark ALL the
+    // processed source messages `'extracted'` in ONE transaction. Either the whole
+    // batch + marks commit, or a mid-loop error drops the tx and rolls BOTH back — so
+    // there is never a partial state (orphaned candidates, or marks without candidates).
+    //
+    // We mark EVERY pending message we read — not just the ones a safe item referenced —
+    // because all of them were processed this run (referenced, unreferenced, and
+    // sensitivity-DROPPED alike). Leaving any `'pending'` would re-call the provider and
+    // re-duplicate on the next run; marking them all is the dedup guarantee.
+    //
+    // `record_candidate` is a single `INSERT` (no inner transaction), and
+    // `mark_messages_extracted` is a single `UPDATE`, so both compose safely inside the
+    // `unchecked_transaction` (the same mechanism `record_run_model_call` already uses).
+    // The token-ledger row was written ABOVE, outside this tx (the call's cost is real
+    // regardless of whether the persist commits).
+    let message_ids: Vec<String> = messages.iter().map(|m| m.message_id.clone()).collect();
+    let tx = db
+        .conn()
+        .unchecked_transaction()
+        .map_err(StorageError::from)?;
     let mut candidates_created = 0usize;
     for (i, item) in safe_items.iter().enumerate() {
         let memory_id = format!("{candidate_id_prefix}:c{i}");
         record_candidate(
-            db.conn(),
+            &tx,
             &NewMemoryCandidate {
                 memory_id: &memory_id,
                 scope: MemoryScope::Session,
@@ -415,20 +463,23 @@ pub fn extract_inline<T: Transport>(
                 // RECALL time by cognition::rank_recall (parity with the TS).
                 content: Some(item.content.as_str()),
                 principal_id: Some(principal_id),
-                // slice-1 stores no sensitive content (sensitive items are DROPPED
-                // above), so the column is always false here.
+                // Sensitive items are DROPPED above (never persisted), so the column is
+                // always false for a stored candidate.
                 sensitive: false,
                 created_at: now_ms,
             },
         )?;
         candidates_created += 1;
     }
+    let messages_marked_extracted = mark_messages_extracted(&tx, &message_ids)?;
+    tx.commit().map_err(StorageError::from)?;
 
     Ok(ExtractionOutcome {
         messages_read,
         items_parsed,
         sensitive_dropped,
         candidates_created,
+        messages_marked_extracted,
         prompt_tokens: outcome.prompt_tokens,
         completion_tokens: outcome.completion_tokens,
         total_tokens: outcome.total_tokens,
@@ -550,6 +601,9 @@ mod tests {
         assert_eq!(out.items_parsed, 1);
         assert_eq!(out.sensitive_dropped, 0);
         assert_eq!(out.candidates_created, 1);
+        // slice-2: ALL processed messages are marked extracted (not just the one the
+        // single item referenced) — the dedup mark.
+        assert_eq!(out.messages_marked_extracted, 2);
         assert_eq!(out.total_tokens, 55);
 
         // The token ledger row was written (the extraction call is ledgered).
@@ -695,7 +749,243 @@ mod tests {
         .unwrap();
         assert_eq!(out.messages_read, 0);
         assert_eq!(out.candidates_created, 0);
+        assert_eq!(out.messages_marked_extracted, 0);
         assert_eq!(db.count("token_ledger").unwrap(), 0);
+    }
+
+    /// Read one message's `memory_extract_status` (test-only helper for the slice-2
+    /// dedup/rollback assertions).
+    fn status_of(db: &friday_storage::Db, message_id: &str) -> String {
+        db.conn()
+            .query_row(
+                "SELECT memory_extract_status FROM agent_session_message WHERE message_id = ?1",
+                [message_id],
+                |r| r.get::<_, String>(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn re_run_reads_no_pending_and_creates_no_duplicate_candidates() {
+        // DEDUP proof. The mock refs ONLY ids[0]; ids[1] is processed-but-unreferenced.
+        // After run 1 BOTH must be marked extracted (so run 2 sees zero pending and never
+        // calls the provider). seed_session gives a referenced + an unreferenced message,
+        // so the unchanged-ledger assertion catches "marked only the referenced id".
+        let mut db = friday_storage::Db::open_hub(&tmp("dedup")).unwrap();
+        let ids = seed_session(&db, "s1");
+        let content = json!({
+            "items": [{
+                "kind": "preference",
+                "content": "User's project codename is Falcon.",
+                "sourceMessageIds": [ids[0]],
+                "tags": ["naming"]
+            }]
+        })
+        .to_string();
+        let c = client(content);
+
+        // Run 1: reads both pending, creates 1 candidate, marks BOTH messages extracted.
+        let out1 = extract_inline(
+            &mut db,
+            "s1",
+            "alice",
+            &c,
+            DEFAULT_MAX_ITEMS,
+            "s1:ex:100",
+            "led-1",
+            100,
+        )
+        .unwrap();
+        assert_eq!(out1.messages_read, 2);
+        assert_eq!(out1.candidates_created, 1);
+        assert_eq!(out1.messages_marked_extracted, 2, "both messages consumed");
+        assert_eq!(status_of(&db, &ids[0]), "extracted");
+        assert_eq!(
+            status_of(&db, &ids[1]),
+            "extracted",
+            "the unreferenced message must also be marked (else it stays pending)"
+        );
+        assert_eq!(db.count("token_ledger").unwrap(), 1);
+        assert_eq!(pending_review(db.conn()).unwrap().len(), 1);
+
+        // Run 2 with a PANIC transport: if it reads any pending it would call the
+        // provider and panic. It must read 0 pending → 0 candidates → 0 provider calls.
+        struct PanicTransport;
+        impl Transport for PanicTransport {
+            fn get_json(&self, _u: &str, _b: &str) -> Result<Value, DeepSeekError> {
+                panic!("re-run must not discover models (no pending messages)");
+            }
+            fn post_json(&self, _u: &str, _b: &str, _body: &Value) -> Result<Value, DeepSeekError> {
+                panic!("re-run must not call the provider (no pending messages)");
+            }
+        }
+        let c2 = DeepSeekClient::with_transport(PanicTransport, "test-key-not-real".into());
+        let out2 = extract_inline(
+            &mut db,
+            "s1",
+            "alice",
+            &c2,
+            DEFAULT_MAX_ITEMS,
+            "s1:ex:200",
+            "led-2",
+            200,
+        )
+        .unwrap();
+        assert_eq!(out2.messages_read, 0, "no pending messages on re-run");
+        assert_eq!(out2.candidates_created, 0, "no duplicate candidates");
+        assert_eq!(out2.messages_marked_extracted, 0);
+        // No second ledger row (no provider call), and still exactly one candidate.
+        assert_eq!(
+            db.count("token_ledger").unwrap(),
+            1,
+            "no second provider call"
+        );
+        assert_eq!(
+            pending_review(db.conn()).unwrap().len(),
+            1,
+            "no duplicate row"
+        );
+        assert_eq!(db.count("memory_item").unwrap(), 1);
+    }
+
+    #[test]
+    fn persist_error_mid_loop_rolls_back_both_candidates_and_marks() {
+        // TRANSACTIONAL proof. The mock returns TWO safe items → the loop mints `:c0`
+        // then `:c1`. We pre-insert a memory_item at `:c1` so the c1 INSERT collides on
+        // the PRIMARY KEY mid-loop → the whole tx drops → BOTH the c0 candidate AND the
+        // extracted-marks roll back (all-or-nothing). No test seam in `extract_inline`.
+        let mut db = friday_storage::Db::open_hub(&tmp("rollback")).unwrap();
+        let ids = seed_session(&db, "s1");
+        let content = json!({
+            "items": [
+                {"kind":"fact","content":"first item","sourceMessageIds":[ids[0]]},
+                {"kind":"fact","content":"second item","sourceMessageIds":[ids[1]]}
+            ]
+        })
+        .to_string();
+        let c = client(content);
+
+        // Pre-seed the row the loop will try to mint at i==1, forcing a PK collision.
+        record_candidate(
+            db.conn(),
+            &NewMemoryCandidate {
+                memory_id: "s1:ex:100:c1",
+                scope: MemoryScope::Session,
+                content_ref: None,
+                content: Some("pre-existing collision row"),
+                principal_id: Some("alice"),
+                sensitive: false,
+                created_at: 50,
+            },
+        )
+        .unwrap();
+
+        let err = extract_inline(
+            &mut db,
+            "s1",
+            "alice",
+            &c,
+            DEFAULT_MAX_ITEMS,
+            "s1:ex:100",
+            "led-1",
+            100,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ExtractionError::Storage(_)),
+            "PK collision is a storage error"
+        );
+
+        // FULL ROLLBACK: the c0 candidate the loop inserted before the collision is gone
+        // (only the pre-seeded c1 remains), and NO message was marked — both still pending.
+        assert!(
+            friday_storage::memory::get(db.conn(), "s1:ex:100:c0")
+                .unwrap()
+                .is_none(),
+            "the c0 candidate must be rolled back (no partial persist)"
+        );
+        assert_eq!(
+            db.count("memory_item").unwrap(),
+            1,
+            "only the pre-seeded collision row survives"
+        );
+        assert_eq!(
+            status_of(&db, &ids[0]),
+            "pending",
+            "no message marked on rollback"
+        );
+        assert_eq!(
+            status_of(&db, &ids[1]),
+            "pending",
+            "no message marked on rollback"
+        );
+        // The ledger row was written BEFORE the tx, so it survives (disclosed: a retry
+        // re-calls the provider; slice-2 defers the 'failed'/queue machine).
+        assert_eq!(db.count("token_ledger").unwrap(), 1);
+    }
+
+    #[test]
+    fn sensitivity_dropped_source_is_marked_extracted_not_re_extracted() {
+        // A session whose ONLY extracted item is sensitivity-DROPPED still consumes its
+        // source messages: they are marked extracted so a re-run does not re-extract them
+        // (matches the TS — a dropped item still leaves the pending set).
+        let mut db = friday_storage::Db::open_hub(&tmp("dropped")).unwrap();
+        let ids = seed_session(&db, "s1");
+        let content = json!({
+            "items": [
+                {"kind":"fact","content":"User's API key rotation is monthly.","sourceMessageIds":[ids[0]]}
+            ]
+        })
+        .to_string();
+        let c = client(content);
+
+        let out = extract_inline(
+            &mut db,
+            "s1",
+            "bob",
+            &c,
+            DEFAULT_MAX_ITEMS,
+            "s1:ex:100",
+            "led-1",
+            100,
+        )
+        .unwrap();
+        assert_eq!(out.items_parsed, 1);
+        assert_eq!(out.sensitive_dropped, 1, "the API-key item is dropped");
+        assert_eq!(out.candidates_created, 0, "nothing safe to persist");
+        // Even with zero candidates, EVERY processed message is consumed (marked).
+        assert_eq!(out.messages_marked_extracted, 2);
+        assert_eq!(status_of(&db, &ids[0]), "extracted");
+        assert_eq!(status_of(&db, &ids[1]), "extracted");
+        assert_eq!(
+            db.count("memory_item").unwrap(),
+            0,
+            "no sensitive content stored"
+        );
+
+        // Re-run sees no pending and makes no provider call (proves not re-extracted).
+        struct PanicTransport;
+        impl Transport for PanicTransport {
+            fn get_json(&self, _u: &str, _b: &str) -> Result<Value, DeepSeekError> {
+                panic!("dropped-source re-run must not call the provider");
+            }
+            fn post_json(&self, _u: &str, _b: &str, _body: &Value) -> Result<Value, DeepSeekError> {
+                panic!("dropped-source re-run must not call the provider");
+            }
+        }
+        let c2 = DeepSeekClient::with_transport(PanicTransport, "test-key-not-real".into());
+        let out2 = extract_inline(
+            &mut db,
+            "s1",
+            "bob",
+            &c2,
+            DEFAULT_MAX_ITEMS,
+            "s1:ex:200",
+            "led-2",
+            200,
+        )
+        .unwrap();
+        assert_eq!(out2.messages_read, 0, "dropped source is not re-extracted");
     }
 
     #[test]

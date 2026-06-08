@@ -192,6 +192,75 @@ pub fn session_message_count(conn: &Connection, agent_session_id: &str) -> Resul
     Ok(n)
 }
 
+/// Load only the messages NOT yet consumed by a memory extraction
+/// (`memory_extract_status = 'pending'`), in `seq` order (oldest first). This is the
+/// dedup half of session-memory slice-2: the inline extraction reads PENDING messages
+/// and marks the processed ones terminal, so a RE-RUN reads no pending and creates no
+/// duplicate candidates. An unknown/empty session — or one whose every message is
+/// already terminal — returns an empty Vec (not an error).
+///
+/// [`load_session_messages`] is kept UNCHANGED for the resume/history path, which must
+/// always see the full conversation regardless of extraction status. Slice-2 changes
+/// ONLY the extraction read; it does not alter how a session resumes.
+pub fn load_pending_session_messages(
+    conn: &Connection,
+    agent_session_id: &str,
+) -> Result<Vec<StoredSessionMessage>> {
+    let mut stmt = conn.prepare(
+        "SELECT message_id, agent_session_id, seq, role, content, refs, created_at
+         FROM agent_session_message
+         WHERE agent_session_id = ?1 AND memory_extract_status = 'pending'
+         ORDER BY seq ASC",
+    )?;
+    let rows = stmt.query_map([agent_session_id], |r| {
+        Ok(StoredSessionMessage {
+            message_id: r.get(0)?,
+            agent_session_id: r.get(1)?,
+            seq: r.get(2)?,
+            role: r.get(3)?,
+            content: r.get(4)?,
+            refs: r.get(5)?,
+            created_at: r.get(6)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
+/// Mark the given messages as consumed by a memory extraction
+/// (`memory_extract_status = 'extracted'`), so a later extraction's
+/// [`load_pending_session_messages`] no longer returns them (the dedup guarantee).
+/// Returns the number of rows actually updated.
+///
+/// Slice-2 collapses the TS extracted/skipped distinction to a single terminal
+/// `'extracted'` status: a processed message (whether a safe item referenced it, no
+/// item referenced it, or its only item was sensitivity-DROPPED) is consumed and must
+/// not be re-extracted — matching the TS, where a dropped/unreferenced message still
+/// leaves the pending set. The richer 'skipped'/'failed'/queue transitions are deferred.
+///
+/// This takes a bare `&Connection` (not `&mut Db`) so the caller can run it INSIDE the
+/// same `unchecked_transaction` that persists the candidates — then a mid-persist error
+/// rolls back BOTH the candidates and these marks (all-or-nothing). An empty id slice is
+/// a no-op (0 updated). The `memory_id`-shaped ids are bound as parameters (no string
+/// interpolation), so this is injection-safe even with caller-minted ids.
+pub fn mark_messages_extracted(conn: &Connection, message_ids: &[String]) -> Result<usize> {
+    if message_ids.is_empty() {
+        return Ok(0);
+    }
+    let placeholders = vec!["?"; message_ids.len()].join(", ");
+    let sql = format!(
+        "UPDATE agent_session_message SET memory_extract_status = 'extracted'
+         WHERE message_id IN ({placeholders})"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let params = rusqlite::params_from_iter(message_ids.iter());
+    let updated = stmt.execute(params)?;
+    Ok(updated)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,5 +373,111 @@ mod tests {
             append_session_message(db.conn(), "s1", &SessionMessage::new("  ", "x", None), 1)
                 .is_err()
         );
+    }
+
+    // --- slice-2 (dedup) -----------------------------------------------------
+
+    fn status_of(db: &Db, message_id: &str) -> String {
+        db.conn()
+            .query_row(
+                "SELECT memory_extract_status FROM agent_session_message WHERE message_id = ?1",
+                [message_id],
+                |r| r.get::<_, String>(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn fresh_db_defaults_messages_to_pending_and_reaches_v20() {
+        let db = Db::open_hub(&tmp("pending-default")).unwrap();
+        // The fresh-DB migration chain reaches the slice-2 version.
+        let v: i64 = db
+            .conn()
+            .query_row("SELECT version FROM schema_version WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(v, 20, "fresh migration reaches the slice-2 version");
+
+        ensure_session(db.conn(), "s1", 1).unwrap();
+        let id = append_session_message(
+            db.conn(),
+            "s1",
+            &SessionMessage::new("user", "hello", None),
+            10,
+        )
+        .unwrap();
+        // A freshly-appended message defaults to 'pending' (extractable).
+        assert_eq!(status_of(&db, &id), "pending");
+    }
+
+    #[test]
+    fn load_pending_returns_only_pending_and_mark_makes_them_terminal() {
+        let db = Db::open_hub(&tmp("pending")).unwrap();
+        ensure_session(db.conn(), "s1", 1).unwrap();
+        let m0 =
+            append_session_message(db.conn(), "s1", &SessionMessage::new("user", "a", None), 10)
+                .unwrap();
+        let m1 = append_session_message(
+            db.conn(),
+            "s1",
+            &SessionMessage::new("assistant", "b", None),
+            11,
+        )
+        .unwrap();
+
+        // Both start pending; load_pending sees both (in seq order); full load is unchanged.
+        let pending = load_pending_session_messages(db.conn(), "s1").unwrap();
+        assert_eq!(pending.len(), 2);
+        assert_eq!((pending[0].seq, pending[1].seq), (0, 1));
+        assert_eq!(load_session_messages(db.conn(), "s1").unwrap().len(), 2);
+
+        // Mark m0 extracted → load_pending now returns only m1; full load still 2.
+        let n = mark_messages_extracted(db.conn(), std::slice::from_ref(&m0)).unwrap();
+        assert_eq!(n, 1);
+        let pending = load_pending_session_messages(db.conn(), "s1").unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].message_id, m1);
+        assert_eq!(status_of(&db, &m0), "extracted");
+        assert_eq!(status_of(&db, &m1), "pending");
+        assert_eq!(
+            load_session_messages(db.conn(), "s1").unwrap().len(),
+            2,
+            "history/resume load is unaffected by extraction status"
+        );
+
+        // Mark the rest → no pending remains.
+        assert_eq!(mark_messages_extracted(db.conn(), &[m1]).unwrap(), 1);
+        assert!(load_pending_session_messages(db.conn(), "s1")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn mark_empty_slice_is_noop_and_unknown_ids_update_nothing() {
+        let db = Db::open_hub(&tmp("noop")).unwrap();
+        ensure_session(db.conn(), "s1", 1).unwrap();
+        append_session_message(db.conn(), "s1", &SessionMessage::new("user", "a", None), 10)
+            .unwrap();
+        assert_eq!(mark_messages_extracted(db.conn(), &[]).unwrap(), 0);
+        assert_eq!(
+            mark_messages_extracted(db.conn(), &["does-not-exist".to_string()]).unwrap(),
+            0
+        );
+        // The real message is untouched.
+        assert_eq!(
+            load_pending_session_messages(db.conn(), "s1")
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn load_pending_unknown_session_is_empty() {
+        let db = Db::open_hub(&tmp("pending-unknown")).unwrap();
+        assert!(load_pending_session_messages(db.conn(), "nope")
+            .unwrap()
+            .is_empty());
     }
 }
