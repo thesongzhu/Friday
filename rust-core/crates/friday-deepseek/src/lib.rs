@@ -47,9 +47,19 @@ pub enum DeepSeekError {
     /// Authentication rejected (HTTP 401/403). Never a fallback.
     #[error("DeepSeek authentication failed (HTTP {0})")]
     Auth(u16),
-    /// Route unavailable (network error, 5xx, rate limit, …). Never a fallback.
+    /// Route unavailable: a TRANSIENT failure that retrying the SAME route may
+    /// fix — network/transport error, request-timeout (HTTP 408), or a server-side
+    /// 5xx. Classified `Retryable` (bounded). Never a fallback.
     #[error("DeepSeek provider unavailable: {0}")]
     ProviderUnavailable(String),
+    /// A TERMINAL client-side HTTP error (other 4xx: 400 bad-request / 404 / 422,
+    /// and 429 rate-limit). Retrying cannot fix a malformed/unauthorized/not-found
+    /// request, and — absent any backoff mechanism — retrying a 429 would only
+    /// hammer a rate-limited provider, so 429 is treated as terminal here (a future
+    /// backoff slice could make 429 retryable-with-delay). Classified `Terminal`.
+    /// Never a fallback. Display is COARSE: status code only, never the response body.
+    #[error("DeepSeek client error (HTTP {status})")]
+    ClientError { status: u16 },
     /// Response did not match the documented shape.
     #[error("DeepSeek response shape unexpected: {0}")]
     BadResponse(String),
@@ -87,11 +97,18 @@ impl Default for UreqTransport {
 fn map_ureq_err(e: ureq::Error) -> DeepSeekError {
     match e {
         ureq::Error::Status(code, _resp) => {
-            // Do not read/echo the response body; classify by status only.
+            // Do not read/echo the response body; classify by status code ONLY.
             if code == 401 || code == 403 {
                 DeepSeekError::Auth(code)
-            } else {
+            } else if code == 408 || (500..=599).contains(&code) {
+                // Transient: request-timeout (408) or any server-side 5xx — retrying
+                // the SAME route may succeed.
                 DeepSeekError::ProviderUnavailable(format!("HTTP {code}"))
+            } else {
+                // Terminal client error: other 4xx (400/404/422) and 429 rate-limit.
+                // Retrying cannot fix the request, and (no backoff) retrying a 429 only
+                // hammers a rate-limited provider — so it fails closed, not retried.
+                DeepSeekError::ClientError { status: code }
             }
         }
         // Transport error (DNS/TLS/timeout). Its Display carries host/kind, not
@@ -597,7 +614,12 @@ mod tests {
     }
 
     #[test]
-    fn real_transport_maps_rate_limit_to_provider_unavailable_without_body_or_secret() {
+    fn real_transport_maps_rate_limit_to_terminal_client_error_without_body_or_secret() {
+        // 429 is now a TERMINAL ClientError (no backoff mechanism ⇒ treat as terminal
+        // rather than hammer a rate-limited provider). Display/Debug stays COARSE: the
+        // status code only — never the response body (which carries SECRET-QUOTA-BODY)
+        // nor the API key / Authorization header. This doubles as the leak-lens assertion
+        // for the new ClientError variant (#593 leak-lens LOW).
         let (base_url, handle) = serve_http_once(
             429,
             "Too Many Requests",
@@ -610,22 +632,56 @@ mod tests {
         );
         let err = c.discover_models().unwrap_err();
         handle.join().unwrap();
-        assert!(matches!(
-            err,
-            DeepSeekError::ProviderUnavailable(ref reason) if reason == "HTTP 429"
-        ));
-        let rendered = format!("{err:?}");
-        for forbidden in [
-            "SECRET-QUOTA-BODY",
-            "test-key-not-real",
-            "Authorization",
-            "Bearer",
-        ] {
+        assert!(matches!(err, DeepSeekError::ClientError { status: 429 }));
+        // Both Debug and Display must be coarse and secret-free.
+        for rendered in [format!("{err:?}"), format!("{err}")] {
+            for forbidden in [
+                "SECRET-QUOTA-BODY",
+                "test-key-not-real",
+                "Authorization",
+                "Bearer",
+            ] {
+                assert!(
+                    !rendered.contains(forbidden),
+                    "client-error render leaked {forbidden}: {rendered}"
+                );
+            }
+            // Positively: the status code IS present (a coarse, useful label).
+            assert!(rendered.contains("429"), "status code missing: {rendered}");
+        }
+    }
+
+    #[test]
+    fn map_ureq_status_partitions_transient_5xx_408_vs_terminal_4xx() {
+        // Synthetic ureq::Error::Status values drive map_ureq_err directly (no network),
+        // proving the exact partition: 5xx + 408 + transport ⇒ transient ProviderUnavailable
+        // (Retryable); other 4xx + 429 ⇒ terminal ClientError. ureq::Error::Status carries a
+        // Response; we synthesize one with the desired status line.
+        let status_err = |code: u16, reason: &str| {
+            let resp = ureq::Response::new(code, reason, "{}").unwrap();
+            map_ureq_err(ureq::Error::Status(code, resp))
+        };
+
+        // Transient — stays ProviderUnavailable (Retryable downstream).
+        for code in [500u16, 502, 503, 504, 599, 408] {
             assert!(
-                !rendered.contains(forbidden),
-                "rate-limit error leaked {forbidden}: {rendered}"
+                matches!(
+                    status_err(code, "x"),
+                    DeepSeekError::ProviderUnavailable(ref r) if r == &format!("HTTP {code}")
+                ),
+                "HTTP {code} must be transient ProviderUnavailable"
             );
         }
+        // Terminal client error — ClientError (Terminal downstream). 429 included.
+        for code in [400u16, 404, 409, 422, 429] {
+            assert!(
+                matches!(status_err(code, "x"), DeepSeekError::ClientError { status } if status == code),
+                "HTTP {code} must be terminal ClientError"
+            );
+        }
+        // 401/403 stay Auth (unchanged).
+        assert!(matches!(status_err(401, "x"), DeepSeekError::Auth(401)));
+        assert!(matches!(status_err(403, "x"), DeepSeekError::Auth(403)));
     }
 
     #[test]
