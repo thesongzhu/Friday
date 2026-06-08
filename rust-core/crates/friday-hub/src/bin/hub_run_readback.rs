@@ -182,10 +182,11 @@ fn derive_loop_status(kinds: &[String]) -> &'static str {
 /// Note: relative filenames inside a `tool.executed:` kind are NOT forbidden —
 /// only absolute paths (`/Users/`, `/private/`) and secret markers are.
 fn reject_forbidden_output(rendered: &str) -> Result<(), ReadbackError> {
-    // Delegates to the single shared guard (common secret/path markers, now broadened
-    // to /home,/var,/tmp,/etc) and adds this bin's body-field marker. `"task"` (the run
-    // task body) must never appear (only run_id/state/labels do). Relative filenames
-    // inside a `tool.executed:` kind have no leading slash and remain permitted.
+    // Delegates to the single shared guard (common secret/path markers
+    // Authorization/Bearer/sk-/`/Users/`/`/private/`) and adds this bin's body-field
+    // marker. `"task"` (the run task body) must never appear (only run_id/state/labels
+    // do). Relative filenames inside a `tool.executed:` kind have no leading slash and
+    // remain permitted — including interior `etc`/`var`/`tmp`/`home` dir segments.
     friday_hub::refs_guard::reject_forbidden_output(rendered, &["\"task\""])
         .map_err(|_| ReadbackError::new("output_guard"))
 }

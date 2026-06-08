@@ -161,8 +161,8 @@ fn arg_value(args: &[String], name: &str) -> Option<String> {
 /// — the primary defense is that `parse_status` discards the raw `ProbeOutput`,
 /// so these markers should never appear; the guard is a structural backstop.
 fn reject_forbidden_output(rendered: &str) -> Result<(), BridgeError> {
-    // Delegates to the single shared guard (common secret/path markers, now broadened
-    // to /home,/var,/tmp,/etc) and adds the raw-CLI account-field markers that must
+    // Delegates to the single shared guard (common secret/path markers
+    // Authorization/Bearer/sk-/`/Users/`/`/private/`) and adds the raw-CLI account-field markers that must
     // NEVER reach output (the parsed status carries none of these; this catches a
     // regression if it did).
     friday_hub::refs_guard::reject_forbidden_output(

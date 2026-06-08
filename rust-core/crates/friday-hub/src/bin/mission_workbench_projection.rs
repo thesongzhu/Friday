@@ -863,9 +863,9 @@ fn dedupe(values: Vec<String>) -> Vec<String> {
 }
 
 fn reject_forbidden_output(rendered: &str) -> Result<(), String> {
-    // Delegates to the single shared guard (common secret/path markers, now broadened
-    // to /home,/var,/tmp,/etc) and adds this bin's raw-content body markers — a
-    // projection must surface only redacted proof refs, never raw transcript/provider
+    // Delegates to the single shared guard (common secret/path markers
+    // Authorization/Bearer/sk-/`/Users/`/`/private/`) and adds this bin's raw-content
+    // body markers — a projection must surface only redacted proof refs, never raw transcript/provider
     // text or a `provider_native_synced` claim. The matched marker is surfaced in the
     // error, preserving this bin's exact `forbidden marker in projection: {marker}`.
     friday_hub::refs_guard::reject_forbidden_output(

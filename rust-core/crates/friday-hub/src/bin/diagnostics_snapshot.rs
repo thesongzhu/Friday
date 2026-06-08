@@ -202,9 +202,9 @@ fn arg_value(args: &[String], name: &str) -> Option<String> {
 /// these markers should never appear; the guard is the backstop that fails the
 /// WHOLE projection closed if one ever does (non-zero exit + refs-only error).
 fn reject_forbidden_output(rendered: &str) -> Result<(), BridgeError> {
-    // Delegates to the single shared guard (common secret/path markers, now broadened
-    // to /home,/var,/tmp,/etc). This bin has no extra body-field markers — the payload
-    // carries only counts/booleans/ids/static labels.
+    // Delegates to the single shared guard (common secret/path markers
+    // Authorization/Bearer/sk-/`/Users/`/`/private/`). This bin has no extra body-field
+    // markers — the payload carries only counts/booleans/ids/static labels.
     friday_hub::refs_guard::reject_forbidden_output(rendered, &[])
         .map_err(|_| BridgeError::new("output_guard"))
 }

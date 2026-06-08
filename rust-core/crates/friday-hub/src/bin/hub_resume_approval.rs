@@ -209,9 +209,9 @@ fn resume_error_kind(err: &ResumeError) -> &'static str {
 
 /// Refuse to print if any forbidden marker leaked into the refs-only payload.
 fn reject_forbidden_output(rendered: &str) -> Result<(), BridgeError> {
-    // Delegates to the single shared guard (common secret/path markers, now broadened
-    // to /home,/var,/tmp,/etc) and adds this bin's body-field marker. A result body
-    // field (`answer":"`) must never appear (only the hash/len do).
+    // Delegates to the single shared guard (common secret/path markers
+    // Authorization/Bearer/sk-/`/Users/`/`/private/`) and adds this bin's body-field
+    // marker. A result body field (`answer":"`) must never appear (only the hash/len do).
     friday_hub::refs_guard::reject_forbidden_output(rendered, &["answer\":\""])
         .map_err(|_| BridgeError::new("output_guard"))
 }

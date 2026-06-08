@@ -11,33 +11,42 @@
 //! This module hosts the single source of truth for the COMMON marker set (secret
 //! markers + absolute-path markers) and the scan loop. Each bin passes its
 //! bin-specific body-field markers (e.g. `final_message"`, `"task"`, `authMethod`)
-//! as `extra` so its exact blocking set is preserved — now unioned with a broadened
-//! common path set.
+//! as `extra` so its exact blocking set is preserved.
 //!
-//! Broadening note (defense-in-depth, inert today): the common path set now covers
-//! `/home/`, `/var/`, `/tmp/`, `/etc/` in addition to the original `/Users/`,
-//! `/private/`. Nothing dynamic currently reaches these outputs as an absolute path
-//! (proof refs are hex fingerprints, not paths; relative tool filenames have no
-//! leading slash), so this strictly tightens the guard without changing any bin's
-//! verified safe output.
+//! ## Pure DRY consolidation — behavior is byte-identical to pre-#595
+//! This is ONLY a de-duplication: [`COMMON_MARKERS`] MATCHES the pre-existing
+//! per-bin common set EXACTLY (`Authorization`, `Bearer`, `sk-`, `/Users/`,
+//! `/private/`), and each bin's `extra` carries exactly its original bin-specific
+//! markers. So every bin's blocking set — and therefore its emit/refuse decision on
+//! every input — is unchanged from before the consolidation; the only thing removed
+//! was the copy-paste.
+//!
+//! ## Broadening to `/home,/var,/tmp,/etc` was DROPPED (suggestion #592 refuted)
+//! An earlier pass added `/home/`, `/var/`, `/tmp/`, `/etc/` to the common set as a
+//! "tighten the guard" measure. That is WRONG and was reverted: these are bare
+//! SUBSTRING matches, and a legitimately-contained RELATIVE tool path can have an
+//! interior directory segment literally named `etc`/`var`/`tmp`/`home` (e.g.
+//! `config/etc/app.conf`). `hub_run_readback` surfaces such relative paths verbatim
+//! inside `tool.executed:` event kinds, so `/etc/` matched the `…/etc/…` substring
+//! and fail-closed a previously-passing readback (exit 2, `output_guard`) — a real
+//! over-block / availability regression with no offsetting leak prevented (proof
+//! refs are hex fingerprints, not paths). The #592 "broaden markers" suggestion is
+//! refuted and recorded here for the record.
+//!
+//! (Note: even `/Users/` and `/private/` are substring matches that could, in
+//! principle, over-block a relative path containing those exact directory names.
+//! That is PRE-EXISTING behavior, preserved exactly — it is NOT changed here.)
 
 /// Common forbidden markers checked for EVERY proof bin: secret-header / api-key
-/// markers and absolute-path markers across the common Unix path roots.
+/// markers and the two absolute-path markers that match the pre-#595 per-bin set.
 ///
 /// `sk-` covers OpenAI-style keys; `Authorization` / `Bearer` cover auth headers.
-/// The path markers reject any absolute filesystem path leaking into a refs-only
+/// `/Users/` and `/private/` reject a macOS absolute path leaking into a refs-only
 /// payload (which should only ever carry hashes/lengths/counts/redacted refs).
-pub const COMMON_MARKERS: &[&str] = &[
-    "Authorization",
-    "Bearer",
-    "sk-",
-    "/Users/",
-    "/private/",
-    "/home/",
-    "/var/",
-    "/tmp/",
-    "/etc/",
-];
+/// Deliberately NOT broadened to `/home,/var,/tmp,/etc` — see the module docs: those
+/// bare substrings over-block legitimate relative tool paths with such interior
+/// directory segments (`config/etc/app.conf`) and broke a `hub_run_readback`.
+pub const COMMON_MARKERS: &[&str] = &["Authorization", "Bearer", "sk-", "/Users/", "/private/"];
 
 /// Defense-in-depth: scan `rendered` for any forbidden marker and refuse (Err) if
 /// one is present. Always checks [`COMMON_MARKERS`]; additionally checks each marker
@@ -76,18 +85,35 @@ mod tests {
 
     #[test]
     fn every_common_path_marker_trips_the_guard() {
+        // ONLY the two pre-#595 absolute-path markers — `/home,/var,/tmp,/etc` were
+        // dropped (they over-block legit relative paths; see the over-block regression
+        // test below and the module docs).
         for (input, marker) in [
             (r#"{"p":"/Users/op/x"}"#, "/Users/"),
-            (r#"{"p":"/private/tmp/x"}"#, "/private/"),
-            (r#"{"p":"/home/op/x"}"#, "/home/"),
-            (r#"{"p":"/var/db/x"}"#, "/var/"),
-            (r#"{"p":"/tmp/x"}"#, "/tmp/"),
-            (r#"{"p":"/etc/passwd"}"#, "/etc/"),
+            (r#"{"p":"/private/etc/x"}"#, "/private/"),
         ] {
             assert_eq!(
                 reject_forbidden_output(input, &[]).err().as_deref(),
                 Some(marker),
                 "path marker {marker} must trip the guard"
+            );
+        }
+    }
+
+    #[test]
+    fn dropped_unix_root_markers_no_longer_trip_as_absolute_paths() {
+        // These ABSOLUTE paths were tripped by #595's broadened common set; that
+        // broadening is reverted, so they now pass (matching pre-#595 behavior). This
+        // is intentional: the original per-bin guards never listed these roots.
+        for input in [
+            r#"{"p":"/home/op/x"}"#,
+            r#"{"p":"/var/db/x"}"#,
+            r#"{"p":"/tmp/x"}"#,
+            r#"{"p":"/etc/passwd"}"#,
+        ] {
+            assert!(
+                reject_forbidden_output(input, &[]).is_ok(),
+                "dropped marker must NOT trip the guard for input {input}"
             );
         }
     }
@@ -128,11 +154,34 @@ mod tests {
     }
 
     #[test]
+    fn interior_dir_segment_named_like_a_unix_root_does_not_false_trip() {
+        // REGRESSION (over-block introduced by #595's broadened common set, now
+        // reverted): a LEGITIMATELY-contained RELATIVE tool path may have an interior
+        // directory segment literally named `etc`/`var`/`tmp`/`home`. Such a path
+        // (no leading slash) is surfaced verbatim inside a `tool.executed:` event
+        // kind in `hub_run_readback`'s success payload. The broadened markers
+        // (`/etc/`,`/var/`,`/tmp/`,`/home/`) matched the `/etc/` substring inside
+        // `config/etc/app.conf` and fail-closed the WHOLE readback (exit 2,
+        // `output_guard`) — a previously-passing readback. With the common set back
+        // to the original (no Unix-root path markers beyond `/Users/`,`/private/`),
+        // these interior segments are permitted again.
+        let readback = r#"{"event_kinds":["tool.executed:read 15 bytes from config/etc/app.conf","tool.executed:write 8 bytes to data/var/state.json","tool.executed:read 4 bytes from cache/tmp/scratch","agent.finished"]}"#;
+        assert!(
+            reject_forbidden_output(readback, &["\"task\""]).is_ok(),
+            "interior etc/var/tmp/home dir segments in a relative tool path must not trip the guard"
+        );
+        // Also as bare interior segments without the tool-event wrapper.
+        assert!(reject_forbidden_output(r#"{"p":"a/home/b"}"#, &[]).is_ok());
+        assert!(reject_forbidden_output(r#"{"p":"x/etc/y"}"#, &[]).is_ok());
+    }
+
+    #[test]
     fn safe_label_with_no_marker_does_not_false_trip() {
         // Labels/words that merely resemble a marker but lack the exact substring.
         // "task_count" contains no `"task"` (quoted) and no path/secret marker.
         assert!(reject_forbidden_output(r#"{"task_count":4,"vary":7}"#, &["\"task\""]).is_ok());
-        // "etcetera" must not trip `/etc/` (no slashes), "tmpfile" must not trip `/tmp/`.
+        // Words resembling a (now-dropped) Unix root — `etcetera`/`tmpfile`/`homevar` —
+        // carry no common/secret marker and pass.
         assert!(reject_forbidden_output(r#"{"note":"etcetera tmpfile homevar"}"#, &[]).is_ok());
     }
 }

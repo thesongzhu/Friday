@@ -237,9 +237,9 @@ fn ephemeral_dev_secret(pid: u32, nanos: u128) -> Vec<u8> {
 /// Defense-in-depth: refuse to print if any forbidden marker leaked into the refs-only
 /// payload. Mirrors `hub_run_task`'s guard; `answer"` (the body field) must never appear.
 fn reject_forbidden_output(rendered: &str) -> Result<(), BridgeError> {
-    // Delegates to the single shared guard (common secret/path markers, now broadened
-    // to /home,/var,/tmp,/etc) and adds this bin's body-field marker. `"answer"` (the
-    // body text field) must never appear (only the sha256/len do).
+    // Delegates to the single shared guard (common secret/path markers
+    // Authorization/Bearer/sk-/`/Users/`/`/private/`) and adds this bin's body-field
+    // marker. `"answer"` (the body text field) must never appear (only the sha256/len do).
     friday_hub::refs_guard::reject_forbidden_output(rendered, &["\"answer\""])
         .map_err(|_| BridgeError::new("output_guard"))
 }
