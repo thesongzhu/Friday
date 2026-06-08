@@ -18,3 +18,14 @@ x25519-dalek = { version = "2.0.1", features = ["static_secrets", "zeroize"] }
 hkdf = "0.12.4"
 hmac = "0.12.1"
 sha2.workspace = true
+# Ed25519 asymmetric approval primitive (S6a): operator-sign / hub-verify-only.
+ed25519-dalek.workspace = true
+
+[dev-dependencies]
+# DEV-ONLY (tests). friday-crypto stays domain-free in its shipped graph (no
+# normal friday-* dep, asserted by friday-arch-tests which scans only
+# `dependencies`/`build-dependencies`). The Ed25519 field-tamper test builds REAL
+# `CanonicalApproval` canonical bytes via the gate to prove every bound field
+# (principal/action/scope/expiry/nonce, transitively through the action digest) is
+# covered by the signature. friday-core only deps thiserror, so this is cycle-free.
+friday-core.workspace = true

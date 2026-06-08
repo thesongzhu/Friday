@@ -48,6 +48,12 @@ libc = "0.2"
 # PII detection on the memory-recall path (Hub-only; ported from the oracle PII
 # guard). Pure computation, no I/O. Used only by friday-hub, never by the phone FFI.
 regex = "1.11.1"
+# Ed25519 asymmetric approval signatures (S6a). The OPERATOR holds the PRIVATE
+# signing key (offline, e.g. an S6c CLI); the Hub holds ONLY the PUBLIC verify
+# key — so the Hub (where the agent runs) can VERIFY an approval but can never
+# MINT one. Well-audited; v2.x over curve25519-dalek 4.x (already in the lock via
+# x25519-dalek). `rand_core` enables OsRng keygen; `zeroize` wipes the secret on drop.
+ed25519-dalek = { version = "2.1.1", features = ["rand_core", "zeroize"] }
 # internal crates
 friday-core = { path = "crates/friday-core" }
 friday-crypto = { path = "crates/friday-crypto" }
