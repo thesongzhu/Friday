@@ -11,6 +11,7 @@
 
 pub mod agent_run;
 pub mod agent_run_read;
+pub mod agent_session;
 pub mod audit;
 pub mod authorize;
 pub mod authorize_ed25519;
@@ -29,6 +30,10 @@ pub mod run_result;
 mod schema;
 pub mod workflow;
 
+pub use agent_session::{
+    append_session_message, ensure_session, load_session_messages, session_exists,
+    session_message_count, SessionMessage, StoredSessionMessage,
+};
 pub use authorize::authorize_mutating_action;
 pub use authorize_ed25519::{authorize_mutating_action_ed25519, Ed25519VerifyOnlyPolicy};
 pub use error::{Result, StorageError};

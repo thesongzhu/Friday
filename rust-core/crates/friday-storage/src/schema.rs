@@ -55,6 +55,13 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     // phone never runs the agent loop and the TS-facing readback is refs-only, so
     // the body-bearing table is never created on a phone.
     "run_result",
+    // S5: minimal agent-loop SESSION + its conversation messages. A session groups
+    // runs and stores their prior messages (role + content + refs) Hub-side so a
+    // session can RESUME with multi-turn inbound history. The message `content` is
+    // a body kept Hub-side (like `run_result.answer`); the phone never runs the loop
+    // and there is no answer-body-over-wire, so the tables are never on a phone.
+    "agent_session",
+    "agent_session_message",
 ];
 
 /// Tables present only on a phone (never created on the Hub).
@@ -224,6 +231,17 @@ pub fn hub_migrations() -> Vec<Migration> {
             name: "run_result_owner_principal",
             destructive: false,
             up: m0017_run_result_owner_principal,
+        },
+        // S5: Hub-only minimal agent-loop `agent_session` + `agent_session_message`
+        // tables. A session groups runs and stores their prior conversation messages
+        // (role + content + refs) so a session can RESUME with multi-turn inbound
+        // history. Purely additive (CREATE TABLE + INDEX only) — touches no existing
+        // table, so v17 rows/queries are unaffected.
+        Migration {
+            version: 18,
+            name: "agent_session",
+            destructive: false,
+            up: m0018_agent_session,
         },
     ]
 }
@@ -438,6 +456,38 @@ CREATE TABLE run_result (
     created_at    INTEGER NOT NULL
 );
 CREATE INDEX idx_run_result_created ON run_result(created_at);";
+
+// --- S5 agent-session fragments (Hub-only) ----------------------------------
+
+// A session groups agent-loop runs and stores their prior conversation messages so
+// a session can RESUME with multi-turn inbound history. `agent_session` is the
+// lightweight parent row (timestamps only — the foundation `session` table is a
+// separate UI/activity grouping and is NOT reused). `agent_session_message` holds
+// the ordered conversation turns: `role` (e.g. user/assistant), the message `content`
+// kept Hub-side (like `run_result.answer`; NEVER an answer-body-over-wire), an
+// optional `refs` soft-link (e.g. the producing run id — no FK, the `*_ref`
+// convention), and a per-session monotonic `seq` so the prior history loads in order.
+// `UNIQUE(agent_session_id, seq)` makes a duplicate ordinal a fail-closed insert.
+const DDL_AGENT_SESSION: &str = "
+CREATE TABLE agent_session (
+    agent_session_id TEXT PRIMARY KEY,
+    created_at       INTEGER NOT NULL,
+    updated_at       INTEGER NOT NULL
+);
+
+CREATE TABLE agent_session_message (
+    message_id       TEXT PRIMARY KEY,
+    agent_session_id TEXT NOT NULL,
+    seq              INTEGER NOT NULL CHECK(seq >= 0),
+    role             TEXT NOT NULL CHECK(length(trim(role)) > 0),
+    content          TEXT NOT NULL DEFAULT '',
+    refs             TEXT,
+    created_at       INTEGER NOT NULL,
+    UNIQUE(agent_session_id, seq),
+    FOREIGN KEY(agent_session_id) REFERENCES agent_session(agent_session_id)
+);
+CREATE INDEX idx_agent_session_message_seq
+    ON agent_session_message(agent_session_id, seq);";
 
 // --- PNS-001 provider-session fragments (Hub-only) --------------------------
 
@@ -1146,4 +1196,12 @@ fn m0016_pending_approval_tool_params(tx: &Transaction) -> rusqlite::Result<()> 
 // the refs-only proof projection (which does not select it at all).
 fn m0017_run_result_owner_principal(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch("ALTER TABLE run_result ADD COLUMN owner_principal TEXT;")
+}
+
+// S5: additive Hub-only `agent_session` + `agent_session_message` tables. A session
+// groups runs and stores their prior conversation messages (role + content + refs)
+// keyed by `agent_session_id`, so a session can RESUME with multi-turn inbound
+// history. Purely additive (CREATE TABLE + INDEX only) — touches no existing table.
+fn m0018_agent_session(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_AGENT_SESSION)
 }
