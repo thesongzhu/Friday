@@ -519,3 +519,55 @@ fn pending_request_persists_with_correct_binding_and_rejects_duplicate_nonce() {
         "duplicate approval_id (nonce) must be refused"
     );
 }
+
+/// S6d: the persisted tool call (`tool_params`, JSON) round-trips, and `set_pending_status`
+/// updates the lifecycle status — the substrate the resume entrypoint relies on to
+/// re-execute the EXACT approved mutation and mark it consumed.
+#[test]
+fn pending_tool_params_round_trip_and_status_update() {
+    use friday_storage::set_pending_status;
+    let db = Db::open_hub(&temp_db_path("ed-toolparams")).unwrap();
+    let req = mutating_req();
+
+    let pending = PendingApprovalRequest::for_request(&req, "ap-tp", "run-tp", FUTURE, NOW)
+        .with_tool_params(Some(r#"[["path","/data/secret.db"]]"#.to_string()));
+    persist_pending_request(db.conn(), &pending).unwrap();
+
+    let got = get_pending_request(db.conn(), "ap-tp").unwrap().unwrap();
+    assert_eq!(
+        got.tool_params.as_deref(),
+        Some(r#"[["path","/data/secret.db"]]"#),
+        "the executable tool call round-trips Hub-side"
+    );
+    assert_eq!(got.status, "pending");
+
+    // A pre-S6d row (built without tool_params) reads back NULL — the additive column is
+    // back-compatible.
+    let legacy = PendingApprovalRequest::for_request(&req, "ap-legacy", "run-tp", FUTURE, NOW);
+    persist_pending_request(db.conn(), &legacy).unwrap();
+    assert_eq!(
+        get_pending_request(db.conn(), "ap-legacy")
+            .unwrap()
+            .unwrap()
+            .tool_params,
+        None
+    );
+
+    // Status update (bookkeeping; the load-bearing single-use guard is consumed_approval).
+    assert_eq!(
+        set_pending_status(db.conn(), "ap-tp", "consumed").unwrap(),
+        1
+    );
+    assert_eq!(
+        get_pending_request(db.conn(), "ap-tp")
+            .unwrap()
+            .unwrap()
+            .status,
+        "consumed"
+    );
+    // Unknown nonce updates nothing.
+    assert_eq!(
+        set_pending_status(db.conn(), "nope", "consumed").unwrap(),
+        0
+    );
+}

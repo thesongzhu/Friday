@@ -27,6 +27,9 @@ friday-fs.workspace = true
 # The live model returns free-text content; the tool-call protocol is a JSON object
 # the Hub parses back into a RawToolCall. serde_json is the strict parser for that.
 serde_json.workspace = true
+# S6d: the resume bridge bin (`hub_resume_approval`) deserializes the S6c CLI's
+# operator-signed approval JSON. Derive only; no I/O.
+serde.workspace = true
 # Refs-only hashing for the S0 dev write-bridge bin (`hub_run_task`): the final
 # message is emitted as a sha256 hash + length, never as body text. Pure hashing,
 # no I/O; already in the Hub closure via friday-storage/friday-crypto.

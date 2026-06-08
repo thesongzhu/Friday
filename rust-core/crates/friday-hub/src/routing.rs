@@ -44,6 +44,8 @@ use friday_core::gate::{CanonicalApproval, MutatingActionRequest};
 use friday_storage::StorageError;
 use rusqlite::Connection;
 
+use friday_crypto::OperatorVerifyingKey;
+
 use crate::{run_loop_with_policy, AgentLlmClient, LoopOutcome, ToolExecutor};
 
 /// Provider wire API. Subset of the oracle's `FRIDAY_PROVIDER_APIS` that this
@@ -433,12 +435,15 @@ pub fn run_routed_loop(
     run_id: &str,
     task: &str,
     recall_preamble: &str,
-    secret: &[u8],
+    _secret: &[u8],
     approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
     max_turns: u64,
     now_ms: i64,
 ) -> Result<(RoutedSelection, LoopOutcome), RoutedLoopError> {
-    // Pre-S4 default policy (no principal bound, nothing disabled): unchanged behavior.
+    // Pre-S4 default policy (no principal bound, nothing disabled). S6d: this wrapper
+    // fail-closes with NO operator verify key — a mutating action Pauses (the pre-S6d
+    // deny-all behavior). Callers that provision an operator key drive
+    // [`run_routed_loop_with_policy`] directly with `Some(vk)`.
     run_routed_loop_with_policy(
         registry,
         request,
@@ -448,7 +453,7 @@ pub fn run_routed_loop(
         run_id,
         task,
         recall_preamble,
-        secret,
+        None, // operator_vk: unprovisioned ⇒ fail-closed Pause for protected actions
         approve,
         &crate::RunPolicy::default(),
         max_turns,
@@ -470,7 +475,7 @@ pub fn run_routed_loop_with_policy(
     run_id: &str,
     task: &str,
     recall_preamble: &str,
-    secret: &[u8],
+    operator_vk: Option<&OperatorVerifyingKey>,
     approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
     policy: &crate::RunPolicy,
     max_turns: u64,
@@ -487,6 +492,8 @@ pub fn run_routed_loop_with_policy(
         .resolve(route)
         .ok_or_else(|| RoutedLoopError::NoClientForProvider(route.provider_id.clone()))?;
 
+    // S6d: thread the operator verify key so the loop authorizes a protected action via the
+    // Ed25519 verify-only policy (never the HMAC authorize). `None` ⇒ fail-closed Pause.
     let outcome = run_loop_with_policy(
         client,
         executor,
@@ -494,7 +501,7 @@ pub fn run_routed_loop_with_policy(
         run_id,
         task,
         recall_preamble,
-        secret,
+        operator_vk,
         approve,
         policy,
         max_turns,

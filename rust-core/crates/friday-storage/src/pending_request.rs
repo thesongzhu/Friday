@@ -51,6 +51,14 @@ pub struct PendingApprovalRequest {
     /// here).
     pub status: String,
     pub created_at: i64,
+    /// S6d: the raw tool-call key/value pairs (JSON `[[k,v],...]`) the run Paused on, so
+    /// the resume entrypoint can re-execute the EXACT approved mutation. `None` for a
+    /// pre-S6d row (the column is a nullable additive ALTER). The `action_digest` already
+    /// binds these params transitively — the resume path recomputes the digest from the
+    /// reconstructed call and cross-checks it, so a tampered `tool_params` cannot make a
+    /// DIFFERENT mutation match the operator's signed approval. Hub-side only (never the
+    /// wire).
+    pub tool_params: Option<String>,
 }
 
 impl PendingApprovalRequest {
@@ -84,7 +92,16 @@ impl PendingApprovalRequest {
             issuer: CANONICAL_GATE_ISSUER.to_string(),
             status: "pending".to_string(),
             created_at,
+            tool_params: None,
         }
+    }
+
+    /// Attach the raw tool-call params (JSON) the run Paused on (S6d), so the resume
+    /// entrypoint can re-execute the EXACT approved mutation. Returns `self` for a
+    /// builder-style call right after [`PendingApprovalRequest::for_request`].
+    pub fn with_tool_params(mut self, tool_params: Option<String>) -> Self {
+        self.tool_params = tool_params;
+        self
     }
 }
 
@@ -94,8 +111,8 @@ pub fn persist_pending_request(conn: &Connection, req: &PendingApprovalRequest) 
     conn.execute(
         "INSERT INTO pending_approval_request (
             approval_id, run_id, action, action_digest, principal_id, surface,
-            resource_type, resource_id, expires_at, issuer, status, created_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            resource_type, resource_id, expires_at, issuer, status, created_at, tool_params
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             req.approval_id,
             req.run_id,
@@ -109,9 +126,23 @@ pub fn persist_pending_request(conn: &Connection, req: &PendingApprovalRequest) 
             req.issuer,
             req.status,
             req.created_at,
+            req.tool_params,
         ],
     )?;
     Ok(())
+}
+
+/// Mark a pending request resolved (S6d), e.g. `consumed` after a successful resume or
+/// `denied` after a refused one. Idempotent bookkeeping ONLY — the load-bearing
+/// single-use guarantee is the gate's `consumed_approval` nonce store, which already
+/// makes a second ingest of the same approval a replay-refused Deny regardless of this
+/// status. Returns the number of rows updated (0 if the nonce is unknown).
+pub fn set_pending_status(conn: &Connection, approval_id: &str, status: &str) -> Result<usize> {
+    let n = conn.execute(
+        "UPDATE pending_approval_request SET status = ?2 WHERE approval_id = ?1",
+        params![approval_id, status],
+    )?;
+    Ok(n)
 }
 
 fn row_to_pending(row: &rusqlite::Row) -> rusqlite::Result<PendingApprovalRequest> {
@@ -128,11 +159,12 @@ fn row_to_pending(row: &rusqlite::Row) -> rusqlite::Result<PendingApprovalReques
         issuer: row.get(9)?,
         status: row.get(10)?,
         created_at: row.get(11)?,
+        tool_params: row.get(12)?,
     })
 }
 
 const SELECT_COLS: &str = "approval_id, run_id, action, action_digest, principal_id, surface, \
-     resource_type, resource_id, expires_at, issuer, status, created_at";
+     resource_type, resource_id, expires_at, issuer, status, created_at, tool_params";
 
 /// Read a pending request by its `approval_id` nonce. `None` if absent.
 pub fn get_pending_request(

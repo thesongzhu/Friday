@@ -33,6 +33,10 @@
 /// Routing decides *who answers*; it has zero authority over tool-call
 /// classification, which stays the trusted [`build_request`]/`trusted_classify`
 /// chokepoint regardless of the routed provider.
+pub mod operator_vk;
+
+pub mod resume;
+
 pub mod routing;
 
 /// UNW-004 — Hub composition root: wires the built graph (Db + RouteRegistry + live
@@ -164,8 +168,10 @@ use friday_core::gate::{
 // The risk-escalation primitives (`shell_risk`/`is_destructive_request`) now live behind
 // the sealed `friday_core::gate::classify`; `Resource` is constructed there too.
 use friday_core::{ActivityState, ActivityType, Risk};
+use friday_crypto::OperatorVerifyingKey;
 use friday_storage::{
-    agent_run, authorize_mutating_action, ActivityRow, AuditEvent, Db, StorageError,
+    agent_run, authorize_mutating_action, authorize_mutating_action_ed25519, ActivityRow,
+    AuditEvent, Db, StorageError,
 };
 use rusqlite::Connection;
 
@@ -1617,6 +1623,28 @@ pub(crate) enum GateDispatch {
     Unregistered(String),
 }
 
+/// How a protected (`RequiresApproval`) action is authorized at the dispatch chokepoint.
+/// This makes the authorization scheme EXPLICIT at each call site — there is no implicit
+/// fallback that could let a protected action be Allowed by the wrong scheme.
+///
+/// S6d switched the LOOP to [`AuthzMode::Ed25519`] / [`AuthzMode::DenyAll`] — the loop's
+/// protected path is NEVER [`AuthzMode::Hmac`], so it can never be Allowed by an HMAC
+/// approval (the latent self-Allow is closed). The legacy symmetric [`AuthzMode::Hmac`]
+/// remains ONLY for the separate `workflow_exec` driver (its Ed25519 switch is a follow-up
+/// lane); the loop never selects it.
+#[derive(Clone, Copy)]
+pub(crate) enum AuthzMode<'a> {
+    /// S6d loop path: verify a protected action's approval as Ed25519 under the operator's
+    /// PUBLIC key (verify-only — the Hub can never mint). No HMAC code path is reachable.
+    Ed25519(&'a OperatorVerifyingKey),
+    /// S6d loop path, unprovisioned: NO operator key ⇒ fail-closed. The base gate decision
+    /// stands and a `RequiresApproval` is NEVER upgraded — a protected action Pauses.
+    DenyAll,
+    /// Legacy symmetric HMAC authorize (the `workflow_exec` driver only). Retained so this
+    /// slice does not change workflow behavior; the loop NEVER uses this variant.
+    Hmac(&'a [u8]),
+}
+
 /// Classify → authorize → execute-ONLY-on-`Allow`, the gate-mandatory dispatch for a
 /// single raw tool call. The executor is invoked EXACTLY once, and ONLY on a gate
 /// `Allow`; `RequiresApproval`/`Deny`/unregistered never reach the executor. Records
@@ -1630,12 +1658,14 @@ pub(crate) fn gate_dispatch(
     approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
     now_ms: i64,
 ) -> Result<GateDispatch, StorageError> {
-    // Pre-S4 default policy (no principal bound, nothing disabled): unchanged behavior.
+    // Pre-S4 default policy (no principal bound, nothing disabled). The `workflow_exec`
+    // driver keeps its existing legacy HMAC authorization (S6d switched the LOOP, not the
+    // workflow driver — that is a separate follow-up lane). Behavior here is unchanged.
     gate_dispatch_with_policy(
         conn,
         executor,
         raw,
-        secret,
+        AuthzMode::Hmac(secret),
         approve,
         &RunPolicy::default(),
         now_ms,
@@ -1654,13 +1684,32 @@ pub(crate) fn gate_dispatch(
 ///      approval). Both surface as [`GateDispatch::Denied`] so the shared callers
 ///      ([`run_loop_with_policy`], `workflow_exec`) need no new arm.
 ///
+/// ## S6d — the protected-path authorization, made explicit ([`AuthzMode`])
+/// `authz` selects HOW a protected (`RequiresApproval`) action is authorized:
+///   - [`AuthzMode::Ed25519`] (the LOOP, operator key provisioned): the approval signature
+///     is ALWAYS verified as Ed25519 under the operator's PUBLIC key
+///     ([`authorize_mutating_action_ed25519`]). An HMAC-signed approval over the same
+///     canonical bytes is REJECTED (an HMAC hex is not a 64-byte Ed25519 signature, and
+///     even a right-sized value is invalid without the operator's offline private key) —
+///     closing the latent self-Allow (the Hub holds only a verify key + the HMAC secret,
+///     yet cannot get a protected action Allowed).
+///   - [`AuthzMode::DenyAll`] (the LOOP, unprovisioned): fail-closed — the base gate
+///     decision stands and a `RequiresApproval` is NEVER upgraded, so a protected action
+///     Pauses. No approval, no HMAC path.
+///   - [`AuthzMode::Hmac`] (the `workflow_exec` driver ONLY): the legacy symmetric
+///     authorize, unchanged by this slice. The loop NEVER selects this variant.
+///
+/// The base decision ([`friday_core::gate::evaluate`]) is authoritative for read-only
+/// (Allow) / reserved (Deny) and the bound-principal rule (an Agent/Channel can never
+/// self-approve) — decided BEFORE any signature is examined, in every mode.
+///
 /// Everything else is identical to the pre-S4 path: authorize → execute ONLY on `Allow`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn gate_dispatch_with_policy(
     conn: &Connection,
     executor: &dyn ToolExecutor,
     raw: &RawToolCall,
-    secret: &[u8],
+    authz: AuthzMode<'_>,
     approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
     policy: &RunPolicy,
     now_ms: i64,
@@ -1687,8 +1736,24 @@ pub(crate) fn gate_dispatch_with_policy(
             raw.action
         )));
     }
-    let approval = approve(&request);
-    let record = authorize_mutating_action(conn, &request, approval.as_ref(), secret, now_ms)?;
+    // (2) S6d protected-path authorization (explicit per `authz`):
+    let record = match authz {
+        // LOOP: verify a protected action's approval as Ed25519 under the operator's key.
+        // An HMAC-signed approval over the same bytes is rejected here (downgrade closed).
+        AuthzMode::Ed25519(vk) => {
+            let approval = approve(&request);
+            authorize_mutating_action_ed25519(conn, &request, approval.as_ref(), vk, now_ms)?
+        }
+        // LOOP, unprovisioned: DenyAll-equivalent. The base decision stands; a
+        // RequiresApproval is never upgraded (no approval consulted, no HMAC path), so a
+        // protected action Pauses. Read-only Allows, reserved/agent-self-approve Denies.
+        AuthzMode::DenyAll => friday_core::gate::evaluate(&request),
+        // workflow_exec ONLY: the legacy symmetric HMAC authorize, unchanged by S6d.
+        AuthzMode::Hmac(secret) => {
+            let approval = approve(&request);
+            authorize_mutating_action(conn, &request, approval.as_ref(), secret, now_ms)?
+        }
+    };
     Ok(match record.decision {
         // Execute ONLY on Allow — the single chokepoint both drivers rely on.
         GateDecision::Allow => match executor.execute(&raw.action, &raw.params) {
@@ -1707,6 +1772,13 @@ pub(crate) fn gate_dispatch_with_policy(
 /// feedback would cause. 2 KiB comfortably covers a notes / config file's salient head;
 /// anything larger is truncated with [`FEEDBACK_TRUNCATION_MARKER`].
 const MAX_FEEDBACK_CONTENT_BYTES: usize = 2048;
+
+/// TTL (ms) for a `pending_approval_request` the loop persists when a mutating action
+/// Pauses (S6d): the `expires_at` the OFFLINE operator signs over and the resume
+/// entrypoint re-checks (an expired approval is fail-closed Denied). 24h gives the
+/// operator a realistic offline-signing window without leaving an approval valid
+/// indefinitely.
+const PENDING_APPROVAL_TTL_MS: i64 = 24 * 60 * 60 * 1000;
 
 /// Appended to fed-back content when it was truncated to [`MAX_FEEDBACK_CONTENT_BYTES`],
 /// so the model knows the file continues beyond what it can see.
@@ -1810,6 +1882,12 @@ fn bill_model_call(
 /// Drive a MULTI-TURN agent loop with the pre-S4 default policy (no per-run principal
 /// bound, no disabled tools, not read-only). Thin wrapper over [`run_loop_with_policy`];
 /// existing callers/tests are unchanged.
+///
+/// S6d: this wrapper fail-closes with NO operator verify key (`operator_vk = None`), so a
+/// mutating action Pauses (DenyAll-equivalent) — the pre-S6d behavior for callers that do
+/// not provision an operator key. The legacy HMAC `_secret` is no longer consulted on the
+/// dispatch path. Callers that DO provision an operator key drive
+/// [`run_loop_with_policy`] directly with `Some(vk)`.
 #[allow(clippy::too_many_arguments)]
 pub fn run_loop(
     client: &dyn AgentLlmClient,
@@ -1818,7 +1896,7 @@ pub fn run_loop(
     run_id: &str,
     task: &str,
     recall_preamble: &str,
-    secret: &[u8],
+    _secret: &[u8],
     approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
     max_turns: u64,
     now_ms: i64,
@@ -1830,7 +1908,7 @@ pub fn run_loop(
         run_id,
         task,
         recall_preamble,
-        secret,
+        None, // operator_vk: unprovisioned ⇒ fail-closed Pause for protected actions
         approve,
         &RunPolicy::default(),
         max_turns,
@@ -1852,10 +1930,19 @@ pub fn run_loop(
 /// enforced inside the SHARED [`gate_dispatch_with_policy`] chokepoint. A
 /// [`RunPolicy::default`] reproduces the pre-S4 behavior exactly.
 ///
-/// `approve` is the owner-approval seam: given a mutating request, it returns a signed
-/// [`CanonicalApproval`] iff the owner approved THIS action (in production this is the
-/// phone-relayed owner-approval leg + Hub mint; in tests it mints-or-`None`). A
-/// read-only action needs no approval (the gate `Allow`s it directly).
+/// `operator_vk` (S6d) is the operator's PUBLIC Ed25519 verify key. When `Some`, a
+/// protected (mutating) action authorizes against it via the Ed25519 verify-only policy —
+/// NEVER the legacy HMAC authorize (an HMAC approval over the same bytes is rejected). On
+/// the Pause path the loop persists a `pending_approval_request` (CSPRNG nonce + the exact
+/// tool call) so the OFFLINE operator can sign an approval the resume entrypoint
+/// re-executes. When `None`, no operator key is provisioned ⇒ fail-closed: every mutating
+/// action Pauses, none is ever Allowed.
+///
+/// `approve` is the in-loop approval seam: given a mutating request, it returns a
+/// [`CanonicalApproval`] iff one is available WITHOUT pausing (in production this is
+/// deny-all `None` — the operator approves OFFLINE, ingested by the resume entrypoint; in
+/// tests it can mint an operator-Ed25519 approval to exercise the Allow path). A read-only
+/// action needs no approval (the gate `Allow`s it directly).
 ///
 /// No-hidden-call invariant: the model is called EXACTLY once per loop turn (via
 /// `next_step` — count == `turns`), and the executor EXACTLY once per `Allow`ed tool;
@@ -1872,7 +1959,7 @@ pub fn run_loop_with_policy(
     run_id: &str,
     task: &str,
     recall_preamble: &str,
-    secret: &[u8],
+    operator_vk: Option<&OperatorVerifyingKey>,
     approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
     policy: &RunPolicy,
     max_turns: u64,
@@ -1910,6 +1997,14 @@ pub fn run_loop_with_policy(
 
     let mut history: Vec<TurnTrace> = Vec::new();
     let mut executed_tools: u64 = 0;
+
+    // S6d: the loop's protected path authorizes via the operator's Ed25519 verify key when
+    // provisioned, else fail-closed (DenyAll). The loop NEVER uses the HMAC authorize, so a
+    // protected action can never be Allowed by an HMAC approval.
+    let authz = match operator_vk {
+        Some(vk) => AuthzMode::Ed25519(vk),
+        None => AuthzMode::DenyAll,
+    };
 
     for turn_index in 0..max_turns {
         let ev = |suffix: &str| format!("{run_id}:t{turn_index}:{suffix}");
@@ -1986,8 +2081,9 @@ pub fn run_loop_with_policy(
 
         // Gate-mandatory dispatch via the SHARED chokepoint (same as run_workflow):
         // (disabled/read-only restriction) → bind principal → classify → authorize →
-        // execute ONLY on Allow. run_loop owns the recording.
-        match gate_dispatch_with_policy(conn, executor, &raw, secret, approve, policy, now_ms)? {
+        // execute ONLY on Allow. run_loop owns the recording. S6d: the protected path
+        // authorizes via `authz` (Ed25519 verify-only or fail-closed), never HMAC.
+        match gate_dispatch_with_policy(conn, executor, &raw, authz, approve, policy, now_ms)? {
             GateDispatch::Unregistered(action) => {
                 agent_run::record_event(
                     conn,
@@ -2068,13 +2164,35 @@ pub fn run_loop_with_policy(
                 }
             }
             GateDispatch::RequiresApproval => {
-                agent_run::record_event(
-                    conn,
-                    &ev("outcome"),
-                    run_id,
-                    &format!("tool.paused:requires_approval:{}", raw.action),
-                    now_ms,
-                )?;
+                // S6d Pause persistence: record everything the OFFLINE operator needs to
+                // sign an approval for THIS exact action — and everything the resume
+                // entrypoint needs to RE-EXECUTE it — and nothing the Hub could use to
+                // mint one. The `approval_id` nonce is CSPRNG (unpredictable); the
+                // `action_digest` is recomputed from the SAME deterministic request build,
+                // so it binds the exact tool call (incl. params + principal). The raw tool
+                // call is persisted (Hub-side only) so the resume can replay the one
+                // mutation. A persistence failure does NOT fabricate progress — the run
+                // still Pauses (resumable once the pending row exists); we record the
+                // outcome with the nonce so it is recoverable.
+                let nonce = friday_crypto::generate_approval_nonce();
+                let pending_recorded = match build_request_with_policy(&raw, policy) {
+                    Ok(request) => {
+                        let expires_at = now_ms.saturating_add(PENDING_APPROVAL_TTL_MS);
+                        let tool_params = serde_json::to_string(&raw.params).ok();
+                        let pending = friday_storage::PendingApprovalRequest::for_request(
+                            &request, &nonce, run_id, expires_at, now_ms,
+                        )
+                        .with_tool_params(tool_params);
+                        friday_storage::persist_pending_request(conn, &pending).is_ok()
+                    }
+                    Err(_) => false,
+                };
+                let outcome = if pending_recorded {
+                    format!("tool.paused:requires_approval:{}:{}", raw.action, nonce)
+                } else {
+                    format!("tool.paused:requires_approval:{}", raw.action)
+                };
+                agent_run::record_event(conn, &ev("outcome"), run_id, &outcome, now_ms)?;
                 return Ok(LoopOutcome {
                     status: LoopStatus::Paused,
                     turns: turn_index + 1,
@@ -2501,7 +2619,7 @@ mod tests {
             db.conn(),
             &exec,
             &raw,
-            SECRET,
+            AuthzMode::DenyAll, // read_file is base-Allow (read-only); authz irrelevant
             &approve,
             &RunPolicy::default(),
             1,
@@ -2513,9 +2631,16 @@ mod tests {
         // DISABLED: read_file disabled for this run → Denied BEFORE execution; the executor
         // is NOT reached again (the count stays 1).
         let policy = RunPolicy::new(None, ["read_file".to_string()], false);
-        let blocked =
-            gate_dispatch_with_policy(db.conn(), &exec, &raw, SECRET, &approve, &policy, 1)
-                .unwrap();
+        let blocked = gate_dispatch_with_policy(
+            db.conn(),
+            &exec,
+            &raw,
+            AuthzMode::DenyAll,
+            &approve,
+            &policy,
+            1,
+        )
+        .unwrap();
         if let GateDispatch::Denied(reason) = blocked {
             assert_eq!(reason, "tool_disabled_for_run:read_file");
         } else {
@@ -2549,8 +2674,16 @@ mod tests {
         // read_only run → the mutating write is Denied BEFORE execution (stricter than the
         // gate's default Pause); the executor is never reached and no file is created.
         let policy = RunPolicy::new(None, Vec::<String>::new(), true);
-        let ro = gate_dispatch_with_policy(db.conn(), &exec, &write, SECRET, &approve, &policy, 1)
-            .unwrap();
+        let ro = gate_dispatch_with_policy(
+            db.conn(),
+            &exec,
+            &write,
+            AuthzMode::DenyAll,
+            &approve,
+            &policy,
+            1,
+        )
+        .unwrap();
         if let GateDispatch::Denied(reason) = ro {
             assert_eq!(reason, "run_is_read_only:write_file");
         } else {
@@ -2569,7 +2702,7 @@ mod tests {
             db.conn(),
             &exec,
             &write,
-            SECRET,
+            AuthzMode::DenyAll, // deny-all (no operator key) ⇒ the mutating write Pauses
             &approve,
             &RunPolicy::default(),
             1,
@@ -3827,8 +3960,15 @@ mod tests {
         assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
     }
 
+    /// S6d HMAC-DOWNGRADE CLOSED + Pause persistence (loop level): `run_loop` provisions NO
+    /// operator key, so even with an HMAC-minting `approve` closure a mutating write CANNOT
+    /// be Allowed — the read executes (base Allow), the write Pauses (fail-closed), no file
+    /// is written, and the loop persists a `pending_approval_request` (CSPRNG nonce) the
+    /// offline operator can later sign. The positive Ed25519-approved write is the
+    /// integration test `s6d_resume_ingestion` (it needs an operator signing key, banned in
+    /// `friday-hub/src/**`).
     #[test]
-    fn loop_mutating_with_approval_across_turns_writes_to_disk() {
+    fn loop_hmac_minted_approval_cannot_execute_a_mutation_and_pause_persists_pending() {
         let root = TempDir::new("loop-mut");
         std::fs::write(root.0.join("in.md"), b"input").unwrap();
         let db = Db::open_hub(&temp_path("loop-mut")).unwrap();
@@ -3852,17 +3992,38 @@ mod tests {
             "read input then write output",
             "",
             SECRET,
-            &mint_for_each(),
+            &mint_for_each(), // an HMAC-minting owner seam — must NOT drive the mutation
             10,
             1000,
         )
         .unwrap();
-        assert_eq!(out.status, LoopStatus::Finished);
-        assert_eq!(out.executed_tools, 2); // a read AND an approved mutating write, across two turns
         assert_eq!(
-            std::fs::read_to_string(root.0.join("out.md")).unwrap(),
-            "produced"
+            out.status,
+            LoopStatus::Paused,
+            "the mutating write must Pause (no operator key ⇒ HMAC can't Allow it)"
         );
+        assert_eq!(
+            out.executed_tools, 1,
+            "only the read executed; the write Paused"
+        );
+        assert!(
+            !root.0.join("out.md").exists(),
+            "an HMAC approval must not complete the mutating write (downgrade closed)"
+        );
+        // The Pause persisted a pending request bound to THIS action, with a 64-hex CSPRNG
+        // nonce, status pending.
+        let (count, nonce_len): (i64, i64) = db
+            .conn()
+            .query_row(
+                "SELECT count(*), COALESCE(length(MAX(approval_id)),0) \
+                 FROM pending_approval_request WHERE run_id='r1' AND action='write_file' \
+                 AND status='pending'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(nonce_len, 64, "CSPRNG nonce is 32 bytes => 64 hex chars");
         assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
     }
 
@@ -4119,60 +4280,13 @@ mod tests {
         assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
     }
 
-    #[test]
-    fn loop_approval_double_spend_across_turns_is_refused() {
-        // Reviewer-B's highest-value gap: ONE pre-minted approval reused for two
-        // IDENTICAL mutating writes on turns 0 and 1. Turn 0 writes; turn 1's same
-        // single-use key is replay-refused → Deny → Blocked. One execution, one receipt.
-        let root = TempDir::new("loop-dup");
-        let db = Db::open_hub(&temp_path("loop-dup")).unwrap();
-        agent_run::create_run(db.conn(), "r1", "write twice", 1).unwrap();
-        let write = raw("write_file", &[("path", "x.txt"), ("content", "C")]);
-        let request = build_request(&write).unwrap();
-        let appr = mint_approval(&request, "ap-dup", SECRET, 1_000_000);
-        let approve = move |_req: &MutatingActionRequest| Some(appr.clone());
-        let client = ScriptedAgentLlmClient::new(vec![
-            AgentStep::Tool(write.clone()),
-            AgentStep::Tool(write.clone()),
-            AgentStep::Finish {
-                message: "x".to_string(),
-            }, // never reached
-        ]);
-        let executor = FsToolExecutor::new(&root.0);
-        let out = run_loop(
-            &client,
-            &executor,
-            db.conn(),
-            "r1",
-            "write twice",
-            "",
-            SECRET,
-            &approve,
-            5,
-            1000,
-        )
-        .unwrap();
-        assert_eq!(out.status, LoopStatus::Blocked);
-        assert_eq!(
-            out.executed_tools, 1,
-            "the single-use approval executes once; the replay is refused"
-        );
-        assert!(out.detail.contains("replay_refused"));
-        let receipts: i64 = db
-            .conn()
-            .query_row(
-                "SELECT count(*) FROM audit_ledger WHERE audit_id LIKE 'r1:t%:receipt'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(
-            receipts, 1,
-            "exactly one receipt — the replayed turn produced none"
-        );
-        assert_eq!(std::fs::read_to_string(root.0.join("x.txt")).unwrap(), "C");
-        assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
-    }
+    // NOTE: the former `loop_approval_double_spend_across_turns_is_refused` (HMAC-mint
+    // executes-once-then-replay-refused at the loop level) is superseded by S6d: the loop's
+    // protected path is Ed25519-only, so an HMAC mint can no longer execute a mutation. The
+    // execute-once + replay-refused property is now proven with an OPERATOR Ed25519 approval
+    // in the integration test `tests/s6d_resume_ingestion.rs` (both at the loop level and
+    // via the resume entrypoint) — it requires an operator SIGNING key, which
+    // `friday-hub/src/**` is forbidden from referencing (the key-substitution defense).
 
     #[test]
     fn build_loop_prompt_renders_history() {
