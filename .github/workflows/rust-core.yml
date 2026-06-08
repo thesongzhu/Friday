@@ -62,6 +62,14 @@ jobs:
         # audit-chain status / truth-labels (no model call, no quota, no network, no secret),
         # so it is safe but unnecessary to execute in CI.
         run: cargo build -p friday-hub --bin diagnostics_snapshot
+      - name: Build bins (incl. Rust-owned hub_extract_memory inline extraction)
+        # FIRST Rust-ownership slice of the session-memory "moat": names the inline
+        # memory-extraction bin explicitly so a missing/compile-broken
+        # `hub_extract_memory` reds CI loudly. Only BUILT here — running it needs
+        # FRIDAY_DEEPSEEK_API_KEY + a real session DB and spends quota (the coordinator's
+        # separate live-proof), so it is never executed in CI. The unit tests use a
+        # scripted MOCK provider (no key, no quota, no network).
+        run: cargo build -p friday-hub --bin hub_extract_memory
       - name: Test
         # The one live DeepSeek test is #[ignore]d, so this needs no network/secrets.
         run: cargo test --workspace

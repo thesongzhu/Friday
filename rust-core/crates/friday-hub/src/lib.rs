@@ -165,6 +165,19 @@ pub mod skill_catalog;
 /// common secret/path marker set; each bin passes its body-field markers as `extra`.
 pub mod refs_guard;
 
+/// Sensitive-learning guard — ported from the TS `friday-sensitive-learning-guard`.
+/// Classifies an extracted memory item's text as a high-risk sensitive candidate
+/// (passwords/tokens/SSN/medical/financial/… + Chinese equivalents); the extraction
+/// engine DROPS a matched item (never stores it), parity with the TS.
+pub mod sensitive_guard;
+
+/// FIRST Rust-ownership slice for the session-memory "moat": INLINE manual-trigger
+/// extraction for ONE session — read messages → provider extract call (ledgered) →
+/// parse + sensitivity-filter → persist CANDIDATES via the existing memory spine
+/// (`record_candidate`). Reuses confirm/recall/redact unchanged. The TS extraction
+/// path STAYS LIVE (parity pending); queue/auto deferred. PROOF-ONLY, NOT a v1 GO.
+pub mod memory_extraction;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,
