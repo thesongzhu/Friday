@@ -13,6 +13,7 @@ pub mod agent_run;
 pub mod agent_run_read;
 pub mod audit;
 pub mod authorize;
+pub mod authorize_ed25519;
 pub mod blob;
 pub mod channel;
 mod error;
@@ -21,15 +22,21 @@ mod migrate;
 pub mod mission;
 pub mod offline;
 pub mod pairing;
+pub mod pending_request;
 pub mod process_registry;
 pub mod provider_session;
 mod schema;
 pub mod workflow;
 
 pub use authorize::authorize_mutating_action;
+pub use authorize_ed25519::{authorize_mutating_action_ed25519, Ed25519VerifyOnlyPolicy};
 pub use error::{Result, StorageError};
 pub use migrate::{
     apply_migrations, current_version, now_ms, Migration, MigrationFn, MigrationReport,
+};
+pub use pending_request::{
+    get_pending_request, list_pending_requests_for_run, persist_pending_request,
+    PendingApprovalRequest,
 };
 pub use schema::{hub_migrations, phone_migrations, HUB_ONLY_TABLES, PHONE_ONLY_TABLES};
 
