@@ -30,7 +30,7 @@ use friday_core::gate::{CanonicalApproval, MutatingActionRequest};
 use friday_core::WorkLane;
 use friday_crypto::OperatorVerifyingKey;
 use friday_deepseek::{DeepSeekClient, DeepSeekError, Transport, UreqTransport};
-use friday_storage::{agent_run, Db, StorageError};
+use friday_storage::{agent_run, persist_run_result, Db, RunResult, StorageError};
 
 use crate::mission_context::MissionContextLookup;
 use crate::mission_preflight::MissionAttachmentOutcome;
@@ -239,7 +239,7 @@ impl<T: Transport> HubRuntime<T> {
         // enforced before any tool executes. S6d: thread the provisioned operator verify
         // key so a protected action authorizes via the Ed25519 verify-only policy (never
         // HMAC); `None` ⇒ fail-closed Pause.
-        run_routed_loop_with_policy(
+        let (selection, outcome) = run_routed_loop_with_policy(
             &self.routes,
             &request,
             self,
@@ -253,7 +253,33 @@ impl<T: Transport> HubRuntime<T> {
             &self.policy,
             self.max_turns,
             now_ms,
-        )
+        )?;
+
+        // D1 OWNER-WIRING: a FINISHED run produced a deliverable ANSWER; persist it Hub-side
+        // keyed by `run_id` with the run's BOUND OWNER principal recorded
+        // (`self.policy.principal_id()` — the SAME principal S4 binds into the gate Actor), so
+        // the authenticated body projection [`friday_storage::get_run_answer_for_principal`]
+        // releases the answer body ONLY to that owner. A run with NO bound principal records
+        // NO owner ⇒ the body stays unreadable to everyone (fail-closed, correct).
+        //
+        // We persist ONLY on `Finished`: a `Paused` run's `run_result` slot belongs to the
+        // resume completion leg ([`crate::resume`]), and persisting an empty answer here would
+        // collide with that later immutable `mutation_completed` result; `Errored`/`Bounded`/
+        // `Blocked` carry no deliverable answer. A fresh `run_id` cannot already hold a
+        // result, so a persist conflict here would signal a real bug and is propagated.
+        if outcome.status == LoopStatus::Finished {
+            let mut result = RunResult::new(
+                "finished",
+                outcome.final_message.clone().unwrap_or_default(),
+                None,
+            );
+            if let Some(principal) = self.policy.principal_id() {
+                result = result.with_owner_principal(principal);
+            }
+            persist_run_result(self.db.conn(), run_id, &result, now_ms)?;
+        }
+
+        Ok((selection, outcome))
     }
 
     /// S1.3 — the Mission-BOUND agent-loop entry (the `executeRun` Mission-context parity,
@@ -1319,6 +1345,144 @@ mod tests {
             table_count(&rt, "mission_link"),
             0,
             "the unbound run_task must not bind to any mission"
+        );
+    }
+
+    // ---- D1 owner-wiring (run_task persists owner_principal) -----------------
+
+    /// D1 OWNER-WIRING: a FINISHED run owned by principal P persists its answer with
+    /// `owner_principal == P`, so the authenticated body projection Grants the body to P and
+    /// Denies a different principal Q — the owner axis is wired end-to-end through `run_task`.
+    #[test]
+    fn owner_wiring_finished_run_records_owner_and_gates_authed_body() {
+        use friday_storage::{get_run_answer_for_principal, AnswerDenyReason, RunAnswerAccess};
+
+        const ANSWER: &str = "OWNER-ANSWER-CANARY-d1q4-only-P-may-read";
+
+        let ws = TempDir::new("owner-wire");
+        let script = format!("{{\"tool\":\"none\",\"answer\":\"{ANSWER}\"}}");
+        let transport = ScriptTransport::new(&[script.as_str()]);
+        let client = DeepSeekClient::with_transport(transport, "k".into());
+        let agent = DeepSeekAgentLlmClient::new(client);
+        let rt = HubRuntime::new(
+            HubConfig {
+                db_path: tmp("owner-wire"),
+                workspace_root: ws.0.clone(),
+                secret: SECRET.to_vec(),
+                max_turns: 4,
+                principal_id: Some("alice".to_string()), // the run's bound OWNER principal
+                disabled_tools: vec![],
+                read_only: false,
+                operator_vk: None,
+            },
+            agent,
+            Box::new(DenyAllApprovals),
+        )
+        .unwrap();
+
+        let (_sel, out) = rt.run_task("run-owned", "answer me", 1000).unwrap();
+        assert_eq!(out.status, LoopStatus::Finished);
+        assert_eq!(out.final_message.as_deref(), Some(ANSWER));
+
+        // run_result recorded owner_principal == P.
+        let owner: Option<String> = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT owner_principal FROM run_result WHERE run_id = 'run-owned'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(owner.as_deref(), Some("alice"));
+
+        // P (owner) is GRANTED the body; Q (≠P) is DENIED with no body.
+        match get_run_answer_for_principal(rt.db().conn(), "run-owned", "alice").unwrap() {
+            RunAnswerAccess::Granted(stored) => assert_eq!(stored.answer, ANSWER),
+            other => panic!("owner P must be Granted the body, got {other:?}"),
+        }
+        let denied = get_run_answer_for_principal(rt.db().conn(), "run-owned", "bob").unwrap();
+        assert_eq!(
+            denied,
+            RunAnswerAccess::Denied(AnswerDenyReason::PrincipalMismatch)
+        );
+        // Canary: the denied (non-owner) projection carries NEITHER the body NOR the owner.
+        let rendered = format!("{denied:?}");
+        assert!(!rendered.contains(ANSWER) && !rendered.contains("alice"));
+    }
+
+    /// A FINISHED run with NO bound principal records NO owner ⇒ the body is unreadable to
+    /// everyone (fail-closed), even though the body genuinely IS stored Hub-side.
+    #[test]
+    fn owner_wiring_unowned_run_records_no_owner_body_unreadable() {
+        use friday_storage::{get_run_answer_for_principal, AnswerDenyReason, RunAnswerAccess};
+
+        let (rt, _ws, _post) = runtime_with(
+            "owner-wire-none",
+            &["{\"tool\":\"none\",\"answer\":\"unowned-answer\"}"],
+            Box::new(DenyAllApprovals),
+        );
+        let (_sel, out) = rt.run_task("run-unowned", "answer me", 1000).unwrap();
+        assert_eq!(out.status, LoopStatus::Finished);
+
+        let owner: Option<String> = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT owner_principal FROM run_result WHERE run_id = 'run-unowned'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(owner, None, "an unowned run must record no owner principal");
+
+        // No owner ⇒ body released to NO ONE, even a valid-looking principal.
+        assert_eq!(
+            get_run_answer_for_principal(rt.db().conn(), "run-unowned", "alice").unwrap(),
+            RunAnswerAccess::Denied(AnswerDenyReason::NoOwnerPrincipal)
+        );
+        // ...but the body IS stored Hub-side (the deny is authorization, not missing data).
+        assert_eq!(
+            friday_storage::get_run_result(rt.db().conn(), "run-unowned")
+                .unwrap()
+                .unwrap()
+                .answer,
+            "unowned-answer"
+        );
+    }
+
+    /// A non-Finished run (here a Paused mutating action) persists NO `run_result` from
+    /// `run_task` — leaving the slot free for the resume completion leg (no immutable-result
+    /// collision) and meaning the authed projection safely finds NO answer.
+    #[test]
+    fn owner_wiring_paused_run_persists_no_result() {
+        use friday_storage::{get_run_answer_for_principal, RunAnswerAccess};
+
+        let (rt, _root, _post) = runtime_with(
+            "owner-wire-paused",
+            &["{\"tool\":\"write_file\",\"parameters\":{\"path\":\"out.txt\",\"content\":\"X\"}}"],
+            Box::new(DenyAllApprovals),
+        );
+        let (_sel, out) = rt.run_task("run-paused", "write a file", 2000).unwrap();
+        assert!(matches!(
+            out.status,
+            LoopStatus::Paused | LoopStatus::Blocked
+        ));
+        // No run_result row was written by run_task (the resume leg owns a Paused run's slot).
+        assert_eq!(
+            rt.db()
+                .conn()
+                .query_row(
+                    "SELECT count(*) FROM run_result WHERE run_id = 'run-paused'",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            get_run_answer_for_principal(rt.db().conn(), "run-paused", "alice").unwrap(),
+            RunAnswerAccess::NotFound
         );
     }
 

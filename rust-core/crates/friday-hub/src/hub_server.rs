@@ -19,6 +19,7 @@
 //! auth material, raw private reasoning, cwd, or external urls on the wire. The answer +
 //! usage live Hub-side in the token_ledger / Activity receipt. No UI code here.
 
+use friday_crypto::{open, DataKey, Sealed};
 use friday_deepseek::{DeepSeekClient, Transport};
 use friday_protocol::{
     Envelope, ErrorCode, Message, MissionIntakeRequestWire, MissionIntakeResultWire,
@@ -29,8 +30,12 @@ use friday_protocol::{
     ProviderWorkspaceActionResultWire, RouteDecisionProjectionWire, SUPPORTED,
 };
 use friday_providers::unified::{FallbackStatus, PlatformProvider, ProviderSession, SessionStatus};
-use friday_storage::Db;
+use friday_storage::{
+    get_run_answer_for_principal, get_run_result_ref, AnswerDenyReason, Db, RunAnswerAccess,
+    RunResultRef,
+};
 use friday_transport::{ws_recv_envelope, ws_send_envelope, TransportError, WireWebSocket};
+use serde_json::json;
 use std::collections::BTreeSet;
 use std::io::{Read, Write};
 
@@ -43,6 +48,7 @@ use crate::provider_dispatch::{
     dispatch_provider_action, DispatchContext, DispatchError, ProviderDispatchAdapter,
 };
 use crate::provider_workspace::ProviderWorkspaceCatalog;
+use crate::runtime::HubRuntime;
 use crate::RecordAskError;
 
 /// A headless Hub runtime serving one or more trusted client sessions. Generic over the
@@ -882,6 +888,244 @@ impl<T: Transport> HubServer<T> {
             ws_send_envelope(ws, session_key, &response, aad)?;
         }
     }
+}
+
+// ===========================================================================
+// D1-Q4 — internal AUTHENTICATED single-provider agent-loop route.
+// ===========================================================================
+//
+// Truth label: this is an INTERNAL, authenticated, SINGLE-provider (`deepseek-flash`) route.
+// It is NOT multi-provider, NOT provider-native, and NOT a v1 GO; `executeRun` is NOT
+// replaced. The answer BODY is delivered ONLY to the AUTHENTICATED OWNER of the run; every
+// proof/unauth surface gets refs-only (status + the answer's sha256 + length), never the
+// body, never a raw provider/secret/channel id.
+//
+// Authentication reuses the EXISTING sealed-session mechanism (`DeviceKeypair` ECDH →
+// per-session `DataKey`, the same one [`HubServer::serve_connection`] is fenced by): a caller
+// proves possession of the shared session key by sealing the agreed challenge, which the Hub
+// OPENS with its half of the session. A caller without the paired key produces a seal the Hub
+// cannot open → no [`AuthedPrincipal`] → no run, no body (fail-closed).
+
+/// An AUTHENTICATED caller principal, derived from a verified sealed session (D1-Q4).
+///
+/// Constructible ONLY by [`AuthedPrincipal::authenticate`]. The bound principal is the
+/// HUB-OWNER principal supplied by Hub config — NEVER a client-supplied string — so a caller
+/// can never self-assert another principal to read someone else's answer. There is no public
+/// constructor and no way to mint one without opening a caller-sealed proof.
+pub struct AuthedPrincipal(String);
+
+impl AuthedPrincipal {
+    /// Authenticate a caller over the established sealed session and bind the Hub's OWNER
+    /// principal to it.
+    ///
+    /// Authentication == the Hub can OPEN the caller's `sealed_proof` under the shared session
+    /// `DataKey` (proving the caller holds the paired session key — the SAME seal/open the WS
+    /// transport uses) AND the opened bytes equal the agreed `expected_challenge` (binding the
+    /// proof to THIS exchange). A different `DeviceKeypair` yields a seal that does not open →
+    /// `None`. The `owner_principal` is Hub-supplied (single-owner v1); an empty/blank one is
+    /// rejected (no anonymous owner). Returns `None` on ANY failure — fail-closed.
+    pub fn authenticate(
+        hub_session: &DataKey,
+        sealed_proof: &Sealed,
+        aad: &[u8],
+        expected_challenge: &[u8],
+        owner_principal: &str,
+    ) -> Option<AuthedPrincipal> {
+        // Possession of the shared session key is the authentication; opening fails closed for
+        // any caller that did not seal under it.
+        let opened = open(hub_session, sealed_proof, aad).ok()?;
+        if opened.as_slice() != expected_challenge {
+            return None;
+        }
+        let principal = owner_principal.trim();
+        if principal.is_empty() {
+            return None;
+        }
+        Some(AuthedPrincipal(principal.to_string()))
+    }
+
+    /// The bound, Hub-trusted principal (never client-supplied).
+    pub fn principal(&self) -> &str {
+        &self.0
+    }
+}
+
+/// The body-release outcome of the authenticated answer projection (D1-Q4).
+///
+/// The answer BODY is carried ONLY in [`AuthedAnswer::Delivered`] — for in-process hand-off
+/// to the authenticated owner. Every other variant is body-free. A MANUAL [`std::fmt::Debug`]
+/// (below) redacts the body, so an accidental `{:?}` can never leak it; the body is NEVER
+/// placed on a refs-only/proof surface (use [`AuthedAnswer::proof_refs_json`]).
+pub enum AuthedAnswer {
+    /// The authenticated caller IS the run's owner: the answer body is released to them,
+    /// alongside its refs-only fingerprint (sha256 + length) for proof.
+    Delivered {
+        run_id: String,
+        status: String,
+        answer: String,
+        answer_sha256: String,
+        answer_len: i64,
+    },
+    /// A stored answer exists but the authenticated caller is NOT its owner (or the run has no
+    /// owner): the body is WITHHELD. Carries only the coarse deny reason + the refs-only
+    /// fingerprint (never the body, never the owner principal).
+    Denied {
+        run_id: String,
+        reason: AnswerDenyReason,
+        refs: Option<RunResultRef>,
+    },
+    /// No stored answer for this run (provider unavailable / run not Finished): safe failure,
+    /// no body, no panic.
+    NoAnswer { run_id: String },
+}
+
+impl std::fmt::Debug for AuthedAnswer {
+    /// Body-redacting Debug: a `Delivered` renders only its fingerprint (sha256 + length),
+    /// NEVER the answer body. This is the structural guard behind the "never log the Granted
+    /// body" rule — even a stray `{:?}` on this type cannot leak the answer.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuthedAnswer::Delivered {
+                run_id,
+                status,
+                answer_sha256,
+                answer_len,
+                ..
+            } => f
+                .debug_struct("AuthedAnswer::Delivered")
+                .field("run_id", run_id)
+                .field("status", status)
+                .field("answer_sha256", answer_sha256)
+                .field("answer_len", answer_len)
+                .field("answer", &"<redacted: owner-only body>")
+                .finish(),
+            AuthedAnswer::Denied {
+                run_id,
+                reason,
+                refs,
+            } => f
+                .debug_struct("AuthedAnswer::Denied")
+                .field("run_id", run_id)
+                .field("reason", reason)
+                .field("refs", refs)
+                .finish(),
+            AuthedAnswer::NoAnswer { run_id } => f
+                .debug_struct("AuthedAnswer::NoAnswer")
+                .field("run_id", run_id)
+                .finish(),
+        }
+    }
+}
+
+impl AuthedAnswer {
+    /// The answer body for the AUTHENTICATED OWNER (in-process hand-off ONLY). `None` for
+    /// every non-delivered variant. NEVER call this for a proof/log/wire surface.
+    pub fn delivered_body(&self) -> Option<&str> {
+        match self {
+            AuthedAnswer::Delivered { answer, .. } => Some(answer),
+            _ => None,
+        }
+    }
+
+    /// The (d) REFS-ONLY proof projection: outcome label + status + the answer FINGERPRINT
+    /// (sha256 + length) + run_id — and NEVER the answer body (and never an owner principal,
+    /// raw provider/secret/channel id). This is what a proof/unauth surface (e.g. the bin's
+    /// stdout) prints.
+    pub fn proof_refs_json(&self) -> serde_json::Value {
+        match self {
+            AuthedAnswer::Delivered {
+                run_id,
+                status,
+                answer_sha256,
+                answer_len,
+                ..
+            } => json!({
+                "outcome": "delivered_to_authenticated_owner",
+                "run_id": run_id,
+                "status": status,
+                "answer_sha256": answer_sha256,
+                "answer_len": answer_len,
+            }),
+            AuthedAnswer::Denied {
+                run_id,
+                reason,
+                refs,
+            } => json!({
+                "outcome": "denied_not_owner",
+                "run_id": run_id,
+                "deny_reason": format!("{reason:?}"),
+                "answer_sha256": refs.as_ref().map(|r| r.answer_sha256.clone()),
+                "answer_len": refs.as_ref().map(|r| r.answer_len),
+            }),
+            AuthedAnswer::NoAnswer { run_id } => json!({
+                "outcome": "no_answer_safe_failure",
+                "run_id": run_id,
+            }),
+        }
+    }
+}
+
+/// (b)/(c) The auditable BODY-RELEASE decision: project a run's answer to an AUTHENTICATED
+/// caller. Releases the body ONLY when the caller's authenticated principal matches the run's
+/// bound OWNER principal (via [`friday_storage::get_run_answer_for_principal`]); otherwise the
+/// body is WITHHELD and only the refs-only fingerprint is returned. A `RunAnswerAccess::Granted`
+/// is destructured IMMEDIATELY into [`AuthedAnswer::Delivered`] and never allowed to escape as
+/// a `{:?}` (it carries the body). A storage error fails closed to [`AuthedAnswer::NoAnswer`].
+pub fn project_answer_for_authed(
+    conn: &rusqlite::Connection,
+    run_id: &str,
+    caller: &AuthedPrincipal,
+) -> AuthedAnswer {
+    match get_run_answer_for_principal(conn, run_id, caller.principal()) {
+        Ok(RunAnswerAccess::Granted(stored)) => AuthedAnswer::Delivered {
+            run_id: run_id.to_string(),
+            status: stored.status,
+            answer: stored.answer,
+            answer_sha256: stored.answer_sha256,
+            answer_len: stored.answer_len,
+        },
+        Ok(RunAnswerAccess::Denied(reason)) => AuthedAnswer::Denied {
+            run_id: run_id.to_string(),
+            reason,
+            // refs-only fingerprint (body-free, owner-free) for the deny's proof surface.
+            refs: get_run_result_ref(conn, run_id).ok().flatten(),
+        },
+        Ok(RunAnswerAccess::NotFound) | Err(_) => AuthedAnswer::NoAnswer {
+            run_id: run_id.to_string(),
+        },
+    }
+}
+
+/// (a)+(b)+(c) The internal AUTHENTICATED single-provider agent-loop route (D1-Q4).
+///
+/// Runs the Rust agent loop ([`HubRuntime::run_task`]) for an ALREADY-AUTHENTICATED caller
+/// (the `caller` is produced ONLY by [`AuthedPrincipal::authenticate`] over the sealed
+/// session), then projects the answer body to that authenticated OWNER via
+/// [`project_answer_for_authed`]. The runtime is single-owner (v1): it MUST be configured with
+/// the SAME principal as `caller` so owner-wiring records `owner == caller` and the body is
+/// released to them.
+///
+/// SAFE FAILURE: a route/provider failure (`run_task` `Err`) OR a non-Finished run (e.g. a
+/// transport-errored loop, which persists no `run_result`) returns a body-free
+/// [`AuthedAnswer::NoAnswer`] — no panic, no partial/false success. The answer body, when
+/// delivered, is carried ONLY in [`AuthedAnswer::Delivered`] for in-process hand-off to the
+/// authed owner — it is NEVER placed on a refs-only/proof surface and NEVER logged.
+pub fn run_authed_agent_loop<T: Transport>(
+    runtime: &HubRuntime<T>,
+    caller: &AuthedPrincipal,
+    run_id: &str,
+    task: &str,
+    now_ms: i64,
+) -> AuthedAnswer {
+    // (a) the caller is already authenticated (typed proof). (b) run the loop as that
+    // principal; a route/provider failure is a SAFE FAILURE (no body, no panic).
+    if runtime.run_task(run_id, task, now_ms).is_err() {
+        return AuthedAnswer::NoAnswer {
+            run_id: run_id.to_string(),
+        };
+    }
+    // (c) release the answer ONLY to the authenticated owner (owner-wiring + ownership gate).
+    project_answer_for_authed(runtime.db().conn(), run_id, caller)
 }
 
 fn work_item_timeline_wire(item: friday_core::WorkItem) -> MissionTimelineWorkItemWire {
@@ -4824,5 +5068,327 @@ mod tests {
         }
         assert!(pages > 1);
         assert_eq!(provider_link_count, ask_count);
+    }
+}
+
+#[cfg(test)]
+mod authed_route_tests {
+    //! D1-Q4 adversarial tests: the auth boundary is the point.
+    //!
+    //! Authentication reuses the existing sealed-session mechanism (`DeviceKeypair` ECDH →
+    //! `DataKey`); the body is released ONLY to the authenticated owner; unauth / wrong-
+    //! principal / provider-unavailable are body-free; and no proof/log projection carries
+    //! the body or a secret.
+    use super::*;
+    use crate::runtime::{DenyAllApprovals, HubConfig, HubRuntime};
+    use crate::DeepSeekAgentLlmClient;
+    use friday_crypto::{seal, DeviceKeypair};
+    use friday_deepseek::{DeepSeekClient, DeepSeekError};
+    use friday_storage::{persist_run_result, RunResult};
+    use serde_json::Value;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static C: AtomicU64 = AtomicU64::new(0);
+    fn tmp(tag: &str) -> String {
+        std::env::temp_dir()
+            .join(format!(
+                "friday-authed-route-{}-{}-{}.sqlite",
+                std::process::id(),
+                tag,
+                C.fetch_add(1, Ordering::Relaxed)
+            ))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    const AAD: &[u8] = b"d1q4-authed-route-aad";
+    const CHALLENGE: &[u8] = b"d1q4-authed-run-challenge";
+    const BODY: &str = "AUTHED-ROUTE-BODY-CANARY-only-owner-P";
+
+    /// Two halves of ONE shared session via DeviceKeypair ECDH (the existing pairing/session
+    /// mechanism): a challenge sealed by the caller opens for the hub == authenticated.
+    fn paired_sessions() -> (DataKey, DataKey) {
+        let hub = DeviceKeypair::generate();
+        let phone = DeviceKeypair::generate();
+        (
+            hub.agree(&phone.public_bytes()),
+            phone.agree(&hub.public_bytes()),
+        )
+    }
+
+    /// An authenticated caller bound to `principal` over a freshly paired session.
+    fn authed(principal: &str) -> AuthedPrincipal {
+        let (hub_session, caller_session) = paired_sessions();
+        let sealed = seal(&caller_session, CHALLENGE, AAD).unwrap();
+        AuthedPrincipal::authenticate(&hub_session, &sealed, AAD, CHALLENGE, principal).unwrap()
+    }
+
+    // --- authentication boundary (the existing sealed-session mechanism) ------
+
+    #[test]
+    fn authenticate_grants_principal_for_the_paired_caller() {
+        let (hub_session, caller_session) = paired_sessions();
+        let sealed = seal(&caller_session, CHALLENGE, AAD).unwrap();
+        let authed =
+            AuthedPrincipal::authenticate(&hub_session, &sealed, AAD, CHALLENGE, "principal:owner")
+                .expect("the paired caller authenticates");
+        assert_eq!(authed.principal(), "principal:owner");
+    }
+
+    #[test]
+    fn authenticate_denies_an_unpaired_attacker_keypair() {
+        // The attacker shares NO key with the hub → its seal does not open → None. THIS is the
+        // real auth boundary: no principal ⇒ no run, no body downstream (fail-closed).
+        let hub = DeviceKeypair::generate();
+        let real_phone = DeviceKeypair::generate();
+        let hub_session = hub.agree(&real_phone.public_bytes());
+
+        let attacker = DeviceKeypair::generate();
+        let attacker_session = attacker.agree(&hub.public_bytes()); // hub never shared with attacker
+        let sealed = seal(&attacker_session, CHALLENGE, AAD).unwrap();
+        assert!(
+            AuthedPrincipal::authenticate(&hub_session, &sealed, AAD, CHALLENGE, "principal:owner")
+                .is_none(),
+            "an unpaired attacker keypair must NOT authenticate"
+        );
+    }
+
+    #[test]
+    fn authenticate_denies_wrong_challenge_or_blank_principal() {
+        let (hub_session, caller_session) = paired_sessions();
+        // A seal of the WRONG bytes (opens, but is not the agreed challenge) is refused.
+        let sealed_wrong = seal(&caller_session, b"not-the-challenge", AAD).unwrap();
+        assert!(AuthedPrincipal::authenticate(
+            &hub_session,
+            &sealed_wrong,
+            AAD,
+            CHALLENGE,
+            "principal:owner"
+        )
+        .is_none());
+        // A blank/anonymous principal is refused (no anonymous owner).
+        let sealed_ok = seal(&caller_session, CHALLENGE, AAD).unwrap();
+        assert!(
+            AuthedPrincipal::authenticate(&hub_session, &sealed_ok, AAD, CHALLENGE, "   ")
+                .is_none()
+        );
+    }
+
+    // --- body-release projection (auditable, runtime-free) --------------------
+
+    fn seed_owned(tag: &str, run_id: &str, owner: &str) -> Db {
+        let db = Db::open_hub(&tmp(tag)).unwrap();
+        persist_run_result(
+            db.conn(),
+            run_id,
+            &RunResult::new("finished", BODY, None).with_owner_principal(owner),
+            10,
+        )
+        .unwrap();
+        db
+    }
+
+    #[test]
+    fn project_delivers_body_to_authed_owner_and_proof_is_body_free() {
+        let db = seed_owned("proj-owner", "run-x", "principal:P");
+        let owner = authed("principal:P");
+        let out = project_answer_for_authed(db.conn(), "run-x", &owner);
+        assert_eq!(
+            out.delivered_body(),
+            Some(BODY),
+            "the owner receives the body"
+        );
+        // CANARY: neither the refs-only proof projection nor the Debug carries the body.
+        let proof = out.proof_refs_json().to_string();
+        assert!(
+            !proof.contains(BODY),
+            "proof surface leaked the body: {proof}"
+        );
+        assert!(
+            !format!("{out:?}").contains(BODY),
+            "Debug leaked the owner-only body"
+        );
+    }
+
+    #[test]
+    fn project_denies_a_wrong_principal_with_no_body() {
+        let db = seed_owned("proj-wrong", "run-x", "principal:P");
+        let other = authed("principal:Q");
+        let out = project_answer_for_authed(db.conn(), "run-x", &other);
+        assert!(out.delivered_body().is_none(), "a non-owner gets NO body");
+        assert!(matches!(
+            out,
+            AuthedAnswer::Denied {
+                reason: AnswerDenyReason::PrincipalMismatch,
+                ..
+            }
+        ));
+        assert!(!out.proof_refs_json().to_string().contains(BODY));
+        assert!(!format!("{out:?}").contains(BODY));
+    }
+
+    #[test]
+    fn project_no_answer_for_an_unknown_run() {
+        let db = Db::open_hub(&tmp("proj-none")).unwrap();
+        let owner = authed("principal:P");
+        let out = project_answer_for_authed(db.conn(), "nope", &owner);
+        assert!(matches!(out, AuthedAnswer::NoAnswer { .. }));
+        assert!(out.delivered_body().is_none());
+    }
+
+    // --- end-to-end through the real HubRuntime agent loop --------------------
+
+    struct TempWs(PathBuf);
+    impl TempWs {
+        fn new(tag: &str) -> Self {
+            let p = std::env::temp_dir().join(format!(
+                "friday-authed-route-ws-{}-{}-{}",
+                std::process::id(),
+                tag,
+                C.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&p).unwrap();
+            TempWs(p)
+        }
+    }
+    impl Drop for TempWs {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A transport that finishes the loop in one turn with `answer` as the final message.
+    struct FinishTransport {
+        answer: String,
+    }
+    impl Transport for FinishTransport {
+        fn get_json(&self, _u: &str, _b: &str) -> Result<Value, DeepSeekError> {
+            Ok(serde_json::json!({"data":[{"id":"deepseek-v4-flash"}]}))
+        }
+        fn post_json(&self, _u: &str, _b: &str, _body: &Value) -> Result<Value, DeepSeekError> {
+            let content = format!("{{\"tool\":\"none\",\"answer\":\"{}\"}}", self.answer);
+            Ok(serde_json::json!({
+                "model":"deepseek-v4-flash",
+                "choices":[{"message":{"content":content},"finish_reason":"stop"}],
+                "usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+            }))
+        }
+    }
+
+    /// A transport whose chat POST fails — the provider is unavailable mid-loop.
+    struct ProviderDownTransport;
+    impl Transport for ProviderDownTransport {
+        fn get_json(&self, _u: &str, _b: &str) -> Result<Value, DeepSeekError> {
+            Ok(serde_json::json!({"data":[{"id":"deepseek-v4-flash"}]}))
+        }
+        fn post_json(&self, _u: &str, _b: &str, _body: &Value) -> Result<Value, DeepSeekError> {
+            Err(DeepSeekError::ProviderUnavailable(
+                "network down".to_string(),
+            ))
+        }
+    }
+
+    fn runtime_with<T: Transport>(tag: &str, t: T, principal: &str) -> (HubRuntime<T>, TempWs) {
+        let ws = TempWs::new(tag);
+        let client = DeepSeekClient::with_transport(t, "k".into());
+        let agent = DeepSeekAgentLlmClient::new(client);
+        let rt = HubRuntime::new(
+            HubConfig {
+                db_path: tmp(tag),
+                workspace_root: ws.0.clone(),
+                secret: b"authed-route-test-secret-0123456789".to_vec(),
+                max_turns: 4,
+                principal_id: Some(principal.to_string()),
+                disabled_tools: vec![],
+                read_only: false,
+                operator_vk: None,
+            },
+            agent,
+            Box::new(DenyAllApprovals),
+        )
+        .unwrap();
+        (rt, ws)
+    }
+
+    #[test]
+    fn authed_loop_delivers_body_to_owner_and_proof_canary_is_clean() {
+        let (rt, _ws) = runtime_with(
+            "loop-owner",
+            FinishTransport {
+                answer: BODY.to_string(),
+            },
+            "principal:owner",
+        );
+        // The caller is authenticated as the SAME principal the runtime is configured with.
+        let caller = authed("principal:owner");
+        let out = run_authed_agent_loop(&rt, &caller, "run-authed-1", "answer me", 1000);
+        assert_eq!(
+            out.delivered_body(),
+            Some(BODY),
+            "the authenticated owner receives the answer body"
+        );
+        // CANARY: the body appears in NEITHER the refs-only proof NOR the Debug; and no secret.
+        let proof = out.proof_refs_json().to_string();
+        assert!(
+            !proof.contains(BODY),
+            "proof surface leaked the body: {proof}"
+        );
+        assert!(!proof.contains("authed-route-test-secret"));
+        assert!(!format!("{out:?}").contains(BODY));
+    }
+
+    #[test]
+    fn authed_loop_wrong_principal_caller_gets_no_body() {
+        // The run is OWNED by `principal:owner` (the runtime's principal); a caller
+        // authenticated as a DIFFERENT principal is denied the body.
+        let (rt, _ws) = runtime_with(
+            "loop-wrong",
+            FinishTransport {
+                answer: BODY.to_string(),
+            },
+            "principal:owner",
+        );
+        let _seed =
+            run_authed_agent_loop(&rt, &authed("principal:owner"), "run-authed-2", "go", 1000);
+        // Now a different authenticated principal projects the SAME run → Denied, no body.
+        let intruder = authed("principal:intruder");
+        let out = project_answer_for_authed(rt.db().conn(), "run-authed-2", &intruder);
+        assert!(
+            out.delivered_body().is_none(),
+            "a non-owner must get NO body"
+        );
+        assert!(matches!(
+            out,
+            AuthedAnswer::Denied {
+                reason: AnswerDenyReason::PrincipalMismatch,
+                ..
+            }
+        ));
+        assert!(!out.proof_refs_json().to_string().contains(BODY));
+    }
+
+    #[test]
+    fn authed_loop_provider_unavailable_is_safe_failure_no_body_no_panic() {
+        let (rt, _ws) = runtime_with("loop-down", ProviderDownTransport, "principal:owner");
+        let caller = authed("principal:owner");
+        let out = run_authed_agent_loop(&rt, &caller, "run-authed-down", "answer me", 1000);
+        assert!(
+            matches!(out, AuthedAnswer::NoAnswer { .. }),
+            "provider-unavailable must be a body-free safe failure, got {out:?}"
+        );
+        assert!(out.delivered_body().is_none());
+        // No run_result persisted for the errored (non-Finished) run.
+        assert_eq!(
+            rt.db()
+                .conn()
+                .query_row(
+                    "SELECT count(*) FROM run_result WHERE run_id = 'run-authed-down'",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
     }
 }
