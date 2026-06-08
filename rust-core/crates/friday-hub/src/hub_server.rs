@@ -944,10 +944,90 @@ impl AuthedPrincipal {
         Some(AuthedPrincipal(principal.to_string()))
     }
 
+    /// WS substrate **S-C** — authenticate a TRUSTED-PEER-FORWARDED principal over the
+    /// established sealed session and bind it (fail-closed).
+    ///
+    /// This is the SIBLING of [`AuthedPrincipal::authenticate`] for the agent-run WS dispatch
+    /// arm. Where `authenticate` binds the Hub's OWN configured owner (the caller is just
+    /// proving session possession), this binds the principal the trusted in-TCB peer
+    /// FORWARDED on the request — but ONLY after every one of the following holds, in order:
+    ///
+    /// 1. `auth_proof` OPENS under the established `session_key` and equals
+    ///    `expected_challenge` — i.e. the peer holds the paired ECDH half (the SAME seal/open
+    ///    the WS transport is fenced by). A peer that completed the handshake but cannot seal
+    ///    the agreed challenge under the session key fails here. **A session key is NOT
+    ///    authorization on its own** — this is only step 1.
+    /// 2. `forwarded_principal` is non-empty / non-whitespace.
+    /// 3. `forwarded_principal` is NOT anonymous / public under the SAME sentinel set the
+    ///    body-ownership gate uses ([`friday_core::gate::is_anonymous_principal`], via
+    ///    `is_forwarded_principal_anonymous` — `""`, `"public"`, `"public:default"` all fail).
+    /// 4. `forwarded_principal` is IN the Hub `owner_allowlist` (v1 = a single configured
+    ///    owner, passed in). A principal not on the allowlist — even a well-formed one
+    ///    forwarded by a peer holding the session key — is REJECTED.
+    ///
+    /// **Trust basis.** The bound principal is TRUSTED-PEER-FORWARDED: the in-TCB TS API
+    /// resolved it from a validated bearer token and forwarded it over the sealed session.
+    /// It is NOT a client-asserted string a remote attacker chose — the SEALED SESSION is the
+    /// basis of trust (only the paired peer can produce an openable `auth_proof`), and the
+    /// owner-allowlist is the final ceiling (a compromised/buggy peer still cannot mint an
+    /// arbitrary principal). Production key-source + a supervisor are deferred (open-qs); this
+    /// is `rust_wired` at best, DARK, NOT a v1 GO.
+    ///
+    /// Returns `None` on ANY failure — fail-closed, never partial.
+    pub fn authenticate_forwarded(
+        session_key: &DataKey,
+        auth_proof: &Sealed,
+        aad: &[u8],
+        expected_challenge: &[u8],
+        forwarded_principal: &str,
+        owner_allowlist: &[String],
+    ) -> Option<AuthedPrincipal> {
+        // (1) Possession-of-session proof: the peer must seal the agreed challenge under the
+        // ESTABLISHED session key. A correct-handshake peer that cannot open this — or any
+        // peer on a different key — fails closed here. A session key alone is NOT enough.
+        let opened = open(session_key, auth_proof, aad).ok()?;
+        if opened.as_slice() != expected_challenge {
+            return None;
+        }
+        // (2) Non-empty / non-whitespace forwarded principal.
+        let principal = forwarded_principal.trim();
+        if principal.is_empty() {
+            return None;
+        }
+        // (3) Non-anonymous under the EXACT sentinel set the body-ownership gate uses, so a
+        // forwarded "public"/"public:default" can never be bound (it would never own a body).
+        if is_forwarded_principal_anonymous(principal) {
+            return None;
+        }
+        // (4) Owner-allowlist ceiling: the forwarded principal must be a configured Hub owner.
+        // A well-formed, non-anonymous, session-key-backed principal that is NOT on the
+        // allowlist is REJECTED — the handshake authenticated the CHANNEL, not the principal.
+        if !owner_allowlist.iter().any(|owner| owner == principal) {
+            return None;
+        }
+        // Bind the FORWARDED principal (trusted-peer-forwarded, allowlisted) — never a raw
+        // client-asserted string that skipped the above chain.
+        Some(AuthedPrincipal(principal.to_string()))
+    }
+
     /// The bound, Hub-trusted principal (never client-supplied).
     pub fn principal(&self) -> &str {
         &self.0
     }
+}
+
+/// True if a forwarded principal is anonymous / public / empty under the SAME sentinel set
+/// the body-ownership gate ([`friday_storage::get_run_answer_for_principal`]) enforces — so a
+/// forwarded `""`, `"public"`, or `"public:default"` is rejected by
+/// [`AuthedPrincipal::authenticate_forwarded`] before it can ever be bound. Mirrors
+/// `friday_storage::run_result`'s private `is_anonymous_principal_str`: the actor `kind`/`id`
+/// are irrelevant (the gate inspects only `principal_id`); a placeholder is passed.
+fn is_forwarded_principal_anonymous(principal: &str) -> bool {
+    friday_core::gate::is_anonymous_principal(&friday_core::gate::Actor {
+        kind: friday_core::gate::ActorKind::Owner,
+        id: String::new(),
+        principal_id: Some(principal.to_string()),
+    })
 }
 
 /// The body-release outcome of the authenticated answer projection (D1-Q4).
@@ -5172,6 +5252,140 @@ mod authed_route_tests {
         assert!(
             AuthedPrincipal::authenticate(&hub_session, &sealed_ok, AAD, CHALLENGE, "   ")
                 .is_none()
+        );
+    }
+
+    // --- S-C: authenticate_forwarded (the trusted-peer-forwarded principal sibling) ----------
+
+    /// The allowlisted single Hub owner used by the forwarded-auth tests.
+    const FWD_OWNER: &str = "principal:forwarded-owner";
+
+    /// Build a valid forwarded auth_proof sealed under the peer's session view.
+    fn fwd_proof(caller_session: &DataKey) -> Sealed {
+        seal(caller_session, CHALLENGE, AAD).unwrap()
+    }
+
+    #[test]
+    fn authenticate_forwarded_binds_an_allowlisted_principal_for_the_paired_peer() {
+        let (hub_session, caller_session) = paired_sessions();
+        let proof = fwd_proof(&caller_session);
+        let bound = AuthedPrincipal::authenticate_forwarded(
+            &hub_session,
+            &proof,
+            AAD,
+            CHALLENGE,
+            FWD_OWNER,
+            &[FWD_OWNER.to_string()],
+        )
+        .expect("a paired peer forwarding an allowlisted principal authenticates");
+        assert_eq!(
+            bound.principal(),
+            FWD_OWNER,
+            "binds the FORWARDED principal"
+        );
+    }
+
+    #[test]
+    fn authenticate_forwarded_rejects_a_non_allowlisted_principal() {
+        // THE PRECONDITION: a correct-session peer forwarding a well-formed but NON-allowlisted
+        // principal is rejected — a session key is NOT authorization.
+        let (hub_session, caller_session) = paired_sessions();
+        let proof = fwd_proof(&caller_session);
+        assert!(
+            AuthedPrincipal::authenticate_forwarded(
+                &hub_session,
+                &proof,
+                AAD,
+                CHALLENGE,
+                "principal:attacker-not-on-allowlist",
+                &[FWD_OWNER.to_string()],
+            )
+            .is_none(),
+            "a non-allowlisted forwarded principal must be rejected"
+        );
+    }
+
+    #[test]
+    fn authenticate_forwarded_rejects_empty_and_anonymous_forwarded_principals() {
+        let (hub_session, caller_session) = paired_sessions();
+        let proof = fwd_proof(&caller_session);
+        for bad in ["", "   ", "public", "public:default"] {
+            assert!(
+                AuthedPrincipal::authenticate_forwarded(
+                    &hub_session,
+                    &proof,
+                    AAD,
+                    CHALLENGE,
+                    bad,
+                    // Even if (pathologically) the anonymous sentinel were on the allowlist,
+                    // the anonymous check rejects it first.
+                    &[bad.to_string(), FWD_OWNER.to_string()],
+                )
+                .is_none(),
+                "an empty/anonymous forwarded principal must be rejected: {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn authenticate_forwarded_rejects_an_unpaired_peer_even_if_principal_allowlisted() {
+        // The peer shares NO key with the hub → its auth_proof does not open → None, REGARDLESS
+        // of the forwarded principal being allowlisted. Possession-of-session is step 1.
+        let hub = DeviceKeypair::generate();
+        let real_peer = DeviceKeypair::generate();
+        let hub_session = hub.agree(&real_peer.public_bytes());
+        let attacker = DeviceKeypair::generate();
+        let attacker_session = attacker.agree(&hub.public_bytes()); // hub never shared with attacker
+        let proof = seal(&attacker_session, CHALLENGE, AAD).unwrap();
+        assert!(
+            AuthedPrincipal::authenticate_forwarded(
+                &hub_session,
+                &proof,
+                AAD,
+                CHALLENGE,
+                FWD_OWNER,
+                &[FWD_OWNER.to_string()],
+            )
+            .is_none(),
+            "an unpaired peer must NOT authenticate even with an allowlisted principal"
+        );
+    }
+
+    #[test]
+    fn authenticate_forwarded_rejects_a_wrong_challenge_seal() {
+        let (hub_session, caller_session) = paired_sessions();
+        // Opens (correct session key) but is NOT the agreed challenge.
+        let proof_wrong = seal(&caller_session, b"not-the-challenge", AAD).unwrap();
+        assert!(
+            AuthedPrincipal::authenticate_forwarded(
+                &hub_session,
+                &proof_wrong,
+                AAD,
+                CHALLENGE,
+                FWD_OWNER,
+                &[FWD_OWNER.to_string()],
+            )
+            .is_none(),
+            "a proof of the wrong challenge must be rejected"
+        );
+    }
+
+    #[test]
+    fn authenticate_forwarded_rejects_when_allowlist_empty() {
+        // An empty owner-allowlist (no configured owner) rejects EVERY forwarded principal.
+        let (hub_session, caller_session) = paired_sessions();
+        let proof = fwd_proof(&caller_session);
+        assert!(
+            AuthedPrincipal::authenticate_forwarded(
+                &hub_session,
+                &proof,
+                AAD,
+                CHALLENGE,
+                FWD_OWNER,
+                &[],
+            )
+            .is_none(),
+            "an empty allowlist must reject every dispatch"
         );
     }
 
