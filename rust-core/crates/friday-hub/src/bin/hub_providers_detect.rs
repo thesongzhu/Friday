@@ -63,7 +63,13 @@ fn main() {
                 "ok": false,
                 "error_kind": err.kind,
             });
-            println!("{payload}");
+            // Defense-in-depth: route the error payload through the SAME guard as the
+            // success path (fail closed if a marker ever leaked). `error_kind` is a
+            // static closed-vocab token today, so this never suppresses output.
+            let rendered = payload.to_string();
+            if reject_forbidden_output(&rendered).is_ok() {
+                println!("{rendered}");
+            }
             eprintln!("hub_providers_detect_unavailable: {}", err.kind);
             std::process::exit(2);
         }
@@ -155,24 +161,15 @@ fn arg_value(args: &[String], name: &str) -> Option<String> {
 /// — the primary defense is that `parse_status` discards the raw `ProbeOutput`,
 /// so these markers should never appear; the guard is a structural backstop.
 fn reject_forbidden_output(rendered: &str) -> Result<(), BridgeError> {
-    for marker in [
-        // Secret / path markers (mirrors hub_run_task).
-        "Authorization",
-        "Bearer",
-        "sk-",
-        "/Users/",
-        "/private/",
-        // Raw-CLI account-field markers — must NEVER reach output (the parsed
-        // status carries none of these; this catches a regression if it did).
-        "authMethod",
-        "subscriptionType",
-        "loggedIn",
-    ] {
-        if rendered.contains(marker) {
-            return Err(BridgeError::new("output_guard"));
-        }
-    }
-    Ok(())
+    // Delegates to the single shared guard (common secret/path markers
+    // Authorization/Bearer/sk-/`/Users/`/`/private/`) and adds the raw-CLI account-field markers that must
+    // NEVER reach output (the parsed status carries none of these; this catches a
+    // regression if it did).
+    friday_hub::refs_guard::reject_forbidden_output(
+        rendered,
+        &["authMethod", "subscriptionType", "loggedIn"],
+    )
+    .map_err(|_| BridgeError::new("output_guard"))
 }
 
 #[cfg(test)]

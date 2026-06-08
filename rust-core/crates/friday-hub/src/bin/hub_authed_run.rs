@@ -73,7 +73,13 @@ fn main() {
                 "ok": false,
                 "error_kind": err.kind,
             });
-            println!("{payload}");
+            // Defense-in-depth: route the error payload through the SAME guard as the
+            // success path (fail closed if a marker ever leaked). `error_kind` is a
+            // static closed-vocab token today, so this never suppresses output.
+            let rendered = payload.to_string();
+            if reject_forbidden_output(&rendered).is_ok() {
+                println!("{rendered}");
+            }
             eprintln!("hub_authed_run_unavailable: {}", err.kind);
             std::process::exit(2);
         }
@@ -231,19 +237,11 @@ fn ephemeral_dev_secret(pid: u32, nanos: u128) -> Vec<u8> {
 /// Defense-in-depth: refuse to print if any forbidden marker leaked into the refs-only
 /// payload. Mirrors `hub_run_task`'s guard; `answer"` (the body field) must never appear.
 fn reject_forbidden_output(rendered: &str) -> Result<(), BridgeError> {
-    for marker in [
-        "Authorization",
-        "Bearer",
-        "sk-",
-        "/Users/",
-        "/private/",
-        "\"answer\"", // the body text field must never appear (only the sha256/len do)
-    ] {
-        if rendered.contains(marker) {
-            return Err(BridgeError::new("output_guard"));
-        }
-    }
-    Ok(())
+    // Delegates to the single shared guard (common secret/path markers
+    // Authorization/Bearer/sk-/`/Users/`/`/private/`) and adds this bin's body-field
+    // marker. `"answer"` (the body text field) must never appear (only the sha256/len do).
+    friday_hub::refs_guard::reject_forbidden_output(rendered, &["\"answer\""])
+        .map_err(|_| BridgeError::new("output_guard"))
 }
 
 #[cfg(test)]

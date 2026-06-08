@@ -83,7 +83,13 @@ fn main() {
                 "ok": false,
                 "error_kind": err.kind,
             });
-            println!("{payload}");
+            // Defense-in-depth: route the error payload through the SAME guard as the
+            // success path (fail closed if a marker ever leaked). `error_kind` is a
+            // static closed-vocab token today, so this never suppresses output.
+            let rendered = payload.to_string();
+            if reject_forbidden_output(&rendered).is_ok() {
+                println!("{rendered}");
+            }
             eprintln!("diagnostics_snapshot_unavailable: {}", err.kind);
             std::process::exit(2);
         }
@@ -196,12 +202,11 @@ fn arg_value(args: &[String], name: &str) -> Option<String> {
 /// these markers should never appear; the guard is the backstop that fails the
 /// WHOLE projection closed if one ever does (non-zero exit + refs-only error).
 fn reject_forbidden_output(rendered: &str) -> Result<(), BridgeError> {
-    for marker in ["Authorization", "Bearer", "sk-", "/Users/", "/private/"] {
-        if rendered.contains(marker) {
-            return Err(BridgeError::new("output_guard"));
-        }
-    }
-    Ok(())
+    // Delegates to the single shared guard (common secret/path markers
+    // Authorization/Bearer/sk-/`/Users/`/`/private/`). This bin has no extra body-field
+    // markers — the payload carries only counts/booleans/ids/static labels.
+    friday_hub::refs_guard::reject_forbidden_output(rendered, &[])
+        .map_err(|_| BridgeError::new("output_guard"))
 }
 
 #[cfg(test)]

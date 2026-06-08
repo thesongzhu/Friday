@@ -863,23 +863,22 @@ fn dedupe(values: Vec<String>) -> Vec<String> {
 }
 
 fn reject_forbidden_output(rendered: &str) -> Result<(), String> {
-    for marker in [
-        "provider_native_synced",
-        "raw transcript",
-        "raw_provider",
-        "raw-channel",
-        "raw-chat",
-        "Authorization",
-        "Bearer",
-        "sk-",
-        "/Users/",
-        "/private/",
-    ] {
-        if rendered.contains(marker) {
-            return Err(format!("forbidden marker in projection: {marker}"));
-        }
-    }
-    Ok(())
+    // Delegates to the single shared guard (common secret/path markers
+    // Authorization/Bearer/sk-/`/Users/`/`/private/`) and adds this bin's raw-content
+    // body markers — a projection must surface only redacted proof refs, never raw transcript/provider
+    // text or a `provider_native_synced` claim. The matched marker is surfaced in the
+    // error, preserving this bin's exact `forbidden marker in projection: {marker}`.
+    friday_hub::refs_guard::reject_forbidden_output(
+        rendered,
+        &[
+            "provider_native_synced",
+            "raw transcript",
+            "raw_provider",
+            "raw-channel",
+            "raw-chat",
+        ],
+    )
+    .map_err(|marker| format!("forbidden marker in projection: {marker}"))
 }
 
 #[cfg(test)]
