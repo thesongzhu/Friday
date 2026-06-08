@@ -198,12 +198,14 @@ pub struct RawToolCall {
 /// failures the caller fail-closes on — never a silent default.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentError {
-    /// The provider/route call itself failed (network / 5xx / rate-limit / auth /
-    /// bad-response / no-models), carrying the STRUCTURED [`friday_deepseek::DeepSeekError`]
-    /// instead of stringifying it. This preserves the variant so the run_loop error site can
-    /// classify it via [`crate::retry::RetryDisposition::classify_deepseek`] and BOUND-retry
-    /// only the transient (`Retryable`) cases — a `Terminal` (auth/credential/validation) one
-    /// is surfaced immediately, exactly as before. The error's `Display`/`Debug` is the
+    /// The provider/route call itself failed (network / 5xx / request-timeout / auth /
+    /// client-4xx / rate-limit / bad-response / no-models), carrying the STRUCTURED
+    /// [`friday_deepseek::DeepSeekError`] instead of stringifying it. This preserves the
+    /// variant so the run_loop error site can classify it via
+    /// [`crate::retry::RetryDisposition::classify_deepseek`] and BOUND-retry only the
+    /// transient (`Retryable`: network/5xx/408) cases — a `Terminal` one (auth / credential /
+    /// client-4xx / 429-rate-limit / validation) is surfaced immediately. The error's
+    /// `Display`/`Debug` is the
     /// crate's own coarse, secret-free message (status code / kind only; never the API key
     /// or response body — see `map_ureq_err`), so this leaks no more than the prior
     /// `format!("{e:?}")` did.
@@ -4645,7 +4647,8 @@ mod tests {
         )
     }
 
-    /// A transient (Retryable) route error: `ProviderUnavailable` (network / 5xx / rate-limit).
+    /// A transient (Retryable) route error: `ProviderUnavailable` (network/transport,
+    /// request-timeout 408, or server-side 5xx) — retrying the SAME route may fix it.
     fn transient_route_err() -> Result<MeteredStep, AgentError> {
         Err(AgentError::Route(
             friday_deepseek::DeepSeekError::ProviderUnavailable("HTTP 503".to_string()),
@@ -4655,6 +4658,15 @@ mod tests {
     /// A Terminal route error: `Auth` (credential rejected) — must NEVER be retried.
     fn terminal_route_err() -> Result<MeteredStep, AgentError> {
         Err(AgentError::Route(friday_deepseek::DeepSeekError::Auth(401)))
+    }
+
+    /// A Terminal client-side route error: a 429 rate-limit (also covers 400/404/422).
+    /// Terminal because there is no backoff mechanism here — retrying would only hammer a
+    /// rate-limited provider — so it must fail closed after exactly ONE provider attempt.
+    fn client_error_route_err(status: u16) -> Result<MeteredStep, AgentError> {
+        Err(AgentError::Route(
+            friday_deepseek::DeepSeekError::ClientError { status },
+        ))
     }
 
     #[test]
@@ -4753,6 +4765,105 @@ mod tests {
             "a Terminal route error is NOT retried"
         );
         assert_eq!(db.count("token_ledger").unwrap(), 0, "nothing billed");
+    }
+
+    #[test]
+    fn loop_does_not_retry_terminal_client_4xx_or_429_but_does_retry_503() {
+        // (Test 2b) A terminal client error — 429 rate-limit (and 400/404/422) — fails
+        // closed IMMEDIATELY: exactly ONE provider call, run Errored, nothing billed. This is
+        // the #593 LOW fix: such errors were previously folded into ProviderUnavailable and
+        // wastefully retried up to RUN_LOOP_MAX_PROVIDER_ATTEMPTS (hammering a rate-limited
+        // provider with no backoff). The boundary partner (a 503) STILL retries — proving the
+        // change is a precise re-partition, not a blanket "stop retrying everything".
+        for terminal_status in [429u16, 400, 422] {
+            let label = format!("retry-client-{terminal_status}");
+            let root = TempDir::new(&label);
+            let db = Db::open_hub(&temp_path(&label)).unwrap();
+            agent_run::create_run(db.conn(), "r1", "do it", 1).unwrap();
+            let client = RetryScriptedClient::new(vec![
+                client_error_route_err(terminal_status),
+                // A success is scripted next; the loop must NEVER reach it for a terminal error.
+                Ok(ok_step(
+                    AgentStep::Finish {
+                        message: "should-not-reach".to_string(),
+                    },
+                    10,
+                    5,
+                )),
+            ]);
+            let executor = FsToolExecutor::new(&root.0);
+            let out = run_loop(
+                &client,
+                &executor,
+                db.conn(),
+                "r1",
+                "do it",
+                "",
+                SECRET,
+                &no_approval(),
+                5,
+                1000,
+            )
+            .unwrap();
+            assert_eq!(
+                out.status,
+                LoopStatus::Errored,
+                "terminal client error (HTTP {terminal_status}) fails closed"
+            );
+            assert_eq!(out.turns, 1);
+            assert_eq!(
+                client.provider_calls(),
+                1,
+                "a terminal client error (HTTP {terminal_status}) is NOT retried"
+            );
+            assert_eq!(
+                db.count("token_ledger").unwrap(),
+                0,
+                "nothing billed for HTTP {terminal_status}"
+            );
+            // The surfaced error string is coarse/secret-free: status + kind only.
+            let detail = format!(
+                "agent_error:{}",
+                AgentError::Route(friday_deepseek::DeepSeekError::ClientError {
+                    status: terminal_status
+                },)
+            );
+            assert!(detail.contains(&terminal_status.to_string()));
+            assert!(!detail.contains("Bearer") && !detail.contains("Authorization"));
+        }
+
+        // Boundary partner: a transient 503 IS still retried (bounded), confirming the
+        // re-partition did not over-broaden terminality.
+        {
+            let root = TempDir::new("retry-503-still-retries");
+            let db = Db::open_hub(&temp_path("retry-503-still-retries")).unwrap();
+            agent_run::create_run(db.conn(), "r1", "do it", 1).unwrap();
+            let client = RetryScriptedClient::new(vec![transient_route_err()]);
+            let executor = FsToolExecutor::new(&root.0);
+            let out = run_loop(
+                &client,
+                &executor,
+                db.conn(),
+                "r1",
+                "do it",
+                "",
+                SECRET,
+                &no_approval(),
+                5,
+                1000,
+            )
+            .unwrap();
+            assert_eq!(
+                out.status,
+                LoopStatus::Errored,
+                "exhausted retries fail closed"
+            );
+            assert_eq!(
+                client.provider_calls() as u32,
+                RUN_LOOP_MAX_PROVIDER_ATTEMPTS,
+                "a transient 503 IS retried up to the bound (terminality not over-broadened)"
+            );
+        }
     }
 
     #[test]

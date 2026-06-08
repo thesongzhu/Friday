@@ -42,15 +42,24 @@ impl RetryDisposition {
     }
 
     /// Classify a DeepSeek provider error. ONLY a transient
-    /// [`DeepSeekError::ProviderUnavailable`] (network / 5xx / rate-limit) is
-    /// `Retryable`; credential / auth / bad-response / no-models / core errors are
-    /// `Terminal` — retrying cannot fix them, and (per the crate's own variant docs)
-    /// none of them is ever a fallback trigger.
+    /// [`DeepSeekError::ProviderUnavailable`] (network/transport, request-timeout 408,
+    /// or server-side 5xx) is `Retryable`; everything else is `Terminal` — retrying
+    /// cannot fix it, and (per the crate's own variant docs) none is ever a fallback
+    /// trigger.
+    ///
+    /// In particular [`DeepSeekError::ClientError`] — a terminal client-side 4xx
+    /// (400/404/422) and **429 rate-limit** — is `Terminal`, NOT retried. A 4xx will
+    /// not become valid on a bare retry, and 429-as-terminal is deliberate: there is
+    /// no backoff mechanism here (the run_loop retry has no injected clock / no sleep),
+    /// so retrying a 429 would only HAMMER a rate-limited provider with no delay. A
+    /// future backoff slice could reclassify 429 as retryable-with-delay; until then,
+    /// fail closed.
     pub fn classify_deepseek(err: &DeepSeekError) -> Self {
         match err {
             DeepSeekError::ProviderUnavailable(_) => RetryDisposition::Retryable,
             DeepSeekError::CredentialMissing
             | DeepSeekError::Auth(_)
+            | DeepSeekError::ClientError { .. }
             | DeepSeekError::BadResponse(_)
             | DeepSeekError::NoModels
             | DeepSeekError::Core(_) => RetryDisposition::Terminal,
@@ -93,11 +102,17 @@ mod tests {
             RetryDisposition::classify_deepseek(&DeepSeekError::ProviderUnavailable("503".into())),
             RetryDisposition::Retryable
         );
-        // Everything else is Terminal — retrying cannot fix it. (All 5 non-transient
-        // variants pinned, incl. Core — exhaustive coverage of the mapping.)
+        // Everything else is Terminal — retrying cannot fix it. (All non-transient
+        // variants pinned, incl. Core and the new client-4xx/429 ClientError —
+        // exhaustive coverage of the mapping.)
         for terminal in [
             DeepSeekError::CredentialMissing,
             DeepSeekError::Auth(401),
+            // Terminal client errors: malformed/not-found 4xx AND 429 rate-limit (no
+            // backoff ⇒ terminal, not a hammering retry).
+            DeepSeekError::ClientError { status: 400 },
+            DeepSeekError::ClientError { status: 422 },
+            DeepSeekError::ClientError { status: 429 },
             DeepSeekError::BadResponse("garbage".into()),
             DeepSeekError::NoModels,
             DeepSeekError::Core(friday_core::CoreError::BlockedTransfer("x".into())),
@@ -108,6 +123,14 @@ mod tests {
                 "{terminal:?} must be terminal"
             );
         }
+        // And a transient 5xx-style ProviderUnavailable IS retryable (boundary partner
+        // to the 4xx terminal cases above).
+        assert_eq!(
+            RetryDisposition::classify_deepseek(&DeepSeekError::ProviderUnavailable(
+                "HTTP 503".into()
+            )),
+            RetryDisposition::Retryable
+        );
     }
 
     #[test]
