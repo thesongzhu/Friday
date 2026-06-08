@@ -8,22 +8,30 @@
 //! per run so the answer can be read back later by the future production route, UI
 //! live-data, and device proof-capture.
 //!
-//! ## Two reads, one boundary (the refs-only wire contract is UNCHANGED)
-//! The store holds the answer TEXT Hub-side, but exposes TWO distinct reads:
+//! ## Three reads, one boundary (the refs-only wire contract is UNCHANGED)
+//! The store holds the answer TEXT Hub-side, but exposes THREE distinct reads —
+//! the security boundary is which one a surface is allowed to call:
 //!
 //! * [`get_run_result`] returns the full [`StoredRunResult`] INCLUDING the answer
-//!   body. This is **Hub-internal only** — for a future production route / UI
-//!   live-data path that runs ON the Hub and is entitled to the body. It must
-//!   never be piped to the `hub_run_readback` bin or any TS-facing/over-the-wire
-//!   surface.
+//!   body. This is **Hub-internal only** — for a Hub-side path entitled to the body.
+//!   It must never be piped to the `hub_run_readback` bin or any TS-facing surface.
 //! * [`get_run_result_ref`] returns the refs-only [`RunResultRef`] — `status` +
-//!   `answer_sha256` + `answer_len` (+ created/audit refs), and **NO answer body**.
-//!   This is the S2-style projection the TS-facing readback consumes, exactly like
-//!   [`crate::agent_run_read::get_run_summary`] omits the run `task` body.
+//!   `answer_sha256` + `answer_len` (+ created/audit refs), and **NO answer body**
+//!   (and **no owner principal**). This is the **(a) refs-only proof projection** the
+//!   public / unauthenticated readback consumes, exactly like
+//!   [`crate::agent_run_read::get_run_summary`] omits the run `task` body. UNCHANGED.
+//! * [`get_run_answer_for_principal`] (D1-Q1) is the **(b) authenticated answer-body
+//!   projection**: it returns the body ONLY to a caller whose principal matches the
+//!   run's bound OWNER principal (recorded in the `owner_principal` column), and
+//!   FAILS CLOSED otherwise (no owner / anonymous owner / anonymous caller / wrong
+//!   principal all DENY — body withheld). The denying / not-found outcomes carry
+//!   neither the body nor the owner id. The transport that authenticates the caller
+//!   and supplies a trusted `caller_principal` is a later slice (D1-Q4).
 //!
-//! Whether an answer body is EVER transported off-Hub is a deferred PRIVACY
-//! decision the operator owns; this module deliberately keeps the body Hub-side
-//! and gives the wire only fingerprints (sha256 + length + status).
+//! Whether an answer body is EVER transported off-Hub is a PRIVACY decision the
+//! operator owns; D1-Q1 admits exactly ONE off-Hub path — to the authenticated
+//! OWNER — while the wire's proof surface still gets only fingerprints (sha256 +
+//! length + status), never the body and never the owner principal.
 //!
 //! ## Fingerprint cannot drift from the body
 //! `answer_sha256` + `answer_len` are DERIVED from the answer bytes at the persist
@@ -45,6 +53,7 @@
 //! capture are NOT wired (later tracks). PROOF-ONLY; NOT a v1 GO.
 
 use crate::error::{Result, StorageError};
+use friday_core::gate::{is_anonymous_principal, Actor, ActorKind};
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 
@@ -65,10 +74,21 @@ pub struct RunResult {
     /// Optional soft link to the audit-ledger receipt for this run (a `TEXT` ref,
     /// no FK — matches the established `*_ref` soft-link convention).
     pub audit_ref: Option<String>,
+    /// D1-Q1: the run's bound OWNER principal — WHO is entitled to read the answer
+    /// BODY back via the authenticated projection ([`get_run_answer_for_principal`]).
+    /// `None` (the default) means NO owner is recorded, which FAILS CLOSED on the
+    /// body read (an unowned answer is never released to anyone). S4 binds this
+    /// principal at runtime into the gate `Actor`/digest; a persist caller that
+    /// knows the run's principal records it here via [`RunResult::with_owner_principal`]
+    /// so the authenticated readback can enforce `caller == owner`.
+    pub owner_principal: Option<String>,
 }
 
 impl RunResult {
-    /// Convenience constructor.
+    /// Convenience constructor. The owner principal defaults to `None`
+    /// (fail-closed: no authenticated body read until an owner is recorded via
+    /// [`RunResult::with_owner_principal`]). This signature is deliberately
+    /// unchanged so existing callers compile untouched.
     pub fn new(
         status: impl Into<String>,
         answer: impl Into<String>,
@@ -78,12 +98,23 @@ impl RunResult {
             status: status.into(),
             answer: answer.into(),
             audit_ref,
+            owner_principal: None,
         }
+    }
+
+    /// Record the run's bound OWNER principal (D1-Q1). This is the principal the
+    /// authenticated answer-body read ([`get_run_answer_for_principal`]) matches
+    /// `caller_principal` against; without it the body read fails closed.
+    #[must_use]
+    pub fn with_owner_principal(mut self, owner_principal: impl Into<String>) -> Self {
+        self.owner_principal = Some(owner_principal.into());
+        self
     }
 }
 
 /// A full Hub-side run-result record, INCLUDING the answer body. Returned by
-/// [`get_run_result`] for Hub-internal callers only — never the wire.
+/// [`get_run_result`] for Hub-internal callers only — never the wire. Also the
+/// payload of an ownership-GRANTED authenticated read ([`RunAnswerAccess::Granted`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoredRunResult {
     pub run_id: String,
@@ -96,6 +127,9 @@ pub struct StoredRunResult {
     pub answer_len: i64,
     pub audit_ref: Option<String>,
     pub created_at: i64,
+    /// D1-Q1: the run's bound OWNER principal (the axis the authenticated body read
+    /// keys on). `None` ⇒ no owner recorded ⇒ fail-closed on the body read.
+    pub owner_principal: Option<String>,
 }
 
 /// A REFS-ONLY projection of a run result: status + the answer fingerprint
@@ -121,6 +155,54 @@ pub struct RunResultRef {
 pub enum PersistRunResultOutcome {
     Persisted,
     DuplicateIdentical,
+}
+
+/// The outcome of an OWNERSHIP-GATED answer-body read ([`get_run_answer_for_principal`]).
+///
+/// This is the **(b) authenticated answer-body projection** — distinct from the
+/// **(a) refs-only proof projection** ([`get_run_result_ref`]). The answer BODY is
+/// released ONLY in [`RunAnswerAccess::Granted`]; every other variant is BODY-free
+/// AND OWNER-ID-free, so a denied (non-owner / anonymous) caller learns nothing
+/// about the answer or who owns it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RunAnswerAccess {
+    /// The caller's principal matched the run's bound owner principal: the full
+    /// [`StoredRunResult`] (INCLUDING the answer body) is released to this
+    /// authenticated owner.
+    Granted(StoredRunResult),
+    /// Access denied — the answer body is WITHHELD. Carries only a coarse,
+    /// body-free, owner-id-free [`AnswerDenyReason`]; never the answer or the owner.
+    Denied(AnswerDenyReason),
+    /// No stored result exists for this `run_id` (nothing to read).
+    NotFound,
+}
+
+/// Why an ownership-gated answer-body read was denied. Deliberately PAYLOAD-FREE:
+/// it carries neither the answer body nor the run's owner principal, so a denied
+/// caller learns nothing beyond "denied, for this coarse reason".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnswerDenyReason {
+    /// The run has NO bound owner principal (NULL / empty / `public` / `public:default`).
+    /// Fail-closed: an answer with no real owner is released to NO ONE (no anonymous
+    /// body access).
+    NoOwnerPrincipal,
+    /// The CALLER's principal is anonymous / public / empty — a public caller never
+    /// reads an answer body.
+    AnonymousCaller,
+    /// The caller is a known, non-anonymous principal but is NOT the run's owner.
+    PrincipalMismatch,
+}
+
+/// True if `principal` is anonymous / public / empty under the SAME sentinel set
+/// the gate uses ([`friday_core::gate::is_anonymous_principal`]), so `""`, `"public"`,
+/// and `"public:default"` all fail closed. The actor `kind`/`id` are irrelevant to
+/// that check (it inspects only `principal_id`); we pass a placeholder.
+fn is_anonymous_principal_str(principal: &str) -> bool {
+    is_anonymous_principal(&Actor {
+        kind: ActorKind::Owner,
+        id: String::new(),
+        principal_id: Some(principal.to_string()),
+    })
 }
 
 /// Lowercase-hex SHA-256 of `bytes`.
@@ -174,8 +256,9 @@ pub fn persist_run_result(
         None => {
             tx.execute(
                 "INSERT INTO run_result
-                    (run_id, status, answer, answer_sha256, answer_len, audit_ref, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    (run_id, status, answer, answer_sha256, answer_len, audit_ref, created_at,
+                     owner_principal)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     run_id,
                     result.status,
@@ -184,6 +267,7 @@ pub fn persist_run_result(
                     answer_len,
                     result.audit_ref,
                     now_ms,
+                    result.owner_principal,
                 ],
             )?;
             PersistRunResultOutcome::Persisted
@@ -202,7 +286,8 @@ pub fn persist_run_result(
 pub fn get_run_result(conn: &Connection, run_id: &str) -> Result<Option<StoredRunResult>> {
     let row = conn
         .query_row(
-            "SELECT run_id, status, answer, answer_sha256, answer_len, audit_ref, created_at
+            "SELECT run_id, status, answer, answer_sha256, answer_len, audit_ref, created_at,
+                    owner_principal
              FROM run_result WHERE run_id = ?1",
             [run_id],
             |r| {
@@ -214,6 +299,7 @@ pub fn get_run_result(conn: &Connection, run_id: &str) -> Result<Option<StoredRu
                     answer_len: r.get(4)?,
                     audit_ref: r.get(5)?,
                     created_at: r.get(6)?,
+                    owner_principal: r.get(7)?,
                 })
             },
         )
@@ -246,6 +332,62 @@ pub fn get_run_result_ref(conn: &Connection, run_id: &str) -> Result<Option<RunR
         )
         .optional()?;
     Ok(row)
+}
+
+/// AUTHENTICATED, ownership-gated read of a run's answer BODY by `run_id`.
+///
+/// This is the **(b) authenticated answer-body projection** (D1-Q1). It releases the
+/// answer body ONLY when `caller_principal` matches the run's bound OWNER principal
+/// (the `owner_principal` recorded at persist time). The **(a) refs-only proof
+/// projection** is [`get_run_result_ref`] (unchanged — body-free AND owner-free, for
+/// public / unauthenticated proof surfaces).
+///
+/// Fail-closed on every ambiguity (an over-deny is safe; releasing a body is not):
+/// * no stored result for `run_id` → [`RunAnswerAccess::NotFound`];
+/// * stored result has NO / empty / `public` / `public:default` owner →
+///   [`RunAnswerAccess::Denied`]`(`[`AnswerDenyReason::NoOwnerPrincipal`]`)` — an
+///   unowned answer is released to NO ONE (no anonymous body access);
+/// * `caller_principal` is empty / `public` / `public:default` →
+///   [`AnswerDenyReason::AnonymousCaller`] (a public caller never reads a body);
+/// * a real owner exists but `caller_principal` != owner →
+///   [`AnswerDenyReason::PrincipalMismatch`].
+///
+/// The body is returned ONLY inside [`RunAnswerAccess::Granted`]. This function never
+/// logs or prints the body (or the owner principal), and the `Denied` / `NotFound`
+/// variants carry neither. The transport that AUTHENTICATES the caller and supplies a
+/// TRUSTED `caller_principal` is a later slice (D1-Q4); this projection takes
+/// `caller_principal` as a trusted argument and enforces only the ownership match.
+pub fn get_run_answer_for_principal(
+    conn: &Connection,
+    run_id: &str,
+    caller_principal: &str,
+) -> Result<RunAnswerAccess> {
+    // Read the full record Hub-side; the body never leaves this function except via Granted.
+    let stored = match get_run_result(conn, run_id)? {
+        Some(s) => s,
+        None => return Ok(RunAnswerAccess::NotFound),
+    };
+
+    // Fail-closed: a run with no real (non-anonymous) bound owner releases its body to
+    // NO ONE. A NULL/empty/`public` owner is treated identically — no anonymous owner.
+    let owner = match stored.owner_principal.as_deref() {
+        Some(o) if !is_anonymous_principal_str(o) => o.to_string(),
+        _ => return Ok(RunAnswerAccess::Denied(AnswerDenyReason::NoOwnerPrincipal)),
+    };
+
+    // Fail-closed: an anonymous / public / empty caller never reads an answer body,
+    // even if (pathologically) a stored owner string compared equal.
+    if is_anonymous_principal_str(caller_principal) {
+        return Ok(RunAnswerAccess::Denied(AnswerDenyReason::AnonymousCaller));
+    }
+
+    // The ownership match: exact principal equality. A mismatch (including incidental
+    // whitespace) over-denies, which is the safe direction.
+    if caller_principal == owner {
+        Ok(RunAnswerAccess::Granted(stored))
+    } else {
+        Ok(RunAnswerAccess::Denied(AnswerDenyReason::PrincipalMismatch))
+    }
 }
 
 #[cfg(test)]
@@ -392,5 +534,141 @@ mod tests {
         let db = Db::open_hub(&tmp("missing")).unwrap();
         assert!(get_run_result(db.conn(), "nope").unwrap().is_none());
         assert!(get_run_result_ref(db.conn(), "nope").unwrap().is_none());
+    }
+
+    // --- D1-Q1: authenticated (ownership-gated) answer-body projection ----------
+
+    const Q1_BODY: &str = "ANSWER-BODY-CANARY-only-the-owner-may-read-this";
+    const Q1_OWNER: &str = "principal:alice";
+    const Q1_OTHER: &str = "principal:bob";
+
+    /// Persist a run owned by `owner` (or unowned when `owner` is `None`) and return the db.
+    fn seed_owned(tag: &str, run_id: &str, owner: Option<&str>) -> Db {
+        let db = Db::open_hub(&tmp(tag)).unwrap();
+        let mut result = RunResult::new("finished", Q1_BODY, Some("audit-q1".to_string()));
+        if let Some(o) = owner {
+            result = result.with_owner_principal(o);
+        }
+        persist_run_result(db.conn(), run_id, &result, 4242).unwrap();
+        db
+    }
+
+    #[test]
+    fn owner_principal_reads_its_own_answer_body() {
+        let db = seed_owned("q1-grant", "run-q1", Some(Q1_OWNER));
+        match get_run_answer_for_principal(db.conn(), "run-q1", Q1_OWNER).unwrap() {
+            RunAnswerAccess::Granted(stored) => {
+                assert_eq!(
+                    stored.answer, Q1_BODY,
+                    "the owner must receive the real body"
+                );
+                assert_eq!(stored.owner_principal.as_deref(), Some(Q1_OWNER));
+                assert_eq!(stored.answer_sha256, sha256_hex(Q1_BODY.as_bytes()));
+            }
+            other => panic!("owner must be Granted the body, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn different_principal_is_denied_and_gets_no_body_or_owner() {
+        let db = seed_owned("q1-mismatch", "run-q1", Some(Q1_OWNER));
+        let access = get_run_answer_for_principal(db.conn(), "run-q1", Q1_OTHER).unwrap();
+        assert_eq!(
+            access,
+            RunAnswerAccess::Denied(AnswerDenyReason::PrincipalMismatch)
+        );
+        // Canary: a denied (non-owner) caller learns NEITHER the answer body NOR who owns it.
+        let rendered = format!("{access:?}");
+        assert!(
+            !rendered.contains(Q1_BODY),
+            "a deny result must never carry the answer body: {rendered}"
+        );
+        assert!(
+            !rendered.contains(Q1_OWNER),
+            "a deny result must never leak the owner principal: {rendered}"
+        );
+    }
+
+    #[test]
+    fn run_with_no_owner_fails_closed_no_anonymous_body() {
+        // The run was persisted via the unchanged 3-arg `new` -> owner_principal = None.
+        let db = seed_owned("q1-noowner", "run-q1", None);
+        // Even the (correct) status etc. is stored, but the body is released to NO ONE,
+        // including a caller that supplies a perfectly valid-looking principal.
+        let access = get_run_answer_for_principal(db.conn(), "run-q1", Q1_OWNER).unwrap();
+        assert_eq!(
+            access,
+            RunAnswerAccess::Denied(AnswerDenyReason::NoOwnerPrincipal)
+        );
+        assert!(
+            !format!("{access:?}").contains(Q1_BODY),
+            "the no-owner fail-closed deny must never carry the body"
+        );
+        // ...and the body genuinely IS still stored Hub-side (the Hub-internal read sees it),
+        // proving the deny is an AUTHORIZATION decision, not missing data.
+        assert_eq!(
+            get_run_result(db.conn(), "run-q1").unwrap().unwrap().answer,
+            Q1_BODY
+        );
+    }
+
+    #[test]
+    fn anonymous_or_public_caller_is_denied_even_for_an_owned_run() {
+        let db = seed_owned("q1-anoncaller", "run-q1", Some(Q1_OWNER));
+        for anon in ["", "   ", "public", "public:default", "PUBLIC"] {
+            let access = get_run_answer_for_principal(db.conn(), "run-q1", anon).unwrap();
+            assert_eq!(
+                access,
+                RunAnswerAccess::Denied(AnswerDenyReason::AnonymousCaller),
+                "anonymous/public caller '{anon}' must be denied"
+            );
+            assert!(
+                !format!("{access:?}").contains(Q1_BODY),
+                "an anonymous-caller deny must never carry the body (caller '{anon}')"
+            );
+        }
+    }
+
+    #[test]
+    fn owner_recorded_as_public_is_treated_as_no_owner() {
+        // A run whose recorded owner is itself an anonymous/public sentinel must NOT be
+        // readable by a caller passing that same sentinel — it is still NO real owner.
+        let db = seed_owned("q1-pubowner", "run-q1", Some("public"));
+        let access = get_run_answer_for_principal(db.conn(), "run-q1", "public").unwrap();
+        // Caller-anonymity is checked, but no-owner is the governing fail-closed reason here;
+        // either way the body is withheld. We assert the body never escapes.
+        assert!(
+            matches!(access, RunAnswerAccess::Denied(_)),
+            "got {access:?}"
+        );
+        assert!(!format!("{access:?}").contains(Q1_BODY));
+    }
+
+    #[test]
+    fn unknown_run_is_not_found_not_a_silent_grant() {
+        let db = Db::open_hub(&tmp("q1-missing")).unwrap();
+        assert_eq!(
+            get_run_answer_for_principal(db.conn(), "nope", Q1_OWNER).unwrap(),
+            RunAnswerAccess::NotFound
+        );
+    }
+
+    #[test]
+    fn refs_only_projection_still_carries_no_body_and_no_owner() {
+        // Regression: the refs-only proof projection is UNCHANGED — no body, and it
+        // must not leak the new owner_principal column either.
+        let db = seed_owned("q1-refs", "run-q1", Some(Q1_OWNER));
+        let refs = get_run_result_ref(db.conn(), "run-q1").unwrap().unwrap();
+        let rendered = format!("{refs:?}");
+        assert!(
+            !rendered.contains(Q1_BODY),
+            "refs-only must never carry the answer body: {rendered}"
+        );
+        assert!(
+            !rendered.contains(Q1_OWNER),
+            "refs-only must never carry the owner principal: {rendered}"
+        );
+        // It does still expose the body-free fingerprint.
+        assert_eq!(refs.answer_sha256, sha256_hex(Q1_BODY.as_bytes()));
     }
 }

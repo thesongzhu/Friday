@@ -40,8 +40,9 @@ pub use pending_request::{
     set_pending_status, PendingApprovalRequest,
 };
 pub use run_result::{
-    get_run_result, get_run_result_ref, persist_run_result, PersistRunResultOutcome, RunResult,
-    RunResultRef, StoredRunResult,
+    get_run_answer_for_principal, get_run_result, get_run_result_ref, persist_run_result,
+    AnswerDenyReason, PersistRunResultOutcome, RunAnswerAccess, RunResult, RunResultRef,
+    StoredRunResult,
 };
 pub use schema::{hub_migrations, phone_migrations, HUB_ONLY_TABLES, PHONE_ONLY_TABLES};
 
