@@ -314,6 +314,16 @@ export interface CreateFridayApiRuntimeDeps {
    */
   allowTestOnlyAgentRunStartExecution?: boolean;
   /**
+   * execrun-replacement slice 4 (DARK): per-run "route this run via the future Rust
+   * read-only loop" flag. DEFAULT-FALSE — leave unset in production/runtime. When unset
+   * (default) the startRun HTTP route never even evaluates the qualifying predicate and
+   * behavior is byte-identical to today. When set true, the route-bound startRun wrapper
+   * computes `qualifiesForRustReadOnlyRoute(...)` and DISCARDS the result — no actual
+   * routing is wired in this slice (the later composition slice consumes the bool). This
+   * flag holds the gate; it does not turn anything on.
+   */
+  routeAgentRunViaRust?: boolean;
+  /**
    * Test-oracle only: allows legacy TypeScript agent run controls in isolated
    * mock/unit validation. Production/runtime callers must leave this unset so
    * agent cancel, rollback, automation-run, plan approval, and tool approval
