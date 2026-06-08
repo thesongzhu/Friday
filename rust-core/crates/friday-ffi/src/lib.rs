@@ -1926,6 +1926,16 @@ fn message_kind_name(m: &friday_protocol::Message) -> &'static str {
         M::MissionLifecycleRequest { .. } => "MissionLifecycleRequest",
         M::MissionLifecycleResult { .. } => "MissionLifecycleResult",
         M::Error { .. } => "Error",
+        // WS-transport substrate (S-A) message kinds (AgentRunRequest /
+        // AgentRunResult, protocol schema v12) land DARK: no FFI surface
+        // constructs, dispatches, or names them yet (server/dispatch/auth are
+        // later sub-slices S-B/S-C). A minimal wildcard keeps this exhaustive
+        // match compiling WITHOUT a behavior-bearing named arm — it deliberately
+        // does NOT match the new variants by name. The only existing consumer of
+        // this fn, the `other => AskResponseFfi::Unsupported` arm in
+        // `to_ask_response`, already routes any unknown kind to Unsupported, so
+        // no production path changes.
+        _ => "Unsupported",
     }
 }
 

@@ -15,6 +15,8 @@
 //! Mission lifecycle commands/results (schema v9).
 //! Bounded Mission timeline hydration (schema v10).
 //! Mission intake/preflight from mobile/desktop/channel surfaces (schema v11).
+//! WS-transport substrate (S-A) for the executeRun-replacement: the agent-run
+//! request/result wire shapes carried over the long-lived sealed session (schema v12).
 //! Session-detail, attachments, and workflow messages remain deferred to their owning
 //! units; for the provider lane, what is still deferred is NOT these wire types but the
 //! real provider ADAPTERS (live dispatch) and the operator-gated remote proof lanes. The
@@ -26,9 +28,16 @@ use std::fmt;
 use thiserror::Error;
 
 /// Highest wire schema version this build speaks.
-pub const CURRENT_SCHEMA_VERSION: u16 = 11;
+///
+/// v12 adds the WS-transport substrate (S-A) message kinds for the
+/// executeRun-replacement (`AgentRunRequest`/`AgentRunResult`). These land DARK:
+/// nothing constructs or dispatches them yet — the server/dispatch/auth arms are
+/// later sub-slices (S-B/S-C). Bumping the wire version here keeps wire-compat
+/// honest (a peer that speaks v12 advertises these kinds exist), even while no
+/// production route emits them.
+pub const CURRENT_SCHEMA_VERSION: u16 = 12;
 /// The inclusive range of versions this build supports.
-pub const SUPPORTED: VersionRange = VersionRange { min: 1, max: 11 };
+pub const SUPPORTED: VersionRange = VersionRange { min: 1, max: 12 };
 
 /// A surface-safe Mission projection. This is the wire shape mobile, desktop, and
 /// channel surfaces may render. It intentionally has no raw provider ids, channel
@@ -852,6 +861,49 @@ pub enum Message {
     /// hub->client: lifecycle mutation receipt. Status changes here are Mission
     /// management facts, not provider completion unless proof_ref says so.
     MissionLifecycleResult { result: MissionLifecycleResultWire },
+    /// trusted-TS-peer->hub: dispatch one production agent-run to the Rust loop
+    /// over the long-lived sealed WS session. **WS-transport substrate (S-A) for
+    /// the executeRun-replacement.** This slice defines ONLY the wire shape — it
+    /// lands DARK: nothing constructs or dispatches it yet. The server, dispatch,
+    /// and auth-verification arms are the later sub-slices S-B and S-C. Truth
+    /// label: `rust_wired` at best, with NO production route, and NOT v1 GO.
+    AgentRunRequest {
+        /// Caller-chosen idempotency/run identifier for this agent-run.
+        run_id: String,
+        /// The agent task/prompt to run on the Rust loop.
+        task: String,
+        /// The TS-token-resolved principal conveyed by the trusted in-TCB peer
+        /// (the only peer on the sealed session). **SHAPE-ONLY here:** a LATER
+        /// sub-slice (S-C) MUST VERIFY this against the sealed session before any
+        /// dispatch; this slice never trusts it. Defining the field does not
+        /// confer trust.
+        forwarded_principal: String,
+        /// The sealed proof bytes the dispatch arm will later verify against the
+        /// session (S-C). **SHAPE-ONLY here** — opaque, unverified at this layer.
+        auth_proof: Vec<u8>,
+    },
+    /// hub->trusted-TS-peer: REFS-ONLY terminal receipt for an agent-run.
+    /// **WS-transport substrate (S-A).** It carries a coarse loop-status label and
+    /// the answer FINGERPRINT (sha256 + length) — and **MUST NOT** carry the
+    /// answer body / `final_message`. The body is delivered SEALED over the
+    /// session by a LATER sub-slice, NEVER as a refs field. This mirrors the
+    /// `AuthedAnswer::proof_refs_json` and `owner_sealed_body_len` discipline.
+    /// Lands DARK. Truth label: `rust_wired` at best, and NOT v1 GO.
+    AgentRunResult {
+        /// The run this result terminates (echoes `AgentRunRequest::run_id`).
+        run_id: String,
+        /// Coarse loop-status label (e.g. completed / denied / no_answer). A
+        /// status here is a loop fact, not a body — see the refs-only note below.
+        status: String,
+        /// sha256 fingerprint of the answer body, when an answer exists. The body
+        /// itself NEVER travels in this message.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        answer_sha256: Option<String>,
+        /// Byte length of the answer body, when an answer exists. A length is a
+        /// ref/fingerprint — never the body bytes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        answer_len: Option<u64>,
+    },
     /// either: explicit error code + message.
     Error { code: ErrorCode, message: String },
 }
@@ -1796,5 +1848,114 @@ mod tests {
             .unwrap()
             .into_core()
             .is_err());
+    }
+
+    // --- WS-transport substrate (S-A) for the executeRun-replacement -----------
+    // These cover the two DARK message kinds added at schema v12. They exercise
+    // ONLY the codec/shape; nothing here constructs a server, dispatch, or auth
+    // path (those are later sub-slices S-B/S-C).
+
+    #[test]
+    fn agent_run_request_round_trips_over_envelope() {
+        let msg = Message::AgentRunRequest {
+            run_id: "run-1".into(),
+            task: "summarize the inbox".into(),
+            // SHAPE-ONLY: a later sub-slice (S-C) verifies these against the
+            // sealed session; the codec just carries them.
+            forwarded_principal: "owner-1".into(),
+            auth_proof: vec![0xDE, 0xAD, 0xBE, 0xEF],
+        };
+        let env = Envelope::new("m1", 1000, msg.clone()).with_correlation("c1");
+        let json = env.encode().unwrap();
+        assert!(json.contains(&format!("\"schema_version\":{CURRENT_SCHEMA_VERSION}")));
+        assert!(json.contains("\"kind\":\"AgentRunRequest\""));
+        let back = Envelope::decode(&json).unwrap();
+        assert_eq!(back, env);
+        assert_eq!(back.message, msg);
+    }
+
+    #[test]
+    fn agent_run_result_round_trips_over_envelope() {
+        // Refs-only terminal receipt: a coarse status + the answer FINGERPRINT.
+        let msg = Message::AgentRunResult {
+            run_id: "run-1".into(),
+            status: "completed".into(),
+            answer_sha256: Some("a".repeat(64)),
+            answer_len: Some(4096),
+        };
+        let env = Envelope::new("m2", 2000, msg.clone()).with_correlation("c2");
+        let json = env.encode().unwrap();
+        assert!(json.contains(&format!("\"schema_version\":{CURRENT_SCHEMA_VERSION}")));
+        assert!(json.contains("\"kind\":\"AgentRunResult\""));
+        let back = Envelope::decode(&json).unwrap();
+        assert_eq!(back, env);
+        assert_eq!(back.message, msg);
+
+        // The fingerprint fields are optional: a no-answer result omits them, and
+        // `skip_serializing_if` keeps them off the wire entirely.
+        let no_answer = Message::AgentRunResult {
+            run_id: "run-2".into(),
+            status: "no_answer".into(),
+            answer_sha256: None,
+            answer_len: None,
+        };
+        let env2 = Envelope::new("m3", 3000, no_answer.clone());
+        let json2 = env2.encode().unwrap();
+        assert!(!json2.contains("answer_sha256"));
+        assert!(!json2.contains("answer_len"));
+        assert_eq!(Envelope::decode(&json2).unwrap().message, no_answer);
+    }
+
+    #[test]
+    fn agent_run_result_is_refs_only_never_carries_the_body() {
+        // STRUCTURAL refs-only proof (mirrors `AuthedAnswer::proof_refs_json` /
+        // the `owner_sealed_body_len` discipline): the serialized AgentRunResult
+        // must contain ONLY the refs fields — run_id, status, and the answer
+        // FINGERPRINT — and NEVER the answer body or any `final_message` key. The
+        // body is sealed over the session by a later sub-slice, never here.
+        const BODY: &str = "TOP-SECRET ANSWER BODY THAT MUST NEVER HIT THE WIRE";
+        let msg = Message::AgentRunResult {
+            run_id: "run-1".into(),
+            status: "completed".into(),
+            answer_sha256: Some("b".repeat(64)),
+            answer_len: Some(BODY.len() as u64),
+        };
+        let json = Envelope::new("m1", 1000, msg).encode().unwrap();
+
+        // No body / final_message field can exist (the struct has no such field),
+        // and no body-bearing key name leaks onto the wire.
+        for forbidden in [
+            "answer\"",
+            "\"answer\":",
+            "final_message",
+            "body",
+            "final_answer",
+            "plaintext",
+            BODY,
+        ] {
+            assert!(
+                !json.contains(forbidden),
+                "AgentRunResult leaked a body field/key: {forbidden} in {json}"
+            );
+        }
+
+        // What IS allowed: exactly the refs/fingerprint keys.
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let m = parsed.get("message").unwrap().as_object().unwrap();
+        let mut keys: Vec<&str> = m.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec!["answer_len", "answer_sha256", "kind", "run_id", "status"]
+        );
+    }
+
+    #[test]
+    fn schema_version_bumped_to_twelve_for_ws_substrate() {
+        // S-A bumps the wire version so a v12 peer advertises these kinds exist
+        // (wire-compat honesty), even while nothing emits them yet (DARK).
+        assert_eq!(CURRENT_SCHEMA_VERSION, 12);
+        assert_eq!(SUPPORTED.max, 12);
+        assert_eq!(SUPPORTED.min, 1);
     }
 }
