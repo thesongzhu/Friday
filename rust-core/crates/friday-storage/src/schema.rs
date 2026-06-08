@@ -50,6 +50,11 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     "workspace_claim",
     "process_lease",
     "process_observation",
+    // D1-substrate: the durable Hub-side ANSWER STORE keyed by `run_id`. Holds the
+    // run's result/answer text Hub-side (plus its sha256 + length + status); the
+    // phone never runs the agent loop and the TS-facing readback is refs-only, so
+    // the body-bearing table is never created on a phone.
+    "run_result",
 ];
 
 /// Tables present only on a phone (never created on the Hub).
@@ -183,6 +188,17 @@ pub fn hub_migrations() -> Vec<Migration> {
             name: "pending_approval_request",
             destructive: false,
             up: m0014_pending_approval_request,
+        },
+        // D1-substrate: Hub-only `run_result` answer store keyed by `run_id`. The
+        // run's result/answer is persisted Hub-side (with a derived sha256 + length
+        // so the refs-only readback never needs the body). Purely additive (CREATE
+        // TABLE only) — it touches no existing table, so v14 rows/queries are
+        // unaffected.
+        Migration {
+            version: 15,
+            name: "run_result",
+            destructive: false,
+            up: m0015_run_result,
         },
     ]
 }
@@ -375,6 +391,28 @@ CREATE TABLE agent_run_event (
     UNIQUE(run_id, seq)
 );
 CREATE INDEX idx_agent_run_event_run ON agent_run_event(run_id, seq);";
+
+// --- D1-substrate run-result fragment (Hub-only) ----------------------------
+
+// The durable answer store keyed by `run_id` (PK ⇒ one result per run). `answer`
+// is the result body (Hub-side only; never crosses the refs-only readback);
+// `answer_sha256` (lowercase-hex, 64 chars) + `answer_len` (>= 0) are the
+// refs-only fingerprint the wire projection exposes instead of the body; `status`
+// is a coarse outcome label; `audit_ref` is a soft link (no FK) to the run's
+// audit-ledger receipt. The CHECK constraints make a hand-built INSERT with a
+// malformed fingerprint unrepresentable (the typed `persist_run_result` derives
+// both from the body, so they are always well-formed via the API).
+const DDL_RUN_RESULT: &str = "
+CREATE TABLE run_result (
+    run_id        TEXT PRIMARY KEY,
+    status        TEXT NOT NULL,
+    answer        TEXT NOT NULL DEFAULT '',
+    answer_sha256 TEXT NOT NULL CHECK(length(answer_sha256) = 64),
+    answer_len    INTEGER NOT NULL CHECK(answer_len >= 0),
+    audit_ref     TEXT,
+    created_at    INTEGER NOT NULL
+);
+CREATE INDEX idx_run_result_created ON run_result(created_at);";
 
 // --- PNS-001 provider-session fragments (Hub-only) --------------------------
 
@@ -1057,4 +1095,12 @@ fn m0014_pending_approval_request(tx: &Transaction) -> rusqlite::Result<()> {
          );
          CREATE INDEX idx_pending_approval_run ON pending_approval_request(run_id, created_at);",
     )
+}
+
+// D1-substrate: additive Hub-only `run_result` answer store keyed by `run_id`.
+// Purely additive (CREATE TABLE + INDEX only) — touches no existing table, so
+// pre-existing rows and every existing query are unaffected.
+fn m0015_run_result(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_RUN_RESULT)?;
+    Ok(())
 }

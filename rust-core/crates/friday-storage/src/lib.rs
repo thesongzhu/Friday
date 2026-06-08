@@ -25,6 +25,7 @@ pub mod pairing;
 pub mod pending_request;
 pub mod process_registry;
 pub mod provider_session;
+pub mod run_result;
 mod schema;
 pub mod workflow;
 
@@ -37,6 +38,10 @@ pub use migrate::{
 pub use pending_request::{
     get_pending_request, list_pending_requests_for_run, persist_pending_request,
     PendingApprovalRequest,
+};
+pub use run_result::{
+    get_run_result, get_run_result_ref, persist_run_result, PersistRunResultOutcome, RunResult,
+    RunResultRef, StoredRunResult,
 };
 pub use schema::{hub_migrations, phone_migrations, HUB_ONLY_TABLES, PHONE_ONLY_TABLES};
 
