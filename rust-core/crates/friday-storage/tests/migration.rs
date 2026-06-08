@@ -124,6 +124,64 @@ fn forward_migration_adds_run_id_preserving_pre_v13_ledger_rows() {
 }
 
 #[test]
+fn forward_migration_v19_to_v20_backfills_existing_messages_to_pending() {
+    // Session-memory slice-2 additive migration v20: agent_session_message gains
+    // `memory_extract_status TEXT NOT NULL DEFAULT 'pending'`. A PRE-EXISTING v19
+    // message row (seeded before the column existed) must survive the forward ALTER
+    // with its status BACKFILLED to 'pending' (so the first post-upgrade extraction
+    // still reads the full history), and `load_pending_session_messages` must return it.
+    use friday_storage::agent_session::{
+        ensure_session, load_pending_session_messages, SessionMessage,
+    };
+
+    let p = temp_db_path("msg-extract-status-mig");
+    let seeded_id;
+    {
+        let mut migs = hub_migrations();
+        migs.retain(|m| m.version <= 19);
+        let db = Db::open(&p, Profile::Hub, &migs, "v19").unwrap();
+        assert_eq!(db.version().unwrap(), 19);
+        assert!(
+            db.conn()
+                .prepare("SELECT memory_extract_status FROM agent_session_message")
+                .is_err(),
+            "memory_extract_status column must not exist before v20"
+        );
+        // Seed a session + a message with the pre-v20 shape (no status column).
+        ensure_session(db.conn(), "s1", 1).unwrap();
+        seeded_id = friday_storage::agent_session::append_session_message(
+            db.conn(),
+            "s1",
+            &SessionMessage::new("user", "remember this", None),
+            10,
+        )
+        .unwrap();
+    }
+    // Reopen with the full set -> forward-migrate to v20 (the additive ALTER + index).
+    let db = Db::open_hub(&p).unwrap();
+    assert_eq!(db.version().unwrap(), hub_max_version());
+    assert_eq!(
+        db.count("agent_session_message").unwrap(),
+        1,
+        "pre-v20 message row survived the migration"
+    );
+    // The ALTER's DEFAULT backfilled the PRE-EXISTING row to 'pending'.
+    let status: String = db
+        .conn()
+        .query_row(
+            "SELECT memory_extract_status FROM agent_session_message WHERE message_id = ?1",
+            [&seeded_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(status, "pending", "existing row backfills to 'pending'");
+    // ...and the dedup read returns it (so the first post-upgrade extraction sees it).
+    let pending = load_pending_session_messages(db.conn(), "s1").unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].message_id, seeded_id);
+}
+
+#[test]
 fn reopen_is_idempotent_and_preserves_rows() {
     let p = temp_db_path("seeded");
     {

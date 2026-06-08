@@ -27,8 +27,9 @@
 //! A single JSON object: `truth_label="rust_inline_memory_extraction"`,
 //! `proof_only=true`, `ok`, the session/principal IDs (caller-supplied refs),
 //! `messages_read`, `items_parsed`, `sensitive_dropped`, `candidates_created`,
-//! and token counts (`prompt`/`completion`/`total`) + the reported `model` label.
-//! NO message text, NO candidate content, NO secret.
+//! `messages_marked_extracted` (the slice-2 dedup mark — how many source messages this
+//! run consumed so a re-run skips them), and token counts (`prompt`/`completion`/
+//! `total`) + the reported `model` label. NO message text, NO candidate content, NO secret.
 
 use std::env;
 use std::path::Path;
@@ -120,6 +121,7 @@ fn run() -> Result<String, ExtractError> {
         "items_parsed": outcome.items_parsed,
         "sensitive_dropped": outcome.sensitive_dropped,
         "candidates_created": outcome.candidates_created,
+        "messages_marked_extracted": outcome.messages_marked_extracted,
         "token_prompt": outcome.prompt_tokens,
         "token_completion": outcome.completion_tokens,
         "token_total": outcome.total_tokens,
@@ -205,6 +207,7 @@ mod tests {
             "items_parsed": 2,
             "sensitive_dropped": 1,
             "candidates_created": 1,
+            "messages_marked_extracted": 4,
             "token_prompt": 42,
             "token_completion": 13,
             "token_total": 55,

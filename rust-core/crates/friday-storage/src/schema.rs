@@ -267,6 +267,23 @@ pub fn hub_migrations() -> Vec<Migration> {
             destructive: false,
             up: m0019_provider_timeline,
         },
+        // Session-memory slice-2 (dedup): add the `memory_extract_status` column to
+        // `agent_session_message`, mirroring the TS `session_messages.memory_extract_status`.
+        // This is what makes a re-run of the inline memory extraction SKIP already-processed
+        // messages (no duplicate candidates). `ALTER TABLE ... ADD COLUMN ... DEFAULT 'pending'`
+        // is additive and back-compatible: every existing v18 message row reads back as
+        // 'pending' (so the FIRST extraction still reads the full history), and the next run
+        // marks the processed messages terminal so they are not re-extracted. The CHECK
+        // enumerates the full TS status vocabulary so the deferred queue/retry slice
+        // ('queued'/'skipped'/'failed') is not foreclosed; slice-2's inline path uses only
+        // the 'pending' -> 'extracted' transition. Hub-only — `agent_session_message` is a
+        // Hub-only table (never created on a phone), so this migration has no phone twin.
+        Migration {
+            version: 20,
+            name: "session_message_memory_extract_status",
+            destructive: false,
+            up: m0020_session_message_memory_extract_status,
+        },
     ]
 }
 
@@ -1324,4 +1341,29 @@ fn m0018_agent_session(tx: &Transaction) -> rusqlite::Result<()> {
 // no existing table, so pre-existing rows/queries are unaffected.
 fn m0019_provider_timeline(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(DDL_PROVIDER_TIMELINE)
+}
+
+// Session-memory slice-2 (dedup): additive `memory_extract_status` column on the
+// Hub-only `agent_session_message` table (mirrors the TS
+// `session_messages.memory_extract_status`). The inline memory extraction reads only
+// 'pending' messages and marks the processed ones 'extracted', so a RE-RUN reads no
+// pending and produces no duplicate candidates. `ADD COLUMN ... DEFAULT 'pending'`
+// sets EVERY existing row to 'pending' (so the first run after upgrade still reads the
+// full history); the column is `NOT NULL` so a message always has a definite status.
+// The CHECK enumerates the full TS status vocabulary (`'pending','queued','extracted',
+// 'skipped','failed'`) so the deferred queue/retry slice is not foreclosed — slice-2's
+// inline path uses only the 'pending'->'extracted' transition. A partial index on the
+// 'pending' rows keeps the per-session pending SELECT cheap without indexing the
+// terminal rows. Purely additive (ALTER + INDEX only) — touches no other table.
+fn m0020_session_message_memory_extract_status(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "ALTER TABLE agent_session_message
+            ADD COLUMN memory_extract_status TEXT NOT NULL DEFAULT 'pending'
+            CHECK(memory_extract_status IN (
+                'pending', 'queued', 'extracted', 'skipped', 'failed'
+            ));
+         CREATE INDEX idx_agent_session_message_pending
+            ON agent_session_message(agent_session_id, seq)
+            WHERE memory_extract_status = 'pending';",
+    )
 }
