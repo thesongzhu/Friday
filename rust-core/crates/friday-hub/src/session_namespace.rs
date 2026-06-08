@@ -7,7 +7,8 @@
 //! user's memory is isolated PER (account, channel) instead of being shared across every
 //! channel for the same user.
 //!
-//! Format (byte-identical to the TS for ASCII inputs — see the normalization caveat below):
+//! Format (byte-identical to the TS — including the Unicode-aware lowercasing; see the
+//! normalization note on the dot-join residual that is SHARED with the TS oracle):
 //! ```text
 //! tenant.<accountId>.channel.<channel>.user.<normalizedUserId>.shared
 //! ```
@@ -146,16 +147,30 @@ fn falsy_or<'a>(value: Option<&'a str>, fallback: &'a str) -> &'a str {
 /// We implement it with explicit char filtering (no `regex` dependency needed) and verify
 /// equivalence with the ported TS test vectors (`tests` below).
 ///
-/// PARITY CAVEAT (honest): this is byte-identical to the TS for ASCII inputs — the only
-/// inputs real session userIds/accountIds/channels take. The lowercasing uses
-/// `to_ascii_lowercase`, whereas JS `String.toLowerCase()` is Unicode-aware. They diverge
-/// ONLY for the rare non-ASCII char that JS lowercases INTO a kept ASCII char (e.g. the
-/// Kelvin sign `K` → ASCII `k`, or `İ` → `i`): JS would keep it, this port maps it to `-`
-/// (outside the ASCII keep-set). For every other non-ASCII char both map to `-`. This is a
-/// documented parity gap, not a silent divergence; it is irrelevant for ASCII ids.
+/// LOWERCASING (byte-parity with JS `String.toLowerCase()`): Step 1 uses Rust
+/// `str::to_lowercase()`, which — like JS `.toLowerCase()` — implements the Unicode
+/// DEFAULT case mapping (NOT plain ASCII lowering). So a non-ASCII char that JS lowercases
+/// INTO a kept ASCII char also lowers here BEFORE the keep-set filter, and is therefore
+/// kept identically: e.g. the Kelvin sign `K` (U+212A) → `k`, which is in `[a-z0-9._-]` and
+/// survives in BOTH impls (closing the earlier `to_ascii_lowercase` divergence where Rust
+/// would have mapped it to `-` and merged it with a plain `user` id — an isolation MERGE in
+/// the dangerous direction). Any char that lowers to something OUTSIDE the keep-set (most
+/// non-ASCII, e.g. `é`, CJK) maps to `-` in both. Both use Unicode default case mapping, so
+/// they agree on the single-codepoint mappings relevant to the keep-set; this is now a
+/// faithful port, not a documented gap.
+///
+/// Residual (genuinely shared with the TS, not a Rust divergence): the dot is in the
+/// keep-set and segments are `.`-joined, so an id literally containing the joiner/segment
+/// words could in principle collide with a different (account, channel, user) triple. This
+/// is byte-faithful to the TS oracle (same unescaped join + same keep-set), so it is NOT a
+/// Rust regression; closing it is a SHARED TS+Rust hardening follow-on (segment-escape /
+/// dot-reject), out of scope for this parity slice.
 pub fn normalize_namespace_segment(value: &str) -> String {
-    // Step 1: toLowerCase() then replace each char NOT in [a-z0-9._-] with '-'.
-    let lowered = value.to_ascii_lowercase();
+    // Step 1: toLowerCase() then replace each char NOT in [a-z0-9._-] with '-'. Use the
+    // Unicode-aware `to_lowercase` (matches JS `.toLowerCase()`), NOT `to_ascii_lowercase`,
+    // so a non-ASCII char JS folds into a kept ASCII char (e.g. Kelvin U+212A -> 'k') is
+    // kept identically here instead of collapsing to '-'.
+    let lowered = value.to_lowercase();
     let mut mapped = String::with_capacity(lowered.len());
     for ch in lowered.chars() {
         if is_kept(ch) {
@@ -334,6 +349,43 @@ mod tests {
         // Non-ASCII is outside the keep-set and becomes '-' (then collapses/trims).
         assert_eq!(normalize_namespace_segment("héllo"), "h-llo");
         assert_eq!(normalize_namespace_segment("名前"), "default");
+    }
+
+    #[test]
+    fn unicode_lowercasing_matches_js_tolowercase_no_isolation_merge() {
+        // REGRESSION GUARD for the closed Rust!=TS divergence: a non-ASCII char that JS
+        // `.toLowerCase()` folds INTO a kept ASCII char must be KEPT here too (Unicode-aware
+        // `to_lowercase`), NOT mapped to '-'. The Kelvin sign U+212A 'K' lowercases to 'k'.
+        // With the old `to_ascii_lowercase` it stayed non-ASCII -> '-' -> "user-k" actually
+        // collapsing to merge distinct ids; the fix keeps it as 'k'.
+        assert_eq!(normalize_namespace_segment("user\u{212A}"), "userk");
+        // It must therefore NOT collide with a plainly-distinct id...
+        assert_ne!(
+            normalize_namespace_segment("user\u{212A}"), // -> "userk"
+            normalize_namespace_segment("user")          // -> "user"
+        );
+        // ...and it must be IDENTICAL to the already-ASCII spelling JS would have produced.
+        assert_eq!(
+            normalize_namespace_segment("user\u{212A}"),
+            normalize_namespace_segment("userK") // ASCII 'K' -> 'k' -> "userk"
+        );
+        // End-to-end through the resolver: the Kelvin id and the ASCII 'k' id land in the
+        // SAME namespace (correct — they ARE the same user once case-folded), while a plain
+        // "user" id stays in a DIFFERENT namespace (no dangerous merge).
+        let ns_kelvin = resolve_session_memory_namespace(
+            Some("default"),
+            Some("discord"),
+            Some("user\u{212A}"),
+        )
+        .unwrap();
+        let ns_ascii_k =
+            resolve_session_memory_namespace(Some("default"), Some("discord"), Some("userK"))
+                .unwrap();
+        let ns_plain =
+            resolve_session_memory_namespace(Some("default"), Some("discord"), Some("user"))
+                .unwrap();
+        assert_eq!(ns_kelvin, ns_ascii_k);
+        assert_ne!(ns_kelvin, ns_plain);
     }
 
     #[test]

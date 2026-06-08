@@ -185,7 +185,9 @@ pub struct ExtractionOutcome {
     /// The DERIVED memory namespace (slice-3) under which candidates were stored as
     /// `principal_id` — `tenant.<account>.channel.<channel>.user.<user>.shared`. This is a
     /// store-scope LABEL (composed from normalized session-owner ids), NOT a body, so it is
-    /// refs-only safe to render. Empty for the no-pending early return (nothing was stored).
+    /// refs-only safe to render. ALWAYS non-empty on a successful return: it is resolved
+    /// (fail-closed if unresolvable) BEFORE the no-pending early return, so even the
+    /// nothing-to-extract path reports the namespace the session WOULD store under.
     pub derived_namespace: String,
 }
 
