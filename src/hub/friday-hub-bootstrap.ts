@@ -6931,6 +6931,9 @@ export async function createFridayHub(
     allowTestOnlyWorkflowBuilderDraftExecution: config.allowTestOnlyWorkflowBuilderDraftExecution,
     agentRuntime,
     allowTestOnlyAgentRunStartExecution: config.allowTestOnlyAgentRunStartExecution,
+    // execrun-replacement slice 4 (DARK): default-false per-run Rust-route flag. Unset in
+    // production → predicate never evaluated → byte-identical to today.
+    routeAgentRunViaRust: config.routeAgentRunViaRust,
     allowTestOnlyAgentRunControlExecution: config.allowTestOnlyAgentRunControlExecution,
     allowTestOnlyAutonomyLifecycleExecution: config.allowTestOnlyAutonomyLifecycleExecution,
     allowTestOnlyStandingAgendaExecution: config.allowTestOnlyStandingAgendaExecution,

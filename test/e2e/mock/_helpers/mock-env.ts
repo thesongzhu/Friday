@@ -365,6 +365,13 @@ export async function createMockHubEnv(opts?: {
   allowTestOnlySkillConverterExecution?: boolean;
   /** Test-oracle opt-in for the legacy TS provider-detect probe; set false to prove default fail-closed behavior. */
   allowTestOnlyProviderDetectExecution?: boolean;
+  /**
+   * execrun-replacement slice 4 (DARK): per-run Rust-route flag. DEFAULT-FALSE here (honest
+   * dark) — the predicate is unconsumed this slice so the value is cosmetic; the ui browser
+   * e2e exercises /v1/workflow-runs (workflow runtime), NOT the agent startRun route, so no
+   * mock value can change its behavior. Plumbed only for allowTestOnly-pattern consistency.
+   */
+  routeAgentRunViaRust?: boolean;
 }): Promise<MockHubEnv> {
   // Reset deterministic counters
   resetMockCounters();
@@ -425,6 +432,9 @@ export async function createMockHubEnv(opts?: {
       allowTestOnlyRealtimeExecution: opts?.allowTestOnlyRealtimeExecution ?? true,
       allowTestOnlySkillConverterExecution: opts?.allowTestOnlySkillConverterExecution ?? true,
       allowTestOnlyProviderDetectExecution: opts?.allowTestOnlyProviderDetectExecution ?? true,
+      // execrun-replacement slice 4 (DARK): default-FALSE (honest dark), unlike the
+      // allowTestOnly* flags which default true. The predicate is unconsumed this slice.
+      routeAgentRunViaRust: opts?.routeAgentRunViaRust ?? false,
       // Allow private-network targets so mock E2E tests don't require DNS resolution
       ssrfPolicy: opts?.ssrfPolicy ?? { allowPrivateNetwork: true },
     });

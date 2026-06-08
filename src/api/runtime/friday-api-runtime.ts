@@ -905,6 +905,165 @@ export function resolveApiRuntimeCanonicalGateRequired(env: NodeJS.ProcessEnv = 
   return protectedProfile;
 }
 
+// ─── execrun-replacement slice 4: per-run Rust-route qualifying predicate (DARK) ───
+//
+// This predicate decides whether ONE production agent-run qualifies for the future
+// Rust read-only loop. It is DARK substrate: nobody consumes its boolean yet (the
+// later "composition" slice wires the actual routing). With the per-run flag off OR
+// the predicate disqualified, behavior is byte-identical to today — the startRun route
+// falls through to the existing `allowTestOnlyAgentRunStartExecution !== true` 503 stub.
+//
+// Invariants (so dark == byte-identical):
+//   * TOTAL: never throws (any uncertainty / missing field → returns false).
+//   * Side-effect-free: computes a bool, reads nothing external, writes nothing.
+//   * The route-via-Rust flag is checked FIRST and short-circuits; if the flag is not
+//     exactly `true` the predicate is not even evaluated by the route wrapper.
+//   * Every clause is a strict `=== true` / exact-string comparison; nothing truthy.
+//
+// The exact qualifying set (matches the coordinator's pre-authorized predicate):
+//   1. Route-not-method: admitted ONLY from the single startRun HTTP route. Enforced
+//      structurally (the predicate is computed only inside the route-bound startRun
+//      wrapper, never the automation-service copy or the executeRun callers) AND by an
+//      explicit internal marker `invokedFromHttpStartRunRoute === true` that ONLY the
+//      route wrapper passes. The 7 non-route callers (heartbeat/cron/channel-entry/
+//      autonomous/planning-gate/subagent/sessions-tool) reach executeRun directly, not
+//      this route, and never set the marker → never admitted. This avoids the historical
+//      route-only-retirement trap of pinning at the method chokepoint.
+//   2. constraints.readOnly === true (hard-blocks every mutating tool at the runtime).
+//   3. DeepSeek-flash ONLY: providerId === "deepseek" AND requested model ===
+//      "deepseek-v4-flash". A request for deepseek-pro / codex / claude / chat / reasoner
+//      / a missing model → DISQUALIFIED (no silent downgrade to flash). If a taskProfile
+//      model override is present it must ALSO be exactly the flash identifier.
+//   4. The 4 READ tools ONLY: the run must positively grant exactly the Rust read-tool
+//      set {read_file, list_dir, stat_file, search} via `allowedRustRouteTools`. Any other
+//      tool (run_command / write_file / edit_file / append_file / delete_file / move_file /
+//      …) or a missing grant → disqualified. The grant carries the Rust-loop tool names
+//      because it gates what the Rust read-only loop may expose (the composition slice
+//      wires the HTTP-body parse that populates it; today the route never sets it → the
+//      run is disqualified → today's 503).
+//   5. No subagents, no plan-review, no session-mirror dependency, no Pause-able
+//      (mutating/approval) action:
+//        * plan-review: requireReview === true OR planReviewOverride present OR
+//          skipPlanningReview / resumeExistingRun truthy → disqualified.
+//        * session-mirror: input.sessionKey present → disqualified (a sessioned run
+//          participates in session mirroring).
+//        * subagents: no startRun-input field represents them — a subagent child reaches
+//          executeRun, not this HTTP route (covered by the route marker), and the
+//          allow-list excludes spawn_subagent. Stated explicitly; bound structurally.
+//        * Pause-able / mutating-approval actions: structurally precluded by readOnly
+//          (clause 2 hard-blocks mutating tool calls) + the reads-only allow-list
+//          (clause 4). No separate field.
+//
+// NOTE: these are the RUST registry read-tool names (read_file / list_dir / stat_file /
+// search). list_dir/stat_file/search have no TS alias; the grant names what the Rust
+// read-only loop natively exposes, which is exactly what the future route gates.
+export const RUST_ROUTE_READ_TOOL_ALLOWLIST = ["read_file", "list_dir", "stat_file", "search"] as const;
+
+const RUST_ROUTE_DEEPSEEK_PROVIDER_ID = "deepseek";
+const RUST_ROUTE_DEEPSEEK_FLASH_MODEL = "deepseek-v4-flash";
+
+export interface RustRouteQualificationInput {
+  /**
+   * Internal route marker. ONLY the createFridayAgentRoutes-bound startRun wrapper sets
+   * this to `true`; the automation-service startRun copy and every executeRun caller
+   * leave it unset. This is the route-not-method pin (NOT derived from the body-controlled
+   * executionContext.surface).
+   */
+  invokedFromHttpStartRunRoute?: boolean;
+  providerId?: string;
+  model?: string;
+  sessionKey?: string;
+  requireReview?: boolean;
+  constraints?: FridayAgentRunConstraints;
+  taskProfile?: FridayAgentTaskProfileInput;
+  /**
+   * Positive per-run grant of the Rust read-tool set. The composition slice wires the
+   * HTTP-body parse that populates this; today the startRun route never sets it.
+   */
+  allowedRustRouteTools?: string[];
+  skipPlanningReview?: boolean;
+  resumeExistingRun?: boolean;
+  /**
+   * Plan-review OVERRIDE (0h clause-5 disqualifier). An independently-sufficient plan-review
+   * marker: friday-agent-runtime honors a supplied `planReviewOverride` standalone (precedence
+   * over an existing `planReview`, no dependency on skip/resume). PRESENCE → disqualified.
+   * Typed `unknown` because the predicate only checks PRESENCE, never the payload. The
+   * composition slice wires the body-parse that populates this from the real startRun input.
+   */
+  planReviewOverride?: unknown;
+}
+
+/**
+ * Fail-closed qualifying predicate for the future Rust read-only route (DARK).
+ * TOTAL + side-effect-free: returns `true` only when EVERY clause holds; any missing /
+ * uncertain field → `false`. Computes a bool; routes nothing.
+ */
+export function qualifiesForRustReadOnlyRoute(input: RustRouteQualificationInput): boolean {
+  // Clause 1 — route-not-method: explicit internal marker from the HTTP route wrapper only.
+  if (input.invokedFromHttpStartRunRoute !== true) {
+    return false;
+  }
+
+  // Clause 2 — readOnly (hard-blocks mutating tools in the runtime).
+  if (input.constraints?.readOnly !== true) {
+    return false;
+  }
+
+  // Clause 3 — DeepSeek-flash only; no silent downgrade, no pro/codex/claude/missing.
+  if (input.providerId !== RUST_ROUTE_DEEPSEEK_PROVIDER_ID) {
+    return false;
+  }
+  if (input.model !== RUST_ROUTE_DEEPSEEK_FLASH_MODEL) {
+    return false;
+  }
+  if (
+    input.taskProfile?.model !== undefined
+    && input.taskProfile.model !== RUST_ROUTE_DEEPSEEK_FLASH_MODEL
+  ) {
+    return false;
+  }
+
+  // Clause 4 — exactly the 4 Rust read tools, nothing else.
+  const grant = input.allowedRustRouteTools;
+  if (!Array.isArray(grant) || grant.length !== RUST_ROUTE_READ_TOOL_ALLOWLIST.length) {
+    return false;
+  }
+  const granted = new Set(grant);
+  if (granted.size !== RUST_ROUTE_READ_TOOL_ALLOWLIST.length) {
+    return false;
+  }
+  for (const tool of RUST_ROUTE_READ_TOOL_ALLOWLIST) {
+    if (!granted.has(tool)) {
+      return false;
+    }
+  }
+
+  // Clause 5 — no plan-review.
+  if (input.requireReview === true) {
+    return false;
+  }
+  if (input.taskProfile?.id === "review") {
+    return false;
+  }
+  if (input.skipPlanningReview === true || input.resumeExistingRun === true) {
+    return false;
+  }
+  // The 4th plan-review disqualifier (0h): planReviewOverride is independently sufficient —
+  // PRESENCE alone disqualifies (matches the clause-5 contract above), regardless of skip/resume.
+  if (input.planReviewOverride !== undefined) {
+    return false;
+  }
+
+  // Clause 5 — no session-mirror dependency (a sessioned run participates in mirroring).
+  if (typeof input.sessionKey === "string" && input.sessionKey.trim().length > 0) {
+    return false;
+  }
+
+  // Subagents + Pause-able/mutating-approval actions are precluded structurally
+  // (route marker + readOnly + reads-only allow-list); no separate field to check.
+  return true;
+}
+
 export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): FridayApiRuntime {
   const accessTokenTtlSec = deps.accessTokenTtlSec ?? DEFAULT_ACCESS_TTL;
   const refreshTokenTtlSec = deps.refreshTokenTtlSec ?? DEFAULT_REFRESH_TTL;
@@ -3844,6 +4003,31 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           run: async () => throwRetiredAgentRunControl(),
         };
 
+    // execrun-replacement slice 4 (DARK): route-only Rust-route qualification.
+    // This wrapper is handed ONLY to createFridayAgentRoutes (the single startRun HTTP
+    // route) — NOT to the automation-service copy (a non-route caller) above, and NOT to
+    // the executeRun path the 7 non-route callers use. That is the structural half of the
+    // route-not-method pin; the explicit `invokedFromHttpStartRunRoute: true` marker below
+    // is the testable half. The flag is checked FIRST and short-circuits; with the flag off
+    // (default) or the predicate disqualified, the wrapper just calls the unchanged startRun
+    // → byte-identical to today (the existing fail-closed 503 still applies inside startRun).
+    // The computed boolean is consumed by NOBODY yet; the composition slice will route on it.
+    const routeStartRun: typeof startRun = async (input) => {
+      if (deps.routeAgentRunViaRust === true) {
+        // DARK: compute qualification and discard. No routing wired in this slice.
+        void qualifiesForRustReadOnlyRoute({
+          invokedFromHttpStartRunRoute: true,
+          providerId: input.providerId,
+          model: input.model,
+          sessionKey: input.sessionKey,
+          requireReview: input.requireReview,
+          constraints: input.constraints,
+          taskProfile: input.taskProfile,
+        });
+      }
+      return startRun(input);
+    };
+
     for (const route of createFridayAgentRoutes({
       validateRequestedRoute: async (providerId, model, tenantContext) => {
         await deps.providerService.resolveRoute(model, providerId, {
@@ -3851,7 +4035,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           autoValidate: true,
         });
       },
-      startRun,
+      startRun: routeStartRun,
       getRun: (runId) => {
         return deps.db.withReadConnection((db) =>
           enrichAgentRun(agentRepo.getById(db, runId)),
