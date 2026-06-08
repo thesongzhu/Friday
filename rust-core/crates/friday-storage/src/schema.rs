@@ -200,6 +200,20 @@ pub fn hub_migrations() -> Vec<Migration> {
             destructive: false,
             up: m0015_run_result,
         },
+        // S6d: add the executable tool call (`tool_params`, the raw key/value pairs as
+        // JSON) to a Hub-only pending request, so the resume/ingestion entrypoint can
+        // re-execute the EXACT mutation the operator approved after the run Paused. The
+        // `action_digest` already binds these params transitively, so the resume path
+        // cross-checks the reconstructed digest against the stored one; this column only
+        // makes the call REPLAYABLE Hub-side (it never crosses the wire). Purely additive
+        // (a nullable ALTER) — pre-S6d `pending_approval_request` rows read back with
+        // `tool_params = NULL` and every existing query is unaffected.
+        Migration {
+            version: 16,
+            name: "pending_approval_tool_params",
+            destructive: false,
+            up: m0016_pending_approval_tool_params,
+        },
     ]
 }
 
@@ -1103,4 +1117,12 @@ fn m0014_pending_approval_request(tx: &Transaction) -> rusqlite::Result<()> {
 fn m0015_run_result(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(DDL_RUN_RESULT)?;
     Ok(())
+}
+
+// S6d: additive nullable `tool_params` column on `pending_approval_request` (the raw
+// tool-call key/value pairs as JSON), so the resume entrypoint can re-execute the exact
+// approved mutation. `ALTER TABLE ... ADD COLUMN` with no default is additive and
+// back-compatible: existing v14 rows read back as `NULL`.
+fn m0016_pending_approval_tool_params(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch("ALTER TABLE pending_approval_request ADD COLUMN tool_params TEXT;")
 }

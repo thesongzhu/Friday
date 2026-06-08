@@ -149,6 +149,11 @@ fn run() -> Result<String, BridgeError> {
         principal_id,
         disabled_tools,
         read_only,
+        // S6d: no operator key set inline. `HubRuntime::live` resolves it from the
+        // operator-controlled env path (`FRIDAY_OPERATOR_VK_PATH`): UNSET ⇒ fail-closed
+        // (protected actions Pause — the read-mostly dev bridge's behavior is unchanged);
+        // SET ⇒ the loop authorizes via the Ed25519 verify-only policy.
+        operator_vk: None,
     })
     .map_err(|_| BridgeError::new("init_failed"))?;
 

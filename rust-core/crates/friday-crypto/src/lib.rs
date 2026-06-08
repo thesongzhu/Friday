@@ -52,6 +52,26 @@ pub enum CryptoError {
     BadKey,
 }
 
+/// Generate a single-use approval **nonce** (the S6b/S6d pending-request
+/// `approval_id`) from the OS CSPRNG (`OsRng`, OS entropy via getrandom — NOT a
+/// counter, clock, or PID), hex-encoded. 32 bytes of entropy → 64 lowercase hex
+/// chars.
+///
+/// This is what makes the nonce the offline operator signs over UNPREDICTABLE: an
+/// attacker cannot pre-compute or guess a pending request's `approval_id`, and the
+/// gate's single-use `consumed_approval` store keys replay defense on it. Reuses the
+/// same `OsRng` source as [`DataKey::generate`] (XChaCha key material is 32 CSPRNG
+/// bytes), so no extra RNG surface is introduced.
+pub fn generate_approval_nonce() -> String {
+    let bytes = XChaCha20Poly1305::generate_key(&mut OsRng); // 32 CSPRNG bytes
+    let mut s = String::with_capacity(KEY_LEN * 2);
+    for b in bytes.as_slice() {
+        s.push(char::from_digit((b >> 4) as u32, 16).unwrap());
+        s.push(char::from_digit((b & 0x0f) as u32, 16).unwrap());
+    }
+    s
+}
+
 /// A 256-bit data key used to encrypt sensitive fields/blobs.
 #[derive(Clone, PartialEq, Eq, ZeroizeOnDrop)]
 pub struct DataKey([u8; KEY_LEN]);
@@ -274,6 +294,19 @@ mod tests {
             unwrap_data_key(&old, &wrapped_new),
             Err(CryptoError::Open)
         ));
+    }
+
+    #[test]
+    fn approval_nonce_is_csprng_unique_and_64_hex() {
+        let a = generate_approval_nonce();
+        let b = generate_approval_nonce();
+        assert_eq!(a.len(), KEY_LEN * 2, "32 bytes => 64 hex chars");
+        assert!(a
+            .bytes()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        // Two draws from the CSPRNG must differ (a counter/clock-derived nonce would
+        // be predictable; this is the unpredictability property S6d requires).
+        assert_ne!(a, b, "two CSPRNG nonces must not collide");
     }
 
     #[test]

@@ -27,6 +27,7 @@
 use std::path::PathBuf;
 
 use friday_core::gate::{CanonicalApproval, MutatingActionRequest};
+use friday_crypto::OperatorVerifyingKey;
 use friday_deepseek::{DeepSeekClient, DeepSeekError, Transport, UreqTransport};
 use friday_storage::{agent_run, Db, StorageError};
 
@@ -79,6 +80,19 @@ pub struct HubConfig {
     /// tool is blocked before execution (strictly stricter than the default Pause). `false`
     /// ⇒ pre-S4 behavior.
     pub read_only: bool,
+    /// S6d: the operator's PUBLIC Ed25519 verify key — the linchpin. When `Some`, a
+    /// protected (mutating) action authorizes against it via the Ed25519 verify-only
+    /// policy (NEVER the legacy HMAC authorize), and on Pause the loop persists a
+    /// `pending_approval_request` the offline operator can sign + the resume entrypoint
+    /// re-executes. When `None` (NO operator key provisioned), the loop is fail-closed:
+    /// every mutating action Pauses and is NEVER Allowed.
+    ///
+    /// This MUST be loaded from an OPERATOR-CONTROLLED source ([`crate::operator_vk`] — a
+    /// file the operator wrote from the S6c CLI `keygen`, or a `SecureStore` entry the
+    /// operator provisioned). The Hub MUST NOT generate/derive its own keypair here: a
+    /// Hub-minted operator key would be full self-mint. [`HubRuntime::live`] resolves it
+    /// from the operator-controlled env path; tests provision a test key directly.
+    pub operator_vk: Option<OperatorVerifyingKey>,
 }
 
 /// Why the live runtime failed to assemble.
@@ -86,6 +100,11 @@ pub struct HubConfig {
 pub enum HubInitError {
     DeepSeek(DeepSeekError),
     Storage(StorageError),
+    /// S6d: an operator verify key SOURCE was configured (the env path is set) but could
+    /// not be read/parsed. A CLEAR failure — a broken provisioning never silently degrades
+    /// to "no key" (which would be a different, fail-closed-Pause state). An UNSET source
+    /// is NOT an error (it is `operator_vk = None` ⇒ fail-closed Pause).
+    OperatorVk(crate::operator_vk::OperatorVkError),
 }
 
 impl std::fmt::Display for HubInitError {
@@ -94,6 +113,9 @@ impl std::fmt::Display for HubInitError {
             // DeepSeekError's Debug carries no key (verified in friday-deepseek); never prints the secret.
             HubInitError::DeepSeek(e) => write!(f, "deepseek init failed: {e:?}"),
             HubInitError::Storage(e) => write!(f, "storage init failed: {e}"),
+            HubInitError::OperatorVk(e) => {
+                write!(f, "operator verify key provisioning failed: {e:?}")
+            }
         }
     }
 }
@@ -107,7 +129,11 @@ pub struct HubRuntime<T: Transport> {
     routes: RouteRegistry,
     deepseek: DeepSeekAgentLlmClient<T>,
     executor: FsToolExecutor,
-    secret: Vec<u8>,
+    /// S6d: the operator's PUBLIC verify key (provisioned from an operator-controlled
+    /// source). `None` ⇒ fail-closed (protected actions Pause, never Allow). The Hub holds
+    /// ONLY a verify key — never a signing key — so it can verify an operator approval but
+    /// never mint one.
+    operator_vk: Option<OperatorVerifyingKey>,
     approval: Box<dyn ApprovalPolicy>,
     max_turns: u64,
     /// S4 per-run policy: the bound principal (also the memory-recall owner — ONE source,
@@ -134,7 +160,7 @@ impl<T: Transport> HubRuntime<T> {
             routes,
             deepseek,
             executor,
-            secret: config.secret,
+            operator_vk: config.operator_vk,
             approval,
             max_turns: config.max_turns,
             policy,
@@ -181,7 +207,9 @@ impl<T: Transport> HubRuntime<T> {
         let approve = |req: &MutatingActionRequest| self.approval.approve(req);
         // S4: thread the run policy so the bound principal reaches every gate request's
         // Actor (and the action digest) and the disabled/read-only restrictions are
-        // enforced before any tool executes.
+        // enforced before any tool executes. S6d: thread the provisioned operator verify
+        // key so a protected action authorizes via the Ed25519 verify-only policy (never
+        // HMAC); `None` ⇒ fail-closed Pause.
         run_routed_loop_with_policy(
             &self.routes,
             &request,
@@ -191,7 +219,7 @@ impl<T: Transport> HubRuntime<T> {
             run_id,
             task,
             &recall_preamble,
-            &self.secret,
+            self.operator_vk.as_ref(),
             &approve,
             &self.policy,
             self.max_turns,
@@ -237,7 +265,17 @@ impl HubRuntime<UreqTransport> {
     /// Assemble the LIVE runtime: the real DeepSeek client from the env key
     /// (`DeepSeekClient::from_env`, never logs the key) + deny-all approval (safe default).
     /// This is the bootstrap the live e2e proof drives.
-    pub fn live(config: HubConfig) -> Result<Self, HubInitError> {
+    ///
+    /// S6d: if the caller did not pre-provision `config.operator_vk`, resolve it from the
+    /// OPERATOR-CONTROLLED env path ([`crate::operator_vk::provision_operator_vk_from_env`]):
+    /// UNSET ⇒ `None` (fail-closed Pause for protected actions); SET-but-broken ⇒ a hard
+    /// [`HubInitError::OperatorVk`]. The Hub NEVER generates its own operator key here — it
+    /// only loads operator-supplied bytes — so a Hub-minted self-approval is impossible.
+    pub fn live(mut config: HubConfig) -> Result<Self, HubInitError> {
+        if config.operator_vk.is_none() {
+            config.operator_vk = crate::operator_vk::provision_operator_vk_from_env()
+                .map_err(HubInitError::OperatorVk)?;
+        }
         let client = DeepSeekClient::from_env().map_err(HubInitError::DeepSeek)?;
         let agent = DeepSeekAgentLlmClient::new(client);
         Self::new(config, agent, Box::new(DenyAllApprovals)).map_err(HubInitError::Storage)
@@ -384,6 +422,7 @@ mod tests {
                 principal_id: None, // recall disabled by default; the recall test sets it
                 disabled_tools: vec![],
                 read_only: false,
+                operator_vk: None, // S6d: no operator key in these tests ⇒ fail-closed Pause
             },
             agent,
             approval,
@@ -443,6 +482,7 @@ mod tests {
                 principal_id: principal.map(|p| p.to_string()),
                 disabled_tools: vec![],
                 read_only: false,
+                operator_vk: None,
             },
             agent,
             Box::new(DenyAllApprovals),
@@ -671,6 +711,7 @@ mod tests {
                 principal_id: None,
                 disabled_tools: vec!["read_file".to_string()], // <- disabled for this run
                 read_only: false,
+                operator_vk: None,
             },
             agent,
             Box::new(DenyAllApprovals),
@@ -700,35 +741,57 @@ mod tests {
         assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
     }
 
-    /// With a minting owner policy, the mutating write executes ONCE; a replay of the same
-    /// single-use approval on the next turn is refused (Blocked) — one execution, one receipt.
+    /// S6d HMAC-DOWNGRADE CLOSED (composed level): a Hub that CAN mint a valid HMAC
+    /// approval (the [`MintPolicy`] holds the symmetric secret) still cannot complete a
+    /// protected mutation through the composed runtime when NO operator verify key is
+    /// provisioned (`operator_vk: None`, the runtime_with default). The loop's protected
+    /// path is Ed25519-only / fail-closed — it never consults the HMAC authorize — so the
+    /// write Pauses, executes nothing, and writes no file. The positive Ed25519-approved
+    /// completion + replay-refusal is the integration test `s6d_resume_ingestion` (it needs
+    /// an operator SIGNING key, which `friday-hub/src/**` must never reference — see
+    /// `operator_vk::tests::hub_crate_never_references_a_signing_key`).
     #[test]
-    fn composed_mutating_with_approval_executes_then_replay_refused() {
-        // Two IDENTICAL writes: identical action+params → identical digest → the SAME
-        // single-use approval. Turn 0 consumes it (Allow→execute); turn 1's replay of the
-        // same digest is refused. (Different content would be a DIFFERENT digest → a fresh
-        // approval → not a replay at all, so the writes must be identical for this scenario.)
+    fn composed_hmac_minted_approval_cannot_complete_a_protected_mutation_fail_closed() {
         let write =
             "{\"tool\":\"write_file\",\"parameters\":{\"path\":\"out.txt\",\"content\":\"C\"}}";
         let (rt, root, _post) = runtime_with(
-            "approve",
-            &[write, write, "{\"tool\":\"none\"}"],
+            "downgrade",
+            &[write, "{\"tool\":\"none\"}"],
             Box::new(MintPolicy {
                 secret: SECRET.to_vec(),
                 id: "ap-rt".to_string(),
                 expires_at: 1_000_000,
             }),
         );
-        let (_sel, out) = rt.run_task("run-appr", "write twice", 1000).unwrap();
+        let (_sel, out) = rt.run_task("run-appr", "write once", 1000).unwrap();
         assert_eq!(
-            out.executed_tools, 1,
-            "single-use approval executes once; replay refused"
+            out.executed_tools, 0,
+            "an HMAC-minted approval must NOT complete a protected mutation (downgrade closed)"
         );
-        assert!(matches!(out.status, LoopStatus::Blocked));
-        assert_eq!(std::fs::read_to_string(root.join("out.txt")).unwrap(), "C");
-        // Discriminating witness (Finding B): EXACTLY ONE execution receipt on the hash-chain
-        // — the replayed second write produced none. This distinguishes single-vs-double
-        // execution without changing the (necessarily-identical) replay writes.
+        assert!(
+            matches!(out.status, LoopStatus::Paused),
+            "no operator key ⇒ the protected write Pauses, got {:?}",
+            out.status
+        );
+        assert!(
+            !root.join("out.txt").exists(),
+            "the gate withheld the write — no file created (fail-closed, no bypass)"
+        );
+        // The Pause persisted a `pending_approval_request` with a CSPRNG nonce (S6d req 4),
+        // bound to THIS exact action, status `pending` — the offline operator's to-sign item.
+        let (count, nonce_len): (i64, i64) = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT count(*), COALESCE(length(MAX(approval_id)),0) \
+                 FROM pending_approval_request WHERE run_id='run-appr' AND status='pending'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "exactly one pending request persisted on Pause");
+        assert_eq!(nonce_len, 64, "CSPRNG nonce is 32 bytes => 64 hex chars");
+        // No execution receipt on the hash-chain.
         let receipts: i64 = rt
             .db()
             .conn()
@@ -738,10 +801,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(
-            receipts, 1,
-            "one execution receipt; the replay produced none"
-        );
+        assert_eq!(receipts, 0, "no mutation executed ⇒ no execution receipt");
         assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
     }
 
@@ -789,6 +849,7 @@ mod tests {
             principal_id: None, // the live save→recall→answer-carries-marker e2e is a separate proof (PR4)
             disabled_tools: vec![],
             read_only: false,
+            operator_vk: None, // the live operator-approved mutating-completion proof is S6e
         })
         .expect("live runtime assembles (FRIDAY_DEEPSEEK_API_KEY set)");
         let (sel, out) = rt

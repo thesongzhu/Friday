@@ -37,7 +37,7 @@ pub use migrate::{
 };
 pub use pending_request::{
     get_pending_request, list_pending_requests_for_run, persist_pending_request,
-    PendingApprovalRequest,
+    set_pending_status, PendingApprovalRequest,
 };
 pub use run_result::{
     get_run_result, get_run_result_ref, persist_run_result, PersistRunResultOutcome, RunResult,
