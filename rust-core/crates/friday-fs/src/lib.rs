@@ -975,13 +975,19 @@ fn scan_file_into(root: &Path, rel: &str, query: &str, hits: &mut Vec<SearchHit>
 //      cwd via `set_current_dir`). The root is canonicalized/validated to exist first.
 //   4. TIMEOUT + KILL. A wall-clock deadline ([`RUN_COMMAND_TIMEOUT`]); on expiry the child is
 //      SIGKILL'd (and its process group) so a `sleep`/hang cannot pin a hub thread. The
-//      capture is DEADLOCK-FREE: dedicated reader threads drain stdout+stderr to EOF (a child
-//      whose output exceeds the OS pipe buffer can never block on write), capping the RETAINED
-//      bytes while still consuming the rest. The child is `setpgid`'d into its OWN process group
-//      and the group is SIGKILL'd on EVERY return path (not only on timeout) so a fast-exiting
-//      command that left a grandchild holding the pipe write-fd cannot make the reader-join hang
-//      with no deadline (see the inline note for the residual sub-ms pgid-reuse window — accepted
-//      over an unbounded hang, the same trade `std::process::Command::output()` makes).
+//      capture is DEADLOCK-FREE: dedicated reader threads drain stdout+stderr (a child whose
+//      output exceeds the OS pipe buffer can never block on write), capping the RETAINED bytes
+//      while still consuming the rest. The child is `setpgid`'d into its OWN process group, and the
+//      group is SIGKILL'd on EVERY return path (not only on timeout) so any IN-GROUP descendant is
+//      reaped, its write-fd closes, and the pipe EOFs. Critically, the reader drain is itself
+//      DEADLINE-BOUNDED (timeout + a small grace, [`RUN_COMMAND_DRAIN_GRACE`]) and does NOT rely on
+//      EOF: a grandchild that `setsid()`-ESCAPES the process group cannot be reached by the killpg,
+//      but it ALSO cannot pin the hub, because the readers self-terminate at the deadline whether or
+//      not the pipe ever EOFs. So the call ALWAYS returns within ~timeout + grace. The escaped
+//      grandchild is an orphan daemon (inherent to an operator-signed daemon-launching command — the
+//      gate signed a command that double-forks/`setsid`; signing a daemon yields a daemon), NOT a
+//      hub-thread hang. (See the inline note for the residual sub-ms pgid-reuse window — accepted
+//      over an unbounded hang, the same trade `std::process::Command::output()` makes.)
 //   5. OUTPUT BOUND. Combined stdout+stderr is capped at [`RUN_COMMAND_MAX_OUTPUT_BYTES`]
 //      RETAINED bytes (truncated on a char boundary; `output_truncated` set). The model-facing
 //      feedback path bounds this further to 2048 bytes downstream.
@@ -1001,6 +1007,15 @@ pub const RUN_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_s
 /// path sees a useful head without the helper itself buffering unboundedly.
 pub const RUN_COMMAND_MAX_OUTPUT_BYTES: usize = 64 * 1024;
 
+/// Extra grace added to `timeout` to form the OVERALL output-drain deadline. After the leader (and
+/// its in-group descendants) exit, any buffered in-group output still has this long to flush/EOF
+/// before the reader threads are cut loose. It also caps the worst-case extra time a
+/// process-group-ESCAPING (`setsid`) grandchild holding the pipe write-fd open can keep the readers
+/// draining: the call returns within `timeout + RUN_COMMAND_DRAIN_GRACE`, never the grandchild's
+/// lifetime. Small (2s) — enough to flush real output, short enough that the hub thread is never
+/// pinned.
+pub const RUN_COMMAND_DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Fixed, safe `PATH` for the env-scrubbed child. The hub process `PATH` is NOT inherited; only
 /// these standard system dirs are searched for argv[0]. This is load-bearing: after `env_clear()`
 /// a child with no `PATH` cannot resolve a bare program name like `echo`.
@@ -1009,15 +1024,18 @@ pub const RUN_COMMAND_CHILD_PATH: &str = "/usr/bin:/bin:/usr/local/bin";
 /// The result of a successfully-SPAWNED command (a tokenize/spawn FAILURE is an `Err`, never
 /// this). `exit_code` is `None` when the child was killed by a signal (incl. our timeout kill)
 /// or otherwise has no normal exit code. `output` is the combined, byte-capped, char-boundary-
-/// safe stdout+stderr. `output_truncated` ⇒ more output existed than was retained. `timed_out`
-/// ⇒ the child exceeded [`RUN_COMMAND_TIMEOUT`] and was killed.
+/// safe stdout+stderr. `output_truncated` ⇒ the retained output is INCOMPLETE — either more output
+/// existed than the byte cap retained, OR the output-drain deadline ([`RUN_COMMAND_DRAIN_GRACE`])
+/// cut reading short before EOF (e.g. a process-group-escaping grandchild held the pipe open).
+/// `timed_out` ⇒ the child exceeded [`RUN_COMMAND_TIMEOUT`] and was killed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommandRunResult {
     /// Process exit code, or `None` if terminated by a signal (incl. the timeout kill).
     pub exit_code: Option<i32>,
     /// Combined stdout+stderr, byte-capped to [`RUN_COMMAND_MAX_OUTPUT_BYTES`] (char-safe).
     pub output: String,
-    /// Whether output beyond the cap was discarded.
+    /// Whether the retained output is INCOMPLETE: output beyond the byte cap was discarded, OR the
+    /// drain deadline cut reading short before EOF (see [`RUN_COMMAND_DRAIN_GRACE`]).
     pub output_truncated: bool,
     /// Whether the child was killed for exceeding the timeout.
     pub timed_out: bool,
@@ -1132,19 +1150,84 @@ pub fn run_command_in_root_with_timeout(
     let mut child = cmd.spawn().map_err(|_| FsError::CommandSpawn)?;
     let pid = child.id() as libc::pid_t;
 
-    // (4/5) DEADLOCK-FREE bounded capture. Each pipe is drained to EOF by its own thread so a
-    //       child emitting more than the OS pipe buffer can NEVER block on write (which would
+    // (4/5) DEADLINE-BOUNDED, DEADLOCK-FREE bounded capture. Each pipe is drained by its own thread
+    //       so a child emitting more than the OS pipe buffer can NEVER block on write (which would
     //       otherwise masquerade as a timeout). The shared buffer retains at most
     //       RUN_COMMAND_MAX_OUTPUT_BYTES COMBINED across both streams; bytes past the cap are
     //       read-and-discarded. `truncated` records that more existed.
+    //
+    //       Crucially, the drain is bounded by an ABSOLUTE wall-clock deadline (timeout + a small
+    //       grace) rather than by waiting for EOF. EOF normally arrives first — when the leader and
+    //       its in-group descendants exit (or we SIGKILL the group) every copy of the write-fd
+    //       closes, the pipe EOFs, and the reader returns at once. But a grandchild that called
+    //       `setsid()`/`setpgid()` has ESCAPED the leader's process group: our killpg can NOT reach
+    //       it, so if it inherited and keeps the write-fd open the pipe NEVER EOFs. Without a
+    //       deadline the reader's blocking `read()` would hang forever and the `r.join()` below
+    //       would PIN the calling hub thread (the recv_timeout only ever guarded the LEADER, which
+    //       has already exited). So each reader self-terminates at `drain_deadline`: it sets its fd
+    //       non-blocking and `poll()`s against the REMAINING budget, stopping (and marking the
+    //       output truncated) when the deadline passes. The threads therefore exit on their own and
+    //       the unchanged join loop below is naturally bounded — NO unbounded block, NO thread leak.
     let shared: Arc<Mutex<(Vec<u8>, bool)>> =
         Arc::new(Mutex::new((Vec::with_capacity(4096), false)));
 
-    fn drain_into<R: std::io::Read>(mut r: R, shared: Arc<Mutex<(Vec<u8>, bool)>>) {
+    // Absolute deadline for the WHOLE drain: the command's own timeout plus a small grace so that,
+    // once the leader exits, any IN-GROUP buffered output still has a moment to flush/EOF before we
+    // cut the readers loose. A process-group-escaping grandchild holding the pipe open is bounded by
+    // this same deadline (it can never push past it), which is the whole point.
+    let drain_deadline = std::time::Instant::now() + timeout + RUN_COMMAND_DRAIN_GRACE;
+
+    // Drain `r` into `shared` until EOF or `deadline`, whichever comes first. The fd is set
+    // non-blocking and we `poll()` against the remaining budget so a never-EOF pipe (an escaped
+    // grandchild holding the write-fd) can NOT pin this thread: at the deadline we mark the output
+    // truncated and return, leaving the thread promptly joinable. `R: Read + AsRawFd` so we can
+    // reach the underlying fd for fcntl/poll while still using the buffered `read()` path.
+    fn drain_into<R: std::io::Read + std::os::unix::io::AsRawFd>(
+        mut r: R,
+        shared: Arc<Mutex<(Vec<u8>, bool)>>,
+        deadline: std::time::Instant,
+    ) {
+        let fd = r.as_raw_fd();
+        // Set the read end non-blocking (a separate open-file-description from the child's write
+        // end, so the child's I/O semantics are unchanged). If fcntl fails we bail rather than risk
+        // an unbounded blocking read.
+        unsafe {
+            let flags = libc::fcntl(fd, libc::F_GETFL);
+            if flags < 0 || libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) < 0 {
+                return;
+            }
+        }
         let mut chunk = [0u8; 8192];
         loop {
+            // Remaining budget; once it hits zero the deadline has passed → stop and mark truncated.
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                shared.lock().unwrap().1 = true; // deadline cut the drain short → output truncated
+                return;
+            }
+            let mut pfd = libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            // Clamp to i32 milliseconds (>=1 so we never busy-spin); the loop re-checks the real
+            // deadline above, so a clamp shorter than `remaining` only costs an extra poll.
+            let timeout_ms = remaining.as_millis().clamp(1, i32::MAX as u128) as libc::c_int;
+            let pr = unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
+            if pr < 0 {
+                let e = std::io::Error::last_os_error();
+                if e.kind() == std::io::ErrorKind::Interrupted {
+                    continue; // EINTR — re-poll against the (re-checked) deadline
+                }
+                return; // poll itself failed — stop draining this stream (do not block)
+            }
+            if pr == 0 {
+                continue; // poll timed out; loop re-checks the deadline and returns if reached
+            }
+            // Readable OR hung-up (POLLHUP). Attempt the read UNCONDITIONALLY — gating on POLLIN
+            // would `continue` on a POLLHUP and busy-spin, since poll re-reports POLLHUP instantly.
             match r.read(&mut chunk) {
-                Ok(0) => break, // EOF (child closed this fd)
+                Ok(0) => return, // EOF — child (and any in-group descendant) closed this fd
                 Ok(n) => {
                     let mut guard = shared.lock().unwrap();
                     let (buf, truncated) = &mut *guard;
@@ -1157,10 +1240,11 @@ pub fn run_command_in_root_with_timeout(
                     } else {
                         buf.extend_from_slice(&chunk[..n]);
                     }
-                    // drop guard, keep reading to EOF so the child never blocks on a full pipe
+                    // drop guard, keep reading so the child never blocks on a full pipe
                 }
-                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(_) => break, // pipe broke (child died) — done draining this stream
+                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue, // EINTR
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => continue, // EAGAIN → re-poll
+                Err(_) => return, // pipe broke (child died) — done draining this stream
             }
         }
     }
@@ -1170,11 +1254,15 @@ pub fn run_command_in_root_with_timeout(
     let mut readers = Vec::new();
     if let Some(out) = stdout {
         let s = Arc::clone(&shared);
-        readers.push(std::thread::spawn(move || drain_into(out, s)));
+        readers.push(std::thread::spawn(move || {
+            drain_into(out, s, drain_deadline)
+        }));
     }
     if let Some(err) = stderr {
         let s = Arc::clone(&shared);
-        readers.push(std::thread::spawn(move || drain_into(err, s)));
+        readers.push(std::thread::spawn(move || {
+            drain_into(err, s, drain_deadline)
+        }));
     }
 
     // Waiter thread: block on wait() and report the status over a channel so the main thread can
@@ -1201,26 +1289,36 @@ pub fn run_command_in_root_with_timeout(
         Err(mpsc::RecvTimeoutError::Disconnected) => (None, false),
     };
 
-    // (4) Bound the reader joins on EVERY path, not just the timeout path. The leader process is
-    //     now reaped (normal exit, or our kill), but a grandchild it spawned could still hold the
-    //     stdout/stderr write-fd open — then `drain_into` would block forever waiting for an EOF
-    //     that never comes, and `r.join()` below would hang with NO timeout protecting it (the
-    //     deadline only covered `recv_timeout`, which already returned). So we UNCONDITIONALLY
-    //     SIGKILL the whole process group: any lingering grandchild dies, its copy of the write-fd
-    //     closes, the pipe EOFs, and the readers join promptly. This is why we setpgid'd the child
-    //     into its own group — the killpg here cannot touch the hub or any unrelated process.
-    //     RESIDUAL (documented, not claimed-defended): on the normal-exit path the leader was
-    //     already reaped, so in the vanishingly small window where the OS has recycled its freed
-    //     pgid onto an unrelated new process group, this killpg could signal that group. The
-    //     window is sub-millisecond and the alternative (an unbounded hang on a daemon-spawning
-    //     command) is the worse failure for this surface; we accept it, as `std::process::Command`'s
-    //     own `output()` accepts the dual hang. ESRCH (nothing left in the group) is ignored.
+    // (4) SIGKILL the whole process group on EVERY path, not just the timeout path. The leader is
+    //     now reaped (normal exit, or our kill), but it may have spawned descendants. Any descendant
+    //     that is STILL IN the leader's process group is reached by this killpg: it dies, its copies
+    //     of the stdout/stderr write-fd close, the pipe EOFs, and the corresponding reader returns
+    //     at once. This is why we setpgid'd the child into its OWN group — the killpg here cannot
+    //     touch the hub or any unrelated process.
+    //
+    //     HONEST RESIDUAL — escaped grandchildren are NOT reaped, and that is INHERENT. A grandchild
+    //     that called `setsid()`/`setpgid(0,0)` has left the leader's process group, so this killpg
+    //     can NEVER reach it; if it inherited and keeps the pipe write-fd open, the pipe never EOFs.
+    //     We do NOT hunt it down: this surface only runs an operator-signed, single-use command, and
+    //     an operator who signs a command that DAEMONIZES (the standard double-fork/`setsid` that
+    //     retains stdout) gets a daemon — that orphan is the approved behavior of the approved
+    //     command, not a containment failure. What this code MUST guarantee is that such an escapee
+    //     can NOT pin the hub: the reader threads are DEADLINE-BOUNDED (see `drain_into` above), so
+    //     they self-terminate at `drain_deadline` (= timeout + grace) regardless of an escaped writer
+    //     holding the pipe open. The `r.join()` below is therefore bounded on every path WITHOUT
+    //     depending on this killpg producing an EOF, and the call returns within ~timeout + grace.
+    //     RESIDUAL (pgid reuse): on the normal-exit path the leader was already reaped, so in the
+    //     vanishingly small window where the OS recycled its freed pgid onto an unrelated new group,
+    //     this killpg could signal that group. Sub-millisecond, accepted, ESRCH ignored — the same
+    //     trade `std::process::Command::output()` makes.
     unsafe {
         libc::kill(-pid, libc::SIGKILL);
     }
 
-    // Readers now EOF (the child's — and any grandchild's — fds are closed), so these joins are
-    // bounded on every path.
+    // The reader threads either already returned (the child's/in-group fds EOF'd, or the pipe
+    // broke) or will self-terminate at `drain_deadline` if an escaped grandchild is holding the
+    // write-fd open. Either way each thread exits ON ITS OWN, so these joins are bounded on every
+    // path — they do NOT depend on the killpg above forcing an EOF.
     for r in readers {
         let _ = r.join();
     }
@@ -1759,6 +1857,57 @@ mod tests {
         assert!(
             elapsed < std::time::Duration::from_secs(3),
             "must return promptly after the kill, took {elapsed:?}"
+        );
+    }
+
+    /// SETSID-ESCAPE BOUND (the load-bearing reliability test). A `perl` LEADER forks a grandchild
+    /// that calls `POSIX::setsid()` — ESCAPING the leader's process group — and then HOLDS stdout
+    /// open while sleeping far longer than the timeout+grace; the leader then EXITS immediately.
+    /// `recv_timeout` returns the instant the leader exits (`timed_out=false`), and our process-group
+    /// SIGKILL can NOT reach the escaped grandchild, so the stdout pipe never EOFs. Pre-fix the
+    /// unbounded `r.join()` would block on the grandchild's full lifetime (or forever), pinning the
+    /// calling thread. Post-fix the reader drain is deadline-bounded, so the call MUST return within
+    /// ~timeout + grace regardless. We use a 1s timeout (grace 2s ⇒ ~3s drain deadline) and a
+    /// grandchild that sleeps 30s, then assert the call returns in < 8s — well above the ~3s drain
+    /// deadline (generous headroom for a loaded CI runner's scheduling jitter) yet far below the
+    /// grandchild's 30s lifetime. This test FAILS on the pre-fix code (it would take ~30s, blowing
+    /// the 8s bound) and PASSES on the deadline-bounded fix (returns ~3s).
+    #[test]
+    fn run_command_setsid_escaped_grandchild_does_not_pin_thread() {
+        let root = TempDir::new();
+        // perl is on PATH (/usr/bin/perl). Quote-aware tokenizer: pass the program as one '...'
+        // single-quoted arg so the script survives as a single literal token (no shell, no $expand).
+        // The grandchild setsid()'s (new session ⇒ new process group ⇒ escapes the leader's group),
+        // keeps STDOUT (it does NOT close it) and sleeps 30s; the leader prints + exits at once.
+        let script = "my $pid = fork(); \
+                      if (!defined $pid) { exit 3 } \
+                      if ($pid == 0) { POSIX::setsid(); $| = 1; print \"grandchild\\n\"; sleep 30; exit 0 } \
+                      print \"leader\\n\"; exit 0;";
+        let command = format!("perl -MPOSIX -e '{script}'");
+        let timeout = std::time::Duration::from_secs(1);
+        // Bound: well above the ~3s drain deadline (loaded-CI headroom) yet far below the
+        // grandchild's 30s lifetime, so this cleanly separates "deadline-bounded" from "pinned".
+        let bound = std::time::Duration::from_secs(8);
+        let start = std::time::Instant::now();
+        let r = run_command_in_root_with_timeout(root.path(), &command, timeout).unwrap();
+        let elapsed = start.elapsed();
+        // The HARD requirement: bounded by ~timeout + grace, NOT the grandchild's 30s lifetime.
+        assert!(
+            elapsed < bound,
+            "an escaped setsid grandchild holding stdout must NOT pin the call; \
+             returned in {elapsed:?} (must be < {bound:?})"
+        );
+        // The leader exited on its own well within the timeout, so this is NOT a timeout-kill of
+        // the leader: `timed_out` reflects the leader, which exited normally.
+        assert!(
+            !r.timed_out,
+            "the leader exited on its own; timed_out must reflect the leader, not the drain cut"
+        );
+        // The deadline cut the drain short (the grandchild's pipe never EOF'd) ⇒ output marked
+        // truncated/incomplete (we reuse `output_truncated` as the deadline-cut signal).
+        assert!(
+            r.output_truncated,
+            "a deadline-bounded drain that never saw EOF must report the output as truncated"
         );
     }
 
