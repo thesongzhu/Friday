@@ -12,6 +12,18 @@ import type {
 export interface CreateFridayAutonomyPolicyServiceDeps {
   db: FridaySqliteLayer;
   nowIso: () => string;
+  /**
+   * Test-oracle ONLY. When not explicitly `true`, the autonomy-policy mutation
+   * `updatePolicy` method fails closed at the METHOD boundary (not just the HTTP
+   * route), so every non-route caller — the agent controlled-autonomy tool
+   * (`policy_update`) and any future autonomous caller — is fenced out of TS
+   * autonomy-policy mutation while runtime ownership is moved to Rust. Production
+   * hub bootstrap leaves this unset → fail-closed. Mirrors the route-level
+   * `allowTestOnlyAutonomyPolicyMutation` guard
+   * (`assertAutonomyPolicyMutationTestOracleAllowed` in `friday-autonomy-routes.ts`)
+   * so both layers honor the same flag.
+   */
+  allowTestOnlyAutonomyPolicyMutation?: boolean;
 }
 
 export interface FridayUpdateAutonomyPolicyInput {
@@ -235,6 +247,30 @@ export function createFridayAutonomyPolicyService(
   }
 
   function updatePolicy(input: FridayUpdateAutonomyPolicyInput): FridayAutonomyPolicy {
+    // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+    // Phase 3 (route-only-guard defect) found the retirement guard was ROUTE-only
+    // (PATCH /v1/autonomy/policy via assertAutonomyPolicyMutationTestOracleAllowed).
+    // The agent controlled-autonomy tool (`policy_update`) reaches this method
+    // directly via `policyService.updatePolicy(...)`, bypassing the HTTP route
+    // guard, so an autonomous agent run could mutate the autonomy policy in prod.
+    // Guarding here fails ALL non-route callers closed BEFORE any DB read or
+    // policy persist — unless the explicit test-oracle flag is set. Never default
+    // this flag on in prod. Reads (getPolicy/evaluateRisks) stay live; only
+    // mutation is retired, mirroring the route which asserts only on mutation.
+    if (deps.allowTestOnlyAutonomyPolicyMutation !== true) {
+      void input;
+      throw new FridayDomainError(
+        "TS_RUNTIME_AUTONOMY_POLICY_MUTATION_RETIRED",
+        "TypeScript autonomy policy mutation is fail-closed in default/live runtime; use the Rust-owned autonomy_policy_mutation entrypoint.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_autonomy_policy_mutation_entrypoint_required",
+          },
+        },
+      );
+    }
     const current = getPolicy();
     const nextMode = input.mode ?? current.mode;
     const modeSwitches = input.mode === "max_autonomy"
