@@ -495,6 +495,67 @@ fn attach_completed_provider_state_for_ask(
     Ok(last)
 }
 
+/// S1.3 — record the Mission binding for an agent-LOOP run by driving the SAME
+/// provider-timeline attachment the single-shot ask path uses
+/// ([`attach_provider_timeline_state`]). The agent loop is a Hub-orchestrated,
+/// DeepSeek-routed run, so it binds to its Mission exactly like the ask does.
+///
+/// The `MissionLink` that actually ties THIS run to the Mission is written by the FIRST
+/// attachment call (target `friday://provider-timeline/{session}#{run_id}`, request_id =
+/// `run_id`) and upserted (same `link_id`) on each subsequent state; the later states only
+/// advance the WorkItem status. The status mapping is TRUTH-honest — it never over-claims:
+///
+/// - `completed` (the loop `Finished`) → full progression to `ProviderCompleted` with the
+///   run as proof (`proof_ref` = `friday://agent-run/{run_id}`), completing the WorkItem so
+///   its result/billing tie to the Mission.
+/// - otherwise (Paused / Blocked / Bounded / Errored) → drive ONLY to `RoutedToProvider`.
+///   That is TRUE for every `Ok` loop outcome (the route was selected and the client was
+///   called), and it deliberately does NOT claim `ProviderWaiting`/`CompletedWithProof` for
+///   a paused or dead run. The binding link still exists, tied to the run.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn attach_agent_loop_provider_state(
+    db: &Db,
+    mission_id: &str,
+    work_item_id: &str,
+    session_id: &str,
+    run_id: &str,
+    completed: bool,
+    proof_ref: &str,
+    now_ms: i64,
+) -> Result<MissionAttachmentOutcome, StorageError> {
+    let mut states = vec![
+        PendingState::SentToHub,
+        PendingState::AcceptedByHub,
+        PendingState::RoutedToProvider,
+    ];
+    if completed {
+        states.push(PendingState::WaitingProvider);
+        states.push(PendingState::ProviderCompleted);
+    }
+    let mut last = MissionAttachmentOutcome::Blocked {
+        blockers: vec!["provider_state_not_attached".into()],
+    };
+    for state in states {
+        last = attach_provider_timeline_state(
+            db,
+            ProviderTimelineAttachment {
+                mission_id: mission_id.to_string(),
+                work_item_id: work_item_id.to_string(),
+                friday_session_id: session_id.to_string(),
+                request_id: run_id.to_string(),
+                state,
+                proof_ref: (state == PendingState::ProviderCompleted)
+                    .then(|| proof_ref.to_string()),
+                now_ms,
+            },
+        )?;
+        if matches!(last, MissionAttachmentOutcome::Blocked { .. }) {
+            return Ok(last);
+        }
+    }
+    Ok(last)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
