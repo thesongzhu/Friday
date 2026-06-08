@@ -1825,6 +1825,81 @@ fn format_executed_outcome(receipt: &ToolReceipt) -> String {
     }
 }
 
+/// Max bytes of prior-session conversation CONTENT rendered into the model prompt
+/// preamble (S5 inbound history). Keeps the multi-turn context BOUNDED so a long
+/// session can never blow the completion-token budget — the session-level mirror of
+/// [`MAX_FEEDBACK_CONTENT_BYTES`] for per-turn tool content. The MOST RECENT messages
+/// are preserved; older ones are dropped (with [`SESSION_HISTORY_OMISSION_MARKER`])
+/// once the budget is exceeded.
+const MAX_SESSION_HISTORY_BYTES: usize = 6144;
+
+/// Per-message cap inside the session-history preamble: a single oversized message is
+/// head-sliced to this many bytes (with [`FEEDBACK_TRUNCATION_MARKER`]) so one huge
+/// turn cannot by itself exhaust [`MAX_SESSION_HISTORY_BYTES`]. Strictly smaller than
+/// the history budget, so the most-recent message ALWAYS fits.
+const MAX_SESSION_MESSAGE_BYTES: usize = 1024;
+
+/// Prepended to the rendered session history when older messages were dropped to fit
+/// [`MAX_SESSION_HISTORY_BYTES`], so the model knows the conversation began earlier.
+const SESSION_HISTORY_OMISSION_MARKER: &str = "[earlier session messages omitted]\n";
+
+/// Render a session's prior conversation messages (S5 inbound history) into a BOUNDED
+/// prompt preamble, prepended ahead of the recall preamble + task so the model sees
+/// the multi-turn context that preceded this run. Pure + deterministic.
+///
+/// Two bounding layers ensure a long/large session can never blow the completion
+/// budget: each message's content is head-sliced to [`MAX_SESSION_MESSAGE_BYTES`],
+/// and messages are then accumulated MOST-RECENT-FIRST only while the running total
+/// stays within [`MAX_SESSION_HISTORY_BYTES`] — older messages that do not fit are
+/// dropped (oldest first), flagged with [`SESSION_HISTORY_OMISSION_MARKER`]. The kept
+/// messages are emitted in chronological (oldest-first) order under a label that marks
+/// them as CONTEXT, not the current task. An empty history renders the empty string
+/// (no preamble — the single-shot prompt is unchanged).
+///
+/// Like the recall preamble and the tool-result feedback, the rendered history is
+/// MODEL-CONTEXT only: it never reaches the event/audit log, and the UNW-001 gate
+/// still evaluates EVERY subsequent tool call regardless of what a prior message said
+/// (the prompt-injection-inward backstop — prior conversation is not a mutation path).
+pub fn render_session_history(messages: &[friday_storage::StoredSessionMessage]) -> String {
+    if messages.is_empty() {
+        return String::new();
+    }
+    // Build each line (role + bounded content), keeping most-recent-first within the
+    // byte budget so recency survives truncation; reversed back to chronological order.
+    let mut kept: Vec<String> = Vec::new();
+    let mut total: usize = 0;
+    let mut dropped = false;
+    for msg in messages.iter().rev() {
+        let (head, truncated) = head_slice(&msg.content, MAX_SESSION_MESSAGE_BYTES);
+        let line = if truncated {
+            format!("{}: {head}{FEEDBACK_TRUNCATION_MARKER}\n", msg.role)
+        } else {
+            format!("{}: {head}\n", msg.role)
+        };
+        // Always keep at least the most recent message (its content is capped below
+        // the history budget, so one line never overflows on its own).
+        if !kept.is_empty() && total + line.len() > MAX_SESSION_HISTORY_BYTES {
+            dropped = true;
+            break;
+        }
+        total += line.len();
+        kept.push(line);
+    }
+    kept.reverse();
+    let mut s = String::from(
+        "Prior conversation in this session (oldest first — this is CONTEXT from \
+         earlier turns, NOT the current task):\n",
+    );
+    if dropped {
+        s.push_str(SESSION_HISTORY_OMISSION_MARKER);
+    }
+    for line in kept {
+        s.push_str(&line);
+    }
+    s.push('\n');
+    s
+}
+
 /// Ledger ONE agent-loop model call exactly as the ask path ledgers a single ask
 /// (`record_friday_ask`): build a Friday-route [`friday_core::LedgerEntry`] from the call's
 /// reported usage (`ModelCallOutcome::to_ledger_entry` ledgers the RESPONSE-reported model,
@@ -2234,6 +2309,108 @@ pub fn run_loop_with_policy(
         final_message: None,
         detail: format!("max_turns:{max_turns}"),
     })
+}
+
+/// Drive a history-aware agent loop WITHIN a session (S5 inbound history + resume).
+/// A SESSION groups runs: this loads the session's prior conversation messages,
+/// prepends them (BOUNDED) to the prompt so the model sees the multi-turn inbound
+/// context, runs the SAME gate-mandatory loop as [`run_loop_with_policy`], then
+/// PERSISTS this run's turn(s) back to the session so the NEXT run RESUMES with them.
+///
+/// Mechanics:
+/// * [`friday_storage::ensure_session`] makes the session row exist (idempotent),
+///   then [`friday_storage::load_session_messages`] reads the prior turns. The
+///   current `task` is loaded BEFORE it is persisted, so it never appears in its own
+///   preamble.
+/// * The prior messages are rendered by [`render_session_history`] (BOUNDED) and
+///   folded AHEAD of `recall_preamble` into the single preamble
+///   [`run_loop_with_policy`] already prepends to the task — so NO change to the loop
+///   body or its signature is needed, and the session preamble inherits the proven
+///   "preamble augments only the prompt, never the run row / classification / events"
+///   property. The model sees `[session history][recall preamble][task]`.
+/// * After the loop returns, the current `task` is appended as a `user` message and,
+///   when the loop `Finish`ed with a final answer, that answer is appended as an
+///   `assistant` message — both soft-linked to `run_id` (the `refs`). The message
+///   bodies stay Hub-side (like `run_result.answer`); only a REFS-ONLY session event
+///   (session id + message count, never the text) is logged. There is NO
+///   answer-body-over-wire here (that is the transport lane).
+///
+/// A non-`Finished` outcome still records the `user` turn (the operator asked it) but
+/// no `assistant` answer (there is none). Single-shot runs that never call this keep
+/// using [`run_loop`] / [`run_loop_with_policy`] unchanged — no session row is touched.
+#[allow(clippy::too_many_arguments)]
+pub fn run_session_loop(
+    client: &dyn AgentLlmClient,
+    executor: &dyn ToolExecutor,
+    conn: &Connection,
+    run_id: &str,
+    session_id: &str,
+    task: &str,
+    recall_preamble: &str,
+    operator_vk: Option<&OperatorVerifyingKey>,
+    approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
+    policy: &RunPolicy,
+    max_turns: u64,
+    now_ms: i64,
+) -> Result<LoopOutcome, StorageError> {
+    // 1. Ensure the session exists and LOAD its prior turns BEFORE persisting the
+    //    current task (so the task is never folded into its own preamble).
+    friday_storage::ensure_session(conn, session_id, now_ms)?;
+    let prior = friday_storage::load_session_messages(conn, session_id)?;
+
+    // 2. Fold the BOUNDED prior-session history AHEAD of the recall preamble. The loop
+    //    already builds `prompt_task = preamble + task`, so passing the combined
+    //    preamble threads inbound history into the model WITHOUT any loop change.
+    let session_preamble = render_session_history(&prior);
+    let combined_preamble = format!("{session_preamble}{recall_preamble}");
+
+    // 3. Run the SAME gate-mandatory loop (principal/scope/operator-key aware).
+    let outcome = run_loop_with_policy(
+        client,
+        executor,
+        conn,
+        run_id,
+        task,
+        &combined_preamble,
+        operator_vk,
+        approve,
+        policy,
+        max_turns,
+        now_ms,
+    )?;
+
+    // 4. Persist this run's turn(s) so the next run in the session resumes with them:
+    //    the user task always, the assistant answer only when the loop finished with
+    //    one. Bodies are Hub-side; the event below is refs-only.
+    friday_storage::append_session_message(
+        conn,
+        session_id,
+        &friday_storage::SessionMessage::new("user", task, Some(run_id.to_string())),
+        now_ms,
+    )?;
+    if outcome.status == LoopStatus::Finished {
+        if let Some(answer) = outcome.final_message.as_deref() {
+            friday_storage::append_session_message(
+                conn,
+                session_id,
+                &friday_storage::SessionMessage::new("assistant", answer, Some(run_id.to_string())),
+                now_ms,
+            )?;
+        }
+    }
+
+    // Refs-only session outcome event: the session id + the new message COUNT, never
+    // any message text (the refs-only / answer-body boundary; no secret/PII logged).
+    let count = friday_storage::session_message_count(conn, session_id)?;
+    agent_run::record_event(
+        conn,
+        &format!("{run_id}:session"),
+        run_id,
+        &format!("session.appended:{session_id}:count={count}"),
+        now_ms,
+    )?;
+
+    Ok(outcome)
 }
 
 #[cfg(test)]
@@ -4304,6 +4481,293 @@ mod tests {
         assert!(p.contains("\"none\"")); // the finish hint
                                          // No history → no history section.
         assert!(!build_loop_prompt("t", &[]).contains("So far this run"));
+    }
+
+    // --- S5: inbound conversation history + minimal sessions/resume -------------
+
+    fn stored_msg(seq: i64, role: &str, content: &str) -> friday_storage::StoredSessionMessage {
+        friday_storage::StoredSessionMessage {
+            message_id: format!("s:m{seq}"),
+            agent_session_id: "s".to_string(),
+            seq,
+            role: role.to_string(),
+            content: content.to_string(),
+            refs: None,
+            created_at: seq,
+        }
+    }
+
+    #[test]
+    fn render_session_history_is_bounded_and_drops_oldest() {
+        // Empty history → empty preamble (single-shot prompt unchanged).
+        assert!(render_session_history(&[]).is_empty());
+
+        // A short history renders both turns, labeled as CONTEXT (not the task).
+        let small = render_session_history(&[
+            stored_msg(0, "user", "remember 47"),
+            stored_msg(1, "assistant", "noted 47"),
+        ]);
+        assert!(small.contains("Prior conversation in this session"));
+        assert!(small.contains("user: remember 47"));
+        assert!(small.contains("assistant: noted 47"));
+        assert!(!small.contains(SESSION_HISTORY_OMISSION_MARKER));
+
+        // Many LARGE messages → per-message + total caps hold; oldest dropped + flagged.
+        let big: Vec<_> = (0..12)
+            .map(|i| stored_msg(i, "user", &"Z".repeat(5000)))
+            .collect();
+        let rendered = render_session_history(&big);
+        let zcount = rendered.chars().filter(|&c| c == 'Z').count();
+        assert!(
+            zcount <= MAX_SESSION_HISTORY_BYTES,
+            "rendered history content must stay within the byte budget, got {zcount}"
+        );
+        assert!(
+            rendered.contains(SESSION_HISTORY_OMISSION_MARKER),
+            "older messages over budget must be flagged omitted"
+        );
+        // Per-message content was head-sliced (each 5000-byte message > the per-message
+        // cap), so the truncation marker is present.
+        assert!(rendered.contains(FEEDBACK_TRUNCATION_MARKER));
+    }
+
+    #[test]
+    fn session_loop_prepends_prior_history_into_model_prompt() {
+        let root = TempDir::new("s5-prompt");
+        let db = Db::open_hub(&temp_path("s5-prompt")).unwrap();
+        // Seed a session with prior turns (as a prior run would have left them).
+        friday_storage::ensure_session(db.conn(), "sess-1", 1).unwrap();
+        friday_storage::append_session_message(
+            db.conn(),
+            "sess-1",
+            &friday_storage::SessionMessage::new(
+                "user",
+                "remember the number 47",
+                Some("r0".into()),
+            ),
+            2,
+        )
+        .unwrap();
+        friday_storage::append_session_message(
+            db.conn(),
+            "sess-1",
+            &friday_storage::SessionMessage::new("assistant", "noted: 47", Some("r0".into())),
+            3,
+        )
+        .unwrap();
+        // A new run that finishes on turn 1.
+        agent_run::create_run(db.conn(), "r1", "what number did I ask you to remember", 10)
+            .unwrap();
+        let client = CapturingAgentLlmClient::new(vec![AgentStep::Finish {
+            message: "47".into(),
+        }]);
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_session_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "sess-1",
+            "what number did I ask you to remember",
+            "",
+            None,
+            &no_approval(),
+            &RunPolicy::default(),
+            10,
+            10,
+        )
+        .unwrap();
+        assert_eq!(out.status, LoopStatus::Finished);
+        let prompts = client.prompts.borrow();
+        assert_eq!(prompts.len(), 1);
+        // The turn-1 prompt carries the prior session history, labeled as context...
+        assert!(
+            prompts[0].contains("Prior conversation in this session"),
+            "got: {}",
+            prompts[0]
+        );
+        assert!(prompts[0].contains("remember the number 47"));
+        assert!(prompts[0].contains("noted: 47"));
+        // ...AND the current task is still present.
+        assert!(prompts[0].contains("what number did I ask you to remember"));
+        // This run appended its own user + assistant turns (2 -> 4 total), refs to r1.
+        assert_eq!(
+            friday_storage::session_message_count(db.conn(), "sess-1").unwrap(),
+            4
+        );
+        let msgs = friday_storage::load_session_messages(db.conn(), "sess-1").unwrap();
+        assert_eq!(msgs[2].role, "user");
+        assert_eq!(msgs[2].content, "what number did I ask you to remember");
+        assert_eq!(msgs[2].refs.as_deref(), Some("r1"));
+        assert_eq!(msgs[3].role, "assistant");
+        assert_eq!(msgs[3].content, "47");
+        // The session event is REFS-ONLY: it carries the count, never the message text.
+        let session_ev: String = db
+            .conn()
+            .query_row(
+                "SELECT kind FROM agent_run_event WHERE event_id = 'r1:session'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(session_ev.contains("session.appended:sess-1:count=4"));
+        assert!(
+            !session_ev.contains("47"),
+            "the event must not carry message text"
+        );
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
+    }
+
+    #[test]
+    fn session_resume_run2_sees_run1_message() {
+        let root = TempDir::new("s5-resume");
+        let db = Db::open_hub(&temp_path("s5-resume")).unwrap();
+        let ex = FsToolExecutor::new(&root.0);
+        // Run 1: fresh session, model finishes with an answer.
+        agent_run::create_run(db.conn(), "r1", "remember my budget is 500", 10).unwrap();
+        let c1 = CapturingAgentLlmClient::new(vec![AgentStep::Finish {
+            message: "got it, budget 500".into(),
+        }]);
+        let o1 = run_session_loop(
+            &c1,
+            &ex,
+            db.conn(),
+            "r1",
+            "sess-x",
+            "remember my budget is 500",
+            "",
+            None,
+            &no_approval(),
+            &RunPolicy::default(),
+            5,
+            10,
+        )
+        .unwrap();
+        assert_eq!(o1.status, LoopStatus::Finished);
+        // Run 1's prompt had NO prior history (fresh session).
+        assert!(!c1.prompts.borrow()[0].contains("Prior conversation in this session"));
+
+        // Run 2: SAME session, a new run — it must SEE run 1's turns (resume/continue).
+        agent_run::create_run(db.conn(), "r2", "what is my budget", 20).unwrap();
+        let c2 = CapturingAgentLlmClient::new(vec![AgentStep::Finish {
+            message: "your budget is 500".into(),
+        }]);
+        let o2 = run_session_loop(
+            &c2,
+            &ex,
+            db.conn(),
+            "r2",
+            "sess-x",
+            "what is my budget",
+            "",
+            None,
+            &no_approval(),
+            &RunPolicy::default(),
+            5,
+            20,
+        )
+        .unwrap();
+        assert_eq!(o2.status, LoopStatus::Finished);
+        let p2 = c2.prompts.borrow();
+        assert_eq!(p2.len(), 1);
+        // Continuity: run 2's prompt carries run 1's user task AND its assistant answer.
+        assert!(
+            p2[0].contains("remember my budget is 500"),
+            "run 2 must see run 1's user turn, got: {}",
+            p2[0]
+        );
+        assert!(
+            p2[0].contains("got it, budget 500"),
+            "run 2 must see run 1's assistant turn"
+        );
+        // Session now holds 4 messages: (user, assistant) x 2 runs, in order.
+        let msgs = friday_storage::load_session_messages(db.conn(), "sess-x").unwrap();
+        assert_eq!(msgs.len(), 4);
+        assert_eq!(msgs[0].content, "remember my budget is 500");
+        assert_eq!(msgs[0].refs.as_deref(), Some("r1"));
+        assert_eq!(msgs[3].content, "your budget is 500");
+        assert_eq!(msgs[3].refs.as_deref(), Some("r2"));
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
+    }
+
+    #[test]
+    fn single_shot_run_loop_creates_no_session_state() {
+        // The non-session entrypoint is UNCHANGED: it touches NO agent_session table.
+        let root = TempDir::new("s5-single");
+        std::fs::write(root.0.join("notes.md"), b"answer is 47").unwrap();
+        let db = Db::open_hub(&temp_path("s5-single")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "read notes.md", 1).unwrap();
+        let client = CapturingAgentLlmClient::new(vec![
+            AgentStep::Tool(raw("read_file", &[("path", "notes.md")])),
+            AgentStep::Finish {
+                message: "47".into(),
+            },
+        ]);
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "read notes.md",
+            "",
+            SECRET,
+            &no_approval(),
+            10,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.status, LoopStatus::Finished);
+        // No session rows created by the single-shot path.
+        assert_eq!(db.count("agent_session").unwrap(), 0);
+        assert_eq!(db.count("agent_session_message").unwrap(), 0);
+        // And no session prompt label leaked into the single-shot prompts.
+        assert!(!client.prompts.borrow()[0].contains("Prior conversation in this session"));
+    }
+
+    #[test]
+    fn session_loop_bounds_oversized_history_in_prompt() {
+        // End-to-end bound: a session with many LARGE prior messages must not blow the
+        // prompt — the rendered history is capped and the oldest are flagged omitted.
+        let root = TempDir::new("s5-bound");
+        let db = Db::open_hub(&temp_path("s5-bound")).unwrap();
+        friday_storage::ensure_session(db.conn(), "big", 1).unwrap();
+        for i in 0..12 {
+            friday_storage::append_session_message(
+                db.conn(),
+                "big",
+                &friday_storage::SessionMessage::new("user", "Z".repeat(5000), None),
+                2 + i,
+            )
+            .unwrap();
+        }
+        agent_run::create_run(db.conn(), "r1", "summarize", 100).unwrap();
+        let client = CapturingAgentLlmClient::new(vec![AgentStep::Finish {
+            message: "ok".into(),
+        }]);
+        let ex = FsToolExecutor::new(&root.0);
+        run_session_loop(
+            &client,
+            &ex,
+            db.conn(),
+            "r1",
+            "big",
+            "summarize",
+            "",
+            None,
+            &no_approval(),
+            &RunPolicy::default(),
+            5,
+            100,
+        )
+        .unwrap();
+        let prompts = client.prompts.borrow();
+        let zcount = prompts[0].chars().filter(|&c| c == 'Z').count();
+        assert!(
+            zcount <= MAX_SESSION_HISTORY_BYTES,
+            "oversized session history must be bounded in the prompt, got {zcount}"
+        );
+        assert!(prompts[0].contains(SESSION_HISTORY_OMISSION_MARKER));
     }
 }
 
