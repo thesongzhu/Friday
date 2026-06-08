@@ -284,6 +284,27 @@ pub fn hub_migrations() -> Vec<Migration> {
             destructive: false,
             up: m0020_session_message_memory_extract_status,
         },
+        // Session-memory slice-3 (ownership-binding): add the session OWNER fields
+        // (`account_id`, `channel`, `user_id`) to `agent_session`, mirroring the TS
+        // `FridaySessionRecord` axes the memory namespace is DERIVED from. This is what
+        // lets the inline extraction compute its store SCOPE from the SESSION (a composite
+        // `tenant.<account>.channel.<channel>.user.<user>.shared` namespace) instead of
+        // trusting a caller-supplied principal — faithful to the TS production model where
+        // extraction is job-driven and the session is the source of truth.
+        //
+        // All three columns are NULLABLE additive `ALTER`s: every existing v20
+        // `agent_session` row reads back `account_id = NULL`, `channel = NULL`,
+        // `user_id = NULL`. A NULL `user_id` FAILS CLOSED at namespace resolution (the TS
+        // throws `MEMORY_NAMESPACE_UNRESOLVABLE`), so a pre-slice-3 session is never
+        // silently bound to a default/anonymous scope — it simply cannot be extracted until
+        // its owner is set. Purely additive (ALTER only) — touches no other table, so v20
+        // rows/queries are unaffected. Hub-only — `agent_session` is a Hub-only table.
+        Migration {
+            version: 21,
+            name: "agent_session_owner",
+            destructive: false,
+            up: m0021_agent_session_owner,
+        },
     ]
 }
 
@@ -1365,5 +1386,25 @@ fn m0020_session_message_memory_extract_status(tx: &Transaction) -> rusqlite::Re
          CREATE INDEX idx_agent_session_message_pending
             ON agent_session_message(agent_session_id, seq)
             WHERE memory_extract_status = 'pending';",
+    )
+}
+
+// Session-memory slice-3 (ownership-binding): additive NULLABLE owner columns on the
+// Hub-only `agent_session` table (`account_id`, `channel`, `user_id`). These mirror the
+// TS `FridaySessionRecord` axes the memory namespace is derived from. The memory store
+// SCOPE (the `principal_id` recall axis) is now DERIVED from these — a composite
+// `tenant.<account>.channel.<channel>.user.<user>.shared` namespace — instead of a
+// caller-supplied principal. `ALTER TABLE ... ADD COLUMN` with no default is additive and
+// back-compatible: every existing v20 row reads back NULL for all three. A NULL `user_id`
+// FAILS CLOSED at namespace resolution (TS throws `MEMORY_NAMESPACE_UNRESOLVABLE`), so a
+// pre-slice-3 session is never bound to a default scope — it cannot be extracted until its
+// owner is set. The `agent_session` CREATE-DDL const stays FROZEN at its pre-v21 shape, so
+// a fresh install runs the base CREATE then this ALTER (no duplicate-column on fresh
+// install) — mirrors how m0017 added `run_result.owner_principal`.
+fn m0021_agent_session_owner(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "ALTER TABLE agent_session ADD COLUMN account_id TEXT;
+         ALTER TABLE agent_session ADD COLUMN channel TEXT;
+         ALTER TABLE agent_session ADD COLUMN user_id TEXT;",
     )
 }

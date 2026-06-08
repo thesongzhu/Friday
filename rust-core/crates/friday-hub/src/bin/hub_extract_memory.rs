@@ -18,6 +18,17 @@
 //!   only counts. The persisted candidates are NON-DURABLE (`state = Candidate`) —
 //!   they require explicit confirm to become recallable.
 //!
+//! ## Slice-3 ownership-binding — `--principal` is now a PROOF-TIME ASSERTION
+//! The store SCOPE is DERIVED from the SESSION owner (the composite namespace
+//! `tenant.<account>.channel.<channel>.user.<user>.shared`), NOT a caller-supplied
+//! principal. The `--principal` arg is therefore OPTIONAL and, when supplied, is treated
+//! as an ASSERTION: it MUST equal the derived namespace, else the emit FAILS CLOSED
+//! (`error_kind="principal_mismatch"`, exit 2). This lets the coordinator's live-proof
+//! pin the expected store scope without ever overriding it. The derived namespace is
+//! echoed back as `principal_id` (a store-scope LABEL — composed from normalized ids,
+//! never a body) so the isolation proof is legible. A session with no resolvable owner
+//! `user_id` fails closed (`error_kind="namespace_unresolvable"`).
+//!
 //! ## CI vs live
 //! CI only BUILDS this bin (it names it explicitly so a compile break reds CI).
 //! Running it needs `FRIDAY_DEEPSEEK_API_KEY` + a real session DB and spends quota,
@@ -25,7 +36,8 @@
 //!
 //! ## Output contract — REFS ONLY
 //! A single JSON object: `truth_label="rust_inline_memory_extraction"`,
-//! `proof_only=true`, `ok`, the session/principal IDs (caller-supplied refs),
+//! `proof_only=true`, `ok`, the session ID (a ref), the DERIVED `principal_id`
+//! (= the composite namespace store scope — a label, never a body),
 //! `messages_read`, `items_parsed`, `sensitive_dropped`, `candidates_created`,
 //! `messages_marked_extracted` (the slice-2 dedup mark — how many source messages this
 //! run consumed so a re-run skips them), and token counts (`prompt`/`completion`/
@@ -84,7 +96,9 @@ fn run() -> Result<String, ExtractError> {
         return Err(ExtractError::new("db_not_found"));
     }
     let session_id = arg_value(&args, "--session").ok_or(ExtractError::new("bad_args"))?;
-    let principal_id = arg_value(&args, "--principal").ok_or(ExtractError::new("bad_args"))?;
+    // Slice-3: `--principal` is now OPTIONAL and is a proof-time ASSERTION (it must equal
+    // the SESSION-derived namespace), NOT the store key. Absent = no assertion.
+    let asserted_principal = arg_value(&args, "--principal");
 
     // Live provider client from the Hub env (FRIDAY_DEEPSEEK_API_KEY). A missing
     // credential fails CLOSED (never a fallback) — coarse category only.
@@ -100,7 +114,6 @@ fn run() -> Result<String, ExtractError> {
     let outcome = extract_inline(
         &mut db,
         &session_id,
-        &principal_id,
         &client,
         DEFAULT_MAX_ITEMS,
         &id_prefix,
@@ -109,14 +122,25 @@ fn run() -> Result<String, ExtractError> {
     )
     .map_err(map_extract_err)?;
 
+    // Slice-3 assertion: if the operator pinned an expected store scope via `--principal`,
+    // it MUST equal the derived namespace — else FAIL CLOSED (the proof would otherwise
+    // claim a scope the data is not actually stored under).
+    if let Some(expected) = asserted_principal.as_deref() {
+        if expected != outcome.derived_namespace {
+            return Err(ExtractError::new("principal_mismatch"));
+        }
+    }
+
     let payload = json!({
         "truth_label": "rust_inline_memory_extraction",
         "proof_only": true,
         "ts_path_live": true,
         "queue_auto_deferred": true,
+        "ownership_binding": true,
         "ok": true,
         "session_id": session_id,
-        "principal_id": principal_id,
+        // The DERIVED store scope (the composite namespace) — slice-3 ownership-binding.
+        "principal_id": outcome.derived_namespace,
         "messages_read": outcome.messages_read,
         "items_parsed": outcome.items_parsed,
         "sensitive_dropped": outcome.sensitive_dropped,
@@ -143,6 +167,8 @@ fn map_extract_err(e: friday_hub::memory_extraction::ExtractionError) -> Extract
         E::Provider(_) => ExtractError::new("provider_failed"),
         E::Parse => ExtractError::new("parse_failed"),
         E::BadInput(_) => ExtractError::new("bad_args"),
+        // Slice-3: the session's memory namespace is unresolvable (no owner user_id).
+        E::NamespaceUnresolvable(_) => ExtractError::new("namespace_unresolvable"),
     }
 }
 
@@ -252,5 +278,40 @@ mod tests {
         });
         let rendered = payload.to_string();
         assert!(reject_forbidden_output(&rendered).is_ok());
+    }
+
+    #[test]
+    fn derived_namespace_principal_is_guard_clean() {
+        // Slice-3: the echoed `principal_id` is the composite namespace store scope (a
+        // label of normalized ids + dots) — it must pass the refs-only guard.
+        let ns = "tenant.default.channel.discord.user.user-abc.shared";
+        let payload = json!({
+            "truth_label": "rust_inline_memory_extraction",
+            "proof_only": true,
+            "ownership_binding": true,
+            "ok": true,
+            "session_id": "s1",
+            "principal_id": ns,
+            "candidates_created": 1,
+            "token_total": 55,
+            "model": "deepseek-v4-flash",
+        });
+        let rendered = serde_json::to_string(&payload).unwrap();
+        assert!(reject_forbidden_output(&rendered).is_ok());
+        let parsed: Value = from_str(&rendered).unwrap();
+        assert_eq!(parsed["principal_id"], ns);
+    }
+
+    #[test]
+    fn namespace_unresolvable_error_payload_passes_guard() {
+        let payload = json!({
+            "truth_label": "rust_inline_memory_extraction",
+            "proof_only": true,
+            "ok": false,
+            "error_kind": "namespace_unresolvable",
+        });
+        assert!(reject_forbidden_output(&payload.to_string()).is_ok());
+        let mismatch = json!({"ok": false, "error_kind": "principal_mismatch"});
+        assert!(reject_forbidden_output(&mismatch.to_string()).is_ok());
     }
 }

@@ -182,6 +182,58 @@ fn forward_migration_v19_to_v20_backfills_existing_messages_to_pending() {
 }
 
 #[test]
+fn forward_migration_v20_to_v21_backfills_owner_to_null_and_fresh_has_columns() {
+    // Session-memory slice-3 additive migration v21: agent_session gains nullable
+    // `account_id`, `channel`, `user_id`. A PRE-EXISTING v20 session row (seeded before the
+    // columns existed) must survive the forward ALTER reading back NULL for all three (so a
+    // pre-slice-3 session is never silently bound to a default scope — it fails closed at
+    // namespace resolution until an owner is set). A FRESH install has the columns.
+    use friday_storage::agent_session::{
+        ensure_session, ensure_session_with_owner, load_session_owner, SessionOwner,
+    };
+
+    let p = temp_db_path("agent-session-owner-mig");
+    {
+        let mut migs = hub_migrations();
+        migs.retain(|m| m.version <= 20);
+        let db = Db::open(&p, Profile::Hub, &migs, "v20").unwrap();
+        assert_eq!(db.version().unwrap(), 20);
+        assert!(
+            db.conn()
+                .prepare("SELECT user_id FROM agent_session")
+                .is_err(),
+            "owner columns must not exist before v21"
+        );
+        // Seed a session with the pre-v21 shape (no owner columns).
+        ensure_session(db.conn(), "s1", 1).unwrap();
+    }
+    // Reopen with the full set -> forward-migrate to v21 (the additive owner ALTERs).
+    let db = Db::open_hub(&p).unwrap();
+    assert_eq!(db.version().unwrap(), hub_max_version());
+    assert_eq!(
+        db.count("agent_session").unwrap(),
+        1,
+        "pre-v21 session row survived the migration"
+    );
+    // The pre-existing row reads back ALL owner axes as NULL (fail-closed at resolution).
+    let owner = load_session_owner(db.conn(), "s1").unwrap();
+    assert_eq!(
+        owner,
+        Some(SessionOwner::default()),
+        "pre-v21 row backfills to no-owner (all NULL)"
+    );
+
+    // A fresh ensure_session_with_owner on the migrated DB stores + reads back the owner.
+    let bound = SessionOwner {
+        account_id: Some("default".into()),
+        channel: Some("discord".into()),
+        user_id: Some("user-abc".into()),
+    };
+    ensure_session_with_owner(db.conn(), "s2", &bound, 2).unwrap();
+    assert_eq!(load_session_owner(db.conn(), "s2").unwrap(), Some(bound));
+}
+
+#[test]
 fn reopen_is_idempotent_and_preserves_rows() {
     let p = temp_db_path("seeded");
     {
