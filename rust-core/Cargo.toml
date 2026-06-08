@@ -24,6 +24,7 @@ members = [
     "crates/friday-fs",
     "crates/friday-hub",
     "crates/friday-ffi",
+    "crates/friday-operator-cli",
     "crates/friday-arch-tests",
 ]
 
