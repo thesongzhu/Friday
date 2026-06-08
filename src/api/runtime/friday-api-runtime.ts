@@ -1490,6 +1490,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
   const autonomyPolicyService = createFridayAutonomyPolicyService({
     db: deps.db,
     nowIso: deps.nowIso,
+    // METHOD-level retirement guard: plumb the same test-oracle flag the route
+    // honors so the shared service instance (also wired into the agent
+    // controlled-autonomy tool's `policy_update`) fails closed for every
+    // non-route caller unless explicitly enabled. Production leaves this unset.
+    allowTestOnlyAutonomyPolicyMutation: deps.allowTestOnlyAutonomyPolicyMutation,
   });
   const capabilityAcquisitionService = createFridayCapabilityAcquisitionService({
     db: deps.db,

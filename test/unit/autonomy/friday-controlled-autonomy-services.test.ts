@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { FridaySqliteLayer } from "#state";
 import type { FridayRuntimeCapabilityId, FridayRuntimeCapabilityMatrix } from "#providers";
+import { FridayDomainError } from "#errors";
 import {
   createFridayAutonomyPolicyService,
   createFridayCapabilityAcquisitionService,
@@ -358,15 +359,69 @@ describe("controlled autonomy closed loops", () => {
   });
 
   it("keeps OAuth, payment, CAPTCHA, and sensitive permissions human-gated even in max autonomy", () => {
-    const policy = policyService.updatePolicy({ mode: "max_autonomy" });
+    // updatePolicy is METHOD-level fail-closed (TS-runtime retirement) unless the
+    // explicit test-oracle flag is set, so this behavioral assertion uses a local
+    // flagged service. The default-off behavior is covered by the dedicated
+    // fail-closed tests below; the shared `policyService` stays unflagged.
+    const flaggedPolicyService = createFridayAutonomyPolicyService({
+      db,
+      nowIso: () => `2026-04-25T00:00:${String(++nowCounter).padStart(2, "0")}.000Z`,
+      allowTestOnlyAutonomyPolicyMutation: true,
+    });
+    const policy = flaggedPolicyService.updatePolicy({ mode: "max_autonomy" });
 
     expect(policy.mode).toBe("max_autonomy");
     expect(policy.riskSwitches.external_download).toBe(true);
     expect(policy.riskSwitches.oauth).toBe(false);
 
-    const decision = policyService.evaluateRisks(["oauth", "payment", "captcha", "sensitive_permission"]);
+    const decision = flaggedPolicyService.evaluateRisks(["oauth", "payment", "captcha", "sensitive_permission"]);
     expect(decision.allowed).toBe(false);
     expect(decision.hardHumanBlockers.length).toBe(4);
+  });
+
+  describe("TS-runtime retirement: updatePolicy METHOD-level fail-closed guard", () => {
+    it("fails closed for non-route callers when the test-oracle flag is unset and does NOT mutate the policy", () => {
+      // The shared `policyService` is constructed without
+      // allowTestOnlyAutonomyPolicyMutation (mirrors production/runtime + the
+      // agent controlled-autonomy tool's `policy_update` path). Mutation must be
+      // fenced BEFORE any persist.
+      const before = policyService.getPolicy();
+      expect(before.mode).toBe("low_risk_auto");
+
+      let thrown: unknown;
+      try {
+        policyService.updatePolicy({ mode: "max_autonomy", paused: true });
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(FridayDomainError);
+      expect(thrown).toMatchObject({
+        code: "TS_RUNTIME_AUTONOMY_POLICY_MUTATION_RETIRED",
+        httpStatus: 503,
+      });
+
+      // No persist/mutation happened: reads stay live and unchanged.
+      const after = policyService.getPolicy();
+      expect(after.mode).toBe("low_risk_auto");
+      expect(after.paused).toBe(false);
+    });
+
+    it("allows the test-oracle path to mutate the policy when the flag is set to true", () => {
+      const flaggedPolicyService = createFridayAutonomyPolicyService({
+        db,
+        nowIso: () => `2026-04-25T00:00:${String(++nowCounter).padStart(2, "0")}.000Z`,
+        allowTestOnlyAutonomyPolicyMutation: true,
+      });
+
+      const updated = flaggedPolicyService.updatePolicy({ mode: "max_autonomy", paused: true });
+      expect(updated.mode).toBe("max_autonomy");
+      expect(updated.paused).toBe(true);
+
+      // The mutation persisted: a fresh read reflects it.
+      expect(flaggedPolicyService.getPolicy().mode).toBe("max_autonomy");
+      expect(flaggedPolicyService.getPolicy().paused).toBe(true);
+    });
   });
 
   it("creates standing-goal agenda and records strategy-only improvement after a low-risk run", async () => {
