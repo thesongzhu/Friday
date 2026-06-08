@@ -34,12 +34,18 @@
 //!    NEVER "allowed". A foreign / mistyped name can therefore never weaken the disabled
 //!    set by sneaking through as "not disabled".
 //!
-//! ## Coverage of the full TS surface (no silent drops)
+//! ## Coverage of the TS surface
 //! The four fs+exec tools above are the ones present on BOTH sides. The rest of the TS
 //! tool surface (browser, web search/fetch, memory, desktop, nodes, skills, subagents, …)
-//! has NO Rust executor yet; those are recorded EXPLICITLY in [`TS_ONLY_UNMAPPED`] (the
-//! `unmapped` direction), not silently dropped — a `disabledToolNames` entry for one of
-//! them is unenforceable Rust-side but fail-closed (`UnknownFailClosed`) if ever dispatched.
+//! has NO Rust executor yet; those are recorded in [`TS_ONLY_UNMAPPED`] (the `unmapped`
+//! direction). NOTE: that list is a best-effort INVENTORY of the known TS surface, NOT a
+//! compiler-guaranteed-exhaustive enumeration of the live TS tool registry (the live
+//! surface evolves; e.g. `request_tool_pack`/`tool_search` were added late) — so do NOT
+//! rely on it for completeness. **The SECURITY guarantee does not depend on this list being
+//! complete:** the resolver consults ONLY [`TS_RUST_PAIRS`] + [`RUST_ONLY_ACTIONS`], so ANY
+//! name absent from both — whether or not it appears in [`TS_ONLY_UNMAPPED`] — canonicalizes
+//! to nothing and fail-closes (`UnknownFailClosed`) if dispatched. The unmapped list is
+//! documentation/ledger for the future routing slice, not a security boundary.
 //! Conversely, Rust actions with no TS alias are recorded in [`RUST_ONLY_ACTIONS`].
 //!
 //! ## Param-schema diffs (recorded for the future routing slice; see [`PARAM_SCHEMA_DIFFS`])
@@ -146,6 +152,7 @@ pub const TS_ONLY_UNMAPPED: &[&str] = &[
     "reflex_candidate_decide",
     "reflex_candidate_list",
     "reflex_preference_update",
+    "request_tool_pack",
     "sessions",
     "setup",
     "setup_assistant",
@@ -156,6 +163,7 @@ pub const TS_ONLY_UNMAPPED: &[&str] = &[
     "spawn_subagent",
     "system",
     "task_status",
+    "tool_search",
     "tts",
     "web_fetch",
     "web_search",
