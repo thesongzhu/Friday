@@ -223,6 +223,10 @@ describe("Session memory extraction — integration", () => {
       providerService: createMockProviderService(),
       idGenerator,
       nowIso: () => NOW,
+      // TS-runtime retirement: opt this integration suite into the live mutators
+      // (Directive 0b) — the three mutators are METHOD-level fail-closed by
+      // default; the dedicated unit guard tests cover the default-off fence.
+      allowTestOnlySessionMemoryExtractionExecution: true,
     });
   });
 

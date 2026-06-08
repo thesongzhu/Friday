@@ -3604,6 +3604,10 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       providerService: deps.providerService,
       idGenerator: deps.idGenerator,
       nowIso: deps.nowIso,
+      // METHOD-level retirement guard: plumb the same test-oracle flag the route
+      // honors so the service mutators fail closed for every non-route caller
+      // unless explicitly enabled. Production leaves this unset.
+      allowTestOnlySessionMemoryExtractionExecution: deps.allowTestOnlySessionMemoryExtractionExecution,
     });
   }
 

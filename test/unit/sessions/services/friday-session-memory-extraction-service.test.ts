@@ -11,6 +11,7 @@ import type {
   FridaySessionService,
   FridaySessionMemoryExtractionService,
 } from "#sessions";
+import { createFridayAgentMemoryExtractTool } from "#agent";
 import type { FridayMemoryService } from "#memory";
 import type { FridayProviderService } from "#providers";
 
@@ -100,6 +101,12 @@ describe("FridaySessionMemoryExtractionService", () => {
       providerService,
       idGenerator: idGen,
       nowIso: () => NOW,
+      // TS-runtime retirement: the three mutators are METHOD-level fail-closed
+      // unless this explicit test-oracle flag is set. These behavioral tests
+      // exercise the live extraction logic, so opt in (Directive 0b) — the
+      // default-off fail-closed behavior is covered by the dedicated guard tests
+      // below.
+      allowTestOnlySessionMemoryExtractionExecution: true,
     });
 
     // Create a test session with messages
@@ -418,6 +425,155 @@ describe("FridaySessionMemoryExtractionService", () => {
 
       // Should process exactly 3 messages (1 batch × 3)
       expect(result.processedMessageCount).toBe(3);
+    });
+  });
+
+  describe("TS-runtime retirement: METHOD-level fail-closed guard", () => {
+    // Construct a SEPARATE service WITHOUT the test-oracle flag (mirrors the
+    // production/runtime hub + the three non-route callers: lifecycle job,
+    // memory-extraction job, agent memory-extract tool). The mutators must fail
+    // closed BEFORE any read/persist/LLM-call.
+    function createUnflaggedService(): FridaySessionMemoryExtractionService {
+      return createFridaySessionMemoryExtractionService({
+        db,
+        sessionService,
+        memoryService,
+        providerService,
+        idGenerator: idGen,
+        nowIso: () => NOW,
+        // allowTestOnlySessionMemoryExtractionExecution intentionally unset → fail-closed
+      });
+    }
+
+    function countJobRows(): number {
+      return db.withReadConnection((d) => {
+        const row = d.prepare(
+          "SELECT COUNT(*) AS cnt FROM session_memory_extraction_jobs WHERE session_key = ?",
+        ).get("discord:default:user1") as { cnt: number };
+        return row.cnt;
+      });
+    }
+
+    function pendingMessageCount(): number {
+      return db.withReadConnection((d) => {
+        const row = d.prepare(
+          "SELECT COUNT(*) AS cnt FROM session_messages WHERE session_key = ? AND memory_extract_status = 'pending'",
+        ).get("discord:default:user1") as { cnt: number };
+        return row.cnt;
+      });
+    }
+
+    it("extractFromSession fails closed (503) when the flag is unset and persists NO job rows", async () => {
+      const unflagged = createUnflaggedService();
+      const jobsBefore = countJobRows();
+      const pendingBefore = pendingMessageCount();
+
+      let thrown: unknown;
+      try {
+        await unflagged.extractFromSession("discord:default:user1", { trigger: "auto", mode: "queue" });
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(FridayDomainError);
+      expect(thrown).toMatchObject({
+        code: "TS_RUNTIME_SESSION_MEMORY_EXTRACTION_RETIRED",
+        httpStatus: 503,
+      });
+      // No partial side-effect: no job queued, no memory items, no status mutation.
+      expect(countJobRows()).toBe(jobsBefore);
+      expect(pendingMessageCount()).toBe(pendingBefore);
+      expect(memoryService.store).not.toHaveBeenCalled();
+      expect(providerService.runWithFallback).not.toHaveBeenCalled();
+    });
+
+    it("extractFromSession (inline) fails closed (503) and persists NO memory items / NO status mutation", async () => {
+      const unflagged = createUnflaggedService();
+      const pendingBefore = pendingMessageCount();
+
+      await expect(
+        unflagged.extractFromSession("discord:default:user1", { trigger: "manual", mode: "inline" }),
+      ).rejects.toMatchObject({
+        code: "TS_RUNTIME_SESSION_MEMORY_EXTRACTION_RETIRED",
+        httpStatus: 503,
+      });
+
+      expect(pendingMessageCount()).toBe(pendingBefore);
+      expect(memoryService.store).not.toHaveBeenCalled();
+      expect(providerService.runWithFallback).not.toHaveBeenCalled();
+    });
+
+    it("extractSpecificMessages fails closed (503) BEFORE the empty-input check and persists NO side-effect", async () => {
+      const unflagged = createUnflaggedService();
+      const messages = await sessionService.getMessages("discord:default:user1");
+      const targetId = messages[0].id;
+      const pendingBefore = pendingMessageCount();
+
+      await expect(
+        unflagged.extractSpecificMessages("discord:default:user1", [targetId]),
+      ).rejects.toMatchObject({
+        code: "TS_RUNTIME_SESSION_MEMORY_EXTRACTION_RETIRED",
+        httpStatus: 503,
+      });
+
+      // Guard runs before the empty-input check too (fail-closed, not a 400).
+      await expect(
+        unflagged.extractSpecificMessages("discord:default:user1", []),
+      ).rejects.toMatchObject({
+        code: "TS_RUNTIME_SESSION_MEMORY_EXTRACTION_RETIRED",
+        httpStatus: 503,
+      });
+
+      expect(pendingMessageCount()).toBe(pendingBefore);
+      expect(memoryService.store).not.toHaveBeenCalled();
+      expect(providerService.runWithFallback).not.toHaveBeenCalled();
+    });
+
+    it("retryFailedExtractions fails closed (503) when the flag is unset and persists NO job rows", async () => {
+      const unflagged = createUnflaggedService();
+      // Mark messages failed so a flagged retry would otherwise queue a job.
+      db.withWriteTransaction((d) => {
+        d.prepare(
+          "UPDATE session_messages SET memory_extract_status = 'failed' WHERE session_key = 'discord:default:user1'",
+        ).run();
+      });
+      const jobsBefore = countJobRows();
+
+      await expect(
+        unflagged.retryFailedExtractions("discord:default:user1"),
+      ).rejects.toMatchObject({
+        code: "TS_RUNTIME_SESSION_MEMORY_EXTRACTION_RETIRED",
+        httpStatus: 503,
+      });
+
+      expect(countJobRows()).toBe(jobsBefore);
+    });
+
+    it("the agent memory-extract tool path fails closed when the flag is unset", async () => {
+      const unflagged = createUnflaggedService();
+      const tool = createFridayAgentMemoryExtractTool({ extractionService: unflagged });
+
+      // Default tool mode is "inline" → reaches extractFromSession → guard fires.
+      // The tool catches the FridayDomainError and surfaces it as a failed tool
+      // result (content carries the retirement fail-closed message).
+      const output = await tool.execute(
+        { sessionKey: "discord:default:user1" },
+        new AbortController().signal,
+      );
+
+      expect(output.isError).toBe(true);
+      expect(output.content).toContain("fail-closed");
+      expect(output.content).toContain("session_memory_extraction");
+      // No partial side-effect: no LLM call, no memory persisted.
+      expect(memoryService.store).not.toHaveBeenCalled();
+      expect(providerService.runWithFallback).not.toHaveBeenCalled();
+    });
+
+    it("getExtractionStatus (read-only) stays LIVE even when the flag is unset", async () => {
+      const unflagged = createUnflaggedService();
+      const status = await unflagged.getExtractionStatus("discord:default:user1");
+      expect(status.sessionKey).toBe("discord:default:user1");
+      expect(status.pendingMessages).toBe(2);
     });
   });
 });

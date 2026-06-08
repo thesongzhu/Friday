@@ -7174,6 +7174,11 @@ export async function createFridayHub(
       providerService,
       idGenerator,
       nowIso,
+      // METHOD-level retirement guard: plumb the same test-oracle flag the route
+      // honors so the live hub jobs (lifecycle @120s, memory-extraction @60s) and
+      // the agent memory-extract tool fail closed unless explicitly enabled.
+      // Production leaves this unset → fail-closed.
+      allowTestOnlySessionMemoryExtractionExecution: config.allowTestOnlySessionMemoryExtractionExecution,
     });
   }
 
