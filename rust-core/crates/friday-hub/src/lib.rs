@@ -1377,8 +1377,12 @@ pub trait ToolExecutor {
 /// The executor is reached ONLY on a gate `Allow` (see [`gate_dispatch`]), so a mutating arm runs
 /// IFF a signed approval was minted — the executor itself never decides; the gate does.
 /// `search` is a read-type tool wired to `friday_fs::search_within_root` (sets `content` with the
-/// matches; `summary` is a count only). `run_command` is registered but has no friday-fs primitive,
-/// so it remains `Unsupported` here. Fail-closed in every arm.
+/// matches; `summary` is a count only). `run_command` (the highest-risk arm) is wired to
+/// `friday_fs::run_command_in_root` — shell-FREE direct-argv exec, env-scrubbed, cwd-contained,
+/// timeout+kill, output-bounded; `content` carries the bounded output, `summary` is REFS-ONLY
+/// (exit code + byte count, NEVER the output or command). It is `mutating=true, Risk::High`, so
+/// the gate withholds it pending a single-use Ed25519 approval of the exact command and it never
+/// executes here without one. Fail-closed in every arm.
 pub struct FsToolExecutor {
     root: std::path::PathBuf,
 }
@@ -1542,6 +1546,50 @@ impl ToolExecutor for FsToolExecutor {
                     action: action.to_string(),
                     summary: format!("moved {path} to {target}"),
                     content: None,
+                })
+            }
+            // run_command: the HIGHEST-RISK arm. mutating + Risk::High in the registry; a command
+            // with shell metacharacters is classified Critical → gate DENY; the exact command is
+            // bound into the action_digest. So this arm is reached ONLY after an operator's
+            // single-use Ed25519 approval of THIS command. friday_fs::run_command_in_root runs it
+            // SHELL-FREE (direct argv exec), env-SCRUBBED (no FRIDAY_* secret inheritance),
+            // cwd-CONTAINED to root, with a TIMEOUT+kill and an OUTPUT cap. Fail-closed: a
+            // tokenize/spawn failure is an ExecError::Fs(CommandInvalid|CommandSpawn) with a
+            // STATIC message (no path/command/secret).
+            "run_command" => {
+                let command = Self::param(params, "command")?;
+                let result =
+                    friday_fs::run_command_in_root(&self.root, command).map_err(ExecError::Fs)?;
+                // content (model-facing): the bounded output + an exit/timeout status line.
+                let status_line = if result.timed_out {
+                    "[run_command: timed out, child killed]".to_string()
+                } else {
+                    format!("[run_command: exit {:?}]", result.exit_code)
+                };
+                let content = if result.output.is_empty() {
+                    status_line
+                } else {
+                    format!("{}\n{}", result.output, status_line)
+                };
+                // summary (REFS-ONLY → hash-chained audit ledger): exit code + byte count +
+                // truncation/timeout flags ONLY. NEVER the output text, NEVER the command string
+                // (the command already lives in the audit action label + action_digest), NEVER
+                // any env/secret. Mirrors read_file/list_dir/search keeping their payload out of
+                // the ledger summary — here it is security-critical (command output can be secret).
+                Ok(ToolReceipt {
+                    action: action.to_string(),
+                    summary: format!(
+                        "run_command: exit {:?}, {} bytes{}{}",
+                        result.exit_code,
+                        result.output.len(),
+                        if result.output_truncated {
+                            " (truncated)"
+                        } else {
+                            ""
+                        },
+                        if result.timed_out { " (timed out)" } else { "" }
+                    ),
+                    content: Some(content),
                 })
             }
             other => Err(ExecError::Unsupported(other.to_string())),
@@ -3676,20 +3724,64 @@ mod tests {
         assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
     }
 
-    /// `run_command` is registered but has NO friday-fs primitive, so the executor's fall-through
-    /// arm still returns `Unsupported`. (After wiring `search`, this arm is no longer reachable
-    /// through the loop — run_command is mutating and Pauses — so this DIRECT call is the only
-    /// remaining coverage of the fail-closed `other =>` arm.)
+    /// The executor's fall-through `other =>` arm still fails closed for a genuinely-unknown
+    /// action. (run_command USED to be the only direct coverage of this arm; now that it is wired,
+    /// a bogus action exercises the fail-closed catch-all. Loop-level coverage of unregistered
+    /// tools is `unregistered_tool_is_refused_fail_closed`; this is the executor-arm unit.)
     #[test]
-    fn executor_run_command_is_unsupported() {
-        let root = TempDir::new("unsup-runcmd");
+    fn executor_unknown_action_is_unsupported() {
+        let root = TempDir::new("unsup-unknown");
         let executor = FsToolExecutor::new(&root.0);
-        let err = executor
-            .execute("run_command", &[("command".to_string(), "ls".to_string())])
-            .unwrap_err();
+        let err = executor.execute("definitely_not_a_tool", &[]).unwrap_err();
         assert!(
-            matches!(err, ExecError::Unsupported(ref a) if a == "run_command"),
-            "run_command must be Unsupported (no fs primitive), got {err:?}"
+            matches!(err, ExecError::Unsupported(ref a) if a == "definitely_not_a_tool"),
+            "an unknown action must be Unsupported, got {err:?}"
+        );
+    }
+
+    /// run_command is NOW WIRED: a DIRECT execute (bypassing the gate — a legitimate unit test of
+    /// the arm, exactly as the mutating fs arms are unit-tested) runs the command shell-free,
+    /// env-scrubbed, cwd-contained, and returns a ToolReceipt whose `content` carries the output
+    /// and whose `summary` is REFS-ONLY (exit + byte count, NO output text, NO command string).
+    /// The gate-PAUSE (never-executes-without-approval) property is proven separately in
+    /// `each_mutating_fs_tool_pauses_under_deny_all_and_never_executes`.
+    #[test]
+    fn executor_run_command_runs_and_summary_is_refs_only() {
+        let root = TempDir::new("runcmd-exec");
+        let executor = FsToolExecutor::new(&root.0);
+        let receipt = executor
+            .execute(
+                "run_command",
+                &[("command".to_string(), "echo hello".to_string())],
+            )
+            .unwrap();
+        assert_eq!(receipt.action, "run_command");
+        // content (model-facing) carries the actual output + a status line.
+        let content = receipt.content.as_deref().unwrap_or("");
+        assert!(
+            content.contains("hello"),
+            "content must carry output: {content:?}"
+        );
+        assert!(
+            content.contains("exit Some(0)"),
+            "content must carry exit: {content:?}"
+        );
+        // summary (→ audit ledger) is REFS-ONLY: it must NOT contain the output text NOR the
+        // command string — only exit code + byte count.
+        assert!(
+            !receipt.summary.contains("hello"),
+            "summary must NOT leak output text: {}",
+            receipt.summary
+        );
+        assert!(
+            !receipt.summary.contains("echo"),
+            "summary must NOT leak the command string: {}",
+            receipt.summary
+        );
+        assert!(
+            receipt.summary.starts_with("run_command: exit Some(0)"),
+            "summary must be the refs-only exit+bytes form: {}",
+            receipt.summary
         );
     }
 
@@ -4402,6 +4494,31 @@ mod tests {
             assert!(
                 !root.0.join("moved.txt").exists(),
                 "move must not have created the target"
+            );
+        }
+        // run_command (highest-risk): a metacharacter-FREE command (`echo hi`) stays at the High
+        // base risk (not Critical, which would DENY) → mutating → withheld under deny-all → the
+        // loop PAUSES and the executor is NEVER invoked (calls == 0). No command ran without an
+        // operator's signed approval — the security-critical gate-pause proof. A drop-marker file
+        // would have been the side effect of a real run; we assert via the (more robust) zero
+        // executor-call count, the established "no command ran" invariant.
+        {
+            let root = TempDir::new("pause-runcmd");
+            // A command that, IF it ran, would create an observable side effect on disk; we then
+            // assert that file is ABSENT (belt-and-suspenders on top of calls == 0). `touch` is on
+            // the fixed child PATH and metacharacter-free, so it stays High and Pauses.
+            let (out, calls) = run_one(
+                &root.0,
+                raw("run_command", &[("command", "touch SENTINEL_RAN")]),
+            );
+            assert_eq!(out.status, LoopStatus::Paused, "run_command must pause");
+            assert_eq!(
+                calls, 0,
+                "executor never invoked for a withheld run_command"
+            );
+            assert!(
+                !root.0.join("SENTINEL_RAN").exists(),
+                "run_command must NOT have executed (no side-effect file) without approval"
             );
         }
     }
