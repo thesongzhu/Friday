@@ -214,6 +214,17 @@ pub fn hub_migrations() -> Vec<Migration> {
             destructive: false,
             up: m0016_pending_approval_tool_params,
         },
+        // D1-Q1: add the run's bound OWNER principal to `run_result` so the
+        // authenticated answer-body read can enforce `caller_principal == owner`.
+        // `ALTER TABLE ... ADD COLUMN` with no default is additive and back-compatible:
+        // existing v15 `run_result` rows read back as `owner_principal = NULL`, which
+        // FAILS CLOSED on the body read (an unowned answer is released to no one).
+        Migration {
+            version: 17,
+            name: "run_result_owner_principal",
+            destructive: false,
+            up: m0017_run_result_owner_principal,
+        },
     ]
 }
 
@@ -1125,4 +1136,14 @@ fn m0015_run_result(tx: &Transaction) -> rusqlite::Result<()> {
 // back-compatible: existing v14 rows read back as `NULL`.
 fn m0016_pending_approval_tool_params(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch("ALTER TABLE pending_approval_request ADD COLUMN tool_params TEXT;")
+}
+
+// D1-Q1: additive nullable `owner_principal` column on `run_result` — the run's bound
+// OWNER principal the authenticated answer-body read (`get_run_answer_for_principal`)
+// matches the caller against. `ALTER TABLE ... ADD COLUMN` with no default is additive
+// and back-compatible: existing v15 rows read back as `owner_principal = NULL`. A NULL
+// (or empty / `public`) owner FAILS CLOSED on the body read, so the column never weakens
+// the refs-only proof projection (which does not select it at all).
+fn m0017_run_result_owner_principal(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch("ALTER TABLE run_result ADD COLUMN owner_principal TEXT;")
 }
