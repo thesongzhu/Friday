@@ -488,6 +488,7 @@ dependencies = [
  "friday-core",
  "hkdf",
  "hmac",
+ "libc",
  "sha2",
  "thiserror 1.0.69",
  "x25519-dalek",
