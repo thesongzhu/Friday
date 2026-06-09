@@ -1,0 +1,3 @@
+# The esbuild-bundled interop runner is a regenerable build artifact, not source.
+# Rebuild it with: node test/interop/build-sealed-client-runner.mjs
+.build/
