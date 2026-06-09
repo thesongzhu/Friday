@@ -445,9 +445,20 @@ function handleBody(ctx: InboundContext, fields: Record<string, unknown>): void 
     ctx.fail(unavailable("Sealed agent-run client could not open the owner-sealed body."));
     return;
   }
-  // Defensive: the refs fingerprint (sha256) must match the opened body.
-  if (ctx.refs?.answerSha256 !== undefined && ctx.refs.answerSha256 !== sha256Hex(Buffer.from(body, "utf8"))) {
+  // Defensive: a DELIVERED body MUST carry a refs fingerprint, and that fingerprint MUST match the
+  // opened body — on BOTH sha256 AND byte length. The server always emits sha256+len together with a
+  // body; a body with no sha256 ref, a sha256 mismatch, or a len mismatch is fail-closed (never
+  // surfaced unverified). This holds the integrity check independent of the loopback trust model.
+  if (ctx.refs?.answerSha256 === undefined) {
+    ctx.fail(unavailable("Sealed agent-run client received a body with no fingerprint ref."));
+    return;
+  }
+  if (ctx.refs.answerSha256 !== sha256Hex(Buffer.from(body, "utf8"))) {
     ctx.fail(unavailable("Sealed agent-run client body fingerprint mismatch."));
+    return;
+  }
+  if (ctx.refs.answerLen !== undefined && ctx.refs.answerLen !== Buffer.byteLength(body, "utf8")) {
+    ctx.fail(unavailable("Sealed agent-run client body length mismatch."));
     return;
   }
   finishWithBody(ctx, body);
@@ -559,6 +570,9 @@ export function createFridayRustHubAgentRunSealedClient(
           try {
             connected = await new Promise<Socket>((res, rej) => {
               const s = connect({ host, port }, () => res(s));
+              // Capture the connecting socket into the outer slot SYNCHRONOUSLY, so a timeout that
+              // fires DURING a slow connect still has teardown destroy it (no leaked half-open socket).
+              socket = s;
               s.once("error", rej);
             });
           } catch {
@@ -587,7 +601,14 @@ export function createFridayRustHubAgentRunSealedClient(
 
             // (4) hand off to the WS layer over the SAME socket: manual RFC6455 upgrade, then
             // Sender/Receiver. The preamble reader detaches its listeners on takeover().
-            const { socket: sock } = reader.takeover();
+            const { socket: sock, leftover: preambleLeftover } = reader.takeover();
+            // INVARIANT: tungstenite cannot send the 101 before it receives our GET (written inside
+            // wsClientUpgrade, AFTER takeover), so the preamble reader cannot have buffered any
+            // upgrade-response bytes. If it somehow did (a pipelining non-loopback server), the fresh
+            // upgrade read would silently lose them — so fail CLOSED here instead of dropping them.
+            if (preambleLeftover.length > 0) {
+              throw new Error("unexpected buffered bytes before ws upgrade");
+            }
             const leftover = await wsClientUpgrade(sock, host, port);
 
             const sender = new wsRuntime.Sender(sock, undefined, () => randomBytes(4));
