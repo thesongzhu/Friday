@@ -26,6 +26,7 @@ use zeroize::ZeroizeOnDrop;
 
 pub mod approval;
 pub mod ed25519_approval;
+pub mod file_store;
 pub mod pairing;
 pub mod session;
 pub use approval::{action_digest, sign_approval, verify_approval_signature};
@@ -33,6 +34,7 @@ pub use ed25519_approval::{
     verify_ed25519_approval, verify_ed25519_approval_hex, ApprovalScheme, ApprovalSig,
     ApprovalSignature, Ed25519Error, OperatorSigningKey, OperatorVerifyingKey,
 };
+pub use file_store::{FileSecureStore, FileStoreError};
 pub use pairing::{pairing_proof, verify_pairing_proof};
 pub use session::DeviceKeypair;
 
