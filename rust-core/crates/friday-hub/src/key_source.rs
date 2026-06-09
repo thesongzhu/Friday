@@ -289,7 +289,7 @@ mod tests {
     /// The Rust side below reuses `DeviceKeypair::from_secret_bytes` (x25519-dalek), an
     /// INDEPENDENT implementation; their agreement proves byte-parity across the two stacks.
     const TS_EXPECTED_PUBKEY_HEX: &str =
-        "1d4a03c1c3af1a4639b616951c9b0e1cd1c957c9b0f25fe7a99b85101598de56";
+        "1d4a03c1c3af1a4639b616951c9b0e1cd1c957c9b0f25fe7a99b85101598de56"; // pragma: allowlist secret
 
     fn to_hex(bytes: &[u8]) -> String {
         let mut s = String::with_capacity(bytes.len() * 2);
@@ -346,7 +346,7 @@ mod tests {
         let secret = derive_client_x25519_secret(&KAT_MASTER);
         assert_eq!(
             to_hex(secret.as_slice()),
-            "84a7b3761b283c9adc27b8a169f83c7ea795852a8bdbb0fa1311ca24dac0613d",
+            "84a7b3761b283c9adc27b8a169f83c7ea795852a8bdbb0fa1311ca24dac0613d", // pragma: allowlist secret
             "the sha256(purpose || master) secret must match the TS derivation"
         );
     }
