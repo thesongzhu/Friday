@@ -18,11 +18,16 @@
  * secret on the API host (the client) and the same pubkey the operator provisions on the Hub.
  *
  * ## Hard contracts enforced here (load-bearing — Directive-0i)
- * 1. **Fail-closed on missing/invalid** — {@link resolveRustAgentRunWsClientX25519Secret}
- *    returns `null` when the SecureStore has no master key, the key is empty, or the derived
- *    secret is not exactly 32 bytes. The caller (compose) treats `null` as "do not route to
- *    Rust" → today's 503. There is no anonymous / default-key fallback: the composition never
- *    opens an UNAUTHENTICATED WS connection.
+ * 1. **Fail-closed (no weak/zero/predictable key, ever)** — the resolver returns `null` (compose
+ *    → today's 503) when: the presence env signal is explicitly off, {@link getMasterKey} THROWS
+ *    (misconfig, e.g. an invalid `FRIDAY_MASTER_KEY`), the key is empty, or the derived secret is
+ *    not 32 bytes. There is no anonymous / default-key fallback. **IMPORTANT (6b):** `getMasterKey`
+ *    AUTO-GENERATES + persists a random key on a fresh host, so a *merely-absent* master key does
+ *    NOT fail closed HERE — it yields a valid secret from a random key, and the fail-closed is then
+ *    enforced SERVER-side (the derived pubkey is not in the peer-allowlist → no session). So 6b must
+ *    enroll the pubkey derived from the prod host's STABLE master key, and RE-ENROLL on key rotation
+ *    (a rotated master key changes the derived secret → changes the pubkey → the stale allowlist
+ *    entry no longer matches → fail-closed until re-provisioned).
  * 2. **SecureStore-derived, never an env-var key** — the secret is derived through the
  *    keychain-backed {@link getMasterKey} path (the SecureStore root the secret admin uses),
  *    domain-separated with {@link WS_X25519_SECRET_PURPOSE}. An env var may carry only the
@@ -97,7 +102,12 @@ export function resolveRustAgentRunWsClientX25519Secret(): Uint8Array | null {
 
   let masterKey: Buffer;
   try {
-    // SecureStore root (keychain-backed). Throws when no key is provisioned → fail closed.
+    // SecureStore root (keychain-backed). NOTE: on a fresh host getMasterKey AUTO-GENERATES +
+    // persists a random key — it does NOT throw on a merely-absent key. It throws only on
+    // MISCONFIG (e.g. an invalid `FRIDAY_MASTER_KEY`), which this catch fail-closes. A
+    // merely-absent key therefore yields a VALID secret from a fresh random key; the resulting
+    // pubkey simply will not be in the server peer-allowlist (until 6b enrollment) → no session
+    // (fail-closed SERVER-side). The client never opens a weak/zero/predictable-key session.
     masterKey = getMasterKey();
   } catch {
     return null;
