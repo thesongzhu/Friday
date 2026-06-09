@@ -1,5 +1,41 @@
-//! WS substrate **S-C** + **S-E** — `hub_agent_run_server`: the long-lived loopback agent-run WS
-//! server bin, with the authed agent-run DISPATCH arm (S-C) HARDENED against REPLAY (S-E).
+//! WS substrate **S-C** + **S-E** + **S-F** — `hub_agent_run_server`: the long-lived loopback
+//! agent-run WS server bin, with the authed agent-run DISPATCH arm (S-C) HARDENED against REPLAY
+//! (S-E) and the connecting PEER authenticated against a SecureStore pubkey allowlist (S-F).
+//!
+//! ## S-F peer authentication (this revision — DARK, security-critical)
+//! S-C/S-E authenticated the *channel* (a correct ECDH handshake) and the *forwarded principal*
+//! (owner-allowlist), but NOT the *peer process*: a FRESH local keypair could complete the
+//! handshake and forge an openable `auth_proof` for an allowlisted owner string (owner strings are
+//! identifiers, not secrets). That is the **FORGERY** gap S-E explicitly deferred. S-F closes it by
+//! authenticating the PEER itself:
+//! * **SecureStore peer-pubkey allowlist.** At boot the server loads, from [`SecureStore`], an
+//!   allowlist of authorized peer X25519 public keys (the production TS-API peer's pubkey[s]). On
+//!   each connection, [`establish_session`] checks the peer's pubkey against that allowlist as the
+//!   FIRST gate — BEFORE the low-order check, BEFORE sending the server pubkey/nonce, BEFORE any
+//!   `agree()`. A non-allowlisted pubkey ⇒ NO session (fail closed; the connection ends and the
+//!   peer learns nothing — no server pubkey, no nonce, no agree, no auth, no dispatch). A fresh
+//!   local keypair that is NOT in the allowlist can no longer forge a session.
+//! * **Fail-closed on a missing/invalid allowlist.** [`load_peer_allowlist`] treats a MISSING entry
+//!   (None) and an INVALID entry (empty, or not a nonzero multiple of 32 bytes) as a boot failure:
+//!   the server REFUSES TO START rather than falling open to "accept any peer". It never defaults
+//!   to an empty/open allowlist.
+//!
+//! **Key-material boundary (dev vs production).** The allowlist material is SecureStore-derived and
+//! stays OUTSIDE agent-readable surfaces — NEVER in the repo, logs, artifacts, or any
+//! prompt-visible config; the server reports only presence/validity (bool) + a count, never the
+//! pubkey bytes. For this DARK build the dev path uses [`InMemorySecureStore`] (empty by default ⇒
+//! the binary fails closed at boot, the honest dark posture: no native backend yet, no production
+//! caller). PRODUCTION provisioning (real Keychain/Keystore, the live TS-API peer pubkey) happens
+//! at the slice-6 live-flip; there is NO `--peer-pubkey` arg/env fallback (the SecureStore-derived
+//! decision is binding). Tests provision a temp [`InMemorySecureStore`] fixture — no real
+//! production key material is required to build or test.
+//!
+//! S-F is ADDITIVE: the peer gate is a NEW check BEFORE the S-C/S-E gates (low-order check,
+//! per-handshake nonce, owner-allowlist, possession-of-session, msg_id dedup), not a reorder of
+//! them — all of those PRESERVE'd properties still hold and are still exercised through the real
+//! `accept_one` path (the migrated tests allowlist the client pubkey so each pre-existing gate is
+//! still the layer that rejects in its own test). `rust_wired` at best; NOT v1 GO; `executeRun` is
+//! NOT replaced; the live forged-peer proof is the coordinator's at slice-6.
 //!
 //! ## S-E anti-replay (this revision — DARK, security-critical)
 //! S-C's adversarial panel found a REAL replay hole: the auth challenge was a FIXED constant and
@@ -15,10 +51,10 @@
 //! * **per-session msg_id dedup.** [`serve_sealed_session`] wires a fresh [`IdempotencyTracker`]
 //!   so a replayed `msg_id` WITHIN a session is rejected fail-closed.
 //!
-//! S-E closes REPLAY ONLY. It does NOT add PEER authentication: a FRESH local process completing
-//! the CURRENT handshake and forging a proof for an allowlisted owner string is STILL possible —
-//! that is the PEER-AUTH gap, deferred to **S-F** (SecureStore pubkey allowlist / pairing).
-//! Loopback-only + no-prod-caller bound it meanwhile.
+//! S-E closes REPLAY. It did NOT add PEER authentication — a FRESH local process completing the
+//! CURRENT handshake and forging a proof for an allowlisted owner string. **S-F (this revision)
+//! CLOSES that FORGERY gap** with the SecureStore peer-pubkey allowlist gate described above: only
+//! an allowlisted peer pubkey establishes a session.
 //!
 //! ## What this slice is (DARK)
 //! S-B stood up the SERVER plus per-session sealed key establishment (peer pubkey from the
@@ -83,7 +119,9 @@ use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use friday_crypto::{generate_approval_nonce, seal, DataKey, DeviceKeypair, Sealed};
+use friday_crypto::{
+    generate_approval_nonce, seal, DataKey, DeviceKeypair, InMemorySecureStore, Sealed, SecureStore,
+};
 use friday_deepseek::Transport;
 use friday_hub::hub_server::{run_authed_agent_loop, AuthedPrincipal, ForwardedAuth};
 use friday_hub::runtime::{HubConfig, HubRuntime};
@@ -116,6 +154,18 @@ const SESSION_NONCE_LEN: usize = 64;
 /// auth/dispatch. Set on the `TcpStream` BEFORE the cleartext preamble read; it propagates
 /// through the WS layer (the underlying stream is the same socket).
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// S-F: the [`SecureStore`] id under which the authorized peer X25519 pubkey allowlist lives. A
+/// fixed, public, NON-SECRET lookup key (the allowlist VALUE — the pubkey bytes — is the protected
+/// material and is never logged; pubkeys themselves are not secret, but the allowlist is loaded
+/// from SecureStore per the binding operator decision, never from a repo/arg/env surface). The
+/// stored value is a concatenation of one-or-more raw 32-byte X25519 public keys.
+const PEER_PUBKEY_ALLOWLIST_ID: &str = "friday:execrun:ws:s-f:peer-pubkey-allowlist:v1";
+
+/// The X25519 public-key width, in bytes. The SecureStore allowlist entry is a concatenation of
+/// these fixed-width keys; a stored value whose length is not a NONZERO multiple of this is INVALID
+/// (fail closed at boot).
+const X25519_PUBKEY_LEN: usize = 32;
 
 /// The canonical low-order X25519 points (the libsodium `has_small_order` set), stored in their
 /// **bit-255-masked** canonical form. A peer public key that decodes to one of these drives an
@@ -186,6 +236,60 @@ enum ServerError {
     BadArgs,
     Bind,
     Init,
+    /// S-F: the SecureStore peer-pubkey allowlist is MISSING or INVALID ⇒ FAIL CLOSED (the server
+    /// refuses to start rather than accept any peer). The detail (which) is NOT surfaced.
+    PeerAllowlist,
+}
+
+/// Why a SecureStore peer-pubkey allowlist load failed. Coarse + non-leaking: it names the failure
+/// CATEGORY only, never the (would-be) pubkey bytes.
+#[derive(Debug, PartialEq, Eq)]
+enum PeerAllowlistError {
+    /// No allowlist entry exists in the SecureStore (a MISSING entry — never "open").
+    Missing,
+    /// The entry exists but is malformed: empty, or not a NONZERO multiple of [`X25519_PUBKEY_LEN`].
+    Invalid,
+}
+
+/// Load + validate the authorized peer-pubkey allowlist from the [`SecureStore`] (S-F). The stored
+/// value is a concatenation of raw 32-byte X25519 public keys.
+///
+/// FAIL-CLOSED contract — there is NO "open"/empty-allowlist fallthrough:
+/// * a MISSING entry (`get` ⇒ `None`)            ⇒ [`PeerAllowlistError::Missing`];
+/// * an EMPTY value (zero bytes)                  ⇒ [`PeerAllowlistError::Invalid`];
+/// * a value whose length is not a multiple of 32 ⇒ [`PeerAllowlistError::Invalid`].
+///
+/// On success returns the non-empty `Vec<[u8; 32]>` of allowlisted pubkeys. The raw bytes are
+/// returned to the caller but NEVER logged/printed by this bin (only a count is reported).
+fn load_peer_allowlist(
+    store: &dyn SecureStore,
+    id: &str,
+) -> Result<Vec<[u8; X25519_PUBKEY_LEN]>, PeerAllowlistError> {
+    let bytes = store.get(id).ok_or(PeerAllowlistError::Missing)?;
+    if bytes.is_empty() || bytes.len() % X25519_PUBKEY_LEN != 0 {
+        return Err(PeerAllowlistError::Invalid);
+    }
+    let allowlist: Vec<[u8; X25519_PUBKEY_LEN]> = bytes
+        .chunks_exact(X25519_PUBKEY_LEN)
+        .map(|c| {
+            let mut k = [0u8; X25519_PUBKEY_LEN];
+            k.copy_from_slice(c);
+            k
+        })
+        .collect();
+    // `chunks_exact` on a nonzero-multiple length yields ≥1 chunk and no remainder, so this is
+    // guaranteed non-empty — but assert the invariant rather than trust it (fail closed).
+    if allowlist.is_empty() {
+        return Err(PeerAllowlistError::Invalid);
+    }
+    Ok(allowlist)
+}
+
+/// True iff `peer_pub` is one of the authorized peer pubkeys. Plain byte-equality over the raw
+/// 32-byte keys — constant-time-ness is NOT required (a public key is not secret), and the value
+/// is fixed-width so there is no length oracle. This is the S-F PEER gate.
+fn peer_is_allowlisted(allowlist: &[[u8; X25519_PUBKEY_LEN]], peer_pub: &[u8; 32]) -> bool {
+    allowlist.contains(peer_pub)
 }
 
 fn main() {
@@ -194,6 +298,9 @@ fn main() {
             ServerError::BadArgs => "bad_args",
             ServerError::Bind => "bind_failed",
             ServerError::Init => "init_failed",
+            // S-F: a missing/invalid SecureStore peer-pubkey allowlist fails the boot CLOSED. The
+            // category only — never the (would-be) pubkey bytes.
+            ServerError::PeerAllowlist => "peer_allowlist_unavailable",
         };
         eprintln!("hub_agent_run_server_unavailable: {kind}");
         std::process::exit(2);
@@ -228,6 +335,24 @@ fn run() -> Result<(), ServerError> {
         format!("{workspace_root}/.hub-agent-run-server-dev-{pid}-{nanos}.sqlite")
     });
 
+    // (0) S-F PEER AUTH — load the authorized peer-pubkey allowlist from the SecureStore BEFORE
+    // anything else, and FAIL CLOSED if it is missing/invalid. The allowlist is SecureStore-derived
+    // per the binding operator decision — NOT a CLI arg/env key. In this DARK build the dev path is
+    // an EMPTY `InMemorySecureStore` (no native backend yet, no production caller), so the binary
+    // correctly fails closed at boot: it refuses to start rather than fall open to "accept any
+    // peer". PRODUCTION provisioning (real Keychain/Keystore + the live TS-API peer pubkey) lands
+    // at the slice-6 live-flip. We report only the COUNT — never the pubkey bytes.
+    let secure_store = InMemorySecureStore::new();
+    let peer_allowlist =
+        load_peer_allowlist(&secure_store, PEER_PUBKEY_ALLOWLIST_ID).map_err(|_| {
+            // The category is logged via the ServerError mapping; the bytes are never touched.
+            ServerError::PeerAllowlist
+        })?;
+    eprintln!(
+        "hub_agent_run_server: peer-pubkey allowlist loaded from SecureStore (count={})",
+        peer_allowlist.len()
+    );
+
     // (1) Build ONE HubRuntime at boot so the DeepSeek-client/DB cold-start is paid ONCE (not
     // per connection). S-C HOLDS this runtime and DISPATCHES into `run_task` for an authenticated
     // peer. The runtime is single-owner (v1): it is configured with the SAME principal the
@@ -258,10 +383,11 @@ fn run() -> Result<(), ServerError> {
     );
 
     // (3) Long-lived accept loop. Each accepted connection: set the read timeout, read the peer
-    // pubkey preamble (rejecting low-order points), run the WS handshake, derive the sealed
-    // session key, and serve sealed envelopes fail-closed — dispatching authed agent-runs.
+    // pubkey preamble, REJECT a non-allowlisted peer pubkey (S-F, the FIRST gate), reject low-order
+    // points, run the WS handshake, derive the sealed session key, and serve sealed envelopes
+    // fail-closed — dispatching authed agent-runs.
     loop {
-        match listener.accept_one(&server_kp, &runtime, &owner_allowlist) {
+        match listener.accept_one(&server_kp, &runtime, &owner_allowlist, &peer_allowlist) {
             Ok(_served) => {}
             // A connection-level error ends THAT connection only; the server keeps listening.
             Err(_e) => continue,
@@ -289,19 +415,22 @@ impl AgentRunWsListener {
     }
 
     /// Accept exactly ONE connection, set the per-connection read timeout, establish the sealed
-    /// session (peer pubkey from the wire; low-order points rejected), and serve it fail-closed
-    /// — dispatching authed agent-runs. Returns the count of envelopes processed on that session.
+    /// session (peer pubkey from the wire; S-F: a NON-ALLOWLISTED peer pubkey is rejected FIRST;
+    /// then low-order points rejected), and serve it fail-closed — dispatching authed agent-runs.
+    /// Returns the count of envelopes processed on that session.
     fn accept_one<T: Transport>(
         &self,
         server_kp: &DeviceKeypair,
         runtime: &HubRuntime<T>,
         owner_allowlist: &[String],
+        peer_allowlist: &[[u8; X25519_PUBKEY_LEN]],
     ) -> Result<usize, TransportError> {
         let (stream, _peer) = self.listener.accept()?;
         // HARDENING: a per-connection read timeout BEFORE any read, so a stalled peer cannot
         // wedge the single-threaded accept loop before auth/dispatch.
         stream.set_read_timeout(Some(READ_TIMEOUT))?;
-        let (mut ws, session_key, session_nonce) = establish_session(stream, server_kp)?;
+        let (mut ws, session_key, session_nonce) =
+            establish_session(stream, server_kp, peer_allowlist)?;
         serve_sealed_session(
             &mut ws,
             &session_key,
@@ -319,9 +448,12 @@ impl AgentRunWsListener {
 /// length-prefixed preamble BEFORE the WS upgrade. The server then ECDHs
 /// `server_kp.agree(peer_pub)` → the per-session [`DataKey`].
 ///
-/// Two FAIL-CLOSED gates BEFORE the session is derived:
+/// FAIL-CLOSED gates BEFORE the session is derived (in order):
 /// * a peer-pubkey frame that is not exactly 32 bytes (a malformed preamble can never yield a
-///   session); and
+///   session);
+/// * **S-F PEER AUTH:** the peer pubkey is NOT in the SecureStore-derived allowlist (a fresh local
+///   keypair cannot forge a session — this is the FORGERY gate, and it runs FIRST, before we send
+///   our own pubkey/nonce, so a non-allowlisted peer learns NOTHING); and
 /// * a known low-order / NON-CONTRIBUTORY X25519 point (which would drive an all-zero shared
 ///   secret) — see [`is_low_order_x25519`].
 ///
@@ -336,6 +468,7 @@ impl AgentRunWsListener {
 fn establish_session<S: Read + Write>(
     mut stream: S,
     server_kp: &DeviceKeypair,
+    peer_allowlist: &[[u8; X25519_PUBKEY_LEN]],
 ) -> Result<(WireWebSocket<S>, DataKey, Vec<u8>), TransportError> {
     // (a) Receive the peer's X25519 public key (cleartext preamble). The peer pubkey is ALWAYS an
     // input read from the wire — the server never fabricates the peer's ECDH half.
@@ -344,6 +477,18 @@ fn establish_session<S: Read + Write>(
         .as_slice()
         .try_into()
         .map_err(|_| TransportError::Protocol("peer pubkey must be 32 bytes".into()))?;
+
+    // (a') S-F PEER AUTH (the FORGERY gate — FIRST, before any other check). Verify the peer pubkey
+    // is in the SecureStore-derived allowlist. A non-allowlisted pubkey ⇒ NO session: we return
+    // BEFORE sending our own pubkey or the nonce and BEFORE the `agree()`, so a fresh local keypair
+    // (which can otherwise complete the handshake and forge an `auth_proof` for an allowlisted owner
+    // string) cannot establish a session and the peer learns nothing. We do NOT log the rejected
+    // pubkey (a public value, but kept out of logs on principle).
+    if !peer_is_allowlisted(peer_allowlist, &peer_pub) {
+        return Err(TransportError::Protocol(
+            "peer pubkey not in SecureStore allowlist".into(),
+        ));
+    }
 
     // HARDENING: reject a non-contributory (known low-order) peer key BEFORE deriving the
     // session — such a key would yield an all-zero shared secret a peer never has to "prove".
@@ -625,6 +770,23 @@ mod tests {
     const OWNER: &str = "principal:owner-allowlisted";
     const BODY: &str = "S-C-DISPATCH-BODY-CANARY-owner-only";
 
+    /// A FIXED non-secret test client secret scalar (small primes). Using a known secret lets a
+    /// test compute the client's pubkey up-front (to put it in the S-F peer allowlist) AND
+    /// reconstruct the SAME keypair inside a spawned thread (`DeviceKeypair` is not Clone/Send).
+    /// This is a TEST FIXTURE, not real key material.
+    const CLIENT_SECRET: [u8; 32] = [
+        // pragma: allowlist secret
+        7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101,
+        103, 107, 109, 113, 127, 131, 137, 139, 149,
+    ];
+
+    /// Build a single-entry S-F peer allowlist from a peer pubkey (the common test case: the test's
+    /// client is the authorized peer). Helper so the migrated S-C/S-E tests clear the peer gate and
+    /// keep exercising their OWN gate (principal / proof / wrong-key / low-order), not the peer gate.
+    fn allowlist_of(peer_pub: [u8; 32]) -> Vec<[u8; X25519_PUBKEY_LEN]> {
+        vec![peer_pub]
+    }
+
     /// A unique temp workspace dir (the agent loop's fs tools are contained to it).
     struct TempWs(PathBuf);
     impl TempWs {
@@ -859,13 +1021,18 @@ mod tests {
         // client thread (it must bind the per-handshake nonce, unknown until after the handshake).
         let client_kp = DeviceKeypair::generate();
         let client_session = client_kp.agree(&server_kp.public_bytes());
+        // S-F: ALLOWLIST this client's pubkey so the handshake clears the peer gate and the test
+        // exercises the S-C dispatch/body path (NOT the peer gate). Captured before the move.
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
         let client = spawn_client(addr, client_kp, |session, nonce| {
             let req = agent_run_request("req-1", "run-sc-1", OWNER, session, nonce);
             (req, session.clone(), session.clone())
         });
 
         // SERVER on the main thread (holds the non-Send runtime).
-        let processed = listener.accept_one(&server_kp, &rt, &allowlist).unwrap();
+        let processed = listener
+            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist)
+            .unwrap();
         assert_eq!(processed, 1, "one authed dispatch processed");
 
         let obs = client.join().unwrap();
@@ -913,13 +1080,18 @@ mod tests {
         let allowlist = vec![OWNER.to_string()];
 
         let client_kp = DeviceKeypair::generate();
+        // S-F: allowlist the client pubkey so the handshake SUCCEEDS and the rejection is
+        // attributable to the PRINCIPAL gate (forged/empty/anonymous owner), not the peer gate.
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
         let forwarded = forwarded.to_string();
         let client = spawn_client(addr, client_kp, move |session, nonce| {
             let req = agent_run_request("req-x", "run-rej", &forwarded, session, nonce);
             (req, session.clone(), session.clone())
         });
 
-        let processed = listener.accept_one(&server_kp, &rt, &allowlist).unwrap();
+        let processed = listener
+            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist)
+            .unwrap();
         assert_eq!(processed, 0, "[{tag}] rejected dispatch processes ZERO");
 
         let obs = client.join().unwrap();
@@ -958,6 +1130,9 @@ mod tests {
         let allowlist = vec![OWNER.to_string()];
 
         let client_kp = DeviceKeypair::generate();
+        // S-F: allowlist the client pubkey so the handshake SUCCEEDS and the rejection is
+        // attributable to the bad auth_proof (wrong key), not the peer gate.
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
         // The envelope opens (correct session key) but the auth_proof is sealed under a WRONG key.
         let wrong = DataKey::generate();
         let client = spawn_client(addr, client_kp, move |session, nonce| {
@@ -979,7 +1154,9 @@ mod tests {
             (req, session.clone(), session.clone())
         });
 
-        let processed = listener.accept_one(&server_kp, &rt, &allowlist).unwrap();
+        let processed = listener
+            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist)
+            .unwrap();
         assert_eq!(
             processed, 0,
             "a bad auth_proof (wrong key) must fail closed"
@@ -999,6 +1176,9 @@ mod tests {
         let allowlist = vec![OWNER.to_string()];
 
         let client_kp = DeviceKeypair::generate();
+        // S-F: allowlist the client pubkey so the HANDSHAKE succeeds (the client IS the authorized
+        // peer) and the rejection is attributable to the wrong ENVELOPE key, not the peer gate.
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
         // Seal the request (and its auth_proof) under a key that is NOT the established session.
         let wrong_key = DataKey::generate();
         // Client SEALS under the wrong key but OPENS replies under the real session (there are
@@ -1009,7 +1189,9 @@ mod tests {
             (req, wrong_key.clone(), session.clone())
         });
 
-        let processed = listener.accept_one(&server_kp, &rt, &allowlist).unwrap();
+        let processed = listener
+            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist)
+            .unwrap();
         assert_eq!(
             processed, 0,
             "a wrong-session-key envelope must fail closed"
@@ -1028,6 +1210,10 @@ mod tests {
         let listener = AgentRunWsListener::bind_loopback(0).unwrap();
         let addr = listener.local_addr().unwrap();
         let allowlist = vec![OWNER.to_string()];
+        // S-F: ALLOWLIST the low-order point itself, so it CLEARS the (earlier) peer gate and the
+        // rejection is attributable to the LOW-ORDER gate — keeping that PRESERVE'd property
+        // exercised end-to-end through `accept_one`, not just by the standalone unit test.
+        let peer_allowlist = allowlist_of(peer_pub);
         let client = thread::spawn(move || {
             let mut stream = TcpStream::connect(addr).unwrap();
             // Send the low-order point as the peer pubkey; the server must reject it. The peer
@@ -1039,7 +1225,7 @@ mod tests {
             drop(stream);
         });
         // accept_one runs the REAL production path; a low-order key must make it return Err.
-        let outcome = listener.accept_one(&server_kp, &rt, &allowlist);
+        let outcome = listener.accept_one(&server_kp, &rt, &allowlist, &peer_allowlist);
         client.join().unwrap();
         assert!(
             outcome.is_err(),
@@ -1122,7 +1308,9 @@ mod tests {
         let server = thread::spawn(move || -> Result<(), TransportError> {
             let (stream, _peer) = listener.listener.accept()?;
             stream.set_read_timeout(Some(Duration::from_millis(300)))?;
-            establish_session(stream, &server_kp).map(|_| ())
+            // The stall is at the PREAMBLE read, BEFORE the S-F peer gate — the allowlist is never
+            // consulted, so any (here empty) allowlist suffices to drive `establish_session`.
+            establish_session(stream, &server_kp, &[]).map(|_| ())
         });
 
         // Connect but send nothing — the server's preamble read must time out (not block).
@@ -1210,19 +1398,24 @@ mod tests {
         let server_kp = DeviceKeypair::generate();
         let listener = AgentRunWsListener::bind_loopback(0).unwrap();
         let addr = listener.local_addr().unwrap();
+        // S-F: a KNOWN client keypair, allowlisted, so BOTH handshakes clear the peer gate and the
+        // test exercises nonce FRESHNESS (not the peer gate). A fresh `generate()` per handshake
+        // would be non-allowlisted and rejected before a nonce was ever sent.
+        let peer_allowlist =
+            allowlist_of(DeviceKeypair::from_secret_bytes(CLIENT_SECRET).public_bytes());
 
         // Drive one handshake: spawn a client that reads the nonce, run the server's
         // establish_session on THIS (main) thread (server_kp is borrowed, not cloned), return the
         // client-observed nonce.
         let one_handshake = || -> Vec<u8> {
             let c = thread::spawn(move || {
-                let client_kp = DeviceKeypair::generate();
+                let client_kp = DeviceKeypair::from_secret_bytes(CLIENT_SECRET);
                 let (_ws, _s, nonce) = client_handshake(addr, &client_kp);
                 nonce
             });
             let (stream, _peer) = listener.listener.accept().unwrap();
             stream.set_read_timeout(Some(READ_TIMEOUT)).unwrap();
-            let _ = establish_session(stream, &server_kp).unwrap();
+            let _ = establish_session(stream, &server_kp, &peer_allowlist).unwrap();
             c.join().unwrap()
         };
 
@@ -1257,14 +1450,15 @@ mod tests {
         let listener = AgentRunWsListener::bind_loopback(0).unwrap();
         let addr = listener.local_addr().unwrap();
         let allowlist = vec![OWNER.to_string()];
-        // A FIXED client secret scalar so the SAME client keypair (hence the SAME session key) is
-        // reconstructed in BOTH connection threads (DeviceKeypair is not Clone/Send-shared). The
-        // value is a non-secret test fixture (small primes), not real key material.
-        let client_secret: [u8; 32] = [
-            // pragma: allowlist secret
-            7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97,
-            101, 103, 107, 109, 113, 127, 131, 137, 139, 149,
-        ];
+        // A FIXED client secret scalar (the shared `CLIENT_SECRET` test fixture) so the SAME client
+        // keypair (hence the SAME session key) is reconstructed in BOTH connection threads
+        // (DeviceKeypair is not Clone/Send-shared).
+        let client_secret = CLIENT_SECRET;
+        // S-F: allowlist that fixed client pubkey so BOTH handshakes (conn-1 valid, conn-2 replay)
+        // CLEAR the peer gate — the conn-2 rejection is then attributable ONLY to the stale nonce
+        // binding (the S-E replay defense), not the peer gate.
+        let peer_allowlist =
+            allowlist_of(DeviceKeypair::from_secret_bytes(client_secret).public_bytes());
         let client_session =
             DeviceKeypair::from_secret_bytes(client_secret).agree(&server_kp.public_bytes());
 
@@ -1292,7 +1486,9 @@ mod tests {
             // Drain the (accepted) reply so the server completes conn-1 cleanly.
             let _ = ws_recv_envelope(&mut ws, &sess_c1, SESSION_AAD);
         });
-        let processed1 = listener.accept_one(&server_kp, &rt1, &allowlist).unwrap();
+        let processed1 = listener
+            .accept_one(&server_kp, &rt1, &allowlist, &peer_allowlist)
+            .unwrap();
         assert_eq!(processed1, 1, "connection-1 is a VALID dispatch");
         let captured_proof = rx.recv().unwrap();
         c1.join().unwrap();
@@ -1321,7 +1517,9 @@ mod tests {
                 .ok()
                 .map(|e| e.message)
         });
-        let processed2 = listener.accept_one(&server_kp, &rt2, &allowlist).unwrap();
+        let processed2 = listener
+            .accept_one(&server_kp, &rt2, &allowlist, &peer_allowlist)
+            .unwrap();
         assert_eq!(
             processed2, 0,
             "a captured auth_proof REPLAYED on a fresh handshake must be REJECTED (no dispatch)"
@@ -1345,6 +1543,9 @@ mod tests {
         let allowlist = vec![OWNER.to_string()];
 
         let client_kp = DeviceKeypair::generate();
+        // S-F: allowlist the client pubkey so the handshake clears the peer gate and the test
+        // exercises the msg_id DEDUP (S-E within-session replay), not the peer gate.
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
         let client = thread::spawn(move || {
             let (mut ws, session, _nonce) = client_handshake(addr, &client_kp);
             // A benign keepalive (NOT an AgentRunRequest) — the dedup is checked BEFORE the branch.
@@ -1367,7 +1568,9 @@ mod tests {
             (first.is_some(), second.is_some())
         });
 
-        let processed = listener.accept_one(&server_kp, &rt, &allowlist).unwrap();
+        let processed = listener
+            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist)
+            .unwrap();
         // The first keepalive was processed (echoed); the replayed msg_id ended the session.
         assert_eq!(
             processed, 1,
@@ -1378,6 +1581,200 @@ mod tests {
         assert!(
             !second_echoed,
             "a replayed msg_id within the session must END the session (no echo)"
+        );
+    }
+
+    // ======================= S-F peer authentication (forgery defeat) =======================
+
+    /// What a peer observed during the cleartext preamble — used by the forgery tests to assert a
+    /// NON-allowlisted peer learns NOTHING (no server pubkey, no nonce).
+    struct PreambleObservations {
+        /// The server's pubkey frame, if the server sent it (it does NOT on a peer-gate rejection).
+        server_pub: Option<Vec<u8>>,
+        /// The server's per-handshake nonce frame, if sent (never, on a peer-gate rejection).
+        nonce: Option<Vec<u8>>,
+    }
+
+    /// Drive ONLY the cleartext preamble from the client side: send `client_pub`, then TRY to read
+    /// the server pubkey + nonce. A peer-gate rejection ends the connection BEFORE the server writes
+    /// either, so both reads fail (None). This is how we prove "the peer learns nothing".
+    fn try_preamble(addr: SocketAddr, client_pub: [u8; 32]) -> PreambleObservations {
+        let mut stream = TcpStream::connect(addr).unwrap();
+        let _ = write_frame(&mut stream, &client_pub);
+        let server_pub = read_frame(&mut stream).ok();
+        let nonce = if server_pub.is_some() {
+            read_frame(&mut stream).ok()
+        } else {
+            None
+        };
+        PreambleObservations { server_pub, nonce }
+    }
+
+    // (S-F a) HEADLINE — FORGERY DEFEATED: a FRESH local keypair that is NOT in the SecureStore
+    // allowlist cannot establish a session. The server REJECTS at the peer gate (accept_one ⇒ Err)
+    // BEFORE sending its own pubkey or nonce — so the attacker cannot even begin the handshake it
+    // would need to forge an `auth_proof` for an allowlisted owner string. This is the gap S-E
+    // explicitly deferred; S-F closes it. (Distinct from the principal-layer reject tests: a
+    // DIFFERENT, EARLIER gate and a DIFFERENT allowlist — the peer pubkey, not the owner string.)
+    #[test]
+    fn non_allowlisted_peer_pubkey_gets_no_session_forgery_defeated() {
+        let (rt, _ws) = mock_runtime("sf-forge", OWNER);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let owner_allowlist = vec![OWNER.to_string()];
+
+        // The allowlist authorizes a DIFFERENT peer (a known fixture pubkey). The attacker uses a
+        // FRESH keypair that is NOT in it — exactly the forgery S-E left open.
+        let authorized_peer = DeviceKeypair::from_secret_bytes(CLIENT_SECRET).public_bytes();
+        let peer_allowlist = allowlist_of(authorized_peer);
+        let attacker_kp = DeviceKeypair::generate();
+        let attacker_pub = attacker_kp.public_bytes();
+        assert_ne!(
+            attacker_pub, authorized_peer,
+            "the attacker's fresh key must NOT be the allowlisted peer"
+        );
+
+        let client = thread::spawn(move || try_preamble(addr, attacker_pub));
+        // The server runs the REAL accept path; a non-allowlisted peer must make it FAIL CLOSED.
+        let outcome = listener.accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist);
+        let obs = client.join().unwrap();
+
+        assert!(
+            outcome.is_err(),
+            "a non-allowlisted peer pubkey must get NO session (fail closed — forgery defeated)"
+        );
+        // The peer learned NOTHING: the server sent neither its pubkey nor a nonce. Without the
+        // server pubkey the attacker cannot derive the session key, and without the nonce it cannot
+        // build the (nonce-bound) auth_proof — so an `auth_proof` for an allowlisted owner string
+        // can never be forged on this connection.
+        assert!(
+            obs.server_pub.is_none(),
+            "a rejected peer must NOT receive the server pubkey"
+        );
+        assert!(
+            obs.nonce.is_none(),
+            "a rejected peer must NOT receive the per-handshake nonce"
+        );
+    }
+
+    // (S-F b) POSITIVE SecureStore read path + happy dispatch: provision a temp InMemorySecureStore
+    // with the authorized peer pubkey, LOAD it via `load_peer_allowlist` (the real read path), and
+    // run a full authed dispatch through `accept_one`. Proves the SecureStore-derived allowlist
+    // path works POSITIVELY (not only the missing/invalid fail-closed cases) and that an ALLOWLISTED
+    // peer establishes a session and runs.
+    #[test]
+    fn securestore_provisioned_allowlisted_peer_runs() {
+        let (rt, _ws) = mock_runtime("sf-store-ok", OWNER);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let owner_allowlist = vec![OWNER.to_string()];
+
+        // Provision the SecureStore with the authorized peer pubkey (raw 32 bytes), then load it
+        // through the REAL read path — exactly what `run()` does at boot.
+        let client_kp = DeviceKeypair::from_secret_bytes(CLIENT_SECRET);
+        let client_pub = client_kp.public_bytes();
+        let mut store = InMemorySecureStore::new();
+        store.put(PEER_PUBKEY_ALLOWLIST_ID, &client_pub);
+        let peer_allowlist =
+            load_peer_allowlist(&store, PEER_PUBKEY_ALLOWLIST_ID).expect("provisioned allowlist");
+        assert_eq!(peer_allowlist.len(), 1, "one provisioned peer pubkey");
+
+        let client = spawn_client(addr, client_kp, |session, nonce| {
+            let req = agent_run_request("req-sf", "run-sf-ok", OWNER, session, nonce);
+            (req, session.clone(), session.clone())
+        });
+        let processed = listener
+            .accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist)
+            .unwrap();
+        assert_eq!(
+            processed, 1,
+            "a SecureStore-allowlisted peer establishes a session and runs"
+        );
+        let obs = client.join().unwrap();
+        assert!(
+            matches!(obs.result, Some(Message::AgentRunResult { .. })),
+            "the allowlisted peer got a refs result"
+        );
+    }
+
+    // (S-F c) FAIL CLOSED on a MISSING SecureStore entry: an empty store has no allowlist ⇒ the
+    // load returns Missing (the boot would refuse to start). It never falls open to an empty/open
+    // allowlist.
+    #[test]
+    fn missing_securestore_allowlist_fails_closed() {
+        let store = InMemorySecureStore::new(); // empty — the DARK-build default
+        assert_eq!(
+            load_peer_allowlist(&store, PEER_PUBKEY_ALLOWLIST_ID),
+            Err(PeerAllowlistError::Missing),
+            "a MISSING SecureStore allowlist must fail closed (no open fallthrough)"
+        );
+    }
+
+    // (S-F c') FAIL CLOSED on an INVALID SecureStore entry: empty bytes, and a length that is not a
+    // nonzero multiple of 32, are both Invalid. A valid nonzero-multiple length parses to N keys.
+    #[test]
+    fn invalid_securestore_allowlist_fails_closed_valid_parses() {
+        let mut store = InMemorySecureStore::new();
+
+        // Empty value ⇒ Invalid.
+        store.put(PEER_PUBKEY_ALLOWLIST_ID, b"");
+        assert_eq!(
+            load_peer_allowlist(&store, PEER_PUBKEY_ALLOWLIST_ID),
+            Err(PeerAllowlistError::Invalid),
+            "an EMPTY allowlist value must fail closed"
+        );
+
+        // Not a multiple of 32 (31 bytes) ⇒ Invalid.
+        store.put(PEER_PUBKEY_ALLOWLIST_ID, &[0xABu8; 31]);
+        assert_eq!(
+            load_peer_allowlist(&store, PEER_PUBKEY_ALLOWLIST_ID),
+            Err(PeerAllowlistError::Invalid),
+            "a non-32-multiple allowlist value must fail closed"
+        );
+
+        // A trailing partial key (33 bytes) ⇒ Invalid (no silent truncation).
+        store.put(PEER_PUBKEY_ALLOWLIST_ID, &[0xCDu8; 33]);
+        assert_eq!(
+            load_peer_allowlist(&store, PEER_PUBKEY_ALLOWLIST_ID),
+            Err(PeerAllowlistError::Invalid),
+            "a partial trailing key must fail closed (no truncation)"
+        );
+
+        // Two concatenated 32-byte keys ⇒ parses to exactly two.
+        let a = DeviceKeypair::generate().public_bytes();
+        let b = DeviceKeypair::from_secret_bytes(CLIENT_SECRET).public_bytes();
+        let mut two = Vec::new();
+        two.extend_from_slice(&a);
+        two.extend_from_slice(&b);
+        store.put(PEER_PUBKEY_ALLOWLIST_ID, &two);
+        let loaded = load_peer_allowlist(&store, PEER_PUBKEY_ALLOWLIST_ID)
+            .expect("two-key allowlist parses");
+        assert_eq!(loaded, vec![a, b], "two concatenated keys parse in order");
+    }
+
+    // (S-F d) peer_is_allowlisted exact-match semantics: only an exact 32-byte match passes; a
+    // fresh (non-listed) key and a one-bit-flipped near-miss both fail.
+    #[test]
+    fn peer_is_allowlisted_is_exact_match() {
+        let a = DeviceKeypair::generate().public_bytes();
+        let b = DeviceKeypair::generate().public_bytes();
+        let list = vec![a];
+        assert!(peer_is_allowlisted(&list, &a), "the listed key matches");
+        assert!(
+            !peer_is_allowlisted(&list, &b),
+            "a fresh, non-listed key does NOT match"
+        );
+        let mut near = a;
+        near[0] ^= 0x01; // flip one bit
+        assert!(
+            !peer_is_allowlisted(&list, &near),
+            "a one-bit near-miss must NOT match (exact equality)"
+        );
+        assert!(
+            !peer_is_allowlisted(&[], &a),
+            "an EMPTY allowlist matches nothing (fail closed)"
         );
     }
 }
