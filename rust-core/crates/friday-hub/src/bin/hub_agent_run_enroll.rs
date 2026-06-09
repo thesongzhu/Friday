@@ -14,8 +14,8 @@
 //!   slice opens the SAME default).
 //! * `--print-pubkey` — derive + print the client pubkey hex and EXIT WITHOUT enrolling (for
 //!   operator verification against the API host's `deriveRustAgentRunWsClientX25519PublicKey`).
-//! * `--dry-run` — do everything EXCEPT the `try_put` (derive, open the store, report what WOULD
-//!   be enrolled), then exit 0 without mutating the store.
+//! * `--dry-run` — derive + report what WOULD be enrolled and exit 0 WITHOUT touching the
+//!   filesystem at all (the store is not even opened, so no store dir is created).
 //!
 //! ## What it enrolls
 //! The value stored under [`key_source::PEER_PUBKEY_ALLOWLIST_ID`] is a raw concatenation of
@@ -160,7 +160,18 @@ fn run() -> Result<(), EnrollError> {
         None => default_store_dir().map_err(|_| EnrollError::NoStoreDir)?,
     };
 
-    // (5) Derive the FileSecureStore KEK from the SAME master key and open the store.
+    // (5) --dry-run: report what WOULD be enrolled WITHOUT touching the filesystem. Reported
+    // BEFORE opening the store, so a dry-run never creates the store dir (a true no-op preview).
+    if opts.dry_run {
+        println!(
+            "DRY-RUN: would enroll client pubkey {pubkey_hex} (32 bytes) under id \
+             '{PEER_PUBKEY_ALLOWLIST_ID}' in store dir {} — NOT written (store not opened)",
+            store_dir.display()
+        );
+        return Ok(());
+    }
+
+    // (6) Derive the FileSecureStore KEK from the SAME master key and open the store.
     let kek = derive_file_store_kek(&master);
     let mut store = FileSecureStore::open(&store_dir, kek).map_err(|_| EnrollError::StoreOpen)?;
 
@@ -169,16 +180,7 @@ fn run() -> Result<(), EnrollError> {
     // entry, it does not append); a rotated master writes the NEW pubkey, replacing the old.
     let value: &[u8] = &pubkey;
 
-    if opts.dry_run {
-        println!(
-            "DRY-RUN: would enroll client pubkey {pubkey_hex} (32 bytes) under id \
-             '{PEER_PUBKEY_ALLOWLIST_ID}' in store dir {} — NOT written",
-            store_dir.display()
-        );
-        return Ok(());
-    }
-
-    // (6) CHECKED enrollment write — the CLI must KNOW it landed (try_put, not the infallible
+    // (7) CHECKED enrollment write — the CLI must KNOW it landed (try_put, not the infallible
     // trait `put`). On success the bytes are fsync'd + the rename durably committed.
     store
         .try_put(PEER_PUBKEY_ALLOWLIST_ID, value)

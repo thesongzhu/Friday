@@ -47,6 +47,7 @@ use std::path::{Path, PathBuf};
 
 use friday_crypto::{DeviceKeypair, Kek};
 use sha2::{Digest, Sha256};
+use zeroize::Zeroizing;
 
 /// The master key width in bytes. Mirrors the TS `KEY_BYTES = 32`
 /// (`src/security/friday-secret-crypto.ts:21`).
@@ -137,7 +138,7 @@ pub fn default_store_dir() -> Result<PathBuf, KeySourceError> {
 /// STRICT about non-hex input (TS `Buffer.from` silently stops at the first non-hex char; we
 /// reject it as [`KeySourceError::NotHex`] so a malformed key fails closed rather than decoding
 /// to a truncated — and therefore different — key).
-fn decode_master_hex(hex: &str) -> Result<[u8; MASTER_KEY_LEN], KeySourceError> {
+fn decode_master_hex(hex: &str) -> Result<Zeroizing<[u8; MASTER_KEY_LEN]>, KeySourceError> {
     let hex = hex.as_bytes();
     if hex.len() % 2 != 0 {
         return Err(KeySourceError::NotHex);
@@ -146,7 +147,7 @@ fn decode_master_hex(hex: &str) -> Result<[u8; MASTER_KEY_LEN], KeySourceError> 
     if n != MASTER_KEY_LEN {
         return Err(KeySourceError::WrongLength(n));
     }
-    let mut out = [0u8; MASTER_KEY_LEN];
+    let mut out = Zeroizing::new([0u8; MASTER_KEY_LEN]);
     for (i, pair) in hex.chunks_exact(2).enumerate() {
         let hi = hex_nibble(pair[0]).ok_or(KeySourceError::NotHex)?;
         let lo = hex_nibble(pair[1]).ok_or(KeySourceError::NotHex)?;
@@ -177,7 +178,7 @@ fn hex_nibble(b: u8) -> Option<u8> {
 /// The returned key never appears in any error or log. (An empty `FRIDAY_MASTER_KEY` — set but
 /// `""` — is treated as ABSENT and falls through to the file, mirroring TS `if (envKey)` which
 /// is falsy on `""`.)
-pub fn read_master_key() -> Result<[u8; MASTER_KEY_LEN], KeySourceError> {
+pub fn read_master_key() -> Result<Zeroizing<[u8; MASTER_KEY_LEN]>, KeySourceError> {
     // (1) env (hex). Byte-faithful to TS: the env value is NOT trimmed (TS does
     // `Buffer.from(envKey, "hex")` directly — `friday-secret-crypto.ts:148`). Only an EXACTLY
     // empty value is treated as absent (TS `if (envKey)` is falsy on `""`); a whitespace-bearing
@@ -230,12 +231,12 @@ pub fn derive_file_store_kek(master: &[u8; MASTER_KEY_LEN]) -> Kek {
 ///
 /// Private to this module: the secret never leaves it (only the PUBLIC key is exposed, via
 /// [`derive_client_x25519_pubkey`]).
-fn derive_client_x25519_secret(master: &[u8; MASTER_KEY_LEN]) -> [u8; 32] {
+fn derive_client_x25519_secret(master: &[u8; MASTER_KEY_LEN]) -> Zeroizing<[u8; 32]> {
     let mut hasher = Sha256::new();
     hasher.update(WS_X25519_SECRET_PURPOSE);
     hasher.update(master);
     let digest = hasher.finalize();
-    let mut secret = [0u8; 32];
+    let mut secret = Zeroizing::new([0u8; 32]);
     secret.copy_from_slice(&digest);
     secret
 }
@@ -249,7 +250,7 @@ fn derive_client_x25519_secret(master: &[u8; MASTER_KEY_LEN]) -> [u8; 32] {
 /// no x25519 is hand-rolled here. Proven byte-equal to TS by the in-module cross-language KAT.
 pub fn derive_client_x25519_pubkey(master: &[u8; MASTER_KEY_LEN]) -> [u8; X25519_PUBKEY_LEN] {
     let secret = derive_client_x25519_secret(master);
-    DeviceKeypair::from_secret_bytes(secret).public_bytes()
+    DeviceKeypair::from_secret_bytes(*secret).public_bytes()
 }
 
 #[cfg(test)]
@@ -344,7 +345,7 @@ mod tests {
     fn client_secret_matches_ts_kat() {
         let secret = derive_client_x25519_secret(&KAT_MASTER);
         assert_eq!(
-            to_hex(&secret),
+            to_hex(secret.as_slice()),
             "84a7b3761b283c9adc27b8a169f83c7ea795852a8bdbb0fa1311ca24dac0613d",
             "the sha256(purpose || master) secret must match the TS derivation"
         );
@@ -492,7 +493,7 @@ mod tests {
         }
         let from_file = read_master_key().expect("hex file must read successfully");
         assert_eq!(
-            from_file, KAT_MASTER,
+            *from_file, KAT_MASTER,
             "the file must be HEX-decoded (TS format), not read as raw bytes"
         );
         // The whole file→pubkey path must derive the TS-parity pubkey.
@@ -544,7 +545,7 @@ mod tests {
         let kek_bytes = *derive_file_store_kek(&m1).as_bytes();
         let x_secret = derive_client_x25519_secret(&m1);
         assert_ne!(
-            kek_bytes, x_secret,
+            kek_bytes, *x_secret,
             "the KEK and the X25519 secret must be domain-separated (distinct tags)"
         );
     }
