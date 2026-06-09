@@ -118,7 +118,7 @@ function makeStubWsClient() {
       return {
         truthLabel: "rust_wired" as const,
         runId: request.runId,
-        status: "completed",
+        status: "finished",
         answerSha256: ANSWER_SHA256,
         answerLen: OWNER_BODY.length,
       };
@@ -140,7 +140,7 @@ function makeStubReadback(owner: string) {
             proofOnly: true,
             outcome: "delivered",
             runId: input.runId,
-            status: "completed",
+            status: "finished",
             answer: OWNER_BODY,
             answerSha256: ANSWER_SHA256,
             answerLen: OWNER_BODY.length,
@@ -429,7 +429,7 @@ describe("FridayApiRuntime — execrun S-F-compose (DARK) Rust-route composition
         proofOnly: true,
         outcome: "delivered",
         runId: input.runId,
-        status: "completed",
+        status: "finished",
         answer: OWNER_BODY,
         answerSha256: ANSWER_SHA256,
         answerLen: OWNER_BODY.length,

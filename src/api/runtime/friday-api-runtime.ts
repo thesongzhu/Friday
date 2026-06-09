@@ -1215,7 +1215,11 @@ async function composeRustReadOnlyAgentRun(args: {
       routeId: `${args.providerId}:${args.model}`,
       providerId: args.providerId,
       model: args.model,
-      loopStatus: wsResult.status === "completed" ? "Finished" : "Errored",
+      // The Rust server's wire `AgentRunResult.status` echoes the persisted RunResult status,
+      // which for a finished loop is the literal "finished" (rust-core lib.rs `detail: "finished"`,
+      // asserted by hub_server.rs `status == "finished"`) — NOT "completed". A delivered readback
+      // (gated above) implies the loop finished, so map "finished" → Finished, else Errored.
+      loopStatus: wsResult.status === "finished" ? "Finished" : "Errored",
       turns: 0,
       executedTools: 0,
       finalMessageSha256: readbackReceipt.answerSha256,
