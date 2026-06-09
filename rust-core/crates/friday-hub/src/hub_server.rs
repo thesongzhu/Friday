@@ -914,18 +914,24 @@ impl<T: Transport> HubServer<T> {
 /// constructor and no way to mint one without opening a caller-sealed proof.
 pub struct AuthedPrincipal(String);
 
-/// The REQUEST-derived inputs to [`AuthedPrincipal::authenticate_forwarded`] — the fields a
-/// (potentially hostile) peer supplies on the wire, bundled so the verifier signature stays
-/// small. ALL of these are attacker-controlled; the verifier trusts none of them until the
-/// possession-of-session + nonce-bound-challenge + allowlist chain passes. Borrowed (no
-/// allocation): the verifier reconstructs the auth AAD + nonce-bound challenge from these.
+/// The per-request inputs to [`AuthedPrincipal::authenticate_forwarded`], bundled so the
+/// verifier signature stays small. **Trust is NOT uniform across these fields — read carefully:**
+/// `auth_proof` / `run_id` / `forwarded_principal` are PEER-conveyed on the wire (attacker-
+/// controlled; the verifier trusts none of them until the possession-of-session + nonce-bound-
+/// challenge + allowlist chain passes). `session_nonce` is the EXCEPTION: it is **SERVER-
+/// generated per handshake and MUST NEVER be read from the wire / a request field** — it is the
+/// anti-replay binding, and if it were attacker-suppliable (or empty) the binding would collapse
+/// back to the bare fixed challenge (the exact replay hole S-E closes). The verifier
+/// SELF-ENFORCES this (rejects a wrong-width `session_nonce`), but a caller MUST still pass the
+/// server's fresh nonce, never a peer value. Borrowed (no allocation).
 pub struct ForwardedAuth<'a> {
     /// The peer's sealed possession-of-session proof (decoded from the wire `auth_proof`). Must
     /// open under the session key to `expected_challenge || session_nonce` with the per-request
     /// AAD — a stale/lifted proof fails.
     pub auth_proof: &'a Sealed,
-    /// THIS handshake's fresh per-handshake nonce (the anti-replay binding). A captured proof
-    /// sealed a DIFFERENT nonce and will not verify here.
+    /// THIS handshake's fresh per-handshake nonce — the anti-replay binding. **SERVER-generated,
+    /// never wire-read.** A captured proof sealed a DIFFERENT nonce will not verify here; a
+    /// missing/short nonce is REJECTED by the verifier (it must be `SESSION_NONCE_LEN` wide).
     pub session_nonce: &'a [u8],
     /// The run the proof is bound to (length-delimited into the AAD) — a proof can't be lifted to
     /// a different run.
@@ -934,6 +940,12 @@ pub struct ForwardedAuth<'a> {
     /// AAD — a proof can't be lifted to a different principal).
     pub forwarded_principal: &'a str,
 }
+
+/// Required width of [`ForwardedAuth::session_nonce`] — the server's `generate_approval_nonce`
+/// emits 32 CSPRNG bytes as 64 lowercase-hex ASCII bytes. MUST match the bin's `SESSION_NONCE_LEN`
+/// (`hub_agent_run_server.rs`). The verifier rejects any other width so the anti-replay nonce
+/// binding cannot collapse to the bare fixed challenge.
+const SESSION_NONCE_LEN: usize = 64;
 
 impl AuthedPrincipal {
     /// Authenticate a caller over the established sealed session and bind the Hub's OWNER
@@ -1035,6 +1047,15 @@ impl AuthedPrincipal {
             run_id,
             forwarded_principal,
         } = req;
+        // (0) SELF-ENFORCE the anti-replay invariant AT this verification boundary (the one that
+        // OWNS the property). The server ALWAYS supplies a fresh full-width CSPRNG nonce
+        // (`SESSION_NONCE_LEN`); a missing/short/wrong-width `session_nonce` would let
+        // `nonce_bound_challenge` collapse back toward the bare fixed challenge — the exact replay
+        // hole S-E closes. Reject it here so the property cannot silently regress if a future
+        // caller mis-wires `session_nonce` (no upstream test would catch that).
+        if session_nonce.len() != SESSION_NONCE_LEN {
+            return None;
+        }
         // (1) Possession-of-session proof BOUND to THIS handshake. The peer must seal the agreed
         // challenge CONCATENATED with this connection's fresh `session_nonce`, under the
         // ESTABLISHED session key, with the per-request auth AAD (principal+run_id, length-
@@ -5360,9 +5381,11 @@ mod authed_route_tests {
     const FWD_OWNER: &str = "principal:forwarded-owner";
     /// A fixed per-handshake nonce stand-in for the unit tests (the bin tests drive the REAL
     /// per-connection CSPRNG nonce end-to-end). Non-secret. // pragma: allowlist secret
-    const FWD_NONCE: &[u8] = b"unit-test-handshake-nonce-AAAA";
-    /// A second, DISTINCT nonce — the "later handshake" in the replay test.
-    const FWD_NONCE_2: &[u8] = b"unit-test-handshake-nonce-BBBB";
+    /// SESSION_NONCE_LEN (64) bytes wide — matches the server's real `generate_approval_nonce`
+    /// output so the tests exercise the production path (and the verifier's self-enforcement guard).
+    const FWD_NONCE: &[u8] = &[b'a'; 64];
+    /// A second, DISTINCT 64-byte nonce — the "later handshake" in the replay test.
+    const FWD_NONCE_2: &[u8] = &[b'b'; 64];
     /// The run_id bound into the auth AAD for the forwarded-auth tests.
     const FWD_RUN: &str = "run:fwd-unit";
 
@@ -5405,6 +5428,35 @@ mod authed_route_tests {
             bound.principal(),
             FWD_OWNER,
             "binds the FORWARDED principal"
+        );
+    }
+
+    // S-E (b): SELF-ENFORCEMENT — a wrong-width (short/empty) session_nonce is rejected AT the
+    // verifier even when the peer sealed its proof under that SAME short nonce (so the step-(1)
+    // proof comparison alone would PASS). Without the boundary guard a missing/short nonce
+    // collapses the binding toward the bare fixed challenge (the replay hole); this proves the
+    // guard — not just the proof comparison — blocks it, so a future caller can't silently regress.
+    #[test]
+    fn authenticate_forwarded_rejects_a_wrong_width_session_nonce() {
+        let (hub_session, caller_session) = paired_sessions();
+        let short: &[u8] = b"too-short-nonce"; // not SESSION_NONCE_LEN wide
+                                               // Proof sealed under the SHORT nonce ⇒ the proof comparison alone would otherwise PASS.
+        let proof = fwd_proof_bound(&caller_session, short, FWD_OWNER, FWD_RUN);
+        assert!(
+            AuthedPrincipal::authenticate_forwarded(
+                &hub_session,
+                AAD,
+                CHALLENGE,
+                ForwardedAuth {
+                    auth_proof: &proof,
+                    session_nonce: short,
+                    run_id: FWD_RUN,
+                    forwarded_principal: FWD_OWNER,
+                },
+                &[FWD_OWNER.to_string()],
+            )
+            .is_none(),
+            "a wrong-width session_nonce must be rejected by the self-enforcement guard"
         );
     }
 
