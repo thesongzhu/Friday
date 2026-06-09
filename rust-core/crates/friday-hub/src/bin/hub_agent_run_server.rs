@@ -20,15 +20,22 @@
 //!   the server REFUSES TO START rather than falling open to "accept any peer". It never defaults
 //!   to an empty/open allowlist.
 //!
-//! **Key-material boundary (dev vs production).** The allowlist material is SecureStore-derived and
-//! stays OUTSIDE agent-readable surfaces — NEVER in the repo, logs, artifacts, or any
-//! prompt-visible config; the server reports only presence/validity (bool) + a count, never the
-//! pubkey bytes. For this DARK build the dev path uses [`InMemorySecureStore`] (empty by default ⇒
-//! the binary fails closed at boot, the honest dark posture: no native backend yet, no production
-//! caller). PRODUCTION provisioning (real Keychain/Keystore, the live TS-API peer pubkey) happens
-//! at the slice-6 live-flip; there is NO `--peer-pubkey` arg/env fallback (the SecureStore-derived
-//! decision is binding). Tests provision a temp [`InMemorySecureStore`] fixture — no real
-//! production key material is required to build or test.
+//! **Key-material boundary + the persistent store (execrun-enablement slice 3).** The allowlist
+//! material is SecureStore-derived and stays OUTSIDE agent-readable surfaces — NEVER in the repo,
+//! logs, artifacts, or any prompt-visible config; the server reports only presence/validity (bool)
+//! plus a count, never the pubkey bytes. At boot the server now opens the PERSISTENT
+//! [`FileSecureStore`] the `hub_agent_run_enroll` CLI provisions: it reads the master key via
+//! [`friday_hub::key_source::read_master_key`] (env-or-file, **never auto-generated**), derives the
+//! store KEK via [`friday_hub::key_source::derive_file_store_kek`] and DROPS the `Zeroizing` master
+//! immediately, resolves the store dir (`--store-dir`, default
+//! [`friday_hub::key_source::default_store_dir`]), and opens the store under that KEK to load the
+//! allowlist. An UNPROVISIONED host (no master key, or no/empty/corrupt allowlist) makes the binary
+//! REFUSE TO BOOT — it never falls open to "accept any peer", and there is NO `--peer-pubkey`
+//! arg/env fallback (the SecureStore-derived decision is binding). This still lands DARK: nothing
+//! connects to it in production (no production caller, no LaunchAgent entry) until the slice-6
+//! live-flip. Tests provision a temp [`FileSecureStore`] / [`friday_crypto::InMemorySecureStore`]
+//! fixture and drive `accept_one`/`establish_session`/`load_peer_allowlist` directly (NOT `run()`),
+//! so no real production key material is required to build or test.
 //!
 //! S-F is ADDITIVE: the peer gate is a NEW check BEFORE the S-C/S-E gates (low-order check,
 //! per-handshake nonce, owner-allowlist, possession-of-session, msg_id dedup), not a reorder of
@@ -120,10 +127,11 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use friday_crypto::{
-    generate_approval_nonce, seal, DataKey, DeviceKeypair, InMemorySecureStore, Sealed, SecureStore,
+    generate_approval_nonce, seal, DataKey, DeviceKeypair, FileSecureStore, Sealed, SecureStore,
 };
 use friday_deepseek::Transport;
 use friday_hub::hub_server::{run_authed_agent_loop, AuthedPrincipal, ForwardedAuth};
+use friday_hub::key_source::{PEER_PUBKEY_ALLOWLIST_ID, X25519_PUBKEY_LEN};
 use friday_hub::runtime::{HubConfig, HubRuntime};
 use friday_protocol::{Envelope, IdempotencyTracker, Message, Seen};
 use friday_transport::{
@@ -155,17 +163,12 @@ const SESSION_NONCE_LEN: usize = 64;
 /// through the WS layer (the underlying stream is the same socket).
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// S-F: the [`SecureStore`] id under which the authorized peer X25519 pubkey allowlist lives. A
-/// fixed, public, NON-SECRET lookup key (the allowlist VALUE — the pubkey bytes — is the protected
-/// material and is never logged; pubkeys themselves are not secret, but the allowlist is loaded
-/// from SecureStore per the binding operator decision, never from a repo/arg/env surface). The
-/// stored value is a concatenation of one-or-more raw 32-byte X25519 public keys.
-const PEER_PUBKEY_ALLOWLIST_ID: &str = "friday:execrun:ws:s-f:peer-pubkey-allowlist:v1";
-
-/// The X25519 public-key width, in bytes. The SecureStore allowlist entry is a concatenation of
-/// these fixed-width keys; a stored value whose length is not a NONZERO multiple of this is INVALID
-/// (fail closed at boot).
-const X25519_PUBKEY_LEN: usize = 32;
+// S-F: the SecureStore allowlist id (`PEER_PUBKEY_ALLOWLIST_ID`) and the X25519 pubkey width
+// (`X25519_PUBKEY_LEN`) are NOT redefined here — they are imported from `friday_hub::key_source`
+// (the single source of truth shared with the enroll CLI). MED-1: a local copy would let a future
+// edit silently desync the enroll-CLI's id/len from the server's, fail-closing the allowlist read
+// at cutover. The server now redefines NONE of {the id, the pubkey length, the KEK derivation, the
+// store-dir default} — all come from key_source.
 
 /// The canonical low-order X25519 points (the libsodium `has_small_order` set), stored in their
 /// **bit-255-masked** canonical form. A peer public key that decodes to one of these drives an
@@ -239,6 +242,15 @@ enum ServerError {
     /// S-F: the SecureStore peer-pubkey allowlist is MISSING or INVALID ⇒ FAIL CLOSED (the server
     /// refuses to start rather than accept any peer). The detail (which) is NOT surfaced.
     PeerAllowlist,
+    /// The master key (`FRIDAY_MASTER_KEY` / `~/.friday/master.key`) is absent or unreadable ⇒ the
+    /// server REFUSES TO BOOT. An unprovisioned host has no service; it NEVER auto-generates a key
+    /// (that would derive a KEK that cannot open the enroll CLI's store). The category only — never
+    /// the key bytes or the file path.
+    MasterKeyUnavailable,
+    /// The persistent FileSecureStore cannot be resolved/opened (e.g. `$HOME` unset so the default
+    /// store dir is unresolvable, or the open failed) ⇒ FAIL CLOSED. The category only — never the
+    /// path (a path can carry the operator's home/username).
+    StoreUnavailable,
 }
 
 /// Why a SecureStore peer-pubkey allowlist load failed. Coarse + non-leaking: it names the failure
@@ -301,6 +313,10 @@ fn main() {
             // S-F: a missing/invalid SecureStore peer-pubkey allowlist fails the boot CLOSED. The
             // category only — never the (would-be) pubkey bytes.
             ServerError::PeerAllowlist => "peer_allowlist_unavailable",
+            // Boot fail-closed reasons for the persistent store. NON-LEAKING: never the key bytes
+            // and never the store path (which can carry the operator's home/username).
+            ServerError::MasterKeyUnavailable => "master_key_unavailable",
+            ServerError::StoreUnavailable => "secure_store_unavailable",
         };
         eprintln!("hub_agent_run_server_unavailable: {kind}");
         std::process::exit(2);
@@ -335,14 +351,36 @@ fn run() -> Result<(), ServerError> {
         format!("{workspace_root}/.hub-agent-run-server-dev-{pid}-{nanos}.sqlite")
     });
 
-    // (0) S-F PEER AUTH — load the authorized peer-pubkey allowlist from the SecureStore BEFORE
-    // anything else, and FAIL CLOSED if it is missing/invalid. The allowlist is SecureStore-derived
-    // per the binding operator decision — NOT a CLI arg/env key. In this DARK build the dev path is
-    // an EMPTY `InMemorySecureStore` (no native backend yet, no production caller), so the binary
-    // correctly fails closed at boot: it refuses to start rather than fall open to "accept any
-    // peer". PRODUCTION provisioning (real Keychain/Keystore + the live TS-API peer pubkey) lands
-    // at the slice-6 live-flip. We report only the COUNT — never the pubkey bytes.
-    let secure_store = InMemorySecureStore::new();
+    // (0) S-F PEER AUTH — open the PERSISTENT FileSecureStore the enroll CLI provisioned, then load
+    // the authorized peer-pubkey allowlist from it BEFORE anything else, FAILING CLOSED at every
+    // step. The store key material is sourced via `friday_hub::key_source` (the single source of
+    // truth shared with the enroll CLI), NOT a CLI arg/env key:
+    //   * read the master key fail-closed (env-or-file; NEVER auto-generated — a missing key means
+    //     the host is UNPROVISIONED, so the server refuses to boot rather than mint a key that
+    //     would derive a KEK the enroll CLI's store can't be opened under);
+    //   * derive the FileSecureStore KEK and DROP the master immediately (it is `Zeroizing`, so the
+    //     drop wipes it — the master never lives past the one derivation it is needed for);
+    //   * resolve the store dir (`--store-dir`, default `key_source::default_store_dir()`, which is
+    //     fail-closed if `$HOME` is unset) and open the store under the derived KEK.
+    // An unprovisioned server (no master key, or no/empty/corrupt allowlist) REFUSES TO START — it
+    // never falls open to "accept any peer". The store is only needed at boot to load the allowlist;
+    // it is dropped immediately after (below) so the KEK does not sit in memory during the (long-
+    // lived) serving loop. This STAYS DARK: nothing connects to it in production (no production
+    // caller, no LaunchAgent entry) until the slice-6 live-flip. We report only the COUNT — never
+    // the pubkey bytes, never the master, never the store path.
+    let master = friday_hub::key_source::read_master_key().map_err(|_| {
+        // The category is surfaced via the ServerError mapping; the key bytes are never touched.
+        ServerError::MasterKeyUnavailable
+    })?;
+    let kek = friday_hub::key_source::derive_file_store_kek(&master);
+    drop(master); // `Zeroizing` ⇒ the master is wiped now; only the KEK survives.
+    let store_dir: PathBuf = match arg_value(&args, "--store-dir") {
+        Some(d) => PathBuf::from(d),
+        None => friday_hub::key_source::default_store_dir()
+            .map_err(|_| ServerError::StoreUnavailable)?,
+    };
+    let secure_store =
+        FileSecureStore::open(&store_dir, kek).map_err(|_| ServerError::StoreUnavailable)?;
     let peer_allowlist =
         load_peer_allowlist(&secure_store, PEER_PUBKEY_ALLOWLIST_ID).map_err(|_| {
             // The category is logged via the ServerError mapping; the bytes are never touched.
@@ -352,6 +390,9 @@ fn run() -> Result<(), ServerError> {
         "hub_agent_run_server: peer-pubkey allowlist loaded from SecureStore (count={})",
         peer_allowlist.len()
     );
+    // The KEK-holding store is no longer needed (the allowlist is in memory); drop it so the KEK
+    // is wiped (Kek is ZeroizeOnDrop) rather than lingering for the lifetime of the serving loop.
+    drop(secure_store);
 
     // (1) Build ONE HubRuntime at boot so the DeepSeek-client/DB cold-start is paid ONCE (not
     // per connection). S-C HOLDS this runtime and DISPATCHES into `run_task` for an authenticated
@@ -753,7 +794,11 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // `InMemorySecureStore` is TEST-ONLY now (slice 3 moved `run()` to `FileSecureStore`), so its
+    // import lives here — keeping it top-level would be an unused import in the non-test bin compile
+    // (clippy `-D warnings`). `FileSecureStore` is imported via `use super::*` (run() uses it).
     use friday_crypto::open as crypto_open;
+    use friday_crypto::InMemorySecureStore;
     use friday_deepseek::{DeepSeekClient, DeepSeekError};
     use friday_hub::hub_server::{auth_aad, nonce_bound_challenge};
     use friday_hub::runtime::DenyAllApprovals;
@@ -1704,7 +1749,7 @@ mod tests {
     // allowlist.
     #[test]
     fn missing_securestore_allowlist_fails_closed() {
-        let store = InMemorySecureStore::new(); // empty — the DARK-build default
+        let store = InMemorySecureStore::new(); // empty store — an UNPROVISIONED allowlist
         assert_eq!(
             load_peer_allowlist(&store, PEER_PUBKEY_ALLOWLIST_ID),
             Err(PeerAllowlistError::Missing),
@@ -1775,6 +1820,113 @@ mod tests {
         assert!(
             !peer_is_allowlisted(&[], &a),
             "an EMPTY allowlist matches nothing (fail closed)"
+        );
+    }
+
+    /// A unique temp dir per test (no `tempfile` dep — the workspace minimal-dep convention,
+    /// mirroring `key_source`'s test helper). Removed on drop.
+    struct TempDir {
+        path: PathBuf,
+    }
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            static CTR: AtomicU64 = AtomicU64::new(0);
+            let n = CTR.fetch_add(1, Ordering::Relaxed);
+            let mut path = std::env::temp_dir();
+            path.push(format!(
+                "friday-execrun-s3-server-test-{tag}-{}-{n}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+        fn child(&self, name: &str) -> PathBuf {
+            self.path.join(name)
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    // (S-F e) THE TRUE END-TO-END ENROLL→PERSIST→SERVER-LOAD→ACCEPT PROOF (slice 3, deferred from
+    // slice 2). This exercises the FULL chain that, at cutover, lets the live client's derived
+    // pubkey pass the S-F peer gate:
+    //
+    //   master key  --key_source::derive_file_store_kek-->  FileSecureStore KEK
+    //   master key  --key_source::derive_client_x25519_pubkey-->  enrolled pubkey
+    //   enroll CLI:  FileSecureStore::open(dir, KEK).try_put(ALLOWLIST_ID, &pubkey)   [persist]
+    //   server boot: FileSecureStore::open(dir, KEK) -> load_peer_allowlist(ALLOWLIST_ID)  [load]
+    //   server gate: peer_is_allowlisted(&allowlist, &pubkey) == true                  [accept]
+    //
+    // It derives directly from a FIXED master (NO process-env mutation), persists exactly as
+    // `hub_agent_run_enroll` does (`try_put`), then RE-OPENS the store and runs the server's OWN
+    // private loader + gate. Mirroring the slice-2 KAT master (all 0x42) makes the round-tripped
+    // pubkey the known parity value `1d4a03c1…98de56`, tying this proof to the cross-language KAT.
+    #[test]
+    fn enroll_to_server_load_accept_end_to_end() {
+        // The slice-2 cross-language KAT master + its expected derived pubkey hex.
+        let master = [0x42u8; friday_hub::key_source::MASTER_KEY_LEN];
+        const KAT_PUBKEY_HEX: &str =
+            "1d4a03c1c3af1a4639b616951c9b0e1cd1c957c9b0f25fe7a99b85101598de56"; // pragma: allowlist secret
+
+        // Derive directly (no env). The KEK opens the store; the pubkey is what the enroll CLI
+        // writes and the live handshake produces.
+        let pubkey = friday_hub::key_source::derive_client_x25519_pubkey(&master);
+        assert_eq!(
+            hex_encode(&pubkey),
+            KAT_PUBKEY_HEX,
+            "the round-tripped pubkey must be the slice-2 cross-language KAT value (ties this \
+             proof to the parity contract)"
+        );
+
+        let td = TempDir::new("e2e");
+        let store_dir = td.child("agent-run-securestore");
+
+        // ENROLL: open the store under the derived KEK and persist the pubkey under the SHARED
+        // allowlist id — byte-for-byte what `hub_agent_run_enroll` does (`try_put`).
+        {
+            let kek = friday_hub::key_source::derive_file_store_kek(&master);
+            let mut store = FileSecureStore::open(&store_dir, kek).expect("enroll: open store");
+            store
+                .try_put(PEER_PUBKEY_ALLOWLIST_ID, &pubkey)
+                .expect("enroll: persist pubkey");
+        }
+
+        // SERVER BOOT: RE-OPEN the store under a FRESHLY re-derived KEK (Kek is consumed by `open`;
+        // re-derive per the `key_source::kek_is_deterministic_for_a_master` pattern), then run the
+        // server's OWN private loader — exactly the `run()` boot path (minus the listener).
+        let server_store = {
+            let kek = friday_hub::key_source::derive_file_store_kek(&master);
+            FileSecureStore::open(&store_dir, kek).expect("server: open store")
+        };
+        let allowlist = load_peer_allowlist(&server_store, PEER_PUBKEY_ALLOWLIST_ID)
+            .expect("server: the enroll-persisted allowlist must load (Ok)");
+        assert_eq!(
+            allowlist.len(),
+            1,
+            "exactly one enrolled peer pubkey round-trips"
+        );
+
+        // ACCEPT: the server's S-F gate admits the enrolled pubkey.
+        assert!(
+            peer_is_allowlisted(&allowlist, &pubkey),
+            "the enroll→persist→load chain must produce an allowlist that ACCEPTS the derived \
+             pubkey (the cutover accept path)"
+        );
+
+        // NEGATIVE: a DIFFERENT master derives a DIFFERENT pubkey that is NOT in this allowlist —
+        // the gate fails closed against a non-enrolled peer (no fall-open).
+        let other_master = [0x37u8; friday_hub::key_source::MASTER_KEY_LEN];
+        let other_pubkey = friday_hub::key_source::derive_client_x25519_pubkey(&other_master);
+        assert_ne!(
+            pubkey, other_pubkey,
+            "different masters → different pubkeys"
+        );
+        assert!(
+            !peer_is_allowlisted(&allowlist, &other_pubkey),
+            "a DIFFERENT master's pubkey must NOT be allowlisted (fail closed)"
         );
     }
 
