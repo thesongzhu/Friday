@@ -1,5 +1,24 @@
-//! WS substrate **S-C** — `hub_agent_run_server`: the long-lived loopback agent-run WS server
-//! bin, NOW with the authed agent-run DISPATCH arm.
+//! WS substrate **S-C** + **S-E** — `hub_agent_run_server`: the long-lived loopback agent-run WS
+//! server bin, with the authed agent-run DISPATCH arm (S-C) HARDENED against REPLAY (S-E).
+//!
+//! ## S-E anti-replay (this revision — DARK, security-critical)
+//! S-C's adversarial panel found a REAL replay hole: the auth challenge was a FIXED constant and
+//! `server_kp` is stable-per-boot, so a captured sealed `auth_proof` RE-AUTHENTICATED verbatim on
+//! a later connection (the attacker replays the public peer-pubkey preamble → same session key →
+//! the stale proof opens). S-E kills replay-to-AUTHENTICATE two ways:
+//! * **per-handshake nonce.** [`establish_session`] generates a FRESH CSPRNG nonce per connection
+//!   ([`generate_approval_nonce`], OsRng) and sends it cleartext; the peer must seal
+//!   `AUTH_CHALLENGE || session_nonce` in its `auth_proof`. A proof captured under nonce `N1`
+//!   cannot verify on a new handshake (nonce `N2`) — the attacker cannot re-seal `…||N2` without
+//!   the paired ECDH private half. The AAD also length-binds `(principal, run_id)` so a proof
+//!   can't be LIFTED to a different pair.
+//! * **per-session msg_id dedup.** [`serve_sealed_session`] wires a fresh [`IdempotencyTracker`]
+//!   so a replayed `msg_id` WITHIN a session is rejected fail-closed.
+//!
+//! S-E closes REPLAY ONLY. It does NOT add PEER authentication: a FRESH local process completing
+//! the CURRENT handshake and forging a proof for an allowlisted owner string is STILL possible —
+//! that is the PEER-AUTH gap, deferred to **S-F** (SecureStore pubkey allowlist / pairing).
+//! Loopback-only + no-prod-caller bound it meanwhile.
 //!
 //! ## What this slice is (DARK)
 //! S-B stood up the SERVER plus per-session sealed key establishment (peer pubkey from the
@@ -16,14 +35,23 @@
 //! flag and runs the live forged-principal-fails-closed proof. Removing this file reverts S-C.
 //!
 //! ## Truth label
-//! WS substrate **S-C**. Loopback-only. **Dev key-exchange** (the PRODUCTION key source —
+//! WS substrate **S-C + S-E**. Loopback-only. **Dev key-exchange** (the PRODUCTION key source —
 //! loopback pairing handshake vs SecureStore — is a LATER decision, deferred; here both peers
 //! hold their OWN keypair and ECDH at connect). The bound principal is
 //! **TRUSTED-PEER-FORWARDED** (the in-TCB TS API resolved it from a validated bearer token and
 //! forwarded it over the sealed session) — NOT a client-asserted string; the sealed session is
-//! the basis of trust and the owner-allowlist is the final ceiling. Production key-source + a
-//! supervisor are deferred (open-qs). `rust_wired` at best; NOT v1 GO; `executeRun` is NOT
-//! replaced; the live forged-principal proof is the coordinator's at S-F.
+//! the basis of trust and the owner-allowlist is the final ceiling.
+//!
+//! **S-E closes REPLAY** (a captured `auth_proof` no longer re-authenticates across handshakes —
+//! per-handshake nonce; a replayed `msg_id` within a session is rejected). **PEER-AUTH is STILL
+//! DEFERRED to S-F**: a fresh local process completing the CURRENT handshake can still forge a
+//! proof for an allowlisted owner string — only loopback + the dark / no-prod-caller posture
+//! bounds it. **Wire-format change (for S-F / the dark S-D TS client):** the server now emits a
+//! cleartext NONCE frame AFTER its pubkey and BEFORE the WS upgrade; any real peer MUST read that
+//! frame or its WS handshake desyncs. (The S-D TS client is hermetic/refs-only and does NOT speak
+//! this preamble, so it is unaffected; S-F's production caller must read the nonce.) Production
+//! key-source + a supervisor are deferred (open-qs). `rust_wired` at best; NOT v1 GO; `executeRun`
+//! is NOT replaced; the live forged-principal proof is the coordinator's at S-F.
 //!
 //! ## Why this is NOT the `hub_authed_run` ECDH anti-pattern
 //! The proof bin `hub_authed_run` generates BOTH ECDH halves in-process and seals to itself — an
@@ -55,11 +83,11 @@ use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use friday_crypto::{seal, DataKey, DeviceKeypair, Sealed};
+use friday_crypto::{generate_approval_nonce, seal, DataKey, DeviceKeypair, Sealed};
 use friday_deepseek::Transport;
-use friday_hub::hub_server::{run_authed_agent_loop, AuthedPrincipal};
+use friday_hub::hub_server::{run_authed_agent_loop, AuthedPrincipal, ForwardedAuth};
 use friday_hub::runtime::{HubConfig, HubRuntime};
-use friday_protocol::{Envelope, Message};
+use friday_protocol::{Envelope, IdempotencyTracker, Message, Seen};
 use friday_transport::{
     read_frame, write_frame, ws_accept, ws_recv_envelope, ws_send_envelope, TransportError,
     WireWebSocket,
@@ -69,10 +97,20 @@ use friday_transport::{
 /// A fixed, public, non-secret constant (the confidentiality is in the session key, not the AAD).
 const SESSION_AAD: &[u8] = b"friday:execrun:ws:s-c:agent-run-session:aad:v1";
 
-/// The agreed authentication challenge the trusted peer seals (in `auth_proof`) to prove
-/// possession of the session key. A fixed, public, non-secret constant — the security is in
-/// possessing the session key that seals it, not in the challenge value.
+/// The BASE authentication challenge the trusted peer seals (in `auth_proof`) to prove
+/// possession of the session key. A fixed, public, non-secret constant — but as of S-E it is
+/// NOT the sole binding: the peer seals `AUTH_CHALLENGE || session_nonce` (a FRESH per-handshake
+/// CSPRNG nonce), and the AAD additionally binds the principal + run_id. The security against
+/// REPLAY is in the per-handshake nonce (a captured proof sealed a DIFFERENT nonce and no longer
+/// verifies); the security against forgery is still in possessing the session key.
 const AUTH_CHALLENGE: &[u8] = b"friday:execrun:ws:s-c:authed-run:challenge:v1";
+
+/// S-E anti-replay: the byte length of the fresh per-handshake nonce the server generates and
+/// sends in cleartext. [`generate_approval_nonce`] returns 32 CSPRNG bytes hex-encoded = 64
+/// lowercase-hex ASCII chars; we bind those 64 fixed-width bytes (a fixed length keeps the
+/// `challenge || nonce` concat unambiguous). A malformed nonce frame of any other length is a
+/// fail-closed handshake error (no session).
+const SESSION_NONCE_LEN: usize = 64;
 
 /// Per-connection read timeout: a stalled peer cannot wedge the long-lived accept loop before
 /// auth/dispatch. Set on the `TcpStream` BEFORE the cleartext preamble read; it propagates
@@ -263,8 +301,14 @@ impl AgentRunWsListener {
         // HARDENING: a per-connection read timeout BEFORE any read, so a stalled peer cannot
         // wedge the single-threaded accept loop before auth/dispatch.
         stream.set_read_timeout(Some(READ_TIMEOUT))?;
-        let (mut ws, session_key) = establish_session(stream, server_kp)?;
-        serve_sealed_session(&mut ws, &session_key, runtime, owner_allowlist)
+        let (mut ws, session_key, session_nonce) = establish_session(stream, server_kp)?;
+        serve_sealed_session(
+            &mut ws,
+            &session_key,
+            &session_nonce,
+            runtime,
+            owner_allowlist,
+        )
     }
 }
 
@@ -280,10 +324,19 @@ impl AgentRunWsListener {
 ///   session); and
 /// * a known low-order / NON-CONTRIBUTORY X25519 point (which would drive an all-zero shared
 ///   secret) — see [`is_low_order_x25519`].
+///
+/// **S-E anti-replay — per-handshake nonce.** After the low-order check and AFTER sending our own
+/// pubkey, but BEFORE the WS upgrade (the cleartext preamble is the only place we can `write_frame`
+/// raw bytes), the server generates a FRESH CSPRNG nonce ([`generate_approval_nonce`], the same
+/// OsRng source used for keys/approval nonces) and sends it cleartext. A nonce is NOT a secret;
+/// its job is to make the challenge the peer must seal UNIQUE per connection, so a captured
+/// `auth_proof` from a prior handshake (a different nonce) cannot re-authenticate. The nonce is
+/// returned with the session key and threaded into [`AuthedPrincipal::authenticate_forwarded`].
+/// The low-order-check-BEFORE-agree ordering (an S-C property) is preserved.
 fn establish_session<S: Read + Write>(
     mut stream: S,
     server_kp: &DeviceKeypair,
-) -> Result<(WireWebSocket<S>, DataKey), TransportError> {
+) -> Result<(WireWebSocket<S>, DataKey, Vec<u8>), TransportError> {
     // (a) Receive the peer's X25519 public key (cleartext preamble). The peer pubkey is ALWAYS an
     // input read from the wire — the server never fabricates the peer's ECDH half.
     let peer_pub_bytes = read_frame(&mut stream)?;
@@ -303,10 +356,24 @@ fn establish_session<S: Read + Write>(
     // (b) Send our OWN public key so the peer can derive the same session key.
     write_frame(&mut stream, &server_kp.public_bytes())?;
 
+    // (b') S-E: generate + send a FRESH per-handshake CSPRNG nonce (cleartext; not a secret). The
+    // peer must seal `AUTH_CHALLENGE || session_nonce` in its `auth_proof`, so a proof captured
+    // from a PRIOR handshake (a different nonce) cannot re-authenticate on THIS connection.
+    let session_nonce = generate_approval_nonce().into_bytes();
+    // Invariant guard (fail-closed): the CSPRNG nonce must be the expected fixed width, so the
+    // `challenge || nonce` concat the peer seals is unambiguous. Any deviation aborts the
+    // handshake (no session) rather than deriving a weak/ambiguous binding.
+    if session_nonce.len() != SESSION_NONCE_LEN {
+        return Err(TransportError::Protocol(
+            "session nonce has unexpected length".into(),
+        ));
+    }
+    write_frame(&mut stream, &session_nonce)?;
+
     // (c) WS upgrade over the (now preamble-consumed) stream, then derive the sealed session key.
     let ws = ws_accept(stream)?;
     let session_key = server_kp.agree(&peer_pub);
-    Ok((ws, session_key))
+    Ok((ws, session_key, session_nonce))
 }
 
 /// Serve sealed envelopes over ONE established session until the peer disconnects, sends an
@@ -327,15 +394,26 @@ fn establish_session<S: Read + Write>(
 /// Any other (benign) opened envelope is echoed sealed (a keepalive), as in S-B. An envelope
 /// that fails to open under the session key ENDS the session (fail-closed) — no dispatch.
 ///
+/// **S-E anti-replay — msg_id dedup.** A per-session [`IdempotencyTracker`] records each opened
+/// envelope's `msg_id`; a REPLAYED `msg_id` within this session is rejected fail-closed (END the
+/// session, no echo, no dispatch). The tracker is fresh per connection (it lives on the stack of
+/// THIS call), so it defends WITHIN-session replay; CROSS-handshake replay is defeated separately
+/// by the per-handshake `session_nonce` bound into the auth challenge.
+///
 /// Returns the number of envelopes processed before the session ended — `0` means the first
 /// envelope failed to open OR failed auth (the fail-closed path: no echo, no dispatch).
 fn serve_sealed_session<S: Read + Write, T: Transport>(
     ws: &mut WireWebSocket<S>,
     session_key: &DataKey,
+    session_nonce: &[u8],
     runtime: &HubRuntime<T>,
     owner_allowlist: &[String],
 ) -> Result<usize, TransportError> {
     let mut processed = 0usize;
+    // S-E: per-session msg_id dedup. A reconnect mints a FRESH tracker (so it is not a
+    // cross-connection store) — combined with the per-handshake nonce, a captured envelope is
+    // useless both within a session (dedup) and across handshakes (nonce).
+    let mut seen_ids = IdempotencyTracker::new();
     loop {
         let env = match ws_recv_envelope(ws, session_key, SESSION_AAD) {
             Ok(e) => e,
@@ -343,6 +421,11 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
             // No dispatch, no processing — fail closed.
             Err(_) => return Ok(processed),
         };
+        // S-E: reject a REPLAYED msg_id within this session (fail-closed: END the session, no
+        // echo, no dispatch). Checked BEFORE any branch so it covers dispatch AND keepalive.
+        if let Seen::Replay = seen_ids.observe(&env.msg_id) {
+            return Ok(processed);
+        }
         match env.message {
             Message::AgentRunRequest {
                 run_id,
@@ -352,14 +435,20 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
             } => {
                 // The dispatch arm: AUTH BEFORE ANY RUN. The `auth_proof` is the peer-sealed
                 // challenge; reconstruct it as a `Sealed` for the session-key open. A malformed
-                // proof that cannot decode is an auth failure (None below), not a panic.
+                // proof that cannot decode is an auth failure (None below), not a panic. S-E: the
+                // verifier binds THIS handshake's `session_nonce` into the challenge and the
+                // `(principal, run_id)` into the AAD — a captured/lifted proof fails to verify.
                 let caller = decode_sealed_proof(&auth_proof).and_then(|proof| {
                     AuthedPrincipal::authenticate_forwarded(
                         session_key,
-                        &proof,
                         SESSION_AAD,
                         AUTH_CHALLENGE,
-                        &forwarded_principal,
+                        ForwardedAuth {
+                            auth_proof: &proof,
+                            session_nonce,
+                            run_id: &run_id,
+                            forwarded_principal: &forwarded_principal,
+                        },
                         owner_allowlist,
                     )
                 });
@@ -519,7 +608,9 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use friday_crypto::open as crypto_open;
     use friday_deepseek::{DeepSeekClient, DeepSeekError};
+    use friday_hub::hub_server::{auth_aad, nonce_bound_challenge};
     use friday_hub::runtime::DenyAllApprovals;
     use friday_hub::DeepSeekAgentLlmClient;
     use friday_transport::{ws_connect, ws_send_envelope};
@@ -609,35 +700,50 @@ mod tests {
         (rt, ws)
     }
 
-    /// Drive the cleartext pubkey preamble from the CLIENT side, then run the WS upgrade and
-    /// derive the client's view of the session key. The client keypair is generated HERE
-    /// (test-only), never by the server.
+    /// Drive the cleartext pubkey preamble from the CLIENT side, read the server pubkey AND the
+    /// S-E per-handshake nonce, then run the WS upgrade and derive the client's view of the
+    /// session key. The client keypair is generated HERE (test-only), never by the server.
+    /// Returns `(ws, session_key, session_nonce)` — the nonce MUST be threaded into the proof.
     fn client_handshake(
         addr: SocketAddr,
         client_kp: &DeviceKeypair,
-    ) -> (WireWebSocket<TcpStream>, DataKey) {
+    ) -> (WireWebSocket<TcpStream>, DataKey, Vec<u8>) {
         let mut stream = TcpStream::connect(addr).unwrap();
         write_frame(&mut stream, &client_kp.public_bytes()).unwrap();
         let server_pub_bytes = read_frame(&mut stream).unwrap();
         let server_pub: [u8; 32] = server_pub_bytes.as_slice().try_into().unwrap();
+        // S-E: the server sends a fresh per-handshake nonce in cleartext AFTER its pubkey.
+        let session_nonce = read_frame(&mut stream).unwrap();
         let ws = ws_connect(&format!("ws://{addr}/"), stream).unwrap();
         let session = client_kp.agree(&server_pub);
-        (ws, session)
+        (ws, session, session_nonce)
     }
 
-    /// Build a sealed `auth_proof` over the agreed challenge under the client's session view.
-    fn auth_proof_bytes(client_session: &DataKey) -> Vec<u8> {
-        let sealed = seal(client_session, AUTH_CHALLENGE, SESSION_AAD).unwrap();
+    /// Build a sealed `auth_proof` over the S-E nonce-bound challenge (`AUTH_CHALLENGE ||
+    /// session_nonce`) under the client's session view, with the per-request auth AAD binding
+    /// `(principal, run_id)`. This is what the trusted peer does post-handshake — the proof is
+    /// NOT precomputable before the nonce is known.
+    fn auth_proof_bytes(
+        client_session: &DataKey,
+        session_nonce: &[u8],
+        principal: &str,
+        run_id: &str,
+    ) -> Vec<u8> {
+        let challenge = nonce_bound_challenge(AUTH_CHALLENGE, session_nonce);
+        let req_aad = auth_aad(SESSION_AAD, principal, run_id);
+        let sealed = seal(client_session, &challenge, &req_aad).unwrap();
         encode_sealed_proof(&sealed)
     }
 
     /// An `AgentRunRequest` envelope for `run_id` forwarding `principal`, with an `auth_proof`
-    /// sealed under `client_session` (the peer's possession-of-session proof).
+    /// sealed under `client_session` and bound to THIS handshake's `session_nonce` (the peer's
+    /// possession-of-session-AND-this-handshake proof).
     fn agent_run_request(
         msg_id: &str,
         run_id: &str,
         principal: &str,
         client_session: &DataKey,
+        session_nonce: &[u8],
     ) -> Envelope {
         Envelope::new(
             msg_id,
@@ -646,7 +752,7 @@ mod tests {
                 run_id: run_id.to_string(),
                 task: "answer me".into(),
                 forwarded_principal: principal.to_string(),
-                auth_proof: auth_proof_bytes(client_session),
+                auth_proof: auth_proof_bytes(client_session, session_nonce, principal, run_id),
             },
         )
     }
@@ -682,18 +788,23 @@ mod tests {
         body_chunk: Option<String>,
     }
 
-    /// Spawn the CLIENT peer: handshake, send `req` sealed under `seal_key`, then read up to two
-    /// replies (refs result + owner-sealed body). Returns the observations. The server runs on
-    /// the caller's (main) thread via `accept_one`.
-    fn spawn_client(
+    /// Spawn the CLIENT peer: handshake (which reads the S-E per-handshake nonce), then call
+    /// `build` with the derived `(session_key, session_nonce)` to construct the request POST-
+    /// handshake (the auth_proof binds the nonce, so it CANNOT be precomputed). `build` returns
+    /// `(req, seal_key, recv_key)` so a test can seal under a wrong key or recv under a different
+    /// key. Reads up to two replies (refs result + owner-sealed body). The server runs on the
+    /// caller's (main) thread via `accept_one`.
+    fn spawn_client<F>(
         addr: SocketAddr,
-        req: Envelope,
         client_kp: DeviceKeypair,
-        seal_key: DataKey,
-        recv_key: DataKey,
-    ) -> thread::JoinHandle<ClientObservations> {
+        build: F,
+    ) -> thread::JoinHandle<ClientObservations>
+    where
+        F: FnOnce(&DataKey, &[u8]) -> (Envelope, DataKey, DataKey) + Send + 'static,
+    {
         thread::spawn(move || {
-            let (mut ws, _session) = client_handshake(addr, &client_kp);
+            let (mut ws, session, session_nonce) = client_handshake(addr, &client_kp);
+            let (req, seal_key, recv_key) = build(&session, &session_nonce);
             ws_send_envelope(&mut ws, &seal_key, &req, SESSION_AAD).unwrap();
             let result = ws_recv_envelope(&mut ws, &recv_key, SESSION_AAD)
                 .ok()
@@ -743,18 +854,15 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let allowlist = vec![OWNER.to_string()];
 
-        // The client derives the SAME session the server will (ECDH), so it can build the
-        // matching auth_proof + seal/open envelopes. We precompute its session view here.
+        // The client derives the SAME session the server will (ECDH). We precompute its session
+        // view here to OPEN the sealed body reply later; the auth_proof itself is built INSIDE the
+        // client thread (it must bind the per-handshake nonce, unknown until after the handshake).
         let client_kp = DeviceKeypair::generate();
         let client_session = client_kp.agree(&server_kp.public_bytes());
-        let req = agent_run_request("req-1", "run-sc-1", OWNER, &client_session);
-        let client = spawn_client(
-            addr,
-            req,
-            client_kp,
-            client_session.clone(),
-            client_session.clone(),
-        );
+        let client = spawn_client(addr, client_kp, |session, nonce| {
+            let req = agent_run_request("req-1", "run-sc-1", OWNER, session, nonce);
+            (req, session.clone(), session.clone())
+        });
 
         // SERVER on the main thread (holds the non-Send runtime).
         let processed = listener.accept_one(&server_kp, &rt, &allowlist).unwrap();
@@ -805,9 +913,11 @@ mod tests {
         let allowlist = vec![OWNER.to_string()];
 
         let client_kp = DeviceKeypair::generate();
-        let client_session = client_kp.agree(&server_kp.public_bytes());
-        let req = agent_run_request("req-x", "run-rej", forwarded, &client_session);
-        let client = spawn_client(addr, req, client_kp, client_session.clone(), client_session);
+        let forwarded = forwarded.to_string();
+        let client = spawn_client(addr, client_kp, move |session, nonce| {
+            let req = agent_run_request("req-x", "run-rej", &forwarded, session, nonce);
+            (req, session.clone(), session.clone())
+        });
 
         let processed = listener.accept_one(&server_kp, &rt, &allowlist).unwrap();
         assert_eq!(processed, 0, "[{tag}] rejected dispatch processes ZERO");
@@ -848,21 +958,26 @@ mod tests {
         let allowlist = vec![OWNER.to_string()];
 
         let client_kp = DeviceKeypair::generate();
-        let client_session = client_kp.agree(&server_kp.public_bytes());
         // The envelope opens (correct session key) but the auth_proof is sealed under a WRONG key.
         let wrong = DataKey::generate();
-        let bad_proof = encode_sealed_proof(&seal(&wrong, AUTH_CHALLENGE, SESSION_AAD).unwrap());
-        let req = Envelope::new(
-            "req-badproof",
-            1000,
-            Message::AgentRunRequest {
-                run_id: "run-badproof".into(),
-                task: "answer me".into(),
-                forwarded_principal: OWNER.to_string(),
-                auth_proof: bad_proof,
-            },
-        );
-        let client = spawn_client(addr, req, client_kp, client_session.clone(), client_session);
+        let client = spawn_client(addr, client_kp, move |session, nonce| {
+            // Bind the CORRECT nonce + AAD so the failure is attributable to the WRONG key, not a
+            // missing nonce binding.
+            let challenge = nonce_bound_challenge(AUTH_CHALLENGE, nonce);
+            let req_aad = auth_aad(SESSION_AAD, OWNER, "run-badproof");
+            let bad_proof = encode_sealed_proof(&seal(&wrong, &challenge, &req_aad).unwrap());
+            let req = Envelope::new(
+                "req-badproof",
+                1000,
+                Message::AgentRunRequest {
+                    run_id: "run-badproof".into(),
+                    task: "answer me".into(),
+                    forwarded_principal: OWNER.to_string(),
+                    auth_proof: bad_proof,
+                },
+            );
+            (req, session.clone(), session.clone())
+        });
 
         let processed = listener.accept_one(&server_kp, &rt, &allowlist).unwrap();
         assert_eq!(
@@ -884,13 +999,15 @@ mod tests {
         let allowlist = vec![OWNER.to_string()];
 
         let client_kp = DeviceKeypair::generate();
-        let real_session = client_kp.agree(&server_kp.public_bytes());
-        // Seal the request under a key that is NOT the established session key.
+        // Seal the request (and its auth_proof) under a key that is NOT the established session.
         let wrong_key = DataKey::generate();
-        let req = agent_run_request("req-wrong", "run-wrong", OWNER, &wrong_key);
         // Client SEALS under the wrong key but OPENS replies under the real session (there are
-        // none — the server ends the session).
-        let client = spawn_client(addr, req, client_kp, wrong_key, real_session);
+        // none — the server ends the session). The nonce is still bound correctly so the failure
+        // is attributable to the wrong ENVELOPE key (the server can't even open the envelope).
+        let client = spawn_client(addr, client_kp, move |session, nonce| {
+            let req = agent_run_request("req-wrong", "run-wrong", OWNER, &wrong_key, nonce);
+            (req, wrong_key.clone(), session.clone())
+        });
 
         let processed = listener.accept_one(&server_kp, &rt, &allowlist).unwrap();
         assert_eq!(
@@ -1077,11 +1194,190 @@ mod tests {
         let sealed = seal(&k, AUTH_CHALLENGE, SESSION_AAD).unwrap();
         let wire = encode_sealed_proof(&sealed);
         let back = decode_sealed_proof(&wire).unwrap();
-        assert_eq!(
-            friday_crypto::open(&k, &back, SESSION_AAD).unwrap(),
-            AUTH_CHALLENGE
-        );
+        assert_eq!(crypto_open(&k, &back, SESSION_AAD).unwrap(), AUTH_CHALLENGE);
         assert!(decode_sealed_proof(&[]).is_none());
         assert!(decode_sealed_proof(&[200, 1, 2]).is_none()); // nlen > remaining
+    }
+
+    // ============================ S-E anti-replay (end-to-end) ============================
+
+    // (S-E c) NONCE FRESHNESS: two SEPARATE handshakes against the SAME server keypair yield
+    // DISTINCT per-handshake nonces (a CSPRNG token, not a predictable counter). This is the
+    // freshness/uniqueness the replay defense rests on — if the nonce repeated, a captured proof
+    // would replay.
+    #[test]
+    fn two_handshakes_get_distinct_csprng_nonces() {
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        // Drive one handshake: spawn a client that reads the nonce, run the server's
+        // establish_session on THIS (main) thread (server_kp is borrowed, not cloned), return the
+        // client-observed nonce.
+        let one_handshake = || -> Vec<u8> {
+            let c = thread::spawn(move || {
+                let client_kp = DeviceKeypair::generate();
+                let (_ws, _s, nonce) = client_handshake(addr, &client_kp);
+                nonce
+            });
+            let (stream, _peer) = listener.listener.accept().unwrap();
+            stream.set_read_timeout(Some(READ_TIMEOUT)).unwrap();
+            let _ = establish_session(stream, &server_kp).unwrap();
+            c.join().unwrap()
+        };
+
+        let n1 = one_handshake();
+        let n2 = one_handshake();
+
+        assert_eq!(n1.len(), SESSION_NONCE_LEN, "nonce is the expected width");
+        assert_eq!(n2.len(), SESSION_NONCE_LEN, "nonce is the expected width");
+        assert_ne!(
+            n1, n2,
+            "two handshakes against the same server key MUST get distinct nonces (CSPRNG, not a \
+             predictable counter) — else a captured proof would replay"
+        );
+    }
+
+    // (S-E a) REPLAY-TO-AUTHENTICATE DEFEATED: capture a VALID `auth_proof` from connection-1
+    // (bound to nonce N1) and REPLAY it verbatim on connection-2 (a fresh handshake, nonce N2)
+    // against the SAME server AND client keypairs. The envelope is freshly sealed under conn-2's
+    // session (so it opens — the attacker did complete a fresh handshake), but the inner
+    // `auth_proof` is the STALE captured one. The server MUST reject (processed=0, no reply): the
+    // captured proof sealed `CHALLENGE || N1`, but conn-2 expects `CHALLENGE || N2`.
+    //
+    // Holding BOTH keypairs constant is the crux: if conn-2 used a fresh client_kp the session key
+    // would differ and the proof would fail to OPEN (the existing wrong-key test) — passing for
+    // the WRONG reason. Same keys ⇒ same session key ⇒ the rejection is attributable ONLY to the
+    // nonce binding.
+    #[test]
+    fn captured_auth_proof_replayed_on_a_new_handshake_is_rejected() {
+        use std::sync::mpsc;
+
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        // A FIXED client secret scalar so the SAME client keypair (hence the SAME session key) is
+        // reconstructed in BOTH connection threads (DeviceKeypair is not Clone/Send-shared). The
+        // value is a non-secret test fixture (small primes), not real key material.
+        let client_secret: [u8; 32] = [
+            // pragma: allowlist secret
+            7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97,
+            101, 103, 107, 109, 113, 127, 131, 137, 139, 149,
+        ];
+        let client_session =
+            DeviceKeypair::from_secret_bytes(client_secret).agree(&server_kp.public_bytes());
+
+        // --- Connection 1: a VALID dispatch; the client returns the auth_proof it sealed (N1). ---
+        let (rt1, _ws1) = mock_runtime("replay-c1", OWNER);
+        let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        let sess_c1 = client_session.clone();
+        let c1 = thread::spawn(move || {
+            let kp = DeviceKeypair::from_secret_bytes(client_secret);
+            let (mut ws, _session, nonce) = client_handshake(addr, &kp);
+            // Build the proof binding THIS handshake's nonce (N1) and capture it.
+            let proof = auth_proof_bytes(&sess_c1, &nonce, OWNER, "run-replay");
+            tx.send(proof.clone()).unwrap();
+            let req = Envelope::new(
+                "req-c1",
+                1000,
+                Message::AgentRunRequest {
+                    run_id: "run-replay".into(),
+                    task: "answer me".into(),
+                    forwarded_principal: OWNER.to_string(),
+                    auth_proof: proof,
+                },
+            );
+            ws_send_envelope(&mut ws, &sess_c1, &req, SESSION_AAD).unwrap();
+            // Drain the (accepted) reply so the server completes conn-1 cleanly.
+            let _ = ws_recv_envelope(&mut ws, &sess_c1, SESSION_AAD);
+        });
+        let processed1 = listener.accept_one(&server_kp, &rt1, &allowlist).unwrap();
+        assert_eq!(processed1, 1, "connection-1 is a VALID dispatch");
+        let captured_proof = rx.recv().unwrap();
+        c1.join().unwrap();
+
+        // --- Connection 2: REPLAY the captured (N1) proof on a fresh handshake (N2). ----------
+        let (rt2, _ws2) = mock_runtime("replay-c2", OWNER);
+        let sess_c2 = client_session.clone();
+        let c2 = thread::spawn(move || {
+            let kp = DeviceKeypair::from_secret_bytes(client_secret);
+            let (mut ws, _session, _n2) = client_handshake(addr, &kp);
+            // The attacker re-seals the ENVELOPE under the (real, fresh) conn-2 session so it
+            // OPENS, but stuffs the STALE captured auth_proof (bound to N1) inside.
+            let req = Envelope::new(
+                "req-c2",
+                1000,
+                Message::AgentRunRequest {
+                    run_id: "run-replay".into(),
+                    task: "answer me".into(),
+                    forwarded_principal: OWNER.to_string(),
+                    auth_proof: captured_proof,
+                },
+            );
+            ws_send_envelope(&mut ws, &sess_c2, &req, SESSION_AAD).unwrap();
+            // The server must fail closed (END the session) — no reply.
+            ws_recv_envelope(&mut ws, &sess_c2, SESSION_AAD)
+                .ok()
+                .map(|e| e.message)
+        });
+        let processed2 = listener.accept_one(&server_kp, &rt2, &allowlist).unwrap();
+        assert_eq!(
+            processed2, 0,
+            "a captured auth_proof REPLAYED on a fresh handshake must be REJECTED (no dispatch)"
+        );
+        let reply2 = c2.join().unwrap();
+        assert!(
+            reply2.is_none(),
+            "the replayed dispatch must end the session with NO reply (no run, no body)"
+        );
+    }
+
+    // (S-E d) WITHIN-SESSION msg_id REPLAY rejected: a SECOND envelope with the SAME msg_id on one
+    // session is rejected fail-closed (the per-session IdempotencyTracker). We send two benign
+    // keepalives with the same msg_id; the first is echoed, the second ends the session.
+    #[test]
+    fn replayed_msg_id_within_a_session_is_rejected() {
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (rt, _ws) = mock_runtime("dedup", OWNER);
+        let allowlist = vec![OWNER.to_string()];
+
+        let client_kp = DeviceKeypair::generate();
+        let client = thread::spawn(move || {
+            let (mut ws, session, _nonce) = client_handshake(addr, &client_kp);
+            // A benign keepalive (NOT an AgentRunRequest) — the dedup is checked BEFORE the branch.
+            let keepalive = |id: &str| {
+                Envelope::new(
+                    id,
+                    1000,
+                    Message::AskFridayStream {
+                        seq: 0,
+                        chunk: "ping".into(),
+                    },
+                )
+            };
+            // First send with msg_id "dup-1": echoed back.
+            ws_send_envelope(&mut ws, &session, &keepalive("dup-1"), SESSION_AAD).unwrap();
+            let first = ws_recv_envelope(&mut ws, &session, SESSION_AAD).ok();
+            // Second send with the SAME msg_id "dup-1": the server must END the session (no echo).
+            ws_send_envelope(&mut ws, &session, &keepalive("dup-1"), SESSION_AAD).unwrap();
+            let second = ws_recv_envelope(&mut ws, &session, SESSION_AAD).ok();
+            (first.is_some(), second.is_some())
+        });
+
+        let processed = listener.accept_one(&server_kp, &rt, &allowlist).unwrap();
+        // The first keepalive was processed (echoed); the replayed msg_id ended the session.
+        assert_eq!(
+            processed, 1,
+            "exactly ONE envelope processed: the replayed msg_id is rejected, not processed"
+        );
+        let (first_echoed, second_echoed) = client.join().unwrap();
+        assert!(first_echoed, "the first (fresh) msg_id is echoed");
+        assert!(
+            !second_echoed,
+            "a replayed msg_id within the session must END the session (no echo)"
+        );
     }
 }
