@@ -313,6 +313,13 @@ fi
 # =============================================================================
 STAGE_DIR="${STAGE_DIR:-${LOG_DIR}/staging}"
 STAGE_DIR="$(expand_abs STAGE_DIR "${STAGE_DIR}")"
+# Staging is NOT installation: refuse to write the filled plist into the live
+# LaunchAgents dir (where launchd would auto-load it at next login). The operator
+# bootstraps manually from the staged copy — this tool never installs.
+case "${STAGE_DIR}" in
+  "${HOME}/Library/LaunchAgents" | "${HOME}/Library/LaunchAgents/"*)
+    die "--stage-dir must not be inside ~/Library/LaunchAgents (staging is not installation; bootstrap manually)." 2 ;;
+esac
 mkdir -p "${STAGE_DIR}" "${LOG_DIR}"
 STAGED_PLIST="${STAGE_DIR}/${LABEL}.plist"
 
@@ -328,6 +335,12 @@ fi
 
 # sed-escape a replacement value (so a path with & or / cannot corrupt the
 # substitution). Escapes \, &, and the / delimiter.
+# NOTE: this escapes for SED, not XML. A value containing an XML-special char
+# (& < >) — unusual in the expected inputs (paths under ~/.friday, a principal id,
+# a port) — is NOT XML-escaped here. That cannot cause a SILENT bad install: the
+# `plutil -lint` gate below rejects any malformed result and the script aborts
+# (exit 73) before staging is considered valid. Operators should pass XML-clean
+# values; if one isn't, the lint abort tells them so.
 sed_escape() { printf '%s' "$1" | sed -e 's/[\\&/]/\\&/g'; }
 
 fill_template() {
