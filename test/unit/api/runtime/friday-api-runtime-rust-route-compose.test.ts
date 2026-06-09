@@ -9,9 +9,9 @@ import type { FridayProviderService } from "#providers";
 import type { FridaySqliteLayer } from "#state";
 import { createFridayRustHubRunContinuityProjectorService } from "../../../../src/api/mission-spine/friday-rust-hub-run-continuity-projector-service.js";
 import type {
-  FridayRustHubAgentRunWsClientService,
-  FridayRustHubAgentRunWsRequest,
-} from "../../../../src/api/mission-spine/friday-rust-hub-agent-run-ws-client.js";
+  FridayRustHubAgentRunSealedClientService,
+  FridayRustHubAgentRunSealedClientServiceRequest,
+} from "../../../../src/api/mission-spine/friday-rust-hub-agent-run-sealed-client-service.js";
 import type {
   FridayRustHubRunAnswerReadbackInput,
   FridayRustHubRunAnswerReadbackReceipt,
@@ -109,11 +109,11 @@ function makeAgentRuntime(): FridayAgentRuntime {
   } as unknown as FridayAgentRuntime;
 }
 
-/** A scripted-stub WS client that records every dispatch (refs-only result). */
+/** A scripted-stub sealed WS client that records every dispatch (refs-only result). */
 function makeStubWsClient() {
-  const calls: FridayRustHubAgentRunWsRequest[] = [];
-  const service: FridayRustHubAgentRunWsClientService = {
-    dispatchRun: vi.fn(async (request: FridayRustHubAgentRunWsRequest) => {
+  const calls: FridayRustHubAgentRunSealedClientServiceRequest[] = [];
+  const service: FridayRustHubAgentRunSealedClientService = {
+    dispatchRun: vi.fn(async (request: FridayRustHubAgentRunSealedClientServiceRequest) => {
       calls.push(request);
       return {
         truthLabel: "rust_wired" as const,
@@ -161,9 +161,9 @@ function makeStubReadback(owner: string) {
 
 interface ComposeDeps {
   routeAgentRunViaRust?: boolean;
-  wsClient?: FridayRustHubAgentRunWsClientService;
+  wsClient?: FridayRustHubAgentRunSealedClientService;
   readback?: FridayRustHubRunAnswerReadbackService;
-  sessionKeyResolver?: () => Uint8Array | null;
+  clientSecretResolver?: () => Uint8Array | null;
   hubDbPath?: string;
   idGenerator?: () => string;
 }
@@ -187,9 +187,10 @@ function makeRuntime(db: FridaySqliteLayer, opts: ComposeDeps) {
     ...(opts.readback ? { rustAgentRunAnswerReadback: opts.readback } : {}),
     // The REAL projector is used so the no-double-count contract is exercised against a db.
     rustAgentRunContinuityProjector: createFridayRustHubRunContinuityProjectorService(),
-    // SecureStore resolver: fixture key by default; tests override to prove fail-closed.
-    rustAgentRunWsSessionKeyResolver:
-      opts.sessionKeyResolver ?? (() => new Uint8Array(32).fill(7)),
+    // SecureStore X25519-secret resolver: fixture 32-byte secret by default (a valid X25519
+    // scalar); tests override to prove fail-closed.
+    rustAgentRunWsClientSecretResolver:
+      opts.clientSecretResolver ?? (() => new Uint8Array(32).fill(7)),
     rustAgentRunHubDbPath: opts.hubDbPath ?? "/tmp/friday-test-hub.db",
   });
 }
@@ -273,7 +274,8 @@ describe("FridayApiRuntime — execrun S-F-compose (DARK) Rust-route composition
     expect(ws.calls).toHaveLength(1);
     expect(ws.calls[0].runId).toBe(RUN_ID);
     expect(ws.calls[0].forwardedPrincipal).toBe(OWNER_PRINCIPAL);
-    expect(ws.calls[0].authProof.length).toBeGreaterThanOrEqual(32);
+    // The sealed client receives the resolved 32-byte X25519 SECRET (NOT a pre-built authProof).
+    expect(ws.calls[0].clientSecret.length).toBe(32);
     expect(readback.calls).toHaveLength(1);
     expect(readback.calls[0].callerPrincipal).toBe(OWNER_PRINCIPAL);
 
@@ -334,7 +336,7 @@ describe("FridayApiRuntime — execrun S-F-compose (DARK) Rust-route composition
       wsClient: ws.service,
       readback: readback.service,
       // SecureStore returns null → fail closed before any WS connection.
-      sessionKeyResolver: () => null,
+      clientSecretResolver: () => null,
     });
 
     await expect(callStartRoute(runtime, { ...QUALIFYING_BODY })).rejects.toMatchObject({

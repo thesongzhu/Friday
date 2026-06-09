@@ -27,10 +27,10 @@ import type {
   FridayStandingAgendaService,
 } from "../../autonomy/index.js";
 import type { FridayProviderService } from "#providers";
-import type { FridayRustHubAgentRunWsClientService } from "../mission-spine/friday-rust-hub-agent-run-ws-client.js";
+import type { FridayRustHubAgentRunSealedClientService } from "../mission-spine/friday-rust-hub-agent-run-sealed-client-service.js";
 import type { FridayRustHubRunContinuityProjectorService } from "../mission-spine/friday-rust-hub-run-continuity-projector-service.js";
 import type { FridayRustHubRunAnswerReadbackService } from "../mission-spine/friday-rust-hub-run-answer-readback-service.js";
-import type { FridayRustAgentRunWsSessionKeyResolver } from "../mission-spine/friday-rust-hub-agent-run-ws-session-key.js";
+import type { FridayRustAgentRunWsClientX25519SecretResolver } from "../mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
 import type { FridayMediaUnderstandingRoutesDeps } from "../http/routes/friday-media-understanding-routes.js";
 import type { FridaySocialImportRoutesDeps } from "../http/routes/friday-social-import-routes.js";
 import type { FridayTaskWorkflowRoutesDeps } from "../http/routes/friday-task-workflow-routes.js";
@@ -336,17 +336,19 @@ export interface CreateFridayApiRuntimeDeps {
    * None of these is consulted while the flag is off / a run is disqualified (byte-identical
    * 503 path is untouched).
    */
-  rustAgentRunWsClient?: FridayRustHubAgentRunWsClientService;
+  rustAgentRunWsClient?: FridayRustHubAgentRunSealedClientService;
   /** S-F-compose (DARK): the slice-2 Rust→TS continuity projector (SOLE TS usage writer). */
   rustAgentRunContinuityProjector?: FridayRustHubRunContinuityProjectorService;
   /** S-F-compose (DARK): the slice-3 owner-gated body readback (returns body to the owner). */
   rustAgentRunAnswerReadback?: FridayRustHubRunAnswerReadbackService;
   /**
-   * S-F-compose (DARK): the SecureStore resolver for the WS session key (the WS `authProof`).
-   * Default = the keychain-backed resolver. A `null` resolve (missing/invalid key) fails
-   * closed → no WS call, today's 503. Tests inject a fixture resolver. NEVER logs the key.
+   * B1-compose (DARK): the SecureStore resolver for the sealed WS client's X25519 SECRET (the
+   * ECDH model — REPLACES the old symmetric session-key resolver). The sealed client runs the
+   * handshake with this secret and builds the auth_proof itself; its derived pubkey is what 6b
+   * enrolls in the server peer-allowlist. Default = the keychain-backed resolver. A `null`/short
+   * resolve fails closed → no WS call, today's 503. Tests inject a fixture secret. NEVER logs it.
    */
-  rustAgentRunWsSessionKeyResolver?: FridayRustAgentRunWsSessionKeyResolver;
+  rustAgentRunWsClientSecretResolver?: FridayRustAgentRunWsClientX25519SecretResolver;
   /**
    * S-F-compose (DARK): filesystem path to the Rust Hub DB the owner-gated body readback
    * reads from. Default = `process.env.FRIDAY_HUB_AGENT_RUN_DB_PATH`. Absent → the readback

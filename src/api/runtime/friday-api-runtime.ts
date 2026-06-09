@@ -136,14 +136,17 @@ import { createFridayChannelWebhookRoutes } from "../http/routes/friday-channel-
 import { createFridayPackagingRoutes } from "../http/routes/friday-packaging-routes.js";
 import { createFridayCloudWorkerSetupRoutes } from "../http/routes/friday-cloud-worker-setup-routes.js";
 import { createFridayCloudWorkerSetupService } from "#cloud-workers";
-import { createFridayRustHubAgentRunWsClientService } from "../mission-spine/friday-rust-hub-agent-run-ws-client.js";
-import type { FridayRustHubAgentRunWsClientService } from "../mission-spine/friday-rust-hub-agent-run-ws-client.js";
+// execrun B1-compose (DARK): the composition repoints routeStartRun to the PROVEN sealed WS
+// client (the real ECDH handshake) via its service adapter + a SecureStore X25519-SECRET resolver
+// (the ECDH model — REPLACES #612's symmetric session-key resolver, which was the wrong shape).
+import { createFridayRustHubAgentRunSealedClientService } from "../mission-spine/friday-rust-hub-agent-run-sealed-client-service.js";
+import type { FridayRustHubAgentRunSealedClientService } from "../mission-spine/friday-rust-hub-agent-run-sealed-client-service.js";
 import { createFridayRustHubRunContinuityProjectorService } from "../mission-spine/friday-rust-hub-run-continuity-projector-service.js";
 import type { FridayRustHubRunContinuityProjectorService } from "../mission-spine/friday-rust-hub-run-continuity-projector-service.js";
 import { createFridayRustHubRunAnswerReadbackService } from "../mission-spine/friday-rust-hub-run-answer-readback-service.js";
 import type { FridayRustHubRunAnswerReadbackService } from "../mission-spine/friday-rust-hub-run-answer-readback-service.js";
-import { resolveRustAgentRunWsSessionKey } from "../mission-spine/friday-rust-hub-agent-run-ws-session-key.js";
-import type { FridayRustAgentRunWsSessionKeyResolver } from "../mission-spine/friday-rust-hub-agent-run-ws-session-key.js";
+import { resolveRustAgentRunWsClientX25519Secret } from "../mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
+import type { FridayRustAgentRunWsClientX25519SecretResolver } from "../mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
 import { createFridayStudioService } from "../../studio/index.js";
 import {
   createFridayMutatingActionDigest,
@@ -1118,16 +1121,27 @@ function failClosedRustAgentRun(): FridayDomainError {
   );
 }
 
+/**
+ * B1-compose (DARK): parse the Rust agent-run WS server port from its env var. Defaults to a
+ * sentinel `0` (the same sentinel the old plain-WS client used) when unset / non-numeric — on the
+ * default-off route this port is never dialed, and 6b provisions the real port via env.
+ */
+function readRustAgentRunWsPort(raw: string | undefined): number {
+  if (!raw) return 0;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
 async function composeRustReadOnlyAgentRun(args: {
   readonly runId: string;
   readonly task: string;
   readonly principalId: string | undefined;
   readonly providerId: string;
   readonly model: string;
-  readonly wsClient: FridayRustHubAgentRunWsClientService;
+  readonly wsClient: FridayRustHubAgentRunSealedClientService;
   readonly projector: FridayRustHubRunContinuityProjectorService;
   readonly readback: FridayRustHubRunAnswerReadbackService;
-  readonly sessionKeyResolver: FridayRustAgentRunWsSessionKeyResolver;
+  readonly clientSecretResolver: FridayRustAgentRunWsClientX25519SecretResolver;
   readonly hubDbPath: string | undefined;
   readonly db: FridaySqliteLayer;
   readonly nowIso: () => string;
@@ -1148,10 +1162,12 @@ async function composeRustReadOnlyAgentRun(args: {
 }): Promise<FridayAgentRuntimeResult> {
   const failClosed = failClosedRustAgentRun;
 
-  // (1) SecureStore session key — MISSING/invalid ⇒ fail closed BEFORE any WS connection.
-  // Never open an unauthenticated WS call; never log the key.
-  const sessionKey = args.sessionKeyResolver();
-  if (!sessionKey || sessionKey.length === 0) {
+  // (1) SecureStore X25519 client SECRET — MISSING/invalid ⇒ fail closed BEFORE any WS
+  // connection. The sealed client runs the ECDH handshake with this secret and builds the
+  // auth_proof itself; a non-32-byte secret fails closed here (the 503), never escaping as a
+  // RangeError from the sealed client. Never open an unauthenticated WS call; never log the key.
+  const clientSecret = args.clientSecretResolver();
+  if (!clientSecret || clientSecret.length !== 32) {
     throw failClosed();
   }
   // The owner principal must be present to gate the body readback (slice-3). Absent ⇒ 503.
@@ -1165,12 +1181,13 @@ async function composeRustReadOnlyAgentRun(args: {
     throw failClosed();
   }
 
-  // (2) Dispatch the run over the WS client (S-D). Refs-only result; fail-closed on error.
+  // (2) Dispatch the run over the SEALED WS client (B1). The client runs the ECDH handshake +
+  // builds the auth_proof from `clientSecret` INTERNALLY; refs-only result; fail-closed on error.
   const wsResult = await args.wsClient.dispatchRun({
     runId: args.runId,
     task: args.task,
     forwardedPrincipal: callerPrincipal,
-    authProof: sessionKey,
+    clientSecret,
   });
 
   // (3) Owner-gated body readback (slice-3). The body is released ONLY to the matching
@@ -4211,14 +4228,26 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     //
     // Dark-substrate services are lazily constructed once (real constructors), overridable
     // via deps for mock-proven tests. They are consulted ONLY on the qualifying branch.
+    // B1-compose (DARK): the PROVEN sealed WS client (real ECDH handshake) via its service
+    // adapter. SIDE-EFFECT-FREE construction (no secret resolved, no socket opened here) — so the
+    // DEFAULT-OFF route stays byte-identical to today (these services are built but never
+    // consulted while the flag is off / a run is disqualified). host/port from config/env (default
+    // 127.0.0.1 + the existing WS port env); the sealed client opens the socket lazily per dispatch.
     const rustWsClient =
-      deps.rustAgentRunWsClient ?? createFridayRustHubAgentRunWsClientService();
+      deps.rustAgentRunWsClient
+      ?? createFridayRustHubAgentRunSealedClientService({
+        host: process.env.FRIDAY_HUB_AGENT_RUN_WS_HOST ?? "127.0.0.1",
+        port: readRustAgentRunWsPort(process.env.FRIDAY_HUB_AGENT_RUN_WS_PORT),
+      });
     const rustContinuityProjector =
       deps.rustAgentRunContinuityProjector ?? createFridayRustHubRunContinuityProjectorService();
     const rustAnswerReadback =
       deps.rustAgentRunAnswerReadback ?? createFridayRustHubRunAnswerReadbackService();
-    const rustWsSessionKeyResolver =
-      deps.rustAgentRunWsSessionKeyResolver ?? resolveRustAgentRunWsSessionKey;
+    // B1-compose (DARK): the SecureStore X25519-SECRET resolver (the ECDH model) REPLACES #612's
+    // symmetric session-key resolver. Default = the keychain-backed resolver; a null/short resolve
+    // fails closed → no WS call, today's 503. Tests inject a fixture secret.
+    const rustWsClientSecretResolver =
+      deps.rustAgentRunWsClientSecretResolver ?? resolveRustAgentRunWsClientX25519Secret;
     const rustHubDbPath = deps.rustAgentRunHubDbPath ?? process.env.FRIDAY_HUB_AGENT_RUN_DB_PATH;
 
     const routeStartRun: typeof startRun = async (input) => {
@@ -4312,7 +4341,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             wsClient: rustWsClient,
             projector: rustContinuityProjector,
             readback: rustAnswerReadback,
-            sessionKeyResolver: rustWsSessionKeyResolver,
+            clientSecretResolver: rustWsClientSecretResolver,
             hubDbPath: rustHubDbPath,
             db: deps.db,
             nowIso: deps.nowIso,
