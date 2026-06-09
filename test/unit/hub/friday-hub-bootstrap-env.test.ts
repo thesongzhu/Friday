@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { createRequire } from "node:module";
-import { resolveFridayCanonicalMutatingActionGate, resolveFridayHubConfig } from "#hub";
+import {
+  resolveFridayCanonicalMutatingActionGate,
+  resolveFridayHubConfig,
+  resolveRouteAgentRunViaRust,
+} from "#hub";
 import type { FridayHubConfig } from "#hub";
 
 // ─── Helpers ───
@@ -341,5 +345,55 @@ describe("resolveFridayHubConfig", () => {
     expect(() => resolveFridayCanonicalMutatingActionGate({
       FRIDAY_CANONICAL_GATE: "sometimes",
     })).toThrow(/Invalid FRIDAY_CANONICAL_GATE/);
+  });
+});
+
+// ─── execrun slice 4: routeAgentRunViaRust env knob (DARK, default-off) ───
+
+describe("resolveRouteAgentRunViaRust", () => {
+  // DEFAULT-OFF: env unset (nothing set) → false → byte-identical to today's gated-off 503.
+  it("defaults to false when neither config nor env is set", () => {
+    expect(resolveRouteAgentRunViaRust(undefined, emptyEnv())).toBe(false);
+  });
+
+  it("parses FRIDAY_ROUTE_AGENT_RUN_VIA_RUST=1 as true", () => {
+    expect(resolveRouteAgentRunViaRust(undefined, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "1" })).toBe(true);
+  });
+
+  it("parses FRIDAY_ROUTE_AGENT_RUN_VIA_RUST=true as true", () => {
+    expect(resolveRouteAgentRunViaRust(undefined, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "true" })).toBe(true);
+  });
+
+  it("parses the env case-insensitively (TRUE, True) and trims surrounding whitespace", () => {
+    expect(resolveRouteAgentRunViaRust(undefined, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "TRUE" })).toBe(true);
+    expect(resolveRouteAgentRunViaRust(undefined, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "True" })).toBe(true);
+    expect(resolveRouteAgentRunViaRust(undefined, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "  1  " })).toBe(true);
+    expect(resolveRouteAgentRunViaRust(undefined, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: " true " })).toBe(true);
+  });
+
+  // Fail-safe OFF: everything that is not exactly "1"/"true" → false.
+  it("treats 0, false, empty, and garbage env values as false (fail-safe off)", () => {
+    expect(resolveRouteAgentRunViaRust(undefined, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "0" })).toBe(false);
+    expect(resolveRouteAgentRunViaRust(undefined, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "false" })).toBe(false);
+    expect(resolveRouteAgentRunViaRust(undefined, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "" })).toBe(false);
+    expect(resolveRouteAgentRunViaRust(undefined, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "yes" })).toBe(false);
+    expect(resolveRouteAgentRunViaRust(undefined, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "on" })).toBe(false);
+    expect(resolveRouteAgentRunViaRust(undefined, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "enabled" })).toBe(false);
+    expect(resolveRouteAgentRunViaRust(undefined, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "truthy" })).toBe(false);
+    expect(resolveRouteAgentRunViaRust(undefined, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "2" })).toBe(false);
+  });
+
+  // PRECEDENCE: an explicit config boolean ALWAYS wins over the env.
+  it("uses explicit config true over the env (even when env says false)", () => {
+    expect(resolveRouteAgentRunViaRust(true, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "false" })).toBe(true);
+    expect(resolveRouteAgentRunViaRust(true, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "0" })).toBe(true);
+    expect(resolveRouteAgentRunViaRust(true, emptyEnv())).toBe(true);
+  });
+
+  // The discriminating case: config=false MUST beat env=true (a `||` would wrongly return true here).
+  it("uses explicit config false over the env (config false beats env true)", () => {
+    expect(resolveRouteAgentRunViaRust(false, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "1" })).toBe(false);
+    expect(resolveRouteAgentRunViaRust(false, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "true" })).toBe(false);
+    expect(resolveRouteAgentRunViaRust(false, emptyEnv())).toBe(false);
   });
 });
