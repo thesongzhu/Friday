@@ -965,13 +965,23 @@ impl AuthedPrincipal {
     ///    owner, passed in). A principal not on the allowlist — even a well-formed one
     ///    forwarded by a peer holding the session key — is REJECTED.
     ///
-    /// **Trust basis.** The bound principal is TRUSTED-PEER-FORWARDED: the in-TCB TS API
-    /// resolved it from a validated bearer token and forwarded it over the sealed session.
-    /// It is NOT a client-asserted string a remote attacker chose — the SEALED SESSION is the
-    /// basis of trust (only the paired peer can produce an openable `auth_proof`), and the
-    /// owner-allowlist is the final ceiling (a compromised/buggy peer still cannot mint an
-    /// arbitrary principal). Production key-source + a supervisor are deferred (open-qs); this
-    /// is `rust_wired` at best, DARK, NOT a v1 GO.
+    /// **Trust basis (HONEST — the peer is NOT yet authenticated).** The bound principal is
+    /// INTENDED to be TRUSTED-PEER-FORWARDED: in production the in-TCB TS API resolves it from a
+    /// validated bearer token and forwards it over the sealed session. BUT this slice does NOT
+    /// authenticate the PEER: the session is established by an UNAUTHENTICATED dev ECDH handshake
+    /// (cleartext peer pubkey, a stable server key, a FIXED challenge), so on loopback ANY local
+    /// process can complete the handshake and produce an openable `auth_proof` — there is NO
+    /// pairing / SecureStore check here. So `open()` proves only "the caller completed the
+    /// handshake", NOT "the caller is the one authorized peer". What stops an ARBITRARY principal
+    /// TODAY is solely the `owner_allowlist` ceiling (an attacker would still have to forward an
+    /// allowlisted owner string). This is acceptable ONLY because the slice is DARK + loopback-
+    /// only + has NO production caller. **HARD FORWARD-GATES before S-F wires any production
+    /// caller (and before any slice-6 spend) — do NOT skip:** (S-F) add real PEER authentication
+    /// (SecureStore pubkey allowlist / pairing) before trusting a forwarded principal; (S-E) bind
+    /// a per-handshake NONCE into the challenge/AAD (or a consumed-proof store) — the FIXED
+    /// challenge makes a captured `auth_proof` REPLAYABLE today (replay-to-RE-RUN is separately
+    /// blocked only by the run_id PRIMARY KEY, which must persist or S-E must land if the deferred
+    /// key-source stabilizes server_kp). `rust_wired` at best, DARK, NOT a v1 GO.
     ///
     /// Returns `None` on ANY failure — fail-closed, never partial.
     pub fn authenticate_forwarded(
