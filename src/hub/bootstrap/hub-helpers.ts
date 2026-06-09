@@ -1902,6 +1902,15 @@ export interface FridayHubConfig {
   allowTestOnlyPluginExecution?: boolean;
   /** Test-oracle only; production hub creation must leave the provider-detect probe fail-closed. */
   allowTestOnlyProviderDetectExecution?: boolean;
+  /**
+   * execrun-replacement slice 4 (DARK): per-run "route a qualifying agent-run via the
+   * future Rust read-only loop" flag. DEFAULT-FALSE — production hub creation must leave
+   * this unset so the startRun route stays byte-identical to today (it computes nothing
+   * and routes nothing). When true, the route-bound startRun wrapper evaluates the
+   * fail-closed qualifying predicate and discards the boolean; NO actual routing is wired
+   * in this slice (the later composition slice consumes it).
+   */
+  routeAgentRunViaRust?: boolean;
 }
 
 // ─── Resolved Hub Config ───
