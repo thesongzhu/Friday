@@ -27,6 +27,10 @@ import type {
   FridayStandingAgendaService,
 } from "../../autonomy/index.js";
 import type { FridayProviderService } from "#providers";
+import type { FridayRustHubAgentRunWsClientService } from "../mission-spine/friday-rust-hub-agent-run-ws-client.js";
+import type { FridayRustHubRunContinuityProjectorService } from "../mission-spine/friday-rust-hub-run-continuity-projector-service.js";
+import type { FridayRustHubRunAnswerReadbackService } from "../mission-spine/friday-rust-hub-run-answer-readback-service.js";
+import type { FridayRustAgentRunWsSessionKeyResolver } from "../mission-spine/friday-rust-hub-agent-run-ws-session-key.js";
 import type { FridayMediaUnderstandingRoutesDeps } from "../http/routes/friday-media-understanding-routes.js";
 import type { FridaySocialImportRoutesDeps } from "../http/routes/friday-social-import-routes.js";
 import type { FridayTaskWorkflowRoutesDeps } from "../http/routes/friday-task-workflow-routes.js";
@@ -323,6 +327,32 @@ export interface CreateFridayApiRuntimeDeps {
    * flag holds the gate; it does not turn anything on.
    */
   routeAgentRunViaRust?: boolean;
+  /**
+   * execrun-replacement slice S-F-compose (DARK): the three dark-substrate services the
+   * composition wires together when {@link routeAgentRunViaRust} is on AND a run qualifies.
+   * ALL OPTIONAL — when omitted the composition lazily constructs the real services. Tests
+   * inject a scripted-stub WS client + a `delivered` readback + the real projector so the
+   * full path is mock-proven (no real Rust bin, no provider, no spend, no network egress).
+   * None of these is consulted while the flag is off / a run is disqualified (byte-identical
+   * 503 path is untouched).
+   */
+  rustAgentRunWsClient?: FridayRustHubAgentRunWsClientService;
+  /** S-F-compose (DARK): the slice-2 Rust→TS continuity projector (SOLE TS usage writer). */
+  rustAgentRunContinuityProjector?: FridayRustHubRunContinuityProjectorService;
+  /** S-F-compose (DARK): the slice-3 owner-gated body readback (returns body to the owner). */
+  rustAgentRunAnswerReadback?: FridayRustHubRunAnswerReadbackService;
+  /**
+   * S-F-compose (DARK): the SecureStore resolver for the WS session key (the WS `authProof`).
+   * Default = the keychain-backed resolver. A `null` resolve (missing/invalid key) fails
+   * closed → no WS call, today's 503. Tests inject a fixture resolver. NEVER logs the key.
+   */
+  rustAgentRunWsSessionKeyResolver?: FridayRustAgentRunWsSessionKeyResolver;
+  /**
+   * S-F-compose (DARK): filesystem path to the Rust Hub DB the owner-gated body readback
+   * reads from. Default = `process.env.FRIDAY_HUB_AGENT_RUN_DB_PATH`. Absent → the readback
+   * fails closed (no body) → 503. Tests point this at a hermetic fixture DB / stub readback.
+   */
+  rustAgentRunHubDbPath?: string;
   /**
    * Test-oracle only: allows legacy TypeScript agent run controls in isolated
    * mock/unit validation. Production/runtime callers must leave this unset so
