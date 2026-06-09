@@ -82,7 +82,7 @@
 
 use std::fs;
 use std::io::Write;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -155,9 +155,15 @@ impl FileSecureStore {
     /// (each is written `0600` at `put` time).
     pub fn open(dir: impl AsRef<Path>, kek: Kek) -> Result<Self, FileStoreError> {
         let dir = dir.as_ref().to_path_buf();
-        fs::create_dir_all(&dir)?;
-        // Enforce 0700 explicitly (umask-safe; create_dir_all honors umask, and a
-        // pre-existing dir may have looser perms).
+        // Create with 0700 from the START so a freshly-created dir is never even
+        // briefly group/other-accessible (DirBuilder.mode applies the mode at
+        // creation, unlike create_dir_all which honors umask then needs a chmod).
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(DIR_MODE)
+            .create(&dir)?;
+        // DirBuilder.mode only governs dirs IT creates; a pre-existing dir keeps
+        // its old (possibly looser) perms, so still enforce 0700 explicitly.
         fs::set_permissions(&dir, fs::Permissions::from_mode(DIR_MODE))?;
         Ok(Self { dir, kek })
     }
@@ -293,10 +299,13 @@ impl FileSecureStore {
             fs::rename(&tmp_path, target)?;
             // fsync the parent directory so the rename is durable across a power
             // loss (atomic alone only guarantees no torn read by a concurrent
-            // reader; durability needs the dir entry flushed).
-            if let Ok(dir) = fs::File::open(parent) {
-                let _ = dir.sync_all();
-            }
+            // reader; durability needs the dir entry flushed). Propagate failure
+            // so the durability guarantee is real rather than silently best-effort
+            // (the entry is already renamed into place; a post-rename Err signals
+            // "written but maybe not power-loss-durable" — safe for the idempotent
+            // enrollment caller to retry).
+            let dir = fs::File::open(parent)?;
+            dir.sync_all()?;
             Ok(())
         };
 
