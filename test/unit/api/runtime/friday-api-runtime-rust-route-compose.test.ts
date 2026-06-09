@@ -36,6 +36,24 @@ function makeIdGenerator(runId: string): () => string {
   return () => runId;
 }
 
+/**
+ * A generator that returns each id in `ids` in turn, then throws once exhausted. Used to
+ * PROVE the cross-request idempotency replay path NEVER mints the second runId — if the
+ * compose-path replay regressed and minted a fresh runId for request #2, this generator
+ * would hand out R2 (and the test's row/WS assertions would catch the double-run).
+ */
+function makeSequenceIdGenerator(...ids: string[]): () => string {
+  let i = 0;
+  return () => {
+    if (i >= ids.length) {
+      throw new Error("idGenerator exhausted — a second runId was minted unexpectedly");
+    }
+    return ids[i++];
+  };
+}
+
+const RUN_ID_2 = "fixed-run-id-2";
+
 function makeProviderService(): FridayProviderService {
   return {
     listProviders: vi.fn(async () => []),
@@ -199,6 +217,7 @@ const OWNER_PRINCIPAL = "rust-route-compose-owner";
 async function callStartRoute(
   runtime: ReturnType<typeof createFridayApiRuntime>,
   body: Record<string, unknown>,
+  opts: { headers?: Record<string, string>; principalId?: string } = {},
 ) {
   const startRoute = runtime.routes
     .getRoutes()
@@ -206,7 +225,9 @@ async function callStartRoute(
   expect(startRoute).toBeDefined();
   return startRoute!.handler({
     body,
-    principal: makeBoundPrincipal(OWNER_PRINCIPAL),
+    principal: makeBoundPrincipal(opts.principalId ?? OWNER_PRINCIPAL),
+    ...(opts.headers ? { headers: opts.headers } : {}),
+    receivedAt: NOW,
   } as never);
 }
 
@@ -348,5 +369,161 @@ describe("FridayApiRuntime — execrun S-F-compose (DARK) Rust-route composition
     expect(ws.calls).toHaveLength(2);
     expect(countRows(db, "friday_agent_runs", RUN_ID)).toBe(1);
     expect(countRows(db, "llm_usage_records", RUN_ID)).toBe(1);
+  });
+
+  // ── Fix 1 — apiRequestIdempotencyKey REPLAY in the compose path ──
+  // Two requests sharing ONE Idempotency-Key, each minting a DISTINCT runId (the real
+  // cross-request case test (e) masks by reusing one fixed id). The SECOND must REPLAY the
+  // first's result (no second WS dispatch, no second runId, no second row), returning the
+  // SAME owner body.
+  it("(f) two requests sharing one Idempotency-Key → SECOND replays the first (no second run / no second row)", async () => {
+    db = createTestDb();
+    const ws = makeStubWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+      // Distinct ids: R1 for request #1; if the replay regressed and minted a second runId,
+      // R2 would be handed out (and the row/WS assertions below would catch it).
+      idGenerator: makeSequenceIdGenerator(RUN_ID, RUN_ID_2),
+    });
+    const headers = { "idempotency-key": "shared-key-abc" }; // pragma: allowlist secret
+
+    const first = (await callStartRoute(runtime, { ...QUALIFYING_BODY }, { headers })) as {
+      runId: string;
+      response: string;
+    };
+    const second = (await callStartRoute(runtime, { ...QUALIFYING_BODY }, { headers })) as {
+      runId: string;
+      response: string;
+      finalResponse?: string;
+    };
+
+    // Both return the owner body…
+    expect(first.response).toBe(OWNER_BODY);
+    expect(second.response).toBe(OWNER_BODY);
+    expect(second.finalResponse).toBe(OWNER_BODY);
+    // …but the SECOND replays the FIRST run id — it did NOT mint a fresh runId.
+    expect(first.runId).toBe(RUN_ID);
+    expect(second.runId).toBe(RUN_ID);
+
+    // The WS path was dispatched exactly ONCE (the replay does NOT re-dispatch).
+    expect(ws.calls).toHaveLength(1);
+    // The first run was the only run projected; the second runId was NEVER created.
+    expect(countRows(db, "friday_agent_runs", RUN_ID)).toBe(1);
+    expect(countRows(db, "llm_usage_records", RUN_ID)).toBe(1);
+    expect(countRows(db, "friday_agent_runs", RUN_ID_2)).toBe(0);
+    expect(countRows(db, "llm_usage_records", RUN_ID_2)).toBe(0);
+  });
+
+  it("(g) same Idempotency-Key but DIFFERENT principal → no replay (scoped per principal)", async () => {
+    db = createTestDb();
+    const ws = makeStubWsClient();
+    // Readback delivers to whichever principal is the caller (both are owners of their run).
+    const readback: FridayRustHubRunAnswerReadbackService = {
+      readAnswer: vi.fn(async (input: FridayRustHubRunAnswerReadbackInput): Promise<FridayRustHubRunAnswerReadbackReceipt> => ({
+        truthLabel: "rust_wired_dev",
+        proofOnly: true,
+        outcome: "delivered",
+        runId: input.runId,
+        status: "completed",
+        answer: OWNER_BODY,
+        answerSha256: ANSWER_SHA256,
+        answerLen: OWNER_BODY.length,
+      })),
+    };
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback,
+      idGenerator: makeSequenceIdGenerator(RUN_ID, RUN_ID_2),
+    });
+    const headers = { "idempotency-key": "shared-key-xyz" }; // pragma: allowlist secret
+
+    await callStartRoute(runtime, { ...QUALIFYING_BODY }, { headers, principalId: "principal-A" });
+    const second = (await callStartRoute(runtime, { ...QUALIFYING_BODY }, {
+      headers,
+      principalId: "principal-B",
+    })) as { runId: string };
+
+    // The key is scoped to (principalId, idempotencyKey): principal-B finds no prior run,
+    // so it routes a NEW run (second runId minted) — NOT a replay.
+    expect(second.runId).toBe(RUN_ID_2);
+    expect(ws.calls).toHaveLength(2);
+    expect(countRows(db, "friday_agent_runs", RUN_ID)).toBe(1);
+    expect(countRows(db, "friday_agent_runs", RUN_ID_2)).toBe(1);
+  });
+
+  it("(g2) same Idempotency-Key + SAME principal but DIFFERENT payload → idempotency CONFLICT (409)", async () => {
+    db = createTestDb();
+    const ws = makeStubWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+      idGenerator: makeSequenceIdGenerator(RUN_ID, RUN_ID_2),
+    });
+    const headers = { "idempotency-key": "shared-key-conflict" }; // pragma: allowlist secret
+
+    // First request establishes the run under the key with payload-hash(A).
+    await callStartRoute(runtime, { ...QUALIFYING_BODY }, { headers });
+    // Second request reuses the key but a DIFFERENT task → different payload hash → the
+    // mirrored conflict check fires (same precedence the bare startRun enforces).
+    await expect(
+      callStartRoute(runtime, { ...QUALIFYING_BODY, task: "A DIFFERENT read-only task." }, { headers }),
+    ).rejects.toMatchObject({ httpStatus: 409 });
+    // The conflict fired BEFORE any second WS dispatch / second run.
+    expect(ws.calls).toHaveLength(1);
+    expect(countRows(db, "friday_agent_runs", RUN_ID_2)).toBe(0);
+  });
+
+  // ── Fix 2 — body.planReviewOverride now reaches the predicate's clause-5 disqualifier ──
+  // A run that otherwise FULLY qualifies but carries a plan-review override marker must be
+  // DISQUALIFIED via HTTP → today's unchanged 503 (the slice-4 clause-5 now fires).
+  it("(h) qualifying body + planReviewOverride → DISQUALIFIED → byte-identical 503; WS never touched", async () => {
+    db = createTestDb();
+    const ws = makeStubWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+    });
+
+    await expect(
+      callStartRoute(runtime, {
+        ...QUALIFYING_BODY,
+        planReviewOverride: { decision: "force-review" },
+      }),
+    ).rejects.toMatchObject({
+      code: "TS_RUNTIME_AGENT_RUNS_RETIRED",
+      httpStatus: 503,
+    });
+    // The plan-review override disqualified the run BEFORE any Rust route was touched.
+    expect(ws.calls).toHaveLength(0);
+    expect(readback.calls).toHaveLength(0);
+    expect(countRows(db, "friday_agent_runs", RUN_ID)).toBe(0);
+  });
+
+  it("(i) planReviewOverride is presence-only — even a falsy value disqualifies", async () => {
+    db = createTestDb();
+    const ws = makeStubWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+    });
+
+    // A FALSY value is still PRESENT → clause-5 disqualifies (presence-only contract).
+    await expect(
+      callStartRoute(runtime, { ...QUALIFYING_BODY, planReviewOverride: null }),
+    ).rejects.toMatchObject({
+      code: "TS_RUNTIME_AGENT_RUNS_RETIRED",
+      httpStatus: 503,
+    });
+    expect(ws.calls).toHaveLength(0);
   });
 });

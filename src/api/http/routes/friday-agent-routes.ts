@@ -909,6 +909,11 @@ export interface FridayAgentRoutesDeps {
     // Additive + optional; forwarded straight to the route-bound startRun wrapper, which
     // (only when the default-OFF Rust-route flag is on) uses it as the clause-4 qualifier.
     allowedRustRouteTools?: string[];
+    // execrun S-F carry-forward (DARK): a plan-review OVERRIDE marker (predicate clause-5
+    // disqualifier). Additive + optional; PRESENCE alone disqualifies the Rust route (→ the
+    // unchanged 503). Forwarded RAW — presence-only, never coerced/injected (route-not-method
+    // pin: it may only DISQUALIFY, never grant). Absent for every existing caller.
+    planReviewOverride?: unknown;
   }) => Promise<FridayAgentRuntimeResult>;
   getRun: (runId: string) => FridayAgentRunRecord | null;
   listRuns: (query: {
@@ -1402,6 +1407,16 @@ export function createFridayAgentRoutes(
           ? body.allowedRustRouteTools
           : undefined;
 
+        // execrun S-F carry-forward (DARK): forward `body.planReviewOverride` RAW into the
+        // route-bound startRun wrapper so the Rust-route predicate's clause-5 plan-review
+        // disqualifier can fire (PRESENCE → disqualified → today's unchanged 503). Parsed
+        // presence-only (`"planReviewOverride" in body`) — NEVER coerced, validated, or
+        // injected: the route-not-method pin requires this field may ONLY disqualify, never
+        // grant. Absent for every existing caller (conditional spread → omitted → byte-
+        // identical), so the only HTTP-observable change is: a run carrying this marker is now
+        // disqualified instead of (incorrectly) qualifying.
+        const hasPlanReviewOverride = "planReviewOverride" in body;
+
         const result = await deps.startRun({
           task: body.task,
           taskPrompt,
@@ -1417,6 +1432,9 @@ export function createFridayAgentRoutes(
           taskProfile,
           executionContext,
           ...(allowedRustRouteTools ? { allowedRustRouteTools } : {}),
+          ...(hasPlanReviewOverride
+            ? { planReviewOverride: (body as Record<string, unknown>).planReviewOverride }
+            : {}),
           ...(apiIdempotencyKey
             ? {
               apiIdempotencyKey,

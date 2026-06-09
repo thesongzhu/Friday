@@ -1096,6 +1096,28 @@ export function qualifiesForRustReadOnlyRoute(input: RustRouteQualificationInput
  *
  * Truth label: `rust_wired` — dark, mock-proven, no real spend; NOT v1 GO.
  */
+/**
+ * The SOLE 503 the Rust read-only compose path raises on ANY fail-closed condition
+ * (missing session key, missing owner principal / Hub DB path, WS error, non-delivered
+ * readback, projector throw). Byte-identical to the disqualified / flag-off `startRun`
+ * 503 (same code, message, status, classification, replacement) so the route stays
+ * indistinguishable from today on every non-routed path. Hoisted to module scope so the
+ * compose path AND the route-level idempotency-replay guard share one definition.
+ */
+function failClosedRustAgentRun(): FridayDomainError {
+  return new FridayDomainError(
+    "TS_RUNTIME_AGENT_RUNS_RETIRED",
+    "Agent run execution is fail-closed while runtime ownership is being moved out of TypeScript.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_agent_run_entrypoint_required",
+      },
+    },
+  );
+}
+
 async function composeRustReadOnlyAgentRun(args: {
   readonly runId: string;
   readonly task: string;
@@ -1109,19 +1131,22 @@ async function composeRustReadOnlyAgentRun(args: {
   readonly hubDbPath: string | undefined;
   readonly db: FridaySqliteLayer;
   readonly nowIso: () => string;
+  /**
+   * execrun S-F carry-forward (DARK) — optional apiRequest idempotency descriptor. When
+   * present, the projected continuity row is stamped with
+   * `metadata.apiRequest.{principalId,idempotencyKey,payloadHash}` (the EXACT shape the
+   * bare `startRun` persists) so a SUBSEQUENT request sharing the key REPLAYS this run
+   * instead of minting a second runId. Absent ⇒ no stamp (unchanged).
+   */
+  readonly apiRequestIdempotency?: {
+    readonly operationId: string;
+    readonly principalId: string;
+    readonly idempotencyKey: string;
+    readonly payloadHash: string;
+    readonly receivedAt: string;
+  };
 }): Promise<FridayAgentRuntimeResult> {
-  const failClosed = (): FridayDomainError =>
-    new FridayDomainError(
-      "TS_RUNTIME_AGENT_RUNS_RETIRED",
-      "Agent run execution is fail-closed while runtime ownership is being moved out of TypeScript.",
-      {
-        httpStatus: 503,
-        details: {
-          classification: "fail_closed",
-          replacement: "rust_owned_agent_run_entrypoint_required",
-        },
-      },
-    );
+  const failClosed = failClosedRustAgentRun;
 
   // (1) SecureStore session key — MISSING/invalid ⇒ fail closed BEFORE any WS connection.
   // Never open an unauthenticated WS call; never log the key.
@@ -1164,8 +1189,8 @@ async function composeRustReadOnlyAgentRun(args: {
   // WS result carries no token totals (S-D is refs-only and untouched), so usage is 0 here
   // and `pricingResolved:false` stands — truth label dark, no fabricated numbers.
   const completedAtIso = args.nowIso();
-  const projection = args.db.withWriteTransaction((db) =>
-    args.projector.project(db, {
+  const projection = args.db.withWriteTransaction((db) => {
+    const result = args.projector.project(db, {
       truthLabel: "rust_wired_dev",
       proofOnly: true,
       ok: true,
@@ -1183,8 +1208,28 @@ async function composeRustReadOnlyAgentRun(args: {
       usageCompletionTokens: 0,
       usageTotalTokens: 0,
       completedAtIso,
-    }),
-  );
+    });
+    // execrun S-F carry-forward (DARK): MERGE the apiRequest idempotency descriptor into the
+    // projected row's metadata so a subsequent request sharing the key replays this run.
+    // `json_set('$.apiRequest', json(?))` MERGES — it preserves the projector's
+    // `surface`/`rustContinuity` telemetry (an `agentRepo.update({metadata})` would clobber
+    // metadata_json wholesale). Stamped in the SAME write transaction as the projection.
+    if (args.apiRequestIdempotency) {
+      db.prepare(
+        "UPDATE friday_agent_runs SET metadata_json = json_set(metadata_json, '$.apiRequest', json(?)) WHERE id = ?",
+      ).run(
+        JSON.stringify({
+          operationId: args.apiRequestIdempotency.operationId,
+          idempotencyKey: args.apiRequestIdempotency.idempotencyKey,
+          payloadHash: args.apiRequestIdempotency.payloadHash,
+          receivedAt: args.apiRequestIdempotency.receivedAt,
+          principalId: args.apiRequestIdempotency.principalId,
+        }),
+        args.runId,
+      );
+    }
+    return result;
+  });
 
   // (5) Return the owner-released body as the run's final response.
   return {
@@ -4190,6 +4235,65 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           planReviewOverride: input.planReviewOverride,
         });
         if (qualifies) {
+          // execrun S-F carry-forward (DARK) — apiRequestIdempotencyKey REPLAY precedence.
+          // The compose path mints a FRESH runId; without this guard two requests sharing
+          // one `apiIdempotencyKey` would each mint a new runId → two agent_run/usage rows
+          // (the projector's run_id-keyed dedup is per-run and does NOT catch this cross-
+          // request case). So BEFORE minting + routing, mirror the SAME idempotency path the
+          // bare `startRun` uses: if a prior run exists for this key, REPLAY it (no new WS
+          // dispatch, no second projection) instead of routing a new run.
+          const normalizedPrincipalId =
+            typeof input.principalId === "string" && input.principalId.trim().length > 0
+              ? input.principalId.trim()
+              : undefined;
+          if (input.apiIdempotencyKey && input.apiIdempotencyPayloadHash) {
+            const scopedPrincipalId = normalizedPrincipalId ?? "anonymous";
+            const existingRun = deps.db.withReadConnection((db) =>
+              agentRepo.findLatestByApiRequestIdempotencyKey(db, {
+                principalId: scopedPrincipalId,
+                idempotencyKey: input.apiIdempotencyKey!,
+              }),
+            );
+            if (existingRun) {
+              const existingHash = readStoredIdempotencyPayloadHash(existingRun.metadata);
+              if (existingHash && existingHash !== input.apiIdempotencyPayloadHash) {
+                throwIdempotencyConflict(input.apiIdempotencyKey, "agent.runs.start");
+              }
+              // Faithful compose-path replay: the projector NEVER stores the answer body
+              // (projector contract #3 — the row carries only a body REF), so we cannot
+              // `replayAgentRunResult(existingRun)` (that would hand the caller the internal
+              // `rust-run-body-ref:…` string, not their answer). Instead re-run the SAME
+              // owner-gated readback (slice-3) for the EXISTING runId — no WS dispatch, no
+              // re-projection — and return the owner-released body. Owner principal absent /
+              // body non-delivered ⇒ fail closed (same 503 the compose raises).
+              const callerPrincipal = normalizedPrincipalId;
+              if (!callerPrincipal) {
+                throw failClosedRustAgentRun();
+              }
+              if (!rustHubDbPath) {
+                throw failClosedRustAgentRun();
+              }
+              const replayReadback = await rustAnswerReadback.readAnswer({
+                dbPath: rustHubDbPath,
+                runId: existingRun.id,
+                callerPrincipal,
+              });
+              if (replayReadback.outcome !== "delivered") {
+                throw failClosedRustAgentRun();
+              }
+              return {
+                runId: existingRun.id,
+                status: existingRun.status,
+                response: replayReadback.answer,
+                toolCallCount: 0,
+                durationMs: existingRun.durationMs ?? 0,
+                usageInput: existingRun.usageInput ?? 0,
+                usageOutput: existingRun.usageOutput ?? 0,
+                finalResponse: replayReadback.answer,
+              };
+            }
+          }
+
           // Qualifying run: route via Rust. Fail-closed on missing key / WS / readback /
           // projector — this NEVER falls through to the TS `startRun`. providerId/model
           // are guaranteed defined here (the predicate required the exact deepseek-flash
@@ -4197,7 +4301,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           return composeRustReadOnlyAgentRun({
             runId: deps.idGenerator(),
             task: input.task,
-            principalId: input.principalId,
+            // Owner-binding keys on the NORMALIZED principal — the SAME value the idempotency
+            // lookup (above), the owner-gated readback, and the stamp use — so all four agree on
+            // one canonical owner string (a blank/whitespace principal ⇒ undefined ⇒ fail-closed,
+            // matching the bare startRun which normalizes throughout). Robust to future auth
+            // issuance even if a principalId ever arrives non-canonical.
+            principalId: normalizedPrincipalId,
             providerId: input.providerId ?? RUST_ROUTE_DEEPSEEK_PROVIDER_ID,
             model: input.model ?? RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
             wsClient: rustWsClient,
@@ -4207,6 +4316,22 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             hubDbPath: rustHubDbPath,
             db: deps.db,
             nowIso: deps.nowIso,
+            // Stamp the apiRequest idempotency descriptor onto the projected row so a
+            // SUBSEQUENT request sharing this key REPLAYS this run (the lookup above) rather
+            // than minting a second runId. Mirrors the EXACT shape the bare startRun persists
+            // (`metadata.apiRequest.{principalId,idempotencyKey,payloadHash}`), so both
+            // `findLatestByApiRequestIdempotencyKey` and the `payloadHash` conflict check work.
+            ...(input.apiIdempotencyKey && input.apiIdempotencyPayloadHash
+              ? {
+                apiRequestIdempotency: {
+                  operationId: "agent.runs.start",
+                  principalId: normalizedPrincipalId ?? "anonymous",
+                  idempotencyKey: input.apiIdempotencyKey,
+                  payloadHash: input.apiIdempotencyPayloadHash,
+                  receivedAt: input.apiIdempotencyReceivedAt ?? deps.nowIso(),
+                },
+              }
+              : {}),
           });
         }
       }
