@@ -914,6 +914,39 @@ impl<T: Transport> HubServer<T> {
 /// constructor and no way to mint one without opening a caller-sealed proof.
 pub struct AuthedPrincipal(String);
 
+/// The per-request inputs to [`AuthedPrincipal::authenticate_forwarded`], bundled so the
+/// verifier signature stays small. **Trust is NOT uniform across these fields — read carefully:**
+/// `auth_proof` / `run_id` / `forwarded_principal` are PEER-conveyed on the wire (attacker-
+/// controlled; the verifier trusts none of them until the possession-of-session + nonce-bound-
+/// challenge + allowlist chain passes). `session_nonce` is the EXCEPTION: it is **SERVER-
+/// generated per handshake and MUST NEVER be read from the wire / a request field** — it is the
+/// anti-replay binding, and if it were attacker-suppliable (or empty) the binding would collapse
+/// back to the bare fixed challenge (the exact replay hole S-E closes). The verifier
+/// SELF-ENFORCES this (rejects a wrong-width `session_nonce`), but a caller MUST still pass the
+/// server's fresh nonce, never a peer value. Borrowed (no allocation).
+pub struct ForwardedAuth<'a> {
+    /// The peer's sealed possession-of-session proof (decoded from the wire `auth_proof`). Must
+    /// open under the session key to `expected_challenge || session_nonce` with the per-request
+    /// AAD — a stale/lifted proof fails.
+    pub auth_proof: &'a Sealed,
+    /// THIS handshake's fresh per-handshake nonce — the anti-replay binding. **SERVER-generated,
+    /// never wire-read.** A captured proof sealed a DIFFERENT nonce will not verify here; a
+    /// missing/short nonce is REJECTED by the verifier (it must be `SESSION_NONCE_LEN` wide).
+    pub session_nonce: &'a [u8],
+    /// The run the proof is bound to (length-delimited into the AAD) — a proof can't be lifted to
+    /// a different run.
+    pub run_id: &'a str,
+    /// The trusted-peer-forwarded principal (allowlist-checked; also length-delimited into the
+    /// AAD — a proof can't be lifted to a different principal).
+    pub forwarded_principal: &'a str,
+}
+
+/// Required width of [`ForwardedAuth::session_nonce`] — the server's `generate_approval_nonce`
+/// emits 32 CSPRNG bytes as 64 lowercase-hex ASCII bytes. MUST match the bin's `SESSION_NONCE_LEN`
+/// (`hub_agent_run_server.rs`). The verifier rejects any other width so the anti-replay nonce
+/// binding cannot collapse to the bare fixed challenge.
+const SESSION_NONCE_LEN: usize = 64;
+
 impl AuthedPrincipal {
     /// Authenticate a caller over the established sealed session and bind the Hub's OWNER
     /// principal to it.
@@ -969,34 +1002,71 @@ impl AuthedPrincipal {
     /// INTENDED to be TRUSTED-PEER-FORWARDED: in production the in-TCB TS API resolves it from a
     /// validated bearer token and forwards it over the sealed session. BUT this slice does NOT
     /// authenticate the PEER: the session is established by an UNAUTHENTICATED dev ECDH handshake
-    /// (cleartext peer pubkey, a stable server key, a FIXED challenge), so on loopback ANY local
-    /// process can complete the handshake and produce an openable `auth_proof` — there is NO
-    /// pairing / SecureStore check here. So `open()` proves only "the caller completed the
+    /// (cleartext peer pubkey, a stable server key), so on loopback ANY local process can complete
+    /// a FRESH handshake and produce an openable `auth_proof` under the CURRENT nonce — there is
+    /// NO pairing / SecureStore check here. So `open()` proves only "the caller completed THIS
     /// handshake", NOT "the caller is the one authorized peer". What stops an ARBITRARY principal
     /// TODAY is solely the `owner_allowlist` ceiling (an attacker would still have to forward an
     /// allowlisted owner string). This is acceptable ONLY because the slice is DARK + loopback-
-    /// only + has NO production caller. **HARD FORWARD-GATES before S-F wires any production
-    /// caller (and before any slice-6 spend) — do NOT skip:** (S-F) add real PEER authentication
-    /// (SecureStore pubkey allowlist / pairing) before trusting a forwarded principal; (S-E) bind
-    /// a per-handshake NONCE into the challenge/AAD (or a consumed-proof store) — the FIXED
-    /// challenge makes a captured `auth_proof` REPLAYABLE today (replay-to-RE-RUN is separately
-    /// blocked only by the run_id PRIMARY KEY, which must persist or S-E must land if the deferred
-    /// key-source stabilizes server_kp). `rust_wired` at best, DARK, NOT a v1 GO.
+    /// only + has NO production caller. **HARD FORWARD-GATE before S-F wires any production caller
+    /// (and before any slice-6 spend) — do NOT skip:** (S-F) add real PEER authentication
+    /// (SecureStore pubkey allowlist / pairing) before trusting a forwarded principal — a fresh
+    /// local process completing the current handshake and forging a proof for an allowlisted owner
+    /// string is STILL possible (the peer-auth gap). `rust_wired` at best, DARK, NOT a v1 GO.
+    ///
+    /// **S-E anti-replay (this slice).** The challenge bound here is NOT a fixed constant: the
+    /// caller seals `expected_challenge || session_nonce`, where `session_nonce` is a FRESH
+    /// per-handshake CSPRNG nonce the SERVER generated and sent in cleartext. The auth AAD also
+    /// length-delimits `forwarded_principal` and `run_id` into [`auth_aad`]. Consequences:
+    /// * a `auth_proof` CAPTURED from a PRIOR handshake (nonce `N1`) does NOT open/verify on a new
+    ///   handshake (nonce `N2 != N1`) — REPLAY-TO-AUTHENTICATE is defeated. The attacker can
+    ///   replay the public peer-pubkey preamble, but cannot RE-SEAL `challenge||N2` without the
+    ///   paired ECDH private half; and
+    /// * a proof sealed for one `(principal, run_id)` cannot be LIFTED to a different one (the AAD
+    ///   binds both, length-delimited, so cross-pair substitution fails to open).
+    ///
+    /// (Replay-to-RE-RUN is separately blocked by the `run_id` PRIMARY KEY; this closes the AUTH
+    /// replay only. PEER-auth remains S-F's job — see above.)
+    ///
+    /// The request-derived inputs (`auth_proof`, `session_nonce`, `run_id`, `forwarded_principal`)
+    /// are bundled in [`ForwardedAuth`] so the verifier signature stays small; the SESSION inputs
+    /// (`session_key`, `aad`, `expected_challenge`) and the Hub-supplied `owner_allowlist` stay
+    /// explicit.
     ///
     /// Returns `None` on ANY failure — fail-closed, never partial.
     pub fn authenticate_forwarded(
         session_key: &DataKey,
-        auth_proof: &Sealed,
         aad: &[u8],
         expected_challenge: &[u8],
-        forwarded_principal: &str,
+        req: ForwardedAuth<'_>,
         owner_allowlist: &[String],
     ) -> Option<AuthedPrincipal> {
-        // (1) Possession-of-session proof: the peer must seal the agreed challenge under the
-        // ESTABLISHED session key. A correct-handshake peer that cannot open this — or any
-        // peer on a different key — fails closed here. A session key alone is NOT enough.
-        let opened = open(session_key, auth_proof, aad).ok()?;
-        if opened.as_slice() != expected_challenge {
+        let ForwardedAuth {
+            auth_proof,
+            session_nonce,
+            run_id,
+            forwarded_principal,
+        } = req;
+        // (0) SELF-ENFORCE the anti-replay invariant AT this verification boundary (the one that
+        // OWNS the property). The server ALWAYS supplies a fresh full-width CSPRNG nonce
+        // (`SESSION_NONCE_LEN`); a missing/short/wrong-width `session_nonce` would let
+        // `nonce_bound_challenge` collapse back toward the bare fixed challenge — the exact replay
+        // hole S-E closes. Reject it here so the property cannot silently regress if a future
+        // caller mis-wires `session_nonce` (no upstream test would catch that).
+        if session_nonce.len() != SESSION_NONCE_LEN {
+            return None;
+        }
+        // (1) Possession-of-session proof BOUND to THIS handshake. The peer must seal the agreed
+        // challenge CONCATENATED with this connection's fresh `session_nonce`, under the
+        // ESTABLISHED session key, with the per-request auth AAD (principal+run_id, length-
+        // delimited). A correct-handshake peer that cannot open this — any peer on a different
+        // key, OR a captured proof from a PRIOR handshake (different nonce), OR a proof lifted
+        // from a different (principal, run_id) — fails closed here. A session key alone is NOT
+        // enough, and a stale `auth_proof` is NOT replayable.
+        let req_aad = auth_aad(aad, forwarded_principal, run_id);
+        let opened = open(session_key, auth_proof, &req_aad).ok()?;
+        let expected = nonce_bound_challenge(expected_challenge, session_nonce);
+        if opened != expected {
             return None;
         }
         // (2) Non-empty / non-whitespace forwarded principal.
@@ -1024,6 +1094,45 @@ impl AuthedPrincipal {
     pub fn principal(&self) -> &str {
         &self.0
     }
+}
+
+/// S-E anti-replay — the per-handshake challenge the trusted peer must seal: the fixed agreed
+/// `challenge` CONCATENATED with this connection's fresh CSPRNG `session_nonce`. Both inputs are
+/// fixed-length on the wire (the challenge is a static constant; the nonce is a fixed-width
+/// CSPRNG token), so a plain concat is unambiguous. A captured proof from a PRIOR handshake
+/// sealed `challenge || N1`; on a new handshake the server expects `challenge || N2` (N2 != N1),
+/// so the stale proof's opened bytes never match — REPLAY-TO-AUTHENTICATE is defeated.
+///
+/// `pub` so the trusted peer (the production caller wired by S-F, and the bin's loopback test
+/// client) constructs the IDENTICAL bytes it must seal — the verifier and the prover share ONE
+/// encoding. Carries no key material; the security is in the session key that seals it.
+pub fn nonce_bound_challenge(challenge: &[u8], session_nonce: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(challenge.len() + session_nonce.len());
+    out.extend_from_slice(challenge);
+    out.extend_from_slice(session_nonce);
+    out
+}
+
+/// S-E anti-replay — the per-REQUEST auth AAD: the session `aad` plus the `forwarded_principal`
+/// and `run_id`, each LENGTH-DELIMITED (a 4-byte big-endian length prefix per field) so the
+/// encoding is unambiguous — `("ab","c")` and `("a","bc")` produce DISTINCT AADs. Binding both
+/// into the AAD means an `auth_proof` sealed for one `(principal, run_id)` cannot be LIFTED to a
+/// different one: substituting either field changes the AAD, so `open` fails (the AEAD tag no
+/// longer authenticates). The AAD is NOT secret (it is reconstructed by the verifier from the
+/// cleartext request fields); its job is binding, not confidentiality.
+///
+/// `pub` for the same reason as [`nonce_bound_challenge`]: the prover and the verifier must
+/// derive the SAME AAD bytes from the same `(aad, principal, run_id)` triple.
+pub fn auth_aad(aad: &[u8], forwarded_principal: &str, run_id: &str) -> Vec<u8> {
+    let principal = forwarded_principal.as_bytes();
+    let run = run_id.as_bytes();
+    let mut out = Vec::with_capacity(aad.len() + 8 + principal.len() + run.len());
+    out.extend_from_slice(aad);
+    out.extend_from_slice(&(principal.len() as u32).to_be_bytes());
+    out.extend_from_slice(principal);
+    out.extend_from_slice(&(run.len() as u32).to_be_bytes());
+    out.extend_from_slice(run);
+    out
 }
 
 /// True if a forwarded principal is anonymous / public / empty under the SAME sentinel set
@@ -5266,13 +5375,36 @@ mod authed_route_tests {
     }
 
     // --- S-C: authenticate_forwarded (the trusted-peer-forwarded principal sibling) ----------
+    // --- S-E: per-handshake nonce + (principal, run_id) AAD binding (anti-replay) ------------
 
     /// The allowlisted single Hub owner used by the forwarded-auth tests.
     const FWD_OWNER: &str = "principal:forwarded-owner";
+    /// A fixed per-handshake nonce stand-in for the unit tests (the bin tests drive the REAL
+    /// per-connection CSPRNG nonce end-to-end). Non-secret. // pragma: allowlist secret
+    /// SESSION_NONCE_LEN (64) bytes wide — matches the server's real `generate_approval_nonce`
+    /// output so the tests exercise the production path (and the verifier's self-enforcement guard).
+    const FWD_NONCE: &[u8] = &[b'a'; 64];
+    /// A second, DISTINCT 64-byte nonce — the "later handshake" in the replay test.
+    const FWD_NONCE_2: &[u8] = &[b'b'; 64];
+    /// The run_id bound into the auth AAD for the forwarded-auth tests.
+    const FWD_RUN: &str = "run:fwd-unit";
 
-    /// Build a valid forwarded auth_proof sealed under the peer's session view.
+    /// Build a valid forwarded auth_proof sealed under the peer's session view, BOUND to the
+    /// given handshake `nonce` and `(principal, run_id)` AAD — the S-E binding the peer performs.
+    fn fwd_proof_bound(
+        caller_session: &DataKey,
+        nonce: &[u8],
+        principal: &str,
+        run_id: &str,
+    ) -> Sealed {
+        let challenge = nonce_bound_challenge(CHALLENGE, nonce);
+        let req_aad = auth_aad(AAD, principal, run_id);
+        seal(caller_session, &challenge, &req_aad).unwrap()
+    }
+
+    /// The common-case proof: bound to `FWD_NONCE`, `FWD_OWNER`, `FWD_RUN`.
     fn fwd_proof(caller_session: &DataKey) -> Sealed {
-        seal(caller_session, CHALLENGE, AAD).unwrap()
+        fwd_proof_bound(caller_session, FWD_NONCE, FWD_OWNER, FWD_RUN)
     }
 
     #[test]
@@ -5281,10 +5413,14 @@ mod authed_route_tests {
         let proof = fwd_proof(&caller_session);
         let bound = AuthedPrincipal::authenticate_forwarded(
             &hub_session,
-            &proof,
             AAD,
             CHALLENGE,
-            FWD_OWNER,
+            ForwardedAuth {
+                auth_proof: &proof,
+                session_nonce: FWD_NONCE,
+                run_id: FWD_RUN,
+                forwarded_principal: FWD_OWNER,
+            },
             &[FWD_OWNER.to_string()],
         )
         .expect("a paired peer forwarding an allowlisted principal authenticates");
@@ -5295,19 +5431,155 @@ mod authed_route_tests {
         );
     }
 
+    // S-E (b): SELF-ENFORCEMENT — a wrong-width (short/empty) session_nonce is rejected AT the
+    // verifier even when the peer sealed its proof under that SAME short nonce (so the step-(1)
+    // proof comparison alone would PASS). Without the boundary guard a missing/short nonce
+    // collapses the binding toward the bare fixed challenge (the replay hole); this proves the
+    // guard — not just the proof comparison — blocks it, so a future caller can't silently regress.
+    #[test]
+    fn authenticate_forwarded_rejects_a_wrong_width_session_nonce() {
+        let (hub_session, caller_session) = paired_sessions();
+        let short: &[u8] = b"too-short-nonce"; // not SESSION_NONCE_LEN wide
+                                               // Proof sealed under the SHORT nonce ⇒ the proof comparison alone would otherwise PASS.
+        let proof = fwd_proof_bound(&caller_session, short, FWD_OWNER, FWD_RUN);
+        assert!(
+            AuthedPrincipal::authenticate_forwarded(
+                &hub_session,
+                AAD,
+                CHALLENGE,
+                ForwardedAuth {
+                    auth_proof: &proof,
+                    session_nonce: short,
+                    run_id: FWD_RUN,
+                    forwarded_principal: FWD_OWNER,
+                },
+                &[FWD_OWNER.to_string()],
+            )
+            .is_none(),
+            "a wrong-width session_nonce must be rejected by the self-enforcement guard"
+        );
+    }
+
+    // S-E (a): a proof captured under nonce N1 REPLAYED against a later handshake (nonce N2)
+    // FAILS — the verifier expects `CHALLENGE || N2`, the captured proof sealed `CHALLENGE || N1`.
+    // This is the replay-to-authenticate defense at the unit level (same session key, two nonces).
+    #[test]
+    fn authenticate_forwarded_rejects_a_proof_captured_under_a_prior_handshake_nonce() {
+        let (hub_session, caller_session) = paired_sessions();
+        // Proof sealed under the FIRST handshake's nonce.
+        let captured = fwd_proof_bound(&caller_session, FWD_NONCE, FWD_OWNER, FWD_RUN);
+        // The SAME proof, replayed verbatim, against a LATER handshake's nonce (N2 != N1).
+        assert!(
+            AuthedPrincipal::authenticate_forwarded(
+                &hub_session,
+                AAD,
+                CHALLENGE,
+                ForwardedAuth {
+                    auth_proof: &captured,
+                    session_nonce: FWD_NONCE_2, // the new handshake's nonce
+                    run_id: FWD_RUN,
+                    forwarded_principal: FWD_OWNER,
+                },
+                &[FWD_OWNER.to_string()],
+            )
+            .is_none(),
+            "a captured auth_proof must NOT re-authenticate under a fresh handshake nonce"
+        );
+        // CONTROL: the SAME captured proof STILL authenticates under its OWN nonce (no false-neg).
+        assert!(
+            AuthedPrincipal::authenticate_forwarded(
+                &hub_session,
+                AAD,
+                CHALLENGE,
+                ForwardedAuth {
+                    auth_proof: &captured,
+                    session_nonce: FWD_NONCE, // its own nonce
+                    run_id: FWD_RUN,
+                    forwarded_principal: FWD_OWNER,
+                },
+                &[FWD_OWNER.to_string()],
+            )
+            .is_some(),
+            "a proof under the CURRENT nonce must still authenticate"
+        );
+    }
+
+    // S-E: a proof sealed for (principal, run) cannot be LIFTED to a different run_id — the AAD
+    // binds run_id (length-delimited), so substituting it makes `open` fail.
+    #[test]
+    fn authenticate_forwarded_rejects_a_proof_lifted_to_a_different_run_id() {
+        let (hub_session, caller_session) = paired_sessions();
+        // The peer sealed a proof for FWD_RUN.
+        let proof = fwd_proof_bound(&caller_session, FWD_NONCE, FWD_OWNER, FWD_RUN);
+        // The verifier is asked to authenticate it for a DIFFERENT run_id — the AAD differs.
+        assert!(
+            AuthedPrincipal::authenticate_forwarded(
+                &hub_session,
+                AAD,
+                CHALLENGE,
+                ForwardedAuth {
+                    auth_proof: &proof,
+                    session_nonce: FWD_NONCE,
+                    run_id: "run:some-other-run", // lifted to a different run
+                    forwarded_principal: FWD_OWNER,
+                },
+                &[FWD_OWNER.to_string()],
+            )
+            .is_none(),
+            "a proof bound to one run_id must not authenticate a different run_id"
+        );
+    }
+
+    // S-E: the length-delimited AAD is UNAMBIGUOUS — ("ab","c") and ("a","bc") must NOT collide.
+    // A naive `principal || run_id` concat would let a proof for ("ab","c") authenticate ("a","bc").
+    #[test]
+    fn auth_aad_is_unambiguous_across_field_boundaries() {
+        assert_ne!(
+            auth_aad(AAD, "ab", "c"),
+            auth_aad(AAD, "a", "bc"),
+            "length-delimited AAD must distinguish field boundaries"
+        );
+        // And end-to-end: a proof for ("ab","c") must not open for ("a","bc").
+        let (hub_session, caller_session) = paired_sessions();
+        let proof = fwd_proof_bound(&caller_session, FWD_NONCE, "principal:ab", "c");
+        assert!(
+            AuthedPrincipal::authenticate_forwarded(
+                &hub_session,
+                AAD,
+                CHALLENGE,
+                ForwardedAuth {
+                    auth_proof: &proof,
+                    session_nonce: FWD_NONCE,
+                    run_id: "bc",
+                    forwarded_principal: "principal:a",
+                },
+                &["principal:a".to_string()],
+            )
+            .is_none(),
+            "a boundary-shifted (principal, run_id) must not authenticate"
+        );
+    }
+
     #[test]
     fn authenticate_forwarded_rejects_a_non_allowlisted_principal() {
         // THE PRECONDITION: a correct-session peer forwarding a well-formed but NON-allowlisted
         // principal is rejected — a session key is NOT authorization.
         let (hub_session, caller_session) = paired_sessions();
-        let proof = fwd_proof(&caller_session);
+        // Seal the proof BOUND to the attacker's forwarded principal (so the open succeeds and the
+        // ALLOWLIST check is what rejects, not the AAD mismatch).
+        let attacker = "principal:attacker-not-on-allowlist";
+        let proof = fwd_proof_bound(&caller_session, FWD_NONCE, attacker, FWD_RUN);
         assert!(
             AuthedPrincipal::authenticate_forwarded(
                 &hub_session,
-                &proof,
                 AAD,
                 CHALLENGE,
-                "principal:attacker-not-on-allowlist",
+                ForwardedAuth {
+                    auth_proof: &proof,
+                    session_nonce: FWD_NONCE,
+                    run_id: FWD_RUN,
+                    forwarded_principal: attacker,
+                },
                 &[FWD_OWNER.to_string()],
             )
             .is_none(),
@@ -5318,15 +5590,21 @@ mod authed_route_tests {
     #[test]
     fn authenticate_forwarded_rejects_empty_and_anonymous_forwarded_principals() {
         let (hub_session, caller_session) = paired_sessions();
-        let proof = fwd_proof(&caller_session);
         for bad in ["", "   ", "public", "public:default"] {
+            // Seal the proof bound to `bad` so the open succeeds and the ANONYMOUS/empty check is
+            // what rejects (not an AAD mismatch).
+            let proof = fwd_proof_bound(&caller_session, FWD_NONCE, bad, FWD_RUN);
             assert!(
                 AuthedPrincipal::authenticate_forwarded(
                     &hub_session,
-                    &proof,
                     AAD,
                     CHALLENGE,
-                    bad,
+                    ForwardedAuth {
+                        auth_proof: &proof,
+                        session_nonce: FWD_NONCE,
+                        run_id: FWD_RUN,
+                        forwarded_principal: bad,
+                    },
                     // Even if (pathologically) the anonymous sentinel were on the allowlist,
                     // the anonymous check rejects it first.
                     &[bad.to_string(), FWD_OWNER.to_string()],
@@ -5346,14 +5624,18 @@ mod authed_route_tests {
         let hub_session = hub.agree(&real_peer.public_bytes());
         let attacker = DeviceKeypair::generate();
         let attacker_session = attacker.agree(&hub.public_bytes()); // hub never shared with attacker
-        let proof = seal(&attacker_session, CHALLENGE, AAD).unwrap();
+        let proof = fwd_proof_bound(&attacker_session, FWD_NONCE, FWD_OWNER, FWD_RUN);
         assert!(
             AuthedPrincipal::authenticate_forwarded(
                 &hub_session,
-                &proof,
                 AAD,
                 CHALLENGE,
-                FWD_OWNER,
+                ForwardedAuth {
+                    auth_proof: &proof,
+                    session_nonce: FWD_NONCE,
+                    run_id: FWD_RUN,
+                    forwarded_principal: FWD_OWNER,
+                },
                 &[FWD_OWNER.to_string()],
             )
             .is_none(),
@@ -5364,15 +5646,20 @@ mod authed_route_tests {
     #[test]
     fn authenticate_forwarded_rejects_a_wrong_challenge_seal() {
         let (hub_session, caller_session) = paired_sessions();
-        // Opens (correct session key) but is NOT the agreed challenge.
-        let proof_wrong = seal(&caller_session, b"not-the-challenge", AAD).unwrap();
+        // Opens (correct session key + correct AAD) but is NOT the agreed (nonce-bound) challenge.
+        let req_aad = auth_aad(AAD, FWD_OWNER, FWD_RUN);
+        let proof_wrong = seal(&caller_session, b"not-the-challenge", &req_aad).unwrap();
         assert!(
             AuthedPrincipal::authenticate_forwarded(
                 &hub_session,
-                &proof_wrong,
                 AAD,
                 CHALLENGE,
-                FWD_OWNER,
+                ForwardedAuth {
+                    auth_proof: &proof_wrong,
+                    session_nonce: FWD_NONCE,
+                    run_id: FWD_RUN,
+                    forwarded_principal: FWD_OWNER,
+                },
                 &[FWD_OWNER.to_string()],
             )
             .is_none(),
@@ -5388,10 +5675,14 @@ mod authed_route_tests {
         assert!(
             AuthedPrincipal::authenticate_forwarded(
                 &hub_session,
-                &proof,
                 AAD,
                 CHALLENGE,
-                FWD_OWNER,
+                ForwardedAuth {
+                    auth_proof: &proof,
+                    session_nonce: FWD_NONCE,
+                    run_id: FWD_RUN,
+                    forwarded_principal: FWD_OWNER,
+                },
                 &[],
             )
             .is_none(),
