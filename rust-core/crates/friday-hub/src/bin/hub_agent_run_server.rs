@@ -1783,10 +1783,16 @@ mod tests {
 
     /// A "PONG"-answering mock runtime (additive test scaffolding — reuses `FinishTransport` /
     /// `HubRuntime::new` UNCHANGED, just a different deterministic answer than `BODY`).
-    fn pong_runtime(tag: &str, principal: &str, answer: &str) -> (HubRuntime<FinishTransport>, TempWs) {
+    fn pong_runtime(
+        tag: &str,
+        principal: &str,
+        answer: &str,
+    ) -> (HubRuntime<FinishTransport>, TempWs) {
         let ws = TempWs::new(tag);
         let client = DeepSeekClient::with_transport(
-            FinishTransport { answer: answer.to_string() },
+            FinishTransport {
+                answer: answer.to_string(),
+            },
             "k".into(), // pragma: allowlist secret
         );
         let agent = DeepSeekAgentLlmClient::new(client);
@@ -1868,7 +1874,9 @@ mod tests {
 
     /// Read the ONE JSON line the runner prints on stdout.
     fn read_client_json(child: std::process::Child) -> serde_json::Value {
-        let out = child.wait_with_output().expect("await TS client subprocess");
+        let out = child
+            .wait_with_output()
+            .expect("await TS client subprocess");
         let stdout = String::from_utf8_lossy(&out.stdout);
         let line = stdout
             .lines()
@@ -1899,7 +1907,12 @@ mod tests {
         // Enroll the TS client's pubkey (derived from the fixed secret the subprocess uses).
         let peer_allowlist = allowlist_of(ts_client_pubkey());
 
-        let child = spawn_ts_client(addr.port(), &ts_client_secret_hex(), OWNER, "run-interop-ok");
+        let child = spawn_ts_client(
+            addr.port(),
+            &ts_client_secret_hex(),
+            OWNER,
+            "run-interop-ok",
+        );
         // SERVER serves on the main thread (non-Send runtime); the TS client drives the socket.
         let processed = listener
             .accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist)
@@ -1907,8 +1920,16 @@ mod tests {
         assert_eq!(processed, 1, "one authed dispatch processed");
 
         let v = read_client_json(child);
-        assert_eq!(v["ok"], serde_json::json!(true), "TS client reports success: {v:?}");
-        assert_eq!(v["body"], serde_json::json!(ANSWER), "TS client opened the owner-sealed body");
+        assert_eq!(
+            v["ok"],
+            serde_json::json!(true),
+            "TS client reports success: {v:?}"
+        );
+        assert_eq!(
+            v["body"],
+            serde_json::json!(ANSWER),
+            "TS client opened the owner-sealed body"
+        );
         assert_eq!(v["runId"], serde_json::json!("run-interop-ok"));
         // The refs fingerprint matches the body (TS surfaces sha256/len from the refs result).
         assert_eq!(
@@ -1916,7 +1937,11 @@ mod tests {
             serde_json::json!(sha256_hex(ANSWER.as_bytes())),
             "TS surfaced the refs sha256"
         );
-        assert_eq!(v["answerLen"], serde_json::json!(ANSWER.len()), "TS surfaced the refs len");
+        assert_eq!(
+            v["answerLen"],
+            serde_json::json!(ANSWER.len()),
+            "TS surfaced the refs len"
+        );
     }
 
     // (2) FAIL-CLOSED — FORGED PEER: a client pubkey NOT in the allowlist ⇒ the server establishes
@@ -1937,11 +1962,22 @@ mod tests {
         let child = spawn_ts_client(addr.port(), &ts_client_secret_hex(), OWNER, "run-forged");
         // The server rejects the peer pubkey and returns an Err (no session established).
         let served = listener.accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist);
-        assert!(served.is_err(), "a forged/non-allowlisted peer establishes NO session");
+        assert!(
+            served.is_err(),
+            "a forged/non-allowlisted peer establishes NO session"
+        );
 
         let v = read_client_json(child);
-        assert_eq!(v["ok"], serde_json::json!(false), "forged peer ⇒ TS fails closed: {v:?}");
-        assert_eq!(v["httpStatus"], serde_json::json!(503), "fail-closed surfaces a 503");
+        assert_eq!(
+            v["ok"],
+            serde_json::json!(false),
+            "forged peer ⇒ TS fails closed: {v:?}"
+        );
+        assert_eq!(
+            v["httpStatus"],
+            serde_json::json!(503),
+            "fail-closed surfaces a 503"
+        );
     }
 
     // (3) FAIL-CLOSED — BAD PRINCIPAL: a VALID handshake (allowlisted peer) but a forwarded principal
@@ -1969,10 +2005,21 @@ mod tests {
         let processed = listener
             .accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist)
             .expect("server serves the session but runs nothing");
-        assert_eq!(processed, 0, "a non-allowlisted principal runs ZERO dispatches");
+        assert_eq!(
+            processed, 0,
+            "a non-allowlisted principal runs ZERO dispatches"
+        );
 
         let v = read_client_json(child);
-        assert_eq!(v["ok"], serde_json::json!(false), "bad principal ⇒ TS fails closed: {v:?}");
-        assert_eq!(v["httpStatus"], serde_json::json!(503), "fail-closed surfaces a 503");
+        assert_eq!(
+            v["ok"],
+            serde_json::json!(false),
+            "bad principal ⇒ TS fails closed: {v:?}"
+        );
+        assert_eq!(
+            v["httpStatus"],
+            serde_json::json!(503),
+            "fail-closed surfaces a 503"
+        );
     }
 }
