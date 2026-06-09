@@ -715,6 +715,23 @@ mod tests {
         })
     }
 
+    // LOOPBACK CONTAINMENT (restored — the S-C rewrite dropped S-B's guard for this exact
+    // security property; off-box reachability must stay zero, and S-E/S-F keep editing this bin).
+    #[test]
+    fn listener_binds_loopback_only_not_all_interfaces() {
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        assert!(
+            addr.ip().is_loopback(),
+            "agent-run WS listener must bind 127.0.0.1 (this Mac), never 0.0.0.0/LAN"
+        );
+        assert_ne!(
+            addr.ip(),
+            std::net::IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            "must NOT bind 0.0.0.0"
+        );
+    }
+
     // (a) VALID AUTHORIZED PEER over a real loopback socket: correct key + allowlisted forwarded
     // principal ⇒ the loop runs, a REFS-ONLY result is returned, and the BODY is delivered SEALED
     // (never in the refs result).
