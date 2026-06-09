@@ -891,6 +891,38 @@ export function resolveFridayCanonicalMutatingActionGate(
   return protectedProfile;
 }
 
+/**
+ * execrun-replacement slice 4 (DARK): single source of truth resolving the per-run
+ * `routeAgentRunViaRust` flag from (1) an EXPLICIT {@link FridayHubConfig.routeAgentRunViaRust}
+ * and, only as a fallback, (2) the `FRIDAY_ROUTE_AGENT_RUN_VIA_RUST` env var — the operator
+ * knob that lets the Rust read-only execrun route be flipped WITHOUT a source edit.
+ *
+ * PRECEDENCE: an explicit config boolean (true OR false) ALWAYS wins; the env is consulted
+ * ONLY when config does not specify (the previously-unsettable gap). This preserves the
+ * prior `config.routeAgentRunViaRust` precedence exactly.
+ *
+ * PARSE (fail-safe OFF): case-insensitive, trimmed `"1"` or `"true"` ⇒ true; ABSENT, `""`,
+ * `"0"`, `"false"`, or ANY other value ⇒ false. DEFAULT (env unset, config unset) ⇒ false,
+ * so the downstream `deps.routeAgentRunViaRust === true` gate stays off → byte-identical to
+ * today's fail-closed 503. Intentionally NARROWER than the canonical-gate true-set
+ * (no yes/on/enabled) so any ambiguity resolves OFF.
+ *
+ * The sibling `FRIDAY_HUB_AGENT_RUN_*` knobs (WS host/port, DB path) are read and documented
+ * at the deps/runtime construction point in `friday-api-runtime.ts`; this flag's resolve +
+ * precedence live here, at the bootstrap point where the value flows into the runtime deps.
+ */
+export function resolveRouteAgentRunViaRust(
+  configValue: boolean | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  // Config explicit (true OR false) wins — env is the fallback for the unset gap only.
+  if (typeof configValue === "boolean") {
+    return configValue;
+  }
+  const raw = (env.FRIDAY_ROUTE_AGENT_RUN_VIA_RUST ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true";
+}
+
 function normalizeFridayHubPort(value: number | undefined): number | undefined {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 65535) {
     return undefined;
@@ -6931,9 +6963,13 @@ export async function createFridayHub(
     allowTestOnlyWorkflowBuilderDraftExecution: config.allowTestOnlyWorkflowBuilderDraftExecution,
     agentRuntime,
     allowTestOnlyAgentRunStartExecution: config.allowTestOnlyAgentRunStartExecution,
-    // execrun-replacement slice 4 (DARK): default-false per-run Rust-route flag. Unset in
-    // production → predicate never evaluated → byte-identical to today.
-    routeAgentRunViaRust: config.routeAgentRunViaRust,
+    // execrun-replacement slice 4 (DARK): default-false per-run Rust-route flag. SINGLE
+    // SOURCE OF TRUTH for its resolution = `resolveRouteAgentRunViaRust`: an explicit config
+    // boolean wins; otherwise the `FRIDAY_ROUTE_AGENT_RUN_VIA_RUST` env knob fills the gap
+    // (case-insensitive "1"/"true" → true; anything else, incl. unset → false). With nothing
+    // set (the default) this is `false`, so the `=== true` gate is never satisfied → the
+    // predicate is never evaluated → byte-identical to today's fail-closed 503.
+    routeAgentRunViaRust: resolveRouteAgentRunViaRust(config.routeAgentRunViaRust),
     allowTestOnlyAgentRunControlExecution: config.allowTestOnlyAgentRunControlExecution,
     allowTestOnlyAutonomyLifecycleExecution: config.allowTestOnlyAutonomyLifecycleExecution,
     allowTestOnlyStandingAgendaExecution: config.allowTestOnlyStandingAgendaExecution,

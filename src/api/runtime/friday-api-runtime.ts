@@ -4254,6 +4254,17 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       deps.rustAgentRunWsClientSecretResolver ?? resolveRustAgentRunWsClientX25519Secret;
     const rustHubDbPath = deps.rustAgentRunHubDbPath ?? process.env.FRIDAY_HUB_AGENT_RUN_DB_PATH;
 
+    // OPERATOR ENV KNOBS for this dark Rust read-only execrun route (kept discoverable
+    // together here, alongside the WS host/port + DB path siblings above):
+    //   FRIDAY_HUB_AGENT_RUN_WS_HOST  — sealed-WS host  (default 127.0.0.1)        [above]
+    //   FRIDAY_HUB_AGENT_RUN_WS_PORT  — sealed-WS port                              [above]
+    //   FRIDAY_HUB_AGENT_RUN_DB_PATH  — Rust hub DB path for answer readback        [above]
+    //   FRIDAY_ROUTE_AGENT_RUN_VIA_RUST — the master ON/OFF for routing a qualifying
+    //     run to Rust (execrun slice 4). DEFAULT-OFF: unset/""/"0"/"false"/garbage → off;
+    //     case-insensitive "1"/"true" → on. It is NOT read here — its resolve + precedence
+    //     (an explicit HubConfig.routeAgentRunViaRust wins over the env) live in ONE place,
+    //     `resolveRouteAgentRunViaRust` in friday-hub-bootstrap.ts, which feeds
+    //     `deps.routeAgentRunViaRust`. The gate just below checks that resolved boolean.
     const routeStartRun: typeof startRun = async (input) => {
       if (deps.routeAgentRunViaRust === true) {
         const qualifies = qualifiesForRustReadOnlyRoute({
