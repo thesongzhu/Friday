@@ -364,7 +364,8 @@ fn run() -> Result<(), ServerError> {
     //     fail-closed if `$HOME` is unset) and open the store under the derived KEK.
     // An unprovisioned server (no master key, or no/empty/corrupt allowlist) REFUSES TO START — it
     // never falls open to "accept any peer". The store is only needed at boot to load the allowlist;
-    // it may drop afterward. This STAYS DARK: nothing connects to it in production (no production
+    // it is dropped immediately after (below) so the KEK does not sit in memory during the (long-
+    // lived) serving loop. This STAYS DARK: nothing connects to it in production (no production
     // caller, no LaunchAgent entry) until the slice-6 live-flip. We report only the COUNT — never
     // the pubkey bytes, never the master, never the store path.
     let master = friday_hub::key_source::read_master_key().map_err(|_| {
@@ -389,6 +390,9 @@ fn run() -> Result<(), ServerError> {
         "hub_agent_run_server: peer-pubkey allowlist loaded from SecureStore (count={})",
         peer_allowlist.len()
     );
+    // The KEK-holding store is no longer needed (the allowlist is in memory); drop it so the KEK
+    // is wiped (Kek is ZeroizeOnDrop) rather than lingering for the lifetime of the serving loop.
+    drop(secure_store);
 
     // (1) Build ONE HubRuntime at boot so the DeepSeek-client/DB cold-start is paid ONCE (not
     // per connection). S-C HOLDS this runtime and DISPATCHES into `run_task` for an authenticated
@@ -1865,7 +1869,7 @@ mod tests {
         // The slice-2 cross-language KAT master + its expected derived pubkey hex.
         let master = [0x42u8; friday_hub::key_source::MASTER_KEY_LEN];
         const KAT_PUBKEY_HEX: &str =
-            "1d4a03c1c3af1a4639b616951c9b0e1cd1c957c9b0f25fe7a99b85101598de56";
+            "1d4a03c1c3af1a4639b616951c9b0e1cd1c957c9b0f25fe7a99b85101598de56"; // pragma: allowlist secret
 
         // Derive directly (no env). The KEK opens the store; the pubkey is what the enroll CLI
         // writes and the live handshake produces.
