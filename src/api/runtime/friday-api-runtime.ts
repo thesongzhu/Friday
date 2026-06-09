@@ -4301,7 +4301,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           return composeRustReadOnlyAgentRun({
             runId: deps.idGenerator(),
             task: input.task,
-            principalId: input.principalId,
+            // Owner-binding keys on the NORMALIZED principal — the SAME value the idempotency
+            // lookup (above), the owner-gated readback, and the stamp use — so all four agree on
+            // one canonical owner string (a blank/whitespace principal ⇒ undefined ⇒ fail-closed,
+            // matching the bare startRun which normalizes throughout). Robust to future auth
+            // issuance even if a principalId ever arrives non-canonical.
+            principalId: normalizedPrincipalId,
             providerId: input.providerId ?? RUST_ROUTE_DEEPSEEK_PROVIDER_ID,
             model: input.model ?? RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
             wsClient: rustWsClient,
