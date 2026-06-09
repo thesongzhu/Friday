@@ -136,6 +136,14 @@ import { createFridayChannelWebhookRoutes } from "../http/routes/friday-channel-
 import { createFridayPackagingRoutes } from "../http/routes/friday-packaging-routes.js";
 import { createFridayCloudWorkerSetupRoutes } from "../http/routes/friday-cloud-worker-setup-routes.js";
 import { createFridayCloudWorkerSetupService } from "#cloud-workers";
+import { createFridayRustHubAgentRunWsClientService } from "../mission-spine/friday-rust-hub-agent-run-ws-client.js";
+import type { FridayRustHubAgentRunWsClientService } from "../mission-spine/friday-rust-hub-agent-run-ws-client.js";
+import { createFridayRustHubRunContinuityProjectorService } from "../mission-spine/friday-rust-hub-run-continuity-projector-service.js";
+import type { FridayRustHubRunContinuityProjectorService } from "../mission-spine/friday-rust-hub-run-continuity-projector-service.js";
+import { createFridayRustHubRunAnswerReadbackService } from "../mission-spine/friday-rust-hub-run-answer-readback-service.js";
+import type { FridayRustHubRunAnswerReadbackService } from "../mission-spine/friday-rust-hub-run-answer-readback-service.js";
+import { resolveRustAgentRunWsSessionKey } from "../mission-spine/friday-rust-hub-agent-run-ws-session-key.js";
+import type { FridayRustAgentRunWsSessionKeyResolver } from "../mission-spine/friday-rust-hub-agent-run-ws-session-key.js";
 import { createFridayStudioService } from "../../studio/index.js";
 import {
   createFridayMutatingActionDigest,
@@ -1062,6 +1070,133 @@ export function qualifiesForRustReadOnlyRoute(input: RustRouteQualificationInput
   // Subagents + Pause-able/mutating-approval actions are precluded structurally
   // (route marker + readOnly + reads-only allow-list); no separate field to check.
   return true;
+}
+
+/**
+ * execrun-replacement S-F-compose (DARK) — the qualifying-run composition that routes ONE
+ * agent-run through the Rust read-only loop. This is only ever reached when the
+ * default-OFF `routeAgentRunViaRust` flag is ON AND {@link qualifiesForRustReadOnlyRoute}
+ * returned true (see {@link createFridayApiRuntime}'s route wrapper). Flag-off /
+ * disqualified NEVER reaches here — those fall to today's unchanged 503 path, byte-identical.
+ *
+ * The wired path (operator decision):
+ *   1. Resolve the WS session key from the SecureStore. MISSING/invalid → fail CLOSED:
+ *      throw the SAME 503 the disqualified path would have raised, WITHOUT ever opening a
+ *      WS connection (no unauthenticated egress). The key bytes become the WS `authProof`.
+ *   2. WS client (S-D) `dispatchRun` → the REFS-ONLY result (sha256 + len; NEVER the body).
+ *   3. Owner-gated readback (slice-3) `readAnswer({ runId, callerPrincipal })` → the body,
+ *      released ONLY to the authenticated owner principal. `callerPrincipal` is the bound
+ *      `principalId`; absent → fail closed.
+ *   4. Continuity projector (slice-2) writes the SOLE TS agent_run + run_result + usage row
+ *      (idempotent on run_id; no double-count). It is the only DB write here.
+ *   5. Return a `FridayAgentRuntimeResult` carrying the owner-released body as `finalResponse`.
+ *
+ * Fail-closed: ANY failure (missing key, WS error, readback non-delivered, projector throw)
+ * throws a 503-shaped {@link FridayDomainError}; it NEVER falls through to the TS `startRun`.
+ *
+ * Truth label: `rust_wired` — dark, mock-proven, no real spend; NOT v1 GO.
+ */
+async function composeRustReadOnlyAgentRun(args: {
+  readonly runId: string;
+  readonly task: string;
+  readonly principalId: string | undefined;
+  readonly providerId: string;
+  readonly model: string;
+  readonly wsClient: FridayRustHubAgentRunWsClientService;
+  readonly projector: FridayRustHubRunContinuityProjectorService;
+  readonly readback: FridayRustHubRunAnswerReadbackService;
+  readonly sessionKeyResolver: FridayRustAgentRunWsSessionKeyResolver;
+  readonly hubDbPath: string | undefined;
+  readonly db: FridaySqliteLayer;
+  readonly nowIso: () => string;
+}): Promise<FridayAgentRuntimeResult> {
+  const failClosed = (): FridayDomainError =>
+    new FridayDomainError(
+      "TS_RUNTIME_AGENT_RUNS_RETIRED",
+      "Agent run execution is fail-closed while runtime ownership is being moved out of TypeScript.",
+      {
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_agent_run_entrypoint_required",
+        },
+      },
+    );
+
+  // (1) SecureStore session key — MISSING/invalid ⇒ fail closed BEFORE any WS connection.
+  // Never open an unauthenticated WS call; never log the key.
+  const sessionKey = args.sessionKeyResolver();
+  if (!sessionKey || sessionKey.length === 0) {
+    throw failClosed();
+  }
+  // The owner principal must be present to gate the body readback (slice-3). Absent ⇒ 503.
+  const callerPrincipal = args.principalId;
+  if (!callerPrincipal) {
+    throw failClosed();
+  }
+  // The owner-gated body readback needs a Hub DB path. Absent ⇒ fail closed (no body).
+  const hubDbPath = args.hubDbPath;
+  if (!hubDbPath) {
+    throw failClosed();
+  }
+
+  // (2) Dispatch the run over the WS client (S-D). Refs-only result; fail-closed on error.
+  const wsResult = await args.wsClient.dispatchRun({
+    runId: args.runId,
+    task: args.task,
+    forwardedPrincipal: callerPrincipal,
+    authProof: sessionKey,
+  });
+
+  // (3) Owner-gated body readback (slice-3). The body is released ONLY to the matching
+  // owner; a non-`delivered` outcome carries no body ⇒ fail closed.
+  const readbackReceipt = await args.readback.readAnswer({
+    dbPath: hubDbPath,
+    runId: args.runId,
+    callerPrincipal,
+  });
+  if (readbackReceipt.outcome !== "delivered") {
+    throw failClosed();
+  }
+
+  // (4) Project the ONE TS continuity row (slice-2). SOLE TS usage writer; idempotent on
+  // run_id (re-projection adds no second row — the no-double-count contract). The refs-only
+  // WS result carries no token totals (S-D is refs-only and untouched), so usage is 0 here
+  // and `pricingResolved:false` stands — truth label dark, no fabricated numbers.
+  const completedAtIso = args.nowIso();
+  const projection = args.db.withWriteTransaction((db) =>
+    args.projector.project(db, {
+      truthLabel: "rust_wired_dev",
+      proofOnly: true,
+      ok: true,
+      runId: args.runId,
+      routeId: `${args.providerId}:${args.model}`,
+      providerId: args.providerId,
+      model: args.model,
+      loopStatus: wsResult.status === "completed" ? "Finished" : "Errored",
+      turns: 0,
+      executedTools: 0,
+      finalMessageSha256: readbackReceipt.answerSha256,
+      finalMessageLen: readbackReceipt.answerLen,
+      auditChainVerified: false,
+      usagePromptTokens: 0,
+      usageCompletionTokens: 0,
+      usageTotalTokens: 0,
+      completedAtIso,
+    }),
+  );
+
+  // (5) Return the owner-released body as the run's final response.
+  return {
+    runId: args.runId,
+    status: projection.status as FridayAgentRuntimeResult["status"],
+    response: readbackReceipt.answer,
+    toolCallCount: 0,
+    durationMs: 0,
+    usageInput: 0,
+    usageOutput: 0,
+    finalResponse: readbackReceipt.answer,
+  };
 }
 
 export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): FridayApiRuntime {
@@ -3904,6 +4039,15 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       apiIdempotencyKey?: string;
       apiIdempotencyPayloadHash?: string;
       apiIdempotencyReceivedAt?: string;
+      // execrun-replacement S-F-compose (DARK): the explicit, positive, per-run grant of
+      // the Rust read-tool set. Purely additive + optional — every existing caller omits
+      // it (→ undefined → predicate clause-4 fails → disqualified → byte-identical 503).
+      // The HTTP route forwards `body.allowedRustRouteTools`; no other route behavior
+      // changes. NEVER derived from readOnly/operationalMode — clause-4 is an explicit gate.
+      allowedRustRouteTools?: string[];
+      // S-F-compose (DARK): an explicit plan-review override marker (clause-5 disqualifier).
+      // Additive + optional; absent for every existing caller.
+      planReviewOverride?: unknown;
     }) => {
       if (deps.allowTestOnlyAgentRunStartExecution !== true) {
         void input;
@@ -4003,19 +4147,38 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           run: async () => throwRetiredAgentRunControl(),
         };
 
-    // execrun-replacement slice 4 (DARK): route-only Rust-route qualification.
+    // execrun-replacement S-F-compose (DARK): route a QUALIFYING agent-run through the
+    // Rust read-only loop — behind the DEFAULT-OFF `routeAgentRunViaRust` flag.
+    //
     // This wrapper is handed ONLY to createFridayAgentRoutes (the single startRun HTTP
     // route) — NOT to the automation-service copy (a non-route caller) above, and NOT to
     // the executeRun path the 7 non-route callers use. That is the structural half of the
     // route-not-method pin; the explicit `invokedFromHttpStartRunRoute: true` marker below
-    // is the testable half. The flag is checked FIRST and short-circuits; with the flag off
-    // (default) or the predicate disqualified, the wrapper just calls the unchanged startRun
-    // → byte-identical to today (the existing fail-closed 503 still applies inside startRun).
-    // The computed boolean is consumed by NOBODY yet; the composition slice will route on it.
+    // is the testable half.
+    //
+    // BYTE-IDENTICAL 503 GUARANTEE: the flag is checked FIRST. With the flag OFF (the
+    // default), the predicate is not even evaluated and the wrapper calls the unchanged
+    // `startRun(input)` → byte-identical to today (today's fail-closed 503 fires inside).
+    // With the flag ON but the predicate DISQUALIFIED (e.g. no allowedRustRouteTools
+    // grant, not DeepSeek-flash, sessioned, plan-review), the wrapper ALSO calls the
+    // unchanged `startRun(input)` → the same 503. The ONLY divergence from today is a
+    // flag-ON + fully-qualifying run, which is routed to Rust and NEVER touches `startRun`.
+    //
+    // Dark-substrate services are lazily constructed once (real constructors), overridable
+    // via deps for mock-proven tests. They are consulted ONLY on the qualifying branch.
+    const rustWsClient =
+      deps.rustAgentRunWsClient ?? createFridayRustHubAgentRunWsClientService();
+    const rustContinuityProjector =
+      deps.rustAgentRunContinuityProjector ?? createFridayRustHubRunContinuityProjectorService();
+    const rustAnswerReadback =
+      deps.rustAgentRunAnswerReadback ?? createFridayRustHubRunAnswerReadbackService();
+    const rustWsSessionKeyResolver =
+      deps.rustAgentRunWsSessionKeyResolver ?? resolveRustAgentRunWsSessionKey;
+    const rustHubDbPath = deps.rustAgentRunHubDbPath ?? process.env.FRIDAY_HUB_AGENT_RUN_DB_PATH;
+
     const routeStartRun: typeof startRun = async (input) => {
       if (deps.routeAgentRunViaRust === true) {
-        // DARK: compute qualification and discard. No routing wired in this slice.
-        void qualifiesForRustReadOnlyRoute({
+        const qualifies = qualifiesForRustReadOnlyRoute({
           invokedFromHttpStartRunRoute: true,
           providerId: input.providerId,
           model: input.model,
@@ -4023,8 +4186,31 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           requireReview: input.requireReview,
           constraints: input.constraints,
           taskProfile: input.taskProfile,
+          allowedRustRouteTools: input.allowedRustRouteTools,
+          planReviewOverride: input.planReviewOverride,
         });
+        if (qualifies) {
+          // Qualifying run: route via Rust. Fail-closed on missing key / WS / readback /
+          // projector — this NEVER falls through to the TS `startRun`. providerId/model
+          // are guaranteed defined here (the predicate required the exact deepseek-flash
+          // identifiers), but coalesce defensively to satisfy the type.
+          return composeRustReadOnlyAgentRun({
+            runId: deps.idGenerator(),
+            task: input.task,
+            principalId: input.principalId,
+            providerId: input.providerId ?? RUST_ROUTE_DEEPSEEK_PROVIDER_ID,
+            model: input.model ?? RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
+            wsClient: rustWsClient,
+            projector: rustContinuityProjector,
+            readback: rustAnswerReadback,
+            sessionKeyResolver: rustWsSessionKeyResolver,
+            hubDbPath: rustHubDbPath,
+            db: deps.db,
+            nowIso: deps.nowIso,
+          });
+        }
       }
+      // Flag off OR disqualified → today's unchanged path (byte-identical 503 inside).
       return startRun(input);
     };
 

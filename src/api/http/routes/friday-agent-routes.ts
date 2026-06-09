@@ -905,6 +905,10 @@ export interface FridayAgentRoutesDeps {
     principalId?: string;
     scopes?: string[];
     tenantContext?: FridayProviderTenantContext;
+    // execrun-replacement S-F-compose (DARK): the explicit per-run Rust read-tool grant.
+    // Additive + optional; forwarded straight to the route-bound startRun wrapper, which
+    // (only when the default-OFF Rust-route flag is on) uses it as the clause-4 qualifier.
+    allowedRustRouteTools?: string[];
   }) => Promise<FridayAgentRuntimeResult>;
   getRun: (runId: string) => FridayAgentRunRecord | null;
   listRuns: (query: {
@@ -1387,6 +1391,17 @@ export function createFridayAgentRoutes(
           })
           : undefined;
 
+        // execrun-replacement S-F-compose (DARK): parse the explicit, optional per-run Rust
+        // read-tool grant. Accepted ONLY as an array of non-empty strings; any other shape
+        // (or absence) ⇒ undefined ⇒ the Rust-route predicate's clause-4 fails ⇒ today's
+        // unchanged 503. Additive: no existing caller sends it, so behavior is unchanged.
+        const allowedRustRouteTools = Array.isArray(body.allowedRustRouteTools)
+          && body.allowedRustRouteTools.every(
+            (t): t is string => typeof t === "string" && t.length > 0,
+          )
+          ? body.allowedRustRouteTools
+          : undefined;
+
         const result = await deps.startRun({
           task: body.task,
           taskPrompt,
@@ -1401,6 +1416,7 @@ export function createFridayAgentRoutes(
           disabledToolNames: publicIsolation?.disabledToolNames,
           taskProfile,
           executionContext,
+          ...(allowedRustRouteTools ? { allowedRustRouteTools } : {}),
           ...(apiIdempotencyKey
             ? {
               apiIdempotencyKey,

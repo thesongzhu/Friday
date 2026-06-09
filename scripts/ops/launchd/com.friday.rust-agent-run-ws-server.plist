@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  execrun-replacement S-F-compose (DARK) — launchd plist for the long-lived Rust
+  agent-run WS server (the S-B `hub_agent_run_server` bin).
+
+  ============================ DARK — NOT LOADED ============================
+  This file is ADDED by the S-F-compose slice but is NOT installed and NOT loaded
+  by it. The composition that routes a qualifying agent-run via Rust is behind the
+  DEFAULT-OFF `routeAgentRunViaRust` flag; with that flag off (production default)
+  the WS server is never contacted, so this supervisor stays dark. The LIVE-FLIP —
+  copying this into ~/Library/LaunchAgents and `launchctl bootstrap`-ing it — is
+  slice 6 (an explicit operator gate). Until then nothing here runs.
+
+  Operator decision encoded here: launchd OWNS supervision of the WS server (it is
+  NOT spawned as an unmanaged child of the TS hub). RunAtLoad + KeepAlive give the
+  single persistent loopback server the TS WS client (S-D) dispatches each run over.
+
+  PLACEHOLDERS to fill at live-flip (slice 6), NOT real values:
+    __REPO_DIR__            absolute repo root (e.g. /Users/<you>/Projects/Friday)
+    __RUST_SERVER_BIN__     prebuilt hub_agent_run_server path, OR replace
+                            ProgramArguments with the `cargo run --bin
+                            hub_agent_run_server` invocation
+    __WORKSPACE_ROOT__      the read-only-loop workspace root the server serves
+    __HUB_DB_PATH__         the Rust Hub SQLite the run + answer body persist to
+                            (the same DB the TS owner-gated readback reads)
+    __WS_PORT__             the loopback port (must match FRIDAY_HUB_AGENT_RUN_WS_PORT
+                            on the TS side); the bin binds 127.0.0.1 ONLY (never LAN)
+    __OWNER_PRINCIPAL__     the bound-owner allowlist entry (--owner)
+    __LOG_DIR__             ~/.friday/launchd (matches install-friday-launchagent.sh)
+
+  SECRET REDACTION: no secret/token/key is placed in this plist or in its log paths.
+  The WS session key (authProof) is resolved by the TS side from the SecureStore
+  (keychain-backed) — NEVER an env var here. RUST_LOG is pinned low and
+  FRIDAY_LOG_REDACT_SECRETS=true so the server logs carry NO secret material; logs
+  go to dedicated dark log files, never stdout/stderr of an interactive shell.
+
+  HEALTH / STATUS: KeepAlive(SuccessfulExit=false) restarts the server if it exits
+  abnormally; ThrottleInterval bounds the restart rate. The server binds loopback
+  and fails closed (exits non-zero) when it cannot bind / is otherwise unavailable —
+  launchd then surfaces the failure rather than masking it. The TS client treats an
+  unreachable server as fail-closed (503), so an unavailable service never degrades
+  to an unauthenticated or silent path.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.friday.rust-agent-run-ws-server</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__RUST_SERVER_BIN__</string>
+    <string>--workspace</string>
+    <string>__WORKSPACE_ROOT__</string>
+    <string>--db</string>
+    <string>__HUB_DB_PATH__</string>
+    <string>--port</string>
+    <string>__WS_PORT__</string>
+    <string>--owner</string>
+    <string>__OWNER_PRINCIPAL__</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO_DIR__</string>
+
+  <!-- launchd owns supervision: start at load, keep the single server alive. -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <!-- Restart only on abnormal exit; a clean shutdown stays down (health gate). -->
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- Loopback-only WS endpoint; MUST match the TS client's FRIDAY_HUB_AGENT_RUN_WS_PORT. -->
+    <key>FRIDAY_HUB_AGENT_RUN_WS_HOST</key>
+    <string>127.0.0.1</string>
+    <key>FRIDAY_HUB_AGENT_RUN_WS_PORT</key>
+    <string>__WS_PORT__</string>
+    <!-- The Hub DB the TS owner-gated readback reads the answer body back from. -->
+    <key>FRIDAY_HUB_AGENT_RUN_DB_PATH</key>
+    <string>__HUB_DB_PATH__</string>
+    <!-- SECRET-REDACTED logging: low log level + explicit secret redaction; no backtrace. -->
+    <key>RUST_LOG</key>
+    <string>warn</string>
+    <key>RUST_BACKTRACE</key>
+    <string>0</string>
+    <key>FRIDAY_LOG_REDACT_SECRETS</key>
+    <string>true</string>
+  </dict>
+
+  <!-- Dedicated dark log files (secret-redacted by the env above); never the shell tty. -->
+  <key>StandardOutPath</key>
+  <string>__LOG_DIR__/friday-rust-agent-run-ws-server.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG_DIR__/friday-rust-agent-run-ws-server.stderr.log</string>
+</dict>
+</plist>

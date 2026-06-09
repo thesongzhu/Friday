@@ -25,6 +25,15 @@ export interface FridayStartAgentRunRequest {
   constraints?: FridayAgentRunConstraints;
   taskProfile?: FridayAgentTaskProfileInput;
   executionContext?: FridayAgentExecutionContext;
+  /**
+   * execrun-replacement S-F-compose (DARK): the explicit, positive, per-run grant of the
+   * Rust read-tool set. Additive + optional — every existing caller omits it. When the
+   * default-OFF `routeAgentRunViaRust` flag is on, ONLY a request that positively grants
+   * exactly the 4 Rust read tools (read_file/list_dir/stat_file/search) can qualify for the
+   * Rust read-only route. Absent ⇒ disqualified ⇒ today's unchanged 503. Never derived from
+   * readOnly — this is the independent clause-4 gate.
+   */
+  allowedRustRouteTools?: string[];
 }
 
 export interface FridayAgentRunExecutionResponse {
