@@ -1,0 +1,12 @@
+[package]
+name = "b1-kat-gen"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# Edit these two paths to point at THIS worktree's rust-core crates (absolute paths), e.g.
+#   path = "<worktree-root>/rust-core/crates/friday-crypto"
+friday-crypto = { path = "WORKTREE_ROOT/rust-core/crates/friday-crypto" }
+friday-hub = { path = "WORKTREE_ROOT/rust-core/crates/friday-hub" }
+serde_json = "1"
