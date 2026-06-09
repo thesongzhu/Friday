@@ -28,13 +28,36 @@
     __WS_PORT__             the loopback port (must match FRIDAY_HUB_AGENT_RUN_WS_PORT
                             on the TS side); the bin binds 127.0.0.1 ONLY (never LAN)
     __OWNER_PRINCIPAL__     the bound-owner allowlist entry (--owner)
+    __STORE_DIR__           the PERSISTENT FileSecureStore dir the peer-pubkey allowlist
+                            lives in (--store-dir). MUST be the SAME dir the operator
+                            enrolls the client pubkey into via `hub_agent_run_enroll`
+                            (default ~/.friday/agent-run-securestore). A mismatch ⇒ the
+                            server boots, finds no allowlist, and FAILS CLOSED
+                            (peer_allowlist_unavailable). NOTE: launchd does NOT expand
+                            `~`; the filled value MUST be an absolute path.
     __LOG_DIR__             ~/.friday/launchd (matches install-friday-launchagent.sh)
 
   SECRET REDACTION: no secret/token/key is placed in this plist or in its log paths.
   The WS session key (authProof) is resolved by the TS side from the SecureStore
-  (keychain-backed) — NEVER an env var here. RUST_LOG is pinned low and
+  (keychain-backed) — NEVER an env var here. The server reads its OWN master key from
+  ~/.friday/master.key (or FRIDAY_MASTER_KEY in the operator's own login session — NOT
+  pinned here) and derives the FileSecureStore KEK itself; no key bytes ever appear in
+  this plist or on the command line. RUST_LOG is pinned low and
   FRIDAY_LOG_REDACT_SECRETS=true so the server logs carry NO secret material; logs
   go to dedicated dark log files, never stdout/stderr of an interactive shell.
+
+  ROUTE FLAG IS NOT HERE: the TS-side route enablement (FRIDAY_ROUTE_AGENT_RUN_VIA_RUST,
+  slice 4) and the matching FRIDAY_HUB_AGENT_RUN_WS_PORT belong on the TS hub agent
+  (com.friday.hub), NOT on this Rust WS server. This plist only supervises the loopback
+  server; it does NOT decide whether the TS hub routes a run to it. Setting the route
+  flag here would do nothing (the Rust server does not read it) and would blur the
+  ownership boundary — keep it on com.friday.hub.
+
+  ENV ENTRIES BELOW ARE INFORMATIONAL: the server reads its host/port/db/store from the
+  CLI ProgramArguments above, NOT from these EnvironmentVariables. The FRIDAY_HUB_AGENT_RUN_*
+  env keys are kept as in-file documentation (and to mirror the values the TS client uses)
+  but are inert for this bin — they are NOT load-bearing. RUST_LOG / RUST_BACKTRACE /
+  FRIDAY_LOG_REDACT_SECRETS ARE load-bearing (they shape the process's logging).
 
   HEALTH / STATUS: KeepAlive(SuccessfulExit=false) restarts the server if it exits
   abnormally; ThrottleInterval bounds the restart rate. The server binds loopback
@@ -59,6 +82,16 @@
     <string>__WS_PORT__</string>
     <string>--owner</string>
     <string>__OWNER_PRINCIPAL__</string>
+    <!-- The PERSISTENT FileSecureStore the peer-pubkey allowlist is read from at boot.
+         Added by execrun-enablement slice 3: the wired server resolves the allowlist
+         from this dir (NOT a default), so it MUST be the SAME dir `hub_agent_run_enroll`
+         wrote the client pubkey into. The bin defaults to key_source::default_store_dir()
+         (~/.friday/agent-run-securestore) when omitted, but we pin it EXPLICITLY here so
+         the supervised server and the enroll CLI can never silently disagree. NO secret
+         is passed on the command line — only the dir PATH (the KEK is derived from the
+         master key the server reads itself, never an arg/env). -->
+    <string>--store-dir</string>
+    <string>__STORE_DIR__</string>
   </array>
 
   <key>WorkingDirectory</key>
