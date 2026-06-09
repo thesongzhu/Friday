@@ -194,6 +194,17 @@ pub mod session_namespace;
 /// Dark substrate: `rust_wired`, NOTHING routes through it yet, NOT a v1 GO.
 pub mod tool_name_map;
 
+/// execrun-enablement slice 2 (production key-sourcing pre-req): the SHARED, fail-closed
+/// master-key reader + the two domain-separated derivations both the `hub_agent_run_server`
+/// bin (the FileSecureStore KEK) and the `hub_agent_run_enroll` bin (the client X25519
+/// pubkey enrolled into the peer allowlist) depend on. Placed in the friday-hub LIB so BOTH
+/// bins import the SAME code (a divergent copy would silently break the enrolled-pubkey ==
+/// runtime-handshake-pubkey parity). [`key_source::derive_client_x25519_pubkey`] is the
+/// BYTE-EXACT parity contract with the TS client
+/// (`deriveRustAgentRunWsClientX25519PublicKey`) — proven by an in-module cross-language KAT.
+/// Dark substrate: NOTHING routes through it yet, NOT a v1 GO.
+pub mod key_source;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,
