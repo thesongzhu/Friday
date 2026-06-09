@@ -1777,4 +1777,202 @@ mod tests {
             "an EMPTY allowlist matches nothing (fail closed)"
         );
     }
+
+    // === B1 interop scaffolding (additive, #[ignore], reuses establish_session/serve_sealed_session
+    // via accept_one UNCHANGED; coordinator-applied to discharge the TS<->Rust wire proof bar) ======
+
+    /// A "PONG"-answering mock runtime (additive test scaffolding — reuses `FinishTransport` /
+    /// `HubRuntime::new` UNCHANGED, just a different deterministic answer than `BODY`).
+    fn pong_runtime(tag: &str, principal: &str, answer: &str) -> (HubRuntime<FinishTransport>, TempWs) {
+        let ws = TempWs::new(tag);
+        let client = DeepSeekClient::with_transport(
+            FinishTransport { answer: answer.to_string() },
+            "k".into(), // pragma: allowlist secret
+        );
+        let agent = DeepSeekAgentLlmClient::new(client);
+        let rt = HubRuntime::new(
+            HubConfig {
+                db_path: std::env::temp_dir()
+                    .join(format!(
+                        "friday-execrun-interop-{}-{}-{}.sqlite",
+                        std::process::id(),
+                        tag,
+                        C.fetch_add(1, Ordering::Relaxed)
+                    ))
+                    .to_string_lossy()
+                    .into_owned(),
+                workspace_root: ws.0.clone(),
+                secret: b"execrun-interop-test-secret-0123456789ab".to_vec(), // pragma: allowlist secret
+                max_turns: 4,
+                principal_id: Some(principal.to_string()),
+                disabled_tools: vec![],
+                read_only: false,
+                operator_vk: None,
+            },
+            agent,
+            Box::new(DenyAllApprovals),
+        )
+        .unwrap();
+        (rt, ws)
+    }
+
+    /// The fixed TS-client X25519 secret scalar (same fixture as `CLIENT_SECRET` above): the TS
+    /// subprocess reconstructs the SAME keypair from this hex, so the test can derive its pubkey to
+    /// enroll in the peer-allowlist. NON-secret test material.
+    fn ts_client_secret_hex() -> String {
+        CLIENT_SECRET.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// The TS-client pubkey for `CLIENT_SECRET`, derived via the SAME `DeviceKeypair` the server
+    /// uses — so enrolling it in the peer-allowlist is faithful.
+    fn ts_client_pubkey() -> [u8; 32] {
+        DeviceKeypair::from_secret_bytes(CLIENT_SECRET).public_bytes()
+    }
+
+    /// Absolute path to the worktree root (3 levels up from `friday-hub`'s manifest dir).
+    fn worktree_root() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(3)
+            .expect("worktree root is 3 levels above friday-hub")
+            .to_path_buf()
+    }
+
+    /// Spawn the TS sealed-client SUBPROCESS (the esbuild-bundled real client) targeting `port`,
+    /// with `secret_hex` / `principal`. Returns the child so the caller can `wait_with_output`.
+    /// Requires the bundle to be built (see the opt-in command above) and `node` on PATH.
+    fn spawn_ts_client(
+        port: u16,
+        secret_hex: &str,
+        principal: &str,
+        run_id: &str,
+    ) -> std::process::Child {
+        let bundle = worktree_root().join("test/interop/.build/sealed-client-runner.cjs");
+        assert!(
+            bundle.exists(),
+            "interop bundle missing at {bundle:?} — run `node test/interop/build-sealed-client-runner.mjs` first"
+        );
+        std::process::Command::new("node")
+            .arg(bundle)
+            .arg(format!("--port={port}"))
+            .arg(format!("--secret-hex={secret_hex}"))
+            .arg(format!("--principal={principal}"))
+            .arg(format!("--run-id={run_id}"))
+            .arg("--task=ping")
+            .arg("--timeout-ms=15000")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn node TS client subprocess")
+    }
+
+    /// Read the ONE JSON line the runner prints on stdout.
+    fn read_client_json(child: std::process::Child) -> serde_json::Value {
+        let out = child.wait_with_output().expect("await TS client subprocess");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let line = stdout
+            .lines()
+            .find(|l| l.trim_start().starts_with('{'))
+            .unwrap_or_else(|| {
+                panic!(
+                    "TS client produced no JSON line. stdout={:?} stderr={:?}",
+                    stdout,
+                    String::from_utf8_lossy(&out.stderr)
+                )
+            });
+        serde_json::from_str(line).expect("client JSON parses")
+    }
+
+    // (1) FULL ROUND-TRIP: the real TS sealed client ↔ the real server. The allowlisted client +
+    // allowlisted principal ⇒ the loop runs, a REFS-ONLY result is returned, AND the TS client opens
+    // the owner-sealed body back to "PONG". Proves TS-seal → Rust-open (auth_proof accepted) AND
+    // Rust-seal → TS-open (owner body) over the REAL protocol.
+    #[test]
+    #[ignore = "needs `node` + the prebuilt interop bundle; opt in with --ignored"]
+    fn interop_ts_client_full_round_trip_pong() {
+        const ANSWER: &str = "PONG";
+        let (rt, _ws) = pong_runtime("interop-ok", OWNER, ANSWER);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let owner_allowlist = vec![OWNER.to_string()];
+        // Enroll the TS client's pubkey (derived from the fixed secret the subprocess uses).
+        let peer_allowlist = allowlist_of(ts_client_pubkey());
+
+        let child = spawn_ts_client(addr.port(), &ts_client_secret_hex(), OWNER, "run-interop-ok");
+        // SERVER serves on the main thread (non-Send runtime); the TS client drives the socket.
+        let processed = listener
+            .accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist)
+            .expect("server serves the interop session");
+        assert_eq!(processed, 1, "one authed dispatch processed");
+
+        let v = read_client_json(child);
+        assert_eq!(v["ok"], serde_json::json!(true), "TS client reports success: {v:?}");
+        assert_eq!(v["body"], serde_json::json!(ANSWER), "TS client opened the owner-sealed body");
+        assert_eq!(v["runId"], serde_json::json!("run-interop-ok"));
+        // The refs fingerprint matches the body (TS surfaces sha256/len from the refs result).
+        assert_eq!(
+            v["answerSha256"],
+            serde_json::json!(sha256_hex(ANSWER.as_bytes())),
+            "TS surfaced the refs sha256"
+        );
+        assert_eq!(v["answerLen"], serde_json::json!(ANSWER.len()), "TS surfaced the refs len");
+    }
+
+    // (2) FAIL-CLOSED — FORGED PEER: a client pubkey NOT in the allowlist ⇒ the server establishes
+    // NO session and sends NOTHING ⇒ the TS client must surface a 503-style fail-closed error (NOT a
+    // hang, NOT success). Uses a DIFFERENT secret whose pubkey is not enrolled.
+    #[test]
+    #[ignore = "needs `node` + the prebuilt interop bundle; opt in with --ignored"]
+    fn interop_ts_client_forged_peer_fails_closed() {
+        let (rt, _ws) = pong_runtime("interop-forged", OWNER, "PONG");
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let owner_allowlist = vec![OWNER.to_string()];
+        // The allowlist contains a DIFFERENT (server-generated) pubkey — NOT the TS client's.
+        let peer_allowlist = allowlist_of(DeviceKeypair::generate().public_bytes());
+
+        // The TS client uses its fixed secret (whose pubkey is NOT enrolled) ⇒ rejected at preamble.
+        let child = spawn_ts_client(addr.port(), &ts_client_secret_hex(), OWNER, "run-forged");
+        // The server rejects the peer pubkey and returns an Err (no session established).
+        let served = listener.accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist);
+        assert!(served.is_err(), "a forged/non-allowlisted peer establishes NO session");
+
+        let v = read_client_json(child);
+        assert_eq!(v["ok"], serde_json::json!(false), "forged peer ⇒ TS fails closed: {v:?}");
+        assert_eq!(v["httpStatus"], serde_json::json!(503), "fail-closed surfaces a 503");
+    }
+
+    // (3) FAIL-CLOSED — BAD PRINCIPAL: a VALID handshake (allowlisted peer) but a forwarded principal
+    // that is NOT in the owner allowlist ⇒ the server ends the session with no result ⇒ the TS client
+    // fails closed (no body, no success).
+    #[test]
+    #[ignore = "needs `node` + the prebuilt interop bundle; opt in with --ignored"]
+    fn interop_ts_client_bad_principal_fails_closed() {
+        let (rt, _ws) = pong_runtime("interop-badprincipal", OWNER, "PONG");
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let owner_allowlist = vec![OWNER.to_string()];
+        // The TS client's pubkey IS enrolled (handshake succeeds), so the rejection is attributable
+        // to the PRINCIPAL gate, not the peer gate.
+        let peer_allowlist = allowlist_of(ts_client_pubkey());
+
+        // Forward a NON-allowlisted principal — a well-formed handshake, but the owner gate rejects.
+        let child = spawn_ts_client(
+            addr.port(),
+            &ts_client_secret_hex(),
+            "principal:attacker-not-allowlisted",
+            "run-badprincipal",
+        );
+        let processed = listener
+            .accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist)
+            .expect("server serves the session but runs nothing");
+        assert_eq!(processed, 0, "a non-allowlisted principal runs ZERO dispatches");
+
+        let v = read_client_json(child);
+        assert_eq!(v["ok"], serde_json::json!(false), "bad principal ⇒ TS fails closed: {v:?}");
+        assert_eq!(v["httpStatus"], serde_json::json!(503), "fail-closed surfaces a 503");
+    }
 }
