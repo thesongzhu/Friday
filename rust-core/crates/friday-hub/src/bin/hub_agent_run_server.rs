@@ -2022,4 +2022,150 @@ mod tests {
             "fail-closed surfaces a 503"
         );
     }
+
+    // === B1-compose interop scaffolding (additive, #[ignore]) — drives the REAL composition seam
+    // (X25519 resolver -> service adapter -> real sealed client) the B1 client interop did NOT cover.
+
+    /// The fixture master key the compose-adapter runner sees as FRIDAY_MASTER_KEY (64 hex). NON-secret
+    /// test material — a fixed value so the Rust side can re-derive the SAME client pubkey to enroll.
+    const COMPOSE_FIXTURE_MASTER_KEY: [u8; 32] = [0x42u8; 32]; // pragma: allowlist secret
+
+    /// The TS resolver's domain-separation tag (mirrors
+    /// `friday-rust-hub-agent-run-ws-client-x25519-secret.ts` `WS_X25519_SECRET_PURPOSE`). The Rust
+    /// side re-derives the client secret the SAME way the TS resolver does — so a passing handshake
+    /// LIVE-CHECKS that the resolver's derivation matches what 6b enrolls.
+    const COMPOSE_X25519_PURPOSE: &[u8] = b"friday.rust.agent_run.ws.x25519_secret.v1";
+
+    /// Re-derive the client X25519 pubkey the TS resolver produces for `master_key`:
+    /// `secret = sha256(purpose ‖ master_key)` (streaming `update(purpose).update(key)` ==
+    /// `digest(purpose ‖ key)`), `pubkey = DeviceKeypair::from_secret_bytes(secret).public_bytes()`.
+    fn compose_derive_client_pubkey(master_key: &[u8; 32]) -> [u8; 32] {
+        let mut input = COMPOSE_X25519_PURPOSE.to_vec();
+        input.extend_from_slice(master_key);
+        let secret: [u8; 32] = Sha256::digest(&input).into();
+        DeviceKeypair::from_secret_bytes(secret).public_bytes()
+    }
+
+    fn hex_of(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// Spawn the compose-adapter runner SUBPROCESS (FRIDAY_MASTER_KEY in env → real resolver → real
+    /// adapter → real sealed client). Requires the bundle built via
+    /// `node test/interop/build-compose-adapter-runner.mjs` and `node` on PATH.
+    fn spawn_compose_adapter_client(
+        port: u16,
+        master_key_hex: &str,
+        principal: &str,
+        run_id: &str,
+    ) -> std::process::Child {
+        let bundle = worktree_root().join("test/interop/.build/compose-adapter-runner.cjs");
+        assert!(
+            bundle.exists(),
+            "compose-adapter bundle missing at {bundle:?} — run `node test/interop/build-compose-adapter-runner.mjs` first"
+        );
+        std::process::Command::new("node")
+            .arg(bundle)
+            .env("FRIDAY_MASTER_KEY", master_key_hex)
+            .arg(format!("--port={port}"))
+            .arg(format!("--principal={principal}"))
+            .arg(format!("--run-id={run_id}"))
+            .arg("--task=ping")
+            .arg("--timeout-ms=15000")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn node compose-adapter subprocess")
+    }
+
+    // (1) FULL COMPOSE-SEAM ROUND-TRIP: the REAL X25519 resolver (FRIDAY_MASTER_KEY fixture) → the REAL
+    // service adapter (default createClient = real sealed client) → the REAL server. The Rust side
+    // re-derives + enrolls the client pubkey, so a pass proves (a) the adapter's real construct+dispatch
+    // path handshakes end-to-end and (b) the resolver's derivation matches the enrolled pubkey. Refs-only
+    // (the adapter drops the in-band body; compose's body source is the proven slice-3 DB readback).
+    #[test]
+    #[ignore = "needs `node` + the prebuilt compose-adapter bundle; opt in with --ignored"]
+    fn interop_compose_adapter_resolver_full_round_trip() {
+        const ANSWER: &str = "PONG";
+        let (rt, _ws) = pong_runtime("interop-compose-ok", OWNER, ANSWER);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let owner_allowlist = vec![OWNER.to_string()];
+        // Enroll the pubkey the TS resolver will derive from the fixture master key.
+        let peer_allowlist =
+            allowlist_of(compose_derive_client_pubkey(&COMPOSE_FIXTURE_MASTER_KEY));
+
+        let child = spawn_compose_adapter_client(
+            addr.port(),
+            &hex_of(&COMPOSE_FIXTURE_MASTER_KEY),
+            OWNER,
+            "run-compose-ok",
+        );
+        let processed = listener
+            .accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist)
+            .expect("server serves the compose-adapter session");
+        assert_eq!(processed, 1, "one authed dispatch processed");
+
+        let v = read_client_json(child);
+        assert_eq!(
+            v["ok"],
+            serde_json::json!(true),
+            "compose adapter reports success: {v:?}"
+        );
+        assert_eq!(
+            v["status"],
+            serde_json::json!("finished"),
+            "wire status is the literal 'finished'"
+        );
+        assert_eq!(v["runId"], serde_json::json!("run-compose-ok"));
+        assert_eq!(
+            v["answerSha256"],
+            serde_json::json!(sha256_hex(ANSWER.as_bytes())),
+            "adapter surfaced the refs sha256"
+        );
+        assert_eq!(
+            v["answerLen"],
+            serde_json::json!(ANSWER.len()),
+            "adapter surfaced the refs len"
+        );
+    }
+
+    // (2) FAIL-CLOSED — the resolver-derived pubkey is NOT the one enrolled (forged): the server
+    // establishes NO session ⇒ the adapter surfaces a 503 (NOT a hang, NOT success).
+    #[test]
+    #[ignore = "needs `node` + the prebuilt compose-adapter bundle; opt in with --ignored"]
+    fn interop_compose_adapter_unenrolled_pubkey_fails_closed() {
+        let (rt, _ws) = pong_runtime("interop-compose-forged", OWNER, "PONG");
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let owner_allowlist = vec![OWNER.to_string()];
+        // Enroll a DIFFERENT pubkey (NOT the one the fixture master key derives).
+        let peer_allowlist = allowlist_of(DeviceKeypair::generate().public_bytes());
+
+        let child = spawn_compose_adapter_client(
+            addr.port(),
+            &hex_of(&COMPOSE_FIXTURE_MASTER_KEY),
+            OWNER,
+            "run-compose-forged",
+        );
+        let served = listener.accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist);
+        assert!(
+            served.is_err(),
+            "an unenrolled derived pubkey establishes NO session"
+        );
+
+        let v = read_client_json(child);
+        assert_eq!(
+            v["ok"],
+            serde_json::json!(false),
+            "unenrolled pubkey ⇒ adapter fails closed: {v:?}"
+        );
+        assert_eq!(
+            v["httpStatus"],
+            serde_json::json!(503),
+            "fail-closed surfaces a 503"
+        );
+    }
 }

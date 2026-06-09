@@ -1,0 +1,185 @@
+import { FridayDomainError } from "#errors";
+
+import {
+  createFridayRustHubAgentRunSealedClient,
+  type CreateFridayRustHubAgentRunSealedClientOptions,
+  type FridayRustHubAgentRunSealedClient,
+} from "./friday-rust-hub-agent-run-ws-sealed-client.js";
+
+/**
+ * PROOF-ONLY (Rust-wired), DARK (no production route consumes this) SERVICE ADAPTER that lets
+ * the composition (`composeRustReadOnlyAgentRun`) drive the PROVEN sealed WS client
+ * (`friday-rust-hub-agent-run-ws-sealed-client.ts`) through the SAME `dispatchRun(...)` seam the
+ * old plain-WS client exposed — but over the REAL sealed ECDH protocol (sub-slice B1-compose).
+ *
+ * ## Why an adapter (and not a direct swap)
+ * The old `FridayRustHubAgentRunWsClientService.dispatchRun` took a pre-built SYMMETRIC
+ * `authProof` and returned a refs-only result. The sealed client instead takes the client's
+ * X25519 SECRET, runs the ECDH handshake, builds the `auth_proof` ITSELF, and returns refs PLUS
+ * an in-band owner-sealed body. This adapter bridges the two: it accepts the per-dispatch
+ * `clientSecret` (resolved by the SecureStore X25519 resolver in compose), constructs the
+ * underlying sealed client, dispatches, and maps the sealed result down to the REFS-ONLY shape
+ * the composition consumes. The sealed client's in-band `body` is DROPPED here — it is
+ * belt-and-suspenders for compose, whose authoritative body source stays the slice-3 owner-gated
+ * DB readback (the Rust loop persists the owner-sealed body to the Hub DB; readback reads it).
+ *
+ * ## Construction seam (load-bearing for flag-off byte-identical)
+ * The factory captures ONLY host/port/timeout; it does NOT resolve a secret and does NOT
+ * construct the underlying client. The underlying client is built LAZILY, INSIDE `dispatchRun`,
+ * via the injectable `createClient` seam (default = the real sealed-client factory). So the
+ * factory is side-effect-free — the route can construct it eagerly at startup with NO key
+ * resolution, NO socket, and NO `RangeError` from a not-yet-resolved secret — which is exactly
+ * what keeps the DEFAULT-OFF route byte-identical to today (the dark services are constructed but
+ * never consulted). Tests mock `createClient` to map/fail-closed WITHOUT a socket and WITHOUT
+ * re-proving the (already-proven) interop.
+ *
+ * ## Fail-closed contract
+ * The underlying sealed client already funnels EVERY non-clean settle (connect error, closed
+ * session, bad seal, missing ref, timeout, malformed frame, fingerprint mismatch) to a 503-shaped
+ * {@link FridayDomainError}. This adapter adds no new success path: any throw/reject from the
+ * underlying dispatch surfaces unchanged (503), and a result is mapped to refs-only.
+ *
+ * ## Truth labels
+ * - DARK substrate for the executeRun-replacement: no production route consumes it (until 6b).
+ * - `rust_wired` ceiling: confers NO v1 GO. Reversible / inert until the operator cutover.
+ */
+
+/** A sealed agent-run dispatch, TS-side. Carries the client's X25519 SECRET (NOT a pre-built proof). */
+export interface FridayRustHubAgentRunSealedClientServiceRequest {
+  /** Caller-chosen idempotency/run identifier for this agent-run. */
+  readonly runId: string;
+  /** The agent task/prompt to run on the Rust loop. */
+  readonly task: string;
+  /** The TS-token-resolved principal the trusted peer forwards (allowlist-checked by the server). */
+  readonly forwardedPrincipal: string;
+  /**
+   * The client's 32-byte X25519 SECRET scalar (resolved from SecureStore by compose). The matching
+   * pubkey MUST be enrolled in the server's peer-allowlist or the server establishes NO session
+   * (fail-closed). Held in-process only; never logged. A non-32-byte secret fails closed (503).
+   */
+  readonly clientSecret: Uint8Array;
+}
+
+/**
+ * REFS-ONLY agent-run result receipt — the answer FINGERPRINT only, NEVER the body. The sealed
+ * client's in-band opened `body` is intentionally NOT surfaced here (compose's body source is the
+ * slice-3 DB readback). Shape-identical to the old client's `FridayRustHubAgentRunWsResult` so the
+ * composition's downstream (projector loopStatus + finalMessage refs) is untouched.
+ */
+export interface FridayRustHubAgentRunSealedClientServiceResult {
+  /** Always `rust_wired` — a loud reminder this is a substrate path, not a product one. */
+  readonly truthLabel: "rust_wired";
+  /** The run this result terminates (echoes the request's run id). */
+  readonly runId: string;
+  /** Coarse loop-status label (e.g. `finished` / denied / no_answer). */
+  readonly status: string;
+  /** sha256 of the answer body — a REF, NEVER the body text. Absent when no answer. */
+  readonly answerSha256?: string;
+  /** Byte length of the answer body — a measure, NEVER the body text. Absent when no answer. */
+  readonly answerLen?: number;
+}
+
+export interface FridayRustHubAgentRunSealedClientService {
+  /**
+   * Dispatch one agent-run over a sealed ECDH session and await its REFS-ONLY result. Builds the
+   * underlying sealed client from the request's `clientSecret`, runs the handshake + auth_proof +
+   * send INTERNALLY, then maps the sealed result to refs-only. Fails closed (503) on any non-clean
+   * settle. The in-band owner-sealed body is dropped (compose uses the DB readback).
+   */
+  dispatchRun(
+    request: FridayRustHubAgentRunSealedClientServiceRequest,
+  ): Promise<FridayRustHubAgentRunSealedClientServiceResult>;
+}
+
+/**
+ * Factory seam for the underlying sealed client. Defaults to the real
+ * {@link createFridayRustHubAgentRunSealedClient}; tests inject a fake to map/fail-closed without
+ * a socket (and without re-proving the interop, which is already proven).
+ */
+export type CreateSealedClientFn = (
+  options: CreateFridayRustHubAgentRunSealedClientOptions,
+) => FridayRustHubAgentRunSealedClient;
+
+export interface CreateFridayRustHubAgentRunSealedClientServiceOptions {
+  /** Loopback host for the Rust agent-run WS server. Defaults to `127.0.0.1` (in the client). */
+  readonly host?: string;
+  /** Port the Rust agent-run WS server listens on. */
+  readonly port: number;
+  /** Bounded await (ms) for one dispatch before failing closed. */
+  readonly timeoutMs?: number;
+  /**
+   * Injectable factory for the underlying sealed client (test seam). Default = the real sealed
+   * client. Constructed LAZILY per-dispatch so the service factory itself is side-effect-free.
+   */
+  readonly createClient?: CreateSealedClientFn;
+}
+
+function unavailable(message: string): FridayDomainError {
+  return new FridayDomainError("MISSION_SPINE_RUST_AGENT_RUN_SEALED_WS_CLIENT_UNAVAILABLE", message, {
+    httpStatus: 503,
+    details: {
+      surface: "service:rust_hub_agent_run_sealed_ws_client_service",
+      bridge: "rust_wired",
+      proofOnly: true,
+      proofReady: false,
+    },
+  });
+}
+
+/**
+ * Build the sealed-client SERVICE adapter the composition wires in place of the old plain-WS
+ * client. SIDE-EFFECT-FREE: captures host/port/timeout/createClient only; resolves no secret and
+ * opens no socket until `dispatchRun` is actually called on a qualifying run.
+ */
+export function createFridayRustHubAgentRunSealedClientService(
+  options: CreateFridayRustHubAgentRunSealedClientServiceOptions,
+): FridayRustHubAgentRunSealedClientService {
+  const { host, port, timeoutMs } = options;
+  const createClient = options.createClient ?? createFridayRustHubAgentRunSealedClient;
+
+  return {
+    async dispatchRun(
+      request: FridayRustHubAgentRunSealedClientServiceRequest,
+    ): Promise<FridayRustHubAgentRunSealedClientServiceResult> {
+      // Build the underlying sealed client from the per-dispatch X25519 secret. A non-32-byte
+      // secret throws a RangeError from the sealed client constructor; map it to fail-closed (503)
+      // so a malformed resolve surfaces as today's 503 rather than an unhandled throw.
+      let client: FridayRustHubAgentRunSealedClient;
+      try {
+        client = createClient({
+          ...(host !== undefined ? { host } : {}),
+          port,
+          clientSecret: request.clientSecret,
+          ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+        });
+      } catch {
+        throw unavailable("Sealed agent-run client could not be constructed.");
+      }
+
+      // The sealed client's dispatch already fails closed (503) on every non-clean settle; surface
+      // its FridayDomainError unchanged, wrap any non-domain throw as fail-closed.
+      let sealed;
+      try {
+        sealed = await client.dispatchRun({
+          runId: request.runId,
+          task: request.task,
+          forwardedPrincipal: request.forwardedPrincipal,
+        });
+      } catch (error) {
+        throw error instanceof FridayDomainError
+          ? error
+          : unavailable("Sealed agent-run client dispatch failed.");
+      }
+
+      // Map to the REFS-ONLY shape the composition consumes — DROP the in-band `body` (compose's
+      // authoritative body source is the slice-3 owner-gated DB readback).
+      return {
+        truthLabel: "rust_wired",
+        runId: sealed.runId,
+        status: sealed.status,
+        ...(sealed.answerSha256 !== undefined ? { answerSha256: sealed.answerSha256 } : {}),
+        ...(sealed.answerLen !== undefined ? { answerLen: sealed.answerLen } : {}),
+      };
+    },
+  };
+}
