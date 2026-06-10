@@ -1,6 +1,11 @@
 /**
- * PROOF-ONLY (Rust-wired), DARK (no production route consumes this) CLIENT-HALF of
- * the friday-crypto sealed WS handshake for the executeRun-replacement (sub-slice B1).
+ * TRANSITIVELY WIRED into the production read-only Rust agent-run route, gated DEFAULT-OFF —
+ * CLIENT-HALF of the friday-crypto sealed WS handshake for the executeRun-replacement
+ * (sub-slice B1). As of B1-compose its primitives (`agree`/`seal`/`open`/`encodeSealed`/
+ * `buildAuthProof`/...) are imported by `friday-rust-hub-agent-run-ws-sealed-client.ts`, which
+ * the live route's `composeRustReadOnlyAgentRun` drives — so the prior "no production route
+ * consumes this" claim is no longer true. It does NOT run in default prod: the route branch is
+ * gated DEFAULT-OFF behind `FRIDAY_ROUTE_AGENT_RUN_VIA_RUST` (operator cutover pending).
  *
  * ## What this is
  * The byte-exact TS port of the friday-crypto / friday-transport client primitives the
@@ -33,9 +38,13 @@
  * defend confidentiality against a non-existent relay.
  *
  * ## Truth labels
- * - DARK substrate for the executeRun-replacement: no production route consumes it.
- * - `rust_wired` ceiling: confers NO v1 GO. It speaks the real sealed protocol; it is not
- *   a product path until the composition slice live-flips it (operator gate).
+ * - TRANSITIVELY consumed by the production route handler, gated DEFAULT-OFF: its primitives
+ *   are imported by the sealed WS client that `composeRustReadOnlyAgentRun` drives on the live
+ *   `routeStartRun` path, so it IS reached by a production route (NOT "no production route
+ *   consumes it"). It stays inert in default prod until the operator flips
+ *   `FRIDAY_ROUTE_AGENT_RUN_VIA_RUST` (cutover pending).
+ * - `rust_wired` ceiling: confers NO v1 GO. It speaks the real sealed protocol; it is not a
+ *   full product path until the operator cutover.
  */
 import { createHash, createPrivateKey, createPublicKey, diffieHellman, hkdfSync, randomBytes } from "node:crypto";
 

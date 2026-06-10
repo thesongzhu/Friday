@@ -7,10 +7,16 @@ import {
 } from "./friday-rust-hub-agent-run-ws-sealed-client.js";
 
 /**
- * PROOF-ONLY (Rust-wired), DARK (no production route consumes this) SERVICE ADAPTER that lets
- * the composition (`composeRustReadOnlyAgentRun`) drive the PROVEN sealed WS client
+ * WIRED into the production read-only Rust agent-run route, gated DEFAULT-OFF — SERVICE
+ * ADAPTER that lets the composition (`composeRustReadOnlyAgentRun` in friday-api-runtime.ts,
+ * reached from the live `routeStartRun`) drive the PROVEN sealed WS client
  * (`friday-rust-hub-agent-run-ws-sealed-client.ts`) through the SAME `dispatchRun(...)` seam the
  * old plain-WS client exposed — but over the REAL sealed ECDH protocol (sub-slice B1-compose).
+ * As of B1-compose this adapter IS imported + constructed by friday-api-runtime.ts and its
+ * `dispatchRun(...)` runs on the live route path, so the prior "no production route consumes
+ * this" claim is no longer true. It does NOT run in default prod: the route branch is gated
+ * DEFAULT-OFF behind `FRIDAY_ROUTE_AGENT_RUN_VIA_RUST` (operator cutover pending) and only fires
+ * for a qualifying read-only run.
  *
  * ## Why an adapter (and not a direct swap)
  * The old `FridayRustHubAgentRunWsClientService.dispatchRun` took a pre-built SYMMETRIC
@@ -40,8 +46,13 @@ import {
  * underlying dispatch surfaces unchanged (503), and a result is mapped to refs-only.
  *
  * ## Truth labels
- * - DARK substrate for the executeRun-replacement: no production route consumes it (until 6b).
- * - `rust_wired` ceiling: confers NO v1 GO. Reversible / inert until the operator cutover.
+ * - WIRED into the production route handler but gated DEFAULT-OFF: friday-api-runtime.ts imports
+ *   + constructs this adapter and `composeRustReadOnlyAgentRun` calls `dispatchRun(...)` on the
+ *   live `routeStartRun` path, so it IS consumed by a production route (NOT "no production route
+ *   consumes it"). It stays inert in default prod until the operator flips
+ *   `FRIDAY_ROUTE_AGENT_RUN_VIA_RUST` (6b cutover pending) and a run qualifies.
+ * - `rust_wired` ceiling: confers NO v1 GO. Narrow (read-only / refs-only); not a full
+ *   executeRun replacement.
  */
 
 /** A sealed agent-run dispatch, TS-side. Carries the client's X25519 SECRET (NOT a pre-built proof). */

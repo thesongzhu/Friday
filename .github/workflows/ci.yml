@@ -269,6 +269,18 @@ jobs:
       - name: Assert ts_runtime_blocker count is zero
         run: node scripts/quality/assert-ts-runtime-blocker-zero.mjs ts-runtime-retirement-report.json
 
+      # SECOND validation phase: the route validator above is structurally blind
+      # to service-METHOD guards. Surfaces that are route-retired but still reach
+      # their mutating service methods off-route (agent tools, UIX/reflex callers,
+      # standing-agenda) are fenced by method-head fail-closed guards (TS-R1 / #628
+      # / #597) that the route validator cannot see — so stripping one would
+      # un-retire a live surface while route blocker stays 0. This gate scans the
+      # configured service files (manifest.methodRetiredSurfaces) and asserts every
+      # declared mutating method still carries its guard, and that the manifest
+      # entry counts have not silently shrunk. Builtins-only; own non-zero exit.
+      - name: Assert TS-runtime method-guard coverage + no manifest shrinkage
+        run: node scripts/quality/assert-ts-runtime-method-guards.mjs
+
   # ── Terminal CI Aggregator — single required check for branch protection ──
   quality-gate:
     runs-on: ubuntu-latest
