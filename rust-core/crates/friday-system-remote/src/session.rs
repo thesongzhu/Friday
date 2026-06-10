@@ -148,9 +148,18 @@ impl SessionStore {
     /// * the owner does not match ([`RemoteError::OwnerMismatch`]);
     /// * `ttl_ms` is non-positive;
     /// * the session is ALREADY EXPIRED at `now` ([`RemoteError::SessionExpired`])
-    ///   — an expired session is dead and cannot be revived by heartbeat.
+    ///   — an expired session is dead and cannot be revived by heartbeat;
+    /// * the BOUND DEVICE is no longer registered or no longer owner-matched
+    ///   ([`RemoteError::DeviceNotFound`] / [`RemoteError::OwnerMismatch`]) — a
+    ///   session must not outlive the device it controls. Without this check a
+    ///   deleted/revoked device left its sessions heartbeatable-alive forever
+    ///   (slice-1 gap). Revoking the device now severs liveness on the next
+    ///   heartbeat — fail-closed. The session row itself is NOT mutated when the
+    ///   device check fails, so a refused heartbeat leaves the prior expiry intact
+    ///   (the session still expires on its own clock and can be deleted).
     pub fn heartbeat(
         &mut self,
+        devices: &DeviceStore,
         session_id: &str,
         owner: &str,
         now: i64,
@@ -159,9 +168,11 @@ impl SessionStore {
         if ttl_ms <= 0 {
             return Err(RemoteError::InvalidInput("ttl_ms must be positive".into()));
         }
+        // Read-phase: validate owner, liveness, and the bound device WITHOUT
+        // mutating, so any refusal leaves the session row untouched.
         let s = self
             .by_id
-            .get_mut(session_id)
+            .get(session_id)
             .ok_or_else(|| RemoteError::SessionNotFound(session_id.to_string()))?;
         if s.owner != owner {
             return Err(RemoteError::OwnerMismatch);
@@ -170,6 +181,16 @@ impl SessionStore {
             // Dead. Do not revive. Fail closed.
             return Err(RemoteError::SessionExpired);
         }
+        // Re-validate the bound device: it must still be registered AND still
+        // owner-matched. A device deleted or re-owned out from under the session
+        // severs the session's liveness here (fail-closed) rather than letting an
+        // orphaned session be heartbeated indefinitely.
+        devices.get_for_owner(&s.device_id, owner)?;
+        // Mutate-phase: all checks passed; refresh.
+        let s = self
+            .by_id
+            .get_mut(session_id)
+            .ok_or_else(|| RemoteError::SessionNotFound(session_id.to_string()))?;
         s.heartbeat_at = now;
         s.expires_at = now.saturating_add(ttl_ms);
         Ok(s.clone())
@@ -252,7 +273,9 @@ mod tests {
         assert_eq!(s.state_at(1_400), SessionState::Active);
 
         // heartbeat while live: refresh expiry forward, bump heartbeat_at.
-        let s2 = sessions.heartbeat("sess-1", "owner-1", 1_400, 500).unwrap();
+        let s2 = sessions
+            .heartbeat(&devices, "sess-1", "owner-1", 1_400, 500)
+            .unwrap();
         assert_eq!(s2.heartbeat_at, 1_400);
         assert_eq!(s2.expires_at, 1_900);
 
@@ -275,12 +298,12 @@ mod tests {
             .unwrap();
         // expires_at = 1_100; heartbeat at exactly 1_100 (>=) ⇒ expired, refused.
         assert_eq!(
-            sessions.heartbeat("sess-1", "owner-1", 1_100, 100),
+            sessions.heartbeat(&devices, "sess-1", "owner-1", 1_100, 100),
             Err(RemoteError::SessionExpired)
         );
         // and well past expiry too.
         assert_eq!(
-            sessions.heartbeat("sess-1", "owner-1", 5_000, 100),
+            sessions.heartbeat(&devices, "sess-1", "owner-1", 5_000, 100),
             Err(RemoteError::SessionExpired)
         );
         // An expired session can still be DELETED (valid terminal op).
@@ -346,7 +369,7 @@ mod tests {
             Err(RemoteError::OwnerMismatch)
         );
         assert_eq!(
-            sessions.heartbeat("sess-1", "owner-2", 1_100, 1_000),
+            sessions.heartbeat(&devices, "sess-1", "owner-2", 1_100, 1_000),
             Err(RemoteError::OwnerMismatch)
         );
         assert_eq!(
@@ -359,9 +382,10 @@ mod tests {
 
     #[test]
     fn heartbeat_and_delete_missing_session_fail_closed() {
+        let devices = DeviceStore::new();
         let mut sessions = SessionStore::new();
         assert!(matches!(
-            sessions.heartbeat("ghost", "owner-1", 1, 10),
+            sessions.heartbeat(&devices, "ghost", "owner-1", 1, 10),
             Err(RemoteError::SessionNotFound(_))
         ));
         assert!(matches!(
@@ -398,5 +422,63 @@ mod tests {
             .list_for_owner("owner-1")
             .iter()
             .all(|s| s.owner == "owner-1"));
+    }
+
+    // ---- slice-2: heartbeat re-validates the bound device (fail-closed) ----
+
+    #[test]
+    fn heartbeat_refused_after_bound_device_is_deleted() {
+        let mut devices = store_with_device("owner-1", "dev-1");
+        let mut sessions = SessionStore::new();
+        sessions
+            .create(&devices, "sess-1", "dev-1", "owner-1", 1_000, 1_000)
+            .unwrap();
+        // While the device is live, heartbeat works.
+        sessions
+            .heartbeat(&devices, "sess-1", "owner-1", 1_100, 1_000)
+            .unwrap();
+        // Revoke (delete) the device the session controls.
+        devices.delete_for_owner("dev-1", "owner-1").unwrap();
+        // The session is still within its own expiry window, but its bound device
+        // is gone ⇒ heartbeat is now REFUSED (fail-closed); a revoked device must
+        // not keep its sessions alive.
+        assert!(matches!(
+            sessions.heartbeat(&devices, "sess-1", "owner-1", 1_200, 1_000),
+            Err(RemoteError::DeviceNotFound(_))
+        ));
+        // The refused heartbeat did NOT mutate the session; it still expires on
+        // its prior clock and can be deleted (the valid terminal op).
+        let s = sessions.get_for_owner("sess-1", "owner-1").unwrap();
+        assert_eq!(s.expires_at, 2_100); // from the 1_100 heartbeat, unchanged
+        sessions.delete_for_owner("sess-1", "owner-1").unwrap();
+    }
+
+    #[test]
+    fn heartbeat_refused_when_device_reowned() {
+        // Device re-owned out from under a session ⇒ OwnerMismatch on heartbeat.
+        // (Modelled by deleting dev-1 and re-registering the same device_id to a
+        // different owner; the session still references owner-1.)
+        let mut devices = store_with_device("owner-1", "dev-1");
+        let mut sessions = SessionStore::new();
+        sessions
+            .create(&devices, "sess-1", "dev-1", "owner-1", 1_000, 1_000)
+            .unwrap();
+        devices.delete_for_owner("dev-1", "owner-1").unwrap();
+        // Re-register the same device_id under owner-2.
+        let chal = begin_registration("owner-2", "friday.local", vec![1, 2, 3]).unwrap();
+        let resp = AttestationResponse {
+            credential_id: vec![7, 7, 7],
+            attestation_object: vec![0xa0],
+            client_data_json: b"{}".to_vec(),
+        };
+        let att = AcceptingTestVerifier
+            .verify_registration(&chal, &resp)
+            .unwrap();
+        devices.register("dev-1", &att, "", 0).unwrap();
+        // owner-1's session can no longer heartbeat the now-owner-2 device.
+        assert_eq!(
+            sessions.heartbeat(&devices, "sess-1", "owner-1", 1_200, 1_000),
+            Err(RemoteError::OwnerMismatch)
+        );
     }
 }
