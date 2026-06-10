@@ -23,6 +23,11 @@
 //!   across restarts (the whole point of surviving mid-flight), so [`upsert_pending`]
 //!   UPSERTs (NOT immutable like the event log).
 //!
+//! MONOTONICITY (#596 follow-up): the timeline only ever ADVANCES, and the store enforces
+//! that fail-closed — [`persist_timeline`] refuses a scalar rewind (stale snapshot) and
+//! clamps `updated_at` so the persisted timestamp never regresses; [`persist_event`]
+//! refuses a fresh append below the persisted high-water `seq` (gap backfill).
+//!
 //! REFS-ONLY: no raw transcript text / message body / PII is stored. `body_ref` /
 //! `provider_event_id` / `dispatch_ref` are refs/ids; `event_kind` / `actor` / `action` /
 //! `state` are coarse labels; `blocker` is a coarse reason (same shape as the existing
@@ -175,6 +180,20 @@ fn require_non_empty(field: &str, value: &str) -> Result<()> {
 /// `next_seq`/`retained_from_seq`/`revision` are persisted EXPLICITLY (never re-derived
 /// from the event rows) — `revision` in particular bumps on pending submits / status-only
 /// advances, so it can exceed the last event's revision.
+///
+/// ## Monotonicity guard (#596 follow-up, fail-closed)
+/// The in-memory state machine only ever ADVANCES these scalars, so a re-persist that
+/// would REWIND any of them can only come from a stale snapshot (e.g. an old in-memory
+/// copy persisted after a restart-rehydrate-advance) or a buggy writer. The bare UPSERT
+/// would silently rewind `next_seq` and set up future seq collisions, so:
+/// * a `next_seq` / `retained_from_seq` / `revision` LOWER than the persisted value is
+///   REJECTED (fail-closed `Err`; equal is allowed — an identical re-persist is a benign
+///   idempotent replay);
+/// * `updated_at` is CLAMPED to never regress (`MAX(stored, now_ms)`): an older `now_ms`
+///   is wall-clock skew, not writer staleness (the scalars are the logical clock), so the
+///   write itself is NOT refused — but the persisted timestamp surface stays monotone.
+///
+/// The guard + upsert run in ONE transaction, so the monotonicity decision is race-free.
 pub fn persist_timeline(
     conn: &Connection,
     session_id: &str,
@@ -187,7 +206,41 @@ pub fn persist_timeline(
             "timeline scalars out of range (next_seq>=1, retained_from_seq>=1, revision>=0)".into(),
         ));
     }
-    conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    let existing: Option<TimelineState> = tx
+        .query_row(
+            "SELECT next_seq, retained_from_seq, revision
+             FROM provider_timeline WHERE session_id = ?1",
+            [session_id],
+            |r| {
+                Ok(TimelineState {
+                    next_seq: r.get(0)?,
+                    retained_from_seq: r.get(1)?,
+                    revision: r.get(2)?,
+                })
+            },
+        )
+        .optional()?;
+    if let Some(prev) = existing {
+        if state.next_seq < prev.next_seq
+            || state.retained_from_seq < prev.retained_from_seq
+            || state.revision < prev.revision
+        {
+            return Err(StorageError::Unsupported(format!(
+                "provider_timeline ({session_id}) scalar regression refused: persisted \
+                 (next_seq {}, retained_from_seq {}, revision {}) vs incoming \
+                 (next_seq {}, retained_from_seq {}, revision {}); the timeline scalars \
+                 only ever advance — a lower value is a stale snapshot (fail-closed)",
+                prev.next_seq,
+                prev.retained_from_seq,
+                prev.revision,
+                state.next_seq,
+                state.retained_from_seq,
+                state.revision,
+            )));
+        }
+    }
+    tx.execute(
         "INSERT INTO provider_timeline
             (session_id, next_seq, retained_from_seq, revision, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?5)
@@ -195,7 +248,7 @@ pub fn persist_timeline(
             next_seq          = excluded.next_seq,
             retained_from_seq = excluded.retained_from_seq,
             revision          = excluded.revision,
-            updated_at        = excluded.updated_at",
+            updated_at        = MAX(provider_timeline.updated_at, excluded.updated_at)",
         params![
             session_id,
             state.next_seq,
@@ -204,6 +257,7 @@ pub fn persist_timeline(
             now_ms,
         ],
     )?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -227,6 +281,16 @@ pub fn timeline_exists(conn: &Connection, session_id: &str) -> Result<bool> {
 ///   [`PersistEventOutcome::DuplicateIdentical`] (benign replay);
 /// * an existing row with DIFFERENT content → fail-closed `Err` (an event's content is
 ///   never silently overwritten).
+///
+/// ## Monotonicity guard (#596 follow-up, fail-closed)
+/// A FRESH append must not land BELOW the session's persisted high-water `seq`: the
+/// in-memory machine assigns strictly-monotonic seqs, so a new row under the high-water
+/// mark is a late "backfill" into a gap — indistinguishable post-hoc from a stale or
+/// forged writer (the genuine event's content at that seq is unknowable once it was
+/// missed), so it is REFUSED. Replaying an ALREADY-persisted seq stays a benign
+/// idempotent no-op (handled above, content-checked); appending ABOVE the high-water
+/// mark is unrestricted (contiguity is the in-memory machine's invariant — after a
+/// prune the first persisted seq legitimately starts above 1).
 ///
 /// The check-then-insert runs in ONE transaction, so the idempotency decision is race-free.
 pub fn persist_event(
@@ -277,6 +341,25 @@ pub fn persist_event(
             }
         }
         None => {
+            // Monotonicity guard: a FRESH append below the persisted high-water seq is a
+            // gap backfill / stale writer — refused (see the fn doc). `MAX(seq)` on an
+            // empty log is NULL → no constraint on the first persisted seq.
+            let high_water: Option<i64> = tx.query_row(
+                "SELECT MAX(seq) FROM provider_timeline_event WHERE session_id = ?1",
+                [session_id],
+                |r| r.get(0),
+            )?;
+            if let Some(hw) = high_water {
+                if event.seq < hw {
+                    return Err(StorageError::Unsupported(format!(
+                        "provider_timeline_event ({session_id}) seq regression refused: \
+                         fresh append at seq {} is below the persisted high-water seq {hw}; \
+                         the timeline seq only ever advances — a below-watermark insert is \
+                         a gap backfill from a stale writer (fail-closed)",
+                        event.seq
+                    )));
+                }
+            }
             tx.execute(
                 "INSERT INTO provider_timeline_event
                     (session_id, seq, revision, event_kind, actor, body_ref,
@@ -717,6 +800,182 @@ mod tests {
         assert!(load_events(db.conn(), "nope").unwrap().is_empty());
         assert!(load_pending(db.conn(), "nope").unwrap().is_empty());
         assert!(!timeline_exists(db.conn(), "nope").unwrap());
+    }
+
+    #[test]
+    fn persist_timeline_rejects_scalar_regression_fail_closed() {
+        // The scalars only ever ADVANCE in the in-memory machine; a lower value can only
+        // be a stale snapshot (e.g. an old in-memory copy persisted after a
+        // restart-rehydrate-advance). The bare UPSERT would silently rewind next_seq and
+        // set up future seq collisions — the guard refuses it, per axis.
+        let db = Db::open_hub(&tmp("monotonic-scalars")).unwrap();
+        persist_timeline(db.conn(), "s1", &TimelineState::new(5, 3, 7), 100).unwrap();
+
+        for (label, regressed) in [
+            ("next_seq", TimelineState::new(4, 3, 7)),
+            ("retained_from_seq", TimelineState::new(5, 2, 7)),
+            ("revision", TimelineState::new(5, 3, 6)),
+        ] {
+            assert!(
+                persist_timeline(db.conn(), "s1", &regressed, 200).is_err(),
+                "a {label} regression must fail closed"
+            );
+        }
+        // The persisted row is untouched by the refused writes (incl. updated_at).
+        let st = load_timeline_state(db.conn(), "s1").unwrap().unwrap();
+        assert_eq!(st, TimelineState::new(5, 3, 7));
+        let updated: i64 = db
+            .conn()
+            .query_row(
+                "SELECT updated_at FROM provider_timeline WHERE session_id='s1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(updated, 100, "a refused write must not touch updated_at");
+
+        // Equal scalars are a benign idempotent replay — allowed.
+        persist_timeline(db.conn(), "s1", &TimelineState::new(5, 3, 7), 300).unwrap();
+        // And a genuine advance is allowed.
+        persist_timeline(db.conn(), "s1", &TimelineState::new(6, 3, 9), 400).unwrap();
+        let st = load_timeline_state(db.conn(), "s1").unwrap().unwrap();
+        assert_eq!(st, TimelineState::new(6, 3, 9));
+    }
+
+    #[test]
+    fn persist_timeline_updated_at_never_regresses_on_upsert() {
+        // Wall-clock skew is NOT writer staleness (the scalars are the logical clock), so
+        // an advancing write with an OLDER now_ms is accepted — but the persisted
+        // updated_at is clamped: the timestamp surface never moves backwards.
+        let db = Db::open_hub(&tmp("monotonic-ts")).unwrap();
+        persist_timeline(db.conn(), "s1", &TimelineState::new(5, 1, 5), 200).unwrap();
+        // Logical progress at a skewed (older) clock: accepted, timestamp clamped.
+        persist_timeline(db.conn(), "s1", &TimelineState::new(6, 1, 6), 100).unwrap();
+        let (st, updated): (TimelineState, i64) = (
+            load_timeline_state(db.conn(), "s1").unwrap().unwrap(),
+            db.conn()
+                .query_row(
+                    "SELECT updated_at FROM provider_timeline WHERE session_id='s1'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap(),
+        );
+        assert_eq!(st, TimelineState::new(6, 1, 6), "the advance is accepted");
+        assert_eq!(updated, 200, "updated_at must not regress (clamped to MAX)");
+        // A later clock advances it again.
+        persist_timeline(db.conn(), "s1", &TimelineState::new(6, 1, 6), 300).unwrap();
+        let updated: i64 = db
+            .conn()
+            .query_row(
+                "SELECT updated_at FROM provider_timeline WHERE session_id='s1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(updated, 300);
+    }
+
+    #[test]
+    fn persist_event_rejects_fresh_append_below_the_high_water_seq() {
+        // A FRESH insert below the persisted high-water seq is a gap backfill — the
+        // genuine event's content at that seq is unknowable post-hoc, so it is refused.
+        // Idempotent replay of an EXISTING seq stays a benign no-op.
+        let db = Db::open_hub(&tmp("monotonic-seq")).unwrap();
+        persist_timeline(db.conn(), "s1", &TimelineState::new(6, 1, 5), 10).unwrap();
+        persist_event(db.conn(), "s1", &ev(1, 1, None), 11).unwrap();
+        persist_event(db.conn(), "s1", &ev(2, 2, None), 12).unwrap();
+        // Appending ABOVE the high-water mark is unrestricted (post-prune logs
+        // legitimately start above 1; contiguity is the in-memory machine's invariant).
+        persist_event(db.conn(), "s1", &ev(5, 5, None), 15).unwrap();
+
+        // Backfilling the 3/4 gap under the high-water mark (5) is refused.
+        assert!(
+            persist_event(db.conn(), "s1", &ev(3, 3, None), 20).is_err(),
+            "a fresh append below the high-water seq must fail closed"
+        );
+        assert!(
+            persist_event(db.conn(), "s1", &ev(4, 4, None), 20).is_err(),
+            "a fresh append below the high-water seq must fail closed"
+        );
+        // The refused writes left no rows behind.
+        let seqs: Vec<i64> = load_events(db.conn(), "s1")
+            .unwrap()
+            .iter()
+            .map(|e| e.seq)
+            .collect();
+        assert_eq!(seqs, vec![1, 2, 5]);
+
+        // Replay of an existing seq is still the idempotent no-op (NOT a regression).
+        assert_eq!(
+            persist_event(db.conn(), "s1", &ev(2, 2, None), 99).unwrap(),
+            PersistEventOutcome::DuplicateIdentical
+        );
+        // And the next genuine append (above the mark) still lands.
+        assert_eq!(
+            persist_event(db.conn(), "s1", &ev(6, 6, None), 30).unwrap(),
+            PersistEventOutcome::Persisted
+        );
+    }
+
+    #[test]
+    fn persisted_timeline_surface_is_an_exact_refs_only_column_allowlist() {
+        // ALLOWLIST (#596 follow-up): the refs-only review covered EXACTLY these columns.
+        // The original denylist check (`no column named body/content/transcript`) cannot
+        // catch a future migration adding a transcript-bearing column under any OTHER
+        // name — this exact-match allowlist fails the build for ANY new column on the
+        // persisted timeline surface, forcing it through an explicit refs-only review.
+        let db = Db::open_hub(&tmp("allowlist")).unwrap();
+        let cols = |table: &str| -> Vec<String> {
+            let mut stmt = db
+                .conn()
+                .prepare("SELECT name FROM pragma_table_info(?1) ORDER BY cid")
+                .unwrap();
+            let rows = stmt.query_map([table], |r| r.get::<_, String>(0)).unwrap();
+            rows.map(|r| r.unwrap()).collect()
+        };
+        assert_eq!(
+            cols("provider_timeline"),
+            vec![
+                "session_id",
+                "next_seq",
+                "retained_from_seq",
+                "revision",
+                "created_at",
+                "updated_at",
+            ],
+            "provider_timeline columns drifted from the reviewed refs-only allowlist"
+        );
+        assert_eq!(
+            cols("provider_timeline_event"),
+            vec![
+                "session_id",
+                "seq",
+                "revision",
+                "event_kind",
+                "actor",
+                "body_ref",
+                "provider_event_id",
+                "created_at",
+            ],
+            "provider_timeline_event columns drifted from the reviewed refs-only allowlist"
+        );
+        assert_eq!(
+            cols("provider_timeline_pending"),
+            vec![
+                "session_id",
+                "request_id",
+                "client_msg_id",
+                "action",
+                "state",
+                "dispatch_ref",
+                "blocker",
+                "base_revision",
+                "updated_at_revision",
+                "created_at",
+            ],
+            "provider_timeline_pending columns drifted from the reviewed refs-only allowlist"
+        );
     }
 
     #[test]
