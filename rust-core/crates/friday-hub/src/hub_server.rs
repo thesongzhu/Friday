@@ -5823,6 +5823,66 @@ mod authed_route_tests {
         assert!(out.delivered_body().is_none());
     }
 
+    /// (A1 transport-truth) `with_counts` ATTACHES the run COUNTS to a `Delivered` answer
+    /// (the populated path `run_authed_agent_loop` drives) and is a NO-OP on a non-delivered
+    /// outcome. This is the regression guard for the PR's post-deploy value: without it, a
+    /// `with_counts` that silently dropped the counts (or a refactor that dropped the
+    /// `.with_counts(..)` call) would still pass every other test.
+    #[test]
+    fn a1_with_counts_populates_delivered_and_is_noop_otherwise() {
+        // A real owner-delivered projection (turns/tools default to None before attach).
+        let db = seed_owned("a1-owner", "run-c", "principal:P");
+        let owner = authed("principal:P");
+        let delivered = project_answer_for_authed(db.conn(), "run-c", &owner);
+        // Pre-attach: the DB-projection path has no outcome ⇒ no counts on the proof surface.
+        let pre = delivered.proof_refs_json();
+        assert!(pre.get("turns").unwrap().is_null());
+        assert!(pre.get("executed_tools").unwrap().is_null());
+
+        // ATTACH the loop's counts — the populated path. Counts now ride the proof surface as
+        // NUMBERS, and the body is STILL owner-only (never on the refs/proof surface).
+        let attached = delivered.with_counts(3, 2);
+        assert_eq!(
+            attached.delivered_body(),
+            Some(BODY),
+            "body still delivered"
+        );
+        let proof = attached.proof_refs_json();
+        assert_eq!(proof.get("turns").and_then(|v| v.as_u64()), Some(3));
+        assert_eq!(
+            proof.get("executed_tools").and_then(|v| v.as_u64()),
+            Some(2)
+        );
+        assert!(
+            !proof.to_string().contains(BODY),
+            "the count-bearing proof surface must still be body-free"
+        );
+
+        // NO-OP on a non-delivered outcome: a NoAnswer carries no counts and is unchanged.
+        let none = AuthedAnswer::NoAnswer {
+            run_id: "run-c".into(),
+        };
+        let none_after = none.with_counts(9, 9);
+        assert!(matches!(none_after, AuthedAnswer::NoAnswer { .. }));
+        let none_proof = none_after.proof_refs_json();
+        assert!(
+            none_proof.get("turns").is_none(),
+            "NoAnswer carries no turns"
+        );
+        assert!(
+            none_proof.get("executed_tools").is_none(),
+            "NoAnswer carries no executed_tools"
+        );
+
+        // NO-OP on a Denied outcome too (wrong principal): counts never appear.
+        let other = authed("principal:Q");
+        let denied = project_answer_for_authed(db.conn(), "run-c", &other).with_counts(9, 9);
+        assert!(matches!(denied, AuthedAnswer::Denied { .. }));
+        let denied_proof = denied.proof_refs_json();
+        assert!(denied_proof.get("turns").is_none());
+        assert!(denied_proof.get("executed_tools").is_none());
+    }
+
     // --- end-to-end through the real HubRuntime agent loop --------------------
 
     struct TempWs(PathBuf);
