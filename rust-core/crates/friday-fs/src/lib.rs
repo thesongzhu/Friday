@@ -160,6 +160,21 @@ pub enum FsError {
     /// An underlying I/O error not classified above.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+
+    /// `run_command_in_root` could not turn the `command` string into an argv: it was
+    /// empty/whitespace-only, or had an unbalanced quote. **Static message — carries NO
+    /// path, NO command text, NO secret** (the offending string never reaches the error,
+    /// so it cannot leak into a `Display` that flows to a log/ledger). Fail-closed: an
+    /// unparseable command is refused, never silently run.
+    #[error("command could not be parsed into an argument vector")]
+    CommandInvalid,
+
+    /// `run_command_in_root` could not spawn the child (program not found on the fixed
+    /// child `PATH`, not executable, or the OS refused the exec). **Static message — the
+    /// underlying `io::Error` (which can carry the program name / errno text) is
+    /// DELIBERATELY dropped** so no path/secret reaches the error. Fail-closed.
+    #[error("command could not be spawned")]
+    CommandSpawn,
 }
 
 /// The kind of a [`stat_file_within_root`] target, after the no-follow `lstat`. A
@@ -935,6 +950,398 @@ fn scan_file_into(root: &Path, rel: &str, query: &str, hits: &mut Vec<SearchHit>
     }
 }
 
+// ── run_command: hardened shell-FREE process exec, contained to `root` ──────────────────────
+//
+// THREAT MODEL & SECURITY MODEL (this is the highest-risk tool surface — read before editing).
+// `run_command` is the ONLY primitive here that spawns an external process. It rides the
+// EXISTING gate/approval seam (registered `mutating=true, Risk::High`; a command with shell
+// metacharacters is already classified Critical → gate DENY; the exact command is bound into
+// the Ed25519 action_digest), so this helper is only ever reached AFTER an operator signed the
+// exact command. On top of that single-use approval, the helper enforces a hard, defense-in-
+// depth model so that even a slipped-through or operator-mis-signed command is contained:
+//
+//   1. NO SHELL. We never invoke `sh -c`. The command string is tokenized by a minimal,
+//      quote-aware splitter (single + double quotes for args-with-spaces) into argv, and
+//      argv[0] is exec'd DIRECTLY. There is NO shell expansion, NO globbing, NO env/`$VAR`
+//      substitution, NO pipe/redirect/`;|&` handling. A metacharacter that slips past the gate
+//      is therefore an inert LITERAL argument, never interpreted. `$HOME` is the 5 bytes
+//      `$HOME`, not the home directory.
+//   2. ENV SCRUB (prevents provider-key exfiltration). `env_clear()` then set ONLY a minimal,
+//      fixed allow-list: `PATH` to a constant safe value, plus `LANG=C`/`LC_ALL=C` for
+//      deterministic output. The child does NOT inherit the hub process environment, so a
+//      command cannot read `FRIDAY_DEEPSEEK_API_KEY` or any other secret out of `env`. (With no
+//      shell, `$FRIDAY...` is a literal anyway — env_clear is mandatory defense-in-depth.)
+//   3. CWD CONTAINMENT. `current_dir(root)` is set per-child (we never mutate the hub's global
+//      cwd via `set_current_dir`). The root is canonicalized/validated to exist first.
+//   4. TIMEOUT + KILL. A wall-clock deadline ([`RUN_COMMAND_TIMEOUT`]); on expiry the child is
+//      SIGKILL'd (and its process group) so a `sleep`/hang cannot pin a hub thread. The
+//      capture is DEADLOCK-FREE: dedicated reader threads drain stdout+stderr (a child whose
+//      output exceeds the OS pipe buffer can never block on write), capping the RETAINED bytes
+//      while still consuming the rest. The child is `setpgid`'d into its OWN process group, and the
+//      group is SIGKILL'd on EVERY return path (not only on timeout) so any IN-GROUP descendant is
+//      reaped, its write-fd closes, and the pipe EOFs. Critically, the reader drain is itself
+//      DEADLINE-BOUNDED (timeout + a small grace, [`RUN_COMMAND_DRAIN_GRACE`]) and does NOT rely on
+//      EOF: a grandchild that `setsid()`-ESCAPES the process group cannot be reached by the killpg,
+//      but it ALSO cannot pin the hub, because the readers self-terminate at the deadline whether or
+//      not the pipe ever EOFs. So the call ALWAYS returns within ~timeout + grace. The escaped
+//      grandchild is an orphan daemon (inherent to an operator-signed daemon-launching command — the
+//      gate signed a command that double-forks/`setsid`; signing a daemon yields a daemon), NOT a
+//      hub-thread hang. (See the inline note for the residual sub-ms pgid-reuse window — accepted
+//      over an unbounded hang, the same trade `std::process::Command::output()` makes.)
+//   5. OUTPUT BOUND. Combined stdout+stderr is capped at [`RUN_COMMAND_MAX_OUTPUT_BYTES`]
+//      RETAINED bytes (truncated on a char boundary; `output_truncated` set). The model-facing
+//      feedback path bounds this further to 2048 bytes downstream.
+//   6. FAIL CLOSED. Tokenize failure → [`FsError::CommandInvalid`]; spawn failure →
+//      [`FsError::CommandSpawn`]. Both messages are STATIC (no path/command/secret/errno).
+//      A successful spawn ALWAYS returns `Ok(CommandRunResult)` — including a non-zero exit and
+//      a timeout (those are RESULTS, not errors).
+
+/// Wall-clock timeout for [`run_command_in_root`]. A child still running past this is killed
+/// (SIGKILL to its process group) and the result reports `timed_out=true`. 30s is generous for
+/// a single dev command yet bounds a hang to a fixed window.
+pub const RUN_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Hard cap on the COMBINED (stdout + stderr) bytes RETAINED from a command. Bytes past this are
+/// read-and-discarded (so the child never blocks) but not stored; `output_truncated` is set.
+/// 64 KiB — comfortably above the model-facing 2048-byte feedback bound, so the operator/audit
+/// path sees a useful head without the helper itself buffering unboundedly.
+pub const RUN_COMMAND_MAX_OUTPUT_BYTES: usize = 64 * 1024;
+
+/// Extra grace added to `timeout` to form the OVERALL output-drain deadline. After the leader (and
+/// its in-group descendants) exit, any buffered in-group output still has this long to flush/EOF
+/// before the reader threads are cut loose. It also caps the worst-case extra time a
+/// process-group-ESCAPING (`setsid`) grandchild holding the pipe write-fd open can keep the readers
+/// draining: the call returns within `timeout + RUN_COMMAND_DRAIN_GRACE`, never the grandchild's
+/// lifetime. Small (2s) — enough to flush real output, short enough that the hub thread is never
+/// pinned.
+pub const RUN_COMMAND_DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Fixed, safe `PATH` for the env-scrubbed child. The hub process `PATH` is NOT inherited; only
+/// these standard system dirs are searched for argv[0]. This is load-bearing: after `env_clear()`
+/// a child with no `PATH` cannot resolve a bare program name like `echo`.
+pub const RUN_COMMAND_CHILD_PATH: &str = "/usr/bin:/bin:/usr/local/bin";
+
+/// The result of a successfully-SPAWNED command (a tokenize/spawn FAILURE is an `Err`, never
+/// this). `exit_code` is `None` when the child was killed by a signal (incl. our timeout kill)
+/// or otherwise has no normal exit code. `output` is the combined, byte-capped, char-boundary-
+/// safe stdout+stderr. `output_truncated` ⇒ the retained output is INCOMPLETE — either more output
+/// existed than the byte cap retained, OR the output-drain deadline ([`RUN_COMMAND_DRAIN_GRACE`])
+/// cut reading short before EOF (e.g. a process-group-escaping grandchild held the pipe open).
+/// `timed_out` ⇒ the child exceeded [`RUN_COMMAND_TIMEOUT`] and was killed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommandRunResult {
+    /// Process exit code, or `None` if terminated by a signal (incl. the timeout kill).
+    pub exit_code: Option<i32>,
+    /// Combined stdout+stderr, byte-capped to [`RUN_COMMAND_MAX_OUTPUT_BYTES`] (char-safe).
+    pub output: String,
+    /// Whether the retained output is INCOMPLETE: output beyond the byte cap was discarded, OR the
+    /// drain deadline cut reading short before EOF (see [`RUN_COMMAND_DRAIN_GRACE`]).
+    pub output_truncated: bool,
+    /// Whether the child was killed for exceeding the timeout.
+    pub timed_out: bool,
+}
+
+/// Minimal, quote-aware tokenizer: split `command` into argv. Handles single (`'…'`) and double
+/// (`"…"`) quotes so arguments-with-spaces survive; performs NO shell expansion, NO globbing, NO
+/// `$VAR` substitution, NO escape processing beyond what quotes delimit. A backslash is an
+/// ORDINARY character (it is NOT an escape) — keeping the tokenizer's behavior trivially
+/// auditable and refusing to grant the command any shell-like power. Returns the argv on success;
+/// `Err(())` on an UNBALANCED quote. An empty/whitespace-only command yields an EMPTY argv (the
+/// caller rejects that as [`FsError::CommandInvalid`]). Quote chars delimit but are not retained;
+/// adjacent quoted/unquoted runs concatenate into one token (`a"b"c` → `abc`).
+fn tokenize_command(command: &str) -> Result<Vec<String>, ()> {
+    let mut argv: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    // `in_token` distinguishes an empty quoted token (`""` → one empty arg) from no token at all.
+    let mut in_token = false;
+    let mut chars = command.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            // Unquoted whitespace ends the current token (if any) and is not retained.
+            ' ' | '\t' | '\n' | '\r' => {
+                if in_token {
+                    argv.push(std::mem::take(&mut cur));
+                    in_token = false;
+                }
+            }
+            '\'' | '"' => {
+                let quote = c;
+                in_token = true; // even `''`/`""` produces an (empty) token
+                loop {
+                    match chars.next() {
+                        Some(ch) if ch == quote => break, // closing quote
+                        Some(ch) => cur.push(ch),         // literal inside the quote (incl. spaces)
+                        None => return Err(()),           // unbalanced quote → reject
+                    }
+                }
+            }
+            other => {
+                in_token = true;
+                cur.push(other);
+            }
+        }
+    }
+    if in_token {
+        argv.push(cur);
+    }
+    Ok(argv)
+}
+
+/// Run `command` as a SHELL-FREE, env-scrubbed, cwd-contained, timed, output-bounded child
+/// process under `root`. See the module-level security model above. Uses the default
+/// [`RUN_COMMAND_TIMEOUT`]; [`run_command_in_root_with_timeout`] takes an explicit timeout (tests
+/// use a short one). The `root` must exist (canonicalized) or this is [`FsError::NotFound`].
+pub fn run_command_in_root(root: &Path, command: &str) -> Result<CommandRunResult, FsError> {
+    run_command_in_root_with_timeout(root, command, RUN_COMMAND_TIMEOUT)
+}
+
+/// [`run_command_in_root`] with an explicit `timeout` (the only difference). Exposed so tests can
+/// drive the TIMEOUT branch deterministically with a sub-second deadline rather than waiting the
+/// production 30s. The security model is otherwise identical.
+pub fn run_command_in_root_with_timeout(
+    root: &Path,
+    command: &str,
+    timeout: std::time::Duration,
+) -> Result<CommandRunResult, FsError> {
+    use std::os::unix::process::CommandExt as _;
+    use std::process::{Command, Stdio};
+    use std::sync::mpsc;
+    use std::sync::{Arc, Mutex};
+
+    // (1) Tokenize — NO shell. Empty/whitespace-only or unbalanced-quote → fail closed.
+    let argv = tokenize_command(command).map_err(|()| FsError::CommandInvalid)?;
+    if argv.is_empty() {
+        return Err(FsError::CommandInvalid);
+    }
+    let program = &argv[0];
+    let args = &argv[1..];
+
+    // (3) CWD containment — the root must exist; canonicalize so a symlinked root (e.g.
+    //     /tmp → /private/tmp) is the real dir, and so a non-existent root is a clean NotFound.
+    let real_root = std::fs::canonicalize(root).map_err(classify_open_err)?;
+
+    let mut cmd = Command::new(program);
+    cmd.args(args)
+        .current_dir(&real_root) // per-child cwd; never set_current_dir (global)
+        .stdin(Stdio::null()) // no inherited stdin; a reader can't block on a tty
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    // (2) ENV SCRUB — clear EVERYTHING, then set only the fixed safe allow-list. The child
+    //     cannot read the hub's FRIDAY_DEEPSEEK_API_KEY (or any inherited secret) from `env`.
+    cmd.env_clear()
+        .env("PATH", RUN_COMMAND_CHILD_PATH)
+        .env("LANG", "C")
+        .env("LC_ALL", "C");
+
+    // (4) Put the child in its OWN process group so the timeout kill reaches any grandchildren it
+    //     spawned (killpg), not just argv[0]. setpgid(0,0) in the child is async-signal-safe and
+    //     touches only the child — the single documented `unsafe` here.
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::setpgid(0, 0) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+
+    // (6) Spawn — on failure DROP the io::Error (it can carry the program name/errno) → static.
+    let mut child = cmd.spawn().map_err(|_| FsError::CommandSpawn)?;
+    let pid = child.id() as libc::pid_t;
+
+    // (4/5) DEADLINE-BOUNDED, DEADLOCK-FREE bounded capture. Each pipe is drained by its own thread
+    //       so a child emitting more than the OS pipe buffer can NEVER block on write (which would
+    //       otherwise masquerade as a timeout). The shared buffer retains at most
+    //       RUN_COMMAND_MAX_OUTPUT_BYTES COMBINED across both streams; bytes past the cap are
+    //       read-and-discarded. `truncated` records that more existed.
+    //
+    //       Crucially, the drain is bounded by an ABSOLUTE wall-clock deadline (timeout + a small
+    //       grace) rather than by waiting for EOF. EOF normally arrives first — when the leader and
+    //       its in-group descendants exit (or we SIGKILL the group) every copy of the write-fd
+    //       closes, the pipe EOFs, and the reader returns at once. But a grandchild that called
+    //       `setsid()`/`setpgid()` has ESCAPED the leader's process group: our killpg can NOT reach
+    //       it, so if it inherited and keeps the write-fd open the pipe NEVER EOFs. Without a
+    //       deadline the reader's blocking `read()` would hang forever and the `r.join()` below
+    //       would PIN the calling hub thread (the recv_timeout only ever guarded the LEADER, which
+    //       has already exited). So each reader self-terminates at `drain_deadline`: it sets its fd
+    //       non-blocking and `poll()`s against the REMAINING budget, stopping (and marking the
+    //       output truncated) when the deadline passes. The threads therefore exit on their own and
+    //       the unchanged join loop below is naturally bounded — NO unbounded block, NO thread leak.
+    let shared: Arc<Mutex<(Vec<u8>, bool)>> =
+        Arc::new(Mutex::new((Vec::with_capacity(4096), false)));
+
+    // Absolute deadline for the WHOLE drain: the command's own timeout plus a small grace so that,
+    // once the leader exits, any IN-GROUP buffered output still has a moment to flush/EOF before we
+    // cut the readers loose. A process-group-escaping grandchild holding the pipe open is bounded by
+    // this same deadline (it can never push past it), which is the whole point.
+    let drain_deadline = std::time::Instant::now() + timeout + RUN_COMMAND_DRAIN_GRACE;
+
+    // Drain `r` into `shared` until EOF or `deadline`, whichever comes first. The fd is set
+    // non-blocking and we `poll()` against the remaining budget so a never-EOF pipe (an escaped
+    // grandchild holding the write-fd) can NOT pin this thread: at the deadline we mark the output
+    // truncated and return, leaving the thread promptly joinable. `R: Read + AsRawFd` so we can
+    // reach the underlying fd for fcntl/poll while still using the buffered `read()` path.
+    fn drain_into<R: std::io::Read + std::os::unix::io::AsRawFd>(
+        mut r: R,
+        shared: Arc<Mutex<(Vec<u8>, bool)>>,
+        deadline: std::time::Instant,
+    ) {
+        let fd = r.as_raw_fd();
+        // Set the read end non-blocking (a separate open-file-description from the child's write
+        // end, so the child's I/O semantics are unchanged). If fcntl fails we bail rather than risk
+        // an unbounded blocking read.
+        unsafe {
+            let flags = libc::fcntl(fd, libc::F_GETFL);
+            if flags < 0 || libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) < 0 {
+                return;
+            }
+        }
+        let mut chunk = [0u8; 8192];
+        loop {
+            // Remaining budget; once it hits zero the deadline has passed → stop and mark truncated.
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                shared.lock().unwrap().1 = true; // deadline cut the drain short → output truncated
+                return;
+            }
+            let mut pfd = libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            // Clamp to i32 milliseconds (>=1 so we never busy-spin); the loop re-checks the real
+            // deadline above, so a clamp shorter than `remaining` only costs an extra poll.
+            let timeout_ms = remaining.as_millis().clamp(1, i32::MAX as u128) as libc::c_int;
+            let pr = unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
+            if pr < 0 {
+                let e = std::io::Error::last_os_error();
+                if e.kind() == std::io::ErrorKind::Interrupted {
+                    continue; // EINTR — re-poll against the (re-checked) deadline
+                }
+                return; // poll itself failed — stop draining this stream (do not block)
+            }
+            if pr == 0 {
+                continue; // poll timed out; loop re-checks the deadline and returns if reached
+            }
+            // Readable OR hung-up (POLLHUP). Attempt the read UNCONDITIONALLY — gating on POLLIN
+            // would `continue` on a POLLHUP and busy-spin, since poll re-reports POLLHUP instantly.
+            match r.read(&mut chunk) {
+                Ok(0) => return, // EOF — child (and any in-group descendant) closed this fd
+                Ok(n) => {
+                    let mut guard = shared.lock().unwrap();
+                    let (buf, truncated) = &mut *guard;
+                    let remaining = RUN_COMMAND_MAX_OUTPUT_BYTES.saturating_sub(buf.len());
+                    if remaining == 0 {
+                        *truncated = true; // already full — keep reading to EOF, discard
+                    } else if n > remaining {
+                        buf.extend_from_slice(&chunk[..remaining]);
+                        *truncated = true;
+                    } else {
+                        buf.extend_from_slice(&chunk[..n]);
+                    }
+                    // drop guard, keep reading so the child never blocks on a full pipe
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue, // EINTR
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => continue, // EAGAIN → re-poll
+                Err(_) => return, // pipe broke (child died) — done draining this stream
+            }
+        }
+    }
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let mut readers = Vec::new();
+    if let Some(out) = stdout {
+        let s = Arc::clone(&shared);
+        readers.push(std::thread::spawn(move || {
+            drain_into(out, s, drain_deadline)
+        }));
+    }
+    if let Some(err) = stderr {
+        let s = Arc::clone(&shared);
+        readers.push(std::thread::spawn(move || {
+            drain_into(err, s, drain_deadline)
+        }));
+    }
+
+    // Waiter thread: block on wait() and report the status over a channel so the main thread can
+    // impose the deadline with recv_timeout.
+    let (tx, rx) = mpsc::channel::<std::io::Result<std::process::ExitStatus>>();
+    std::thread::spawn(move || {
+        let status = child.wait();
+        let _ = tx.send(status);
+    });
+
+    let (exit_code, timed_out) = match rx.recv_timeout(timeout) {
+        Ok(Ok(status)) => (status.code(), false),
+        Ok(Err(_)) => (None, false), // wait() itself failed — treat as no code, not a hang
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            // (4) KILL the whole process group (negative pid → killpg semantics), then reap so
+            //     the waiter thread's wait() returns and the pipes EOF (readers can join).
+            unsafe {
+                libc::kill(-pid, libc::SIGKILL);
+                libc::kill(pid, libc::SIGKILL); // belt-and-suspenders if setpgid raced
+            }
+            let _ = rx.recv(); // reap the (now-killed) child
+            (None, true)
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => (None, false),
+    };
+
+    // (4) SIGKILL the whole process group on EVERY path, not just the timeout path. The leader is
+    //     now reaped (normal exit, or our kill), but it may have spawned descendants. Any descendant
+    //     that is STILL IN the leader's process group is reached by this killpg: it dies, its copies
+    //     of the stdout/stderr write-fd close, the pipe EOFs, and the corresponding reader returns
+    //     at once. This is why we setpgid'd the child into its OWN group — the killpg here cannot
+    //     touch the hub or any unrelated process.
+    //
+    //     HONEST RESIDUAL — escaped grandchildren are NOT reaped, and that is INHERENT. A grandchild
+    //     that called `setsid()`/`setpgid(0,0)` has left the leader's process group, so this killpg
+    //     can NEVER reach it; if it inherited and keeps the pipe write-fd open, the pipe never EOFs.
+    //     We do NOT hunt it down: this surface only runs an operator-signed, single-use command, and
+    //     an operator who signs a command that DAEMONIZES (the standard double-fork/`setsid` that
+    //     retains stdout) gets a daemon — that orphan is the approved behavior of the approved
+    //     command, not a containment failure. What this code MUST guarantee is that such an escapee
+    //     can NOT pin the hub: the reader threads are DEADLINE-BOUNDED (see `drain_into` above), so
+    //     they self-terminate at `drain_deadline` (= timeout + grace) regardless of an escaped writer
+    //     holding the pipe open. The `r.join()` below is therefore bounded on every path WITHOUT
+    //     depending on this killpg producing an EOF, and the call returns within ~timeout + grace.
+    //     RESIDUAL (pgid reuse): on the normal-exit path the leader was already reaped, so in the
+    //     vanishingly small window where the OS recycled its freed pgid onto an unrelated new group,
+    //     this killpg could signal that group. Sub-millisecond, accepted, ESRCH ignored — the same
+    //     trade `std::process::Command::output()` makes.
+    unsafe {
+        libc::kill(-pid, libc::SIGKILL);
+    }
+
+    // The reader threads either already returned (the child's/in-group fds EOF'd, or the pipe
+    // broke) or will self-terminate at `drain_deadline` if an escaped grandchild is holding the
+    // write-fd open. Either way each thread exits ON ITS OWN, so these joins are bounded on every
+    // path — they do NOT depend on the killpg above forcing an EOF.
+    for r in readers {
+        let _ = r.join();
+    }
+
+    let (bytes, truncated) = {
+        let guard = shared.lock().unwrap();
+        guard.clone()
+    };
+    // Lossy UTF-8 (command output need not be valid UTF-8), then char-boundary truncate as a
+    // belt to the byte cap (the cap above is enforced on raw bytes; this keeps the String valid).
+    let output = truncate_to_char_boundary(
+        &String::from_utf8_lossy(&bytes),
+        RUN_COMMAND_MAX_OUTPUT_BYTES,
+    );
+
+    Ok(CommandRunResult {
+        exit_code,
+        output,
+        output_truncated: truncated,
+        timed_out,
+    })
+}
+
 /// Truncate `s` to at most `max` bytes, backing up to the nearest UTF-8 char boundary so the
 /// result is always valid UTF-8 (never splits a multibyte char).
 fn truncate_to_char_boundary(s: &str, max: usize) -> String {
@@ -1274,5 +1681,277 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         write_file_within_root(root.path(), "ro.txt", b"NEW").unwrap();
         assert_eq!(read_file(&path), "NEW");
+    }
+
+    // ── run_command: shell-free hardened exec ───────────────────────────────────────────────
+
+    /// The quote-aware tokenizer (NO shell): quotes delimit args-with-spaces, no expansion, no
+    /// backslash-escape, adjacent runs concatenate, unbalanced quotes are rejected.
+    #[test]
+    fn tokenize_command_is_minimal_and_quote_aware() {
+        assert_eq!(
+            tokenize_command("echo hello").unwrap(),
+            vec!["echo", "hello"]
+        );
+        // single + double quotes keep spaces inside one arg
+        assert_eq!(
+            tokenize_command("echo 'a b' \"c d\"").unwrap(),
+            vec!["echo", "a b", "c d"]
+        );
+        // adjacent quoted/unquoted runs concatenate; empty quotes ⇒ an empty arg
+        assert_eq!(tokenize_command("a\"b\"c").unwrap(), vec!["abc"]);
+        assert_eq!(tokenize_command("x '' y").unwrap(), vec!["x", "", "y"]);
+        // metachars are LITERAL (no shell): `$HOME`, `|`, `;` are ordinary chars in args
+        assert_eq!(
+            tokenize_command("echo $HOME | rm ; ls").unwrap(),
+            vec!["echo", "$HOME", "|", "rm", ";", "ls"]
+        );
+        // whitespace-only ⇒ empty argv (caller maps to CommandInvalid)
+        assert!(tokenize_command("   ").unwrap().is_empty());
+        // unbalanced quote ⇒ Err
+        assert!(tokenize_command("echo 'unterminated").is_err());
+        assert!(tokenize_command("echo \"unterminated").is_err());
+    }
+
+    /// Empty / whitespace-only / unbalanced-quote commands fail closed with the STATIC-message
+    /// CommandInvalid (no command text in the error).
+    #[test]
+    fn run_command_rejects_unparseable_fail_closed() {
+        let root = TempDir::new();
+        assert!(matches!(
+            run_command_in_root(root.path(), "").unwrap_err(),
+            FsError::CommandInvalid
+        ));
+        assert!(matches!(
+            run_command_in_root(root.path(), "   ").unwrap_err(),
+            FsError::CommandInvalid
+        ));
+        assert!(matches!(
+            run_command_in_root(root.path(), "echo 'oops").unwrap_err(),
+            FsError::CommandInvalid
+        ));
+        // Static message: the error Display must not echo the command string.
+        let msg = run_command_in_root(root.path(), "echo 'oops")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            !msg.contains("oops"),
+            "error must not leak command text: {msg}"
+        );
+    }
+
+    /// A program not on the fixed child PATH cannot be spawned → static-message CommandSpawn.
+    #[test]
+    fn run_command_unknown_program_fails_closed() {
+        let root = TempDir::new();
+        let err =
+            run_command_in_root(root.path(), "definitely_not_a_real_program_xyz").unwrap_err();
+        assert!(matches!(err, FsError::CommandSpawn), "got {err:?}");
+        assert!(
+            !err.to_string()
+                .contains("definitely_not_a_real_program_xyz"),
+            "spawn error must not leak the program name"
+        );
+    }
+
+    /// Simple command: echo hello → exit 0, output contains "hello", not truncated/timed-out.
+    /// Also proves the env-scrubbed child can still resolve a bare program via the fixed PATH.
+    #[test]
+    fn run_command_simple_echo() {
+        let root = TempDir::new();
+        let r = run_command_in_root(root.path(), "echo hello").unwrap();
+        assert_eq!(r.exit_code, Some(0));
+        assert!(r.output.contains("hello"), "output was {:?}", r.output);
+        assert!(!r.output_truncated);
+        assert!(!r.timed_out);
+    }
+
+    /// CWD containment: the child runs with cwd == root, so `ls` sees ONLY root's contents (and
+    /// nothing from the parent / outside).
+    #[test]
+    fn run_command_cwd_is_root() {
+        let root = TempDir::new();
+        write_file(&root.path().join("inside.txt"), "x");
+        // A sibling file OUTSIDE root that ls(root) must never see.
+        let outside = TempDir::new();
+        write_file(&outside.path().join("outside.txt"), "y");
+
+        let r = run_command_in_root(root.path(), "ls").unwrap();
+        assert_eq!(r.exit_code, Some(0));
+        assert!(
+            r.output.contains("inside.txt"),
+            "ls(cwd=root) must list root: {:?}",
+            r.output
+        );
+        assert!(
+            !r.output.contains("outside.txt"),
+            "ls must not see files outside root (cwd containment): {:?}",
+            r.output
+        );
+    }
+
+    /// ENV SCRUB: a sentinel secret is set in THE CHILD'S would-be inherited env only if env_clear
+    /// failed. We prove env_clear by running `env` and asserting the child env is EXACTLY the
+    /// fixed allow-list — no inherited HOME, no sentinel, PATH == the fixed value. (We avoid
+    /// mutating the process-global env; instead we assert the child env is the allow-list, which
+    /// is a STRONGER proof than "the one sentinel is absent".)
+    #[test]
+    fn run_command_env_is_scrubbed_to_allowlist() {
+        let root = TempDir::new();
+        let r = run_command_in_root(root.path(), "env").unwrap();
+        assert_eq!(r.exit_code, Some(0));
+        let lines: Vec<&str> = r.output.lines().filter(|l| !l.is_empty()).collect();
+        // PATH is the fixed allow-list; LANG/LC_ALL are C; nothing else leaks in.
+        assert!(
+            r.output.contains(&format!("PATH={RUN_COMMAND_CHILD_PATH}")),
+            "child PATH must be the fixed allow-list: {:?}",
+            r.output
+        );
+        assert!(r.output.contains("LANG=C"), "env was {:?}", r.output);
+        // No inherited hub env: HOME / any FRIDAY_* secret must be ABSENT.
+        assert!(
+            !r.output.contains("HOME="),
+            "child must not inherit HOME: {:?}",
+            r.output
+        );
+        assert!(
+            !r.output.contains("FRIDAY_"),
+            "child must not inherit any FRIDAY_* secret: {:?}",
+            r.output
+        );
+        // The child env is EXACTLY {PATH, LANG, LC_ALL} — nothing else (defense-in-depth proof).
+        let keys: std::collections::BTreeSet<&str> =
+            lines.iter().filter_map(|l| l.split('=').next()).collect();
+        assert_eq!(
+            keys,
+            ["LANG", "LC_ALL", "PATH"].into_iter().collect(),
+            "child env must be exactly the fixed allow-list, got {keys:?}"
+        );
+    }
+
+    /// NO-SHELL: `echo $HOME` prints the LITERAL `$HOME` (no expansion) because there is no shell
+    /// and no env-var substitution. (Doubly so: HOME is not even in the scrubbed child env.)
+    #[test]
+    fn run_command_no_shell_expansion() {
+        let root = TempDir::new();
+        let r = run_command_in_root(root.path(), "echo $HOME").unwrap();
+        assert_eq!(r.exit_code, Some(0));
+        assert_eq!(r.output.trim_end(), "$HOME", "no shell expansion expected");
+    }
+
+    /// TIMEOUT + KILL: `sleep 5` with a SHORT (200ms) test timeout → timed_out=true, child killed,
+    /// and the call returns promptly (well under the 5s the sleep would take).
+    #[test]
+    fn run_command_times_out_and_kills_child() {
+        let root = TempDir::new();
+        let start = std::time::Instant::now();
+        let r = run_command_in_root_with_timeout(
+            root.path(),
+            "sleep 5",
+            std::time::Duration::from_millis(200),
+        )
+        .unwrap();
+        let elapsed = start.elapsed();
+        assert!(r.timed_out, "sleep 5 under a 200ms timeout must time out");
+        assert_eq!(r.exit_code, None, "a killed child has no normal exit code");
+        assert!(
+            elapsed < std::time::Duration::from_secs(3),
+            "must return promptly after the kill, took {elapsed:?}"
+        );
+    }
+
+    /// SETSID-ESCAPE BOUND (the load-bearing reliability test). A `perl` LEADER forks a grandchild
+    /// that calls `POSIX::setsid()` — ESCAPING the leader's process group — and then HOLDS stdout
+    /// open while sleeping far longer than the timeout+grace; the leader then EXITS immediately.
+    /// `recv_timeout` returns the instant the leader exits (`timed_out=false`), and our process-group
+    /// SIGKILL can NOT reach the escaped grandchild, so the stdout pipe never EOFs. Pre-fix the
+    /// unbounded `r.join()` would block on the grandchild's full lifetime (or forever), pinning the
+    /// calling thread. Post-fix the reader drain is deadline-bounded, so the call MUST return within
+    /// ~timeout + grace regardless. We use a 1s timeout (grace 2s ⇒ ~3s drain deadline) and a
+    /// grandchild that sleeps 30s, then assert the call returns in < 8s — well above the ~3s drain
+    /// deadline (generous headroom for a loaded CI runner's scheduling jitter) yet far below the
+    /// grandchild's 30s lifetime. This test FAILS on the pre-fix code (it would take ~30s, blowing
+    /// the 8s bound) and PASSES on the deadline-bounded fix (returns ~3s).
+    #[test]
+    fn run_command_setsid_escaped_grandchild_does_not_pin_thread() {
+        let root = TempDir::new();
+        // perl is on PATH (/usr/bin/perl). Quote-aware tokenizer: pass the program as one '...'
+        // single-quoted arg so the script survives as a single literal token (no shell, no $expand).
+        // The grandchild setsid()'s (new session ⇒ new process group ⇒ escapes the leader's group),
+        // keeps STDOUT (it does NOT close it) and sleeps 30s; the leader prints + exits at once.
+        let script = "my $pid = fork(); \
+                      if (!defined $pid) { exit 3 } \
+                      if ($pid == 0) { POSIX::setsid(); $| = 1; print \"grandchild\\n\"; sleep 30; exit 0 } \
+                      print \"leader\\n\"; exit 0;";
+        let command = format!("perl -MPOSIX -e '{script}'");
+        let timeout = std::time::Duration::from_secs(1);
+        // Bound: well above the ~3s drain deadline (loaded-CI headroom) yet far below the
+        // grandchild's 30s lifetime, so this cleanly separates "deadline-bounded" from "pinned".
+        let bound = std::time::Duration::from_secs(8);
+        let start = std::time::Instant::now();
+        let r = run_command_in_root_with_timeout(root.path(), &command, timeout).unwrap();
+        let elapsed = start.elapsed();
+        // The HARD requirement: bounded by ~timeout + grace, NOT the grandchild's 30s lifetime.
+        assert!(
+            elapsed < bound,
+            "an escaped setsid grandchild holding stdout must NOT pin the call; \
+             returned in {elapsed:?} (must be < {bound:?})"
+        );
+        // The leader exited on its own well within the timeout, so this is NOT a timeout-kill of
+        // the leader: `timed_out` reflects the leader, which exited normally.
+        assert!(
+            !r.timed_out,
+            "the leader exited on its own; timed_out must reflect the leader, not the drain cut"
+        );
+        // The deadline cut the drain short (the grandchild's pipe never EOF'd) ⇒ output marked
+        // truncated/incomplete (we reuse `output_truncated` as the deadline-cut signal).
+        assert!(
+            r.output_truncated,
+            "a deadline-bounded drain that never saw EOF must report the output as truncated"
+        );
+    }
+
+    /// OUTPUT BOUND: a single self-terminating program that emits > the cap (`seq 1 200000`,
+    /// hundreds of KiB of ASCII, then EXITS) → output_truncated=true and the RETAINED bytes are
+    /// <= the cap. No shell pipe needed (we banned the shell), and no timeout (it exits).
+    #[test]
+    fn run_command_output_is_bounded() {
+        let root = TempDir::new();
+        let r = run_command_in_root(root.path(), "seq 1 200000").unwrap();
+        assert!(!r.timed_out, "seq exits on its own — must not time out");
+        assert!(
+            r.output_truncated,
+            "output beyond the cap must be truncated"
+        );
+        assert!(
+            r.output.len() <= RUN_COMMAND_MAX_OUTPUT_BYTES,
+            "retained bytes {} must be <= cap {}",
+            r.output.len(),
+            RUN_COMMAND_MAX_OUTPUT_BYTES
+        );
+    }
+
+    /// A non-zero EXIT is a RESULT, not an Err: `false` exits 1.
+    #[test]
+    fn run_command_nonzero_exit_is_a_result() {
+        let root = TempDir::new();
+        let r = run_command_in_root(root.path(), "false").unwrap();
+        assert_eq!(r.exit_code, Some(1));
+        assert!(!r.timed_out);
+    }
+
+    /// A non-existent root is a clean NotFound (canonicalize), not a spawn of the command.
+    #[test]
+    fn run_command_missing_root_is_not_found() {
+        let missing = std::env::temp_dir().join(format!(
+            "friday-fs-no-such-root-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let err = run_command_in_root(&missing, "echo hi").unwrap_err();
+        assert!(matches!(err, FsError::NotFound), "got {err:?}");
     }
 }
