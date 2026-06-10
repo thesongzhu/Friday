@@ -37,6 +37,11 @@ acceptance criterion at the end before you proceed.
   port (`FRIDAY_PORT`, default `3141`). The install tool's *verify-b* enforces
   this, but choose deliberately (e.g. `48750`). The server binds `127.0.0.1`
   ONLY — never the LAN.
+- **A DeepSeek key the server can read at boot.** `HubRuntime::live` constructs
+  `DeepSeekClient::from_env()`, which requires `FRIDAY_DEEPSEEK_API_KEY` in the
+  process env at construction — and the plist deliberately carries no secret, so
+  a plist that execs the bin directly will NOT have it. Use the tool's
+  `--key-env-file` wrapper mode (next section) to deliver it at runtime.
 
 ---
 
@@ -91,8 +96,54 @@ It places **no secret** in the plist and does NOT set the TS route flag. If
 *verify-b* aborts (exit `75`), the chosen port is in use or collides with the TS
 hub — pick another and re-run.
 
+To deliver the DeepSeek key the server needs at boot, add
+`--key-env-file "$HOME/.config/friday/<your>.env"` (see the next section); the
+tool then also stages a key-delivery wrapper and points the plist at its install
+path.
+
+### 3a. DeepSeek key delivery — `--key-env-file` wrapper mode
+
+**Why no secret may live in the plist.** `~/Library/LaunchAgents/*.plist` files
+are plain-text, are not permission-hardened by launchd, get copied around in
+backups/snapshots, and their env blocks show up in `launchctl print` — so this
+plist (and the install tool) NEVER embed a key. But the server requires
+`FRIDAY_DEEPSEEK_API_KEY` in its env at construction (`HubRuntime::live` →
+`DeepSeekClient::from_env()`), so a direct-exec plist boots **fail-closed**
+under launchd. That gap is closed by a wrapper, not by weakening the rule.
+
+**What the wrapper does.** With `--key-env-file <path>` the tool validates the
+env file (exists, mode `0600`/`0400`, owned by you, defines a non-empty
+`FRIDAY_DEEPSEEK_API_KEY` or `DEEPSEEK_API_KEY` — values are never printed) and
+stages a `0700` wrapper (`rust-agent-run-ws-server-run.sh`) next to the plist.
+At every (re)start the wrapper sources ONLY that env file, exports
+`FRIDAY_DEEPSEEK_API_KEY`, and `exec`s the server bin with the exact same args
+the direct-mode plist would have used. The staged plist's `ProgramArguments`
+point at the wrapper's INSTALL path (`<LOG_DIR>/rust-agent-run-ws-server-run.sh`,
+default `~/.friday/launchd/`); the printed step-4 instructions gain one line
+(`install -m 0700 …`) to put it there — manual, like the plist `cp`. Only the
+env file's PATH is embedded in the wrapper; no key value ever appears in the
+wrapper, the plist, or the tool's output.
+
+**Fail-closed behavior.** If the env file is missing/unreadable or the key is
+absent/empty at start time, the wrapper exits `2` WITHOUT starting the server —
+matching the server's own refuse-to-boot posture. launchd's
+`KeepAlive(SuccessfulExit=false)` then surfaces the failure (check
+`friday-rust-agent-run-ws-server.stderr.log`) rather than masking it; nothing
+ever degrades to a keyless or silent boot.
+
+**Key rotation.** Edit the env file in place (keep mode `0600`), then:
+
+```sh
+launchctl kickstart -k "gui/$UID/com.friday.rust-agent-run-ws-server"
+```
+
+The wrapper re-sources the env file at every (re)start — no re-staging, no plist
+change, no new wrapper needed.
+
 ### 4. Install + bootstrap (operator runs the printed commands by hand)
-The tool prints the exact commands; they are, for the staged plist:
+The tool prints the exact commands; they are, for the staged plist (in
+`--key-env-file` wrapper mode the printout adds one preceding line —
+`install -m 0700 '<staged wrapper>' '<wrapper install path>'`):
 
 ```sh
 cp '<staged plist>' "$HOME/Library/LaunchAgents/com.friday.rust-agent-run-ws-server.plist"
@@ -111,6 +162,9 @@ tail -n 40 "$HOME/.friday/launchd/friday-rust-agent-run-ws-server.stderr.log"
 #         "peer-pubkey allowlist loaded from SecureStore (count=…)"
 # a fail-closed boot logs one of: master_key_unavailable / secure_store_unavailable /
 #         peer_allowlist_unavailable / bind_failed
+# in --key-env-file wrapper mode a fail-closed wrapper (exit 2, server never started)
+# logs: "rust-agent-run-ws-server-run: env file missing/unreadable" or
+#       "rust-agent-run-ws-server-run: DeepSeek key missing in env file"
 ```
 
 ### 5. Flip the TS-side route flag (on `com.friday.hub`, NOT here)
