@@ -88,6 +88,15 @@ export interface FridayRustHubAgentRunSealedClientServiceResult {
   readonly answerSha256?: string;
   /** Byte length of the answer body — a measure, NEVER the body text. Absent when no answer. */
   readonly answerLen?: number;
+  /**
+   * (A1 transport-truth) REFS-surface run COUNTS — counts only, NEVER a body/turn/tool name.
+   * `undefined` when the server omits them (an OLD server that predates A1, or a non-delivered
+   * outcome). Token counts are DEFERRED server-side ⇒ currently always `undefined`.
+   */
+  readonly turns?: number;
+  readonly executedTools?: number;
+  readonly promptTokens?: number;
+  readonly completionTokens?: number;
 }
 
 export interface FridayRustHubAgentRunSealedClientService {
@@ -183,13 +192,20 @@ export function createFridayRustHubAgentRunSealedClientService(
       }
 
       // Map to the REFS-ONLY shape the composition consumes — DROP the in-band `body` (compose's
-      // authoritative body source is the slice-3 owner-gated DB readback).
+      // authoritative body source is the slice-3 owner-gated DB readback). (A1) Thread the run
+      // COUNTS through when present (absent ⇒ omitted, never 0-faked); these are counts, not body.
       return {
         truthLabel: "rust_wired",
         runId: sealed.runId,
         status: sealed.status,
         ...(sealed.answerSha256 !== undefined ? { answerSha256: sealed.answerSha256 } : {}),
         ...(sealed.answerLen !== undefined ? { answerLen: sealed.answerLen } : {}),
+        ...(sealed.turns !== undefined ? { turns: sealed.turns } : {}),
+        ...(sealed.executedTools !== undefined ? { executedTools: sealed.executedTools } : {}),
+        ...(sealed.promptTokens !== undefined ? { promptTokens: sealed.promptTokens } : {}),
+        ...(sealed.completionTokens !== undefined
+          ? { completionTokens: sealed.completionTokens }
+          : {}),
       };
     },
   };

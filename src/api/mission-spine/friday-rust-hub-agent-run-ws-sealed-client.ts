@@ -143,6 +143,25 @@ export interface FridayRustHubAgentRunSealedResult {
   /** Byte length of the answer body — a measure — when an answer exists. */
   readonly answerLen?: number;
   /**
+   * (A1 transport-truth) REFS-surface run METADATA: the model-turn COUNT the loop took.
+   * A COUNT only — never a turn body/message. `undefined` when the server omits it (an OLD
+   * server that predates A1, or a non-delivered outcome) — never fabricated.
+   */
+  readonly turns?: number;
+  /**
+   * (A1) REFS-surface run METADATA: the count of tools that actually executed. A COUNT only
+   * — never a tool name/args. `undefined` when absent (old server / non-delivered).
+   */
+  readonly executedTools?: number;
+  /**
+   * (A1) REFS-surface run METADATA: prompt-token total, when known. A COUNT only. Wire-shape
+   * reserved; population is DEFERRED server-side (the per-turn usage is billed to the Rust
+   * token_ledger, not carried on the loop outcome), so this is `undefined` for now.
+   */
+  readonly promptTokens?: number;
+  /** (A1) REFS-surface run METADATA: completion-token total, when known. DEFERRED ⇒ `undefined`. */
+  readonly completionTokens?: number;
+  /**
    * The OPENED answer body, when the run delivered one to this owner. Absent on a denied /
    * no-answer outcome. NOT a refs field — it arrived doubly-sealed over the owner channel.
    */
@@ -379,6 +398,12 @@ interface ResultRefs {
   status: string;
   answerSha256?: string;
   answerLen?: number;
+  // (A1 transport-truth) REFS-surface run COUNTS — counts only, never a body. Absent when the
+  // server omits them (old server / non-delivered / deferred token counts).
+  turns?: number;
+  executedTools?: number;
+  promptTokens?: number;
+  completionTokens?: number;
 }
 
 /**
@@ -408,6 +433,11 @@ function finishWithBody(ctx: InboundContext, body: string | undefined): void {
     status: refs.status,
     ...(refs.answerSha256 !== undefined ? { answerSha256: refs.answerSha256 } : {}),
     ...(refs.answerLen !== undefined ? { answerLen: refs.answerLen } : {}),
+    // (A1) Surface the run COUNTS when the server carried them (absent ⇒ omitted, not 0-faked).
+    ...(refs.turns !== undefined ? { turns: refs.turns } : {}),
+    ...(refs.executedTools !== undefined ? { executedTools: refs.executedTools } : {}),
+    ...(refs.promptTokens !== undefined ? { promptTokens: refs.promptTokens } : {}),
+    ...(refs.completionTokens !== undefined ? { completionTokens: refs.completionTokens } : {}),
     ...(body !== undefined ? { body } : {}),
   });
 }
@@ -422,11 +452,21 @@ function handleResult(ctx: InboundContext, fields: Record<string, unknown>): voi
   }
   const answerSha256 = asString(fields.answer_sha256);
   const answerLen = asNumber(fields.answer_len);
+  // (A1) REFS-surface run COUNTS — parse when present; `asNumber` yields `undefined` for an
+  // absent/non-numeric field (an OLD server omits them entirely ⇒ undefined, never 0-faked).
+  const turns = asNumber(fields.turns);
+  const executedTools = asNumber(fields.executed_tools);
+  const promptTokens = asNumber(fields.prompt_tokens);
+  const completionTokens = asNumber(fields.completion_tokens);
   ctx.refs = {
     runId,
     status,
     ...(answerSha256 !== undefined ? { answerSha256 } : {}),
     ...(answerLen !== undefined ? { answerLen } : {}),
+    ...(turns !== undefined ? { turns } : {}),
+    ...(executedTools !== undefined ? { executedTools } : {}),
+    ...(promptTokens !== undefined ? { promptTokens } : {}),
+    ...(completionTokens !== undefined ? { completionTokens } : {}),
   };
   // No fingerprint ⇒ no answer ⇒ no body envelope follows; settle now. Otherwise wait (bounded)
   // for the SECOND (body) envelope.

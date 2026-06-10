@@ -1164,6 +1164,16 @@ pub enum AuthedAnswer {
         answer: String,
         answer_sha256: String,
         answer_len: i64,
+        /// (A1 transport-truth) REFS-surface run METADATA carried from the
+        /// [`crate::LoopOutcome`]: the model-turn count. A COUNT only — never a turn
+        /// body. `None` until a caller attaches it via [`AuthedAnswer::with_counts`]
+        /// (e.g. [`run_authed_agent_loop`], which now has the outcome in hand). The
+        /// body-projection path that mints this variant leaves it `None` (it reads DB
+        /// state and has no outcome) — the loop entry attaches the real counts after.
+        turns: Option<u64>,
+        /// (A1) REFS-surface run METADATA: the executed-tool COUNT. Never a tool name
+        /// / args. Same `with_counts`-attached / `None`-by-default discipline as `turns`.
+        executed_tools: Option<u64>,
     },
     /// A stored answer exists but the authenticated caller is NOT its owner (or the run has no
     /// owner): the body is WITHHELD. Carries only the coarse deny reason + the refs-only
@@ -1189,6 +1199,8 @@ impl std::fmt::Debug for AuthedAnswer {
                 status,
                 answer_sha256,
                 answer_len,
+                turns,
+                executed_tools,
                 ..
             } => f
                 .debug_struct("AuthedAnswer::Delivered")
@@ -1196,6 +1208,8 @@ impl std::fmt::Debug for AuthedAnswer {
                 .field("status", status)
                 .field("answer_sha256", answer_sha256)
                 .field("answer_len", answer_len)
+                .field("turns", turns)
+                .field("executed_tools", executed_tools)
                 .field("answer", &"<redacted: owner-only body>")
                 .finish(),
             AuthedAnswer::Denied {
@@ -1226,6 +1240,37 @@ impl AuthedAnswer {
         }
     }
 
+    /// (A1 transport-truth) Attach the REFS-surface run COUNTS from the
+    /// [`crate::LoopOutcome`] to a `Delivered` answer. A NO-OP on `Denied` / `NoAnswer`
+    /// (a non-delivered outcome carries no counts) — so the loop entry can attach
+    /// unconditionally without re-matching. Counts are metadata only; this NEVER touches
+    /// the body, sha256, len, status, or owner. The body-release projection
+    /// ([`project_answer_for_authed`]) mints `Delivered` with `None` counts (it has no
+    /// outcome); the loop entry that holds the [`crate::LoopOutcome`] attaches the real
+    /// numbers here.
+    pub fn with_counts(self, turns: u64, executed_tools: u64) -> AuthedAnswer {
+        match self {
+            AuthedAnswer::Delivered {
+                run_id,
+                status,
+                answer,
+                answer_sha256,
+                answer_len,
+                ..
+            } => AuthedAnswer::Delivered {
+                run_id,
+                status,
+                answer,
+                answer_sha256,
+                answer_len,
+                turns: Some(turns),
+                executed_tools: Some(executed_tools),
+            },
+            // A non-delivered outcome carries no counts — unchanged.
+            other => other,
+        }
+    }
+
     /// The (d) REFS-ONLY proof projection: outcome label + status + the answer FINGERPRINT
     /// (sha256 + length) + run_id — and NEVER the answer body (and never an owner principal,
     /// raw provider/secret/channel id). This is what a proof/unauth surface (e.g. the bin's
@@ -1237,6 +1282,8 @@ impl AuthedAnswer {
                 status,
                 answer_sha256,
                 answer_len,
+                turns,
+                executed_tools,
                 ..
             } => json!({
                 "outcome": "delivered_to_authenticated_owner",
@@ -1244,6 +1291,10 @@ impl AuthedAnswer {
                 "status": status,
                 "answer_sha256": answer_sha256,
                 "answer_len": answer_len,
+                // (A1) REFS-surface run COUNTS (metadata, never a body). Absent ⇒ null
+                // (the proof surface and the wire result agree on the same numbers).
+                "turns": turns,
+                "executed_tools": executed_tools,
             }),
             AuthedAnswer::Denied {
                 run_id,
@@ -1282,6 +1333,11 @@ pub fn project_answer_for_authed(
             answer: stored.answer,
             answer_sha256: stored.answer_sha256,
             answer_len: stored.answer_len,
+            // (A1) This DB-projection path has no LoopOutcome in hand — counts default
+            // to `None`. The loop entry ([`run_authed_agent_loop`]) holds the outcome and
+            // attaches the real counts via [`AuthedAnswer::with_counts`].
+            turns: None,
+            executed_tools: None,
         },
         Ok(RunAnswerAccess::Denied(reason)) => AuthedAnswer::Denied {
             run_id: run_id.to_string(),
@@ -1318,13 +1374,28 @@ pub fn run_authed_agent_loop<T: Transport>(
 ) -> AuthedAnswer {
     // (a) the caller is already authenticated (typed proof). (b) run the loop as that
     // principal; a route/provider failure is a SAFE FAILURE (no body, no panic).
-    if runtime.run_task(run_id, task, now_ms).is_err() {
-        return AuthedAnswer::NoAnswer {
-            run_id: run_id.to_string(),
-        };
-    }
-    // (c) release the answer ONLY to the authenticated owner (owner-wiring + ownership gate).
+    //
+    // A1 transport-truth: `run_task` ALREADY returns the `LoopOutcome { turns,
+    // executed_tools, .. }` — this entry used to DISCARD it via `.is_err()`. Capture it so
+    // the REFS-surface run COUNTS can ride the result. This is a no-behavior-change edit:
+    // the `Err` arm still returns the identical body-free `NoAnswer`, and the `Ok` arm
+    // still projects the identical owner-gated body — counts are pure additive metadata.
+    let outcome = match runtime.run_task(run_id, task, now_ms) {
+        Ok((_selection, outcome)) => outcome,
+        Err(_) => {
+            return AuthedAnswer::NoAnswer {
+                run_id: run_id.to_string(),
+            };
+        }
+    };
+    // (c) release the answer ONLY to the authenticated owner (owner-wiring + ownership gate),
+    // then (A1) attach the loop's turn / executed-tool COUNTS to a `Delivered` answer
+    // (a NO-OP on Denied / NoAnswer). Counts are metadata — this never touches the body.
+    // Token counts stay `None` (DEFERRED): the per-turn usage is billed to the Rust
+    // `token_ledger`, not carried on `LoopOutcome`, so the wire field is reserved but
+    // unpopulated for now.
     project_answer_for_authed(runtime.db().conn(), run_id, caller)
+        .with_counts(outcome.turns, outcome.executed_tools)
 }
 
 fn work_item_timeline_wire(item: friday_core::WorkItem) -> MissionTimelineWorkItemWire {

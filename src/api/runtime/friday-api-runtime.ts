@@ -1231,9 +1231,14 @@ async function composeRustReadOnlyAgentRun(args: {
   }
 
   // (4) Project the ONE TS continuity row (slice-2). SOLE TS usage writer; idempotent on
-  // run_id (re-projection adds no second row — the no-double-count contract). The refs-only
-  // WS result carries no token totals (S-D is refs-only and untouched), so usage is 0 here
-  // and `pricingResolved:false` stands — truth label dark, no fabricated numbers.
+  // run_id (re-projection adds no second row — the no-double-count contract).
+  //
+  // A1 transport-truth: the refs-only WS result now CARRIES the run COUNTS (turns /
+  // executedTools) when the server populated them — so we stop hardcoding turns:0 /
+  // executedTools:0 and use the carried values, falling back to 0 ONLY when absent (an OLD
+  // server that predates A1, byte-identically to today). TOKEN totals stay 0: the per-turn
+  // usage is billed to the Rust token_ledger and is NOT carried on the wire yet (deferred),
+  // so `pricingResolved:false` still stands — truth label dark, no fabricated numbers.
   const completedAtIso = args.nowIso();
   const projection = args.db.withWriteTransaction((db) => {
     const result = args.projector.project(db, {
@@ -1249,14 +1254,16 @@ async function composeRustReadOnlyAgentRun(args: {
       // asserted by hub_server.rs `status == "finished"`) — NOT "completed". A delivered readback
       // (gated above) implies the loop finished, so map "finished" → Finished, else Errored.
       loopStatus: wsResult.status === "finished" ? "Finished" : "Errored",
-      turns: 0,
-      executedTools: 0,
+      // (A1) carried run COUNTS (0 ONLY when the server omitted them — old server).
+      turns: wsResult.turns ?? 0,
+      executedTools: wsResult.executedTools ?? 0,
       finalMessageSha256: readbackReceipt.answerSha256,
       finalMessageLen: readbackReceipt.answerLen,
       auditChainVerified: false,
-      usagePromptTokens: 0,
-      usageCompletionTokens: 0,
-      usageTotalTokens: 0,
+      // Token totals stay 0 — DEFERRED (not on the wire yet); pricingResolved:false stands.
+      usagePromptTokens: wsResult.promptTokens ?? 0,
+      usageCompletionTokens: wsResult.completionTokens ?? 0,
+      usageTotalTokens: (wsResult.promptTokens ?? 0) + (wsResult.completionTokens ?? 0),
       completedAtIso,
     });
     // execrun S-F carry-forward (DARK): MERGE the apiRequest idempotency descriptor into the
@@ -1281,15 +1288,20 @@ async function composeRustReadOnlyAgentRun(args: {
     return result;
   });
 
-  // (5) Return the owner-released body as the run's final response.
+  // (5) Return the owner-released body as the run's final response. (A1) `toolCallCount` is the
+  // product-visible surface where "turns>0 with real tools" actually shows — use the carried
+  // executed-tool COUNT (0 ONLY when an old server omitted it). `usageInput`/`usageOutput` use the
+  // carried token counts (currently 0 — DEFERRED, not on the wire). `durationMs` stays 0: the
+  // refs-only result carries no start time, so a real duration is not derivable — honest 0, not
+  // invented.
   return {
     runId: args.runId,
     status: projection.status as FridayAgentRuntimeResult["status"],
     response: readbackReceipt.answer,
-    toolCallCount: 0,
+    toolCallCount: wsResult.executedTools ?? 0,
     durationMs: 0,
-    usageInput: 0,
-    usageOutput: 0,
+    usageInput: wsResult.promptTokens ?? 0,
+    usageOutput: wsResult.completionTokens ?? 0,
     finalResponse: readbackReceipt.answer,
   };
 }

@@ -3368,6 +3368,10 @@ mod tests {
                 status: "completed".into(),
                 answer_sha256: None,
                 answer_len: None,
+                turns: None,
+                executed_tools: None,
+                prompt_tokens: None,
+                completion_tokens: None,
             },
         );
         match parse_hub_response(result.encode().unwrap()) {
