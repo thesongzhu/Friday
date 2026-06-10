@@ -148,6 +148,17 @@ pub mod workflow_exec;
 /// NOT product-replaced; NOT v1 GO.
 pub mod workflow_def;
 
+/// R3 — workflow CATALOG mutation + deploy layer (DARK). The per-WORKFLOW catalog
+/// ENTRY layer the TS `workflows.*` mutation surface maps to
+/// (`workflows.create/update/archive/publish/deploy`), orchestrating
+/// [`friday_storage::workflow_catalog`] (the entry) + [`workflow_def`] (the
+/// version bodies). `publish` delegates to the S8 single-published flip (the
+/// catalog never records the published pointer); `deploy` sets the catalog deploy
+/// pointer to the S8-published version WITHOUT firing a runtime trigger (that is
+/// R2/S10, gated). DARK substrate: no production route, the live TS `workflows.*`
+/// routes are NOT flipped; NOT v1 GO.
+pub mod workflow_catalog;
+
 /// S8 — TS published-version → Rust LINEAR-ONLY workflow translator. Any
 /// DAG/branch/parallel/unsupported source feature fails CLOSED to an explicit
 /// `Unsupported { reasons, preserved_source_meta }` — never a silent flattening,
