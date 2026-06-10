@@ -332,9 +332,7 @@ fn peer_is_allowlisted(allowlist: &[[u8; X25519_PUBKEY_LEN]], peer_pub: &[u8; 32
 ///
 /// Until both land, `len() != 1` is refused. `!= 1` (not `> 1`) also catches an impossible-0 list
 /// fail-closed; the parser guarantees ≥1, so this is purely belt-and-suspenders for the 0 case.
-fn enforce_single_peer(
-    allowlist: &[[u8; X25519_PUBKEY_LEN]],
-) -> Result<(), PeerAllowlistError> {
+fn enforce_single_peer(allowlist: &[[u8; X25519_PUBKEY_LEN]]) -> Result<(), PeerAllowlistError> {
     if allowlist.len() != 1 {
         return Err(PeerAllowlistError::MultiPeer);
     }
