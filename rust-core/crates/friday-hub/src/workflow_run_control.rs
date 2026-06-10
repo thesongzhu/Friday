@@ -273,7 +273,8 @@ pub fn retry(
 /// 2. Terminal run (no `-> Cancelled` edge) → [`RunControlError::InvalidTransition`]
 ///    (TS `INVALID_RUN_TRANSITION` from `assertTransition(status,"cancelled")`).
 ///
-/// Returns a [`WorkflowRunStatus::Cancelled`] outcome on success.
+/// On success the run is written to the terminal `Cancelled` state and `Ok(())`
+/// is returned (cancel produces no [`WorkflowOutcome`] — it does no node re-entry).
 pub fn cancel(conn: &Connection, run_id: &str, reason: Option<&str>, now_ms: i64) -> Result<()> {
     // (1) Unknown run → NotFound (the explicit not-found posture, before the
     // transition check, so a ghost run is a NotFound rather than a generic storage
