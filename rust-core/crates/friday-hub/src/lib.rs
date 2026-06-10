@@ -123,6 +123,13 @@ pub mod workflow_def;
 /// never partial. Dark substrate; NOT v1 GO.
 pub mod workflow_ts_translate;
 
+/// S9 — manual workflow-RUN bridge seam: load a STORED definition (S8 loader)
+/// and execute it through the EXISTING [`workflow_exec`] engine (no engine
+/// change, no second executor; mutating steps stay gate-paused under deny-all).
+/// DARK substrate: no production route, no scheduler (S10, operator-gated);
+/// workflow execution remains fenced in TS and is NOT product-replaced; NOT v1 GO.
+pub mod workflow_run;
+
 /// PAIR-002 — Hub-side local pairing message handler. It consumes the structured
 /// QR payload from PAIR-001 and the first-slice protocol `Pair` message, writes a
 /// trusted device through the existing authenticated pairing proof, and never

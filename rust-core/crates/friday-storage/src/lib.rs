@@ -31,6 +31,7 @@ pub mod run_result;
 mod schema;
 pub mod workflow;
 pub mod workflow_def;
+pub mod workflow_read;
 
 pub use agent_session::{
     append_session_message, ensure_session, ensure_session_with_owner, load_session_messages,
