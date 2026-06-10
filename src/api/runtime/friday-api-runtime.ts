@@ -1662,6 +1662,10 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     db: deps.db,
     idGenerator: deps.idGenerator,
     nowIso: deps.nowIso,
+    // METHOD-level retirement guard: plumb the same test-oracle flag the route
+    // honors so `deployDraft` fails closed for every non-route caller unless
+    // explicitly enabled. Production leaves this unset.
+    allowTestOnlyWorkflowDeployExecution: deps.allowTestOnlyWorkflowDeployExecution,
   });
   const deepLinkApplyService = createFridayDeepLinkApplyService({
     idGenerator: deps.idGenerator,
@@ -1891,6 +1895,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     nowIso: deps.nowIso,
     policyService: autonomyPolicyService,
     capabilitySnapshotGetter: deps.capabilitySnapshotGetter,
+    // METHOD-level retirement guard: plumb the same test-oracle flag the route
+    // honors so the shared service instance (also wired into the agent
+    // controlled-autonomy tool's acquisition_* actions and the standing-agenda
+    // service) fails closed for every non-route caller unless explicitly
+    // enabled. Production leaves this unset.
+    allowTestOnlyCapabilityAcquisitionExecution: deps.allowTestOnlyCapabilityAcquisitionExecution,
   });
   const standingAgendaService = createFridayStandingAgendaService({
     db: deps.db,

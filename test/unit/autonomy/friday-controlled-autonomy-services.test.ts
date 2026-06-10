@@ -31,6 +31,9 @@ describe("controlled autonomy closed loops", () => {
       nowIso,
       policyService,
       capabilitySnapshotGetter: () => ({ readOnly: false, ...emptyAgentSnapshot(), runtime: matrixWith() }),
+      // Test-oracle opt-in: these tests exercise the legacy acquisition run
+      // mutations, which are method-level fail-closed by default (TS-R1).
+      allowTestOnlyCapabilityAcquisitionExecution: true,
     });
     standingAgendaService = createFridayStandingAgendaService({
       db,
@@ -72,6 +75,7 @@ describe("controlled autonomy closed loops", () => {
       nowIso: () => `2026-04-25T00:00:${String(++nowCounter).padStart(2, "0")}.000Z`,
       policyService,
       capabilitySnapshotGetter: () => ({ readOnly: false, ...emptyAgentSnapshot(), runtime: currentMatrix }),
+      allowTestOnlyCapabilityAcquisitionExecution: true,
     });
 
     const run = await mutableService.startRun({
@@ -114,6 +118,7 @@ describe("controlled autonomy closed loops", () => {
       nowIso: () => `2026-04-25T00:00:${String(++nowCounter).padStart(2, "0")}.000Z`,
       policyService,
       capabilitySnapshotGetter: () => ({ readOnly: false, ...emptyAgentSnapshot(), runtime: currentMatrix }),
+      allowTestOnlyCapabilityAcquisitionExecution: true,
     });
 
     const run = await mutableService.startRun({
@@ -464,6 +469,53 @@ describe("controlled autonomy closed loops", () => {
     expect(run.status).toBe("blocked");
     expect(run.verification.passed).toBe(false);
     expect(run.rollback.summary).toContain("No side effects");
+  });
+
+  describe("TS-runtime retirement: agenda item reaches a terminal state (not stuck 'running') when startRun fails closed", () => {
+    it("rethrows the retirement 503 and leaves the item 'failed', never committed at 'running'", async () => {
+      // A fail-closed acquisition service (flag UNSET) — exactly the prod/live
+      // posture. runAgendaItem persists the item as 'running' BEFORE calling
+      // acquisitionService.startRun, which now throws the retirement error.
+      const failClosedAcquisition = createFridayCapabilityAcquisitionService({
+        db,
+        idGenerator: createTestIdGenerator(),
+        nowIso: () => `2026-04-26T00:00:${String(++nowCounter).padStart(2, "0")}.000Z`,
+        policyService,
+        capabilitySnapshotGetter: () => ({ readOnly: false, ...emptyAgentSnapshot(), runtime: matrixWith() }),
+        // No allowTestOnlyCapabilityAcquisitionExecution → fail-closed.
+      });
+      const agendaService = createFridayStandingAgendaService({
+        db,
+        idGenerator: createTestIdGenerator(),
+        nowIso: () => `2026-04-26T01:00:${String(++nowCounter).padStart(2, "0")}.000Z`,
+        policyService,
+        acquisitionService: failClosedAcquisition,
+      });
+
+      const { agendaItem } = await agendaService.createStandingGoal({
+        userId: "test-user",
+        objective: "每天搜索最新 AI 新闻并总结",
+        title: "AI news monitor (retired)",
+      });
+      // Low-risk item — no approval gate; runAgendaItem reaches startRun.
+      expect(agendaItem.approvalRequired).toBe(false);
+
+      // The retirement semantics are NOT swallowed — the 503 propagates.
+      await expect(
+        agendaService.runAgendaItem({ agendaItemId: agendaItem.id, userId: "test-user" }),
+      ).rejects.toMatchObject({
+        code: "TS_RUNTIME_CAPABILITY_ACQUISITION_RETIRED",
+        httpStatus: 503,
+      });
+
+      // The PERSISTED item must NOT be stuck 'running' — it reaches a terminal
+      // 'failed' state so the row is never poisoned.
+      const [persisted] = agendaService
+        .listAgenda({ userId: "test-user" })
+        .filter((item) => item.id === agendaItem.id);
+      expect(persisted?.status).toBe("failed");
+      expect(persisted?.status).not.toBe("running");
+    });
   });
 });
 

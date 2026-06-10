@@ -427,6 +427,39 @@ function normalizeGeneratedSpec(spec: FridayWorkflowSpecV1): FridayWorkflowSpecV
 export function createFridayWorkflowGeneratorService(
   deps: CreateFridayWorkflowGeneratorServiceDeps,
 ): FridayWorkflowGeneratorService {
+  // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+  // Phase 3 (route-only-guard defect): the workflow-generator retirement was
+  // ROUTE-only (friday-workflow-generator-routes asserts the test-oracle flag
+  // before EVERY handler — the route surface retires the WHOLE session
+  // lifecycle). The agent workflow-generator tool (start/turn/generate/approve/
+  // cancel actions), the UIX assistant surface (`startWorkflowSession`/
+  // `continueWorkflowSession`), and the reflex candidate pipeline
+  // (`generateWorkflowDraft`/`approveGeneratedCandidate`) reach these methods
+  // directly, bypassing the HTTP route guard. Guarding here fails ALL non-route
+  // callers closed BEFORE any session-row write, provider call, or workflow
+  // save — unless the explicit test-oracle flag is set. Never default this flag
+  // on in production. ALL mutating session-lifecycle methods are guarded:
+  // startSession, submitTurn (turn append + requirements-analyzer provider call
+  // + on ready_for_generation the full generation pipeline + draft persist),
+  // generateDraft, approveAndSave, and cancelSession (status flip + draft
+  // delete) — mirroring the route surface exactly. Reads
+  // (`getSession`/`getQaVerdict`/`getHarnessSummary`) stay live.
+  function assertWorkflowGeneratorExecutionAllowed(): void {
+    if (deps.allowTestOnlyWorkflowGeneratorExecution !== true) {
+      throw new FridayDomainError(
+        "TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED",
+        "TypeScript workflow generator sessions are retired in default/live runtime; use the Rust-owned workflow generator entrypoint.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_workflow_generator_entrypoint_required",
+          },
+        },
+      );
+    }
+  }
+
   const repo: FridayWorkflowGenerationSessionRepository =
     createFridayWorkflowGenerationSessionRepository({
       db: deps.db,
@@ -1344,6 +1377,7 @@ export function createFridayWorkflowGeneratorService(
     async startSession(
       input: FridayStartWorkflowGenerationRequest,
     ): Promise<FridayWorkflowGenerationTurnResponse> {
+      assertWorkflowGeneratorExecutionAllowed();
       const now = deps.nowIso();
       const sessionId = deps.idGenerator();
       const maintenanceTarget = input.targetWorkflowId
@@ -1465,6 +1499,7 @@ export function createFridayWorkflowGeneratorService(
       sessionId: string,
       input: FridayWorkflowGenerationTurnRequest,
     ): Promise<FridayWorkflowGenerationTurnResponse> {
+      assertWorkflowGeneratorExecutionAllowed();
       const session = requireSession(sessionId);
 
       if (
@@ -1596,6 +1631,7 @@ export function createFridayWorkflowGeneratorService(
       sessionId: string,
       requestedModel?: string,
     ): Promise<FridayGeneratedWorkflowDraft> {
+      assertWorkflowGeneratorExecutionAllowed();
       const session = requireSession(sessionId);
 
       if (
@@ -1686,6 +1722,7 @@ export function createFridayWorkflowGeneratorService(
     },
 
     async approveAndSave(sessionId: string) {
+      assertWorkflowGeneratorExecutionAllowed();
       const session = requireSession(sessionId);
 
       if (session.status !== "ready_for_review") {
@@ -1808,6 +1845,7 @@ export function createFridayWorkflowGeneratorService(
     },
 
     async cancelSession(sessionId: string): Promise<void> {
+      assertWorkflowGeneratorExecutionAllowed();
       const session = requireSession(sessionId);
 
       if (session.status === "saved") {

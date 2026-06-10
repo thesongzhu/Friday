@@ -69,6 +69,16 @@ export interface CreateFridayWorkflowProductServiceDeps {
   };
   idGenerator: () => string;
   nowIso: () => string;
+  /**
+   * Test-oracle only: allows the legacy TypeScript workflow deploy mutations
+   * (`deployDraft` and `materializeGeneratedSession`, which persists a workflow/
+   * draft as the deploy-preparation step) in isolated test/validation harnesses.
+   * Default/live runtime must leave this unset so the methods fail closed for
+   * ALL callers — including the UIX deploy-workflow card, the UIX assistant
+   * create/continue/generate-workflow flows, and the cross-border pack service,
+   * which bypass the HTTP route guard.
+   */
+  allowTestOnlyWorkflowDeployExecution?: boolean;
 }
 
 function sortDraftsByUpdatedAtDescending(
@@ -393,6 +403,32 @@ export function createFridayWorkflowProductService(
 
   return {
     async materializeGeneratedSession(input) {
+      // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+      // materializeGeneratedSession is NOT a read: in the draft-present branch
+      // it persists a NEW workflow row (deps.workflowRuntime.crud.createWorkflow)
+      // and a draft (createDraftFromVisualization), and in the restore branch it
+      // persists a draft from a saved-approval/session record — both DB writes.
+      // It has no HTTP route; its only callers are the UIX assistant
+      // create/continue/generate-workflow flows (startWorkflowSession /
+      // continueWorkflowSession / the `generate-workflow` action), which are part
+      // of the retired generation+deploy lifecycle and bypass the HTTP route
+      // guard. Guarding here with the SAME deploy test-oracle flag fails ALL
+      // these non-route callers closed BEFORE any workflow/draft persist unless
+      // the flag is explicitly set. Never default this flag on in production.
+      if (deps.allowTestOnlyWorkflowDeployExecution !== true) {
+        void input;
+        throw new FridayDomainError(
+          "TS_RUNTIME_WORKFLOW_DEPLOY_RETIRED",
+          "TypeScript workflow deploy execution is retired in default/live runtime; use the Rust-owned workflow deployment entrypoint.",
+          {
+            httpStatus: 503,
+            details: {
+              classification: "fail_closed",
+              replacement: "rust_owned_workflow_deployment_entrypoint_required",
+            },
+          },
+        );
+      }
       if (!deps.workflowGenerator) {
         throw new FridayDomainError(
           "WORKFLOW_GENERATOR_UNAVAILABLE",
@@ -485,6 +521,33 @@ export function createFridayWorkflowProductService(
     },
 
     async deployDraft(input) {
+      // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+      // Phase 3 (route-only-guard defect): the workflow-deploy retirement was
+      // ROUTE-only (friday-workflow-product-routes asserts the test-oracle
+      // flag before POST .../deploy). The UIX deploy-workflow card
+      // (`deployWorkflowCard`) and the cross-border pack service
+      // (`enableWorkflow` preset deployment) reach this method directly,
+      // bypassing the HTTP route guard. Guarding here fails ALL non-route
+      // callers closed BEFORE any lock acquisition, draft compile, publish,
+      // trigger resync, or run start — unless the explicit test-oracle flag is
+      // set. Never default this flag on in production. Reads
+      // (getOverview/getVisualization) stay live. NOTE:
+      // materializeGeneratedSession is NOT a read — it persists a workflow/draft
+      // and is guarded with this SAME deploy flag at its own method head.
+      if (deps.allowTestOnlyWorkflowDeployExecution !== true) {
+        void input;
+        throw new FridayDomainError(
+          "TS_RUNTIME_WORKFLOW_DEPLOY_RETIRED",
+          "TypeScript workflow deploy execution is retired in default/live runtime; use the Rust-owned workflow deployment entrypoint.",
+          {
+            httpStatus: 503,
+            details: {
+              classification: "fail_closed",
+              replacement: "rust_owned_workflow_deployment_entrypoint_required",
+            },
+          },
+        );
+      }
       const workflow = getWorkflowOrThrow(input.workflowId);
       const draft = getDraftOrThrow(input.workflowId, input.draftId);
       let acquiredLockToken: string | undefined;

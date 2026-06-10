@@ -801,6 +801,122 @@ describe("createFridayUixSurfaceService", () => {
     warnSpy.mockRestore();
   });
 
+  it("propagates the workflow-deploy retirement 503 from materializeGeneratedSession (generate-workflow caller path, no crash)", async () => {
+    // The method-level guard (TS-R1) makes materializeGeneratedSession fail
+    // closed in default/live runtime. The UIX generate-workflow action reaches
+    // it directly (with a caller-supplied sessionId), bypassing the HTTP route
+    // guard — this proves the UIX layer surfaces the 503 rather than crashing,
+    // and (since materialize is a no-op when fail-closed and UIX writes nothing
+    // before the call) leaves no poisoned state.
+    const retirementError = new FridayDomainError(
+      "TS_RUNTIME_WORKFLOW_DEPLOY_RETIRED",
+      "TypeScript workflow deploy execution is retired in default/live runtime; use the Rust-owned workflow deployment entrypoint.",
+      {
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_workflow_deployment_entrypoint_required",
+        },
+      },
+    );
+    const materializeGeneratedSession = vi.fn(async () => {
+      throw retirementError;
+    });
+    const service = createFridayUixSurfaceService({
+      idGenerator: () => "assistant-retire-1",
+      selfHealing: {
+        reportStructuredFailure: vi.fn(),
+        listIssueCards: vi.fn(() => []),
+      } as never,
+      workflowProduct: { materializeGeneratedSession } as never,
+    });
+
+    await expect(
+      service.executeTemplate({
+        templateId: "generate-workflow",
+        userId: "user-1",
+        parameters: { sessionId: "pre-deploy-persisted-session" },
+      }),
+    ).rejects.toMatchObject({
+      code: "TS_RUNTIME_WORKFLOW_DEPLOY_RETIRED",
+      httpStatus: 503,
+    } satisfies Partial<FridayDomainError>);
+
+    expect(materializeGeneratedSession).toHaveBeenCalledWith({
+      sessionId: "pre-deploy-persisted-session",
+      actorUserId: "user-1",
+    });
+  });
+
+  it("propagates the workflow-generator retirement 503 from submitTurn (continueWizard caller path, no crash)", async () => {
+    // The continueWizard clarification step reaches continueWorkflowSession ->
+    // workflowGenerator.submitTurn, which is now method-guarded. Proves the UIX
+    // wizard surface propagates the 503 instead of crashing, and never reaches
+    // the downstream materialize since submitTurn fail-closes first.
+    const retirementError = new FridayDomainError(
+      "TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED",
+      "TypeScript workflow generator sessions are retired in default/live runtime; use the Rust-owned workflow generator entrypoint.",
+      {
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_workflow_generator_entrypoint_required",
+        },
+      },
+    );
+    const submitTurn = vi.fn(async () => {
+      throw retirementError;
+    });
+    const materializeGeneratedSession = vi.fn();
+    const service = createFridayUixSurfaceService({
+      idGenerator: () => "assistant-retire-2",
+      selfHealing: {
+        reportStructuredFailure: vi.fn(),
+        listIssueCards: vi.fn(() => []),
+      } as never,
+      workflowGenerator: {
+        startSession: vi.fn(async () => ({
+          session: { sessionId: "workflow-session-1" },
+          mode: "clarification_required",
+          questions: ["Which repository should Friday change first?"],
+        })),
+        submitTurn,
+      } as never,
+      workflowProduct: { materializeGeneratedSession } as never,
+    });
+
+    const started = service.startWizard({
+      wizardId: "guided-assistant",
+      userId: "user-1",
+    });
+
+    await expect(
+      service.continueWizard({
+        wizardId: "guided-assistant",
+        contextId: started.wizard.contextId,
+        userId: "user-1",
+        values: { goal: "Generate a release workflow" },
+      }),
+    ).resolves.toBeDefined();
+
+    // Advance to the clarification step, which drives submitTurn (fail-closed).
+    await expect(
+      service.continueWizard({
+        wizardId: "guided-assistant",
+        contextId: started.wizard.contextId,
+        userId: "user-1",
+        values: { answer: "the release repo" },
+      }),
+    ).rejects.toMatchObject({
+      code: "TS_RUNTIME_WORKFLOW_GENERATOR_RETIRED",
+      httpStatus: 503,
+    } satisfies Partial<FridayDomainError>);
+
+    expect(submitTurn).toHaveBeenCalled();
+    // submitTurn fail-closed BEFORE the downstream materialize.
+    expect(materializeGeneratedSession).not.toHaveBeenCalled();
+  });
+
   it("routes review-issues through the bundled starter skill when a skill executor is available", async () => {
     const execute = vi.fn(() => ({
       runId: "skill-run-1",

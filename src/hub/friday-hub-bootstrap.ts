@@ -2137,6 +2137,12 @@ export async function createFridayHub(
 	      canonicalMutationGate: canonicalMutatingActionGateEnabled,
 	      canonicalApprovalSecret: tokenSecret,
 	      cloudPlanningMode: systemCloudPlanningMode,
+      // TS Runtime Retirement (§1 method-level guard): production leaves this
+      // unset (config flag undefined) so the `executeIntent` method is
+      // fail-closed for the agent system tool path, not just the HTTP route
+      // (whose own flag is never threaded in hub bootstrap). Test-oracle hub
+      // configs set it true to exercise legacy intent execution.
+      allowTestOnlySystemIntentExecution: config.allowTestOnlySystemIntentExecution,
       remoteAuth: {
         rpName: systemRemoteAuthRpName,
         rpId: systemRemoteAuthRpId,
@@ -4143,6 +4149,12 @@ export async function createFridayHub(
     nowIso,
     computeChecksum,
     userRulesContextProvider: buildWorkflowGeneratorPromptContext,
+    // TS Runtime Retirement (§1 method-level guard): production leaves this
+    // unset (config flag undefined) so startSession/generateDraft/approveAndSave
+    // are fail-closed for the agent tool, UIX assistant, and reflex candidate
+    // paths, not just the HTTP routes. Test-oracle hub configs set it true to
+    // exercise legacy generation.
+    allowTestOnlyWorkflowGeneratorExecution: config.allowTestOnlyWorkflowGeneratorExecution,
   });
 
   // ─── Tool approval gates (GAP 2) ───
@@ -5885,6 +5897,12 @@ export async function createFridayHub(
     db: stateRuntime.sqlite,
     idGenerator,
     nowIso,
+    // TS Runtime Retirement (§1 method-level guard): production leaves this
+    // unset (config flag undefined) so the `deployDraft` method is fail-closed
+    // for the UIX deploy-workflow card and cross-border pack paths (this hub
+    // instance is the one wired into both), not just the HTTP route.
+    // Test-oracle hub configs set it true to exercise legacy deployment.
+    allowTestOnlyWorkflowDeployExecution: config.allowTestOnlyWorkflowDeployExecution,
   });
 
   const enrichAgentRunForUi = (run: FridayAgentRunRecord): FridayAgentRunRecord => {

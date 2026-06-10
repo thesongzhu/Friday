@@ -182,6 +182,13 @@ export interface CreateFridaySystemServiceDeps {
     challengeTtlMs?: number;
     assertionTtlMs?: number;
   };
+  /**
+   * Test-oracle only: allows legacy TypeScript system intent execution
+   * (`executeIntent`) in isolated test/validation harnesses. Default/live
+   * runtime must leave this unset so the method fails closed for ALL callers —
+   * including the agent system tool, which bypasses the HTTP route guard.
+   */
+  allowTestOnlySystemIntentExecution?: boolean;
 }
 
 export type FridaySystemEventListener = (event: FridaySystemEvent) => void;
@@ -2400,9 +2407,36 @@ export async function createFridaySystemService(
       }
     };
 
+  // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+  // Phase 3 (route-only-guard defect): the system-intent retirement was
+  // ROUTE-only (friday-system-routes asserts the test-oracle flag before
+  // POST /v1/system/intents). The agent system tool reaches this method
+  // directly via `systemService.executeIntent(...)`, bypassing the HTTP route
+  // guard, so an agent run could drive desktop/system intents in prod.
+  // Guarding here fails ALL non-route callers closed BEFORE any approval-rule
+  // read, lease mutation, companion call, or exec side effect — unless the
+  // explicit test-oracle flag is set. Never default this flag on in
+  // production. Reads (getSession/getState/listEvents/...) stay live; only
+  // intent execution is retired, mirroring the route surface.
   const executeIntent = async (
     input: FridaySystemIntentInput,
-  ): Promise<FridaySystemIntentResult> => executeIntentInternal(input);
+  ): Promise<FridaySystemIntentResult> => {
+    if (deps.allowTestOnlySystemIntentExecution !== true) {
+      void input;
+      throw new FridayDomainError(
+        "TS_RUNTIME_SYSTEM_INTENT_RETIRED",
+        "TypeScript system intent execution is fail-closed in default/live runtime; use the Rust-owned system_intent_execution entrypoint.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_system_intent_execution_entrypoint_required",
+          },
+        },
+      );
+    }
+    return executeIntentInternal(input);
+  };
 
   return {
     getSession,

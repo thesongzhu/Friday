@@ -206,6 +206,36 @@ export function createFridayStandingAgendaService(
     };
     saveAgendaItem(running);
 
+    // ─── TS Runtime Retirement: terminal-state on throw ───
+    // The item is persisted as `running` BEFORE the capability-acquisition
+    // startRun call below. startRun is now method-guarded and fail-closes (503
+    // TS_RUNTIME_CAPABILITY_ACQUISITION_RETIRED) in default/live runtime; without
+    // this guard the item would be committed stuck at `running` forever (no
+    // terminal transition, no agenda-run record). Any throw from the run body
+    // (the retirement guard, or a pre-existing startRun/persist failure) must
+    // move the item OUT of `running` to the terminal `failed` status so the
+    // friday_agenda_items row is never left poisoned. The retirement semantics
+    // are NOT swallowed — the original error is re-thrown so the agent
+    // controlled-autonomy tool's outer try/catch surfaces it as a tool error.
+    try {
+      return await runAgendaItemBody({ item, running, input, startedAt });
+    } catch (error) {
+      saveAgendaItem({
+        ...running,
+        status: "failed",
+        updatedAt: nowIso(),
+      });
+      throw error;
+    }
+  }
+
+  async function runAgendaItemBody(args: {
+    item: FridayAgendaItem;
+    running: FridayAgendaItem;
+    input: { agendaItemId: string; userId: string };
+    startedAt: string;
+  }): Promise<FridayAgendaRun> {
+    const { item, running, input, startedAt } = args;
     const capabilityCheck = await acquisitionService.startRun({
       userId: input.userId,
       goal: `${item.title}\n${item.summary}`,

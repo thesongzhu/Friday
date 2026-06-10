@@ -252,6 +252,9 @@ function makeDeps() {
       },
       idGenerator: () => "id-1",
       nowIso: () => NOW,
+      // Test-oracle opt-in: these tests exercise the legacy `deployDraft`
+      // mutation, which is method-level fail-closed by default (TS-R1).
+      allowTestOnlyWorkflowDeployExecution: true,
     }),
     builderRuntime,
     workflowRuntime,
