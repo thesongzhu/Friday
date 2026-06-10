@@ -44,26 +44,75 @@
 //! `workflow_catalog`). The live TS system-intent path stays fail-closed; this is
 //! ADDITIVE substrate, not a product cutover. NOT v1 GO.
 //!
+//! ## The verified-approval → Allow → AUTHORIZE (effect deferred) path (R4 slice-2, DARK)
+//! [`SystemIntentEntrypoint::dispatch_with_approval`] is the system-intent analogue
+//! of the in-product `friday-hub::resume::resume_with_approval` (S6d). It INGESTS a
+//! canonical Ed25519 operator approval bound to the intent's action digest and
+//! COMPOSES (never re-implements) the proven verify-only policy
+//! `friday_storage::authorize_mutating_action_ed25519`: `friday_core::gate::evaluate`
+//! still cannot grant a mutating action, but a base `RequiresApproval` is upgraded to
+//! `Allow` ONLY by an operator-signed, digest-bound, unexpired, single-use approval.
+//! The Hub holds ONLY the operator's PUBLIC verify key (`OperatorVerifyingKey`), so
+//! agent/channel/remote can NEVER self-mint — and the reserved-action hard-`Deny`
+//! (an Agent/Channel doing `approve`/`deny`) is decided by the gate BEFORE any
+//! signature is examined, so it survives even a perfectly-valid operator approval.
+//! Single-use is the shared `consumed_approval` replay store (the `ed25519:` keyspace);
+//! a replay is refused by the nonce PK collision (no new migration).
+//!
+//! On `Allow` the execute is honest: EVERY protected mutating intent records
+//! `unavailable` (the [`UnavailableExecutor`] seam) even on a valid `Allow` — the
+//! verified approval AUTHORIZES the action, but the actual domain effect is NOT faked.
+//! There is NO control-plane-completes path in this slice. In particular:
+//! * `resume_task` is NOT a pure control-plane / no-effect op: in the TS oracle its
+//!   handler sets an in-memory `activeTask` pointer AND emits `system.task.updated`
+//!   and `system.intent.completed` (`friday-system-service.ts`, `case "resume_task"`).
+//!   The `system.task.updated` event is READ BACK via `findLatestEventByName`
+//!   (`friday-system-service.ts:421`), so the un-emitted event is an OBSERVABLE,
+//!   load-bearing divergence — not cosmetic in-memory state. Recording `completed`
+//!   here while performing NONE of those three effects would be a faked-complete, so
+//!   `resume_task` records `unavailable` + the [`UNIMPLEMENTED_EXECUTION_MARKER`]
+//!   (its `activeTask` + the two event emissions are an HONEST deferred AC) until a
+//!   real executor models them.
+//! * an OS-AFFECTING op (`launch_app`/`open_url`/`close_app`/…/`recover_ui`) is likewise
+//!   routed to the [`UnavailableExecutor`] and records `unavailable` even on a valid
+//!   `Allow`. (`recover_ui`'s TS handler revokes the lease AND hides the companion
+//!   overlay + reads companion status, so it is OS-affecting; completing it after only
+//!   the lease-revoke would fake the overlay effect — it stays `unavailable`.)
+//! * In all cases the m0026 control-lease IS auto-acquired on the `Allow` path (the TS
+//!   `ensureControlLease` ordering, universal to every mutating intent) — that DB
+//!   bookkeeping is real and not faked; only the domain effect is deferred.
+//!
 //! ## DEFERRED / UNIMPLEMENTED seams (explicitly NOT faked green)
 //! * **The actual OS effect** of every "do something to the desktop" action
 //!   (launch_app/open_url/close_app/focus/clipboard*/notification*/handoff*/
-//!   arrange_windows/snapshot) — i.e. the TS `executeIntentInternal` switch
+//!   arrange_windows/recover_ui/snapshot) — i.e. the TS `executeIntentInternal` switch
 //!   bodies that call `execCommand` / `companionBridge` / `desktopSessionManager`.
 //!   Here those route to the [`SystemActionExecutor`] trait, whose only provided
 //!   impl is [`UnavailableExecutor`] (the precedent is the TS
 //!   `createFridaySystemUnavailableCompanionBridge`). A deferred action records a
 //!   `unavailable` result with the coarse marker
 //!   [`UNIMPLEMENTED_EXECUTION_MARKER`] — it NEVER records `completed` for an
-//!   effect it did not perform.
-//! * **The verified canonical approval → Allow → EXECUTE happy path** for a
-//!   mutating intent. `friday_core::gate::evaluate` cannot grant a mutating action;
-//!   the upgrade lives in `friday-storage::authorize_mutating_action` (PR-3b). This
-//!   module wires only the fail-closed BLOCK path (which is what "fail-closed"
-//!   requires); composing the verified-approval execute path is a documented
-//!   follow-on seam (an Allow would, today, hit the unavailable executor anyway).
+//!   effect it did not perform, EVEN on a valid operator `Allow`.
+//! * **`resume_task`'s domain effect** — its in-memory `activeTask` pointer AND the
+//!   two event emissions (`system.task.updated` / `system.intent.completed`) — is not
+//!   modeled in the dark m0026 substrate. Because `system.task.updated` is read back
+//!   (`findLatestEventByName`), this is an OBSERVABLE divergence, so `resume_task`
+//!   stays `unavailable` on a valid `Allow` (only its lease auto-acquire is real) —
+//!   exactly as the OS-affecting actions do. This is an HONEST deferred AC, NOT a
+//!   faked-`completed`.
+//! * **`target_ref` digest binding for a future REAL executor** — `dispatch_with_approval`
+//!   binds `target_ref` into the canonical action digest (via the gate request's
+//!   `parameters`), so a single-use approval is scoped to THIS exact target. The
+//!   `classify`-derived `Resource` (path/target/file) escalation is NOT exercised here
+//!   (a coarse `target_ref` is not a filesystem path); a real OS executor that needs
+//!   resource-scoped risk escalation is an explicit deferred AC.
 
-use friday_core::gate::{self, Actor, ActorKind, GateDecision, MutatingActionRequest};
+use friday_core::gate::{
+    self, Actor, ActorKind, CanonicalApproval, GateDecision, MutatingActionRequest,
+};
 use friday_core::Risk;
+use friday_crypto::OperatorVerifyingKey;
+use friday_storage::authorize_mutating_action_ed25519;
 use friday_storage::system_intent::{
     acquire_control_lease, insert_approval_record, insert_intent_request, insert_intent_result,
     normalize_active_lease, revoke_active_lease, ApprovalRecord, DecisionLabel, IntentAction,
@@ -137,11 +186,14 @@ pub struct DispatchOutcome {
     pub execution_deferred: bool,
 }
 
-/// The boundary to the actual OS effect of a desktop-affecting action. The TS
-/// equivalent is the `companionBridge` / `desktopSessionManager` / `execCommand`
-/// surface. The ONLY provided impl is [`UnavailableExecutor`] (precedent: the TS
-/// `createFridaySystemUnavailableCompanionBridge`); a real impl (companion/Swift
-/// app / AppleScript) is out of scope for this dark slice.
+/// The boundary to the actual EFFECT of a protected action — the OS effect of a
+/// desktop-affecting action (the TS `companionBridge` / `desktopSessionManager` /
+/// `execCommand` surface) AND `resume_task`'s non-OS DOMAIN effect (its `activeTask`
+/// pointer + the `system.task.updated` / `system.intent.completed` emissions). Both are
+/// deferred through this one seam. The ONLY provided impl is [`UnavailableExecutor`]
+/// (precedent: the TS `createFridaySystemUnavailableCompanionBridge`); a real impl
+/// (companion/Swift app / AppleScript + the task-event emission) is out of scope for
+/// this dark slice.
 pub trait SystemActionExecutor {
     /// Attempt to perform `action`'s OS effect on `target_ref`. Returns the coarse
     /// outcome the result row records. A real executor returns `Completed`; the
@@ -157,10 +209,10 @@ pub struct ExecOutcome {
     pub message: String,
 }
 
-/// The DEFAULT executor: every desktop-affecting action is reported `unavailable`
-/// with the unimplemented marker. This is the honest dark-slice seam — it never
-/// fakes a `completed` effect. Mirrors the TS unavailable companion bridge used in
-/// the retirement-guard test.
+/// The DEFAULT executor: every protected action (desktop-affecting OR `resume_task`'s
+/// domain effect) is reported `unavailable` with the unimplemented marker. This is the
+/// honest dark-slice seam — it never fakes a `completed` effect. Mirrors the TS
+/// unavailable companion bridge used in the retirement-guard test.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct UnavailableExecutor;
 
@@ -318,6 +370,175 @@ impl<E: SystemActionExecutor> SystemIntentEntrypoint<E> {
         };
 
         // Run the OS effect through the executor (the unavailable seam by default).
+        let exec = self
+            .executor
+            .execute(input.action, input.target_ref.as_deref());
+        let execution_deferred = exec.status == IntentStatus::Unavailable
+            && exec.message == UNIMPLEMENTED_EXECUTION_MARKER;
+        let result = IntentResultRecord {
+            intent_id: input.intent_id.clone(),
+            action: input.action,
+            status: exec.status,
+            message: exec.message,
+            control_lease_id: lease_id,
+            gate_reason: None,
+            created_at: now_ms,
+        };
+        insert_intent_result(conn, &result)?;
+        Ok(DispatchOutcome {
+            result,
+            execution_deferred,
+        })
+    }
+
+    /// Dispatch a system intent WITH a canonical Ed25519 operator approval — the
+    /// verified-approval → `Allow` → EXECUTE happy path (R4 slice-2, DARK). The
+    /// system-intent analogue of `friday-hub::resume::resume_with_approval` (S6d).
+    ///
+    /// It COMPOSES (never re-implements) the proven verify-only policy: the same
+    /// fail-closed front (flag, validate, persist REQUEST) as [`dispatch`], then
+    /// [`authorize_mutating_action_ed25519`] is the SOLE authority — `friday_core::gate`
+    /// is unchanged, and a base `Allow`/`Deny` (incl. the reserved-action hard-`Deny`
+    /// for an Agent/Channel doing `approve`/`deny`) is FINAL and never consults the
+    /// approval or the replay store. Only a base `RequiresApproval` (a mutating /
+    /// high-risk action) can be upgraded to `Allow`, and ONLY by an operator-signed,
+    /// digest-bound, unexpired, single-use approval verified under `operator_vk` (the
+    /// PUBLIC key the Hub holds — it can verify but never mint). The decision is
+    /// persisted as a durable approval-record.
+    ///
+    /// On the decision:
+    /// * NOT `Allow` (`Deny` / `RequiresApproval` — replay/expired/forged/HMAC/owner-denied/
+    ///   no-approval) → a `blocked` result; NOTHING is executed.
+    /// * `Allow` → the m0026 lease auto-acquire (a real DB op) followed by the
+    ///   [`SystemActionExecutor`] (the [`UnavailableExecutor`] by default). EVERY protected
+    ///   intent — `resume_task` included — records `unavailable` with the unimplemented
+    ///   marker: the approval authorizes the action, but the domain effect is NOT
+    ///   faked-`completed`. There is NO control-plane-completes path in this slice.
+    ///   (`resume_task`'s `activeTask` pointer + the `system.task.updated` /
+    ///   `system.intent.completed` emissions — the latter read back via
+    ///   `findLatestEventByName` — are an HONEST deferred AC; recording `completed` while
+    ///   performing none of them would be a faked-complete.)
+    ///
+    /// `operator_vk` MUST come from an operator-controlled source — this function only
+    /// ever VERIFIES with it. DARK: no production route/flag/caller wires it.
+    pub fn dispatch_with_approval(
+        &self,
+        conn: &Connection,
+        input: &IntentInput,
+        approval: &CanonicalApproval,
+        operator_vk: &OperatorVerifyingKey,
+        now_ms: i64,
+    ) -> Result<DispatchOutcome> {
+        // (1) Flag fail-closed — BEFORE any side effect, mirroring [`dispatch`] and the
+        //     TS method guard.
+        if !self.enabled {
+            return Err(SystemIntentError::FailClosed);
+        }
+
+        // (2) Validate (fail-closed) — never persist/execute an invalid input.
+        self.validate(input)?;
+
+        let mutating = is_mutating(input.action);
+        let risk = resolve_risk(input.action);
+
+        // (2b) Contract guard (fail-closed): the approval-ingestion entrypoint is ONLY for
+        //      a PROTECTED intent — one the gate would base-`RequiresApproval` (mutating, or
+        //      high-risk). A non-protected action (a would-base-`Allow` read-only/low-risk
+        //      op, or a lease-lifecycle `request_control`/`release_control`) does not belong
+        //      here: it is dispatched via [`dispatch`], not approved. Refusing it as `Invalid`
+        //      BEFORE any side effect keeps the contract tight and avoids the slice-1
+        //      divergence where a non-mutating action would auto-acquire a lease on this path.
+        if !(mutating || risk >= Risk::High) {
+            return Err(SystemIntentError::Invalid(format!(
+                "{} is not a protected intent; the approval-ingestion path is for mutating/high-risk intents only (use dispatch)",
+                input.action.as_str()
+            )));
+        }
+
+        // (3) Persist the immutable REQUEST record.
+        let request = IntentRequest {
+            intent_id: input.intent_id.clone(),
+            action: input.action,
+            actor_id: input.actor_id.clone(),
+            actor_kind: input.actor_kind,
+            target_ref: input.target_ref.clone(),
+            mutating,
+            risk: risk_label(risk),
+            created_at: now_ms,
+        };
+        insert_intent_request(conn, &request)?;
+
+        // (4) The verify-only policy is the SOLE authority. It runs `gate::evaluate`
+        //     internally (so the reserved-action hard-Deny for an Agent/Channel is decided
+        //     BEFORE the signature is examined), upgrades ONLY a base RequiresApproval to
+        //     Allow for an operator-signed/digest-bound/unexpired/single-use approval, and
+        //     CONSUMES the nonce on grant. `friday_core::gate` is unchanged.
+        let gate_request = build_gate_request(input, mutating, risk);
+        let evidence = authorize_mutating_action_ed25519(
+            conn,
+            &gate_request,
+            Some(approval),
+            operator_vk,
+            now_ms,
+        )?;
+
+        // (5) Persist the gate decision as durable approval-record evidence (refs-only).
+        insert_approval_record(
+            conn,
+            &ApprovalRecord {
+                record_id: format!("{}::approval", input.intent_id),
+                intent_id: input.intent_id.clone(),
+                action: input.action,
+                decision: decision_label(evidence.decision),
+                reason: evidence.reason.clone(),
+                risk: risk_label(evidence.risk),
+                approval_required: evidence.approval_required,
+                created_at: now_ms,
+            },
+        )?;
+
+        // (6) NOT Allow → blocked; NOTHING is executed (replay/expired/forged/HMAC/
+        //     owner-denied/reserved-action/no-approval all land here).
+        if evidence.decision != GateDecision::Allow {
+            let message = format!(
+                "Approval did not grant {}: {}",
+                input.action.as_str(),
+                evidence.reason
+            );
+            return self.persist_blocked(conn, input, message, Some(evidence.reason), now_ms);
+        }
+
+        // (7) Allow → the honest execute. EVERY protected mutating intent (resume_task
+        //     included) records `unavailable`: the approval AUTHORIZES the action, but the
+        //     domain effect is DEFERRED, never faked-`completed`. There is NO
+        //     control-plane-completes path in this slice. `resume_task` is NOT a pure
+        //     no-effect op — its TS handler sets `activeTask` AND emits
+        //     `system.task.updated` (read back via `findLatestEventByName`) +
+        //     `system.intent.completed`; recording `completed` while performing none of
+        //     those would be a faked-complete (an OBSERVABLE divergence). Those effects are
+        //     an HONEST deferred AC, exactly like `recover_ui`'s overlay effect. We still
+        //     auto-acquire the lease (the universal TS `ensureControlLease` ordering, real
+        //     DB bookkeeping) so the future real executor slots in unchanged.
+        let lease_id = match self.ensure_lease(conn, input, now_ms) {
+            Ok(id) => id,
+            Err(LeaseAcquireError::Busy {
+                owner_kind,
+                owner_id,
+            }) => {
+                return self.persist_blocked(
+                    conn,
+                    input,
+                    format!(
+                        "control lease is currently held by {}:{}",
+                        owner_kind.as_str(),
+                        owner_id
+                    ),
+                    Some("system_control_busy".to_string()),
+                    now_ms,
+                );
+            }
+            Err(LeaseAcquireError::Storage(e)) => return Err(SystemIntentError::Storage(e)),
+        };
         let exec = self
             .executor
             .execute(input.action, input.target_ref.as_deref());
@@ -648,19 +869,42 @@ fn build_gate_request(input: &IntentInput, mutating: bool, risk: Risk) -> Mutati
     };
     // The classification is sealed (built via `classify`), so the gate-decision trio
     // can only come from here — no struct-literal can assert `mutating: false` for a
-    // mutating action. We pass no params (the target is a coarse ref, not a path the
-    // classifier escalates on); the base risk carries the TS-resolved risk.
+    // mutating action. We pass no params to `classify` (the target is a coarse ref, not
+    // a filesystem path the classifier escalates risk on); the base risk carries the
+    // TS-resolved risk. The `target_ref` IS bound into the canonical action digest via
+    // the request's `parameters` (below) — separate from `classify`, so it scopes a
+    // single-use approval to THIS exact target WITHOUT changing the gate DECISION or
+    // risk (the digest distinguishes one authorized action from another).
     let classification = gate::classify(mutating, risk, input.action.as_str(), &[]);
+    let parameters = input
+        .target_ref
+        .as_deref()
+        .map(|t| format!("target_ref={t}"));
     MutatingActionRequest::from_classification(
         classification,
         input.action.as_str().to_string(),
         actor,
         "system".to_string(),
         Vec::new(),
-        None,
+        parameters,
         None,
         None,
     )
+}
+
+/// The canonical action DIGEST an operator must sign to approve `input` — the exact
+/// binding [`SystemIntentEntrypoint::dispatch_with_approval`] verifies against (the
+/// hex SHA-256 of the gate request's `canonical_action_bytes`, transitively binding
+/// action / actor / principal / surface / derived-risk / `target_ref`). This is the
+/// system-intent analogue of the `PendingApprovalRequest` binding an operator signs in
+/// S6: an off-Hub operator computes this digest, signs it with their OFFLINE private
+/// key, and the Hub (holding only the PUBLIC verify key) accepts the resulting approval
+/// for exactly this action. Exposed so the dark approval-ingestion seam can be exercised
+/// end-to-end from a `tests/` integration test WITHOUT the test naming any Hub internal
+/// (and without the Hub ever holding a signing key).
+pub fn intent_action_digest(input: &IntentInput) -> String {
+    let request = build_gate_request(input, is_mutating(input.action), resolve_risk(input.action));
+    friday_crypto::action_digest(&gate::canonical_action_bytes(&request))
 }
 
 #[cfg(test)]
