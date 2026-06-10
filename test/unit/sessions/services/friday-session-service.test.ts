@@ -26,6 +26,10 @@ describe("FridaySessionService", () => {
       db,
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,
+      // TS-R4/G3: opt in to the legacy sweep so the sweepLifecycle suites
+      // exercise the real path. Default/live runtime leaves this unset
+      // (fail-closed) — see the dedicated retirement-guard suite below.
+      allowTestOnlySessionExecution: true,
     });
   });
 

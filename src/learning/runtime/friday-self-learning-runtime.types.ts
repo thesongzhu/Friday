@@ -52,4 +52,12 @@ export interface CreateFridaySelfLearningRuntimeDeps {
    * to the durable skills store; optional elsewhere.
    */
   getSkillLifecycleStatus?: (skillId: string) => SkillLifecycleStatus | undefined;
+  /**
+   * Test-oracle only: forwarded to the auto-fix execution service so its
+   * METHOD-level retirement guard (`execute()`) is satisfied. Default/live
+   * runtime must leave this unset so auto-fix execution fails closed for all
+   * non-route callers (agent-loop self-healing, dispatcher, approval-workflow).
+   * Mirrors the route-layer `allowTestOnlyAutoFixExecution` flag.
+   */
+  allowTestOnlyAutoFixExecution?: boolean;
 }

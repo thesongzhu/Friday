@@ -1,0 +1,27 @@
+[package]
+name = "friday-anthropic"
+description = "Friday Rust Core — Claude/Anthropic Friday-provider route (Hub-only, provider-secret-bearing). DARK / default-off."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+
+# Hub-only, provider-secret-bearing crate. It reads FRIDAY_ANTHROPIC_API_KEY from
+# the environment (set on the Hub only) and must stay OUT of friday-ffi's
+# dependency graph (asserted by friday-arch-tests, mirroring friday-deepseek).
+[dependencies]
+friday-core.workspace = true
+serde_json = "1"
+thiserror.workspace = true
+# Blocking HTTP client (rustls/webpki-roots; no async runtime, no system certs).
+# Same client + features friday-deepseek uses so the secret-bearing crates share
+# one audited transport surface.
+ureq = { version = "2", features = ["json"] }
+
+[dev-dependencies]
+# The PARITY harness (#[ignore]-d, built-not-run) drives the SAME prompt through
+# DeepSeek and Claude for the later live parity proof. friday-deepseek is a
+# dev-dependency ONLY (it never enters this crate's runtime/public graph), the
+# established pattern (friday-deepseek itself dev-deps friday-storage).
+friday-deepseek.workspace = true

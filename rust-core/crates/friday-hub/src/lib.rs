@@ -80,6 +80,37 @@ pub mod conn_truth;
 /// truth-labeled unbuilt-subsystem metrics. Not the XL metrics pipeline (that stays NO-GO).
 pub mod diagnostics;
 
+/// R6 — onboarding provider capability-doctor (DARK). The providers analog of
+/// [`diagnostics::DiagnosticsSnapshot::collect`]: a hub-LIBRARY aggregate
+/// ([`provider_doctor::ProviderDoctor::run`]) that composes the EXISTING parsed
+/// per-provider [`friday_providers::ProviderAuthStatus`] (via [`provider_auth`] /
+/// [`friday_providers::detect`]) into one truth-labeled onboarding-readiness result —
+/// previously this multi-provider orchestration was inlined in the
+/// `hub_providers_detect` bin and callable by nothing else. No-fallback (per-provider
+/// truth, never substituted), no new probing/model call. Built ready-but-NOT-routed:
+/// it does NOT flip the live TS `providers.detect` path and is NOT in the
+/// [`capability`] route table; confers no v1 GO.
+pub mod provider_doctor;
+
+/// R7 — LIVE provider key-validation (`providers.validate`), DARK + secret-bearing.
+/// The real impl of the call-free [`friday_providers::key_validation`] seam: it
+/// constructs the `friday-anthropic`/`friday-deepseek` clients `from_env` and runs ONE
+/// minimal authenticated round-trip, mapping the typed provider error into a
+/// [`friday_providers::KeyValidationOutcome`] (no-fallback: only an auth rejection is
+/// `Invalid`; a 5xx/429/transport is `Unavailable`, never a bad-key signal). The
+/// error→outcome mapping is pure + fully unit-tested; the network side is exercised
+/// only by an `#[ignore]`'d live harness. Registers NO route; confers no v1 GO.
+pub mod provider_key_validation;
+
+/// R7 — composite capability-doctor (`capabilities.doctor`/`providers.doctor`), DARK.
+/// Composes R6's CLI-detect [`provider_doctor::ProviderDoctor`] signal with R7's live
+/// key-validation signal into one per-provider truth-labeled readiness report — the
+/// two taxonomies (`{Codex, Claude}` CLI logins vs `{DeepSeek, Anthropic}` API keys)
+/// reported side-by-side, NEVER collapsed (claude CLI login and the anthropic API key
+/// are distinct credentials, surfaced separately). Generic over both probes for
+/// mockable testing. Registers NO route; confers no v1 GO.
+pub mod capability_doctor;
+
 /// Step-3 — setup-readiness blocker labels (truth-labeled): the runtime analog of the file-57
 /// external-prep checklist. Every prep item is `Ready { evidence }` ONLY when verified, else
 /// `NotReady { blocker }` — never falsely ready. `is_release_ready()` is the prep half of the
@@ -129,6 +160,17 @@ pub mod workflow_ts_translate;
 /// DARK substrate: no production route, no scheduler (S10, operator-gated);
 /// workflow execution remains fenced in TS and is NOT product-replaced; NOT v1 GO.
 pub mod workflow_run;
+
+/// S10-A — workflow SCHEDULER substrate (DARK). The hub-layer half of slice A:
+/// the restricted CRON-SUBSET parser + the minute-granularity UTC `is_due` /
+/// `next_due` evaluator (no `chrono`, UTC-only), the deterministic
+/// `scheduled_run_id` helper (the at-most-once anchor for the future tick's
+/// `create_run` dup-PK claim), and `create_schedule` — the create boundary that
+/// validates the cron expression fail-closed BEFORE it reaches a born-disabled
+/// stored row. NO daemon, NO tick loop, NO firing (slices B/C); the storage rows
+/// live in `friday_storage::schedule`. WAL flip + plist install + enable are
+/// operator-gated. NOT v1 GO.
+pub mod scheduler;
 
 /// PAIR-002 — Hub-side local pairing message handler. It consumes the structured
 /// QR payload from PAIR-001 and the first-slice protocol `Pair` message, writes a
@@ -467,6 +509,76 @@ impl<T: friday_deepseek::Transport> AgentLlmClient for DeepSeekAgentLlmClient<T>
         let step = parse_agent_step(&outcome.content);
         Ok((step, Some(outcome)))
     }
+}
+
+/// S7 — Real model-client adapter over `friday-anthropic` (the Claude/Anthropic
+/// route), the SECOND live provider, mirroring [`DeepSeekAgentLlmClient`]. It builds
+/// the SAME tool-call / loop prompts, calls the live Claude model (`POST /v1/messages`,
+/// no fallback), and parses the reply STRICTLY back into a [`RawToolCall`]/[`AgentStep`].
+///
+/// **DARK / default-off.** This adapter is constructed only behind an explicit,
+/// default-OFF selection (see [`crate::runtime::HubRuntime::live`], env gate
+/// `FRIDAY_CLAUDE_ROUTE_ENABLED`). It is reachable from the routed loop ONLY when a
+/// `claude`-kind route is selected, which the autonomous baseline marks
+/// `available: false`. Prod default behavior is UNCHANGED; the DeepSeek path is untouched.
+///
+/// **No-fallback contract:** identical to DeepSeek — a route failure is an
+/// [`AgentError`], never a silent substitute. The model id is supplied by the caller
+/// (from the route), so there is no model-discovery step.
+///
+/// **Error mapping (retry-classification DEFERRED).** [`AgentError::Route`] carries a
+/// concrete `friday_deepseek::DeepSeekError`, so a [`friday_anthropic::ClaudeError`]
+/// cannot go there. The lowest-blast-radius mapping for this dark, never-selected path
+/// is the existing string-bearing [`AgentError::Model`] (never retried by the run-loop's
+/// `classify_deepseek`). A future non-dark slice that actually selects Claude would add
+/// an `AgentError::ClaudeRoute(ClaudeError)` variant + a classifier arm; out of scope here.
+///
+/// **Ledger/metering DEFERRED.** This adapter does NOT override `next_step_metered`, so
+/// it uses the trait DEFAULT (no usage ⇒ no ledger row). Reusing DeepSeek's `MeteredStep`
+/// (hardwired to `friday_deepseek::ModelCallOutcome`) or `LedgerEntry::friday_route`
+/// (hardwired to `ProviderKind::DeepSeek`/`api.deepseek.com`) would mis-attribute a Claude
+/// call as DeepSeek — a latent honesty bug. A proper Claude ledger needs
+/// `ProviderKind::Anthropic` + a `MeteredStep` generalization; both out of dark scope.
+pub struct ClaudeAgentLlmClient<T: friday_anthropic::Transport> {
+    client: friday_anthropic::ClaudeClient<T>,
+    /// The model id this adapter dispatches to (from the route; e.g. `claude-opus-4-8`).
+    /// Claude has no `/models` discovery step, so the model is supplied here.
+    model: String,
+}
+
+impl<T: friday_anthropic::Transport> ClaudeAgentLlmClient<T> {
+    pub fn new(client: friday_anthropic::ClaudeClient<T>, model: impl Into<String>) -> Self {
+        Self {
+            client,
+            model: model.into(),
+        }
+    }
+}
+
+impl<T: friday_anthropic::Transport> AgentLlmClient for ClaudeAgentLlmClient<T> {
+    fn propose_tool_call(&self, task: &str) -> Result<RawToolCall, AgentError> {
+        let prompt = build_tool_prompt(task);
+        let outcome = self
+            .client
+            .chat(&self.model, &prompt, AGENTLOOP_MAX_TOKENS)
+            // ClaudeError → string-bearing AgentError::Model (retry-classification deferred;
+            // see the adapter doc). Coarse, secret-free Display.
+            .map_err(|e| AgentError::Model(e.to_string()))?;
+        parse_tool_call(&outcome.content)
+    }
+
+    /// History-aware multi-turn step, identical contract to the DeepSeek adapter's
+    /// `next_step`. `{"tool":"none","answer":"<final>"}` parses to `Finish`.
+    fn next_step(&self, task: &str, history: &[TurnTrace]) -> Result<AgentStep, AgentError> {
+        let prompt = build_loop_prompt(task, history);
+        let outcome = self
+            .client
+            .chat(&self.model, &prompt, AGENTLOOP_MAX_TOKENS)
+            .map_err(|e| AgentError::Model(e.to_string()))?;
+        parse_agent_step(&outcome.content)
+    }
+    // `next_step_metered` is intentionally NOT overridden — see the adapter doc
+    // (ledger/metering deferred; the trait default returns `(result, None)`).
 }
 
 /// The process-wide DEFAULT (built-in) tool registry, built once and reused. The free

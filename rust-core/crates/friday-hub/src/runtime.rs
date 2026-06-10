@@ -128,6 +128,11 @@ pub struct HubConfig {
 #[derive(Debug)]
 pub enum HubInitError {
     DeepSeek(DeepSeekError),
+    /// S7 — the DARK Claude route gate was ON but its client could not be built
+    /// (`FRIDAY_ANTHROPIC_API_KEY` missing/empty, etc.). A CLEAR failure: when the
+    /// operator explicitly enables the gate, a missing credential is a hard error, not a
+    /// silent degrade. With the gate OFF (the default) this is never reached.
+    Claude(friday_anthropic::ClaudeError),
     Storage(StorageError),
     /// S6d: an operator verify key SOURCE was configured (the env path is set) but could
     /// not be read/parsed. A CLEAR failure — a broken provisioning never silently degrades
@@ -141,6 +146,9 @@ impl std::fmt::Display for HubInitError {
         match self {
             // DeepSeekError's Debug carries no key (verified in friday-deepseek); never prints the secret.
             HubInitError::DeepSeek(e) => write!(f, "deepseek init failed: {e:?}"),
+            // ClaudeError's Debug carries no key (status code / kind only; verified by the
+            // friday-anthropic leak-lens tests); never prints the secret.
+            HubInitError::Claude(e) => write!(f, "claude init failed: {e:?}"),
             HubInitError::Storage(e) => write!(f, "storage init failed: {e}"),
             HubInitError::OperatorVk(e) => {
                 write!(f, "operator verify key provisioning failed: {e:?}")
@@ -157,6 +165,13 @@ pub struct HubRuntime<T: Transport> {
     db: Db,
     routes: RouteRegistry,
     deepseek: DeepSeekAgentLlmClient<T>,
+    /// S7 — DARK / default-off Claude/Anthropic route client. `None` in every build
+    /// EXCEPT a `live()` build whose `FRIDAY_CLAUDE_ROUTE_ENABLED` gate is on. It is a
+    /// boxed `dyn AgentLlmClient` (NOT generic over `T`, which is the *DeepSeek*
+    /// transport — Claude has its own). Default-off is enforced at two layers: this
+    /// field stays `None`, AND the `claude` route is registered `available: false` so
+    /// `select_route` never picks it. The DeepSeek path is unchanged.
+    claude: Option<Box<dyn AgentLlmClient>>,
     executor: FsToolExecutor,
     /// S6d: the operator's PUBLIC verify key (provisioned from an operator-controlled
     /// source). `None` ⇒ fail-closed (protected actions Pause, never Allow). The Hub holds
@@ -188,12 +203,26 @@ impl<T: Transport> HubRuntime<T> {
             db,
             routes,
             deepseek,
+            // S7: DARK — no Claude client by default. Only `live()` may populate this,
+            // and only when the default-OFF `FRIDAY_CLAUDE_ROUTE_ENABLED` gate is on
+            // (via [`Self::with_claude`]). Tests + the prod default leave it `None`.
+            claude: None,
             executor,
             operator_vk: config.operator_vk,
             approval,
             max_turns: config.max_turns,
             policy,
         })
+    }
+
+    /// S7 — attach the DARK Claude route client (builder, default-off). This is the
+    /// ONLY way the `claude` field becomes `Some`. It does NOT touch the DeepSeek path,
+    /// the route registry, or any default; selecting Claude still additionally requires
+    /// a dispatchable `claude` route (the autonomous baseline marks it `available: false`).
+    /// Consumes + returns `self` so `live()` can chain it behind the env gate.
+    pub fn with_claude(mut self, claude: Box<dyn AgentLlmClient>) -> Self {
+        self.claude = Some(claude);
+        self
     }
 
     /// The route registry reflecting THIS build's ACTUAL dispatch capability: only the live
@@ -417,21 +446,61 @@ impl HubRuntime<UreqTransport> {
         }
         let client = DeepSeekClient::from_env().map_err(HubInitError::DeepSeek)?;
         let agent = DeepSeekAgentLlmClient::new(client);
-        Self::new(config, agent, Box::new(DenyAllApprovals)).map_err(HubInitError::Storage)
+        let runtime =
+            Self::new(config, agent, Box::new(DenyAllApprovals)).map_err(HubInitError::Storage)?;
+        // S7 — DARK Claude route: wire the second-provider client ONLY when the
+        // operator explicitly opts in via the default-OFF env gate. Absent/empty/any
+        // non-`"1"` value ⇒ the gate is OFF and the Claude client is never constructed
+        // (so its `FRIDAY_ANTHROPIC_API_KEY` is never even read) — prod default behavior
+        // is UNCHANGED. Even when the gate is on, the `claude` route is still
+        // `available: false` in the autonomous baseline, so this only PRE-WIRES the
+        // client for a later live proof; it does not by itself make Claude selectable.
+        runtime.maybe_attach_claude_from_env()
+    }
+
+    /// S7 — read the default-OFF gate and, only when it is on, build the live Claude
+    /// client from its env key and attach it (DARK). Separated from `live()` so the
+    /// gate/credential logic is unit-testable. A missing/empty gate ⇒ OFF ⇒ unchanged.
+    fn maybe_attach_claude_from_env(self) -> Result<Self, HubInitError> {
+        if !claude_route_enabled_from_env() {
+            return Ok(self);
+        }
+        // Gate is ON: build the real Claude client (fails closed if the key is absent)
+        // and pin the route's model id.
+        let client = friday_anthropic::ClaudeClient::from_env().map_err(HubInitError::Claude)?;
+        let agent = crate::ClaudeAgentLlmClient::new(client, friday_anthropic::DEFAULT_MODEL);
+        Ok(self.with_claude(Box::new(agent)))
     }
 }
 
+/// S7 — the default-OFF environment gate that governs whether [`HubRuntime::live`]
+/// wires the DARK Claude route. ON only when `FRIDAY_CLAUDE_ROUTE_ENABLED` is exactly
+/// `"1"` (after trimming). UNSET / empty / `"0"` / any other value ⇒ OFF (unchanged
+/// prod default). Kept narrow + explicit so the dark path cannot be enabled by accident.
+pub const ENV_CLAUDE_ROUTE_ENABLED: &str = "FRIDAY_CLAUDE_ROUTE_ENABLED";
+
+fn claude_route_enabled_from_env() -> bool {
+    matches!(std::env::var(ENV_CLAUDE_ROUTE_ENABLED), Ok(v) if v.trim() == "1")
+}
+
 impl<T: Transport> ProviderClientResolver for HubRuntime<T> {
-    /// Only the live `deepseek` provider has a wired client in this build. Any other route
-    /// returns `None` → fail-closed `NoClientForProvider` (a defensive backstop; the route
-    /// registry already prevents selecting unavailable providers, so this never fires on
-    /// the happy path). Routing decides WHO answers; classification stays the trusted
-    /// chokepoint regardless — this resolver confers no classification authority.
+    /// The live `deepseek` provider always has a wired client. The `claude` provider has
+    /// one ONLY when the DARK route was enabled (`self.claude` is `Some` — see
+    /// [`HubRuntime::with_claude`] / [`HubRuntime::live`]'s `FRIDAY_CLAUDE_ROUTE_ENABLED`
+    /// gate); when disabled (the default) it returns `None`. Any other route returns
+    /// `None` → fail-closed `NoClientForProvider` (a defensive backstop; the route
+    /// registry already prevents selecting unavailable providers — `claude` is
+    /// `available: false` in the baseline — so this never fires on the happy path).
+    /// Routing decides WHO answers; classification stays the trusted chokepoint
+    /// regardless — this resolver confers no classification authority.
     fn resolve(&self, route: &ProviderRoute) -> Option<&dyn AgentLlmClient> {
-        if route.provider_id == "deepseek" {
-            Some(&self.deepseek)
-        } else {
-            None
+        match route.provider_id.as_str() {
+            "deepseek" => Some(&self.deepseek),
+            // DARK: `as_deref()` yields `None` whenever the Claude client was not wired
+            // (the default), so the default-off route fail-closes exactly like any
+            // other unwired provider.
+            "claude" => self.claude.as_deref(),
+            _ => None,
         }
     }
 }
@@ -568,6 +637,81 @@ mod tests {
         )
         .unwrap();
         (rt, ws, post_calls) // TempDir guard keeps the workspace alive; counter for the no-hidden test
+    }
+
+    // ---- S7: DARK Claude route default-off -----------------------------------
+
+    #[test]
+    fn claude_route_gate_is_off_by_default_and_on_only_for_exactly_1() {
+        // The default-off gate is the only thing that lets `live()` wire Claude.
+        // Verify the exact-`"1"` predicate WITHOUT mutating the process env: drive the
+        // matcher logic directly via the documented contract values.
+        let on = |v: &str| v.trim() == "1";
+        assert!(on("1"), "exactly \"1\" enables");
+        assert!(on(" 1 "), "trimmed \"1\" enables");
+        for off in ["", "0", "true", "yes", "01", "1 0", "enabled"] {
+            assert!(!on(off), "{off:?} must NOT enable the dark route");
+        }
+        // Sanity: the live env var is currently unset in the test process, so the real
+        // helper reports OFF — the prod default.
+        assert!(
+            !claude_route_enabled_from_env(),
+            "FRIDAY_CLAUDE_ROUTE_ENABLED must be unset/off in the test env"
+        );
+    }
+
+    #[test]
+    fn resolver_returns_none_for_claude_when_dark_some_when_wired() {
+        // Build a runtime with NO Claude client (the default). The baseline `claude`
+        // route must resolve to `None` (DARK fail-closed) while `deepseek` resolves to
+        // its live client and an unknown provider resolves to `None`.
+        let (rt, _ws, _c) = runtime_with(
+            "claude-dark",
+            &["{\"tool\":\"none\"}"],
+            Box::new(DenyAllApprovals),
+        );
+        let baseline = RouteRegistry::autonomous_baseline();
+        let claude_route = baseline
+            .get("claude")
+            .expect("baseline has a claude route")
+            .clone();
+        let deepseek_route = baseline
+            .get("deepseek")
+            .expect("baseline has deepseek")
+            .clone();
+
+        // DARK default: no Claude client wired ⇒ resolver yields None (fail-closed).
+        assert!(
+            rt.resolve(&claude_route).is_none(),
+            "claude must resolve to None by default (dark/off)"
+        );
+        // The baseline marks claude unavailable, so it is doubly fail-closed.
+        assert!(
+            !claude_route.is_dispatchable(),
+            "claude route stays available:false"
+        );
+        // DeepSeek path is unchanged — still resolves to a live client.
+        assert!(
+            rt.resolve(&deepseek_route).is_some(),
+            "deepseek path unchanged"
+        );
+
+        // Now wire the Claude client (what the gated `live()` path does). resolve("claude")
+        // becomes Some; deepseek is still Some; nothing else changes.
+        let wired = rt.with_claude(Box::new(crate::MockAgentLlmClient {
+            proposal: crate::RawToolCall {
+                action: "none".to_string(),
+                params: vec![],
+            },
+        }));
+        assert!(
+            wired.resolve(&claude_route).is_some(),
+            "claude resolves to the wired client once attached"
+        );
+        assert!(
+            wired.resolve(&deepseek_route).is_some(),
+            "deepseek still wired"
+        );
     }
 
     // ---- PROOF-MEMORY-001 recall→inject wiring -------------------------------

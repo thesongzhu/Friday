@@ -20,8 +20,16 @@ use thiserror::Error;
 
 pub mod claude_control;
 pub mod codex_appserver;
+/// R7 — the call-free key-validation seam: the [`key_validation::KeyValidationProbe`]
+/// trait + provider-agnostic typed [`key_validation::KeyValidationOutcome`] +
+/// a mock. The LIVE round-trip impl lives in `friday-hub` (secret-bearing); this
+/// crate keeps its "no model call, nothing charged" contract intact.
+pub mod key_validation;
 pub mod session;
 pub mod unified;
+pub use key_validation::{
+    KeyProvider, KeyValidationOutcome, KeyValidationProbe, MockKeyValidationProbe,
+};
 pub use session::{send_to_provider, CliSession, MockSession, SessionOutcome, SessionRunner};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +44,14 @@ impl Provider {
             Provider::Codex => "codex",
             Provider::Claude => "claude",
         }
+    }
+
+    /// The canonical, ordered set of every provider Friday can detect. The
+    /// onboarding capability-doctor iterates this so a newly-added provider is
+    /// detected automatically (no second hand-maintained list to drift). Order is
+    /// stable (`codex`, `claude`) so a doctor result is deterministic.
+    pub fn all() -> &'static [Provider] {
+        &[Provider::Codex, Provider::Claude]
     }
 }
 
@@ -272,5 +288,21 @@ mod tests {
         let s = detect(&p, Provider::Codex);
         assert!(!s.installed && !s.authenticated);
         assert_eq!(s.detail, "not_installed");
+    }
+
+    #[test]
+    fn provider_all_enumerates_every_provider_in_stable_order() {
+        // The onboarding capability-doctor iterates `Provider::all()`; its order is
+        // stable + complete (every Provider variant appears exactly once). If a new
+        // provider variant is added without extending `all()`, this catches it.
+        assert_eq!(Provider::all(), &[Provider::Codex, Provider::Claude]);
+        // Every variant the match in `as_str` knows about is present in `all()`.
+        for p in [Provider::Codex, Provider::Claude] {
+            assert!(
+                Provider::all().contains(&p),
+                "{} missing from Provider::all()",
+                p.as_str()
+            );
+        }
     }
 }

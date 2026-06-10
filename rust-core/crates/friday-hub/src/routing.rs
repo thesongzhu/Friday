@@ -220,12 +220,16 @@ impl RouteRegistry {
         });
         r.register(ProviderRoute {
             provider_id: "claude".to_string(),
+            // S7: the Claude route is now HTTP-backed (the `friday-anthropic`
+            // /v1/messages client), not CLI. It stays `available: false` (DARK /
+            // default-off): the operator pre-wires the live client behind the
+            // `FRIDAY_CLAUDE_ROUTE_ENABLED` gate, but the route is not yet selectable.
             api: ProviderApi::AnthropicMessages,
-            backend_kind: BackendKind::Cli,
-            model: "claude-opus-4".to_string(),
+            backend_kind: BackendKind::Http,
+            model: "claude-opus-4-8".to_string(),
             model_size: ModelSize::Large,
             capabilities: text_files,
-            available: false, // CLI auth-gated in this build
+            available: false, // DARK: not selectable until an operator enables S7 live
             validation_ok: false,
             priority: 3,
         });

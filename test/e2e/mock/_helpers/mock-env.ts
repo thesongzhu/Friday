@@ -371,8 +371,22 @@ export async function createMockHubEnv(opts?: {
   allowTestOnlyProviderRoutingControlsExecution?: boolean;
   /** Test-oracle opt-in for legacy TS capability-acquisition run mutations; set false to prove default fail-closed behavior. */
   allowTestOnlyCapabilityAcquisitionExecution?: boolean;
+  /**
+   * TS Runtime Retirement — GAP G2: DEFAULT-OFF (INVERTED polarity) guard for the
+   * UIX starter-skill execution lane + UIX-driven skill-generator mutators. Unlike
+   * the `allowTestOnly*` flags (which default TRUE here so legacy TS runs in
+   * tests), this DEFAULTS FALSE — the guard stays INERT so UIX starter-skill
+   * execution keeps working exactly as today (zero degradation, all current green
+   * preserved). Set true to PROVE the lever fires (503
+   * TS_RUNTIME_SKILL_RUNS_RETIRED / TS_RUNTIME_SKILL_GENERATOR_RETIRED).
+   * (Anchored above `allowTestOnlySystemIntentExecution` to leave intervening
+   * context vs the concurrent G1 sibling PR's adjacent flag insertion.)
+   */
+  enforceUixSkillExecRetirement?: boolean;
   /** Test-oracle opt-in for the legacy TS system-service `executeIntent` method; set false to prove default fail-closed behavior. */
   allowTestOnlySystemIntentExecution?: boolean;
+  /** Test-oracle opt-in for the legacy TS auto-fix executor `execute()` method (route + non-route self-healing path); set false to prove default fail-closed behavior. */
+  allowTestOnlyAutoFixExecution?: boolean;
   /**
    * execrun-replacement slice 4 (DARK): per-run Rust-route flag. DEFAULT-FALSE here (honest
    * dark) — the predicate is unconsumed this slice so the value is cosmetic; the ui browser
@@ -443,7 +457,15 @@ export async function createMockHubEnv(opts?: {
       allowTestOnlyProviderProbeExecution: opts?.allowTestOnlyProviderProbeExecution ?? true,
       allowTestOnlyProviderRoutingControlsExecution: opts?.allowTestOnlyProviderRoutingControlsExecution ?? true,
       allowTestOnlyCapabilityAcquisitionExecution: opts?.allowTestOnlyCapabilityAcquisitionExecution ?? true,
+      // TS Runtime Retirement — GAP G2: DEFAULT-FALSE (INVERTED polarity), unlike
+      // the allowTestOnly* flags which default true. Default-off keeps UIX
+      // starter-skill execution + skill-gen mutators live (zero degradation);
+      // a focused test passes true to prove the 503 lever fires. (Anchored above
+      // allowTestOnlySystemIntentExecution to leave intervening context vs the
+      // concurrent G1 sibling PR's adjacent flag insertion.)
+      enforceUixSkillExecRetirement: opts?.enforceUixSkillExecRetirement ?? false,
       allowTestOnlySystemIntentExecution: opts?.allowTestOnlySystemIntentExecution ?? true,
+      allowTestOnlyAutoFixExecution: opts?.allowTestOnlyAutoFixExecution ?? true,
       // execrun-replacement slice 4 (DARK): default-FALSE (honest dark), unlike the
       // allowTestOnly* flags which default true. The predicate is unconsumed this slice.
       routeAgentRunViaRust: opts?.routeAgentRunViaRust ?? false,

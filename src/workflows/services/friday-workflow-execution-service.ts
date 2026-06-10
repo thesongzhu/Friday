@@ -1384,6 +1384,29 @@ export function createFridayWorkflowExecutionService(
     },
 
     async resumeRun(runId, options) {
+      // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+      // Sibling of `startRun` (§1 reconciliation). The route guard is POST-only;
+      // `resumeRun` is reached off-route via `dispatchManagedAsync` ← channel
+      // orchestration and via workflow-approval approve → resumeRun, re-entering
+      // node execution and persisting run state. Guard here fails ALL non-route
+      // callers closed BEFORE any DB read, plan rebuild, node re-entry, provider
+      // call, or write — unless the explicit test-oracle flag is set. Same flag
+      // and family as `startRun`. Never default this flag on in prod.
+      if (deps.allowTestOnlyWorkflowRunExecution !== true) {
+        void runId;
+        void options;
+        throw new FridayDomainError(
+          "TS_RUNTIME_WORKFLOW_RUNS_RETIRED",
+          "Workflow run execution and controls are fail-closed while runtime ownership is being moved out of TypeScript.",
+          {
+            httpStatus: 503,
+            details: {
+              classification: "fail_closed",
+              replacement: "rust_owned_workflow_run_entrypoint_required",
+            },
+          },
+        );
+      }
       const runEntity = deps.db.withReadConnection((db) =>
         deps.runRepo.getRunById(db, runId),
       );
@@ -1581,6 +1604,29 @@ export function createFridayWorkflowExecutionService(
     },
 
     async cancelRun(runId, reason) {
+      // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+      // Sibling of `startRun` (§1 reconciliation). Lower severity than
+      // resume/retry (no node re-entry) but it still aborts in-flight
+      // controllers and writes terminal run/node state via withWriteTransaction,
+      // reachable off-route via `dispatchManagedAsync` ← channel orchestration.
+      // Guarded for consistency so EVERY route-retired run-control mutator is
+      // method-fenced. Same flag and family as `startRun`; never default on in
+      // prod.
+      if (deps.allowTestOnlyWorkflowRunExecution !== true) {
+        void runId;
+        void reason;
+        throw new FridayDomainError(
+          "TS_RUNTIME_WORKFLOW_RUNS_RETIRED",
+          "Workflow run execution and controls are fail-closed while runtime ownership is being moved out of TypeScript.",
+          {
+            httpStatus: 503,
+            details: {
+              classification: "fail_closed",
+              replacement: "rust_owned_workflow_run_entrypoint_required",
+            },
+          },
+        );
+      }
       const runEntity = deps.db.withReadConnection((db) =>
         deps.runRepo.getRunById(db, runId),
       );
@@ -1625,6 +1671,29 @@ export function createFridayWorkflowExecutionService(
     },
 
     async retryRun(runId, nodeIds) {
+      // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+      // Sibling of `startRun` (§1 reconciliation). The route guard is POST-only;
+      // `retryRun` is reached off-route via `dispatchManagedAsync` ← channel
+      // orchestration, re-creating retry attempts and re-entering node execution
+      // (provider/tool calls + persist). Guard here fails ALL non-route callers
+      // closed BEFORE any DB read, retry-attempt creation, node re-entry, or
+      // write — unless the explicit test-oracle flag is set. Same flag and family
+      // as `startRun`. Never default this flag on in prod.
+      if (deps.allowTestOnlyWorkflowRunExecution !== true) {
+        void runId;
+        void nodeIds;
+        throw new FridayDomainError(
+          "TS_RUNTIME_WORKFLOW_RUNS_RETIRED",
+          "Workflow run execution and controls are fail-closed while runtime ownership is being moved out of TypeScript.",
+          {
+            httpStatus: 503,
+            details: {
+              classification: "fail_closed",
+              replacement: "rust_owned_workflow_run_entrypoint_required",
+            },
+          },
+        );
+      }
       const runEntity = deps.db.withReadConnection((db) =>
         deps.runRepo.getRunById(db, runId),
       );
