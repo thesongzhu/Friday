@@ -7,7 +7,12 @@
 //! storage row CHECKs; storage cannot run this parser because it cannot depend on
 //! friday-hub).
 //!
-//! ## Cron subset (everything outside it FAILS CLOSED, at insert AND at read)
+//! ## Cron subset (everything outside it FAILS CLOSED)
+//! The fail-closed guard is WIRED NOW at the INSERT/create boundary
+//! (`create_schedule`): an expression outside this subset is rejected before it
+//! can reach a stored row. The SECOND guard — a due-check re-parse of the stored
+//! `cron_expr` on every tick — is NOT YET WIRED; it is deferred to the future
+//! tick engine (slice B). Until then there is no read-path re-validation.
 //! Five space-separated fields: `min hour dom mon dow`. Each field is one of:
 //! * `*`                — every value in range,
 //! * `*/n`              — every n-th value from the field's minimum (n >= 1, and
@@ -173,10 +178,12 @@ fn parse_field(spec: &FieldSpec, token: &str) -> Result<CronField, CronParseErro
             });
         }
         let values: Vec<u32> = (spec.min..=spec.max).step_by(step as usize).collect();
-        return Ok(CronField {
-            is_star: false,
-            values,
-        });
+        // A `*/n` whose produced set is the COMPLETE field range (only ever `*/1`,
+        // since `*/0` and `step > span` are already rejected and any step >= 2
+        // skips values) is semantically identical to `*` — normalize `is_star` so
+        // the Vixie dom/dow OR-vs-AND rule treats `*/1` exactly like `*`.
+        let is_star = values.len() == (span + 1) as usize;
+        return Ok(CronField { is_star, values });
     }
 
     // A bare number OR a comma list of bare numbers. Each element must parse as a
@@ -343,15 +350,17 @@ pub fn is_due(cron: &CronSchedule, slot_ms: i64) -> bool {
 /// ~2922 days. So `8 * 366` days (2928) covers it with margin; ~4.2M minute
 /// iterations is sub-second and this is off the firing hot path anyway.
 pub fn next_due(cron: &CronSchedule, after_ms: i64) -> Option<i64> {
-    // Start at the next minute boundary strictly after `after_ms`.
-    let start = slot_floor_ms(after_ms) + MIN_MS;
+    // Start at the next minute boundary strictly after `after_ms`. Use checked
+    // arithmetic so a near-`i64::MAX` instant returns None ("cannot fire") rather
+    // than panicking (debug) or wrapping (release); unreachable with real
+    // epoch-millis, defensive only — normal-range behavior is unchanged.
+    let mut slot = slot_floor_ms(after_ms).checked_add(MIN_MS)?;
     const MAX_MINUTES: i64 = 8 * 366 * 24 * 60;
-    let mut slot = start;
     for _ in 0..MAX_MINUTES {
         if matches(cron, &utc_minute_from_ms(slot)) {
             return Some(slot);
         }
-        slot += MIN_MS;
+        slot = slot.checked_add(MIN_MS)?;
     }
     None
 }
@@ -564,6 +573,64 @@ mod tests {
             parse_cron("0 0 0 * *"),
             Err(CronParseError::OutOfRange { value: 0, .. })
         ));
+    }
+
+    #[test]
+    fn rejects_pinned_fail_closed_families() {
+        // An empty element inside a comma list (NOT a wholly-empty token) is an
+        // unsupported form, not an EmptyField.
+        assert!(matches!(
+            parse_cron("0 9 1,,2 * *"),
+            Err(CronParseError::UnsupportedForm { .. })
+        ));
+        // A negative step fails the u32 parse BEFORE the step==0/BadStep check, so
+        // it is an unsupported form.
+        assert!(matches!(
+            parse_cron("*/-1 * * * *"),
+            Err(CronParseError::UnsupportedForm { .. })
+        ));
+        // A u32-overflowing bare numeric fails the integer parse before the range
+        // check, so it is an unsupported form (NOT OutOfRange).
+        assert!(matches!(
+            parse_cron("99999999999 9 * * *"),
+            Err(CronParseError::UnsupportedForm { .. })
+        ));
+        // Hour 24 is out of range 0..=23.
+        assert!(matches!(
+            parse_cron("0 24 * * *"),
+            Err(CronParseError::OutOfRange { value: 24, .. })
+        ));
+        // Month 13 is out of range 1..=12.
+        assert!(matches!(
+            parse_cron("0 9 * 13 *"),
+            Err(CronParseError::OutOfRange { value: 13, .. })
+        ));
+    }
+
+    #[test]
+    fn star_step_full_range_normalizes_to_star() {
+        // `*/1` covers the COMPLETE field range, so is_star must be true (identical
+        // to `*`); a skipping step like `*/5` stays is_star=false.
+        let c = parse_cron("*/1 */1 */1 */1 */1").unwrap();
+        assert!(c.minute.is_star);
+        assert!(c.hour.is_star);
+        assert!(c.dom.is_star);
+        assert!(c.month.is_star);
+        assert!(c.dow.is_star);
+        let c5 = parse_cron("*/5 * * * *").unwrap();
+        assert!(!c5.minute.is_star);
+        // Because `*/1` normalizes to is_star, the dom/dow rule for "0 0 13 * */1"
+        // (dow=*/1 full-range) matches "0 0 13 * *" exactly: dow is treated as the
+        // always-true `*`, so the day uses the AND-rule (only the 13th matches),
+        // NOT the both-restricted OR-rule.
+        let star = parse_cron("0 0 13 * *").unwrap();
+        let norm = parse_cron("0 0 13 * */1").unwrap();
+        assert!(is_due(&star, ymd_hm_to_ms(2026, 6, 13, 0, 0)));
+        assert!(is_due(&norm, ymd_hm_to_ms(2026, 6, 13, 0, 0)));
+        // 2026-06-12 is a Friday (dow=5) and the 12th: the AND-rule rejects it for
+        // both (a both-restricted OR-rule would have wrongly fired on the Friday).
+        assert!(!is_due(&star, ymd_hm_to_ms(2026, 6, 12, 0, 0)));
+        assert!(!is_due(&norm, ymd_hm_to_ms(2026, 6, 12, 0, 0)));
     }
 
     // --- is_due / matching KATs ---------------------------------------------

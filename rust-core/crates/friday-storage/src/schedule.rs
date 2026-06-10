@@ -269,15 +269,13 @@ pub fn record_fire(
     );
     match res {
         Ok(_) => Ok(RecordFireOutcome::Recorded),
-        // Only a PRIMARY KEY / UNIQUE conflict is the benign already-considered
-        // case; a CHECK (bad outcome vocab) or any other constraint propagates.
+        // Only the `(schedule_id, slot_ts)` PRIMARY KEY conflict is the benign
+        // already-considered case. A CHECK (bad outcome vocab) propagates; and a
+        // future UNIQUE index MUST also fail closed rather than be masked as an
+        // idempotent Duplicate — so match the PK extended-code ONLY, never UNIQUE.
         Err(rusqlite::Error::SqliteFailure(err, _))
             if err.code == rusqlite::ErrorCode::ConstraintViolation
-                && matches!(
-                    err.extended_code,
-                    rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY
-                        | rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
-                ) =>
+                && err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY =>
         {
             Ok(RecordFireOutcome::Duplicate)
         }

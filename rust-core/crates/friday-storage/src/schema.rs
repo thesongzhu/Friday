@@ -760,8 +760,9 @@ CREATE UNIQUE INDEX idx_workflow_definition_one_published
 //   non-empty. `workflow_id` names the workflow whose PUBLISHED version a fire
 //   resolves at fire time (no version pinned). `cron_expr` is a RESTRICTED 5-field
 //   subset (min hour dom mon dow; `*`, `*/n`, numeric, comma-lists only) validated
-//   FAIL-CLOSED by the friday-hub `cron_subset` parser at the create boundary AND
-//   re-parsed at every due check — the schema can only structurally guarantee
+//   FAIL-CLOSED by the friday-hub `cron_subset` parser at the create boundary NOW
+//   (a FUTURE due-check re-parse on every tick is a slice-B guard, not yet wired)
+//   — the schema can only structurally guarantee
 //   non-emptiness; the semantic gate is the parser (mirrors how `workflow_def`'s
 //   linear-only semantic gate lives above the row CHECK). `timezone` is UTC-only,
 //   made unrepresentable otherwise by the CHECK (v1 honest restriction — no DST
