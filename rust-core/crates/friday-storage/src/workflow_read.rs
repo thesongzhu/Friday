@@ -12,12 +12,34 @@
 //! filename, i.e. body-adjacent content. Only its **presence** is projected
 //! (`has_evidence`, computed in SQL as `evidence_ref IS NOT NULL`), so the
 //! evidence text is structurally unselectable through this module. The run
-//! `name` IS returned (a definition-name label, the same field the S8
-//! `hub_workflow_def_inspect` projection already emits), but the caller MUST
-//! still run everything through an output guard before emitting off-process.
+//! `name` IS returned (a free-form definition-name label) — callers MUST treat
+//! it as body-adjacent and project it bounded (hash + length), never verbatim,
+//! and still run everything through an output guard before emitting off-process.
+//!
+//! ## DB strings are NOT trusted (fail-closed re-validation)
+//! [`list_workflow_step_summaries`] re-validates the two step fields that flow
+//! into projections as strings: `status` must be in the engine's CLOSED
+//! [`StepStatus`] vocabulary, and `step_id` must have the engine's
+//! `<run_id>:s<seq>` shape. A row that violates either fails the WHOLE listing
+//! CLOSED (error, not passthrough) — a tampered-DB-only channel, but cheap to
+//! close at the projection layer rather than relying on downstream guards.
 
-use crate::error::Result;
+use crate::error::{Result, StorageError};
+use friday_core::StepStatus;
 use rusqlite::{Connection, OptionalExtension};
+
+/// The engine's CLOSED step-status vocabulary, derived from [`StepStatus`]
+/// itself (never a hand-maintained string list, so it cannot drift).
+fn is_engine_step_status(s: &str) -> bool {
+    const VOCAB: [StepStatus; 5] = [
+        StepStatus::Pending,
+        StepStatus::Running,
+        StepStatus::ProofPending,
+        StepStatus::Verified,
+        StepStatus::Failed,
+    ];
+    VOCAB.iter().any(|v| v.as_str() == s)
+}
 
 /// A read-only summary of a `workflow_run` row. `state` is the persisted
 /// `WorkflowRunState` string (a safe closed-vocab label, e.g.
@@ -38,10 +60,12 @@ pub struct WorkflowRunSummary {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorkflowStepSummary {
     /// The engine's step id (`<run_id>:s<seq>` — an identifier, never a body).
+    /// Re-validated against that exact shape at read time (fail-closed).
     pub step_id: String,
     pub seq: i64,
     pub has_side_effect: bool,
-    /// The persisted `StepStatus` string (closed vocab, e.g. `verified`).
+    /// The persisted `StepStatus` string. Re-validated at read time against the
+    /// engine's CLOSED vocabulary (fail-closed) — never a free-form passthrough.
     pub status: String,
     /// Whether deterministic evidence is attached (`evidence_ref IS NOT NULL`).
     /// The evidence text itself is never selected.
@@ -78,6 +102,12 @@ pub fn get_workflow_run_summary(
 /// The ordered (by `seq` ascending) refs-only summaries of a run's steps.
 /// `evidence_ref` is projected ONLY as the `has_evidence` bool — the text is
 /// never selected (refs-only at the SQL layer, not just at the emit layer).
+///
+/// Fail-closed re-validation (DB strings are not trusted): every row's `status`
+/// must be in the engine's closed [`StepStatus`] vocabulary and its `step_id`
+/// must be exactly `<run_id>:s<seq>`. One bad row fails the WHOLE listing —
+/// the tampered value is deliberately NOT quoted in the error (it is the
+/// untrusted content being rejected).
 pub fn list_workflow_step_summaries(
     conn: &Connection,
     run_id: &str,
@@ -100,7 +130,22 @@ pub fn list_workflow_step_summaries(
     })?;
     let mut out = Vec::new();
     for row in rows {
-        out.push(row?);
+        let s: WorkflowStepSummary = row?;
+        if !is_engine_step_status(&s.status) {
+            return Err(StorageError::Unsupported(format!(
+                "workflow_step seq {} of run '{run_id}' has a status outside the \
+                 engine vocabulary (fail-closed; refusing to project)",
+                s.seq
+            )));
+        }
+        if s.step_id != format!("{run_id}:s{}", s.seq) {
+            return Err(StorageError::Unsupported(format!(
+                "workflow_step seq {} of run '{run_id}' has a step_id that is not \
+                 '<run_id>:s<seq>'-shaped (fail-closed; refusing to project)",
+                s.seq
+            )));
+        }
+        out.push(s);
     }
     Ok(out)
 }

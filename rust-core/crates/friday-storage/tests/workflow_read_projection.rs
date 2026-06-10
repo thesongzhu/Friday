@@ -74,3 +74,47 @@ fn step_summaries_are_seq_ordered_and_project_evidence_presence_never_its_text()
         .unwrap()
         .is_empty());
 }
+
+#[test]
+fn tampered_step_status_outside_the_engine_vocabulary_fails_the_listing_closed() {
+    // DB strings are NOT trusted: a hand-tampered status (free-form text that
+    // could carry anything into a projection) fails the WHOLE listing closed —
+    // error, not passthrough.
+    let db = Db::open_hub(&temp_db_path("wfread-badstatus")).unwrap();
+    workflow::create_run(db.conn(), "r1", "qa", 1).unwrap();
+    workflow::add_step(db.conn(), "r1:s0", "r1", 0, false, 1).unwrap();
+    db.conn()
+        .execute(
+            "UPDATE workflow_step SET status = '/Users/jarvis/leak' WHERE step_id = 'r1:s0'",
+            [],
+        )
+        .unwrap();
+    let err = list_workflow_step_summaries(db.conn(), "r1").unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("outside the engine vocabulary"),
+        "expected the closed-vocab rejection, got: {msg}"
+    );
+    // The tampered value itself is never echoed into the error.
+    assert!(!msg.contains("/Users/jarvis/leak"));
+}
+
+#[test]
+fn tampered_step_id_not_run_seq_shaped_fails_the_listing_closed() {
+    let db = Db::open_hub(&temp_db_path("wfread-badref")).unwrap();
+    workflow::create_run(db.conn(), "r1", "qa", 1).unwrap();
+    workflow::add_step(db.conn(), "r1:s0", "r1", 0, false, 1).unwrap();
+    db.conn()
+        .execute(
+            "UPDATE workflow_step SET step_id = 'Bearer not-a-ref' WHERE step_id = 'r1:s0'",
+            [],
+        )
+        .unwrap();
+    let err = list_workflow_step_summaries(db.conn(), "r1").unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("not '<run_id>:s<seq>'-shaped"),
+        "expected the step_id-shape rejection, got: {msg}"
+    );
+    assert!(!msg.contains("Bearer"), "tampered value never echoed");
+}

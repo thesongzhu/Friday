@@ -21,13 +21,31 @@
 //!
 //! ## Output contract — REFS ONLY (no bodies, no params, no prompts, no secrets)
 //! One JSON object on stdout carrying ONLY safe identifiers/labels/counts:
-//! `truth_label="rust_wired_dev"`, run/workflow/version identifiers, the
-//! workflow name label, closed-vocab status + a BOUNDED `status_detail` token
-//! (never the engine's free-form failure text, which can embed executor error
-//! detail), the paused/failed step REF (`<run_id>:s<seq>`), step counts by
-//! status, and the audit-chain-verified bool. Step params, definition bodies and
-//! evidence text are NEVER emitted; [`reject_forbidden_output`] fails the whole
-//! receipt closed if any forbidden marker appears.
+//! `truth_label="rust_wired_dev"`, run/workflow/version identifiers, a BOUNDED
+//! projection of the free-form workflow name (`workflow_name_sha256` +
+//! `workflow_name_len` — the raw DB string is NEVER emitted, so a marker-bearing
+//! name is structurally impossible in output), closed-vocab status + a BOUNDED
+//! `status_detail` token (never the engine's free-form failure text, which can
+//! embed executor error detail), the paused/failed step REF (`<run_id>:s<seq>`),
+//! step counts by status (`verified`/`pending`/`proof_pending`/`failed`/
+//! `running` — the FULL persisted `StepStatus` vocabulary, so the five counters
+//! PARTITION `step_count`; note the engine persists an exec-errored
+//! non-side-effect step as `running`), and `audit_rows_verified` (the COUNT of
+//! hash-chain-verified audit rows — honest: the workflow driver writes zero
+//! audit rows today, so this is 0, attesting chain integrity over whatever rows
+//! exist, not workflow coverage). Step params, definition bodies and evidence
+//! text are NEVER emitted; [`reject_forbidden_output`] fails the whole receipt
+//! closed if any forbidden marker appears.
+//!
+//! ## Bridge-success semantics + known coarseness + dev fence (consumer notes)
+//! - A run whose ENGINE status is `failed` still exits 0 with `ok: true` — exit
+//!   0 means "the bridge dispatched and reported"; consumers MUST key on
+//!   `status`, never on the exit code alone.
+//! - A duplicate `--run-id` (engine single-shot, dup PK at `create_run`) and a
+//!   genuine storage failure both surface as `storage_failed` (known
+//!   coarseness; acceptable for a dev bridge).
+//! - `Db::open_hub` MIGRATES the target DB on open. NEVER point `--db` at the
+//!   production hub DB — this bin is for dev/temp DBs and workspaces only.
 
 use std::env;
 use std::path::Path;
@@ -112,14 +130,17 @@ fn run(args: &[String]) -> Result<String, BridgeError> {
         .unwrap_or(0);
     let run_id = arg_value(args, "--run-id")
         .unwrap_or_else(|| format!("hub_workflow_run_dev_{pid}_{nanos}"));
-    let now_ms = arg_value(args, "--now-ms")
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or_else(|| {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_millis() as i64)
-                .unwrap_or(0)
-        });
+    // A PRESENT but unparsable --now-ms is bad_args (fail-closed) — never a
+    // silent wall-clock fallback (the same posture as --version above).
+    let now_ms = match arg_value(args, "--now-ms") {
+        Some(raw) => raw
+            .parse::<i64>()
+            .map_err(|_| BridgeError::new("bad_args"))?,
+        None => SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0),
+    };
 
     let db = Db::open_hub(&db_path).map_err(|_| BridgeError::new("open_failed"))?;
     let executor = FsToolExecutor::new(&workspace_root);
@@ -160,7 +181,11 @@ fn run(args: &[String]) -> Result<String, BridgeError> {
         .map_err(|_| BridgeError::new("read_failed"))?;
     let pending_seq =
         first_pending_seq(db.conn(), &run_id).map_err(|_| BridgeError::new("read_failed"))?;
-    let audit_chain_verified = verify_audit_chain(db.conn()).is_ok();
+    // HONEST attestation: the COUNT of hash-chain-verified audit rows (the
+    // workflow driver writes zero audit rows today, so this is 0 — a bool here
+    // would be vacuously true). A broken chain fails the receipt closed.
+    let audit_rows_verified =
+        verify_audit_chain(db.conn()).map_err(|_| BridgeError::new("audit_verify_failed"))?;
 
     let count_status =
         |status: &str| -> usize { steps.iter().filter(|s| s.status == status).count() };
@@ -191,20 +216,27 @@ fn run(args: &[String]) -> Result<String, BridgeError> {
         "run_id": run_id,
         "workflow_id": stored_run.workflow_id,
         "version": stored_run.version,
-        "workflow_name": summary.name,
+        // The workflow name is a FREE-FORM DB string — never emitted verbatim.
+        // Bounded refs-only projection: sha256 hex + UTF-8 byte length.
+        "workflow_name_sha256": sha256_hex(summary.name.as_bytes()),
+        "workflow_name_len": summary.name.len(),
         "run_state": summary.state,
         "status": status,
         "status_detail": status_detail,
         "step_ref": step_ref,
         "executed_steps": stored_run.outcome.executed_steps,
         "step_count": steps.len(),
+        // The FULL persisted StepStatus vocabulary — these five PARTITION
+        // step_count ('running' is how the engine persists an exec-errored
+        // non-side-effect step: resolve_step_completion(false, false, false)).
         "verified_count": count_status("verified"),
         "pending_count": count_status("pending"),
         "proof_pending_count": count_status("proof_pending"),
         "failed_count": count_status("failed"),
+        "running_count": count_status("running"),
         "side_effect_step_count": steps.iter().filter(|s| s.has_side_effect).count(),
         "first_pending_seq": pending_seq,
-        "audit_chain_verified": audit_chain_verified,
+        "audit_rows_verified": audit_rows_verified,
     });
 
     let rendered =
@@ -287,6 +319,19 @@ fn ephemeral_dev_secret(pid: u32, nanos: u128) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hasher.update(format!("hub-workflow-run-dev-bridge:{pid}:{nanos}").as_bytes());
     hasher.finalize().to_vec()
+}
+
+/// Lowercase sha256 hex — the bounded projection of a free-form DB string
+/// (mirrors `hub_run_task::sha256_hex`).
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
 }
 
 /// Defense-in-depth: refuse to print if any forbidden marker leaked into the
@@ -383,6 +428,21 @@ mod tests {
         args
     }
 
+    /// The five status counters (the FULL persisted StepStatus vocabulary) must
+    /// PARTITION step_count — no persisted step status is ever invisible to the
+    /// receipt (the original four-counter set silently dropped 'running').
+    fn assert_counters_partition_step_count(v: &Value) {
+        let sum = ["verified", "pending", "proof_pending", "failed", "running"]
+            .iter()
+            .map(|s| v[&format!("{s}_count")].as_u64().unwrap())
+            .sum::<u64>();
+        assert_eq!(
+            sum,
+            v["step_count"].as_u64().unwrap(),
+            "status counters must partition step_count: {v}"
+        );
+    }
+
     #[test]
     fn arg_value_supports_space_and_equals_forms() {
         let args = vec![
@@ -421,7 +481,10 @@ mod tests {
         assert_eq!(v["run_id"], "run1");
         assert_eq!(v["workflow_id"], "wf1");
         assert_eq!(v["version"], 3, "published version resolved + reported");
-        assert_eq!(v["workflow_name"], "research");
+        // The free-form name is projected BOUNDED (hash + byte length), never verbatim.
+        assert_eq!(v["workflow_name_sha256"], sha256_hex(b"research"));
+        assert_eq!(v["workflow_name_len"], "research".len());
+        assert!(v.get("workflow_name").is_none(), "raw name never emitted");
         assert_eq!(v["status"], "completed");
         assert_eq!(v["run_state"], "done");
         assert_eq!(v["status_detail"], Value::Null);
@@ -430,10 +493,17 @@ mod tests {
         assert_eq!(v["step_count"], 2);
         assert_eq!(v["verified_count"], 2);
         assert_eq!(v["pending_count"], 0);
+        assert_eq!(v["running_count"], 0);
+        assert_counters_partition_step_count(&v);
         assert_eq!(v["first_pending_seq"], Value::Null);
+        // Honest audit attestation: a COUNT (0 — the workflow driver writes no
+        // audit rows), never a vacuous bool.
+        assert_eq!(v["audit_rows_verified"], 0);
+        assert!(v.get("audit_chain_verified").is_none());
         // Refs-only: no step params / definition body / evidence text fields.
         assert!(v.get("steps").is_none());
         assert!(!rendered.contains("notes.txt"), "no path/body text leaks");
+        assert!(!rendered.contains("research"), "name label not verbatim");
         assert!(reject_forbidden_output(&rendered).is_ok());
     }
 
@@ -458,6 +528,27 @@ mod tests {
             .err()
             .unwrap();
         assert_eq!(err.kind, "bad_args");
+    }
+
+    #[test]
+    fn unparsable_now_ms_is_bad_args_never_a_silent_wall_clock_fallback() {
+        let (db, ws) = seeded(
+            "badnow",
+            &def(
+                "research",
+                vec![step("read", "read_file", &[("path", "notes.txt")])],
+            ),
+            1,
+        );
+        let err = run(&bin_args(&db, &ws, &["--now-ms=soon"])).err().unwrap();
+        assert_eq!(err.kind, "bad_args");
+        // And the parsable form still works (the fail-closed check is on
+        // PRESENT-but-unparsable, not on presence).
+        let rendered = run(&bin_args(&db, &ws, &["--now-ms=500", "--run-id=run-now"]))
+            .map_err(|e| e.kind)
+            .unwrap();
+        let v: Value = from_str(&rendered).unwrap();
+        assert_eq!(v["status"], "completed");
     }
 
     #[test]
@@ -489,6 +580,8 @@ mod tests {
         assert_eq!(v["step_ref"], "run1:s1");
         assert_eq!(v["executed_steps"], 1);
         assert_eq!(v["pending_count"], 1);
+        assert_eq!(v["running_count"], 0);
+        assert_counters_partition_step_count(&v);
         assert_eq!(v["first_pending_seq"], 1);
         assert_eq!(v["side_effect_step_count"], 1);
         assert!(
@@ -497,6 +590,50 @@ mod tests {
         );
         // The mutating step's params ("content"="y") are never in the receipt.
         assert!(!rendered.contains("out.txt"));
+        assert!(reject_forbidden_output(&rendered).is_ok());
+    }
+
+    #[test]
+    fn exec_errored_step_is_persisted_running_and_counted_running_count() {
+        // THE counter-vocabulary repro: a stored READ-ONLY def run against a
+        // NONEXISTENT workspace exec-errors at s0. The engine persists that
+        // step via resolve_step_completion(false, false, false) == Running and
+        // fails the run — so the receipt must show status=failed AND
+        // running_count=1, with the five counters still partitioning
+        // step_count (the original four counters made this step invisible).
+        let (db, _ws) = seeded(
+            "execerr",
+            &def(
+                "research",
+                vec![
+                    step("read", "read_file", &[("path", "notes.txt")]),
+                    step("ls", "list_dir", &[("path", ".")]),
+                ],
+            ),
+            1,
+        );
+        let ghost_ws = tmp("execerr-ghost-ws").to_string_lossy().into_owned();
+        let rendered = run(&bin_args(&db, &ghost_ws, &["--run-id=run-err"]))
+            .map_err(|e| e.kind)
+            .unwrap();
+        let v: Value = from_str(&rendered).unwrap();
+        assert_eq!(
+            v["ok"], true,
+            "bridge-success semantics: ok keys on the bridge"
+        );
+        assert_eq!(v["status"], "failed");
+        assert_eq!(v["run_state"], "failed");
+        assert_eq!(v["status_detail"], "exec_error");
+        assert_eq!(v["step_ref"], "run-err:s0");
+        assert_eq!(v["executed_steps"], 0);
+        // Step rows are added lazily as the loop reaches them: only s0 exists.
+        assert_eq!(v["step_count"], 1);
+        assert_eq!(v["running_count"], 1, "the exec-errored step is VISIBLE");
+        assert_eq!(v["verified_count"], 0);
+        assert_eq!(v["failed_count"], 0);
+        assert_counters_partition_step_count(&v);
+        // The fs error text (which embeds the ghost path) never leaks.
+        assert!(!rendered.contains("ghost-ws"));
         assert!(reject_forbidden_output(&rendered).is_ok());
     }
 
@@ -540,20 +677,49 @@ mod tests {
     }
 
     #[test]
-    fn forbidden_output_canary_fails_the_whole_receipt_closed() {
-        // CANARY through the REAL path: a definition whose NAME embeds a secret
-        // marker would put "Bearer …" into the receipt's workflow_name — the
-        // output guard must refuse to print anything (fail-closed), proving the
-        // guard sits between the projection and stdout.
+    fn marker_bearing_name_is_structurally_impossible_in_output() {
+        // STRUCTURAL (not canary-caught): a definition whose NAME embeds a
+        // secret marker still produces a SUCCESSFUL receipt, because the name
+        // is never emitted verbatim — only its sha256 + byte length. The marker
+        // cannot reach stdout through the name field at all.
+        let name = "Bearer canary-name";
         let (db, ws) = seeded(
-            "canary",
+            "canary-name",
             &def(
-                "Bearer canary-name",
+                name,
                 vec![step("read", "read_file", &[("path", "notes.txt")])],
             ),
             1,
         );
-        let err = run(&bin_args(&db, &ws, &["--run-id=run1"])).err().unwrap();
+        let rendered = run(&bin_args(&db, &ws, &["--run-id=run1"]))
+            .map_err(|e| e.kind)
+            .unwrap();
+        assert!(!rendered.contains("Bearer"), "marker never in output");
+        let v: Value = from_str(&rendered).unwrap();
+        assert_eq!(v["status"], "completed");
+        assert_eq!(v["workflow_name_sha256"], sha256_hex(name.as_bytes()));
+        assert_eq!(v["workflow_name_len"], name.len());
+        assert!(v.get("workflow_name").is_none());
+    }
+
+    #[test]
+    fn forbidden_output_canary_fails_the_whole_receipt_closed() {
+        // CANARY through the REAL path (defense-in-depth on the OTHER verbatim
+        // fields): a marker-bearing --run-id flows verbatim into the receipt's
+        // run_id/step_ref — the output guard must refuse to print anything
+        // (fail-closed), proving the guard still sits between the projection
+        // and stdout for every field that is not structurally bounded.
+        let (db, ws) = seeded(
+            "canary-runid",
+            &def(
+                "research",
+                vec![step("read", "read_file", &[("path", "notes.txt")])],
+            ),
+            1,
+        );
+        let err = run(&bin_args(&db, &ws, &["--run-id=run-Bearer-1"]))
+            .err()
+            .unwrap();
         assert_eq!(err.kind, "output_guard");
     }
 

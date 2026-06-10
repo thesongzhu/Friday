@@ -22,6 +22,10 @@
 //!   later slice adds Mission binding to the engine, this seam inherits it.
 //! - Single-shot is inherited from the engine: re-invoking with an already-used
 //!   `run_id` fails closed at `create_run` (duplicate PK, no double-dispatch).
+//! - Definition-source axis: the seam is source-agnostic — `RustNative` and
+//!   `TsTranslated` stored definitions load and run through the SAME
+//!   load→engine path (the source label is refs-only provenance metadata, never
+//!   a dispatch fork), and both are exercised by tests below.
 //!
 //! ## Fail-closed posture
 //! A missing definition / missing published version / unparsable or
@@ -285,10 +289,15 @@ mod tests {
     #[test]
     fn mutating_step_gate_pauses_and_the_workspace_is_unchanged() {
         // The S9 safety witness: a stored mutating step loaded from the DB still
-        // checkpoints under deny-all — the run pauses, the write NEVER executes,
-        // and the workspace file is NOT created.
+        // checkpoints under deny-all — the run pauses, the write NEVER executes.
+        // The write TARGET pre-exists with known bytes (the overwrite-existing
+        // case): "unchanged" is asserted as BYTE EQUALITY of its content, not
+        // merely absence/count (a truncate-then-pause bug would pass an
+        // absence-style check; it cannot pass this one).
         let db = Db::open_hub(&tmp_db("pause")).unwrap();
         let ws = tmp_workspace("pause-ws");
+        let pre_existing = b"pre-existing target content the paused write must not touch";
+        std::fs::write(ws.join("out.txt"), pre_existing).unwrap();
         store_published_version(
             db.conn(),
             "wf-ship",
@@ -320,9 +329,10 @@ mod tests {
             other => panic!("expected AwaitingCheckpoint, got {other:?}"),
         }
         assert_eq!(run.outcome.executed_steps, 1, "only the read step ran");
-        assert!(
-            !ws.join("out.txt").exists(),
-            "the gate-paused write must NOT touch the workspace"
+        assert_eq!(
+            std::fs::read(ws.join("out.txt")).unwrap(),
+            pre_existing,
+            "the gate-paused write must leave the pre-existing target BYTE-IDENTICAL"
         );
         let summary = get_workflow_run_summary(db.conn(), "run1")
             .unwrap()
@@ -332,6 +342,44 @@ mod tests {
         assert_eq!(steps[1].status, "pending");
         assert!(!steps[1].has_evidence);
         assert!(steps[1].has_side_effect);
+    }
+
+    #[test]
+    fn ts_translated_sourced_definition_runs_end_to_end_like_a_native_one() {
+        // The definition-source axis: a stored definition whose provenance is
+        // `TsTranslated` (the S8 linear-only translator's output shape, with
+        // refs-only source_meta) loads and runs through the IDENTICAL
+        // load→engine path as a RustNative one — the source label is
+        // provenance, never a dispatch fork.
+        let db = Db::open_hub(&tmp_db("tssrc")).unwrap();
+        let ws = tmp_workspace("tssrc-ws");
+        store_published_version(
+            db.conn(),
+            "wf-ts",
+            1,
+            &read_only_def(),
+            DefinitionSource::TsTranslated,
+            Some(r#"{"ts_workflow_ref":"wf-ts","ts_version":4}"#),
+            100,
+        )
+        .unwrap();
+
+        let exec = FsToolExecutor::new(&ws);
+        let run = run_stored_published_workflow(
+            db.conn(),
+            &exec,
+            "wf-ts",
+            "run-ts",
+            SECRET,
+            &deny_all,
+            200,
+        )
+        .unwrap();
+        assert_eq!(run.outcome.status, WorkflowRunStatus::Completed);
+        assert_eq!(run.outcome.executed_steps, 2);
+        let steps = list_workflow_step_summaries(db.conn(), "run-ts").unwrap();
+        assert_eq!(steps.len(), 2);
+        assert!(steps.iter().all(|s| s.status == "verified"));
     }
 
     #[test]
