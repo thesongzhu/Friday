@@ -22,6 +22,27 @@
 //! * [`session`] — `RemoteSession` model + in-memory `SessionStore`
 //!   (create/heartbeat/delete) with monotonic-expiry, fail-closed lifecycle.
 //!
+//! # slice-2 additions (DARK, additive, fail-closed)
+//! Slice-2 addresses the slice-1-deferred LOWs that are in-crate / additive /
+//! schema-free (the others — real crypto, persistence migration, hub route/FFI,
+//! passkey flows — stay deferred for the reasons below):
+//! * **Assert path ASSEMBLED.** Slice-1 defined [`webauthn::VerifiedAssertion`]
+//!   but left it UNCONSUMED. Slice-2 wires the verify→apply counterpart of
+//!   verify→register: [`device::DeviceStore::apply_assertion`] takes a
+//!   `&VerifiedAssertion` (mintable ONLY via the verifier seam) and advances the
+//!   resolved device's `last_seen_at` (forward-only), via the new owner-scoped
+//!   [`device::DeviceStore::get_by_credential_for_owner`] reverse lookup. With the
+//!   default [`webauthn::DeferredVerifier`] no `VerifiedAssertion` exists, so the
+//!   assert path is unreachable end-to-end (same fail-closed guarantee as
+//!   registration).
+//! * **Heartbeat re-validates the bound device (slice-1 fail-closed hole).**
+//!   Slice-1 [`session::SessionStore::heartbeat`] never consulted the
+//!   `DeviceStore`, so a deleted/re-owned device left its sessions
+//!   heartbeatable-alive indefinitely. Slice-2 makes `heartbeat` take a
+//!   `&DeviceStore` and REFUSE if the bound device is gone or no longer
+//!   owner-matched — a revoked device severs its sessions' liveness on the next
+//!   heartbeat. A refused heartbeat leaves the session row unmutated.
+//!
 //! # What is STUB / DEFERRED (explicit)
 //! 1. **Real WebAuthn cryptographic verification.** [`webauthn::DeferredVerifier`]
 //!    FAILS CLOSED (`Err(WebAuthnVerifierNotWired)`) for every ceremony. COSE key
