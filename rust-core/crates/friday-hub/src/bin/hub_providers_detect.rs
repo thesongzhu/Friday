@@ -13,19 +13,39 @@
 //! layer. It does NOT register a production route and confers no v1 GO. TS wiring
 //! is deferred (design-handoff gated) and OUT OF SCOPE here.
 //!
+//! ## R6 — delegates to the hub-library capability-doctor aggregate
+//! The multi-provider orchestration that USED to be inlined here now lives in the
+//! hub library as [`friday_hub::provider_doctor::ProviderDoctor`] (the providers
+//! analog of `diagnostics::DiagnosticsSnapshot::collect`). This bin is now a thin
+//! projection over [`friday_hub::provider_doctor::ProviderDoctor::run_for`] — it
+//! parses the `--probe` selection, runs the doctor (which composes the EXISTING
+//! per-provider `detect` results, no new probing/model call), and renders the
+//! refs-only JSON. The aggregate is also callable by any future Rust caller (the R6
+//! gap this closes). It registers NO production route and does NOT flip the live TS
+//! `providers.detect` path — DARK, ready-but-not-routed; confers no v1 GO.
+//!
 //! ## Output contract — REFS ONLY (no bodies, no secrets, no account info)
-//! Emits a single JSON object to stdout carrying ONLY the secret-safe
-//! [`friday_providers::ProviderAuthStatus`] fields — the provider label, the
-//! `installed`/`authenticated` booleans, and a coarse static `detail`
-//! (`"logged_in" | "not_logged_in" | "not_installed"`). It NEVER emits the raw
-//! [`friday_providers::ProbeOutput`] (CLI stdout/stderr), which can carry
-//! `authMethod`/`subscriptionType`/account identifiers. A defensive output guard
-//! rejects any forbidden marker before printing.
+//! Emits a single JSON object to stdout carrying ONLY secret-safe fields:
+//! - `truth_label="rust_providers_detect"`, `proof_only=true`, `ok=true`
+//! - `detected`: one entry per requested provider with ONLY the four safe
+//!   [`friday_providers::ProviderAuthStatus`] fields — the provider label, the
+//!   `installed`/`authenticated` booleans, and a coarse static `detail`
+//!   (`"logged_in" | "not_logged_in" | "not_installed"`).
+//! - `ready_providers`: the safe `as_str` labels of the providers that are
+//!   installed AND authenticated (derived per-provider, never a fallback).
+//! - `any_authenticated` / `all_authenticated`: the aggregate onboarding-readiness
+//!   booleans from the hub-library [`ProviderDoctor`] (provider labels + booleans
+//!   only — no account info; they never hide which provider is down).
+//!
+//! It NEVER emits the raw [`friday_providers::ProbeOutput`] (CLI stdout/stderr),
+//! which can carry `authMethod`/`subscriptionType`/account identifiers. A defensive
+//! output guard rejects any forbidden marker before printing.
 
 use std::env;
 use std::ffi::OsString;
 
-use friday_providers::{detect, CliProbe, Provider, ProviderProbe};
+use friday_hub::provider_doctor::ProviderDoctor;
+use friday_providers::{CliProbe, Provider, ProviderProbe};
 use serde_json::json;
 
 /// A fail-closed error: `kind` is a coarse, safe category (the only thing
@@ -106,23 +126,27 @@ fn run(args: &[String]) -> Result<String, BridgeError> {
     render_detect(&probe, &providers)
 }
 
-/// Core: detect each requested provider, build the refs-only JSON, and run it
-/// through the output guard. Generic over the probe so `main` ships `CliProbe`
-/// and tests inject a `MockProbe` through the IDENTICAL code path (so the
-/// "exact safe shape" and "never serializes raw ProbeOutput" assertions are
-/// genuine end-to-end checks, not helper-only ones).
+/// Core: run the hub-library capability-doctor over the requested providers, build
+/// the refs-only JSON, and run it through the output guard. Generic over the probe
+/// so `main` ships `CliProbe` and tests inject a `MockProbe` through the IDENTICAL
+/// code path (so the "exact safe shape" and "never serializes raw ProbeOutput"
+/// assertions are genuine end-to-end checks, not helper-only ones).
+///
+/// R6: the multi-provider orchestration is now [`ProviderDoctor::run_for`] (the hub
+/// library); this bin projects its truth-labeled result. The doctor surfaces ONLY
+/// the parsed `ProviderAuthStatus` fields — the raw `ProbeOutput` (CLI stdout/stderr)
+/// is consumed inside `detect` -> `parse_status` before the doctor sees it, so it is
+/// structurally impossible to place raw CLI text here.
 fn render_detect<P: ProviderProbe>(
     probe: &P,
     providers: &[Provider],
 ) -> Result<String, BridgeError> {
-    // For each provider we surface ONLY the parsed `ProviderAuthStatus` fields.
-    // The raw `ProbeOutput` (CLI stdout/stderr) is consumed inside `detect` ->
-    // `parse_status`, which discards it and returns only booleans + a static
-    // label — it is structurally impossible to place raw CLI text here.
-    let detected: Vec<_> = providers
+    let doctor = ProviderDoctor::run_for(probe, providers);
+
+    let detected: Vec<_> = doctor
+        .statuses
         .iter()
-        .map(|&provider| {
-            let status = detect(probe, provider);
+        .map(|status| {
             json!({
                 "provider": status.provider.as_str(),
                 "installed": status.installed,
@@ -132,11 +156,25 @@ fn render_detect<P: ProviderProbe>(
         })
         .collect();
 
+    // Aggregate onboarding-readiness signals from the doctor (derived per-provider,
+    // no-fallback): the safe `as_str` labels of the ready providers, plus the
+    // any/all-authenticated booleans. These carry no account info (provider labels +
+    // booleans only) and let an onboarding caller see what is usable without hiding
+    // which provider is down (the per-provider truth stays in `detected`).
+    let ready: Vec<&str> = doctor
+        .ready_providers()
+        .iter()
+        .map(|p| p.as_str())
+        .collect();
+
     let payload = json!({
         "truth_label": "rust_providers_detect",
         "proof_only": true,
         "ok": true,
         "detected": detected,
+        "ready_providers": ready,
+        "any_authenticated": doctor.any_authenticated(),
+        "all_authenticated": doctor.all_authenticated(),
     });
 
     let rendered =
@@ -278,6 +316,35 @@ mod tests {
             assert!(obj.contains_key("authenticated"));
             assert!(obj.contains_key("detail"));
         }
+
+        // R6: the aggregate onboarding-readiness signals from the hub-library
+        // `ProviderDoctor` are surfaced (derived per-provider, no-fallback). codex is
+        // ready, claude is not — so `ready_providers` lists ONLY codex, `any` is true,
+        // `all` is false. These never hide which provider is down (the per-provider
+        // truth above stays authoritative).
+        assert_eq!(
+            v["ready_providers"]
+                .as_array()
+                .expect("ready_providers array"),
+            &vec![serde_json::json!("codex")],
+        );
+        assert_eq!(v["any_authenticated"], true);
+        assert_eq!(v["all_authenticated"], false);
+    }
+
+    #[test]
+    fn aggregate_readiness_reflects_a_fully_logged_out_onboarding_state() {
+        // Both providers logged out → the onboarding gate reads NOT ready: empty
+        // ready list, any/all both false (honest false, never a fabricated ready).
+        let probe = MockProbe::new()
+            .set_missing(Provider::Codex)
+            .set(Provider::Claude, "{\n  \"loggedIn\": false\n}");
+        let rendered =
+            render_detect(&probe, &[Provider::Codex, Provider::Claude]).expect("renders");
+        let v = parse(&rendered);
+        assert!(v["ready_providers"].as_array().unwrap().is_empty());
+        assert_eq!(v["any_authenticated"], false);
+        assert_eq!(v["all_authenticated"], false);
     }
 
     #[test]
