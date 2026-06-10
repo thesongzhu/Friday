@@ -1499,7 +1499,13 @@ describe("FridayHub Bootstrap Integration", () => {
     });
   });
 
-  it("registers the agent-loop cooldown sweep job on startup", async () => {
+  it("does NOT register the retired agent-loop cooldown sweep job on startup (SEV-1 stop-the-fail-loop)", async () => {
+    // The `agent-loop-cooldown-sweep` job's terminal action (executionService.execute)
+    // is fail-closed (TS_RUNTIME_AUTOFIX_EXECUTION_RETIRED). It is no longer registered,
+    // and bootstrap calls schedulerRepoRef.disableJob("agent-loop-cooldown-sweep") so any
+    // persisted row is excluded from due-selection and min-wake. On a fresh DB the
+    // disableJob is a no-op UPDATE, so the row never exists; if a legacy row were present
+    // it would be enabled=0 with next_run_at=NULL. Either way it must not be enabled.
     const hub = await createIsolatedHub();
     await hub.start();
 
@@ -1507,12 +1513,14 @@ describe("FridayHub Bootstrap Integration", () => {
     const db = new Database(dbPath);
     try {
       const row = db
-        .prepare("SELECT id, interval_ms, enabled FROM friday_scheduler_jobs WHERE id = 'agent-loop-cooldown-sweep'")
-        .get() as { id: string; interval_ms: number; enabled: number } | undefined;
-      expect(row).toBeDefined();
-      expect(row!.id).toBe("agent-loop-cooldown-sweep");
-      expect(row!.interval_ms).toBe(60_000);
-      expect(row!.enabled).toBe(1);
+        .prepare("SELECT id, interval_ms, enabled, next_run_at FROM friday_scheduler_jobs WHERE id = 'agent-loop-cooldown-sweep'")
+        .get() as { id: string; interval_ms: number; enabled: number; next_run_at: string | null } | undefined;
+      // Fresh DB: the retired job is never seeded, so no row exists.
+      if (row !== undefined) {
+        // Legacy/pre-existing row: bootstrap's disableJob must have disabled it.
+        expect(row.enabled).toBe(0);
+        expect(row.next_run_at).toBeNull();
+      }
     } finally {
       db.close();
     }
@@ -1557,10 +1565,10 @@ describe("FridayHub Bootstrap Integration", () => {
         jobId: "autofix-dispatch",
         status: expect.stringMatching(/^(scheduled|pending|idle)$/),
       });
-      expect(jobById.get("agent-loop-cooldown-sweep")).toMatchObject({
-        jobId: "agent-loop-cooldown-sweep",
-        status: expect.stringMatching(/^(scheduled|pending|idle)$/),
-      });
+      // SEV-1 stop-the-fail-loop: the retired `agent-loop-cooldown-sweep` job is no
+      // longer registered (its terminal action is fail-closed), so it does not appear
+      // in the /v1/jobs listing on a fresh hub.
+      expect(jobById.get("agent-loop-cooldown-sweep")).toBeUndefined();
     });
   });
 

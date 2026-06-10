@@ -299,7 +299,6 @@ import {
 } from "#learning";
 import {
   createFridayObservabilityApiService,
-  FRIDAY_BUILT_IN_SELF_HEALING_ALERT_RULE_ID,
 } from "../observability/services/friday-observability-api-service.js";
 import { createFridaySatelliteRuntimeRoutes } from "../api/http/routes/friday-satellite-runtime-routes.js";
 import { scanLocalSkills } from "../skills/converter/discovery/friday-local-skill-scanner.js";
@@ -312,7 +311,6 @@ import {
   createFridayJobSchedulerRepository,
   createFridayJobSchedulerService,
   createFridayLearningMetricsJob,
-  createFridaySessionLifecycleJob,
   createFridaySessionMemoryExtractionWorkerJob,
   createFridayWorkflowCronTriggerJob,
   createFridayWorkflowTimeoutJob,
@@ -7409,22 +7407,16 @@ export async function createFridayHub(
       },
     ];
 
-    // Session lifecycle sweep
-    if (sessionExtractionService) {
-      const lifecycleJob = createFridaySessionLifecycleJob({
-        db: stateRuntime.sqlite,
-        sessionService: hubSessionService,
-        extractionService: sessionExtractionService,
-        nowIso,
-      });
-      schedulerJobs.push({
-        id: "session-lifecycle-sweep",
-        intervalMs: 120_000, // every 2 min
-        timeoutMs: 300_000, // 5 min
-        catchUpRuns: 1,
-        run: async () => { await lifecycleJob.run(); },
-      });
-    }
+    // Session lifecycle sweep — RETIRED (SEV-1 stop-the-fail-loop).
+    // The `session-lifecycle-sweep` job's handler called sessionService.sweepLifecycle(),
+    // which is fail-closed (TS_RUNTIME_SESSION_RETIRED, 503) in default/live runtime.
+    // A recurring sweep against a retired method fail-loops forever (the scheduler
+    // never auto-disables a recurring failer; it markFailed → reschedule with capped
+    // backoff). The job is no longer registered here so start() does not re-seed its
+    // row enabled=1; the persisted row (if any) is disabled below via
+    // schedulerRepoRef.disableJob so it is excluded from BOTH due-selection and the
+    // min-wake computation (no busy-spin). The Rust-owned session_lifecycle entrypoint
+    // is a separate operator-gated Phase-1/2 replacement.
 
     // Session memory extraction worker
     if (sessionExtractionService) {
@@ -7541,21 +7533,18 @@ export async function createFridayHub(
       }
     }
 
-    schedulerJobs.push({
-      id: "agent-loop-cooldown-sweep",
-      intervalMs: 60_000,
-      timeoutMs: 120_000,
-      catchUpRuns: 1,
-      run: async () => {
-        const hasRepeatedFailureAlert = observabilityService.alerts.getActiveEvents().some(
-          (event) => event.ruleId === FRIDAY_BUILT_IN_SELF_HEALING_ALERT_RULE_ID && event.status !== "resolved",
-        );
-        await agentLoopService?.resumeCooldownRuns({
-          limit: 10,
-          trigger: hasRepeatedFailureAlert ? "repeated_failure_alert" : "cooldown_elapsed",
-        });
-      },
-    });
+    // Agent-loop cooldown sweep — RETIRED (SEV-1 stop-the-fail-loop, latent twin).
+    // The `agent-loop-cooldown-sweep` job's handler called
+    // agentLoopService.resumeCooldownRuns() → executeRun → executionService.execute(),
+    // which is fail-closed (TS_RUNTIME_AUTOFIX_EXECUTION_RETIRED, 503) in default/live
+    // runtime. It does not fire today only because it queries cooldown rows first and
+    // there are none — but its terminal action is already retired, so it can never do
+    // work and becomes an infinite fail-loop the instant any cooldown loop-run row
+    // exists. The job is no longer registered here so start() does not re-seed its row
+    // enabled=1; the persisted row (if any) is disabled below via
+    // schedulerRepoRef.disableJob so it is excluded from BOTH due-selection and the
+    // min-wake computation (no busy-spin). The Rust-owned auto-fix execution entrypoint
+    // is a separate operator-gated Phase-1/2 replacement.
 
     // System self-health monitor: periodic diagnose-only checks; maintenance cleanup requires an explicit gate.
     schedulerJobs.push({
@@ -7595,6 +7584,21 @@ export async function createFridayHub(
       jobs: schedulerJobs,
     });
     const schedulerService = jobScheduler;
+
+    // SEV-1 stop-the-fail-loop: disable the two retired recurring sweeps' persisted
+    // rows. Removing the registration alone is NOT enough — the rows are already
+    // persisted enabled=1 with a next_run_at, and start() does not re-enable existing
+    // rows, but a row left enabled=1 with a def absent from the in-memory map is the
+    // busy-spin trap: the run loop skips it (no jobDef) yet the min-wake computation
+    // still sees it (enabled + nextRunAt), so once next_run_at is in the past,
+    // delayMs=max(0,past)=0 → armTimer(0) spins every event-loop turn (STRICTLY worse
+    // than the original 120s/60s fail-loop). disableJob sets enabled=0 AND
+    // next_run_at=NULL, excluding the row from BOTH listDue (WHERE enabled=1) and the
+    // min-wake (skips !enabled || !nextRunAt) → loop stops, no spin, no orphaned state
+    // (the guarded write-txn never ran). On a fresh DB these are harmless no-op UPDATEs.
+    // Runs before jobScheduler.start(), so start()'s seed loop will not re-create them.
+    schedulerRepoRef.disableJob("session-lifecycle-sweep", nowIso());
+    schedulerRepoRef.disableJob("agent-loop-cooldown-sweep", nowIso());
 
     // Link agent automations to the unified scheduler.
     if (apiRuntime.agentAutomationService) {
