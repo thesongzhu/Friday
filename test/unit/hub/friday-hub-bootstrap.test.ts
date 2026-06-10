@@ -163,6 +163,11 @@ describe("createFridayHub", () => {
     await fs.mkdir(bundledSkillsDir, { recursive: true });
     await fs.mkdir(managedSkillsDir, { recursive: true });
     hub = await createFridayHub({
+      // G5 channel-mirror write guard (TS-retirement): these hub tests drive the
+      // real channelMessageHandler and assert mirrored session messages; opt in
+      // to the test-oracle flag so the channel-mirror addMessage path stays live.
+      // Overridable per-test (e.g. to prove default fail-closed).
+      allowTestOnlySessionExecution: true,
       skillDirs: [bundledSkillsDir, managedSkillsDir],
       stateDir,
       ...overrides,

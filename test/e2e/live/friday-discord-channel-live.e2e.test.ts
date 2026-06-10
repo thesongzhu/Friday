@@ -119,6 +119,9 @@ describe.skipIf(!RUN_LIVE_DISCORD || !DISCORD_SETUP_USER_ID || !DISCORD_GUILD_ID
       skillDirs: [],
       port: 0,
       logRequests: false,
+      // G5 channel-mirror write guard (TS-retirement): live channel run mirrors
+      // inbound/outbound into the session store; opt in to keep that path live.
+      allowTestOnlySessionExecution: true,
     });
     await hub.start();
 
@@ -246,6 +249,8 @@ describe.skipIf(!RUN_LIVE_DISCORD || !DISCORD_SETUP_USER_ID || !DISCORD_GUILD_ID
       skillDirs: [],
       port: 0,
       logRequests: false,
+      // G5 channel-mirror write guard (TS-retirement): keep the mirror live on restart too.
+      allowTestOnlySessionExecution: true,
     });
     await restartedHub.start();
 

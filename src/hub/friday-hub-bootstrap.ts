@@ -8278,13 +8278,75 @@ export async function createFridayHub(
       });
 
       // ── Channel Orchestration Engine (Initiative A-WIRE) ──
+      // TS Runtime Retirement (G5 completeness): this sessionDeps object is wired
+      // SOLELY into the channel orchestration engine (channelOrchestrationEngine
+      // below; the API/non-channel engine uses its own separate engineSessionDeps
+      // in friday-api-runtime). On the channel path the engine's run-executor
+      // control-plane writes (finalizeControlPlane / planning return+reject) and
+      // any turn-preparer write persist assistant/user session messages via this
+      // addMessage BEFORE the agent-runtime executeRun guard, so a deterministic /
+      // control-plane channel message would otherwise bypass the channel-mirror
+      // (G5) guard placed at the handler boundary. We close that bypass by applying
+      // the IDENTICAL fail-closed check here, with the SAME family + flag as the
+      // retired session route and the handler mirror (TS_RUNTIME_SESSION_RETIRED,
+      // allowTestOnlySessionExecution). The check returns a rejected promise (never
+      // throws synchronously) so the run-executor's `.catch(() => undefined)` on
+      // each control-plane write degrades cleanly under flag-unset — no half-state,
+      // no unhandled rejection, turn does not crash (mirrors the handler's chained
+      // non-fatal .catch). Production leaves the flag unset → channel-engine session
+      // writes fail-closed; test-oracle harnesses opt in. Guarding here (the
+      // channel-only caller boundary) — NOT addMessage itself — leaves the many
+      // legitimate non-channel addMessage callers untouched.
       const channelEngineSessionDeps = {
         getMessages: (key: string, limit?: number) => hubSessionService.getMessages(key, limit),
-        addMessage: (key: string, msg: Parameters<typeof hubSessionService.addMessage>[1]) =>
-          hubSessionService.addMessage(key, msg),
+        addMessage: (key: string, msg: Parameters<typeof hubSessionService.addMessage>[1]) => {
+          if (config.allowTestOnlySessionExecution !== true) {
+            return Promise.reject(
+              new FridayDomainError(
+                "TS_RUNTIME_SESSION_RETIRED",
+                "TypeScript session execution is fail-closed in default/live runtime; use the Rust-owned session_lifecycle entrypoint.",
+                {
+                  httpStatus: 503,
+                  details: {
+                    classification: "fail_closed",
+                    replacement: "rust_owned_session_lifecycle_entrypoint_required",
+                  },
+                },
+              ),
+            );
+          }
+          return hubSessionService.addMessage(key, msg);
+        },
         getConversationFocus: (key: string) => hubSessionService.getConversationFocus(key),
-        setConversationFocus: (key: string, state: Parameters<typeof hubSessionService.setConversationFocus>[1]) =>
-          hubSessionService.setConversationFocus(key, state).then(() => undefined),
+        // setConversationFocus is the SECOND session-state WRITE on this channel-only
+        // dep (a sibling of addMessage). It rewrites conversation focus (currentTopicSummary,
+        // assistantAnchorSummary, lastRunId, reply anchors, fingerprints, task ledger) on
+        // pre-existing channel session rows. The run-executor's control-plane finalize does
+        // addMessage THEN setConversationFocus per branch, each `.catch(() => undefined)`-
+        // swallowed — so the addMessage fail-closed rejection is caught and flow STILL reaches
+        // this write. setConversationFocus is retirement-in-scope (the /v1/sessions/:key/compact
+        // focus route is gated behind assertSessionTestOracleAllowed). Apply the IDENTICAL
+        // fail-closed check (same family + flag, no new flag) so the COMPLETE channel-engine
+        // session-write surface is fenced under the production default. getConversationFocus /
+        // getMessages are READS → left live per the retirement (reads stay live).
+        setConversationFocus: (key: string, state: Parameters<typeof hubSessionService.setConversationFocus>[1]) => {
+          if (config.allowTestOnlySessionExecution !== true) {
+            return Promise.reject(
+              new FridayDomainError(
+                "TS_RUNTIME_SESSION_RETIRED",
+                "TypeScript session execution is fail-closed in default/live runtime; use the Rust-owned session_lifecycle entrypoint.",
+                {
+                  httpStatus: 503,
+                  details: {
+                    classification: "fail_closed",
+                    replacement: "rust_owned_session_lifecycle_entrypoint_required",
+                  },
+                },
+              ),
+            );
+          }
+          return hubSessionService.setConversationFocus(key, state).then(() => undefined);
+        },
       };
       const channelOrchestrationEngine = createFridayOrchestrationEngine({
         turnPreparerDeps: {
@@ -8296,8 +8358,44 @@ export async function createFridayHub(
           classifyExecution: classifyFridayExecution,
           capabilitySnapshotGetter: getAgentCapabilitySnapshot as unknown as CreateFridayEngineTurnPreparerDeps["capabilitySnapshotGetter"],
           taskStatusSnapshotGetter: getAgentTaskStatusSnapshot as unknown as CreateFridayEngineTurnPreparerDeps["taskStatusSnapshotGetter"],
+          // persistCompactionEvidence is the THIRD channel-engine session/memory-state
+          // WRITE — separately wired (NOT part of channelEngineSessionDeps), so the
+          // addMessage / setConversationFocus guards above do NOT cover it. The
+          // turn-preparer runs BEFORE dispatch / before the agent-runtime executeRun
+          // guard and, when buildSelectedBlockCompactionEvidence(selectedBlocks) is
+          // non-null, calls this to write a session+runId-keyed derived-state row into
+          // friday_agent_context_replay_entries (summaryText / decisions / todos /
+          // openQuestions / toolFailures / fileOperations) via db.withWriteTransaction →
+          // appendCompactionSummary. Reachable on a bound channel turn even while
+          // addMessage / setConversationFocus reject (proven RED). Apply the IDENTICAL
+          // fail-closed check (SAME family + flag, no new flag) so the COMPLETE
+          // channel-engine session/memory-write surface is fenced under the production
+          // default. The check returns a rejected promise (never throws synchronously);
+          // the turn-preparer wraps the call in `.catch(() => undefined)`
+          // (friday-engine-turn-preparer.ts ~455-463) so flow degrades cleanly — no
+          // half-state, no unhandled rejection, the turn does not crash. Production leaves
+          // the flag unset → channel-engine compaction-evidence writes fail-closed;
+          // test-oracle harnesses opt in. The sink's OTHER consumers (agent runtime parent
+          // + sub-agent, bootstrap ~4851 / ~5172) are downstream of executeRun:803 and
+          // already fenced by allowTestOnlyAgentRunExecution — this closure is the only
+          // channel path to the sink BEFORE that guard.
           persistCompactionEvidence: agentCompactionContextReplaySink
             ? async (input) => {
+              if (config.allowTestOnlySessionExecution !== true) {
+                return Promise.reject(
+                  new FridayDomainError(
+                    "TS_RUNTIME_SESSION_RETIRED",
+                    "TypeScript session execution is fail-closed in default/live runtime; use the Rust-owned session_lifecycle entrypoint.",
+                    {
+                      httpStatus: 503,
+                      details: {
+                        classification: "fail_closed",
+                        replacement: "rust_owned_session_lifecycle_entrypoint_required",
+                      },
+                    },
+                  ),
+                );
+              }
               await agentCompactionContextReplaySink.persist({
                 sessionKey: input.sessionKey,
                 runId: input.runId,
@@ -8305,6 +8403,7 @@ export async function createFridayHub(
                 blocks: input.blocks,
                 compactedAt: nowIso(),
               });
+              return undefined;
             }
             : undefined,
         },
@@ -8637,6 +8736,39 @@ export async function createFridayHub(
               details: payload,
             }).catch((err: unknown) => warnHubBootstrapOnce(`[friday] audit-append: ${err instanceof Error ? err.message : String(err)}`));
           };
+          // ─── TS Runtime Retirement (G5): channel-mirror write boundary guard ───
+          // The channel webhook ingress → channelMessageHandler path mirrors
+          // inbound/outbound channel traffic into the TS session store via
+          // FridaySessionService.addMessage (withWriteTransaction). The session
+          // ROUTE write is already retired (assertSessionTestOracleAllowed →
+          // TS_RUNTIME_SESSION_RETIRED), but this off-route mirror entry was
+          // unguarded. We guard at THIS caller boundary — never on addMessage
+          // itself — because addMessage has many legitimate non-channel callers
+          // (API session routes, agent sessions tool, engine turn-preparer /
+          // run-executor, subagent lineage, parent-summary writes). Guarding the
+          // method globally would break those; guarding here closes the
+          // channel-mirror bypass with the SAME family + flag as the retired
+          // route. Production leaves the flag unset → mirror writes fail-closed;
+          // test-oracle harnesses opt in. Returns the addMessage promise so every
+          // call site (await / await+catch / void async) behaves identically.
+          const mirrorChannelSessionMessage: typeof hubSessionService.addMessage = (key, message) => {
+            if (config.allowTestOnlySessionExecution !== true) {
+              return Promise.reject(
+                new FridayDomainError(
+                  "TS_RUNTIME_SESSION_RETIRED",
+                  "TypeScript session execution is fail-closed in default/live runtime; use the Rust-owned session_lifecycle entrypoint.",
+                  {
+                    httpStatus: 503,
+                    details: {
+                      classification: "fail_closed",
+                      replacement: "rust_owned_session_lifecycle_entrypoint_required",
+                    },
+                  },
+                ),
+              );
+            }
+            return hubSessionService.addMessage(key, message);
+          };
           if (taskText.length === 0) return;
           channelApprovalRoutesBySession.set(sessionKey, {
             channelKind: msg.channelKind,
@@ -8699,7 +8831,7 @@ export async function createFridayHub(
           const reflexCandidateCommand = text.length > 0 ? parseReflexCandidateDecisionCommand(text) : null;
           if (reflexCandidateCommand) {
             void (async () => {
-              await hubSessionService.addMessage(sessionKey, {
+              await mirrorChannelSessionMessage(sessionKey, {
                 role: "user",
                 content: text,
                 contentText: text,
@@ -8771,7 +8903,7 @@ export async function createFridayHub(
                 text: ackText,
                 replyTo: msg.id,
               });
-              await hubSessionService.addMessage(sessionKey, {
+              await mirrorChannelSessionMessage(sessionKey, {
                 role: "assistant",
                 content: ackText,
                 contentText: ackText,
@@ -8807,7 +8939,7 @@ export async function createFridayHub(
           });
           if (reflexPreferenceResult.applied > 0 || reflexPreferenceResult.pendingConfirmation > 0) {
             void (async () => {
-              await hubSessionService.addMessage(sessionKey, {
+              await mirrorChannelSessionMessage(sessionKey, {
                 role: "user",
                 content: text,
                 contentText: text,
@@ -8838,7 +8970,7 @@ export async function createFridayHub(
                 text: ackText,
                 replyTo: msg.id,
               });
-              await hubSessionService.addMessage(sessionKey, {
+              await mirrorChannelSessionMessage(sessionKey, {
                 role: "assistant",
                 content: ackText,
                 contentText: ackText,
@@ -8890,7 +9022,7 @@ export async function createFridayHub(
           if (approvalCommand) {
             if (shouldRouteToolApprovalCommand) {
               void (async () => {
-                await hubSessionService.addMessage(sessionKey, {
+                await mirrorChannelSessionMessage(sessionKey, {
                   role: "user",
                   content: text,
                   contentText: text,
@@ -8973,7 +9105,7 @@ export async function createFridayHub(
                   text: ackText,
                   replyTo: msg.id,
                 });
-                await hubSessionService.addMessage(sessionKey, {
+                await mirrorChannelSessionMessage(sessionKey, {
                   role: "assistant",
                   content: ackText,
                   contentText: ackText,
@@ -9085,7 +9217,7 @@ export async function createFridayHub(
               sourceText: taskText,
             });
             try {
-              const inboundMessage = await hubSessionService.addMessage(sessionKey, {
+              const inboundMessage = await mirrorChannelSessionMessage(sessionKey, {
                 role: "user",
                 content: taskText,
                 contentText: taskText,
@@ -9123,7 +9255,7 @@ export async function createFridayHub(
                     text: outboundText,
                     runId,
                   });
-                  await hubSessionService.addMessage(sessionKey, {
+                  await mirrorChannelSessionMessage(sessionKey, {
                     role: "assistant",
                     content: outboundText,
                     contentText: outboundText,
@@ -9251,7 +9383,7 @@ export async function createFridayHub(
                   error: err,
                 });
                 const fallbackText = buildFridayChannelDeliveryFailureText(result.runId, taskText);
-                await hubSessionService.addMessage(sessionKey, {
+                await mirrorChannelSessionMessage(sessionKey, {
                   role: "assistant",
                   content: fallbackText,
                   contentText: fallbackText,
