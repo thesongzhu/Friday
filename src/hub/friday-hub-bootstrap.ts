@@ -8283,8 +8283,35 @@ export async function createFridayHub(
           return hubSessionService.addMessage(key, msg);
         },
         getConversationFocus: (key: string) => hubSessionService.getConversationFocus(key),
-        setConversationFocus: (key: string, state: Parameters<typeof hubSessionService.setConversationFocus>[1]) =>
-          hubSessionService.setConversationFocus(key, state).then(() => undefined),
+        // setConversationFocus is the SECOND session-state WRITE on this channel-only
+        // dep (a sibling of addMessage). It rewrites conversation focus (currentTopicSummary,
+        // assistantAnchorSummary, lastRunId, reply anchors, fingerprints, task ledger) on
+        // pre-existing channel session rows. The run-executor's control-plane finalize does
+        // addMessage THEN setConversationFocus per branch, each `.catch(() => undefined)`-
+        // swallowed — so the addMessage fail-closed rejection is caught and flow STILL reaches
+        // this write. setConversationFocus is retirement-in-scope (the /v1/sessions/:key/compact
+        // focus route is gated behind assertSessionTestOracleAllowed). Apply the IDENTICAL
+        // fail-closed check (same family + flag, no new flag) so the COMPLETE channel-engine
+        // session-write surface is fenced under the production default. getConversationFocus /
+        // getMessages are READS → left live per the retirement (reads stay live).
+        setConversationFocus: (key: string, state: Parameters<typeof hubSessionService.setConversationFocus>[1]) => {
+          if (config.allowTestOnlySessionExecution !== true) {
+            return Promise.reject(
+              new FridayDomainError(
+                "TS_RUNTIME_SESSION_RETIRED",
+                "TypeScript session execution is fail-closed in default/live runtime; use the Rust-owned session_lifecycle entrypoint.",
+                {
+                  httpStatus: 503,
+                  details: {
+                    classification: "fail_closed",
+                    replacement: "rust_owned_session_lifecycle_entrypoint_required",
+                  },
+                },
+              ),
+            );
+          }
+          return hubSessionService.setConversationFocus(key, state).then(() => undefined);
+        },
       };
       const channelOrchestrationEngine = createFridayOrchestrationEngine({
         turnPreparerDeps: {

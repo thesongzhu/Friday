@@ -811,4 +811,106 @@ describe("channel ENGINE control-plane write guard (G5 completeness, default fai
 
     addMessageSpy.mockRestore();
   });
+
+  // ── setConversationFocus completeness: the SIBLING control-plane write ──
+  // The run-executor's control-plane finalize does TWO awaited writes per branch:
+  // channelEngineSessionDeps.addMessage THEN channelEngineSessionDeps.setConversationFocus,
+  // each `.catch(() => undefined)`-swallowed. With ONLY addMessage guarded, the addMessage
+  // fail-closed rejection is caught and flow STILL reaches setConversationFocus — which (if
+  // unguarded) rewrites focus state (currentTopicSummary, assistantAnchorSummary, lastRunId,
+  // reply anchors, fingerprints, task ledger) on a PRE-EXISTING channel session row. This is
+  // the residual control-plane focus-state write the re-review proved. Seed a real session
+  // row + a sentinel focus via the RAW service (the raw FridaySessionService has no guard —
+  // only the channel-engine dep closure does — so seeding succeeds with the flag unset), drive
+  // the same deterministic 'daemon status' turn under the unset flag, and assert focus is byte-
+  // identical to the seed (setConversationFocus never ran) — while the reply is still delivered
+  // and no unhandled rejection escapes. Empirically RED with the setConversationFocus guard
+  // removed: finalizeFridayConversationFocus rewrites the focus → focusMutated true → FAIL.
+  it("does NOT mutate conversation focus on a pre-existing channel session row for a deterministic control-plane turn, and does not crash", async () => {
+    const channel = createTestChannelPlugin();
+    hub!.channelRegistry.register(channel.plugin);
+    await hub!.start();
+    const onMessage = channel.getStartedHandler();
+    expect(onMessage).toBeTypeOf("function");
+
+    const inbound: FridayChannelMessage = {
+      id: "msg-engine-focus-failclosed",
+      channelKind: "testchannel",
+      senderId: "sender-focus-1",
+      senderName: "Bob",
+      chatId: "chat-engine-focus",
+      chatType: "direct",
+      text: "daemon status",
+      timestamp: Date.now(),
+    };
+    const sessionKey = resolveFridayChannelSessionKey(inbound, {
+      crossChannelIdentityEnabled: false,
+      identityMap: {},
+    });
+
+    // Seed a PRE-EXISTING session row + a distinctive sentinel focus through the raw
+    // session service (no guard on the raw instance). Every field finalizeFridayConversationFocus
+    // would deterministically rewrite (currentTopicSummary / assistantAnchorSummary / lastRunId /
+    // taskLedger / fingerprints) is set to an unmistakable sentinel so any write is detectable.
+    await hub!.apiRuntime.sessionService.getOrCreateSession(sessionKey);
+    const seededFocus = {
+      currentTopicFingerprint: "SENTINEL_TOPIC_FP",
+      currentTopicSummary: "SENTINEL_TOPIC_SUMMARY_DO_NOT_OVERWRITE",
+      currentTopicStartSequence: 1,
+      assistantAnchorSummary: "SENTINEL_ANCHOR_SUMMARY",
+      assistantAnchorFingerprint: "SENTINEL_ANCHOR_FP",
+      lastAnsweredQuestion: "SENTINEL_LAST_ANSWERED",
+      lastRunId: "SENTINEL_LAST_RUN_ID",
+      lastTurnKind: "new_topic" as const,
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    };
+    await hub!.apiRuntime.sessionService.setConversationFocus(sessionKey, seededFocus);
+
+    // Confirm the seed landed (raw write is NOT guarded; only the channel-engine dep is).
+    const focusBefore = await hub!.apiRuntime.sessionService.getConversationFocus(sessionKey);
+    expect(focusBefore?.currentTopicSummary).toBe("SENTINEL_TOPIC_SUMMARY_DO_NOT_OVERWRITE");
+    expect(focusBefore?.lastRunId).toBe("SENTINEL_LAST_RUN_ID");
+
+    // Spy on the raw setConversationFocus to also prove the channel-engine dep's write is
+    // fenced before it reaches the store. (The seed call above is captured then cleared.)
+    const setFocusSpy = vi.spyOn(hub!.apiRuntime.sessionService, "setConversationFocus");
+
+    // Drive the deterministic daemon-status turn through the real channelMessageHandler →
+    // channel orchestration engine → run-executor.finalizeControlPlane. With the flag unset,
+    // addMessage rejects (caught), and the SIBLING setConversationFocus is the write under test.
+    onMessage!(inbound);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    // PRIMARY (instance-agnostic): the seeded focus is BYTE-UNCHANGED → the control-plane
+    // setConversationFocus write was fenced before it could rewrite focus state.
+    const focusAfter = await hub!.apiRuntime.sessionService.getConversationFocus(sessionKey);
+    const focusMutated = JSON.stringify(focusAfter) !== JSON.stringify(focusBefore);
+    expect(focusMutated).toBe(false);
+    expect(focusAfter?.currentTopicSummary).toBe("SENTINEL_TOPIC_SUMMARY_DO_NOT_OVERWRITE");
+    expect(focusAfter?.assistantAnchorSummary).toBe("SENTINEL_ANCHOR_SUMMARY");
+    expect(focusAfter?.lastRunId).toBe("SENTINEL_LAST_RUN_ID");
+
+    // SECONDARY (store-level): the channel-engine dep's setConversationFocus never reached
+    // the store after the seed.
+    expect(setFocusSpy).not.toHaveBeenCalled();
+
+    // Regression: addMessage (the already-guarded sibling) is likewise fenced → no rows.
+    const messages = await hub!.apiRuntime.sessionService.getMessages(sessionKey).catch(() => []);
+    expect(messages.filter((m) => m.role === "assistant")).toHaveLength(0);
+    expect(messages.filter((m) => m.role === "user")).toHaveLength(0);
+
+    // Prove the control-plane path ACTUALLY executed (not a tautology): the deterministic
+    // daemon-status reply is still delivered outbound.
+    expect(channel.sentMessages.some((t) => /daemon/iu.test(t))).toBe(true);
+
+    // Every fenced control-plane write is `.catch(() => undefined)` → no unhandled rejection.
+    const focusRejections = unhandled.filter((r) => {
+      const code = (r as { code?: unknown } | null)?.code;
+      const message = r instanceof Error ? r.message : "";
+      return code === "TS_RUNTIME_SESSION_RETIRED" || /session execution is fail-closed/u.test(message);
+    });
+    expect(focusRejections).toHaveLength(0);
+
+    setFocusSpy.mockRestore();
+  });
 });
