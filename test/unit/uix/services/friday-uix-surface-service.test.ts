@@ -1375,4 +1375,115 @@ describe("createFridayUixSurfaceService", () => {
     );
     expect(response.summary).toContain("bounded title fix");
   });
+
+  // ─── TS Runtime Retirement — GAP G2: DEFAULT-OFF flag guard ───
+  // These two tests pin the INVERTED-polarity lever for the UIX starter-skill
+  // execution lane (executeStarterSkillTemplate). Default-off = no behavior
+  // change today (starter skills execute, zero degradation); flag-on = the lane
+  // fails closed with a 503 TS_RUNTIME_SKILL_RUNS_RETIRED BEFORE skillExecutor
+  // runs. This is the lever to flip ON only when skill exec is Rust-owned (R11).
+  describe("GAP G2 UIX skill-exec retirement guard (DEFAULT-OFF)", () => {
+    it("default (enforceUixSkillExecRetirement unset): starter-skill template executes exactly as before", async () => {
+      const execute = vi.fn(() => ({
+        runId: "skill-run-g2-default",
+        result: Promise.resolve({
+          runId: "skill-run-g2-default",
+          status: "completed",
+          output: {
+            summary: "Friday has 0 open issue card(s).",
+            nextStep: "Nothing to review.",
+            details: {},
+          },
+          stdout: "",
+          stderr: "",
+          durationMs: 7,
+        }),
+      }));
+      const service = createFridayUixSurfaceService({
+        selfHealing: {
+          listIssueCards: vi.fn(() => []),
+        } as never,
+        skillExecutor: {
+          execute,
+          cancel: vi.fn(),
+        },
+        // enforceUixSkillExecRetirement intentionally omitted → default OFF.
+      });
+
+      const response = await service.executeTemplate({
+        templateId: "review-issues",
+        userId: "user-1",
+        parameters: {},
+      });
+
+      // Guard is INERT by default: the starter skill runs, current behavior preserved.
+      expect(execute).toHaveBeenCalledOnce();
+      expect(response.status).toBe("executed");
+      expect(response.summary).toContain("open issue");
+    });
+
+    it("explicit false: behaves identically to default (no throw, skill executes)", async () => {
+      const execute = vi.fn(() => ({
+        runId: "skill-run-g2-false",
+        result: Promise.resolve({
+          runId: "skill-run-g2-false",
+          status: "completed",
+          output: { summary: "Friday has 0 open issue card(s).", details: {} },
+          stdout: "",
+          stderr: "",
+          durationMs: 7,
+        }),
+      }));
+      const service = createFridayUixSurfaceService({
+        selfHealing: { listIssueCards: vi.fn(() => []) } as never,
+        skillExecutor: { execute, cancel: vi.fn() },
+        enforceUixSkillExecRetirement: false,
+      });
+
+      const response = await service.executeTemplate({
+        templateId: "review-issues",
+        userId: "user-1",
+        parameters: {},
+      });
+
+      expect(execute).toHaveBeenCalledOnce();
+      expect(response.status).toBe("executed");
+    });
+
+    it("flag ON (enforceUixSkillExecRetirement=true): lane fails closed 503 TS_RUNTIME_SKILL_RUNS_RETIRED before skillExecutor runs", async () => {
+      const execute = vi.fn(() => {
+        throw new Error("skillExecutor.execute must NOT be reached when the retirement guard is on");
+      });
+      const service = createFridayUixSurfaceService({
+        selfHealing: { listIssueCards: vi.fn(() => []) } as never,
+        skillExecutor: {
+          execute,
+          cancel: vi.fn(),
+        },
+        enforceUixSkillExecRetirement: true,
+      });
+
+      let caught: unknown;
+      try {
+        await service.executeTemplate({
+          templateId: "review-issues",
+          userId: "user-1",
+          parameters: {},
+        });
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toBeInstanceOf(FridayDomainError);
+      const domainError = caught as FridayDomainError;
+      expect(domainError.code).toBe("TS_RUNTIME_SKILL_RUNS_RETIRED");
+      expect(domainError.httpStatus).toBe(503);
+      expect(domainError.details).toMatchObject({
+        classification: "fail_closed",
+        replacement: "rust_owned_skill_run_entrypoint_required",
+      });
+      // Zero side effects: the executor was never invoked.
+      expect(execute).not.toHaveBeenCalled();
+    });
+  });
 });

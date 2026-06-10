@@ -1400,6 +1400,12 @@ export async function createFridayHub(
         task: input.task,
         surface: input.surface,
       }),
+    // TS Runtime Retirement — GAP G2 (DEFAULT-OFF): production leaves this unset
+    // so the skill-generator session mutators behave exactly as today (the
+    // UIX-driven `generate-skill` flow + agent skill-generator tool keep
+    // working). Flip true only when the operator decides to Rust-own skill
+    // generation (R11) — then the mutators fail closed.
+    enforceUixSkillExecRetirement: config.enforceUixSkillExecRetirement,
   });
 
   // 9. Create converter service
@@ -5968,6 +5974,12 @@ export async function createFridayHub(
     sessionService: hubSessionService,
     skillGenerator,
     skillExecutor: executor,
+    // TS Runtime Retirement — GAP G2 (DEFAULT-OFF): production leaves this unset
+    // so UIX starter-skill execution (executeStarterSkillTemplate) behaves
+    // exactly as today — zero degradation. Flip true only when the operator
+    // decides to Rust-own skill execution (R11) — then the UIX skill-exec lane
+    // fails closed (TS_RUNTIME_SKILL_RUNS_RETIRED).
+    enforceUixSkillExecRetirement: config.enforceUixSkillExecRetirement,
     workflowGenerator,
     workflowProduct: workflowProductService,
     selfHealing: selfHealingApiService,
