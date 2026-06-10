@@ -22,6 +22,7 @@ members = [
     "crates/friday-deepseek",
     "crates/friday-providers",
     "crates/friday-fs",
+    "crates/friday-system-remote",
     "crates/friday-hub",
     "crates/friday-ffi",
     "crates/friday-operator-cli",

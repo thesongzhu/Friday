@@ -1,0 +1,16 @@
+[package]
+name = "friday-system-remote"
+description = "Friday Rust Core — R5 system.remote.* foundation (DARK): WebAuthn-ceremony typed state machines (fail-closed verifier seam), registered-device + remote-session in-memory store. NO hub wiring, NO production caller, NO persistence (deferred). NOT v1 GO."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+
+# DARK crate. No production caller, no hub route, no FFI exposure. It is a
+# self-contained R5 slice-1 foundation; it deliberately depends on NOTHING in the
+# workspace (not even friday-core) so it cannot contend with concurrent lanes and
+# carries no migration / schema coupling. Persistence is an explicit deferred
+# slice (see lib.rs) — there is no rusqlite dependency by design this slice.
+[dependencies]
+thiserror.workspace = true
