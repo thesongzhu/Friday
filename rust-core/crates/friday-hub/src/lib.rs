@@ -279,6 +279,14 @@ pub mod tool_name_map;
 /// Dark substrate: NOTHING routes through it yet, NOT a v1 GO.
 pub mod key_source;
 
+/// R4 — the Rust-owned SYSTEM-INTENT execution domain layer (DARK). Mirrors the
+/// fenced TS `friday-system-service.executeIntent` (whose declared replacement is
+/// `rust_owned_system_intent_execution_entrypoint_required`): intent dispatch with
+/// canonical-gate approval-gating (fail-closed; an agent/channel/remote actor can
+/// never self-approve), the control-lease lifecycle, and an honest deferred-OS-action
+/// seam. No production route, no runtime caller, no live flip. NOT v1 GO.
+pub mod system_intent;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,
