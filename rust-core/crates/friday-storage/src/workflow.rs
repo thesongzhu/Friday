@@ -155,16 +155,16 @@ pub fn set_run_state(
 /// -> Running`, but that is a fresh START, not a resume, so `resumable` is NOT
 /// "any `-> Running` is legal"; it is precisely the `AwaitingCheckpoint` predicate
 /// the engine's [`crate::workflow`]-driven `resume_workflow` already enforces.
-/// `terminal` is the core `is_terminal()` (`Done`/`Failed`). This is purely
-/// additive read-only metadata; it performs NO write and changes no existing
-/// behavior.
+/// `terminal` is the core `is_terminal()` (`Done`/`Failed`/`Cancelled`). This is
+/// purely additive read-only metadata; it performs NO write and changes no
+/// existing behavior.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RunControlState {
     pub state: WorkflowRunState,
     /// `true` iff a `-> Running` resume transition is permitted from `state`
     /// (i.e. `state == AwaitingCheckpoint`). Mirrors the `friday-core` machine.
     pub resumable: bool,
-    /// `true` iff `state` is a terminal run state (`Done`/`Failed`).
+    /// `true` iff `state` is a terminal run state (`Done`/`Failed`/`Cancelled`).
     pub terminal: bool,
 }
 
