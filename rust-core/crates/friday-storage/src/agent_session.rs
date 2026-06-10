@@ -63,16 +63,51 @@ pub struct StoredSessionMessage {
     pub created_at: i64,
 }
 
-/// The session OWNER axes (slice-3 ownership-binding) — the three `agent_session`
-/// fields the memory namespace is DERIVED from, mirroring the TS `FridaySessionRecord`
-/// `accountId` / `channel` / `userId`. All optional: a pre-slice-3 session (or one
-/// created via the no-owner [`ensure_session`]) reads back `None` for each. A `None`
-/// (or empty) `user_id` is what FAILS the memory-namespace resolution closed.
+/// The session OWNER axes (slice-3 ownership-binding + owner-wiring conversation axes)
+/// — the `agent_session` fields the memory namespace is DERIVED from, mirroring the TS
+/// `FridaySessionRecord` `accountId` / `channel` / `userId` plus the `chatKind` /
+/// `chatId` / `parentSessionKey` axes the TS `resolveEffectiveUserId` fallbacks key on,
+/// AND the structural `session_kind` discriminant (the TS `parseFridaySessionKey(...).kind`).
+/// All optional: a pre-slice-3 session (or one created via the no-owner
+/// [`ensure_session`]) reads back `None` for each. A `None` (or empty) `user_id` with no
+/// derivable fallback (DM-chatId / subagent parent-walk) is what FAILS the
+/// memory-namespace resolution closed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SessionOwner {
     pub account_id: Option<String>,
     pub channel: Option<String>,
     pub user_id: Option<String>,
+    /// The TS `chatKind` (`"dm"` / `"group"` / `"channel"` / `"thread"`). Only the EXACT
+    /// value `"dm"` enables the DM-chatId userId fallback; `None` (or any other kind)
+    /// means no DM fallback (fail-closed). Enforced by a CHECK at the column.
+    pub chat_kind: Option<String>,
+    /// The TS conversation `chatId`. For a `chat_kind == "dm"` conversation this is the
+    /// user-bound chat identity the userId fallback resolves to.
+    pub chat_id: Option<String>,
+    /// The TS `parentSessionKey`: a SUBAGENT session's soft link to its parent
+    /// `agent_session_id` (no FK). The parent-walk userId fallback FOLLOWS this chain (it
+    /// is the chain POINTER, the TS `parentSessionKey ?? parts.parentKey`); a
+    /// dangling/absent link fails the walk closed. NOTE: this is the chain pointer, NOT
+    /// the subagent DISCRIMINANT — that is [`SessionOwner::session_kind`] (see its doc).
+    pub parent_session_id: Option<String>,
+    /// The STRUCTURAL kind discriminant — the faithful Rust carrier for the TS
+    /// `parseFridaySessionKey(session.key).kind` (`"conversation"` / `"subagent"`).
+    ///
+    /// The TS derives kind from the session KEY's prefix (`subagent:<parentKey>:<taskId>`
+    /// ⇒ `"subagent"`, else `"conversation"`); the Rust `agent_session_id` is opaque, so we
+    /// carry the kind EXPLICITLY instead of inferring it from `parent_session_id` presence
+    /// (which is the chain pointer and is NOT a faithful kind signal — a subagent's key
+    /// can carry its parent in the key itself, so `parentSessionKey` may be absent while
+    /// the kind is still `"subagent"`).
+    ///
+    /// FAIL-CLOSED default: only the EXACT value `"conversation"` enables the DM-chatId
+    /// fallback (TS line 94) and only `"subagent"` enables the parent-walk (TS line 99).
+    /// `None` (unset / legacy / pre-v23) or any unknown value enables NEITHER fallback —
+    /// only a direct `user_id` resolves, else the namespace fails closed. This is the
+    /// structural property that makes a contradictory shape (a subagent-kind row with a
+    /// null parent + `chat_kind == "dm"`) never silently DM-attribute. Enforced by a
+    /// vocabulary CHECK at the column.
+    pub session_kind: Option<String>,
 }
 
 /// Ensure an `agent_session` row exists (idempotent). A new session is created at
@@ -81,15 +116,16 @@ pub struct SessionOwner {
 ///
 /// This is the OWNER-LESS form (no `account_id`/`channel`/`user_id`): a session created
 /// this way reads back [`SessionOwner::default`] (all `None`), so its memory namespace
-/// is UNRESOLVABLE (fail-closed) until an owner is set. Existing callers (e.g. the
-/// production `run_session_loop`) keep using this unchanged. To bind an owner, use
-/// [`ensure_session_with_owner`].
+/// is UNRESOLVABLE (fail-closed) until an owner is set. Callers without an owner in
+/// hand (e.g. `run_session_loop` with `session_owner: None`) keep using this unchanged.
+/// To bind an owner, use [`ensure_session_with_owner`].
 ///
 /// IMPORTANT: this owner-less form references ONLY the pre-v21 columns (it never names
-/// `account_id`/`channel`/`user_id`), so it works against a DB at ANY version that has the
-/// base `agent_session` table — including a v≤20 DB seeded in a migration test BEFORE the
-/// v21 owner columns exist. Owner binding is the sole concern of
-/// [`ensure_session_with_owner`], which requires the v21 columns.
+/// `account_id`/`channel`/`user_id` or the v23 conversation axes), so it works against a
+/// DB at ANY version that has the base `agent_session` table — including a v≤20 DB seeded
+/// in a migration test BEFORE the owner columns exist. Owner binding is the sole concern
+/// of [`ensure_session_with_owner`], which requires the v21 owner columns AND the v23
+/// conversation-axis columns.
 pub fn ensure_session(conn: &Connection, agent_session_id: &str, now_ms: i64) -> Result<()> {
     if agent_session_id.trim().is_empty() {
         return Err(StorageError::Unsupported(
@@ -131,20 +167,39 @@ pub fn ensure_session_with_owner(
     let account_id = none_if_blank(owner.account_id.as_deref());
     let channel = none_if_blank(owner.channel.as_deref());
     let user_id = none_if_blank(owner.user_id.as_deref());
+    let chat_kind = none_if_blank(owner.chat_kind.as_deref());
+    let chat_id = none_if_blank(owner.chat_id.as_deref());
+    let parent_session_id = none_if_blank(owner.parent_session_id.as_deref());
+    let session_kind = none_if_blank(owner.session_kind.as_deref());
     // INSERT-or-bump in one statement: a fresh id INSERTs with the owner; an existing id
     // keeps its created_at + already-bound owner (COALESCE keeps the existing non-NULL,
     // else accepts the incoming value as a backfill) and only advances updated_at — no row
     // is ever clobbered and no bound owner is ever erased.
     conn.execute(
         "INSERT INTO agent_session
-            (agent_session_id, created_at, updated_at, account_id, channel, user_id)
-         VALUES (?1, ?2, ?2, ?3, ?4, ?5)
+            (agent_session_id, created_at, updated_at, account_id, channel, user_id,
+             chat_kind, chat_id, parent_session_id, session_kind)
+         VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT(agent_session_id) DO UPDATE SET
             updated_at = ?2,
             account_id = COALESCE(account_id, excluded.account_id),
             channel    = COALESCE(channel, excluded.channel),
-            user_id    = COALESCE(user_id, excluded.user_id)",
-        params![agent_session_id, now_ms, account_id, channel, user_id],
+            user_id    = COALESCE(user_id, excluded.user_id),
+            chat_kind  = COALESCE(chat_kind, excluded.chat_kind),
+            chat_id    = COALESCE(chat_id, excluded.chat_id),
+            parent_session_id = COALESCE(parent_session_id, excluded.parent_session_id),
+            session_kind = COALESCE(session_kind, excluded.session_kind)",
+        params![
+            agent_session_id,
+            now_ms,
+            account_id,
+            channel,
+            user_id,
+            chat_kind,
+            chat_id,
+            parent_session_id,
+            session_kind
+        ],
     )?;
     Ok(())
 }
@@ -162,7 +217,9 @@ pub fn load_session_owner(
     // "no owner" (which would mis-report as an unresolvable namespace downstream).
     let row = conn
         .query_row(
-            "SELECT account_id, channel, user_id FROM agent_session
+            "SELECT account_id, channel, user_id, chat_kind, chat_id, parent_session_id,
+                    session_kind
+             FROM agent_session
              WHERE agent_session_id = ?1",
             [agent_session_id],
             |r| {
@@ -170,6 +227,10 @@ pub fn load_session_owner(
                     account_id: none_if_blank(r.get::<_, Option<String>>(0)?.as_deref()),
                     channel: none_if_blank(r.get::<_, Option<String>>(1)?.as_deref()),
                     user_id: none_if_blank(r.get::<_, Option<String>>(2)?.as_deref()),
+                    chat_kind: none_if_blank(r.get::<_, Option<String>>(3)?.as_deref()),
+                    chat_id: none_if_blank(r.get::<_, Option<String>>(4)?.as_deref()),
+                    parent_session_id: none_if_blank(r.get::<_, Option<String>>(5)?.as_deref()),
+                    session_kind: none_if_blank(r.get::<_, Option<String>>(6)?.as_deref()),
                 })
             },
         )
@@ -616,9 +677,88 @@ mod tests {
             account_id: Some("acct-1".into()),
             channel: Some("discord".into()),
             user_id: Some("user-abc".into()),
+            ..Default::default()
         };
         ensure_session_with_owner(db.conn(), "s1", &owner, 1).unwrap();
         assert_eq!(load_session_owner(db.conn(), "s1").unwrap(), Some(owner));
+    }
+
+    #[test]
+    fn conversation_axes_store_and_load_round_trip() {
+        // Owner-wiring: the DM/subagent fallback axes (`chat_kind`/`chat_id`/
+        // `parent_session_id`) round-trip through ensure/load like the owner axes.
+        let db = Db::open_hub(&tmp("convaxes")).unwrap();
+        let owner = SessionOwner {
+            account_id: Some("default".into()),
+            channel: Some("telegram".into()),
+            user_id: None,
+            chat_kind: Some("dm".into()),
+            chat_id: Some("chat-77".into()),
+            parent_session_id: None,
+            session_kind: Some("conversation".into()),
+        };
+        ensure_session_with_owner(db.conn(), "s1", &owner, 1).unwrap();
+        assert_eq!(load_session_owner(db.conn(), "s1").unwrap(), Some(owner));
+
+        // A subagent-shaped session links its parent (soft link, no FK — a not-yet-
+        // existing parent id is accepted; the WALK fails closed, not the row) and carries
+        // its STRUCTURAL kind explicitly (round-trips like the other axes).
+        let sub = SessionOwner {
+            parent_session_id: Some("s1".into()),
+            session_kind: Some("subagent".into()),
+            ..Default::default()
+        };
+        ensure_session_with_owner(db.conn(), "s2", &sub, 2).unwrap();
+        let back = load_session_owner(db.conn(), "s2").unwrap().unwrap();
+        assert_eq!(back.parent_session_id.as_deref(), Some("s1"));
+        assert_eq!(back.session_kind.as_deref(), Some("subagent"));
+        assert_eq!(back.chat_kind, None);
+        assert_eq!(back.user_id, None);
+    }
+
+    #[test]
+    fn chat_kind_outside_ts_vocabulary_is_rejected_by_check() {
+        // The CHECK admits NULL or the exact TS vocabulary only — an unknown kind cannot
+        // be stored to LOOK like (or later be confused with) a DM.
+        let db = Db::open_hub(&tmp("chatkind-check")).unwrap();
+        let bad = SessionOwner {
+            chat_kind: Some("direct-message".into()),
+            ..Default::default()
+        };
+        assert!(ensure_session_with_owner(db.conn(), "s1", &bad, 1).is_err());
+        // The valid vocabulary is accepted.
+        for (i, kind) in ["dm", "group", "channel", "thread"].iter().enumerate() {
+            let ok = SessionOwner {
+                chat_kind: Some((*kind).to_string()),
+                ..Default::default()
+            };
+            ensure_session_with_owner(db.conn(), &format!("k{i}"), &ok, 1).unwrap();
+        }
+    }
+
+    #[test]
+    fn session_kind_outside_ts_vocabulary_is_rejected_by_check() {
+        // The structural-kind CHECK admits NULL or the exact TS `parts.kind` vocabulary
+        // only ("conversation" | "subagent") — an unknown value cannot be stored to LOOK
+        // like (or later be confused with) a conversation/subagent and trigger a fallback.
+        let db = Db::open_hub(&tmp("sessionkind-check")).unwrap();
+        let bad = SessionOwner {
+            session_kind: Some("agent".into()),
+            ..Default::default()
+        };
+        assert!(ensure_session_with_owner(db.conn(), "s1", &bad, 1).is_err());
+        // The valid vocabulary is accepted and round-trips.
+        for (i, kind) in ["conversation", "subagent"].iter().enumerate() {
+            let ok = SessionOwner {
+                session_kind: Some((*kind).to_string()),
+                ..Default::default()
+            };
+            ensure_session_with_owner(db.conn(), &format!("sk{i}"), &ok, 1).unwrap();
+            let back = load_session_owner(db.conn(), &format!("sk{i}"))
+                .unwrap()
+                .unwrap();
+            assert_eq!(back.session_kind.as_deref(), Some(*kind));
+        }
     }
 
     #[test]
@@ -630,6 +770,7 @@ mod tests {
             account_id: Some("".into()),
             channel: Some("   ".into()),
             user_id: Some("u".into()),
+            ..Default::default()
         };
         ensure_session_with_owner(db.conn(), "s1", &owner, 1).unwrap();
         let back = load_session_owner(db.conn(), "s1").unwrap().unwrap();
@@ -649,6 +790,7 @@ mod tests {
             account_id: Some("acct-1".into()),
             channel: None,
             user_id: Some("user-abc".into()),
+            ..Default::default()
         };
         ensure_session_with_owner(db.conn(), "s1", &owner, 1).unwrap();
         // A no-owner re-ensure must NOT erase the bound account/user.
@@ -665,6 +807,7 @@ mod tests {
                 account_id: Some("ignored-acct".into()),
                 channel: Some("slack".into()),
                 user_id: None,
+                ..Default::default()
             },
             3,
         )

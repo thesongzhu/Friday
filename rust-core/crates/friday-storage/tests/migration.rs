@@ -228,9 +228,75 @@ fn forward_migration_v20_to_v21_backfills_owner_to_null_and_fresh_has_columns() 
         account_id: Some("default".into()),
         channel: Some("discord".into()),
         user_id: Some("user-abc".into()),
+        ..Default::default()
     };
     ensure_session_with_owner(db.conn(), "s2", &bound, 2).unwrap();
     assert_eq!(load_session_owner(db.conn(), "s2").unwrap(), Some(bound));
+}
+
+#[test]
+fn forward_migration_v22_to_v23_backfills_conversation_axes_to_null() {
+    // Owner-wiring additive migration v23: agent_session gains nullable `chat_kind`,
+    // `chat_id`, `parent_session_id` (the DM/subagent userId-fallback axes). A
+    // PRE-EXISTING v22 session row must survive the forward ALTER reading back NULL for
+    // all three — i.e. NO fallback is derivable for it, so its namespace resolution stays
+    // exactly as fail-closed as before (never silently DM-attributed). A fresh bind with
+    // the new axes then round-trips on the migrated DB.
+    use friday_storage::agent_session::{
+        ensure_session, ensure_session_with_owner, load_session_owner, SessionOwner,
+    };
+
+    let p = temp_db_path("agent-session-conv-axes-mig");
+    {
+        let mut migs = hub_migrations();
+        migs.retain(|m| m.version <= 22);
+        let db = Db::open(&p, Profile::Hub, &migs, "v22").unwrap();
+        assert_eq!(db.version().unwrap(), 22);
+        assert!(
+            db.conn()
+                .prepare("SELECT chat_kind FROM agent_session")
+                .is_err(),
+            "conversation-axis columns must not exist before v23"
+        );
+        // Seed a session with the pre-v23 owner shape (slice-3 axes only). The current
+        // `ensure_session_with_owner` names the v23 columns (it requires the latest
+        // schema), so the v22-era owner bind is reproduced with base ensure + raw UPDATE.
+        ensure_session(db.conn(), "s1", 1).unwrap();
+        db.conn()
+            .execute(
+                "UPDATE agent_session
+                 SET account_id = 'default', channel = 'discord', user_id = 'user-abc'
+                 WHERE agent_session_id = 's1'",
+                [],
+            )
+            .unwrap();
+    }
+    // Reopen with the full set -> forward-migrate to v23 (the additive ALTERs).
+    let db = Db::open_hub(&p).unwrap();
+    assert_eq!(db.version().unwrap(), hub_max_version());
+    let owner = load_session_owner(db.conn(), "s1").unwrap().unwrap();
+    assert_eq!(owner.user_id.as_deref(), Some("user-abc"), "owner survived");
+    assert_eq!(owner.chat_kind, None, "pre-v23 row backfills to NULL");
+    assert_eq!(owner.chat_id, None);
+    assert_eq!(owner.parent_session_id, None);
+    assert_eq!(
+        owner.session_kind, None,
+        "pre-v23 row backfills `session_kind` to NULL ⇒ no fallback derivable (fail-closed)"
+    );
+
+    // A fresh bind with the new axes (incl. the structural `session_kind`) round-trips on
+    // the migrated DB.
+    let dm = SessionOwner {
+        account_id: Some("default".into()),
+        channel: Some("telegram".into()),
+        user_id: None,
+        chat_kind: Some("dm".into()),
+        chat_id: Some("chat-9".into()),
+        parent_session_id: None,
+        session_kind: Some("conversation".into()),
+    };
+    ensure_session_with_owner(db.conn(), "s2", &dm, 2).unwrap();
+    assert_eq!(load_session_owner(db.conn(), "s2").unwrap(), Some(dm));
 }
 
 #[test]

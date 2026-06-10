@@ -76,20 +76,23 @@
 //! — mirroring the TS `MEMORY_NAMESPACE_UNRESOLVABLE` throw. A session is never silently
 //! bound to a default/anonymous scope.
 //!
-//! **Deferred-parity (HONEST).** Only the DIRECT `session.userId` case is ported. The TS
-//! DM-chatId fallback and subagent parent-chain userId walk are DEFERRED — the Rust
-//! `agent_session` does not model `chatKind`/`chatId`/`parentSession` yet (see
-//! [`crate::session_namespace`]). Live sessions created via the production
-//! `run_session_loop` still call the OWNER-LESS `ensure_session`, so they carry a NULL
-//! owner and CANNOT be extracted until a follow-on wires the owner through — that wiring
-//! is out of scope for this slice (it lives in the off-limits loop entrypoint).
+//! **Effective-userId fallbacks (owner-wiring lane — now PORTED).** The TS
+//! `resolveEffectiveUserId` is fully ported in
+//! [`crate::session_namespace::resolve_effective_user_id`]: direct `user_id`, the
+//! DM-chatId fallback (`chat_kind == "dm"` conversation → `chat_id`), and the subagent
+//! parent-walk (`parent_session_id` chain → nearest ancestor userId / DM chat_id) — all
+//! DETERMINISTIC and FAIL-CLOSED when underivable (the v23 columns model the TS
+//! `chatKind`/`chatId`/`parentSessionKey` axes). `run_session_loop` can now BIND a
+//! session owner at creation (the owner-wiring lane), so loop-created sessions are
+//! extractable once their owner axes are supplied.
 //!
 //! - **Queue / auto mode still DEFERRED.** Only the inline manual path; the
 //!   queue/job-retry/auto machine is a follow-on slice.
 //!
-//! Truth label: Rust-owned INLINE extraction, slice-3 (dedup + transactional +
-//! ownership-binding). The TS extraction path STAYS LIVE (full parity — queue/auto +
-//! DM/subagent userId fallbacks — pending). PROOF-ONLY — NOT a v1 GO.
+//! Truth label: Rust-owned INLINE extraction, slice-3 + owner-wiring (dedup +
+//! transactional + ownership-binding + DM/subagent userId fallbacks). The TS extraction
+//! path STAYS LIVE (queue/auto parity pending; this flips NO TS-retirement state).
+//! PROOF-ONLY — NOT a v1 GO.
 
 use friday_core::MemoryScope;
 use friday_deepseek::{DeepSeekClient, DeepSeekError, Transport};
@@ -103,7 +106,9 @@ use serde_json::Value;
 use std::collections::HashSet;
 
 use crate::sensitive_guard::is_sensitive_learning_candidate;
-use crate::session_namespace::{resolve_session_memory_namespace, NamespaceError};
+use crate::session_namespace::{
+    resolve_effective_user_id, resolve_session_memory_namespace, NamespaceError,
+};
 
 /// The valid item kinds (ported from the TS `VALID_KINDS`).
 const VALID_KINDS: &[&str] = &["fact", "decision", "preference", "action_item"];
@@ -413,10 +418,12 @@ pub fn filter_sensitive(
 ///
 /// ## Slice-3 ownership-binding (the store SCOPE is DERIVED from the SESSION)
 /// There is NO caller-supplied principal: the store scope (`principal_id`) is DERIVED
-/// from the session's OWNER axes (`account_id`/`channel`/`user_id`, loaded via
-/// [`load_session_owner`]) through [`resolve_session_memory_namespace`] —
-/// `tenant.<account>.channel.<channel>.user.<user>.shared`. If the session has no
-/// `user_id` (the namespace is unresolvable), extraction FAILS CLOSED
+/// from the session's OWNER axes (loaded via [`load_session_owner`]) through
+/// [`resolve_effective_user_id`] (direct `user_id` → DM-chatId fallback → subagent
+/// parent-walk; the TS `resolveEffectiveUserId` port) and
+/// [`resolve_session_memory_namespace`] —
+/// `tenant.<account>.channel.<channel>.user.<user>.shared`. If NO userId is derivable
+/// (the namespace is unresolvable), extraction FAILS CLOSED
 /// ([`ExtractionError::NamespaceUnresolvable`]) BEFORE any provider call — parity with the
 /// TS `MEMORY_NAMESPACE_UNRESOLVABLE`. The derived namespace is echoed in
 /// [`ExtractionOutcome::derived_namespace`].
@@ -435,15 +442,21 @@ pub fn extract_inline<T: Transport>(
     }
 
     // Slice-3 ownership-binding: DERIVE the store scope from the SESSION (not a caller
-    // principal). Load the session's owner axes and resolve the composite namespace. A
-    // session with no `user_id` FAILS CLOSED here — BEFORE any provider call — mirroring
-    // the TS `MEMORY_NAMESPACE_UNRESOLVABLE` throw. An absent session row also has no
-    // owner, so it fails closed identically (None owner → unresolvable).
+    // principal). Load the session's owner axes, resolve the EFFECTIVE userId (direct →
+    // DM-chatId fallback → subagent parent-walk, the TS `resolveEffectiveUserId` port —
+    // deterministic, fail-closed when underivable), then resolve the composite namespace.
+    // A session with no derivable userId FAILS CLOSED here — BEFORE any provider call —
+    // mirroring the TS `MEMORY_NAMESPACE_UNRESOLVABLE` throw. An absent session row also
+    // has no owner, so it fails closed identically (None owner → unresolvable). The
+    // namespace's account/channel stay the SESSION'S OWN axes even when the userId came
+    // from a parent (faithful to the TS resolver).
     let owner = load_session_owner(db.conn(), session_id)?.unwrap_or_default();
+    let effective_user_id =
+        resolve_effective_user_id(&owner, &mut |key: &str| load_session_owner(db.conn(), key))?;
     let derived_namespace = resolve_session_memory_namespace(
         owner.account_id.as_deref(),
         owner.channel.as_deref(),
-        owner.user_id.as_deref(),
+        effective_user_id.as_deref(),
     )?;
     // The derived namespace IS the store key (the Rust recall axis is a single
     // `principal_id` string; slice-3 sets it to the composite namespace).
@@ -643,6 +656,7 @@ mod tests {
                 account_id: Some("default".into()),
                 channel: Some("discord".into()),
                 user_id: Some(user_id.into()),
+                ..Default::default()
             },
             1,
         )
@@ -834,6 +848,7 @@ mod tests {
                 account_id: Some("default".into()),
                 channel: Some("discord".into()),
                 user_id: Some("dave".into()),
+                ..Default::default()
             },
             1,
         )
@@ -882,6 +897,7 @@ mod tests {
                 account_id: Some("default".into()),
                 channel: Some("discord".into()),
                 user_id: None,
+                ..Default::default()
             },
             1,
         )
@@ -926,6 +942,234 @@ mod tests {
         assert_eq!(db.count("memory_item").unwrap(), 0);
         // ...and the message is NOT consumed (it stays pending for a retry once owned).
         assert_eq!(status_of(&db, "s1:m0"), "pending");
+    }
+
+    // --- owner-wiring (DM-chatId + subagent parent-walk userId fallbacks) ----
+
+    #[test]
+    fn dm_session_without_user_id_derives_namespace_from_chat_id() {
+        // DM fallback e2e: a `chat_kind == "dm"` conversation with NO user_id stores its
+        // candidates under the chat-id-derived namespace (TS: parts.chatId), end-to-end
+        // through the real extraction path.
+        let mut db = friday_storage::Db::open_hub(&tmp("dm-fallback")).unwrap();
+        ensure_session_with_owner(
+            db.conn(),
+            "dm-s",
+            &SessionOwner {
+                account_id: Some("default".into()),
+                channel: Some("telegram".into()),
+                user_id: None,
+                chat_kind: Some("dm".into()),
+                chat_id: Some("dm-user-7".into()),
+                parent_session_id: None,
+                // Structural kind: a CONVERSATION (TS `parts.kind === "conversation"`) — what
+                // gates the DM-chatId fallback (NOT inferred from the parent link).
+                session_kind: Some("conversation".into()),
+            },
+            1,
+        )
+        .unwrap();
+        let m0 = append_session_message(
+            db.conn(),
+            "dm-s",
+            &SessionMessage::new("user", "Call my project Codename Falcon.", None),
+            10,
+        )
+        .unwrap();
+        let content = json!({
+            "items": [{
+                "kind": "preference",
+                "content": "User's project codename is Falcon.",
+                "sourceMessageIds": [m0]
+            }]
+        })
+        .to_string();
+        let c = client(content);
+        let out = extract_inline(
+            &mut db,
+            "dm-s",
+            &c,
+            DEFAULT_MAX_ITEMS,
+            "dm-s:ex:100",
+            "led-dm",
+            100,
+        )
+        .unwrap();
+        assert_eq!(out.candidates_created, 1);
+        // The namespace user segment is the DM chat id — on the session's OWN channel.
+        let ns = crate::session_namespace::resolve_session_memory_namespace(
+            Some("default"),
+            Some("telegram"),
+            Some("dm-user-7"),
+        )
+        .unwrap();
+        assert_eq!(out.derived_namespace, ns);
+        let pending = pending_review(db.conn()).unwrap();
+        assert_eq!(pending[0].principal_id.as_deref(), Some(ns.as_str()));
+    }
+
+    #[test]
+    fn subagent_session_derives_user_from_parent_walk() {
+        // Subagent fallback e2e: a child session with NO user_id walks `parent_session_id`
+        // to the parent's user — and the namespace keeps the CHILD's own account/channel
+        // (only the userId comes from the parent, faithful to the TS resolver).
+        let mut db = friday_storage::Db::open_hub(&tmp("subagent-fallback")).unwrap();
+        // The parent session (a normal owned conversation).
+        ensure_session_with_owner(
+            db.conn(),
+            "parent-s",
+            &SessionOwner {
+                account_id: Some("default".into()),
+                channel: Some("discord".into()),
+                user_id: Some("alice".into()),
+                ..Default::default()
+            },
+            1,
+        )
+        .unwrap();
+        // The subagent child: no user_id, linked to the parent.
+        ensure_session_with_owner(
+            db.conn(),
+            "child-s",
+            &SessionOwner {
+                account_id: Some("default".into()),
+                channel: Some("discord".into()),
+                user_id: None,
+                chat_kind: None,
+                chat_id: None,
+                parent_session_id: Some("parent-s".into()),
+                // Structural kind: a SUBAGENT (TS `parts.kind === "subagent"`) — what gates
+                // the parent-walk (NOT inferred from the parent link's presence).
+                session_kind: Some("subagent".into()),
+            },
+            2,
+        )
+        .unwrap();
+        let m0 = append_session_message(
+            db.conn(),
+            "child-s",
+            &SessionMessage::new("user", "Budget for the falcon task is 500.", None),
+            10,
+        )
+        .unwrap();
+        let content = json!({
+            "items": [{
+                "kind": "fact",
+                "content": "The falcon task budget is 500.",
+                "sourceMessageIds": [m0]
+            }]
+        })
+        .to_string();
+        let c = client(content);
+        let out = extract_inline(
+            &mut db,
+            "child-s",
+            &c,
+            DEFAULT_MAX_ITEMS,
+            "child-s:ex:100",
+            "led-sub",
+            100,
+        )
+        .unwrap();
+        assert_eq!(out.candidates_created, 1);
+        // Parent-derived user, CHILD's account/channel ("default"/"discord" here).
+        assert_eq!(out.derived_namespace, ns_for("alice"));
+        let pending = pending_review(db.conn()).unwrap();
+        assert_eq!(
+            pending[0].principal_id.as_deref(),
+            Some(ns_for("alice").as_str())
+        );
+    }
+
+    #[test]
+    fn underivable_fallbacks_fail_closed_before_any_provider_call() {
+        // The fallbacks NEVER guess: a group chat (chat_id present but kind != dm) and a
+        // dangling subagent parent both fail closed BEFORE the provider is contacted.
+        struct PanicTransport;
+        impl Transport for PanicTransport {
+            fn get_json(&self, _u: &str, _b: &str) -> Result<Value, DeepSeekError> {
+                panic!("underivable namespace must fail closed before discover");
+            }
+            fn post_json(&self, _u: &str, _b: &str, _body: &Value) -> Result<Value, DeepSeekError> {
+                panic!("underivable namespace must fail closed before provider call");
+            }
+        }
+
+        let mut db = friday_storage::Db::open_hub(&tmp("underivable")).unwrap();
+        // (a) A GROUP chat: multi-user — attributing it to the chat id would merge users.
+        ensure_session_with_owner(
+            db.conn(),
+            "group-s",
+            &SessionOwner {
+                account_id: Some("default".into()),
+                channel: Some("telegram".into()),
+                user_id: None,
+                chat_kind: Some("group".into()),
+                chat_id: Some("group-42".into()),
+                parent_session_id: None,
+                // A CONVERSATION (group): no DM fallback (group is multi-user) — fail closed.
+                session_kind: Some("conversation".into()),
+            },
+            1,
+        )
+        .unwrap();
+        append_session_message(
+            db.conn(),
+            "group-s",
+            &SessionMessage::new("user", "remember 47", None),
+            10,
+        )
+        .unwrap();
+        // (b) A subagent whose parent link DANGLES (no such session row).
+        ensure_session_with_owner(
+            db.conn(),
+            "orphan-s",
+            &SessionOwner {
+                account_id: Some("default".into()),
+                channel: Some("discord".into()),
+                user_id: None,
+                chat_kind: None,
+                chat_id: None,
+                parent_session_id: Some("ghost-parent".into()),
+                // A SUBAGENT whose parent link dangles — the walk ends fail closed.
+                session_kind: Some("subagent".into()),
+            },
+            1,
+        )
+        .unwrap();
+        append_session_message(
+            db.conn(),
+            "orphan-s",
+            &SessionMessage::new("user", "remember 48", None),
+            10,
+        )
+        .unwrap();
+
+        for sid in ["group-s", "orphan-s"] {
+            let c = DeepSeekClient::with_transport(PanicTransport, "test-key-not-real".into());
+            let err = extract_inline(
+                &mut db,
+                sid,
+                &c,
+                DEFAULT_MAX_ITEMS,
+                &format!("{sid}:ex:100"),
+                &format!("led-{sid}"),
+                100,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    ExtractionError::NamespaceUnresolvable(NamespaceError::UnresolvableNoUserId)
+                ),
+                "{sid}: underivable fallback must fail closed, got {err:?}"
+            );
+        }
+        // No provider call, no ledger row, no candidate — and messages stay pending.
+        assert_eq!(db.count("token_ledger").unwrap(), 0);
+        assert_eq!(db.count("memory_item").unwrap(), 0);
+        assert_eq!(status_of(&db, "group-s:m0"), "pending");
+        assert_eq!(status_of(&db, "orphan-s:m0"), "pending");
     }
 
     /// Read one message's `memory_extract_status` (test-only helper for the slice-2
