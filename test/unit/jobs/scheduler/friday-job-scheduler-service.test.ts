@@ -498,4 +498,124 @@ describe("FridayJobSchedulerService", () => {
 
     await scheduler.stop();
   });
+
+  // ─── SEV-1 stop-the-fail-loop: retired recurring sweep deregistration + disableJob ───
+  //
+  // A retired recurring job (e.g. session-lifecycle-sweep / agent-loop-cooldown-sweep)
+  // whose handler calls a fail-closed (503) method fail-loops forever: the scheduler
+  // markFailed → reschedules with capped backoff and never auto-disables a recurring
+  // failer. The fix removes the in-memory registration AND calls disableJob on the
+  // persisted row. Removing registration ALONE is the busy-spin trap: an enabled row
+  // with its def absent from the in-memory map is skipped by the run loop (no jobDef)
+  // but is still seen by the min-wake computation; once its next_run_at is in the past,
+  // delayMs = max(0, past) = 0 → armTimer(0) spins every event-loop turn (STRICTLY
+  // worse). disableJob sets enabled=0 AND next_run_at=NULL, excluding the row from BOTH
+  // listDue (WHERE enabled=1) and the min-wake (skips !enabled || !nextRunAt).
+
+  it("SEV-1: NEGATIVE CONTROL — an ENABLED ghost row with an absent job def busy-spins (armTimer(0))", async () => {
+    // This proves the bug is real: without disableJob, deregistration alone leaves the
+    // row enabled=1 with a past next_run_at, and the min-wake computes a wake ~now
+    // (the armTimer(0) signature observable via status().nextWakeAt).
+    const repo = createFridayJobSchedulerRepository({ db });
+
+    // Persisted ghost row: enabled=1, next_run_at in the past — but NO matching job def.
+    const pastDate = new Date(Date.now() - 120_000).toISOString();
+    repo.upsert({ id: "retired-ghost", intervalMs: 120_000, timeoutMs: 300_000, catchUpRuns: 1, nowIso: pastDate });
+    repo.setNextRunAt("retired-ghost", pastDate, pastDate);
+
+    const runLog: string[] = [];
+    // Job map deliberately does NOT contain "retired-ghost".
+    const scheduler = createFridayJobSchedulerService({ repository: repo, jobs: [] });
+
+    await scheduler.start();
+    // Read the wake state immediately on the post-await continuation, BEFORE the
+    // setTimeout(0) macrotask fires, then stop promptly (stop() synchronously cancels
+    // the timer) so the control does not actually spin.
+    const status = await scheduler.status();
+    await scheduler.stop();
+
+    // The run loop never executed the ghost (no jobDef) ...
+    expect(runLog).toEqual([]);
+    // ... but min-wake DID see the enabled row → a wake was armed ≈ now (the trap).
+    expect(status.nextWakeAt).toBeDefined();
+    const wakeMs = new Date(status.nextWakeAt!).getTime();
+    expect(wakeMs - Date.now()).toBeLessThanOrEqual(1_000); // ≈0 delay = busy-spin signature
+
+    // The row is still enabled (deregistration alone did not disable it).
+    const ghost = repo.getById("retired-ghost");
+    expect(ghost?.enabled).toBe(true);
+  });
+
+  it("SEV-1: FIX — disableJob on a deregistered ghost row stops the loop with no busy-spin", async () => {
+    const repo = createFridayJobSchedulerRepository({ db });
+
+    // Same persisted ghost row as the negative control.
+    const pastDate = new Date(Date.now() - 120_000).toISOString();
+    repo.upsert({ id: "retired-ghost", intervalMs: 120_000, timeoutMs: 300_000, catchUpRuns: 1, nowIso: pastDate });
+    repo.setNextRunAt("retired-ghost", pastDate, pastDate);
+
+    // The fix: disable the persisted row (mirrors bootstrap's schedulerRepoRef.disableJob
+    // call) — this is what bootstrap does in addition to removing the registration.
+    const nowIso = new Date().toISOString();
+    repo.disableJob("retired-ghost", nowIso);
+
+    // (3) disableJob sets enabled=0 AND next_run_at=NULL.
+    const afterDisable = repo.getById("retired-ghost");
+    expect(afterDisable?.enabled).toBe(false);
+    expect(afterDisable?.nextRunAt).toBeNull();
+    // Excluded from due-selection (WHERE enabled=1).
+    expect(repo.listDue(new Date().toISOString()).some((j) => j.id === "retired-ghost")).toBe(false);
+
+    const runLog: string[] = [];
+    // Job map deliberately does NOT contain "retired-ghost".
+    const scheduler = createFridayJobSchedulerService({ repository: repo, jobs: [] });
+
+    await scheduler.start();
+    const status = await scheduler.status();
+    await scheduler.stop();
+
+    // (1) no executeJob runs for the disabled ghost.
+    expect(runLog).toEqual([]);
+    // (2) NO busy-spin: the disabled row is excluded from min-wake (earliestMs stays
+    // Infinity), so armTimer is never called and no wake is scheduled.
+    expect(status.nextWakeAt).toBeUndefined();
+    // The row remains disabled across the scheduler start() (start() does not re-enable
+    // existing rows; upsert's ON CONFLICT never touches `enabled`).
+    const afterStart = repo.getById("retired-ghost");
+    expect(afterStart?.enabled).toBe(false);
+    expect(afterStart?.nextRunAt).toBeNull();
+  });
+
+  it("SEV-1: disabled ghost row stays excluded alongside a healthy live job (no spin from the ghost)", async () => {
+    const repo = createFridayJobSchedulerRepository({ db });
+
+    // A retired ghost row (disabled) coexisting with a real future-scheduled job.
+    const pastDate = new Date(Date.now() - 120_000).toISOString();
+    repo.upsert({ id: "retired-ghost", intervalMs: 120_000, timeoutMs: 300_000, catchUpRuns: 1, nowIso: pastDate });
+    repo.setNextRunAt("retired-ghost", pastDate, pastDate);
+    repo.disableJob("retired-ghost", new Date().toISOString());
+
+    const runLog: string[] = [];
+    const jobs: FridayScheduledJobDefinition[] = [
+      {
+        id: "healthy-job",
+        // Anchored far in the future so it neither runs now nor pulls min-wake to ~0.
+        schedule: { kind: "every", everyMs: 600_000, anchorMs: Date.now() + 600_000 },
+        run: async () => { runLog.push("healthy"); },
+      },
+    ];
+
+    const scheduler = createFridayJobSchedulerService({ repository: repo, jobs });
+
+    await scheduler.start();
+    const status = await scheduler.status();
+    await scheduler.stop();
+
+    // The ghost neither ran nor contributed a ~now wake.
+    expect(runLog).toEqual([]);
+    // Min-wake reflects the healthy future job (~10min out), NOT a 0ms ghost spin.
+    expect(status.nextWakeAt).toBeDefined();
+    const wakeMs = new Date(status.nextWakeAt!).getTime();
+    expect(wakeMs - Date.now()).toBeGreaterThan(1_000);
+  });
 });
