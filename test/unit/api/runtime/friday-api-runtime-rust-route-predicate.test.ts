@@ -135,6 +135,67 @@ describe("qualifiesForRustReadOnlyRoute (execrun slice 4, dark predicate)", () =
     ).toBe(false);
   });
 
+  // ── Clause-bypass regression guards (review MED) ─────────────────────────────
+  // A VALID resolved deepseek record must NOT short-circuit the LATER clauses: each test
+  // takes the fully-qualifying UUID+valid-resolved-record input (proven to qualify above)
+  // and flips exactly ONE later clause → still disqualified. Guards against a refactor
+  // that early-returns true once the resolved record is valid, skipping model-literal /
+  // taskProfile-override / 4-tool-allowlist / plan-review / no-session checks.
+
+  /** UUID providerId + valid resolved deepseek record; every other clause qualifying. */
+  function prodResolvedQualifyingInput(): RustRouteQualificationInput {
+    return {
+      ...qualifyingInput(),
+      providerId: PROD_UUID_PROVIDER_ID,
+      resolvedProvider: { kind: "deepseek", enabled: true },
+    };
+  }
+
+  it("a valid resolved record does NOT bypass the model-literal clause (deepseek-v4-pro)", () => {
+    expect(
+      qualifiesForRustReadOnlyRoute({ ...prodResolvedQualifyingInput(), model: "deepseek-v4-pro" }),
+    ).toBe(false);
+  });
+
+  it("a valid resolved record does NOT bypass the taskProfile model-override clause", () => {
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...prodResolvedQualifyingInput(),
+        taskProfile: { model: "deepseek-v4-pro" },
+      }),
+    ).toBe(false);
+  });
+
+  it("a valid resolved record does NOT bypass allowlist exactness — one EXTRA tool", () => {
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...prodResolvedQualifyingInput(),
+        allowedRustRouteTools: [...RUST_ROUTE_READ_TOOL_ALLOWLIST, "run_command"],
+      }),
+    ).toBe(false);
+  });
+
+  it("a valid resolved record does NOT bypass allowlist exactness — one MISSING tool", () => {
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...prodResolvedQualifyingInput(),
+        allowedRustRouteTools: ["read_file", "list_dir", "stat_file"],
+      }),
+    ).toBe(false);
+  });
+
+  it("a valid resolved record does NOT bypass the no-session clause", () => {
+    expect(
+      qualifiesForRustReadOnlyRoute({ ...prodResolvedQualifyingInput(), sessionKey: "some-session" }),
+    ).toBe(false);
+  });
+
+  it("a valid resolved record does NOT bypass the plan-review clause (requireReview)", () => {
+    expect(
+      qualifiesForRustReadOnlyRoute({ ...prodResolvedQualifyingInput(), requireReview: true }),
+    ).toBe(false);
+  });
+
   it("disqualifies deepseek-pro / codex / claude / a missing model (no downgrade to flash)", () => {
     for (const model of ["deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner", "codex", "claude-3-7", undefined]) {
       expect(qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), model })).toBe(false);

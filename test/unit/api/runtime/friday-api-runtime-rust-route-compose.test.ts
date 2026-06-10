@@ -697,4 +697,33 @@ describe("FridayApiRuntime — execrun S-F-compose (DARK) Rust-route composition
     expect(ws.calls).toHaveLength(0);
     expect(readback.calls).toHaveLength(0);
   });
+
+  it("(p) VALID resolved deepseek record + one EXTRA tool in the grant → DISQUALIFIED → byte-identical 503; WS never touched (clause-bypass guard)", async () => {
+    // Review-MED regression guard: a valid resolved record must not short-circuit the
+    // LATER predicate clauses at the compose level — the allowlist-exactness clause still
+    // disqualifies even though the provider record fully qualifies.
+    db = createTestDb();
+    const ws = makeStubWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const getProvider = vi.fn(async (providerId: string) =>
+      providerId === PROD_UUID_PROVIDER_ID ? makeProdProviderRecord() : null,
+    );
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+      providerService: makeProviderService({ getProvider }),
+    });
+
+    await expect(
+      callStartRoute(runtime, {
+        ...QUALIFYING_BODY,
+        providerId: PROD_UUID_PROVIDER_ID,
+        allowedRustRouteTools: [...QUALIFYING_BODY.allowedRustRouteTools, "run_command"],
+      }),
+    ).rejects.toMatchObject({ code: "TS_RUNTIME_AGENT_RUNS_RETIRED", httpStatus: 503 });
+    expect(ws.calls).toHaveLength(0);
+    expect(readback.calls).toHaveLength(0);
+    expect(countRows(db, "friday_agent_runs", RUN_ID)).toBe(0);
+  });
 });
