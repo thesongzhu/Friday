@@ -671,3 +671,144 @@ describe("channel session-mirror write guard (G5, default fail-closed)", () => {
     expect(mirrorRejections).toHaveLength(0);
   });
 });
+
+// ─── G5 completeness: channel ENGINE control-plane write guard — fail-closed ───
+// The G5 handler-boundary guard above only fences the 9 DIRECT channelMessageHandler
+// mirror sites (the inbound user write + natural-trigger / delivery mirrors). It does
+// NOT cover the channel orchestration ENGINE, which writes session messages through a
+// SEPARATE binding (channelEngineSessionDeps.addMessage → run-executor.finalizeControlPlane
+// for deterministic / managed-async dispatch responses, and the planning-gate
+// return/reject branches). A DETERMINISTIC / control-plane channel message (e.g. a
+// workflow-control command whose denial response is persisted as an assistant message)
+// reaches finalizeControlPlane BEFORE the agent-runtime executeRun guard, so it would
+// otherwise persist an assistant session row even with the handler guard in place — the
+// exact bypass the review's empirical probe missed. With the flag UNSET (production
+// default) the engine's control-plane addMessage must fail closed: NO assistant session
+// row, and (because every control-plane write is `.catch(() => undefined)`) no crash /
+// unhandled rejection — while the deterministic denial response is still delivered
+// outbound (proving the control-plane path actually executed).
+describe("channel ENGINE control-plane write guard (G5 completeness, default fail-closed)", () => {
+  let stateDir: string | null = null;
+  let hub: FridayHub | null = null;
+  let autoDetectEnvSnapshot: FridayAutoDetectProviderEnvSnapshot | null = null;
+  const originalSuppression = process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown): void => {
+    unhandled.push(reason);
+  };
+
+  beforeEach(async () => {
+    unhandled.length = 0;
+    process.on("unhandledRejection", onUnhandled);
+    process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = "1";
+    process.env.FRIDAY_CHANNEL_DEBOUNCE_MS = "0";
+    autoDetectEnvSnapshot = clearAutoDetectProviderEnv();
+    stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "friday-channel-engine-failclosed-"));
+    const skillsDir = path.join(stateDir, "skills-empty");
+    await fs.mkdir(skillsDir, { recursive: true });
+    // Deliberately omit allowTestOnlySessionExecution → channel session writes
+    // (handler mirror AND engine control-plane) fail closed (production default).
+    // The workflow-run flag IS set so the workflow-control dispatch reaches the
+    // run-control body (→ genuine WORKFLOW_RUN_NOT_FOUND → denial response →
+    // finalizeControlPlane) and the SESSION write is the only variable under test.
+    hub = await createFridayHub({
+      allowTestOnlyWorkflowRunExecution: true,
+      skillDirs: [skillsDir],
+      stateDir,
+      channels: { enabled: false, instances: [] },
+    });
+  });
+
+  afterEach(async () => {
+    process.off("unhandledRejection", onUnhandled);
+    if (hub) {
+      await hub.stop();
+      hub = null;
+    }
+    if (stateDir) {
+      await fs.rm(stateDir, { recursive: true, force: true });
+      stateDir = null;
+    }
+    if (autoDetectEnvSnapshot) {
+      restoreAutoDetectProviderEnv(autoDetectEnvSnapshot);
+      autoDetectEnvSnapshot = null;
+    }
+    if (originalSuppression === undefined) {
+      delete process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
+    } else {
+      process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = originalSuppression;
+    }
+    delete process.env.FRIDAY_CHANNEL_DEBOUNCE_MS;
+  });
+
+  it("does NOT persist an assistant session row for a deterministic control-plane channel message, and does not crash", async () => {
+    const channel = createTestChannelPlugin();
+    hub!.channelRegistry.register(channel.plugin);
+    await hub!.start();
+    const onMessage = channel.getStartedHandler();
+    expect(onMessage).toBeTypeOf("function");
+
+    // Spy on the underlying session-store addMessage. Both the handler mirror and
+    // the channel-engine binding ultimately call this same FridaySessionService
+    // instance; under the unset flag BOTH guards fence the call BEFORE it reaches
+    // the store, so this spy must see 0 calls.
+    const addMessageSpy = vi.spyOn(hub!.apiRuntime.sessionService, "addMessage");
+
+    // "daemon status" is a DETERMINISTIC (sync_immediate / daemon_status) turn that
+    // is NOT intercepted by the channel handler's pre-engine approval/reflex routing
+    // — it is delegated to channelEntryAdapter → the channel orchestration engine.
+    // dispatchDeterministic returns a handled response → run-executor.finalizeControlPlane
+    // attempts the assistant session write via channelEngineSessionDeps.addMessage,
+    // BEFORE the agent-runtime executeRun guard. This is the engine control-plane
+    // bypass that the handler-boundary G5 guard does NOT cover. (Empirically proven
+    // RED with the binding guard removed: an assistant row persists / the spy fires.)
+    const inbound: FridayChannelMessage = {
+      id: "msg-engine-controlplane-failclosed",
+      channelKind: "testchannel",
+      senderId: "sender-cp-1",
+      senderName: "Bob",
+      chatId: "chat-engine-controlplane",
+      chatType: "direct",
+      text: "daemon status",
+      timestamp: Date.now(),
+    };
+    const sessionKey = resolveFridayChannelSessionKey(inbound, {
+      crossChannelIdentityEnabled: false,
+      identityMap: {},
+    });
+
+    // Drive the message through the real channelMessageHandler → channel engine.
+    onMessage!(inbound);
+
+    // Give the async handler + engine control-plane path time to run (fail-closed).
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    // PRIMARY (store-level, instance-agnostic): the control-plane assistant write is
+    // fail-closed → NO assistant session row. (The review's missed probe checked only
+    // user rows; the engine control-plane write is an ASSISTANT row.)
+    const messages = await hub!.apiRuntime.sessionService.getMessages(sessionKey).catch(() => []);
+    expect(messages.filter((m) => m.role === "assistant")).toHaveLength(0);
+    // The inbound user mirror is likewise fenced by the handler-boundary guard.
+    expect(messages.filter((m) => m.role === "user")).toHaveLength(0);
+
+    // Prove the control-plane path ACTUALLY executed (not short-circuited as a
+    // full-agent turn, in which case the session write would happen inside the
+    // already-guarded agentRuntime.executeRun and the 0-rows result would be a
+    // tautology): the deterministic daemon-status reply is delivered outbound.
+    expect(channel.sentMessages.some((t) => /daemon/iu.test(t))).toBe(true);
+
+    // The fail-closed guard fences EVERY channel session write before it reaches the
+    // shared store → the underlying addMessage is never called.
+    expect(addMessageSpy).not.toHaveBeenCalled();
+
+    // Every fenced control-plane write is `.catch(() => undefined)` → no unhandled rejection.
+    const mirrorRejections = unhandled.filter((r) => {
+      const code = (r as { code?: unknown } | null)?.code;
+      const message = r instanceof Error ? r.message : "";
+      return code === "TS_RUNTIME_SESSION_RETIRED" || /session execution is fail-closed/u.test(message);
+    });
+    expect(mirrorRejections).toHaveLength(0);
+
+    addMessageSpy.mockRestore();
+  });
+});

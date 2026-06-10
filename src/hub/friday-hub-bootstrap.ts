@@ -8243,10 +8243,45 @@ export async function createFridayHub(
       });
 
       // ── Channel Orchestration Engine (Initiative A-WIRE) ──
+      // TS Runtime Retirement (G5 completeness): this sessionDeps object is wired
+      // SOLELY into the channel orchestration engine (channelOrchestrationEngine
+      // below; the API/non-channel engine uses its own separate engineSessionDeps
+      // in friday-api-runtime). On the channel path the engine's run-executor
+      // control-plane writes (finalizeControlPlane / planning return+reject) and
+      // any turn-preparer write persist assistant/user session messages via this
+      // addMessage BEFORE the agent-runtime executeRun guard, so a deterministic /
+      // control-plane channel message would otherwise bypass the channel-mirror
+      // (G5) guard placed at the handler boundary. We close that bypass by applying
+      // the IDENTICAL fail-closed check here, with the SAME family + flag as the
+      // retired session route and the handler mirror (TS_RUNTIME_SESSION_RETIRED,
+      // allowTestOnlySessionExecution). The check returns a rejected promise (never
+      // throws synchronously) so the run-executor's `.catch(() => undefined)` on
+      // each control-plane write degrades cleanly under flag-unset — no half-state,
+      // no unhandled rejection, turn does not crash (mirrors the handler's chained
+      // non-fatal .catch). Production leaves the flag unset → channel-engine session
+      // writes fail-closed; test-oracle harnesses opt in. Guarding here (the
+      // channel-only caller boundary) — NOT addMessage itself — leaves the many
+      // legitimate non-channel addMessage callers untouched.
       const channelEngineSessionDeps = {
         getMessages: (key: string, limit?: number) => hubSessionService.getMessages(key, limit),
-        addMessage: (key: string, msg: Parameters<typeof hubSessionService.addMessage>[1]) =>
-          hubSessionService.addMessage(key, msg),
+        addMessage: (key: string, msg: Parameters<typeof hubSessionService.addMessage>[1]) => {
+          if (config.allowTestOnlySessionExecution !== true) {
+            return Promise.reject(
+              new FridayDomainError(
+                "TS_RUNTIME_SESSION_RETIRED",
+                "TypeScript session execution is fail-closed in default/live runtime; use the Rust-owned session_lifecycle entrypoint.",
+                {
+                  httpStatus: 503,
+                  details: {
+                    classification: "fail_closed",
+                    replacement: "rust_owned_session_lifecycle_entrypoint_required",
+                  },
+                },
+              ),
+            );
+          }
+          return hubSessionService.addMessage(key, msg);
+        },
         getConversationFocus: (key: string) => hubSessionService.getConversationFocus(key),
         setConversationFocus: (key: string, state: Parameters<typeof hubSessionService.setConversationFocus>[1]) =>
           hubSessionService.setConversationFocus(key, state).then(() => undefined),
