@@ -26,8 +26,29 @@
 #   * It places NO secret in the plist or its env. The WS X25519 secret is
 #     resolved on the TS side from SecureStore; the server reads its own master
 #     key (~/.friday/master.key) at boot. Neither is ever an arg/env here.
+#     In --key-env-file wrapper mode the SAME rule holds: only the env file's
+#     PATH is embedded in the generated wrapper — never a key value; the key is
+#     sourced by the wrapper at RUNTIME from the operator's 0600/0400 env file.
 #   * It does NOT set the TS-side route flag (FRIDAY_ROUTE_AGENT_RUN_VIA_RUST) —
 #     that belongs on the TS hub (com.friday.hub), not on this Rust server.
+#
+# KEY-ENV-FILE WRAPPER MODE (opt-in, --key-env-file <path>)
+#   The server's HubRuntime::live → DeepSeekClient::from_env() requires
+#   FRIDAY_DEEPSEEK_API_KEY at construction, but the plist deliberately carries
+#   no secrets — so a plist that execs the bin directly boots FAIL-CLOSED under
+#   launchd (the slice-6 production boot-failure class). With --key-env-file the
+#   tool additionally:
+#     a. VALIDATES the operator's env file (exists, mode 0600/0400, owned by the
+#        invoking user, defines a non-empty FRIDAY_DEEPSEEK_API_KEY or
+#        DEEPSEEK_API_KEY) — without ever printing a value;
+#     b. GENERATES a 0700 wrapper script into the staging dir that `set -eu`,
+#        sources ONLY that env file at runtime, fail-closed exits 2 when the key
+#        is missing, exports FRIDAY_DEEPSEEK_API_KEY, and execs the server bin
+#        with the exact same args the direct-mode plist would have used;
+#     c. STAGES the plist with ProgramArguments pointing at the wrapper's
+#        INSTALL path (<LOG_DIR>/rust-agent-run-ws-server-run.sh — the operator
+#        cp's it there manually, mirroring the plist's manual install step).
+#   Without the flag, behavior is byte-identical to direct-args mode.
 #
 # USAGE
 #   scripts/ops/launchd/build-and-install-rust-agent-run-ws-server.sh [options]
@@ -47,6 +68,10 @@
 #                                               (default ~/.friday/launchd)
 #     RUST_SERVER_BIN / --rust-server-bin <abs> prebuilt server bin; default is the
 #                                               just-built rust-core/target/release path
+#     KEY_ENV_FILE    / --key-env-file <abs>    opt-in wrapper mode: 0600/0400 env file
+#                                               holding the DeepSeek key (see above);
+#                                               generates the key-delivery wrapper and
+#                                               points the plist at its install path
 #     --stage-dir <abs>                         where to write the filled plist
 #                                               (default ~/.friday/launchd/staging)
 #     --skip-build                              do not cargo build (use an existing bin)
@@ -55,7 +80,8 @@
 #     -h | --help                               show this help and exit
 #
 # EXIT CODES
-#   0 ok · 2 bad args/usage · 64 non-Darwin · 70 build failure ·
+#   0 ok · 2 bad args/usage (incl. key-env-file validation failure) ·
+#   64 non-Darwin · 70 build failure ·
 #   75 port collision / port not free (verify-b) · 73 plutil -lint failure ·
 #   77 refusing to clobber without --force
 #
@@ -78,9 +104,12 @@ OWNER_PRINCIPAL="${OWNER_PRINCIPAL:-}"
 STORE_DIR="${STORE_DIR:-}"
 LOG_DIR="${LOG_DIR:-}"
 RUST_SERVER_BIN="${RUST_SERVER_BIN:-}"
+KEY_ENV_FILE="${KEY_ENV_FILE:-}"
 STAGE_DIR=""
 SKIP_BUILD="false"
 FORCE="false"
+
+WRAPPER_NAME="rust-agent-run-ws-server-run.sh"
 
 log()  { printf '[cutover] %s\n' "$*" >&2; }
 die()  { printf '[cutover] ERROR: %s\n' "$*" >&2; exit "${2:-1}"; }
@@ -110,13 +139,22 @@ Optional:
                                                MUST match the dir hub_agent_run_enroll used)
   LOG_DIR         / --log-dir <abs>           launchd log dir (default ~/.friday/launchd)
   RUST_SERVER_BIN / --rust-server-bin <abs>   prebuilt server bin (default: just-built release)
+  KEY_ENV_FILE    / --key-env-file <abs>      opt-in WRAPPER MODE: a 0600/0400 env file, owned by
+                                              the invoking user, defining FRIDAY_DEEPSEEK_API_KEY
+                                              (or DEEPSEEK_API_KEY). Generates a 0700 key-delivery
+                                              wrapper into the staging dir (fail-closed exit 2 when
+                                              the key is missing at runtime) and stages the plist
+                                              with ProgramArguments pointing at the wrapper's
+                                              INSTALL path. No key VALUE is ever read into the
+                                              plist/wrapper or printed — only the env-file PATH.
+                                              Without this flag: direct-args mode (unchanged).
   --stage-dir <abs>                           filled-plist staging dir (default <LOG_DIR>/staging)
   --skip-build                                use an existing bin; do not cargo build
   --force                                     overwrite a staged plist / proceed despite an install
   -h | --help                                 show this help
 
-Exit codes: 0 ok · 2 bad args · 64 non-Darwin · 70 build · 75 port collision (verify-b) ·
-            73 plutil -lint · 77 refuse-to-clobber (use --force).
+Exit codes: 0 ok · 2 bad args (incl. key-env-file validation) · 64 non-Darwin · 70 build ·
+            75 port collision (verify-b) · 73 plutil -lint · 77 refuse-to-clobber (use --force).
 EOF
 }
 
@@ -130,6 +168,7 @@ while [[ $# -gt 0 ]]; do
     --store-dir)       STORE_DIR="${2:?missing value for --store-dir}"; shift 2 ;;
     --log-dir)         LOG_DIR="${2:?missing value for --log-dir}"; shift 2 ;;
     --rust-server-bin) RUST_SERVER_BIN="${2:?missing value for --rust-server-bin}"; shift 2 ;;
+    --key-env-file)    KEY_ENV_FILE="${2:?missing value for --key-env-file}"; shift 2 ;;
     --stage-dir)       STAGE_DIR="${2:?missing value for --stage-dir}"; shift 2 ;;
     --skip-build)      SKIP_BUILD="true"; shift ;;
     --force)           FORCE="true"; shift ;;
@@ -192,6 +231,33 @@ LOG_DIR="$(expand_abs LOG_DIR "${LOG_DIR}")"
 [[ "${WS_PORT}" =~ ^[0-9]+$ ]] || die "WS_PORT must be numeric (got: ${WS_PORT})." 2
 if (( WS_PORT < 1 || WS_PORT > 65535 )); then
   die "WS_PORT must be 1..65535 (got ${WS_PORT}); 0/OS-assign is not allowed for a supervised server." 2
+fi
+
+# --- KEY_ENV_FILE (opt-in wrapper mode): validate WITHOUT printing any value --
+# The env file is the operator's runtime key-delivery channel (the DeepSeek key
+# the server needs at construction — see header). We verify it exists, is locked
+# down (0600/0400, owned by the invoking user), and actually defines a non-empty
+# FRIDAY_DEEPSEEK_API_KEY or DEEPSEEK_API_KEY. The check sources the file inside
+# a throwaway subshell with all output discarded and tests only NON-EMPTINESS —
+# no key value ever reaches this script's variables, logs, or stdout/stderr.
+if [[ -n "${KEY_ENV_FILE}" ]]; then
+  KEY_ENV_FILE="$(expand_abs KEY_ENV_FILE "${KEY_ENV_FILE}")"
+  [[ -f "${KEY_ENV_FILE}" ]] || die "--key-env-file is not a regular file: ${KEY_ENV_FILE}" 2
+  # stat -L: judge the real file behind a symlink, not the link itself.
+  KEY_ENV_PERMS="$(stat -L -f '%Lp' "${KEY_ENV_FILE}" 2>/dev/null || true)"
+  case "${KEY_ENV_PERMS}" in
+    600|400) ;;
+    *) die "--key-env-file must be mode 0600 or 0400 (got ${KEY_ENV_PERMS:-unreadable}): ${KEY_ENV_FILE} — chmod 600 it." 2 ;;
+  esac
+  KEY_ENV_OWNER="$(stat -L -f '%u' "${KEY_ENV_FILE}" 2>/dev/null || true)"
+  if [[ "${KEY_ENV_OWNER}" != "$(id -u)" ]]; then
+    die "--key-env-file must be owned by the invoking user (uid $(id -u); file owner uid ${KEY_ENV_OWNER:-unreadable}): ${KEY_ENV_FILE}" 2
+  fi
+  # shellcheck source=/dev/null
+  if ! ( set -a; . "${KEY_ENV_FILE}" >/dev/null 2>&1; [[ -n "${FRIDAY_DEEPSEEK_API_KEY:-${DEEPSEEK_API_KEY:-}}" ]] ); then
+    die "--key-env-file defines neither FRIDAY_DEEPSEEK_API_KEY nor DEEPSEEK_API_KEY (non-empty): ${KEY_ENV_FILE}" 2
+  fi
+  log "key-env-file OK: ${KEY_ENV_FILE} (mode 0${KEY_ENV_PERMS}, owner-only; key present — value not read into this tool)."
 fi
 
 # --- release build (the two bins) --------------------------------------------
@@ -327,6 +393,16 @@ if [[ -e "${STAGED_PLIST}" && "${FORCE}" != "true" ]]; then
   die "staged plist already exists: ${STAGED_PLIST} (pass --force to overwrite)." 77
 fi
 
+# Wrapper-mode artifacts: the wrapper is STAGED alongside the plist and INSTALLED
+# (by the operator, manually) into LOG_DIR — the same ~/.friday/launchd home the
+# logs use, matching the operator-approved production layout. The staged plist's
+# ProgramArguments point at the INSTALL path (launchd runs the installed copy).
+STAGED_WRAPPER="${STAGE_DIR}/${WRAPPER_NAME}"
+WRAPPER_INSTALL_PATH="${LOG_DIR}/${WRAPPER_NAME}"
+if [[ -n "${KEY_ENV_FILE}" && -e "${STAGED_WRAPPER}" && "${FORCE}" != "true" ]]; then
+  die "staged wrapper already exists: ${STAGED_WRAPPER} (pass --force to overwrite)." 77
+fi
+
 # Refuse to clobber an EXISTING install without --force (idempotency / safety).
 INSTALLED_PLIST="${HOME}/Library/LaunchAgents/${LABEL}.plist"
 if [[ -e "${INSTALLED_PLIST}" && "${FORCE}" != "true" ]]; then
@@ -367,6 +443,127 @@ if grep -q '__[A-Z_]*__' "${STAGED_PLIST}"; then
   die "the filled plist still has unfilled placeholders (see above)." 2
 fi
 
+# =============================================================================
+# KEY-ENV-FILE WRAPPER MODE — generate the wrapper + repoint ProgramArguments
+# =============================================================================
+# Only when --key-env-file was given. Direct-args mode skips this entirely, so
+# its staged plist stays byte-identical to the pre-wrapper-mode tool.
+if [[ -n "${KEY_ENV_FILE}" ]]; then
+  # The wrapper embeds its values inside single quotes; a single quote in any of
+  # them would corrupt the generated sh. Reject up front (the plist has the
+  # analogous XML caveat — there, plutil -lint gates; here, this check gates).
+  for _wv in "${KEY_ENV_FILE}" "${RUST_SERVER_BIN}" "${WORKSPACE_ROOT}" \
+             "${HUB_DB_PATH}" "${WS_PORT}" "${OWNER_PRINCIPAL}" "${STORE_DIR}" \
+             "${WRAPPER_INSTALL_PATH}"; do
+    case "${_wv}" in
+      *"'"*) die "wrapper mode cannot embed a value containing a single quote: ${_wv}" 2 ;;
+    esac
+  done
+
+  # Wrapper body: quoted heredoc (no expansion at generation time) with
+  # __WRAPPER_*__ placeholders, filled by the same sed_escape machinery as the
+  # plist. Pattern mirrors the operator-approved production wrapper: source ONLY
+  # the env file in a throwaway `set -a` subshell, keep ONLY the one needed key,
+  # fail-closed exit 2, export, exec the server bin with the exact same args the
+  # direct-mode plist would have used. NO secret value appears below — only the
+  # env-file PATH.
+  gen_wrapper() {
+    cat <<'WRAP_EOF'
+#!/bin/sh
+# rust-agent-run-ws-server-run.sh — key-delivery wrapper for
+# com.friday.rust-agent-run-ws-server. GENERATED by
+# build-and-install-rust-agent-run-ws-server.sh --key-env-file; re-run that tool
+# to regenerate rather than editing by hand. Install mode 0700 (see the printed
+# manual install instructions).
+#
+# WHY THIS EXISTS: the server's HubRuntime::live → DeepSeekClient::from_env()
+# requires FRIDAY_DEEPSEEK_API_KEY at construction, but the launchd plist
+# deliberately carries NO secret (no-secret-in-plist rule). This wrapper sources
+# ONLY the DeepSeek key from the operator-approved 0600 env file at RUNTIME,
+# exports it, and execs the server bin with the exact args the direct-mode plist
+# would have used. No secret is stored in this script or in the plist.
+#
+# FAIL-CLOSED: missing/unreadable env file, or env file without the key → exit 2
+# (matches the server's own refuse-to-boot posture; launchd KeepAlive surfaces
+# the failure instead of masking it).
+#
+# ROTATION: edit the env file in place (keep mode 0600), then
+#   launchctl kickstart -k "gui/$UID/com.friday.rust-agent-run-ws-server"
+set -eu
+ENV_FILE='__WRAPPER_KEY_ENV_FILE__'
+if [ ! -r "$ENV_FILE" ]; then
+  echo "rust-agent-run-ws-server-run: env file missing/unreadable" >&2
+  exit 2
+fi
+# Extract only the one needed key; never echo values.
+FRIDAY_DEEPSEEK_API_KEY="$(
+  set -a
+  # shellcheck source=/dev/null
+  . "$ENV_FILE" >/dev/null 2>&1
+  printf %s "${FRIDAY_DEEPSEEK_API_KEY:-${DEEPSEEK_API_KEY:-}}"
+)"
+if [ -z "$FRIDAY_DEEPSEEK_API_KEY" ]; then
+  echo "rust-agent-run-ws-server-run: DeepSeek key missing in env file" >&2
+  exit 2
+fi
+export FRIDAY_DEEPSEEK_API_KEY
+exec '__WRAPPER_RUST_SERVER_BIN__' \
+  --workspace '__WRAPPER_WORKSPACE_ROOT__' \
+  --db '__WRAPPER_HUB_DB_PATH__' \
+  --port '__WRAPPER_WS_PORT__' \
+  --owner '__WRAPPER_OWNER_PRINCIPAL__' \
+  --store-dir '__WRAPPER_STORE_DIR__'
+WRAP_EOF
+  }
+
+  gen_wrapper | sed \
+    -e "s/__WRAPPER_KEY_ENV_FILE__/$(sed_escape "${KEY_ENV_FILE}")/g" \
+    -e "s/__WRAPPER_RUST_SERVER_BIN__/$(sed_escape "${RUST_SERVER_BIN}")/g" \
+    -e "s/__WRAPPER_WORKSPACE_ROOT__/$(sed_escape "${WORKSPACE_ROOT}")/g" \
+    -e "s/__WRAPPER_HUB_DB_PATH__/$(sed_escape "${HUB_DB_PATH}")/g" \
+    -e "s/__WRAPPER_WS_PORT__/$(sed_escape "${WS_PORT}")/g" \
+    -e "s/__WRAPPER_OWNER_PRINCIPAL__/$(sed_escape "${OWNER_PRINCIPAL}")/g" \
+    -e "s/__WRAPPER_STORE_DIR__/$(sed_escape "${STORE_DIR}")/g" \
+    > "${STAGED_WRAPPER}"
+
+  if grep -q '__WRAPPER_[A-Z_]*__' "${STAGED_WRAPPER}"; then
+    log "remaining unfilled wrapper placeholders:"
+    grep -o '__WRAPPER_[A-Z_]*__' "${STAGED_WRAPPER}" | sort -u >&2
+    rm -f "${STAGED_WRAPPER}" "${STAGED_PLIST}"
+    die "the generated wrapper still has unfilled placeholders (see above)." 2
+  fi
+  chmod 0700 "${STAGED_WRAPPER}"
+  if ! sh -n "${STAGED_WRAPPER}"; then
+    rm -f "${STAGED_WRAPPER}" "${STAGED_PLIST}"
+    die "generated wrapper failed sh -n syntax check: ${STAGED_WRAPPER}" 2
+  fi
+  log "staged key-delivery wrapper (0700): ${STAGED_WRAPPER}"
+
+  # Repoint ProgramArguments at the wrapper's INSTALL path. The wrapper carries
+  # the full server arg list itself, so the array becomes the single wrapper
+  # path. We rewrite ONLY the ProgramArguments array (preserving the template's
+  # comments elsewhere); plutil -lint below still gates the final result.
+  WRAPPER_PLIST_TMP="${STAGED_PLIST}.wrapper-mode.tmp"
+  WRAPPER_INSTALL_PATH="${WRAPPER_INSTALL_PATH}" awk '
+    /<key>ProgramArguments<\/key>/ { print; inpa=1; next }
+    inpa && /<array>/ {
+      print "  <array>"
+      print "    <!-- KEY-ENV-FILE WRAPPER MODE: launchd execs this 0700 wrapper, which sources"
+      print "         ONLY the DeepSeek key from the operator-approved 0600 env file at runtime"
+      print "         (fail-closed exit 2 when missing) and execs the server bin with the exact"
+      print "         args direct mode would have used. NO secret lives in this plist — only the"
+      print "         wrapper PATH appears here. -->"
+      printf "    <string>%s</string>\n", ENVIRON["WRAPPER_INSTALL_PATH"]
+      print "  </array>"
+      inpa=0; skip=1; next
+    }
+    skip { if (/<\/array>/) { skip=0 }; next }
+    { print }
+  ' "${STAGED_PLIST}" > "${WRAPPER_PLIST_TMP}"
+  mv "${WRAPPER_PLIST_TMP}" "${STAGED_PLIST}"
+  log "staged plist repointed at wrapper install path: ${WRAPPER_INSTALL_PATH}"
+fi
+
 # --- VALIDATE: plutil -lint --------------------------------------------------
 if command -v plutil >/dev/null 2>&1; then
   if ! plutil -lint "${STAGED_PLIST}" >/dev/null; then
@@ -379,10 +576,24 @@ else
 fi
 
 # --- emit the operator's bootstrap command (DO NOT RUN IT) -------------------
-cat >&2 <<EOF
+# Composed from blocks so wrapper mode can ADD lines while direct-args mode's
+# output stays byte-identical to the pre-wrapper-mode tool.
+{
+  cat <<EOF
 
 [cutover] DARK staging complete — NOTHING was installed or loaded.
 [cutover]   staged plist : ${STAGED_PLIST}
+EOF
+
+  if [[ -n "${KEY_ENV_FILE}" ]]; then
+    cat <<EOF
+[cutover]   staged wrapper : ${STAGED_WRAPPER}  (0700; plist execs its INSTALL path below)
+[cutover]   wrapper install: ${WRAPPER_INSTALL_PATH}
+[cutover]   key env file   : ${KEY_ENV_FILE}  (0600/0400 owner-only; sourced by the wrapper at RUNTIME — never read into the plist)
+EOF
+  fi
+
+  cat <<EOF
 [cutover]   server bin   : ${RUST_SERVER_BIN}
 [cutover]   enroll bin   : ${ENROLL_BIN}
 [cutover]   store-dir    : ${STORE_DIR}   (MUST equal the dir you ran hub_agent_run_enroll into)
@@ -393,10 +604,30 @@ cat >&2 <<EOF
 [cutover]   * You ran hub_agent_run_enroll ONCE into the SAME store-dir above.
 [cutover]   * ~/.friday/master.key exists for THIS login user (same \$HOME), or
 [cutover]     the server boots fail-closed (master_key_unavailable).
+EOF
+
+  if [[ -n "${KEY_ENV_FILE}" ]]; then
+    cat <<EOF
+[cutover]   * The key env file above stays 0600/0400, owned by this user, and keeps a
+[cutover]     non-empty FRIDAY_DEEPSEEK_API_KEY (or DEEPSEEK_API_KEY) — the wrapper
+[cutover]     FAILS CLOSED (exit 2) without it and launchd will surface the failure.
+EOF
+  fi
+
+  cat <<EOF
 [cutover]   * On the TS hub (com.friday.hub) you will set FRIDAY_ROUTE_AGENT_RUN_VIA_RUST=1
 [cutover]     and FRIDAY_HUB_AGENT_RUN_WS_PORT=${WS_PORT} (NOT here on the Rust server).
 
 [cutover] To INSTALL + LOAD (operator runs these manually — this tool does NOT):
+EOF
+
+  if [[ -n "${KEY_ENV_FILE}" ]]; then
+    cat <<EOF
+[cutover]   install -m 0700 '${STAGED_WRAPPER}' '${WRAPPER_INSTALL_PATH}'
+EOF
+  fi
+
+  cat <<EOF
 [cutover]   cp '${STAGED_PLIST}' '${INSTALLED_PLIST}'
 [cutover]   launchctl bootout   "gui/\${UID}" '${INSTALLED_PLIST}' 2>/dev/null || true
 [cutover]   launchctl enable    "gui/\${UID}/${LABEL}"
@@ -404,5 +635,15 @@ cat >&2 <<EOF
 [cutover]   launchctl kickstart -k "gui/\${UID}/${LABEL}"
 
 EOF
+
+  if [[ -n "${KEY_ENV_FILE}" ]]; then
+    cat <<EOF
+[cutover] KEY ROTATION (later): edit '${KEY_ENV_FILE}' in place (keep mode 0600), then
+[cutover]   launchctl kickstart -k "gui/\${UID}/${LABEL}"
+[cutover] — the wrapper re-sources the env file at every (re)start; no re-staging needed.
+
+EOF
+  fi
+} >&2
 
 log "done (dark). Review the staged plist, then run the bootstrap commands above by hand."
