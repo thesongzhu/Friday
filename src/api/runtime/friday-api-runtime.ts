@@ -941,10 +941,16 @@ export function resolveApiRuntimeCanonicalGateRequired(env: NodeJS.ProcessEnv = 
 //      this route, and never set the marker → never admitted. This avoids the historical
 //      route-only-retirement trap of pinning at the method chokepoint.
 //   2. constraints.readOnly === true (hard-blocks every mutating tool at the runtime).
-//   3. DeepSeek-flash ONLY: providerId === "deepseek" AND requested model ===
-//      "deepseek-v4-flash". A request for deepseek-pro / codex / claude / chat / reasoner
-//      / a missing model → DISQUALIFIED (no silent downgrade to flash). If a taskProfile
-//      model override is present it must ALSO be exactly the flash identifier.
+//   3. DeepSeek-flash ONLY: the provider identity must be DeepSeek via EITHER real shape —
+//      providerId === "deepseek" (the literal id the test/RGG envs seed), OR the requested
+//      providerId RESOLVES to an enabled provider record whose kind === "deepseek"
+//      (production rows carry UUID ids, e.g. kind="deepseek", id="fa15f1fe-…"; the route
+//      wrapper populates `resolvedProvider` from ONE cheap providerService.getProvider
+//      read). Fail-closed: unresolvable / disabled / non-deepseek kind → DISQUALIFIED.
+//      AND requested model === "deepseek-v4-flash" (still LITERAL). A request for
+//      deepseek-pro / codex / claude / chat / reasoner / a missing model → DISQUALIFIED
+//      (no silent downgrade to flash). If a taskProfile model override is present it must
+//      ALSO be exactly the flash identifier.
 //   4. The 4 READ tools ONLY: the run must positively grant exactly the Rust read-tool
 //      set {read_file, list_dir, stat_file, search} via `allowedRustRouteTools`. Any other
 //      tool (run_command / write_file / edit_file / append_file / delete_file / move_file /
@@ -982,6 +988,18 @@ export interface RustRouteQualificationInput {
    */
   invokedFromHttpStartRunRoute?: boolean;
   providerId?: string;
+  /**
+   * Resolved provider RECORD identity for `providerId` (execrun prod-provider-shape fix).
+   * Production provider rows carry UUID ids with kind="deepseek"; only test/RGG envs seed
+   * the literal id "deepseek". The route wrapper populates this from ONE cheap
+   * `providerService.getProvider` read-by-id, ONLY when the literal id doesn't already
+   * match. Fail-closed: absent (unresolvable / lookup threw) OR `enabled !== true` OR
+   * `kind !== "deepseek"` → clause 3 disqualifies (falls to today's TS path; never throws).
+   */
+  resolvedProvider?: {
+    kind?: string;
+    enabled?: boolean;
+  };
   model?: string;
   sessionKey?: string;
   requireReview?: boolean;
@@ -1021,7 +1039,18 @@ export function qualifiesForRustReadOnlyRoute(input: RustRouteQualificationInput
   }
 
   // Clause 3 — DeepSeek-flash only; no silent downgrade, no pro/codex/claude/missing.
-  if (input.providerId !== RUST_ROUTE_DEEPSEEK_PROVIDER_ID) {
+  // Provider identity qualifies via EITHER real shape:
+  //   (a) the literal provider id "deepseek" (test/RGG envs seed the row with that id), OR
+  //   (b) a NON-EMPTY requested providerId whose RESOLVED record (route wrapper's cheap
+  //       getProvider read) has kind === "deepseek" AND enabled === true (production rows
+  //       carry UUID ids). Fail-closed: no resolved record / disabled / non-deepseek kind
+  //       → disqualified. A resolved record can never rescue a missing/blank providerId.
+  const resolvedDeepseekProvider =
+    typeof input.providerId === "string"
+    && input.providerId.trim().length > 0
+    && input.resolvedProvider?.kind === RUST_ROUTE_DEEPSEEK_PROVIDER_ID
+    && input.resolvedProvider.enabled === true;
+  if (input.providerId !== RUST_ROUTE_DEEPSEEK_PROVIDER_ID && !resolvedDeepseekProvider) {
     return false;
   }
   if (input.model !== RUST_ROUTE_DEEPSEEK_FLASH_MODEL) {
@@ -4267,9 +4296,35 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     //     `deps.routeAgentRunViaRust`. The gate just below checks that resolved boolean.
     const routeStartRun: typeof startRun = async (input) => {
       if (deps.routeAgentRunViaRust === true) {
+        // execrun prod-provider-shape fix: production provider rows carry UUID ids with
+        // kind="deepseek", while test/RGG envs seed the literal id "deepseek". Clause 3 of
+        // the predicate accepts EITHER the literal id OR a resolved record whose kind is
+        // "deepseek" AND which is enabled. Resolve the record here — ONE cheap
+        // read-by-id (`providerService.getProvider` → profile-repo getById; far cheaper
+        // than the `resolveRoute` validation this same request already ran) — ONLY when
+        // the literal doesn't already match (literal-id envs stay byte-identical, zero
+        // extra reads). Fail-closed: unresolvable / lookup-throw / disabled /
+        // non-deepseek-kind ⇒ the predicate disqualifies ⇒ today's unchanged TS path
+        // (this resolution NEVER raises a new error class of its own).
+        let resolvedProvider: { kind: string; enabled: boolean } | undefined;
+        if (
+          typeof input.providerId === "string"
+          && input.providerId.trim().length > 0
+          && input.providerId !== RUST_ROUTE_DEEPSEEK_PROVIDER_ID
+        ) {
+          try {
+            const providerRecord = await deps.providerService.getProvider(input.providerId);
+            if (providerRecord) {
+              resolvedProvider = { kind: providerRecord.kind, enabled: providerRecord.enabled };
+            }
+          } catch {
+            // Unresolvable ⇒ resolvedProvider stays undefined ⇒ clause 3 disqualifies.
+          }
+        }
         const qualifies = qualifiesForRustReadOnlyRoute({
           invokedFromHttpStartRunRoute: true,
           providerId: input.providerId,
+          resolvedProvider,
           model: input.model,
           sessionKey: input.sessionKey,
           requireReview: input.requireReview,
