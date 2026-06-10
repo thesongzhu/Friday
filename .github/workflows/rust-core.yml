@@ -78,6 +78,23 @@ jobs:
         # forbidden-marker guard (no bodies, no model call, no quota, no network, no
         # secret), so it is safe but unnecessary to execute in CI.
         run: cargo build -p friday-hub --bin hub_workflow_def_inspect
+      - name: Build bins (incl. S9 hub_workflow_run write-bridge)
+        # S9 manual workflow-run dev write-bridge (stored definition → S8 loader → the
+        # EXISTING workflow_exec engine, hard-wired deny-all so mutating steps stay
+        # gate-paused): names the bin explicitly so a missing/compile-broken
+        # `hub_workflow_run` reds CI loudly. Only BUILT here — running it executes a
+        # stored workflow against a dev DB/workspace (refs-only receipt, no production
+        # route, no scheduler), and live manual PRODUCTION workflow runs remain
+        # operator-gated, so it is never executed in CI.
+        run: cargo build -p friday-hub --bin hub_workflow_run
+      - name: Build bins (incl. read-only hub_workflow_run_readback surface)
+        # Read-only refs-only projection of one workflow run's run/step rows (the rows
+        # workflow_exec persists): names the bin explicitly so a missing/compile-broken
+        # `hub_workflow_run_readback` reds CI loudly. Only BUILT here — running it opens
+        # a hub DB read-only and emits refs-only labels/counts through the shared
+        # forbidden-marker guard (no bodies, no params, no evidence text, no model call,
+        # no quota, no network, no secret), so it is safe but unnecessary to execute in CI.
+        run: cargo build -p friday-hub --bin hub_workflow_run_readback
       - name: Test
         # The one live DeepSeek test is #[ignore]d, so this needs no network/secrets.
         run: cargo test --workspace
