@@ -100,6 +100,17 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     // truth). Hub-only: a catalog entry is the Hub-coordinated workflow's
     // identity record. Holds NO secret/key material.
     "workflow_catalog",
+    // R4: Rust-owned system-intent substrate (DARK). The four Hub-only tables the
+    // Rust system-intent entrypoint (`friday-hub::system_intent`) operates over —
+    // the immutable intent REQUEST record, its 1:1 RESULT record, the
+    // control-lease lifecycle store, and the approval-decision trail. Hub-only:
+    // system-intent execution is a Hub-coordinated, desktop-affecting surface
+    // that must never exist on a phone. Refs-only — they hold NO raw
+    // url/clipboard/notification body and NO secret/key/approval-mint material.
+    "system_intent_request",
+    "system_intent_result",
+    "system_control_lease",
+    "system_intent_approval_record",
 ];
 
 /// Tables present only on a phone (never created on the Hub).
@@ -395,6 +406,19 @@ pub fn hub_migrations() -> Vec<Migration> {
             name: "workflow_catalog",
             destructive: false,
             up: m0025_workflow_catalog,
+        },
+        // R4: Rust-owned system-intent substrate (DARK — no production route, no
+        // runtime caller, no live TS flip; the TS `executeIntent` is already
+        // fenced fail-closed). Adds the four Hub-only tables the Rust
+        // system-intent entrypoint operates over: the immutable intent REQUEST
+        // record, its 1:1 RESULT record, the control-lease lifecycle store, and
+        // the approval-decision trail. Purely additive (CREATE TABLE + INDEX only)
+        // — touches no existing table, so v25 rows/queries are unaffected. NOT v1 GO.
+        Migration {
+            version: 26,
+            name: "system_intent_substrate",
+            destructive: false,
+            up: m0026_system_intent_substrate,
         },
     ]
 }
@@ -895,6 +919,199 @@ CREATE TABLE workflow_catalog (
 );
 CREATE UNIQUE INDEX idx_workflow_catalog_slug ON workflow_catalog(slug);
 CREATE INDEX idx_workflow_catalog_archived ON workflow_catalog(is_archived);";
+
+// --- R4 system-intent substrate fragment (Hub-only) -------------------------
+
+// DARK system-intent substrate (R4). The Rust-owned equivalent of the TS
+// `friday-system-service` intent/control-lease/approval persistence
+// (`src/system/engine/friday-system-service.ts`). Nothing in production reads
+// or writes these tables — the TS `executeIntent` is already fenced fail-closed
+// (`TS_RUNTIME_SYSTEM_INTENT_RETIRED`, replacement
+// `rust_owned_system_intent_execution_entrypoint_required`), and this substrate
+// is the Rust home for that entrypoint, behind a flagged hub entrypoint with no
+// route/runtime caller. ALL FOUR tables are Hub-only: system-intent execution is
+// a Hub-coordinated, desktop-affecting surface that must never exist on a phone.
+//
+// * `system_intent_request` — the immutable INPUT record of an intent dispatch:
+//   the `action` (closed vocabulary of the 23 TS `FRIDAY_SYSTEM_INTENT_ACTIONS`,
+//   so a bogus action is unrepresentable even via raw SQL), the requesting actor
+//   (`actor_kind` ∈ the TS `FridaySystemControlLeaseOwnerKind` set + the gate's
+//   `owner`, so the gate Actor is faithfully recordable), classification flags
+//   (`mutating`, `risk` ∈ the closed `Risk` vocabulary), and the refs-only
+//   `target_ref` (NEVER raw url/clipboard/notification bodies — a coarse ref/id
+//   only). PK = `intent_id`.
+// * `system_intent_result` — the OUTCOME record keyed 1:1 by `intent_id` (PK ⇒
+//   one result per request; a re-dispatch is a new request). `status` is the
+//   closed TS `FRIDAY_SYSTEM_INTENT_STATUSES` vocabulary. A DEFERRED OS action
+//   (the unimplemented executor seam) records `unavailable` with a coarse
+//   `message` — NEVER a faked `completed`. `control_lease_id` / `gate_reason`
+//   are refs/labels. No body column.
+// * `system_control_lease` — the control-lease lifecycle store (mirrors the TS
+//   `FridaySystemControlLease`): `owner_id` + `owner_kind` exclusivity, optional
+//   `expires_at` (TTL), `revoked_at` + `revoked_reason` for release/expiry/panic.
+//   At most ONE active (non-revoked) lease is enforced by the typed acquire path
+//   (read-then-insert in one IMMEDIATE transaction) — the schema records the full
+//   history (a revoked lease row is retained as an audit trail), so the "active"
+//   notion is "the lease whose `revoked_at IS NULL`", not a row-deletion.
+// * `system_intent_approval_record` — the approval DECISION trail for a mutating
+//   intent (refs-only): the `intent_id` it bound to, the gate `decision`
+//   (`allow`/`deny`/`requires_approval`), the coarse `reason`, the derived
+//   `risk`, and whether `approval_required`. This is the durable evidence the
+//   gate fail-closed a mutating action; it carries NO key/secret/approval-mint
+//   material (the verified approval→Allow upgrade is a deferred seam, owned by
+//   `friday-storage::authorize_mutating_action`, not minted here).
+//
+// REFS-ONLY discipline (mirrors run_result / channel_event / provider_timeline):
+// NO raw url / clipboard text / notification body / app-output is stored.
+// `target_ref` / `control_lease_id` are refs/ids; `action` / `actor_kind` /
+// `status` / `risk` / `decision` are coarse closed-vocabulary labels; `message`
+// / `reason` / `gate_reason` are coarse human reasons (same shape as
+// `work_item.blocking_reason`).
+const DDL_SYSTEM_INTENT: &str = "
+CREATE TABLE system_intent_request (
+    intent_id    TEXT PRIMARY KEY CHECK(length(trim(intent_id)) > 0),
+    action       TEXT NOT NULL CHECK(action IN (
+        'snapshot',
+        'open',
+        'focus',
+        'arrange_windows',
+        'launch_app',
+        'close_app',
+        'open_url',
+        'open_project',
+        'search_file',
+        'handoff_to_browser',
+        'handoff_to_terminal',
+        'read_notification',
+        'notification_list',
+        'notification_act',
+        'triage_notifications',
+        'resume_task',
+        'recover_ui',
+        'clipboard_read',
+        'clipboard_write',
+        'request_control',
+        'release_control',
+        'approve',
+        'deny'
+    )),
+    actor_id     TEXT NOT NULL CHECK(length(trim(actor_id)) > 0),
+    actor_kind   TEXT NOT NULL CHECK(actor_kind IN (
+        'agent',
+        'api',
+        'remote',
+        'system',
+        'owner'
+    )),
+    target_ref   TEXT,
+    mutating     INTEGER NOT NULL CHECK(mutating IN (0, 1)),
+    risk         TEXT NOT NULL CHECK(risk IN (
+        'read_only',
+        'low',
+        'medium',
+        'high',
+        'critical'
+    )),
+    created_at   INTEGER NOT NULL
+);
+CREATE INDEX idx_system_intent_request_created
+    ON system_intent_request(created_at, intent_id);
+
+CREATE TABLE system_intent_result (
+    intent_id        TEXT PRIMARY KEY,
+    action           TEXT NOT NULL CHECK(action IN (
+        'snapshot',
+        'open',
+        'focus',
+        'arrange_windows',
+        'launch_app',
+        'close_app',
+        'open_url',
+        'open_project',
+        'search_file',
+        'handoff_to_browser',
+        'handoff_to_terminal',
+        'read_notification',
+        'notification_list',
+        'notification_act',
+        'triage_notifications',
+        'resume_task',
+        'recover_ui',
+        'clipboard_read',
+        'clipboard_write',
+        'request_control',
+        'release_control',
+        'approve',
+        'deny'
+    )),
+    status           TEXT NOT NULL CHECK(status IN (
+        'completed',
+        'blocked',
+        'failed',
+        'unavailable',
+        'queued'
+    )),
+    message          TEXT NOT NULL DEFAULT '',
+    control_lease_id TEXT,
+    gate_reason      TEXT,
+    created_at       INTEGER NOT NULL,
+    FOREIGN KEY(intent_id) REFERENCES system_intent_request(intent_id)
+);
+CREATE INDEX idx_system_intent_result_created
+    ON system_intent_result(created_at, intent_id);
+
+CREATE TABLE system_control_lease (
+    lease_id        TEXT PRIMARY KEY CHECK(length(trim(lease_id)) > 0),
+    owner_id        TEXT NOT NULL CHECK(length(trim(owner_id)) > 0),
+    owner_kind      TEXT NOT NULL CHECK(owner_kind IN (
+        'agent',
+        'api',
+        'remote',
+        'system',
+        'owner'
+    )),
+    reason          TEXT,
+    acquired_at     INTEGER NOT NULL,
+    expires_at      INTEGER,
+    revoked_at      INTEGER,
+    revoked_reason  TEXT
+);
+CREATE INDEX idx_system_control_lease_active
+    ON system_control_lease(revoked_at, acquired_at);
+-- At-most-ONE active (non-revoked) lease, DB-ENFORCED (mirrors the S8
+-- `idx_workflow_definition_one_published` partial-unique discipline). The unique
+-- key is the constant `1` restricted to non-revoked rows, so a SECOND active lease
+-- is unrepresentable even via raw SQL — the at-most-one-active invariant the
+-- acquire path upholds is now also a schema guarantee, while any number of REVOKED
+-- rows (the retained audit history) are unconstrained. The typed `Reused` path
+-- inserts NO row, so reuse never trips this; a foreign-owner acquire fails Busy
+-- before INSERT, so it never trips it either.
+CREATE UNIQUE INDEX idx_system_control_lease_one_active
+    ON system_control_lease((1)) WHERE revoked_at IS NULL;
+
+CREATE TABLE system_intent_approval_record (
+    record_id         TEXT PRIMARY KEY CHECK(length(trim(record_id)) > 0),
+    intent_id         TEXT NOT NULL,
+    action            TEXT NOT NULL CHECK(length(trim(action)) > 0),
+    decision          TEXT NOT NULL CHECK(decision IN (
+        'allow',
+        'deny',
+        'requires_approval'
+    )),
+    reason            TEXT NOT NULL DEFAULT '',
+    risk              TEXT NOT NULL CHECK(risk IN (
+        'read_only',
+        'low',
+        'medium',
+        'high',
+        'critical'
+    )),
+    approval_required INTEGER NOT NULL CHECK(approval_required IN (0, 1)),
+    created_at        INTEGER NOT NULL,
+    FOREIGN KEY(intent_id) REFERENCES system_intent_request(intent_id)
+);
+CREATE INDEX idx_system_intent_approval_intent
+    ON system_intent_approval_record(intent_id, created_at);";
 
 // --- PNS-001 provider-session fragments (Hub-only) --------------------------
 
@@ -1736,4 +1953,13 @@ fn m0024_workflow_scheduler_substrate(tx: &Transaction) -> rusqlite::Result<()> 
 // touched). Nothing in production reads or writes it (DARK).
 fn m0025_workflow_catalog(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(DDL_WORKFLOW_CATALOG)
+}
+
+// R4: additive Hub-only system-intent substrate (see `DDL_SYSTEM_INTENT`'s doc
+// comment) — the four tables the Rust system-intent entrypoint operates over.
+// Purely additive (CREATE TABLE + INDEX only, no existing table touched), so
+// every pre-existing v25 row and query is unaffected. Nothing in production
+// reads or writes these tables (DARK).
+fn m0026_system_intent_substrate(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_SYSTEM_INTENT)
 }

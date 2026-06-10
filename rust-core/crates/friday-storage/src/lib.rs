@@ -30,6 +30,7 @@ pub mod provider_timeline_store;
 pub mod run_result;
 pub mod schedule;
 mod schema;
+pub mod system_intent;
 pub mod workflow;
 pub mod workflow_catalog;
 pub mod workflow_def;

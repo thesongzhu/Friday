@@ -300,6 +300,103 @@ fn forward_migration_v22_to_v23_backfills_conversation_axes_to_null() {
 }
 
 #[test]
+fn forward_migration_v25_to_v26_adds_system_intent_tables_and_preserves_v25_rows() {
+    // R4 additive migration v26: four NEW Hub-only system-intent tables
+    // (`system_intent_request`, `system_intent_result`, `system_control_lease`,
+    // `system_intent_approval_record`). This is the NEW-TABLE migration pattern
+    // (like m0015 run_result / m0005 agent_run), NOT an ALTER. A fresh v25 DB must
+    // NOT have any of the tables; a v25 row seeded in a pre-existing table must
+    // survive the forward migration untouched; and after reopen the schema reaches
+    // the current max version with all four new tables present + usable.
+    use friday_storage::system_intent::{
+        acquire_control_lease, get_intent_result, insert_intent_request, IntentAction,
+        IntentRequest, LeaseAcquireOutcome, NewControlLease, OwnerKind, RiskLabel,
+    };
+
+    let p = temp_db_path("system-intent-mig");
+    {
+        let mut migs = hub_migrations();
+        migs.retain(|m| m.version <= 25);
+        let db = Db::open(&p, Profile::Hub, &migs, "v25").unwrap();
+        assert_eq!(db.version().unwrap(), 25);
+        // None of the four R4 tables exist before v26.
+        for t in [
+            "system_intent_request",
+            "system_intent_result",
+            "system_control_lease",
+            "system_intent_approval_record",
+        ] {
+            assert!(
+                db.conn()
+                    .prepare(&format!("SELECT 1 FROM {t} LIMIT 1"))
+                    .is_err(),
+                "table {t} must not exist before v26"
+            );
+        }
+        // Seed a row in a PRE-EXISTING table (workflow_catalog, v25) to prove the
+        // additive migration touches nothing.
+        db.conn()
+            .execute(
+                "INSERT INTO workflow_catalog
+                    (workflow_id, slug, name, description, tags_json, is_archived,
+                     revision, etag, deployed_version, created_at, updated_at)
+                 VALUES ('wf-pre-v26', 'pre-v26-slug', 'Pre v26', NULL, '[]', 0, 1,
+                         '0000000000000000000000000000000000000000000000000000000000000000',
+                         NULL, 10, 10)",
+                [],
+            )
+            .unwrap();
+    }
+    // Reopen with the full set -> forward-migrate to v26 (the four additive CREATE TABLEs).
+    let db = Db::open_hub(&p).unwrap();
+    assert_eq!(db.version().unwrap(), hub_max_version());
+    // The pre-existing v25 row survived the additive migration untouched.
+    assert_eq!(
+        db.count("workflow_catalog").unwrap(),
+        1,
+        "pre-v26 workflow_catalog row survived the migration"
+    );
+    // All four new tables are present and START EMPTY.
+    for t in [
+        "system_intent_request",
+        "system_intent_result",
+        "system_control_lease",
+        "system_intent_approval_record",
+    ] {
+        let n: i64 = db
+            .conn()
+            .query_row(&format!("SELECT count(*) FROM {t}"), [], |r| r.get(0))
+            .unwrap_or_else(|e| panic!("table {t} must exist + be queryable after v26: {e}"));
+        assert_eq!(n, 0, "new table {t} starts empty");
+    }
+    // The typed API works against the migrated DB end-to-end: a request persists,
+    // a lease acquires, and a deferred-action result reads back honestly.
+    let request = IntentRequest {
+        intent_id: "i-mig".to_string(),
+        action: IntentAction::LaunchApp,
+        actor_id: "agent-1".to_string(),
+        actor_kind: OwnerKind::Agent,
+        target_ref: Some("com.apple.Safari".to_string()),
+        mutating: true,
+        risk: RiskLabel::Medium,
+        created_at: 100,
+    };
+    insert_intent_request(db.conn(), &request).unwrap();
+    let nl = NewControlLease {
+        lease_id: "L-mig".to_string(),
+        owner_id: "agent-1".to_string(),
+        owner_kind: OwnerKind::Agent,
+        reason: Some("auto:launch_app".to_string()),
+        ttl_ms: Some(1000),
+    };
+    assert!(matches!(
+        acquire_control_lease(db.conn(), &nl, 100).unwrap(),
+        LeaseAcquireOutcome::Acquired(_)
+    ));
+    assert!(get_intent_result(db.conn(), "i-mig").unwrap().is_none());
+}
+
+#[test]
 fn reopen_is_idempotent_and_preserves_rows() {
     let p = temp_db_path("seeded");
     {
