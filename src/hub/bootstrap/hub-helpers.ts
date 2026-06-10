@@ -1909,6 +1909,20 @@ export interface FridayHubConfig {
   /** Test-oracle only; production hub creation must leave the system-service `executeIntent` method fail-closed. */
   allowTestOnlySystemIntentExecution?: boolean;
   /**
+   * TS Runtime Retirement — GAP G2: DEFAULT-OFF (INVERTED polarity) guard for the
+   * UIX starter-skill execution lane (`executeStarterSkillTemplate`, route
+   * POST /v1/uix/templates/:templateId/execute + assistant intent resolver) and
+   * the UIX-driven skill-generator session mutators. UIX starter-skill execution
+   * is an ACCEPTED-LIVE v1 feature (operator decision DEC-3a) and is NOT in the
+   * retirement set, so unlike the `allowTestOnly*` flags this DEFAULTS FALSE —
+   * the guard is INERT and starter skills keep working exactly as today (zero
+   * degradation). Set `true` only when the operator decides to Rust-own skill
+   * execution (R11): the lane then fails closed (503
+   * TS_RUNTIME_SKILL_RUNS_RETIRED / TS_RUNTIME_SKILL_GENERATOR_RETIRED).
+   * Production leaves this unset.
+   */
+  enforceUixSkillExecRetirement?: boolean;
+  /**
    * execrun-replacement slice 4 (DARK): per-run "route a qualifying agent-run via the
    * future Rust read-only loop" flag. DEFAULT-FALSE — production hub creation must leave
    * this unset so the startRun route stays byte-identical to today (it computes nothing

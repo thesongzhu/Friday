@@ -90,4 +90,25 @@ export interface CreateFridaySkillGeneratorServiceDeps {
     channel?: string;
     surface: "skill_generator";
   }) => string | null | Promise<string | null>;
+  /**
+   * TS Runtime Retirement — GAP G2 (DEFAULT-OFF / INVERTED polarity).
+   *
+   * Unlike the `allowTestOnly*` retirement flags (which DEFAULT the guard ON /
+   * fail-closed and require an explicit opt-in to run legacy TS), THIS flag
+   * DEFAULTS the guard OFF. The UIX-driven skill-generator session mutators
+   * (`startSession`/`submitTurn`/`generateDraft`/`approveAndSave`) are NOT in the
+   * retirement set and are an ACCEPTED-LIVE v1 feature (operator decision
+   * DEC-3a). They reach this service off-route (via UIX `executeTemplate`
+   * `generate-skill` and the agent skill-generator tool), bypassing the
+   * route-level `allowTestOnlySkillGeneratorExecution` guard.
+   *
+   * When `false`/undefined (the default, INCLUDING production today) the guard is
+   * INERT and these methods behave exactly as before — zero degradation. When
+   * explicitly `true` the methods fail closed with a 503
+   * `TS_RUNTIME_SKILL_GENERATOR_RETIRED` BEFORE any session write or provider
+   * call. This is the dormant lever to flip ON later when the operator decides
+   * to Rust-own skill generation (R11). Flipping it on also fail-closes the
+   * agent skill-generator tool path (both share this service / R11 owns both).
+   */
+  enforceUixSkillExecRetirement?: boolean;
 }
