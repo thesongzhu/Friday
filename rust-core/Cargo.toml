@@ -20,6 +20,7 @@ members = [
     "crates/friday-transport",
     "crates/friday-storage",
     "crates/friday-deepseek",
+    "crates/friday-anthropic",
     "crates/friday-providers",
     "crates/friday-fs",
     "crates/friday-system-remote",
@@ -63,6 +64,7 @@ friday-protocol = { path = "crates/friday-protocol" }
 friday-transport = { path = "crates/friday-transport" }
 friday-storage = { path = "crates/friday-storage" }
 friday-deepseek = { path = "crates/friday-deepseek" }
+friday-anthropic = { path = "crates/friday-anthropic" }
 friday-providers = { path = "crates/friday-providers" }
 friday-fs = { path = "crates/friday-fs" }
 friday-hub = { path = "crates/friday-hub" }
