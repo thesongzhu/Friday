@@ -31,6 +31,7 @@ pub mod run_result;
 pub mod schedule;
 mod schema;
 pub mod workflow;
+pub mod workflow_catalog;
 pub mod workflow_def;
 pub mod workflow_read;
 

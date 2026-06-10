@@ -92,6 +92,14 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     "workflow_schedule_fire",
     "scheduler_control",
     "scheduler_lease",
+    // R3: per-workflow CATALOG entry (DARK substrate). Holds the workflow's
+    // identity (slug/name/tags), soft-delete state, an optimistic-concurrency
+    // (revision, etag) pair, and the deploy pointer — never a definition body
+    // (that is the Hub-only `workflow_definition`) and never "which version is
+    // published" (the S8 `is_published` flag remains the single source of
+    // truth). Hub-only: a catalog entry is the Hub-coordinated workflow's
+    // identity record. Holds NO secret/key material.
+    "workflow_catalog",
 ];
 
 /// Tables present only on a phone (never created on the Hub).
@@ -371,6 +379,22 @@ pub fn hub_migrations() -> Vec<Migration> {
             name: "workflow_scheduler_substrate",
             destructive: false,
             up: m0024_workflow_scheduler_substrate,
+        },
+        // R3: per-workflow CATALOG entry store (DARK substrate — no production
+        // route, no scheduler/runtime trigger, no live TS `workflows.*` flip).
+        // The S8 `workflow_definition` store (v22) holds versioned immutable
+        // DEFINITION bodies + the single-published flag; this adds the per-WORKFLOW
+        // catalog ENTRY the `workflows.create/update/archive/publish/deploy`
+        // mutation surface operates over (identity, soft-delete, optimistic
+        // concurrency, deploy pointer). It deliberately does NOT persist the
+        // published-version pointer — that stays in `workflow_definition.is_published`
+        // (the single source of truth). Purely additive (CREATE TABLE + INDEX only)
+        // — touches no existing table, so v24 rows/queries are unaffected. NOT v1 GO.
+        Migration {
+            version: 25,
+            name: "workflow_catalog",
+            destructive: false,
+            up: m0025_workflow_catalog,
         },
     ]
 }
@@ -827,6 +851,50 @@ CREATE TABLE scheduler_lease (
     expires_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );";
+
+// --- R3 workflow CATALOG fragment (Hub-only) --------------------------------
+
+// DARK catalog substrate (R3). One Hub-only table the catalog-CRUD + deploy
+// surface (`friday-hub::workflow_catalog`) operates over; nothing in production
+// reads or writes it (the live TS `workflows.*` routes are NOT flipped). It is
+// the per-WORKFLOW ENTRY layer ON TOP of the S8 `workflow_definition` versions.
+//
+// * `workflow_id` PK — the catalog entry's identity.
+// * `slug` — UNIQUE (the DB index makes two entries sharing a slug
+//   unrepresentable, even via raw SQL). `name` — display label. Both non-empty.
+// * `description` — nullable free-form label. `tags_json` — opaque JSON tag
+//   array (coarse labels only; the hub layer owns the shape), DEFAULT '[]'.
+// * `is_archived` — soft-delete flag (the `workflows.archive` end state); a
+//   catalog row is NEVER hard-deleted by the typed API, so a deployed/published
+//   pointer can never dangle behind a vanished entry.
+// * `revision` — optimistic-concurrency counter (>= 1; born 1, every mutation
+//   bumps by 1). `etag` — DERIVED (sha256 of identity fields + revision) by the
+//   typed API at the write chokepoint; the CHECK makes a malformed hand-built
+//   token unrepresentable. A mutation carrying a stale `expected_revision` fails
+//   CLOSED at the hub layer's read-then-write IMMEDIATE transaction.
+// * `deployed_version` — the R3 DEPLOY pointer (nullable; the version made the
+//   deployable target). NOTE: this is NOT "which version is published" — that
+//   stays in `workflow_definition.is_published` (the single source of truth);
+//   the hub deploy op confirms a version is published BEFORE setting this. NO FK
+//   to `workflow_definition`: the layers are intentionally decoupled (a catalog
+//   entry may exist before any version), and cross-table consistency is enforced
+//   by the hub layer querying both, not by a schema FK.
+const DDL_WORKFLOW_CATALOG: &str = "
+CREATE TABLE workflow_catalog (
+    workflow_id      TEXT PRIMARY KEY CHECK(length(trim(workflow_id)) > 0),
+    slug             TEXT NOT NULL CHECK(length(trim(slug)) > 0),
+    name             TEXT NOT NULL CHECK(length(trim(name)) > 0),
+    description      TEXT,
+    tags_json        TEXT NOT NULL DEFAULT '[]',
+    is_archived      INTEGER NOT NULL DEFAULT 0 CHECK(is_archived IN (0, 1)),
+    revision         INTEGER NOT NULL CHECK(revision >= 1),
+    etag             TEXT NOT NULL CHECK(length(etag) = 64),
+    deployed_version INTEGER CHECK(deployed_version IS NULL OR deployed_version >= 1),
+    created_at       INTEGER NOT NULL,
+    updated_at       INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX idx_workflow_catalog_slug ON workflow_catalog(slug);
+CREATE INDEX idx_workflow_catalog_archived ON workflow_catalog(is_archived);";
 
 // --- PNS-001 provider-session fragments (Hub-only) --------------------------
 
@@ -1661,4 +1729,11 @@ fn m0024_workflow_scheduler_substrate(tx: &Transaction) -> rusqlite::Result<()> 
         [],
     )?;
     Ok(())
+}
+
+// R3: additive Hub-only per-workflow CATALOG store (see the DDL const's doc
+// comment). Purely additive (CREATE TABLE + INDEX only, no existing table
+// touched). Nothing in production reads or writes it (DARK).
+fn m0025_workflow_catalog(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_WORKFLOW_CATALOG)
 }
