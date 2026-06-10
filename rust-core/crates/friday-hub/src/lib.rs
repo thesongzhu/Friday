@@ -92,6 +92,25 @@ pub mod diagnostics;
 /// [`capability`] route table; confers no v1 GO.
 pub mod provider_doctor;
 
+/// R7 — LIVE provider key-validation (`providers.validate`), DARK + secret-bearing.
+/// The real impl of the call-free [`friday_providers::key_validation`] seam: it
+/// constructs the `friday-anthropic`/`friday-deepseek` clients `from_env` and runs ONE
+/// minimal authenticated round-trip, mapping the typed provider error into a
+/// [`friday_providers::KeyValidationOutcome`] (no-fallback: only an auth rejection is
+/// `Invalid`; a 5xx/429/transport is `Unavailable`, never a bad-key signal). The
+/// error→outcome mapping is pure + fully unit-tested; the network side is exercised
+/// only by an `#[ignore]`'d live harness. Registers NO route; confers no v1 GO.
+pub mod provider_key_validation;
+
+/// R7 — composite capability-doctor (`capabilities.doctor`/`providers.doctor`), DARK.
+/// Composes R6's CLI-detect [`provider_doctor::ProviderDoctor`] signal with R7's live
+/// key-validation signal into one per-provider truth-labeled readiness report — the
+/// two taxonomies (`{Codex, Claude}` CLI logins vs `{DeepSeek, Anthropic}` API keys)
+/// reported side-by-side, NEVER collapsed (claude CLI login and the anthropic API key
+/// are distinct credentials, surfaced separately). Generic over both probes for
+/// mockable testing. Registers NO route; confers no v1 GO.
+pub mod capability_doctor;
+
 /// Step-3 — setup-readiness blocker labels (truth-labeled): the runtime analog of the file-57
 /// external-prep checklist. Every prep item is `Ready { evidence }` ONLY when verified, else
 /// `NotReady { blocker }` — never falsely ready. `is_release_ready()` is the prep half of the
