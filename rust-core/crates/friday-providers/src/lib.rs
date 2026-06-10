@@ -20,8 +20,16 @@ use thiserror::Error;
 
 pub mod claude_control;
 pub mod codex_appserver;
+/// R7 — the call-free key-validation seam: the [`key_validation::KeyValidationProbe`]
+/// trait + provider-agnostic typed [`key_validation::KeyValidationOutcome`] +
+/// a mock. The LIVE round-trip impl lives in `friday-hub` (secret-bearing); this
+/// crate keeps its "no model call, nothing charged" contract intact.
+pub mod key_validation;
 pub mod session;
 pub mod unified;
+pub use key_validation::{
+    KeyProvider, KeyValidationOutcome, KeyValidationProbe, MockKeyValidationProbe,
+};
 pub use session::{send_to_provider, CliSession, MockSession, SessionOutcome, SessionRunner};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
