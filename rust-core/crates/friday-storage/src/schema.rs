@@ -679,8 +679,12 @@ CREATE INDEX idx_provider_timeline_pending_session
 //   linear-only translator). `source_meta` preserves refs-only provenance for a
 //   translated definition (ids / counts / coarse labels — never raw node
 //   configs, prompts, or secrets).
-// * `is_published` marks at most one published version per `workflow_id`
-//   (enforced by the typed `set_published`, exercised by tests).
+// * `is_published` marks at most one published version per `workflow_id`. The
+//   invariant is DB-ENFORCED by the partial UNIQUE index
+//   `idx_workflow_definition_one_published` (a second `is_published = 1` row for
+//   the same `workflow_id` is unrepresentable, even via hand edits/raw SQL), in
+//   addition to the transactional typed `set_published`; the published reader
+//   additionally refuses an ambiguous multi-published state (defense in depth).
 const DDL_WORKFLOW_DEFINITION: &str = "
 CREATE TABLE workflow_definition (
     workflow_id     TEXT NOT NULL CHECK(length(trim(workflow_id)) > 0),
@@ -695,7 +699,9 @@ CREATE TABLE workflow_definition (
     PRIMARY KEY(workflow_id, version)
 );
 CREATE INDEX idx_workflow_definition_published
-    ON workflow_definition(workflow_id, is_published);";
+    ON workflow_definition(workflow_id, is_published);
+CREATE UNIQUE INDEX idx_workflow_definition_one_published
+    ON workflow_definition(workflow_id) WHERE is_published = 1;";
 
 // --- PNS-001 provider-session fragments (Hub-only) --------------------------
 

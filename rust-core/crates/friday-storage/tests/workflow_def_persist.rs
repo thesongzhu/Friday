@@ -131,6 +131,79 @@ fn publish_is_exclusive_and_publish_missing_version_changes_nothing() {
 }
 
 #[test]
+fn double_publish_end_state_is_unrepresentable_at_the_db_layer() {
+    // Review finding (PR #623 panel): the single-published invariant was
+    // app-layer only — an interleaved second writer (or raw SQL) could leave
+    // TWO is_published=1 rows. The partial UNIQUE index in m0022 makes that end
+    // state unrepresentable even OUTSIDE the typed API.
+    let db = Db::open_hub(&temp_db_path("wfdef-unique")).unwrap();
+    create_definition(db.conn(), &def("wf1", 1, JSON_V1), 100).unwrap();
+    create_definition(db.conn(), &def("wf1", 2, JSON_V2), 200).unwrap();
+    set_published(db.conn(), "wf1", 1).unwrap();
+
+    // The raw-SQL equivalent of the interleaved second publisher's final SET.
+    let err = db
+        .conn()
+        .execute(
+            "UPDATE workflow_definition SET is_published = 1
+             WHERE workflow_id = 'wf1' AND version = 2",
+            [],
+        )
+        .unwrap_err();
+    assert!(
+        err.to_string().to_lowercase().contains("unique"),
+        "second published row must violate the partial unique index: {err}"
+    );
+    // ...while a DIFFERENT workflow's published row coexists fine.
+    create_definition(db.conn(), &def("wf2", 1, JSON_V1), 300).unwrap();
+    set_published(db.conn(), "wf2", 1).unwrap();
+}
+
+#[test]
+fn get_published_fails_closed_on_an_ambiguous_multi_published_state() {
+    // Defense in depth: even if the unique index is gone (hand-rebuilt DB), the
+    // reader must refuse an ambiguous state instead of returning an arbitrary row.
+    let db = Db::open_hub(&temp_db_path("wfdef-ambiguous")).unwrap();
+    create_definition(db.conn(), &def("wf1", 1, JSON_V1), 100).unwrap();
+    create_definition(db.conn(), &def("wf1", 2, JSON_V2), 200).unwrap();
+    db.conn()
+        .execute_batch(
+            "DROP INDEX idx_workflow_definition_one_published;
+             UPDATE workflow_definition SET is_published = 1 WHERE workflow_id = 'wf1';",
+        )
+        .unwrap();
+    let err = get_published_definition(db.conn(), "wf1").unwrap_err();
+    assert!(
+        err.to_string().contains("2 published versions"),
+        "ambiguous published state must fail closed, never resolve silently: {err}"
+    );
+}
+
+#[test]
+fn set_published_is_transactional_failed_target_rolls_back_the_clear() {
+    // Review finding: the clear-UPDATE and set-UPDATE used to be separate
+    // autocommit statements (crash window → ZERO published; deleted target →
+    // silent Ok). Now: one transaction + changed-row check, so a 0-row target
+    // rolls the clear back and the previous published version SURVIVES.
+    let db = Db::open_hub(&temp_db_path("wfdef-atomic")).unwrap();
+    create_definition(db.conn(), &def("wf1", 1, JSON_V1), 100).unwrap();
+    set_published(db.conn(), "wf1", 1).unwrap();
+
+    assert!(matches!(
+        set_published(db.conn(), "wf1", 99),
+        Err(StorageError::NotFound(_))
+    ));
+    assert_eq!(
+        get_published_definition(db.conn(), "wf1")
+            .unwrap()
+            .unwrap()
+            .version,
+        1,
+        "the failed publish must roll back its sibling-clear (v1 stays published)"
+    );
+}
+
+#[test]
 fn delete_is_fail_closed_for_missing_and_published_versions() {
     let db = Db::open_hub(&temp_db_path("wfdef-delete")).unwrap();
     create_definition(db.conn(), &def("wf1", 1, JSON_V1), 100).unwrap();
@@ -210,4 +283,19 @@ fn forward_migration_v21_to_v22_adds_workflow_definition_table() {
     assert_eq!(db.version().unwrap(), hub_max_version());
     create_definition(db.conn(), &def("wf1", 1, JSON_V1), 100).unwrap();
     assert!(get_definition(db.conn(), "wf1", 1).unwrap().is_some());
+    // The MIGRATED DB carries the single-published partial unique index too
+    // (m0022 was amended pre-ship; forward-only migrations make a later fix a v23).
+    let idx: i64 = db
+        .conn()
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'index'
+             AND name = 'idx_workflow_definition_one_published'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        idx, 1,
+        "v21→v22 migration must create the partial unique index"
+    );
 }

@@ -55,7 +55,10 @@
 //!   - `edit`: TS camelCase `oldText`/`newText` vs Rust snake_case `old_text`/`new_text`.
 //!   - `exec`: TS has `workdir`/`env`/`timeoutMs`/`background`; Rust `run_command` takes
 //!     `command` ONLY (the extras have no Rust executor surface yet → would be dropped).
-//!   - `read`/`write`: param names already align (`path`, `content`).
+//!   - `read`: TS also declares + honors line-window `offset`/`limit`; Rust `read_file`
+//!     reads ONLY `path` (the window args have no Rust surface → must fail closed, never
+//!     be dropped: dropping them silently reads the WHOLE file instead of a window).
+//!   - `write`: param names align (`path`, `content`).
 //!
 //! ## Truth labels
 //! Dark substrate for the executeRun-replacement. `rust_wired` at best: the map + resolver
@@ -193,7 +196,10 @@ pub const PARAM_SCHEMA_DIFFS: &[ParamSchemaDiff] = &[
     ParamSchemaDiff {
         ts: "read",
         rust: "read_file",
-        note: "params align: both use `path`.",
+        note: "both use `path`, but TS `read` also declares AND honors line-window \
+               `offset`/`limit` (1-indexed line slicing); the Rust `read_file` executor \
+               reads ONLY `path`, so the window args have no Rust surface — a forwarding \
+               slice must fail closed on them (dropping them silently reads the whole file).",
     },
     ParamSchemaDiff {
         ts: "write",

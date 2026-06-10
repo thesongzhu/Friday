@@ -43,9 +43,19 @@
 //! - **expression args** (`$…`), non-scalar args, unsafe keys, and the
 //!   `exec`-only knobs (`workdir`/`env`/`timeoutMs`/`background`) recorded in
 //!   [`crate::tool_name_map::PARAM_SCHEMA_DIFFS`] as having no Rust surface;
-//! - **per-step retry policies** (maxAttempts > 1) and **timeouts** (the Rust
-//!   engine has no per-step retry/timeout; dropping them silently would remove
-//!   a bound the author set);
+//! - **per-step retry policies** (maxAttempts > 1, plus any retryPolicy shape
+//!   that cannot be parsed — never guessed) and **timeouts** — BOTH the
+//!   node-level `timeoutMs` (the compiler's emission) and `config.timeoutMs`
+//!   (the field the TS node executor ACTUALLY honors at run time,
+//!   `friday-workflow-node-executor.ts`): the Rust engine has no per-step
+//!   retry/timeout; dropping either silently would remove a bound the author
+//!   set. Known residual divergence, documented not hidden: when NO timeout is
+//!   set, TS still applies an implicit 120s default per action node; the Rust
+//!   engine has no counterpart, so a translated step has no per-step clock at
+//!   all (an authored bound fails closed above; the implicit default does not);
+//! - **TS `read` line-window args** `offset`/`limit` (the TS `read` tool slices
+//!   lines; the Rust `read_file` executor reads ONLY `path` — translating them
+//!   would silently change what the step reads);
 //! - **failure policies** other than `fail_fast` (the Rust engine fails the
 //!   run on a step error; honoring `continue_on_error`/`fallback_step`/
 //!   `compensate`/`pause_for_approval` is unbuilt);
@@ -130,8 +140,23 @@ struct TsEdge {
     id: String,
     source: Option<String>,
     target: Option<String>,
-    condition: Option<String>,
+    /// ANY non-null `condition`/`when` value (string or not) — the TS DAG
+    /// scheduler truthy-checks the raw value, so a non-string condition still
+    /// gates the edge in TS; only `null`/absent is unconditional.
+    condition: Option<Value>,
     has_ports: bool,
+}
+
+/// Refs-only JSON shape label for honest reasons (never the value itself).
+fn json_type_label(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
 }
 
 /// Mirror of the TS `normalizeWorkflowNodeType` alias table — minus its
@@ -235,7 +260,16 @@ fn normalize_edge(v: &Value, index: usize) -> TsEdge {
         id: pick(&["id"]).unwrap_or_else(|| format!("edge-{}", index + 1)),
         source,
         target,
-        condition: pick(&["condition", "when"]),
+        // Capture the RAW value (any non-null shape), not just non-empty
+        // strings: a non-string condition would otherwise pass as a plain
+        // linear edge while the TS scheduler truthy-checks (and on evaluation
+        // failure DISABLES) it — a silent flatten of gating routing.
+        condition: obj.and_then(|o| {
+            ["condition", "when"]
+                .iter()
+                .find_map(|k| o.get(*k).filter(|v| !v.is_null()))
+                .cloned()
+        }),
         has_ports: obj
             .is_some_and(|o| o.contains_key("sourcePort") || o.contains_key("targetPort")),
     }
@@ -293,6 +327,14 @@ const UNSAFE_ARG_KEYS: &[&str] = &["__proto__", "constructor", "prototype"];
 /// ([`crate::tool_name_map::PARAM_SCHEMA_DIFFS`]); silently dropping them would
 /// change semantics (e.g. lose a cwd or a timeout), so they fail closed.
 const EXEC_ONLY_KEYS: &[&str] = &["workdir", "env", "timeoutMs", "background"];
+
+/// TS `read`-only line-window args with no Rust `read_file` surface: the TS
+/// `read` tool declares AND honors `offset`/`limit` (1-indexed line slicing in
+/// `friday-agent-file-tools.ts`), while the Rust `read_file` executor reads
+/// ONLY `path` and ignores everything else — passing them through would
+/// silently read the WHOLE file where TS reads a window, so they fail closed
+/// ([`crate::tool_name_map::PARAM_SCHEMA_DIFFS`]).
+const READ_WINDOW_KEYS: &[&str] = &["offset", "limit"];
 
 /// Translate a TS published-version workflow graph (the
 /// `FridayWorkflowVersionEntity.graphJson` value) into the Rust LINEAR-ONLY
@@ -422,14 +464,18 @@ pub fn translate_ts_published_version(graph_json: &Value, name: &str) -> TsTrans
                 ),
             }),
         }
-        if let Some(retry) = &node.retry_policy {
-            let single_attempt = retry
+        // An explicit `retryPolicy: null` is NOT a policy (same null guard as
+        // timeoutMs — JS serializers commonly emit null for absent optionals);
+        // a present policy must be an object with an integer maxAttempts <= 1,
+        // anything else fails closed with a reason that states the truth.
+        if let Some(retry) = node.retry_policy.as_ref().filter(|v| !v.is_null()) {
+            match retry
                 .as_object()
                 .and_then(|o| o.get("maxAttempts"))
                 .and_then(Value::as_i64)
-                .is_some_and(|n| n <= 1);
-            if !single_attempt {
-                reasons.push(UnsupportedFeature {
+            {
+                Some(n) if n <= 1 => {} // single attempt: semantics identical
+                Some(_) => reasons.push(UnsupportedFeature {
                     feature: "step_retry_policy",
                     node_or_edge: Some(node.id.clone()),
                     reason: format!(
@@ -437,7 +483,17 @@ pub fn translate_ts_published_version(graph_json: &Value, name: &str) -> TsTrans
                          per-step retry; silently dropping it would change semantics",
                         node.id
                     ),
-                });
+                }),
+                None => reasons.push(UnsupportedFeature {
+                    feature: "step_retry_policy",
+                    node_or_edge: Some(node.id.clone()),
+                    reason: format!(
+                        "node '{}' carries a retryPolicy whose shape is unparseable (expected an \
+                         object with an integer maxAttempts); fail-closed rather than guessing \
+                         its retry semantics",
+                        node.id
+                    ),
+                }),
             }
         }
         if node.timeout_ms.as_ref().is_some_and(|v| !v.is_null()) {
@@ -446,6 +502,23 @@ pub fn translate_ts_published_version(graph_json: &Value, name: &str) -> TsTrans
                 node_or_edge: Some(node.id.clone()),
                 reason: format!(
                     "node '{}' sets timeoutMs: the Rust engine has no per-step timeout; silently \
+                     dropping it would remove a bound the author set",
+                    node.id
+                ),
+            });
+        }
+        // CONFIG-level timeoutMs is the one the TS node executor ACTUALLY
+        // honors at run time (`config.timeoutMs` overrides its implicit 120s
+        // default and aborts the skill call); the compiler emits the node-level
+        // twin, but generated/raw graphs carry it here — dropping it silently
+        // would remove a runtime-enforced bound the author set.
+        if node.config.get("timeoutMs").is_some_and(|v| !v.is_null()) {
+            reasons.push(UnsupportedFeature {
+                feature: "step_timeout",
+                node_or_edge: Some(node.id.clone()),
+                reason: format!(
+                    "node '{}' sets config.timeoutMs — the per-node timeout the TS node executor \
+                     enforces at run time; the Rust engine has no per-step timeout; silently \
                      dropping it would remove a bound the author set",
                     node.id
                 ),
@@ -464,11 +537,20 @@ pub fn translate_ts_published_version(graph_json: &Value, name: &str) -> TsTrans
     let node_ids: std::collections::HashSet<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
     for edge in &edges {
         if let Some(cond) = &edge.condition {
+            // ANY non-null condition value blocks (mirrors the timeoutMs null
+            // guard): the TS scheduler truthy-checks the raw value and treats
+            // an evaluation FAILURE as edge-disabled, so even a non-string
+            // condition gates the downstream node in TS — translating it as an
+            // unconditional edge would silently flatten that routing.
+            let rendered = match cond {
+                Value::String(s) => format!("condition '{s}'"),
+                other => format!("a non-string condition (JSON {})", json_type_label(other)),
+            };
             reasons.push(UnsupportedFeature {
                 feature: "conditional_edge",
                 node_or_edge: Some(edge.id.clone()),
                 reason: format!(
-                    "edge '{}' carries condition '{cond}': conditional routing is branching \
+                    "edge '{}' carries {rendered}: conditional routing is branching \
                      (LINEAR-ONLY v1); fail-closed, never flattened",
                     edge.id
                 ),
@@ -500,33 +582,67 @@ pub fn translate_ts_published_version(graph_json: &Value, name: &str) -> TsTrans
     }
 
     // --- graph-level features ----------------------------------------------------
-    if graph_level
-        .get("variables")
-        .and_then(Value::as_object)
-        .is_some_and(|m| !m.is_empty())
-    {
-        reasons.push(UnsupportedFeature {
+    // ANY present, non-null `variables` value blocks unless it is an EMPTY
+    // object (the TS type is a Record). An array/scalar shape used to bypass
+    // this blocker entirely — shape-guarded now, fail-closed.
+    match graph_level.get("variables") {
+        None | Some(Value::Null) => {}
+        Some(Value::Object(m)) if m.is_empty() => {}
+        Some(Value::Object(_)) => reasons.push(UnsupportedFeature {
             feature: "graph_variables",
             node_or_edge: None,
             reason: "the graph declares variables: the Rust engine has no variable \
                      substitution; fail-closed"
                 .into(),
-        });
+        }),
+        Some(other) => reasons.push(UnsupportedFeature {
+            feature: "graph_variables",
+            node_or_edge: None,
+            reason: format!(
+                "the graph carries a 'variables' value of unsupported shape (JSON {}; the TS \
+                 type is an object map): the Rust engine has no variable substitution; \
+                 fail-closed rather than guessing",
+                json_type_label(other)
+            ),
+        }),
     }
-    if let Some(policy) = raw.get("failurePolicy").and_then(Value::as_object) {
-        if let Some(strategy) = as_str(policy.get("onFailure")) {
-            if strategy != "fail_fast" {
-                reasons.push(UnsupportedFeature {
-                    feature: "failure_policy",
-                    node_or_edge: None,
-                    reason: format!(
-                        "failurePolicy.onFailure = '{strategy}': the Rust engine only fail-fasts \
-                         (continue_on_error/fallback_step/compensate/pause_for_approval are \
-                         unbuilt); translating it would misrepresent the policy as honored"
-                    ),
-                });
-            }
-        }
+    // Shape-guarded failure policy: only absent/null, or an object whose
+    // `onFailure` is absent/null (TS reads undefined → effectively fail_fast)
+    // or the literal string "fail_fast", translates. A non-object policy or a
+    // non-string onFailure used to bypass the blocker — fail-closed now.
+    match raw.get("failurePolicy") {
+        None | Some(Value::Null) => {}
+        Some(Value::Object(policy)) => match policy.get("onFailure") {
+            None | Some(Value::Null) => {}
+            Some(Value::String(s)) if s == "fail_fast" => {}
+            Some(Value::String(strategy)) => reasons.push(UnsupportedFeature {
+                feature: "failure_policy",
+                node_or_edge: None,
+                reason: format!(
+                    "failurePolicy.onFailure = '{strategy}': the Rust engine only fail-fasts \
+                     (continue_on_error/fallback_step/compensate/pause_for_approval are \
+                     unbuilt); translating it would misrepresent the policy as honored"
+                ),
+            }),
+            Some(other) => reasons.push(UnsupportedFeature {
+                feature: "failure_policy",
+                node_or_edge: None,
+                reason: format!(
+                    "failurePolicy.onFailure is a non-string value (JSON {}); only the literal \
+                     'fail_fast' is translatable; fail-closed rather than guessing",
+                    json_type_label(other)
+                ),
+            }),
+        },
+        Some(other) => reasons.push(UnsupportedFeature {
+            feature: "failure_policy",
+            node_or_edge: None,
+            reason: format!(
+                "failurePolicy is not an object (JSON {}); only an object with \
+                 onFailure = 'fail_fast' is translatable; fail-closed rather than guessing",
+                json_type_label(other)
+            ),
+        }),
     }
 
     // --- topology: must be ONE linear chain covering every node -------------------
@@ -693,6 +809,20 @@ fn scan_action(node: &TsNode, reasons: &mut Vec<UnsupportedFeature>) {
                         reason: format!(
                             "action node '{}' exec arg '{key}' has no Rust run_command surface \
                              (PARAM_SCHEMA_DIFFS); dropping it would change semantics",
+                            node.id
+                        ),
+                    });
+                    continue;
+                }
+                if rust_action == "read_file" && READ_WINDOW_KEYS.contains(&key.as_str()) {
+                    reasons.push(UnsupportedFeature {
+                        feature: "read_param_no_rust_surface",
+                        node_or_edge: Some(node.id.clone()),
+                        reason: format!(
+                            "action node '{}' read arg '{key}' is a TS line-window the Rust \
+                             read_file executor does not honor (it reads only 'path'); \
+                             translating it would silently read the whole file instead of the \
+                             requested window",
                             node.id
                         ),
                     });
@@ -1390,5 +1520,282 @@ mod tests {
             !rendered.contains("SUPER-SECRET-PATH"),
             "source_meta must never carry arg values: {rendered}"
         );
+    }
+
+    // --- review-panel fix panels (PR #623 adversarial review) -------------------
+
+    #[test]
+    fn config_level_timeout_ms_fails_closed_like_node_level() {
+        // HIGH: the TS node executor honors config.timeoutMs (it overrides the
+        // implicit 120s default); the translator used to scan only node-level.
+        // Exact panel repro: an exec step whose 50ms bound would vanish.
+        let g = json!({
+            "schemaVersion": "2.0",
+            "graph": { "nodes": [
+                { "id": "a", "type": "action",
+                  "config": { "ref": "exec", "args": { "command": "sleep 999" },
+                              "timeoutMs": 50 } }
+            ], "edges": [] },
+            "failurePolicy": { "onFailure": "fail_fast" }, "tests": [], "checksum": ""
+        });
+        let t = translate_ts_published_version(&g, "t");
+        let f = features(&t);
+        assert!(f.contains(&"step_timeout"), "features: {f:?}");
+        match &t {
+            TsTranslation::Unsupported { reasons, .. } => {
+                let r = reasons
+                    .iter()
+                    .find(|r| r.feature == "step_timeout")
+                    .unwrap();
+                assert!(
+                    r.reason.contains("config.timeoutMs"),
+                    "reason must name the config-level key: {}",
+                    r.reason
+                );
+            }
+            _ => panic!("must be Unsupported"),
+        }
+
+        // the read-tool twin from the MED finding blocks too...
+        let g = compiled_v2(
+            json!([ { "id": "a", "type": "action",
+                      "config": { "ref": "read", "args": { "path": "x" },
+                                  "timeoutMs": 5000 } } ]),
+            json!([]),
+        );
+        let f = features(&translate_ts_published_version(&g, "t"));
+        assert!(f.contains(&"step_timeout"), "features: {f:?}");
+
+        // ...while an explicit null mirrors the node-level null guard (no blocker).
+        let g = compiled_v2(
+            json!([ { "id": "a", "type": "action",
+                      "config": { "ref": "read", "args": { "path": "x" },
+                                  "timeoutMs": null } } ]),
+            json!([]),
+        );
+        assert!(matches!(
+            translate_ts_published_version(&g, "t"),
+            TsTranslation::Linear { .. }
+        ));
+    }
+
+    #[test]
+    fn read_offset_limit_args_fail_closed_no_rust_surface() {
+        // HIGH: TS `read` honors offset/limit line-windows; Rust read_file reads
+        // only `path` — a translated window-read would silently read the WHOLE
+        // file. Exact panel repro.
+        let g = json!({
+            "schemaVersion": "2.0",
+            "graph": { "nodes": [
+                { "id": "a", "type": "action",
+                  "config": { "ref": "read",
+                              "args": { "path": "big.log", "offset": 100, "limit": 5 } } }
+            ], "edges": [] },
+            "failurePolicy": { "onFailure": "fail_fast", "notifyUser": false },
+            "tests": [], "checksum": ""
+        });
+        let t = translate_ts_published_version(&g, "wf");
+        let f = features(&t);
+        assert!(f.contains(&"read_param_no_rust_surface"), "features: {f:?}");
+        // BOTH window args are reported (full honest gap list for this node).
+        match &t {
+            TsTranslation::Unsupported { reasons, .. } => {
+                let window: Vec<_> = reasons
+                    .iter()
+                    .filter(|r| r.feature == "read_param_no_rust_surface")
+                    .collect();
+                assert_eq!(
+                    window.len(),
+                    2,
+                    "offset AND limit each blocked: {reasons:?}"
+                );
+            }
+            _ => panic!("must be Unsupported"),
+        }
+
+        // a path-only read still translates (and offset/limit on a NON-read tool
+        // are not exec/read knobs — write has no such keys in its TS schema, so
+        // they fall through to the generic scalar handling, unchanged behavior).
+        let g = compiled_v2(
+            json!([action("a", "read", json!({"path": "big.log"}))]),
+            json!([]),
+        );
+        assert!(matches!(
+            translate_ts_published_version(&g, "wf"),
+            TsTranslation::Linear { .. }
+        ));
+    }
+
+    #[test]
+    fn non_string_edge_condition_fails_closed_never_unconditional() {
+        // MED: the TS DAG scheduler truthy-checks the RAW condition value and
+        // disables the edge when evaluation fails — a non-string condition still
+        // gates the downstream node in TS. Exact panel repro (object condition).
+        let g = compiled_v2(
+            json!([
+                action("a", "read", json!({"path": "x"})),
+                action("b", "read", json!({"path": "y"})),
+            ]),
+            json!([ { "id": "e", "sourceNodeId": "a", "targetNodeId": "b",
+                      "condition": { "expr": "$a.ok" } } ]),
+        );
+        let t = translate_ts_published_version(&g, "t");
+        let f = features(&t);
+        assert!(f.contains(&"conditional_edge"), "features: {f:?}");
+        match &t {
+            TsTranslation::Unsupported { reasons, .. } => {
+                let r = reasons
+                    .iter()
+                    .find(|r| r.feature == "conditional_edge")
+                    .unwrap();
+                assert!(
+                    r.reason.contains("non-string condition"),
+                    "honest shape in reason: {}",
+                    r.reason
+                );
+            }
+            _ => panic!("must be Unsupported"),
+        }
+
+        // the `when` alias with a non-string value blocks too.
+        let g = compiled_v2(
+            json!([
+                action("a", "read", json!({"path": "x"})),
+                action("b", "read", json!({"path": "y"})),
+            ]),
+            json!([ { "id": "e", "sourceNodeId": "a", "targetNodeId": "b", "when": 1 } ]),
+        );
+        let f = features(&translate_ts_published_version(&g, "t"));
+        assert!(f.contains(&"conditional_edge"), "features: {f:?}");
+
+        // an explicit null condition is NOT a condition (TS truthy check passes
+        // it as unconditional) — stays linear.
+        let g = compiled_v2(
+            json!([
+                action("a", "read", json!({"path": "x"})),
+                action("b", "read", json!({"path": "y"})),
+            ]),
+            json!([ { "id": "e", "sourceNodeId": "a", "targetNodeId": "b",
+                      "condition": null } ]),
+        );
+        assert!(matches!(
+            translate_ts_published_version(&g, "t"),
+            TsTranslation::Linear { .. }
+        ));
+    }
+
+    #[test]
+    fn retry_policy_null_is_not_a_blocker_and_shapes_get_accurate_reasons() {
+        // MED: an explicit `retryPolicy: null` used to raise a FALSE
+        // step_retry_policy blocker claiming the node "carries retries".
+        let g = compiled_v2(
+            json!([ { "id": "a", "type": "action",
+                      "config": { "ref": "read", "args": { "path": "x" } },
+                      "retryPolicy": null } ]),
+            json!([]),
+        );
+        assert!(
+            matches!(
+                translate_ts_published_version(&g, "t"),
+                TsTranslation::Linear { .. }
+            ),
+            "retryPolicy: null carries no retry semantics — not a blocker"
+        );
+
+        // an unparseable shape still fails closed, with a reason that states the
+        // truth (unparseable) instead of falsely claiming retries.
+        for bad in [
+            json!({}),
+            json!("retry-hard"),
+            json!({ "maxAttempts": 1.5 }),
+        ] {
+            let g = compiled_v2(
+                json!([ { "id": "a", "type": "action",
+                          "config": { "ref": "read", "args": { "path": "x" } },
+                          "retryPolicy": bad } ]),
+                json!([]),
+            );
+            let t = translate_ts_published_version(&g, "t");
+            match &t {
+                TsTranslation::Unsupported { reasons, .. } => {
+                    let r = reasons
+                        .iter()
+                        .find(|r| r.feature == "step_retry_policy")
+                        .expect("unparseable retryPolicy must block");
+                    assert!(
+                        r.reason.contains("unparseable"),
+                        "accurate reason, not 'with retries': {}",
+                        r.reason
+                    );
+                }
+                _ => panic!("must be Unsupported"),
+            }
+        }
+
+        // genuine retries still produce the original honest reason.
+        let g = compiled_v2(
+            json!([ { "id": "a", "type": "action",
+                      "config": { "ref": "read", "args": { "path": "x" } },
+                      "retryPolicy": { "maxAttempts": 3 } } ]),
+            json!([]),
+        );
+        match translate_ts_published_version(&g, "t") {
+            TsTranslation::Unsupported { reasons, .. } => {
+                let r = reasons
+                    .iter()
+                    .find(|r| r.feature == "step_retry_policy")
+                    .unwrap();
+                assert!(r.reason.contains("with retries"), "reason: {}", r.reason);
+            }
+            _ => panic!("must be Unsupported"),
+        }
+    }
+
+    #[test]
+    fn variables_and_failure_policy_shape_bypasses_fail_closed() {
+        // LOW: an array-shaped `variables` used to bypass the graph_variables
+        // blocker entirely (as_object returned None).
+        let g = json!({
+            "schemaVersion": "2.0",
+            "graph": {
+                "nodes": [ action("a", "read", json!({"path": "x"})) ],
+                "edges": [],
+                "variables": [ { "name": "env", "value": "prod" } ]
+            },
+            "failurePolicy": { "onFailure": "fail_fast" }, "tests": [], "checksum": ""
+        });
+        let f = features(&translate_ts_published_version(&g, "t"));
+        assert!(f.contains(&"graph_variables"), "features: {f:?}");
+
+        // LOW: a plain-string failurePolicy used to bypass the failure_policy
+        // blocker (as_object returned None)...
+        let g = json!({
+            "schemaVersion": "2.0",
+            "graph": { "nodes": [ action("a", "read", json!({"path": "x"})) ], "edges": [] },
+            "failurePolicy": "continue_on_error", "tests": [], "checksum": ""
+        });
+        let f = features(&translate_ts_published_version(&g, "t"));
+        assert!(f.contains(&"failure_policy"), "features: {f:?}");
+
+        // ...and so did a non-string onFailure.
+        let g = json!({
+            "schemaVersion": "2.0",
+            "graph": { "nodes": [ action("a", "read", json!({"path": "x"})) ], "edges": [] },
+            "failurePolicy": { "onFailure": 123 }, "tests": [], "checksum": ""
+        });
+        let f = features(&translate_ts_published_version(&g, "t"));
+        assert!(f.contains(&"failure_policy"), "features: {f:?}");
+
+        // null / empty-object shapes remain non-blocking (TS-faithful defaults).
+        let g = json!({
+            "schemaVersion": "2.0",
+            "graph": { "nodes": [ action("a", "read", json!({"path": "x"})) ], "edges": [],
+                       "variables": {} },
+            "failurePolicy": null, "tests": [], "checksum": ""
+        });
+        assert!(matches!(
+            translate_ts_published_version(&g, "t"),
+            TsTranslation::Linear { .. }
+        ));
     }
 }
