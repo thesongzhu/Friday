@@ -7,8 +7,15 @@ import { promisify } from "node:util";
 import { FridayDomainError } from "#errors";
 
 /**
- * PROOF-ONLY (Rust-wired-DEV), DARK (no production route consumes this) TS->Rust
- * OWNER-GATED ANSWER-BODY readback bridge for the S3 `hub_run_answer_readback` bin.
+ * WIRED into the production read-only Rust agent-run route, gated DEFAULT-OFF — TS->Rust
+ * OWNER-GATED ANSWER-BODY readback bridge for the S3 `hub_run_answer_readback` bin. As of
+ * B1-compose this bridge IS imported + constructed by friday-api-runtime.ts and its
+ * `readAnswer(...)` is the authoritative body source inside `composeRustReadOnlyAgentRun`
+ * (and on the idempotency-replay branch) on the live `routeStartRun` path — so the prior
+ * "no production route consumes this / registers NO production route / imported by no
+ * barrel/index" claim is no longer true. It does NOT run in default prod: the route branch is
+ * gated DEFAULT-OFF behind `FRIDAY_ROUTE_AGENT_RUN_VIA_RUST` (operator cutover pending) and
+ * only fires for a qualifying read-only run. `rust_wired_dev` ceiling — confers no v1 GO.
  *
  * This is the OWNER-GATED BODY sibling of the REFS-ONLY
  * `friday-rust-hub-run-readback-service`, and it is deliberately a SEPARATE path: the
@@ -30,10 +37,11 @@ import { FridayDomainError } from "#errors";
  *
  * TRUSTED-PRINCIPAL CONTRACT (not authentication): `callerPrincipal` is passed through
  * as a TRUSTED argument. The Rust primitive enforces the ownership MATCH only; it does
- * NOT authenticate the caller. The transport that authenticates a caller and supplies a
- * trusted principal is a later composition slice (a long-lived `hub_server` WS
- * transport) — out of scope here. This bridge registers NO production route, replaces no
- * TS read path, is imported by no barrel/index, and confers no v1 GO.
+ * NOT authenticate the caller. The trusted principal is now supplied by the live route's
+ * compose step (`composeRustReadOnlyAgentRun` passes the normalized owner principalId as
+ * `callerPrincipal`); this bridge still performs NO authentication of its own. It does not
+ * (yet) replace any TS read path and confers no v1 GO; the route that drives it is gated
+ * DEFAULT-OFF (operator cutover pending).
  *
  * The bridge fails CLOSED (503) on any non-zero exit, timeout, parse failure, invalid
  * shape, or any `delivered` outcome that arrives WITHOUT the body refs it claims. The
