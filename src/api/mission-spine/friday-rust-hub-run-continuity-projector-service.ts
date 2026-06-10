@@ -3,9 +3,13 @@ import type Database from "better-sqlite3";
 import { FridayDomainError } from "#errors";
 
 /**
- * PROOF-ONLY (Rust-wired-DEV), DARK (no production route consumes this) Rust→TS
- * CONTINUITY PROJECTOR for the future `executeRun`-replacement (executeRun-replace
- * slice 2, fork ii).
+ * WIRED into the production read-only Rust agent-run route (`routeStartRun` →
+ * `composeRustReadOnlyAgentRun` in friday-api-runtime.ts) as of B1-compose — this is the
+ * `projector` passed to compose and its `project(...)` runs on the live route path. NOT yet
+ * live in default prod: that route is GATED DEFAULT-OFF (`FRIDAY_ROUTE_AGENT_RUN_VIA_RUST`,
+ * operator cutover pending). Rust→TS CONTINUITY PROJECTOR for the `executeRun`-replacement
+ * (executeRun-replace slice 2, fork ii). `rust_wired_dev` ceiling — narrow (read-only /
+ * refs-only, no fabricated token totals); NOT a full executeRun replacement; confers no v1 GO.
  *
  * ## Why this exists
  * The executeRun-replacement routes production agent-runs through the Rust Hub loop.
@@ -21,10 +25,15 @@ import { FridayDomainError } from "#errors";
  * that projector.
  *
  * ## Truth labels (read before trusting this)
- * - **DARK substrate** for the executeRun-replacement: NO production route registers or
- *   consumes this; it is driven by a STATIC FIXTURE receipt in tests. Reversible —
- *   unreferenced by any barrel/route until the composition slice wires it.
- * - **`rust_wired` ceiling**: this projects a Rust-produced receipt; it is NOT a product
+ * - **WIRED into the production route handler, gated DEFAULT-OFF.** As of B1-compose this
+ *   projector IS imported + constructed by friday-api-runtime.ts and its `project(...)` runs
+ *   inside `composeRustReadOnlyAgentRun` on the live `routeStartRun` path — so the prior
+ *   "no production route consumes this / unreferenced by any barrel/route" claim is no longer
+ *   true. It does NOT execute in default prod: the route branch is gated DEFAULT-OFF behind
+ *   `FRIDAY_ROUTE_AGENT_RUN_VIA_RUST` (operator cutover pending), and even when on it only
+ *   fires for a qualifying read-only Rust run. In tests it is also driven by a STATIC FIXTURE
+ *   receipt.
+ * - **`rust_wired` ceiling**: this projects a Rust-produced receipt; it is NOT a full product
  *   path and confers no v1 GO.
  * - **Usage token source wiring is DEFERRED to the composition slice.** This dark slice
  *   models the receipt as ALREADY carrying the token totals as a fixture field
