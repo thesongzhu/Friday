@@ -420,6 +420,20 @@ pub fn hub_migrations() -> Vec<Migration> {
             destructive: false,
             up: m0026_system_intent_substrate,
         },
+        // R2 slice-2: workflow run-CONTROL columns (DARK substrate). Two ADDITIVE
+        // `ALTER ADD COLUMN`s — `workflow_step.attempt` (retry-attempt counter,
+        // NOT NULL DEFAULT 1 = the base attempt, mirroring TS's 1-based node
+        // attempt) and `workflow_run.cancel_reason` (nullable; only a cancel
+        // writes it). No new table (so HUB_ONLY_TABLES is untouched — both columns
+        // hang off the already-Hub-only workflow_step/workflow_run). The DEFAULT
+        // backfills every pre-v27 step to attempt 1 and leaves every pre-v27 run's
+        // cancel_reason NULL, so v26 rows/queries are unaffected.
+        Migration {
+            version: 27,
+            name: "workflow_run_control_columns",
+            destructive: false,
+            up: m0027_workflow_run_control_columns,
+        },
     ]
 }
 
@@ -1962,4 +1976,18 @@ fn m0025_workflow_catalog(tx: &Transaction) -> rusqlite::Result<()> {
 // reads or writes these tables (DARK).
 fn m0026_system_intent_substrate(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(DDL_SYSTEM_INTENT)
+}
+
+/// R2 slice-2: two ADDITIVE columns on the already-Hub-only workflow tables for
+/// the dark run-control plane (retry/cancel). No new table; nothing reads/writes
+/// these in production (DARK). `workflow_step.attempt` is the retry-attempt counter
+/// (NOT NULL DEFAULT 1 — the base attempt, so every pre-v27 step backfills to 1,
+/// matching TS's 1-based node attempt; `reopen_failed_step` bumps it on a retry).
+/// `workflow_run.cancel_reason` is the cancel message (nullable; only `cancel_run`
+/// writes it, so every pre-v27 run reads back NULL — never mis-attributed a reason).
+fn m0027_workflow_run_control_columns(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "ALTER TABLE workflow_step ADD COLUMN attempt INTEGER NOT NULL DEFAULT 1;
+         ALTER TABLE workflow_run ADD COLUMN cancel_reason TEXT;",
+    )
 }

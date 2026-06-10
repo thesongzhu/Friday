@@ -6,88 +6,84 @@
 //! every non-route caller is fenced out with a 503 `TS_RUNTIME_WORKFLOW_RUNS_RETIRED`
 //! while runtime ownership moves to Rust). This module is the Rust-owned
 //! equivalent of that control surface, built DARK: NO production route, NO
-//! scheduler/trigger/daemon, NO migration, NO route flip, and it changes NO TS
-//! runtime file. It is purely additive over the existing Rust run model.
+//! scheduler/trigger/daemon, NO route flip, and it changes NO TS runtime file. It
+//! is purely additive over the existing Rust run model. (R2 slice-2 DOES land one
+//! additive dark migration — m0027, two `ALTER ADD COLUMN`s on the already-Hub-only
+//! workflow tables — to back retry/cancel; it adds no new table and nothing reads
+//! it in production.)
 //!
 //! ## What it mirrors, and the run-model it maps onto
 //! The TS service uses an 8-state `WorkflowRunStatus`
 //! (`queued/running/pausing/paused/compensating/completed/failed/cancelled`) with
 //! a `failed -> running` retry edge and `* -> cancelled`. The Rust hub does NOT
-//! own that TS schema; it owns the `friday-core` 5-state [`WorkflowRunState`]
-//! (`Pending/Running/AwaitingCheckpoint/Done/Failed`) persisted in
-//! [`friday_storage::workflow`] and driven by the LIVE S9 engine
-//! ([`crate::workflow_exec`]). So this module mirrors the TS control *logic*
-//! (validation order, fail-closed error vocabulary, run effects) mapped onto the
-//! Rust model — TS `paused` ≈ Rust `AwaitingCheckpoint` — rather than porting the
-//! 8 TS state-strings into the Rust `state` column (which would silently corrupt
-//! every 5-state reader, since [`friday_storage::workflow`]'s `parse_run_state`
-//! coerces an unknown string to `Failed`).
+//! own that TS schema; it owns the `friday-core` 6-state [`WorkflowRunState`]
+//! (`Pending/Running/AwaitingCheckpoint/Done/Failed/Cancelled` — `Cancelled` added
+//! additively in R2 slice-2) persisted in [`friday_storage::workflow`] and driven
+//! by the LIVE S9 engine ([`crate::workflow_exec`]). So this module mirrors the TS
+//! control *logic* (validation order, fail-closed error vocabulary, run effects)
+//! mapped onto the Rust model — TS `paused` ≈ Rust `AwaitingCheckpoint`, TS
+//! `cancelled` = Rust `Cancelled` — rather than porting the remaining TS-only
+//! state-strings (`queued`/`pausing`/`compensating`) into the Rust `state` column
+//! (which would silently corrupt every closed-vocab reader, since
+//! [`friday_storage::workflow`]'s `parse_run_state` coerces an UNKNOWN string to
+//! `Failed` — `cancelled` is now a KNOWN string and round-trips faithfully).
 //!
-//! ## Per-op scope (HONEST — two ops fail closed by representability, not by choice)
-//! - **`resume`** — fully built. It is the missing RESUME control bridge: S9
-//!   ([`crate::workflow_run`]) added a START bridge (`run_stored_workflow`) but no
-//!   resume bridge. [`resume`] loads the STORED definition fail-closed, prechecks
-//!   the run is `AwaitingCheckpoint` (the only resumable state — surfacing a
-//!   precise fail-closed error otherwise, matching the TS
-//!   `INVALID_RUN_TRANSITION`/`WORKFLOW_RUN_NOT_FOUND` posture), then DELEGATES to
-//!   the existing [`crate::workflow_exec::resume_workflow`] engine entrypoint
-//!   (real node re-entry through the SAME gate; mutating steps stay approval-gated
-//!   exactly as in the engine). It does NOT re-implement execution and does NOT
-//!   flip state and return hollow (which, in this dark substrate with no tick
-//!   loop, would strand a run in `Running` with nothing driving it).
-//! - **`retry`** — fails closed with [`RunControlError::NotRepresentable`]. TS
-//!   `retryRun` is `failed -> running` plus per-node retry-attempt rows
-//!   (`attempt+1`, idempotency key, `retrying` status). The `friday-core` machine
-//!   has NO `Failed -> Running` edge and the `workflow_step` schema has no
-//!   attempt/idempotency/`retrying` concept. Representing it requires changing
-//!   `friday-core/src/workflow.rs` (a shared core type the LIVE S9 engine +
-//!   `skill.rs`/`planning.rs`/`workflow_read.rs` all match on) and an m0027
-//!   migration — a cross-cutting, non-additive change outside R2's write-set that
-//!   would touch live behavior. See the PR body's DEFERRED ACCEPTANCE CRITERIA.
-//! - **`cancel`** — fails closed with [`RunControlError::NotRepresentable`]. TS
-//!   `cancelRun` writes a terminal `cancelled` run state (distinct from `failed`)
-//!   + cancels pending nodes + records a cancel reason. `friday-core` has NO
-//!   `Cancelled` run state and NO `Cancelled` step status; mapping cancel onto
-//!   `Failed` would erase the cancelled/failed distinction (a data-fudge the hard
-//!   rules forbid). Representing it faithfully requires the same cross-cutting
-//!   `friday-core` change + an m0027 `cancel_reason`. See the PR body.
+//! ## Per-op scope (R2 slice-2: all three ops are now BUILT over the additive
+//! `friday-core` `Cancelled`/retry-edge extension + m0027 columns)
+//! - **`resume`** — the RESUME control bridge (slice-1). [`resume`] loads the
+//!   STORED definition fail-closed, prechecks the run is `AwaitingCheckpoint` (the
+//!   only resumable state), then DELEGATES to
+//!   [`crate::workflow_exec::resume_workflow`] (real node re-entry through the SAME
+//!   gate). It does NOT re-implement execution and does NOT flip-and-abandon state.
+//! - **`retry`** — the RETRY control bridge (slice-2). Mirrors TS `retryRun`
+//!   (`failed -> running` + per-node retry attempt). [`retry`] loads the STORED
+//!   definition fail-closed, prechecks the run is `Failed` (the only retryable
+//!   state), then DELEGATES to [`crate::workflow_exec::retry_workflow`], which
+//!   reopens the failed run's frontier step (-> `Pending`, `attempt += 1` via the
+//!   m0027 column), transitions `Failed -> Running` (the new core edge), and
+//!   re-drives the frontier THROUGH THE SAME GATE then continues — REUSING the
+//!   engine path, not re-implementing it. A mutating frontier with no approval
+//!   re-pauses (never executes unapproved). HONEST: no idempotency keys yet (a
+//!   partial side-effect could double-run on retry) — a documented deferred sub-AC.
+//! - **`cancel`** — the CANCEL control bridge (slice-2). Mirrors TS `cancelRun`
+//!   (terminal `cancelled`, distinct from `failed`, + a reason). [`cancel`]
+//!   prechecks the run exists and is non-terminal, then writes the terminal
+//!   `Cancelled` state + `cancel_reason` (m0027) atomically via
+//!   [`friday_storage::workflow::cancel_run`] — NEVER coercing onto `Failed` (the
+//!   cancelled/failed distinction is preserved end-to-end: the write is `Cancelled`
+//!   and `parse_run_state` reads it back as `Cancelled`). Cancel does NOT load a
+//!   definition (no node re-entry) and does NOT spend executor effort.
 //!
 //! ## Fail-closed posture
-//! Every entrypoint fail-closes: an unknown run, a non-resumable run state, a
-//! missing/unparsable stored definition, and the two not-yet-representable ops
-//! all return an explicit [`RunControlError`] — never a panic, never a silent
-//! success, never a coerced state write. No `unwrap`/`expect` on caller input.
+//! Every entrypoint fail-closes: an unknown run, a non-actionable run state (a
+//! non-`AwaitingCheckpoint` resume, a non-`Failed` retry, a terminal cancel), and a
+//! missing/unparsable stored definition all return an explicit [`RunControlError`]
+//! — never a panic, never a silent success, never a coerced state write. No
+//! `unwrap`/`expect` on caller input.
 
 use friday_core::gate::{CanonicalApproval, MutatingActionRequest};
-use friday_storage::workflow::run_control_state;
+use friday_storage::workflow::{cancel_run, run_control_state};
 use rusqlite::Connection;
 
 use crate::workflow_def::{load_definition, WorkflowDefError};
-use crate::workflow_exec::{resume_workflow, WorkflowOutcome};
+use crate::workflow_exec::{resume_workflow, retry_workflow, WorkflowOutcome};
 use crate::ToolExecutor;
 
 /// Fail-closed errors of the R2 run-control plane. Mirrors the TS service's
-/// error *vocabulary* (run-not-found, invalid-transition) and adds the explicit
-/// not-representable signal for the two ops the Rust run model cannot yet honor.
+/// error *vocabulary* (run-not-found, invalid-transition).
 #[derive(Debug, thiserror::Error)]
 pub enum RunControlError {
     /// The targeted run does not exist (TS `WORKFLOW_RUN_NOT_FOUND`, 404).
     #[error("workflow run not found: {0}")]
     NotFound(String),
     /// The run is not in a state this control op may act on — e.g. a resume of a
-    /// non-`AwaitingCheckpoint` run (TS `INVALID_RUN_TRANSITION`, 400). Carries
-    /// the current state and the attempted control op for an explicit message.
+    /// non-`AwaitingCheckpoint` run, a retry of a non-`Failed` run, or a cancel of
+    /// a terminal run (TS `INVALID_RUN_TRANSITION`, 400). Carries the current state
+    /// and the attempted control op for an explicit message.
     #[error("invalid run-control transition: {0}")]
     InvalidTransition(String),
-    /// The control op is NOT representable in the current Rust run model without
-    /// a cross-cutting `friday-core` change outside R2's additive write-set. This
-    /// is the honest, documented fail-closed for `retry`/`cancel` — NOT a stub,
-    /// NOT a silent no-op, NOT a coercion onto `Failed`. The message names the
-    /// exact missing capability so the acceptance criterion is unambiguous.
-    #[error("workflow run-control op not representable in the Rust run model: {0}")]
-    NotRepresentable(String),
     /// The stored definition failed to load/parse/validate (fail-closed before
-    /// any control effect — a run is never resumed against an invalid body).
+    /// any control effect — a run is never resumed/retried against an invalid body).
     #[error("workflow definition error: {0}")]
     Definition(#[from] WorkflowDefError),
     /// A storage-layer failure surfaced fail-closed (never swallowed).
@@ -173,42 +169,144 @@ pub fn resume(
     Ok(outcome)
 }
 
-/// RETRY a run's failed nodes — NOT representable in the current Rust run model
-/// (fail-closed). See the module docs and the PR's DEFERRED ACCEPTANCE CRITERIA:
-/// faithfully mirroring TS `retryRun` needs a `friday-core` `Failed -> Running`
-/// edge + per-attempt `workflow_step` columns (m0027), a cross-cutting change
-/// outside R2's additive write-set that would touch the live S9 engine. This
-/// returns an explicit, documented [`RunControlError::NotRepresentable`] — it
-/// performs NO write and NO coercion. `nodes` is accepted to pin the intended TS
-/// signature (selective-node retry) so the future representable version is a
-/// drop-in; it is intentionally unused here.
+/// RETRY a `Failed` workflow run — the R2 slice-2 control bridge mirroring TS
+/// `retryRun(runId, nodeIds)`.
+///
+/// It loads the STORED definition (`workflow_id` + `version`) fail-closed,
+/// prechecks the run is `Failed` (the only retryable state — surfacing a precise
+/// fail-closed error otherwise, matching the TS `INVALID_RUN_TRANSITION`/
+/// `WORKFLOW_RUN_NOT_FOUND` posture), then DELEGATES to
+/// [`crate::workflow_exec::retry_workflow`], which reopens the failed run's
+/// frontier step (-> `Pending`, `attempt += 1`), transitions `Failed -> Running`
+/// (the new core retry edge), and re-drives the frontier THROUGH THE SAME GATE then
+/// continues — the SAME re-entry chokepoint as resume. No execution is
+/// re-implemented here and no state is flipped-and-abandoned (a hollow
+/// `Failed -> Running` flip in this dark, tick-loop-less substrate would strand the
+/// run in `Running`).
+///
+/// Fail-closed order (mirrors the TS `retryRun` posture):
+/// 1. Unknown run → [`RunControlError::NotFound`] (TS `WORKFLOW_RUN_NOT_FOUND`).
+/// 2. Run not `Failed` → [`RunControlError::InvalidTransition`] (TS
+///    `INVALID_RUN_TRANSITION`) — checked BEFORE the definition load.
+/// 3. Stored definition missing/unparsable → [`RunControlError::Definition`].
+///
+/// ## Divergences from TS `retryRun` (explicit, documented)
+/// - **Selective-node retry (`nodes`) is NOT modeled.** TS retries a chosen subset
+///   of failed nodes; the Rust engine is a LINEAR step run with a single failure
+///   frontier (it fails fast at the first non-passing step), so "retry" is "re-drive
+///   from the frontier". `nodes` is accepted to pin the TS signature but, if
+///   supplied, MUST name exactly the frontier step (`{run_id}:s{frontier}`) — any
+///   other selection is a fail-closed [`RunControlError::InvalidTransition`] (we do
+///   NOT silently ignore a caller's node selection). A future DAG engine would honor
+///   arbitrary subsets — a deferred sub-AC.
+/// - **No idempotency keys** (TS has per-attempt idempotency keys). Re-driving the
+///   frontier is correct for a TRANSIENT failure; a partially-applied side effect
+///   could double-run. A documented deferred sub-AC (see the module docs / PR body).
+#[allow(clippy::too_many_arguments)]
 pub fn retry(
-    _conn: &Connection,
+    conn: &Connection,
+    executor: &dyn ToolExecutor,
+    workflow_id: &str,
+    version: i64,
     run_id: &str,
-    _nodes: Option<&[String]>,
+    secret: &[u8],
+    approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
+    nodes: Option<&[String]>,
+    now_ms: i64,
 ) -> Result<WorkflowOutcome> {
-    Err(RunControlError::NotRepresentable(format!(
-        "retry of run '{run_id}': the friday-core run-state machine has no 'Failed -> Running' \
-         retry edge and the workflow_step schema has no per-attempt (attempt/idempotency/retrying) \
-         columns. Representing TS retryRun requires a cross-cutting friday-core change + an m0027 \
-         migration, outside R2's additive write-set (it would touch the live S9 engine). Deferred."
-    )))
+    // (1)/(2) Fail-closed precheck FIRST: unknown run → NotFound; a non-Failed run →
+    // InvalidTransition. This runs BEFORE the definition load so a non-retryable run
+    // never pays a parse.
+    let control = run_control_state(conn, run_id)?
+        .ok_or_else(|| RunControlError::NotFound(format!("'{run_id}'")))?;
+    if control.state != friday_core::WorkflowRunState::Failed {
+        return Err(RunControlError::InvalidTransition(format!(
+            "cannot retry run '{run_id}': state is '{}' (only a Failed run is retryable)",
+            control.state.as_str(),
+        )));
+    }
+
+    // (3) Fail-closed definition load BEFORE any mutation.
+    let def = load_definition(conn, workflow_id, version)?;
+
+    // Selective-node retry guard: if a node selection is supplied, it must name
+    // exactly the engine's single failure frontier — we never silently drop a
+    // caller's selection (that would be a quiet semantic divergence).
+    if let Some(sel) = nodes {
+        let frontier_id = frontier_step_id(conn, run_id, def.steps.len())?;
+        let ok = sel.len() == 1 && sel[0] == frontier_id;
+        if !ok {
+            return Err(RunControlError::InvalidTransition(format!(
+                "selective-node retry of run '{run_id}' is limited to the single failure frontier \
+                 step '{frontier_id}' in the linear Rust engine; got {sel:?} (arbitrary-subset \
+                 retry is a deferred sub-AC)"
+            )));
+        }
+    }
+
+    // DELEGATE to the engine: reopen the frontier, Failed -> Running, re-drive
+    // through the gate, continue. The engine owns every state write from here.
+    let outcome = retry_workflow(&def, executor, conn, run_id, secret, approve, now_ms)?;
+    Ok(outcome)
 }
 
-/// CANCEL a run — NOT representable in the current Rust run model (fail-closed).
-/// See the module docs and the PR's DEFERRED ACCEPTANCE CRITERIA: `friday-core`
-/// has no terminal `Cancelled` run state (and no `Cancelled` step status);
-/// mapping cancel onto `Failed` would erase the cancelled/failed distinction (a
-/// data-fudge the hard rules forbid). A faithful cancel needs the same
-/// cross-cutting `friday-core` change + an m0027 `cancel_reason`, outside R2's
-/// write-set. Returns an explicit [`RunControlError::NotRepresentable`]; performs
-/// NO write and NO coercion. `reason` is accepted to pin the TS signature.
-pub fn cancel(_conn: &Connection, run_id: &str, _reason: Option<&str>) -> Result<WorkflowOutcome> {
-    Err(RunControlError::NotRepresentable(format!(
-        "cancel of run '{run_id}': the friday-core run-state machine has no terminal 'Cancelled' \
-         state (and no 'Cancelled' step status); coercing cancel onto 'Failed' would erase the \
-         cancelled/failed distinction. Representing TS cancelRun requires a cross-cutting \
-         friday-core change + an m0027 cancel_reason, outside R2's additive write-set. Deferred."
+/// CANCEL a workflow run terminally — the R2 slice-2 control bridge mirroring TS
+/// `cancelRun(runId, reason)`.
+///
+/// It writes the terminal `Cancelled` state + `cancel_reason` (m0027) atomically via
+/// [`friday_storage::workflow::cancel_run`], which validates the transition through
+/// the SAME `friday-core` machine `set_run_state` uses — so only a non-terminal run
+/// (`Pending`/`Running`/`AwaitingCheckpoint`) cancels and a terminal
+/// (`Done`/`Failed`/`Cancelled`) run is REFUSED (no reopen). It NEVER coerces a run
+/// onto `Failed`: the cancelled/failed distinction is preserved end-to-end (the
+/// write is `Cancelled` and `parse_run_state` reads it back as `Cancelled`).
+///
+/// Unlike TS `cancelRun` (which also aborts in-flight node `AbortController`s),
+/// there is NO in-flight async run to abort in this dark, tick-loop-less substrate —
+/// a Rust run is driven synchronously by an explicit `run_workflow`/`resume_workflow`/
+/// `retry_workflow` call, never a background controller — so the cancel is purely the
+/// terminal state+reason write. Cancel does NOT load a definition (no node re-entry)
+/// and spends NO executor effort.
+///
+/// Fail-closed order (mirrors the TS `cancelRun` posture):
+/// 1. Unknown run → [`RunControlError::NotFound`] (TS `WORKFLOW_RUN_NOT_FOUND`).
+/// 2. Terminal run (no `-> Cancelled` edge) → [`RunControlError::InvalidTransition`]
+///    (TS `INVALID_RUN_TRANSITION` from `assertTransition(status,"cancelled")`).
+///
+/// Returns a [`WorkflowRunStatus::Cancelled`] outcome on success.
+pub fn cancel(conn: &Connection, run_id: &str, reason: Option<&str>, now_ms: i64) -> Result<()> {
+    // (1) Unknown run → NotFound (the explicit not-found posture, before the
+    // transition check, so a ghost run is a NotFound rather than a generic storage
+    // error). (2) The terminal-state refusal is enforced inside `cancel_run` via the
+    // core machine — surfaced as a storage error and mapped to InvalidTransition for
+    // the precise TS-mirrored vocabulary.
+    let control = run_control_state(conn, run_id)?
+        .ok_or_else(|| RunControlError::NotFound(format!("'{run_id}'")))?;
+    if control.terminal {
+        return Err(RunControlError::InvalidTransition(format!(
+            "cannot cancel run '{run_id}': state is '{}' (a terminal run cannot be cancelled)",
+            control.state.as_str(),
+        )));
+    }
+    cancel_run(conn, run_id, reason, now_ms)?;
+    Ok(())
+}
+
+/// The `step_id` of the engine's single failure frontier (first non-`Verified`
+/// registered step) — the only node a selective-node `retry` may name. Mirrors the
+/// engine's `find_retry_frontier_seq` without re-exporting it.
+fn frontier_step_id(conn: &Connection, run_id: &str, n_steps: usize) -> Result<String> {
+    use friday_core::StepStatus;
+    for seq in 0..n_steps {
+        let step_id = format!("{run_id}:s{seq}");
+        match friday_storage::workflow::step_status(conn, &step_id)? {
+            Some(StepStatus::Verified) => continue,
+            Some(_) => return Ok(step_id),
+            None => break,
+        }
+    }
+    Err(RunControlError::InvalidTransition(format!(
+        "run '{run_id}' has no retryable (non-verified) frontier step"
     )))
 }
 
@@ -456,48 +554,225 @@ mod tests {
         assert_eq!(run_state_str(&db, "r1"), "awaiting_checkpoint");
     }
 
-    #[test]
-    fn retry_is_fail_closed_not_representable() {
-        // Documented deferral: retry returns an explicit NotRepresentable error,
-        // performs NO write, and names the exact missing capability.
-        let db = Db::open_hub(&tmp_db("retry-defer")).unwrap();
-        let conn = db.conn();
-        workflow::create_run(conn, "r1", "wf", 100).unwrap();
-        workflow::set_run_state(conn, "r1", WorkflowRunState::Running, 110).unwrap();
-        workflow::set_run_state(conn, "r1", WorkflowRunState::Failed, 120).unwrap();
-
-        let r = retry(conn, "r1", Some(&["n1".to_string()]));
-        match r {
-            Err(RunControlError::NotRepresentable(msg)) => {
-                assert!(
-                    msg.contains("Failed -> Running"),
-                    "names the missing edge: {msg}"
-                );
+    /// Executor that ERRS on its first call and SUCCEEDS thereafter — the witness
+    /// that retry resolves an ENGINE-PRODUCED failure (a transient error), with NO
+    /// injected step state. Mirrors a real transient tool failure.
+    struct TransientExec {
+        calls: Cell<usize>,
+    }
+    impl ToolExecutor for TransientExec {
+        fn execute(
+            &self,
+            action: &str,
+            _params: &[(String, String)],
+        ) -> std::result::Result<ToolReceipt, ExecError> {
+            let n = self.calls.get() + 1;
+            self.calls.set(n);
+            if n == 1 {
+                // Simulate a transient tool failure (any ExecError fails the run).
+                Err(ExecError::Unsupported("transient boom".to_string()))
+            } else {
+                Ok(ToolReceipt {
+                    action: action.to_string(),
+                    summary: format!("ran {action} (attempt {n})"),
+                    content: None,
+                })
             }
-            other => panic!("expected NotRepresentable, got {other:?}"),
         }
-        // The run state is untouched by the fail-closed retry (no coercion).
-        assert_eq!(run_state_str(&db, "r1"), "failed");
+    }
+
+    /// A single read-only step (auto-advances through the gate; no checkpoint).
+    fn single_read_def() -> WorkflowDefinition {
+        WorkflowDefinition {
+            name: "probe".into(),
+            steps: vec![step("read", "read_file", &[("path", "x")], false)],
+        }
     }
 
     #[test]
-    fn cancel_is_fail_closed_not_representable_and_never_coerces_to_failed() {
-        // Documented deferral: cancel returns NotRepresentable, performs NO write,
-        // and does NOT coerce a running run onto Failed (the data-fudge the hard
-        // rules forbid).
-        let db = Db::open_hub(&tmp_db("cancel-defer")).unwrap();
+    fn retry_re_drives_a_real_engine_failure_to_done_through_the_gate() {
+        // The end-to-end happy path with NO injected state: a transient executor
+        // error fails the run on the FIRST drive (engine-produced Failed); retry
+        // THROUGH THE BRIDGE reopens the frontier, transitions Failed -> Running,
+        // re-dispatches (executor now succeeds) → Done. The step's attempt is bumped.
+        let db = Db::open_hub(&tmp_db("retry-ok")).unwrap();
+        let conn = db.conn();
+        let def = single_read_def();
+        store_def(conn, "wf1", &def);
+        let exec = TransientExec {
+            calls: Cell::new(0),
+        };
+
+        // First drive: gate allows the read, executor errs → run Failed.
+        let started = run_workflow(&def, &exec, conn, "r1", SECRET, &mint_all, 100).unwrap();
+        assert!(matches!(started.status, WorkflowRunStatus::Failed { .. }));
+        assert_eq!(run_state_str(&db, "r1"), "failed");
+        assert_eq!(exec.calls.get(), 1);
+        // The engine left the frontier step NON-Verified — here `Running` (an
+        // exec-error on a NON-side-effect step leaves it Running, never a `Failed`
+        // step status). This is the real engine failure shape retry must handle; it
+        // is NOT a `StepStatus::Failed` (the engine has no path that writes that).
+        assert_eq!(
+            workflow::step_status(conn, "r1:s0").unwrap(),
+            Some(friday_core::StepStatus::Running),
+            "exec-error on a pure step leaves it Running (the real frontier), not Failed"
+        );
+
+        // Retry THROUGH THE BRIDGE: reopen + Failed->Running + re-drive → Done.
+        let out = retry(conn, &exec, "wf1", 1, "r1", SECRET, &mint_all, None, 200).unwrap();
+        assert_eq!(out.status, WorkflowRunStatus::Completed);
+        assert_eq!(run_state_str(&db, "r1"), "done");
+        assert_eq!(exec.calls.get(), 2, "the frontier was re-dispatched once");
+        assert_eq!(
+            workflow::step_attempt(conn, "r1:s0").unwrap(),
+            Some(2),
+            "the retried step's attempt was bumped to 2"
+        );
+    }
+
+    #[test]
+    fn retry_of_a_mutating_frontier_re_pauses_without_an_approval_and_never_executes_unapproved() {
+        // Safety witness for retry: a run whose mutating frontier failed, retried
+        // with NO valid approval, RE-pauses (AwaitingCheckpoint) and the executor is
+        // NOT called for the mutating step — the gate, not the bridge, authorizes.
+        // Construct an engine-real Failed run with a mutating frontier: a read then a
+        // write; deny-all pauses at the write; we then fail the paused run, then retry.
+        let db = Db::open_hub(&tmp_db("retry-mut")).unwrap();
+        let conn = db.conn();
+        let def = read_then_write_def();
+        store_def(conn, "wf1", &def);
+        let exec = CountingExec {
+            calls: Cell::new(0),
+        };
+        // Drive: read runs, write checkpoints → AwaitingCheckpoint.
+        run_workflow(&def, &exec, conn, "r1", SECRET, &deny_all, 100).unwrap();
+        assert_eq!(run_state_str(&db, "r1"), "awaiting_checkpoint");
+        assert_eq!(exec.calls.get(), 1);
+        // Fail the run (AwaitingCheckpoint -> Failed is a legal core edge) to model a
+        // run that failed at the mutating frontier (the write step is still Pending).
+        workflow::set_run_state(conn, "r1", WorkflowRunState::Failed, 150).unwrap();
+        assert_eq!(
+            workflow::step_status(conn, "r1:s1").unwrap(),
+            Some(friday_core::StepStatus::Pending),
+            "the mutating frontier is Pending (registered, never executed)"
+        );
+
+        // Retry with deny-all: the mutating frontier needs an approval → re-pause.
+        let out = retry(conn, &exec, "wf1", 1, "r1", SECRET, &deny_all, None, 200).unwrap();
+        assert!(matches!(
+            out.status,
+            WorkflowRunStatus::AwaitingCheckpoint { .. }
+        ));
+        assert_eq!(run_state_str(&db, "r1"), "awaiting_checkpoint");
+        assert_eq!(
+            exec.calls.get(),
+            1,
+            "the unapproved mutating frontier must NOT execute on retry"
+        );
+    }
+
+    #[test]
+    fn retry_fail_closed_unknown_non_failed_and_bad_node_selection() {
+        let db = Db::open_hub(&tmp_db("retry-closed")).unwrap();
+        let conn = db.conn();
+        let def = single_read_def();
+        store_def(conn, "wf1", &def);
+        let exec = CountingExec {
+            calls: Cell::new(0),
+        };
+
+        // Unknown run → NotFound, no execution.
+        let r = retry(conn, &exec, "wf1", 1, "ghost", SECRET, &mint_all, None, 100);
+        assert!(matches!(r, Err(RunControlError::NotFound(_))), "got {r:?}");
+        assert_eq!(exec.calls.get(), 0);
+
+        // A non-Failed (Done) run is not retryable → InvalidTransition, untouched.
+        let out = run_workflow(&def, &exec, conn, "r1", SECRET, &mint_all, 100).unwrap();
+        assert_eq!(out.status, WorkflowRunStatus::Completed);
+        let calls_after_done = exec.calls.get();
+        let r = retry(conn, &exec, "wf1", 1, "r1", SECRET, &mint_all, None, 200);
+        assert!(
+            matches!(r, Err(RunControlError::InvalidTransition(_))),
+            "got {r:?}"
+        );
+        assert_eq!(run_state_str(&db, "r1"), "done");
+        assert_eq!(
+            exec.calls.get(),
+            calls_after_done,
+            "no re-execution of a Done run"
+        );
+
+        // A Failed run with a node selection that is NOT the frontier → InvalidTransition.
+        let exec2 = TransientExec {
+            calls: Cell::new(0),
+        };
+        run_workflow(&def, &exec2, conn, "r2", SECRET, &mint_all, 100).unwrap();
+        assert_eq!(run_state_str(&db, "r2"), "failed");
+        let r = retry(
+            conn,
+            &exec2,
+            "wf1",
+            1,
+            "r2",
+            SECRET,
+            &mint_all,
+            Some(&["not-the-frontier".to_string()]),
+            200,
+        );
+        assert!(
+            matches!(r, Err(RunControlError::InvalidTransition(_))),
+            "a bad node selection is fail-closed, not silently ignored: {r:?}"
+        );
+        assert_eq!(
+            run_state_str(&db, "r2"),
+            "failed",
+            "untouched by the refused retry"
+        );
+    }
+
+    #[test]
+    fn cancel_writes_terminal_cancelled_with_reason_and_never_coerces_to_failed() {
+        // Real cancel: a Running run is cancelled THROUGH THE BRIDGE → terminal
+        // Cancelled (NOT Failed) with the reason recorded; reads back as Cancelled.
+        let db = Db::open_hub(&tmp_db("cancel-ok")).unwrap();
         let conn = db.conn();
         workflow::create_run(conn, "r1", "wf", 100).unwrap();
         workflow::set_run_state(conn, "r1", WorkflowRunState::Running, 110).unwrap();
 
-        let r = cancel(conn, "r1", Some("operator requested"));
-        match r {
-            Err(RunControlError::NotRepresentable(msg)) => {
-                assert!(msg.contains("Cancelled"), "names the missing state: {msg}");
-            }
-            other => panic!("expected NotRepresentable, got {other:?}"),
-        }
-        // The running run is NOT coerced to Failed (or anything) — untouched.
-        assert_eq!(run_state_str(&db, "r1"), "running");
+        cancel(conn, "r1", Some("operator requested"), 120).unwrap();
+        assert_eq!(run_state_str(&db, "r1"), "cancelled");
+        assert_ne!(run_state_str(&db, "r1"), "failed");
+        assert_eq!(
+            workflow::run_cancel_reason(conn, "r1").unwrap(),
+            Some("operator requested".to_string())
+        );
+    }
+
+    #[test]
+    fn cancel_fail_closed_unknown_and_terminal_runs() {
+        let db = Db::open_hub(&tmp_db("cancel-closed")).unwrap();
+        let conn = db.conn();
+
+        // Unknown run → NotFound.
+        assert!(matches!(
+            cancel(conn, "ghost", None, 100),
+            Err(RunControlError::NotFound(_))
+        ));
+
+        // A terminal Failed run cannot be cancelled → InvalidTransition; the run is
+        // NOT coerced — it stays Failed (the cancelled/failed distinction holds).
+        workflow::create_run(conn, "r1", "wf", 100).unwrap();
+        workflow::set_run_state(conn, "r1", WorkflowRunState::Failed, 110).unwrap();
+        let r = cancel(conn, "r1", Some("too late"), 120);
+        assert!(
+            matches!(r, Err(RunControlError::InvalidTransition(_))),
+            "got {r:?}"
+        );
+        assert_eq!(run_state_str(&db, "r1"), "failed");
+        assert_eq!(
+            workflow::run_cancel_reason(conn, "r1").unwrap(),
+            None,
+            "a refused cancel writes no reason"
+        );
     }
 }

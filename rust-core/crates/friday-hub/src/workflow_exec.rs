@@ -370,6 +370,150 @@ fn find_paused_seq(conn: &Connection, run_id: &str, n_steps: usize) -> Result<us
     )))
 }
 
+/// Find the RETRY frontier step's seq for a `Failed` run: the first NON-`Verified`
+/// registered step. This generalizes [`find_paused_seq`] (which is `Pending`-only)
+/// to the real engine-produced failure states — because the engine never persists a
+/// `Failed` *step* status: an exec-error on a side-effect step leaves it
+/// `ProofPending`, an exec-error on a pure step leaves it `Running`, and a denied/
+/// unregistered checkpoint leaves it `Pending`. Earlier steps are `Verified` (the
+/// engine fails fast at the first non-passing step), so the first non-`Verified`
+/// registered step IS the failure point. Fail-closed if every registered step is
+/// `Verified` or none was registered (mirrors TS `WORKFLOW_NO_FAILED_NODES_TO_RETRY`).
+fn find_retry_frontier_seq(
+    conn: &Connection,
+    run_id: &str,
+    n_steps: usize,
+) -> Result<usize, StorageError> {
+    for seq in 0..n_steps {
+        let step_id = format!("{run_id}:s{seq}");
+        match workflow::step_status(conn, &step_id)? {
+            Some(StepStatus::Verified) => continue, // already done — never re-driven
+            Some(_) => return Ok(seq),              // first non-Verified = the frontier
+            None => break,                          // no more registered steps
+        }
+    }
+    Err(StorageError::Unsupported(format!(
+        "no retryable (non-verified) step found for failed run '{run_id}' (nothing to retry)"
+    )))
+}
+
+/// RETRY a `Failed` workflow run by re-driving its frontier step (operator-authorized).
+/// This is the RETRY counterpart to [`resume_workflow`], mirroring its STRUCTURE
+/// (manual re-dispatch of the frontier step THROUGH THE GATE, then [`advance_from`]
+/// continues the rest) so it REUSES the engine's execution path and never
+/// re-implements it. The only differences from resume: it prechecks the run is
+/// `Failed` (not `AwaitingCheckpoint`), it reopens the frontier step
+/// ([`workflow::reopen_failed_step`]: -> `Pending`, `attempt += 1`) so
+/// `complete_step` accepts it again, and it transitions `Failed -> Running` (the R2
+/// slice-2 core retry edge).
+///
+/// It must NOT call `advance_from(frontier, ..)` (that re-`add_step`s the frontier →
+/// `step_id` PK collision); like resume it manually re-dispatches the existing
+/// frontier step then `advance_from(frontier + 1, ..)`. Already-`Verified` earlier
+/// steps are NEVER re-executed.
+///
+/// HONEST LIMITATION (documented dark-substrate sub-AC): there are NO idempotency
+/// keys (TS `retryRun` has per-attempt idempotency keys). Re-driving the frontier
+/// step is correct for a TRANSIENT failure (the common retry case); a step whose
+/// side effect *partially* applied before failing could double-run on retry.
+/// Idempotency-keyed re-execution is a deferred follow-up — see the PR body.
+#[allow(clippy::too_many_arguments)]
+pub fn retry_workflow(
+    def: &WorkflowDefinition,
+    executor: &dyn ToolExecutor,
+    conn: &Connection,
+    run_id: &str,
+    secret: &[u8],
+    approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
+    now_ms: i64,
+) -> Result<WorkflowOutcome, StorageError> {
+    let state = workflow::run_state(conn, run_id)?
+        .ok_or_else(|| StorageError::Unsupported(format!("workflow_run '{run_id}' not found")))?;
+    if state != WorkflowRunState::Failed {
+        return Err(StorageError::Unsupported(format!(
+            "cannot retry workflow_run '{run_id}': state is {} (only a Failed run is retryable)",
+            state.as_str()
+        )));
+    }
+    let frontier_seq = find_retry_frontier_seq(conn, run_id, def.steps.len())?;
+    let step = &def.steps[frontier_seq];
+    let step_id = format!("{run_id}:s{frontier_seq}");
+    // Reopen the frontier step (-> Pending, attempt += 1) BEFORE the run transition, so
+    // a failure to reopen (e.g. it is unexpectedly Verified) aborts without mutating run
+    // state.
+    workflow::reopen_failed_step(conn, &step_id, now_ms)?;
+    // Failed -> Running (the R2 slice-2 core retry edge).
+    workflow::set_run_state(conn, run_id, WorkflowRunState::Running, now_ms)?;
+    // Re-dispatch the frontier step through the gate — the SAME authorization path as
+    // resume/run. A mutating step needs a valid `approve`; otherwise it re-pauses (it
+    // does NOT execute unapproved). Failure arms mirror `resume_workflow` exactly.
+    let raw = RawToolCall {
+        action: step.action.clone(),
+        params: step.params.clone(),
+    };
+    match gate_dispatch(conn, executor, &raw, secret, approve, now_ms)? {
+        GateDispatch::Executed(receipt) => {
+            workflow::complete_step(conn, &step_id, Some(&receipt.summary), true, now_ms)?;
+        }
+        GateDispatch::RequiresApproval => {
+            // The frontier is a mutating step with no valid approval → pause (do not
+            // execute unapproved). The retried run is now AwaitingCheckpoint, resumable.
+            workflow::set_run_state(conn, run_id, WorkflowRunState::AwaitingCheckpoint, now_ms)?;
+            return Ok(WorkflowOutcome {
+                status: WorkflowRunStatus::AwaitingCheckpoint {
+                    step_id,
+                    reason: "gate_requires_approval (retry of a mutating step without an approval)"
+                        .to_string(),
+                },
+                executed_steps: 0,
+            });
+        }
+        GateDispatch::Denied(reason) => {
+            workflow::set_run_state(conn, run_id, WorkflowRunState::Failed, now_ms)?;
+            return Ok(WorkflowOutcome {
+                status: WorkflowRunStatus::Failed {
+                    step_id,
+                    reason: format!("denied:{reason}"),
+                },
+                executed_steps: 0,
+            });
+        }
+        GateDispatch::ExecError(e) => {
+            workflow::complete_step(conn, &step_id, None, false, now_ms)?;
+            workflow::set_run_state(conn, run_id, WorkflowRunState::Failed, now_ms)?;
+            return Ok(WorkflowOutcome {
+                status: WorkflowRunStatus::Failed {
+                    step_id,
+                    reason: format!("exec_error:{e}"),
+                },
+                executed_steps: 0,
+            });
+        }
+        GateDispatch::Unregistered(action) => {
+            workflow::set_run_state(conn, run_id, WorkflowRunState::Failed, now_ms)?;
+            return Ok(WorkflowOutcome {
+                status: WorkflowRunStatus::Failed {
+                    step_id,
+                    reason: format!("unregistered:{action}"),
+                },
+                executed_steps: 0,
+            });
+        }
+    }
+    // Frontier re-executed → continue auto-advancing the rest (count seeded at 1).
+    advance_from(
+        def,
+        frontier_seq + 1,
+        executor,
+        conn,
+        run_id,
+        secret,
+        approve,
+        1,
+        now_ms,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
