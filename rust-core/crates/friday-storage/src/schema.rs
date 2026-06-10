@@ -73,6 +73,13 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     "provider_timeline",
     "provider_timeline_event",
     "provider_timeline_pending",
+    // S8: versioned workflow DEFINITION store (DARK substrate). Workflow runs are
+    // Hub-coordinated (gate 21 §9 / `08`), so their definitions are Hub-only too.
+    // `definition_json` is the executable linear definition body kept Hub-side
+    // (like `run_result.answer`); readbacks/projections are refs-only. The table
+    // holds NO secret/key material — step params are tool-call arguments whose
+    // execution is still governed by the gate at run time.
+    "workflow_definition",
 ];
 
 /// Tables present only on a phone (never created on the Hub).
@@ -304,6 +311,19 @@ pub fn hub_migrations() -> Vec<Migration> {
             name: "agent_session_owner",
             destructive: false,
             up: m0021_agent_session_owner,
+        },
+        // S8: Hub-only versioned `workflow_definition` store (DARK substrate — no
+        // production route, no scheduler/trigger work, no live flip; workflow
+        // execution remains fenced in TS and is NOT product-replaced). Storage
+        // previously persisted workflow runs/steps ONLY; this adds the DEFINITION
+        // layer the `friday-hub::workflow_def` loader feeds to the EXISTING
+        // `workflow_exec` engine. Purely additive (CREATE TABLE + INDEX only) —
+        // touches no existing table, so v21 rows/queries are unaffected.
+        Migration {
+            version: 22,
+            name: "workflow_definition",
+            destructive: false,
+            up: m0022_workflow_definition,
         },
     ]
 }
@@ -637,6 +657,51 @@ CREATE TABLE provider_timeline_pending (
 );
 CREATE INDEX idx_provider_timeline_pending_session
     ON provider_timeline_pending(session_id, request_id);";
+
+// --- S8 workflow-definition fragment (Hub-only) ------------------------------
+
+// Versioned workflow DEFINITION store (S8, DARK substrate). One row per
+// `(workflow_id, version)`; a version row is IMMUTABLE once created (the typed
+// API is create / read / publish-flag flip / delete — never UPDATE of the body),
+// mirroring the TS published-version model (`workflow_versions` in
+// `src/state/sqlite/migrations/v001-initial.ts`: id / workflow_id /
+// version_number / checksum / graph_json / is_published).
+//
+// * `definition_json` is the Rust LINEAR definition body (schema_version-tagged
+//   JSON, parsed fail-closed by `friday-hub::workflow_def`) kept Hub-side like
+//   `run_result.answer` — it never crosses a refs-only readback.
+// * `checksum` is the sha256 (lowercase hex, 64 chars) of `definition_json`,
+//   DERIVED by the typed `create_definition` API (like `run_result.answer_sha256`);
+//   the CHECK makes a malformed hand-built fingerprint unrepresentable, and the
+//   typed readers re-derive + compare so a tampered body fails closed on read.
+// * `source` records provenance: `rust_native` (authored against the Rust types)
+//   or `ts_translated` (ingested from a TS published-version graph by the
+//   linear-only translator). `source_meta` preserves refs-only provenance for a
+//   translated definition (ids / counts / coarse labels — never raw node
+//   configs, prompts, or secrets).
+// * `is_published` marks at most one published version per `workflow_id`. The
+//   invariant is DB-ENFORCED by the partial UNIQUE index
+//   `idx_workflow_definition_one_published` (a second `is_published = 1` row for
+//   the same `workflow_id` is unrepresentable, even via hand edits/raw SQL), in
+//   addition to the transactional typed `set_published`; the published reader
+//   additionally refuses an ambiguous multi-published state (defense in depth).
+const DDL_WORKFLOW_DEFINITION: &str = "
+CREATE TABLE workflow_definition (
+    workflow_id     TEXT NOT NULL CHECK(length(trim(workflow_id)) > 0),
+    version         INTEGER NOT NULL CHECK(version >= 1),
+    name            TEXT NOT NULL CHECK(length(trim(name)) > 0),
+    definition_json TEXT NOT NULL CHECK(length(definition_json) > 0),
+    checksum        TEXT NOT NULL CHECK(length(checksum) = 64),
+    source          TEXT NOT NULL CHECK(source IN ('rust_native', 'ts_translated')),
+    source_meta     TEXT,
+    is_published    INTEGER NOT NULL CHECK(is_published IN (0, 1)),
+    created_at      INTEGER NOT NULL,
+    PRIMARY KEY(workflow_id, version)
+);
+CREATE INDEX idx_workflow_definition_published
+    ON workflow_definition(workflow_id, is_published);
+CREATE UNIQUE INDEX idx_workflow_definition_one_published
+    ON workflow_definition(workflow_id) WHERE is_published = 1;";
 
 // --- PNS-001 provider-session fragments (Hub-only) --------------------------
 
@@ -1407,4 +1472,11 @@ fn m0021_agent_session_owner(tx: &Transaction) -> rusqlite::Result<()> {
          ALTER TABLE agent_session ADD COLUMN channel TEXT;
          ALTER TABLE agent_session ADD COLUMN user_id TEXT;",
     )
+}
+
+// S8: additive Hub-only versioned `workflow_definition` store (see the DDL const's
+// docs). Purely additive (CREATE TABLE + INDEX only) — touches no existing table,
+// so pre-existing rows and every existing query are unaffected.
+fn m0022_workflow_definition(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_WORKFLOW_DEFINITION)
 }
