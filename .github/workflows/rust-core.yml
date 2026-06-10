@@ -70,6 +70,14 @@ jobs:
         # separate live-proof), so it is never executed in CI. The unit tests use a
         # scripted MOCK provider (no key, no quota, no network).
         run: cargo build -p friday-hub --bin hub_extract_memory
+      - name: Build bins (incl. read-only hub_workflow_def_inspect surface)
+        # Read-only refs-only inspector of the S8 workflow_definition store: names the
+        # bin explicitly so a missing/compile-broken `hub_workflow_def_inspect` reds CI
+        # loudly. Only BUILT here — running it opens a hub DB read-only (strict
+        # schema-version equality) and emits refs-only counts/labels through the shared
+        # forbidden-marker guard (no bodies, no model call, no quota, no network, no
+        # secret), so it is safe but unnecessary to execute in CI.
+        run: cargo build -p friday-hub --bin hub_workflow_def_inspect
       - name: Test
         # The one live DeepSeek test is #[ignore]d, so this needs no network/secrets.
         run: cargo test --workspace
