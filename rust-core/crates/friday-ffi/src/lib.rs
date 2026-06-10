@@ -1925,17 +1925,14 @@ fn message_kind_name(m: &friday_protocol::Message) -> &'static str {
         M::MissionTimelineSnapshot { .. } => "MissionTimelineSnapshot",
         M::MissionLifecycleRequest { .. } => "MissionLifecycleRequest",
         M::MissionLifecycleResult { .. } => "MissionLifecycleResult",
+        // WS-transport substrate (S-A..S-F) message kinds. Still DARK on the FFI
+        // surface (nothing here constructs or dispatches them), but they are
+        // NAMED so the truth label carries the real kind — and so this match
+        // stays exhaustive: the next protocol variant is a compile error here,
+        // it cannot silently fall through a wildcard.
+        M::AgentRunRequest { .. } => "AgentRunRequest",
+        M::AgentRunResult { .. } => "AgentRunResult",
         M::Error { .. } => "Error",
-        // WS-transport substrate (S-A) message kinds (AgentRunRequest /
-        // AgentRunResult, protocol schema v12) land DARK: no FFI surface
-        // constructs, dispatches, or names them yet (server/dispatch/auth are
-        // later sub-slices S-B/S-C). A minimal wildcard keeps this exhaustive
-        // match compiling WITHOUT a behavior-bearing named arm — it deliberately
-        // does NOT match the new variants by name. The only existing consumer of
-        // this fn, the `other => AskResponseFfi::Unsupported` arm in
-        // `to_ask_response`, already routes any unknown kind to Unsupported, so
-        // no production path changes.
-        _ => "Unsupported",
     }
 }
 
@@ -3353,6 +3350,44 @@ mod tests {
             parse_hub_response("not a protocol envelope".into()),
             AskResponseFfi::Undecodable { .. }
         ));
+    }
+
+    #[test]
+    fn ffi_unsupported_kind_carries_the_real_message_kind_name_for_ws_substrate() {
+        // The WS-substrate kinds (S-A) are out-of-slice on the FFI surface, but the
+        // truth label must carry the REAL kind name — a regression to a wildcard arm
+        // would collapse these to a generic label and let future variants silently
+        // fall through. (The match in `message_kind_name` is exhaustive by
+        // construction; this pins the observable names.)
+        use friday_protocol::{Envelope, Message};
+        let result = Envelope::new(
+            "ar1",
+            0,
+            Message::AgentRunResult {
+                run_id: "r1".into(),
+                status: "completed".into(),
+                answer_sha256: None,
+                answer_len: None,
+            },
+        );
+        match parse_hub_response(result.encode().unwrap()) {
+            AskResponseFfi::Unsupported { kind } => assert_eq!(kind, "AgentRunResult"),
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
+        let request = Envelope::new(
+            "ar2",
+            0,
+            Message::AgentRunRequest {
+                run_id: "r2".into(),
+                task: "t".into(),
+                forwarded_principal: "p".into(),
+                auth_proof: vec![],
+            },
+        );
+        match parse_hub_response(request.encode().unwrap()) {
+            AskResponseFfi::Unsupported { kind } => assert_eq!(kind, "AgentRunRequest"),
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
     }
 
     #[test]
