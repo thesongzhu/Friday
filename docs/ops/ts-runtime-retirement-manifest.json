@@ -56,17 +56,27 @@
       "doc": "Anti-shrinkage floor: a CI-comparable baseline of manifest entry counts + per-surface method-guard counts. The assertion fails if any count drops BELOW its baseline, forcing a conscious, reviewable baseline edit in the same PR when a surface is legitimately removed/reclassified or a guard is intentionally retired. perSurfaceMethodsMin floors EACH registered surface (present + >= its method count) so 'drop a surface + add filler' cannot hold the grand total. behavioralTestsMin floors the count of surfaces backed by an existing behavioral test so one documented missing-test gap cannot be copied to null out the others. byClassification is EMITTED for review but NOT floored: fail_closed legitimately shrinks as surfaces move to Rust ownership.",
       "surfacesMin": 279,
       "routeFamiliesMin": 18,
-      "guardedMethodsMin": 12,
+      "guardedMethodsMin": 34,
       "perSurfaceMethodsMin": {
         "capability_acquisition": 3,
         "workflow_generator": 5,
         "system_intent": 1,
         "workflow_deploy": 2,
-        "autonomy_policy": 1
+        "autonomy_policy": 1,
+        "satellite_registration": 1,
+        "satellite_pairing": 4,
+        "satellite_capability": 1,
+        "satellite_heartbeat": 1,
+        "satellite_sync": 2,
+        "fleet_remediation": 1,
+        "realtime_ack": 1,
+        "autonomy_mcp_lifecycle": 4,
+        "node_runner_execution": 1,
+        "retry_pipeline": 6
       },
-      "behavioralTestsMin": 5,
+      "behavioralTestsMin": 15,
       "baselineCommit": "e6b39186",
-      "baselineNote": "Set from origin/main e6b39186 (post-#628 TS-R1 4-surface mirror + #597 autonomy-policy). Lower a *Min / drop a perSurfaceMethodsMin entry only in a PR that also removes the corresponding entry/guard, so the reviewer sees the de-retirement."
+      "baselineNote": "Set from origin/main e6b39186 (post-#628 TS-R1 4-surface mirror + #597 autonomy-policy), then RAISED for the orphan off-route leak audit (2026-06-10) defense-in-depth wave: guardedMethodsMin 12->34, behavioralTestsMin 5->15 with the 10 new method-guarded orphan surfaces (satellite registration/pairing/capability/heartbeat/sync, fleet remediation, realtime ack, autonomy MCP lifecycle, node-runner execution, retry pipeline). Lower a *Min / drop a perSurfaceMethodsMin entry only in a PR that also removes the corresponding entry/guard, so the reviewer sees the de-retirement."
     },
     "surfaces": [
       {
@@ -126,6 +136,129 @@
         "behavioralTest": "test/unit/autonomy/friday-controlled-autonomy-services.test.ts",
         "off_route_callers": "agent controlled-autonomy tool (policy_update)",
         "note": "Inline guard; synchronous (non-async) method. Reads getPolicy/evaluateRisks stay live. Guard added in #597. behavioralTest points to friday-controlled-autonomy-services.test.ts (its 'updatePolicy METHOD-level fail-closed' describe block) rather than a `*-retirement-guard*` file because the naming convention is non-uniform here."
+      },
+      {
+        "id": "satellite_registration",
+        "family_code": "TS_RUNTIME_SATELLITE_PAIRING_RETIRED",
+        "serviceFile": "src/satellites/services/friday-satellite-registration-service.ts",
+        "flag": "allowTestOnlySatellitePairingExecution",
+        "guardHelper": "assertSatelliteRegistrationExecutionAllowed",
+        "mutatingMethods": ["register"],
+        "behavioralTest": "test/unit/satellites/services/friday-satellite-registration-retirement-guard.test.ts",
+        "off_route_callers": "none today (route-deps-only via friday-satellite-pairing-routes); future auto-pairing loop would bypass the route fence",
+        "note": "Orphan off-route leak audit (2026-06-10) defense-in-depth: register was ROUTE-only-guarded (TS_RUNTIME_SATELLITE_PAIRING_RETIRED at the pairing route). Method-head guard fails closed before any satellite/pairing-request row write. The runtime composition (createFridaySatelliteRuntime) forwards allowTestOnlySatellitePairingExecution; the live hub never sets it, so the method 503s by default. Verb `register` is not in mutatorVerbs (declared explicitly)."
+      },
+      {
+        "id": "satellite_pairing",
+        "family_code": "TS_RUNTIME_SATELLITE_PAIRING_RETIRED",
+        "serviceFile": "src/satellites/services/friday-satellite-pairing-service.ts",
+        "flag": "allowTestOnlySatellitePairingExecution",
+        "guardHelper": "assertSatellitePairingExecutionAllowed",
+        "mutatingMethods": ["approvePairing", "rejectPairing", "completeHandshake", "revokeSatellite"],
+        "behavioralTest": "test/unit/satellites/services/friday-satellite-pairing-retirement-guard.test.ts",
+        "off_route_callers": "none today (route-deps-only via friday-satellite-pairing-routes; the TUI calls the guarded HTTP route over the wire, not the method)",
+        "note": "Orphan off-route leak audit (2026-06-10) defense-in-depth: the four pairing mutations were ROUTE-only-guarded. Each method-head guard fails closed before any pairing/token/satellite row write. Only `approvePairing` is verb-prefixed (approve); the other three (reject/complete/revoke) are declared explicitly. No live mutator-verb sibling on this file to allowlist."
+      },
+      {
+        "id": "satellite_capability",
+        "family_code": "TS_RUNTIME_SATELLITE_RUNTIME_RETIRED",
+        "serviceFile": "src/satellites/services/friday-satellite-capability-service.ts",
+        "flag": "allowTestOnlySatelliteRuntimeExecution",
+        "guardHelper": "assertSatelliteRuntimeExecutionAllowed",
+        "mutatingMethods": ["updateCapabilities"],
+        "behavioralTest": "test/unit/satellites/services/friday-satellite-capability-retirement-guard.test.ts",
+        "off_route_callers": "none today (route-deps-only via friday-satellite-runtime-routes)",
+        "note": "Orphan off-route leak audit (2026-06-10) defense-in-depth: updateCapabilities was ROUTE-only-guarded (TS_RUNTIME_SATELLITE_RUNTIME_RETIRED). Method-head guard fails closed before the capability/revision write. `update` is a mutatorVerb (auto-flagged, declared)."
+      },
+      {
+        "id": "satellite_heartbeat",
+        "family_code": "TS_RUNTIME_SATELLITE_RUNTIME_RETIRED",
+        "serviceFile": "src/satellites/services/friday-satellite-heartbeat-service.ts",
+        "flag": "allowTestOnlySatelliteRuntimeExecution",
+        "guardHelper": "assertSatelliteRuntimeExecutionAllowed",
+        "mutatingMethods": ["recordHeartbeat"],
+        "behavioralTest": "test/unit/satellites/services/friday-satellite-heartbeat-retirement-guard.test.ts",
+        "off_route_callers": "none today (route-deps-only via friday-satellite-runtime-routes). NOTE: the live `heartbeat-runner` scheduler job is OBSERVABILITY, not this satellite heartbeat — different service.",
+        "note": "Orphan off-route leak audit (2026-06-10) defense-in-depth: recordHeartbeat was ROUTE-only-guarded. Method-head guard fails closed before the heartbeat/status-transition write. Verb `record` is not in mutatorVerbs (declared explicitly)."
+      },
+      {
+        "id": "satellite_sync",
+        "family_code": "TS_RUNTIME_SATELLITE_RUNTIME_RETIRED",
+        "serviceFile": "src/satellites/services/friday-satellite-sync-service.ts",
+        "flag": "allowTestOnlySatelliteRuntimeExecution",
+        "guardHelper": "assertSatelliteRuntimeExecutionAllowed",
+        "mutatingMethods": ["pull", "push"],
+        "behavioralTest": "test/unit/satellites/services/friday-satellite-sync-retirement-guard.test.ts",
+        "off_route_callers": "none in the hub (route-deps-only via friday-satellite-runtime-routes pushSync/pullSync); the off-hub local-runner uses an injected API-client, not this engine, and is not wired in bootstrap",
+        "note": "Orphan off-route leak audit (2026-06-10) defense-in-depth: the inbound sync mutations (pull leases the outbox command-queue + signs a cursor; push persists acks/node-results) were ROUTE-only-guarded. Guards the INBOUND sync engine only — the hub->satellite outbox command-queue (outbox.enqueue) and retention GC are SEPARATE non-retired services and are NOT fenced. Verbs `pull`/`push` are not in mutatorVerbs (declared explicitly)."
+      },
+      {
+        "id": "fleet_remediation",
+        "family_code": "TS_RUNTIME_FLEET_REMEDIATION_RETIRED",
+        "serviceFile": "src/api/fleet/friday-fleet-dashboard-service.ts",
+        "flag": "allowTestOnlyFleetRemediationExecution",
+        "guardHelper": "assertFleetRemediationExecutionAllowed",
+        "mutatingMethods": ["executeSatelliteRemediationAction"],
+        "behavioralTest": "test/unit/api/fleet/friday-fleet-remediation-retirement-guard.test.ts",
+        "off_route_callers": "none today (route-deps-only via friday-fleet-routes, after the canonical-approval gate)",
+        "note": "Orphan off-route leak audit (2026-06-10) defense-in-depth: executeSatelliteRemediationAction was ROUTE-only-guarded (TS_RUNTIME_FLEET_REMEDIATION_RETIRED, asserted after the canonical-approval gate). Method-head guard fails closed before the remediation effect. Reads (getOverview/listSatellites/getSatelliteDetail/getSatelliteRemediationPlan/getSecurityCenter) stay live (verb `get`/`list`). Flag plumbed from api-runtime (same source the route uses)."
+      },
+      {
+        "id": "realtime_ack",
+        "family_code": "TS_RUNTIME_REALTIME_RETIRED",
+        "serviceFile": "src/api/realtime/friday-realtime-subscription-service.ts",
+        "flag": "allowTestOnlyRealtimeExecution",
+        "guardHelper": "assertRealtimeAckExecutionAllowed",
+        "mutatingMethods": ["ackEvent"],
+        "allowlistMutators": [
+          { "method": "generateCursor", "reason": "Read-only HMAC cursor generator (returns computeCursorHmac(...)); verb-prefix 'generate' is a false match, not a state mutation. No DB write, no retirement boundary. Left live." }
+        ],
+        "behavioralTest": "test/unit/api/realtime/friday-realtime-ack-retirement-guard.test.ts",
+        "off_route_callers": "TWO live ingress points already gate this flag BEFORE calling ackEvent: the HTTP /v1/realtime/ack route AND the WS `ack` frame. This method-head guard registers that de-facto two-site fence as a single method guard so a future THIRD caller cannot bypass it.",
+        "note": "Orphan off-route leak audit (2026-06-10): formalizes the already-double-guarded realtime ackEvent as a registered method guard. Fails closed before the checkpoint upsert. Reads (validateSubscriptions/pullEvents/getCheckpoint/cursor helpers) stay live. Verb `ack` is not in mutatorVerbs (declared explicitly). Flag plumbed from api-runtime (same source the route + WS gateway use)."
+      },
+      {
+        "id": "autonomy_mcp_lifecycle",
+        "family_code": "TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED",
+        "serviceFile": "src/autonomy/services/friday-mcp-server-upgrade-lifecycle-service.ts",
+        "flag": "allowTestOnlyAutonomyLifecycleExecution",
+        "guardHelper": "assertAutonomyLifecycleExecutionAllowed",
+        "mutatingMethods": ["registerShadowVersion", "recordCanaryResult", "promote", "rollback"],
+        "behavioralTest": "test/unit/autonomy/friday-mcp-server-upgrade-lifecycle-retirement-guard.test.ts",
+        "off_route_callers": "none today (route-deps-only via friday-autonomy-routes mcpServerActions; no autonomy self-upgrade scheduler is wired)",
+        "note": "Orphan off-route leak audit (2026-06-10) defense-in-depth: the MCP-server upgrade-lifecycle mutations were ROUTE-only-guarded (assertAutonomyLifecycleTestOracleAllowed). Each method-head guard fails closed before the canonical-ticket check and any state write. Only `rollback` is verb-prefixed; the others are declared explicitly. getLifecycleEvidence stays live (verb `get`). NOTE: the sibling skill/channel-adapter/plugin upgrade-lifecycle services share this method SHAPE and the same route guard but are OUT of the audit's named scope (autonomy.mcp.servers.* only) — left for a follow-up parallel-family audit, not a missed surface."
+      },
+      {
+        "id": "node_runner_execution",
+        "family_code": "TS_RUNTIME_NODE_RUNNER_EXECUTION_RETIRED",
+        "serviceFile": "src/api/runtime/friday-deterministic-pipeline-runtime.ts",
+        "flag": "allowTestOnlyNodeRunnerExecution",
+        "guardHelper": "assertNodeRunnerExecutionAllowed",
+        "mutatingMethods": ["executeNode"],
+        "allowlistMutators": [
+          { "method": "createPolicy", "reason": "TWO-SURFACES-ONE-FILE: declared AND guarded under the retry_pipeline surface (same serviceFile, flag allowTestOnlyRetryPipelineExecution, guardHelper assertRetryPipelineExecutionAllowed). Its fail-closed guard IS enforced by retry_pipeline's Phase A.1; this allowlist only suppresses the cross-surface A.2 noise on the shared file. NOT a hole." },
+          { "method": "updatePolicy", "reason": "Same as createPolicy: declared+guarded under retry_pipeline (shared file)." },
+          { "method": "deletePolicy", "reason": "Same as createPolicy: declared+guarded under retry_pipeline (shared file)." },
+          { "method": "execute", "reason": "Internal class method `async execute(...)` on `class DataNodeAdapter implements FridayNodeAdapter` (a transform-node handler), NOT a route-deps mutator on the returned object. Verb-prefix 'execute' false-matches the textual scan. Not reachable as a retired surface." }
+        ],
+        "behavioralTest": "test/unit/api/runtime/friday-deterministic-pipeline-retirement-guard.test.ts",
+        "off_route_callers": "none today (the runtime is route-deps-only in the hub: bootstrap passes it to the route factory + a no-op health-check; no scheduler/event-bus/workflow consumer)",
+        "note": "Orphan off-route leak audit (2026-06-10), F3.4 top-priority: node.runner.execute was ROUTE-only-guarded. This guards the route-deps WRAPPER `nodeRunner.executeNode` that the runtime returns — NOT the shared `createNodeRunnerPipeline` engine, which the LIVE workflow runtime uses as a SEPARATE instance (verified: workflow-runtime calls its own createNodeRunnerPipeline().execute; this wrapper calls this runtime's own instance). Converted from an arrow-property closure to object-method shorthand so the textual validator can locate the method head. `execute` is a mutatorVerb (auto-flagged, declared). Reads (getExecution/listExecutions) stay arrow closures (=>-excluded from the unregistered-mutator scan)."
+      },
+      {
+        "id": "retry_pipeline",
+        "family_code": "TS_RUNTIME_RETRY_PIPELINE_RETIRED",
+        "serviceFile": "src/api/runtime/friday-deterministic-pipeline-runtime.ts",
+        "flag": "allowTestOnlyRetryPipelineExecution",
+        "guardHelper": "assertRetryPipelineExecutionAllowed",
+        "mutatingMethods": ["createPolicy", "updatePolicy", "deletePolicy", "classifyFailure", "decideRetry", "acknowledgeEscalation"],
+        "allowlistMutators": [
+          { "method": "executeNode", "reason": "TWO-SURFACES-ONE-FILE: declared AND guarded under the node_runner_execution surface (same serviceFile, flag allowTestOnlyNodeRunnerExecution, guardHelper assertNodeRunnerExecutionAllowed). Its fail-closed guard IS enforced by node_runner_execution's Phase A.1; this allowlist only suppresses the cross-surface A.2 noise. NOT a hole." },
+          { "method": "execute", "reason": "Internal class method `async execute(...)` on `class DataNodeAdapter implements FridayNodeAdapter`, NOT a route-deps mutator. Verb-prefix 'execute' false-matches. Same internal-class entry as node_runner_execution." }
+        ],
+        "behavioralTest": "test/unit/api/runtime/friday-deterministic-pipeline-retirement-guard.test.ts",
+        "off_route_callers": "none today (route-deps-only, same as node_runner_execution)",
+        "note": "Orphan off-route leak audit (2026-06-10), F3.4 top-priority: retry.* mutations were ROUTE-only-guarded. Guards the route-deps WRAPPERS (retry.createPolicy/updatePolicy/deletePolicy/classifyFailure/decideRetry/acknowledgeEscalation) — local retryRepository/failureClassifier, not the shared engine. Converted from arrow-property closures to object-method shorthand for the validator. create/update/delete are mutatorVerbs (auto-flagged); classify/decide/acknowledge are declared explicitly. Reads (getPolicy/listPolicies/getTrace/listTraces/getCostSummary/listEscalations/listCircuitBreakers) stay arrow closures. Same serviceFile as node_runner_execution; the validator scans the file once and both surfaces' declared methods are located by name."
       }
     ]
   },

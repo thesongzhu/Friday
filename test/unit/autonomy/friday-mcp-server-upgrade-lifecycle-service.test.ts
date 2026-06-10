@@ -83,6 +83,10 @@ describe("createFridayMcpServerUpgradeLifecycleService", () => {
       nowIso: () => "2026-04-17T22:15:00.000Z",
       stateDir,
       canonicalMutationGate,
+      // TS-runtime-retirement: exercise the legacy lifecycle mutations in these
+      // unit tests; default/live runtime leaves this unset so they fail closed
+      // (the 503-by-default behavior is asserted in the dedicated guard test).
+      allowTestOnlyAutonomyLifecycleExecution: true,
     });
     return { repo, service };
   }

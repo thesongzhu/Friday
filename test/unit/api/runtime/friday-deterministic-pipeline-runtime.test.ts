@@ -48,6 +48,12 @@ describe("Friday deterministic pipeline runtime wiring", () => {
       idGenerator,
       nowIso: () => "2026-02-27T00:00:00.000Z",
       invokeSkill: async () => ({ ok: true }),
+      // TS-runtime-retirement: exercise the legacy node-runner/retry paths in
+      // these unit tests; default/live runtime leaves these unset so the route-
+      // deps wrappers fail closed (the 503-by-default behavior is asserted in the
+      // dedicated guard test).
+      allowTestOnlyNodeRunnerExecution: true,
+      allowTestOnlyRetryPipelineExecution: true,
     });
 
     const created = runtime.rules.createBundle({
@@ -84,6 +90,12 @@ describe("Friday deterministic pipeline runtime wiring", () => {
       idGenerator: createTestIdGenerator(),
       nowIso: () => "2026-02-27T00:00:00.000Z",
       invokeSkill: async () => ({ ok: true }),
+      // TS-runtime-retirement: exercise the legacy node-runner/retry paths in
+      // these unit tests; default/live runtime leaves these unset so the route-
+      // deps wrappers fail closed (the 503-by-default behavior is asserted in the
+      // dedicated guard test).
+      allowTestOnlyNodeRunnerExecution: true,
+      allowTestOnlyRetryPipelineExecution: true,
     });
 
     expect(() =>
@@ -108,6 +120,12 @@ describe("Friday deterministic pipeline runtime wiring", () => {
       idGenerator: createTestIdGenerator(),
       nowIso: () => "2026-02-27T00:00:00.000Z",
       invokeSkill: async () => ({ ok: true }),
+      // TS-runtime-retirement: exercise the legacy node-runner/retry paths in
+      // these unit tests; default/live runtime leaves these unset so the route-
+      // deps wrappers fail closed (the 503-by-default behavior is asserted in the
+      // dedicated guard test).
+      allowTestOnlyNodeRunnerExecution: true,
+      allowTestOnlyRetryPipelineExecution: true,
     });
 
     const created = runtime.rules.createBundle({
@@ -145,6 +163,8 @@ describe("Friday deterministic pipeline runtime wiring", () => {
       invokeSkill: async (_skillId, _runId, _nodeId, payload) => ({
         echoed: payload,
       }),
+      allowTestOnlyNodeRunnerExecution: true,
+      allowTestOnlyRetryPipelineExecution: true,
     });
 
     const executed = await runtime.nodeRunner.executeNode({
@@ -180,6 +200,12 @@ describe("Friday deterministic pipeline runtime wiring", () => {
       idGenerator,
       nowIso: () => "2026-02-27T00:00:00.000Z",
       invokeSkill: async () => ({ ok: true }),
+      // TS-runtime-retirement: exercise the legacy node-runner/retry paths in
+      // these unit tests; default/live runtime leaves these unset so the route-
+      // deps wrappers fail closed (the 503-by-default behavior is asserted in the
+      // dedicated guard test).
+      allowTestOnlyNodeRunnerExecution: true,
+      allowTestOnlyRetryPipelineExecution: true,
     });
 
     async function executeEvidenceRun(runId: string, inputData: Record<string, unknown>) {
@@ -276,6 +302,12 @@ describe("Friday deterministic pipeline runtime wiring", () => {
       idGenerator,
       nowIso: () => "2026-02-27T00:00:00.000Z",
       invokeSkill: async () => ({ ok: true }),
+      // TS-runtime-retirement: exercise the legacy node-runner/retry paths in
+      // these unit tests; default/live runtime leaves these unset so the route-
+      // deps wrappers fail closed (the 503-by-default behavior is asserted in the
+      // dedicated guard test).
+      allowTestOnlyNodeRunnerExecution: true,
+      allowTestOnlyRetryPipelineExecution: true,
     });
 
     const run = await runtime.acceptance.runChecks({
@@ -303,6 +335,12 @@ describe("Friday deterministic pipeline runtime wiring", () => {
       idGenerator: createTestIdGenerator(),
       nowIso: () => "2026-02-27T00:00:00.000Z",
       invokeSkill: async () => ({ ok: true }),
+      // TS-runtime-retirement: exercise the legacy node-runner/retry paths in
+      // these unit tests; default/live runtime leaves these unset so the route-
+      // deps wrappers fail closed (the 503-by-default behavior is asserted in the
+      // dedicated guard test).
+      allowTestOnlyNodeRunnerExecution: true,
+      allowTestOnlyRetryPipelineExecution: true,
     });
 
     const decided = runtime.retry.decideRetry({
@@ -333,6 +371,12 @@ describe("Friday deterministic pipeline runtime wiring", () => {
       idGenerator: createTestIdGenerator(),
       nowIso: () => "2026-02-27T00:00:00.000Z",
       invokeSkill: async () => ({ ok: true }),
+      // TS-runtime-retirement: exercise the legacy node-runner/retry paths in
+      // these unit tests; default/live runtime leaves these unset so the route-
+      // deps wrappers fail closed (the 503-by-default behavior is asserted in the
+      // dedicated guard test).
+      allowTestOnlyNodeRunnerExecution: true,
+      allowTestOnlyRetryPipelineExecution: true,
     });
 
     for (let index = 0; index < 3; index += 1) {
@@ -384,6 +428,12 @@ describe("Friday deterministic pipeline runtime wiring", () => {
       idGenerator: createTestIdGenerator(),
       nowIso: () => "2026-02-27T00:00:00.000Z",
       invokeSkill: async () => ({ ok: true }),
+      // TS-runtime-retirement: exercise the legacy node-runner/retry paths in
+      // these unit tests; default/live runtime leaves these unset so the route-
+      // deps wrappers fail closed (the 503-by-default behavior is asserted in the
+      // dedicated guard test).
+      allowTestOnlyNodeRunnerExecution: true,
+      allowTestOnlyRetryPipelineExecution: true,
     });
 
     const created = runtime.rules.createBundle({

@@ -1510,6 +1510,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     nowIso: deps.nowIso,
     currentEpoch: CURRENT_EPOCH,
     cursorSecret: deps.tokenSecret,
+    // TS-runtime-retirement (method-level guard): same top-level flag the HTTP
+    // realtime route + WS ack frame use, so ackEvent fail-closes by default in
+    // live (all three sites fenced) and the legacy path is reachable only under
+    // the test oracle. Both ingress points already pre-check this flag, so live
+    // test-oracle mode passes the ingress gate AND this method guard together.
+    allowTestOnlyRealtimeExecution: deps.allowTestOnlyRealtimeExecution,
   });
 
   const wsGateway = createFridayRealtimeWsGateway({
@@ -1547,6 +1553,10 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     nowIso: deps.nowIso,
     idGenerator: deps.idGenerator,
     outboxQueueService: deps.outboxQueueService,
+    // TS-runtime-retirement (method-level guard): same top-level flag the fleet
+    // route uses, so the method fail-closes by default in live (route + method
+    // both fenced) and the legacy path is reachable only under the test oracle.
+    allowTestOnlyFleetRemediationExecution: deps.allowTestOnlyFleetRemediationExecution,
   });
 
   // Conflicts
@@ -1919,6 +1929,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         nowIso: deps.nowIso,
         stateDir,
         canonicalMutationGate,
+        // TS-runtime-retirement (method-level guard): same top-level flag the
+        // autonomy route uses, so the lifecycle mutations fail-close by default
+        // in live (route + method both fenced) and the legacy path is reachable
+        // only under the test oracle.
+        allowTestOnlyAutonomyLifecycleExecution: deps.allowTestOnlyAutonomyLifecycleExecution,
       })
     : undefined;
   const channelAdapterUpgradeLifecycle = deps.channels?.registry

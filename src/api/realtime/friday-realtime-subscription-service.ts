@@ -1,4 +1,5 @@
 import * as crypto from "node:crypto";
+import { FridayDomainError } from "#errors";
 import type { FridaySqliteLayer } from "#state";
 import type {
   FridayRealtimeEventEnvelope,
@@ -125,6 +126,17 @@ export interface CreateFridayRealtimeSubscriptionServiceDeps {
   nowIso: () => string;
   currentEpoch: number;
   cursorSecret?: string;
+  /**
+   * Test-oracle only: allows the legacy TypeScript realtime checkpoint-ack
+   * mutation (`ackEvent`) in isolated test/validation harnesses. Default/live
+   * runtime must leave this unset so the method fails closed for ALL ingress
+   * (the HTTP /v1/realtime/ack route AND the WS `ack` frame both already gate on
+   * the same flag BEFORE calling ackEvent; this method-head guard formalizes
+   * that two-site fence as a registered method guard). Reads
+   * (validateSubscriptions/pullEvents/getCheckpoint/cursor helpers) stay live.
+   * Never default this flag on in production.
+   */
+  allowTestOnlyRealtimeExecution?: boolean;
 }
 
 // ─── Factory ───
@@ -133,6 +145,31 @@ export function createFridayRealtimeSubscriptionService(
   deps: CreateFridayRealtimeSubscriptionServiceDeps,
 ): FridayRealtimeSubscriptionService {
   const cursorSecret = deps.cursorSecret ?? crypto.randomBytes(16).toString("hex");
+
+  // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+  // Defense-in-depth (orphan off-route leak audit, 2026-06-10): the realtime
+  // checkpoint-ack mutation has TWO live ingress points — the HTTP /v1/realtime/
+  // ack route and the WS `ack` frame — and both already gate on
+  // allowTestOnlyRealtimeExecution before calling ackEvent. This method-head
+  // guard registers that de-facto two-site fence as a single method guard, so a
+  // future THIRD caller of ackEvent cannot bypass it. Fails closed BEFORE the
+  // checkpoint upsert unless the explicit test-oracle flag is set. Mirrors the
+  // ingress 503 code (TS_RUNTIME_REALTIME_RETIRED).
+  function assertRealtimeAckExecutionAllowed(): void {
+    if (deps.allowTestOnlyRealtimeExecution !== true) {
+      throw new FridayDomainError(
+        "TS_RUNTIME_REALTIME_RETIRED",
+        "TypeScript realtime checkpoint-ack is fail-closed in default/live runtime; use the Rust-owned realtime delivery entrypoint.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_realtime_entrypoint_required",
+          },
+        },
+      );
+    }
+  }
 
   /** Check if a streamId is valid for the given topic based on prefix rules. */
   function isStreamValidForTopic(topic: FridayRealtimeTopic, streamId: string): boolean {
@@ -210,6 +247,7 @@ export function createFridayRealtimeSubscriptionService(
     },
 
     ackEvent(principalId, streamId, seq, epoch, cursor) {
+      assertRealtimeAckExecutionAllowed();
       if (epoch !== deps.currentEpoch) {
         return { accepted: false };
       }

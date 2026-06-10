@@ -64,6 +64,7 @@ describe("FridaySatellitePairingService", () => {
       idGenerator: idGen,
       nowIso: () => NOW,
       pairingTtlMs: 10 * 60 * 1000,
+      allowTestOnlySatellitePairingExecution: true,
     });
     return regService.register({
       type: "phone",
@@ -85,6 +86,9 @@ describe("FridaySatellitePairingService", () => {
       nowIso: () => nowIso,
       tokenSecret: "test-token-secret", // pragma: allowlist secret
       generateEphemeralKeyPair: () => EPHEMERAL_KEY,
+      // TS-runtime-retirement: exercise the legacy TypeScript pairing path here;
+      // default/live hub leaves this unset so the methods fail closed.
+      allowTestOnlySatellitePairingExecution: true,
     });
   }
 

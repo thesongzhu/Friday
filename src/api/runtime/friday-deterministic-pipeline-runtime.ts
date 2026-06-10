@@ -91,6 +91,26 @@ export interface CreateFridayDeterministicPipelineRuntimeDeps {
     nodeId: string,
     payload: Record<string, unknown>,
   ) => Promise<unknown>;
+  /**
+   * Test-oracle only: allows the legacy TypeScript node-runner EXECUTION
+   * (`nodeRunner.executeNode`) in isolated test/validation harnesses.
+   * Default/live runtime must leave this unset so the method fails closed for
+   * ALL callers (the HTTP node-runner route guard is bypassed by a direct method
+   * call on this route-deps wrapper). This guards ONLY the route-deps wrapper —
+   * NOT the shared `createNodeRunnerPipeline` engine that the live workflow
+   * runtime also uses (a separate instance). Never default this flag on in prod.
+   */
+  allowTestOnlyNodeRunnerExecution?: boolean;
+  /**
+   * Test-oracle only: allows the legacy TypeScript retry-pipeline mutations
+   * (`retry.createPolicy`/`updatePolicy`/`deletePolicy`/`classifyFailure`/
+   * `decideRetry`/`acknowledgeEscalation`) in isolated test/validation harnesses.
+   * Default/live runtime must leave this unset so the methods fail closed for ALL
+   * callers (the HTTP retry route guard is bypassed by a direct method call on
+   * these route-deps wrappers). Guards ONLY the route-deps wrappers, not the
+   * shared failure-classifier/retry repos. Never default this flag on in prod.
+   */
+  allowTestOnlyRetryPipelineExecution?: boolean;
 }
 
 const RULES_EVALUATE_SCOPE = "rules:evaluate";
@@ -459,6 +479,49 @@ export function createFridayDeterministicPipelineRuntime(
   );
   const pipelineEnabled = pipelineConfig.enabled;
   const pipelineEnforceMode = pipelineConfig.mode === "enforce";
+
+  // ─── TS Runtime Retirement: METHOD-level fail-closed guards ───
+  // Defense-in-depth (orphan off-route leak audit, 2026-06-10): node-runner
+  // execution and retry-pipeline mutations were ROUTE-only-guarded (friday-
+  // deterministic-pipeline-routes asserts the test-oracle flags before the
+  // engine call). These guards fence the route-deps WRAPPERS that this runtime
+  // returns (node.runner.execute, retry.*) — NOT the shared `createNodeRunner
+  // Pipeline`/classifier engines, which the LIVE workflow runtime uses as
+  // separate instances. The runtime is route-deps-only in the hub (bootstrap
+  // passes it to the route factory + a no-op health-check; no scheduler/event-bus
+  // consumer), so guarding the wrapper fails any future non-route caller closed
+  // BEFORE the engine call, with NO effect on the live workflow pipeline. Mirror
+  // the route's advertised 503 codes. Reads (get*/list*) stay live (un-guarded).
+  function assertNodeRunnerExecutionAllowed(): void {
+    if (deps.allowTestOnlyNodeRunnerExecution !== true) {
+      throw new FridayDomainError(
+        "TS_RUNTIME_NODE_RUNNER_EXECUTION_RETIRED",
+        "TypeScript node-runner execution is fail-closed in default/live runtime; use the Rust-owned node-runner entrypoint.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_node_runner_entrypoint_required",
+          },
+        },
+      );
+    }
+  }
+  function assertRetryPipelineExecutionAllowed(): void {
+    if (deps.allowTestOnlyRetryPipelineExecution !== true) {
+      throw new FridayDomainError(
+        "TS_RUNTIME_RETRY_PIPELINE_RETIRED",
+        "TypeScript retry-pipeline mutation is fail-closed in default/live runtime; use the Rust-owned retry entrypoint.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_retry_pipeline_entrypoint_required",
+          },
+        },
+      );
+    }
+  }
 
   const rulesRepository = createFridayRulesRepository();
   const policyBundleRepository = createFridayPolicyBundleRepository();
@@ -1080,7 +1143,8 @@ export function createFridayDeterministicPipelineRuntime(
     },
 
     nodeRunner: {
-      executeNode: async (body) => {
+      async executeNode(body) {
+        assertNodeRunnerExecutionAllowed();
         const payload = asRecord(body);
         const nodeId = asString(payload.nodeId) ?? deps.idGenerator();
         const nodeType = asString(payload.nodeType) ?? "action";
@@ -1493,7 +1557,8 @@ export function createFridayDeterministicPipelineRuntime(
         return { items, total: items.length };
       },
 
-      createPolicy: (body) => {
+      createPolicy(body) {
+        assertRetryPipelineExecutionAllowed();
         const payload = asRecord(body);
         const now = deps.nowIso();
         const policy: FridayRetryPolicy = {
@@ -1545,7 +1610,8 @@ export function createFridayDeterministicPipelineRuntime(
         return { policy };
       },
 
-      updatePolicy: (policyId, body) => {
+      updatePolicy(policyId, body) {
+        assertRetryPipelineExecutionAllowed();
         const payload = asRecord(body);
         const current = retryPersistenceAvailable
           ? deps.db.withReadConnection((db) => retryRepository.getPolicyById(db, policyId))
@@ -1606,7 +1672,8 @@ export function createFridayDeterministicPipelineRuntime(
         return { policy: updated };
       },
 
-      deletePolicy: (policyId, body) => {
+      deletePolicy(policyId, body) {
+        assertRetryPipelineExecutionAllowed();
         const payload = asRecord(body);
         const current = retryPersistenceAvailable
           ? deps.db.withReadConnection((db) => retryRepository.getPolicyById(db, policyId))
@@ -1655,7 +1722,8 @@ export function createFridayDeterministicPipelineRuntime(
         return { items: runId ? retryTraces.filter((trace) => trace.runId === runId) : [...retryTraces] };
       },
 
-      classifyFailure: (body) => {
+      classifyFailure(body) {
+        assertRetryPipelineExecutionAllowed();
         const payload = asRecord(body);
         const error = toClassifyFailureError(payload.error);
         if (!error) {
@@ -1668,7 +1736,8 @@ export function createFridayDeterministicPipelineRuntime(
         return { classifiedFailure };
       },
 
-      decideRetry: (body) => {
+      decideRetry(body) {
+        assertRetryPipelineExecutionAllowed();
         const payload = asRecord(body);
         const classifiedFailure = payload.classifiedFailure
           ? payload.classifiedFailure as FridayClassifiedFailure
@@ -1884,7 +1953,8 @@ export function createFridayDeterministicPipelineRuntime(
         return { items, total: items.length };
       },
 
-      acknowledgeEscalation: (escalationId) => {
+      acknowledgeEscalation(escalationId) {
+        assertRetryPipelineExecutionAllowed();
         if (!retryPersistenceAvailable) {
           throw new FridayDomainError("RETRY_ESCALATION_NOT_FOUND", "Retry escalation not found", { httpStatus: 404 });
         }

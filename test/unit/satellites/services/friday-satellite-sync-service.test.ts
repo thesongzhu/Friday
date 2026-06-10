@@ -48,6 +48,7 @@ describe("FridaySatelliteSyncService", () => {
       cursorSigner,
       ackValidator,
       nowIso: () => NOW,
+      allowTestOnlySatelliteRuntimeExecution: true,
     });
   }
 
@@ -60,6 +61,7 @@ describe("FridaySatelliteSyncService", () => {
       cursorSigner,
       ackValidator,
       nowIso: () => NOW,
+      allowTestOnlySatelliteRuntimeExecution: true,
       learningEventWriter: writer,
     });
 
@@ -241,6 +243,7 @@ describe("FridaySatelliteSyncService", () => {
       cursorSigner,
       ackValidator,
       nowIso: () => NOW,
+      allowTestOnlySatelliteRuntimeExecution: true,
       remoteNodeResultWriter: writer,
     });
 
@@ -302,6 +305,7 @@ describe("FridaySatelliteSyncService", () => {
       cursorSigner,
       ackValidator,
       nowIso: () => NOW,
+      allowTestOnlySatelliteRuntimeExecution: true,
       remoteNodeResultWriter: writer,
     });
     const pulled = service.pull({

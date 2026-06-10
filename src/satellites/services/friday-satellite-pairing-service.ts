@@ -75,6 +75,14 @@ export interface CreatePairingServiceDeps {
   tokenSecret: string;
   /** Optional override for ephemeral key generation (testing). */
   generateEphemeralKeyPair?: () => { publicKey: string; privateKey: string };
+  /**
+   * Test-oracle only: allows the legacy TypeScript satellite-pairing mutations
+   * (`approvePairing`/`rejectPairing`/`completeHandshake`/`revokeSatellite`) in
+   * isolated test/validation harnesses. Default/live runtime must leave this
+   * unset so the methods fail closed for ALL callers (the HTTP pairing route
+   * guard is bypassed by a direct method call). Never default this on in prod.
+   */
+  allowTestOnlySatellitePairingExecution?: boolean;
 }
 
 function hashToken(token: string): string {
@@ -131,8 +139,34 @@ function extractTokenVersionFromLabel(label: string): number | undefined {
 export function createFridaySatellitePairingService(
   deps: CreatePairingServiceDeps,
 ): FridaySatellitePairingService {
+  // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+  // Defense-in-depth (orphan off-route leak audit, 2026-06-10): the satellite
+  // pairing mutations were ROUTE-only-guarded (friday-satellite-pairing-routes).
+  // No non-route caller reaches these methods today (route-deps-only; the TUI
+  // hits the guarded HTTP route over the wire), but a future inbound wiring (an
+  // auto-pairing/handshake loop) would bypass the route fence and reopen a
+  // G4-class leak. Each pairing mutation fails closed BEFORE any pairing/token/
+  // satellite row write unless the explicit test-oracle flag is set. Mirrors the
+  // route's advertised 503 code (TS_RUNTIME_SATELLITE_PAIRING_RETIRED).
+  function assertSatellitePairingExecutionAllowed(): void {
+    if (deps.allowTestOnlySatellitePairingExecution !== true) {
+      throw new FridayDomainError(
+        "TS_RUNTIME_SATELLITE_PAIRING_RETIRED",
+        "TypeScript satellite pairing is fail-closed in default/live runtime; use the Rust-owned satellite pairing entrypoint.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_satellite_pairing_entrypoint_required",
+          },
+        },
+      );
+    }
+  }
+
   return {
     approvePairing(input) {
+      assertSatellitePairingExecutionAllowed();
       return deps.db.withWriteTransaction((db) => {
         const nowIso = deps.nowIso();
 
@@ -203,6 +237,7 @@ export function createFridaySatellitePairingService(
     },
 
     rejectPairing(input) {
+      assertSatellitePairingExecutionAllowed();
       deps.db.withWriteTransaction((db) => {
         const nowIso = deps.nowIso();
         const request = deps.pairingRequestRepo.getRequest(db, input.requestId);
@@ -221,6 +256,7 @@ export function createFridaySatellitePairingService(
     },
 
     completeHandshake(input) {
+      assertSatellitePairingExecutionAllowed();
       return deps.db.withWriteTransaction((db) => {
         const nowIso = deps.nowIso();
 
@@ -304,6 +340,7 @@ export function createFridaySatellitePairingService(
     },
 
     revokeSatellite(input) {
+      assertSatellitePairingExecutionAllowed();
       deps.db.withWriteTransaction((db) => {
         const nowIso = deps.nowIso();
 

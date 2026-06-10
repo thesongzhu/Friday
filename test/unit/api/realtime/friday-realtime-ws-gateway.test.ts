@@ -69,6 +69,11 @@ describe("FridayRealtimeWsGateway", () => {
       checkpointRepo,
       nowIso: () => NOW,
       currentEpoch: EPOCH,
+      // TS-runtime-retirement (method guard): the shared service must allow the
+      // legacy ackEvent path so flag-enabled gateways below can succeed. The
+      // retirement test builds a gateway WITHOUT the gateway flag and asserts the
+      // WS ack frame fail-closes at the gateway BEFORE reaching ackEvent.
+      allowTestOnlyRealtimeExecution: true,
     });
     eventBus = createFridayRealtimeEventBus({
       idGenerator: () => "bus-evt-1",
@@ -140,6 +145,7 @@ describe("FridayRealtimeWsGateway", () => {
       checkpointRepo,
       nowIso: () => NOW,
       currentEpoch: EPOCH,
+      allowTestOnlyRealtimeExecution: true,
     });
     const wsFrameKeyMaterial = ["ws", "frame", "secret"].join("-");
     const frameCrypto = createFridayRealtimeFrameCrypto({
