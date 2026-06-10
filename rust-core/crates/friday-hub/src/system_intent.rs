@@ -44,7 +44,7 @@
 //! `workflow_catalog`). The live TS system-intent path stays fail-closed; this is
 //! ADDITIVE substrate, not a product cutover. NOT v1 GO.
 //!
-//! ## The verified-approval → Allow → EXECUTE happy path (R4 slice-2, DARK)
+//! ## The verified-approval → Allow → AUTHORIZE (effect deferred) path (R4 slice-2, DARK)
 //! [`SystemIntentEntrypoint::dispatch_with_approval`] is the system-intent analogue
 //! of the in-product `friday-hub::resume::resume_with_approval` (S6d). It INGESTS a
 //! canonical Ed25519 operator approval bound to the intent's action digest and
@@ -59,21 +59,28 @@
 //! Single-use is the shared `consumed_approval` replay store (the `ed25519:` keyspace);
 //! a replay is refused by the nonce PK collision (no new migration).
 //!
-//! On `Allow` the execute split is honest:
-//! * a CONTROL-PLANE op (`resume_task` — the UNIQUE mutating intent with NO
-//!   companion/desktop/exec effect in the TS oracle; its sole effect there is an
-//!   in-memory `activeTask` pointer + event emissions) completes the control-plane
-//!   ENVELOPE: the m0026 lease auto-acquire (a DB op = "lease acquire bookkeeping") and
-//!   a `completed` result. Its in-memory `activeTask` domain state is OUTSIDE the m0026
-//!   substrate and is a documented deferral — the `completed` here fakes NO OS effect
-//!   because `resume_task` HAS no OS effect, so the result message reflects the
-//!   control-plane completion, NOT a claim that `activeTask` was set.
-//! * an OS-AFFECTING op (`launch_app`/`open_url`/`close_app`/…/`recover_ui`) is STILL
+//! On `Allow` the execute is honest: EVERY protected mutating intent records
+//! `unavailable` (the [`UnavailableExecutor`] seam) even on a valid `Allow` — the
+//! verified approval AUTHORIZES the action, but the actual domain effect is NOT faked.
+//! There is NO control-plane-completes path in this slice. In particular:
+//! * `resume_task` is NOT a pure control-plane / no-effect op: in the TS oracle its
+//!   handler sets an in-memory `activeTask` pointer AND emits `system.task.updated`
+//!   and `system.intent.completed` (`friday-system-service.ts`, `case "resume_task"`).
+//!   The `system.task.updated` event is READ BACK via `findLatestEventByName`
+//!   (`friday-system-service.ts:421`), so the un-emitted event is an OBSERVABLE,
+//!   load-bearing divergence — not cosmetic in-memory state. Recording `completed`
+//!   here while performing NONE of those three effects would be a faked-complete, so
+//!   `resume_task` records `unavailable` + the [`UNIMPLEMENTED_EXECUTION_MARKER`]
+//!   (its `activeTask` + the two event emissions are an HONEST deferred AC) until a
+//!   real executor models them.
+//! * an OS-AFFECTING op (`launch_app`/`open_url`/`close_app`/…/`recover_ui`) is likewise
 //!   routed to the [`UnavailableExecutor`] and records `unavailable` even on a valid
-//!   `Allow` — the verified approval authorizes the action, but the OS effect is not
-//!   faked. (`recover_ui`'s TS handler revokes the lease AND hides the companion
+//!   `Allow`. (`recover_ui`'s TS handler revokes the lease AND hides the companion
 //!   overlay + reads companion status, so it is OS-affecting; completing it after only
 //!   the lease-revoke would fake the overlay effect — it stays `unavailable`.)
+//! * In all cases the m0026 control-lease IS auto-acquired on the `Allow` path (the TS
+//!   `ensureControlLease` ordering, universal to every mutating intent) — that DB
+//!   bookkeeping is real and not faked; only the domain effect is deferred.
 //!
 //! ## DEFERRED / UNIMPLEMENTED seams (explicitly NOT faked green)
 //! * **The actual OS effect** of every "do something to the desktop" action
@@ -86,8 +93,13 @@
 //!   `unavailable` result with the coarse marker
 //!   [`UNIMPLEMENTED_EXECUTION_MARKER`] — it NEVER records `completed` for an
 //!   effect it did not perform, EVEN on a valid operator `Allow`.
-//! * **`resume_task`'s in-memory `activeTask` domain state** is not modeled in the
-//!   dark m0026 substrate — only its control-plane envelope (the lease) completes.
+//! * **`resume_task`'s domain effect** — its in-memory `activeTask` pointer AND the
+//!   two event emissions (`system.task.updated` / `system.intent.completed`) — is not
+//!   modeled in the dark m0026 substrate. Because `system.task.updated` is read back
+//!   (`findLatestEventByName`), this is an OBSERVABLE divergence, so `resume_task`
+//!   stays `unavailable` on a valid `Allow` (only its lease auto-acquire is real) —
+//!   exactly as the OS-affecting actions do. This is an HONEST deferred AC, NOT a
+//!   faked-`completed`.
 //! * **`target_ref` digest binding for a future REAL executor** — `dispatch_with_approval`
 //!   binds `target_ref` into the canonical action digest (via the gate request's
 //!   `parameters`), so a single-use approval is scoped to THIS exact target. The
@@ -174,11 +186,14 @@ pub struct DispatchOutcome {
     pub execution_deferred: bool,
 }
 
-/// The boundary to the actual OS effect of a desktop-affecting action. The TS
-/// equivalent is the `companionBridge` / `desktopSessionManager` / `execCommand`
-/// surface. The ONLY provided impl is [`UnavailableExecutor`] (precedent: the TS
-/// `createFridaySystemUnavailableCompanionBridge`); a real impl (companion/Swift
-/// app / AppleScript) is out of scope for this dark slice.
+/// The boundary to the actual EFFECT of a protected action — the OS effect of a
+/// desktop-affecting action (the TS `companionBridge` / `desktopSessionManager` /
+/// `execCommand` surface) AND `resume_task`'s non-OS DOMAIN effect (its `activeTask`
+/// pointer + the `system.task.updated` / `system.intent.completed` emissions). Both are
+/// deferred through this one seam. The ONLY provided impl is [`UnavailableExecutor`]
+/// (precedent: the TS `createFridaySystemUnavailableCompanionBridge`); a real impl
+/// (companion/Swift app / AppleScript + the task-event emission) is out of scope for
+/// this dark slice.
 pub trait SystemActionExecutor {
     /// Attempt to perform `action`'s OS effect on `target_ref`. Returns the coarse
     /// outcome the result row records. A real executor returns `Completed`; the
@@ -194,10 +209,10 @@ pub struct ExecOutcome {
     pub message: String,
 }
 
-/// The DEFAULT executor: every desktop-affecting action is reported `unavailable`
-/// with the unimplemented marker. This is the honest dark-slice seam — it never
-/// fakes a `completed` effect. Mirrors the TS unavailable companion bridge used in
-/// the retirement-guard test.
+/// The DEFAULT executor: every protected action (desktop-affecting OR `resume_task`'s
+/// domain effect) is reported `unavailable` with the unimplemented marker. This is the
+/// honest dark-slice seam — it never fakes a `completed` effect. Mirrors the TS
+/// unavailable companion bridge used in the retirement-guard test.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct UnavailableExecutor;
 
@@ -394,13 +409,15 @@ impl<E: SystemActionExecutor> SystemIntentEntrypoint<E> {
     /// On the decision:
     /// * NOT `Allow` (`Deny` / `RequiresApproval` — replay/expired/forged/HMAC/owner-denied/
     ///   no-approval) → a `blocked` result; NOTHING is executed.
-    /// * `Allow` + a CONTROL-PLANE op ([`is_control_plane`] — `resume_task`) → the
-    ///   m0026 lease auto-acquire (a DB op) and a `completed` result. NO OS effect is
-    ///   faked (a control-plane op has none).
-    /// * `Allow` + an OS-AFFECTING op (everything else, incl. `recover_ui`) → routed to
-    ///   the [`SystemActionExecutor`] (the [`UnavailableExecutor`] by default) and records
-    ///   `unavailable` with the unimplemented marker — the approval authorizes the action,
-    ///   but the OS effect is NOT faked-`completed`.
+    /// * `Allow` → the m0026 lease auto-acquire (a real DB op) followed by the
+    ///   [`SystemActionExecutor`] (the [`UnavailableExecutor`] by default). EVERY protected
+    ///   intent — `resume_task` included — records `unavailable` with the unimplemented
+    ///   marker: the approval authorizes the action, but the domain effect is NOT
+    ///   faked-`completed`. There is NO control-plane-completes path in this slice.
+    ///   (`resume_task`'s `activeTask` pointer + the `system.task.updated` /
+    ///   `system.intent.completed` emissions — the latter read back via
+    ///   `findLatestEventByName` — are an HONEST deferred AC; recording `completed` while
+    ///   performing none of them would be a faked-complete.)
     ///
     /// `operator_vk` MUST come from an operator-controlled source — this function only
     /// ever VERIFIES with it. DARK: no production route/flag/caller wires it.
@@ -491,49 +508,17 @@ impl<E: SystemActionExecutor> SystemIntentEntrypoint<E> {
             return self.persist_blocked(conn, input, message, Some(evidence.reason), now_ms);
         }
 
-        // (7) Allow → the honest execute split.
-        if is_control_plane(input.action) {
-            // CONTROL-PLANE op (resume_task): complete the control-plane ENVELOPE — the
-            // m0026 lease auto-acquire (a DB op = "lease acquire bookkeeping"). The
-            // in-memory `activeTask` domain state is OUTSIDE the substrate (deferred), so
-            // the message reflects the control-plane completion, NOT a claim activeTask was
-            // set — `completed` here fakes NO OS effect (a control-plane op has none).
-            let lease_id = match self.ensure_lease(conn, input, now_ms) {
-                Ok(id) => id,
-                Err(LeaseAcquireError::Busy {
-                    owner_kind,
-                    owner_id,
-                }) => {
-                    return self.persist_blocked(
-                        conn,
-                        input,
-                        format!(
-                            "control lease is currently held by {}:{}",
-                            owner_kind.as_str(),
-                            owner_id
-                        ),
-                        Some("system_control_busy".to_string()),
-                        now_ms,
-                    );
-                }
-                Err(LeaseAcquireError::Storage(e)) => return Err(SystemIntentError::Storage(e)),
-            };
-            return self.persist_result(
-                conn,
-                input,
-                IntentStatus::Completed,
-                "Control-plane intent approved and completed (lease acquired)".to_string(),
-                lease_id,
-                None,
-                now_ms,
-            );
-        }
-
-        // OS-AFFECTING op (incl. recover_ui): the approval authorizes the action, but the
-        // OS effect is DEFERRED — route through the executor (the unavailable seam by
-        // default) and record `unavailable`, NEVER a faked `completed`. We still
-        // auto-acquire the lease (the TS `ensureControlLease` ordering) so the future real
-        // executor slots in unchanged.
+        // (7) Allow → the honest execute. EVERY protected mutating intent (resume_task
+        //     included) records `unavailable`: the approval AUTHORIZES the action, but the
+        //     domain effect is DEFERRED, never faked-`completed`. There is NO
+        //     control-plane-completes path in this slice. `resume_task` is NOT a pure
+        //     no-effect op — its TS handler sets `activeTask` AND emits
+        //     `system.task.updated` (read back via `findLatestEventByName`) +
+        //     `system.intent.completed`; recording `completed` while performing none of
+        //     those would be a faked-complete (an OBSERVABLE divergence). Those effects are
+        //     an HONEST deferred AC, exactly like `recover_ui`'s overlay effect. We still
+        //     auto-acquire the lease (the universal TS `ensureControlLease` ordering, real
+        //     DB bookkeeping) so the future real executor slots in unchanged.
         let lease_id = match self.ensure_lease(conn, input, now_ms) {
             Ok(id) => id,
             Err(LeaseAcquireError::Busy {
@@ -826,22 +811,6 @@ fn is_mutating(action: IntentAction) -> bool {
             | IntentAction::Approve
             | IntentAction::Deny
     )
-}
-
-/// True for a CONTROL-PLANE mutating intent: one whose execute effect is a pure
-/// DB / control-plane op (the m0026 lease bookkeeping), with NO OS / companion /
-/// desktop effect to fake. On a verified-approval `Allow` such an op may complete.
-///
-/// `resume_task` is the UNIQUE such intent: in the TS oracle its sole effect is an
-/// in-memory `activeTask` pointer + event emissions (`friday-system-service.ts`,
-/// `case "resume_task"`) — NO `companionBridge` / `execCommand` / `desktopSessionManager`
-/// call. Every other mutating intent is OS-affecting (launch_app/open_url/close_app/
-/// focus/clipboard*/notification_act/handoff*/recover_ui — recover_ui revokes the lease
-/// but ALSO hides the companion overlay + reads companion status, so it is OS-affecting)
-/// or reserved (approve/deny, hard-Denied by the gate). Those stay `unavailable` on a
-/// valid `Allow` — the approval authorizes the action, but the OS effect is not faked.
-fn is_control_plane(action: IntentAction) -> bool {
-    matches!(action, IntentAction::ResumeTask)
 }
 
 /// The TS `resolveRiskLevel`: close_app/notification_act/clipboard_read = high;
@@ -1196,34 +1165,5 @@ mod tests {
         assert!(!is_mutating(IntentAction::NotificationList));
         assert!(!is_mutating(IntentAction::RequestControl));
         assert!(!is_mutating(IntentAction::ReleaseControl));
-    }
-
-    /// `is_control_plane` is `resume_task`-ONLY: every OS-affecting / reserved mutating
-    /// intent is NOT control-plane (so it can never complete-fake an OS effect). The
-    /// verified-approval → execute happy path itself (which must construct an operator
-    /// SIGNING key to play the offline operator) lives in `tests/r4s2_approval_execute.rs`
-    /// — the Hub crate source tree is forbidden from ever naming the operator's signing-key
-    /// type (the key-substitution defense, the `operator_vk` hub-never-references guard).
-    #[test]
-    fn is_control_plane_is_resume_task_only() {
-        assert!(is_control_plane(IntentAction::ResumeTask));
-        for a in [
-            IntentAction::LaunchApp,
-            IntentAction::CloseApp,
-            IntentAction::OpenUrl,
-            IntentAction::Open,
-            IntentAction::Focus,
-            IntentAction::ArrangeWindows,
-            IntentAction::ClipboardRead,
-            IntentAction::ClipboardWrite,
-            IntentAction::NotificationAct,
-            IntentAction::HandoffToBrowser,
-            IntentAction::HandoffToTerminal,
-            IntentAction::RecoverUi,
-            IntentAction::Approve,
-            IntentAction::Deny,
-        ] {
-            assert!(!is_control_plane(a), "{a:?} must NOT be control-plane");
-        }
     }
 }

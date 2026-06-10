@@ -13,7 +13,7 @@
 //!     system intent to Allow → execute (the Hub holds only the PUBLIC verify key —
 //!     it can never self-mint);
 //!   * single-use: a replay of the same approval is refused (the `consumed_approval`
-//!     nonce PK collision), so a control-plane op does NOT complete twice;
+//!     nonce PK collision), so an approved intent does NOT re-authorize twice;
 //!   * the DOWNGRADE defense: an HMAC-signed approval over the SAME canonical bytes
 //!     (what a self-minting Hub holding the symmetric secret would produce) is rejected;
 //!   * NEVER self-mintable: an Agent / Remote actor (the untrusted `OwnerKind`s this
@@ -22,9 +22,13 @@
 //!     reserved-action rule is decided before the signature is examined). The `Channel`
 //!     binding is a gate-LEVEL property (`OwnerKind` has no Channel variant, so it is not
 //!     representable here) and is covered by `friday-core::gate`'s own suite;
-//!   * the HONESTY split: a CONTROL-PLANE op (`resume_task`) completes; an OS-affecting
-//!     op (launch_app / recover_ui) stays `unavailable` even on a valid Allow — the OS
-//!     effect is NEVER faked-`completed`.
+//!   * the HONESTY posture: EVERY protected intent on a valid Allow — `resume_task`
+//!     (its `activeTask` pointer + `system.task.updated`/`system.intent.completed`
+//!     emissions are a deferred AC; `system.task.updated` is read back, so it is an
+//!     OBSERVABLE divergence) just as much as `launch_app` / `recover_ui` — stays
+//!     `unavailable` + `execution_deferred`. The approval AUTHORIZES the action and the
+//!     m0026 lease IS acquired, but the domain effect is NEVER faked-`completed`. There
+//!     is NO control-plane-completes path in this slice.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -79,8 +83,10 @@ fn input(intent_id: &str, action: IntentAction, actor: &str, kind: OwnerKind) ->
     }
 }
 
-/// `resume_task` (the unique control-plane / OS-free mutating intent). It requires a
-/// `target_ref` (the task value), which is bound into the canonical action digest.
+/// `resume_task` — a protected mutating intent whose domain effect (the `activeTask`
+/// pointer + the `system.task.updated`/`system.intent.completed` emissions) is a
+/// deferred AC, so on a valid Allow it stays `unavailable` like every other protected
+/// intent. It requires a `target_ref` (the task value), bound into the action digest.
 fn resume_task_input(id: &str, value: &str) -> IntentInput {
     let mut inp = input(id, IntentAction::ResumeTask, "api-1", OwnerKind::Api);
     inp.target_ref = Some(value.to_string());
@@ -136,11 +142,16 @@ fn enabled_ep() -> SystemIntentEntrypoint<UnavailableExecutor> {
     SystemIntentEntrypoint::with_execution_enabled(UnavailableExecutor)
 }
 
-/// THE HAPPY PATH: a control-plane intent (`resume_task`) + a valid operator Ed25519
-/// approval → Allow → `completed`, with the m0026 control-lease actually acquired and the
-/// approval-record decision = Allow. Exactly one nonce is consumed.
+/// THE HAPPY PATH (authorize, do not fake): `resume_task` + a valid operator Ed25519
+/// approval → Allow, with the m0026 control-lease actually acquired, the approval-record
+/// decision = Allow, and exactly one nonce consumed — BUT the result is `unavailable` +
+/// `execution_deferred`, NOT `completed`. The approval AUTHORIZES `resume_task`, but its
+/// domain effect (the `activeTask` pointer + the `system.task.updated` /
+/// `system.intent.completed` emissions, the former read back via `findLatestEventByName`,
+/// so an OBSERVABLE divergence) is a deferred AC — recording `completed` while performing
+/// none of those would be a faked-complete.
 #[test]
-fn control_plane_resume_task_with_valid_approval_completes() {
+fn resume_task_with_valid_approval_is_authorized_but_deferred_not_completed() {
     let db = Db::open_hub(&tmp("cp-happy")).unwrap();
     let ep = enabled_ep();
     let (sk, vk) = operator();
@@ -152,37 +163,36 @@ fn control_plane_resume_task_with_valid_approval_completes() {
         .unwrap();
     assert_eq!(
         outcome.result.status,
-        IntentStatus::Completed,
-        "an approved control-plane intent completes"
+        IntentStatus::Unavailable,
+        "an approved resume_task is authorized but its domain effect is deferred — never faked-completed"
     );
+    assert_ne!(outcome.result.status, IntentStatus::Completed);
     assert!(
-        !outcome.execution_deferred,
-        "a control-plane completion is not the deferred-OS seam"
+        outcome.execution_deferred,
+        "resume_task's domain effect is the deferred executor seam"
     );
-    // The completion message reflects the control-plane envelope, NOT a claim that the
-    // (deferred) in-memory activeTask domain state was set.
-    assert!(outcome
-        .result
-        .message
-        .contains("Control-plane intent approved"));
+    // The result message is the honest unimplemented marker — NOT a claim that activeTask
+    // was set or the events emitted.
+    assert_eq!(outcome.result.message, UNIMPLEMENTED_EXECUTION_MARKER);
     assert!(!outcome.result.message.contains("Active task set"));
-    // The m0026 lease was actually acquired (the control-plane DB op).
+    // The m0026 lease WAS actually acquired (the real, universal lease auto-acquire).
     let lease_id = outcome.result.control_lease_id.clone().unwrap();
     let lease = get_lease(db.conn(), &lease_id).unwrap().unwrap();
     assert_eq!(lease.owner_id, "api-1");
     assert!(lease.revoked_at.is_none(), "the lease is active");
-    // The approval-record proves the verified Allow.
+    // The approval-record proves the verified Allow (the approval WAS honored).
     let trail = list_approval_records(db.conn(), "i-rt").unwrap();
     assert_eq!(trail.len(), 1);
     assert_eq!(trail[0].decision, DecisionLabel::Allow);
     assert_eq!(trail[0].reason, "canonical_approval_granted");
+    // The nonce WAS consumed — the deferral is the executor's, not the gate's.
     assert_eq!(consumed_count(&db), 1);
     assert_eq!(
         get_intent_result(db.conn(), "i-rt")
             .unwrap()
             .unwrap()
             .status,
-        IntentStatus::Completed
+        IntentStatus::Unavailable
     );
 }
 
@@ -241,7 +251,7 @@ fn recover_ui_with_valid_approval_stays_unavailable_not_completed() {
 }
 
 /// Single-use: a second dispatch with the SAME approval is replay-refused (the nonce PK
-/// collision in consumed_approval), so the control-plane op does NOT complete twice.
+/// collision in consumed_approval), so the approval does NOT re-authorize a second time.
 #[test]
 fn replay_of_same_approval_is_refused_and_does_not_complete_twice() {
     let db = Db::open_hub(&tmp("replay")).unwrap();
@@ -250,11 +260,13 @@ fn replay_of_same_approval_is_refused_and_does_not_complete_twice() {
     let inp1 = resume_task_input("i-r1", "task_a");
     let approval = ed25519_approval(&inp1, &sk, "ap-replay", Some(FUTURE));
 
-    // First use: completes.
+    // First use: authorized (Allow) and the nonce is consumed; the domain effect is
+    // deferred, so the result is `unavailable` (NOT `completed`).
     let o1 = ep
         .dispatch_with_approval(db.conn(), &inp1, &approval, &vk, NOW)
         .unwrap();
-    assert_eq!(o1.result.status, IntentStatus::Completed);
+    assert_eq!(o1.result.status, IntentStatus::Unavailable);
+    assert!(o1.execution_deferred);
     assert_eq!(consumed_count(&db), 1);
 
     // Second use of the SAME approval nonce on a FRESH intent_id (same task value, so the
@@ -276,7 +288,7 @@ fn replay_of_same_approval_is_refused_and_does_not_complete_twice() {
 }
 
 /// THE DOWNGRADE DEFENSE: an HMAC-signed approval over the SAME canonical bytes is
-/// REJECTED for the protected control-plane action — it does NOT complete. Non-vacuous:
+/// REJECTED for the protected `resume_task` action — it does NOT authorize. Non-vacuous:
 /// the same intent with a real operator Ed25519 signature DOES complete.
 #[test]
 fn hmac_signed_approval_is_rejected_downgrade_defense() {
@@ -301,13 +313,18 @@ fn hmac_signed_approval_is_rejected_downgrade_defense() {
     );
     assert_eq!(consumed_count(&db), 0, "a rejected approval burns no nonce");
 
-    // Non-vacuous: the SAME intent, properly Ed25519-signed by the operator, completes.
+    // Non-vacuous: the SAME intent, properly Ed25519-signed by the operator, IS
+    // authorized (Allow) and consumes the nonce — its domain effect is deferred, so the
+    // result is `unavailable` (the Allow is real, distinguishing it from the HMAC block).
     let inp2 = resume_task_input("i-hmac2", "task_b");
     let good = ed25519_approval(&inp2, &sk, "ap-good", Some(FUTURE));
     let ok = ep
         .dispatch_with_approval(db.conn(), &inp2, &good, &vk, NOW)
         .unwrap();
-    assert_eq!(ok.result.status, IntentStatus::Completed);
+    assert_eq!(ok.result.status, IntentStatus::Unavailable);
+    assert!(ok.execution_deferred);
+    let trail = list_approval_records(db.conn(), "i-hmac2").unwrap();
+    assert_eq!(trail[0].decision, DecisionLabel::Allow);
     assert_eq!(consumed_count(&db), 1);
 }
 
@@ -371,7 +388,7 @@ fn digest_mismatch_approval_is_denied() {
     assert_eq!(consumed_count(&db), 0);
 }
 
-/// An EXPIRED approval is denied fail-closed — the control-plane op does not complete.
+/// An EXPIRED approval is denied fail-closed — `resume_task` is not authorized at all.
 #[test]
 fn expired_approval_is_denied_fail_closed() {
     let db = Db::open_hub(&tmp("expired")).unwrap();
