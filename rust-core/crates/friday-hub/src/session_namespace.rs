@@ -29,20 +29,35 @@
 //! `user_id` (or an empty one) CANNOT produce a namespace, so its extraction FAILS CLOSED
 //! — it is never silently bound to a default/anonymous scope.
 //!
-//! ## Deferred-parity gaps (HONEST — documented, not implemented this slice)
-//! The TS `resolveEffectiveUserId` resolves the userId in THREE ways:
-//!   1. `session.userId` directly — **ported here**.
-//!   2. (DM conversation) fall back to the `chatId` when `chatKind == "dm"` — **DEFERRED**.
-//!   3. (subagent) walk the parent-session chain to find a userId — **DEFERRED**.
-//! The Rust `agent_session` does not yet model `chatKind` / `chatId` / `parentSession`, so
-//! cases (2) and (3) are not representable here. Until a follow-on slice adds those axes, a
-//! session whose userId would ONLY have been resolvable via the DM-chatId fallback or the
-//! subagent parent-walk will FAIL CLOSED here rather than resolve — which is the
-//! conservative direction (no wrong-scope binding), but is a real parity gap vs the TS.
+//! ## Effective-userId fallbacks (owner-wiring lane — now PORTED)
+//! The TS `resolveEffectiveUserId` resolves the userId in THREE ways, all now ported:
+//!   1. `session.userId` directly — slice-3.
+//!   2. (DM conversation) fall back to the `chatId` when `chatKind == "dm"` —
+//!      [`resolve_effective_user_id`]. The Rust `agent_session` now models `chat_kind` /
+//!      `chat_id` (v23 additive columns); a NON-subagent session with `chat_kind == "dm"`
+//!      and a non-empty `chat_id` resolves to that `chat_id`.
+//!   3. (subagent) walk the parent-session chain (`parent_session_id`, v23) to the nearest
+//!      ancestor with a userId (or a DM-conversation ancestor's `chat_id`) —
+//!      [`resolve_effective_user_id`], cycle-safe via a visited set like the TS.
+//! Both fallbacks are DETERMINISTIC and FAIL CLOSED when underivable (missing chat_id,
+//! unknown/other chat_kind, dangling parent link, exhausted/cyclic chain → no namespace,
+//! never a guessed/default scope).
 //!
-//! Truth label: byte-identical namespace + normalization port for the DIRECT-userId case;
-//! DM-chatId + subagent parent-walk userId fallbacks are DEFERRED-PARITY. PROOF-ONLY —
-//! NOT a v1 GO; the TS extraction path stays LIVE pending full parity.
+//! HONEST mapping note (Rust vs TS representation, not a semantic change): TS derives the
+//! conversation/subagent KIND and the parent link from the structured session KEY
+//! (`parseFridaySessionKey`); the Rust `agent_session_id` is opaque, so the Rust port
+//! carries those axes as explicit columns — `parent_session_id IS NOT NULL` ⇔ the TS
+//! `kind == "subagent"`, and the parent link is the TS `session.parentSessionKey` leg of
+//! its `parentSessionKey ?? parts.parentKey` (there is no key-embedded parent to fall back
+//! to, so a missing link ends the walk fail-closed).
+//!
+//! Truth label: byte-identical namespace + normalization port; DM-chatId + subagent
+//! parent-walk userId fallbacks ported (column-modeled). This improves PARITY only — it
+//! does NOT flip any TS-retirement state; the TS extraction path stays LIVE. PROOF-ONLY —
+//! NOT a v1 GO.
+
+use friday_storage::agent_session::SessionOwner;
+use friday_storage::StorageError;
 
 /// Namespace segment constants — ported from `src/sessions/friday-session.constants.ts`
 /// (`FRIDAY_SESSION_MEMORY_NAMESPACE_*_SEGMENT`).
@@ -124,6 +139,100 @@ pub fn resolve_session_memory_namespace(
         SHARED_SEGMENT,
     ]
     .join("."))
+}
+
+/// Resolve the EFFECTIVE userId for a session — the faithful port of the TS
+/// `resolveEffectiveUserId` (owner-wiring lane; closes the slice-3 deferred-parity gap):
+///
+/// 1. **Direct**: `owner.user_id` (JS-falsy: an empty string counts as absent).
+/// 2. **DM-chatId fallback**: a NON-subagent (conversation-analog: `parent_session_id`
+///    is `None`) session with `chat_kind == "dm"` resolves to its `chat_id`. The TS
+///    condition is `parts.kind === "conversation" && session.chatKind === "dm"` →
+///    `parts.chatId`; the Rust port keys on the explicit v23 columns. A DM with no
+///    stored `chat_id` is UNDERIVABLE → `None` (fail-closed, no guessing).
+/// 3. **Subagent parent-walk**: a subagent (`parent_session_id` is `Some`) walks its
+///    parent chain via `lookup`, returning the FIRST ancestor `user_id` — or, for a
+///    conversation-analog DM ancestor, its `chat_id` — exactly like the TS walk.
+///    Cycle-safe via a visited set (TS `visited`); a dangling link (`lookup` → `None`)
+///    ends the walk (TS `if (!parentSession) break`). Exhausted chain → `None`.
+///
+/// DETERMINISTIC: the result depends only on the stored owner rows reachable through
+/// `lookup`. FAIL-CLOSED: every underivable shape returns `Ok(None)` (the caller's
+/// namespace resolution then fails closed); a `lookup` STORAGE error PROPAGATES (it is
+/// never swallowed as "no parent", which could silently widen to fail-open elsewhere).
+pub fn resolve_effective_user_id<F>(
+    owner: &SessionOwner,
+    lookup: &mut F,
+) -> Result<Option<String>, StorageError>
+where
+    F: FnMut(&str) -> Result<Option<SessionOwner>, StorageError>,
+{
+    // 1. Direct userId (TS `if (session.userId) return session.userId`).
+    if let Some(u) = non_empty(owner.user_id.as_deref()) {
+        return Ok(Some(u.to_string()));
+    }
+
+    // The Rust kind mapping: `parent_session_id IS NOT NULL` ⇔ TS `parts.kind ==
+    // "subagent"`; otherwise the session is the conversation analog.
+    let is_subagent = non_empty(owner.parent_session_id.as_deref()).is_some();
+
+    // 2. DM-chatId fallback (TS `parts.kind === "conversation" && chatKind === "dm"`).
+    //    EXACT `"dm"` match only — any other / unknown kind gets no fallback. A subagent
+    //    session NEVER uses its own chat axes here (TS: its parts.kind is "subagent").
+    if !is_subagent && is_dm(owner) {
+        if let Some(c) = non_empty(owner.chat_id.as_deref()) {
+            return Ok(Some(c.to_string()));
+        }
+        // DM with no stored chat_id: underivable → fail closed (the TS key always carries
+        // a chatId segment; the Rust column may be NULL — we never substitute a default).
+        return Ok(None);
+    }
+
+    // 3. Subagent parent-walk (TS `parts.kind === "subagent" && sessionLookup`).
+    if is_subagent {
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut current = owner.parent_session_id.clone();
+        while let Some(key) = current {
+            // Cycle guard (TS `visited`): a revisited key ends the walk fail-closed.
+            if !visited.insert(key.clone()) {
+                break;
+            }
+            // Dangling soft link: no such session → walk ends (TS `if (!parent) break`).
+            let parent = match lookup(&key)? {
+                Some(p) => p,
+                None => break,
+            };
+            if let Some(u) = non_empty(parent.user_id.as_deref()) {
+                return Ok(Some(u.to_string()));
+            }
+            // A conversation-analog DM ancestor resolves to its chat_id (TS
+            // `parentParts.kind === "conversation" && parent.chatKind === "dm"`).
+            let parent_is_subagent = non_empty(parent.parent_session_id.as_deref()).is_some();
+            if !parent_is_subagent && is_dm(&parent) {
+                if let Some(c) = non_empty(parent.chat_id.as_deref()) {
+                    return Ok(Some(c.to_string()));
+                }
+            }
+            // Move up (TS `currentKey = parent.parentSessionKey ?? parentParts.parentKey`;
+            // the Rust column is the only modeled link — None ends the walk fail-closed).
+            current = parent.parent_session_id;
+        }
+    }
+
+    Ok(None)
+}
+
+/// Exact-match TS `chatKind === "dm"` (case-sensitive; the TS type is a literal union).
+fn is_dm(owner: &SessionOwner) -> bool {
+    owner.chat_kind.as_deref() == Some("dm")
+}
+
+/// `Some` only for a present, non-empty value (JS-falsy parity for `""`).
+fn non_empty(v: Option<&str>) -> Option<&str> {
+    match v {
+        Some(s) if !s.is_empty() => Some(s),
+        _ => None,
+    }
 }
 
 /// The JS `value || fallback` semantics: a `None` or empty-string value takes the
@@ -269,8 +378,9 @@ mod tests {
     #[test]
     fn fails_closed_when_no_user_id() {
         // TS throws MEMORY_NAMESPACE_UNRESOLVABLE; we return the typed error. This is the
-        // parity for the "no userId, not DM" case (and — since DM/subagent fallbacks are
-        // DEFERRED here — also covers what TS would have resolved via those paths).
+        // parity for the "no userId available" case (the DM/subagent fallbacks — now
+        // ported in `resolve_effective_user_id` — run BEFORE this resolver; when they
+        // also derive nothing, this is the fail-closed end state).
         assert_eq!(
             resolve_session_memory_namespace(Some("default"), Some("discord"), None),
             Err(NamespaceError::UnresolvableNoUserId)
@@ -394,5 +504,162 @@ mod tests {
         let msg = NamespaceError::UnresolvableNoUserId.to_string();
         assert!(msg.contains("unresolvable"));
         assert!(!msg.contains("Bearer"));
+    }
+
+    // ─── resolve_effective_user_id (the TS resolveEffectiveUserId port) ───
+
+    fn owner(
+        user_id: Option<&str>,
+        chat_kind: Option<&str>,
+        chat_id: Option<&str>,
+        parent: Option<&str>,
+    ) -> SessionOwner {
+        SessionOwner {
+            account_id: Some("default".into()),
+            channel: Some("telegram".into()),
+            user_id: user_id.map(str::to_string),
+            chat_kind: chat_kind.map(str::to_string),
+            chat_id: chat_id.map(str::to_string),
+            parent_session_id: parent.map(str::to_string),
+        }
+    }
+
+    /// A lookup over a fixed in-memory map (the TS `sessionLookup` analog).
+    fn map_lookup<'a>(
+        entries: &'a [(&'a str, SessionOwner)],
+    ) -> impl FnMut(&str) -> Result<Option<SessionOwner>, StorageError> + 'a {
+        move |key: &str| {
+            Ok(entries
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.clone()))
+        }
+    }
+
+    /// A lookup that PANICS if called — proves the direct/DM paths never walk.
+    fn no_lookup(key: &str) -> Result<Option<SessionOwner>, StorageError> {
+        panic!("lookup must not be called, got key {key}");
+    }
+
+    #[test]
+    fn effective_user_direct_user_id_wins_without_lookup() {
+        // TS case 1: session.userId returns immediately (no key parse, no walk).
+        let o = owner(Some("alice"), Some("dm"), Some("chat-1"), None);
+        let got = resolve_effective_user_id(&o, &mut no_lookup).unwrap();
+        assert_eq!(got.as_deref(), Some("alice"));
+        // JS-falsy parity: an EMPTY user_id is absent, so the DM fallback applies instead.
+        let o = owner(Some(""), Some("dm"), Some("chat-1"), None);
+        let got = resolve_effective_user_id(&o, &mut no_lookup).unwrap();
+        assert_eq!(got.as_deref(), Some("chat-1"));
+    }
+
+    #[test]
+    fn effective_user_dm_falls_back_to_chat_id_only_for_exact_dm_kind() {
+        // TS case 2: conversation + chatKind === "dm" → chatId.
+        let dm = owner(None, Some("dm"), Some("chat-77"), None);
+        assert_eq!(
+            resolve_effective_user_id(&dm, &mut no_lookup)
+                .unwrap()
+                .as_deref(),
+            Some("chat-77")
+        );
+        // A NON-dm kind gets NO fallback (group/channel/thread chats are multi-user —
+        // attributing them to the chat id would merge users into one scope).
+        for kind in ["group", "channel", "thread"] {
+            let o = owner(None, Some(kind), Some("chat-77"), None);
+            assert_eq!(resolve_effective_user_id(&o, &mut no_lookup).unwrap(), None);
+        }
+        // Unknown/absent kind: fail closed too.
+        let o = owner(None, None, Some("chat-77"), None);
+        assert_eq!(resolve_effective_user_id(&o, &mut no_lookup).unwrap(), None);
+        // DM with NO stored chat_id is UNDERIVABLE → fail closed (no guessing).
+        let o = owner(None, Some("dm"), None, None);
+        assert_eq!(resolve_effective_user_id(&o, &mut no_lookup).unwrap(), None);
+    }
+
+    #[test]
+    fn effective_user_subagent_walks_to_parent_user_id() {
+        // TS case 3: subagent → nearest ancestor userId. One hop...
+        let entries = [("p1", owner(Some("alice"), None, None, None))];
+        let child = owner(None, None, None, Some("p1"));
+        let got = resolve_effective_user_id(&child, &mut map_lookup(&entries)).unwrap();
+        assert_eq!(got.as_deref(), Some("alice"));
+
+        // ...and multi-hop through a userId-less intermediate subagent.
+        let entries = [
+            ("mid", owner(None, None, None, Some("root"))),
+            ("root", owner(Some("bob"), None, None, None)),
+        ];
+        let child = owner(None, None, None, Some("mid"));
+        let got = resolve_effective_user_id(&child, &mut map_lookup(&entries)).unwrap();
+        assert_eq!(got.as_deref(), Some("bob"));
+    }
+
+    #[test]
+    fn effective_user_subagent_resolves_via_dm_conversation_ancestor() {
+        // TS: a conversation-DM PARENT without a userId resolves to ITS chatId.
+        let entries = [("p1", owner(None, Some("dm"), Some("chat-9"), None))];
+        let child = owner(None, None, None, Some("p1"));
+        let got = resolve_effective_user_id(&child, &mut map_lookup(&entries)).unwrap();
+        assert_eq!(got.as_deref(), Some("chat-9"));
+    }
+
+    #[test]
+    fn effective_user_subagent_own_dm_axes_are_not_used() {
+        // A SUBAGENT session never uses its own chat axes (TS: its parts.kind is
+        // "subagent", not "conversation") — the walk decides, and here it finds nothing.
+        let entries = [("p1", owner(None, None, None, None))];
+        let child = owner(None, Some("dm"), Some("chat-self"), Some("p1"));
+        let got = resolve_effective_user_id(&child, &mut map_lookup(&entries)).unwrap();
+        assert_eq!(got, None, "subagent must not DM-resolve from its own axes");
+    }
+
+    #[test]
+    fn effective_user_walk_fails_closed_on_dangling_missing_or_cyclic_chain() {
+        // Dangling parent link (no such session): fail closed.
+        let child = owner(None, None, None, Some("ghost"));
+        assert_eq!(
+            resolve_effective_user_id(&child, &mut map_lookup(&[])).unwrap(),
+            None
+        );
+        // Exhausted chain (ancestors exist but none derivable): fail closed.
+        let entries = [
+            ("p1", owner(None, Some("group"), Some("g-1"), Some("p2"))),
+            ("p2", owner(None, None, None, None)),
+        ];
+        let child = owner(None, None, None, Some("p1"));
+        assert_eq!(
+            resolve_effective_user_id(&child, &mut map_lookup(&entries)).unwrap(),
+            None
+        );
+        // CYCLE (p1 -> p2 -> p1): the visited set terminates the walk, fail closed.
+        let entries = [
+            ("p1", owner(None, None, None, Some("p2"))),
+            ("p2", owner(None, None, None, Some("p1"))),
+        ];
+        let child = owner(None, None, None, Some("p1"));
+        assert_eq!(
+            resolve_effective_user_id(&child, &mut map_lookup(&entries)).unwrap(),
+            None
+        );
+        // SELF-cycle (a session whose parent is itself — pathological but storable).
+        let entries = [("s", owner(None, None, None, Some("s")))];
+        let child = owner(None, None, None, Some("s"));
+        assert_eq!(
+            resolve_effective_user_id(&child, &mut map_lookup(&entries)).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn effective_user_lookup_error_propagates_not_swallowed() {
+        // A STORAGE error during the walk must propagate (never be treated as "no
+        // parent" — that would mis-report a locked/corrupt DB as an unresolvable
+        // namespace downstream, the same discipline as load_session_owner's .optional()).
+        let child = owner(None, None, None, Some("p1"));
+        let mut failing = |_key: &str| -> Result<Option<SessionOwner>, StorageError> {
+            Err(StorageError::Unsupported("disk on fire".into()))
+        };
+        assert!(resolve_effective_user_id(&child, &mut failing).is_err());
     }
 }

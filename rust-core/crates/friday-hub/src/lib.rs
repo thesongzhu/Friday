@@ -2602,6 +2602,27 @@ pub fn run_loop_with_policy(
 /// A non-`Finished` outcome still records the `user` turn (the operator asked it) but
 /// no `assistant` answer (there is none). Single-shot runs that never call this keep
 /// using [`run_loop`] / [`run_loop_with_policy`] unchanged — no session row is touched.
+///
+/// ## Owner-wiring (session-memory/D1 parity)
+/// * `session_owner`: `Some(owner)` BINDS the session's owner axes at creation via
+///   [`friday_storage::ensure_session_with_owner`] (idempotent; an already-bound owner
+///   is never clobbered, a NULL axis can be backfilled) — this is what makes a
+///   loop-created session's memory namespace RESOLVABLE for the Rust inline extraction.
+///   `None` keeps the owner-less [`friday_storage::ensure_session`] exactly as before
+///   (the session carries NULL owner axes and extraction fails closed — unchanged).
+/// * A `Finished` outcome now PERSISTS the run's answer Hub-side
+///   ([`friday_storage::persist_run_result`]) with the run's BOUND OWNER principal
+///   (`policy.principal_id()`) recorded as `owner_principal` — the same D1 owner-wiring
+///   [`HubRuntime::run_task`] got in #587 — so the authenticated body projection
+///   ([`friday_storage::get_run_answer_for_principal`]) releases a sessioned run's
+///   answer ONLY to that owner. A run with NO bound principal records NO owner ⇒ the
+///   body stays unreadable to everyone (fail-closed, correct). Persist happens ONLY on
+///   `Finished`: a `Paused` run's `run_result` slot belongs to the resume completion
+///   leg ([`crate::resume`]), and `Errored`/`Bounded`/`Blocked` carry no deliverable
+///   answer (mirrors `run_task`).
+///
+/// Truth label: parity wiring inside the Rust loop (dev-bridge/test-provable). It does
+/// NOT flip any TS-retirement state and is NOT a v1 GO.
 #[allow(clippy::too_many_arguments)]
 pub fn run_session_loop(
     client: &dyn AgentLlmClient,
@@ -2609,6 +2630,7 @@ pub fn run_session_loop(
     conn: &Connection,
     run_id: &str,
     session_id: &str,
+    session_owner: Option<&friday_storage::SessionOwner>,
     task: &str,
     recall_preamble: &str,
     operator_vk: Option<&OperatorVerifyingKey>,
@@ -2618,8 +2640,13 @@ pub fn run_session_loop(
     now_ms: i64,
 ) -> Result<LoopOutcome, StorageError> {
     // 1. Ensure the session exists and LOAD its prior turns BEFORE persisting the
-    //    current task (so the task is never folded into its own preamble).
-    friday_storage::ensure_session(conn, session_id, now_ms)?;
+    //    current task (so the task is never folded into its own preamble). With a
+    //    supplied owner the session is created OWNED (or a NULL axis backfilled);
+    //    without one the owner-less ensure keeps the pre-wiring behavior bit-for-bit.
+    match session_owner {
+        Some(owner) => friday_storage::ensure_session_with_owner(conn, session_id, owner, now_ms)?,
+        None => friday_storage::ensure_session(conn, session_id, now_ms)?,
+    }
     let prior = friday_storage::load_session_messages(conn, session_id)?;
 
     // 2. Fold the BOUNDED prior-session history AHEAD of the recall preamble. The loop
@@ -2661,6 +2688,27 @@ pub fn run_session_loop(
                 now_ms,
             )?;
         }
+    }
+
+    // 5. D1 OWNER-WIRING (the run_task #587 parity for the sessioned path): a FINISHED
+    //    run produced a deliverable ANSWER; persist it Hub-side keyed by `run_id` with
+    //    the run's BOUND OWNER principal recorded (`policy.principal_id()` — the SAME
+    //    principal the gate Actor binds), so `get_run_answer_for_principal` releases the
+    //    body ONLY to that owner. No bound principal ⇒ NO owner recorded ⇒ the body
+    //    stays unreadable to everyone (fail-closed). Persist ONLY on `Finished` —
+    //    `Paused` belongs to the resume completion leg, and the other outcomes carry no
+    //    deliverable answer (mirrors `run_task`). A fresh `run_id` cannot already hold a
+    //    result, so a persist conflict here signals a real bug and is propagated.
+    if outcome.status == LoopStatus::Finished {
+        let mut result = friday_storage::RunResult::new(
+            "finished",
+            outcome.final_message.clone().unwrap_or_default(),
+            None,
+        );
+        if let Some(principal) = policy.principal_id() {
+            result = result.with_owner_principal(principal);
+        }
+        friday_storage::persist_run_result(conn, run_id, &result, now_ms)?;
     }
 
     // Refs-only session outcome event: the session id + the new message COUNT, never
@@ -5553,6 +5601,7 @@ mod tests {
             db.conn(),
             "r1",
             "sess-1",
+            None,
             "what number did I ask you to remember",
             "",
             None,
@@ -5619,6 +5668,7 @@ mod tests {
             db.conn(),
             "r1",
             "sess-x",
+            None,
             "remember my budget is 500",
             "",
             None,
@@ -5643,6 +5693,7 @@ mod tests {
             db.conn(),
             "r2",
             "sess-x",
+            None,
             "what is my budget",
             "",
             None,
@@ -5737,6 +5788,7 @@ mod tests {
             db.conn(),
             "r1",
             "big",
+            None,
             "summarize",
             "",
             None,
@@ -5753,6 +5805,281 @@ mod tests {
             "oversized session history must be bounded in the prompt, got {zcount}"
         );
         assert!(prompts[0].contains(SESSION_HISTORY_OMISSION_MARKER));
+    }
+
+    // ---- owner-wiring (D1 #587 parity for the sessioned path) -----------------
+
+    /// A sessioned run bound to principal P persists its answer with
+    /// `owner_principal == P`: the authenticated body projection Grants the body to P
+    /// and fail-closed-denies everyone else (mismatch / anonymous). The refs-only
+    /// projection stays body-free.
+    #[test]
+    fn sessioned_finished_run_answer_releasable_only_to_bound_owner() {
+        use friday_storage::{AnswerDenyReason, RunAnswerAccess};
+        let root = TempDir::new("s5-owner");
+        let db = Db::open_hub(&temp_path("s5-owner")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "what is the answer", 10).unwrap();
+        let client = CapturingAgentLlmClient::new(vec![AgentStep::Finish {
+            message: "the answer is 47".into(),
+        }]);
+        let ex = FsToolExecutor::new(&root.0);
+        let policy = RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), false);
+        let out = run_session_loop(
+            &client,
+            &ex,
+            db.conn(),
+            "r1",
+            "sess-owned",
+            None,
+            "what is the answer",
+            "",
+            None,
+            &no_approval(),
+            &policy,
+            5,
+            10,
+        )
+        .unwrap();
+        assert_eq!(out.status, LoopStatus::Finished);
+
+        // The OWNER reads the body back (Granted), with the recorded owner principal.
+        match friday_storage::get_run_answer_for_principal(db.conn(), "r1", "alice").unwrap() {
+            RunAnswerAccess::Granted(stored) => {
+                assert_eq!(stored.answer, "the answer is 47");
+                assert_eq!(stored.status, "finished");
+                assert_eq!(stored.owner_principal.as_deref(), Some("alice"));
+            }
+            other => panic!("owner must be Granted the body, got {other:?}"),
+        }
+        // A NON-owner principal is denied (body withheld).
+        assert_eq!(
+            friday_storage::get_run_answer_for_principal(db.conn(), "r1", "mallory").unwrap(),
+            RunAnswerAccess::Denied(AnswerDenyReason::PrincipalMismatch)
+        );
+        // An anonymous / public caller never reads a body.
+        for anon in ["", "public", "public:default"] {
+            assert_eq!(
+                friday_storage::get_run_answer_for_principal(db.conn(), "r1", anon).unwrap(),
+                RunAnswerAccess::Denied(AnswerDenyReason::AnonymousCaller),
+                "anonymous caller {anon:?} must be denied"
+            );
+        }
+        // The refs-only proof projection is unchanged: fingerprint, never the body.
+        let r = friday_storage::get_run_result_ref(db.conn(), "r1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(r.answer_len, "the answer is 47".len() as i64);
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
+    }
+
+    /// A sessioned run with NO bound principal records NO owner — its persisted answer
+    /// body is unreadable by EVERYONE (fail-closed; same as an ownerless legacy row).
+    #[test]
+    fn sessioned_run_without_principal_persists_ownerless_fail_closed_result() {
+        use friday_storage::{AnswerDenyReason, RunAnswerAccess};
+        let root = TempDir::new("s5-noowner");
+        let db = Db::open_hub(&temp_path("s5-noowner")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "say hi", 10).unwrap();
+        let client = CapturingAgentLlmClient::new(vec![AgentStep::Finish {
+            message: "hi".into(),
+        }]);
+        let ex = FsToolExecutor::new(&root.0);
+        let out = run_session_loop(
+            &client,
+            &ex,
+            db.conn(),
+            "r1",
+            "sess-anon",
+            None,
+            "say hi",
+            "",
+            None,
+            &no_approval(),
+            &RunPolicy::default(), // no principal bound
+            5,
+            10,
+        )
+        .unwrap();
+        assert_eq!(out.status, LoopStatus::Finished);
+        // The result IS persisted (the answer store has the row)...
+        let stored = friday_storage::get_run_result(db.conn(), "r1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.owner_principal, None, "no principal ⇒ no owner");
+        // ...but the body is releasable to NO ONE — not even a real principal.
+        for caller in ["alice", "mallory", ""] {
+            assert_eq!(
+                friday_storage::get_run_answer_for_principal(db.conn(), "r1", caller).unwrap(),
+                RunAnswerAccess::Denied(AnswerDenyReason::NoOwnerPrincipal),
+                "ownerless row must deny caller {caller:?}"
+            );
+        }
+    }
+
+    /// A NON-Finished sessioned outcome persists NO run_result: the Paused run's
+    /// `run_result` slot belongs to the resume completion leg (collision discipline,
+    /// mirrors `run_task`). The user turn is still recorded for the session.
+    #[test]
+    fn paused_sessioned_run_persists_no_run_result() {
+        let root = TempDir::new("s5-paused");
+        let db = Db::open_hub(&temp_path("s5-paused")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "delete the old backup db", 10).unwrap();
+        let client = CapturingAgentLlmClient::new(vec![AgentStep::Tool(raw(
+            "delete_file",
+            &[("path", "backups/old.db")],
+        ))]);
+        let ex = FsToolExecutor::new(&root.0);
+        let policy = RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), false);
+        let out = run_session_loop(
+            &client,
+            &ex,
+            db.conn(),
+            "r1",
+            "sess-paused",
+            None,
+            "delete the old backup db",
+            "",
+            None,
+            &no_approval(),
+            &policy,
+            5,
+            10,
+        )
+        .unwrap();
+        assert_eq!(
+            out.status,
+            LoopStatus::Paused,
+            "mutation w/o approval pauses"
+        );
+        assert_eq!(
+            friday_storage::get_run_result(db.conn(), "r1").unwrap(),
+            None,
+            "a paused run must leave its run_result slot to the resume leg"
+        );
+        // The session still recorded the user turn (the operator asked it).
+        assert_eq!(
+            friday_storage::session_message_count(db.conn(), "sess-paused").unwrap(),
+            1
+        );
+    }
+
+    /// `session_owner: Some(..)` BINDS the session's owner axes at creation, making the
+    /// memory namespace RESOLVABLE for the Rust inline extraction — and a later
+    /// owner-less run on the same session does not clobber the bound owner.
+    #[test]
+    fn session_loop_binds_supplied_owner_and_namespace_resolves() {
+        let root = TempDir::new("s5-bind");
+        let db = Db::open_hub(&temp_path("s5-bind")).unwrap();
+        let ex = FsToolExecutor::new(&root.0);
+        let owner = friday_storage::SessionOwner {
+            account_id: Some("default".into()),
+            channel: Some("discord".into()),
+            user_id: Some("alice".into()),
+            ..Default::default()
+        };
+        agent_run::create_run(db.conn(), "r1", "remember 47", 10).unwrap();
+        let c1 = CapturingAgentLlmClient::new(vec![AgentStep::Finish {
+            message: "noted".into(),
+        }]);
+        run_session_loop(
+            &c1,
+            &ex,
+            db.conn(),
+            "r1",
+            "sess-bound",
+            Some(&owner),
+            "remember 47",
+            "",
+            None,
+            &no_approval(),
+            &RunPolicy::default(),
+            5,
+            10,
+        )
+        .unwrap();
+        // The session was created OWNED...
+        let back = friday_storage::load_session_owner(db.conn(), "sess-bound")
+            .unwrap()
+            .unwrap();
+        assert_eq!(back.user_id.as_deref(), Some("alice"));
+        // ...and its memory namespace resolves (the extraction fail-closed gate opens).
+        let ns = crate::session_namespace::resolve_session_memory_namespace(
+            back.account_id.as_deref(),
+            back.channel.as_deref(),
+            back.user_id.as_deref(),
+        )
+        .unwrap();
+        assert_eq!(ns, "tenant.default.channel.discord.user.alice.shared");
+
+        // A second, owner-less run on the SAME session keeps the bound owner (no clobber).
+        agent_run::create_run(db.conn(), "r2", "and now?", 20).unwrap();
+        let c2 = CapturingAgentLlmClient::new(vec![AgentStep::Finish {
+            message: "still noted".into(),
+        }]);
+        run_session_loop(
+            &c2,
+            &ex,
+            db.conn(),
+            "r2",
+            "sess-bound",
+            None,
+            "and now?",
+            "",
+            None,
+            &no_approval(),
+            &RunPolicy::default(),
+            5,
+            20,
+        )
+        .unwrap();
+        let back = friday_storage::load_session_owner(db.conn(), "sess-bound")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            back.user_id.as_deref(),
+            Some("alice"),
+            "owner-less re-run must not erase the bound owner"
+        );
+    }
+
+    /// `session_owner: None` keeps the pre-wiring behavior bit-for-bit: the session
+    /// carries NULL owner axes (extraction stays fail-closed for it).
+    #[test]
+    fn session_loop_without_owner_creates_unowned_session_unchanged() {
+        let root = TempDir::new("s5-unowned");
+        let db = Db::open_hub(&temp_path("s5-unowned")).unwrap();
+        let ex = FsToolExecutor::new(&root.0);
+        agent_run::create_run(db.conn(), "r1", "hello", 10).unwrap();
+        let client = CapturingAgentLlmClient::new(vec![AgentStep::Finish {
+            message: "hi".into(),
+        }]);
+        run_session_loop(
+            &client,
+            &ex,
+            db.conn(),
+            "r1",
+            "sess-null",
+            None,
+            "hello",
+            "",
+            None,
+            &no_approval(),
+            &RunPolicy::default(),
+            5,
+            10,
+        )
+        .unwrap();
+        let back = friday_storage::load_session_owner(db.conn(), "sess-null")
+            .unwrap()
+            .unwrap();
+        assert_eq!(back, friday_storage::SessionOwner::default());
+        // The namespace stays UNRESOLVABLE — fail-closed, exactly as before this lane.
+        assert!(crate::session_namespace::resolve_session_memory_namespace(
+            back.account_id.as_deref(),
+            back.channel.as_deref(),
+            back.user_id.as_deref(),
+        )
+        .is_err());
     }
 }
 

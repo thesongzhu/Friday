@@ -325,6 +325,21 @@ pub fn hub_migrations() -> Vec<Migration> {
             destructive: false,
             up: m0022_workflow_definition,
         },
+        // Owner-wiring follow-on to v21 (session-memory DM/subagent userId fallbacks): add
+        // the CONVERSATION axes (`chat_kind`, `chat_id`, `parent_session_id`) the TS
+        // `resolveEffectiveUserId` derives a fallback userId from — (DM) a `chatKind ==
+        // "dm"` conversation falls back to its `chatId`; (subagent) a child session walks
+        // its parent chain to the nearest userId. All three columns are NULLABLE additive
+        // `ALTER`s: every existing v22 row reads back NULL, which simply means "no fallback
+        // available" — namespace resolution for such a session stays exactly as fail-closed
+        // as before (NULL `user_id` + no derivable fallback ⇒ MEMORY_NAMESPACE_UNRESOLVABLE
+        // parity). Purely additive — touches no other table. Hub-only table.
+        Migration {
+            version: 23,
+            name: "agent_session_conversation_axes",
+            destructive: false,
+            up: m0023_agent_session_conversation_axes,
+        },
     ]
 }
 
@@ -1479,4 +1494,28 @@ fn m0021_agent_session_owner(tx: &Transaction) -> rusqlite::Result<()> {
 // so pre-existing rows and every existing query are unaffected.
 fn m0022_workflow_definition(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(DDL_WORKFLOW_DEFINITION)
+}
+
+// Owner-wiring (session-memory DM/subagent userId-fallback parity): additive NULLABLE
+// conversation axes on the Hub-only `agent_session` table, mirroring the TS
+// `FridaySessionRecord` fields the `resolveEffectiveUserId` fallbacks key on:
+//   * `chat_kind`  — the TS `chatKind` ("dm" | "group" | "channel" | "thread"). Only the
+//     exact value 'dm' enables the DM-chatId fallback; the CHECK admits NULL or the full
+//     TS vocabulary so an unknown kind cannot be smuggled in to LOOK like a DM. NULL ⇒
+//     kind unknown ⇒ no DM fallback (fail-closed).
+//   * `chat_id`    — the TS conversation `chatId` (for a DM chat this is the user-bound
+//     chat identity the fallback resolves to).
+//   * `parent_session_id` — the TS `parentSessionKey`: a SUBAGENT session's link to its
+//     parent `agent_session_id`, walked (cycle-safe, fail-closed on a missing link) to
+//     find the nearest ancestor userId. Soft link (no FK) per the `*_ref` convention —
+//     a dangling parent fails the walk closed rather than rejecting the row.
+// Every existing v22 row reads back NULL for all three ⇒ no fallback available ⇒ namespace
+// resolution stays exactly as fail-closed as v21 (never a silently-broadened scope).
+fn m0023_agent_session_conversation_axes(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "ALTER TABLE agent_session ADD COLUMN chat_kind TEXT
+            CHECK(chat_kind IS NULL OR chat_kind IN ('dm', 'group', 'channel', 'thread'));
+         ALTER TABLE agent_session ADD COLUMN chat_id TEXT;
+         ALTER TABLE agent_session ADD COLUMN parent_session_id TEXT;",
+    )
 }
