@@ -284,6 +284,8 @@ mod tests {
             answer: "THE-SECRET-BODY".into(),
             answer_sha256: "00".repeat(32),
             answer_len: 15,
+            turns: Some(2),
+            executed_tools: Some(1),
         };
         let mut payload = answer.proof_refs_json();
         let obj = payload.as_object_mut().unwrap();

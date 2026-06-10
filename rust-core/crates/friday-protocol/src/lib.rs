@@ -903,6 +903,32 @@ pub enum Message {
         /// ref/fingerprint — never the body bytes.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         answer_len: Option<u64>,
+        /// (A1 transport-truth) REFS-surface run METADATA: the count of model turns
+        /// the loop took (`LoopOutcome::turns`). A COUNT only — never a turn body /
+        /// message / param. ADDITIVE + OPTIONAL: an OLD server omits it (deserializes
+        /// to `None` on a new client via `#[serde(default)]`); a NEW server's value is
+        /// ignored by an old client (serde ignores unknown fields — `Message` is not
+        /// `deny_unknown_fields`). `None` ⇒ byte-identical to the pre-A1 wire.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turns: Option<u64>,
+        /// (A1) REFS-surface run METADATA: the count of tools that actually executed
+        /// (gate `Allow` + executor `Ok`; `LoopOutcome::executed_tools`). A COUNT only
+        /// — NEVER a tool name / args / receipt. Same additive/optional/byte-identical
+        /// discipline as `turns`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        executed_tools: Option<u64>,
+        /// (A1) REFS-surface run METADATA: prompt-token total for the run, when known.
+        /// A COUNT only. **Wire-shape reserved; population is DEFERRED** — the per-turn
+        /// usage is billed to the Rust `token_ledger` (keyed by `run_id`) and is NOT on
+        /// `LoopOutcome`, so the emit path leaves this `None` for now (a later slice
+        /// folds the ledger total in). Carrying the field here completes the
+        /// wire-widening pattern so no second wire change is needed then.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt_tokens: Option<u64>,
+        /// (A1) REFS-surface run METADATA: completion-token total for the run, when
+        /// known. A COUNT only. Same DEFERRED-population note as `prompt_tokens`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        completion_tokens: Option<u64>,
     },
     /// either: explicit error code + message.
     Error { code: ErrorCode, message: String },
@@ -1882,6 +1908,10 @@ mod tests {
             status: "completed".into(),
             answer_sha256: Some("a".repeat(64)),
             answer_len: Some(4096),
+            turns: Some(3),
+            executed_tools: Some(2),
+            prompt_tokens: None,
+            completion_tokens: None,
         };
         let env = Envelope::new("m2", 2000, msg.clone()).with_correlation("c2");
         let json = env.encode().unwrap();
@@ -1892,33 +1922,143 @@ mod tests {
         assert_eq!(back.message, msg);
 
         // The fingerprint fields are optional: a no-answer result omits them, and
-        // `skip_serializing_if` keeps them off the wire entirely.
+        // `skip_serializing_if` keeps them off the wire entirely. The A1 count fields
+        // are optional on the SAME terms.
         let no_answer = Message::AgentRunResult {
             run_id: "run-2".into(),
             status: "no_answer".into(),
             answer_sha256: None,
             answer_len: None,
+            turns: None,
+            executed_tools: None,
+            prompt_tokens: None,
+            completion_tokens: None,
         };
         let env2 = Envelope::new("m3", 3000, no_answer.clone());
         let json2 = env2.encode().unwrap();
         assert!(!json2.contains("answer_sha256"));
         assert!(!json2.contains("answer_len"));
+        assert!(!json2.contains("turns"));
+        assert!(!json2.contains("executed_tools"));
+        assert!(!json2.contains("prompt_tokens"));
+        assert!(!json2.contains("completion_tokens"));
         assert_eq!(Envelope::decode(&json2).unwrap().message, no_answer);
+    }
+
+    /// (A1 transport-truth) Serde back-compat for the ADDITIVE count fields, BOTH
+    /// directions — the load-bearing wire-widening proof.
+    #[test]
+    fn agent_run_result_a1_counts_are_backward_and_forward_compatible() {
+        // (1) ABSENT ⇒ BYTE-IDENTICAL TO TODAY: a `None`-count result serializes with
+        // NO count keys at all (the pre-A1 wire shape, verbatim). This is the proof
+        // that a server which never populates counts emits exactly today's bytes.
+        let pre_a1_shape = Message::AgentRunResult {
+            run_id: "run-compat".into(),
+            status: "finished".into(),
+            answer_sha256: Some("c".repeat(64)),
+            answer_len: Some(42),
+            turns: None,
+            executed_tools: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+        };
+        let pre_a1_json = Envelope::new("c1", 1, pre_a1_shape.clone())
+            .encode()
+            .unwrap();
+        for key in [
+            "turns",
+            "executed_tools",
+            "prompt_tokens",
+            "completion_tokens",
+        ] {
+            assert!(
+                !pre_a1_json.contains(key),
+                "an absent count must NOT appear on the wire (byte-identical to pre-A1): {key}"
+            );
+        }
+
+        // (2) FORWARD-COMPAT (new server → old client): a NEW server's JSON that
+        // CARRIES the count fields still deserializes on a client that does not know
+        // them — serde ignores unknown fields (`Message` is not `deny_unknown_fields`).
+        // We model "an old client" by an envelope JSON the running code can decode even
+        // with EXTRA keys present.
+        let new_server_json = r#"{"schema_version":1,"msg_id":"c2","sent_at":2,"message":{"kind":"AgentRunResult","run_id":"run-fwd","status":"finished","answer_sha256":"deadbeef","answer_len":10,"turns":4,"executed_tools":3,"prompt_tokens":111,"completion_tokens":22,"some_future_field":"ignored"}}"#;
+        let decoded = Envelope::decode(new_server_json).expect("forward-compat decode");
+        match decoded.message {
+            Message::AgentRunResult {
+                turns,
+                executed_tools,
+                prompt_tokens,
+                completion_tokens,
+                ..
+            } => {
+                assert_eq!(turns, Some(4));
+                assert_eq!(executed_tools, Some(3));
+                assert_eq!(prompt_tokens, Some(111));
+                assert_eq!(completion_tokens, Some(22));
+            }
+            other => panic!("expected AgentRunResult, got {other:?}"),
+        }
+
+        // (3) BACKWARD-COMPAT (old server → new client): a result JSON with NO count
+        // keys (today's server) deserializes to `None` on the new client via
+        // `#[serde(default)]` — never an error.
+        let old_server_json = r#"{"schema_version":1,"msg_id":"c3","sent_at":3,"message":{"kind":"AgentRunResult","run_id":"run-bwd","status":"finished","answer_sha256":"deadbeef","answer_len":10}}"#;
+        match Envelope::decode(old_server_json)
+            .expect("backward-compat decode")
+            .message
+        {
+            Message::AgentRunResult {
+                turns,
+                executed_tools,
+                prompt_tokens,
+                completion_tokens,
+                ..
+            } => {
+                assert_eq!(turns, None);
+                assert_eq!(executed_tools, None);
+                assert_eq!(prompt_tokens, None);
+                assert_eq!(completion_tokens, None);
+            }
+            other => panic!("expected AgentRunResult, got {other:?}"),
+        }
+
+        // (4) POPULATED round-trips intact (the new-server-to-new-client path).
+        let populated = Message::AgentRunResult {
+            run_id: "run-rt".into(),
+            status: "finished".into(),
+            answer_sha256: Some("a".repeat(64)),
+            answer_len: Some(7),
+            turns: Some(5),
+            executed_tools: Some(1),
+            prompt_tokens: Some(900),
+            completion_tokens: Some(80),
+        };
+        let env = Envelope::new("c4", 4, populated.clone());
+        assert_eq!(
+            Envelope::decode(&env.encode().unwrap()).unwrap().message,
+            populated
+        );
     }
 
     #[test]
     fn agent_run_result_is_refs_only_never_carries_the_body() {
         // STRUCTURAL refs-only proof (mirrors `AuthedAnswer::proof_refs_json` /
         // the `owner_sealed_body_len` discipline): the serialized AgentRunResult
-        // must contain ONLY the refs fields — run_id, status, and the answer
-        // FINGERPRINT — and NEVER the answer body or any `final_message` key. The
-        // body is sealed over the session by a later sub-slice, never here.
+        // must contain ONLY the refs fields — run_id, status, the answer FINGERPRINT,
+        // and (A1) the run COUNTS — and NEVER the answer body or any `final_message`
+        // key. The body is sealed over the session by a later sub-slice, never here.
         const BODY: &str = "TOP-SECRET ANSWER BODY THAT MUST NEVER HIT THE WIRE";
         let msg = Message::AgentRunResult {
             run_id: "run-1".into(),
             status: "completed".into(),
             answer_sha256: Some("b".repeat(64)),
             answer_len: Some(BODY.len() as u64),
+            // A1 counts: present but body-free (counts are metadata, never a body).
+            turns: Some(2),
+            executed_tools: Some(1),
+            prompt_tokens: None,
+            completion_tokens: None,
         };
         let json = Envelope::new("m1", 1000, msg).encode().unwrap();
 
@@ -1939,15 +2079,29 @@ mod tests {
             );
         }
 
-        // What IS allowed: exactly the refs/fingerprint keys.
+        // What IS allowed: exactly the refs/fingerprint keys PLUS the A1 run COUNTS
+        // (turns / executed_tools — present here; token counts are deferred ⇒ absent).
+        // No body-bearing key is in this set; every member is a ref/count, not a body.
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         let m = parsed.get("message").unwrap().as_object().unwrap();
         let mut keys: Vec<&str> = m.keys().map(String::as_str).collect();
         keys.sort_unstable();
         assert_eq!(
             keys,
-            vec!["answer_len", "answer_sha256", "kind", "run_id", "status"]
+            vec![
+                "answer_len",
+                "answer_sha256",
+                "executed_tools",
+                "kind",
+                "run_id",
+                "status",
+                "turns",
+            ]
         );
+        // (A1) The counts are NUMBERS (metadata), not strings/objects that could smuggle
+        // a body — a structural guard that the count surface stays count-only.
+        assert!(m.get("turns").unwrap().is_number());
+        assert!(m.get("executed_tools").unwrap().is_number());
     }
 
     #[test]

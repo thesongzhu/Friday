@@ -695,16 +695,23 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 let outcome = run_authed_agent_loop(runtime, &caller, &run_id, &task, now_ms);
 
                 // (refs) REFS-ONLY terminal receipt over the wire: status + answer FINGERPRINT
-                // (sha256/len) — NEVER the body. Mirrors `AuthedAnswer::proof_refs_json`.
-                let (status, answer_sha256, answer_len) = result_refs(&outcome);
+                // (sha256/len) + (A1) the run COUNTS (turns / executed_tools) — NEVER the body.
+                // Mirrors `AuthedAnswer::proof_refs_json`. Counts are metadata; token counts
+                // are DEFERRED (`None`) — not on `LoopOutcome`. An absent count is omitted from
+                // the wire (`skip_serializing_if`) ⇒ byte-identical to the pre-A1 result.
+                let refs = result_refs(&outcome);
                 let result = Envelope::new(
                     format!("agent-run-result-{run_id}"),
                     now_ms,
                     Message::AgentRunResult {
                         run_id: run_id.clone(),
-                        status,
-                        answer_sha256,
-                        answer_len,
+                        status: refs.status,
+                        answer_sha256: refs.answer_sha256,
+                        answer_len: refs.answer_len,
+                        turns: refs.turns,
+                        executed_tools: refs.executed_tools,
+                        prompt_tokens: None,
+                        completion_tokens: None,
                     },
                 )
                 .with_correlation(env.msg_id.clone());
@@ -754,12 +761,21 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-/// Project a dispatch outcome to its REFS-ONLY terminal fields (status + answer sha256/len).
-/// NEVER returns the body. Derives the fingerprint from the `proof_refs_json` projection so the
-/// wire result and the proof surface agree.
-fn result_refs(
-    outcome: &friday_hub::hub_server::AuthedAnswer,
-) -> (String, Option<String>, Option<u64>) {
+/// The REFS-ONLY terminal projection of a dispatch outcome: status + answer sha256/len +
+/// (A1) the run COUNTS (turns / executed_tools). NEVER carries the body. Derived from the
+/// `proof_refs_json` projection so the wire result and the proof surface agree on the same
+/// numbers. Token counts are DEFERRED (not on `LoopOutcome`) ⇒ always `None` here.
+struct ResultRefs {
+    status: String,
+    answer_sha256: Option<String>,
+    answer_len: Option<u64>,
+    /// (A1) REFS-surface run COUNTS — a COUNT only, never a turn body / tool name / args.
+    turns: Option<u64>,
+    executed_tools: Option<u64>,
+}
+
+/// Project a dispatch outcome to its REFS-ONLY terminal fields. NEVER returns the body.
+fn result_refs(outcome: &friday_hub::hub_server::AuthedAnswer) -> ResultRefs {
     let refs = outcome.proof_refs_json();
     let status = refs
         .get("status")
@@ -775,7 +791,16 @@ fn result_refs(
         .and_then(|v| v.as_str())
         .map(str::to_string);
     let answer_len = refs.get("answer_len").and_then(|v| v.as_u64());
-    (status, answer_sha256, answer_len)
+    // (A1) The run COUNTS surface on `Delivered` only (null/absent otherwise).
+    let turns = refs.get("turns").and_then(|v| v.as_u64());
+    let executed_tools = refs.get("executed_tools").and_then(|v| v.as_u64());
+    ResultRefs {
+        status,
+        answer_sha256,
+        answer_len,
+        turns,
+        executed_tools,
+    }
 }
 
 /// On-wire form for a `Sealed`: `[nonce_len: u8][nonce][ciphertext]`. Mirrors the transport's
@@ -1422,22 +1447,36 @@ mod tests {
     #[test]
     fn refs_result_never_carries_body() {
         use friday_hub::hub_server::AuthedAnswer;
+        // (A1) Attach real run COUNTS — the refs result must surface the counts but STILL
+        // never carry the body.
         let delivered = AuthedAnswer::Delivered {
             run_id: "run-f".into(),
             status: "finished".into(),
             answer: BODY.into(),
             answer_sha256: sha256_hex(BODY.as_bytes()),
             answer_len: BODY.len() as i64,
+            turns: Some(3),
+            executed_tools: Some(2),
         };
-        let (status, sha, len) = result_refs(&delivered);
-        assert_eq!(status, "finished");
-        assert_eq!(sha.as_deref(), Some(sha256_hex(BODY.as_bytes()).as_str()));
-        assert_eq!(len, Some(BODY.len() as u64));
+        let refs = result_refs(&delivered);
+        assert_eq!(refs.status, "finished");
+        assert_eq!(
+            refs.answer_sha256.as_deref(),
+            Some(sha256_hex(BODY.as_bytes()).as_str())
+        );
+        assert_eq!(refs.answer_len, Some(BODY.len() as u64));
+        // (A1) The COUNTS rode through the refs projection.
+        assert_eq!(refs.turns, Some(3));
+        assert_eq!(refs.executed_tools, Some(2));
         let result = Message::AgentRunResult {
             run_id: "run-f".into(),
-            status,
-            answer_sha256: sha,
-            answer_len: len,
+            status: refs.status,
+            answer_sha256: refs.answer_sha256,
+            answer_len: refs.answer_len,
+            turns: refs.turns,
+            executed_tools: refs.executed_tools,
+            prompt_tokens: None,
+            completion_tokens: None,
         };
         assert!(
             !format!("{result:?}").contains(BODY),
