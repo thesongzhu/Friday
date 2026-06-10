@@ -12,6 +12,15 @@ use crate::error::CoreError;
 
 /// Lifecycle of a workflow run. Checkpoints requiring user action pause the run
 /// in `AwaitingCheckpoint` (those go to Activity, `08` §1/§4).
+///
+/// R2 slice-2 (additive): `Cancelled` is a NEW terminal state (mirrors the TS
+/// `WorkflowRunStatus` `cancelled`, distinct from `failed`), and a `Failed ->
+/// Running` retry edge + `{Pending,Running,AwaitingCheckpoint} -> Cancelled`
+/// cancel edges are added. NO existing variant is changed/removed and NO existing
+/// transition edge is altered — `Pending`/`Running`/`AwaitingCheckpoint`/`Done`/
+/// `Failed` and every prior edge behave byte-identically (the LIVE S9 engine,
+/// `skill.rs`/`planning.rs`/`workflow_read.rs` only reference the type in docs and
+/// `as_str`/`is_terminal` predicates, none of which change for the old variants).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkflowRunState {
     Pending,
@@ -19,6 +28,12 @@ pub enum WorkflowRunState {
     AwaitingCheckpoint,
     Done,
     Failed,
+    /// Terminal: the run was cancelled by the owner/operator (distinct from
+    /// `Failed` — a cancel is an intentional stop, not an error). NEW in R2
+    /// slice-2; mirrors TS `cancelled`. Coercing a cancel onto `Failed` would
+    /// erase this distinction (the data-fudge the hard rules forbid), so the
+    /// state is first-class.
+    Cancelled,
 }
 
 impl WorkflowRunState {
@@ -29,17 +44,24 @@ impl WorkflowRunState {
             WorkflowRunState::AwaitingCheckpoint => "awaiting_checkpoint",
             WorkflowRunState::Done => "done",
             WorkflowRunState::Failed => "failed",
+            WorkflowRunState::Cancelled => "cancelled",
         }
     }
 
     pub fn is_terminal(&self) -> bool {
-        matches!(self, WorkflowRunState::Done | WorkflowRunState::Failed)
+        // `Cancelled` is terminal alongside `Done`/`Failed` (a cancelled run is a
+        // finished run). The existing `Done`/`Failed` classification is unchanged.
+        matches!(
+            self,
+            WorkflowRunState::Done | WorkflowRunState::Failed | WorkflowRunState::Cancelled
+        )
     }
 
     pub fn can_transition_to(&self, next: WorkflowRunState) -> bool {
         use WorkflowRunState::*;
         matches!(
             (self, next),
+            // --- Pre-R2 edges (UNCHANGED — byte-identical to slice-1) ---
             (Pending, Running)
                 | (Pending, Failed)
                 | (Running, AwaitingCheckpoint)
@@ -47,6 +69,18 @@ impl WorkflowRunState {
                 | (Running, Failed)
                 | (AwaitingCheckpoint, Running)
                 | (AwaitingCheckpoint, Failed)
+                // --- R2 slice-2 retry edge: a Failed run may be re-driven ---
+                // (mirrors TS `retryRun`'s `assertTransition(status,"running")`).
+                // This is the ONLY new edge into `Running`; it does NOT widen
+                // resume (which stays the `AwaitingCheckpoint -> Running` edge).
+                | (Failed, Running)
+                // --- R2 slice-2 cancel edges into the terminal Cancelled state ---
+                // (mirror TS `cancelRun`'s `assertTransition(status,"cancelled")`).
+                // ONLY non-terminal sources may cancel; `Done`/`Failed`/`Cancelled`
+                // are terminal and have NO `-> Cancelled` edge (no terminal reopen).
+                | (Pending, Cancelled)
+                | (Running, Cancelled)
+                | (AwaitingCheckpoint, Cancelled)
         )
     }
 
@@ -202,6 +236,72 @@ mod tests {
         assert!(s.is_terminal());
         assert!(Pending.try_transition(Done).is_err()); // must run first
         assert!(Done.try_transition(Running).is_err()); // terminal
+    }
+
+    #[test]
+    fn r2_additive_change_preserves_every_pre_existing_edge_and_classification() {
+        // PROOF-OF-NO-REGRESSION for the R2 slice-2 additive core change: every
+        // edge/classification the LIVE S9 engine relies on behaves byte-identically.
+        // Existing edges still ALLOWED (each was legal before slice-2):
+        for (a, b) in [
+            (Pending, Running),
+            (Pending, Failed),
+            (Running, AwaitingCheckpoint),
+            (Running, Done),
+            (Running, Failed),
+            (AwaitingCheckpoint, Running),
+            (AwaitingCheckpoint, Failed),
+        ] {
+            assert!(
+                a.can_transition_to(b),
+                "pre-existing edge {a:?}->{b:?} lost"
+            );
+        }
+        // Existing rejections still REJECTED (no widening of the old states):
+        assert!(!Pending.try_transition(Done).is_ok_and(|_| true)); // must run first
+        assert!(Done.try_transition(Running).is_err()); // Done terminal
+        assert!(Done.try_transition(Failed).is_err()); // Done terminal
+        assert!(Failed.try_transition(Done).is_err()); // Failed not -> Done
+        assert!(Failed.try_transition(AwaitingCheckpoint).is_err()); // retry routes via Running only
+                                                                     // Existing classifications unchanged: Done/Failed terminal; the rest not.
+        assert!(Done.is_terminal());
+        assert!(Failed.is_terminal());
+        assert!(!Pending.is_terminal());
+        assert!(!Running.is_terminal());
+        assert!(!AwaitingCheckpoint.is_terminal());
+        // Existing string labels unchanged.
+        assert_eq!(Pending.as_str(), "pending");
+        assert_eq!(Running.as_str(), "running");
+        assert_eq!(AwaitingCheckpoint.as_str(), "awaiting_checkpoint");
+        assert_eq!(Done.as_str(), "done");
+        assert_eq!(Failed.as_str(), "failed");
+    }
+
+    #[test]
+    fn r2_cancelled_state_and_retry_edge_are_additive_and_terminal() {
+        // The NEW terminal `Cancelled` state: distinct label, terminal, and (the
+        // catch the advisor flagged) MUST survive a string round-trip distinct from
+        // Failed — the storage `parse_run_state` round-trip is exercised in the
+        // storage crate; here we lock the core-level contract.
+        assert_eq!(Cancelled.as_str(), "cancelled");
+        assert!(Cancelled.is_terminal());
+        assert_ne!(Cancelled, Failed, "cancelled is NOT failed");
+
+        // The NEW retry edge: Failed -> Running (the only new edge into Running).
+        assert!(Failed.try_transition(Running).is_ok());
+        // The NEW cancel edges: every NON-terminal state -> Cancelled.
+        assert!(Pending.try_transition(Cancelled).is_ok());
+        assert!(Running.try_transition(Cancelled).is_ok());
+        assert!(AwaitingCheckpoint.try_transition(Cancelled).is_ok());
+        // Terminal states have NO -> Cancelled edge (no terminal reopen / no
+        // cancel->cancel re-entry).
+        assert!(Done.try_transition(Cancelled).is_err());
+        assert!(Failed.try_transition(Cancelled).is_err());
+        assert!(Cancelled.try_transition(Cancelled).is_err());
+        // Cancelled is fully terminal: no edge OUT of it.
+        assert!(Cancelled.try_transition(Running).is_err());
+        assert!(Cancelled.try_transition(Done).is_err());
+        assert!(Cancelled.try_transition(Failed).is_err());
     }
 
     #[test]

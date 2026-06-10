@@ -397,6 +397,84 @@ fn forward_migration_v25_to_v26_adds_system_intent_tables_and_preserves_v25_rows
 }
 
 #[test]
+fn forward_migration_v26_to_v27_adds_run_control_columns_and_preserves_v26_rows() {
+    // R2 slice-2 additive migration v27: two ADDITIVE columns on the already-Hub-only
+    // workflow tables — `workflow_step.attempt` (NOT NULL DEFAULT 1) and
+    // `workflow_run.cancel_reason` (nullable). This is the ALTER ADD COLUMN pattern
+    // (like m0013 token_ledger run_id / m0020 memory_extract_status), NOT a new table.
+    // A PRE-EXISTING v26 run+step (seeded before the columns existed) must survive the
+    // forward ALTER: the step's `attempt` BACKFILLS to the DEFAULT 1 (so a pre-v27 step
+    // is the base attempt, never mis-counted as a retry), and the run's `cancel_reason`
+    // reads back NULL (so a pre-v27 run is never silently attributed a cancel reason).
+    use friday_core::WorkflowRunState;
+    use friday_storage::workflow;
+
+    let p = temp_db_path("wf-run-control-cols-mig");
+    {
+        let mut migs = hub_migrations();
+        migs.retain(|m| m.version <= 26);
+        let db = Db::open(&p, Profile::Hub, &migs, "v26").unwrap();
+        assert_eq!(db.version().unwrap(), 26);
+        // Neither column exists before v27.
+        assert!(
+            db.conn()
+                .prepare("SELECT attempt FROM workflow_step")
+                .is_err(),
+            "workflow_step.attempt must not exist before v27"
+        );
+        assert!(
+            db.conn()
+                .prepare("SELECT cancel_reason FROM workflow_run")
+                .is_err(),
+            "workflow_run.cancel_reason must not exist before v27"
+        );
+        // Seed a run + a step with the pre-v27 shape (no attempt / cancel_reason).
+        workflow::create_run(db.conn(), "r-pre-v27", "QA", 10).unwrap();
+        workflow::add_step(db.conn(), "st-pre-v27", "r-pre-v27", 1, true, 10).unwrap();
+    }
+    // Reopen with the full set -> forward-migrate to v27 (the two additive ALTERs).
+    let db = Db::open_hub(&p).unwrap();
+    assert_eq!(db.version().unwrap(), hub_max_version());
+    assert_eq!(
+        db.count("workflow_run").unwrap(),
+        1,
+        "pre-v27 run row survived the migration"
+    );
+    assert_eq!(
+        db.count("workflow_step").unwrap(),
+        1,
+        "pre-v27 step survived"
+    );
+    // The ALTER's DEFAULT backfilled the PRE-EXISTING step to attempt 1 (base attempt).
+    assert_eq!(
+        workflow::step_attempt(db.conn(), "st-pre-v27").unwrap(),
+        Some(1),
+        "pre-v27 step backfills to the base attempt (1)"
+    );
+    // The pre-existing run reads back NULL cancel_reason (never mis-attributed).
+    assert_eq!(
+        workflow::run_cancel_reason(db.conn(), "r-pre-v27").unwrap(),
+        None,
+        "pre-v27 run backfills to NULL cancel_reason"
+    );
+    // The typed run-control API works against the migrated DB end-to-end: cancel
+    // writes the NEW terminal `Cancelled` state + a reason (NOT Failed) and reads
+    // back faithfully — proving the v27 columns + the friday-core Cancelled state +
+    // the parse_run_state round-trip all compose on a migrated DB.
+    workflow::set_run_state(db.conn(), "r-pre-v27", WorkflowRunState::Running, 11).unwrap();
+    workflow::cancel_run(db.conn(), "r-pre-v27", Some("operator requested"), 12).unwrap();
+    assert_eq!(
+        workflow::run_state(db.conn(), "r-pre-v27").unwrap(),
+        Some(WorkflowRunState::Cancelled),
+        "cancel writes terminal Cancelled (NOT Failed) and round-trips on the migrated DB"
+    );
+    assert_eq!(
+        workflow::run_cancel_reason(db.conn(), "r-pre-v27").unwrap(),
+        Some("operator requested".to_string()),
+    );
+}
+
+#[test]
 fn reopen_is_idempotent_and_preserves_rows() {
     let p = temp_db_path("seeded");
     {
