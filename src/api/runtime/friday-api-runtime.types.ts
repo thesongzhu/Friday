@@ -446,6 +446,23 @@ export interface CreateFridayApiRuntimeDeps {
    * harness (operator reconciliation item).
    */
   allowTestOnlyProviderDetectExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript provider probe surfaces
+   * (POST /v1/providers/:providerId/validate, GET /v1/providers/:providerId/doctor,
+   * POST /v1/capabilities/doctor). Production/runtime callers must leave this
+   * unset so these probes fail-close until Rust owns the provider-probe
+   * entrypoint. NOTE: retiring validate 503s the release-GO closure harness
+   * (operator reconciliation item).
+   */
+  allowTestOnlyProviderProbeExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript provider routing-controls
+   * surfaces (POST /v1/providers/routing/pin, POST /v1/providers/routing/penalties/clear).
+   * Production/runtime callers must leave this unset so these user-scoped routing
+   * mutations fail-close until Rust owns the routing-controls entrypoint. Does NOT
+   * cover the model-routing config surfaces (GET/PUT /v1/model-routing).
+   */
+  allowTestOnlyProviderRoutingControlsExecution?: boolean;
   /** Optional: Reflex service for deterministic preference writes before agent runs. */
   reflexService?: FridayReflexService;
   /** Optional deterministic runtime capability getter used by context evidence selection. */

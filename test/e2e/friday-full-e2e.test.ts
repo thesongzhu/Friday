@@ -134,6 +134,8 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
       allowTestOnlySessionMemoryExtractionExecution: true,
       allowTestOnlyRealtimeExecution: true,
       allowTestOnlySkillConverterExecution: true,
+      allowTestOnlyProviderProbeExecution: true,
+      allowTestOnlyProviderRoutingControlsExecution: true,
     });
     await hub.start();
 

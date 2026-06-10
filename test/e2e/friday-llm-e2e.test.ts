@@ -445,6 +445,7 @@ async function createLlmTestEnv(): Promise<LlmTestEnv> {
     // Keep tokenSecret omitted so the hub uses its local test defaults.
     port: 0,
     logRequests: false,
+    allowTestOnlyProviderProbeExecution: true,
   });
 
   await hub.start();
