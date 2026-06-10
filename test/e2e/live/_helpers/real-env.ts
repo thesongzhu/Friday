@@ -339,6 +339,7 @@ async function startLocalRealHubEnv(
       allowTestOnlyWorkflowGeneratorExecution: true,
       allowTestOnlyWorkflowDeployExecution: true,
       allowTestOnlySystemIntentExecution: true,
+      allowTestOnlyAutoFixExecution: true,
       ...opts?.hubConfig,
     });
     await createdHub.start();

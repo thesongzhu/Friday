@@ -4,6 +4,7 @@ import {
   createFridayAgentLoopRepository,
   createFridayAgentLoopService,
 } from "#learning";
+import { FridayDomainError } from "#errors";
 import type { FridaySqliteLayer } from "#state";
 import { createTestDb } from "../../../helpers/friday-test-db.helper.js";
 
@@ -386,5 +387,67 @@ describe("createFridayAgentLoopService", () => {
     const policy = service.getPolicy();
     expect(policy.expertModeEnabled).toBe(false);
     expect(policy.probeBudget).toBe(4);
+  });
+
+  // TS Runtime Retirement (G1): when execute() fail-closes (503 retirement
+  // guard) on the live self-healing path, the loop run — persisted as 'running'
+  // before the call — must be finalized to a terminal 'failed' state, not
+  // orphaned at 'running', and the throw must propagate (semantics not
+  // swallowed) so the caller's `void ...catch()` logs it.
+  it("finalizes the loop run to 'failed' (not orphaned 'running') and re-throws when execute() fail-closes", async () => {
+    const details = buildIncidentDetails({ riskTier: 0 });
+    db = createTestDb();
+    const loopRepo = createFridayAgentLoopRepository();
+    const retirementError = new FridayDomainError(
+      "TS_RUNTIME_AUTOFIX_EXECUTION_RETIRED",
+      "fail closed",
+      { httpStatus: 503, details: { classification: "fail_closed" } },
+    );
+    const service = createFridayAgentLoopService({
+      db,
+      idGenerator: (() => {
+        let counter = 0;
+        return () => `loop-id-${++counter}`;
+      })(),
+      nowIso: () => NOW,
+      loopRepo,
+      incidentRepo: {} as never,
+      diagnosisRepo: {} as never,
+      actionRepo: {} as never,
+      lessonRepo: {} as never,
+      approvalService: { reject: vi.fn(async () => undefined) } as never,
+      executionService: {
+        execute: vi.fn(async () => {
+          throw retirementError;
+        }),
+      } as never,
+      dispatcher: { runApprovedAction: vi.fn() } as never,
+      selfHealing: {
+        getIncident: vi.fn(({ incidentId }: { incidentId: string }) =>
+          incidentId === details.incident.incidentId ? details : null),
+        getAction: vi.fn(({ actionId }: { actionId: string }) =>
+          actionId === details.action.action.actionId ? details.action : null),
+      } as never,
+      observability: { recordAgentLoopEvent: vi.fn(async () => undefined) } as never,
+      publishEvent: { publish: vi.fn() },
+    });
+
+    await expect(
+      service.handleProcessResults({
+        results: [{
+          incidentsCreated: [{ incidentId: "incident-1" } as never],
+          diagnosisCreated: [],
+        }],
+        correlationId: "corr-retire",
+      }),
+    ).rejects.toMatchObject({ code: "TS_RUNTIME_AUTOFIX_EXECUTION_RETIRED" });
+
+    const runs = db.withReadConnection((reader) =>
+      loopRepo.listRuns(reader, { userId: "user-1" }));
+    expect(runs.length).toBe(1);
+    expect(runs[0]?.status).toBe("failed");
+    expect(runs[0]?.haltReason).toBe("execution_failed");
+    expect(runs[0]?.completedAt).toBeTruthy();
+    expect(runs[0]?.lastError).toContain("fail closed");
   });
 });

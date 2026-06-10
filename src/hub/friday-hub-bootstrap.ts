@@ -4062,6 +4062,13 @@ export async function createFridayHub(
     // Lets the auto-fix planner capture the prior skill status at plan-build time for the
     // regenerate_skill rollback (restore-not-enable).
     getSkillLifecycleStatus: getPersistedSkillLifecycleStatus,
+    // TS Runtime Retirement (G1): forwards the same test-oracle flag the autofix
+    // ROUTE uses (config.allowTestOnlyAutoFixExecution) into the execution
+    // service's METHOD-level guard, so the live non-route self-healing path
+    // (reportStructuredFailure → agent-loop executeRun → execute()) fails closed
+    // in default/live runtime and stays exercised under the test/mock/real-env
+    // harnesses that opt in.
+    allowTestOnlyAutoFixExecution: config.allowTestOnlyAutoFixExecution,
   });
 
   // P1-01: Assign immediately so learningContextBuilder and communicationPromptBuilder

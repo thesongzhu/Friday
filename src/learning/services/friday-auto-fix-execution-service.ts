@@ -51,6 +51,18 @@ export interface CreateAutoFixExecutionServiceDeps {
   stepExecutors?: Partial<Record<FridayAutoFixStepKind, StepExecutor>>;
   /** Override verifiers per step kind for production use. */
   stepVerifiers?: Partial<Record<FridayAutoFixStepKind, StepVerifier>>;
+  /**
+   * Test-oracle only: allows the legacy TypeScript auto-fix self-healing
+   * EXECUTOR (`execute`) to run reversible remediation mutations in isolated
+   * test/validation harnesses. Default/live runtime must leave this unset so
+   * `execute()` fails closed for ALL callers — including the live agent-loop
+   * self-healing path (`reportStructuredFailure` → agent-loop `executeRun` →
+   * `executionService.execute()`), the dispatcher, and the approval-workflow —
+   * which bypass the HTTP route guard in `friday-auto-fix-routes.ts`. This
+   * mirrors the route-layer `allowTestOnlyAutoFixExecution` flag exactly; never
+   * default it on in production.
+   */
+  allowTestOnlyAutoFixExecution?: boolean;
 }
 
 /**
@@ -143,6 +155,40 @@ export function createFridayAutoFixExecutionService(
 ): FridayAutoFixExecutionService {
   const executors: Partial<Record<FridayAutoFixStepKind, StepExecutor>> = { ...DEFAULT_EXECUTORS, ...deps.stepExecutors };
   const verifiers = { ...DEFAULT_VERIFIERS, ...deps.stepVerifiers };
+
+  // ─── TS Runtime Retirement: METHOD-level fail-closed guard (HIDDEN-GAP G1) ───
+  // The autofix-execution route surface (`autofix.actions.execute`/`run.ready`/
+  // `rollback`) is advertised retired and is guarded at the HTTP route layer
+  // (`friday-auto-fix-routes.ts`, `allowTestOnlyAutoFixExecution`). But a
+  // NON-route caller still reaches the mutating executor: the live self-healing
+  // loop `selfHealing.reportStructuredFailure` (workflow deploy-catch +
+  // hub-bootstrap workflow-failure hook) → rule-based planner → agent-loop
+  // `executeRun` → `executionService.execute()`. The dispatcher and the
+  // approval-workflow service also call `execute()` directly. Default autofix
+  // policy is permissive (`autoApplyLowRisk:true`, `paused:false`), so this path
+  // is firing-capable on a default prod hub today (bounded to tier<2 reversible
+  // actions). Guarding here fails ALL callers closed BEFORE any state read/write,
+  // executor side effect, rollback, or lesson-extraction provider call — unless
+  // the explicit test-oracle flag is set. `run.ready` funnels per-action through
+  // this same `execute()`, and the standalone `rollback` route op
+  // (`rollbackService.rollback`) has no non-route caller (it is reached only via
+  // the already-route-guarded `rollbackAction` and internally from this now-
+  // guarded `execute()`), so this single guard closes the whole G1 surface.
+  function assertAutoFixExecutionAllowed(): void {
+    if (deps.allowTestOnlyAutoFixExecution !== true) {
+      throw new FridayDomainError(
+        "TS_RUNTIME_AUTOFIX_EXECUTION_RETIRED",
+        "TypeScript auto-fix execution is fail-closed in default/live runtime; use the Rust-owned auto-fix execution entrypoint.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_autofix_execution_entrypoint_required",
+          },
+        },
+      );
+    }
+  }
 
   function persistPlanEvidence(
     actionId: UUID,
@@ -266,6 +312,10 @@ export function createFridayAutoFixExecutionService(
 
   return {
     async execute(actionId) {
+      // Fail closed for ALL callers (route + non-route) before any state read,
+      // executor side effect, rollback, or provider call.
+      assertAutoFixExecutionAllowed();
+
       const nowIso = deps.nowIso();
 
       const action = deps.db.withReadConnection((db) =>
