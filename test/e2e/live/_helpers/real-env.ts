@@ -333,6 +333,12 @@ async function startLocalRealHubEnv(
       allowTestOnlyProviderDetectExecution: true,
       allowTestOnlyProviderProbeExecution: true,
       allowTestOnlyProviderRoutingControlsExecution: true,
+      // Method-level retirement guards (TS-R1): the real-env harness opts in so
+      // live e2e can exercise the legacy in-process generator/deploy/system
+      // paths; production leaves these unset (fail-closed).
+      allowTestOnlyWorkflowGeneratorExecution: true,
+      allowTestOnlyWorkflowDeployExecution: true,
+      allowTestOnlySystemIntentExecution: true,
       ...opts?.hubConfig,
     });
     await createdHub.start();

@@ -4599,6 +4599,9 @@ describe("FridayAgentRuntime", () => {
       canonicalApprovalSecret: "test-canonical-secret", // pragma: allowlist secret
       companionReconnectIntervalMs: 60_000,
       warn: vi.fn(),
+      // Test-oracle opt-in: this test drives the real `executeIntent` through
+      // the agent system tool; the method is fail-closed by default (TS-R1).
+      allowTestOnlySystemIntentExecution: true,
     });
     const llmClient = createMockLlmClient([
       [

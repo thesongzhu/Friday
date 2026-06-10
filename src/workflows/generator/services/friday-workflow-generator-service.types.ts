@@ -79,4 +79,13 @@ export interface CreateFridayWorkflowGeneratorServiceDeps {
     channel?: string;
     surface: "workflow_generator";
   }) => string | null | Promise<string | null>;
+  /**
+   * Test-oracle only: allows legacy TypeScript workflow-generator session
+   * mutations (`startSession`/`submitTurn`/`generateDraft`/`approveAndSave`/
+   * `cancelSession`) in isolated test/validation harnesses. Default/live runtime
+   * must leave this unset so the methods fail closed for ALL callers — including
+   * the agent workflow-generator tool, the UIX assistant surface, and the reflex
+   * candidate pipeline, which bypass the HTTP route guard.
+   */
+  allowTestOnlyWorkflowGeneratorExecution?: boolean;
 }

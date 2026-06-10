@@ -378,6 +378,9 @@ describe("FridayWorkflowGeneratorService", () => {
       idGenerator: () => `id-${++idCounter}`,
       nowIso: () => NOW,
       computeChecksum: (content: string) => `checksum-${content.length}`,
+      // Test-oracle opt-in: these tests exercise the legacy generator
+      // mutations, which are method-level fail-closed by default (TS-R1).
+      allowTestOnlyWorkflowGeneratorExecution: true,
     };
     service = createFridayWorkflowGeneratorService(deps);
   });

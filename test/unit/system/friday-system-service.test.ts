@@ -303,6 +303,9 @@ async function createServiceFixtureWithOptions(options?: {
       rpId: "localhost",
       origin: "http://localhost:3141",
     },
+    // Test-oracle opt-in: these tests exercise legacy `executeIntent`, which is
+    // method-level fail-closed by default (TS-R1).
+    allowTestOnlySystemIntentExecution: true,
   });
   return {
     db,

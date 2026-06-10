@@ -34,6 +34,14 @@ export interface CreateFridayCapabilityAcquisitionServiceDeps {
   policyService: FridayAutonomyPolicyService;
   capabilitySnapshotGetter?: (input: { readOnly: boolean }) =>
     Promise<FridayAgentCapabilitiesSnapshot> | FridayAgentCapabilitiesSnapshot;
+  /**
+   * Test-oracle only: allows legacy TypeScript capability-acquisition run
+   * mutations (`startRun`/`approveRun`/`cancelRun`) in isolated test/validation
+   * harnesses. Default/live runtime must leave this unset so the methods fail
+   * closed for ALL callers — including the agent controlled-autonomy tool and
+   * the standing-agenda service, which bypass the HTTP route guard.
+   */
+  allowTestOnlyCapabilityAcquisitionExecution?: boolean;
 }
 
 export interface FridayCapabilityAcquisitionService {
@@ -77,6 +85,33 @@ export function createFridayCapabilityAcquisitionService(
 ): FridayCapabilityAcquisitionService {
   const { db, idGenerator, nowIso, policyService } = deps;
 
+  // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+  // Phase 3 (route-only-guard defect): the capability-acquisition retirement
+  // was ROUTE-only (friday-autonomy-routes asserts the test-oracle flag before
+  // the acquisition routes). The agent controlled-autonomy tool
+  // (`acquisition_start`/`acquisition_approve`/`acquisition_cancel`) and the
+  // standing-agenda service (`runAgendaItem` → `acquisitionService.startRun`)
+  // reach these methods directly, bypassing the HTTP route guard. Guarding here
+  // fails ALL non-route callers closed BEFORE any run-row write, capability
+  // probe, or verification side effect — unless the explicit test-oracle flag
+  // is set. Never default this flag on in production. Reads (`plan`/`getRun`)
+  // stay live; only run mutations are retired, mirroring the route surface.
+  function assertCapabilityAcquisitionExecutionAllowed(): void {
+    if (deps.allowTestOnlyCapabilityAcquisitionExecution !== true) {
+      throw new FridayDomainError(
+        "TS_RUNTIME_CAPABILITY_ACQUISITION_RETIRED",
+        "TypeScript capability-acquisition execution is fail-closed in default/live runtime; use the Rust-owned capability_acquisition entrypoint.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_capability_acquisition_entrypoint_required",
+          },
+        },
+      );
+    }
+  }
+
   async function resolveMatrix(readOnly: boolean): Promise<FridayRuntimeCapabilityMatrix> {
     if (!deps.capabilitySnapshotGetter) {
       return buildFridayRuntimeCapabilityMatrix({
@@ -116,6 +151,7 @@ export function createFridayCapabilityAcquisitionService(
   }
 
   async function startRun(input: FridayStartCapabilityAcquisitionInput): Promise<FridayCapabilityAcquisitionRun> {
+    assertCapabilityAcquisitionExecutionAllowed();
     const policy = policyService.getPolicy();
     const matrix = await resolveMatrix(input.readOnly ?? false);
     const run = buildRun({
@@ -142,6 +178,7 @@ export function createFridayCapabilityAcquisitionService(
   }
 
   async function approveRun(runId: string): Promise<FridayCapabilityAcquisitionRun> {
+    assertCapabilityAcquisitionExecutionAllowed();
     const current = getRun(runId);
     if (!current) {
       throw new FridayDomainError("CAPABILITY_ACQUISITION_RUN_NOT_FOUND", "Capability acquisition run not found", {
@@ -279,6 +316,7 @@ export function createFridayCapabilityAcquisitionService(
   }
 
   function cancelRun(runId: string): FridayCapabilityAcquisitionRun {
+    assertCapabilityAcquisitionExecutionAllowed();
     const current = getRun(runId);
     if (!current) {
       throw new FridayDomainError("CAPABILITY_ACQUISITION_RUN_NOT_FOUND", "Capability acquisition run not found", {
