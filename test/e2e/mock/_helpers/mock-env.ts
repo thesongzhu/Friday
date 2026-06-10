@@ -385,6 +385,8 @@ export async function createMockHubEnv(opts?: {
   enforceUixSkillExecRetirement?: boolean;
   /** Test-oracle opt-in for the legacy TS system-service `executeIntent` method; set false to prove default fail-closed behavior. */
   allowTestOnlySystemIntentExecution?: boolean;
+  /** Test-oracle opt-in for the legacy TS auto-fix executor `execute()` method (route + non-route self-healing path); set false to prove default fail-closed behavior. */
+  allowTestOnlyAutoFixExecution?: boolean;
   /**
    * execrun-replacement slice 4 (DARK): per-run Rust-route flag. DEFAULT-FALSE here (honest
    * dark) — the predicate is unconsumed this slice so the value is cosmetic; the ui browser
@@ -463,6 +465,7 @@ export async function createMockHubEnv(opts?: {
       // concurrent G1 sibling PR's adjacent flag insertion.)
       enforceUixSkillExecRetirement: opts?.enforceUixSkillExecRetirement ?? false,
       allowTestOnlySystemIntentExecution: opts?.allowTestOnlySystemIntentExecution ?? true,
+      allowTestOnlyAutoFixExecution: opts?.allowTestOnlyAutoFixExecution ?? true,
       // execrun-replacement slice 4 (DARK): default-FALSE (honest dark), unlike the
       // allowTestOnly* flags which default true. The predicate is unconsumed this slice.
       routeAgentRunViaRust: opts?.routeAgentRunViaRust ?? false,

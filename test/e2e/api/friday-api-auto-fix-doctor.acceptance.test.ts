@@ -213,6 +213,9 @@ function buildAcceptanceSelfHealingApiService(
     nowIso: () => NOW,
     stepExecutors: support.stepExecutors,
     stepVerifiers: support.stepVerifiers,
+    // TS Runtime Retirement (G1): opt in so the route-backed executeAction /
+    // rollbackAction paths reach the now-method-guarded execute().
+    allowTestOnlyAutoFixExecution: true,
   });
   return createFridaySelfHealingApiService({
     db,
@@ -257,6 +260,8 @@ describe("Phase 14.5B module_28b: one-click repair / recovery doctor acceptance"
       nowIso: () => NOW,
     });
     const executionService = createFridayAutoFixExecutionService({
+      // TS Runtime Retirement (G1): opt in to the test-oracle so execute() runs.
+      allowTestOnlyAutoFixExecution: true,
       db,
       actionRepo,
       incidentRepo,
@@ -312,6 +317,8 @@ describe("Phase 14.5B module_28b: one-click repair / recovery doctor acceptance"
       nowIso: () => NOW,
     });
     const executionService = createFridayAutoFixExecutionService({
+      // TS Runtime Retirement (G1): opt in to the test-oracle so execute() runs.
+      allowTestOnlyAutoFixExecution: true,
       db,
       actionRepo,
       incidentRepo,
