@@ -334,8 +334,38 @@ export function createFridaySessionMemoryExtractionService(
 
   // ─── Service implementation ───
 
+  // ─── TS Runtime Retirement (TS-R4/G3): METHOD-level fail-closed guard ───
+  // The `session-memory-extraction` worker job and the `session-lifecycle-sweep`
+  // job (via createFridaySessionLifecycleJob → extractFromSession) reach these
+  // mutators directly, bypassing the HTTP route guard
+  // (assertSessionMemoryExtractionTestOracleAllowed in friday-session-routes);
+  // the agent memory-extract tool is a further off-route caller. This fails ALL
+  // non-route callers closed BEFORE any session read, provider/LLM call
+  // (worker inline path → processInline → llmClient), or memory/job DB write,
+  // unless the explicit test-oracle flag is set. The worker job's per-job
+  // try/catch records markFailed (terminal) on this throw, so dormant-but-armed
+  // queued jobs churn to failed under fail-closed rather than spending quota.
+  // Never default this flag on in production. getExtractionStatus (read) stays
+  // live, mirroring the route surface.
+  function assertMemoryExtractionAllowed(): void {
+    if (deps.allowTestOnlySessionMemoryExtractionExecution !== true) {
+      throw new FridayDomainError(
+        "TS_RUNTIME_SESSION_MEMORY_EXTRACTION_RETIRED",
+        "TypeScript session memory extraction is fail-closed in default/live runtime; use the Rust-owned session_memory_extraction entrypoint.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_session_memory_extraction_entrypoint_required",
+          },
+        },
+      );
+    }
+  }
+
   return {
     async extractFromSession(sessionKey, options) {
+      assertMemoryExtractionAllowed();
       const session = await deps.sessionService.getSession(sessionKey);
       if (!session) {
         throw new FridayDomainError(
@@ -436,6 +466,7 @@ export function createFridaySessionMemoryExtractionService(
     },
 
     async extractSpecificMessages(sessionKey, messageIds, options) {
+      assertMemoryExtractionAllowed();
       if (!messageIds.length) {
         throw new FridayDomainError(
           FRIDAY_SESSION_MEMORY_EXTRACTION_ERROR_CODES.INVALID_INPUT,
@@ -561,6 +592,7 @@ export function createFridaySessionMemoryExtractionService(
     },
 
     async retryFailedExtractions(sessionKey) {
+      assertMemoryExtractionAllowed();
       const result: FridaySessionMemoryRetryResult = {
         sessionsQueued: [],
         resetMessageCount: 0,

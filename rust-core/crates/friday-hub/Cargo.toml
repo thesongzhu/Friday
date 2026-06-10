@@ -23,6 +23,10 @@ rusqlite.workspace = true
 # live. Depending on them here (and NOT in friday-ffi) is the compile-time
 # "no secret on phone" boundary, asserted by friday-arch-tests.
 friday-deepseek.workspace = true
+# S7 — the Claude/Anthropic route, DARK / default-off. Secret-bearing, Hub-only
+# (same boundary as friday-deepseek; asserted by friday-arch-tests). Reachable only
+# behind an explicit default-OFF selection; the DeepSeek path is unchanged.
+friday-anthropic.workspace = true
 friday-providers.workspace = true
 # The ToolExecutor's file read/write goes through the hardened workspace-root-contained
 # safe-open — NEVER std::fs on an agent-supplied path.

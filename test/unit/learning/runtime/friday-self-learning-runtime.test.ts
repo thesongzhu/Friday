@@ -279,6 +279,8 @@ describe("FridaySelfLearningRuntime", () => {
       db,
       idGenerator: idGen,
       nowIso: () => NOW,
+      // TS Runtime Retirement (G1): opt in so autoFixExecution.execute() runs.
+      allowTestOnlyAutoFixExecution: true,
       stepExecutors: {
         retry_node: async (step) => {
           retryExecutorCalled.push(step.stepId);

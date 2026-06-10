@@ -1486,4 +1486,100 @@ describe("FridaySkillGeneratorService", () => {
       }
     });
   });
+
+  // ─── TS Runtime Retirement — GAP G2: DEFAULT-OFF flag guard ───
+  // Pins the INVERTED-polarity lever for the UIX-driven skill-generator session
+  // mutators. Default-off = no behavior change today (current generation works,
+  // zero degradation); flag-on = the mutators fail closed with a 503
+  // TS_RUNTIME_SKILL_GENERATOR_RETIRED BEFORE any session write or provider call.
+  // Lever to flip ON only when skill generation is Rust-owned (R11).
+  describe("GAP G2 skill-generator retirement guard (DEFAULT-OFF)", () => {
+    it("default (enforceUixSkillExecRetirement unset): startSession proceeds exactly as before", async () => {
+      // Sanity: with the guard inert, startSession runs the analyzer (NOT a 503).
+      // We assert it is NOT the retirement error; behavior is the legacy path.
+      mockFetchForLlm([
+        { state: "needs_clarification", questions: ["What format?"], spec: { goal: "Build a timer" } },
+      ]);
+      try {
+        const result = await service.startSession({
+          goal: "Build a timer skill",
+          userId: "user-1",
+          channel: "discord",
+        });
+        expect(result.session.sessionId).toBe("id-1");
+        expect(result.mode).toBe("clarification_required");
+      } finally {
+        restoreFetch();
+      }
+    });
+
+    it("explicit false: startSession proceeds (identical to default, no throw)", async () => {
+      const idGen = vi.fn(() => "id-explicit-false-1");
+      const offDeps: CreateFridaySkillGeneratorServiceDeps = {
+        ...deps,
+        idGenerator: idGen,
+        enforceUixSkillExecRetirement: false,
+      };
+      const offService = createFridaySkillGeneratorService(offDeps);
+      mockFetchForLlm([
+        { state: "needs_clarification", questions: ["What format?"], spec: { goal: "x" } },
+      ]);
+      try {
+        const result = await offService.startSession({
+          goal: "Build a timer skill",
+          userId: "user-1",
+          channel: "discord",
+        });
+        expect(result.mode).toBe("clarification_required");
+        expect(idGen).toHaveBeenCalled();
+      } finally {
+        restoreFetch();
+      }
+    });
+
+    it("flag ON (enforceUixSkillExecRetirement=true): all 4 mutators fail closed 503 TS_RUNTIME_SKILL_GENERATOR_RETIRED with zero side effects", async () => {
+      const idGen = vi.fn(() => "id-guarded-1");
+      const guardedDeps: CreateFridaySkillGeneratorServiceDeps = {
+        ...deps,
+        idGenerator: idGen,
+        enforceUixSkillExecRetirement: true,
+      };
+      const guarded = createFridaySkillGeneratorService(guardedDeps);
+
+      const expected = {
+        code: "TS_RUNTIME_SKILL_GENERATOR_RETIRED",
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_skill_generator_entrypoint_required",
+        },
+      };
+
+      await expect(
+        guarded.startSession({ goal: "Build a timer skill", userId: "user-1", channel: "discord" }),
+      ).rejects.toMatchObject(expected);
+      await expect(
+        guarded.submitTurn("any-session", { message: "go" }),
+      ).rejects.toMatchObject(expected);
+      await expect(
+        guarded.generateDraft("any-session"),
+      ).rejects.toMatchObject(expected);
+      await expect(
+        guarded.approveAndSave("any-session"),
+      ).rejects.toMatchObject(expected);
+
+      // Zero side effects: the guard fires before id allocation / session write /
+      // provider call on every mutator.
+      expect(idGen).not.toHaveBeenCalled();
+    });
+
+    it("flag ON: a read (getSession) stays live (reads are not retired)", async () => {
+      const guarded = createFridaySkillGeneratorService({
+        ...deps,
+        enforceUixSkillExecRetirement: true,
+      });
+      // Unknown session id returns null rather than throwing the retirement 503.
+      await expect(guarded.getSession("missing-session")).resolves.toBeNull();
+    });
+  });
 });

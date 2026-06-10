@@ -466,6 +466,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "friday-anthropic"
+version = "0.0.1"
+dependencies = [
+ "friday-core",
+ "friday-deepseek",
+ "serde_json",
+ "thiserror 1.0.69",
+ "ureq",
+]
+
+[[package]]
 name = "friday-arch-tests"
 version = "0.0.1"
 dependencies = [
@@ -531,6 +542,7 @@ dependencies = [
 name = "friday-hub"
 version = "0.0.1"
 dependencies = [
+ "friday-anthropic",
  "friday-core",
  "friday-crypto",
  "friday-deepseek",
@@ -591,6 +603,13 @@ dependencies = [
  "rusqlite",
  "serde_json",
  "sha2",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "friday-system-remote"
+version = "0.0.1"
+dependencies = [
  "thiserror 1.0.69",
 ]
 

@@ -242,6 +242,14 @@ enum ServerError {
     /// S-F: the SecureStore peer-pubkey allowlist is MISSING or INVALID ⇒ FAIL CLOSED (the server
     /// refuses to start rather than accept any peer). The detail (which) is NOT surfaced.
     PeerAllowlist,
+    /// FIX-Q3a (hardening): the allowlist loaded+parsed cleanly but holds MORE THAN ONE peer pubkey.
+    /// Multi-peer is REFUSED until the multi-principal bindings land (FIX-Q2: bind exec owner to the
+    /// authenticated caller; FIX-Q3b: a tamper-evident pubkey→principal map so the caller principal
+    /// is DERIVED from the matched pubkey, not the wire-asserted `forwarded_principal`). Until then a
+    /// 2nd enrolled pubkey + the client-asserted owner string would form a confidentiality-leaking
+    /// chain (any enrolled peer forwards the single owner → receives the owner-sealed body). This
+    /// turns the single-peer CLI convention into a SERVER invariant. The count is NOT surfaced.
+    MultiPeerUnsupported,
     /// The master key (`FRIDAY_MASTER_KEY` / `~/.friday/master.key`) is absent or unreadable ⇒ the
     /// server REFUSES TO BOOT. An unprovisioned host has no service; it NEVER auto-generates a key
     /// (that would derive a KEK that cannot open the enroll CLI's store). The category only — never
@@ -261,6 +269,9 @@ enum PeerAllowlistError {
     Missing,
     /// The entry exists but is malformed: empty, or not a NONZERO multiple of [`X25519_PUBKEY_LEN`].
     Invalid,
+    /// FIX-Q3a: the entry parsed cleanly but holds MORE THAN ONE pubkey (or, defensively, zero).
+    /// Refused until the multi-principal bindings land — see [`enforce_single_peer`].
+    MultiPeer,
 }
 
 /// Load + validate the authorized peer-pubkey allowlist from the [`SecureStore`] (S-F). The stored
@@ -304,6 +315,30 @@ fn peer_is_allowlisted(allowlist: &[[u8; X25519_PUBKEY_LEN]], peer_pub: &[u8; 32
     allowlist.contains(peer_pub)
 }
 
+/// FIX-Q3a (hardening) — fail closed unless the allowlist holds EXACTLY ONE peer pubkey.
+///
+/// `load_peer_allowlist` is intentionally a multi-key PARSER (any nonzero multiple of 32 bytes →
+/// N keys), so the single-peer guarantee was, until now, only the enroll CLI's CONVENTION — the
+/// server would happily admit N. This guard converts that convention into a SERVER invariant.
+///
+/// Why refuse >1 today: there is no cryptographic pubkey↔principal binding (the run principal is the
+/// client-asserted `forwarded_principal`, checked only against the `--owner` allowlist ceiling). A
+/// SECOND enrolled pubkey + the single owner string therefore forms a confidentiality-leaking chain
+/// — any enrolled peer can forward the owner principal, pass the ceiling, and receive the
+/// owner-sealed body. Multi-peer is gated behind the (currently unbuilt) multi-principal bindings:
+///   * FIX-Q2  — bind the exec owner to the AUTHENTICATED caller (not the static runtime config);
+///   * FIX-Q3b — a tamper-evident pubkey→principal map so the caller principal is DERIVED from the
+///     matched enrolled pubkey rather than trusted from the wire.
+///
+/// Until both land, `len() != 1` is refused. `!= 1` (not `> 1`) also catches an impossible-0 list
+/// fail-closed; the parser guarantees ≥1, so this is purely belt-and-suspenders for the 0 case.
+fn enforce_single_peer(allowlist: &[[u8; X25519_PUBKEY_LEN]]) -> Result<(), PeerAllowlistError> {
+    if allowlist.len() != 1 {
+        return Err(PeerAllowlistError::MultiPeer);
+    }
+    Ok(())
+}
+
 fn main() {
     if let Err(err) = run() {
         let kind = match err {
@@ -313,6 +348,9 @@ fn main() {
             // S-F: a missing/invalid SecureStore peer-pubkey allowlist fails the boot CLOSED. The
             // category only — never the (would-be) pubkey bytes.
             ServerError::PeerAllowlist => "peer_allowlist_unavailable",
+            // FIX-Q3a: >1 enrolled peer pubkey is refused at boot (single-peer is now a code
+            // invariant). The category only — never the count, never the pubkey bytes.
+            ServerError::MultiPeerUnsupported => "peer_allowlist_multi_peer_unsupported",
             // Boot fail-closed reasons for the persistent store. NON-LEAKING: never the key bytes
             // and never the store path (which can carry the operator's home/username).
             ServerError::MasterKeyUnavailable => "master_key_unavailable",
@@ -386,6 +424,12 @@ fn run() -> Result<(), ServerError> {
             // The category is logged via the ServerError mapping; the bytes are never touched.
             ServerError::PeerAllowlist
         })?;
+    // FIX-Q3a (hardening) — fail the BOOT closed unless EXACTLY ONE peer is enrolled. The loader is a
+    // multi-key parser, so without this guard a 2nd enrolled pubkey would be silently admitted; with
+    // no pubkey↔principal binding (FIX-Q3b) + config-sourced exec owner (FIX-Q2) that is a latent
+    // confidentiality leak. A misconfigured (>1) store therefore never serves. DARK w.r.t. the
+    // running bin: the live store has exactly 1 entry, so this is a no-op until a future redeploy.
+    enforce_single_peer(&peer_allowlist).map_err(|_| ServerError::MultiPeerUnsupported)?;
     eprintln!(
         "hub_agent_run_server: peer-pubkey allowlist loaded from SecureStore (count={})",
         peer_allowlist.len()
@@ -1797,6 +1841,55 @@ mod tests {
         let loaded = load_peer_allowlist(&store, PEER_PUBKEY_ALLOWLIST_ID)
             .expect("two-key allowlist parses");
         assert_eq!(loaded, vec![a, b], "two concatenated keys parse in order");
+    }
+
+    // (FIX-Q3a) SINGLE-PEER is a SERVER INVARIANT, not just a CLI convention. The loader still
+    // PARSES N keys (see `invalid_securestore_allowlist_fails_closed_valid_parses`, which keeps the
+    // parser forward-compatible for when the multi-principal bindings FIX-Q2/FIX-Q3b land), but the
+    // boot-time `enforce_single_peer` guard REFUSES anything other than exactly one. This closes the
+    // latent confidentiality chain (a 2nd enrolled pubkey + the client-asserted owner string) until
+    // a real pubkey↔principal binding exists. DARK w.r.t. the running bin (live store = 1 entry).
+    #[test]
+    fn enforce_single_peer_fails_closed_above_one() {
+        // (a) Exactly one peer ⇒ Ok — the single-peer happy path is UNCHANGED.
+        let a = DeviceKeypair::generate().public_bytes();
+        assert_eq!(
+            enforce_single_peer(&[a]),
+            Ok(()),
+            "exactly one enrolled peer is admitted (single-peer happy path unchanged)"
+        );
+
+        // (b) The loader PARSES a 64-byte (two-key) store to two keys, but the guard then REFUSES
+        //     it: prove via the REAL read path that a 2-pubkey store fails the boot closed.
+        let b = DeviceKeypair::from_secret_bytes(CLIENT_SECRET).public_bytes();
+        let mut store = InMemorySecureStore::new();
+        let mut two = Vec::new();
+        two.extend_from_slice(&a);
+        two.extend_from_slice(&b);
+        store.put(PEER_PUBKEY_ALLOWLIST_ID, &two);
+        let parsed = load_peer_allowlist(&store, PEER_PUBKEY_ALLOWLIST_ID)
+            .expect("the loader still parses a two-key allowlist (parser unchanged)");
+        assert_eq!(parsed.len(), 2, "loader parses both keys");
+        assert_eq!(
+            enforce_single_peer(&parsed),
+            Err(PeerAllowlistError::MultiPeer),
+            "a TWO-pubkey allowlist must fail the boot closed (FIX-Q3a server invariant)"
+        );
+
+        // (c) Defensive: an (impossible-via-parser) EMPTY list is also refused fail-closed, not Ok.
+        assert_eq!(
+            enforce_single_peer(&[]),
+            Err(PeerAllowlistError::MultiPeer),
+            "a zero-peer list must also fail closed (!= 1, never falls open)"
+        );
+
+        // (d) Three peers ⇒ refused too (any N>1).
+        let c = DeviceKeypair::generate().public_bytes();
+        assert_eq!(
+            enforce_single_peer(&[a, b, c]),
+            Err(PeerAllowlistError::MultiPeer),
+            "three pubkeys are refused (any N>1 fails closed)"
+        );
     }
 
     // (S-F d) peer_is_allowlisted exact-match semantics: only an exact 32-byte match passes; a

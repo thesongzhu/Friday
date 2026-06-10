@@ -1400,6 +1400,12 @@ export async function createFridayHub(
         task: input.task,
         surface: input.surface,
       }),
+    // TS Runtime Retirement — GAP G2 (DEFAULT-OFF): production leaves this unset
+    // so the skill-generator session mutators behave exactly as today (the
+    // UIX-driven `generate-skill` flow + agent skill-generator tool keep
+    // working). Flip true only when the operator decides to Rust-own skill
+    // generation (R11) — then the mutators fail closed.
+    enforceUixSkillExecRetirement: config.enforceUixSkillExecRetirement,
   });
 
   // 9. Create converter service
@@ -2363,6 +2369,13 @@ export async function createFridayHub(
     db: stateRuntime!.sqlite,
     idGenerator,
     nowIso,
+    // TS Runtime Retirement (TS-R4/G3 method-level guard): production leaves
+    // this unset (config flag undefined) so `sweepLifecycle` is fail-closed for
+    // the `session-lifecycle-sweep` scheduler job (which bypasses the HTTP route
+    // guard), not just the route. This same instance is also passed to the API
+    // runtime, so the route guard and the method guard stay consistent.
+    // Test-oracle hub configs set it true to exercise the legacy sweep.
+    allowTestOnlySessionExecution: config.allowTestOnlySessionExecution,
   });
 
   // Build agent tool registry (exec, read, write, edit, web_fetch, browser, xhs, + new tools)
@@ -4062,6 +4075,13 @@ export async function createFridayHub(
     // Lets the auto-fix planner capture the prior skill status at plan-build time for the
     // regenerate_skill rollback (restore-not-enable).
     getSkillLifecycleStatus: getPersistedSkillLifecycleStatus,
+    // TS Runtime Retirement (G1): forwards the same test-oracle flag the autofix
+    // ROUTE uses (config.allowTestOnlyAutoFixExecution) into the execution
+    // service's METHOD-level guard, so the live non-route self-healing path
+    // (reportStructuredFailure → agent-loop executeRun → execute()) fails closed
+    // in default/live runtime and stays exercised under the test/mock/real-env
+    // harnesses that opt in.
+    allowTestOnlyAutoFixExecution: config.allowTestOnlyAutoFixExecution,
   });
 
   // P1-01: Assign immediately so learningContextBuilder and communicationPromptBuilder
@@ -5968,6 +5988,12 @@ export async function createFridayHub(
     sessionService: hubSessionService,
     skillGenerator,
     skillExecutor: executor,
+    // TS Runtime Retirement — GAP G2 (DEFAULT-OFF): production leaves this unset
+    // so UIX starter-skill execution (executeStarterSkillTemplate) behaves
+    // exactly as today — zero degradation. Flip true only when the operator
+    // decides to Rust-own skill execution (R11) — then the UIX skill-exec lane
+    // fails closed (TS_RUNTIME_SKILL_RUNS_RETIRED).
+    enforceUixSkillExecRetirement: config.enforceUixSkillExecRetirement,
     workflowGenerator,
     workflowProduct: workflowProductService,
     selfHealing: selfHealingApiService,
@@ -7233,6 +7259,15 @@ export async function createFridayHub(
       providerService,
       idGenerator,
       nowIso,
+      // TS Runtime Retirement (TS-R4/G3 method-level guard): production leaves
+      // this unset so extractFromSession/extractSpecificMessages/
+      // retryFailedExtractions are fail-closed for the `session-memory-extraction`
+      // worker job, the `session-lifecycle-sweep` job, and the agent
+      // memory-extract tool — all of which reach this instance off-route,
+      // bypassing the HTTP route guard. This stops the armed quota-spending
+      // inline extraction on next deploy. Test-oracle hub configs set it true.
+      allowTestOnlySessionMemoryExtractionExecution:
+        config.allowTestOnlySessionMemoryExtractionExecution,
     });
   }
 

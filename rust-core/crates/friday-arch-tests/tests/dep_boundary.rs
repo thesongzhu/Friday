@@ -104,7 +104,9 @@ fn ffi_dependency_closure_excludes_deepseek() {
     let ffi_closure = closure(&graph, "friday-ffi");
 
     // Hub-only, provider-secret-bearing crates must never reach the phone.
-    for hub_only in ["friday-deepseek", "friday-providers"] {
+    // friday-anthropic (S7, the Claude/Anthropic route) is secret-bearing exactly like
+    // friday-deepseek and must stay out of the phone FFI graph too.
+    for hub_only in ["friday-deepseek", "friday-anthropic", "friday-providers"] {
         assert!(graph.contains_key(hub_only), "{hub_only} crate not found");
         assert!(
             !ffi_closure.contains(hub_only),
@@ -169,7 +171,7 @@ fn hub_is_the_secret_bearing_composition_root_and_phone_is_not() {
     );
 
     let hub_closure = closure(&graph, "friday-hub");
-    for secret in ["friday-deepseek", "friday-providers"] {
+    for secret in ["friday-deepseek", "friday-anthropic", "friday-providers"] {
         assert!(
             hub_closure.contains(secret),
             "friday-hub closure must include the secret-bearing {secret}: {hub_closure:?}"
@@ -184,10 +186,27 @@ fn hub_is_the_secret_bearing_composition_root_and_phone_is_not() {
     }
     // And the phone STILL cannot reach the secret crates (re-asserted with hub present).
     let ffi_closure = closure(&graph, "friday-ffi");
-    for secret in ["friday-deepseek", "friday-providers", "friday-hub"] {
+    for secret in [
+        "friday-deepseek",
+        "friday-anthropic",
+        "friday-providers",
+        "friday-hub",
+    ] {
         assert!(
             !ffi_closure.contains(secret),
             "PHONE SECRET LEAK: friday-ffi depends on {secret}; closure = {ffi_closure:?}"
         );
     }
+}
+
+#[test]
+fn anthropic_does_not_depend_on_ffi_either() {
+    // S7: the secret-bearing Claude crate must not pull in the phone surface
+    // (mirrors `deepseek_does_not_depend_on_ffi_either`).
+    let graph = internal_dep_graph(&workspace_root());
+    let an_closure = closure(&graph, "friday-anthropic");
+    assert!(
+        !an_closure.contains("friday-ffi"),
+        "friday-anthropic must not depend on friday-ffi; closure = {an_closure:?}"
+    );
 }

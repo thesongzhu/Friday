@@ -657,6 +657,31 @@ export function createFridayAgentLoopService(
     return nextDetails;
   };
 
+  // TS Runtime Retirement (G1): the loop run is persisted as `running` BEFORE
+  // `executionService.execute()` is called. With the new method-level
+  // retirement guard on `execute()`, a fail-closed 503 throw would otherwise
+  // orphan the run deterministically at `running`. Mirror #628's standing-agenda
+  // terminal-state treatment: reset the run to a terminal `failed` state and let
+  // the caller re-throw so retirement semantics are not swallowed. Any other
+  // execution throw is finalized the same way (it was previously unhandled).
+  const finalizeRunOnExecutionThrow = async (
+    run: FridayAgentLoopRunEntity,
+    error: unknown,
+  ): Promise<void> => {
+    const message = error instanceof FridayDomainError
+      ? error.message
+      : error instanceof Error
+        ? error.message
+        : String(error);
+    const failed = updateRun(run.loopRunId, {
+      status: "failed",
+      haltReason: "execution_failed",
+      lastError: message,
+      completedAt: deps.nowIso(),
+    });
+    await emitLoopEvent("agent-loop.run.failed", failed, buildRunDetails(failed));
+  };
+
   const executeRun = async (
     run: FridayAgentLoopRunEntity,
     trigger: FridayAgentLoopTrigger,
@@ -701,9 +726,19 @@ export function createFridayAgentLoopService(
         await emitLoopEvent("agent-loop.run.awaiting-approval", pending, details);
         return details;
       }
-      result = await deps.dispatcher.runApprovedAction(actionDetails.action.actionId);
+      try {
+        result = await deps.dispatcher.runApprovedAction(actionDetails.action.actionId);
+      } catch (error) {
+        await finalizeRunOnExecutionThrow(executing, error);
+        throw error;
+      }
     } else {
-      result = await deps.executionService.execute(actionDetails.action.actionId);
+      try {
+        result = await deps.executionService.execute(actionDetails.action.actionId);
+      } catch (error) {
+        await finalizeRunOnExecutionThrow(executing, error);
+        throw error;
+      }
     }
 
     return finalizeExecution({
