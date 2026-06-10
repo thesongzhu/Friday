@@ -8602,6 +8602,39 @@ export async function createFridayHub(
               details: payload,
             }).catch((err: unknown) => warnHubBootstrapOnce(`[friday] audit-append: ${err instanceof Error ? err.message : String(err)}`));
           };
+          // ─── TS Runtime Retirement (G5): channel-mirror write boundary guard ───
+          // The channel webhook ingress → channelMessageHandler path mirrors
+          // inbound/outbound channel traffic into the TS session store via
+          // FridaySessionService.addMessage (withWriteTransaction). The session
+          // ROUTE write is already retired (assertSessionTestOracleAllowed →
+          // TS_RUNTIME_SESSION_RETIRED), but this off-route mirror entry was
+          // unguarded. We guard at THIS caller boundary — never on addMessage
+          // itself — because addMessage has many legitimate non-channel callers
+          // (API session routes, agent sessions tool, engine turn-preparer /
+          // run-executor, subagent lineage, parent-summary writes). Guarding the
+          // method globally would break those; guarding here closes the
+          // channel-mirror bypass with the SAME family + flag as the retired
+          // route. Production leaves the flag unset → mirror writes fail-closed;
+          // test-oracle harnesses opt in. Returns the addMessage promise so every
+          // call site (await / await+catch / void async) behaves identically.
+          const mirrorChannelSessionMessage: typeof hubSessionService.addMessage = (key, message) => {
+            if (config.allowTestOnlySessionExecution !== true) {
+              return Promise.reject(
+                new FridayDomainError(
+                  "TS_RUNTIME_SESSION_RETIRED",
+                  "TypeScript session execution is fail-closed in default/live runtime; use the Rust-owned session_lifecycle entrypoint.",
+                  {
+                    httpStatus: 503,
+                    details: {
+                      classification: "fail_closed",
+                      replacement: "rust_owned_session_lifecycle_entrypoint_required",
+                    },
+                  },
+                ),
+              );
+            }
+            return hubSessionService.addMessage(key, message);
+          };
           if (taskText.length === 0) return;
           channelApprovalRoutesBySession.set(sessionKey, {
             channelKind: msg.channelKind,
@@ -8664,7 +8697,7 @@ export async function createFridayHub(
           const reflexCandidateCommand = text.length > 0 ? parseReflexCandidateDecisionCommand(text) : null;
           if (reflexCandidateCommand) {
             void (async () => {
-              await hubSessionService.addMessage(sessionKey, {
+              await mirrorChannelSessionMessage(sessionKey, {
                 role: "user",
                 content: text,
                 contentText: text,
@@ -8736,7 +8769,7 @@ export async function createFridayHub(
                 text: ackText,
                 replyTo: msg.id,
               });
-              await hubSessionService.addMessage(sessionKey, {
+              await mirrorChannelSessionMessage(sessionKey, {
                 role: "assistant",
                 content: ackText,
                 contentText: ackText,
@@ -8772,7 +8805,7 @@ export async function createFridayHub(
           });
           if (reflexPreferenceResult.applied > 0 || reflexPreferenceResult.pendingConfirmation > 0) {
             void (async () => {
-              await hubSessionService.addMessage(sessionKey, {
+              await mirrorChannelSessionMessage(sessionKey, {
                 role: "user",
                 content: text,
                 contentText: text,
@@ -8803,7 +8836,7 @@ export async function createFridayHub(
                 text: ackText,
                 replyTo: msg.id,
               });
-              await hubSessionService.addMessage(sessionKey, {
+              await mirrorChannelSessionMessage(sessionKey, {
                 role: "assistant",
                 content: ackText,
                 contentText: ackText,
@@ -8855,7 +8888,7 @@ export async function createFridayHub(
           if (approvalCommand) {
             if (shouldRouteToolApprovalCommand) {
               void (async () => {
-                await hubSessionService.addMessage(sessionKey, {
+                await mirrorChannelSessionMessage(sessionKey, {
                   role: "user",
                   content: text,
                   contentText: text,
@@ -8938,7 +8971,7 @@ export async function createFridayHub(
                   text: ackText,
                   replyTo: msg.id,
                 });
-                await hubSessionService.addMessage(sessionKey, {
+                await mirrorChannelSessionMessage(sessionKey, {
                   role: "assistant",
                   content: ackText,
                   contentText: ackText,
@@ -9050,7 +9083,7 @@ export async function createFridayHub(
               sourceText: taskText,
             });
             try {
-              const inboundMessage = await hubSessionService.addMessage(sessionKey, {
+              const inboundMessage = await mirrorChannelSessionMessage(sessionKey, {
                 role: "user",
                 content: taskText,
                 contentText: taskText,
@@ -9088,7 +9121,7 @@ export async function createFridayHub(
                     text: outboundText,
                     runId,
                   });
-                  await hubSessionService.addMessage(sessionKey, {
+                  await mirrorChannelSessionMessage(sessionKey, {
                     role: "assistant",
                     content: outboundText,
                     contentText: outboundText,
@@ -9216,7 +9249,7 @@ export async function createFridayHub(
                   error: err,
                 });
                 const fallbackText = buildFridayChannelDeliveryFailureText(result.runId, taskText);
-                await hubSessionService.addMessage(sessionKey, {
+                await mirrorChannelSessionMessage(sessionKey, {
                   role: "assistant",
                   content: fallbackText,
                   contentText: fallbackText,

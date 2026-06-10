@@ -262,6 +262,45 @@ describe("Workflow trigger/scheduler retirement guard (method-level, §1)", () =
 
       expect(runRowCount()).toBe(0);
     });
+
+    // ─── G4: run-control siblings of startRun (resume/retry/cancel) ───
+    // Reached off-route via dispatchManagedAsync ← channel orchestration and
+    // workflow-approval approve → resumeRun. Each must fail closed at the METHOD
+    // boundary BEFORE any DB read (getRunById) or write, so the guard fires even
+    // for a non-existent runId (proving it precedes the WORKFLOW_RUN_NOT_FOUND
+    // lookup). No run row is created.
+    it("direct resumeRun method throws retired error before any DB read", async () => {
+      const runtime = buildRuntime({ allowTestOnly: false });
+      publishWorkflow(runtime, "resume-wf");
+
+      await expect(
+        runtime.execution.resumeRun("00000000-0000-0000-0000-000000000001"),
+      ).rejects.toMatchObject({ code: RETIRED_CODE });
+
+      expect(runRowCount()).toBe(0);
+    });
+
+    it("direct retryRun method throws retired error before any DB read", async () => {
+      const runtime = buildRuntime({ allowTestOnly: false });
+      publishWorkflow(runtime, "retry-wf");
+
+      await expect(
+        runtime.execution.retryRun("00000000-0000-0000-0000-000000000002"),
+      ).rejects.toMatchObject({ code: RETIRED_CODE });
+
+      expect(runRowCount()).toBe(0);
+    });
+
+    it("direct cancelRun method throws retired error before any DB read", async () => {
+      const runtime = buildRuntime({ allowTestOnly: false });
+      publishWorkflow(runtime, "cancel-wf");
+
+      await expect(
+        runtime.execution.cancelRun("00000000-0000-0000-0000-000000000003"),
+      ).rejects.toMatchObject({ code: RETIRED_CODE });
+
+      expect(runRowCount()).toBe(0);
+    });
   });
 
   // ─── Explicit test-oracle flag ON: legacy path still works ───
@@ -291,6 +330,24 @@ describe("Workflow trigger/scheduler retirement guard (method-level, §1)", () =
 
       expect(started).toBe(1);
       expect(runRowCount()).toBeGreaterThanOrEqual(1);
+    });
+
+    // G4: with the flag ON, the run-control siblings pass the retirement guard
+    // and reach their bodies — proven by the DOWNSTREAM not-found error (NOT the
+    // retirement code), confirming the guard is the only thing fenced by the flag.
+    it("resume/retry/cancel reach the body (downstream not-found, NOT retired) when flag is on", async () => {
+      const runtime = buildRuntime({ allowTestOnly: true });
+      publishWorkflow(runtime, "oracle-control-wf");
+
+      await expect(
+        runtime.execution.resumeRun("00000000-0000-0000-0000-0000000000a1"),
+      ).rejects.toMatchObject({ code: "WORKFLOW_RUN_NOT_FOUND" });
+      await expect(
+        runtime.execution.retryRun("00000000-0000-0000-0000-0000000000a2"),
+      ).rejects.toMatchObject({ code: "WORKFLOW_RUN_NOT_FOUND" });
+      await expect(
+        runtime.execution.cancelRun("00000000-0000-0000-0000-0000000000a3"),
+      ).rejects.toMatchObject({ code: "WORKFLOW_RUN_NOT_FOUND" });
     });
   });
 });

@@ -109,6 +109,7 @@ async function createIsolatedHub(stateDir: string): Promise<FridayHub> {
   await fs.mkdir(skillsDir, { recursive: true });
   return createFridayHub({
     allowTestOnlyWorkflowRunExecution: true, // TS-retirement method guard: test-oracle opt-in
+    allowTestOnlySessionExecution: true, // G5 channel-mirror write guard: test-oracle opt-in
     skillDirs: [skillsDir],
     stateDir,
     channels: { enabled: false, instances: [] },
@@ -568,5 +569,105 @@ describe("channel natural-trigger parent runtime resolver", () => {
     ].join("\n"));
 
     expect(sanitized).toBe("Here is the useful answer.");
+  });
+});
+
+// ─── G5: channel-mirror write guard — DEFAULT fail-closed proof ───
+// When the test-oracle flag `allowTestOnlySessionExecution` is left UNSET
+// (production default), the channel webhook ingress → channelMessageHandler
+// session-mirror writes (FridaySessionService.addMessage) must fail closed: no
+// session message is persisted, and the handler does NOT crash / leak an
+// unhandled rejection (every mirror call site has a non-fatal `.catch`).
+describe("channel session-mirror write guard (G5, default fail-closed)", () => {
+  let stateDir: string | null = null;
+  let hub: FridayHub | null = null;
+  let autoDetectEnvSnapshot: FridayAutoDetectProviderEnvSnapshot | null = null;
+  const originalSuppression = process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown): void => {
+    unhandled.push(reason);
+  };
+
+  beforeEach(async () => {
+    unhandled.length = 0;
+    process.on("unhandledRejection", onUnhandled);
+    process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = "1";
+    process.env.FRIDAY_CHANNEL_DEBOUNCE_MS = "0";
+    autoDetectEnvSnapshot = clearAutoDetectProviderEnv();
+    stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "friday-channel-mirror-failclosed-"));
+    const skillsDir = path.join(stateDir, "skills-empty");
+    await fs.mkdir(skillsDir, { recursive: true });
+    // Deliberately omit allowTestOnlySessionExecution → channel-mirror writes
+    // fail closed (production default). Workflow-run flag is set so the absence
+    // of mirror writes is the only variable under test.
+    hub = await createFridayHub({
+      allowTestOnlyWorkflowRunExecution: true,
+      skillDirs: [skillsDir],
+      stateDir,
+      channels: { enabled: false, instances: [] },
+    });
+  });
+
+  afterEach(async () => {
+    process.off("unhandledRejection", onUnhandled);
+    if (hub) {
+      await hub.stop();
+      hub = null;
+    }
+    if (stateDir) {
+      await fs.rm(stateDir, { recursive: true, force: true });
+      stateDir = null;
+    }
+    if (autoDetectEnvSnapshot) {
+      restoreAutoDetectProviderEnv(autoDetectEnvSnapshot);
+      autoDetectEnvSnapshot = null;
+    }
+    if (originalSuppression === undefined) {
+      delete process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS;
+    } else {
+      process.env.FRIDAY_SUPPRESS_TEST_ENV_SECURITY_WARNINGS = originalSuppression;
+    }
+    delete process.env.FRIDAY_CHANNEL_DEBOUNCE_MS;
+  });
+
+  it("does NOT mirror an inbound channel message into the session store and does not crash the handler", async () => {
+    const channel = createTestChannelPlugin();
+    hub!.channelRegistry.register(channel.plugin);
+    await hub!.start();
+    const onMessage = channel.getStartedHandler();
+    expect(onMessage).toBeTypeOf("function");
+
+    const inbound: FridayChannelMessage = {
+      id: "msg-mirror-failclosed",
+      channelKind: "testchannel",
+      senderId: "sender-1",
+      senderName: "Alice",
+      chatId: "chat-mirror-failclosed",
+      chatType: "direct",
+      text: "hello friday, mirror me",
+      timestamp: Date.now(),
+    };
+    const sessionKey = resolveFridayChannelSessionKey(inbound, {
+      crossChannelIdentityEnabled: false,
+      identityMap: {},
+    });
+
+    // Drive the message through the real channelMessageHandler.
+    onMessage!(inbound);
+
+    // Give the async handler time to run its (fail-closed) mirror path.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    // The mirror write is fail-closed → no session message persisted.
+    const messages = await hub!.apiRuntime.sessionService.getMessages(sessionKey).catch(() => []);
+    expect(messages.filter((m) => m.role === "user")).toHaveLength(0);
+
+    // The fenced mirror rejection is caught non-fatally → no unhandled rejection.
+    const mirrorRejections = unhandled.filter((r) => {
+      const code = (r as { code?: unknown } | null)?.code;
+      const message = r instanceof Error ? r.message : "";
+      return code === "TS_RUNTIME_SESSION_RETIRED" || /session execution is fail-closed/u.test(message);
+    });
+    expect(mirrorRejections).toHaveLength(0);
   });
 });

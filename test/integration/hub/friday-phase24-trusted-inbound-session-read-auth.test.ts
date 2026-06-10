@@ -90,6 +90,10 @@ describe("phase24 trusted-inbound session read requires an authenticated princip
       port: 0,
       logRequests: false,
       channels: { enabled: false, instances: [] },
+      // G5 channel-mirror write guard (TS-retirement): this test asserts the
+      // channelMessageHandler mirrors the inbound message into the session store
+      // and reads it back; opt in to keep the mirror write path live.
+      allowTestOnlySessionExecution: true,
     } as Parameters<typeof createFridayHub>[0]);
     cleanups.push(() => hub.stop?.());
 
