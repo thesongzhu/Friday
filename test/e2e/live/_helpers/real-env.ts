@@ -331,6 +331,8 @@ async function startLocalRealHubEnv(
       allowTestOnlySkillConverterExecution: true,
       allowTestOnlyPluginExecution: true,
       allowTestOnlyProviderDetectExecution: true,
+      allowTestOnlyProviderProbeExecution: true,
+      allowTestOnlyProviderRoutingControlsExecution: true,
       ...opts?.hubConfig,
     });
     await createdHub.start();

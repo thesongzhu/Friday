@@ -3697,6 +3697,99 @@
       "next_action": "Replace the fail-closed response with the Rust-owned provider-detect entrypoint when available; this route is on the production onboarding + release-GO path — coordinate the Rust entrypoint with operator sign-off (see reconciliation note)."
     },
     {
+      "id": "providers_validate",
+      "route": { "method": "POST", "path": "/v1/providers/:providerId/validate", "operationId": "providers.validate" },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-provider-routes.ts providers.validate wires default/live to assertProviderProbeTestOracleAllowed(deps) AFTER request validation + the canonical mutation gate (maybeRequireProviderMutationTicket; gate-required profiles 503/CANONICAL_APPROVAL_REQUIRED before the guard) and BEFORE the providerService.validateProvider call. 503 TS_RUNTIME_PROVIDER_PROBE_RETIRED (classification fail_closed, replacement rust_owned_provider_probe_entrypoint_required). fail_closed NOT operator_external_adapter: validateProvider (src/providers/services/friday-provider-service.ts, verified by reading the impl) is a transient key/connectivity PROBE that egresses to the provider (validator.validate({credential,...}) for HTTP, validateCliProvider for CLI) AND persists the resulting validation state to the provider DB (withWriteTransaction) — it is both a probe and a state write, Rust-ownable product logic — same shape as providers.detect; it is not a permanent egress-delivery conduit, and when retired the guard fail-closes BEFORE the validateProvider call so neither the egress nor the state write runs. executes_product_logic:false: no provider validation runs in default/live. Flag allowTestOnlyProviderProbeExecution threaded CreateFridayApiRuntimeDeps -> createFridayProviderRoutes + hub-config (FridayHubConfig -> friday-hub-bootstrap) so mock-env (createMockHubEnv default-true), real-env (live, true), and the full/llm e2e (createFridayHub) set it. OPERATOR/RECONCILIATION NOTE: retiring this route 503s the release-GO closure harnesses scripts/e2e/run-friday-closure.mjs and scripts/e2e/run-friday-external-closure.mjs (both POST /v1/providers/:providerId/validate, throw on non-200) — these are NOT CI gates but need the Rust provider-probe entrypoint (or an operator decision) before release-verify; same shape as the providers.detect reconciliation note. Reachable only through explicit allowTestOnlyProviderProbeExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned provider-probe entrypoint when available; validate is on the release-GO path — coordinate with operator sign-off (see reconciliation note)."
+    },
+    {
+      "id": "providers_doctor",
+      "route": { "method": "GET", "path": "/v1/providers/:providerId/doctor", "operationId": "providers.doctor" },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-provider-routes.ts providers.doctor wires default/live to assertProviderProbeTestOracleAllowed(deps) at the top of the handler, so the 503 fires BEFORE the providerService.doctorProvider call. 503 TS_RUNTIME_PROVIDER_PROBE_RETIRED (classification fail_closed, replacement rust_owned_provider_probe_entrypoint_required). fail_closed NOT operator_external_adapter: doctorProvider (src/providers/services/friday-provider-service.ts buildDoctorReport, verified by reading the impl) computes a transient provider backend/auth/routing-eligibility health diagnostic — read-shaped for HTTP/oauth providers (derived from stored validation state + config), and in the CLI branch it runs a live probeFridayCliSession session probe; it is the same diagnostic surface providers.health.list aggregates per-provider. This is Rust-ownable diagnostic product logic; the guard fail-closes BEFORE the doctorProvider call so no doctor diagnostic runs in default/live. executes_product_logic:false: no provider doctor diagnostic runs in default/live. Flag allowTestOnlyProviderProbeExecution threaded as for providers.validate (runtime + hub-config + mock-env/real-env/e2e). Reachable only through explicit allowTestOnlyProviderProbeExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned provider-probe entrypoint when available."
+    },
+    {
+      "id": "capabilities_doctor",
+      "route": { "method": "POST", "path": "/v1/capabilities/doctor", "operationId": "capabilities.doctor" },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-provider-routes.ts capabilities.doctor wires default/live to assertProviderProbeTestOracleAllowed(deps) AFTER body validation (parseCapabilityDoctorProviderIds -> 400 on an explicit empty providerIds list) + the canonical mutation gate (maybeRequireProviderMutationTicket) and BEFORE the providerService.runCapabilityDoctor call. 503 TS_RUNTIME_PROVIDER_PROBE_RETIRED (classification fail_closed, replacement rust_owned_provider_probe_entrypoint_required). fail_closed NOT operator_external_adapter: runCapabilityDoctor (src/providers/services/friday-provider-service.ts, verified by reading the impl) calls validateProvider per provider (egress + DB validation-state write) and runs probeProviderCapability live standardized capability PROBES against the providers, Rust-ownable product logic; when retired the guard fail-closes BEFORE the runCapabilityDoctor call so neither the per-provider validation nor the capability probes run. executes_product_logic:false: no capability probe runs in default/live. Flag allowTestOnlyProviderProbeExecution threaded as for providers.validate. Reachable only through explicit allowTestOnlyProviderProbeExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned provider-probe entrypoint when available."
+    },
+    {
+      "id": "providers_routing_pin",
+      "route": { "method": "POST", "path": "/v1/providers/routing/pin", "operationId": "providers.routing.pin" },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-provider-routes.ts providers.routing.pin wires default/live to assertProviderRoutingControlsTestOracleAllowed(deps) AFTER the user-scoped principal check (401 UNAUTHORIZED), body validation (providerId/model/backendKind -> 400 VALIDATION_ERROR), and the canonical mutation gate (maybeRequireProviderMutationTicket) and IMMEDIATELY BEFORE the providerService.pinRoute user-scoped routing-state write. 503 TS_RUNTIME_PROVIDER_ROUTING_CONTROLS_RETIRED (classification fail_closed, replacement rust_owned_provider_routing_controls_entrypoint_required). fail_closed NOT operator_external_adapter: pin writes user-scoped routing state (runtime product logic), Rust-ownable; when retired the guard fail-closes BEFORE the write so no state mutates. executes_product_logic:false: no routing pin write runs in default/live. Flag allowTestOnlyProviderRoutingControlsExecution threaded CreateFridayApiRuntimeDeps -> createFridayProviderRoutes + hub-config so mock-env (default-true), real-env (true), and full-e2e (createFridayHub) set it; mock-journeys e2e Scenario exercises POST /v1/providers/routing/pin through createMockHubEnv. This flag does NOT cover the model-routing config surfaces (GET/PUT /v1/model-routing), which remain operator_external_adapter and are DEFERRED. Reachable only through explicit allowTestOnlyProviderRoutingControlsExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned routing-controls entrypoint when available."
+    },
+    {
+      "id": "providers_routing_penalty_clear",
+      "route": { "method": "POST", "path": "/v1/providers/routing/penalties/clear", "operationId": "providers.routing.penalty.clear" },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-provider-routes.ts providers.routing.penalty.clear wires default/live to assertProviderRoutingControlsTestOracleAllowed(deps) AFTER the user-scoped principal check (401 UNAUTHORIZED), body validation (providerId/model/backendKind -> 400 VALIDATION_ERROR), and the canonical mutation gate (maybeRequireProviderMutationTicket) and IMMEDIATELY BEFORE the providerService.clearRoutePenalty user-scoped routing-penalty write. 503 TS_RUNTIME_PROVIDER_ROUTING_CONTROLS_RETIRED (classification fail_closed, replacement rust_owned_provider_routing_controls_entrypoint_required). fail_closed NOT operator_external_adapter: penalty.clear writes user-scoped routing-penalty state (runtime product logic), Rust-ownable; when retired the guard fail-closes BEFORE the write so no state mutates. executes_product_logic:false: no penalty-clear write runs in default/live. Flag allowTestOnlyProviderRoutingControlsExecution threaded as for providers.routing.pin. This flag does NOT cover the model-routing config surfaces (GET/PUT /v1/model-routing), which remain operator_external_adapter and are DEFERRED. Reachable only through explicit allowTestOnlyProviderRoutingControlsExecution test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned routing-controls entrypoint when available."
+    },
+    {
+      "id": "providers_health_list_compat",
+      "route": { "method": "GET", "path": "/v1/providers/health", "operationId": "providers.health.list" },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep the provider health snapshot as a bounded compatibility read while provider probe/routing-controls mutations are fail-closed or moved to Rust-owned product truth. This read (src/api/http/routes/friday-provider-routes.ts listHealthSnapshot) aggregates per-provider lane/circuit/validation status by invoking the read-shaped doctorProvider health computation (buildDoctorReport) per provider — the same diagnostic the fail-closed providers.doctor surface returns; for HTTP/oauth providers this is derived from stored validation state + config, and the CLI branch runs a live cli-session probe. It performs no create/update/delete/validate mutation and does not mark completion, so it stays a bounded compatibility read rather than a fail-closed mutation. NOTE: this is NOT weaker than providers.doctor on the probe axis — it runs the same per-provider doctorProvider computation (CLI-branch live probe) across ALL providers, so fencing providers.doctor leaves this aggregate read as an unfenced path to the same diagnostic. Per coordinator scope it is re-labeled (not fenced); when providers.doctor's Rust diagnostic entrypoint lands, this aggregate read should move with it.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted provider-health projection when available."
+    },
+    {
+      "id": "providers_capability_health_list_compat",
+      "route": { "method": "GET", "path": "/v1/providers/capability-health", "operationId": "providers.capability.health.list" },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep the provider capability-health snapshot as a bounded compatibility read while provider capability probes are fail-closed or moved to Rust-owned product truth. This read (src/api/http/routes/friday-provider-routes.ts listCapabilityHealthSnapshot) derives per-provider capability state from declared runtimeCapabilities + the listHealthSnapshot result, so it transitively invokes the same read-shaped doctorProvider health computation per provider (live cli-session probe in the CLI branch); it does NOT run the heavyweight probeProviderCapability standardized capability probe (that lives only in the fail-closed capabilities.doctor / runCapabilityDoctor path). It performs no create/update/delete/validate mutation and does not mark completion, so it stays a bounded compatibility read. NOTE: like providers.health.list this is an unfenced path to the per-provider doctorProvider diagnostic; when that Rust diagnostic entrypoint lands, this read should move with it.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted capability-health projection when available."
+    },
+    {
+      "id": "providers_get_compat",
+      "route": { "method": "GET", "path": "/v1/providers/:providerId", "operationId": "providers.get" },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep the single-provider read as a bounded compatibility read while provider mutation and probe surfaces are fail-closed or moved to Rust-owned product truth. This read returns a configured provider profile (secrets are stored as env-ref/none key sources, never raw); it does not create, update, delete, validate, or run completion.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted provider projection when available."
+    },
+    {
+      "id": "providers_templates_list_compat",
+      "route": { "method": "GET", "path": "/v1/providers/templates", "operationId": "providers.templates.list" },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep the provider-template list as a bounded compatibility read while provider setup mutation is fail-closed or moved to Rust-owned product truth. This read returns static onboarding template metadata; it does not create, update, delete, or mark completion. NOTE: this path is asserted by the setup-template-loading UI browser-e2e (test/e2e/ui/friday-setup-template-loading.e2e.test.ts) which checks the route exists — compat_shim is a re-label only with NO behavior change, so that browser-e2e is unaffected.",
+      "next_action": "Replace this compatibility read with a Rust-owned provider-template projection when available."
+    },
+    {
+      "id": "providers_usage_get_compat",
+      "route": { "method": "GET", "path": "/v1/providers/usage", "operationId": "providers.usage.get" },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep the provider usage summary as a bounded compatibility read while provider budget mutation is fail-closed or moved to Rust-owned product truth. This read (src/api/http/routes/friday-provider-usage-routes.ts) returns aggregated usage groups; it does not record usage, mutate budget, or mark completion.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted provider-usage projection when available."
+    },
+    {
+      "id": "providers_budget_get_compat",
+      "route": { "method": "GET", "path": "/v1/providers/budget", "operationId": "providers.budget.get" },
+      "classification": "compat_shim",
+      "user_triggerable": true,
+      "migration_intent": "Keep the provider budget status as a bounded compatibility read while provider budget mutation (PUT /v1/providers/budget) is fail-closed or moved to Rust-owned product truth. This read (src/api/http/routes/friday-provider-usage-routes.ts) returns the monthly limit/spent/remaining snapshot; it does not mutate budget config or mark completion.",
+      "next_action": "Replace this compatibility read with a Rust-owned redacted provider-budget projection when available."
+    },
+    {
       "id": "realtime_subscribe_read",
       "route": {
         "method": "POST",

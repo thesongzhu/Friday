@@ -365,6 +365,10 @@ export async function createMockHubEnv(opts?: {
   allowTestOnlySkillConverterExecution?: boolean;
   /** Test-oracle opt-in for the legacy TS provider-detect probe; set false to prove default fail-closed behavior. */
   allowTestOnlyProviderDetectExecution?: boolean;
+  /** Test-oracle opt-in for the legacy TS provider probe surfaces (validate/doctor/capabilities.doctor); set false to prove default fail-closed behavior. */
+  allowTestOnlyProviderProbeExecution?: boolean;
+  /** Test-oracle opt-in for the legacy TS provider routing-controls surfaces (routing.pin/routing.penalty.clear); set false to prove default fail-closed behavior. */
+  allowTestOnlyProviderRoutingControlsExecution?: boolean;
   /**
    * execrun-replacement slice 4 (DARK): per-run Rust-route flag. DEFAULT-FALSE here (honest
    * dark) — the predicate is unconsumed this slice so the value is cosmetic; the ui browser
@@ -432,6 +436,8 @@ export async function createMockHubEnv(opts?: {
       allowTestOnlyRealtimeExecution: opts?.allowTestOnlyRealtimeExecution ?? true,
       allowTestOnlySkillConverterExecution: opts?.allowTestOnlySkillConverterExecution ?? true,
       allowTestOnlyProviderDetectExecution: opts?.allowTestOnlyProviderDetectExecution ?? true,
+      allowTestOnlyProviderProbeExecution: opts?.allowTestOnlyProviderProbeExecution ?? true,
+      allowTestOnlyProviderRoutingControlsExecution: opts?.allowTestOnlyProviderRoutingControlsExecution ?? true,
       // execrun-replacement slice 4 (DARK): default-FALSE (honest dark), unlike the
       // allowTestOnly* flags which default true. The predicate is unconsumed this slice.
       routeAgentRunViaRust: opts?.routeAgentRunViaRust ?? false,
