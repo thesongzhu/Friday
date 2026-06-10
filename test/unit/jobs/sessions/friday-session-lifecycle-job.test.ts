@@ -21,6 +21,9 @@ describe("FridaySessionLifecycleJob", () => {
       db,
       idGenerator: idGen,
       nowIso: () => new Date(BASE_TIME).toISOString(),
+      // TS-R4/G3: the lifecycle job drives sweepLifecycle, which is fail-closed
+      // by default in live runtime; opt in so the job test exercises the sweep.
+      allowTestOnlySessionExecution: true,
     });
 
     mockExtractionService = {
@@ -67,6 +70,7 @@ describe("FridaySessionLifecycleJob", () => {
       db,
       idGenerator: idGen,
       nowIso: futureIso,
+      allowTestOnlySessionExecution: true,
     });
 
     const job = createFridaySessionLifecycleJob({
@@ -95,6 +99,7 @@ describe("FridaySessionLifecycleJob", () => {
       db,
       idGenerator: idGen,
       nowIso: futureIso,
+      allowTestOnlySessionExecution: true,
     });
 
     vi.mocked(mockExtractionService.extractFromSession).mockRejectedValue(

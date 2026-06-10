@@ -3727,6 +3727,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     db: deps.db,
     idGenerator: deps.idGenerator,
     nowIso: deps.nowIso,
+    // TS Runtime Retirement (TS-R4/G3 method-level guard): plumb the same
+    // test-oracle flag the route honors so `sweepLifecycle` fails closed for
+    // every non-route caller unless explicitly enabled. Only used when the hub
+    // does not pass its own sessionService (e.g. standalone API runtime / the
+    // api-test-server helper). Production leaves this unset.
+    allowTestOnlySessionExecution: deps.allowTestOnlySessionExecution,
   });
 
   async function loadSessionHistoryMessages(sessionKey: string): Promise<FridaySessionMessageRecord[]> {
@@ -4005,6 +4011,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       providerService: deps.providerService,
       idGenerator: deps.idGenerator,
       nowIso: deps.nowIso,
+      // TS Runtime Retirement (TS-R4/G3 method-level guard): plumb the same
+      // test-oracle flag the route honors so the extraction mutators fail closed
+      // for every non-route caller (this is the route-facing instance; the
+      // scheduler uses a separate instance in hub bootstrap) unless explicitly
+      // enabled. Production leaves this unset.
+      allowTestOnlySessionMemoryExtractionExecution:
+        deps.allowTestOnlySessionMemoryExtractionExecution,
     });
   }
 

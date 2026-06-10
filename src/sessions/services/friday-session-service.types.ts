@@ -73,4 +73,14 @@ export interface CreateFridaySessionServiceDeps {
   db: FridaySqliteLayer;
   idGenerator: () => string;
   nowIso: () => string;
+  /**
+   * TS Runtime Retirement (TS-R4/G3) — METHOD-level fail-closed guard for the
+   * mutating session-lifecycle sweep. Default/live runtime must leave this unset
+   * so `sweepLifecycle` fails closed for ALL callers — including the
+   * `session-lifecycle-sweep` scheduler job, which bypasses the HTTP route guard
+   * (`assertSessionTestOracleAllowed` in friday-session-routes). Test-oracle
+   * harnesses set it `true` to exercise the legacy in-process sweep. Reads stay
+   * live; only the sweep mutation is retired, mirroring the route surface.
+   */
+  allowTestOnlySessionExecution?: boolean;
 }
