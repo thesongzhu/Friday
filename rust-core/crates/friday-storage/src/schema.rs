@@ -80,6 +80,18 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     // holds NO secret/key material — step params are tool-call arguments whose
     // execution is still governed by the gate at run time.
     "workflow_definition",
+    // S10-A: Rust workflow SCHEDULER substrate (DARK — no daemon, no tick loop, no
+    // production route yet; tables created additively, nothing reads/writes them in
+    // production). All four are Hub-only: a schedule references a Hub-only published
+    // workflow definition and a scheduled fire goes through the Hub-coordinated run
+    // engine; the lease/control singletons coordinate a future Hub-side daemon. They
+    // hold NO secret/key material (schedule = workflow_id + restricted cron + flags;
+    // fire = a closed-vocab outcome receipt; control = pause flag/reason; lease = an
+    // opaque holder token + expiry).
+    "workflow_schedule",
+    "workflow_schedule_fire",
+    "scheduler_control",
+    "scheduler_lease",
 ];
 
 /// Tables present only on a phone (never created on the Hub).
@@ -343,6 +355,22 @@ pub fn hub_migrations() -> Vec<Migration> {
             name: "agent_session_conversation_axes",
             destructive: false,
             up: m0023_agent_session_conversation_axes,
+        },
+        // S10-A: Rust workflow SCHEDULER substrate (DARK). Adds the four Hub-only
+        // tables a future scheduler daemon will use — `workflow_schedule` (operator
+        // schedule rows, born disabled, UTC-only, restricted cron), the per-slot
+        // `workflow_schedule_fire` receipt (PK `(schedule_id, slot_ts)` so a slot's
+        // outcome is recorded at-most-once), and the `scheduler_control` /
+        // `scheduler_lease` singletons (runtime pause kill-switch + single-instance
+        // lease). Purely additive (CREATE TABLE + INDEX + one control-singleton seed
+        // INSERT) — touches no existing table, so v23 rows/queries are unaffected. NO
+        // daemon, NO tick loop, NO production route consumes these yet (slices B/C);
+        // the WAL file-mode flip + plist install + enable are operator-gated. NOT v1 GO.
+        Migration {
+            version: 24,
+            name: "workflow_scheduler_substrate",
+            destructive: false,
+            up: m0024_workflow_scheduler_substrate,
         },
     ]
 }
@@ -721,6 +749,83 @@ CREATE INDEX idx_workflow_definition_published
     ON workflow_definition(workflow_id, is_published);
 CREATE UNIQUE INDEX idx_workflow_definition_one_published
     ON workflow_definition(workflow_id) WHERE is_published = 1;";
+
+// --- S10-A workflow-scheduler substrate fragment (Hub-only) -----------------
+
+// DARK scheduler substrate (S10-A). Four Hub-only tables a FUTURE Rust daemon
+// (slices B/C, operator-gated) will use; nothing reads or writes them in
+// production now. Design: `S10_DAEMON_SCHEDULER_DESIGN_20260609.md` §1.3/§1.4/§3.
+//
+// * `workflow_schedule` — operator-assigned schedule rows. `schedule_id` PK,
+//   non-empty. `workflow_id` names the workflow whose PUBLISHED version a fire
+//   resolves at fire time (no version pinned). `cron_expr` is a RESTRICTED 5-field
+//   subset (min hour dom mon dow; `*`, `*/n`, numeric, comma-lists only) validated
+//   FAIL-CLOSED by the friday-hub `cron_subset` parser at the create boundary AND
+//   re-parsed at every due check — the schema can only structurally guarantee
+//   non-emptiness; the semantic gate is the parser (mirrors how `workflow_def`'s
+//   linear-only semantic gate lives above the row CHECK). `timezone` is UTC-only,
+//   made unrepresentable otherwise by the CHECK (v1 honest restriction — no DST
+//   math). `enabled` is BORN DISABLED (DEFAULT 0): creating a schedule never starts
+//   firing; enabling is a second explicit operator act. `last_slot_ts` is the
+//   watermark (last UTC-minute slot CONSIDERED — fired or skipped); NULL until the
+//   first tick considers it, and a future writer advances it monotonically.
+// * `workflow_schedule_fire` — one receipt row per CONSIDERED slot, PK
+//   `(schedule_id, slot_ts)` so a slot's outcome is recorded AT MOST ONCE even
+//   under a daemon race (the per-slot dedupe complement to the engine's
+//   deterministic-run-id `create_run` PK). `outcome` is a CLOSED vocabulary
+//   (anything else is unrepresentable). `run_id` is set only on `'fired'`.
+//   `detail_token` is a bounded closed-vocab token (NEVER engine free text); v1
+//   leaves the column nullable TEXT with the closed vocabulary enforced by the
+//   slice-B tick writer (no value vocab is fixed at the storage layer yet).
+// * `scheduler_control` — singleton (`id=1` CHECK) runtime kill-switch: `paused`
+//   (0/1) checked at the top of every future tick. Seeded `(1, 0, NULL, 0)` by this
+//   migration so a read is always defined (never a missing-row fail).
+// * `scheduler_lease` — singleton (`id=1` CHECK) single-instance lease: an opaque
+//   `holder` token + `expires_at`. NOT seeded (a NULL holder is disallowed); a row
+//   appears only when a daemon acquires the lease at runtime (slice C).
+const DDL_WORKFLOW_SCHEDULER: &str = "
+CREATE TABLE workflow_schedule (
+    schedule_id   TEXT PRIMARY KEY CHECK(length(trim(schedule_id)) > 0),
+    workflow_id   TEXT NOT NULL CHECK(length(trim(workflow_id)) > 0),
+    cron_expr     TEXT NOT NULL CHECK(length(trim(cron_expr)) > 0),
+    timezone      TEXT NOT NULL DEFAULT 'UTC' CHECK(timezone = 'UTC'),
+    enabled       INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0, 1)),
+    last_slot_ts  INTEGER,
+    created_at    INTEGER NOT NULL,
+    updated_at    INTEGER NOT NULL
+);
+CREATE INDEX idx_workflow_schedule_enabled ON workflow_schedule(enabled);
+CREATE TABLE workflow_schedule_fire (
+    schedule_id   TEXT NOT NULL,
+    slot_ts       INTEGER NOT NULL,
+    outcome       TEXT NOT NULL CHECK(outcome IN (
+        'fired',
+        'skipped_missed',
+        'skipped_paused',
+        'skipped_no_published',
+        'skipped_previous_awaiting',
+        'invalid_schedule',
+        'error'
+    )),
+    run_id        TEXT,
+    detail_token  TEXT,
+    created_at    INTEGER NOT NULL,
+    PRIMARY KEY(schedule_id, slot_ts)
+);
+CREATE INDEX idx_workflow_schedule_fire_outcome
+    ON workflow_schedule_fire(schedule_id, outcome);
+CREATE TABLE scheduler_control (
+    id         INTEGER PRIMARY KEY CHECK(id = 1),
+    paused     INTEGER NOT NULL CHECK(paused IN (0, 1)),
+    reason     TEXT,
+    updated_at INTEGER NOT NULL
+);
+CREATE TABLE scheduler_lease (
+    id         INTEGER PRIMARY KEY CHECK(id = 1),
+    holder     TEXT NOT NULL CHECK(length(trim(holder)) > 0),
+    expires_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);";
 
 // --- PNS-001 provider-session fragments (Hub-only) --------------------------
 
@@ -1540,4 +1645,19 @@ fn m0023_agent_session_conversation_axes(tx: &Transaction) -> rusqlite::Result<(
          ALTER TABLE agent_session ADD COLUMN session_kind TEXT
             CHECK(session_kind IS NULL OR session_kind IN ('conversation', 'subagent'));",
     )
+}
+
+// S10-A: DARK Rust workflow-scheduler substrate (the four Hub-only tables in
+// `DDL_WORKFLOW_SCHEDULER` + the `scheduler_control` singleton seed). Purely
+// additive (CREATE TABLE + INDEX, no existing table touched). Seeds the
+// `scheduler_control` row so a pause-check read is always defined (the lease
+// singleton is intentionally left empty — its `holder` cannot be a placeholder).
+// Nothing in production reads or writes these tables in slice A.
+fn m0024_workflow_scheduler_substrate(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_WORKFLOW_SCHEDULER)?;
+    tx.execute(
+        "INSERT INTO scheduler_control (id, paused, reason, updated_at) VALUES (1, 0, NULL, 0)",
+        [],
+    )?;
+    Ok(())
 }
