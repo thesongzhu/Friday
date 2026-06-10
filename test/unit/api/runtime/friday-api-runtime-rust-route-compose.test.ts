@@ -54,10 +54,12 @@ function makeSequenceIdGenerator(...ids: string[]): () => string {
 
 const RUN_ID_2 = "fixed-run-id-2";
 
-function makeProviderService(): FridayProviderService {
+function makeProviderService(
+  overrides: { getProvider?: (providerId: string) => Promise<unknown> } = {},
+): FridayProviderService {
   return {
     listProviders: vi.fn(async () => []),
-    getProvider: vi.fn(async () => null),
+    getProvider: overrides.getProvider ?? vi.fn(async () => null),
     createProvider: vi.fn(async () => ({} as never)),
     updateProvider: vi.fn(async () => ({} as never)),
     deleteProvider: vi.fn(async () => undefined),
@@ -166,6 +168,7 @@ interface ComposeDeps {
   clientSecretResolver?: () => Uint8Array | null;
   hubDbPath?: string;
   idGenerator?: () => string;
+  providerService?: FridayProviderService;
 }
 
 function makeRuntime(db: FridaySqliteLayer, opts: ComposeDeps) {
@@ -173,7 +176,7 @@ function makeRuntime(db: FridaySqliteLayer, opts: ComposeDeps) {
     db,
     idGenerator: opts.idGenerator ?? makeIdGenerator(RUN_ID),
     nowIso: () => NOW,
-    providerService: makeProviderService(),
+    providerService: opts.providerService ?? makeProviderService(),
     agentRuntime: makeAgentRuntime(),
     agentEventEmitter: createFridayAgentEventEmitter(),
     tokenSecret: "test-secret-key-that-is-at-least-32-chars-long!!", // pragma: allowlist secret
@@ -527,5 +530,171 @@ describe("FridayApiRuntime — execrun S-F-compose (DARK) Rust-route composition
       httpStatus: 503,
     });
     expect(ws.calls).toHaveLength(0);
+  });
+
+  // ── execrun prod-provider-shape fix — qualification by RESOLVED provider kind ──
+  // Production provider rows carry UUID ids (kind="deepseek", id="fa15f1fe-…"); only
+  // test/RGG envs seed the literal id "deepseek". Before this fix the predicate's literal
+  // clause + resolveRoute's id-only match were mutually unsatisfiable on prod data: the
+  // literal id 404'd at validation, the UUID id failed the literal clause → 503 always.
+  const PROD_UUID_PROVIDER_ID = "fa15f1fe-7e64-4d2c-9a1b-3c5d7e9f0a2b";
+
+  /** A prod-shaped provider PROFILE row: UUID id, kind="deepseek". */
+  function makeProdProviderRecord(overrides: { kind?: string; enabled?: boolean } = {}) {
+    return {
+      id: PROD_UUID_PROVIDER_ID,
+      kind: (overrides.kind ?? "deepseek") as never,
+      name: "DeepSeek (prod-shaped row)",
+      baseUrl: "https://api.deepseek.com",
+      enabled: overrides.enabled ?? true,
+      config: {
+        api: "openai-completions" as const,
+        authMode: "api-key" as const,
+        keySource: { kind: "env-ref" as const, envVar: "DEEPSEEK_API_KEY" },
+        supportedModels: ["deepseek-v4-flash"],
+        validation: { status: "ok" as const, checkedAt: NOW },
+      },
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+  }
+
+  function readProjectedProviderId(database: FridaySqliteLayer, runId: string): string | undefined {
+    return database.withReadConnection((d) =>
+      (d.prepare("SELECT provider_id AS p FROM friday_agent_runs WHERE id = ?").get(runId) as
+        | { p: string }
+        | undefined)?.p,
+    );
+  }
+
+  it("(j) prod UUID-id deepseek provider row → QUALIFIES and routes via Rust (the prod-shape fix)", async () => {
+    db = createTestDb();
+    const ws = makeStubWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const getProvider = vi.fn(async (providerId: string) =>
+      providerId === PROD_UUID_PROVIDER_ID ? makeProdProviderRecord() : null,
+    );
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+      providerService: makeProviderService({ getProvider }),
+    });
+
+    const result = (await callStartRoute(runtime, {
+      ...QUALIFYING_BODY,
+      providerId: PROD_UUID_PROVIDER_ID,
+    })) as { runId: string; response: string; finalResponse?: string };
+
+    // The cheap read-by-id resolved the record, the run qualified, and the full Rust
+    // path was invoked.
+    expect(getProvider).toHaveBeenCalledWith(PROD_UUID_PROVIDER_ID);
+    expect(ws.calls).toHaveLength(1);
+    expect(result.runId).toBe(RUN_ID);
+    expect(result.response).toBe(OWNER_BODY);
+    expect(result.finalResponse).toBe(OWNER_BODY);
+    // Truth-labeling: the projected continuity row carries the REAL provider row id (the
+    // UUID the request used), not the literal — providerId downstream is labeling only.
+    expect(readProjectedProviderId(db, RUN_ID)).toBe(PROD_UUID_PROVIDER_ID);
+  });
+
+  it("(k) literal providerId \"deepseek\" still qualifies WITHOUT any record read (no regression, zero extra reads)", async () => {
+    db = createTestDb();
+    const ws = makeStubWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const getProvider = vi.fn(async () => null);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+      providerService: makeProviderService({ getProvider }),
+    });
+
+    const result = (await callStartRoute(runtime, { ...QUALIFYING_BODY })) as { response: string };
+
+    expect(result.response).toBe(OWNER_BODY);
+    expect(ws.calls).toHaveLength(1);
+    // The literal shape short-circuits BEFORE the record read → byte-identical for the
+    // existing test/RGG envs.
+    expect(getProvider).not.toHaveBeenCalled();
+  });
+
+  it("(l) UUID provider row of a NON-deepseek kind → DISQUALIFIED → byte-identical 503; WS never touched", async () => {
+    db = createTestDb();
+    const ws = makeStubWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+      providerService: makeProviderService({
+        getProvider: vi.fn(async () => makeProdProviderRecord({ kind: "anthropic" })),
+      }),
+    });
+
+    await expect(
+      callStartRoute(runtime, { ...QUALIFYING_BODY, providerId: PROD_UUID_PROVIDER_ID }),
+    ).rejects.toMatchObject({ code: "TS_RUNTIME_AGENT_RUNS_RETIRED", httpStatus: 503 });
+    expect(ws.calls).toHaveLength(0);
+    expect(readback.calls).toHaveLength(0);
+  });
+
+  it("(m) DISABLED deepseek-kind provider row → DISQUALIFIED → byte-identical 503; WS never touched", async () => {
+    db = createTestDb();
+    const ws = makeStubWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+      providerService: makeProviderService({
+        getProvider: vi.fn(async () => makeProdProviderRecord({ enabled: false })),
+      }),
+    });
+
+    await expect(
+      callStartRoute(runtime, { ...QUALIFYING_BODY, providerId: PROD_UUID_PROVIDER_ID }),
+    ).rejects.toMatchObject({ code: "TS_RUNTIME_AGENT_RUNS_RETIRED", httpStatus: 503 });
+    expect(ws.calls).toHaveLength(0);
+    expect(readback.calls).toHaveLength(0);
+  });
+
+  it("(n) UNRESOLVABLE providerId (no record) → DISQUALIFIED → byte-identical 503, no new error class", async () => {
+    db = createTestDb();
+    const ws = makeStubWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+      providerService: makeProviderService({ getProvider: vi.fn(async () => null) }),
+    });
+
+    await expect(
+      callStartRoute(runtime, { ...QUALIFYING_BODY, providerId: PROD_UUID_PROVIDER_ID }),
+    ).rejects.toMatchObject({ code: "TS_RUNTIME_AGENT_RUNS_RETIRED", httpStatus: 503 });
+    expect(ws.calls).toHaveLength(0);
+  });
+
+  it("(o) getProvider THROWS → resolution fails closed → byte-identical 503 (never a new error)", async () => {
+    db = createTestDb();
+    const ws = makeStubWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+      providerService: makeProviderService({
+        getProvider: vi.fn(async () => {
+          throw new Error("provider repo unavailable");
+        }),
+      }),
+    });
+
+    await expect(
+      callStartRoute(runtime, { ...QUALIFYING_BODY, providerId: PROD_UUID_PROVIDER_ID }),
+    ).rejects.toMatchObject({ code: "TS_RUNTIME_AGENT_RUNS_RETIRED", httpStatus: 503 });
+    expect(ws.calls).toHaveLength(0);
+    expect(readback.calls).toHaveLength(0);
   });
 });

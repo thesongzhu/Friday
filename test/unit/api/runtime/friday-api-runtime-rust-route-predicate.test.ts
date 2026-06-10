@@ -56,6 +56,85 @@ describe("qualifiesForRustReadOnlyRoute (execrun slice 4, dark predicate)", () =
     expect(qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), providerId: undefined })).toBe(false);
   });
 
+  // ── Clause 3 (prod provider shape): resolved provider RECORD kind ────────────
+  // Production provider rows carry UUID ids (kind="deepseek", id="fa15f1fe-…"); only
+  // test/RGG envs seed the literal id "deepseek". The route wrapper resolves the record
+  // and passes `resolvedProvider`; the predicate must accept BOTH shapes, fail-closed.
+  const PROD_UUID_PROVIDER_ID = "fa15f1fe-7e64-4d2c-9a1b-3c5d7e9f0a2b";
+
+  it("admits a prod-shaped UUID provider id whose RESOLVED record is an enabled deepseek", () => {
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...qualifyingInput(),
+        providerId: PROD_UUID_PROVIDER_ID,
+        resolvedProvider: { kind: "deepseek", enabled: true },
+      }),
+    ).toBe(true);
+  });
+
+  it("still admits the literal provider id \"deepseek\" WITHOUT any resolved record (test/RGG envs)", () => {
+    // The literal shape never depends on a record resolution (the route wrapper does not
+    // even perform the read when the literal matches).
+    expect(
+      qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), resolvedProvider: undefined }),
+    ).toBe(true);
+  });
+
+  it("disqualifies a UUID provider id whose resolved record kind is NOT deepseek", () => {
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...qualifyingInput(),
+        providerId: PROD_UUID_PROVIDER_ID,
+        resolvedProvider: { kind: "anthropic", enabled: true },
+      }),
+    ).toBe(false);
+  });
+
+  it("disqualifies a UUID provider id whose resolved deepseek record is DISABLED (or enabled-unknown)", () => {
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...qualifyingInput(),
+        providerId: PROD_UUID_PROVIDER_ID,
+        resolvedProvider: { kind: "deepseek", enabled: false },
+      }),
+    ).toBe(false);
+    // enabled missing → uncertain → fail-closed
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...qualifyingInput(),
+        providerId: PROD_UUID_PROVIDER_ID,
+        resolvedProvider: { kind: "deepseek" },
+      }),
+    ).toBe(false);
+  });
+
+  it("disqualifies an UNRESOLVABLE UUID provider id (no record) — fail-closed, never throws", () => {
+    const input: RustRouteQualificationInput = {
+      ...qualifyingInput(),
+      providerId: PROD_UUID_PROVIDER_ID,
+      // resolvedProvider intentionally absent (route wrapper found no record / lookup threw)
+    };
+    expect(() => qualifiesForRustReadOnlyRoute(input)).not.toThrow();
+    expect(qualifiesForRustReadOnlyRoute(input)).toBe(false);
+  });
+
+  it("a resolved deepseek record can NOT rescue a missing/blank providerId", () => {
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...qualifyingInput(),
+        providerId: undefined,
+        resolvedProvider: { kind: "deepseek", enabled: true },
+      }),
+    ).toBe(false);
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...qualifyingInput(),
+        providerId: "   ",
+        resolvedProvider: { kind: "deepseek", enabled: true },
+      }),
+    ).toBe(false);
+  });
+
   it("disqualifies deepseek-pro / codex / claude / a missing model (no downgrade to flash)", () => {
     for (const model of ["deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner", "codex", "claude-3-7", undefined]) {
       expect(qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), model })).toBe(false);
