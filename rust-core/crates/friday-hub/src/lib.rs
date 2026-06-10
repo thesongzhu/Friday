@@ -469,6 +469,76 @@ impl<T: friday_deepseek::Transport> AgentLlmClient for DeepSeekAgentLlmClient<T>
     }
 }
 
+/// S7 — Real model-client adapter over `friday-anthropic` (the Claude/Anthropic
+/// route), the SECOND live provider, mirroring [`DeepSeekAgentLlmClient`]. It builds
+/// the SAME tool-call / loop prompts, calls the live Claude model (`POST /v1/messages`,
+/// no fallback), and parses the reply STRICTLY back into a [`RawToolCall`]/[`AgentStep`].
+///
+/// **DARK / default-off.** This adapter is constructed only behind an explicit,
+/// default-OFF selection (see [`crate::runtime::HubRuntime::live`], env gate
+/// `FRIDAY_CLAUDE_ROUTE_ENABLED`). It is reachable from the routed loop ONLY when a
+/// `claude`-kind route is selected, which the autonomous baseline marks
+/// `available: false`. Prod default behavior is UNCHANGED; the DeepSeek path is untouched.
+///
+/// **No-fallback contract:** identical to DeepSeek — a route failure is an
+/// [`AgentError`], never a silent substitute. The model id is supplied by the caller
+/// (from the route), so there is no model-discovery step.
+///
+/// **Error mapping (retry-classification DEFERRED).** [`AgentError::Route`] carries a
+/// concrete `friday_deepseek::DeepSeekError`, so a [`friday_anthropic::ClaudeError`]
+/// cannot go there. The lowest-blast-radius mapping for this dark, never-selected path
+/// is the existing string-bearing [`AgentError::Model`] (never retried by the run-loop's
+/// `classify_deepseek`). A future non-dark slice that actually selects Claude would add
+/// an `AgentError::ClaudeRoute(ClaudeError)` variant + a classifier arm; out of scope here.
+///
+/// **Ledger/metering DEFERRED.** This adapter does NOT override `next_step_metered`, so
+/// it uses the trait DEFAULT (no usage ⇒ no ledger row). Reusing DeepSeek's `MeteredStep`
+/// (hardwired to `friday_deepseek::ModelCallOutcome`) or `LedgerEntry::friday_route`
+/// (hardwired to `ProviderKind::DeepSeek`/`api.deepseek.com`) would mis-attribute a Claude
+/// call as DeepSeek — a latent honesty bug. A proper Claude ledger needs
+/// `ProviderKind::Anthropic` + a `MeteredStep` generalization; both out of dark scope.
+pub struct ClaudeAgentLlmClient<T: friday_anthropic::Transport> {
+    client: friday_anthropic::ClaudeClient<T>,
+    /// The model id this adapter dispatches to (from the route; e.g. `claude-opus-4-8`).
+    /// Claude has no `/models` discovery step, so the model is supplied here.
+    model: String,
+}
+
+impl<T: friday_anthropic::Transport> ClaudeAgentLlmClient<T> {
+    pub fn new(client: friday_anthropic::ClaudeClient<T>, model: impl Into<String>) -> Self {
+        Self {
+            client,
+            model: model.into(),
+        }
+    }
+}
+
+impl<T: friday_anthropic::Transport> AgentLlmClient for ClaudeAgentLlmClient<T> {
+    fn propose_tool_call(&self, task: &str) -> Result<RawToolCall, AgentError> {
+        let prompt = build_tool_prompt(task);
+        let outcome = self
+            .client
+            .chat(&self.model, &prompt, AGENTLOOP_MAX_TOKENS)
+            // ClaudeError → string-bearing AgentError::Model (retry-classification deferred;
+            // see the adapter doc). Coarse, secret-free Display.
+            .map_err(|e| AgentError::Model(e.to_string()))?;
+        parse_tool_call(&outcome.content)
+    }
+
+    /// History-aware multi-turn step, identical contract to the DeepSeek adapter's
+    /// `next_step`. `{"tool":"none","answer":"<final>"}` parses to `Finish`.
+    fn next_step(&self, task: &str, history: &[TurnTrace]) -> Result<AgentStep, AgentError> {
+        let prompt = build_loop_prompt(task, history);
+        let outcome = self
+            .client
+            .chat(&self.model, &prompt, AGENTLOOP_MAX_TOKENS)
+            .map_err(|e| AgentError::Model(e.to_string()))?;
+        parse_agent_step(&outcome.content)
+    }
+    // `next_step_metered` is intentionally NOT overridden — see the adapter doc
+    // (ledger/metering deferred; the trait default returns `(result, None)`).
+}
+
 /// The process-wide DEFAULT (built-in) tool registry, built once and reused. The free
 /// `trusted_classify`/`build_tool_prompt` chokepoints call this on every turn; caching
 /// avoids rebuilding the `BTreeMap` + its ~10 `String`s per call (the UNW-002 reviewer
