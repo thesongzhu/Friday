@@ -370,22 +370,29 @@ mod tests {
         ClaudeClient::with_transport(mock, "test-key-not-real".to_string())
     }
 
+    /// Serve exactly one HTTP response on an ephemeral localhost port. The thread
+    /// returns the raw request bytes it captured off the wire (as a lossy String)
+    /// so a header KAT can assert what actually reached the socket. Callers that
+    /// only care about the response simply `handle.join().unwrap();` and discard
+    /// the returned String.
     fn serve_http_once(
         status: u16,
         reason: &'static str,
         body: &'static str,
-    ) -> (String, thread::JoinHandle<()>) {
+    ) -> (String, thread::JoinHandle<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let handle = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             let mut req = [0u8; 2048];
-            let _ = stream.read(&mut req);
+            let n = stream.read(&mut req).unwrap_or(0);
+            let captured = String::from_utf8_lossy(&req[..n]).into_owned();
             let response = format!(
                 "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
                 body.len()
             );
             stream.write_all(response.as_bytes()).unwrap();
+            captured
         });
         (format!("http://{addr}"), handle)
     }
@@ -399,6 +406,41 @@ mod tests {
         let err =
             api_key_from_env_var("FRIDAY_ANTHROPIC_API_KEY_DEFINITELY_UNSET_a1b2c3").unwrap_err();
         assert!(matches!(err, ClaudeError::CredentialMissing));
+    }
+
+    #[test]
+    fn empty_or_whitespace_credential_fails_closed_no_client() {
+        // A var that is SET but empty / whitespace-only must FAIL CLOSED exactly
+        // like an absent var — never yielding a (blank-key) client. Use a unique
+        // bespoke var name so the (single) env-mutating test in this suite has no
+        // concurrent-mutation partner regardless of cargo's test parallelism, and
+        // never touches the real `FRIDAY_ANTHROPIC_API_KEY`.
+        let var = "FRIDAY_ANTHROPIC_API_KEY_EMPTY_WS_TEST_d4e5f6";
+
+        std::env::set_var(var, "");
+        assert!(
+            matches!(
+                api_key_from_env_var(var).unwrap_err(),
+                ClaudeError::CredentialMissing
+            ),
+            "empty key must fail closed"
+        );
+
+        std::env::set_var(var, "  \t\n ");
+        assert!(
+            matches!(
+                api_key_from_env_var(var).unwrap_err(),
+                ClaudeError::CredentialMissing
+            ),
+            "whitespace-only key must fail closed"
+        );
+
+        // A non-empty value IS accepted (positive control: the validator is not
+        // just always-Err) — and is returned verbatim, not trimmed.
+        std::env::set_var(var, " sk-real ");
+        assert_eq!(api_key_from_env_var(var).unwrap(), " sk-real ");
+
+        std::env::remove_var(var);
     }
 
     // ---- request shaping (golden request JSON) ----
@@ -431,6 +473,44 @@ mod tests {
         assert_eq!(body["messages"][0]["content"], "ping");
         // No streaming, no thinking — kept simple.
         assert!(body.get("stream").is_none());
+    }
+
+    #[test]
+    fn real_transport_sends_x_api_key_and_anthropic_version_headers_on_the_wire() {
+        // The Anthropic auth headers are set by the REAL transport (UreqTransport),
+        // not by ClaudeClient — so prove them where they're actually written: parse
+        // the raw request bytes captured off the socket and assert the request line
+        // + that the CONFIGURED x-api-key value and the pinned anthropic-version
+        // VALUE reach the wire. Dropping `.set("x-api-key", ..)` or changing
+        // ANTHROPIC_VERSION must turn this RED.
+        let (base_url, handle) = serve_http_once(
+            200,
+            "OK",
+            r#"{"model":"claude-opus-4-8","content":[{"type":"text","text":"PONG"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}"#,
+        );
+        let c = ClaudeClient::with_transport_and_base_url(
+            UreqTransport::new(),
+            "test-key-not-real".to_string(),
+            base_url,
+        );
+        let out = c.chat("claude-opus-4-8", "ping", 16).unwrap();
+        assert_eq!(out.content, "PONG"); // sanity: the round-trip completed
+
+        // ureq does not guarantee header-NAME casing on the wire; lowercase the
+        // haystack. The two asserted VALUES are case-stable.
+        let captured = handle.join().unwrap().to_ascii_lowercase();
+        assert!(
+            captured.contains("post /v1/messages"),
+            "request line missing POST /v1/messages: {captured}"
+        );
+        assert!(
+            captured.contains("x-api-key: test-key-not-real"),
+            "configured x-api-key did not reach the wire: {captured}"
+        );
+        assert!(
+            captured.contains("anthropic-version: 2023-06-01"),
+            "anthropic-version value did not reach the wire: {captured}"
+        );
     }
 
     // ---- response parsing (golden response → expected text/usage) ----
