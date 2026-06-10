@@ -252,9 +252,7 @@ mod tests {
         assert_eq!(s.state_at(1_400), SessionState::Active);
 
         // heartbeat while live: refresh expiry forward, bump heartbeat_at.
-        let s2 = sessions
-            .heartbeat("sess-1", "owner-1", 1_400, 500)
-            .unwrap();
+        let s2 = sessions.heartbeat("sess-1", "owner-1", 1_400, 500).unwrap();
         assert_eq!(s2.heartbeat_at, 1_400);
         assert_eq!(s2.expires_at, 1_900);
 

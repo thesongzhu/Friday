@@ -252,10 +252,22 @@ mod tests {
         store.register("dev-1", &att, "", 100).unwrap();
         // Backwards timestamp does not rewind last_seen_at.
         store.touch_for_owner("dev-1", "owner-1", 50).unwrap();
-        assert_eq!(store.get_for_owner("dev-1", "owner-1").unwrap().last_seen_at, 100);
+        assert_eq!(
+            store
+                .get_for_owner("dev-1", "owner-1")
+                .unwrap()
+                .last_seen_at,
+            100
+        );
         // Forward timestamp advances it.
         store.touch_for_owner("dev-1", "owner-1", 200).unwrap();
-        assert_eq!(store.get_for_owner("dev-1", "owner-1").unwrap().last_seen_at, 200);
+        assert_eq!(
+            store
+                .get_for_owner("dev-1", "owner-1")
+                .unwrap()
+                .last_seen_at,
+            200
+        );
         // Wrong owner refused.
         assert_eq!(
             store.touch_for_owner("dev-1", "owner-2", 300),
