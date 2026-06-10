@@ -130,6 +130,17 @@ pub mod workflow_ts_translate;
 /// workflow execution remains fenced in TS and is NOT product-replaced; NOT v1 GO.
 pub mod workflow_run;
 
+/// S10-A — workflow SCHEDULER substrate (DARK). The hub-layer half of slice A:
+/// the restricted CRON-SUBSET parser + the minute-granularity UTC `is_due` /
+/// `next_due` evaluator (no `chrono`, UTC-only), the deterministic
+/// `scheduled_run_id` helper (the at-most-once anchor for the future tick's
+/// `create_run` dup-PK claim), and `create_schedule` — the create boundary that
+/// validates the cron expression fail-closed BEFORE it reaches a born-disabled
+/// stored row. NO daemon, NO tick loop, NO firing (slices B/C); the storage rows
+/// live in `friday_storage::schedule`. WAL flip + plist install + enable are
+/// operator-gated. NOT v1 GO.
+pub mod scheduler;
+
 /// PAIR-002 — Hub-side local pairing message handler. It consumes the structured
 /// QR payload from PAIR-001 and the first-slice protocol `Pair` message, writes a
 /// trusted device through the existing authenticated pairing proof, and never

@@ -136,6 +136,10 @@ export function createFridaySelfLearningRuntime(
     nowIso: deps.nowIso,
     stepExecutors: deps.stepExecutors,
     stepVerifiers: deps.stepVerifiers,
+    // TS Runtime Retirement (G1): method-level fail-closed guard on execute().
+    // Default/live runtime leaves this unset (fail closed); test/mock/real-env
+    // harnesses opt in via hub-config.
+    allowTestOnlyAutoFixExecution: deps.allowTestOnlyAutoFixExecution,
   });
 
   const approvals = createFridayApprovalWorkflowService({

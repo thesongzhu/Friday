@@ -28,6 +28,7 @@ pub mod process_registry;
 pub mod provider_session;
 pub mod provider_timeline_store;
 pub mod run_result;
+pub mod schedule;
 mod schema;
 pub mod workflow;
 pub mod workflow_def;
@@ -146,6 +147,45 @@ impl Db {
             &schema::hub_migrations(),
             "unit2-foundation",
         )
+    }
+
+    /// Open (and migrate) a Hub database in SHARED-WRITER (concurrent) mode for
+    /// the S10 scheduler daemon.
+    ///
+    /// Identical to [`Db::open_hub`] except it additionally sets, on ITS OWN
+    /// connection only:
+    /// * `PRAGMA journal_mode = WAL` — so a second process (the agent-run WS
+    ///   server) can read while the scheduler writes;
+    /// * `PRAGMA busy_timeout = 5000` — so a contended write retries for 5s
+    ///   instead of failing immediately with `SQLITE_BUSY`.
+    ///
+    /// DARK / operator-gated: this is ADDITIVE and is NOT called by any existing
+    /// `open_hub` caller (the WS server, hub bootstrap, every read adapter still
+    /// use [`Db::open_hub`] / [`Db::open_hub_readonly`]). It exists for the future
+    /// scheduler bin (slice C). `journal_mode = WAL` is a PERSISTENT file-mode
+    /// change the instant a connection runs it, so flipping it on the PRODUCTION
+    /// `rust-hub.sqlite` is an OPERATOR-GATED deploy step (design §2/§7 G1) — slice
+    /// A only sets the pragma on connections it opens itself (tests / a future
+    /// daemon), never on a prod path. Keep this method off every production caller
+    /// until that gate is taken.
+    pub fn open_hub_concurrent(path: &str) -> Result<Db> {
+        let mut conn = Connection::open(path)?;
+        conn.pragma_update(None, "foreign_keys", true)?;
+        // WAL is a no-op (returns "memory") on an in-memory DB; on a file DB it
+        // converts the journal mode persistently. busy_timeout is per-connection.
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "busy_timeout", 5000)?;
+        apply_migrations(
+            &mut conn,
+            path,
+            &schema::hub_migrations(),
+            "unit2-foundation",
+        )?;
+        Ok(Db {
+            conn,
+            path: path.to_string(),
+            profile: Profile::Hub,
+        })
     }
 
     /// Open a Hub database for pure-read projections without applying migrations.

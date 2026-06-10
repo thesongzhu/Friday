@@ -23,6 +23,7 @@ members = [
     "crates/friday-anthropic",
     "crates/friday-providers",
     "crates/friday-fs",
+    "crates/friday-system-remote",
     "crates/friday-hub",
     "crates/friday-ffi",
     "crates/friday-operator-cli",

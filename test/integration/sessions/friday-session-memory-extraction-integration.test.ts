@@ -223,6 +223,9 @@ describe("Session memory extraction — integration", () => {
       providerService: createMockProviderService(),
       idGenerator,
       nowIso: () => NOW,
+      // TS-R4/G3: opt in to the legacy extraction mutators (fail-closed by
+      // default in live runtime).
+      allowTestOnlySessionMemoryExtractionExecution: true,
     });
   });
 

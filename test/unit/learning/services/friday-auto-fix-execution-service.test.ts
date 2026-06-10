@@ -123,6 +123,8 @@ describe("FridayAutoFixExecutionService", () => {
       nowIso: () => NOW,
     });
     service = createFridayAutoFixExecutionService({
+      // TS Runtime Retirement (G1): opt in to the test-oracle so execute() runs.
+      allowTestOnlyAutoFixExecution: true,
       db,
       actionRepo,
       incidentRepo,
@@ -312,6 +314,8 @@ describe("FridayAutoFixExecutionService", () => {
     });
 
     const executionService = createFridayAutoFixExecutionService({
+      // TS Runtime Retirement (G1): opt in to the test-oracle so execute() runs.
+      allowTestOnlyAutoFixExecution: true,
       db,
       actionRepo,
       incidentRepo,
@@ -410,6 +414,8 @@ describe("FridayAutoFixExecutionService", () => {
       updatedAt: NOW,
     });
     const executionService = createFridayAutoFixExecutionService({
+      // TS Runtime Retirement (G1): opt in to the test-oracle so execute() runs.
+      allowTestOnlyAutoFixExecution: true,
       db,
       actionRepo,
       incidentRepo,
@@ -504,6 +510,8 @@ describe("FridayAutoFixExecutionService", () => {
     // must refuse this payload so the action cannot finalize as a verified
     // repair.
     const executionService = createFridayAutoFixExecutionService({
+      // TS Runtime Retirement (G1): opt in to the test-oracle so execute() runs.
+      allowTestOnlyAutoFixExecution: true,
       db,
       actionRepo,
       incidentRepo,
@@ -574,6 +582,8 @@ describe("FridayAutoFixExecutionService", () => {
     const executed: string[] = [];
     const verified: string[] = [];
     const overrideService = createFridayAutoFixExecutionService({
+      // TS Runtime Retirement (G1): opt in to the test-oracle so execute() runs.
+      allowTestOnlyAutoFixExecution: true,
       db,
       actionRepo,
       incidentRepo: createFridayErrorIncidentRepository(),
@@ -607,6 +617,8 @@ describe("FridayAutoFixExecutionService", () => {
 
   it("fails closed when an injected executor rejects a step kind", async () => {
     const failClosedService = createFridayAutoFixExecutionService({
+      // TS Runtime Retirement (G1): opt in to the test-oracle so execute() runs.
+      allowTestOnlyAutoFixExecution: true,
       db,
       actionRepo: createFridayAutoFixActionRepository(),
       incidentRepo: createFridayErrorIncidentRepository(),
@@ -664,6 +676,8 @@ describe("FridayAutoFixExecutionService", () => {
     const incidentRepo = createFridayErrorIncidentRepository();
     const diagnosisRepo = createFridayDiagnosisRecordRepository();
     const lessonAwareService = createFridayAutoFixExecutionService({
+      // TS Runtime Retirement (G1): opt in to the test-oracle so execute() runs.
+      allowTestOnlyAutoFixExecution: true,
       db,
       actionRepo,
       incidentRepo,
@@ -882,6 +896,8 @@ describe("FridayAutoFixExecutionService", () => {
 
       // Create service with a verifier that FAILS for apply_config_patch
       const failService = createFridayAutoFixExecutionService({
+      // TS Runtime Retirement (G1): opt in to the test-oracle so execute() runs.
+      allowTestOnlyAutoFixExecution: true,
         db,
         actionRepo,
         incidentRepo,
@@ -995,6 +1011,8 @@ describe("FridayAutoFixExecutionService", () => {
       };
 
       const executionService = createFridayAutoFixExecutionService({
+      // TS Runtime Retirement (G1): opt in to the test-oracle so execute() runs.
+      allowTestOnlyAutoFixExecution: true,
         db,
         actionRepo,
         incidentRepo,
@@ -1092,6 +1110,8 @@ describe("FridayAutoFixExecutionService", () => {
 
       // Create service with a verifier that FAILS for retry_node
       const failService = createFridayAutoFixExecutionService({
+      // TS Runtime Retirement (G1): opt in to the test-oracle so execute() runs.
+      allowTestOnlyAutoFixExecution: true,
         db,
         actionRepo,
         incidentRepo,
@@ -1225,6 +1245,8 @@ describe("FridayAutoFixExecutionService", () => {
       };
 
       const executionService = createFridayAutoFixExecutionService({
+      // TS Runtime Retirement (G1): opt in to the test-oracle so execute() runs.
+      allowTestOnlyAutoFixExecution: true,
         db,
         actionRepo,
         incidentRepo,
@@ -1354,6 +1376,8 @@ describe("FridayAutoFixExecutionService", () => {
       };
 
       const executionService = createFridayAutoFixExecutionService({
+      // TS Runtime Retirement (G1): opt in to the test-oracle so execute() runs.
+      allowTestOnlyAutoFixExecution: true,
         db,
         actionRepo,
         incidentRepo,
@@ -1463,6 +1487,8 @@ describe("FridayAutoFixExecutionService", () => {
       });
 
       const executionService = createFridayAutoFixExecutionService({
+      // TS Runtime Retirement (G1): opt in to the test-oracle so execute() runs.
+      allowTestOnlyAutoFixExecution: true,
         db,
         actionRepo,
         incidentRepo,
