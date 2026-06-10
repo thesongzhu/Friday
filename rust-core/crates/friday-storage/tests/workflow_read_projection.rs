@@ -29,6 +29,27 @@ fn run_summary_projects_labels_and_is_none_for_an_unknown_run() {
 }
 
 #[test]
+fn run_summary_projects_the_cancelled_state_faithfully_not_coerced_to_failed() {
+    // R2 slice-2 readback contract: a CANCELLED run must project `state =
+    // "cancelled"` through the readback bridge — not silently coerced/dropped to
+    // "failed". The run-state projection is a pass-through string today, but this
+    // locks the contract so a future closed-vocab tightening of the run state can't
+    // re-introduce the cancelled/failed erasure on the read side.
+    let db = Db::open_hub(&temp_db_path("wfread-cancelled")).unwrap();
+    workflow::create_run(db.conn(), "r1", "research", 100).unwrap();
+    workflow::set_run_state(db.conn(), "r1", WorkflowRunState::Running, 150).unwrap();
+    workflow::cancel_run(db.conn(), "r1", Some("operator requested"), 200).unwrap();
+
+    let s = get_workflow_run_summary(db.conn(), "r1").unwrap().unwrap();
+    assert_eq!(
+        s.state, "cancelled",
+        "a cancelled run projects 'cancelled', NOT coerced to 'failed'"
+    );
+    assert_ne!(s.state, "failed");
+    assert_eq!(s.updated_at, 200);
+}
+
+#[test]
 fn step_summaries_are_seq_ordered_and_project_evidence_presence_never_its_text() {
     let db = Db::open_hub(&temp_db_path("wfread-steps")).unwrap();
     workflow::create_run(db.conn(), "r1", "qa", 1).unwrap();

@@ -17,6 +17,12 @@ fn parse_run_state(s: &str) -> WorkflowRunState {
         "running" => WorkflowRunState::Running,
         "awaiting_checkpoint" => WorkflowRunState::AwaitingCheckpoint,
         "done" => WorkflowRunState::Done,
+        // R2 slice-2: `cancelled` is a NEW first-class state. It MUST parse back to
+        // `Cancelled` (NOT fall through to the `_ => Failed` catch-all) — otherwise
+        // a cancel write would silently read back as `Failed`, reintroducing the
+        // cancelled/failed erasure the hard rules forbid. The compiler does NOT
+        // enforce this arm (the catch-all absorbs it), so it is explicit + tested.
+        "cancelled" => WorkflowRunState::Cancelled,
         _ => WorkflowRunState::Failed,
     }
 }
@@ -269,4 +275,118 @@ pub fn complete_step(
         params![status.as_str(), stored_ref, now, step_id],
     )?;
     Ok(status)
+}
+
+// --- R2 slice-2: run-CONTROL persistence (retry / cancel). Hub-only, additive. ---
+//
+// These compose the same `friday-core` machine `set_run_state` enforces; they add
+// NO second transition table. They are the storage primitives the dark R2
+// run-control plane (`friday-hub::workflow_run_control`) delegates to, mirroring
+// the TS `friday-workflow-execution-service` `retryRun`/`cancelRun` writes.
+
+/// The persisted retry-attempt count of a step (the `attempt` column, m0027). `1`
+/// is the base attempt (matching TS, which starts a node at `attempt = 1` and a
+/// retry at `attempt + 1`). Returns `None` for an unknown `step_id`.
+pub fn step_attempt(conn: &Connection, step_id: &str) -> Result<Option<i64>> {
+    let a: Option<i64> = conn
+        .query_row(
+            "SELECT attempt FROM workflow_step WHERE step_id = ?1",
+            [step_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(a)
+}
+
+/// REOPEN the non-terminal frontier step of a failed run for retry (the retry
+/// primitive). Mirrors TS `retryRun`'s per-node retry-attempt creation: it returns
+/// the step to `Pending` and bumps `attempt` (the m0027 column) so a re-drive
+/// re-dispatches it through the gate and `complete_step` accepts it again.
+///
+/// Unlike TS — which INSERTs a new attempt *row* (its `workflow_run_node` keys on
+/// `(runId, nodeId, attempt)`) — the Rust `workflow_step` keys on a single
+/// `step_id` PK, so this is an in-place UPDATE that bumps the attempt counter
+/// (inserting a new row would collide on the PK). The attempt counter still
+/// records the retry, faithful to the TS `attempt + 1` semantics, without a schema
+/// reshape outside m0027's additive column.
+///
+/// ## Which step state is the retry frontier (HONEST — the engine never writes a
+/// `Failed` *step* status)
+/// A failed run's frontier step is NOT `StepStatus::Failed` — the engine has no
+/// path that persists that status. Tracing the failure arms in
+/// [`crate::workflow_exec`]: an exec-error on a side-effect step persists
+/// `ProofPending` (`complete_step(None,..)`), an exec-error on a non-side-effect
+/// step leaves it `Running`, and a denied/unregistered checkpoint leaves it
+/// `Pending` (it was registered but never executed). So this reopens any
+/// **non-`Verified`** step (`Pending`/`Running`/`ProofPending`/the injected-only
+/// `Failed`) — the real engine-produced frontier. It REFUSES a `Verified` step:
+/// completed (evidence-verified) side-effect work must never be silently redone
+/// (that would be the data-fudge the hard rules forbid). Returns the new attempt.
+pub fn reopen_failed_step(conn: &Connection, step_id: &str, now: i64) -> Result<i64> {
+    let cur: Option<String> = conn
+        .query_row(
+            "SELECT status FROM workflow_step WHERE step_id = ?1",
+            [step_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let cur = cur
+        .ok_or_else(|| StorageError::Unsupported(format!("workflow_step '{step_id}' not found")))?;
+    if parse_step_status(&cur) == StepStatus::Verified {
+        return Err(StorageError::Unsupported(format!(
+            "workflow_step '{step_id}' is 'verified'; completed work is not re-driveable on retry"
+        )));
+    }
+    // Reopen: -> Pending, attempt += 1, clear any stale evidence_ref (a failed/partial
+    // attempt's ref is invalid — a fresh attempt re-earns it).
+    conn.execute(
+        "UPDATE workflow_step
+            SET status = ?1, attempt = attempt + 1, evidence_ref = NULL, updated_at = ?2
+          WHERE step_id = ?3",
+        params![StepStatus::Pending.as_str(), now, step_id],
+    )?;
+    let new_attempt: i64 = conn.query_row(
+        "SELECT attempt FROM workflow_step WHERE step_id = ?1",
+        [step_id],
+        |r| r.get(0),
+    )?;
+    Ok(new_attempt)
+}
+
+/// CANCEL a run terminally, recording the reason (the cancel primitive). Mirrors
+/// TS `cancelRun`'s `finalizeRun(runId, "cancelled", …, {message: reason})`: it
+/// transitions the run to the terminal `Cancelled` state THROUGH the `friday-core`
+/// machine (so `{Pending,Running,AwaitingCheckpoint} -> Cancelled` is validated and
+/// a terminal `Done`/`Failed`/`Cancelled` run is REFUSED — never reopened) and
+/// writes `cancel_reason` (m0027) in the SAME statement (atomic state+reason).
+///
+/// This NEVER coerces a run onto `Failed` — the cancelled/failed distinction is
+/// preserved end-to-end (the write is `Cancelled`, and `parse_run_state` reads it
+/// back as `Cancelled`). Fail-closed: an unknown run, or a run in a non-cancellable
+/// (terminal) state, returns an error and writes nothing.
+pub fn cancel_run(conn: &Connection, run_id: &str, reason: Option<&str>, now: i64) -> Result<()> {
+    let cur = run_state(conn, run_id)?
+        .ok_or_else(|| StorageError::Unsupported(format!("workflow_run '{run_id}' not found")))?;
+    // Validate the transition through the SAME core machine set_run_state uses — a
+    // terminal run (Done/Failed/Cancelled) has no -> Cancelled edge and fails here.
+    let next = cur.try_transition(WorkflowRunState::Cancelled)?;
+    conn.execute(
+        "UPDATE workflow_run SET state = ?1, cancel_reason = ?2, updated_at = ?3 WHERE run_id = ?4",
+        params![next.as_str(), reason, now, run_id],
+    )?;
+    Ok(())
+}
+
+/// Read a run's `cancel_reason` (m0027), or `None` if unset / the run is unknown.
+/// A non-cancelled run carries `NULL` (the column defaults NULL); only a cancel
+/// writes it.
+pub fn run_cancel_reason(conn: &Connection, run_id: &str) -> Result<Option<String>> {
+    let r: Option<Option<String>> = conn
+        .query_row(
+            "SELECT cancel_reason FROM workflow_run WHERE run_id = ?1",
+            [run_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(r.flatten())
 }

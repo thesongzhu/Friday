@@ -334,3 +334,158 @@ fn proof_pending_verifies_when_evidence_arrives_but_verified_cannot_downgrade() 
         .unwrap();
     assert_eq!(ev_after.as_deref(), Some("evidence://late"));
 }
+
+// --- R2 slice-2 run-control persistence (cancel / retry primitives) ----------
+
+#[test]
+fn cancel_run_writes_terminal_cancelled_with_reason_and_never_coerces_to_failed() {
+    // The cancel primitive writes the NEW terminal `Cancelled` state (NOT Failed),
+    // records the reason atomically, and — the data-fudge guard — reads back as
+    // Cancelled (the parse_run_state round-trip), distinct from Failed.
+    let p = temp_db_path("wf-cancel");
+    let db = Db::open_hub(&p).unwrap();
+    workflow::create_run(db.conn(), "r1", "QA", 1).unwrap();
+    workflow::set_run_state(db.conn(), "r1", WorkflowRunState::Running, 2).unwrap();
+
+    workflow::cancel_run(db.conn(), "r1", Some("operator requested"), 3).unwrap();
+    assert_eq!(
+        workflow::run_state(db.conn(), "r1").unwrap(),
+        Some(WorkflowRunState::Cancelled),
+        "cancel writes terminal Cancelled, NOT Failed"
+    );
+    assert_ne!(
+        workflow::run_state(db.conn(), "r1").unwrap(),
+        Some(WorkflowRunState::Failed),
+        "the cancelled/failed distinction is preserved end-to-end"
+    );
+    assert_eq!(
+        workflow::run_cancel_reason(db.conn(), "r1").unwrap(),
+        Some("operator requested".to_string())
+    );
+    // The raw column stores the exact string "cancelled" (not "failed").
+    let raw: String = db
+        .conn()
+        .query_row(
+            "SELECT state FROM workflow_run WHERE run_id = 'r1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(raw, "cancelled");
+}
+
+#[test]
+fn cancel_run_fail_closed_on_terminal_and_unknown_runs() {
+    let p = temp_db_path("wf-cancel-closed");
+    let db = Db::open_hub(&p).unwrap();
+    // Unknown run -> error, no write.
+    assert!(workflow::cancel_run(db.conn(), "ghost", None, 1).is_err());
+
+    // A terminal Done run cannot be cancelled (no Done -> Cancelled edge).
+    workflow::create_run(db.conn(), "r-done", "QA", 1).unwrap();
+    workflow::set_run_state(db.conn(), "r-done", WorkflowRunState::Running, 2).unwrap();
+    workflow::set_run_state(db.conn(), "r-done", WorkflowRunState::Done, 3).unwrap();
+    assert!(
+        workflow::cancel_run(db.conn(), "r-done", Some("too late"), 4).is_err(),
+        "a terminal Done run is not cancellable"
+    );
+    assert_eq!(
+        workflow::run_state(db.conn(), "r-done").unwrap(),
+        Some(WorkflowRunState::Done),
+        "the terminal run is untouched by the refused cancel"
+    );
+
+    // A terminal Failed run cannot be cancelled (preserves failed, never coerced).
+    workflow::create_run(db.conn(), "r-failed", "QA", 1).unwrap();
+    workflow::set_run_state(db.conn(), "r-failed", WorkflowRunState::Failed, 2).unwrap();
+    assert!(workflow::cancel_run(db.conn(), "r-failed", None, 3).is_err());
+    assert_eq!(
+        workflow::run_state(db.conn(), "r-failed").unwrap(),
+        Some(WorkflowRunState::Failed)
+    );
+
+    // A cancelled run cannot be re-cancelled (Cancelled is terminal).
+    workflow::create_run(db.conn(), "r-cx", "QA", 1).unwrap();
+    workflow::set_run_state(db.conn(), "r-cx", WorkflowRunState::Running, 2).unwrap();
+    workflow::cancel_run(db.conn(), "r-cx", Some("first"), 3).unwrap();
+    assert!(workflow::cancel_run(db.conn(), "r-cx", Some("again"), 4).is_err());
+    assert_eq!(
+        workflow::run_cancel_reason(db.conn(), "r-cx").unwrap(),
+        Some("first".to_string()),
+        "the original reason is preserved; a re-cancel writes nothing"
+    );
+}
+
+#[test]
+fn reopen_step_accepts_real_engine_frontier_states_and_refuses_verified() {
+    // The retry primitive reopens the NON-Verified frontier step (-> Pending,
+    // attempt += 1) so a re-drive can re-dispatch + re-complete it. CRITICAL: the
+    // engine never persists a `Failed` STEP status — a failed run's frontier is
+    // ProofPending (side-effect exec-error) / Running (pure exec-error) / Pending
+    // (denied checkpoint), so those are the states that must be retryable. Only a
+    // `Verified` step is refused (completed work must not be silently redone).
+    let p = temp_db_path("wf-reopen-step");
+    let db = Db::open_hub(&p).unwrap();
+    workflow::create_run(db.conn(), "r1", "QA", 1).unwrap();
+
+    // Frontier as ProofPending (the real side-effect exec-error state): retryable.
+    workflow::add_step(db.conn(), "st1", "r1", 1, true, 1).unwrap();
+    assert_eq!(workflow::step_attempt(db.conn(), "st1").unwrap(), Some(1)); // m0027 base
+    workflow::complete_step(db.conn(), "st1", None, false, 2).unwrap(); // -> ProofPending
+    assert_eq!(
+        workflow::step_status(db.conn(), "st1").unwrap(),
+        Some(StepStatus::ProofPending)
+    );
+    let a = workflow::reopen_failed_step(db.conn(), "st1", 3).unwrap();
+    assert_eq!(
+        a, 2,
+        "attempt bumped to 2 on the first retry of a ProofPending step"
+    );
+    assert_eq!(
+        workflow::step_status(db.conn(), "st1").unwrap(),
+        Some(StepStatus::Pending),
+        "reopened step is back to Pending (so complete_step accepts it again)"
+    );
+
+    // Frontier still Pending (denied-checkpoint state): retryable too.
+    workflow::add_step(db.conn(), "st2", "r1", 2, true, 1).unwrap();
+    assert_eq!(
+        workflow::reopen_failed_step(db.conn(), "st2", 4).unwrap(),
+        2
+    );
+
+    // A Verified step is REFUSED — completed (evidence-verified) work is not re-driveable.
+    workflow::add_step(db.conn(), "st3", "r1", 3, true, 1).unwrap();
+    workflow::complete_step(db.conn(), "st3", Some("evidence://done"), false, 5).unwrap();
+    assert_eq!(
+        workflow::step_status(db.conn(), "st3").unwrap(),
+        Some(StepStatus::Verified)
+    );
+    assert!(
+        workflow::reopen_failed_step(db.conn(), "st3", 6).is_err(),
+        "a Verified step is not re-driveable on retry"
+    );
+
+    // The injected-only `Failed` step status is also accepted (defensive).
+    db.conn()
+        .execute(
+            "UPDATE workflow_step SET status = 'failed', evidence_ref = 'stale' WHERE step_id = 'st2'",
+            [],
+        )
+        .unwrap();
+    let a2 = workflow::reopen_failed_step(db.conn(), "st2", 7).unwrap();
+    assert_eq!(a2, 3, "attempt accumulates across retries");
+    // The stale evidence_ref from the failed attempt is cleared (a fresh attempt re-earns it).
+    let ev: Option<String> = db
+        .conn()
+        .query_row(
+            "SELECT evidence_ref FROM workflow_step WHERE step_id = 'st2'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(ev, None, "stale evidence cleared on reopen");
+
+    // Unknown step -> fail-closed.
+    assert!(workflow::reopen_failed_step(db.conn(), "ghost", 8).is_err());
+}
