@@ -45,14 +45,28 @@
     "private_reasoning"
   ],
   "methodRetiredSurfaces": {
-    "doc": "Config-driven method-guard coverage for surfaces that are ROUTE-retired but reach their mutating service methods OFF-route (agent tools, UIX/reflex callers, background jobs, standing-agenda). The route validator (discoverRoutes) is structurally blind to these: it only sees src/api/http/routes/**. scripts/quality/assert-ts-runtime-method-guards.mjs SCANS each listed service file and asserts every declared mutating method carries its method-head fail-closed guard (a reference to its `flag`, directly or via `guardHelper`). This closes the route-only-guard defect (POST_TS_RECONCILIATION_LEDGER §1) and the #628 near-miss: original commit ad45080e added guards to only a SUBSET of each surface's mutating methods (it shipped a 31-line generator change / 34-line product change vs. the e6b39186 fixup's 38 / 63), leaving submitTurn, cancelSession, and materializeGeneratedSession route-retired-but-unguarded while the route validator stayed blocker=0. THIS LIST MUST GROW as more surfaces are method-fenced; surfaces that are guarded only at the HTTP route (e.g. standing-agenda, whose runAgendaItem inherits protection from the now-guarded acquisitionService.startRun) are NOT listed here because the route validator already covers them.",
+    "doc": "Config-driven method-guard STRUCTURAL-PRESENCE coverage for surfaces that are ROUTE-retired but reach their mutating service methods OFF-route (agent tools, UIX/reflex callers, background jobs, standing-agenda). The route validator (discoverRoutes) is structurally blind to these: it only sees src/api/http/routes/**. scripts/quality/assert-ts-runtime-method-guards.mjs strips comments + string/template literals, then asserts (A) every declared mutatingMethod shows its method-head fail-closed guard within its OWN brace-matched body (the `flag` directly or via `guardHelper`); (B) every PUBLIC verb-prefixed (mutating-named) method on each service file is either a declared mutatingMethod or a justified allowlistMutators entry (forces NEW mutators to be registered/allowlisted); (C) a behavioralTest file exists per surface. HONEST LIMIT: this is TEXTUAL — it verifies guard PRESENCE, not fail-closed BEHAVIOR (a neutered/inverted guard whose tokens survive reads as present); behavior is proven by the per-surface behavioralTest in the CI `test` job. It also cannot discover a brand-new off-route surface in a NEW file (covered by the route validator + behavioralTest once registered), nor a mutator whose name is not verb-prefixed in mutatorVerbs. This closes the route-only-guard defect (POST_TS_RECONCILIATION_LEDGER §1) and the #628 near-miss (ad45080e left submitTurn/cancelSession/materializeGeneratedSession route-retired-but-unguarded while the route validator stayed blocker=0). THIS LIST MUST GROW as more surfaces are method-fenced; route-only-guarded surfaces (e.g. standing-agenda) are NOT listed here because the route validator already covers them.",
+    "mutatorVerbs": [
+      "run", "execute", "start", "resume", "retry", "cancel", "create", "update",
+      "delete", "approve", "deny", "generate", "submit", "materialize", "sweep",
+      "extract", "remember", "dispatch", "publish", "deploy", "apply", "rollback"
+    ],
+    "mutatorVerbsDoc": "A PUBLIC method (declared in an exported `...Service` interface, or an object-method shorthand with a body in the factory return) is treated as a MUTATOR if its first camelCase segment (lower-cased) is one of these verbs. VERB-PREFIX, not substring: `getRun` => `get` (not a mutator), `startRun` => `start` (mutator). Widen this list as new mutating naming appears; a mutator whose name is not verb-prefixed here (e.g. `upsertApprovalRule`) is a documented heuristic gap.",
     "countFloor": {
-      "doc": "Anti-shrinkage floor: a CI-comparable baseline of manifest entry counts + the count of declared method-guard assertions. The assertion fails if any count drops BELOW its baseline, forcing a conscious, reviewable baseline edit in the same PR when a surface is legitimately removed/reclassified or a guard is intentionally retired. byClassification is EMITTED for review but NOT floored: fail_closed legitimately shrinks as surfaces move to Rust ownership, so flooring it would false-fail real progress.",
+      "doc": "Anti-shrinkage floor: a CI-comparable baseline of manifest entry counts + per-surface method-guard counts. The assertion fails if any count drops BELOW its baseline, forcing a conscious, reviewable baseline edit in the same PR when a surface is legitimately removed/reclassified or a guard is intentionally retired. perSurfaceMethodsMin floors EACH registered surface (present + >= its method count) so 'drop a surface + add filler' cannot hold the grand total. behavioralTestsMin floors the count of surfaces backed by an existing behavioral test so one documented missing-test gap cannot be copied to null out the others. byClassification is EMITTED for review but NOT floored: fail_closed legitimately shrinks as surfaces move to Rust ownership.",
       "surfacesMin": 279,
       "routeFamiliesMin": 18,
       "guardedMethodsMin": 12,
+      "perSurfaceMethodsMin": {
+        "capability_acquisition": 3,
+        "workflow_generator": 5,
+        "system_intent": 1,
+        "workflow_deploy": 2,
+        "autonomy_policy": 1
+      },
+      "behavioralTestsMin": 5,
       "baselineCommit": "e6b39186",
-      "baselineNote": "Set from origin/main e6b39186 (post-#628 TS-R1 4-surface mirror + #597 autonomy-policy). Lower a *Min only in a PR that also removes the corresponding entry/guard, so the reviewer sees the de-retirement."
+      "baselineNote": "Set from origin/main e6b39186 (post-#628 TS-R1 4-surface mirror + #597 autonomy-policy). Lower a *Min / drop a perSurfaceMethodsMin entry only in a PR that also removes the corresponding entry/guard, so the reviewer sees the de-retirement."
     },
     "surfaces": [
       {
@@ -62,8 +76,9 @@
         "flag": "allowTestOnlyCapabilityAcquisitionExecution",
         "guardHelper": "assertCapabilityAcquisitionExecutionAllowed",
         "mutatingMethods": ["startRun", "approveRun", "cancelRun"],
+        "behavioralTest": "test/unit/autonomy/friday-capability-acquisition-retirement-guard.test.ts",
         "off_route_callers": "agent controlled-autonomy tool (acquisition_start/approve/cancel) + standing-agenda runAgendaItem",
-        "note": "Reads plan/getRun stay live; only run mutations are method-fenced. Guard added in #628/ad45080e."
+        "note": "Reads plan/getRun stay live (verb-prefix `get` is not a mutator, so the registration scan does not flag them); only run mutations are method-fenced. Guard added in #628/ad45080e."
       },
       {
         "id": "workflow_generator",
@@ -72,8 +87,9 @@
         "flag": "allowTestOnlyWorkflowGeneratorExecution",
         "guardHelper": "assertWorkflowGeneratorExecutionAllowed",
         "mutatingMethods": ["startSession", "submitTurn", "generateDraft", "approveAndSave", "cancelSession"],
+        "behavioralTest": "test/unit/workflows/generator/services/friday-workflow-generator-retirement-guard.test.ts",
         "off_route_callers": "agent tool 'turn' / UIX continueWorkflowSession",
-        "note": "submitTurn + cancelSession were the unguarded route-retired mutators the e6b39186 fixup of #628 closed; getSession/getQaVerdict/getHarnessSummary stay live."
+        "note": "submitTurn + cancelSession were the unguarded route-retired mutators the e6b39186 fixup of #628 closed; getSession/getQaVerdict/getHarnessSummary stay live (read prefixes, not flagged). deleteDraft is a factory-internal helper (not a returned/interface member) called by the guarded methods, so it is correctly NOT flagged as a public mutator."
       },
       {
         "id": "system_intent",
@@ -81,8 +97,15 @@
         "serviceFile": "src/system/engine/friday-system-service.ts",
         "flag": "allowTestOnlySystemIntentExecution",
         "mutatingMethods": ["executeIntent"],
+        "behavioralTest": "test/unit/system/friday-system-intent-retirement-guard.test.ts",
+        "allowlistMutators": [
+          {
+            "method": "updateApprovalRule",
+            "reason": "Public mutator on this service file, but NOT a test-oracle retirement surface. Its route (`system_approvals_update`, /v1/system/approvals/:approvalId) is independently classified fail_closed and covered by the route validator. At the METHOD boundary it carries the canonical-approval gate `assertLegacyApprovalRuleMutationAllowed`, which is a DIFFERENT mechanism AND polarity than test-oracle retirement: it is open-by-default and throws only when the canonical mutation gate is engaged (`if (!canonicalMutationGate) return; throw ...`), whereas methodRetiredSurfaces guards are fail-closed-by-default (`if (flag !== true) throw`). Registering it would falsely assert a fail-closed property it does not have. Allowlisted (not folded into mutatingMethods) so this conscious de-coverage decision is visible in the manifest diff."
+          }
+        ],
         "off_route_callers": "agent system tool (executeIntent only)",
-        "note": "Inline guard on the executeIntent wrapper (NOT executeIntentInternal); getSession/getState/listEvents stay live. Guard added in #628/ad45080e."
+        "note": "Inline guard on the executeIntent wrapper (NOT executeIntentInternal — that internal helper is not a returned/interface member, so the scan does not flag it); getSession/getState/listEvents stay live. Guard added in #628/ad45080e. updateApprovalRule is a public mutator handled via allowlistMutators (different guard mechanism — see reason)."
       },
       {
         "id": "workflow_deploy",
@@ -90,8 +113,9 @@
         "serviceFile": "src/workflows/services/friday-workflow-product-service.ts",
         "flag": "allowTestOnlyWorkflowDeployExecution",
         "mutatingMethods": ["deployDraft", "materializeGeneratedSession"],
+        "behavioralTest": "test/unit/workflows/friday-workflow-product-retirement-guard.test.ts",
         "off_route_callers": "UIX start/continue/generate-workflow",
-        "note": "materializeGeneratedSession persists a workflow row + draft in both branches (was mislabeled a 'stays-live read' in ad45080e); the e6b39186 fixup guarded it. getOverview/getVisualization stay live."
+        "note": "materializeGeneratedSession persists a workflow row + draft in both branches (was mislabeled a 'stays-live read' in ad45080e); the e6b39186 fixup guarded it. getOverview/getVisualization stay live. Inline-guarded (no helper) with TWO independent `allowTestOnlyWorkflowDeployExecution !== true` throws — the brace-matched per-method body check requires EACH method to show its own throw (a sibling's no longer satisfies the other)."
       },
       {
         "id": "autonomy_policy",
@@ -99,8 +123,9 @@
         "serviceFile": "src/autonomy/services/friday-autonomy-policy-service.ts",
         "flag": "allowTestOnlyAutonomyPolicyMutation",
         "mutatingMethods": ["updatePolicy"],
+        "behavioralTest": "test/unit/autonomy/friday-controlled-autonomy-services.test.ts",
         "off_route_callers": "agent controlled-autonomy tool (policy_update)",
-        "note": "Inline guard; synchronous (non-async) method. Reads getPolicy/evaluateRisks stay live. Guard added in #597."
+        "note": "Inline guard; synchronous (non-async) method. Reads getPolicy/evaluateRisks stay live. Guard added in #597. behavioralTest points to friday-controlled-autonomy-services.test.ts (its 'updatePolicy METHOD-level fail-closed' describe block) rather than a `*-retirement-guard*` file because the naming convention is non-uniform here."
       }
     ]
   },
