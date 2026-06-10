@@ -109,6 +109,20 @@ pub mod planner;
 /// only (no skill/plugin exec). Resume-after-approval is a deferred follow-up.
 pub mod workflow_exec;
 
+/// S8 — workflow DEFINITION layer: versioned serde definition (LINEAR-only) +
+/// storage CRUD over `friday_storage::workflow_def` + the loader that produces the
+/// exact [`planner::WorkflowDefinition`] the EXISTING [`workflow_exec`] engine
+/// consumes (no second executor). DARK substrate: no production route, no
+/// scheduler (S10, operator-gated); workflow execution remains fenced in TS and is
+/// NOT product-replaced; NOT v1 GO.
+pub mod workflow_def;
+
+/// S8 — TS published-version → Rust LINEAR-ONLY workflow translator. Any
+/// DAG/branch/parallel/unsupported source feature fails CLOSED to an explicit
+/// `Unsupported { reasons, preserved_source_meta }` — never a silent flattening,
+/// never partial. Dark substrate; NOT v1 GO.
+pub mod workflow_ts_translate;
+
 /// PAIR-002 — Hub-side local pairing message handler. It consumes the structured
 /// QR payload from PAIR-001 and the first-slice protocol `Pair` message, writes a
 /// trusted device through the existing authenticated pairing proof, and never
