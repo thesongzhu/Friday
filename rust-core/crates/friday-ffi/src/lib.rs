@@ -3386,6 +3386,7 @@ mod tests {
                 task: "t".into(),
                 forwarded_principal: "p".into(),
                 auth_proof: vec![],
+                session_id: None,
             },
         );
         match parse_hub_response(request.encode().unwrap()) {

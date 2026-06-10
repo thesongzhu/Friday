@@ -22,7 +22,12 @@ function makeFakeClient(behavior: {
   reject?: unknown;
 }) {
   const constructed: CreateFridayRustHubAgentRunSealedClientOptions[] = [];
-  const dispatched: Array<{ runId: string; task: string; forwardedPrincipal: string }> = [];
+  const dispatched: Array<{
+    runId: string;
+    task: string;
+    forwardedPrincipal: string;
+    sessionKey?: string;
+  }> = [];
   const createClient = vi.fn(
     (options: CreateFridayRustHubAgentRunSealedClientOptions): FridayRustHubAgentRunSealedClient => {
       constructed.push(options);
@@ -175,6 +180,38 @@ describe("createFridayRustHubAgentRunSealedClientService (B1-compose, dark, adap
         clientSecret: SECRET,
       }),
     ).rejects.toMatchObject({ httpStatus: 503 });
+  });
+
+  it("(A2a Phase 1) forwards a NON-EMPTY sessionKey to the underlying client", async () => {
+    const fake = makeFakeClient({ result: deliveredResult() });
+    const service = createFridayRustHubAgentRunSealedClientService({
+      port: 4123,
+      createClient: fake.createClient,
+    });
+    await service.dispatchRun({
+      runId: "run-1",
+      task: "compare it to the other file",
+      forwardedPrincipal: "owner-1",
+      clientSecret: SECRET,
+      sessionKey: "chat-session-xyz",
+    });
+    expect(fake.dispatched[0].sessionKey).toBe("chat-session-xyz");
+  });
+
+  it("(A2a Phase 1) does NOT set sessionKey on the inner dispatch when it is absent (byte-identical sessionless)", async () => {
+    const fake = makeFakeClient({ result: deliveredResult() });
+    const service = createFridayRustHubAgentRunSealedClientService({
+      port: 4123,
+      createClient: fake.createClient,
+    });
+    await service.dispatchRun({
+      runId: "run-1",
+      task: "read README.md",
+      forwardedPrincipal: "owner-1",
+      clientSecret: SECRET,
+      // no sessionKey
+    });
+    expect("sessionKey" in fake.dispatched[0]).toBe(false);
   });
 
   it("fails closed (503) when the underlying client construction throws (e.g. a non-32-byte secret)", async () => {

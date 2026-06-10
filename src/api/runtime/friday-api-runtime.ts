@@ -1002,6 +1002,15 @@ export interface RustRouteQualificationInput {
   };
   model?: string;
   sessionKey?: string;
+  /**
+   * (A2a Phase 1) The OWNER principal for the run. Used ONLY by the relaxed clause-5 session
+   * sub-clause: a sessioned run (`sessionKey` non-empty) is admitted ONLY with a non-empty
+   * `principalId` (the bound owner the Rust server scopes the session history + body to). A
+   * blank/whitespace/absent principal disqualifies a SESSIONED run (fail-closed). It has NO
+   * effect on a sessionless run (that path is unchanged). The route wrapper populates this
+   * from the SAME normalized `principalId` it already threads to compose/idempotency.
+   */
+  principalId?: string;
   requireReview?: boolean;
   constraints?: FridayAgentRunConstraints;
   taskProfile?: FridayAgentTaskProfileInput;
@@ -1094,9 +1103,28 @@ export function qualifiesForRustReadOnlyRoute(input: RustRouteQualificationInput
     return false;
   }
 
-  // Clause 5 — no session-mirror dependency (a sessioned run participates in mirroring).
+  // Clause 5 — session sub-clause (A2a Phase 1 RELAX, owner-scoped).
+  //
+  // A non-empty `sessionKey` NO LONGER disqualifies — a read-only sessioned (multi-turn)
+  // chat run may now route to Rust, where the server reloads + threads the session history
+  // via the already-built `run_session_loop`. This is the ONLY relaxation in Phase 1: clause
+  // 2 (readOnly), clause 3 (deepseek-flash), clause 4 (exactly the 4 read tools), and the
+  // plan-review sub-clauses above all stay intact and fail-closed.
+  //
+  // COMPENSATING REQUIREMENT (the matched tightening): a sessioned run is admitted ONLY with
+  // a NON-EMPTY owner `principalId`. The session history + answer body are releasable only to
+  // the run's bound OWNER = the authenticated forwarded principal; an anonymous / blank
+  // principal cannot own a session, so it MUST still disqualify (fail-closed) — otherwise an
+  // ownerless sessioned run could not be safely owner-scoped. A blank/whitespace principalId
+  // counts as absent. SCOPE: this requirement is checked ONLY when a sessionKey is present —
+  // the SESSIONLESS path is UNTOUCHED (a sessionless run with a blank principal stays exactly
+  // as today: it qualifies here and fail-closes downstream in compose, byte-identical).
   if (typeof input.sessionKey === "string" && input.sessionKey.trim().length > 0) {
-    return false;
+    const hasOwnerPrincipal =
+      typeof input.principalId === "string" && input.principalId.trim().length > 0;
+    if (!hasOwnerPrincipal) {
+      return false;
+    }
   }
 
   // Subagents + Pause-able/mutating-approval actions are precluded structurally
@@ -1165,6 +1193,13 @@ async function composeRustReadOnlyAgentRun(args: {
   readonly runId: string;
   readonly task: string;
   readonly principalId: string | undefined;
+  /**
+   * (A2a Phase 1) The session key for a MULTI-TURN read-only chat run, forwarded to the sealed
+   * WS dispatch as `session_id` ONLY when non-empty. Absent/blank ⇒ the dispatch is byte-
+   * identical to today's sessionless request (no `session_id` on the wire). The Rust server
+   * scopes the session to the authenticated owner principal, never this key.
+   */
+  readonly sessionKey: string | undefined;
   readonly providerId: string;
   readonly model: string;
   readonly wsClient: FridayRustHubAgentRunSealedClientService;
@@ -1217,6 +1252,10 @@ async function composeRustReadOnlyAgentRun(args: {
     task: args.task,
     forwardedPrincipal: callerPrincipal,
     clientSecret,
+    // (A2a Phase 1) forward the session key; the WS client emits `session_id` only when it is
+    // non-empty (absent/blank ⇒ byte-identical sessionless wire, today's behavior). The server
+    // owner-scopes the session to `callerPrincipal` (the authenticated owner), never this key.
+    ...(args.sessionKey !== undefined ? { sessionKey: args.sessionKey } : {}),
   });
 
   // (3) Owner-gated body readback (slice-3). The body is released ONLY to the matching
@@ -4364,6 +4403,10 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           resolvedProvider,
           model: input.model,
           sessionKey: input.sessionKey,
+          // (A2a Phase 1) the owner principal the relaxed clause-5 session sub-clause requires
+          // for a SESSIONED run. The qualifier trims it; a blank/absent principal disqualifies
+          // a sessioned run (fail-closed) and is a no-op for a sessionless run.
+          principalId: input.principalId,
           requireReview: input.requireReview,
           constraints: input.constraints,
           taskProfile: input.taskProfile,
@@ -4443,6 +4486,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             // matching the bare startRun which normalizes throughout). Robust to future auth
             // issuance even if a principalId ever arrives non-canonical.
             principalId: normalizedPrincipalId,
+            // (A2a Phase 1) forward the session key so a SESSIONED qualifying run dispatches
+            // `session_id`; absent/blank ⇒ byte-identical sessionless dispatch (today's behavior).
+            sessionKey: input.sessionKey,
             providerId: input.providerId ?? RUST_ROUTE_DEEPSEEK_PROVIDER_ID,
             model: input.model ?? RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
             wsClient: rustWsClient,

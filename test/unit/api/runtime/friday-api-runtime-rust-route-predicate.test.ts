@@ -184,7 +184,9 @@ describe("qualifiesForRustReadOnlyRoute (execrun slice 4, dark predicate)", () =
     ).toBe(false);
   });
 
-  it("a valid resolved record does NOT bypass the no-session clause", () => {
+  it("a valid resolved record does NOT bypass the session OWNER requirement (sessioned + no principal)", () => {
+    // (A2a Phase 1) a sessioned run with NO owner principal stays disqualified (fail-closed),
+    // even with an otherwise fully-qualifying prod-resolved input.
     expect(
       qualifiesForRustReadOnlyRoute({ ...prodResolvedQualifyingInput(), sessionKey: "some-session" }),
     ).toBe(false);
@@ -265,10 +267,62 @@ describe("qualifiesForRustReadOnlyRoute (execrun slice 4, dark predicate)", () =
     expect(qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), planReviewOverride: {} })).toBe(false);
   });
 
-  // ── Clause 5: no session-mirror dependency ──────────────────────────────────
-  it("disqualifies a sessioned run (session-mirror dependency)", () => {
+  // ── Clause 5 session sub-clause (A2a Phase 1 RELAX, owner-scoped) ────────────
+  // A sessioned run is NOW admitted — but ONLY with a non-empty owner principalId. The
+  // sessionLESS path is unchanged (the owner requirement is checked only when a sessionKey
+  // is present). A blank/whitespace sessionKey is treated as absent (no session).
+  it("admits a sessioned run when an owner principalId is present (A2a Phase 1 relax)", () => {
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...qualifyingInput(),
+        sessionKey: "sess-123",
+        principalId: "principal:owner-1",
+      }),
+    ).toBe(true);
+  });
+
+  it("disqualifies a sessioned run with a MISSING owner principalId (fail-closed)", () => {
     expect(qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), sessionKey: "sess-123" })).toBe(false);
-    // whitespace-only sessionKey is treated as absent (still qualifies)
+  });
+
+  it("disqualifies a sessioned run with a BLANK / whitespace owner principalId (fail-closed)", () => {
+    expect(
+      qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), sessionKey: "sess-123", principalId: "" }),
+    ).toBe(false);
+    expect(
+      qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), sessionKey: "sess-123", principalId: "   " }),
+    ).toBe(false);
+  });
+
+  it("admits a sessioned run that ALSO meets every other clause (a real read-only sessioned chat)", () => {
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...prodResolvedQualifyingInput(),
+        sessionKey: "chat-session-xyz",
+        principalId: "principal:owner-1",
+        allowedRustRouteTools: ["search", "stat_file", "list_dir", "read_file"],
+      }),
+    ).toBe(true);
+  });
+
+  it("a sessioned run is STILL bound by every other clause (sessioned ∧ readOnly:false ⇒ disqualified)", () => {
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...qualifyingInput(),
+        sessionKey: "sess-123",
+        principalId: "principal:owner-1",
+        constraints: { readOnly: false },
+      }),
+    ).toBe(false);
+  });
+
+  it("the session OWNER requirement does NOT affect the SESSIONLESS path (blank principal still qualifies)", () => {
+    // A sessionless run with a blank/absent principal qualifies HERE exactly as before
+    // (it fail-closes downstream in compose). The owner requirement is session-scoped only —
+    // this preserves the byte-identical sessionless behavior.
+    expect(qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), principalId: "" })).toBe(true);
+    expect(qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), principalId: undefined })).toBe(true);
+    // whitespace-only sessionKey is treated as absent (no session ⇒ no owner needed ⇒ qualifies)
     expect(qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), sessionKey: "   " })).toBe(true);
   });
 

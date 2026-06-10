@@ -881,6 +881,23 @@ pub enum Message {
         /// The sealed proof bytes the dispatch arm will later verify against the
         /// session (S-C). **SHAPE-ONLY here** — opaque, unverified at this layer.
         auth_proof: Vec<u8>,
+        /// (A2a Phase 1) The CLIENT-ASSERTED session id this run participates in,
+        /// when the run is a sessioned (multi-turn) chat. ADDITIVE + OPTIONAL — an
+        /// absent field deserializes to `None` (`#[serde(default)]`) and a `None`
+        /// value is OMITTED from the wire (`skip_serializing_if`), so a sessionless
+        /// request is BYTE-IDENTICAL to the pre-A2a wire and routes through the
+        /// unchanged sessionless dispatch path. **Mirrors the A1 additive-optional
+        /// pattern.**
+        ///
+        /// **SECURITY (INV-5/INV-7): this is a CLIENT ASSERTION, NOT an authority.**
+        /// It selects WHICH session row to load/append — it does NOT grant access to
+        /// it. The run's bound OWNER is the AUTHENTICATED forwarded principal
+        /// (verified by [`crate`]-external `authenticate_forwarded` against the owner
+        /// allowlist), NEVER this `session_id`. Session history + the answer body are
+        /// releasable only to that authenticated owner — so a peer cannot read another
+        /// owner's history by guessing a `session_id`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
     },
     /// hub->trusted-TS-peer: REFS-ONLY terminal receipt for an agent-run.
     /// **WS-transport substrate (S-A).** It carries a coarse loop-status label and
@@ -1890,6 +1907,8 @@ mod tests {
             // sealed session; the codec just carries them.
             forwarded_principal: "owner-1".into(),
             auth_proof: vec![0xDE, 0xAD, 0xBE, 0xEF],
+            // A2a Phase 1: a sessionless request (the pre-A2a shape) carries `None`.
+            session_id: None,
         };
         let env = Envelope::new("m1", 1000, msg.clone()).with_correlation("c1");
         let json = env.encode().unwrap();
@@ -1897,6 +1916,50 @@ mod tests {
         assert!(json.contains("\"kind\":\"AgentRunRequest\""));
         let back = Envelope::decode(&json).unwrap();
         assert_eq!(back, env);
+        assert_eq!(back.message, msg);
+    }
+
+    #[test]
+    fn agent_run_request_sessionless_is_byte_identical_no_session_id_key() {
+        // (A2a Phase 1) BYTE-IDENTICAL proof: a `session_id: None` request serializes
+        // with NO `session_id` key at all (`skip_serializing_if = "Option::is_none"`),
+        // so the sessionless wire is exactly the pre-A2a wire. This is the additive-
+        // optional discipline A1 established; absent ⇒ unchanged on the wire.
+        let msg = Message::AgentRunRequest {
+            run_id: "run-1".into(),
+            task: "summarize the inbox".into(),
+            forwarded_principal: "owner-1".into(),
+            auth_proof: vec![0xDE, 0xAD, 0xBE, 0xEF],
+            session_id: None,
+        };
+        let json = Envelope::new("m1", 1000, msg).encode().unwrap();
+        assert!(
+            !json.contains("session_id"),
+            "a sessionless AgentRunRequest must not carry a session_id key (byte-identical to pre-A2a): {json}"
+        );
+    }
+
+    #[test]
+    fn agent_run_request_sessioned_round_trips_with_session_id() {
+        // (A2a Phase 1) A sessioned request carries `session_id` on the wire and
+        // round-trips it. An OLD decoder (pre-A2a) ignores the unknown field (the
+        // `Message` enum is NOT `deny_unknown_fields`), so a new client talking to an
+        // old server degrades to sessionless rather than failing — same forward/back
+        // compatibility A1 relies on.
+        let msg = Message::AgentRunRequest {
+            run_id: "run-2".into(),
+            task: "compare it to the other file".into(),
+            forwarded_principal: "owner-1".into(),
+            auth_proof: vec![0x01, 0x02],
+            session_id: Some("sess-abc".into()),
+        };
+        let env = Envelope::new("m2", 2000, msg.clone());
+        let json = env.encode().unwrap();
+        assert!(
+            json.contains("\"session_id\":\"sess-abc\""),
+            "a sessioned request must carry session_id on the wire: {json}"
+        );
+        let back = Envelope::decode(&json).unwrap();
         assert_eq!(back.message, msg);
     }
 

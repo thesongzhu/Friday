@@ -30,8 +30,9 @@ use friday_core::gate::{CanonicalApproval, MutatingActionRequest};
 use friday_core::WorkLane;
 use friday_crypto::OperatorVerifyingKey;
 use friday_deepseek::{DeepSeekClient, DeepSeekError, Transport, UreqTransport};
-use friday_storage::{agent_run, persist_run_result, Db, RunResult, StorageError};
+use friday_storage::{agent_run, persist_run_result, Db, RunResult, SessionOwner, StorageError};
 
+use crate::hub_server::{project_answer_for_authed, AuthedAnswer, AuthedPrincipal};
 use crate::mission_context::MissionContextLookup;
 use crate::mission_preflight::MissionAttachmentOutcome;
 use crate::mission_runtime::{
@@ -43,7 +44,8 @@ use crate::routing::{
     RouteRequest, RoutedLoopError, RoutedSelection,
 };
 use crate::{
-    AgentLlmClient, DeepSeekAgentLlmClient, FsToolExecutor, LoopOutcome, LoopStatus, RunPolicy,
+    run_session_loop, AgentLlmClient, DeepSeekAgentLlmClient, FsToolExecutor, LoopOutcome,
+    LoopStatus, RunPolicy,
 };
 
 /// S1.3 — the outcome of [`HubRuntime::run_agent_loop_for_mission`], mirroring
@@ -309,6 +311,118 @@ impl<T: Transport> HubRuntime<T> {
         }
 
         Ok((selection, outcome))
+    }
+
+    /// (A2a Phase 1) The SESSIONED authenticated agent-loop entry — the read-only chat
+    /// parity of [`run_authed_agent_loop`](crate::hub_server::run_authed_agent_loop) for a
+    /// MULTI-TURN session. It drives the EXISTING, already-verified
+    /// [`run_session_loop`] (no new loop code) so a run reloads its session history and
+    /// appends this turn, then projects the answer body owner-gated EXACTLY as the
+    /// sessionless entry does. The dispatch arm calls this ONLY when the client carried a
+    /// non-empty `session_id`; a sessionless run stays on [`run_authed_agent_loop`]
+    /// unchanged (byte-identical).
+    ///
+    /// ## Owner-scoping (INV-5/INV-7 — the load-bearing security property)
+    /// The session OWNER is the AUTHENTICATED forwarded principal (`caller`, produced ONLY
+    /// by [`AuthedPrincipal::authenticate_forwarded`] against the owner allowlist), NEVER
+    /// the client-asserted `session_id`. We bind `SessionOwner { user_id:
+    /// caller.principal(), .. }` at session creation, and the body is released via
+    /// [`project_answer_for_authed`] to that SAME authenticated `caller` — so a peer can
+    /// never read another owner's session history/body by guessing a `session_id`. Single-
+    /// owner v1: the runtime's `self.policy.principal_id()` is the SAME configured owner the
+    /// allowlist admits, so `run_session_loop`'s owner-wiring records `owner == caller` and
+    /// the body is releasable to them. If they ever diverged (a multi-entry allowlist, NOT
+    /// v1), `project_answer_for_authed` would DENY → fail-closed (the body stays withheld),
+    /// which is the correct safe behavior, not a leak.
+    ///
+    /// SAFE FAILURE: a storage failure (the session loop's `Err`) OR a non-Finished run
+    /// returns a body-free [`AuthedAnswer::NoAnswer`] — no panic, no partial/false success
+    /// — mirroring [`run_authed_agent_loop`]. The body, when delivered, is carried ONLY in
+    /// [`AuthedAnswer::Delivered`] for in-process hand-off to the authed owner; it is NEVER
+    /// placed on a refs surface and NEVER logged.
+    ///
+    /// Recall: like [`Self::run_task`], the run still folds this owner's confirmed-memory
+    /// recall preamble (keyed by `self.policy.principal_id()`) AHEAD of the session history
+    /// — consistent with the sessionless entry; the session loop adds prior-turn history on
+    /// top, it does not replace recall.
+    ///
+    /// Truth label: DARK Phase 1 (read-only sessioned chat). Reachable only when the WS
+    /// server's dispatch arm branches on a client `session_id`; live only at DEPLOY GO.
+    /// Read-only sessioned chat on Rust is an HONEST PARTIAL — it is NOT GATE-AGENT-REPLACE.
+    pub fn run_session_task(
+        &self,
+        caller: &AuthedPrincipal,
+        run_id: &str,
+        session_id: &str,
+        task: &str,
+        now_ms: i64,
+    ) -> AuthedAnswer {
+        // Create the run row FIRST — `run_session_loop` only `ensure_session`s the session
+        // row; it does NOT create the `agent_run` row (its step-5 `persist_run_result`
+        // would orphan without one). `run_task` does this too. A create failure is a SAFE
+        // FAILURE (body-free NoAnswer; no panic, no partial body).
+        if agent_run::create_run(self.db.conn(), run_id, task, now_ms).is_err() {
+            return AuthedAnswer::NoAnswer {
+                run_id: run_id.to_string(),
+            };
+        }
+
+        // Owner-scoping: bind the session's owner to the AUTHENTICATED caller principal —
+        // NEVER the client-asserted `session_id` (INV-5/INV-7). The `user_id` axis is what
+        // the memory namespace + owner-wiring derive from.
+        let owner = SessionOwner {
+            user_id: Some(caller.principal().to_string()),
+            ..SessionOwner::default()
+        };
+
+        // The owner's confirmed-memory recall preamble (same source as `run_task`). A recall
+        // failure is a SAFE FAILURE (body-free NoAnswer) — never a panic.
+        let recall_preamble = match self.recall_preamble(run_id, now_ms) {
+            Ok(p) => p,
+            Err(_) => {
+                return AuthedAnswer::NoAnswer {
+                    run_id: run_id.to_string(),
+                };
+            }
+        };
+
+        // Drive the EXISTING session loop AS the bound owner: it ensures the OWNED session,
+        // loads + folds prior history, runs the SAME gate-mandatory loop (read-only stays
+        // gate-enforced; a mutating tool would Pause — Phase 1 admits none), appends this
+        // turn, and owner-wires a Finished answer's `run_result`. NO new loop code.
+        let approve = |req: &MutatingActionRequest| self.approval.approve(req);
+        let outcome = match run_session_loop(
+            &self.deepseek,
+            &self.executor,
+            self.db.conn(),
+            run_id,
+            session_id,
+            Some(&owner),
+            task,
+            &recall_preamble,
+            self.operator_vk.as_ref(),
+            &approve,
+            &self.policy,
+            self.max_turns,
+            now_ms,
+        ) {
+            Ok(outcome) => outcome,
+            // A storage failure is a SAFE FAILURE: body-free NoAnswer (mirrors the
+            // sessionless entry's route/provider-failure handling). No panic, no partial.
+            Err(_) => {
+                return AuthedAnswer::NoAnswer {
+                    run_id: run_id.to_string(),
+                };
+            }
+        };
+
+        // Release the body ONLY to the authenticated owner (the SAME owner-gated projection
+        // the sessionless entry uses), then attach the loop's COUNTS to a Delivered answer
+        // (a no-op on Denied/NoAnswer). This is byte-shared with `run_authed_agent_loop`'s
+        // tail, so the only difference between the two dispatch arms is which loop ran. Token
+        // counts stay `None` (DEFERRED — billed to the Rust token_ledger, not on LoopOutcome).
+        project_answer_for_authed(self.db.conn(), run_id, caller)
+            .with_counts(outcome.turns, outcome.executed_tools)
     }
 
     /// S1.3 — the Mission-BOUND agent-loop entry (the `executeRun` Mission-context parity,
