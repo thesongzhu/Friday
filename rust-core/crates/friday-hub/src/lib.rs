@@ -80,6 +80,18 @@ pub mod conn_truth;
 /// truth-labeled unbuilt-subsystem metrics. Not the XL metrics pipeline (that stays NO-GO).
 pub mod diagnostics;
 
+/// R6 — onboarding provider capability-doctor (DARK). The providers analog of
+/// [`diagnostics::DiagnosticsSnapshot::collect`]: a hub-LIBRARY aggregate
+/// ([`provider_doctor::ProviderDoctor::run`]) that composes the EXISTING parsed
+/// per-provider [`friday_providers::ProviderAuthStatus`] (via [`provider_auth`] /
+/// [`friday_providers::detect`]) into one truth-labeled onboarding-readiness result —
+/// previously this multi-provider orchestration was inlined in the
+/// `hub_providers_detect` bin and callable by nothing else. No-fallback (per-provider
+/// truth, never substituted), no new probing/model call. Built ready-but-NOT-routed:
+/// it does NOT flip the live TS `providers.detect` path and is NOT in the
+/// [`capability`] route table; confers no v1 GO.
+pub mod provider_doctor;
+
 /// Step-3 — setup-readiness blocker labels (truth-labeled): the runtime analog of the file-57
 /// external-prep checklist. Every prep item is `Ready { evidence }` ONLY when verified, else
 /// `NotReady { blocker }` — never falsely ready. `is_release_ready()` is the prep half of the
