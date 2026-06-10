@@ -193,9 +193,10 @@ mod tests {
     #[test]
     fn deepseek_transient_failures_are_unavailable_never_invalid() {
         // THE honesty guard: a 5xx / 408 / 529 / transport (ProviderUnavailable), a
-        // 429 rate-limit, a non-auth 4xx, a bad response, and no-models are ALL
-        // Unavailable — never Invalid. A good key must NOT be branded bad on a server
-        // hiccup or a rate-limit (a rate-limit means we DID authenticate).
+        // 429 rate-limit, a non-auth 4xx, a bad response, no-models, AND an internal
+        // Core error are ALL Unavailable — never Invalid. A good key must NOT be
+        // branded bad on a server hiccup, a rate-limit (a rate-limit means we DID
+        // authenticate), or an internal error (which says nothing about the key).
         for (err, expect_detail) in [
             (
                 DeepSeekError::ProviderUnavailable("HTTP 503".into()),
@@ -206,6 +207,14 @@ mod tests {
             (DeepSeekError::ClientError { status: 404 }, "client_error"),
             (DeepSeekError::BadResponse("x".into()), "bad_response"),
             (DeepSeekError::NoModels, "no_models"),
+            // An internal Core error is NOT a credential rejection: it must map to
+            // Unavailable("internal_error"), never Invalid. Locks the safe direction
+            // so a future `Core => Invalid` edit (dishonestly branding a good key bad
+            // on an internal error) turns this test RED.
+            (
+                DeepSeekError::Core(friday_core::CoreError::InvalidLedger("x".into())),
+                "internal_error",
+            ),
         ] {
             let outcome = map_deepseek_result::<()>(Err(err));
             assert_eq!(
@@ -233,6 +242,13 @@ mod tests {
         assert_eq!(
             map_claude_result::<()>(Err(ClaudeError::Auth(401))),
             KeyValidationOutcome::Invalid { status: 401 }
+        );
+        // Symmetry with DeepSeek: ClaudeError::Auth covers both 401 and 403 (per the
+        // enum doc, "HTTP 401/403"), and 403 is likewise a credential rejection ⇒
+        // Invalid — never Unavailable.
+        assert_eq!(
+            map_claude_result::<()>(Err(ClaudeError::Auth(403))),
+            KeyValidationOutcome::Invalid { status: 403 }
         );
     }
 
