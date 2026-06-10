@@ -9,12 +9,18 @@
  *
  * This is a TEXTUAL gate. It verifies the STRUCTURAL PRESENCE of method-head
  * fail-closed guards (after stripping comments + string/template literals so a
- * commented-out or JSDoc'd guard cannot false-pass). It does NOT, and a textual
- * gate CANNOT, verify fail-closed BEHAVIOR — a neutered or inverted guard whose
- * tokens survive (e.g. `if (flag === true) throw`) would still read as "present".
- * Behavior is covered by the per-surface BEHAVIORAL TESTS that this gate requires
- * to EXIST (manifest `behavioralTest`); those run in the CI `test` job and are the
- * real proof that the guard fails closed.
+ * commented-out or JSDoc'd guard cannot false-pass). For INLINE surfaces it now
+ * requires the actual fail-closed FORM `<flag> !== true` within the method's own
+ * body (the same form Backstop 1 checks) — NOT a bare mention of the flag — so a
+ * benign reference (`logger.debug({ x: deps.<flag> })`) can no longer be mistaken
+ * for a guard. That closes the bare-mention false-GREEN (the ad45080e class), where
+ * a method's real throw is dropped but an incidental flag reference keeps it reading
+ * as "guarded". It does NOT, and a textual gate CANNOT, verify fail-closed BEHAVIOR:
+ * the `<flag> !== true` form can be PRESENT yet not actually fail closed (e.g.
+ * `if (deps.<flag> !== true) return;` instead of `throw`) — still a FORM check, not
+ * a behavior proof. Behavior is covered by the per-surface BEHAVIORAL TESTS that this
+ * gate requires to EXIST (manifest `behavioralTest`); those run in the CI `test` job
+ * and are the real proof that the guard fails closed.
  *
  * WHAT THIS GATE GUARANTEES:
  *   - STRUCTURAL guard presence: every declared mutating method on a registered
@@ -510,9 +516,17 @@ export function evaluateSurface(repoRoot, surface, mutatorVerbs) {
     return { failures, details };
   }
 
+  // The fail-closed FORM pattern, shared between Backstop 1 (file-level presence)
+  // and the inline per-method guard token below, so the two stay in lockstep and
+  // cannot drift. This is `<flag> !== true` — the exact form every inline guard
+  // uses (`if (deps.<flag> !== true) throw`). A bare flag mention (e.g. a telemetry
+  // `logger.debug({ x: deps.<flag> })`) does NOT match, which is the point: a bare
+  // mention must not be accepted as a per-method guard (the ad45080e false-GREEN).
+  const failClosedFormPattern = `${escapeRegExp(flag)}\\s*!==\\s*true`;
+
   // Backstop 1: the actual fail-closed throw must exist at least once (post strip),
   // so gutting a shared guard helper's body (while keeping callers) is still caught.
-  const throwRegex = new RegExp(`${escapeRegExp(flag)}\\s*!==\\s*true`);
+  const throwRegex = new RegExp(failClosedFormPattern);
   details.hasFlagThrow = throwRegex.test(source);
   if (!details.hasFlagThrow) {
     failures.push(
@@ -522,11 +536,15 @@ export function evaluateSurface(repoRoot, surface, mutatorVerbs) {
   }
 
   // The token each guarded method body must contain: the guardHelper call if the
-  // surface uses a named helper, else a direct reference to the flag.
+  // surface uses a named helper, else the `<flag> !== true` fail-closed FORM (NOT a
+  // bare reference to the flag). Requiring the form — the same one Backstop 1 uses —
+  // means a benign mention of the flag (telemetry, logging, a destructured option)
+  // can no longer satisfy the per-method guard, closing the bare-mention false-GREEN
+  // that let an off-route method read as guarded while its real throw was removed.
   const guardHelper = surface.guardHelper;
   const guardTokenRegex = guardHelper
     ? new RegExp(`(?<![A-Za-z0-9_$])${escapeRegExp(guardHelper)}\\s*\\(`)
-    : new RegExp(`(?<![A-Za-z0-9_$])${escapeRegExp(flag)}(?![A-Za-z0-9_$])`);
+    : new RegExp(failClosedFormPattern);
 
   // ── PHASE A.1: every declared mutating method shows its guard in its OWN body ──
   for (const methodName of surface.mutatingMethods ?? []) {
@@ -824,8 +842,9 @@ function main() {
   // human success line so the output stays machine-parseable.
   if (!args.json) {
     console.log(
-      "\n✅ ts-runtime method-guard STRUCTURAL presence verified + all public mutators registered/allowlisted "
-      + "+ behavioral-test files present + no manifest shrinkage. (Structural presence only — fail-closed BEHAVIOR "
+      "\n✅ ts-runtime method-guard STRUCTURAL presence verified (inline surfaces require the `<flag> !== true` "
+      + "fail-closed FORM in each method body, not a bare flag mention) + all public mutators registered/allowlisted "
+      + "+ behavioral-test files present + no manifest shrinkage. (FORM/structural presence only — fail-closed BEHAVIOR "
       + "is proven by the per-surface behavioral tests in the `test` job; brand-new-file off-route surfaces and "
       + "non-verb-prefixed mutator names are documented textual-gate limits.)",
     );
