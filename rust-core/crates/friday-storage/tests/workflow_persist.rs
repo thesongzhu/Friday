@@ -71,6 +71,66 @@ fn run_state_machine_is_persisted_and_validated() {
 }
 
 #[test]
+fn run_control_state_classifies_resumable_and_terminal_for_the_r2_control_plane() {
+    // The additive R2 read helper: the dark run-control plane's fail-closed
+    // precheck. It must classify ONLY AwaitingCheckpoint as resumable (NOT
+    // Pending — a fresh start is not a resume), and Done/Failed as terminal,
+    // single-sourced with the friday-core machine. An unknown run is None.
+    let p = temp_db_path("wf-ctl-state");
+    let db = Db::open_hub(&p).unwrap();
+
+    // Unknown run → None (the control layer surfaces a not-found error).
+    assert!(workflow::run_control_state(db.conn(), "ghost")
+        .unwrap()
+        .is_none());
+
+    workflow::create_run(db.conn(), "r1", "QA", 1).unwrap();
+    // Pending: NOT resumable (a resume is re-entry of a PAUSED run, not a start),
+    // not terminal.
+    let s = workflow::run_control_state(db.conn(), "r1")
+        .unwrap()
+        .unwrap();
+    assert_eq!(s.state, WorkflowRunState::Pending);
+    assert!(!s.resumable, "Pending is a fresh start, not a resume");
+    assert!(!s.terminal);
+
+    // Running: not resumable, not terminal.
+    workflow::set_run_state(db.conn(), "r1", WorkflowRunState::Running, 2).unwrap();
+    let s = workflow::run_control_state(db.conn(), "r1")
+        .unwrap()
+        .unwrap();
+    assert!(!s.resumable);
+    assert!(!s.terminal);
+
+    // AwaitingCheckpoint: the ONLY resumable state.
+    workflow::set_run_state(db.conn(), "r1", WorkflowRunState::AwaitingCheckpoint, 3).unwrap();
+    let s = workflow::run_control_state(db.conn(), "r1")
+        .unwrap()
+        .unwrap();
+    assert_eq!(s.state, WorkflowRunState::AwaitingCheckpoint);
+    assert!(s.resumable, "an AwaitingCheckpoint run is resumable");
+    assert!(!s.terminal);
+
+    // Done (terminal): not resumable.
+    workflow::set_run_state(db.conn(), "r1", WorkflowRunState::Running, 4).unwrap();
+    workflow::set_run_state(db.conn(), "r1", WorkflowRunState::Done, 5).unwrap();
+    let s = workflow::run_control_state(db.conn(), "r1")
+        .unwrap()
+        .unwrap();
+    assert!(!s.resumable);
+    assert!(s.terminal, "Done is terminal");
+
+    // Failed (terminal): not resumable.
+    workflow::create_run(db.conn(), "r2", "x", 1).unwrap();
+    workflow::set_run_state(db.conn(), "r2", WorkflowRunState::Failed, 2).unwrap();
+    let s = workflow::run_control_state(db.conn(), "r2")
+        .unwrap()
+        .unwrap();
+    assert!(!s.resumable);
+    assert!(s.terminal, "Failed is terminal");
+}
+
+#[test]
 fn run_cannot_be_done_while_a_side_effect_step_is_proof_pending() {
     // The file-32 deferral, closed: persistence + per-step gating alone let a run
     // reach Done with an unverified side-effect step. This is the discriminating

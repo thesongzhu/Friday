@@ -137,6 +137,53 @@ pub fn set_run_state(
     Ok(())
 }
 
+/// How a run's current state classifies for run-CONTROL (R2): the read-only
+/// projection the dark run-control plane needs to fail-closed BEFORE attempting
+/// any transition. It carries the run's current [`WorkflowRunState`] and the two
+/// control-relevant predicates derived from the *same* `friday-core` state
+/// machine that [`set_run_state`] enforces — so the control layer never
+/// hand-rolls a second, divergent transition table.
+///
+/// `resumable` is exactly "the run is `AwaitingCheckpoint`" — a *resume* is the
+/// re-entry of a paused (checkpoint) run. The core machine also allows `Pending
+/// -> Running`, but that is a fresh START, not a resume, so `resumable` is NOT
+/// "any `-> Running` is legal"; it is precisely the `AwaitingCheckpoint` predicate
+/// the engine's [`crate::workflow`]-driven `resume_workflow` already enforces.
+/// `terminal` is the core `is_terminal()` (`Done`/`Failed`). This is purely
+/// additive read-only metadata; it performs NO write and changes no existing
+/// behavior.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RunControlState {
+    pub state: WorkflowRunState,
+    /// `true` iff a `-> Running` resume transition is permitted from `state`
+    /// (i.e. `state == AwaitingCheckpoint`). Mirrors the `friday-core` machine.
+    pub resumable: bool,
+    /// `true` iff `state` is a terminal run state (`Done`/`Failed`).
+    pub terminal: bool,
+}
+
+/// Read a run's [`RunControlState`] — the fail-closed precheck the dark R2
+/// run-control plane consults before attempting a control transition. Returns
+/// `None` for an unknown `run_id` (the control layer surfaces a not-found error);
+/// never writes. `resumable` is the `AwaitingCheckpoint` predicate — a paused run
+/// that the `friday-core` machine permits `-> Running` re-entry from — matching
+/// exactly what the engine's `resume_workflow` already requires, so the control
+/// layer cannot accept a resume the engine would reject.
+pub fn run_control_state(conn: &Connection, run_id: &str) -> Result<Option<RunControlState>> {
+    let Some(state) = run_state(conn, run_id)? else {
+        return Ok(None);
+    };
+    Ok(Some(RunControlState {
+        state,
+        // Resume = re-entry of a PAUSED run, i.e. exactly AwaitingCheckpoint
+        // (the engine's resume_workflow rejects any other state). `Pending ->
+        // Running` is a fresh start, not a resume, so it is deliberately NOT
+        // counted resumable here even though the core machine allows that edge.
+        resumable: matches!(state, WorkflowRunState::AwaitingCheckpoint),
+        terminal: state.is_terminal(),
+    }))
+}
+
 /// Add a step (status `Pending`). `has_side_effect` decides evidence-gating.
 #[allow(clippy::too_many_arguments)]
 pub fn add_step(
