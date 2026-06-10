@@ -120,6 +120,8 @@ describe("FridayAutoFixDispatcherService", () => {
     });
 
     const executionService = createFridayAutoFixExecutionService({
+      // TS Runtime Retirement (G1): opt in to the test-oracle so execute() runs.
+      allowTestOnlyAutoFixExecution: true,
       db,
       actionRepo,
       incidentRepo,
