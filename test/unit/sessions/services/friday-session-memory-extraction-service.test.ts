@@ -100,6 +100,10 @@ describe("FridaySessionMemoryExtractionService", () => {
       providerService,
       idGenerator: idGen,
       nowIso: () => NOW,
+      // TS-R4/G3: opt in to the legacy extraction mutators so this suite
+      // exercises the real path. Default/live runtime leaves this unset
+      // (fail-closed) — see the dedicated retirement-guard suite.
+      allowTestOnlySessionMemoryExtractionExecution: true,
     });
 
     // Create a test session with messages

@@ -2363,6 +2363,13 @@ export async function createFridayHub(
     db: stateRuntime!.sqlite,
     idGenerator,
     nowIso,
+    // TS Runtime Retirement (TS-R4/G3 method-level guard): production leaves
+    // this unset (config flag undefined) so `sweepLifecycle` is fail-closed for
+    // the `session-lifecycle-sweep` scheduler job (which bypasses the HTTP route
+    // guard), not just the route. This same instance is also passed to the API
+    // runtime, so the route guard and the method guard stay consistent.
+    // Test-oracle hub configs set it true to exercise the legacy sweep.
+    allowTestOnlySessionExecution: config.allowTestOnlySessionExecution,
   });
 
   // Build agent tool registry (exec, read, write, edit, web_fetch, browser, xhs, + new tools)
@@ -7240,6 +7247,15 @@ export async function createFridayHub(
       providerService,
       idGenerator,
       nowIso,
+      // TS Runtime Retirement (TS-R4/G3 method-level guard): production leaves
+      // this unset so extractFromSession/extractSpecificMessages/
+      // retryFailedExtractions are fail-closed for the `session-memory-extraction`
+      // worker job, the `session-lifecycle-sweep` job, and the agent
+      // memory-extract tool — all of which reach this instance off-route,
+      // bypassing the HTTP route guard. This stops the armed quota-spending
+      // inline extraction on next deploy. Test-oracle hub configs set it true.
+      allowTestOnlySessionMemoryExtractionExecution:
+        config.allowTestOnlySessionMemoryExtractionExecution,
     });
   }
 

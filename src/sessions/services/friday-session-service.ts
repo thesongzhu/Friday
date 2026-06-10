@@ -541,6 +541,29 @@ export function createFridaySessionService(
     },
 
     async sweepLifecycle(): Promise<FridaySessionSweepResult> {
+      // ─── TS Runtime Retirement (TS-R4/G3): METHOD-level fail-closed guard ───
+      // The `session-lifecycle-sweep` scheduler job (friday-hub-bootstrap →
+      // createFridaySessionLifecycleJob) reaches this method directly,
+      // bypassing the HTTP route guard (assertSessionTestOracleAllowed in
+      // friday-session-routes). Guarding here fails ALL non-route callers closed
+      // BEFORE the lifecycle write transaction (idle/archive/prune/hard-delete)
+      // unless the explicit test-oracle flag is set. The scheduler's executeJob
+      // catches this throw, records markFailed, and reschedules — no crash, no
+      // partial sweep. Never default this flag on in production.
+      if (deps.allowTestOnlySessionExecution !== true) {
+        throw new FridayDomainError(
+          "TS_RUNTIME_SESSION_RETIRED",
+          "TypeScript session execution is fail-closed in default/live runtime; use the Rust-owned session_lifecycle entrypoint.",
+          {
+            httpStatus: 503,
+            details: {
+              classification: "fail_closed",
+              replacement: "rust_owned_session_lifecycle_entrypoint_required",
+            },
+          },
+        );
+      }
+
       const now = deps.nowIso();
       const nowMs = new Date(now).getTime();
 
