@@ -76,3 +76,29 @@ fn session_store_is_empty_without_a_device() {
     assert!(matches!(out, Err(RemoteError::DeviceNotFound(_))));
     assert!(sessions.is_empty());
 }
+
+#[test]
+fn assert_path_is_unreachable_through_the_default_path() {
+    // slice-2: DeviceStore::apply_assertion advances a device's last_seen on a
+    // VERIFIED assertion. But — exactly like registration — an external caller
+    // cannot mint a VerifiedAssertion: the only verifier they can reach is the
+    // shipped DeferredVerifier, which fails closed. So with no real verifier wired
+    // the assert path is unreachable end to end (we cannot even construct the
+    // argument to apply_assertion), and credential resolution over an empty store
+    // also fails closed.
+    let chal = begin_assertion("owner-1", "friday.local", vec![7, 7, 7], vec![4, 5, 6]).unwrap();
+    let resp = AssertionResponse {
+        credential_id: vec![7, 7, 7],
+        authenticator_data: vec![1],
+        client_data_json: b"{}".to_vec(),
+        signature: vec![0xde, 0xad],
+    };
+    let out = DeferredVerifier.verify_assertion(&chal, &resp, &[0x04, 0x01]);
+    assert_eq!(out, Err(RemoteError::WebAuthnVerifierNotWired));
+    // And the by-credential resolver over an empty store fails closed too.
+    let devices = DeviceStore::new();
+    assert_eq!(
+        devices.get_by_credential_for_owner(&[7, 7, 7], "owner-1"),
+        Err(RemoteError::UnknownCredential)
+    );
+}

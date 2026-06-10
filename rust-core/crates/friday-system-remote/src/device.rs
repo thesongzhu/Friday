@@ -22,7 +22,7 @@
 //! so no device can be registered yet — fail closed.
 
 use crate::error::{RemoteError, Result};
-use crate::webauthn::VerifiedAttestation;
+use crate::webauthn::{VerifiedAssertion, VerifiedAttestation};
 use std::collections::HashMap;
 
 /// A registered WebAuthn device row.
@@ -79,6 +79,22 @@ impl DeviceStore {
         }
         if self.by_id.contains_key(device_id) {
             return Err(RemoteError::DeviceAlreadyRegistered(device_id.to_string()));
+        }
+        // Credential ids are minted unique by the authenticator. Enforce that
+        // uniqueness in the store too, so the credential-id reverse lookup
+        // ([`Self::get_by_credential_for_owner`]) is unambiguous (this is the
+        // invariant a future persistence slice expresses as a UNIQUE index on the
+        // credential column). A second device claiming an already-registered
+        // credential id is REFUSED — fail-closed.
+        let new_credential_id = attestation.credential_id();
+        if self
+            .by_id
+            .values()
+            .any(|d| d.credential_id == new_credential_id)
+        {
+            return Err(RemoteError::DeviceAlreadyRegistered(format!(
+                "credential already registered for device '{device_id}'"
+            )));
         }
         let device = RegisteredDevice {
             device_id: device_id.to_string(),
@@ -148,6 +164,77 @@ impl DeviceStore {
         Ok(())
     }
 
+    /// Resolve the registered device for a WebAuthn `credential_id`, owner-scoped.
+    /// A WebAuthn assertion identifies the authenticator by credential id (not by
+    /// our internal `device_id`), so the assert path needs this reverse lookup.
+    ///
+    /// Returns:
+    /// * [`RemoteError::UnknownCredential`] if NO device with that credential id
+    ///   is registered — fail-closed, and the `UnknownCredential` variant (already
+    ///   in the taxonomy) is exactly the right "no such credential" signal;
+    /// * [`RemoteError::OwnerMismatch`] if a device with that credential id exists
+    ///   but is owned by a different principal — cross-owner resolution is refused
+    ///   (existence is revealed only after the owner check passes).
+    ///
+    /// Credential ids are unique within the store ([`Self::register`] refuses a
+    /// duplicate live credential id), so the in-memory scan's first match is
+    /// unambiguous.
+    pub fn get_by_credential_for_owner(
+        &self,
+        credential_id: &[u8],
+        owner: &str,
+    ) -> Result<&RegisteredDevice> {
+        let device = self
+            .by_id
+            .values()
+            .find(|d| d.credential_id == credential_id)
+            .ok_or(RemoteError::UnknownCredential)?;
+        if device.owner != owner {
+            return Err(RemoteError::OwnerMismatch);
+        }
+        Ok(device)
+    }
+
+    /// Apply a VERIFIED assertion: advance the matching device's `last_seen_at`
+    /// (forward-only) and return the device. This is the assert-path counterpart
+    /// of [`DeviceStore::register`]'s verify→register: only a successful
+    /// [`crate::webauthn::WebAuthnVerifier::verify_assertion`] can mint a
+    /// [`VerifiedAssertion`] (no public constructor), so an unverified assertion
+    /// can never reach here — the same typestate fail-closed guarantee as
+    /// registration.
+    ///
+    /// Resolution is by the assertion's `credential_id`, scoped to the assertion's
+    /// own `owner`. If no device matches the credential id the call fails closed
+    /// ([`RemoteError::UnknownCredential`]); a credential owned by a different
+    /// principal is [`RemoteError::OwnerMismatch`]. The owner is taken from the
+    /// verified assertion itself, NOT from caller free-input, so a caller cannot
+    /// smuggle a different owner past verification.
+    pub fn apply_assertion(
+        &mut self,
+        assertion: &VerifiedAssertion,
+        now: i64,
+    ) -> Result<RegisteredDevice> {
+        // Locate the device id under an owner-scoped, fail-closed lookup first so
+        // we never touch a cross-owner device. (An immutable borrow that ends
+        // before the mutation below.)
+        let device_id = self
+            .get_by_credential_for_owner(assertion.credential_id(), assertion.owner())?
+            .device_id
+            .clone();
+        // We just resolved this id under the assertion's owner, so the mutable
+        // re-borrow is guaranteed present and owner-matched. Advance last_seen_at
+        // forward-only (a stale/replayed assertion timestamp cannot rewind it),
+        // then return the updated row — no `expect`/`unwrap` on any path.
+        let device = self
+            .by_id
+            .get_mut(&device_id)
+            .ok_or_else(|| RemoteError::DeviceNotFound(device_id.clone()))?;
+        if now > device.last_seen_at {
+            device.last_seen_at = now;
+        }
+        Ok(device.clone())
+    }
+
     /// Delete a device, owner-scoped. A missing device is
     /// [`RemoteError::DeviceNotFound`]; another owner's device is
     /// [`RemoteError::OwnerMismatch`] and is NOT deleted.
@@ -176,8 +263,25 @@ impl DeviceStore {
 mod tests {
     use super::*;
     use crate::webauthn::{
-        begin_registration, AcceptingTestVerifier, AttestationResponse, WebAuthnVerifier,
+        begin_assertion, begin_registration, AcceptingTestVerifier, AssertionResponse,
+        AttestationResponse, WebAuthnVerifier,
     };
+
+    /// Mint a VerifiedAssertion for `owner`/`cred` via the test verifier (the only
+    /// in-crate path to a verified token). The verifier enforces the credential-id
+    /// binding, so this mirrors a real successful assertion.
+    fn verified_assertion(owner: &str, cred: Vec<u8>) -> VerifiedAssertion {
+        let chal = begin_assertion(owner, "friday.local", cred.clone(), vec![5, 6, 7]).unwrap();
+        let resp = AssertionResponse {
+            credential_id: cred,
+            authenticator_data: vec![1],
+            client_data_json: br#"{"type":"webauthn.get"}"#.to_vec(),
+            signature: vec![0xde, 0xad],
+        };
+        AcceptingTestVerifier
+            .verify_assertion(&chal, &resp, &[0x04, 0x01, 0x02])
+            .expect("test verifier accepts a matching credential")
+    }
 
     fn verified_attestation(owner: &str, cred: Vec<u8>) -> VerifiedAttestation {
         let chal = begin_registration(owner, "friday.local", vec![1, 2, 3]).unwrap();
@@ -216,6 +320,21 @@ mod tests {
             store.register("dev-1", &att2, "", 2),
             Err(RemoteError::DeviceAlreadyRegistered("dev-1".into()))
         );
+    }
+
+    #[test]
+    fn register_rejects_duplicate_credential_id() {
+        let mut store = DeviceStore::new();
+        let att = verified_attestation("owner-1", vec![7, 7, 7]);
+        store.register("dev-1", &att, "", 1).unwrap();
+        // A different device_id but the SAME credential id is refused — credential
+        // ids are unique within the store (fail-closed), even across owners.
+        let att_same_cred = verified_attestation("owner-2", vec![7, 7, 7]);
+        assert!(matches!(
+            store.register("dev-2", &att_same_cred, "", 2),
+            Err(RemoteError::DeviceAlreadyRegistered(_))
+        ));
+        assert_eq!(store.len(), 1);
     }
 
     #[test]
@@ -313,5 +432,106 @@ mod tests {
         assert!(o1.iter().all(|d| d.owner == "owner-1"));
         assert_eq!(store.list_for_owner("owner-2").len(), 1);
         assert_eq!(store.list_for_owner("owner-3").len(), 0);
+    }
+
+    // ---- slice-2: assert-path linkage (credential resolve + apply_assertion) ----
+
+    #[test]
+    fn get_by_credential_for_owner_resolves_and_scopes() {
+        let mut store = DeviceStore::new();
+        store
+            .register(
+                "dev-1",
+                &verified_attestation("owner-1", vec![7, 7, 7]),
+                "",
+                1,
+            )
+            .unwrap();
+        // Correct owner + credential ⇒ resolves to the device.
+        let d = store
+            .get_by_credential_for_owner(&[7, 7, 7], "owner-1")
+            .unwrap();
+        assert_eq!(d.device_id, "dev-1");
+        // Unknown credential ⇒ UnknownCredential (fail-closed).
+        assert_eq!(
+            store.get_by_credential_for_owner(&[0, 0, 0], "owner-1"),
+            Err(RemoteError::UnknownCredential)
+        );
+        // Right credential, WRONG owner ⇒ OwnerMismatch (cross-owner refused).
+        assert_eq!(
+            store.get_by_credential_for_owner(&[7, 7, 7], "owner-2"),
+            Err(RemoteError::OwnerMismatch)
+        );
+    }
+
+    #[test]
+    fn apply_assertion_touches_matching_device_forward_only() {
+        let mut store = DeviceStore::new();
+        store
+            .register(
+                "dev-1",
+                &verified_attestation("owner-1", vec![7, 7, 7]),
+                "",
+                100,
+            )
+            .unwrap();
+        // A verified assertion for the registered credential advances last_seen_at.
+        let assertion = verified_assertion("owner-1", vec![7, 7, 7]);
+        let touched = store.apply_assertion(&assertion, 500).unwrap();
+        assert_eq!(touched.device_id, "dev-1");
+        assert_eq!(touched.last_seen_at, 500);
+        // Forward-only: a stale/replayed assertion timestamp cannot rewind it.
+        let stale = verified_assertion("owner-1", vec![7, 7, 7]);
+        let again = store.apply_assertion(&stale, 200).unwrap();
+        assert_eq!(again.last_seen_at, 500);
+    }
+
+    #[test]
+    fn apply_assertion_for_unregistered_credential_fails_closed() {
+        let mut store = DeviceStore::new();
+        store
+            .register(
+                "dev-1",
+                &verified_attestation("owner-1", vec![7, 7, 7]),
+                "",
+                1,
+            )
+            .unwrap();
+        // Verified assertion, but for a credential that is NOT registered.
+        let assertion = verified_assertion("owner-1", vec![9, 9, 9]);
+        assert_eq!(
+            store.apply_assertion(&assertion, 10),
+            Err(RemoteError::UnknownCredential)
+        );
+    }
+
+    #[test]
+    fn apply_assertion_cannot_touch_another_owners_device() {
+        let mut store = DeviceStore::new();
+        // Device with credential [7,7,7] is owned by owner-1.
+        store
+            .register(
+                "dev-1",
+                &verified_attestation("owner-1", vec![7, 7, 7]),
+                "",
+                1,
+            )
+            .unwrap();
+        // A (verified) assertion that claims owner-2 for the SAME credential id is
+        // refused — the owner is bound into the verified assertion, and the device
+        // belongs to owner-1, so resolution fails closed with OwnerMismatch. The
+        // device is NOT touched.
+        let assertion = verified_assertion("owner-2", vec![7, 7, 7]);
+        assert_eq!(
+            store.apply_assertion(&assertion, 999),
+            Err(RemoteError::OwnerMismatch)
+        );
+        assert_eq!(
+            store
+                .get_for_owner("dev-1", "owner-1")
+                .unwrap()
+                .last_seen_at,
+            1
+        );
     }
 }
