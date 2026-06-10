@@ -83,7 +83,7 @@ pub mod diagnostics;
 /// R6 — onboarding provider capability-doctor (DARK). The providers analog of
 /// [`diagnostics::DiagnosticsSnapshot::collect`]: a hub-LIBRARY aggregate
 /// ([`provider_doctor::ProviderDoctor::run`]) that composes the EXISTING parsed
-/// per-provider [`friday_providers::ProviderAuthStatus`] (via [`provider_auth`] /
+/// per-provider [`friday_providers::ProviderAuthStatus`] (via
 /// [`friday_providers::detect`]) into one truth-labeled onboarding-readiness result —
 /// previously this multi-provider orchestration was inlined in the
 /// `hub_providers_detect` bin and callable by nothing else. No-fallback (per-provider
