@@ -45,7 +45,7 @@ use friday_storage::workflow_def::{
     get_definition as def_get, get_published_definition as def_get_published,
     set_published as def_set_published, DefinitionSource,
 };
-use rusqlite::Connection;
+use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 /// The maximum slug length the catalog accepts (mirrors the TS
 /// `workflows.create` `slug` bound).
@@ -238,6 +238,17 @@ pub fn update(
 /// `version` must be unused (a duplicate fails closed at the S8 PK). The catalog
 /// entry must exist and not be archived. This does NOT bump the catalog revision
 /// (the catalog row's identity is unchanged; only a new version body is added).
+///
+/// The archived (read-only) fence is re-checked INSIDE an IMMEDIATE transaction
+/// that also performs the `def_create` insert — mirroring how the storage layer's
+/// `update_entry` / `archive_entry` / `set_deployed_version` re-check `is_archived`
+/// inside their own IMMEDIATE tx (`workflow_def::write_tx` pattern). IMMEDIATE
+/// takes the write lock at BEGIN, so a concurrent `archive` cannot land between
+/// the archived-check and the version insert: a workflow archived between a
+/// caller's read and this call can never gain a new version (the TOCTOU is
+/// closed, uniformly with the other mutating ops). Both statements live in one
+/// `def_create`-bearing tx, so the new version body is never written for an entry
+/// that was concurrently archived.
 pub fn add_version(
     conn: &Connection,
     workflow_id: &str,
@@ -245,16 +256,23 @@ pub fn add_version(
     def: &StoredWorkflowDefV1,
     now_ms: i64,
 ) -> Result<String> {
-    require_active_entry(conn, workflow_id)?; // existence + non-archived
-    Ok(def_create(
-        conn,
+    // IMMEDIATE (write lock at BEGIN), exactly like the storage `write_tx` the
+    // other mutating ops use — NOT the DEFERRED `unchecked_transaction`, whose
+    // lock would not yet be held when the archived SELECT runs.
+    let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)
+        .map_err(friday_storage::StorageError::from)?;
+    require_active_entry_tx(&tx, workflow_id)?; // existence + non-archived, IN-TX (authoritative)
+    let checksum = def_create(
+        &tx,
         workflow_id,
         version,
         def,
         DefinitionSource::RustNative,
         None,
         now_ms,
-    )?)
+    )?;
+    tx.commit().map_err(friday_storage::StorageError::from)?;
+    Ok(checksum)
 }
 
 /// ARCHIVE (soft-delete) a catalog entry under optimistic concurrency. The entry
@@ -345,10 +363,35 @@ pub fn list(conn: &Connection) -> Result<Vec<WorkflowCatalogRow>> {
 }
 
 /// Load a catalog entry and fail closed if it is missing or archived (the shared
-/// precondition for publish/deploy/add_version — an archived workflow is
-/// read-only).
+/// precondition for publish/deploy — an archived workflow is read-only). This is
+/// the HUB-LAYER (pre-tx) check; for `deploy` the authoritative in-tx archived
+/// re-check still lives in the storage `set_deployed_version` IMMEDIATE tx, and
+/// for `add_version` in [`require_active_entry_tx`]. `publish` relies on this
+/// pre-tx check only: a uniform in-tx fence for publish would require a
+/// tx-composable variant of the S8 `set_published` (which opens its own
+/// transaction — nesting fails closed), and altering that delegation is out of
+/// scope here (filed as a follow-up).
 fn require_active_entry(conn: &Connection, workflow_id: &str) -> Result<WorkflowCatalogRow> {
     let entry = cat_get(conn, workflow_id)?
+        .ok_or_else(|| WorkflowCatalogError::NotFound(format!("'{workflow_id}'")))?;
+    if entry.is_archived {
+        return Err(WorkflowCatalogError::Conflict(format!(
+            "'{workflow_id}' is archived (an archived workflow is read-only)"
+        )));
+    }
+    Ok(entry)
+}
+
+/// In-transaction variant of [`require_active_entry`]: load the catalog entry
+/// using the open IMMEDIATE transaction (`cat_get` reads through the `Transaction`
+/// deref to `&Connection`) and fail closed if it is missing or archived. Because
+/// the surrounding tx holds the write lock from BEGIN (IMMEDIATE), this check and
+/// the caller's subsequent write are TOCTOU-safe against a concurrent `archive` —
+/// the authoritative fence for `add_version`, mirroring the storage layer's
+/// in-tx `is_archived` re-check in `update_entry` / `archive_entry` /
+/// `set_deployed_version`.
+fn require_active_entry_tx(tx: &Transaction<'_>, workflow_id: &str) -> Result<WorkflowCatalogRow> {
+    let entry = cat_get(tx, workflow_id)?
         .ok_or_else(|| WorkflowCatalogError::NotFound(format!("'{workflow_id}'")))?;
     if entry.is_archived {
         return Err(WorkflowCatalogError::Conflict(format!(
@@ -621,6 +664,9 @@ mod tests {
         .is_err());
 
         // ARCHIVED entry is read-only: update / publish / deploy / add_version all refuse.
+        // (update/deploy/add_version refuse via an IN-TX archived re-check;
+        // publish refuses via the HUB-LAYER pre-tx check — see `publish` /
+        // `require_active_entry` docs for why publish's fence is not in-tx.)
         archive(conn, "wf1", 1, 400).unwrap();
         assert!(matches!(
             update(conn, "wf1", 2, Some("x"), None, None, 500),
@@ -628,6 +674,7 @@ mod tests {
                 friday_storage::StorageError::Unsupported(_)
             ))
         ));
+        // publish on an archived entry → Conflict (via the hub-layer check).
         assert!(matches!(
             publish(conn, "wf1", 1),
             Err(WorkflowCatalogError::Conflict(_))
@@ -688,5 +735,93 @@ mod tests {
         assert!(create(conn, "wf1", "wf-other", "WF2", None, None, &def("WF2"), 200).is_err());
         // the original is intact.
         assert_eq!(get(conn, "wf1").unwrap().unwrap().name, "WF");
+    }
+
+    #[test]
+    fn create_rolls_back_catalog_entry_when_v1_body_insert_fails() {
+        // CROSS-TABLE atomicity: `create` inserts the catalog entry (cat_create)
+        // FIRST, then the v1 definition body (def_create), in one
+        // `unchecked_transaction` (DropBehavior::Rollback). The other atomicity
+        // KAT exercises a failure at the FIRST insert (duplicate workflow_id at
+        // cat_create), so def_create never runs and the cross-table rollback path
+        // is NOT exercised. This KAT drives the REACHABLE second-insert failure:
+        //
+        // S8 permits a (workflow_id, version) definition row with NO catalog entry
+        // (the layers are decoupled — no FK; the S8 module docs + tests create
+        // bare definitions). So pre-seed an ORPHAN (wf1, v1) definition via the S8
+        // layer with no catalog row, then call create(wf1, ...):
+        //   - cat_create SUCCEEDS (no catalog row for wf1 yet), then
+        //   - def_create FAILS on the workflow_definition PK ((wf1, v1) exists),
+        //   - so the `?` early-return DROPS the tx → rollback → the catalog insert
+        //     is undone.
+        //
+        // Red-green meaning: if the tx were NOT rollback-on-drop (e.g. an
+        // autocommit insert, or a commit-on-drop tx), the cat_create row would
+        // survive and get(wf1) would return Some → this assertion fails. The
+        // None assertion is therefore the empirical witness that the cross-table
+        // rollback path fires.
+        let db = Db::open_hub(&tmp("rollback-xtable")).unwrap();
+        let conn = db.conn();
+
+        // Pre-seed the orphan (wf1, v1) definition via the S8 layer — no catalog
+        // entry exists for wf1.
+        def_create(
+            conn,
+            "wf1",
+            INITIAL_VERSION,
+            &def("WF"),
+            DefinitionSource::RustNative,
+            None,
+            50,
+        )
+        .unwrap();
+        assert!(
+            get(conn, "wf1").unwrap().is_none(),
+            "precondition: no catalog entry for the orphan definition"
+        );
+
+        // create(wf1, ...): cat_create succeeds, def_create fails on the (wf1, v1)
+        // PK, the cross-table transaction rolls back.
+        let err = create(conn, "wf1", "wf", "WF", None, None, &def("WF"), 100);
+        assert!(
+            matches!(err, Err(WorkflowCatalogError::Definition(_))),
+            "create must fail closed when the v1 body insert collides on the S8 PK, got {err:?}"
+        );
+
+        // The catalog insert MUST have rolled back — no orphan catalog entry.
+        assert!(
+            get(conn, "wf1").unwrap().is_none(),
+            "the cat_create insert must roll back when def_create fails; no orphan catalog entry"
+        );
+        // And the pre-seeded orphan definition is untouched (still exactly v1).
+        assert!(def_get(conn, "wf1", 1).unwrap().is_some());
+    }
+
+    #[test]
+    fn add_version_on_archived_entry_fails_closed_in_tx() {
+        // The archived (read-only) fence for `add_version` is re-checked INSIDE
+        // the IMMEDIATE transaction that also performs the def_create insert. This
+        // KAT proves it fails CLOSED for an archived entry and writes NO new
+        // version body. (Single-threaded, this cannot ISOLATE the in-tx check
+        // firing from a pre-tx check — both would fire; what it proves is the
+        // fail-closed behavior. The in-tx authoritativeness/TOCTOU-uniformity is a
+        // structural property of using the IMMEDIATE write_tx, not something a
+        // single-threaded test isolates.)
+        let db = Db::open_hub(&tmp("addver-archived")).unwrap();
+        let conn = db.conn();
+        create(conn, "wf1", "wf", "WF", None, None, &def("WF"), 100).unwrap();
+        archive(conn, "wf1", 1, 200).unwrap();
+
+        let r = add_version(conn, "wf1", 2, &def("WF"), 300);
+        assert!(
+            matches!(r, Err(WorkflowCatalogError::Conflict(_))),
+            "add_version on an archived entry must fail closed (Conflict), got {r:?}"
+        );
+        // No v2 body was written (the in-tx fence fired before def_create, and the
+        // tx never committed).
+        assert!(
+            def_get(conn, "wf1", 2).unwrap().is_none(),
+            "no new version body may be written for an archived entry"
+        );
     }
 }
