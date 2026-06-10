@@ -20,9 +20,12 @@ import { FridayDomainError } from "#errors";
  * process.
  *
  * ## Truth labels (read before trusting this)
- * - **DARK substrate** for the executeRun-replacement: NO production route registers
- *   or consumes this. It is imported by no barrel/index/bootstrap. The composition
- *   slice (S-F) wires it; until then it is reversible and inert.
+ * - **DARK — and SUPERSEDED.** This S-D plain/unsealed stub is consumed by NO production
+ *   route and by no barrel/index/bootstrap; its ONLY importer is its own unit test. B1-compose
+ *   did NOT wire this stub — it wired the REAL sealed client
+ *   (`friday-rust-hub-agent-run-ws-sealed-client.ts`, via the sealed-client service adapter)
+ *   into `composeRustReadOnlyAgentRun` instead, bypassing this file. So this stub stays dark /
+ *   reversible / inert; it was kept as the S-A wire-contract reference, not on any live path.
  * - **`rust_wired` ceiling**: this speaks the S-A wire contract to a (later) Rust
  *   server; it is NOT a product path and confers NO v1 GO. In tests it is driven by a
  *   hermetic in-process loopback stub server — never a real Rust bin, never a

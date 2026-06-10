@@ -19,9 +19,13 @@ import {
 } from "./friday-rust-hub-agent-run-ws-sealed-crypto.js";
 
 /**
- * PROOF-ONLY (Rust-wired), DARK (no production route consumes this) TS->Rust AGENT-RUN
- * SEALED WS CLIENT for the executeRun-replacement (sub-slice B1) — the REAL sealed-protocol
- * client half.
+ * WIRED into the production read-only Rust agent-run route, gated DEFAULT-OFF — TS->Rust
+ * AGENT-RUN SEALED WS CLIENT for the executeRun-replacement (sub-slice B1) — the REAL
+ * sealed-protocol client half. As of B1-compose this client is constructed by the sealed-client
+ * service adapter that `composeRustReadOnlyAgentRun` drives on the live `routeStartRun` path —
+ * so the prior "no production route consumes this" claim is no longer true. It does NOT run in
+ * default prod: the route branch is gated DEFAULT-OFF behind `FRIDAY_ROUTE_AGENT_RUN_VIA_RUST`
+ * (operator cutover pending) and only fires for a qualifying read-only run.
  *
  * ## What this is (and how it differs from the S-D stub)
  * The S-D client (`friday-rust-hub-agent-run-ws-client.ts`) is a DARK STUB: it opens a plain
@@ -58,9 +62,13 @@ import {
  * error — never a hang, never a partial success, never a surfaced body on an error.
  *
  * ## Truth labels
- * - DARK substrate for the executeRun-replacement: no production route consumes it.
- * - `rust_wired` ceiling: confers NO v1 GO. Reversible / inert until the composition slice
- *   live-flips it (operator gate).
+ * - Consumed by the production route handler, gated DEFAULT-OFF: the sealed-client service
+ *   adapter constructs this client and `composeRustReadOnlyAgentRun` drives its `dispatchRun`
+ *   on the live `routeStartRun` path, so it IS reached by a production route (NOT "no production
+ *   route consumes it"). It stays inert in default prod until the operator flips
+ *   `FRIDAY_ROUTE_AGENT_RUN_VIA_RUST` (cutover pending).
+ * - `rust_wired` ceiling: confers NO v1 GO. Narrow (read-only); not a full executeRun
+ *   replacement until the operator cutover.
  */
 
 /**

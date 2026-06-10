@@ -172,6 +172,19 @@ pub mod workflow_ts_translate;
 /// workflow execution remains fenced in TS and is NOT product-replaced; NOT v1 GO.
 pub mod workflow_run;
 
+/// R2 — workflow RUN-CONTROL plane (DARK): the fail-closed run-control surface
+/// (`resume` / `retry` / `cancel`) over the `friday-core`/`friday-storage`
+/// 5-state run model. `resume` is a real control bridge that loads the STORED
+/// definition and DELEGATES to the existing [`workflow_exec::resume_workflow`]
+/// engine entrypoint (S9 has a START bridge but no RESUME bridge); `retry` and
+/// `cancel` fail closed with an explicit "not representable in the Rust run
+/// model" error because they require a cross-cutting `friday-core` run-state
+/// change (a `Failed -> Running` retry edge / a `Cancelled` state) that is
+/// outside R2's additive write-set and would touch the LIVE S9 engine. No
+/// production route, no scheduler/trigger, no migration, no route flip; TS
+/// run-control stays fail-closed/retired and is NOT product-replaced; NOT v1 GO.
+pub mod workflow_run_control;
+
 /// S10-A — workflow SCHEDULER substrate (DARK). The hub-layer half of slice A:
 /// the restricted CRON-SUBSET parser + the minute-granularity UTC `is_due` /
 /// `next_due` evaluator (no `chrono`, UTC-only), the deterministic
