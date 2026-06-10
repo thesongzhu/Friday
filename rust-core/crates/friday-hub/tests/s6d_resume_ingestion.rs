@@ -32,7 +32,10 @@ use friday_hub::{
     build_request_with_policy, run_loop_with_policy, AgentError, AgentLlmClient, AgentStep,
     FsToolExecutor, LoopStatus, RawToolCall, RunPolicy, TurnTrace,
 };
-use friday_storage::{agent_run, get_run_result, list_pending_requests_for_run, Db};
+use friday_storage::{
+    agent_run, get_run_answer_for_principal, get_run_result, list_pending_requests_for_run,
+    AnswerDenyReason, Db, RunAnswerAccess,
+};
 
 static C: AtomicU64 = AtomicU64::new(0);
 
@@ -305,11 +308,14 @@ fn loop_hmac_approval_cannot_execute_even_with_operator_key() {
 
 // ─────────────────────────── resume/ingestion entrypoint ───────────────────────────
 
-/// Drive a run to a Pause, return (db, ws, pending nonce, the reconstructed request) so a
-/// resume test can sign + ingest an approval for the EXACT paused action.
-fn pause_a_run(
+/// Drive a run to a Pause under the supplied `policy`, return (db, ws, pending nonce, the
+/// reconstructed request) so a resume test can sign + ingest an approval for the EXACT
+/// paused action. The pending row carries the policy's `principal_id` (the digest binds
+/// it), so the reconstructed request used to sign MUST be built with the SAME policy.
+fn pause_a_run_with_policy(
     tag: &str,
     vk: &OperatorVerifyingKey,
+    policy: &RunPolicy,
 ) -> (Db, Workspace, String, MutatingActionRequest) {
     let db = Db::open_hub(&temp_db(tag)).unwrap();
     let ws = Workspace::new(tag);
@@ -327,7 +333,7 @@ fn pause_a_run(
         "",
         Some(vk),
         &no_approval(),
-        &RunPolicy::default(),
+        policy,
         5,
         NOW,
     )
@@ -335,8 +341,16 @@ fn pause_a_run(
     assert_eq!(out.status, LoopStatus::Paused);
     let pending = list_pending_requests_for_run(db.conn(), run_id).unwrap();
     let nonce = pending[0].approval_id.clone();
-    let request = build_request_with_policy(&call, &RunPolicy::default()).unwrap();
+    let request = build_request_with_policy(&call, policy).unwrap();
     (db, ws, nonce, request)
+}
+
+/// The default (no-principal) Pause helper used by the existing refusal/replay tests.
+fn pause_a_run(
+    tag: &str,
+    vk: &OperatorVerifyingKey,
+) -> (Db, Workspace, String, MutatingActionRequest) {
+    pause_a_run_with_policy(tag, vk, &RunPolicy::default())
 }
 
 /// THE core S6d flow: resume with a valid operator approval executes EXACTLY ONE mutation;
@@ -377,6 +391,90 @@ fn resume_executes_one_mutation_then_replay_is_refused() {
         std::fs::read_to_string(ws.join("out.txt")).unwrap(),
         "TAMPERED",
         "the file was NOT re-written by the replay"
+    );
+}
+
+/// Owner-wiring completeness (review MED-2): a BOUND paused run, resumed with a valid
+/// operator approval, persists its `mutation_completed` run_result WITH the run's owner
+/// principal — so the authenticated body projection RELEASES the resumed mutation's body
+/// to the legitimate owner and DENIES every other caller. Before the fix the resume leg
+/// dropped the owner ⇒ the result was ownerless ⇒ even the owner was Denied
+/// (`NoOwnerPrincipal`). This also covers the identical gap on the `run_task` resume path
+/// (resume.rs IS that path; runtime.rs only persists the already-owned Finished leg).
+#[test]
+fn resume_completion_persists_owner_principal_readable_only_to_owner() {
+    let (sk, vk) = operator();
+    // The paused run is BOUND to principal "alice" (the digest binds it, so the signed
+    // approval and the reconstructed request must use the SAME policy — they do via the
+    // helper).
+    let policy = RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), false);
+    let (db, ws, nonce, request) = pause_a_run_with_policy("resume-owner", &vk, &policy);
+    let exec = FsToolExecutor::new(&ws.0);
+
+    let approval = ed_approval(&request, &sk, &nonce, Some(FUTURE));
+    let r = resume_with_approval(db.conn(), &exec, &vk, &approval, NOW).unwrap();
+    assert_eq!(r.decision, GateDecision::Allow);
+    assert!(r.executed, "the approved mutation executed");
+    assert_eq!(r.result_status, "mutation_completed");
+    assert_eq!(
+        std::fs::read_to_string(ws.join("out.txt")).unwrap(),
+        "RESUMED"
+    );
+
+    // The OWNER reads the resumed mutation's body back (Granted), with the recorded owner.
+    match get_run_answer_for_principal(db.conn(), &r.run_id, "alice").unwrap() {
+        RunAnswerAccess::Granted(stored) => {
+            assert_eq!(stored.status, "mutation_completed");
+            assert_eq!(
+                stored.owner_principal.as_deref(),
+                Some("alice"),
+                "the resume leg recorded the run's bound owner principal"
+            );
+            assert!(
+                stored.audit_ref.is_some(),
+                "result still links the audit receipt"
+            );
+        }
+        other => panic!("owner must be Granted the resumed body, got {other:?}"),
+    }
+    // A DIFFERENT principal is denied (body withheld) — not over-denied to the owner, but
+    // closed to everyone else.
+    assert_eq!(
+        get_run_answer_for_principal(db.conn(), &r.run_id, "mallory").unwrap(),
+        RunAnswerAccess::Denied(AnswerDenyReason::PrincipalMismatch)
+    );
+    // An anonymous / public caller never reads a body.
+    for anon in ["", "public", "public:default"] {
+        assert_eq!(
+            get_run_answer_for_principal(db.conn(), &r.run_id, anon).unwrap(),
+            RunAnswerAccess::Denied(AnswerDenyReason::AnonymousCaller),
+            "anonymous caller {anon:?} must be denied"
+        );
+    }
+}
+
+/// The fail-closed direction is preserved: an UNBOUND (no-principal) paused run resumed to
+/// completion records NO owner ⇒ the resumed body is unreadable by EVERYONE
+/// (`NoOwnerPrincipal`) — never widened to a default/anonymous owner.
+#[test]
+fn resume_completion_without_principal_is_ownerless_fail_closed() {
+    let (sk, vk) = operator();
+    let (db, ws, nonce, request) = pause_a_run("resume-noowner", &vk); // RunPolicy::default()
+    let exec = FsToolExecutor::new(&ws.0);
+
+    let approval = ed_approval(&request, &sk, &nonce, Some(FUTURE));
+    let r = resume_with_approval(db.conn(), &exec, &vk, &approval, NOW).unwrap();
+    assert_eq!(r.decision, GateDecision::Allow);
+    assert!(r.executed);
+    // No bound principal ⇒ ownerless ⇒ every caller (incl. any principal) is Denied.
+    let stored = get_run_result(db.conn(), &r.run_id).unwrap().unwrap();
+    assert_eq!(
+        stored.owner_principal, None,
+        "no bound principal ⇒ no owner recorded (fail-closed)"
+    );
+    assert_eq!(
+        get_run_answer_for_principal(db.conn(), &r.run_id, "anyone").unwrap(),
+        RunAnswerAccess::Denied(AnswerDenyReason::NoOwnerPrincipal)
     );
 }
 

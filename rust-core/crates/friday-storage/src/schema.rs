@@ -326,10 +326,14 @@ pub fn hub_migrations() -> Vec<Migration> {
             up: m0022_workflow_definition,
         },
         // Owner-wiring follow-on to v21 (session-memory DM/subagent userId fallbacks): add
-        // the CONVERSATION axes (`chat_kind`, `chat_id`, `parent_session_id`) the TS
-        // `resolveEffectiveUserId` derives a fallback userId from — (DM) a `chatKind ==
-        // "dm"` conversation falls back to its `chatId`; (subagent) a child session walks
-        // its parent chain to the nearest userId. All three columns are NULLABLE additive
+        // the CONVERSATION axes (`chat_kind`, `chat_id`, `parent_session_id`) plus the
+        // structural `session_kind` discriminant the TS `resolveEffectiveUserId` keys its
+        // fallbacks on — (DM) a `kind == "conversation"` + `chatKind == "dm"` session falls
+        // back to its `chatId`; (subagent) a `kind == "subagent"` child walks its parent
+        // chain to the nearest userId. `session_kind` is the faithful carrier of the TS
+        // `parseFridaySessionKey(...).kind` (the prior port INFERRED subagent-ness from
+        // `parent_session_id` presence — a different signal, the source of the cross-user
+        // mis-attribution window the review flagged). All FOUR columns are NULLABLE additive
         // `ALTER`s: every existing v22 row reads back NULL, which simply means "no fallback
         // available" — namespace resolution for such a session stays exactly as fail-closed
         // as before (NULL `user_id` + no derivable fallback ⇒ MEMORY_NAMESPACE_UNRESOLVABLE
@@ -1508,14 +1512,32 @@ fn m0022_workflow_definition(tx: &Transaction) -> rusqlite::Result<()> {
 //   * `parent_session_id` — the TS `parentSessionKey`: a SUBAGENT session's link to its
 //     parent `agent_session_id`, walked (cycle-safe, fail-closed on a missing link) to
 //     find the nearest ancestor userId. Soft link (no FK) per the `*_ref` convention —
-//     a dangling parent fails the walk closed rather than rejecting the row.
-// Every existing v22 row reads back NULL for all three ⇒ no fallback available ⇒ namespace
+//     a dangling parent fails the walk closed rather than rejecting the row. This is the
+//     walk CHAIN POINTER, NOT the subagent discriminant (see `session_kind`).
+//   * `session_kind` — the STRUCTURAL kind discriminant: the faithful carrier of the TS
+//     `parseFridaySessionKey(session.key).kind` ("conversation" | "subagent"). The TS
+//     derives kind from the session KEY's prefix; the Rust `agent_session_id` is opaque,
+//     so we carry kind EXPLICITLY instead of INFERRING subagent-ness from
+//     `parent_session_id` presence (the prior port's bug — those are different signals:
+//     a TS subagent's parent can live in the key, so its `parentSessionKey` column may be
+//     NULL while kind is still "subagent"). Only the EXACT 'conversation' enables the
+//     DM-chatId fallback and only 'subagent' the parent-walk; the CHECK admits NULL or the
+//     exact TS vocabulary so an unknown value cannot masquerade as either. NULL/unknown ⇒
+//     no fallback derivable (fail-closed). The contradictory shape the review flagged (a
+//     'subagent'-kind row with a NULL `parent_session_id` and `chat_kind == 'dm'`) is
+//     intentionally REPRESENTABLE (faithful to TS, where a subagent's parent may be in the
+//     key) but RESOLVES FAIL-CLOSED: kind == 'subagent' takes the parent-walk leg (NOT the
+//     DM-chatId leg), and a NULL chain pointer ends that walk with no derivable userId ⇒
+//     the namespace fails closed — it is NEVER silently DM-attributed to a foreign chat id.
+// Every existing v22 row reads back NULL for all four ⇒ no fallback available ⇒ namespace
 // resolution stays exactly as fail-closed as v21 (never a silently-broadened scope).
 fn m0023_agent_session_conversation_axes(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(
         "ALTER TABLE agent_session ADD COLUMN chat_kind TEXT
             CHECK(chat_kind IS NULL OR chat_kind IN ('dm', 'group', 'channel', 'thread'));
          ALTER TABLE agent_session ADD COLUMN chat_id TEXT;
-         ALTER TABLE agent_session ADD COLUMN parent_session_id TEXT;",
+         ALTER TABLE agent_session ADD COLUMN parent_session_id TEXT;
+         ALTER TABLE agent_session ADD COLUMN session_kind TEXT
+            CHECK(session_kind IS NULL OR session_kind IN ('conversation', 'subagent'));",
     )
 }

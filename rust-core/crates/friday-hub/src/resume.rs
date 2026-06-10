@@ -192,10 +192,13 @@ pub fn resume_with_approval(
             persist_run_result(
                 conn,
                 &run_id,
-                &RunResult::new(
-                    "mutation_completed",
-                    &receipt.summary,
-                    Some(receipt_id.clone()),
+                &with_owner(
+                    RunResult::new(
+                        "mutation_completed",
+                        &receipt.summary,
+                        Some(receipt_id.clone()),
+                    ),
+                    pending.principal_id.as_deref(),
                 ),
                 now_ms,
             )?;
@@ -217,7 +220,10 @@ pub fn resume_with_approval(
             persist_run_result(
                 conn,
                 &run_id,
-                &RunResult::new("mutation_exec_failed", &err_text, Some(receipt_id.clone())),
+                &with_owner(
+                    RunResult::new("mutation_exec_failed", &err_text, Some(receipt_id.clone())),
+                    pending.principal_id.as_deref(),
+                ),
                 now_ms,
             )?;
             Ok(ResumeOutcome {
@@ -230,6 +236,29 @@ pub fn resume_with_approval(
                 audit_ref: Some(receipt_id),
             })
         }
+    }
+}
+
+/// Record the run's BOUND OWNER principal on the resume-completion `RunResult`, mirroring
+/// the Finished-leg owner-wiring in [`crate::run_session_loop`] (lib.rs) and
+/// [`crate::HubRuntime::run_task`] (runtime.rs, #587).
+///
+/// The Paused→resume completion leg is the ONLY writer of a paused run's `run_result`
+/// slot (the loop deliberately defers it). Recording the run's principal (reconstructed
+/// at the resume entry as `pending.principal_id`) is what lets
+/// [`friday_storage::get_run_answer_for_principal`] release the resumed mutation's body to
+/// the LEGITIMATE owner — without it the result is OWNERLESS and the authenticated body
+/// projection Denies EVERYONE (over-deny: even the owner cannot read their own approved
+/// mutation's result). FAIL-CLOSED unchanged: a run with NO bound principal records NO
+/// owner ⇒ the body stays unreadable to everyone (correct — no widening). The coarse
+/// `result_status` / audit `audit_ref` / refs-only projections are unaffected (this only
+/// sets the `owner_principal` axis used by the authenticated body read).
+fn with_owner(result: RunResult, principal_id: Option<&str>) -> RunResult {
+    match principal_id {
+        Some(p) if !p.is_empty() => result.with_owner_principal(p),
+        // No bound principal (or an empty one) ⇒ leave the result OWNERLESS (fail-closed:
+        // unreadable to everyone), never substitute a default/anonymous owner.
+        _ => result,
     }
 }
 

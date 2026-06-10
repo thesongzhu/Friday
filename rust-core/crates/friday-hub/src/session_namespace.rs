@@ -46,10 +46,21 @@
 //! HONEST mapping note (Rust vs TS representation, not a semantic change): TS derives the
 //! conversation/subagent KIND and the parent link from the structured session KEY
 //! (`parseFridaySessionKey`); the Rust `agent_session_id` is opaque, so the Rust port
-//! carries those axes as explicit columns — `parent_session_id IS NOT NULL` ⇔ the TS
-//! `kind == "subagent"`, and the parent link is the TS `session.parentSessionKey` leg of
-//! its `parentSessionKey ?? parts.parentKey` (there is no key-embedded parent to fall back
-//! to, so a missing link ends the walk fail-closed).
+//! carries those axes as explicit columns. The KIND is carried by the explicit
+//! `session_kind` column (the faithful carrier of the TS `parts.kind`): `session_kind ==
+//! "subagent"` ⇔ the TS `kind == "subagent"`, `session_kind == "conversation"` ⇔ the TS
+//! `kind == "conversation"`; the parent link (`parent_session_id`) is the TS
+//! `session.parentSessionKey` leg of its `parentSessionKey ?? parts.parentKey` — a CHAIN
+//! POINTER, NOT the discriminant (there is no key-embedded parent to fall back to, so a
+//! missing link ends the walk fail-closed). KIND is INTENTIONALLY decoupled from the chain
+//! pointer: the prior port inferred subagent-ness from `parent_session_id IS NOT NULL`,
+//! which DIVERGED from TS (a subagent's parent can live in its key, so its
+//! `parentSessionKey` column may be NULL while its kind is still "subagent") — that
+//! divergence opened a cross-user mis-attribution window for a subagent-kind row with a
+//! null parent + `chat_kind == "dm"` (it took the DM-chatId leg instead of the walk). With
+//! the explicit `session_kind` the DM-chatId fallback is gated on `kind == "conversation"`
+//! and the parent-walk on `kind == "subagent"` — faithful to the TS; `None`/unknown kind
+//! (legacy/unset) enables NEITHER fallback (fail-closed by construction).
 //!
 //! Truth label: byte-identical namespace + normalization port; DM-chatId + subagent
 //! parent-walk userId fallbacks ported (column-modeled). This improves PARITY only — it
@@ -145,16 +156,24 @@ pub fn resolve_session_memory_namespace(
 /// `resolveEffectiveUserId` (owner-wiring lane; closes the slice-3 deferred-parity gap):
 ///
 /// 1. **Direct**: `owner.user_id` (JS-falsy: an empty string counts as absent).
-/// 2. **DM-chatId fallback**: a NON-subagent (conversation-analog: `parent_session_id`
-///    is `None`) session with `chat_kind == "dm"` resolves to its `chat_id`. The TS
-///    condition is `parts.kind === "conversation" && session.chatKind === "dm"` →
-///    `parts.chatId`; the Rust port keys on the explicit v23 columns. A DM with no
-///    stored `chat_id` is UNDERIVABLE → `None` (fail-closed, no guessing).
-/// 3. **Subagent parent-walk**: a subagent (`parent_session_id` is `Some`) walks its
-///    parent chain via `lookup`, returning the FIRST ancestor `user_id` — or, for a
-///    conversation-analog DM ancestor, its `chat_id` — exactly like the TS walk.
-///    Cycle-safe via a visited set (TS `visited`); a dangling link (`lookup` → `None`)
-///    ends the walk (TS `if (!parentSession) break`). Exhausted chain → `None`.
+/// 2. **DM-chatId fallback**: a CONVERSATION (`session_kind == "conversation"`) session
+///    with `chat_kind == "dm"` resolves to its `chat_id`. The TS condition is
+///    `parts.kind === "conversation" && session.chatKind === "dm"` → `parts.chatId`; the
+///    Rust port keys on the explicit `session_kind` discriminant (NOT on
+///    `parent_session_id` presence). A DM with no stored `chat_id` is UNDERIVABLE → `None`
+///    (fail-closed, no guessing).
+/// 3. **Subagent parent-walk**: a subagent (`session_kind == "subagent"`) walks its
+///    parent chain via `lookup` (following the `parent_session_id` pointer), returning the
+///    FIRST ancestor `user_id` — or, for a conversation DM ancestor, its `chat_id` —
+///    exactly like the TS walk. Cycle-safe via a visited set (TS `visited`); a dangling
+///    link (`lookup` → `None`) ends the walk (TS `if (!parentSession) break`). Exhausted
+///    chain → `None`. A subagent with a NULL `parent_session_id` simply has no chain to
+///    walk ⇒ `None` (fail-closed) — it NEVER falls through to the DM-chatId leg.
+/// 4. **Neither (fail-closed by construction)**: any other `session_kind` — `None`
+///    (legacy/unset), an empty string, or any unknown value — enables NO fallback; only a
+///    direct `user_id` could have resolved (step 1), else `None`. This is the structural
+///    property that makes the contradictory shape (a subagent-kind row with a null parent
+///    + `chat_kind == "dm"`) and any un-kinded row fail closed rather than DM-attribute.
 ///
 /// DETERMINISTIC: the result depends only on the stored owner rows reachable through
 /// `lookup`. FAIL-CLOSED: every underivable shape returns `Ok(None)` (the caller's
@@ -172,14 +191,12 @@ where
         return Ok(Some(u.to_string()));
     }
 
-    // The Rust kind mapping: `parent_session_id IS NOT NULL` ⇔ TS `parts.kind ==
-    // "subagent"`; otherwise the session is the conversation analog.
-    let is_subagent = non_empty(owner.parent_session_id.as_deref()).is_some();
-
     // 2. DM-chatId fallback (TS `parts.kind === "conversation" && chatKind === "dm"`).
-    //    EXACT `"dm"` match only — any other / unknown kind gets no fallback. A subagent
-    //    session NEVER uses its own chat axes here (TS: its parts.kind is "subagent").
-    if !is_subagent && is_dm(owner) {
+    //    Gated on the EXPLICIT `session_kind == "conversation"` discriminant (faithful to
+    //    the TS `parts.kind`), NOT on `parent_session_id` presence — a subagent-kind row
+    //    NEVER reaches this leg even if its own `chat_kind == "dm"`. EXACT `"dm"` match
+    //    only; any other / unknown chat_kind gets no fallback.
+    if is_conversation(owner) && is_dm(owner) {
         if let Some(c) = non_empty(owner.chat_id.as_deref()) {
             return Ok(Some(c.to_string()));
         }
@@ -188,8 +205,12 @@ where
         return Ok(None);
     }
 
-    // 3. Subagent parent-walk (TS `parts.kind === "subagent" && sessionLookup`).
-    if is_subagent {
+    // 3. Subagent parent-walk (TS `parts.kind === "subagent" && sessionLookup`). Gated on
+    //    the EXPLICIT `session_kind == "subagent"` discriminant; the walk FOLLOWS the
+    //    `parent_session_id` chain pointer (TS `parentSessionKey ?? parts.parentKey` — the
+    //    Rust column is the only modeled link, so a NULL pointer simply has no chain to walk
+    //    and falls through to the fail-closed end state, NEVER to the DM-chatId leg above).
+    if is_subagent(owner) {
         let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut current = owner.parent_session_id.clone();
         while let Some(key) = current {
@@ -205,10 +226,10 @@ where
             if let Some(u) = non_empty(parent.user_id.as_deref()) {
                 return Ok(Some(u.to_string()));
             }
-            // A conversation-analog DM ancestor resolves to its chat_id (TS
-            // `parentParts.kind === "conversation" && parent.chatKind === "dm"`).
-            let parent_is_subagent = non_empty(parent.parent_session_id.as_deref()).is_some();
-            if !parent_is_subagent && is_dm(&parent) {
+            // A conversation DM ancestor resolves to its chat_id (TS
+            // `parentParts.kind === "conversation" && parent.chatKind === "dm"`) — gated on
+            // the parent's OWN explicit kind, not on its parent-link presence.
+            if is_conversation(&parent) && is_dm(&parent) {
                 if let Some(c) = non_empty(parent.chat_id.as_deref()) {
                     return Ok(Some(c.to_string()));
                 }
@@ -219,12 +240,28 @@ where
         }
     }
 
+    // 4. Neither conversation-DM nor subagent (incl. `session_kind` None/unknown): no
+    //    fallback derivable → fail closed (TS falls through to `return undefined`).
     Ok(None)
 }
 
 /// Exact-match TS `chatKind === "dm"` (case-sensitive; the TS type is a literal union).
 fn is_dm(owner: &SessionOwner) -> bool {
     owner.chat_kind.as_deref() == Some("dm")
+}
+
+/// Exact-match TS `parts.kind === "conversation"` — the structural discriminant carried by
+/// the explicit `session_kind` column (case-sensitive). `None`/empty/unknown is NOT a
+/// conversation (no DM-chatId fallback — fail-closed).
+fn is_conversation(owner: &SessionOwner) -> bool {
+    owner.session_kind.as_deref() == Some("conversation")
+}
+
+/// Exact-match TS `parts.kind === "subagent"` — the structural discriminant carried by the
+/// explicit `session_kind` column (case-sensitive), DECOUPLED from `parent_session_id`
+/// presence. `None`/empty/unknown is NOT a subagent (no parent-walk — fail-closed).
+fn is_subagent(owner: &SessionOwner) -> bool {
+    owner.session_kind.as_deref() == Some("subagent")
 }
 
 /// `Some` only for a present, non-empty value (JS-falsy parity for `""`).
@@ -508,11 +545,15 @@ mod tests {
 
     // ─── resolve_effective_user_id (the TS resolveEffectiveUserId port) ───
 
+    /// Build a `SessionOwner` with an EXPLICIT `session_kind` (the structural discriminant),
+    /// NEVER derived from `parent` — re-deriving kind from the parent link would re-import
+    /// the exact bug this fix closes into the tests.
     fn owner(
         user_id: Option<&str>,
         chat_kind: Option<&str>,
         chat_id: Option<&str>,
         parent: Option<&str>,
+        kind: Option<&str>,
     ) -> SessionOwner {
         SessionOwner {
             account_id: Some("default".into()),
@@ -521,7 +562,19 @@ mod tests {
             chat_kind: chat_kind.map(str::to_string),
             chat_id: chat_id.map(str::to_string),
             parent_session_id: parent.map(str::to_string),
+            session_kind: kind.map(str::to_string),
         }
+    }
+
+    /// A CONVERSATION-kind owner (TS `parts.kind === "conversation"`).
+    fn conv(user_id: Option<&str>, chat_kind: Option<&str>, chat_id: Option<&str>) -> SessionOwner {
+        owner(user_id, chat_kind, chat_id, None, Some("conversation"))
+    }
+
+    /// A SUBAGENT-kind owner (TS `parts.kind === "subagent"`); `parent` is the chain
+    /// pointer (may be `None` — a subagent whose parent lives only in its key).
+    fn sub(user_id: Option<&str>, parent: Option<&str>) -> SessionOwner {
+        owner(user_id, None, None, parent, Some("subagent"))
     }
 
     /// A lookup over a fixed in-memory map (the TS `sessionLookup` analog).
@@ -544,11 +597,11 @@ mod tests {
     #[test]
     fn effective_user_direct_user_id_wins_without_lookup() {
         // TS case 1: session.userId returns immediately (no key parse, no walk).
-        let o = owner(Some("alice"), Some("dm"), Some("chat-1"), None);
+        let o = conv(Some("alice"), Some("dm"), Some("chat-1"));
         let got = resolve_effective_user_id(&o, &mut no_lookup).unwrap();
         assert_eq!(got.as_deref(), Some("alice"));
         // JS-falsy parity: an EMPTY user_id is absent, so the DM fallback applies instead.
-        let o = owner(Some(""), Some("dm"), Some("chat-1"), None);
+        let o = conv(Some(""), Some("dm"), Some("chat-1"));
         let got = resolve_effective_user_id(&o, &mut no_lookup).unwrap();
         assert_eq!(got.as_deref(), Some("chat-1"));
     }
@@ -556,7 +609,7 @@ mod tests {
     #[test]
     fn effective_user_dm_falls_back_to_chat_id_only_for_exact_dm_kind() {
         // TS case 2: conversation + chatKind === "dm" → chatId.
-        let dm = owner(None, Some("dm"), Some("chat-77"), None);
+        let dm = conv(None, Some("dm"), Some("chat-77"));
         assert_eq!(
             resolve_effective_user_id(&dm, &mut no_lookup)
                 .unwrap()
@@ -566,31 +619,40 @@ mod tests {
         // A NON-dm kind gets NO fallback (group/channel/thread chats are multi-user —
         // attributing them to the chat id would merge users into one scope).
         for kind in ["group", "channel", "thread"] {
-            let o = owner(None, Some(kind), Some("chat-77"), None);
+            let o = conv(None, Some(kind), Some("chat-77"));
             assert_eq!(resolve_effective_user_id(&o, &mut no_lookup).unwrap(), None);
         }
-        // Unknown/absent kind: fail closed too.
-        let o = owner(None, None, Some("chat-77"), None);
+        // Unknown/absent chat_kind: fail closed too.
+        let o = conv(None, None, Some("chat-77"));
         assert_eq!(resolve_effective_user_id(&o, &mut no_lookup).unwrap(), None);
         // DM with NO stored chat_id is UNDERIVABLE → fail closed (no guessing).
-        let o = owner(None, Some("dm"), None, None);
+        let o = conv(None, Some("dm"), None);
         assert_eq!(resolve_effective_user_id(&o, &mut no_lookup).unwrap(), None);
+        // A row with NO `session_kind` (legacy/unset) gets NO DM fallback even with
+        // `chat_kind == "dm"` and a stored chat_id — fail closed by construction (the
+        // structural gate is on the explicit kind, never inferred).
+        let unkinded = owner(None, Some("dm"), Some("chat-77"), None, None);
+        assert_eq!(
+            resolve_effective_user_id(&unkinded, &mut no_lookup).unwrap(),
+            None,
+            "an un-kinded DM-shaped row must fail closed, never DM-attribute"
+        );
     }
 
     #[test]
     fn effective_user_subagent_walks_to_parent_user_id() {
         // TS case 3: subagent → nearest ancestor userId. One hop...
-        let entries = [("p1", owner(Some("alice"), None, None, None))];
-        let child = owner(None, None, None, Some("p1"));
+        let entries = [("p1", conv(Some("alice"), None, None))];
+        let child = sub(None, Some("p1"));
         let got = resolve_effective_user_id(&child, &mut map_lookup(&entries)).unwrap();
         assert_eq!(got.as_deref(), Some("alice"));
 
         // ...and multi-hop through a userId-less intermediate subagent.
         let entries = [
-            ("mid", owner(None, None, None, Some("root"))),
-            ("root", owner(Some("bob"), None, None, None)),
+            ("mid", sub(None, Some("root"))),
+            ("root", conv(Some("bob"), None, None)),
         ];
-        let child = owner(None, None, None, Some("mid"));
+        let child = sub(None, Some("mid"));
         let got = resolve_effective_user_id(&child, &mut map_lookup(&entries)).unwrap();
         assert_eq!(got.as_deref(), Some("bob"));
     }
@@ -598,8 +660,8 @@ mod tests {
     #[test]
     fn effective_user_subagent_resolves_via_dm_conversation_ancestor() {
         // TS: a conversation-DM PARENT without a userId resolves to ITS chatId.
-        let entries = [("p1", owner(None, Some("dm"), Some("chat-9"), None))];
-        let child = owner(None, None, None, Some("p1"));
+        let entries = [("p1", conv(None, Some("dm"), Some("chat-9")))];
+        let child = sub(None, Some("p1"));
         let got = resolve_effective_user_id(&child, &mut map_lookup(&entries)).unwrap();
         assert_eq!(got.as_deref(), Some("chat-9"));
     }
@@ -608,43 +670,92 @@ mod tests {
     fn effective_user_subagent_own_dm_axes_are_not_used() {
         // A SUBAGENT session never uses its own chat axes (TS: its parts.kind is
         // "subagent", not "conversation") — the walk decides, and here it finds nothing.
-        let entries = [("p1", owner(None, None, None, None))];
-        let child = owner(None, Some("dm"), Some("chat-self"), Some("p1"));
+        let entries = [("p1", sub(None, None))];
+        // A subagent that ALSO carries its own dm chat axes — gated out of the DM leg by
+        // its explicit `session_kind == "subagent"`.
+        let child = owner(
+            None,
+            Some("dm"),
+            Some("chat-self"),
+            Some("p1"),
+            Some("subagent"),
+        );
         let got = resolve_effective_user_id(&child, &mut map_lookup(&entries)).unwrap();
         assert_eq!(got, None, "subagent must not DM-resolve from its own axes");
     }
 
     #[test]
+    fn effective_user_subagent_kind_with_null_parent_and_dm_axes_fails_closed_not_dm() {
+        // THE review's exact missing test (MED-1, cross-user mis-attribution window): a row
+        // that is SEMANTICALLY a subagent (`session_kind == "subagent"`) but has a NULL
+        // parent link AND `chat_kind == "dm"` + a stored chat_id MUST take the parent-walk
+        // leg (not the DM-chatId leg) and — with no chain to walk — fail closed. The prior
+        // port (inferring subagent-ness from `parent_session_id IS NOT NULL`) treated this
+        // shape as a conversation and returned the chat_id "C" — a WRONG-principal namespace
+        // write if "C" belongs to a different user than this subagent's true ancestor.
+        let null_parent = owner(None, Some("dm"), Some("C"), None, Some("subagent"));
+        let got = resolve_effective_user_id(&null_parent, &mut no_lookup).unwrap();
+        assert_eq!(
+            got, None,
+            "a null-parent subagent-kind dm-shaped row must fail closed, NEVER return the chat_id"
+        );
+        assert_ne!(
+            got.as_deref(),
+            Some("C"),
+            "must NOT DM-attribute the subagent to a foreign chat id (the closed mis-attribution window)"
+        );
+
+        // The SIBLING positive control: the SAME subagent shape but WITH a parent link to an
+        // ancestor that carries the true userId walks to that ancestor "U" — never to "C".
+        let entries = [("anc", conv(Some("U"), None, None))];
+        let with_parent = owner(None, Some("dm"), Some("C"), Some("anc"), Some("subagent"));
+        let walked = resolve_effective_user_id(&with_parent, &mut map_lookup(&entries)).unwrap();
+        assert_eq!(
+            walked.as_deref(),
+            Some("U"),
+            "the subagent resolves to its ancestor userId via the walk, not its own dm chat id"
+        );
+        assert_ne!(walked.as_deref(), Some("C"));
+    }
+
+    #[test]
     fn effective_user_walk_fails_closed_on_dangling_missing_or_cyclic_chain() {
         // Dangling parent link (no such session): fail closed.
-        let child = owner(None, None, None, Some("ghost"));
+        let child = sub(None, Some("ghost"));
         assert_eq!(
             resolve_effective_user_id(&child, &mut map_lookup(&[])).unwrap(),
             None
         );
-        // Exhausted chain (ancestors exist but none derivable): fail closed.
+        // Exhausted chain (ancestors exist but none derivable): fail closed. The
+        // intermediate is a subagent-kind group conversation analog (no derivable userId).
         let entries = [
-            ("p1", owner(None, Some("group"), Some("g-1"), Some("p2"))),
-            ("p2", owner(None, None, None, None)),
+            (
+                "p1",
+                owner(
+                    None,
+                    Some("group"),
+                    Some("g-1"),
+                    Some("p2"),
+                    Some("subagent"),
+                ),
+            ),
+            ("p2", sub(None, None)),
         ];
-        let child = owner(None, None, None, Some("p1"));
+        let child = sub(None, Some("p1"));
         assert_eq!(
             resolve_effective_user_id(&child, &mut map_lookup(&entries)).unwrap(),
             None
         );
         // CYCLE (p1 -> p2 -> p1): the visited set terminates the walk, fail closed.
-        let entries = [
-            ("p1", owner(None, None, None, Some("p2"))),
-            ("p2", owner(None, None, None, Some("p1"))),
-        ];
-        let child = owner(None, None, None, Some("p1"));
+        let entries = [("p1", sub(None, Some("p2"))), ("p2", sub(None, Some("p1")))];
+        let child = sub(None, Some("p1"));
         assert_eq!(
             resolve_effective_user_id(&child, &mut map_lookup(&entries)).unwrap(),
             None
         );
         // SELF-cycle (a session whose parent is itself — pathological but storable).
-        let entries = [("s", owner(None, None, None, Some("s")))];
-        let child = owner(None, None, None, Some("s"));
+        let entries = [("s", sub(None, Some("s")))];
+        let child = sub(None, Some("s"));
         assert_eq!(
             resolve_effective_user_id(&child, &mut map_lookup(&entries)).unwrap(),
             None
@@ -656,7 +767,7 @@ mod tests {
         // A STORAGE error during the walk must propagate (never be treated as "no
         // parent" — that would mis-report a locked/corrupt DB as an unresolvable
         // namespace downstream, the same discipline as load_session_owner's .optional()).
-        let child = owner(None, None, None, Some("p1"));
+        let child = sub(None, Some("p1"));
         let mut failing = |_key: &str| -> Result<Option<SessionOwner>, StorageError> {
             Err(StorageError::Unsupported("disk on fire".into()))
         };

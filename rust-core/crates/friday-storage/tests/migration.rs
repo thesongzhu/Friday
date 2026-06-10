@@ -279,8 +279,13 @@ fn forward_migration_v22_to_v23_backfills_conversation_axes_to_null() {
     assert_eq!(owner.chat_kind, None, "pre-v23 row backfills to NULL");
     assert_eq!(owner.chat_id, None);
     assert_eq!(owner.parent_session_id, None);
+    assert_eq!(
+        owner.session_kind, None,
+        "pre-v23 row backfills `session_kind` to NULL ⇒ no fallback derivable (fail-closed)"
+    );
 
-    // A fresh bind with the new axes round-trips on the migrated DB.
+    // A fresh bind with the new axes (incl. the structural `session_kind`) round-trips on
+    // the migrated DB.
     let dm = SessionOwner {
         account_id: Some("default".into()),
         channel: Some("telegram".into()),
@@ -288,6 +293,7 @@ fn forward_migration_v22_to_v23_backfills_conversation_axes_to_null() {
         chat_kind: Some("dm".into()),
         chat_id: Some("chat-9".into()),
         parent_session_id: None,
+        session_kind: Some("conversation".into()),
     };
     ensure_session_with_owner(db.conn(), "s2", &dm, 2).unwrap();
     assert_eq!(load_session_owner(db.conn(), "s2").unwrap(), Some(dm));

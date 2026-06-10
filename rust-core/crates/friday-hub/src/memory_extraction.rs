@@ -962,6 +962,9 @@ mod tests {
                 chat_kind: Some("dm".into()),
                 chat_id: Some("dm-user-7".into()),
                 parent_session_id: None,
+                // Structural kind: a CONVERSATION (TS `parts.kind === "conversation"`) — what
+                // gates the DM-chatId fallback (NOT inferred from the parent link).
+                session_kind: Some("conversation".into()),
             },
             1,
         )
@@ -1035,6 +1038,9 @@ mod tests {
                 chat_kind: None,
                 chat_id: None,
                 parent_session_id: Some("parent-s".into()),
+                // Structural kind: a SUBAGENT (TS `parts.kind === "subagent"`) — what gates
+                // the parent-walk (NOT inferred from the parent link's presence).
+                session_kind: Some("subagent".into()),
             },
             2,
         )
@@ -1101,6 +1107,8 @@ mod tests {
                 chat_kind: Some("group".into()),
                 chat_id: Some("group-42".into()),
                 parent_session_id: None,
+                // A CONVERSATION (group): no DM fallback (group is multi-user) — fail closed.
+                session_kind: Some("conversation".into()),
             },
             1,
         )
@@ -1123,6 +1131,8 @@ mod tests {
                 chat_kind: None,
                 chat_id: None,
                 parent_session_id: Some("ghost-parent".into()),
+                // A SUBAGENT whose parent link dangles — the walk ends fail closed.
+                session_kind: Some("subagent".into()),
             },
             1,
         )

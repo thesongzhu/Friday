@@ -2608,8 +2608,14 @@ pub fn run_loop_with_policy(
 ///   [`friday_storage::ensure_session_with_owner`] (idempotent; an already-bound owner
 ///   is never clobbered, a NULL axis can be backfilled) — this is what makes a
 ///   loop-created session's memory namespace RESOLVABLE for the Rust inline extraction.
-///   `None` keeps the owner-less [`friday_storage::ensure_session`] exactly as before
-///   (the session carries NULL owner axes and extraction fails closed — unchanged).
+///   `None` keeps the OWNER-AXIS / session-ensure path exactly as before: it routes to
+///   the owner-less [`friday_storage::ensure_session`], the session carries NULL owner
+///   axes, and extraction fails closed — unchanged. (NOTE: this "unchanged" scopes to the
+///   ensure/owner-axis path only. The new Finished-persist step 5 below runs REGARDLESS of
+///   `session_owner` — with `session_owner: None` AND no bound principal it now writes an
+///   OWNERLESS `run_result` row the pre-wiring loop did not. That row is fail-closed:
+///   `get_run_answer_for_principal` Denies it to EVERYONE (`NoOwnerPrincipal`), so it
+///   leaks nothing — see `sessioned_run_without_principal_persists_ownerless_fail_closed_result`.)
 /// * A `Finished` outcome now PERSISTS the run's answer Hub-side
 ///   ([`friday_storage::persist_run_result`]) with the run's BOUND OWNER principal
 ///   (`policy.principal_id()`) recorded as `owner_principal` — the same D1 owner-wiring
@@ -6042,8 +6048,11 @@ mod tests {
         );
     }
 
-    /// `session_owner: None` keeps the pre-wiring behavior bit-for-bit: the session
-    /// carries NULL owner axes (extraction stays fail-closed for it).
+    /// `session_owner: None` keeps the OWNER-AXIS / session-ensure path bit-for-bit: the
+    /// session carries NULL owner axes (extraction stays fail-closed for it). HONEST scope
+    /// (review LOW-a): this only covers the ensure/owner-axis path. The Finished-persist
+    /// step now writes an OWNERLESS `run_result` row even for `None` — asserted here to be
+    /// fail-closed (unreadable to everyone), NOT absent.
     #[test]
     fn session_loop_without_owner_creates_unowned_session_unchanged() {
         let root = TempDir::new("s5-unowned");
@@ -6080,6 +6089,21 @@ mod tests {
             back.user_id.as_deref(),
         )
         .is_err());
+        // HONEST (review LOW-a): with `None` AND no bound principal the Finished-persist DOES
+        // write a run_result row (the pre-wiring loop wrote none here) — but it is OWNERLESS
+        // and so Denied to EVERYONE (fail-closed/leakless), NOT readable and NOT absent.
+        use friday_storage::{AnswerDenyReason, RunAnswerAccess};
+        let row = friday_storage::get_run_result(db.conn(), "r1").unwrap();
+        assert!(
+            row.is_some(),
+            "the Finished-persist writes a row even for session_owner: None"
+        );
+        assert_eq!(row.unwrap().owner_principal, None, "the row is ownerless");
+        assert_eq!(
+            friday_storage::get_run_answer_for_principal(db.conn(), "r1", "anyone").unwrap(),
+            RunAnswerAccess::Denied(AnswerDenyReason::NoOwnerPrincipal),
+            "an ownerless row is unreadable by everyone (fail-closed)"
+        );
     }
 }
 
