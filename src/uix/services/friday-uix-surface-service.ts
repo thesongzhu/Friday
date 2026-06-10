@@ -149,6 +149,31 @@ export interface CreateFridayUixSurfaceServiceDeps {
   /** Optional writer to emit learning events when preferences are updated via API. */
   learningEventWriter?: (events: Array<{ eventId: string; ts: string; userId: string; kind: "user_correction"; payload: Record<string, unknown> }>) => void;
   nowIso?: () => string;
+  /**
+   * TS Runtime Retirement — GAP G2 (DEFAULT-OFF / INVERTED polarity).
+   *
+   * Gates ONLY the UIX starter-skill execution lane on THIS service
+   * (`executeStarterSkillTemplate` → `skillExecutor.execute`, reached from the
+   * public route POST /v1/uix/templates/:templateId/execute and the assistant
+   * intent resolver). `uix.templates.execute` is NOT in the retirement set; UIX
+   * starter-skill execution is an ACCEPTED-LIVE v1 feature (operator decision
+   * DEC-3a). The UIX-driven skill-generator session mutators are gated by the
+   * skill-generator SERVICE's own `enforceUixSkillExecRetirement` instance (NOT
+   * this UIX flag); both read the same hub-config value so they flip together,
+   * but the guard for each lives on the service that owns the mutation.
+   *
+   * Unlike the `allowTestOnly*` retirement flags (default guard ON / fail-closed,
+   * opt-in to run legacy TS), this flag DEFAULTS the guard OFF. When
+   * `false`/undefined (the default, INCLUDING production today) the guard is
+   * INERT and starter skills execute exactly as before — ZERO degradation. When
+   * explicitly `true` the lane fails closed with a 503
+   * `TS_RUNTIME_SKILL_RUNS_RETIRED` BEFORE any skill execution. This is the
+   * dormant lever to flip ON later when the operator decides to Rust-own skill
+   * execution (R11). NOTE: the guard lives in the UIX `executeStarterSkillTemplate`
+   * wrapper (NOT in the shared `skillExecutor.execute` method) so flipping it on
+   * does NOT fail-close the agent skill-tool execution path — only the UIX lane.
+   */
+  enforceUixSkillExecRetirement?: boolean;
 }
 
 const TEMPLATE_DEFINITIONS: FridayActionTemplateSummary[] = [
@@ -1447,6 +1472,33 @@ export function createFridayUixSurfaceService(
     defaultSummary: string;
     tenantContext?: FridayProviderTenantContext;
   }) {
+    // ─── TS Runtime Retirement — GAP G2: DEFAULT-OFF lane guard ───
+    // INVERTED polarity vs the `allowTestOnly*` idiom. This is the single
+    // chokepoint for every UIX starter-skill execution call site (the public
+    // route POST /v1/uix/templates/:templateId/execute via `executeTemplate`,
+    // and the assistant intent resolver `uix.intents.resolve`). UIX starter-skill
+    // execution is NOT in the retirement set — it is an ACCEPTED-LIVE v1 feature
+    // (operator decision DEC-3a), so this guard DEFAULTS OFF and is INERT:
+    // when `enforceUixSkillExecRetirement` is false/undefined (the default,
+    // INCLUDING production today) starter skills execute exactly as before —
+    // ZERO degradation. Flip the flag `=== true` later (when the operator decides
+    // to Rust-own skill execution — R11) and the lane fails closed BEFORE any
+    // `skillExecutor.execute` call. The guard is placed in THIS wrapper, not in
+    // the shared `skillExecutor.execute` method, so flipping it on does NOT
+    // fail-close the agent skill-tool execution path — only the UIX lane.
+    if (deps.enforceUixSkillExecRetirement === true) {
+      throw new FridayDomainError(
+        "TS_RUNTIME_SKILL_RUNS_RETIRED",
+        "Skill run execution is fail-closed while runtime ownership is being moved out of TypeScript.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_skill_run_entrypoint_required",
+          },
+        },
+      );
+    }
     if (!deps.skillExecutor) {
       throw new FridayDomainError(
         "UIX_STARTER_SKILL_UNAVAILABLE",

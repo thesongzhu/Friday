@@ -589,6 +589,42 @@ function autoResolveSkillGeneratorClarifications(input: {
 export function createFridaySkillGeneratorService(
   deps: CreateFridaySkillGeneratorServiceDeps,
 ): FridaySkillGeneratorService {
+  // ─── TS Runtime Retirement — GAP G2: DEFAULT-OFF method-level guard ───
+  // INVERTED polarity vs the `allowTestOnly*` idiom. The UIX-driven
+  // skill-generator session mutators (startSession/submitTurn/generateDraft/
+  // approveAndSave) are NOT in the retirement set and are an ACCEPTED-LIVE v1
+  // feature (operator decision DEC-3a). They reach this service OFF-ROUTE — via
+  // the UIX `executeTemplate` `generate-skill` flow and the agent
+  // skill-generator tool — bypassing the route-level
+  // `allowTestOnlySkillGeneratorExecution` guard.
+  //
+  // This guard DEFAULTS OFF: when `enforceUixSkillExecRetirement` is
+  // false/undefined (the default, INCLUDING production today) it is INERT and
+  // these methods behave exactly as before — ZERO degradation, starter-skill
+  // generation keeps working. It is a dormant lever: flip
+  // `enforceUixSkillExecRetirement === true` later (when the operator decides to
+  // Rust-own skill generation — R11) and every mutator fails closed with a 503
+  // `TS_RUNTIME_SKILL_GENERATOR_RETIRED` BEFORE any session-row write or
+  // provider call. `cancelSession` is deliberately left live so an in-flight
+  // session can still be abandoned post-flip. Reads stay live. NOTE: flipping ON
+  // also fail-closes the agent skill-generator tool generator path (both share
+  // this service instance; R11 owns both).
+  function assertUixSkillGenerationExecutionAllowed(): void {
+    if (deps.enforceUixSkillExecRetirement === true) {
+      throw new FridayDomainError(
+        "TS_RUNTIME_SKILL_GENERATOR_RETIRED",
+        "Skill generator execution is fail-closed while generator ownership is being moved out of TypeScript.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_skill_generator_entrypoint_required",
+          },
+        },
+      );
+    }
+  }
+
   const repo: FridaySkillGenerationSessionRepository =
     createFridaySkillGenerationSessionRepository({
       db: deps.db,
@@ -1688,6 +1724,7 @@ export function createFridaySkillGeneratorService(
     async startSession(
       input: FridayStartSkillGenerationRequest,
     ): Promise<FridaySkillGenerationTurnResponse> {
+      assertUixSkillGenerationExecutionAllowed();
       assertSafeSkillGenerationGoal(input.goal);
       const now = deps.nowIso();
       const sessionId = deps.idGenerator();
@@ -1812,6 +1849,7 @@ export function createFridaySkillGeneratorService(
       sessionId: string,
       input: FridaySkillGenerationTurnRequest,
     ): Promise<FridaySkillGenerationTurnResponse> {
+      assertUixSkillGenerationExecutionAllowed();
       const session = requireSession(sessionId);
       assertSafeSkillGenerationGoal(`${session.goal}\n${input.message}`);
 
@@ -1955,6 +1993,7 @@ export function createFridaySkillGeneratorService(
       sessionId: string,
       requestedModel?: string,
     ): Promise<FridayGeneratedSkillDraft> {
+      assertUixSkillGenerationExecutionAllowed();
       const session = requireSession(sessionId);
       assertSafeSkillGenerationGoal(`${session.goal}\n${session.specSummary}`);
 
@@ -2071,6 +2110,7 @@ export function createFridaySkillGeneratorService(
     },
 
     async approveAndSave(sessionId: string, input = {}) {
+      assertUixSkillGenerationExecutionAllowed();
       const session = requireSession(sessionId);
 
       if (session.status !== "ready_for_review") {
