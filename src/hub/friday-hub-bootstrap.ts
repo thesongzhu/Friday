@@ -8323,8 +8323,44 @@ export async function createFridayHub(
           classifyExecution: classifyFridayExecution,
           capabilitySnapshotGetter: getAgentCapabilitySnapshot as unknown as CreateFridayEngineTurnPreparerDeps["capabilitySnapshotGetter"],
           taskStatusSnapshotGetter: getAgentTaskStatusSnapshot as unknown as CreateFridayEngineTurnPreparerDeps["taskStatusSnapshotGetter"],
+          // persistCompactionEvidence is the THIRD channel-engine session/memory-state
+          // WRITE — separately wired (NOT part of channelEngineSessionDeps), so the
+          // addMessage / setConversationFocus guards above do NOT cover it. The
+          // turn-preparer runs BEFORE dispatch / before the agent-runtime executeRun
+          // guard and, when buildSelectedBlockCompactionEvidence(selectedBlocks) is
+          // non-null, calls this to write a session+runId-keyed derived-state row into
+          // friday_agent_context_replay_entries (summaryText / decisions / todos /
+          // openQuestions / toolFailures / fileOperations) via db.withWriteTransaction →
+          // appendCompactionSummary. Reachable on a bound channel turn even while
+          // addMessage / setConversationFocus reject (proven RED). Apply the IDENTICAL
+          // fail-closed check (SAME family + flag, no new flag) so the COMPLETE
+          // channel-engine session/memory-write surface is fenced under the production
+          // default. The check returns a rejected promise (never throws synchronously);
+          // the turn-preparer wraps the call in `.catch(() => undefined)`
+          // (friday-engine-turn-preparer.ts ~455-463) so flow degrades cleanly — no
+          // half-state, no unhandled rejection, the turn does not crash. Production leaves
+          // the flag unset → channel-engine compaction-evidence writes fail-closed;
+          // test-oracle harnesses opt in. The sink's OTHER consumers (agent runtime parent
+          // + sub-agent, bootstrap ~4851 / ~5172) are downstream of executeRun:803 and
+          // already fenced by allowTestOnlyAgentRunExecution — this closure is the only
+          // channel path to the sink BEFORE that guard.
           persistCompactionEvidence: agentCompactionContextReplaySink
             ? async (input) => {
+              if (config.allowTestOnlySessionExecution !== true) {
+                return Promise.reject(
+                  new FridayDomainError(
+                    "TS_RUNTIME_SESSION_RETIRED",
+                    "TypeScript session execution is fail-closed in default/live runtime; use the Rust-owned session_lifecycle entrypoint.",
+                    {
+                      httpStatus: 503,
+                      details: {
+                        classification: "fail_closed",
+                        replacement: "rust_owned_session_lifecycle_entrypoint_required",
+                      },
+                    },
+                  ),
+                );
+              }
               await agentCompactionContextReplaySink.persist({
                 sessionKey: input.sessionKey,
                 runId: input.runId,
@@ -8332,6 +8368,7 @@ export async function createFridayHub(
                 blocks: input.blocks,
                 compactedAt: nowIso(),
               });
+              return undefined;
             }
             : undefined,
         },

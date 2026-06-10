@@ -3,7 +3,9 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createFridayAgentContextReplayRepository } from "../../../src/agent/persistence/friday-agent-context-replay-repository.js";
 import type { FridayChannelMessage, FridayChannelPlugin } from "#channels";
 import {
   createFridayChannelNaturalTriggerResolver,
@@ -912,5 +914,127 @@ describe("channel ENGINE control-plane write guard (G5 completeness, default fai
     expect(focusRejections).toHaveLength(0);
 
     setFocusSpy.mockRestore();
+  });
+
+  // ── persistCompactionEvidence completeness: the THIRD (separately-wired) write ──
+  // The channel orchestration engine's turn-preparer is wired with a SEPARATE
+  // `persistCompactionEvidence` dep (bootstrap ~8326 → agentCompactionContextReplaySink.persist)
+  // that is NOT routed through channelEngineSessionDeps and so is NOT covered by the
+  // addMessage / setConversationFocus guards. The turn-preparer runs BEFORE dispatch /
+  // before the agent-runtime executeRun guard, and when buildSelectedBlockCompactionEvidence
+  // (over the prepared turn's selectedBlocks) is non-null it calls persistCompactionEvidence,
+  // which writes a session+runId-keyed row into friday_agent_context_replay_entries
+  // (summaryText / decisions / todos / openQuestions / toolFailures / fileOperations) via
+  // db.withWriteTransaction → appendCompactionSummary. This is a derived session/memory-state
+  // WRITE reachable on a bound channel turn even though addMessage / setConversationFocus
+  // reject. We seed a PRE-EXISTING session with rich history + a focus state whose
+  // currentTopicStartSequence covers the seeded turns, so prepareTurn yields focus_topic /
+  // topic blocks → compaction evidence is non-null and persistCompactionEvidence WOULD fire.
+  // With the flag UNSET (production default) the channel-engine persistCompactionEvidence
+  // closure must fail closed → ZERO new rows in friday_agent_context_replay_entries — while
+  // the deterministic daemon-status reply is still delivered outbound and no unhandled
+  // rejection escapes (the turn-preparer wraps the call in `.catch(() => undefined)`).
+  // Empirically RED with the persistCompactionEvidence guard removed: a replay row lands.
+  it("does NOT persist a compaction-evidence replay row for a channel turn with rich seeded context, and does not crash", async () => {
+    const channel = createTestChannelPlugin();
+    hub!.channelRegistry.register(channel.plugin);
+    await hub!.start();
+    const onMessage = channel.getStartedHandler();
+    expect(onMessage).toBeTypeOf("function");
+
+    const inbound: FridayChannelMessage = {
+      id: "msg-engine-replay-failclosed",
+      channelKind: "testchannel",
+      senderId: "sender-replay-1",
+      senderName: "Bob",
+      chatId: "chat-engine-replay",
+      chatType: "direct",
+      text: "daemon status",
+      timestamp: Date.now(),
+    };
+    const sessionKey = resolveFridayChannelSessionKey(inbound, {
+      crossChannelIdentityEnabled: false,
+      identityMap: {},
+    });
+
+    // Seed a PRE-EXISTING session with a multi-turn topic history (raw service, no guard).
+    // The seeded turns establish a "deployment" topic so prepareTurn produces focus_topic /
+    // topic_block selectedBlocks (gated on focusState.currentTopicStartSequence), which is
+    // what makes buildSelectedBlockCompactionEvidence non-null → persistCompactionEvidence
+    // fires in the turn-preparer (before dispatch / before the executeRun guard).
+    await hub!.apiRuntime.sessionService!.getOrCreateSession(sessionKey);
+    await hub!.apiRuntime.sessionService!.addMessage(sessionKey, {
+      role: "user",
+      content: "Let's plan the production deployment. Decision: deploy to AWS ECS.",
+      contentText: "Let's plan the production deployment. Decision: deploy to AWS ECS.",
+    });
+    await hub!.apiRuntime.sessionService!.addMessage(sessionKey, {
+      role: "assistant",
+      content: "Plan recorded. Decision: deploy to AWS ECS. TODO: run smoke tests. Open question: use Redis?",
+      contentText: "Plan recorded. Decision: deploy to AWS ECS. TODO: run smoke tests. Open question: use Redis?",
+    });
+    await hub!.apiRuntime.sessionService!.addMessage(sessionKey, {
+      role: "user",
+      content: "Continue with the deployment topic and the ECS plan.",
+      contentText: "Continue with the deployment topic and the ECS plan.",
+    });
+    // Focus whose currentTopicStartSequence covers the seeded turns → topic-window /
+    // focus_topic blocks are eligible. Seeded via the raw (unguarded) service.
+    await hub!.apiRuntime.sessionService!.setConversationFocus(sessionKey, {
+      currentTopicFingerprint: "deployment-topic",
+      currentTopicSummary: "Production deployment to AWS ECS",
+      currentTopicStartSequence: 1,
+      assistantAnchorSummary: "Plan recorded; deploy to AWS ECS",
+      lastTurnKind: "new_topic" as const,
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    });
+
+    // Read-only snapshot of replay rows BEFORE the channel turn (instance-agnostic,
+    // store-level): open the hub's SQLite file directly (WAL → concurrent reader OK).
+    const dbPath = path.join(stateDir!, "friday.db");
+    const replayRepo = createFridayAgentContextReplayRepository();
+    const readReplayRowCount = (): number => {
+      const reader = new Database(dbPath, { readonly: true });
+      try {
+        return replayRepo.listCompactionSummariesBySession(reader, { sessionKey, limit: 100 }).length;
+      } finally {
+        reader.close();
+      }
+    };
+    const replayRowsBefore = readReplayRowCount();
+
+    // Drive the deterministic daemon-status turn through the real channelMessageHandler →
+    // channel orchestration engine. The turn-preparer runs FIRST (before dispatch) and is
+    // where persistCompactionEvidence would fire. With the flag unset it fails closed.
+    onMessage!(inbound);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    // PRIMARY (store-level, instance-agnostic): NO new compaction-evidence replay row.
+    const replayRowsAfter = readReplayRowCount();
+    expect(replayRowsAfter).toBe(replayRowsBefore);
+    expect(replayRowsAfter).toBe(0);
+
+    // Prove the channel turn ACTUALLY executed the engine path (not a tautology where the
+    // compaction evidence was simply null): the deterministic daemon-status reply is
+    // delivered outbound. (The same proof the sibling control-plane tests use.)
+    expect(channel.sentMessages.some((t) => /daemon/iu.test(t))).toBe(true);
+
+    // Regression: the sibling guarded writes (addMessage / setConversationFocus) remain
+    // fenced too → no NEW assistant/user rows beyond the 3 seeded, and the seeded focus
+    // is byte-unchanged.
+    const messages = await hub!.apiRuntime.sessionService!.getMessages(sessionKey).catch(() => []);
+    expect(messages.filter((m) => m.role === "assistant")).toHaveLength(1); // only the seed
+    expect(messages.filter((m) => m.role === "user")).toHaveLength(2); // only the seeds
+    const focusAfter = await hub!.apiRuntime.sessionService!.getConversationFocus(sessionKey);
+    expect(focusAfter?.currentTopicSummary).toBe("Production deployment to AWS ECS");
+
+    // The fenced persistCompactionEvidence call is wrapped in `.catch(() => undefined)` in the
+    // turn-preparer → no unhandled rejection escapes.
+    const replayRejections = unhandled.filter((r) => {
+      const code = (r as { code?: unknown } | null)?.code;
+      const message = r instanceof Error ? r.message : "";
+      return code === "TS_RUNTIME_SESSION_RETIRED" || /session execution is fail-closed/u.test(message);
+    });
+    expect(replayRejections).toHaveLength(0);
   });
 });
