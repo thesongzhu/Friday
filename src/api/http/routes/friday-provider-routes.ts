@@ -397,6 +397,23 @@ export interface FridayProviderRoutesDeps {
   providerService: FridayProviderService;
   canonicalMutationGate?: FridayMutatingActionGate;
   providerMutationGateRequired?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript provider probe surfaces
+   * (POST /v1/providers/:providerId/validate, GET /v1/providers/:providerId/doctor,
+   * POST /v1/capabilities/doctor) in isolated/mock validation. Production/runtime
+   * callers must leave this unset so these transient capability/key-validation
+   * probes fail-close until Rust owns the provider-probe entrypoint.
+   */
+  allowTestOnlyProviderProbeExecution?: boolean;
+  /**
+   * Test-oracle only: allow the legacy TypeScript provider routing-controls
+   * surfaces (POST /v1/providers/routing/pin, POST /v1/providers/routing/penalties/clear)
+   * in isolated/mock validation. Production/runtime callers must leave this unset
+   * so these user-scoped routing-state mutations fail-close until Rust owns the
+   * routing-controls entrypoint. This does NOT cover the model-routing config
+   * surfaces (GET/PUT /v1/model-routing), which remain operator_external_adapter.
+   */
+  allowTestOnlyProviderRoutingControlsExecution?: boolean;
 }
 
 export function createFridayProviderSetupMutatingActionRequest(input: {
@@ -440,6 +457,59 @@ export function createFridayProviderSetupMutatingActionRequest(input: {
       },
     ],
   };
+}
+
+// ─── Retirement helpers ───
+//
+// The provider probe surfaces (validate / doctor / capabilities.doctor) run
+// transient TypeScript capability/key-validation product logic via
+// providerService: validateProvider probes the provider connection and writes
+// validation state; runCapabilityDoctor validates + runs live capability
+// probes; doctorProvider computes a backend/auth/routing health diagnostic
+// (read-shaped, with a live cli-session probe in the CLI branch). The
+// routing-controls surfaces (routing.pin / routing.penalty.clear) write
+// user-scoped routing state. They fail-close by default/live until Rust owns
+// the corresponding entrypoints; legacy behavior is reachable only through the
+// explicit per-group test-oracle flags. The model-routing config reads/writes
+// (GET/PUT /v1/model-routing) and the provider CRUD/OAuth adapters stay
+// operator_external_adapter and are NOT covered here.
+
+function throwRetiredProviderRuntime(
+  code: string,
+  label: string,
+  replacement: string,
+): never {
+  throw new FridayDomainError(
+    code,
+    `${label} is fail-closed in default/live runtime; use the Rust-owned ${replacement} entrypoint.`,
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: `rust_owned_${replacement}_entrypoint_required`,
+      },
+    },
+  );
+}
+
+function assertProviderProbeTestOracleAllowed(deps: FridayProviderRoutesDeps): void {
+  if (deps.allowTestOnlyProviderProbeExecution !== true) {
+    throwRetiredProviderRuntime(
+      "TS_RUNTIME_PROVIDER_PROBE_RETIRED",
+      "TypeScript provider probe execution",
+      "provider_probe",
+    );
+  }
+}
+
+function assertProviderRoutingControlsTestOracleAllowed(deps: FridayProviderRoutesDeps): void {
+  if (deps.allowTestOnlyProviderRoutingControlsExecution !== true) {
+    throwRetiredProviderRuntime(
+      "TS_RUNTIME_PROVIDER_ROUTING_CONTROLS_RETIRED",
+      "TypeScript provider routing-controls execution",
+      "provider_routing_controls",
+    );
+  }
 }
 
 // ─── Factory ───
@@ -806,6 +876,7 @@ export function createFridayProviderRoutes(
           parameters: { providerIds: providerIds ?? "all-providers" },
           surface: "api:/v1/capabilities/doctor",
         });
+        assertProviderProbeTestOracleAllowed(deps);
         const report = await deps.providerService.runCapabilityDoctor({
           ownerUserId: ctx.principal?.userId,
           providerIds,
@@ -948,6 +1019,7 @@ export function createFridayProviderRoutes(
           parameters: { providerId },
           surface: "api:/v1/providers/validate",
         });
+        assertProviderProbeTestOracleAllowed(deps);
         const validation =
           await deps.providerService.validateProvider(providerId, {
             ownerUserId: ctx.principal?.userId,
@@ -963,6 +1035,7 @@ export function createFridayProviderRoutes(
       auth: { public: true },
       async handler(ctx): Promise<FridayGetProviderDoctorResponse> {
         const { providerId } = ctx.params as { providerId: string };
+        assertProviderProbeTestOracleAllowed(deps);
         const doctor = await deps.providerService.doctorProvider(providerId);
         return { doctor };
       },
@@ -1042,6 +1115,7 @@ export function createFridayProviderRoutes(
           parameters: body,
           surface: "api:/v1/providers/routing/pin",
         });
+        assertProviderRoutingControlsTestOracleAllowed(deps);
         await deps.providerService.pinRoute({
           userId: ctx.principal.userId,
           taskProfileId: typeof body.taskProfileId === "string" ? body.taskProfileId : undefined,
@@ -1086,6 +1160,7 @@ export function createFridayProviderRoutes(
           parameters: body,
           surface: "api:/v1/providers/routing/penalties/clear",
         });
+        assertProviderRoutingControlsTestOracleAllowed(deps);
         const cleared = await deps.providerService.clearRoutePenalty({
           userId: ctx.principal.userId,
           taskProfileId: typeof body.taskProfileId === "string" ? body.taskProfileId : undefined,

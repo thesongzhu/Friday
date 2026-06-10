@@ -3512,6 +3512,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     providerService: deps.providerService,
     canonicalMutationGate,
     providerMutationGateRequired,
+    allowTestOnlyProviderProbeExecution: deps.allowTestOnlyProviderProbeExecution,
+    allowTestOnlyProviderRoutingControlsExecution: deps.allowTestOnlyProviderRoutingControlsExecution,
   })) {
     routes.register(route);
   }

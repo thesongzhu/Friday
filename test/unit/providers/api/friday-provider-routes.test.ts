@@ -138,6 +138,11 @@ describe("FridayProviderRoutes", () => {
         nowIso: () => NOW,
         ticketIdGenerator: () => "ticket-1",
       }),
+      // Probe + routing-controls surfaces fail-close by default; enable the
+      // test-oracle flags so these positive-path tests exercise real behavior.
+      // The dedicated retirement describe block omits these flags.
+      allowTestOnlyProviderProbeExecution: true,
+      allowTestOnlyProviderRoutingControlsExecution: true,
     });
   }
 
@@ -612,6 +617,7 @@ describe("FridayProviderRoutes", () => {
       const mockService = makeMockService();
       const routes = createFridayProviderRoutes({
         providerService: mockService,
+        allowTestOnlyProviderProbeExecution: true,
       });
       const validateRoute = routes.find(
         (r) => r.operationId === "providers.validate",
@@ -671,6 +677,7 @@ describe("FridayProviderRoutes", () => {
       const mockService = makeMockService();
       const routes = createFridayProviderRoutes({
         providerService: mockService,
+        allowTestOnlyProviderProbeExecution: true,
       });
       const doctorRoute = routes.find(
         (r) => r.operationId === "providers.doctor",
@@ -692,6 +699,7 @@ describe("FridayProviderRoutes", () => {
       const mockService = makeMockService();
       const routes = createFridayProviderRoutes({
         providerService: mockService,
+        allowTestOnlyProviderProbeExecution: true,
       });
       const doctorRoute = routes.find(
         (r) => r.operationId === "capabilities.doctor",
@@ -834,6 +842,7 @@ describe("FridayProviderRoutes", () => {
       const mockService = makeMockService();
       const routes = createFridayProviderRoutes({
         providerService: mockService,
+        allowTestOnlyProviderRoutingControlsExecution: true,
       });
       const pinRoute = routes.find(
         (r) => r.operationId === "providers.routing.pin",
@@ -867,6 +876,7 @@ describe("FridayProviderRoutes", () => {
       const mockService = makeMockService();
       const routes = createFridayProviderRoutes({
         providerService: mockService,
+        allowTestOnlyProviderRoutingControlsExecution: true,
       });
       const clearRoute = routes.find(
         (r) => r.operationId === "providers.routing.penalty.clear",
@@ -1362,6 +1372,125 @@ describe("FridayProviderRoutes", () => {
       expect(operationIds).toContain("auth.oauth.anthropic.callback");
       expect(operationIds).toContain("auth.oauth.openai.codex.device.initiate");
       expect(operationIds).toContain("auth.oauth.openai.codex.device.complete");
+    });
+  });
+
+  describe("TS runtime retirement (test-oracle flags unset)", () => {
+    function retiredRoute(operationId: string, mockService: FridayProviderService) {
+      const route = createFridayProviderRoutes({ providerService: mockService }).find(
+        (entry) => entry.operationId === operationId,
+      );
+      if (!route) throw new Error(`route not found: ${operationId}`);
+      return route;
+    }
+
+    // ── Probe surfaces (allowTestOnlyProviderProbeExecution unset) ──
+
+    it("fail-closes providers.validate with 503 TS_RUNTIME_PROVIDER_PROBE_RETIRED (never calls the service)", async () => {
+      const mockService = makeMockService();
+      await expect(
+        retiredRoute("providers.validate", mockService).handler(
+          makeCtx({ params: { providerId: "prov-001" } }),
+        ),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_PROVIDER_PROBE_RETIRED", httpStatus: 503 });
+      expect(mockService.validateProvider).not.toHaveBeenCalled();
+    });
+
+    it("fail-closes providers.doctor with 503 TS_RUNTIME_PROVIDER_PROBE_RETIRED (never calls the service)", async () => {
+      const mockService = makeMockService();
+      await expect(
+        retiredRoute("providers.doctor", mockService).handler(
+          makeCtx({ params: { providerId: "prov-001" } }),
+        ),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_PROVIDER_PROBE_RETIRED", httpStatus: 503 });
+      expect(mockService.doctorProvider).not.toHaveBeenCalled();
+    });
+
+    it("fail-closes capabilities.doctor with 503 TS_RUNTIME_PROVIDER_PROBE_RETIRED (never calls the service)", async () => {
+      const mockService = makeMockService();
+      await expect(
+        retiredRoute("capabilities.doctor", mockService).handler(makeCtx({ body: {} })),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_PROVIDER_PROBE_RETIRED", httpStatus: 503 });
+      expect(mockService.runCapabilityDoctor).not.toHaveBeenCalled();
+    });
+
+    it("validates the body (400) before the probe retirement guard (capabilities.doctor empty providerIds)", async () => {
+      const mockService = makeMockService();
+      await expect(
+        retiredRoute("capabilities.doctor", mockService).handler(makeCtx({ body: { providerIds: [] } })),
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR", httpStatus: 400 });
+      expect(mockService.runCapabilityDoctor).not.toHaveBeenCalled();
+    });
+
+    // ── Routing-controls surfaces (allowTestOnlyProviderRoutingControlsExecution unset) ──
+
+    it("fail-closes providers.routing.pin with 503 TS_RUNTIME_PROVIDER_ROUTING_CONTROLS_RETIRED (never calls the service)", async () => {
+      const mockService = makeMockService();
+      await expect(
+        retiredRoute("providers.routing.pin", mockService).handler(
+          makeCtx({
+            principal: { userId: "user-1" } as never,
+            body: { providerId: "prov-001", model: "gpt-4o", backendKind: "http" },
+          }),
+        ),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_PROVIDER_ROUTING_CONTROLS_RETIRED", httpStatus: 503 });
+      expect(mockService.pinRoute).not.toHaveBeenCalled();
+    });
+
+    it("fail-closes providers.routing.penalty.clear with 503 TS_RUNTIME_PROVIDER_ROUTING_CONTROLS_RETIRED (never calls the service)", async () => {
+      const mockService = makeMockService();
+      await expect(
+        retiredRoute("providers.routing.penalty.clear", mockService).handler(
+          makeCtx({
+            principal: { userId: "user-1" } as never,
+            body: { providerId: "prov-001", model: "gpt-4o", backendKind: "http" },
+          }),
+        ),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_PROVIDER_ROUTING_CONTROLS_RETIRED", httpStatus: 503 });
+      expect(mockService.clearRoutePenalty).not.toHaveBeenCalled();
+    });
+
+    it("requires a user-scoped principal (401) before the routing-controls retirement guard (pin)", async () => {
+      const mockService = makeMockService();
+      await expect(
+        retiredRoute("providers.routing.pin", mockService).handler(
+          makeCtx({
+            principal: null,
+            body: { providerId: "prov-001", model: "gpt-4o", backendKind: "http" },
+          }),
+        ),
+      ).rejects.toMatchObject({ code: "UNAUTHORIZED", httpStatus: 401 });
+      expect(mockService.pinRoute).not.toHaveBeenCalled();
+    });
+
+    it("validates the body (400) before the routing-controls retirement guard (pin missing model)", async () => {
+      const mockService = makeMockService();
+      await expect(
+        retiredRoute("providers.routing.pin", mockService).handler(
+          makeCtx({
+            principal: { userId: "user-1" } as never,
+            body: { providerId: "prov-001", backendKind: "http" },
+          }),
+        ),
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR", httpStatus: 400 });
+      expect(mockService.pinRoute).not.toHaveBeenCalled();
+    });
+
+    // ── Deferred + re-labeled surfaces stay reachable (no guard) ──
+
+    it("does NOT fail-close model-routing GET/PUT or the compat_shim reads (no guard)", async () => {
+      const mockService = makeMockService();
+      const routes = createFridayProviderRoutes({ providerService: mockService });
+      // model-routing config is DEFERRED (operator_external_adapter); reachable without the probe/controls flags.
+      const routingGet = routes.find((r) => r.operationId === "providers.routing.get")!;
+      await expect(routingGet.handler(makeCtx())).resolves.toBeDefined();
+      // GET reads re-labeled compat_shim stay reachable (no behavior change).
+      const healthList = routes.find((r) => r.operationId === "providers.health.list")!;
+      await expect(healthList.handler(makeCtx())).resolves.toBeDefined();
+      const getProvider = routes.find((r) => r.operationId === "providers.get")!;
+      await expect(
+        getProvider.handler(makeCtx({ params: { providerId: "prov-001" } })),
+      ).resolves.toBeDefined();
     });
   });
 });
