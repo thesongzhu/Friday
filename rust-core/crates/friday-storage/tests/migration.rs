@@ -475,6 +475,87 @@ fn forward_migration_v26_to_v27_adds_run_control_columns_and_preserves_v26_rows(
 }
 
 #[test]
+fn forward_migration_v28_to_v29_adds_step_effect_table_and_preserves_v28_rows() {
+    // A5 additive migration v29: ONE new Hub-only table `workflow_step_effect` (the
+    // per-step-effect idempotency ledger). This is the NEW-TABLE migration pattern
+    // (like m0026 system_intent / m0005 agent_run), NOT an ALTER — so it touches no
+    // existing table. A fresh v28 DB must NOT have the table; a v28 row seeded in a
+    // pre-existing table (workflow_step) must survive the forward migration untouched;
+    // and after reopen the schema reaches the current max version with the new table
+    // present + usable through the typed API.
+    use friday_storage::workflow;
+
+    let p = temp_db_path("wf-step-effect-mig");
+    {
+        let mut migs = hub_migrations();
+        migs.retain(|m| m.version <= 28);
+        let db = Db::open(&p, Profile::Hub, &migs, "v28").unwrap();
+        assert_eq!(db.version().unwrap(), 28);
+        // The table must not exist before v29.
+        assert!(
+            db.conn()
+                .prepare("SELECT 1 FROM workflow_step_effect LIMIT 1")
+                .is_err(),
+            "workflow_step_effect must not exist before v29"
+        );
+        // Seed a run + step (a pre-existing table) to prove the additive migration
+        // touches nothing.
+        workflow::create_run(db.conn(), "r-pre-v29", "ship", 10).unwrap();
+        workflow::add_step(db.conn(), "r-pre-v29:s0", "r-pre-v29", 0, true, 10).unwrap();
+    }
+    // Reopen with the full set -> forward-migrate to v29 (the additive CREATE TABLE).
+    let db = Db::open_hub(&p).unwrap();
+    assert_eq!(db.version().unwrap(), hub_max_version());
+    // The pre-existing v28 rows survived untouched.
+    assert_eq!(
+        db.count("workflow_run").unwrap(),
+        1,
+        "pre-v29 run row survived the migration"
+    );
+    assert_eq!(
+        db.count("workflow_step").unwrap(),
+        1,
+        "pre-v29 step survived"
+    );
+    // The new table is present and STARTS EMPTY.
+    assert_eq!(
+        db.count("workflow_step_effect").unwrap(),
+        0,
+        "new table starts empty"
+    );
+    // The typed idempotency API works against the migrated DB end-to-end: record a
+    // committed effect under its stable key and read it back.
+    let key = workflow::step_effect_idem_key(
+        "r-pre-v29",
+        0,
+        "write_file",
+        &[("path".to_string(), "o".to_string())],
+    );
+    assert!(workflow::committed_effect(db.conn(), &key)
+        .unwrap()
+        .is_none());
+    workflow::record_committed_effect(
+        db.conn(),
+        &key,
+        "r-pre-v29",
+        "r-pre-v29:s0",
+        0,
+        "write_file",
+        "committed on migrated db",
+        None,
+        11,
+    )
+    .unwrap();
+    assert_eq!(
+        workflow::committed_effect(db.conn(), &key)
+            .unwrap()
+            .unwrap()
+            .receipt_summary,
+        "committed on migrated db",
+    );
+}
+
+#[test]
 fn reopen_is_idempotent_and_preserves_rows() {
     let p = temp_db_path("seeded");
     {

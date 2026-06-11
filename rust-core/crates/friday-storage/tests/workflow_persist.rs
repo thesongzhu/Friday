@@ -489,3 +489,191 @@ fn reopen_step_accepts_real_engine_frontier_states_and_refuses_verified() {
     // Unknown step -> fail-closed.
     assert!(workflow::reopen_failed_step(db.conn(), "ghost", 8).is_err());
 }
+
+// --- A5: per-step-effect idempotency ledger (m0029) --------------------------
+
+#[test]
+fn step_effect_idem_key_is_stable_and_param_order_insensitive_but_effect_sensitive() {
+    // The key must be STABLE across attempts (it excludes the attempt) so a retry of
+    // the SAME effect matches its prior commit, INSENSITIVE to param ORDER (two
+    // semantically-identical effects share a key), and SENSITIVE to the action/params
+    // (a DIFFERENT effect computes a different key, so a skip can never apply the
+    // wrong effect).
+    let p1 = vec![
+        ("path".to_string(), "out.txt".to_string()),
+        ("content".to_string(), "hello".to_string()),
+    ];
+    let p1_reordered = vec![
+        ("content".to_string(), "hello".to_string()),
+        ("path".to_string(), "out.txt".to_string()),
+    ];
+    let base = workflow::step_effect_idem_key("r1", 2, "write_file", &p1);
+
+    // Stable: same inputs -> same key (no attempt in the key).
+    assert_eq!(
+        base,
+        workflow::step_effect_idem_key("r1", 2, "write_file", &p1)
+    );
+    // Param-order-insensitive: reordering the same params -> same key.
+    assert_eq!(
+        base,
+        workflow::step_effect_idem_key("r1", 2, "write_file", &p1_reordered)
+    );
+
+    // Effect-sensitive: a changed action, a changed param value, a changed seq, or a
+    // changed run each produce a DIFFERENT key.
+    assert_ne!(
+        base,
+        workflow::step_effect_idem_key("r1", 2, "delete_file", &p1),
+        "a different action must miss"
+    );
+    let p_changed = vec![
+        ("path".to_string(), "out.txt".to_string()),
+        ("content".to_string(), "HELLO".to_string()),
+    ];
+    assert_ne!(
+        base,
+        workflow::step_effect_idem_key("r1", 2, "write_file", &p_changed),
+        "a different param value (changed effect at the same seq) must miss"
+    );
+    assert_ne!(
+        base,
+        workflow::step_effect_idem_key("r1", 3, "write_file", &p1),
+        "a different seq must miss"
+    );
+    assert_ne!(
+        base,
+        workflow::step_effect_idem_key("r2", 2, "write_file", &p1),
+        "a different run must miss"
+    );
+    // 64-hex sha256.
+    assert_eq!(base.len(), 64);
+    assert!(base.chars().all(|c| c.is_ascii_hexdigit()));
+}
+
+#[test]
+fn record_and_read_committed_effect_round_trips_and_re_record_is_a_no_op() {
+    let p = temp_db_path("wf-effect-rt");
+    let db = Db::open_hub(&p).unwrap();
+    let key = workflow::step_effect_idem_key(
+        "r1",
+        1,
+        "write_file",
+        &[("path".to_string(), "o".to_string())],
+    );
+    // No effect recorded yet.
+    assert_eq!(workflow::committed_effect(db.conn(), &key).unwrap(), None);
+
+    // First record returns true (a new row); reads back faithfully.
+    let wrote = workflow::record_committed_effect(
+        db.conn(),
+        &key,
+        "r1",
+        "r1:s1",
+        1,
+        "write_file",
+        "wrote out.txt",
+        Some("body-ref://abc"),
+        100,
+    )
+    .unwrap();
+    assert!(wrote, "first record writes a new row");
+    let got = workflow::committed_effect(db.conn(), &key)
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.idem_key, key);
+    assert_eq!(got.run_id, "r1");
+    assert_eq!(got.step_id, "r1:s1");
+    assert_eq!(got.seq, 1);
+    assert_eq!(got.action, "write_file");
+    assert_eq!(got.receipt_summary, "wrote out.txt");
+    assert_eq!(got.receipt_content.as_deref(), Some("body-ref://abc"));
+    assert_eq!(got.committed_at, 100);
+
+    // A re-record of the SAME key is a benign no-op (INSERT OR IGNORE) returning false
+    // and NOT overwriting the original commit (it is the same effect).
+    let wrote_again = workflow::record_committed_effect(
+        db.conn(),
+        &key,
+        "r1",
+        "r1:s1",
+        1,
+        "write_file",
+        "DIFFERENT summary that must not clobber",
+        None,
+        200,
+    )
+    .unwrap();
+    assert!(!wrote_again, "re-record of the same key is a no-op");
+    let got2 = workflow::committed_effect(db.conn(), &key)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        got2.receipt_summary, "wrote out.txt",
+        "the original committed receipt is preserved, never clobbered"
+    );
+    assert_eq!(got2.committed_at, 100);
+}
+
+#[test]
+fn committed_effect_survives_reopen_failed_step() {
+    // THE structural property the A5 design depends on: the idempotency ledger is a
+    // SEPARATE table, so a committed effect SURVIVES `reopen_failed_step` (which sets
+    // the step Pending, bumps attempt, clears the step's evidence_ref). If the ledger
+    // were columns on workflow_step, reopen would have to deliberately avoid them; a
+    // separate table survives by construction.
+    let p = temp_db_path("wf-effect-survives-reopen");
+    let db = Db::open_hub(&p).unwrap();
+    workflow::create_run(db.conn(), "r1", "ship", 1).unwrap();
+    workflow::add_step(db.conn(), "r1:s0", "r1", 0, true, 1).unwrap();
+    let params = [("path".to_string(), "o".to_string())];
+    let key = workflow::step_effect_idem_key("r1", 0, "write_file", &params);
+    workflow::record_committed_effect(
+        db.conn(),
+        &key,
+        "r1",
+        "r1:s0",
+        0,
+        "write_file",
+        "committed",
+        None,
+        2,
+    )
+    .unwrap();
+    // Put the step in a non-Verified frontier state, then reopen it (a retry would).
+    workflow::complete_step(db.conn(), "r1:s0", None, false, 3).unwrap(); // -> ProofPending
+    workflow::reopen_failed_step(db.conn(), "r1:s0", 4).unwrap();
+    assert_eq!(
+        workflow::step_attempt(db.conn(), "r1:s0").unwrap(),
+        Some(2),
+        "reopen bumped the attempt"
+    );
+    // The committed effect is STILL recorded under the SAME (attempt-free) key.
+    let got = workflow::committed_effect(db.conn(), &key).unwrap();
+    assert!(
+        got.is_some(),
+        "the committed effect survives reopen (attempt-free key, separate table)"
+    );
+    assert_eq!(got.unwrap().receipt_summary, "committed");
+}
+
+#[test]
+fn step_has_side_effect_reads_the_persisted_flag() {
+    let p = temp_db_path("wf-has-side-effect");
+    let db = Db::open_hub(&p).unwrap();
+    workflow::create_run(db.conn(), "r1", "x", 1).unwrap();
+    workflow::add_step(db.conn(), "r1:s0", "r1", 0, false, 1).unwrap(); // read-only
+    workflow::add_step(db.conn(), "r1:s1", "r1", 1, true, 1).unwrap(); // side-effect
+    assert_eq!(
+        workflow::step_has_side_effect(db.conn(), "r1:s0").unwrap(),
+        Some(false)
+    );
+    assert_eq!(
+        workflow::step_has_side_effect(db.conn(), "r1:s1").unwrap(),
+        Some(true)
+    );
+    assert_eq!(
+        workflow::step_has_side_effect(db.conn(), "ghost").unwrap(),
+        None
+    );
+}

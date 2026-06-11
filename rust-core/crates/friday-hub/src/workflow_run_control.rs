@@ -43,8 +43,15 @@
 //!   m0027 column), transitions `Failed -> Running` (the new core edge), and
 //!   re-drives the frontier THROUGH THE SAME GATE then continues — REUSING the
 //!   engine path, not re-implementing it. A mutating frontier with no approval
-//!   re-pauses (never executes unapproved). HONEST: no idempotency keys yet (a
-//!   partial side-effect could double-run on retry) — a documented deferred sub-AC.
+//!   re-pauses (never executes unapproved). A5: the engine's re-drive now routes
+//!   through the per-step-effect idempotency guard (m0029 ledger) — a side-effect
+//!   step's COMMITTED effect is recorded under a stable per-effect key and a
+//!   re-drive of the SAME effect is skipped (executor not re-called). HONEST: in
+//!   this linear synchronous engine a committed step is `Verified` and the frontier
+//!   already skips `Verified`, so the SKIP is REDUNDANT defense-in-depth (forward-safe
+//!   for a DAG/async model); the always-active behavior is the committed-effect
+//!   RECORD. Exactly-once against a partially-applied EXTERNAL tool still needs the
+//!   key CARRIED into the executor — a documented deferred sub-AC.
 //! - **`cancel`** — the CANCEL control bridge (slice-2). Mirrors TS `cancelRun`
 //!   (terminal `cancelled`, distinct from `failed`, + a reason). [`cancel`]
 //!   prechecks the run exists and is non-terminal, then writes the terminal
@@ -199,9 +206,15 @@ pub fn resume(
 ///   other selection is a fail-closed [`RunControlError::InvalidTransition`] (we do
 ///   NOT silently ignore a caller's node selection). A future DAG engine would honor
 ///   arbitrary subsets — a deferred sub-AC.
-/// - **No idempotency keys** (TS has per-attempt idempotency keys). Re-driving the
-///   frontier is correct for a TRANSIENT failure; a partially-applied side effect
-///   could double-run. A documented deferred sub-AC (see the module docs / PR body).
+/// - **Per-step-effect idempotency (A5, m0029).** The frontier re-drive routes through
+///   the engine's idempotency guard ([`crate::workflow_exec`]'s `dispatch_step_idempotent`):
+///   a side-effect step's COMMITTED effect is recorded under a stable per-effect key (NOT
+///   the attempt) and a re-drive of the SAME effect is skipped (executor not re-called).
+///   HONEST: in this linear synchronous engine a committed step is `Verified` and the
+///   frontier already skips `Verified`, so the skip is REDUNDANT defense-in-depth
+///   (forward-safe for a DAG/async model); the always-active behavior is the committed-effect
+///   RECORD. Exactly-once against a partially-applied EXTERNAL tool still needs the key
+///   CARRIED into the executor — a deferred sub-AC (see the module docs / PR body).
 #[allow(clippy::too_many_arguments)]
 pub fn retry(
     conn: &Connection,
