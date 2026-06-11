@@ -8,6 +8,7 @@ import type { FridayProviderProfile } from "#providers";
 import {
   buildRustRouteSelfProbeBody,
   createRustRouteProbeOutcomeHolder,
+  isRetryableConnectionFailure,
   maybeBuildRustRouteSelfProbeJob,
   mintDiagnosticAdminBearer,
   resolveEnabledDeepseekProviderId,
@@ -238,6 +239,38 @@ describe("mintDiagnosticAdminBearer (security-sensitive self-mint)", () => {
   });
 });
 
+// ─── Boot-race connection-failure classifier (narrowness is load-bearing for spend-safety) ───
+
+describe("isRetryableConnectionFailure (spend-safe boot-race gate)", () => {
+  function fetchFailed(code: string): TypeError {
+    const err = new TypeError("fetch failed");
+    (err as { cause?: unknown }).cause = { code };
+    return err;
+  }
+
+  it("is TRUE for undici TypeError('fetch failed') with a pre-connect errno cause", () => {
+    for (const code of ["ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN"]) {
+      expect(isRetryableConnectionFailure(fetchFailed(code))).toBe(true);
+    }
+  });
+
+  it("is FALSE for a TypeError without a connection-level cause code", () => {
+    expect(isRetryableConnectionFailure(new TypeError("fetch failed"))).toBe(false);
+    const other = new TypeError("fetch failed");
+    (other as { cause?: unknown }).cause = { code: "ERR_SOMETHING_ELSE" };
+    expect(isRetryableConnectionFailure(other)).toBe(false);
+  });
+
+  it("is FALSE for a generic Error, an AbortError, and a plain ECONNREFUSED-message Error", () => {
+    expect(isRetryableConnectionFailure(new Error("ECONNREFUSED"))).toBe(false);
+    const abort = new Error("aborted");
+    abort.name = "AbortError";
+    expect(isRetryableConnectionFailure(abort)).toBe(false);
+    expect(isRetryableConnectionFailure("ECONNREFUSED")).toBe(false);
+    expect(isRetryableConnectionFailure(undefined)).toBe(false);
+  });
+});
+
 // ─── Provider resolution: prod UUID, not the literal "deepseek" ───
 
 describe("resolveEnabledDeepseekProviderId", () => {
@@ -322,6 +355,91 @@ describe("runRustRouteSelfProbe (no network in CI; the real landing is proven at
     const outcome = await runRustRouteSelfProbe(deps);
     expect(outcome.status).toBe("error");
     expect(outcome.httpStatus).toBe(503);
+  });
+
+  // ─── Boot-race: first-tick fires before the hub HTTP server finished listen() ───
+  // The loopback POST then hits a not-yet-accepting 127.0.0.1:<port> → undici surfaces a
+  // `TypeError: fetch failed` with `cause.code === "ECONNREFUSED"`. The probe must retry EXACTLY
+  // once after a short (injected-0) backoff and SUCCEED on the second call — eliminating the
+  // boot-time fetch-failed without changing cadence/spend posture.
+  function fetchFailedTypeError(code: string): TypeError {
+    const err = new TypeError("fetch failed");
+    (err as { cause?: unknown }).cause = { code };
+    return err;
+  }
+
+  it("retries ONCE on a boot-race ECONNREFUSED and records 'ok' when the retry succeeds (two calls)", async () => {
+    const postAgentRun = vi
+      .fn()
+      .mockRejectedValueOnce(fetchFailedTypeError("ECONNREFUSED"))
+      .mockResolvedValueOnce({ httpStatus: 200, runId: "run-after-retry" });
+    const deps = {
+      ...baseDeps(),
+      transport: { postAgentRun },
+      connectRetryBackoffMs: 0, // no real sleep in CI
+    };
+    const outcome = await runRustRouteSelfProbe(deps);
+    expect(outcome.status).toBe("ok");
+    expect(outcome.httpStatus).toBe(200);
+    expect(outcome.runId).toBe("run-after-retry");
+    expect(postAgentRun).toHaveBeenCalledTimes(2);
+    // Each attempt carried a (fresh, single-use) bearer; never asserted by value, never logged.
+    expect(typeof postAgentRun.mock.calls[0][0].bearer).toBe("string");
+    expect(typeof postAgentRun.mock.calls[1][0].bearer).toBe("string");
+  });
+
+  it("uses the injected sleep for the retry backoff (no real timer)", async () => {
+    const sleep = vi.fn(async () => {});
+    const postAgentRun = vi
+      .fn()
+      .mockRejectedValueOnce(fetchFailedTypeError("ECONNREFUSED"))
+      .mockResolvedValueOnce({ httpStatus: 200, runId: "r" });
+    const deps = {
+      ...baseDeps(),
+      transport: { postAgentRun },
+      connectRetryBackoffMs: 1234,
+      sleep,
+    };
+    await runRustRouteSelfProbe(deps);
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledWith(1234);
+  });
+
+  // SPEND-SAFETY (locks the retry narrowness against future double-spend): a non-connection
+  // failure (e.g. a generic Error, an AbortError/timeout, or any error that is NOT a pre-connect
+  // `fetch failed`+ECONNREFUSED) must NOT be retried — the run may have started server-side, so a
+  // retry could double-spend real DeepSeek. It is recorded as 'error' on a SINGLE call.
+  it("does NOT retry a non-connection error — single call, 'error' outcome (no double-spend)", async () => {
+    const postAgentRun = vi.fn(async () => {
+      throw new Error("some downstream failure that is not a pre-connect refusal");
+    });
+    const deps = { ...baseDeps(), transport: { postAgentRun }, connectRetryBackoffMs: 0 };
+    const outcome = await runRustRouteSelfProbe(deps);
+    expect(outcome.status).toBe("error");
+    expect(postAgentRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT retry an AbortError/timeout (run may have started server-side) — single call", async () => {
+    const abortErr = new Error("The operation was aborted");
+    abortErr.name = "AbortError";
+    const postAgentRun = vi.fn(async () => {
+      throw abortErr;
+    });
+    const deps = { ...baseDeps(), transport: { postAgentRun }, connectRetryBackoffMs: 0 };
+    const outcome = await runRustRouteSelfProbe(deps);
+    expect(outcome.status).toBe("error");
+    expect(postAgentRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries ONCE then LOG-AND-CONTINUEs when the connection is STILL refused (two calls, never throws)", async () => {
+    const postAgentRun = vi
+      .fn()
+      .mockRejectedValueOnce(fetchFailedTypeError("ECONNREFUSED"))
+      .mockRejectedValueOnce(fetchFailedTypeError("ECONNREFUSED"));
+    const deps = { ...baseDeps(), transport: { postAgentRun }, connectRetryBackoffMs: 0 };
+    const outcome = await runRustRouteSelfProbe(deps);
+    expect(outcome.status).toBe("error");
+    expect(postAgentRun).toHaveBeenCalledTimes(2);
   });
 
   it("never includes the self-minted bearer in any recorded outcome detail", async () => {

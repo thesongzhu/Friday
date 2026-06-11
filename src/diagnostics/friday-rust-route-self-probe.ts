@@ -284,6 +284,40 @@ export function createRustRouteProbeOutcomeHolder(): RustRouteProbeOutcomeHolder
   };
 }
 
+// ─── Boot-race connection-failure classifier (spend-safe retry gate) ───
+
+/** Short default backoff before the single connection-failure retry (boot-race window). */
+export const RUST_ROUTE_DIAGNOSTIC_CONNECT_RETRY_BACKOFF_MS = 500;
+
+/**
+ * Is `err` a PRE-CONNECT, server-not-yet-listening failure that is SAFE to retry without any
+ * risk of double-spending real DeepSeek? This is intentionally NARROW: it matches ONLY the
+ * loopback transport failing to ESTABLISH a connection (the boot-race where the first probe tick
+ * fires before the hub HTTP server's `listen()` has finished accepting on 127.0.0.1:<port>).
+ *
+ * undici/Node surface this as a `TypeError: fetch failed` whose `cause.code` is a connection-level
+ * errno — `ECONNREFUSED` (server not listening yet), or the closely-related `ECONNRESET` /
+ * `ENOTFOUND` / `EAI_AGAIN`. In ALL of those the request never reached the agent-run handler, so no
+ * run was started and a retry cannot double-spend.
+ *
+ * It deliberately does NOT match AbortError/timeout (the run may have already started server-side →
+ * retrying could double-spend) nor any non-2xx HTTP status (the server WAS reached). Those are
+ * left to log-and-continue exactly as before.
+ */
+export function isRetryableConnectionFailure(err: unknown): boolean {
+  if (!(err instanceof TypeError)) {
+    return false;
+  }
+  const cause = (err as { cause?: unknown }).cause;
+  const code = typeof cause === "object" && cause !== null
+    ? (cause as { code?: unknown }).code
+    : undefined;
+  return code === "ECONNREFUSED"
+    || code === "ECONNRESET"
+    || code === "ENOTFOUND"
+    || code === "EAI_AGAIN";
+}
+
 // ─── The probe runner (one tick) ───
 
 export interface RustRouteSelfProbeDeps {
@@ -296,6 +330,17 @@ export interface RustRouteSelfProbeDeps {
   /** Injected logger (defaults to console). NEVER receives the bearer. */
   logger?: Pick<Console, "warn" | "info">;
   ttlSec?: number;
+  /**
+   * Boot-race resilience: when the FIRST loopback POST fails with a pre-connect connection error
+   * (ECONNREFUSED etc. — the hub HTTP server has not finished `listen()` when the first probe tick
+   * fires), retry EXACTLY once after a short backoff. Spend-safe: only pre-connect failures are
+   * retried (the run never started server-side), so no double-spend. Default backoff
+   * {@link RUST_ROUTE_DIAGNOSTIC_CONNECT_RETRY_BACKOFF_MS}; injectable (tests pass 0). Does NOT
+   * change the hourly cadence or spend posture — it only collapses the boot-time fetch-failed.
+   */
+  connectRetryBackoffMs?: number;
+  /** Injected sleep (testability — defaults to a real setTimeout). NEVER affects cadence. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 /**
@@ -328,7 +373,35 @@ export async function runRustRouteSelfProbe(deps: RustRouteSelfProbeDeps): Promi
       ttlSec: deps.ttlSec,
     });
     const body = buildRustRouteSelfProbeBody(providerId);
-    const { httpStatus, runId } = await deps.transport.postAgentRun({ bearer, body });
+    // Boot-race resilience: the first probe tick can fire before the hub HTTP server has finished
+    // `listen()` (the loopback POST then hits a not-yet-accepting 127.0.0.1:<port> → ECONNREFUSED /
+    // "fetch failed"). Retry EXACTLY once on such a PRE-CONNECT failure after a short backoff. This
+    // is spend-safe (the run never started server-side, so no double-spend) and narrow — timeouts,
+    // aborts, and any non-2xx are NOT retried. It does not touch cadence or spend posture.
+    let attemptResult: { httpStatus: number; runId?: string };
+    try {
+      attemptResult = await deps.transport.postAgentRun({ bearer, body });
+    } catch (firstErr) {
+      if (!isRetryableConnectionFailure(firstErr)) {
+        throw firstErr;
+      }
+      const backoffMs = deps.connectRetryBackoffMs ?? RUST_ROUTE_DIAGNOSTIC_CONNECT_RETRY_BACKOFF_MS;
+      logger.info?.(
+        `[friday][rust-route-self-probe] loopback not yet accepting (boot-race); retrying once after ${backoffMs}ms`,
+      );
+      const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+      await sleep(backoffMs);
+      // Mint a FRESH bearer for the retry: the first one may have aged toward its short TTL during
+      // the backoff, and a fresh single-use token preserves the never-reused posture.
+      const retryBearer = mintDiagnosticAdminBearer({
+        tokenSecret: deps.tokenSecret,
+        nowMs: () => new Date(deps.nowIso()).getTime(),
+        idGenerator: deps.idGenerator,
+        ttlSec: deps.ttlSec,
+      });
+      attemptResult = await deps.transport.postAgentRun({ bearer: retryBearer, body });
+    }
+    const { httpStatus, runId } = attemptResult;
 
     const ok = httpStatus >= 200 && httpStatus < 300;
     const outcome: RustRouteProbeOutcome = {
