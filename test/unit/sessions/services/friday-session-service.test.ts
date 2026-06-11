@@ -539,6 +539,122 @@ describe("FridaySessionService", () => {
     });
   });
 
+  // ─── getSessionMemoryNamespaceCandidates (F5.5 dual-read) ───
+
+  describe("getSessionMemoryNamespaceCandidates", () => {
+    const FLAG = "FRIDAY_NS_HARDENING_ENABLED";
+    const prior = process.env[FLAG];
+    afterEach(() => {
+      if (prior === undefined) delete process.env[FLAG];
+      else process.env[FLAG] = prior;
+    });
+
+    it("FLAG-OFF: returns the SINGLE legacy namespace (byte-identical to getSessionMemoryNamespace)", async () => {
+      delete process.env[FLAG];
+      await service.createSession({ channel: "discord", chatId: "user-ns1", userId: "user-ns1" });
+      const candidates = await service.getSessionMemoryNamespaceCandidates("discord:default:user-ns1");
+      const single = await service.getSessionMemoryNamespace("discord:default:user-ns1");
+      expect(candidates).toEqual([single]);
+      expect(candidates).toEqual(["tenant.default.channel.discord.user.user-ns1.shared"]);
+    });
+
+    it("FLAG-ON: a session created/persisted under FLAG-OFF is still recalled via the legacy candidate", async () => {
+      // Create the session with the flag OFF — the WRITE path persists the LEGACY
+      // (dotted) namespace, the real pre-flip data shape.
+      delete process.env[FLAG];
+      await service.createSession({
+        channel: "discord",
+        chatId: "ada.lovelace@example.com",
+        userId: "ada.lovelace@example.com",
+        chatKind: "dm",
+      });
+      const key = "discord:default:ada.lovelace@example.com";
+      const persistedLegacy = await service.getSessionMemoryNamespace(key);
+      expect(persistedLegacy).toBe(
+        "tenant.default.channel.discord.user.ada.lovelace-example.com.shared",
+      );
+
+      // Now flip the flag ON and read the dual-read candidates. The hardened namespace
+      // (new write target) comes first; the LEGACY namespace — byte-identical to what
+      // was persisted above — comes second, so the pre-flip memory is still found.
+      process.env[FLAG] = "1";
+      const candidates = await service.getSessionMemoryNamespaceCandidates(key);
+      expect(candidates).toEqual([
+        "tenant.default.channel.discord.user.ada-lovelace-example-com.shared", // hardened
+        "tenant.default.channel.discord.user.ada.lovelace-example.com.shared", // legacy
+      ]);
+      expect(candidates[1]).toBe(persistedLegacy);
+    });
+
+    it("FLAG-ON dedup-collapse: a non-dotted session yields ONE candidate", async () => {
+      process.env[FLAG] = "1";
+      await service.createSession({ channel: "discord", chatId: "user-ns1", userId: "user-ns1" });
+      const candidates = await service.getSessionMemoryNamespaceCandidates("discord:default:user-ns1");
+      expect(candidates).toEqual(["tenant.default.channel.discord.user.user-ns1.shared"]);
+    });
+
+    it("throws for nonexistent session", async () => {
+      await expectSessionError(
+        service.getSessionMemoryNamespaceCandidates("discord:default:nonexistent"),
+        FRIDAY_SESSION_ERROR_CODES.NOT_FOUND,
+      );
+    });
+
+    it("ROLLBACK (on->off): recall reads the PERSISTED hardened namespace ALONE — no re-derive regression (review must-fix)", async () => {
+      // `getOrCreateSession` (the live runtime path) PERSISTS the resolved `memory_namespace`.
+      // Under flag-ON it persists the HARDENED namespace for a dotted userId.
+      process.env[FLAG] = "1";
+      const key = "discord:default:grace.hopper@example.com";
+      await service.getOrCreateSession(key);
+      const session = await service.getSession(key);
+      const persistedHardened = session?.memoryNamespace;
+      expect(persistedHardened).toBe(
+        "tenant.default.channel.discord.user.grace-hopper-example-com.shared",
+      );
+
+      // Now ROLL BACK the flag (on -> off). Flag-off recall MUST be byte-identical to
+      // today (`getSessionMemoryNamespace`): the SINGLE persisted (authoritative)
+      // namespace, NOT a blind re-derivation. The persisted value here is the HARDENED
+      // namespace (what the rows were written under), so it — and ONLY it — is the
+      // recall target. The pre-fix bug demoted this to a defensive tail behind a
+      // re-derived legacy primary (an empty bucket searched first); the fix removes the
+      // dual-read/re-scope from the flag-off path entirely so there is zero regression
+      // regardless of any persisted-vs-re-derived drift.
+      delete process.env[FLAG];
+      const candidates = await service.getSessionMemoryNamespaceCandidates(key);
+      expect(candidates).toEqual([persistedHardened]);
+      // Byte-identical to `getSessionMemoryNamespace` (today's single-namespace recall).
+      const single = await service.getSessionMemoryNamespace(key);
+      expect(candidates).toEqual([single]);
+    });
+
+    it("FLAG-OFF (must-fix): persisted namespace DIFFERS from re-derived legacy — recall STILL reads the persisted bucket (no regression)", async () => {
+      // Drive the exact reviewer-specified adversarial case at the session-service
+      // boundary: a session whose PERSISTED `memory_namespace` differs from what a
+      // blind re-derivation of its current axes would produce. We construct this by
+      // persisting a HARDENED namespace under flag-on, then reading flag-off — the
+      // re-derived legacy (dotted) namespace differs from the persisted hardened one.
+      process.env[FLAG] = "1";
+      const key = "discord:default:ada.lovelace@example.com";
+      await service.getOrCreateSession(key);
+      const session = await service.getSession(key);
+      const persisted = session?.memoryNamespace;
+      expect(persisted).toBe(
+        "tenant.default.channel.discord.user.ada-lovelace-example-com.shared",
+      );
+
+      // Flag OFF: a blind re-derivation would yield the LEGACY (dotted) namespace, which
+      // is a DIFFERENT bucket than the persisted one. The fix guarantees recall uses the
+      // PERSISTED bucket (authoritative), never the divergent re-derivation.
+      delete process.env[FLAG];
+      const reDerivedLegacy = "tenant.default.channel.discord.user.ada.lovelace-example.com.shared";
+      expect(persisted).not.toBe(reDerivedLegacy); // confirm the drift is real
+      const candidates = await service.getSessionMemoryNamespaceCandidates(key);
+      expect(candidates).toEqual([persisted]);
+      expect(candidates).not.toContain(reDerivedLegacy);
+    });
+  });
+
   // ─── forkSession ───
 
   describe("forkSession", () => {
