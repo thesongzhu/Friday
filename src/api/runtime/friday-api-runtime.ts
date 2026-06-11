@@ -139,8 +139,14 @@ import { createFridayCloudWorkerSetupService } from "#cloud-workers";
 // execrun B1-compose (DARK): the composition repoints routeStartRun to the PROVEN sealed WS
 // client (the real ECDH handshake) via its service adapter + a SecureStore X25519-SECRET resolver
 // (the ECDH model — REPLACES #612's symmetric session-key resolver, which was the wrong shape).
-import { createFridayRustHubAgentRunSealedClientService } from "../mission-spine/friday-rust-hub-agent-run-sealed-client-service.js";
-import type { FridayRustHubAgentRunSealedClientService } from "../mission-spine/friday-rust-hub-agent-run-sealed-client-service.js";
+import {
+  createFridayRustHubAgentRunSealedClientService,
+  isPausedDispatchOutcome,
+} from "../mission-spine/friday-rust-hub-agent-run-sealed-client-service.js";
+import type {
+  FridayRustHubAgentRunSealedClientService,
+  FridayRustHubAgentRunSealedClientServiceDispatchOutcome,
+} from "../mission-spine/friday-rust-hub-agent-run-sealed-client-service.js";
 import type { FridayRustHubAgentRunConstraints } from "../mission-spine/friday-rust-hub-agent-run-ws-sealed-client.js";
 import { createFridayRustHubRunContinuityProjectorService } from "../mission-spine/friday-rust-hub-run-continuity-projector-service.js";
 import type { FridayRustHubRunContinuityProjectorService } from "../mission-spine/friday-rust-hub-run-continuity-projector-service.js";
@@ -1276,8 +1282,10 @@ async function composeRustReadOnlyAgentRun(args: {
   // (2) Dispatch the run over the SEALED WS client (B1). The client runs the ECDH handshake +
   // builds the auth_proof from `clientSecret` INTERNALLY; refs-only result; fail-closed on error.
   // leg A: a dispatch throw is the sealed-WS "closed-before-the-body" / transport surface —
-  // log {run_id, leg=dispatch, code} before rethrowing so the spend ties to this leg.
-  let wsResult;
+  // log {run_id, leg=dispatch, code} before rethrowing so the spend ties to this leg. Typed as the
+  // discriminated union so the `outcome === "paused"` narrowing below (and the result narrowing
+  // after the paused early-return) is sound.
+  let wsResult: FridayRustHubAgentRunSealedClientServiceDispatchOutcome;
   try {
     wsResult = await args.wsClient.dispatchRun({
       runId: args.runId,
@@ -1299,6 +1307,72 @@ async function composeRustReadOnlyAgentRun(args: {
       err instanceof FridayDomainError ? err.code : "dispatch_error",
     );
     throw err;
+  }
+
+  // (A3 courier) PAUSED outcome — the Rust loop gate PAUSED a mutating tool and the courier settled
+  // with a refs-only paused outcome (approval nonce + action digest + summary; NO signing material,
+  // INV-1). This reaches here ONLY when the courier's default-off run-control flag is on AND the
+  // server paused; with the flag off the courier never returns a paused outcome, so this whole branch
+  // is UNREACHABLE and the path below is byte-identical to today. (A read-only run can never pause —
+  // this branch is also DARK until a LATER PR relaxes clause 2 to admit a mutating run.)
+  //
+  // We MUST NOT route a paused outcome through the delivered-body readback (it has no body ⇒ it would
+  // fail-close at the readback gate before projecting). Instead we BRANCH EARLY: project an HONEST
+  // non-Finished continuity row via `loopStatus:"Paused"` (the projector maps it to the terminal
+  // "cancelled" status — a non-error resumable stop, never a fake "finished"; INV-5 refs-only — the
+  // row stores only the pause refs, NEVER the answer/summary body). The returned result carries an
+  // EMPTY `response` (no body exists yet — the run paused pending approval) and a 0 tool count.
+  if (isPausedDispatchOutcome(wsResult)) {
+    const pausedAtIso = args.nowIso();
+    const pausedProjection = args.db.withWriteTransaction((db) =>
+      args.projector.project(db, {
+        truthLabel: "rust_wired_dev",
+        proofOnly: true,
+        // `ok` is the receipt-well-formed flag (a fixed `true` on the receipt type — the same value
+        // every non-finished mapping uses, e.g. Bounded/Errored); the NON-finished semantics of a
+        // pause are carried by `loopStatus:"Paused"` → the projector's "cancelled" status mapping,
+        // NOT by this flag.
+        ok: true,
+        runId: args.runId,
+        routeId: `${args.providerId}:${args.model}`,
+        providerId: args.providerId,
+        model: args.model,
+        // HONEST non-Finished status: the projector maps "Paused" → the terminal "cancelled" run
+        // status (a resumable, non-error stop) — NEVER a fabricated "completed"/"finished".
+        loopStatus: "Paused",
+        // A paused run executed reads (turns/tools) up to the pause; surface the carried counts when
+        // present (absent ⇒ 0, an old server). Counts are refs, never a body.
+        turns: 0,
+        executedTools: 0,
+        // No answer body exists for a paused run — store a body REF over the pause refs (NEVER the
+        // answer/summary body). The action digest is the run's fingerprint at the pause point.
+        finalMessageSha256: wsResult.actionDigest,
+        finalMessageLen: 0,
+        auditChainVerified: false,
+        usagePromptTokens: 0,
+        usageCompletionTokens: 0,
+        usageTotalTokens: 0,
+        completedAtIso: pausedAtIso,
+      }),
+    );
+    // A pause is NOT a fail-closed 503 — it is an honest non-Finished settle that returns a row.
+    // Log it body-free (run_id + leg) on its OWN line so it is never confused with a 503.
+    console.warn(
+      `[friday][rust-agent-run] paused-pending-approval run_id=${args.runId} leg=paused status=${pausedProjection.status}`,
+    );
+    return {
+      runId: args.runId,
+      // The projected status is the HONEST terminal mapping of a pause ("cancelled") — NOT Finished.
+      status: pausedProjection.status as FridayAgentRuntimeResult["status"],
+      // No body exists for a paused run — the empty response keeps the owner-sealed summary OUT of
+      // plaintext (INV-5 refs-only). A LATER PR's resume leg delivers the answer after approval.
+      response: "",
+      toolCallCount: 0,
+      durationMs: 0,
+      usageInput: 0,
+      usageOutput: 0,
+      finalResponse: "",
+    };
   }
 
   // (3) Owner-gated body readback (slice-3). The body is released ONLY to the matching
@@ -4445,6 +4519,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       ?? createFridayRustHubAgentRunSealedClientService({
         host: process.env.FRIDAY_HUB_AGENT_RUN_WS_HOST ?? "127.0.0.1",
         port: readRustAgentRunWsPort(process.env.FRIDAY_HUB_AGENT_RUN_WS_PORT),
+        // (A3 courier) Forward the DEFAULT-OFF run-control flag to the courier. When false (default)
+        // the courier's paused/resume behavior is inert (byte-identical to today); when true it
+        // admits a server `AgentRunPaused` (paused outcome) + relays an opaque approval. Resolved in
+        // ONE place (`resolveAgentRunControlViaRust` in friday-hub-bootstrap.ts) → `deps`.
+        ...(deps.agentRunControlViaRust === true ? { agentRunControlViaRust: true } : {}),
       });
     const rustContinuityProjector =
       deps.rustAgentRunContinuityProjector ?? createFridayRustHubRunContinuityProjectorService();

@@ -125,6 +125,35 @@ function makeStubWsClient() {
         answerLen: OWNER_BODY.length,
       };
     }),
+    // (A3 courier) The compose read-only path never resumes; this stub method is unused here.
+    resumeWithApproval: vi.fn(async () => {
+      throw new Error("resumeWithApproval not used by the read-only compose path");
+    }),
+  };
+  return { service, calls };
+}
+
+/**
+ * (A3 courier) A scripted-stub sealed WS client that settles every dispatch with a PAUSED outcome
+ * (the Rust loop gate paused a mutating tool). Refs only — no signing material (INV-1).
+ */
+function makeStubPausedWsClient() {
+  const calls: FridayRustHubAgentRunSealedClientServiceRequest[] = [];
+  const service: FridayRustHubAgentRunSealedClientService = {
+    dispatchRun: vi.fn(async (request: FridayRustHubAgentRunSealedClientServiceRequest) => {
+      calls.push(request);
+      return {
+        outcome: "paused" as const,
+        truthLabel: "rust_wired" as const,
+        runId: request.runId,
+        approvalId: "approval-nonce-xyz",
+        actionDigest: "d".repeat(64),
+        ownerSealedSummary: "write_file",
+      };
+    }),
+    resumeWithApproval: vi.fn(async () => {
+      throw new Error("resumeWithApproval not used by this paused-dispatch test");
+    }),
   };
   return { service, calls };
 }
@@ -295,6 +324,55 @@ describe("FridayApiRuntime — execrun S-F-compose (DARK) Rust-route composition
     // Exactly ONE TS continuity agent_run + usage row.
     expect(countRows(db, "friday_agent_runs", RUN_ID)).toBe(1);
     expect(countRows(db, "llm_usage_records", RUN_ID)).toBe(1);
+  });
+
+  it("(a-paused) (A3 courier) a PAUSED dispatch → HONEST non-Finished row (cancelled), refs-only, readback SKIPPED", async () => {
+    db = createTestDb();
+    const ws = makeStubPausedWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+    });
+
+    const result = (await callStartRoute(runtime, { ...QUALIFYING_BODY })) as {
+      runId: string;
+      response: string;
+      finalResponse?: string;
+      status: string;
+      toolCallCount: number;
+    };
+
+    // The dispatch ran; the paused branch was taken BEFORE the delivered-body readback (no readback
+    // call — a paused run has no body, and routing it through the readback would fail-close).
+    expect(ws.calls).toHaveLength(1);
+    expect(readback.calls).toHaveLength(0);
+
+    // The continuity row is projected HONESTLY: NOT "completed"/Finished — the projector maps the
+    // "Paused" loop status to the terminal "cancelled" run status (a resumable, non-error stop).
+    expect(result.status).toBe("cancelled");
+    // No body exists for a paused run — the response is empty (the owner-sealed summary is kept OUT
+    // of the plaintext response; INV-5 refs-only). A LATER PR's resume leg delivers the answer. The
+    // route omits an empty `finalResponse` (`result.finalResponse ? {...} : {}`), so it is undefined.
+    expect(result.response).toBe("");
+    expect(result.finalResponse).toBeUndefined();
+    expect(result.toolCallCount).toBe(0);
+
+    // Exactly ONE TS continuity row was projected (idempotent on run_id), with the cancelled status.
+    expect(countRows(db, "friday_agent_runs", RUN_ID)).toBe(1);
+    const rowStatus = db.withReadConnection((d) =>
+      (d.prepare("SELECT status FROM friday_agent_runs WHERE id = ?").get(RUN_ID) as { status: string }).status,
+    );
+    expect(rowStatus).toBe("cancelled");
+    // The projected row stores a body REF over the pause refs (the action digest) — NEVER the body.
+    const rowResponse = db.withReadConnection((d) =>
+      (d.prepare("SELECT response_text FROM friday_agent_runs WHERE id = ?").get(RUN_ID) as
+        | { response_text: string | null }
+        | undefined)?.response_text ?? "",
+    );
+    expect(rowResponse).toContain("rust-run-body-ref:");
+    expect(rowResponse).not.toBe(OWNER_BODY);
   });
 
   it("(b) flag OFF (default) → byte-identical 503; the WS path is NEVER touched", async () => {

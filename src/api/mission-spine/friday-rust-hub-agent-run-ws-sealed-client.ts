@@ -205,6 +205,79 @@ export interface FridayRustHubAgentRunSealedResult {
   readonly completionTokens?: number;
 }
 
+/**
+ * (A3 courier) The PAUSED dispatch outcome: the Rust server's loop gate PAUSED a mutating tool on
+ * the run and emitted a `Message::AgentRunPaused` frame instead of an `AgentRunResult`. This settles
+ * `dispatchRun` with a NEW non-result outcome carrying REFS ONLY (the single-use approval nonce + the
+ * action digest + a coarse body-free summary) so the operator can be prompted to sign (out-of-band)
+ * and the courier can later relay an `AgentRunResume`.
+ *
+ * **INV-1 (no signing material):** this carries NO signing key, NO private material, and NO mutation
+ * body/args — only the references the operator's OWN signer binds an Ed25519 approval over. TS
+ * inspects nothing inside the eventual signed blob; it is a pure courier.
+ *
+ * **Wire mapping (matches the merged `AgentRunPaused` EXACTLY — `friday-protocol::Message`):**
+ *   - `approvalId` ← the wire `nonce` (the `pending_approval_request.approval_id` the operator signs
+ *     over; the A2 design doc §2.3 names it "the approval_id nonce"). A nonce, not a secret.
+ *   - `actionDigest` ← the wire `action_digest` (hex SHA-256 of `canonical_action_bytes` — binds the
+ *     EXACT paused action, transitively principal/scope/params). A fingerprint, never a body.
+ *   - `ownerSealedSummary` ← the wire `summary` (a coarse, body-free action-verb summary). Optional.
+ *   - `expiresAt`: the merged `AgentRunPaused` does NOT carry an expiry field, so this is parsed
+ *     DEFENSIVELY (forward-compatible) and is `undefined` today — never fabricated. (The approval's
+ *     real expiry is enforced server-side by `resume_with_approval`, not surfaced on this refs frame.)
+ *
+ * The `outcome: "paused"` discriminant lets the consumer (compose) tell a paused settle apart from a
+ * normal `AgentRunResult` WITHOUT touching the existing result shape (which carries no `outcome` key).
+ */
+export interface FridayRustHubAgentRunPausedOutcome {
+  /** Discriminant: distinguishes a paused settle from a normal `AgentRunResult` (no `outcome` key). */
+  readonly outcome: "paused";
+  readonly truthLabel: "rust_wired";
+  /** The run that paused (echoes the request run id). */
+  readonly runId: string;
+  /** The single-use approval nonce the operator signs over (wire `nonce`). A nonce, never a secret. */
+  readonly approvalId: string;
+  /** Hex SHA-256 of the canonical action bytes (wire `action_digest`). A fingerprint, never a body. */
+  readonly actionDigest: string;
+  /** A coarse, body-free summary of WHAT paused (wire `summary`). Never the tool args/params/body. */
+  readonly ownerSealedSummary?: string;
+  /** Approval expiry (epoch ms), when the wire carries one. DEFERRED — the merged wire omits it ⇒ `undefined`. */
+  readonly expiresAt?: number;
+}
+
+/**
+ * (A3 courier) The discriminated outcome of a sealed dispatch: EITHER the refs-only `AgentRunResult`
+ * (the {@link FridayRustHubAgentRunSealedResult}, today's ONLY outcome — carries NO `outcome` key so
+ * the legacy `toEqual` shape is byte-identical) OR — ONLY when the courier's default-off run-control
+ * flag is on AND the server emits an `AgentRunPaused` — the {@link FridayRustHubAgentRunPausedOutcome}.
+ * With the flag OFF an `AgentRunPaused` is an unknown inbound and stays fail-closed (503), so the
+ * union NARROWS to exactly `FridayRustHubAgentRunSealedResult` and the type is byte-identical to today.
+ */
+export type FridayRustHubAgentRunSealedDispatchOutcome =
+  | FridayRustHubAgentRunSealedResult
+  | FridayRustHubAgentRunPausedOutcome;
+
+/**
+ * (A3 courier) The result of relaying an operator-signed approval to RESUME a paused run — the
+ * REFS-ONLY `Message::AgentRunControlResult` the server returns. Carries the coarse
+ * `op`/`accepted`/`status` + an optional soft `auditRef` — NEVER the mutation body, args, or answer.
+ * `accepted=false` is a fail-closed refusal (forged/replayed/expired blob / unprovisioned verify key
+ * / storage error); the `status` says why at a coarse grain.
+ */
+export interface FridayRustHubAgentRunResumeResult {
+  readonly truthLabel: "rust_wired";
+  /** The run this control op terminates (echoes the request run id). */
+  readonly runId: string;
+  /** The control op (`resume`). */
+  readonly op: string;
+  /** Whether the op was accepted (`true`) or refused fail-closed (`false`). */
+  readonly accepted: boolean;
+  /** Coarse, body-free outcome label. */
+  readonly status: string;
+  /** Soft link to the hash-chained audit receipt, when one was written. A ref, never a body. */
+  readonly auditRef?: string;
+}
+
 export interface CreateFridayRustHubAgentRunSealedClientOptions {
   /** Loopback host for the Rust agent-run WS server. Defaults to `127.0.0.1`. */
   readonly host?: string;
@@ -218,6 +291,18 @@ export interface CreateFridayRustHubAgentRunSealedClientOptions {
   readonly clientSecret: Uint8Array;
   /** Bounded await (ms) for the dispatch to settle before failing closed. */
   readonly timeoutMs?: number;
+  /**
+   * (A3 courier) Run-control flag, DEFAULT-OFF. Mirrors the Phase-2 server's default-off
+   * `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST` flag posture EXACTLY. When `false`/absent (the default):
+   *   - an inbound `AgentRunPaused` is an UNKNOWN message ⇒ fail-closed (503), byte-identical to today;
+   *   - {@link FridayRustHubAgentRunSealedClient.resumeWithApproval} is fail-closed (the courier
+   *     relays nothing).
+   * When `true`, the new courier behavior is enabled: an `AgentRunPaused` settles `dispatchRun` with
+   * the {@link FridayRustHubAgentRunPausedOutcome}, and `resumeWithApproval` relays the opaque blob.
+   * The success (`AgentRunResult`) path and the trailing unknown→fail-closed are UNTOUCHED by this
+   * flag — so flag-off behavior is exactly today's.
+   */
+  readonly agentRunControlViaRust?: boolean;
 }
 
 export interface FridayRustHubAgentRunSealedClient {
@@ -227,10 +312,46 @@ export interface FridayRustHubAgentRunSealedClient {
    * settles and closes — it does NOT await the owner-sealed body frame (leg-A decouple, #655 Part
    * 4; compose sources the body from the owner-gated DB readback). Fails closed (503) on any
    * non-clean settle, including a session that closes BEFORE any refs arrive.
+   *
+   * (A3 courier) Returns the discriminated {@link FridayRustHubAgentRunSealedDispatchOutcome}: a
+   * normal refs-only `AgentRunResult` OR — ONLY when `agentRunControlViaRust` is on AND the server
+   * emits an `AgentRunPaused` — a {@link FridayRustHubAgentRunPausedOutcome}. With the flag OFF an
+   * `AgentRunPaused` is an unknown inbound ⇒ fail-closed (503), so the outcome is byte-identical to
+   * today's `FridayRustHubAgentRunSealedResult`.
    */
   dispatchRun(
     request: FridayRustHubAgentRunSealedRequest,
-  ): Promise<FridayRustHubAgentRunSealedResult>;
+  ): Promise<FridayRustHubAgentRunSealedDispatchOutcome>;
+  /**
+   * (A3 courier) Relay an operator's out-of-band Ed25519-signed approval to RESUME a paused run.
+   * Opens a FRESH sealed session bound to the SAME credentials (`clientSecret`) and the SAME
+   * `run_id` (the merged `AgentRunResume` is self-authenticating via the blob's nonce/digest — it
+   * carries no `auth_proof`/`forwarded_principal`; the A2 design §2.1 blesses reconnect because the
+   * NONCE is the single-use authority, not the socket), sends `Message::AgentRunResume {run_id,
+   * signed_blob}`, and awaits the refs-only `AgentRunControlResult`.
+   *
+   * **INV-1 (pure courier):** `opaqueSignedBlob` is treated as OPAQUE bytes — TS inspects NOTHING
+   * inside it, mints no signature, holds no signing key, and authors none of the approval's
+   * semantics. The server decodes + verifies + consumes the nonce + executes the ONE mutation.
+   *
+   * Fail-closed (503) when the run-control flag is OFF (the courier relays nothing) or on any
+   * non-clean settle. A server refusal (`accepted=false`) is a SUCCESSFUL relay of a refusal
+   * outcome, not a transport failure — it resolves with `{accepted:false, status}`.
+   */
+  resumeWithApproval(
+    request: FridayRustHubAgentRunResumeRequest,
+  ): Promise<FridayRustHubAgentRunResumeResult>;
+}
+
+/** (A3 courier) A resume relay: the run to resume + the operator's OPAQUE signed approval blob. */
+export interface FridayRustHubAgentRunResumeRequest {
+  /** The paused run to resume (echoes the paused `run_id`). */
+  readonly runId: string;
+  /**
+   * The operator's canonical Ed25519-signed approval bytes (the S6c CLI output). OPAQUE to the
+   * courier — relayed VERBATIM as the wire `signed_blob`; TS inspects/derives/authors NOTHING.
+   */
+  readonly opaqueSignedBlob: Uint8Array;
 }
 
 function unavailable(message: string): FridayDomainError {
@@ -396,7 +517,7 @@ function wsClientUpgrade(socket: Socket, host: string, port: number): Promise<Bu
 }
 
 /** A decoded inbound envelope: the inner message kind plus the fields we read. */
-interface InboundEnvelope {
+export interface InboundEnvelope {
   readonly kind: string;
   readonly fields: Record<string, unknown>;
 }
@@ -462,6 +583,32 @@ export function buildConstraintsWire(
   return Object.keys(wire).length > 0 ? wire : undefined;
 }
 
+/**
+ * (A3 courier) Build the `AgentRunResume` envelope that relays an operator's OPAQUE signed approval.
+ * The merged wire (`friday-protocol::Message::AgentRunResume`) is exactly `{run_id, signed_blob}` —
+ * serde `Vec<u8>` serializes as a JSON ARRAY of byte numbers (NOT base64/hex), EXACTLY like the
+ * dispatch envelope's `auth_proof`. The blob is relayed VERBATIM via `Array.from` — TS inspects,
+ * derives, and authors NOTHING inside it (INV-1, a pure courier). EXPORTED + pure so the precise
+ * wire shape is unit-testable without a socket (mirrors {@link buildConstraintsWire}).
+ */
+export function buildResumeEnvelope(
+  runId: string,
+  opaqueSignedBlob: Uint8Array,
+): Record<string, unknown> {
+  return {
+    schema_version: SCHEMA_VERSION,
+    msg_id: `agent-run-resume-${runId}`,
+    correlation_id: `agent-run-resume-${runId}`,
+    sent_at: Date.now(),
+    message: {
+      kind: "AgentRunResume",
+      run_id: runId,
+      // serde `Vec<u8>` ⇒ a JSON ARRAY of byte numbers (NOT base64/hex). VERBATIM relay (INV-1).
+      signed_blob: Array.from(opaqueSignedBlob),
+    },
+  };
+}
+
 /** Open + decode one inbound sealed WS Binary payload into its inner message. */
 function openInbound(sessionKey: Uint8Array, payload: Buffer): InboundEnvelope {
   const sealed = decodeSealed(new Uint8Array(payload));
@@ -514,7 +661,19 @@ export interface InboundContext {
   sessionKey: Uint8Array;
   /** Mutable refs slot — set by the result handler, read by the close handler. */
   refs: ResultRefs | null;
-  succeed(result: FridayRustHubAgentRunSealedResult): void;
+  /**
+   * (A3 courier) The run-control flag, DEFAULT-OFF. Gates ONLY the new `AgentRunPaused` inbound
+   * branch: OFF ⇒ an `AgentRunPaused` is an unknown message and fails closed (byte-identical to
+   * today); ON ⇒ it settles with the paused outcome. The `AgentRunResult` path is flag-independent.
+   * Defaults to `false` when a caller (e.g. a legacy test) omits it.
+   */
+  controlEnabled?: boolean;
+  /**
+   * (A3 courier) Settle with the dispatch outcome. Widened from the legacy
+   * `FridayRustHubAgentRunSealedResult`-only signature to the discriminated union so a paused
+   * settle can flow through — a normal result (no `outcome` key) is unchanged.
+   */
+  succeed(result: FridayRustHubAgentRunSealedDispatchOutcome): void;
   fail(error: FridayDomainError): void;
 }
 
@@ -579,12 +738,101 @@ export function handleResult(ctx: InboundContext, fields: Record<string, unknown
 }
 
 /**
+ * (A3 courier) Handle the merged `Message::AgentRunPaused` inbound — settle the in-flight dispatch
+ * with the {@link FridayRustHubAgentRunPausedOutcome}, carrying REFS ONLY (the approval nonce + the
+ * action digest + a coarse summary). Maps the wire fields to the TS outcome EXACTLY:
+ *   `nonce` → `approvalId`, `action_digest` → `actionDigest`, `summary` → `ownerSealedSummary?`.
+ * `expiresAt` is parsed defensively (the merged wire omits it ⇒ `undefined`, forward-compatible).
+ *
+ * **FLAG-GATED:** this is reached ONLY when `ctx.controlEnabled` is true (the run-control flag is
+ * on). With the flag off, `handleInbound` never routes an `AgentRunPaused` here — it falls to the
+ * unknown→fail-closed branch, byte-identical to today. A pause frame MISSING a required ref
+ * (`run_id`/`nonce`/`action_digest`) fails closed — the refs-surface contract is preserved.
+ *
+ * **INV-1:** carries NO signing material; TS authors no approval. EXPORTED only so the settle-branch
+ * logic is unit-testable against a fake ctx without a socket.
+ */
+export function handlePaused(ctx: InboundContext, fields: Record<string, unknown>): void {
+  const runId = asString(fields.run_id);
+  const approvalId = asString(fields.nonce);
+  const actionDigest = asString(fields.action_digest);
+  if (!runId || !approvalId || !actionDigest) {
+    ctx.fail(unavailable("Sealed agent-run client pause is missing a required ref."));
+    return;
+  }
+  const ownerSealedSummary = asString(fields.summary);
+  // The merged `AgentRunPaused` carries NO expiry field; parse defensively for forward-compat (a
+  // later wire revision may add `expires_at`) — `undefined` today, never fabricated.
+  const expiresAt = asNumber(fields.expires_at);
+  ctx.succeed({
+    outcome: "paused",
+    truthLabel: "rust_wired",
+    runId,
+    approvalId,
+    actionDigest,
+    ...(ownerSealedSummary !== undefined ? { ownerSealedSummary } : {}),
+    ...(expiresAt !== undefined ? { expiresAt } : {}),
+  });
+}
+
+/**
+ * (A3 courier) Parse the refs-only `Message::AgentRunControlResult` the server returns for a resume
+ * relay into the {@link FridayRustHubAgentRunResumeResult}. REFS-ONLY: the coarse `op`/`accepted`/
+ * `status` + an optional soft `audit_ref` — NEVER a body. A frame missing a required ref
+ * (`run_id`/`op`/`status`, or a non-boolean `accepted`) returns `undefined` (the caller fails
+ * closed). A server REFUSAL (`accepted=false`) is a VALID parse — it is a refusal outcome, not a
+ * parse failure. EXPORTED only so the parse is unit-testable against a fake field map without a socket.
+ */
+export function parseControlResult(
+  fields: Record<string, unknown>,
+): FridayRustHubAgentRunResumeResult | undefined {
+  const runId = asString(fields.run_id);
+  const op = asString(fields.op);
+  const status = asString(fields.status);
+  const accepted = fields.accepted;
+  if (!runId || !op || !status || typeof accepted !== "boolean") {
+    return undefined;
+  }
+  const auditRef = asString(fields.audit_ref);
+  return {
+    truthLabel: "rust_wired",
+    runId,
+    op,
+    accepted,
+    status,
+    ...(auditRef !== undefined ? { auditRef } : {}),
+  };
+}
+
+/**
  * Dispatch one opened inbound envelope to its handler. (leg-A decouple, #655 Part 4) The client
  * settles synchronously on the FIRST `AgentRunResult`, so any later frame (e.g. the now-ignored
  * owner-sealed body `AskFridayStream`) arrives after teardown removed the listeners and after the
  * `settled` guard is set — a no-op. We keep the kind dispatch narrow: only `AgentRunResult` is a
  * recognized inbound; anything else BEFORE a result is fail-closed.
+ *
+ * (A3 courier) When the run-control flag is ON (`ctx.controlEnabled`), `AgentRunPaused` is ALSO a
+ * recognized inbound and settles with the paused outcome. With the flag OFF an `AgentRunPaused` is
+ * NOT recognized — it falls to the unknown→fail-closed branch, byte-identical to today.
+ *
+ * EXPORTED only so the flag-gated kind-dispatch (incl. the flag-off `AgentRunPaused`→fail-closed
+ * byte-identity) is unit-testable against a pre-opened field map without a socket. Takes the already
+ * decoded {@link InboundEnvelope} so the test does not need session crypto.
  */
+export function routeInboundEnvelope(ctx: InboundContext, inbound: InboundEnvelope): void {
+  if (inbound.kind === "AgentRunResult") {
+    handleResult(ctx, inbound.fields);
+    return;
+  }
+  // (A3 courier) FLAG-GATED: a paused frame is recognized ONLY when run-control is on. Flag off ⇒
+  // it falls through to the unknown→fail-closed branch below (byte-identical to today).
+  if (ctx.controlEnabled === true && inbound.kind === "AgentRunPaused") {
+    handlePaused(ctx, inbound.fields);
+    return;
+  }
+  ctx.fail(unavailable("Sealed agent-run client received an unknown message shape."));
+}
+
 function handleInbound(ctx: InboundContext, payload: Buffer): void {
   let inbound: InboundEnvelope;
   try {
@@ -593,11 +841,7 @@ function handleInbound(ctx: InboundContext, payload: Buffer): void {
     ctx.fail(unavailable("Sealed agent-run client could not open an inbound envelope."));
     return;
   }
-  if (inbound.kind === "AgentRunResult") {
-    handleResult(ctx, inbound.fields);
-    return;
-  }
-  ctx.fail(unavailable("Sealed agent-run client received an unknown message shape."));
+  routeInboundEnvelope(ctx, inbound);
 }
 
 /**
@@ -624,16 +868,19 @@ export function createFridayRustHubAgentRunSealedClient(
     throw new RangeError(`clientSecret must be ${X25519_PUBKEY_LEN} bytes`);
   }
   const keypair = deviceKeypairFromSecret(options.clientSecret);
+  // (A3 courier) DEFAULT-OFF run-control flag. Gates ONLY the new `AgentRunPaused` inbound branch
+  // (in the dispatch ctx) and the `resumeWithApproval` method. OFF ⇒ byte-identical to today.
+  const controlEnabled = options.agentRunControlViaRust === true;
 
   return {
     dispatchRun(
       request: FridayRustHubAgentRunSealedRequest,
-    ): Promise<FridayRustHubAgentRunSealedResult> {
+    ): Promise<FridayRustHubAgentRunSealedDispatchOutcome> {
       if (!request.runId) {
         return Promise.reject(unavailable("Sealed agent-run client requires a run id."));
       }
 
-      return new Promise<FridayRustHubAgentRunSealedResult>((resolve, reject) => {
+      return new Promise<FridayRustHubAgentRunSealedDispatchOutcome>((resolve, reject) => {
         let settled = false;
         let socket: Socket | null = null;
         let receiver: WsReceiver | null = null;
@@ -659,7 +906,7 @@ export function createFridayRustHubAgentRunSealedClient(
             }
           }
         }
-        function succeed(result: FridayRustHubAgentRunSealedResult): void {
+        function succeed(result: FridayRustHubAgentRunSealedDispatchOutcome): void {
           if (settled) return;
           settled = true;
           teardown();
@@ -673,8 +920,16 @@ export function createFridayRustHubAgentRunSealedClient(
         }
 
         // The accumulated read state across the two inbound envelopes (refs first, body optional),
-        // bundled with the settlement callbacks so the module-level handlers can drive it.
-        const ctx: InboundContext = { sessionKey: new Uint8Array(0), refs: null, succeed, fail };
+        // bundled with the settlement callbacks so the module-level handlers can drive it. (A3) the
+        // DEFAULT-OFF run-control flag flows in so a flag-on dispatch can settle on `AgentRunPaused`;
+        // flag-off keeps the paused frame in the unknown→fail-closed bucket (byte-identical).
+        const ctx: InboundContext = {
+          sessionKey: new Uint8Array(0),
+          refs: null,
+          controlEnabled,
+          succeed,
+          fail,
+        };
 
         void (async () => {
           // (1) RAW TCP connect (NOT new WebSocket(url) — its HTTP upgrade would corrupt the
@@ -798,6 +1053,182 @@ export function createFridayRustHubAgentRunSealedClient(
             sealAndSend(sender, sessionKey, envelope);
           } catch {
             fail(unavailable("Sealed agent-run client handshake failed."));
+          }
+        })();
+      });
+    },
+
+    resumeWithApproval(
+      request: FridayRustHubAgentRunResumeRequest,
+    ): Promise<FridayRustHubAgentRunResumeResult> {
+      // (A3 courier) FLAG-GATED: with the run-control flag OFF the courier relays NOTHING — it fails
+      // closed without opening a socket. This keeps the default-off posture byte-identical (the
+      // method exists but is inert) and never sends an `AgentRunResume` the server would ignore.
+      if (!controlEnabled) {
+        return Promise.reject(
+          unavailable("Sealed agent-run client run-control is disabled (resume relay refused)."),
+        );
+      }
+      if (!request.runId) {
+        return Promise.reject(unavailable("Sealed agent-run client resume requires a run id."));
+      }
+      // INV-1 (pure courier): the blob is OPAQUE — TS inspects/derives/authors NOTHING inside it. We
+      // require only that SOME bytes are present (an empty blob can carry no signature ⇒ fail closed).
+      if (!(request.opaqueSignedBlob instanceof Uint8Array) || request.opaqueSignedBlob.length === 0) {
+        return Promise.reject(
+          unavailable("Sealed agent-run client resume requires a signed approval blob."),
+        );
+      }
+
+      // Open a FRESH sealed session bound to the SAME credentials (`clientSecret`) + the SAME run_id
+      // (design §2.1: reconnect is safe because the NONCE inside the blob is the single-use authority,
+      // not the socket). The merged `AgentRunResume` is SELF-authenticating via the blob — it carries
+      // NO `auth_proof`/`forwarded_principal` — so this leg does not rebuild a possession proof.
+      return new Promise<FridayRustHubAgentRunResumeResult>((resolve, reject) => {
+        let settled = false;
+        let socket: Socket | null = null;
+        let receiver: WsReceiver | null = null;
+        let controlResult: FridayRustHubAgentRunResumeResult | null = null;
+        // Typed as the WIDE `Uint8Array` (matching `InboundContext.sessionKey`) so the
+        // `agree()`-derived key (`Uint8Array<ArrayBufferLike>`) assigns without a buffer-kind mismatch.
+        let resumeSessionKey: Uint8Array = new Uint8Array(0);
+
+        const timer = setTimeout(() => {
+          fail(unavailable("Sealed agent-run client resume timed out awaiting a result."));
+        }, timeoutMs);
+        if (typeof timer.unref === "function") timer.unref();
+
+        function teardown(): void {
+          clearTimeout(timer);
+          if (receiver) {
+            receiver.removeAllListeners();
+          }
+          if (socket) {
+            socket.removeAllListeners();
+            socket.on("error", () => {});
+            try {
+              socket.destroy();
+            } catch {
+              // best-effort; the result is already decided.
+            }
+          }
+        }
+        function succeed(result: FridayRustHubAgentRunResumeResult): void {
+          if (settled) return;
+          settled = true;
+          teardown();
+          resolve(result);
+        }
+        function fail(error: FridayDomainError): void {
+          if (settled) return;
+          settled = true;
+          teardown();
+          reject(error);
+        }
+        // The server ending the session BEFORE a control result is the fail-closed path (forged peer /
+        // bad blob / the server ran nothing). A control result already settled ⇒ guarded no-op.
+        function onClose(): void {
+          if (controlResult) {
+            succeed(controlResult);
+            return;
+          }
+          fail(unavailable("Sealed agent-run client resume connection closed before a result."));
+        }
+        function onInbound(payload: Buffer): void {
+          let inbound: InboundEnvelope;
+          try {
+            inbound = openInbound(resumeSessionKey, payload);
+          } catch {
+            fail(unavailable("Sealed agent-run client resume could not open an inbound envelope."));
+            return;
+          }
+          if (inbound.kind !== "AgentRunControlResult") {
+            fail(unavailable("Sealed agent-run client resume received an unknown message shape."));
+            return;
+          }
+          const parsed = parseControlResult(inbound.fields);
+          if (!parsed) {
+            fail(unavailable("Sealed agent-run client resume result is missing a required ref."));
+            return;
+          }
+          // A server REFUSAL (`accepted=false`) is a SUCCESSFUL relay of a refusal outcome — resolve
+          // with it (the caller inspects `accepted`), it is NOT a transport failure.
+          controlResult = parsed;
+          succeed(parsed);
+        }
+
+        void (async () => {
+          // (1) RAW TCP connect (NOT new WebSocket(url)) — preamble first, like dispatch.
+          let connected: Socket;
+          try {
+            connected = await new Promise<Socket>((res, rej) => {
+              const s = connect({ host, port }, () => res(s));
+              socket = s;
+              s.once("error", rej);
+            });
+          } catch {
+            fail(unavailable("Sealed agent-run client resume could not open a connection."));
+            return;
+          }
+          socket = connected;
+          socket.setNoDelay(true);
+
+          const reader = createPreambleReader(socket);
+          try {
+            // (2) preamble: write client pubkey → read server pubkey (32B) → read nonce (64B).
+            socket.write(frameBytes(keypair.publicKey));
+            const serverPub = await reader.readFrame();
+            if (serverPub.length !== X25519_PUBKEY_LEN) {
+              throw new Error("server pubkey wrong width");
+            }
+            const sessionNonce = await reader.readFrame();
+            if (sessionNonce.length !== SESSION_NONCE_LEN) {
+              throw new Error("session nonce wrong width");
+            }
+
+            // (3) derive the session key (X25519 + HKDF) over the agreed peer pubkey.
+            const sessionKey = agree(keypair.secret, serverPub);
+            resumeSessionKey = sessionKey;
+
+            // (4) hand off to the WS layer over the SAME socket: manual RFC6455 upgrade, then
+            // Sender/Receiver.
+            const { socket: sock, leftover: preambleLeftover } = reader.takeover();
+            if (preambleLeftover.length > 0) {
+              throw new Error("unexpected buffered bytes before ws upgrade");
+            }
+            const leftover = await wsClientUpgrade(sock, host, port);
+
+            const sender = new wsRuntime.Sender(sock, undefined, () => randomBytes(4));
+            const recv = new wsRuntime.Receiver({ isServer: false, binaryType: "nodebuffer", skipUTF8Validation: true });
+            receiver = recv;
+
+            recv.on("message", (data: Buffer, isBinary: boolean) => {
+              if (!isBinary) {
+                fail(unavailable("Sealed agent-run client resume received a non-binary frame."));
+                return;
+              }
+              onInbound(data);
+            });
+            recv.on("conclude", onClose);
+            recv.on("error", () => {
+              fail(unavailable("Sealed agent-run client resume received a malformed WS frame."));
+            });
+
+            sock.on("data", (chunk: Buffer) => recv.write(chunk));
+            sock.on("error", () => {
+              fail(unavailable("Sealed agent-run client resume connection error."));
+            });
+            sock.on("close", onClose);
+            if (leftover.length > 0) {
+              recv.write(leftover);
+            }
+
+            // (5) seal + send the AgentRunResume envelope (built by the pure, wire-tested
+            // `buildResumeEnvelope` — `{run_id, signed_blob}`, the blob relayed VERBATIM; INV-1).
+            const envelope = buildResumeEnvelope(request.runId, request.opaqueSignedBlob);
+            sealAndSend(sender, sessionKey, envelope);
+          } catch {
+            fail(unavailable("Sealed agent-run client resume handshake failed."));
           }
         })();
       });

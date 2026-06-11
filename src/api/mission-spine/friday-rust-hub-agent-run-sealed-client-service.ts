@@ -4,7 +4,10 @@ import {
   createFridayRustHubAgentRunSealedClient,
   type CreateFridayRustHubAgentRunSealedClientOptions,
   type FridayRustHubAgentRunConstraints,
+  type FridayRustHubAgentRunPausedOutcome,
+  type FridayRustHubAgentRunResumeResult,
   type FridayRustHubAgentRunSealedClient,
+  type FridayRustHubAgentRunSealedDispatchOutcome,
 } from "./friday-rust-hub-agent-run-ws-sealed-client.js";
 
 /**
@@ -114,16 +117,53 @@ export interface FridayRustHubAgentRunSealedClientServiceResult {
   readonly completionTokens?: number;
 }
 
+/**
+ * (A3 courier) The discriminated dispatch outcome the adapter surfaces: EITHER the refs-only result
+ * (above, today's ONLY outcome — no `outcome` key, byte-identical shape) OR — ONLY when the
+ * default-off run-control flag is on AND the Rust server emits an `AgentRunPaused` — the paused
+ * outcome (refs only: approval nonce + action digest + summary; NO signing material, INV-1). With
+ * the flag OFF the union NARROWS to exactly the result, so the type is byte-identical to today.
+ */
+export type FridayRustHubAgentRunSealedClientServiceDispatchOutcome =
+  | FridayRustHubAgentRunSealedClientServiceResult
+  | FridayRustHubAgentRunPausedOutcome;
+
+/** (A3 courier) A resume relay through the adapter: the SAME shape the underlying client takes. */
+export interface FridayRustHubAgentRunSealedClientServiceResumeRequest {
+  /** The paused run to resume (echoes the paused run id). */
+  readonly runId: string;
+  /**
+   * The client's 32-byte X25519 SECRET (resolved from SecureStore by the caller). Used to open the
+   * FRESH sealed session for the resume relay. Held in-process only; never logged.
+   */
+  readonly clientSecret: Uint8Array;
+  /** The operator's OPAQUE Ed25519-signed approval blob — relayed VERBATIM; TS authors nothing (INV-1). */
+  readonly opaqueSignedBlob: Uint8Array;
+}
+
 export interface FridayRustHubAgentRunSealedClientService {
   /**
    * Dispatch one agent-run over a sealed ECDH session and await its REFS-ONLY result. Builds the
    * underlying sealed client from the request's `clientSecret`, runs the handshake + auth_proof +
    * send INTERNALLY, then maps the sealed result to refs-only. Fails closed (503) on any non-clean
    * settle. The in-band owner-sealed body is dropped (compose uses the DB readback).
+   *
+   * (A3 courier) Returns the discriminated outcome: a refs-only result OR — ONLY when the default-off
+   * run-control flag is on AND the server pauses — a refs-only paused outcome. Flag-off ⇒ byte-identical.
    */
   dispatchRun(
     request: FridayRustHubAgentRunSealedClientServiceRequest,
-  ): Promise<FridayRustHubAgentRunSealedClientServiceResult>;
+  ): Promise<FridayRustHubAgentRunSealedClientServiceDispatchOutcome>;
+  /**
+   * (A3 courier) Relay an operator's OPAQUE Ed25519-signed approval to RESUME a paused run. Builds the
+   * underlying sealed client from the request's `clientSecret` and opens a FRESH sealed session bound
+   * to the SAME credentials + run_id, sends `AgentRunResume {run_id, signed_blob}`, and awaits the
+   * refs-only control result. INV-1: TS inspects/authors NOTHING inside the blob — a pure courier.
+   * Fails closed (503) when the run-control flag is OFF or on any non-clean settle.
+   */
+  resumeWithApproval(
+    request: FridayRustHubAgentRunSealedClientServiceResumeRequest,
+  ): Promise<FridayRustHubAgentRunResumeResult>;
 }
 
 /**
@@ -147,6 +187,14 @@ export interface CreateFridayRustHubAgentRunSealedClientServiceOptions {
    * client. Constructed LAZILY per-dispatch so the service factory itself is side-effect-free.
    */
   readonly createClient?: CreateSealedClientFn;
+  /**
+   * (A3 courier) Run-control flag, DEFAULT-OFF. Mirrors the Phase-2 server's default-off
+   * `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST` posture. Forwarded UNCHANGED to every underlying sealed
+   * client this adapter constructs, where it gates ONLY the new `AgentRunPaused` inbound branch +
+   * the `resumeWithApproval` method. Absent/`false` ⇒ byte-identical to today (a paused frame fails
+   * closed, resume relays nothing).
+   */
+  readonly agentRunControlViaRust?: boolean;
 }
 
 function unavailable(message: string): FridayDomainError {
@@ -162,6 +210,18 @@ function unavailable(message: string): FridayDomainError {
 }
 
 /**
+ * (A3 courier) Type guard: a dispatch outcome that is the PAUSED outcome (vs the normal result).
+ * EXPORTED so the compose path (friday-api-runtime.ts) discriminates the SAME way without re-deriving
+ * the check. Probes the `outcome` discriminant directly (it is absent on the result member, present
+ * + `"paused"` on the paused member) — narrows reliably across the union.
+ */
+export function isPausedDispatchOutcome(
+  outcome: FridayRustHubAgentRunSealedDispatchOutcome,
+): outcome is FridayRustHubAgentRunPausedOutcome {
+  return (outcome as FridayRustHubAgentRunPausedOutcome).outcome === "paused";
+}
+
+/**
  * Build the sealed-client SERVICE adapter the composition wires in place of the old plain-WS
  * client. SIDE-EFFECT-FREE: captures host/port/timeout/createClient only; resolves no secret and
  * opens no socket until `dispatchRun` is actually called on a qualifying run.
@@ -171,29 +231,41 @@ export function createFridayRustHubAgentRunSealedClientService(
 ): FridayRustHubAgentRunSealedClientService {
   const { host, port, timeoutMs } = options;
   const createClient = options.createClient ?? createFridayRustHubAgentRunSealedClient;
+  // (A3 courier) DEFAULT-OFF run-control flag, forwarded UNCHANGED to every underlying client this
+  // adapter constructs. Absent/`false` ⇒ byte-identical to today.
+  const agentRunControlViaRust = options.agentRunControlViaRust === true;
+
+  /** Construct the underlying sealed client for one secret — shared by dispatch + resume. */
+  function buildClient(clientSecret: Uint8Array): FridayRustHubAgentRunSealedClient {
+    return createClient({
+      ...(host !== undefined ? { host } : {}),
+      port,
+      clientSecret,
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      // Forward the run-control flag so the inner client gates its paused/resume behavior; absent
+      // (false) ⇒ the inner client's paused branch + resume are inert (byte-identical to today).
+      ...(agentRunControlViaRust ? { agentRunControlViaRust: true } : {}),
+    });
+  }
 
   return {
     async dispatchRun(
       request: FridayRustHubAgentRunSealedClientServiceRequest,
-    ): Promise<FridayRustHubAgentRunSealedClientServiceResult> {
+    ): Promise<FridayRustHubAgentRunSealedClientServiceDispatchOutcome> {
       // Build the underlying sealed client from the per-dispatch X25519 secret. A non-32-byte
       // secret throws a RangeError from the sealed client constructor; map it to fail-closed (503)
       // so a malformed resolve surfaces as today's 503 rather than an unhandled throw.
       let client: FridayRustHubAgentRunSealedClient;
       try {
-        client = createClient({
-          ...(host !== undefined ? { host } : {}),
-          port,
-          clientSecret: request.clientSecret,
-          ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-        });
+        client = buildClient(request.clientSecret);
       } catch {
         throw unavailable("Sealed agent-run client could not be constructed.");
       }
 
       // The sealed client's dispatch already fails closed (503) on every non-clean settle; surface
-      // its FridayDomainError unchanged, wrap any non-domain throw as fail-closed.
-      let sealed;
+      // its FridayDomainError unchanged, wrap any non-domain throw as fail-closed. Typed as the
+      // discriminated union so the `outcome === "paused"` narrowing below is sound.
+      let sealed: FridayRustHubAgentRunSealedDispatchOutcome;
       try {
         sealed = await client.dispatchRun({
           runId: request.runId,
@@ -212,9 +284,17 @@ export function createFridayRustHubAgentRunSealedClientService(
           : unavailable("Sealed agent-run client dispatch failed.");
       }
 
-      // Map to the REFS-ONLY shape the composition consumes — DROP the in-band `body` (compose's
-      // authoritative body source is the slice-3 owner-gated DB readback). (A1) Thread the run
-      // COUNTS through when present (absent ⇒ omitted, never 0-faked); these are counts, not body.
+      // (A3 courier) A PAUSED outcome is surfaced UNCHANGED (refs only — approval nonce + action
+      // digest + summary; no signing material, INV-1) so compose can project an honest non-Finished
+      // row. It reaches here ONLY when the run-control flag is on (else the inner client fails closed
+      // on the unknown frame), so flag-off dispatch never produces this branch.
+      if (isPausedDispatchOutcome(sealed)) {
+        return sealed;
+      }
+
+      // Map the normal result to the REFS-ONLY shape the composition consumes — DROP the in-band
+      // `body` (compose's authoritative body source is the slice-3 owner-gated DB readback). (A1)
+      // Thread the run COUNTS through when present (absent ⇒ omitted, never 0-faked); not a body.
       return {
         truthLabel: "rust_wired",
         runId: sealed.runId,
@@ -228,6 +308,31 @@ export function createFridayRustHubAgentRunSealedClientService(
           ? { completionTokens: sealed.completionTokens }
           : {}),
       };
+    },
+
+    async resumeWithApproval(
+      request: FridayRustHubAgentRunSealedClientServiceResumeRequest,
+    ): Promise<FridayRustHubAgentRunResumeResult> {
+      // Build the underlying sealed client from the per-resume X25519 secret (fail-closed on a
+      // non-32-byte secret, same as dispatch). The inner client gates the relay on the run-control
+      // flag — OFF ⇒ it rejects without opening a socket (byte-identical inert default).
+      let client: FridayRustHubAgentRunSealedClient;
+      try {
+        client = buildClient(request.clientSecret);
+      } catch {
+        throw unavailable("Sealed agent-run client could not be constructed.");
+      }
+      try {
+        // INV-1: forward the OPAQUE blob VERBATIM; the adapter inspects/authors NOTHING inside it.
+        return await client.resumeWithApproval({
+          runId: request.runId,
+          opaqueSignedBlob: request.opaqueSignedBlob,
+        });
+      } catch (error) {
+        throw error instanceof FridayDomainError
+          ? error
+          : unavailable("Sealed agent-run client resume failed.");
+      }
     },
   };
 }

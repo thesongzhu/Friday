@@ -47,6 +47,13 @@ async function main(): Promise<void> {
 
   try {
     const result = await client.dispatchRun({ runId, task, forwardedPrincipal: principal });
+    // (A3 courier) dispatch returns a discriminated union (result | paused). This runner drives the
+    // read-only path with the run-control flag OFF, so a paused outcome is unreachable here — narrow
+    // on the `outcome` discriminant so the answer refs are read only on the result member.
+    if ("outcome" in result && result.outcome === "paused") {
+      process.stdout.write(JSON.stringify({ ok: false, code: "UNEXPECTED_PAUSE", httpStatus: 0 }) + "\n");
+      process.exit(4);
+    }
     process.stdout.write(
       JSON.stringify({
         ok: true,
