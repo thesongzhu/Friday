@@ -1018,6 +1018,40 @@ export function resolveRouteWorkflowsViaRust(
   return raw === "1" || raw === "true";
 }
 
+/**
+ * Barrier 5 (companion hardening): gate the live system companion bridge for
+ * AGENT-REACHABLE consumers behind the SAME test-only flag that fences
+ * `friday-system-service.executeIntent` (the `TS_RUNTIME_SYSTEM_INTENT_RETIRED`
+ * guard at `friday-system-service.ts`, opened only by
+ * `allowTestOnlySystemIntentExecution === true`).
+ *
+ * The `guide_lens` agent tool and the setup assistant reach the live Swift
+ * companion daemon via `companionBridge` WITHOUT passing through that
+ * `executeIntent` retirement guard, so on the default/production path they were a
+ * bypass: an agent run could drive overlay draws and a `captureSnapshot`
+ * screen-read at the daemon even though the executeIntent route is 503.
+ *
+ * This helper SEVERS that bypass by default: unless the explicit test-only flag is
+ * set, agent-reachable consumers receive `undefined` instead of the live bridge.
+ * Both consumers already null-check `companionBridge` (`friday-guide-lens-service.ts`
+ * `showNativeOverlay`/`clearNativeOverlay`/`captureSnapshot`;
+ * `friday-setup-assistant.ts` `setOverlayVisible`), so an absent bridge degrades
+ * them to fail-closed no-ops — no daemon call, no overlay, no screen read. NEVER
+ * default the flag on in production; the flag is the test-oracle escape hatch only.
+ *
+ * NOTE: the `systemService` consumer is NOT routed through this helper — it keeps
+ * the live bridge and is fenced separately at the method level by
+ * `executeIntent`'s own guard (it threads the same flag through
+ * `createFridaySystemService`). Severing the agent-reachable bypasses here mirrors
+ * that method-level fail-closed posture for the two consumers that lacked it.
+ */
+function resolveAgentReachableCompanionBridge<TBridge>(
+  liveBridge: TBridge,
+  allowTestOnlySystemIntentExecution: boolean | undefined,
+): TBridge | undefined {
+  return allowTestOnlySystemIntentExecution === true ? liveBridge : undefined;
+}
+
 function normalizeFridayHubPort(value: number | undefined): number | undefined {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 65535) {
     return undefined;
@@ -2411,7 +2445,16 @@ export async function createFridayHub(
       idGenerator,
       nowIso,
       systemService,
-      companionBridge: systemCompanionBridge,
+      // Barrier 5: the guide_lens agent tool bypasses the executeIntent retirement
+      // guard, so on the default/prod path it must NOT receive the live companion
+      // bridge (it would let an agent drive overlay draws + a captureSnapshot
+      // screen-read at the daemon). Fail closed to `undefined` unless the same
+      // test-only flag that opens executeIntent is set; the service null-checks the
+      // bridge and degrades overlay/snapshot to no-ops when absent.
+      companionBridge: resolveAgentReachableCompanionBridge(
+        systemCompanionBridge,
+        config.allowTestOnlySystemIntentExecution,
+      ),
       parserAdapter: guideLensParserAdapter,
       defaultPreferences: {
         defaultSurface: "native_desktop",
@@ -8205,7 +8248,15 @@ export async function createFridayHub(
       environmentScanner,
       coordinator: setupCoordinator,
       prerequisiteInstaller,
-      companionBridge: systemCompanionBridge,
+      // Barrier 5: the setup assistant is a SECOND agent-reachable token-holder of
+      // the live companion bridge that bypasses the executeIntent retirement guard.
+      // Fail closed to `undefined` on the default/prod path (it null-checks the
+      // bridge and degrades setOverlayVisible to a no-op when absent), opened only
+      // by the same test-only flag that fences executeIntent.
+      companionBridge: resolveAgentReachableCompanionBridge(
+        systemCompanionBridge,
+        config.allowTestOnlySystemIntentExecution,
+      ),
       eventEmitter: {
         emit: (event, payload) => {
           agentEventEmitter.emit(event as never, payload as never);
