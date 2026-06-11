@@ -95,10 +95,41 @@ describe("FridaySessionMemoryNamespace", () => {
       }
     });
 
-    it("replaces special characters in userId", () => {
+    it("replaces special characters in userId (including the dot — F5.5 hardening)", () => {
+      // F5.5 collision hardening: '@' AND the literal '.' both map to '-'. The dot is the
+      // segment joiner and is no longer kept inside a segment.
       const session = makeSession({ userId: "user@example.com" });
       const ns = resolveFridaySessionMemoryNamespace(session);
-      expect(ns).toBe("tenant.default.channel.discord.user.user-example.com.shared");
+      expect(ns).toBe("tenant.default.channel.discord.user.user-example-com.shared");
+    });
+
+    it("closes the dot-join collision: distinct tuples never collide (F5.5)", () => {
+      // The joiner-INJECTION vector: a userId / accountId literally containing the joiner
+      // word `.user.` could, when `.` was kept intra-segment, forge a DIFFERENT
+      // (account, channel, user) tuple's composite string — and that string IS the memory
+      // principal_id SCOPE, so distinct users would share one scope.
+      //
+      // Pre-fix both of these DISTINCT tuples produced
+      //   `tenant.a.channel.b.user.x.user.y.shared`  ← a real cross-tuple collision.
+      // Post-fix the embedded `.`s map to `-`, so they are DISTINCT.
+      const forged = resolveFridaySessionMemoryNamespace(
+        makeSession({ accountId: "a", channel: "b", userId: "x.user.y" }),
+      );
+      const victim = resolveFridaySessionMemoryNamespace(
+        makeSession({ accountId: "a", channel: "b.user.x", userId: "y" }),
+      );
+      expect(forged).not.toBe(victim);
+      expect(forged).toBe("tenant.a.channel.b.user.x-user-y.shared");
+      expect(victim).toBe("tenant.a.channel.b-user-x.user.y.shared");
+
+      // INJECTIVITY by construction: with `.` dropped from every segment, the composite
+      // splits into EXACTLY the seven fixed-position parts; no payload segment contains a dot.
+      const parts = forged.split(".");
+      expect(parts.length).toBe(7);
+      expect([parts[0], parts[2], parts[4], parts[6]]).toEqual(["tenant", "channel", "user", "shared"]);
+      for (const payload of [parts[1], parts[3], parts[5]]) {
+        expect(payload).not.toContain(".");
+      }
     });
 
     it("normalizes account and channel segments", () => {

@@ -7,8 +7,9 @@
 //! user's memory is isolated PER (account, channel) instead of being shared across every
 //! channel for the same user.
 //!
-//! Format (byte-identical to the TS — including the Unicode-aware lowercasing; see the
-//! normalization note on the dot-join residual that is SHARED with the TS oracle):
+//! Format (byte-identical to the TS — including the Unicode-aware lowercasing; the dot-join
+//! collision is now CLOSED in BOTH halves by dropping `.` from the segment keep-set, see the
+//! normalization note on [`is_kept`]):
 //! ```text
 //! tenant.<accountId>.channel.<channel>.user.<normalizedUserId>.shared
 //! ```
@@ -284,7 +285,7 @@ fn falsy_or<'a>(value: Option<&'a str>, fallback: &'a str) -> &'a str {
 /// Byte-identical port of the TS `normalizeNamespaceSegment`:
 /// ```js
 /// value.toLowerCase()
-///   .replace(/[^a-z0-9._-]/g, "-")
+///   .replace(/[^a-z0-9_-]/g, "-")
 ///   .replace(/-+/g, "-")
 ///   .replace(/^-|-$/g, "");
 /// // empty result -> "default"
@@ -305,14 +306,19 @@ fn falsy_or<'a>(value: Option<&'a str>, fallback: &'a str) -> &'a str {
 /// they agree on the single-codepoint mappings relevant to the keep-set; this is now a
 /// faithful port, not a documented gap.
 ///
-/// Residual (genuinely shared with the TS, not a Rust divergence): the dot is in the
-/// keep-set and segments are `.`-joined, so an id literally containing the joiner/segment
-/// words could in principle collide with a different (account, channel, user) triple. This
-/// is byte-faithful to the TS oracle (same unescaped join + same keep-set), so it is NOT a
-/// Rust regression; closing it is a SHARED TS+Rust hardening follow-on (segment-escape /
-/// dot-reject), out of scope for this parity slice.
+/// Collision hardening (F5.5 — CLOSED, shared TS+Rust): the dot-join collision is now
+/// closed by DROPPING `.` from the keep-set (see [`is_kept`]). Previously `.` was kept AND
+/// used as the segment joiner, so an id literally containing the joiner/segment words (e.g.
+/// `alice.channel.evil.user.bob`) could forge a different (account, channel, user) triple's
+/// namespace string — the composite is the memory `principal_id` SCOPE, so that was a
+/// cross-scope read/write collision. With `.` mapped to `-` in every segment, the composite
+/// always splits into exactly the seven fixed-position parts, so the mapping is injective
+/// over NORMALIZED segment tuples — this closes the CROSS-POSITION joiner-injection. The
+/// WITHIN-position normalization stays lossy (`a.b` ≡ `a-b`, same accepted behavior as
+/// `@` → `-`), lower-severity and not exploitable under single-owner v1. The change is
+/// byte-identical to the LIVE TS oracle (`/[^a-z0-9_-]/g`), preserving the parity contract.
 pub fn normalize_namespace_segment(value: &str) -> String {
-    // Step 1: toLowerCase() then replace each char NOT in [a-z0-9._-] with '-'. Use the
+    // Step 1: toLowerCase() then replace each char NOT in [a-z0-9_-] with '-'. Use the
     // Unicode-aware `to_lowercase` (matches JS `.toLowerCase()`), NOT `to_ascii_lowercase`,
     // so a non-ASCII char JS folds into a kept ASCII char (e.g. Kelvin U+212A -> 'k') is
     // kept identically here instead of collapsing to '-'.
@@ -357,10 +363,21 @@ pub fn normalize_namespace_segment(value: &str) -> String {
     }
 }
 
-/// The TS keep-set `[a-z0-9._-]` (applied AFTER `toLowerCase`, so uppercase A-Z is already
+/// The TS keep-set `[a-z0-9_-]` (applied AFTER `toLowerCase`, so uppercase A-Z is already
 /// lowered and never reaches here as uppercase).
+///
+/// COLLISION HARDENING (F5.5): the literal `.` is DELIBERATELY EXCLUDED (it maps to `-` like
+/// any other punctuation). `.` is the SEGMENT JOINER used by
+/// [`resolve_session_memory_namespace`] (`.join(".")`), and that composite string becomes
+/// the memory `principal_id` SCOPE. Stripping `.` from every segment makes the composite
+/// always split into exactly the seven fixed-position parts, so the mapping is injective
+/// over NORMALIZED segment tuples — a userId literally containing `.` can no longer forge a
+/// different tuple's split (the CROSS-POSITION collision). The WITHIN-position normalization
+/// stays lossy (`a.b` ≡ `a-b`, same as the accepted `@` → `-`). This keep-set is
+/// byte-identical to the LIVE TS oracle `normalizeNamespaceSegment` (`/[^a-z0-9_-]/g`); the
+/// two MUST stay in lockstep.
 fn is_kept(ch: char) -> bool {
-    ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '.' || ch == '_' || ch == '-'
+    ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '-'
 }
 
 #[cfg(test)]
@@ -413,6 +430,55 @@ mod tests {
     }
 
     #[test]
+    fn dot_join_collision_is_closed_distinct_tuples_never_collide() {
+        // F5.5 SHARED collision test (mirrored byte-for-byte in the TS test).
+        //
+        // The joiner-INJECTION vector: a userId / accountId literally containing the joiner
+        // word `.user.` (or `.channel.`) could, when `.` was kept intra-segment, forge a
+        // DIFFERENT (account, channel, user) tuple's composite string — and that string is
+        // the memory `principal_id` SCOPE, so distinct users would share one scope.
+        //
+        // Pre-fix these two DISTINCT tuples both produced
+        //   `tenant.a.channel.b.user.x.user.y.shared`  ← a real cross-tuple collision.
+        // Post-fix the embedded `.`s map to `-`, so they are DISTINCT.
+        let forged = resolve_session_memory_namespace(
+            Some("a"),
+            Some("b"),
+            Some("x.user.y"), // a userId that embeds the `.user.` joiner
+        )
+        .unwrap();
+        let victim = resolve_session_memory_namespace(
+            Some("a"),
+            Some("b.user.x"), // a channel that embeds the `.user.` joiner
+            Some("y"),
+        )
+        .unwrap();
+        assert_ne!(
+            forged, victim,
+            "distinct (account, channel, user) tuples must NEVER produce the same namespace"
+        );
+        assert_eq!(forged, "tenant.a.channel.b.user.x-user-y.shared");
+        assert_eq!(victim, "tenant.a.channel.b-user-x.user.y.shared");
+
+        // INJECTIVITY by construction: with `.` dropped from every segment, the composite
+        // splits into EXACTLY the seven fixed-position parts, so the parts (after the fixed
+        // tenant/channel/user/shared markers) round-trip the original normalized tuple.
+        let parts: Vec<&str> = forged.split('.').collect();
+        assert_eq!(parts.len(), 7, "namespace must be exactly 7 dot-parts");
+        assert_eq!(parts[0], "tenant");
+        assert_eq!(parts[2], "channel");
+        assert_eq!(parts[4], "user");
+        assert_eq!(parts[6], "shared");
+        // The account / channel / user payload positions never contain a `.`.
+        for payload in [parts[1], parts[3], parts[5]] {
+            assert!(
+                !payload.contains('.'),
+                "no segment may contain the joiner '.', got {payload:?}"
+            );
+        }
+    }
+
+    #[test]
     fn fails_closed_when_no_user_id() {
         // TS throws MEMORY_NAMESPACE_UNRESOLVABLE; we return the typed error. This is the
         // parity for the "no userId available" case (the DM/subagent fallbacks — now
@@ -431,7 +497,8 @@ mod tests {
 
     #[test]
     fn replaces_special_characters_in_user_id() {
-        // TS: "user@example.com" -> "user-example.com" ('@' -> '-', dots PRESERVED).
+        // F5.5 collision hardening: "user@example.com" -> "user-example-com" — '@' AND the
+        // literal '.' both map to '-' (the dot is no longer kept; it is the segment joiner).
         let ns = resolve_session_memory_namespace(
             Some("default"),
             Some("discord"),
@@ -440,7 +507,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             ns,
-            "tenant.default.channel.discord.user.user-example.com.shared"
+            "tenant.default.channel.discord.user.user-example-com.shared"
         );
     }
 
@@ -486,13 +553,17 @@ mod tests {
         assert_eq!(normalize_namespace_segment(""), "default");
         // Runs of disallowed chars collapse to ONE '-'.
         assert_eq!(normalize_namespace_segment("a   b---c"), "a-b-c");
-        // Dots, underscores, hyphens are KEPT.
-        assert_eq!(normalize_namespace_segment("a.b_c-d"), "a.b_c-d");
-        // user@example.com (the segment-level vector).
+        // F5.5: underscores and hyphens are KEPT; the literal '.' is NOT (it maps to '-',
+        // then collapses with adjacent '-'). It is the segment joiner, never an intra-segment
+        // char.
+        assert_eq!(normalize_namespace_segment("a.b_c-d"), "a-b_c-d");
+        // user@example.com (the segment-level vector): '@' and '.' both -> '-'.
         assert_eq!(
             normalize_namespace_segment("user@example.com"),
-            "user-example.com"
+            "user-example-com"
         );
+        // A bare run of dots collapses to ONE '-' then trims to empty -> "default".
+        assert_eq!(normalize_namespace_segment("..."), "default");
         // Non-ASCII is outside the keep-set and becomes '-' (then collapses/trims).
         assert_eq!(normalize_namespace_segment("héllo"), "h-llo");
         assert_eq!(normalize_namespace_segment("名前"), "default");

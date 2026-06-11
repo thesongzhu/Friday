@@ -122,10 +122,33 @@ function resolveEffectiveUserId(
   return undefined;
 }
 
+/**
+ * Normalize a single namespace SEGMENT.
+ *
+ * Pipeline: lowercase → replace every char NOT in the keep-set `[a-z0-9_-]` with `-`
+ * → collapse runs of `-` → trim leading/trailing `-` → empty result becomes `default`.
+ *
+ * COLLISION HARDENING (F5.5): the literal `.` is DELIBERATELY EXCLUDED from the keep-set
+ * (it maps to `-` like any other punctuation). `.` is the SEGMENT JOINER used by
+ * {@link resolveFridaySessionMemoryNamespace} (`[...].join(".")`), and that composite string
+ * becomes the memory store SCOPE (the Rust `principal_id`). If a segment could itself
+ * contain a `.`, a userId such as `alice.channel.evil.user.bob` could FORGE a different
+ * (account, channel, user) tuple's namespace string — a cross-scope memory read/write
+ * collision. With `.` stripped from every segment, the composite ALWAYS splits into exactly
+ * the seven fixed-position parts, so the mapping is injective over NORMALIZED segment
+ * tuples: this closes the CROSS-POSITION joiner-injection (a segment can no longer forge a
+ * different account/channel/user split). The WITHIN-position normalization stays lossy
+ * (`a.b` ≡ `a-b`, the same accepted behavior as the pre-existing `@` → `-`); that is
+ * lower-severity and not exploitable under the single-owner v1 threat model.
+ *
+ * PARITY: this keep-set is byte-identical to the Rust port `normalize_namespace_segment`
+ * / `is_kept` in `rust-core/crates/friday-hub/src/session_namespace.rs`. The two MUST stay
+ * in lockstep (the Rust half binds the same composite string to its `principal_id` scope).
+ */
 function normalizeNamespaceSegment(value: string): string {
   const normalized = value
     .toLowerCase()
-    .replace(/[^a-z0-9._-]/g, "-")
+    .replace(/[^a-z0-9_-]/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
 
