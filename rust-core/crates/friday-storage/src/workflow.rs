@@ -227,6 +227,22 @@ pub fn step_status(conn: &Connection, step_id: &str) -> Result<Option<StepStatus
     Ok(s.map(|x| parse_step_status(&x)))
 }
 
+/// Whether a step carries a side effect (the persisted `has_side_effect` flag — the
+/// single source of truth the run-completion gate and `complete_step` already read).
+/// `None` for an unknown `step_id`. The A5 idempotency guard keys off this: ONLY a
+/// side-effect step is a re-run hazard, so only a side-effect step is ledger-checked
+/// (a read-only step always re-runs — skipping a read would serve stale data).
+pub fn step_has_side_effect(conn: &Connection, step_id: &str) -> Result<Option<bool>> {
+    let v: Option<i64> = conn
+        .query_row(
+            "SELECT has_side_effect FROM workflow_step WHERE step_id = ?1",
+            [step_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(v.map(|x| x != 0))
+}
+
 /// Resolve + persist a step's completion via the evidence-gating invariant. A
 /// side-effect step is persisted `Verified` only when deterministic evidence is
 /// supplied (`evidence_ref`); otherwise `ProofPending` (even if the model claimed
@@ -389,4 +405,145 @@ pub fn run_cancel_reason(conn: &Connection, run_id: &str) -> Result<Option<Strin
         )
         .optional()?;
     Ok(r.flatten())
+}
+
+// --- A5: per-step-effect IDEMPOTENCY ledger (DARK, m0029). Hub-only, additive. ---
+//
+// The retry frontier (`reopen_failed_step` -> Pending + `attempt += 1`) re-drives a
+// step's effect. These primitives let the engine RECORD a step's committed
+// side-effect under a STABLE idempotency key and CHECK that key on a re-drive so an
+// already-committed effect is NOT re-run. The key deliberately EXCLUDES the attempt
+// (so a retry of the SAME effect matches its prior commit) and INCLUDES the
+// action+params digest (so a re-drive of a DIFFERENT effect at the same seq — e.g. a
+// changed def version — naturally MISSES and never skips the wrong effect).
+//
+// HONEST SCOPE (the engine semantics, restated where the data lives): in today's
+// LINEAR, SYNCHRONOUS engine a committed side-effect step is `complete_step`d
+// `Verified`, and the retry frontier SKIPS `Verified` steps (`reopen_failed_step`
+// REFUSES them) — so a committed effect is already never re-driven. This ledger is
+// therefore DARK defense-in-depth + forward-safety: it always RECORDS committed-effect
+// provenance, and its SKIP guards a future model where commit and `Verified` can
+// diverge (a DAG frontier with a committed sibling, or an async/crash run). It does
+// NOT, by itself, make the current engine "exactly-once" against a partially-applied
+// external tool — that needs the key CARRIED into the executor so a key-aware tool
+// dedupes, an explicit deferred sub-AC (the executor signature / gate code is not
+// touched here).
+
+/// A committed per-step side-effect, recorded under its stable idempotency key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommittedEffect {
+    /// The stable idempotency key (`sha256(run_id|seq|action|sorted-params)` hex).
+    pub idem_key: String,
+    pub run_id: String,
+    pub step_id: String,
+    pub seq: i64,
+    pub action: String,
+    /// The committed tool-receipt summary (the SAME bounded text persisted as evidence).
+    pub receipt_summary: String,
+    /// The committed tool-receipt content (refs/body the engine threads back), or None.
+    pub receipt_content: Option<String>,
+    pub committed_at: i64,
+}
+
+/// Compute the STABLE per-step-effect idempotency key:
+/// `sha256(run_id "\0" seq "\0" action "\0" k1 "\0" v1 "\0" ...)` over the params
+/// SORTED by key (so param ORDER never changes the key — two semantically-identical
+/// effects share a key). It deliberately does NOT include the retry `attempt` (a
+/// retry of the SAME effect must match its prior commit) and DOES include
+/// action+params (a DIFFERENT effect at the same seq computes a different key, so a
+/// skip can never apply the wrong effect). `\0` separators + the explicit field
+/// order make the encoding unambiguous (no `"a"+"bc"` vs `"ab"+"c"` collision).
+pub fn step_effect_idem_key(
+    run_id: &str,
+    seq: i64,
+    action: &str,
+    params: &[(String, String)],
+) -> String {
+    use sha2::{Digest, Sha256};
+    let mut sorted: Vec<&(String, String)> = params.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    let mut h = Sha256::new();
+    h.update(run_id.as_bytes());
+    h.update([0u8]);
+    h.update(seq.to_string().as_bytes());
+    h.update([0u8]);
+    h.update(action.as_bytes());
+    h.update([0u8]);
+    for (k, v) in sorted {
+        h.update(k.as_bytes());
+        h.update([0u8]);
+        h.update(v.as_bytes());
+        h.update([0u8]);
+    }
+    let digest = h.finalize();
+    let mut hex = String::with_capacity(64);
+    for b in digest {
+        use std::fmt::Write as _;
+        let _ = write!(hex, "{b:02x}");
+    }
+    hex
+}
+
+/// RECORD a step's committed side-effect under its stable idempotency key (the
+/// engine calls this immediately after a side-effect step's executor returns `Ok`,
+/// BEFORE `complete_step`). The `idem_key` PRIMARY KEY makes a re-record of the SAME
+/// effect a benign no-op (`INSERT OR IGNORE`) rather than a uniqueness error, so a
+/// re-drive that DID run the effect again (it was not skipped) does not fail closed
+/// on the record. Returns `true` if a NEW row was written, `false` if the key was
+/// already present (already-committed).
+#[allow(clippy::too_many_arguments)]
+pub fn record_committed_effect(
+    conn: &Connection,
+    idem_key: &str,
+    run_id: &str,
+    step_id: &str,
+    seq: i64,
+    action: &str,
+    receipt_summary: &str,
+    receipt_content: Option<&str>,
+    committed_at: i64,
+) -> Result<bool> {
+    let rows = conn.execute(
+        "INSERT OR IGNORE INTO workflow_step_effect
+            (idem_key, run_id, step_id, seq, action, receipt_summary, receipt_content, committed_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            idem_key,
+            run_id,
+            step_id,
+            seq,
+            action,
+            receipt_summary,
+            receipt_content,
+            committed_at
+        ],
+    )?;
+    Ok(rows == 1)
+}
+
+/// READ a committed effect by its stable idempotency key, or `None` if no effect was
+/// ever committed under that key. The engine consults this BEFORE dispatching a
+/// side-effect step on a re-drive: a `Some` means the SAME effect already committed
+/// (skip the executor, reuse the recorded receipt); a `None` means it never committed
+/// (dispatch through the gate). Never writes.
+pub fn committed_effect(conn: &Connection, idem_key: &str) -> Result<Option<CommittedEffect>> {
+    conn.query_row(
+        "SELECT idem_key, run_id, step_id, seq, action, receipt_summary, receipt_content, committed_at
+           FROM workflow_step_effect WHERE idem_key = ?1",
+        [idem_key],
+        |r| {
+            Ok(CommittedEffect {
+                idem_key: r.get(0)?,
+                run_id: r.get(1)?,
+                step_id: r.get(2)?,
+                seq: r.get(3)?,
+                action: r.get(4)?,
+                receipt_summary: r.get(5)?,
+                receipt_content: r.get(6)?,
+                committed_at: r.get(7)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(StorageError::from)
 }

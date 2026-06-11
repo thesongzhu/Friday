@@ -48,10 +48,119 @@ use friday_storage::{workflow, StorageError};
 use rusqlite::Connection;
 
 use crate::planner::{plan_step, StepDisposition, WorkflowDefinition};
-use crate::{gate_dispatch, GateDispatch, RawToolCall, ToolExecutor};
+use crate::{gate_dispatch, GateDispatch, RawToolCall, ToolExecutor, ToolReceipt};
 
 /// Priority of a workflow-checkpoint Needs-Me item (urgency-first ordering, `08` §1).
 const WORKFLOW_CHECKPOINT_PRIORITY: u8 = 7;
+
+/// A5: per-step-effect IDEMPOTENT dispatch — the single wrapper around the shared
+/// security chokepoint [`gate_dispatch`] that ALL three workflow drivers
+/// ([`advance_from`] auto-advance, [`resume_workflow`] force-dispatch, and
+/// [`retry_workflow`] force-dispatch) route their step dispatch through, so the
+/// retry frontier (`reopen_failed_step` → re-drive) never re-runs an
+/// already-committed side effect.
+///
+/// It does NOT touch / re-implement the gate (the `gate_dispatch` chokepoint is
+/// wrapped, never modified — the classify→authorize→execute-ONLY-on-`Allow`
+/// posture, the crypto authorize, and the executor-called-exactly-once invariant
+/// are all unchanged). It adds ONE thing on top:
+///
+/// - **Pre-dispatch SKIP (side-effect steps only):** for a step the persisted
+///   `has_side_effect` flag marks a side effect, it computes the STABLE idempotency
+///   key (`step_effect_idem_key(run_id, seq, action, params)` — NO attempt, so a
+///   retry of the SAME effect matches; WITH the action+params digest, so a changed
+///   effect at the same seq MISSES) and consults the m0029 ledger. A `Some` means
+///   the SAME effect already committed → the executor is NOT called and the RECORDED
+///   receipt is replayed as [`GateDispatch::Executed`]. The gate is also not consulted
+///   on the skip (the effect already passed it once when it committed).
+/// - **Post-dispatch RECORD (side-effect steps only):** on a real
+///   [`GateDispatch::Executed`], it RECORDS the committed effect under the same key
+///   BEFORE the caller's `complete_step`, so a subsequent re-drive can skip it. The
+///   key PK makes a re-record of the SAME effect a benign no-op.
+///
+/// A read-only step (`has_side_effect == false`) is NEVER skipped and NEVER recorded
+/// — re-running a read on retry is correct (skipping it would serve stale data), and
+/// reads are not a double-apply hazard.
+///
+/// PREDICATE CAVEAT (forward-only; documented, not narrowed here on purpose): the skip
+/// predicate is the persisted `has_side_effect` flag, which means "requires evidence
+/// to verify" — and the engine sets it `true` not only for mutating steps but also for
+/// a SENSITIVE-READ checkpoint and any `force_checkpoint` step. So in the FORWARD model
+/// (where the skip could fire) such a read would be REPLAYED from its recorded receipt
+/// rather than re-read — staleness, not a double-apply (benign for a read). This is
+/// inert in today's engine (a committed read is `Verified` and the frontier skips it,
+/// so its ledger row is never consulted), and is refined precisely when the
+/// executor-carried key lands (a key-aware tool decides re-run vs dedup per its own
+/// idempotency). For the same forward-only reason a SKIPPED step is still counted in
+/// `executed_steps` though the executor did not run. The predicate is deliberately NOT
+/// narrowed at this slice (narrowing it for zero current benefit is regression risk).
+///
+/// HONEST SCOPE (DARK defense-in-depth + forward-safety, NOT a live double-run fix):
+/// in today's LINEAR, SYNCHRONOUS engine a committed side-effect step is
+/// `complete_step`d `Verified`, and the retry frontier SKIPS `Verified` steps
+/// (`reopen_failed_step` REFUSES them) — so a committed effect is ALREADY never
+/// re-driven, and the SKIP branch here is REDUNDANT with that Verified-skip and is
+/// not reached by normal `run_workflow`/`retry_workflow` execution. The always-active,
+/// genuinely-new behavior is the RECORD (committed-effect provenance on every
+/// committed side-effect). The SKIP guards a FUTURE model where commit and `Verified`
+/// can diverge (a DAG frontier with a committed sibling, or an async/crash run). It
+/// does NOT make the current engine exactly-once against a partially-applied EXTERNAL
+/// tool — that needs the key CARRIED into `executor.execute` so a key-aware tool
+/// dedupes, a deferred sub-AC (the executor signature / gate code is untouched here).
+#[allow(clippy::too_many_arguments)]
+fn dispatch_step_idempotent(
+    conn: &Connection,
+    executor: &dyn ToolExecutor,
+    raw: &RawToolCall,
+    run_id: &str,
+    seq: usize,
+    step_id: &str,
+    secret: &[u8],
+    approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
+    now_ms: i64,
+) -> Result<GateDispatch, StorageError> {
+    // The side-effect flag is the persisted truth (single-sourced with the
+    // run-completion gate / `complete_step`). A read-only step is never a re-run
+    // hazard, so it bypasses the ledger entirely (always dispatched, never recorded).
+    let is_side_effect = workflow::step_has_side_effect(conn, step_id)?.unwrap_or(false);
+    if !is_side_effect {
+        return gate_dispatch(conn, executor, raw, secret, approve, now_ms);
+    }
+
+    let idem_key = workflow::step_effect_idem_key(run_id, seq as i64, &raw.action, &raw.params);
+
+    // Pre-dispatch SKIP: the SAME effect already committed under this key → replay the
+    // recorded receipt WITHOUT calling the executor (and without re-consulting the
+    // gate — the effect already passed it when it committed). A DIFFERENT effect at the
+    // same seq computes a different key and misses, so this never replays the wrong one.
+    if let Some(committed) = workflow::committed_effect(conn, &idem_key)? {
+        return Ok(GateDispatch::Executed(ToolReceipt {
+            action: raw.action.clone(),
+            summary: committed.receipt_summary,
+            content: committed.receipt_content,
+        }));
+    }
+
+    // Not yet committed → the real gate-mandatory dispatch (unchanged).
+    let outcome = gate_dispatch(conn, executor, raw, secret, approve, now_ms)?;
+    // Post-dispatch RECORD: on a real commit, record the effect under the stable key
+    // BEFORE the caller's `complete_step`, so a later re-drive of the SAME effect skips
+    // it. The PK makes a re-record of the same key a benign no-op.
+    if let GateDispatch::Executed(receipt) = &outcome {
+        workflow::record_committed_effect(
+            conn,
+            &idem_key,
+            run_id,
+            step_id,
+            seq as i64,
+            &raw.action,
+            &receipt.summary,
+            receipt.content.as_deref(),
+            now_ms,
+        )?;
+    }
+    Ok(outcome)
+}
 
 /// The Needs-Me items for PAUSED workflows (`08` §2): every `AwaitingCheckpoint` run is
 /// surfaced as a cross-source action item the user must act on (approve/resume the
@@ -163,7 +272,9 @@ pub fn resume_workflow(
         action: step.action.clone(),
         params: step.params.clone(),
     };
-    match gate_dispatch(conn, executor, &raw, secret, approve, now_ms)? {
+    match dispatch_step_idempotent(
+        conn, executor, &raw, run_id, paused_seq, &step_id, secret, approve, now_ms,
+    )? {
         GateDispatch::Executed(receipt) => {
             workflow::complete_step(conn, &step_id, Some(&receipt.summary), true, now_ms)?;
         }
@@ -277,7 +388,9 @@ fn advance_from(
                     action: step.action.clone(),
                     params: step.params.clone(),
                 };
-                match gate_dispatch(conn, executor, &raw, secret, approve, now_ms)? {
+                match dispatch_step_idempotent(
+                    conn, executor, &raw, run_id, seq, &step_id, secret, approve, now_ms,
+                )? {
                     GateDispatch::Executed(receipt) => {
                         // Complete WITH the tool receipt as evidence (`08` §6).
                         workflow::complete_step(
@@ -412,11 +525,16 @@ fn find_retry_frontier_seq(
 /// frontier step then `advance_from(frontier + 1, ..)`. Already-`Verified` earlier
 /// steps are NEVER re-executed.
 ///
-/// HONEST LIMITATION (documented dark-substrate sub-AC): there are NO idempotency
-/// keys (TS `retryRun` has per-attempt idempotency keys). Re-driving the frontier
-/// step is correct for a TRANSIENT failure (the common retry case); a step whose
-/// side effect *partially* applied before failing could double-run on retry.
-/// Idempotency-keyed re-execution is a deferred follow-up — see the PR body.
+/// A5 IDEMPOTENCY: the frontier re-dispatch routes through
+/// [`dispatch_step_idempotent`] (the same wrapper as run/resume), so a side-effect
+/// step's COMMITTED effect is recorded under a stable per-effect key (m0029) and a
+/// re-drive of the SAME effect is skipped (the executor is not re-called). HONEST
+/// SCOPE: in this linear synchronous engine a committed side-effect step is
+/// `Verified` and the frontier already SKIPS `Verified` steps, so the skip is
+/// REDUNDANT defense-in-depth (forward-safe for a DAG/async model); the always-active
+/// behavior is the committed-effect RECORD. It does NOT make a partially-applied
+/// EXTERNAL tool exactly-once — that needs the key CARRIED into the executor (a
+/// deferred sub-AC). See [`dispatch_step_idempotent`] and the PR body.
 #[allow(clippy::too_many_arguments)]
 pub fn retry_workflow(
     def: &WorkflowDefinition,
@@ -451,7 +569,17 @@ pub fn retry_workflow(
         action: step.action.clone(),
         params: step.params.clone(),
     };
-    match gate_dispatch(conn, executor, &raw, secret, approve, now_ms)? {
+    match dispatch_step_idempotent(
+        conn,
+        executor,
+        &raw,
+        run_id,
+        frontier_seq,
+        &step_id,
+        secret,
+        approve,
+        now_ms,
+    )? {
         GateDispatch::Executed(receipt) => {
             workflow::complete_step(conn, &step_id, Some(&receipt.summary), true, now_ms)?;
         }
@@ -1002,5 +1130,323 @@ mod tests {
                 ),
             ],
         }
+    }
+
+    // --- A5: per-step-effect idempotency (m0029) -----------------------------
+
+    /// Executor that ERRS on its first call and SUCCEEDS thereafter (a transient
+    /// failure) — distinct from `CountingExec` so an A5 test can drive a real
+    /// engine-produced Failed run with a NON-Verified side-effect frontier.
+    struct TransientExec {
+        calls: Cell<usize>,
+    }
+    impl ToolExecutor for TransientExec {
+        fn execute(
+            &self,
+            action: &str,
+            _params: &[(String, String)],
+        ) -> Result<ToolReceipt, ExecError> {
+            let n = self.calls.get() + 1;
+            self.calls.set(n);
+            if n == 1 {
+                Err(ExecError::Unsupported("transient boom".to_string()))
+            } else {
+                Ok(ToolReceipt {
+                    action: action.to_string(),
+                    summary: format!("ran {action} (attempt {n})"),
+                    content: None,
+                })
+            }
+        }
+    }
+
+    /// A single SIDE-EFFECT (evidence_required) but gate-safe (`read_file`,
+    /// auto-advances) step. Its `has_side_effect` flag is true, so it is ledger-tracked,
+    /// yet it executes WITHOUT a checkpoint pause (the gate Allows a read), which is the
+    /// only synchronous shape in the linear engine where a side-effect step runs the
+    /// executor and is recorded.
+    fn single_side_effect_def() -> WorkflowDefinition {
+        WorkflowDefinition {
+            name: "probe".into(),
+            steps: vec![step("e", "read_file", &[("path", "log")], false, true)],
+        }
+    }
+
+    #[test]
+    fn a_committed_side_effect_records_its_effect_in_the_idempotency_ledger() {
+        // THE always-active, genuinely-new A5 behavior: when a side-effect step
+        // commits (executor Ok), the engine RECORDS the committed effect under its
+        // stable per-effect key (m0029). This is observable provenance regardless of
+        // whether the skip ever fires. A read-only step is NOT recorded (not a hazard).
+        let db = Db::open_hub(&tmp("a5-record")).unwrap();
+        let exec = CountingExec {
+            calls: Cell::new(0),
+        };
+        let def = WorkflowDefinition {
+            name: "mix".into(),
+            steps: vec![
+                step("read", "read_file", &[("path", "x")], false, false), // read-only s0
+                step("ev", "read_file", &[("path", "log")], false, true),  // side-effect s1
+            ],
+        };
+        let out = run_workflow(&def, &exec, db.conn(), "r1", SECRET, &deny_all, 100).unwrap();
+        assert_eq!(out.status, WorkflowRunStatus::Completed);
+
+        // The side-effect step (s1) recorded a committed effect under its stable key.
+        let key = workflow::step_effect_idem_key(
+            "r1",
+            1,
+            "read_file",
+            &[("path".to_string(), "log".to_string())],
+        );
+        let committed = workflow::committed_effect(db.conn(), &key).unwrap();
+        assert!(
+            committed.is_some(),
+            "the committed side-effect step recorded its effect"
+        );
+        let committed = committed.unwrap();
+        assert_eq!(committed.step_id, "r1:s1");
+        assert_eq!(committed.action, "read_file");
+
+        // The READ-ONLY step (s0) recorded NOTHING (not a re-run hazard).
+        let read_key = workflow::step_effect_idem_key(
+            "r1",
+            0,
+            "read_file",
+            &[("path".to_string(), "x".to_string())],
+        );
+        assert!(
+            workflow::committed_effect(db.conn(), &read_key)
+                .unwrap()
+                .is_none(),
+            "a read-only step is never ledger-recorded"
+        );
+    }
+
+    #[test]
+    fn idempotency_key_skips_a_non_verified_committed_side_effect_on_retry() {
+        // THE load-bearing GUARD-LOGIC test, isolating the idempotency KEY from
+        // Verified-skip. We construct a state the current linear engine does NOT
+        // produce on its own — a side-effect step left NON-Verified (ProofPending)
+        // that ALSO has a committed-effect ledger row — to prove the skip branch is
+        // the SOLE cause of the executor NOT being called.
+        //
+        // HONEST: this is a guard-logic test against an INJECTED ledger row, NOT a
+        // regression test of a prevented live double-run. In today's engine a committed
+        // side-effect step is Verified and the retry frontier skips Verified, so this
+        // exact (non-Verified + committed) combination is unreachable through normal
+        // run/retry; the skip is forward-safe defense-in-depth (see
+        // `dispatch_step_idempotent`). Verified-skip cannot cause this assertion: the
+        // step here is ProofPending, NOT Verified, so the frontier DOES reopen + re-drive
+        // it — only the ledger entry stops the executor.
+        let db = Db::open_hub(&tmp("a5-skip")).unwrap();
+        let exec = TransientExec {
+            calls: Cell::new(0),
+        };
+        let def = single_side_effect_def();
+
+        // First drive: gate Allows the read, executor ERRS → step ProofPending, run Failed.
+        let started = run_workflow(&def, &exec, db.conn(), "r1", SECRET, &mint_all, 100).unwrap();
+        assert!(matches!(started.status, WorkflowRunStatus::Failed { .. }));
+        assert_eq!(exec.calls.get(), 1);
+        assert_eq!(
+            workflow::step_status(db.conn(), "r1:s0").unwrap(),
+            Some(StepStatus::ProofPending),
+            "a side-effect exec-error leaves the step ProofPending (non-Verified frontier)"
+        );
+        // NB: no committed effect was recorded (the executor ERRED, never committed).
+        let key = workflow::step_effect_idem_key(
+            "r1",
+            0,
+            "read_file",
+            &[("path".to_string(), "log".to_string())],
+        );
+        assert!(workflow::committed_effect(db.conn(), &key)
+            .unwrap()
+            .is_none());
+
+        // INJECT a committed-effect ledger row for this exact effect (the synthetic
+        // state). On retry, the frontier reopens (ProofPending → Pending) and is
+        // re-driven through `dispatch_step_idempotent`, which now finds the recorded
+        // effect → SKIPS the executor and replays the recorded receipt.
+        workflow::record_committed_effect(
+            db.conn(),
+            &key,
+            "r1",
+            "r1:s0",
+            0,
+            "read_file",
+            "recorded-receipt-summary",
+            None,
+            150,
+        )
+        .unwrap();
+
+        let out = retry_workflow(&def, &exec, db.conn(), "r1", SECRET, &mint_all, 200).unwrap();
+        assert_eq!(out.status, WorkflowRunStatus::Completed);
+        assert_eq!(
+            exec.calls.get(),
+            1,
+            "the committed effect was SKIPPED on retry: the executor was NOT called again"
+        );
+        // The step completed from the recorded receipt → Verified.
+        assert_eq!(
+            workflow::step_status(db.conn(), "r1:s0").unwrap(),
+            Some(StepStatus::Verified)
+        );
+    }
+
+    #[test]
+    fn retry_without_a_ledger_entry_re_runs_the_frontier_the_negative_twin() {
+        // The NEGATIVE TWIN of the skip test: IDENTICAL setup but NO injected ledger
+        // row → the executor IS called again on retry. This isolates the key as the
+        // sole cause of the skip in the positive case (same engine path, same
+        // non-Verified frontier; the only difference is the ledger entry).
+        let db = Db::open_hub(&tmp("a5-noskip")).unwrap();
+        let exec = TransientExec {
+            calls: Cell::new(0),
+        };
+        let def = single_side_effect_def();
+
+        let started = run_workflow(&def, &exec, db.conn(), "r1", SECRET, &mint_all, 100).unwrap();
+        assert!(matches!(started.status, WorkflowRunStatus::Failed { .. }));
+        assert_eq!(exec.calls.get(), 1);
+
+        // NO ledger row injected → retry re-drives the frontier (executor called a 2nd time).
+        let out = retry_workflow(&def, &exec, db.conn(), "r1", SECRET, &mint_all, 200).unwrap();
+        assert_eq!(out.status, WorkflowRunStatus::Completed);
+        assert_eq!(
+            exec.calls.get(),
+            2,
+            "with NO committed-effect ledger entry the frontier is re-driven (executor re-called)"
+        );
+        assert_eq!(
+            workflow::step_status(db.conn(), "r1:s0").unwrap(),
+            Some(StepStatus::Verified)
+        );
+        // The re-drive committed the effect now (so a FURTHER re-drive would skip it).
+        let key = workflow::step_effect_idem_key(
+            "r1",
+            0,
+            "read_file",
+            &[("path".to_string(), "log".to_string())],
+        );
+        assert!(
+            workflow::committed_effect(db.conn(), &key)
+                .unwrap()
+                .is_some(),
+            "the successful re-drive recorded the committed effect"
+        );
+    }
+
+    #[test]
+    fn retry_after_partial_success_does_not_double_run_committed_steps_only_re_drives_frontier() {
+        // The required per-behavior retry test, driven END-TO-END (no injected state):
+        // a multi-step run where an EARLIER side-effect step COMMITS (Verified) and a
+        // LATER step is the failure frontier. Retry must re-drive ONLY the failed
+        // frontier — the already-committed earlier step's executor is NOT re-called.
+        //
+        // (In the linear engine this is enforced by Verified-skip; the A5 ledger ALSO
+        // recorded the earlier step's effect, so a future model that re-presented it at
+        // the frontier would skip it too. Both guards agree here.)
+        let db = Db::open_hub(&tmp("a5-partial")).unwrap();
+        // s0 = side-effect read (commits Verified on attempt 1); s1 = side-effect read
+        // that ERRS on its first execution (the frontier), succeeds on retry. A single
+        // TransientExec errs only on its FIRST call — which is s1 (s0 ran first, OK on
+        // call 1? no: call 1 is s0). So use a frontier-only-failing executor instead.
+        struct FrontierFailExec {
+            calls: Cell<usize>,
+            // step ids that have been executed, to prove no double-run.
+            ran: std::cell::RefCell<Vec<String>>,
+            fail_action_once: std::cell::RefCell<Option<String>>,
+        }
+        impl ToolExecutor for FrontierFailExec {
+            fn execute(
+                &self,
+                action: &str,
+                params: &[(String, String)],
+            ) -> Result<ToolReceipt, ExecError> {
+                self.calls.set(self.calls.get() + 1);
+                let path = params
+                    .iter()
+                    .find(|(k, _)| k == "path")
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or_default();
+                self.ran.borrow_mut().push(format!("{action}:{path}"));
+                // Fail the frontier action exactly once (the first time it is seen).
+                let mut once = self.fail_action_once.borrow_mut();
+                if once.as_deref() == Some(path.as_str()) {
+                    *once = None;
+                    return Err(ExecError::Unsupported("frontier boom".to_string()));
+                }
+                Ok(ToolReceipt {
+                    action: action.to_string(),
+                    summary: format!("ran {action} {path}"),
+                    content: None,
+                })
+            }
+        }
+        let exec = FrontierFailExec {
+            calls: Cell::new(0),
+            ran: std::cell::RefCell::new(Vec::new()),
+            fail_action_once: std::cell::RefCell::new(Some("frontier".to_string())),
+        };
+        let def = WorkflowDefinition {
+            name: "twostep".into(),
+            steps: vec![
+                step("a", "read_file", &[("path", "committed")], false, true), // s0 side-effect
+                step("b", "read_file", &[("path", "frontier")], false, true), // s1 side-effect frontier
+            ],
+        };
+
+        // First drive: s0 commits (Verified), s1 errs → ProofPending, run Failed.
+        let started = run_workflow(&def, &exec, db.conn(), "r1", SECRET, &mint_all, 100).unwrap();
+        assert!(matches!(started.status, WorkflowRunStatus::Failed { .. }));
+        assert_eq!(
+            workflow::step_status(db.conn(), "r1:s0").unwrap(),
+            Some(StepStatus::Verified),
+            "the earlier side-effect step committed (Verified)"
+        );
+        assert_eq!(
+            workflow::step_status(db.conn(), "r1:s1").unwrap(),
+            Some(StepStatus::ProofPending),
+            "the frontier side-effect step failed (ProofPending)"
+        );
+        assert_eq!(
+            *exec.ran.borrow(),
+            vec!["read_file:committed", "read_file:frontier"]
+        );
+        let calls_after_first = exec.calls.get();
+        assert_eq!(calls_after_first, 2);
+        // s0's committed effect is recorded.
+        let s0_key = workflow::step_effect_idem_key(
+            "r1",
+            0,
+            "read_file",
+            &[("path".to_string(), "committed".to_string())],
+        );
+        assert!(workflow::committed_effect(db.conn(), &s0_key)
+            .unwrap()
+            .is_some());
+
+        // Retry: ONLY the frontier (s1) is re-driven; s0 is NOT re-executed.
+        let out = retry_workflow(&def, &exec, db.conn(), "r1", SECRET, &mint_all, 200).unwrap();
+        assert_eq!(out.status, WorkflowRunStatus::Completed);
+        assert_eq!(run_state(&db, "r1"), "done");
+        // Exactly ONE more executor call (the frontier re-drive); s0 not re-run.
+        assert_eq!(
+            exec.calls.get(),
+            calls_after_first + 1,
+            "retry re-drove ONLY the frontier — the committed earlier step was not double-run"
+        );
+        assert_eq!(
+            *exec.ran.borrow(),
+            vec![
+                "read_file:committed",
+                "read_file:frontier",
+                "read_file:frontier"
+            ],
+            "the committed step (committed) ran exactly once; only the frontier re-ran"
+        );
     }
 }

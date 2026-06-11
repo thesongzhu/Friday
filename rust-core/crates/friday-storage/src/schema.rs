@@ -111,6 +111,18 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     "system_intent_result",
     "system_control_lease",
     "system_intent_approval_record",
+    // A5: per-step-effect IDEMPOTENCY ledger (DARK substrate). Records the
+    // committed side-effect of a workflow step keyed by a STABLE idempotency key
+    // `sha256(run_id|seq|action|sorted-params)` (NOT the attempt — so it survives a
+    // `reopen_failed_step` retry and a re-drive of the SAME effect matches it). A
+    // separate table (not columns on `workflow_step`) so the record survives
+    // `reopen_failed_step` (which sets the step Pending / bumps attempt / clears
+    // evidence_ref) by construction. Hub-only: it hangs off the Hub-only workflow run
+    // engine and is created only where that engine runs. Holds NO secret/key material
+    // — the recorded receipt is the SAME bounded tool-summary (+ optional content) the
+    // step already persisted as evidence; the key is a digest, never raw approval/mint
+    // material. Nothing reads/writes it in production (DARK).
+    "workflow_step_effect",
 ];
 
 /// Tables present only on a phone (never created on the Hub).
@@ -461,6 +473,24 @@ pub fn hub_migrations() -> Vec<Migration> {
             destructive: false,
             up: m0028_agent_session_lifecycle,
         },
+        // A5: per-step-effect IDEMPOTENCY ledger (DARK substrate). A NEW Hub-only
+        // table `workflow_step_effect` recording the committed side-effect of a
+        // workflow step keyed by a STABLE idempotency key (the m0029 column
+        // `idem_key` = `sha256(run_id|seq|action|sorted-params)`, NOT the attempt —
+        // so a retry that re-drives the SAME effect matches the recorded commit and
+        // a CHANGED effect naturally misses). It is the NEW-TABLE pattern (like
+        // m0026 system_intent / m0005 agent_run), NOT an ALTER — so no existing
+        // table is touched and every pre-v29 row/query is unaffected. The table is
+        // separate (not columns on `workflow_step`) on purpose: the record must
+        // survive `reopen_failed_step` (which sets the step Pending / bumps attempt /
+        // clears evidence_ref), and a separate table survives-by-construction. DARK:
+        // nothing in production reads or writes it.
+        Migration {
+            version: 29,
+            name: "workflow_step_effect_idempotency",
+            destructive: false,
+            up: m0029_workflow_step_effect_idempotency,
+        },
     ]
 }
 
@@ -631,6 +661,32 @@ CREATE TABLE workflow_step (
     updated_at      INTEGER NOT NULL
 );
 CREATE INDEX idx_workflow_step_run ON workflow_step(run_id, seq);";
+
+// A5: per-step-effect IDEMPOTENCY ledger (Hub-only, DARK). One row per COMMITTED
+// side-effect of a workflow step. The PRIMARY KEY is the STABLE idempotency key
+// `idem_key` = `sha256(run_id|seq|action|sorted-params)` (NOT the attempt), so:
+//   * a retry that reopens + re-drives the SAME effect computes the SAME key and
+//     hits this row (the skip path), and
+//   * a re-drive of a DIFFERENT effect (changed action/params, e.g. a new def
+//     version at the same seq) computes a DIFFERENT key and naturally MISSES (it
+//     never skips the wrong effect).
+// `step_id`/`run_id`/`seq` are carried for projection/debug (and `run_id` is
+// indexed for a per-run sweep), but the key is the identity. The recorded
+// `receipt_summary` (+ optional `receipt_content`) is the SAME bounded tool
+// summary/content the step persisted as evidence — so a skip can return the
+// recorded receipt without re-running the executor. No secret/key material.
+const DDL_WORKFLOW_STEP_EFFECT: &str = "
+CREATE TABLE workflow_step_effect (
+    idem_key        TEXT PRIMARY KEY,
+    run_id          TEXT NOT NULL,
+    step_id         TEXT NOT NULL,
+    seq             INTEGER NOT NULL,
+    action          TEXT NOT NULL,
+    receipt_summary TEXT NOT NULL,
+    receipt_content TEXT,
+    committed_at    INTEGER NOT NULL
+);
+CREATE INDEX idx_workflow_step_effect_run ON workflow_step_effect(run_id, seq);";
 
 // --- PR-5 agent-loop fragments (Hub-only) -----------------------------------
 
@@ -2062,4 +2118,14 @@ fn m0028_agent_session_lifecycle(tx: &Transaction) -> rusqlite::Result<()> {
          ALTER TABLE agent_session ADD COLUMN status_changed_at INTEGER;
          ALTER TABLE agent_session ADD COLUMN last_activity_at INTEGER;",
     )
+}
+
+/// A5: per-step-effect IDEMPOTENCY ledger (DARK). One NEW Hub-only table
+/// (`DDL_WORKFLOW_STEP_EFFECT`) recording the committed side-effect of a workflow
+/// step keyed by a STABLE idempotency key. This is the NEW-TABLE migration pattern
+/// (like m0026 system_intent / m0005 agent_run), NOT an ALTER — touches no existing
+/// table, so every pre-v29 row and query is unaffected. Nothing in production reads
+/// or writes this table (DARK).
+fn m0029_workflow_step_effect_idempotency(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_WORKFLOW_STEP_EFFECT)
 }
