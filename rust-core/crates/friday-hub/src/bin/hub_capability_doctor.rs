@@ -389,7 +389,10 @@ mod tests {
         assert_eq!(v["ok"], true);
         assert_eq!(v["key_validation_probed"], false);
         // HONEST absence: null, not an array of fabricated CredentialMissing.
-        assert!(v["key_validation"].is_null(), "key section must be null when not probed");
+        assert!(
+            v["key_validation"].is_null(),
+            "key section must be null when not probed"
+        );
         assert!(
             v["confirmed_valid_keys"].is_null(),
             "confirmed list must be null when not probed (not an empty array implying we checked)"
@@ -541,7 +544,9 @@ mod tests {
         let keys = MockKeyValidationProbe::new()
             .with(
                 KeyProvider::DeepSeek,
-                KeyValidationOutcome::Unavailable { detail: "provider_unavailable" },
+                KeyValidationOutcome::Unavailable {
+                    detail: "provider_unavailable",
+                },
             )
             .with(KeyProvider::Anthropic, KeyValidationOutcome::Valid);
         let rendered = render_composite(&cli, &keys).expect("renders");
@@ -582,7 +587,10 @@ mod tests {
                 .iter()
                 .find(|e| e["provider"] == kp)
                 .unwrap();
-            assert_eq!(e["label"], "credential_missing", "{kp} must be credential_missing");
+            assert_eq!(
+                e["label"], "credential_missing",
+                "{kp} must be credential_missing"
+            );
             assert!(e["status"].is_null());
             assert!(e["detail"].is_null());
         }
@@ -600,7 +608,8 @@ mod tests {
             Provider::Claude,
             "{\n  \"loggedIn\": true,\n  \"authMethod\": \"claude.ai\",\n  \"subscriptionType\": \"max\",\n  \"email\": \"someone@example.com\"\n}",
         );
-        let keys = MockKeyValidationProbe::new().with(KeyProvider::DeepSeek, KeyValidationOutcome::Valid);
+        let keys =
+            MockKeyValidationProbe::new().with(KeyProvider::DeepSeek, KeyValidationOutcome::Valid);
         let rendered = render_composite(&cli, &keys).expect("renders (guard passes)");
 
         for forbidden in ["authMethod", "subscriptionType", "loggedIn", "example.com"] {
