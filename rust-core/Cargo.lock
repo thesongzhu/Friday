@@ -574,6 +574,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "friday-operator-signer"
+version = "0.0.1"
+dependencies = [
+ "friday-core",
+ "friday-crypto",
+ "friday-hub",
+ "friday-operator-cli",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "zeroize",
+]
+
+[[package]]
 name = "friday-protocol"
 version = "0.0.1"
 dependencies = [
