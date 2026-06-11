@@ -96,6 +96,9 @@ export type { FridaySessionSendPolicyResolveInput } from "./services/friday-sess
 
 export {
   resolveFridaySessionMemoryNamespace,
+  resolveFridaySessionMemoryNamespaceCandidates,
+  isFridayNamespaceHardeningEnabled,
+  FRIDAY_NS_HARDENING_ENV_FLAG,
   buildFridaySessionMemorySource,
   buildFridaySessionMemoryMetadata,
 } from "./services/friday-session-memory-namespace.js";

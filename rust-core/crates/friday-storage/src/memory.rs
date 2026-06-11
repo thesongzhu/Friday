@@ -264,6 +264,39 @@ pub fn recall_confirmed(conn: &Connection, principal_id: &str) -> Result<Vec<Mem
     Ok(out)
 }
 
+/// DUAL-READ recall: the UNION of [`recall_confirmed`] over an ORDERED list of principals,
+/// DEDUPED by `memory_id` (first principal in the list wins for a given id). This is the
+/// data-layer half of the F5.5 namespace-hardening dual-read — the caller passes the ordered
+/// `[hardened, legacy]` namespace list (the
+/// `session_namespace::resolve_session_memory_namespace_candidates` output) so memory written
+/// under the LEGACY namespace is still recalled after the hardening flag is flipped on. There
+/// is NO destructive re-key — the legacy rows are read in place.
+///
+/// IMPORTANT — the per-principal SQL stays SINGLE-principal: each `recall_confirmed` call
+/// enforces `principal_id = ?` exactly (and its single-principal `debug_assert`), so a row
+/// owned by an unrelated principal is never returned. The UNION + dedup happen HERE, in
+/// memory, NOT in SQL — so this helper can never widen the per-principal isolation boundary.
+///
+/// Ordering: principals are consulted in order; within the merged set the first principal to
+/// own a given `memory_id` wins (so a row re-written under the hardened namespace is preferred
+/// over its lingering legacy copy when both exist). An empty list ⇒ empty result. A
+/// blank/empty principal in the list contributes nothing (same fail-closed rule as
+/// `recall_confirmed`).
+pub fn recall_confirmed_multi(conn: &Connection, principals: &[&str]) -> Result<Vec<MemoryRow>> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out: Vec<MemoryRow> = Vec::new();
+    for principal in principals {
+        for row in recall_confirmed(conn, principal)? {
+            // Dedup by memory_id: the FIRST principal (ordered hardened-first) to own a given
+            // id wins; a later (legacy) duplicate of the same id is dropped.
+            if seen.insert(row.memory_id.clone()) {
+                out.push(row);
+            }
+        }
+    }
+    Ok(out)
+}
+
 // --- helpers ---------------------------------------------------------------
 
 fn current_state(conn: &Connection, memory_id: &str) -> Result<Option<MemoryState>> {

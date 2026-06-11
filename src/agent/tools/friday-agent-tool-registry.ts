@@ -230,6 +230,9 @@ export function createFridayAgentToolRegistry(
         resolveSessionMemoryNamespace: options.sessionService
           ? async (sessionKey) => options.sessionService?.getSessionMemoryNamespace(sessionKey)
           : undefined,
+        resolveSessionMemoryNamespaceCandidates: options.sessionService
+          ? async (sessionKey) => options.sessionService?.getSessionMemoryNamespaceCandidates(sessionKey)
+          : undefined,
         memoryGuardFactory: options.memoryGuardFactory,
       }),
     );
