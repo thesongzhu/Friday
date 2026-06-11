@@ -74,6 +74,11 @@ pub struct VerifiedAttestation {
     /// verifier fills this from the COSE key in `authData`; the stub never
     /// reaches here.
     public_key: Bytes,
+    /// The authenticator's initial sign-count at registration time. A real
+    /// verifier reads this from the attestation `authData`; it seeds the
+    /// monotonic regression baseline a device row stores. Many platform/synced
+    /// passkeys report 0 here (and stay 0) — that is spec-legal.
+    sign_count: u32,
 }
 
 impl VerifiedAttestation {
@@ -88,6 +93,33 @@ impl VerifiedAttestation {
     }
     pub fn public_key(&self) -> &[u8] {
         &self.public_key
+    }
+    /// Initial sign-count established at registration (the regression baseline).
+    pub fn sign_count(&self) -> u32 {
+        self.sign_count
+    }
+
+    /// Crate-internal constructor — the SINGLE choke point through which a
+    /// `VerifiedAttestation` comes into existence. It is `pub(crate)`, so only
+    /// the in-crate verifiers can call it: the real [`crate::real`] engine (after
+    /// genuine cryptographic verification) and the `cfg(test)`
+    /// [`AcceptingTestVerifier`]. An external caller (e.g. a future hub) has NO
+    /// path to it — they can only obtain a `VerifiedAttestation` as the `Ok`
+    /// result of a verifier, preserving the fail-closed typestate guarantee.
+    pub(crate) fn new_verified(
+        owner: String,
+        rp_id: String,
+        credential_id: Bytes,
+        public_key: Bytes,
+        sign_count: u32,
+    ) -> Self {
+        Self {
+            owner,
+            rp_id,
+            credential_id,
+            public_key,
+            sign_count,
+        }
     }
 }
 
@@ -118,6 +150,13 @@ pub struct AssertionResponse {
 pub struct VerifiedAssertion {
     owner: String,
     credential_id: Bytes,
+    /// The authenticator sign-count this assertion presented, AFTER the real
+    /// verifier confirmed it strictly increased over the stored baseline (or is
+    /// the spec-legal 0/0 synced-passkey case). The device row advances its
+    /// stored sign-count to this value — that advance is what makes a later
+    /// REPLAY of an older assertion trip the regression check. The test verifier
+    /// leaves it 0 (it performs no counter logic).
+    new_sign_count: u32,
 }
 
 impl VerifiedAssertion {
@@ -126,6 +165,21 @@ impl VerifiedAssertion {
     }
     pub fn credential_id(&self) -> &[u8] {
         &self.credential_id
+    }
+    /// The verified, strictly-advanced sign-count to persist on the device row.
+    pub fn new_sign_count(&self) -> u32 {
+        self.new_sign_count
+    }
+
+    /// Crate-internal constructor — the SINGLE choke point through which a
+    /// `VerifiedAssertion` comes into existence (`pub(crate)`; same fail-closed
+    /// rationale as [`VerifiedAttestation::new_verified`]).
+    pub(crate) fn new_verified(owner: String, credential_id: Bytes, new_sign_count: u32) -> Self {
+        Self {
+            owner,
+            credential_id,
+            new_sign_count,
+        }
     }
 }
 
@@ -261,14 +315,16 @@ impl WebAuthnVerifier for AcceptingTestVerifier {
         challenge: &RegistrationChallenge,
         response: &AttestationResponse,
     ) -> Result<VerifiedAttestation> {
-        Ok(VerifiedAttestation {
-            owner: challenge.owner.clone(),
-            rp_id: challenge.rp_id.clone(),
-            credential_id: response.credential_id.clone(),
+        Ok(VerifiedAttestation::new_verified(
+            challenge.owner.clone(),
+            challenge.rp_id.clone(),
+            response.credential_id.clone(),
             // A real verifier extracts this from the COSE key in authData; the
             // test verifier fabricates a deterministic placeholder.
-            public_key: vec![0x04, 0xAA, 0xBB, 0xCC],
-        })
+            vec![0x04, 0xAA, 0xBB, 0xCC],
+            // No counter logic in the test verifier: seed the baseline at 0.
+            0,
+        ))
     }
 
     fn verify_assertion(
@@ -282,10 +338,12 @@ impl WebAuthnVerifier for AcceptingTestVerifier {
         if response.credential_id != challenge.expected_credential_id {
             return Err(RemoteError::UnknownCredential);
         }
-        Ok(VerifiedAssertion {
-            owner: challenge.owner.clone(),
-            credential_id: response.credential_id.clone(),
-        })
+        Ok(VerifiedAssertion::new_verified(
+            challenge.owner.clone(),
+            response.credential_id.clone(),
+            // No counter logic in the test verifier.
+            0,
+        ))
     }
 }
 
