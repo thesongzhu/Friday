@@ -1226,46 +1226,83 @@ async function composeRustReadOnlyAgentRun(args: {
 }): Promise<FridayAgentRuntimeResult> {
   const failClosed = failClosedRustAgentRun;
 
+  // (observability) Close the 503-after-billing diagnostic gap: the failing run_id appeared
+  // in NO log, so a billed run that 503s left no trail linking the spend to a leg. Log
+  // {run_id, leg, code} on every fail-closed exit of this compose path — body-free (never the
+  // answer, owner, key, or task; the runId is a uuid ref). Cheap (one console.warn per 503).
+  const logFailClosed = (leg: string, code = "TS_RUNTIME_AGENT_RUNS_RETIRED"): void => {
+    console.warn(
+      `[friday][rust-agent-run] fail-closed 503 run_id=${args.runId} leg=${leg} code=${code}`,
+    );
+  };
+
   // (1) SecureStore X25519 client SECRET — MISSING/invalid ⇒ fail closed BEFORE any WS
   // connection. The sealed client runs the ECDH handshake with this secret and builds the
   // auth_proof itself; a non-32-byte secret fails closed here (the 503), never escaping as a
   // RangeError from the sealed client. Never open an unauthenticated WS call; never log the key.
   const clientSecret = args.clientSecretResolver();
   if (!clientSecret || clientSecret.length !== 32) {
+    logFailClosed("preflight_client_secret");
     throw failClosed();
   }
   // The owner principal must be present to gate the body readback (slice-3). Absent ⇒ 503.
   const callerPrincipal = args.principalId;
   if (!callerPrincipal) {
+    logFailClosed("preflight_principal");
     throw failClosed();
   }
   // The owner-gated body readback needs a Hub DB path. Absent ⇒ fail closed (no body).
   const hubDbPath = args.hubDbPath;
   if (!hubDbPath) {
+    logFailClosed("preflight_hub_db_path");
     throw failClosed();
   }
 
   // (2) Dispatch the run over the SEALED WS client (B1). The client runs the ECDH handshake +
   // builds the auth_proof from `clientSecret` INTERNALLY; refs-only result; fail-closed on error.
-  const wsResult = await args.wsClient.dispatchRun({
-    runId: args.runId,
-    task: args.task,
-    forwardedPrincipal: callerPrincipal,
-    clientSecret,
-    // (A2a Phase 1) forward the session key; the WS client emits `session_id` only when it is
-    // non-empty (absent/blank ⇒ byte-identical sessionless wire, today's behavior). The server
-    // owner-scopes the session to `callerPrincipal` (the authenticated owner), never this key.
-    ...(args.sessionKey !== undefined ? { sessionKey: args.sessionKey } : {}),
-  });
+  // leg A: a dispatch throw is the sealed-WS "closed-before-the-body" / transport surface —
+  // log {run_id, leg=dispatch, code} before rethrowing so the spend ties to this leg.
+  let wsResult;
+  try {
+    wsResult = await args.wsClient.dispatchRun({
+      runId: args.runId,
+      task: args.task,
+      forwardedPrincipal: callerPrincipal,
+      clientSecret,
+      // (A2a Phase 1) forward the session key; the WS client emits `session_id` only when it is
+      // non-empty (absent/blank ⇒ byte-identical sessionless wire, today's behavior). The server
+      // owner-scopes the session to `callerPrincipal` (the authenticated owner), never this key.
+      ...(args.sessionKey !== undefined ? { sessionKey: args.sessionKey } : {}),
+    });
+  } catch (err) {
+    logFailClosed(
+      "dispatch",
+      err instanceof FridayDomainError ? err.code : "dispatch_error",
+    );
+    throw err;
+  }
 
   // (3) Owner-gated body readback (slice-3). The body is released ONLY to the matching
-  // owner; a non-`delivered` outcome carries no body ⇒ fail closed.
-  const readbackReceipt = await args.readback.readAnswer({
-    dbPath: hubDbPath,
-    runId: args.runId,
-    callerPrincipal,
-  });
+  // owner; a non-`delivered` outcome carries no body ⇒ fail closed. leg B: a readback throw is
+  // the readback-bin (spawn/open/parse) surface — the SQLITE_BUSY-readback path this fix
+  // targets. Log {run_id, leg=readback, code} before rethrowing.
+  let readbackReceipt;
+  try {
+    readbackReceipt = await args.readback.readAnswer({
+      dbPath: hubDbPath,
+      runId: args.runId,
+      callerPrincipal,
+    });
+  } catch (err) {
+    logFailClosed(
+      "readback",
+      err instanceof FridayDomainError ? err.code : "readback_error",
+    );
+    throw err;
+  }
   if (readbackReceipt.outcome !== "delivered") {
+    // leg C: the readback succeeded but returned a non-delivered outcome (denied / not_found).
+    logFailClosed(`readback_${readbackReceipt.outcome}`);
     throw failClosed();
   }
 

@@ -9,10 +9,16 @@
 //!   `<dir>/backups/v<version>-<ts>-<unique>.sqlite` and the backup is verified openable
 //!   (PRAGMA integrity_check == "ok") before the destructive step proceeds.
 //!
-//! Concurrency note: the foundation uses the default (rollback-journal) mode and
-//! a single connection, so the file copy is consistent when no write txn is
-//! open. WAL + multi-connection concurrency is deferred to the Hub runtime
-//! (Unit 4); this framework does not claim concurrent-writer safety.
+//! Concurrency note: the Hub openers ([`crate::Db::open_hub`] /
+//! `open_hub_concurrent`) run in WAL with a non-zero `busy_timeout` (so the
+//! multi-process Hub DB never returns an immediate `SQLITE_BUSY`); the generic
+//! `open`/`open_phone` paths use the default (rollback-journal) single-connection
+//! mode. The destructive-migration backup here is a FILE COPY: under WAL, recent
+//! writes can live in the `-wal` sidecar, so a backup taken mid-migration must
+//! checkpoint or copy the sidecars too — this is acceptable because a destructive
+//! migration runs at open BEFORE any concurrent writer is admitted (the steady-state
+//! prod Hub is already at the current version, so no destructive step runs on the hot
+//! path). This framework still does not claim general concurrent-WRITER safety.
 
 use crate::error::{Result, StorageError};
 use rusqlite::{Connection, Transaction};
@@ -102,6 +108,18 @@ pub fn apply_migrations(
 
     for m in pending {
         if m.destructive {
+            // WAL-safety: the destructive backup is a FILE COPY of the main DB file
+            // ([`backup_db`]). Under WAL the committed rows (the seed + any prior
+            // migration's frames) can still live in the `-wal` sidecar, so a copy of
+            // only the main file would be INCOMPLETE (data-missing) — a silent corrupt
+            // backup. Checkpoint(TRUNCATE) first so every committed frame is folded into
+            // the main file and the WAL is zeroed, making the standalone file-copy
+            // self-contained (which both `verify_backup` and a restore re-open require).
+            // At migrate time `conn` is the sole connection, so TRUNCATE fully flushes.
+            // A no-op on a rollback-journal DB; fail-closed BEFORE the destructive step
+            // if the checkpoint itself errors. `wal_checkpoint` returns a result ROW
+            // (busy, log, checkpointed) — NOT a setter — so it is run via `execute_batch`.
+            conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
             let backup = backup_db(db_path, m.version)?;
             verify_backup(&backup)?;
             report.backups.push(backup);

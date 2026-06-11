@@ -253,6 +253,10 @@ export function createFridayRustHubRunAnswerReadbackService(
     options.timeoutMs ??
     readTimeoutMs(process.env.FRIDAY_HUB_RUN_ANSWER_READBACK_TIMEOUT_MS, 120_000);
 
+  // One-time guard so the (loud) cargo-run-fallback warning is logged once per service
+  // instance, not on every readback. Flipped true the first time the fallback is taken.
+  let warnedCargoFallback = false;
+
   return {
     async readAnswer(
       input: FridayRustHubRunAnswerReadbackInput,
@@ -279,6 +283,13 @@ export function createFridayRustHubRunAnswerReadbackService(
         input.callerPrincipal,
       ];
 
+      // Prefer the PREBUILT binary (`FRIDAY_HUB_RUN_ANSWER_READBACK_BIN` / `adapterBin`).
+      // The `cargo run` fallback COMPILES the bin in the request hot path — a latency +
+      // reliability bug (it added 19-43s tails and a non-JSON-stdout failure surface on the
+      // live 503-after-billing route). When it falls back we now emit a LOUD one-time warning
+      // (the fallback was previously silent) so an operator running this route in prod without
+      // the env set sees it. DEPLOY OPS: build `hub_run_answer_readback` once and set
+      // `FRIDAY_HUB_RUN_ANSWER_READBACK_BIN` to its path in the launchd wrapper — see the PR.
       const command = adapterBin ?? "cargo";
       const args = adapterBin
         ? adapterArgs
@@ -294,6 +305,15 @@ export function createFridayRustHubRunAnswerReadbackService(
             "--",
             ...adapterArgs,
           ];
+      if (!adapterBin && !warnedCargoFallback) {
+        warnedCargoFallback = true;
+        console.warn(
+          "[friday][rust-answer-readback] FRIDAY_HUB_RUN_ANSWER_READBACK_BIN is not set — " +
+            "falling back to `cargo run` in the request hot path (compiles per cold start; " +
+            "adds latency and a failure surface). Set it to a prebuilt hub_run_answer_readback " +
+            "binary at deploy time.",
+        );
+      }
 
       let stdout = "";
       try {
