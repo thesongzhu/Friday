@@ -662,6 +662,7 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 task,
                 forwarded_principal,
                 auth_proof,
+                session_id,
             } => {
                 // The dispatch arm: AUTH BEFORE ANY RUN. The `auth_proof` is the peer-sealed
                 // challenge; reconstruct it as a `Sealed` for the session-key open. A malformed
@@ -691,8 +692,27 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
 
                 // AUTHENTICATED: run the Rust loop AS the bound owner. A route/provider failure
                 // is a SAFE FAILURE (body-free NoAnswer) — never a panic, never a partial body.
+                //
+                // (A2a Phase 1) CONDITIONAL dispatch swap on the client-asserted `session_id`:
+                //   * PRESENT (non-empty) ⇒ the SESSIONED entry [`HubRuntime::run_session_task`]
+                //     (the EXISTING `run_session_loop` — reloads history, appends this turn), with
+                //     the session OWNER = the AUTHENTICATED `caller` (NEVER `session_id`).
+                //   * ABSENT (or blank) ⇒ the UNCHANGED sessionless [`run_authed_agent_loop`].
+                // The swap is CONDITIONAL by design: `run_session_loop` runs ensure_session/
+                // load_session_messages, so routing today's sessionless live path through it would
+                // NOT be byte-identical. A blank/whitespace `session_id` is treated as ABSENT so a
+                // degenerate value can never silently divert the sessionless path. Both arms then
+                // share the IDENTICAL refs + owner-sealed-body emit below (the body is owner-gated
+                // by `project_answer_for_authed` in BOTH), so the only difference is which loop ran.
                 let now_ms = now_ms();
-                let outcome = run_authed_agent_loop(runtime, &caller, &run_id, &task, now_ms);
+                let outcome = match session_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    Some(sid) => runtime.run_session_task(&caller, &run_id, sid, &task, now_ms),
+                    None => run_authed_agent_loop(runtime, &caller, &run_id, &task, now_ms),
+                };
 
                 // (refs) REFS-ONLY terminal receipt over the wire: status + answer FINGERPRINT
                 // (sha256/len) + (A1) the run COUNTS (turns / executed_tools) — NEVER the body.
@@ -1029,6 +1049,31 @@ mod tests {
                 task: "answer me".into(),
                 forwarded_principal: principal.to_string(),
                 auth_proof: auth_proof_bytes(client_session, session_nonce, principal, run_id),
+                session_id: None,
+            },
+        )
+    }
+
+    /// (A2a Phase 1) A SESSIONED `AgentRunRequest` — identical to [`agent_run_request`] but
+    /// carrying a non-empty `session_id`, so the server's dispatch arm branches into
+    /// `run_session_task` (the existing `run_session_loop`) instead of `run_authed_agent_loop`.
+    fn sessioned_agent_run_request(
+        msg_id: &str,
+        run_id: &str,
+        principal: &str,
+        session_id: &str,
+        client_session: &DataKey,
+        session_nonce: &[u8],
+    ) -> Envelope {
+        Envelope::new(
+            msg_id,
+            1000,
+            Message::AgentRunRequest {
+                run_id: run_id.to_string(),
+                task: "answer me".into(),
+                forwarded_principal: principal.to_string(),
+                auth_proof: auth_proof_bytes(client_session, session_nonce, principal, run_id),
+                session_id: Some(session_id.to_string()),
             },
         )
     }
@@ -1263,6 +1308,7 @@ mod tests {
                     task: "answer me".into(),
                     forwarded_principal: OWNER.to_string(),
                     auth_proof: bad_proof,
+                    session_id: None,
                 },
             );
             (req, session.clone(), session.clone())
@@ -1608,6 +1654,7 @@ mod tests {
                     task: "answer me".into(),
                     forwarded_principal: OWNER.to_string(),
                     auth_proof: proof,
+                    session_id: None,
                 },
             );
             ws_send_envelope(&mut ws, &sess_c1, &req, SESSION_AAD).unwrap();
@@ -1637,6 +1684,7 @@ mod tests {
                     task: "answer me".into(),
                     forwarded_principal: OWNER.to_string(),
                     auth_proof: captured_proof,
+                    session_id: None,
                 },
             );
             ws_send_envelope(&mut ws, &sess_c2, &req, SESSION_AAD).unwrap();
@@ -2450,6 +2498,233 @@ mod tests {
             v["httpStatus"],
             serde_json::json!(503),
             "fail-closed surfaces a 503"
+        );
+    }
+
+    // ────────────────────────────────────────────────────────────────────────────────────
+    // (A2a Phase 1) SESSIONED read-only dispatch — the CONDITIONAL swap on `session_id`.
+    // ────────────────────────────────────────────────────────────────────────────────────
+
+    // OWNER-SCOPING: a sessioned request (non-empty `session_id`) routes through
+    // `run_session_task` → `run_session_loop`. The session row is created OWNED by the
+    // AUTHENTICATED forwarded principal (the `caller`), NOT the client-asserted `session_id`,
+    // and the body is delivered owner-sealed to that owner EXACTLY like the sessionless path.
+    #[test]
+    fn sessioned_dispatch_creates_owner_scoped_session_and_delivers_body_to_owner() {
+        let (rt, _ws) = mock_runtime("sess-owner", OWNER);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+
+        let client_kp = DeviceKeypair::generate();
+        let client_session = client_kp.agree(&server_kp.public_bytes());
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let client = spawn_client(addr, client_kp, |session, nonce| {
+            // CLIENT-ASSERTED session id — deliberately NOT the principal. The owner binding
+            // must come from the authenticated `caller`, never this value.
+            let req = sessioned_agent_run_request(
+                "req-s1",
+                "run-sess-1",
+                OWNER,
+                "chat-session-xyz",
+                session,
+                nonce,
+            );
+            (req, session.clone(), session.clone())
+        });
+
+        let processed = listener
+            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist)
+            .unwrap();
+        assert_eq!(processed, 1, "one sessioned dispatch processed");
+
+        let obs = client.join().unwrap();
+        // The refs result + owner-sealed body are delivered EXACTLY as the sessionless path
+        // (the two dispatch arms share the identical emit tail).
+        let Some(Message::AgentRunResult {
+            run_id,
+            answer_sha256,
+            answer_len,
+            ..
+        }) = obs.result.clone()
+        else {
+            panic!("expected AgentRunResult, got {:?}", obs.result);
+        };
+        assert_eq!(run_id, "run-sess-1");
+        assert_eq!(
+            answer_sha256.as_deref(),
+            Some(sha256_hex(BODY.as_bytes()).as_str())
+        );
+        assert_eq!(answer_len, Some(BODY.len() as u64));
+        assert!(
+            !format!("{:?}", obs.result).contains(BODY),
+            "refs result leaked the body"
+        );
+        let chunk = obs
+            .body_chunk
+            .expect("owner-sealed body delivered for the sessioned run");
+        let inner_bytes = hex_decode(&chunk).expect("body chunk is hex");
+        let inner = decode_sealed_proof(&inner_bytes).expect("owner-sealed body decodes");
+        let opened = friday_crypto::open(&client_session, &inner, SESSION_AAD).unwrap();
+        assert_eq!(
+            opened,
+            BODY.as_bytes(),
+            "owner opens the sealed sessioned body"
+        );
+
+        // OWNER-SCOPING (the load-bearing assertion): the session row was created OWNED by the
+        // AUTHENTICATED principal (`OWNER`), NEVER the client-asserted `session_id`.
+        let owner = friday_storage::load_session_owner(rt.db().conn(), "chat-session-xyz")
+            .unwrap()
+            .expect("the sessioned run created the session row");
+        assert_eq!(
+            owner.user_id.as_deref(),
+            Some(OWNER),
+            "the session owner MUST be the authenticated principal, never the client-asserted session_id"
+        );
+        assert_ne!(
+            owner.user_id.as_deref(),
+            Some("chat-session-xyz"),
+            "the client-asserted session_id must NEVER become the owner"
+        );
+
+        // The run's turn was appended to THIS session (history is now persisted for the next turn).
+        assert!(
+            friday_storage::session_message_count(rt.db().conn(), "chat-session-xyz").unwrap() >= 1,
+            "the sessioned run appended at least the user turn"
+        );
+
+        // BODY is releasable ONLY to the bound owner (a guessed/other principal is denied).
+        use friday_storage::{AnswerDenyReason, RunAnswerAccess};
+        match friday_storage::get_run_answer_for_principal(rt.db().conn(), "run-sess-1", OWNER)
+            .unwrap()
+        {
+            RunAnswerAccess::Granted(stored) => assert_eq!(stored.answer, BODY),
+            other => panic!("owner must be Granted the sessioned body, got {other:?}"),
+        }
+        assert_eq!(
+            friday_storage::get_run_answer_for_principal(
+                rt.db().conn(),
+                "run-sess-1",
+                "principal:not-the-owner"
+            )
+            .unwrap(),
+            RunAnswerAccess::Denied(AnswerDenyReason::PrincipalMismatch),
+            "a non-owner (even one who guessed the session_id) must be DENIED the body"
+        );
+    }
+
+    // SESSION THREADING: a SECOND turn on the SAME session id reloads + extends the SAME
+    // session row — proving multi-turn history accumulates on one session (the Phase-1
+    // capability). Two separate sealed connections (transport-stateless, DB-stateful).
+    #[test]
+    fn second_sessioned_turn_threads_into_the_same_session_history() {
+        let (rt, _ws) = mock_runtime("sess-thread", OWNER);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        let sid = "chat-thread-1";
+
+        // ── Turn 1 (fresh sealed connection) ──
+        let kp1 = DeviceKeypair::generate();
+        let peer1 = allowlist_of(kp1.public_bytes());
+        let c1 = spawn_client(addr, kp1, move |s, n| {
+            let req = sessioned_agent_run_request("req-t1", "run-t1", OWNER, "chat-thread-1", s, n);
+            (req, s.clone(), s.clone())
+        });
+        assert_eq!(
+            listener
+                .accept_one(&server_kp, &rt, &allowlist, &peer1)
+                .unwrap(),
+            1
+        );
+        c1.join().unwrap();
+        let after_turn1 = friday_storage::session_message_count(rt.db().conn(), sid).unwrap();
+        assert!(after_turn1 >= 1, "turn 1 appended history");
+
+        // ── Turn 2 (a SEPARATE sealed connection, SAME session id) ──
+        let kp2 = DeviceKeypair::generate();
+        let peer2 = allowlist_of(kp2.public_bytes());
+        let c2 = spawn_client(addr, kp2, move |s, n| {
+            let req = sessioned_agent_run_request("req-t2", "run-t2", OWNER, "chat-thread-1", s, n);
+            (req, s.clone(), s.clone())
+        });
+        assert_eq!(
+            listener
+                .accept_one(&server_kp, &rt, &allowlist, &peer2)
+                .unwrap(),
+            1
+        );
+        c2.join().unwrap();
+
+        // Turn 2 reloaded the SAME session and appended ON TOP of turn 1's history — the count
+        // STRICTLY grew (it did not start a fresh session), and both runs' turns are present.
+        let after_turn2 = friday_storage::session_message_count(rt.db().conn(), sid).unwrap();
+        assert!(
+            after_turn2 > after_turn1,
+            "turn 2 must extend the SAME session history (got {after_turn1} → {after_turn2})"
+        );
+        let msgs = friday_storage::load_session_messages(rt.db().conn(), sid).unwrap();
+        assert!(
+            msgs.iter().any(|m| m.refs.as_deref() == Some("run-t1")),
+            "turn 1's message persists in the shared session"
+        );
+        assert!(
+            msgs.iter().any(|m| m.refs.as_deref() == Some("run-t2")),
+            "turn 2's message was appended to the SAME session"
+        );
+    }
+
+    // BYTE-IDENTICAL SESSIONLESS: a request with NO `session_id` (the pre-A2a shape) still
+    // routes through the UNCHANGED `run_authed_agent_loop` and creates NO session row — the
+    // sessioned path is not silently entered. This is the regression fence for the one
+    // currently-live, operator-fed sessionless path.
+    #[test]
+    fn sessionless_dispatch_uses_unchanged_path_and_creates_no_session_row() {
+        let (rt, _ws) = mock_runtime("sess-none", OWNER);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+
+        let client_kp = DeviceKeypair::generate();
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let client = spawn_client(addr, client_kp, |session, nonce| {
+            // The EXACT sessionless helper today's live path uses (session_id: None).
+            let req = agent_run_request("req-none", "run-none", OWNER, session, nonce);
+            (req, session.clone(), session.clone())
+        });
+        assert_eq!(
+            listener
+                .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist)
+                .unwrap(),
+            1
+        );
+        let obs = client.join().unwrap();
+        // The result is delivered (the unchanged sessionless path still works).
+        assert!(
+            matches!(obs.result, Some(Message::AgentRunResult { .. })),
+            "sessionless dispatch still returns a refs result"
+        );
+        // CRITICAL: NO session row was created for the sessionless run — `run_session_loop`
+        // (which ensure_session's) was NEVER entered. The run's own id is never a session id.
+        assert!(
+            friday_storage::load_session_owner(rt.db().conn(), "run-none")
+                .unwrap()
+                .is_none(),
+            "the sessionless path must NOT create a session row (byte-identical to today)"
+        );
+        // And the agent_session table has NO rows at all from this run.
+        let n: i64 = rt
+            .db()
+            .conn()
+            .query_row("SELECT count(*) FROM agent_session", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            n, 0,
+            "the sessionless dispatch created ZERO session rows (the session loop was never reached)"
         );
     }
 }

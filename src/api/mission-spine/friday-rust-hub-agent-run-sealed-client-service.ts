@@ -69,6 +69,13 @@ export interface FridayRustHubAgentRunSealedClientServiceRequest {
    * (fail-closed). Held in-process only; never logged. A non-32-byte secret fails closed (503).
    */
   readonly clientSecret: Uint8Array;
+  /**
+   * (A2a Phase 1) The session key for a MULTI-TURN read-only chat run. Forwarded UNCHANGED to the
+   * underlying sealed client, which emits it as `session_id` ONLY when non-empty (absent/blank ⇒
+   * byte-identical sessionless wire). The Rust server scopes the session to the authenticated
+   * `forwardedPrincipal`, never this key.
+   */
+  readonly sessionKey?: string;
 }
 
 /**
@@ -184,6 +191,9 @@ export function createFridayRustHubAgentRunSealedClientService(
           runId: request.runId,
           task: request.task,
           forwardedPrincipal: request.forwardedPrincipal,
+          // (A2a Phase 1) forward the session key; the inner client emits `session_id` only when
+          // non-empty (absent/blank ⇒ byte-identical sessionless wire).
+          ...(request.sessionKey !== undefined ? { sessionKey: request.sessionKey } : {}),
         });
       } catch (error) {
         throw error instanceof FridayDomainError

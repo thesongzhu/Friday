@@ -125,6 +125,16 @@ export interface FridayRustHubAgentRunSealedRequest {
   readonly task: string;
   /** The TS-token-resolved principal the trusted peer forwards (allowlist-checked by the server). */
   readonly forwardedPrincipal: string;
+  /**
+   * (A2a Phase 1) The session key for a MULTI-TURN (sessioned) read-only chat run. When
+   * NON-EMPTY it is forwarded on the wire as `session_id`, which makes the Rust server's
+   * dispatch arm branch into the sessioned loop (history reload/append). ABSENT or BLANK ⇒
+   * the `session_id` field is OMITTED from the wire entirely, so the envelope is
+   * BYTE-IDENTICAL to the pre-A2a sessionless request and routes through the unchanged
+   * sessionless dispatch path. **SECURITY: this only SELECTS the session row; the run's
+   * owner is the authenticated `forwardedPrincipal`, verified server-side — never this key.**
+   */
+  readonly sessionKey?: string;
 }
 
 /**
@@ -696,6 +706,14 @@ export function createFridayRustHubAgentRunSealedClient(
               forwardedPrincipal: request.forwardedPrincipal,
               runId: request.runId,
             });
+            // (A2a Phase 1) Forward `session_id` ONLY when the run carries a non-empty session
+            // key. A blank/absent key OMITS the field entirely (it is NOT set to null/undefined),
+            // so the serialized envelope is BYTE-IDENTICAL to the pre-A2a sessionless request —
+            // the Rust server then routes it through the unchanged sessionless dispatch path.
+            const sessionId =
+              typeof request.sessionKey === "string" && request.sessionKey.trim().length > 0
+                ? request.sessionKey.trim()
+                : undefined;
             const envelope = {
               schema_version: SCHEMA_VERSION,
               msg_id: `agent-run-${request.runId}`,
@@ -708,6 +726,8 @@ export function createFridayRustHubAgentRunSealedClient(
                 forwarded_principal: request.forwardedPrincipal,
                 // serde `Vec<u8>` serializes as a JSON ARRAY of byte numbers (NOT base64/hex).
                 auth_proof: Array.from(authProof),
+                // Conditional spread: present ⇒ `session_id` rides the wire; absent ⇒ no key.
+                ...(sessionId !== undefined ? { session_id: sessionId } : {}),
               },
             };
             sealAndSend(sender, sessionKey, envelope);
