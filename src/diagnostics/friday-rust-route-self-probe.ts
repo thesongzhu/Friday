@@ -136,12 +136,14 @@ export function mintDiagnosticAdminBearer(deps: {
   const nowSec = Math.floor(deps.nowMs() / 1000);
   // Minimal claims: admin-001 principal (GAP A), ONLY agent.run scope, sessionless (no `sid`),
   // short exp. `tokenId` is a fresh uuid never inserted into the revocation table ⇒ not revoked.
+  // NO `role`: principalId alone satisfies the Rust owner allowlist (GAP A) and the happy path,
+  // so `role` is omitted to remove a latent admin-path escalation (the `principal.role==="admin"` /
+  // principalHasAnyRole authz paths would otherwise grant full admin within the 60s TTL if reached).
   const claims = {
     tokenId: deps.idGenerator(),
     principalType: "user" as const,
     principalId: RUST_ROUTE_DIAGNOSTIC_PRINCIPAL_ID,
     userId: RUST_ROUTE_DIAGNOSTIC_PRINCIPAL_ID,
-    role: "admin" as const,
     scopes: ["agent.run" as const],
     iat: nowSec,
     exp: nowSec + ttlSec,

@@ -178,6 +178,12 @@ describe("mintDiagnosticAdminBearer (security-sensitive self-mint)", () => {
     const { principal, claims } = makeValidator().validate(token);
     expect(principal.principalId).toBe("admin-001");
     expect(claims?.principalType).toBe("user");
+    // MUST-FIX (review): no `role` is minted — principalId alone satisfies GAP A and the happy
+    // path. `role` is omitted so the latent `principal.role==="admin"` / principalHasAnyRole
+    // authz paths cannot grant full admin within the bearer's TTL. Assert it is absent on BOTH
+    // the raw claims AND the validator-projected principal (the load-bearing one for authz).
+    expect(claims?.role).toBeUndefined();
+    expect(principal.role).toBeUndefined();
   });
 
   it("is short-lived (exp - iat === the smallest viable TTL) and sessionless (no sid)", () => {
