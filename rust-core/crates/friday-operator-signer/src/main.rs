@@ -7,8 +7,9 @@
 //! The OFFLINE OPERATOR signer. Like the S6c CLI (`friday-operator-approve`) it produces an
 //! Ed25519-signed `CanonicalApproval` over the Hub-computed canonical action digest — EXACTLY
 //! what `friday_hub::resume::resume_with_approval` verifies under `OperatorVerifyingKey`. The
-//! ONE difference: the operator's PRIVATE signing seed is read from the **KEK-wrapped
-//! `FileSecureStore` the WS server already uses** (KEK derived from the host master key),
+//! ONE difference: the operator's PRIVATE signing seed is read from a **KEK-wrapped
+//! `FileSecureStore` the Hub CANNOT open** — an ISOLATED store, in a SEPARATE directory,
+//! sealed under a KEK derived from a SEPARATE operator-only master key the Hub never reads —
 //! instead of a plaintext hex file. Ed25519-native, so the Hub verify side needs no scheme
 //! change.
 //!
@@ -24,32 +25,41 @@
 //! - INV-1 (no self-mint): the HUB crate holds ONLY `OperatorVerifyingKey` and (by the
 //!   structural `hub_crate_never_references_a_signing_key` test) has NO code that turns the
 //!   stored seed bytes into a signer. This helper lives in a SEPARATE crate
-//!   (`friday-operator-signer`) on the operator side; it adds NO signing path to the hub. The
-//!   seed living in the KEK-wrapped SecureStore is safe FOR THAT REASON.
-//! - INV-6 (real operator key, off-box): the SIGNING seed lives with the operator, in the
-//!   operator's SecureStore on the operator's machine; this helper is the operator's signer
-//!   and is never run by the hub/coordinator.
+//!   (`friday-operator-signer`) on the operator side; it adds NO signing path to the hub.
+//! - INV-6 (real operator key, ISOLATED): the SIGNING seed lives with the operator in an
+//!   ISOLATED KEK-wrapped SecureStore the HUB's existing derivation CANNOT OPEN — a separate
+//!   store directory, sealed under a KEK with a DISTINCT purpose tag. Unconditionally (any
+//!   master values), the Hub's own `derive_file_store_kek` cannot unwrap the seed; the
+//!   inverted KAT `hub_kek_cannot_open_the_operator_signer_seed` proves exactly that (even
+//!   fed the signer master). The KEK is also derived from a separate operator-only master
+//!   (`FRIDAY_OPERATOR_SIGNER_MASTER` / `~/.friday/operator-signer.key`) the Hub never reads,
+//!   so by default (distinct master VALUE) the seed KEK stays hub-underivable even against
+//!   added hub code — a conditional, not-KAT-covered property that degrades only if the
+//!   operator deliberately reuses the same master bytes. Either way the seed is NO LONGER
+//!   co-resident with the Hub's store (the audit's INV-6-weakening co-residency is removed).
 //!
 //! ## Subcommands
 //!
 //! ```text
 //! friday-operator-sign provision --seed-hex <64-hex> [--store-dir <dir>]
-//!     Enroll the operator's 32-byte Ed25519 signing seed (hex) into the KEK-wrapped
-//!     SecureStore (KEK derived from the host master key). The seed is the SECRET; it is
-//!     never printed. Run ONCE on the operator's machine. (Prefer feeding the seed via
-//!     --seed-stdin so it never appears in argv / shell history.)
+//!     Enroll the operator's 32-byte Ed25519 signing seed (hex) into the ISOLATED
+//!     KEK-wrapped SecureStore (KEK derived from the operator-only signer master). The seed
+//!     is the SECRET; it is never printed. Run ONCE on the operator's machine. (Prefer
+//!     feeding the seed via --seed-stdin so it never appears in argv / shell history.)
 //!
 //! friday-operator-sign sign --request <pending.json> [--store-dir <dir>]
 //!     Read a pending request (the fields the Hub persists when a mutating action Pauses:
 //!     approval_id nonce + the Hub-computed action_digest + expiry + decision), load the
-//!     PRIVATE seed from the SecureStore, and emit an Ed25519-signed CanonicalApproval (JSON)
-//!     to stdout. The seed never appears in the output; the SignedApproval is what the Hub's
-//!     resume ingestion verifies.
+//!     PRIVATE seed from the ISOLATED SecureStore, and emit an Ed25519-signed
+//!     CanonicalApproval (JSON) to stdout. The seed never appears in the output; the
+//!     SignedApproval is what the Hub's resume ingestion verifies.
 //! ```
 //!
-//! The master key is sourced exactly as the WS server sources it: `FRIDAY_MASTER_KEY` (hex)
-//! or `~/.friday/master.key`. NEVER auto-generated. The store dir defaults to
-//! `~/.friday/agent-run-securestore` (the server's default).
+//! The signer master key is an OPERATOR-ONLY secret, DISTINCT from the Hub's: it is sourced
+//! from `FRIDAY_OPERATOR_SIGNER_MASTER` (hex) or `~/.friday/operator-signer.key`. NEVER
+//! auto-generated, and NEVER the Hub's `FRIDAY_MASTER_KEY` / `~/.friday/master.key`. The
+//! store dir defaults to `~/.friday/operator-signer-securestore` (NOT the Hub's
+//! `~/.friday/agent-run-securestore`), so the seed is never co-resident with the Hub's store.
 
 use std::process::ExitCode;
 
@@ -66,16 +76,18 @@ USAGE:
     friday-operator-sign provision --seed-stdin        [--store-dir <dir>]
     friday-operator-sign sign --request <pending-request.json> [--store-dir <dir>]
 
-provision enrolls the operator's 32-byte Ed25519 signing seed into the KEK-wrapped
-SecureStore (KEK derived from the host master key). The seed is the SECRET and is never
-printed. Prefer --seed-stdin so the seed never appears in argv / shell history.
+provision enrolls the operator's 32-byte Ed25519 signing seed into the ISOLATED KEK-wrapped
+SecureStore (KEK derived from the operator-only signer master). The seed is the SECRET and
+is never printed. Prefer --seed-stdin so the seed never appears in argv / shell history.
 
-sign reads a pending request JSON, loads the PRIVATE seed from the SecureStore, and emits
-an Ed25519-signed CanonicalApproval (JSON) to stdout for the Hub's resume ingestion. The
-private seed never appears in the output.
+sign reads a pending request JSON, loads the PRIVATE seed from the ISOLATED SecureStore, and
+emits an Ed25519-signed CanonicalApproval (JSON) to stdout for the Hub's resume ingestion.
+The private seed never appears in the output.
 
-The master key is sourced from FRIDAY_MASTER_KEY (hex) or ~/.friday/master.key (never
-auto-generated). --store-dir defaults to ~/.friday/agent-run-securestore.
+The signer master key is sourced from FRIDAY_OPERATOR_SIGNER_MASTER (hex) or
+~/.friday/operator-signer.key (never auto-generated) — an OPERATOR-ONLY secret, DISTINCT
+from the Hub's master so the Hub cannot derive the seed KEK. --store-dir defaults to
+~/.friday/operator-signer-securestore (NOT the Hub's store).
 
 DARK / PROOF-ONLY: this helper is NOT wired into prod, registers no route, and is NEVER
 invoked automatically by the hub or any coordinator process. The operator runs it by hand.";
@@ -140,7 +152,7 @@ fn cmd_provision(args: &[String]) -> Result<(), String> {
 
     // The seed bytes never appear here — only a non-secret confirmation to stderr.
     eprintln!(
-        "operator signing seed provisioned into the SecureStore at {} (KEK-wrapped under the host master key).",
+        "operator signing seed provisioned into the ISOLATED SecureStore at {} (KEK-wrapped under the operator-only signer master; the Hub cannot derive this KEK).",
         store_dir.display()
     );
     Ok(())
