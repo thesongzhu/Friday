@@ -1055,11 +1055,13 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                         reason.as_deref(),
                         now_ms,
                     )
-                    .unwrap_or_else(|_| friday_hub::agent_run_control::ControlOutcome {
-                        op: "cancel",
-                        accepted: false,
-                        status: "storage_failed".to_string(),
-                        audit_ref: None,
+                    .unwrap_or_else(|_| {
+                        friday_hub::agent_run_control::ControlOutcome {
+                            op: "cancel",
+                            accepted: false,
+                            status: "storage_failed".to_string(),
+                            audit_ref: None,
+                        }
                     }),
                     // Session auth failed (forged / non-allowlisted / un-openable proof) ⇒
                     // fail-closed refusal. We do NOT end the session (a control op is not a
@@ -1098,11 +1100,13 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                         caller.principal(),
                         now_ms,
                     )
-                    .unwrap_or_else(|_| friday_hub::agent_run_control::ControlOutcome {
-                        op: "reject",
-                        accepted: false,
-                        status: "storage_failed".to_string(),
-                        audit_ref: None,
+                    .unwrap_or_else(|_| {
+                        friday_hub::agent_run_control::ControlOutcome {
+                            op: "reject",
+                            accepted: false,
+                            status: "storage_failed".to_string(),
+                            audit_ref: None,
+                        }
                     }),
                     None => friday_hub::agent_run_control::ControlOutcome {
                         op: "reject",
@@ -1794,7 +1798,10 @@ mod tests {
         let processed = listener
             .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false)
             .unwrap();
-        assert_eq!(processed, 1, "the control message is processed as a keepalive");
+        assert_eq!(
+            processed, 1,
+            "the control message is processed as a keepalive"
+        );
         // The flag is OFF ⇒ the message is ECHOED verbatim (keepalive), NOT a control result.
         match client.join().unwrap().result.expect("an echo reply") {
             Message::AgentRunCancel { run_id, .. } => assert_eq!(run_id, "run-x"),
@@ -1865,7 +1872,10 @@ mod tests {
             !agent_run_control_enabled_from(None),
             "unset ⇒ disabled (default-off, deploy-safe)"
         );
-        assert!(!agent_run_control_enabled_from(Some("")), "empty ⇒ disabled");
+        assert!(
+            !agent_run_control_enabled_from(Some("")),
+            "empty ⇒ disabled"
+        );
         assert!(!agent_run_control_enabled_from(Some("0")), "0 ⇒ disabled");
         assert!(
             !agent_run_control_enabled_from(Some("false")),
@@ -2440,7 +2450,8 @@ mod tests {
 
         let client = thread::spawn(move || try_preamble(addr, attacker_pub));
         // The server runs the REAL accept path; a non-allowlisted peer must make it FAIL CLOSED.
-        let outcome = listener.accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist, false);
+        let outcome =
+            listener.accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist, false);
         let obs = client.join().unwrap();
 
         assert!(

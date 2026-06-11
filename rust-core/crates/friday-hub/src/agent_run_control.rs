@@ -100,7 +100,10 @@ pub fn effective_run_policy(
 
 /// The effective per-run `max_turns`: a wire-asserted cap can only ever LOWER the runtime ceiling
 /// (never raise it). `None`/absent ⇒ the runtime default unchanged.
-pub fn effective_max_turns(runtime_default: u64, constraints: Option<&AgentRunConstraintsWire>) -> u64 {
+pub fn effective_max_turns(
+    runtime_default: u64,
+    constraints: Option<&AgentRunConstraintsWire>,
+) -> u64 {
     match constraints.and_then(|c| c.max_turns) {
         Some(cap) => runtime_default.min(cap),
         None => runtime_default,

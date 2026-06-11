@@ -2407,7 +2407,14 @@ mod tests {
         assert!(json.contains("\"kind\":\"AgentRunPaused\""));
         assert!(json.contains(&format!("\"schema_version\":{CURRENT_SCHEMA_VERSION}")));
         // Structural body-free guard: no args/params/body key can appear (the struct has none).
-        for forbidden in [ARGS, "params", "args", "tool_params", "body", "final_message"] {
+        for forbidden in [
+            ARGS,
+            "params",
+            "args",
+            "tool_params",
+            "body",
+            "final_message",
+        ] {
             assert!(
                 !json.contains(forbidden),
                 "AgentRunPaused leaked {forbidden}: {json}"
@@ -2453,7 +2460,9 @@ mod tests {
             auth_proof: vec![],
             reason: None,
         };
-        let json = Envelope::new("x2", 1003, no_reason.clone()).encode().unwrap();
+        let json = Envelope::new("x2", 1003, no_reason.clone())
+            .encode()
+            .unwrap();
         assert!(!json.contains("reason"));
         assert_eq!(Envelope::decode(&json).unwrap().message, no_reason);
     }
@@ -2489,7 +2498,10 @@ mod tests {
         assert!(json.contains("\"accepted\":true"));
         // Body-free guard.
         for forbidden in ["body", "final_message", "answer\"", "params"] {
-            assert!(!json.contains(forbidden), "control result leaked {forbidden}");
+            assert!(
+                !json.contains(forbidden),
+                "control result leaked {forbidden}"
+            );
         }
         assert_eq!(Envelope::decode(&json).unwrap().message, msg);
 

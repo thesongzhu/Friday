@@ -17,8 +17,8 @@ use friday_core::gate::{
 };
 use friday_crypto::{OperatorSigningKey, OperatorVerifyingKey};
 use friday_hub::agent_run_control::{
-    cancel, detect_pause, effective_max_turns, effective_run_policy, reject, resume,
-    resolve_run_owner,
+    cancel, detect_pause, effective_max_turns, effective_run_policy, reject, resolve_run_owner,
+    resume,
 };
 use friday_hub::{
     build_request_with_policy, run_loop_with_policy, AgentError, AgentLlmClient, AgentStep,
@@ -148,7 +148,10 @@ const OWNER: &str = "owner:alice";
 /// Drive a run to a Pause BOUND to `OWNER`, returning (db, ws, nonce, request) so a test can
 /// sign + ingest an approval for the EXACT paused action. The pending row carries the owner
 /// principal (the digest binds it), so the reconstructed request used to sign uses the SAME policy.
-fn pause_owned_run(tag: &str, vk: &OperatorVerifyingKey) -> (Db, Workspace, String, MutatingActionRequest) {
+fn pause_owned_run(
+    tag: &str,
+    vk: &OperatorVerifyingKey,
+) -> (Db, Workspace, String, MutatingActionRequest) {
     let db = Db::open_hub(&temp_db(tag)).unwrap();
     let ws = Workspace::new(tag);
     let run_id = "run-ctl";
@@ -244,7 +247,10 @@ fn reject_refused_for_non_owner_run_mismatch_and_unknown_approval() {
     let r = reject(db.conn(), "run-ctl", &nonce, "mallory", NOW).unwrap();
     assert_eq!(r.status, "not_owner");
     assert_eq!(
-        get_pending_request(db.conn(), &nonce).unwrap().unwrap().status,
+        get_pending_request(db.conn(), &nonce)
+            .unwrap()
+            .unwrap()
+            .status,
         "pending"
     );
     // A reject naming a DIFFERENT run than the pending row's ⇒ run_mismatch.
@@ -256,7 +262,10 @@ fn reject_refused_for_non_owner_run_mismatch_and_unknown_approval() {
     assert!(r.accepted);
     assert_eq!(r.status, "rejected");
     assert_eq!(
-        get_pending_request(db.conn(), &nonce).unwrap().unwrap().status,
+        get_pending_request(db.conn(), &nonce)
+            .unwrap()
+            .unwrap()
+            .status,
         "rejected"
     );
     let r = reject(db.conn(), "run-ctl", &nonce, OWNER, NOW).unwrap();
@@ -281,7 +290,15 @@ fn rejected_approval_cannot_be_resumed_no_mutation() {
 
     // A correctly-signed resume for the SAME nonce is now REFUSED before the spine can execute.
     let approval = ed_approval(&request, &sk, &nonce, Some(FUTURE));
-    let out = resume(db.conn(), &exec, &vk, "run-ctl", &signed_blob(&approval), NOW).unwrap();
+    let out = resume(
+        db.conn(),
+        &exec,
+        &vk,
+        "run-ctl",
+        &signed_blob(&approval),
+        NOW,
+    )
+    .unwrap();
     assert!(!out.accepted, "a rejected approval must not resume");
     assert_eq!(out.status, "approval_rejected");
     assert!(
@@ -302,7 +319,15 @@ fn cancelled_run_cannot_be_resumed_no_mutation() {
     assert!(r.accepted);
 
     let approval = ed_approval(&request, &sk, &nonce, Some(FUTURE));
-    let out = resume(db.conn(), &exec, &vk, "run-ctl", &signed_blob(&approval), NOW).unwrap();
+    let out = resume(
+        db.conn(),
+        &exec,
+        &vk,
+        "run-ctl",
+        &signed_blob(&approval),
+        NOW,
+    )
+    .unwrap();
     assert!(!out.accepted, "a cancelled run must not resume");
     assert_eq!(out.status, "run_cancelled");
     assert!(
@@ -322,7 +347,15 @@ fn resume_executes_the_approved_mutation() {
     let exec = FsToolExecutor::new(&ws.0);
 
     let approval = ed_approval(&request, &sk, &nonce, Some(FUTURE));
-    let out = resume(db.conn(), &exec, &vk, "run-ctl", &signed_blob(&approval), NOW).unwrap();
+    let out = resume(
+        db.conn(),
+        &exec,
+        &vk,
+        "run-ctl",
+        &signed_blob(&approval),
+        NOW,
+    )
+    .unwrap();
     assert!(out.accepted);
     assert_eq!(out.status, "mutation_completed");
     assert!(out.audit_ref.is_some());
