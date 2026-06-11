@@ -959,6 +959,35 @@ export function resolveRouteProvidersViaRust(
   return raw === "1" || raw === "true";
 }
 
+/**
+ * Tier-2 WORKFLOW catalog-mutation route bridge (DARK): single source of truth resolving the
+ * `routeWorkflowsViaRust` flag from (1) an EXPLICIT {@link FridayHubConfig.routeWorkflowsViaRust}
+ * and, only as a fallback, (2) the `FRIDAY_ROUTE_WORKFLOWS_VIA_RUST` env var — the operator knob
+ * that flips the Rust-owned workflow catalog-mutation route (`create/update/archive/publish/
+ * deploy` → the `hub_workflow_catalog` bin, #657) WITHOUT a source edit.
+ *
+ * MIRRORS {@link resolveRouteAgentRunViaRust} exactly: an explicit config boolean (true OR false)
+ * ALWAYS wins; the env is consulted ONLY when config does not specify. PARSE (fail-safe OFF):
+ * case-insensitive, trimmed `"1"` or `"true"` ⇒ true; ABSENT, `""`, `"0"`, `"false"`, or ANY
+ * other value ⇒ false. DEFAULT (both unset) ⇒ false, so the downstream
+ * `deps.routeWorkflowsViaRust === true` gate stays off and the catalog-mutation routes stay
+ * byte-identical to today's fail-closed `TS_RUNTIME_WORKFLOW_CATALOG_MUTATION_RETIRED` 503.
+ *
+ * The sibling `FRIDAY_HUB_WORKFLOW_CATALOG_*` knobs (bin path, DEV DB path, timeout) are read +
+ * documented at the bridge construction point in `friday-rust-hub-workflow-catalog-bridge-service.ts`.
+ */
+export function resolveRouteWorkflowsViaRust(
+  configValue: boolean | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  // Config explicit (true OR false) wins — env is the fallback for the unset gap only.
+  if (typeof configValue === "boolean") {
+    return configValue;
+  }
+  const raw = (env.FRIDAY_ROUTE_WORKFLOWS_VIA_RUST ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true";
+}
+
 function normalizeFridayHubPort(value: number | undefined): number | undefined {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 65535) {
     return undefined;
@@ -7064,6 +7093,13 @@ export async function createFridayHub(
     // (the default) this is `false` → the route handlers' `=== true` gate is never satisfied →
     // byte-identical to today's fail-closed 503.
     routeProvidersViaRust: resolveRouteProvidersViaRust(config.routeProvidersViaRust),
+    // Tier-2 WORKFLOW catalog-mutation route bridge (DARK): default-false flag routing
+    // create/update/archive/publish/deploy → the Rust `hub_workflow_catalog` bin. SINGLE
+    // SOURCE OF TRUTH = `resolveRouteWorkflowsViaRust` (explicit config wins; otherwise the
+    // `FRIDAY_ROUTE_WORKFLOWS_VIA_RUST` env knob fills the gap, "1"/"true" → true; anything
+    // else incl. unset → false). With nothing set (the default) this is `false`, so the
+    // `=== true` gate is never satisfied → byte-identical to today's fail-closed retirement 503.
+    routeWorkflowsViaRust: resolveRouteWorkflowsViaRust(config.routeWorkflowsViaRust),
     allowTestOnlyAgentRunControlExecution: config.allowTestOnlyAgentRunControlExecution,
     allowTestOnlyAutonomyLifecycleExecution: config.allowTestOnlyAutonomyLifecycleExecution,
     allowTestOnlyStandingAgendaExecution: config.allowTestOnlyStandingAgendaExecution,

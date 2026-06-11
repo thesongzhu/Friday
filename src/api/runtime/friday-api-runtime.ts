@@ -148,6 +148,7 @@ import { createFridayRustHubRunAnswerReadbackService } from "../mission-spine/fr
 import type { FridayRustHubRunAnswerReadbackService } from "../mission-spine/friday-rust-hub-run-answer-readback-service.js";
 import { createFridayRustHubProvidersDetectService } from "../mission-spine/friday-rust-hub-providers-detect-bridge-service.js";
 import { createFridayRustHubCapabilityDoctorService } from "../mission-spine/friday-rust-hub-capability-doctor-bridge-service.js";
+import { createFridayRustHubWorkflowCatalogBridgeService } from "../mission-spine/friday-rust-hub-workflow-catalog-bridge-service.js";
 import { resolveRustAgentRunWsClientX25519Secret } from "../mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
 import type { FridayRustAgentRunWsClientX25519SecretResolver } from "../mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
 import { createFridayStudioService } from "../../studio/index.js";
@@ -2581,9 +2582,21 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     routes.register(route);
   }
 
+  // Tier-2 WORKFLOW catalog-mutation route bridge (DARK): the refs-only TS→Rust bridge for the
+  // `hub_workflow_catalog` bin, consulted ONLY on the `routeWorkflowsViaRust`-on branch of the
+  // catalog-mutation handlers. Constructed lazily ONLY when the flag is on (default-off ⇒ the
+  // bridge is never built and the routes stay byte-identical to today's retirement 503). Tests
+  // inject a scripted-mock adapterBin bridge via `deps.rustWorkflowCatalogBridge`.
+  const routeWorkflowsViaRust = deps.routeWorkflowsViaRust === true;
+  const rustWorkflowCatalogBridge = routeWorkflowsViaRust
+    ? deps.rustWorkflowCatalogBridge ?? createFridayRustHubWorkflowCatalogBridgeService()
+    : undefined;
+
   // Register workflow routes (real service wiring)
   for (const route of createFridayWorkflowRoutes({
     allowTestOnlyWorkflowCatalogMutationExecution: deps.allowTestOnlyWorkflowCatalogMutationExecution,
+    routeWorkflowsViaRust,
+    rustWorkflowCatalogBridge,
     listWorkflows: (query) => {
       const workflows = workflowRuntime.crud.listWorkflows({
         tag: query.tag,
