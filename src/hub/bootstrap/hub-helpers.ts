@@ -60,6 +60,7 @@ import type { FridayBrowserPresentationMode } from "#browser";
 import type { FridayAutonomousEngine } from "../../agent/autonomous/friday-autonomous.types.js";
 import type { FridayMcpAdapter } from "../../agent/mcp/friday-mcp-adapter.types.js";
 import { parseFridaySecretInput } from "../../security/friday-secret-ref.js";
+import type { RustRouteProbeOutcome } from "../../diagnostics/friday-rust-route-self-probe.js";
 
 // ─── Constants ───
 
@@ -1825,6 +1826,14 @@ export interface FridayHub {
   satelliteRuntime: FridaySatelliteRuntime;
   mcpAdapter?: FridayMcpAdapter;
   webchatWsService?: WebchatWsService;
+  /**
+   * F1.5 — Headless Rust-route self-probe diagnostic readback (DARK, DEFAULT-OFF). `lastProbeOutcome`
+   * returns the most recent probe result, or `undefined` when the FRIDAY_RUST_ROUTE_DIAGNOSTIC_ENABLED
+   * flag is unset (the diagnostic never ran). Read-only; never carries the self-minted bearer.
+   */
+  rustRouteDiagnostic: {
+    lastProbeOutcome(): RustRouteProbeOutcome | undefined;
+  };
 }
 
 export interface FridayHubStatus {

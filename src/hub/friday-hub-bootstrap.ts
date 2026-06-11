@@ -364,6 +364,17 @@ import { appendFridayAuditLog, resolveFridayAuditLogPath } from "./services/frid
 import { createFridayGatewayService } from "./services/friday-gateway-service.js";
 import { createFridayProviderBackedTtsService } from "../media/friday-provider-backed-tts-service.js";
 import { createFridayChannelNaturalTriggerResolver } from "./bootstrap/friday-channel-natural-trigger-resolver.js";
+// F1.5 — Headless Rust-route self-probe diagnostic (DARK, DEFAULT-OFF). The `mintDiagnosticAdminBearer`
+// self-mint is intentionally module-scoped (NOT re-exported from a barrel) to avoid re-creating the
+// rejected H-a "assert admin without a token" trust surface; only this wiring + its test import it.
+import {
+  createRustRouteLoopbackTransport,
+  createRustRouteProbeOutcomeHolder,
+  maybeBuildRustRouteSelfProbeJob,
+  resolveRustRouteDiagnosticConfig,
+  RUST_ROUTE_DIAGNOSTIC_JOB_ID,
+  type RustRouteProbeOutcomeHolder,
+} from "../diagnostics/friday-rust-route-self-probe.js";
 
 // ─── Extracted helpers, types, and stubs ───
 
@@ -7380,6 +7391,10 @@ export async function createFridayHub(
 
   let jobScheduler: FridayJobSchedulerService | undefined;
   let schedulerRepo: FridayJobSchedulerRepository | undefined;
+  // F1.5 self-probe last-outcome holder — the in-product diagnostic readback surface. Only
+  // assigned when the default-OFF FRIDAY_RUST_ROUTE_DIAGNOSTIC_ENABLED flag is on; stays
+  // undefined (no diagnostic) otherwise. Read-only outcome; NEVER holds the bearer.
+  let rustRouteProbeOutcomeHolder: RustRouteProbeOutcomeHolder | undefined;
   if (stateRuntime) {
     schedulerRepo = createFridayJobSchedulerRepository({ db: stateRuntime.sqlite });
     const schedulerRepoRef = schedulerRepo;
@@ -7585,6 +7600,43 @@ export async function createFridayHub(
       },
     });
 
+    // F1.5 — Headless Rust-route self-probe diagnostic (DARK, DEFAULT-OFF; OPTION-1 / H-b).
+    // WHEN ENABLED by the operator via FRIDAY_RUST_ROUTE_DIAGNOSTIC_ENABLED=true ONLY, this
+    // recurring read-only self-probe lands ONE qualifying agent-run through the LIVE Rust
+    // read-only route (in-process loopback POST /v1/agent/runs with a self-minted, sessionless,
+    // short-lived, agent.run-only admin-001 bearer — the EXACT slice6 H-b path; no new trust
+    // surface, no direct routeStartRun caller). Each successful tick produces a REAL
+    // token_ledger row in rust-hub.sqlite. HONEST LABEL: "recurring REAL row, WEAKLY organic
+    // (system-initiated)" — NOT strictly organic. ENABLING = recurring REAL DeepSeek spend
+    // (operator gate; default cadence hourly, 5-min floor). Default-OFF by construction: when
+    // the flag is unset/anything-but-"true", maybeBuildRustRouteSelfProbeJob returns null ⇒ the
+    // job is never pushed ⇒ never registered ⇒ never fires. A failed probe is log-and-continue
+    // (runRustRouteSelfProbe never throws) so the recurring job cannot become a crash/fail-loop.
+    {
+      const diagnosticConfig = resolveRustRouteDiagnosticConfig(process.env);
+      if (diagnosticConfig.enabled) {
+        const probeHost = config.host ?? process.env.FRIDAY_HOST ?? "127.0.0.1";
+        const probePort = config.port ?? parseFridayHubPort(process.env.FRIDAY_PORT) ?? 3141;
+        rustRouteProbeOutcomeHolder = createRustRouteProbeOutcomeHolder();
+        const probeJob = maybeBuildRustRouteSelfProbeJob(diagnosticConfig, {
+          tokenSecret,
+          nowIso,
+          idGenerator,
+          providerService,
+          transport: createRustRouteLoopbackTransport({ host: probeHost, port: probePort }),
+          outcomeHolder: rustRouteProbeOutcomeHolder,
+        });
+        if (probeJob) {
+          schedulerJobs.push(probeJob);
+          console.warn(
+            `[friday][rust-route-self-probe] ENABLED — recurring REAL DeepSeek spend every `
+            + `${Math.round(diagnosticConfig.intervalMs / 1000)}s (weakly organic, system-initiated). `
+            + `Verify landings via token_ledger in rust-hub.sqlite (fallback=0, total_tokens>0).`,
+          );
+        }
+      }
+    }
+
     jobScheduler = createFridayJobSchedulerService({
       repository: schedulerRepoRef,
       nowIso,
@@ -7606,6 +7658,17 @@ export async function createFridayHub(
     // Runs before jobScheduler.start(), so start()'s seed loop will not re-create them.
     schedulerRepoRef.disableJob("session-lifecycle-sweep", nowIso());
     schedulerRepoRef.disableJob("agent-loop-cooldown-sweep", nowIso());
+
+    // F1.5 stop-the-spin: if the Rust-route self-probe is NOT enabled this boot, disable any row
+    // a PRIOR enabled boot persisted (enabled=1, next_run_at set). Enable→disable is the expected
+    // operator lifecycle (turn it on to land rows, off to stop spend). Without this, a disabled
+    // boot leaves the row enabled=1 with NO in-memory def → the exact orphan busy-spin trap
+    // described above (run loop skips it, but min-wake still sees it → armTimer(0) spins once
+    // next_run_at passes). disableJob clears enabled + next_run_at; harmless no-op on a fresh DB.
+    // Runs before start() so its seed loop will not re-create the row.
+    if (!resolveRustRouteDiagnosticConfig(process.env).enabled) {
+      schedulerRepoRef.disableJob(RUST_ROUTE_DIAGNOSTIC_JOB_ID, nowIso());
+    }
 
     // Link agent automations to the unified scheduler.
     if (apiRuntime.agentAutomationService) {
@@ -9604,6 +9667,11 @@ export async function createFridayHub(
     satelliteRuntime,
     mcpAdapter,
     webchatWsService,
+    // F1.5 diagnostic readback surface — the last self-probe outcome (undefined when the
+    // default-OFF flag is unset, i.e. the diagnostic never ran). Read-only; never holds the bearer.
+    rustRouteDiagnostic: {
+      lastProbeOutcome: () => rustRouteProbeOutcomeHolder?.get(),
+    },
   };
 
   return hub;
