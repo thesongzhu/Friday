@@ -7,10 +7,13 @@
  *
  * This drives `createFridayRustHubAgentRunSealedClient` UNCHANGED — the e2e proof is that the
  * REAL client speaks the REAL Rust server's sealed protocol (TS-seal → Rust-open, auth_proof
- * accepted, owner-sealed body opened). A reimplementation here would prove nothing.
+ * accepted, refs-only result settled). (leg-A decouple, #655 Part 4) The client now SETTLES on
+ * the refs envelope ALONE and no longer surfaces the owner-sealed body frame, so this runner
+ * reports the REFS (status/sha256/len) — NOT a body. The answer body is sourced by compose from
+ * the owner-gated DB readback, proven separately.
  *
  * Output contract (stdout, exactly one JSON line):
- *   success: {"ok":true,"status":"…","runId":"…","answerSha256":"…","answerLen":…,"body":"PONG"}
+ *   success: {"ok":true,"status":"…","runId":"…","answerSha256":"…","answerLen":…}
  *   fail-closed: {"ok":false,"code":"…","httpStatus":503}
  */
 import { createFridayRustHubAgentRunSealedClient } from "../../src/api/mission-spine/friday-rust-hub-agent-run-ws-sealed-client.js";
@@ -51,7 +54,6 @@ async function main(): Promise<void> {
         runId: result.runId,
         answerSha256: result.answerSha256 ?? null,
         answerLen: result.answerLen ?? null,
-        body: result.body ?? null,
       }) + "\n",
     );
     process.exit(0);

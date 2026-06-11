@@ -11,10 +11,8 @@ import {
   decodeSealed,
   deviceKeypairFromSecret,
   encodeSealed,
-  hexDecode,
   open,
   seal,
-  sha256Hex,
   X25519_PUBKEY_LEN,
 } from "./friday-rust-hub-agent-run-ws-sealed-crypto.js";
 
@@ -41,9 +39,13 @@ import {
  *   4. `session_key = HKDF(X25519(client_priv, server_pub))`.
  *   5. Send an `AgentRunRequest` Envelope sealed under the session key (XChaCha20-Poly1305),
  *      with a per-request `auth_proof` sealed over `AUTH_CHALLENGE || session_nonce`.
- *   6. Read TWO inbound sealed envelopes: the refs-only `AgentRunResult` FIRST, then (only if
- *      a body was delivered) a SECOND `AskFridayStream{seq:0, chunk:hex}` carrying the
- *      DOUBLY-sealed body. A denied/no-answer outcome sends NO body envelope.
+ *   6. (leg-A decouple, #655 Part 4) SETTLE on the FIRST inbound sealed envelope — the refs-only
+ *      `AgentRunResult` (status + answer fingerprint + A1 counts) — ALONE. The client no longer
+ *      awaits the SECOND owner-sealed body frame: the authoritative answer body is sourced by
+ *      compose from the owner-gated DB readback, not from the WS frame. The server still emits the
+ *      body frame after the refs frame, and still persists the body to the Hub DB BEFORE emitting
+ *      refs (so the readback always finds a committed row when refs arrive — no not_found race);
+ *      this client simply settles on refs and tears down without draining the body frame.
  *
  * ## Threat model (HONEST — loopback only)
  * The server binds 127.0.0.1 only; this client connects only to loopback. The client
@@ -138,9 +140,13 @@ export interface FridayRustHubAgentRunSealedRequest {
 }
 
 /**
- * The result of a sealed dispatch: the REFS-ONLY receipt PLUS the opened owner-sealed body,
- * when the run delivered one. The body is surfaced ONLY to the authed in-process caller (it
- * arrived doubly-sealed over the owner-only channel); it is NEVER on the refs receipt itself.
+ * The result of a sealed dispatch: the REFS-ONLY receipt (status + answer fingerprint +
+ * A1 counts). (leg-A decouple, #655 Part 4) The dispatch now SETTLES on the refs envelope
+ * ALONE — it no longer awaits or surfaces the owner-sealed body frame. The authoritative
+ * answer body is sourced by compose from the owner-gated DB readback
+ * (`FridayRustHubRunAnswerReadbackService.readAnswer`), never from the WS body frame, so the
+ * client carries NO `body` field. (The Rust server still PERSISTS the body to the Hub DB and
+ * still emits the body frame after the refs frame; this client simply does not wait for it.)
  */
 export interface FridayRustHubAgentRunSealedResult {
   readonly truthLabel: "rust_wired";
@@ -171,11 +177,6 @@ export interface FridayRustHubAgentRunSealedResult {
   readonly promptTokens?: number;
   /** (A1) REFS-surface run METADATA: completion-token total, when known. DEFERRED ⇒ `undefined`. */
   readonly completionTokens?: number;
-  /**
-   * The OPENED answer body, when the run delivered one to this owner. Absent on a denied /
-   * no-answer outcome. NOT a refs field — it arrived doubly-sealed over the owner channel.
-   */
-  readonly body?: string;
 }
 
 export interface CreateFridayRustHubAgentRunSealedClientOptions {
@@ -195,9 +196,11 @@ export interface CreateFridayRustHubAgentRunSealedClientOptions {
 
 export interface FridayRustHubAgentRunSealedClient {
   /**
-   * Dispatch one agent-run over a sealed session and await its result. Connects, runs the
-   * preamble + WS upgrade, seals the request, reads the refs result + optional owner-sealed
-   * body, then closes. Fails closed (503) on any non-clean settle.
+   * Dispatch one agent-run over a sealed session and await its REFS-ONLY result. Connects, runs
+   * the preamble + WS upgrade, seals the request, reads the FIRST (refs) result envelope, then
+   * settles and closes — it does NOT await the owner-sealed body frame (leg-A decouple, #655 Part
+   * 4; compose sources the body from the owner-gated DB readback). Fails closed (503) on any
+   * non-clean settle, including a session that closes BEFORE any refs arrive.
    */
   dispatchRun(
     request: FridayRustHubAgentRunSealedRequest,
@@ -417,11 +420,18 @@ interface ResultRefs {
 }
 
 /**
- * The two-envelope read state + settlement callbacks, shared between the inbound-message handler
- * and the server-close handler. Extracted to a module-level factory so the dispatch closure stays
- * small and the read-loop logic is testable in isolation.
+ * The refs read state + settlement callbacks, shared between the inbound-message handler and the
+ * server-close handler. Extracted to a module-level factory so the dispatch closure stays small
+ * and the settle logic is testable in isolation.
+ *
+ * (leg-A decouple, #655 Part 4) The dispatch settles on the FIRST (refs) envelope alone; `refs`
+ * is the only accumulated state, read by the close handler to distinguish a clean settle from a
+ * close-before-any-refs fail-closed.
+ *
+ * EXPORTED (with {@link handleResult} / {@link handleServerClose}) ONLY so the settle-branch logic
+ * is unit-testable against a fake ctx without a socket; not part of the public dispatch surface.
  */
-interface InboundContext {
+export interface InboundContext {
   /** Set once the handshake derives the session key (mutated in the async setup). */
   sessionKey: Uint8Array;
   /** Mutable refs slot — set by the result handler, read by the close handler. */
@@ -430,8 +440,8 @@ interface InboundContext {
   fail(error: FridayDomainError): void;
 }
 
-/** Settle from the accumulated refs + the (optional) opened body. */
-function finishWithBody(ctx: InboundContext, body: string | undefined): void {
+/** Settle from the accumulated refs (status + answer fingerprint + A1 counts). */
+function finishFromRefs(ctx: InboundContext): void {
   const { refs } = ctx;
   if (!refs) {
     ctx.fail(unavailable("Sealed agent-run client never received a result ref."));
@@ -448,12 +458,20 @@ function finishWithBody(ctx: InboundContext, body: string | undefined): void {
     ...(refs.executedTools !== undefined ? { executedTools: refs.executedTools } : {}),
     ...(refs.promptTokens !== undefined ? { promptTokens: refs.promptTokens } : {}),
     ...(refs.completionTokens !== undefined ? { completionTokens: refs.completionTokens } : {}),
-    ...(body !== undefined ? { body } : {}),
   });
 }
 
-/** Handle the refs-only `AgentRunResult` envelope (the FIRST inbound). */
-function handleResult(ctx: InboundContext, fields: Record<string, unknown>): void {
+/**
+ * Handle the refs-only `AgentRunResult` envelope (the FIRST and ONLY inbound the client awaits).
+ *
+ * (leg-A decouple, #655 Part 4) SETTLE IMMEDIATELY on the refs — whether or not a fingerprint is
+ * present. Previously, a result carrying `answer_sha256`/`answer_len` made the client WAIT for a
+ * SECOND owner-sealed body frame; that wait is removed. The body is sourced by compose from the
+ * owner-gated DB readback, and the server persists the body BEFORE emitting these refs, so a
+ * committed row is guaranteed to exist when this settles (no not_found race). A missing required
+ * ref (`run_id`/`status`) still fails closed — the refs-surface contract is preserved.
+ */
+export function handleResult(ctx: InboundContext, fields: Record<string, unknown>): void {
   const runId = asString(fields.run_id);
   const status = asString(fields.status);
   if (!runId || !status) {
@@ -478,51 +496,17 @@ function handleResult(ctx: InboundContext, fields: Record<string, unknown>): voi
     ...(promptTokens !== undefined ? { promptTokens } : {}),
     ...(completionTokens !== undefined ? { completionTokens } : {}),
   };
-  // No fingerprint ⇒ no answer ⇒ no body envelope follows; settle now. Otherwise wait (bounded)
-  // for the SECOND (body) envelope.
-  if (answerSha256 === undefined && answerLen === undefined) {
-    finishWithBody(ctx, undefined);
-  }
+  // (leg-A decouple) Settle on the refs ALONE — the body frame (if any) is no longer awaited.
+  finishFromRefs(ctx);
 }
 
-/** Handle the owner-sealed body envelope (`AskFridayStream`, the optional SECOND inbound). */
-function handleBody(ctx: InboundContext, fields: Record<string, unknown>): void {
-  // chunk = hex(encode_sealed(seal(session_key, body, SESSION_AAD))). DOUBLY sealed: the
-  // transport already opened the OUTER seal; the chunk hex-decodes to a SECOND sealed blob we
-  // open again under the session key.
-  const chunk = asString(fields.chunk);
-  if (chunk === undefined) {
-    ctx.fail(unavailable("Sealed agent-run client body chunk missing."));
-    return;
-  }
-  let body: string;
-  try {
-    const innerSealed = decodeSealed(hexDecode(chunk));
-    body = Buffer.from(open(ctx.sessionKey, innerSealed, SESSION_AAD)).toString("utf8");
-  } catch {
-    ctx.fail(unavailable("Sealed agent-run client could not open the owner-sealed body."));
-    return;
-  }
-  // Defensive: a DELIVERED body MUST carry a refs fingerprint, and that fingerprint MUST match the
-  // opened body — on BOTH sha256 AND byte length. The server always emits sha256+len together with a
-  // body; a body with no sha256 ref, a sha256 mismatch, or a len mismatch is fail-closed (never
-  // surfaced unverified). This holds the integrity check independent of the loopback trust model.
-  if (ctx.refs?.answerSha256 === undefined) {
-    ctx.fail(unavailable("Sealed agent-run client received a body with no fingerprint ref."));
-    return;
-  }
-  if (ctx.refs.answerSha256 !== sha256Hex(Buffer.from(body, "utf8"))) {
-    ctx.fail(unavailable("Sealed agent-run client body fingerprint mismatch."));
-    return;
-  }
-  if (ctx.refs.answerLen !== undefined && ctx.refs.answerLen !== Buffer.byteLength(body, "utf8")) {
-    ctx.fail(unavailable("Sealed agent-run client body length mismatch."));
-    return;
-  }
-  finishWithBody(ctx, body);
-}
-
-/** Dispatch one opened inbound envelope to its handler (result / body / unknown ⇒ fail-closed). */
+/**
+ * Dispatch one opened inbound envelope to its handler. (leg-A decouple, #655 Part 4) The client
+ * settles synchronously on the FIRST `AgentRunResult`, so any later frame (e.g. the now-ignored
+ * owner-sealed body `AskFridayStream`) arrives after teardown removed the listeners and after the
+ * `settled` guard is set — a no-op. We keep the kind dispatch narrow: only `AgentRunResult` is a
+ * recognized inbound; anything else BEFORE a result is fail-closed.
+ */
 function handleInbound(ctx: InboundContext, payload: Buffer): void {
   let inbound: InboundEnvelope;
   try {
@@ -535,28 +519,21 @@ function handleInbound(ctx: InboundContext, payload: Buffer): void {
     handleResult(ctx, inbound.fields);
     return;
   }
-  if (inbound.kind === "AskFridayStream") {
-    handleBody(ctx, inbound.fields);
-    return;
-  }
   ctx.fail(unavailable("Sealed agent-run client received an unknown message shape."));
 }
 
 /**
  * Handle the server ending the session. A close BEFORE any refs is the FAIL-CLOSED path (forged
- * peer / bad principal — the server established no session or ran nothing). With refs present, a
- * missing body is fail-closed only when the refs indicated an answer exists.
+ * peer / bad principal — the server established no session or ran nothing) and stays a 503. With
+ * refs present the client already settled on them, so `succeed`'s `settled` guard makes this a
+ * no-op; `finishFromRefs` is a defensive backstop for the (unreached) refs-present close.
  */
-function handleServerClose(ctx: InboundContext): void {
+export function handleServerClose(ctx: InboundContext): void {
   if (!ctx.refs) {
     ctx.fail(unavailable("Sealed agent-run client connection closed before a result."));
     return;
   }
-  if (ctx.refs.answerSha256 !== undefined || ctx.refs.answerLen !== undefined) {
-    ctx.fail(unavailable("Sealed agent-run client connection closed before the body."));
-    return;
-  }
-  finishWithBody(ctx, undefined);
+  finishFromRefs(ctx);
 }
 
 export function createFridayRustHubAgentRunSealedClient(
@@ -681,7 +658,8 @@ export function createFridayRustHubAgentRunSealedClient(
               handleInbound(ctx, data);
             });
             // The server closed the session. Before any refs ⇒ fail-closed (forged peer / bad
-            // principal); after refs ⇒ settle (or fail if a promised body never arrived).
+            // principal). After refs the client already settled, so this is a guarded no-op
+            // (leg-A decouple: a body-frame-less close is no longer a failure).
             recv.on("conclude", () => handleServerClose(ctx));
             recv.on("error", () => {
               fail(unavailable("Sealed agent-run client received a malformed WS frame."));
