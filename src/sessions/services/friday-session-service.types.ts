@@ -34,6 +34,14 @@ export interface FridaySessionService {
   pruneOldSessions(olderThan: string): Promise<FridaySessionPruneResult>;
   sweepLifecycle(): Promise<FridaySessionSweepResult>;
   getSessionMemoryNamespace(key: string): Promise<string>;
+  /**
+   * Resolve the ORDERED, DEDUPED set of namespaces to consult on the READ (recall)
+   * path. Hardening OFF (default): `[legacy]` (one entry, byte-identical to today).
+   * Hardening ON: `[hardened, legacy]` deduped — dual-read so memory written under
+   * the legacy namespace is still recalled (no destructive re-key). See
+   * {@link resolveFridaySessionMemoryNamespaceCandidates}.
+   */
+  getSessionMemoryNamespaceCandidates(key: string): Promise<string[]>;
   forkSession(parentKey: string, input?: FridaySessionForkCreateInput): Promise<FridaySessionForkCreateResult>;
   listForks(parentKey: string, input?: FridaySessionForkListInput): Promise<FridaySessionRecord[]>;
   mergeForkSummary(parentKey: string, input: FridaySessionForkMergeInput): Promise<FridaySessionForkMergeResult>;

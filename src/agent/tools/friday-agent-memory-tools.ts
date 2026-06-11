@@ -33,6 +33,15 @@ export interface CreateFridayAgentMemoryToolsDeps {
   idGenerator?: () => string;
   nowIso?: () => string;
   resolveSessionMemoryNamespace?: (sessionKey: string) => Promise<string | undefined>;
+  /**
+   * Resolve the ORDERED, DEDUPED set of session-memory namespaces to consult on
+   * recall (the dual-read list). When the namespace-hardening flag is OFF (default)
+   * this is a single-element list equal to `resolveSessionMemoryNamespace`, so recall
+   * behavior is byte-identical to today. When ON it is `[hardened, legacy]` deduped,
+   * so memory written under the legacy namespace is still recalled (no destructive
+   * re-key). When absent, recall falls back to the single-namespace path.
+   */
+  resolveSessionMemoryNamespaceCandidates?: (sessionKey: string) => Promise<string[] | undefined>;
   memoryGuardFactory?: FridayMemoryGuardServiceFactory;
   /**
    * Optional session or run identifier used to scope the memory namespace.
@@ -438,26 +447,80 @@ function resolveMemoryScopeId(input: {
     ?? normalizeAgentMemoryScopeId(input.principalId);
 }
 
+/**
+ * Resolve the dual-read candidate namespaces for recall. Returns the ORDERED,
+ * DEDUPED list (primary/hardened first, legacy after) — or `[]` when no session
+ * namespace applies. Prefers `resolveSessionMemoryNamespaceCandidates` (the dual-read
+ * dep); falls back to the single-namespace `resolveSessionMemoryNamespace` for
+ * callers that only wired the older dep (then the list has at most one entry, exactly
+ * the pre-dual-read behavior).
+ */
+async function resolveImplicitSessionNamespaceCandidates(params: {
+  deps: CreateFridayAgentMemoryToolsDeps;
+  explicitNamespace: string | undefined;
+  sessionId: string | undefined;
+}): Promise<string[]> {
+  if (
+    (params.explicitNamespace && !namespaceShouldOverlaySessionMemory(params.explicitNamespace))
+    || !params.sessionId
+  ) {
+    return [];
+  }
+  try {
+    if (params.deps.resolveSessionMemoryNamespaceCandidates) {
+      const candidates = await params.deps.resolveSessionMemoryNamespaceCandidates(params.sessionId);
+      const cleaned = (candidates ?? [])
+        .filter((ns): ns is string => typeof ns === "string" && ns.trim().length > 0)
+        .map((ns) => ns.trim());
+      // Dedup defensively (the dep already dedups, but a stale persisted-namespace
+      // tail could repeat the primary).
+      return [...new Set(cleaned)];
+    }
+    if (params.deps.resolveSessionMemoryNamespace) {
+      const namespace = await params.deps.resolveSessionMemoryNamespace(params.sessionId);
+      return typeof namespace === "string" && namespace.trim().length > 0 ? [namespace.trim()] : [];
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
 async function resolveImplicitSessionNamespace(params: {
   deps: CreateFridayAgentMemoryToolsDeps;
   explicitNamespace: string | undefined;
   sessionId: string | undefined;
 }): Promise<string | undefined> {
-  if (
-    (params.explicitNamespace && !namespaceShouldOverlaySessionMemory(params.explicitNamespace))
-    || !params.sessionId
-    || !params.deps.resolveSessionMemoryNamespace
-  ) {
-    return undefined;
+  // The PRIMARY session namespace is the FIRST dual-read candidate (hardened-when-on,
+  // legacy-when-off) — keeping this single value consistent with the candidate list.
+  const candidates = await resolveImplicitSessionNamespaceCandidates(params);
+  return candidates[0];
+}
+
+/**
+ * Search each legacy/stale session namespace (the dual-read candidate TAIL) and flatten the
+ * union. `memoryService.search` stays single-namespace per call — the dedup happens at the
+ * caller. Empty `namespaces` ⇒ no query (the common flag-off / no-dotted-segment case).
+ */
+async function searchLegacyDualReadNamespaces(params: {
+  deps: CreateFridayAgentMemoryToolsDeps;
+  query: string;
+  agentNamespace: string;
+  namespaces: string[];
+  limit: number;
+}): Promise<FridayMemorySearchResult[]> {
+  if (params.namespaces.length === 0) {
+    return [];
   }
-  try {
-    const namespace = await params.deps.resolveSessionMemoryNamespace(params.sessionId);
-    return typeof namespace === "string" && namespace.trim().length > 0
-      ? namespace.trim()
-      : undefined;
-  } catch {
-    return undefined;
-  }
+  const perNamespace = await Promise.all(
+    params.namespaces.map((ns) =>
+      params.deps.memoryService.search(params.query, {
+        namespace: [params.agentNamespace, ns],
+        limit: Math.max(params.limit * 2, params.limit),
+      }),
+    ),
+  );
+  return perNamespace.flat();
 }
 
 function extractStoredPreferenceValue(input: {
@@ -581,11 +644,21 @@ function createMemorySearchTool(
       const scopeId = resolveMemoryScopeId({ sessionId, principalId });
       const query = readStringParam(args, "query", { required: true });
       const explicitNamespace = readExplicitNamespace(args);
-      const implicitSessionNamespace = await resolveImplicitSessionNamespace({
+      // Dual-read: the ORDERED, DEDUPED session-namespace candidates. When the
+      // hardening flag is OFF (default) this is a single entry (== the legacy
+      // namespace), so everything below behaves byte-identically to today. When ON
+      // it is `[hardened, legacy]` and we ALSO search the legacy tail so memory
+      // written before the flip is still recalled (no destructive re-key).
+      const implicitSessionNamespaceCandidates = await resolveImplicitSessionNamespaceCandidates({
         deps,
         explicitNamespace,
         sessionId,
       });
+      const implicitSessionNamespace = implicitSessionNamespaceCandidates[0];
+      // The dual-read TAIL (legacy + any stale persisted namespace). Empty in the
+      // common (flag-off, or no-dotted-segment) case — so this adds ZERO extra queries
+      // unless a real legacy bucket exists.
+      const legacyDualReadNamespaces = implicitSessionNamespaceCandidates.slice(1);
       const limit = readNumberParam(args, "limit", { integer: true }) ?? 10;
       const agentNamespace = resolveAgentScopedNamespace({ scopeId });
       const explicitResolution = explicitNamespace
@@ -606,6 +679,18 @@ function createMemorySearchTool(
           namespace: scopedNamespace,
           limit: implicitSessionNamespace ? Math.max(limit * 2, limit) : limit,
         });
+        // DUAL-READ union: search each legacy/stale session namespace (the candidate
+        // tail) so memory written under the pre-hardening namespace is still recalled.
+        // `memoryService.search` stays SINGLE-namespace per call — the union + dedup is
+        // done here at the consumer. Empty list ⇒ no extra search (flag-off / no dotted
+        // segment), so this is a no-op for the common case.
+        const legacyDualReadResults = await searchLegacyDualReadNamespaces({
+          deps,
+          query,
+          agentNamespace,
+          namespaces: legacyDualReadNamespaces,
+          limit,
+        });
         const memoryGuardFactory = deps.memoryGuardFactory;
         const guardedContext = memoryGuardFactory && shouldIncludeGuardedPrincipalMemory(explicitNamespace)
           ? resolvePrincipalMemoryGuardContext({ args, signal })
@@ -622,20 +707,35 @@ function createMemorySearchTool(
             || namespaceShouldOverlaySessionMemory(explicitNamespace)
             || scopedResults.length === 0
           );
+        // Lexical fallback over ALL session-namespace candidates (primary + legacy tail),
+        // so legacy session memory is lexically scanned too under flag-on — not just the
+        // hardened primary. With one candidate (flag-off / no dotted segment) this is the
+        // single-namespace scan of before.
         const sessionLexicalCandidates =
           shouldUseSessionFallback && implicitSessionNamespace && sessionId
-            ? await buildSessionLexicalCandidates({
-              deps,
-              sessionId,
-              namespace: implicitSessionNamespace,
-              query,
-              limit,
-            })
+            ? (await Promise.all(
+                implicitSessionNamespaceCandidates.map((ns) =>
+                  buildSessionLexicalCandidates({
+                    deps,
+                    sessionId,
+                    namespace: ns,
+                    query,
+                    limit,
+                  }),
+                ),
+              )).flat()
             : [];
         const dedupedResults = (() => {
-          const merged = [...scopedResults, ...guardedResults, ...sessionLexicalCandidates];
+          const merged = [
+            ...scopedResults,
+            ...legacyDualReadResults,
+            ...guardedResults,
+            ...sessionLexicalCandidates,
+          ];
           const directlySearchedIds = new Set(
-            [...scopedResults, ...guardedResults].map((candidate) => candidate.item.id),
+            [...scopedResults, ...legacyDualReadResults, ...guardedResults].map(
+              (candidate) => candidate.item.id,
+            ),
           );
           const seen = new Set<string>();
           const itemsByContent = new Map<string, FridayMemorySearchResult>();
