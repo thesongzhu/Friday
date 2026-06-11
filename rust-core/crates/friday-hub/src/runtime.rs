@@ -542,6 +542,23 @@ impl<T: Transport> HubRuntime<T> {
         &self.db
     }
 
+    /// (A1 run-controls) The composed `FsToolExecutor` (workspace-root-contained, gate-mandatory).
+    /// Exposed so the sealed-WS server's RESUME control handler can delegate to the S6
+    /// [`crate::resume::resume_with_approval`] spine (which executes the ONE approved mutation
+    /// through this executor). It is the SAME executor the live loop uses — no separate/forked
+    /// executor for control ops. ADDITIVE, read-only accessor: no live behavior change.
+    pub fn executor(&self) -> &FsToolExecutor {
+        &self.executor
+    }
+
+    /// (A1 run-controls) The operator's PUBLIC verify key, if provisioned. Exposed so the RESUME
+    /// control handler can verify an operator-signed approval (the Hub holds only a VERIFY key —
+    /// it can never mint one). `None` ⇒ fail-closed (resume cannot verify, so nothing is Allowed).
+    /// ADDITIVE, read-only accessor: no live behavior change.
+    pub fn operator_vk(&self) -> Option<&OperatorVerifyingKey> {
+        self.operator_vk.as_ref()
+    }
+
     /// FIX-Q2 (hardening) — the run-owner principal this runtime is CONFIGURED with (the
     /// `--owner` allowlist's single entry, threaded via [`HubConfig::principal_id`] into the
     /// [`RunPolicy`]). This is the principal `run_task` stamps as the run's owner, recalls

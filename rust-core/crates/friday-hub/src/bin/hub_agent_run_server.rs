@@ -488,12 +488,34 @@ fn run() -> Result<(), ServerError> {
         );
     }
 
+    // (A1 run-controls) Read the run-control flag ONCE at boot (default-off). When false the
+    // server emits/handles EXACTLY the pre-A1 wire (a paused run ⇒ `AgentRunResult{no_answer}`;
+    // a control message ⇒ benign keepalive echo), so deploying a v13 binary changes NO live
+    // behavior until the operator flips this SEPARATE flag.
+    let run_control_enabled =
+        agent_run_control_enabled_from(env::var(AGENT_RUN_CONTROL_ENABLED_ENV).ok().as_deref());
+    if run_control_enabled {
+        eprintln!(
+            "hub_agent_run_server: on-wire run-CONTROL plane ENABLED (FRIDAY_AGENT_RUN_CONTROL_VIA_RUST)"
+        );
+    } else {
+        eprintln!(
+            "hub_agent_run_server: on-wire run-CONTROL plane DISABLED (set FRIDAY_AGENT_RUN_CONTROL_VIA_RUST=1 to enable)"
+        );
+    }
+
     // (3) Long-lived accept loop. Each accepted connection: set the read timeout, read the peer
     // pubkey preamble, REJECT a non-allowlisted peer pubkey (S-F, the FIRST gate), reject low-order
     // points, run the WS handshake, derive the sealed session key, and serve sealed envelopes
     // fail-closed — dispatching authed agent-runs.
     loop {
-        match listener.accept_one(&server_kp, &runtime, &owner_allowlist, &peer_allowlist) {
+        match listener.accept_one(
+            &server_kp,
+            &runtime,
+            &owner_allowlist,
+            &peer_allowlist,
+            run_control_enabled,
+        ) {
             Ok(_served) => {}
             // A connection-level error ends THAT connection only; the server keeps listening.
             Err(_e) => continue,
@@ -509,6 +531,26 @@ const SESSION_REAPER_ENABLED_ENV: &str = "FRIDAY_RUST_SESSION_REAPER_ENABLED";
 
 /// The reaper sweep cadence (120s), matching the old TS sweep's interval.
 const SESSION_REAPER_INTERVAL: Duration = Duration::from_secs(120);
+
+/// (A1 run-controls) The env flag that gates the on-wire RUN-CONTROL protocol. DEFAULT-OFF: the
+/// server emits `AgentRunPaused` (instead of the pre-A1 `AgentRunResult{no_answer}` for a paused
+/// run) and handles `AgentRunResume`/`AgentRunCancel`/`AgentRunReject` ONLY when
+/// `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST` is exactly `"1"`/`"true"` (case-insensitive). Unset — or any
+/// other value — leaves the control plane DARK: a paused run emits EXACTLY the pre-A1
+/// `AgentRunResult{status:"no_answer"}` bytes, and a control message is treated as a benign
+/// keepalive (echoed), so deploying a v13 binary changes NO live behavior. SEPARATE from
+/// `FRIDAY_ROUTE_AGENT_RUN_VIA_RUST` (the run-START flag) — flipping THIS one is the run-CONTROL
+/// live-flip, an operator DEPLOY-GO decision.
+const AGENT_RUN_CONTROL_ENABLED_ENV: &str = "FRIDAY_AGENT_RUN_CONTROL_VIA_RUST";
+
+/// Whether the operator has explicitly enabled the on-wire run-control plane. Fail-closed: only
+/// the exact opt-in values enable it; everything else (including unset) is OFF.
+fn agent_run_control_enabled_from(raw: Option<&str>) -> bool {
+    matches!(
+        raw.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("1") | Some("true")
+    )
+}
 
 /// Whether the operator has explicitly enabled the session-lifecycle reaper. Fail-closed:
 /// only the exact opt-in values enable it; everything else (including unset) is OFF.
@@ -610,6 +652,7 @@ impl AgentRunWsListener {
         runtime: &HubRuntime<T>,
         owner_allowlist: &[String],
         peer_allowlist: &[[u8; X25519_PUBKEY_LEN]],
+        run_control_enabled: bool,
     ) -> Result<usize, TransportError> {
         let (stream, _peer) = self.listener.accept()?;
         // HARDENING: a per-connection read timeout BEFORE any read, so a stalled peer cannot
@@ -623,6 +666,7 @@ impl AgentRunWsListener {
             &session_nonce,
             runtime,
             owner_allowlist,
+            run_control_enabled,
         )
     }
 }
@@ -739,6 +783,7 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
     session_nonce: &[u8],
     runtime: &HubRuntime<T>,
     owner_allowlist: &[String],
+    run_control_enabled: bool,
 ) -> Result<usize, TransportError> {
     let mut processed = 0usize;
     // S-E: per-session msg_id dedup. A reconnect mints a FRESH tracker (so it is not a
@@ -764,6 +809,16 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 forwarded_principal,
                 auth_proof,
                 session_id,
+                // (A1 run-controls) The per-run CONSTRAINTS the peer asserts. The wire SHAPE +
+                // the pure mapping onto a per-run `RunPolicy`
+                // ([`friday_hub::agent_run_control::effective_run_policy`]) are built + tested,
+                // but APPLYING them on the live dispatch requires the runtime to accept a per-run
+                // policy OVERRIDE (today `run_task` uses its OWN constructed `self.policy`).
+                // Threading that through the just-fixed live run-START path is a DEFERRED sub-AC
+                // (see the PR body) — so this slice does NOT apply the constraints on dispatch.
+                // `_constraints` is captured (not `..`) so the destructure stays exhaustive and a
+                // future field addition is a compile error, not a silent drop.
+                constraints: _constraints,
             } => {
                 // The dispatch arm: AUTH BEFORE ANY RUN. The `auth_proof` is the peer-sealed
                 // challenge; reconstruct it as a `Sealed` for the session-key open. A malformed
@@ -834,21 +889,59 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                     "hub_agent_run_server_dispatch: run_id={run_id} leg=refs status={} has_body={has_body}",
                     refs.status
                 );
-                let result = Envelope::new(
-                    format!("agent-run-result-{run_id}"),
-                    now_ms,
-                    Message::AgentRunResult {
-                        run_id: run_id.clone(),
-                        status: refs.status,
-                        answer_sha256: refs.answer_sha256,
-                        answer_len: refs.answer_len,
-                        turns: refs.turns,
-                        executed_tools: refs.executed_tools,
-                        prompt_tokens: None,
-                        completion_tokens: None,
-                    },
-                )
-                .with_correlation(env.msg_id.clone());
+                // (A1 run-controls) PAUSE-SURFACING — discriminate the NoAnswer black hole. When
+                // the run produced NO body, it is EITHER a genuine no-answer OR a PAUSE (the loop
+                // persisted a `pending_approval_request` before returning, and the server only
+                // sees `NoAnswer`). FLAG-GATED + DARK: only when the run-control flag is ON do we
+                // probe the DB for a live pending row and, if found, emit `AgentRunPaused` instead
+                // of `AgentRunResult{no_answer}`. With the flag OFF this branch is never taken, so
+                // a paused run emits EXACTLY the pre-A1 `AgentRunResult{status:"no_answer"}` bytes
+                // (the deploy-safety invariant). The pause frame is REFS-ONLY (nonce + digest +
+                // action-verb summary — never the tool body/args).
+                let result = if run_control_enabled && !has_body {
+                    match friday_hub::agent_run_control::detect_pause(runtime.db().conn(), &run_id)
+                    {
+                        Ok(Some(pause)) => {
+                            eprintln!(
+                                "hub_agent_run_server_dispatch: run_id={run_id} leg=paused (run-control enabled)"
+                            );
+                            Some(Envelope::new(
+                                format!("agent-run-paused-{run_id}"),
+                                now_ms,
+                                Message::AgentRunPaused {
+                                    run_id: run_id.clone(),
+                                    nonce: pause.nonce,
+                                    action_digest: pause.action_digest,
+                                    summary: pause.summary,
+                                },
+                            ))
+                        }
+                        // No live pending row (genuine no-answer) ⇒ fall through to the unchanged
+                        // refs result. A DB probe error is non-fatal: fail SAFE to the pre-A1 path
+                        // (never panic, never fabricate a pause).
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                let result = result
+                    .unwrap_or_else(|| {
+                        Envelope::new(
+                            format!("agent-run-result-{run_id}"),
+                            now_ms,
+                            Message::AgentRunResult {
+                                run_id: run_id.clone(),
+                                status: refs.status,
+                                answer_sha256: refs.answer_sha256,
+                                answer_len: refs.answer_len,
+                                turns: refs.turns,
+                                executed_tools: refs.executed_tools,
+                                prompt_tokens: None,
+                                completion_tokens: None,
+                            },
+                        )
+                    })
+                    .with_correlation(env.msg_id.clone());
                 if let Err(err) = ws_send_envelope(ws, session_key, &result, SESSION_AAD) {
                     // The refs frame could not be sent (transport closed). Log which leg
                     // failed (run_id + leg) before ending the session — this is the leg-A
@@ -897,8 +990,134 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 }
                 processed += 1;
             }
+            // (A1 run-controls) RESUME — relay an operator's signed approval to the S6 spine.
+            // FLAG-GATED: when the flag is OFF this is a benign keepalive (echoed), so deploying a
+            // v13 binary changes no behavior; only when ON do we verify+execute. Resume is
+            // SELF-authenticating (the operator's Ed25519 signature is the authority); it uses the
+            // runtime's verify key + executor and pre-checks the reject/cancel coupling.
+            Message::AgentRunResume {
+                ref run_id,
+                ref signed_blob,
+            } if run_control_enabled => {
+                let now_ms = now_ms();
+                let outcome = match runtime.operator_vk() {
+                    Some(vk) => friday_hub::agent_run_control::resume(
+                        runtime.db().conn(),
+                        runtime.executor(),
+                        vk,
+                        run_id,
+                        signed_blob,
+                        now_ms,
+                    )
+                    .unwrap_or_else(|_| {
+                        // A storage error is a fail-closed refusal (never a panic / partial).
+                        friday_hub::agent_run_control::ControlOutcome {
+                            op: "resume",
+                            accepted: false,
+                            status: "storage_failed".to_string(),
+                            audit_ref: None,
+                        }
+                    }),
+                    // No operator key provisioned ⇒ cannot verify ⇒ fail-closed refusal.
+                    None => friday_hub::agent_run_control::ControlOutcome {
+                        op: "resume",
+                        accepted: false,
+                        status: "operator_vk_unprovisioned".to_string(),
+                        audit_ref: None,
+                    },
+                };
+                send_control_result(ws, session_key, &env.msg_id, run_id, &outcome, now_ms)?;
+                processed += 1;
+            }
+            // (A1 run-controls) CANCEL — owner-authed terminal stop. FLAG-GATED (keepalive when
+            // off). The forwarded principal is authenticated against the sealed session (the SAME
+            // possession proof an AgentRunRequest carries, bound to this run_id), then the control
+            // module requires that authenticated principal == the run's bound owner.
+            Message::AgentRunCancel {
+                ref run_id,
+                ref forwarded_principal,
+                ref auth_proof,
+                ref reason,
+            } if run_control_enabled => {
+                let now_ms = now_ms();
+                let outcome = match authenticate_control_caller(
+                    session_key,
+                    session_nonce,
+                    owner_allowlist,
+                    auth_proof,
+                    run_id,
+                    forwarded_principal,
+                ) {
+                    Some(caller) => friday_hub::agent_run_control::cancel(
+                        runtime.db().conn(),
+                        run_id,
+                        caller.principal(),
+                        reason.as_deref(),
+                        now_ms,
+                    )
+                    .unwrap_or_else(|_| friday_hub::agent_run_control::ControlOutcome {
+                        op: "cancel",
+                        accepted: false,
+                        status: "storage_failed".to_string(),
+                        audit_ref: None,
+                    }),
+                    // Session auth failed (forged / non-allowlisted / un-openable proof) ⇒
+                    // fail-closed refusal. We do NOT end the session (a control op is not a
+                    // dispatch); we answer the refusal and keep serving.
+                    None => friday_hub::agent_run_control::ControlOutcome {
+                        op: "cancel",
+                        accepted: false,
+                        status: "auth_failed".to_string(),
+                        audit_ref: None,
+                    },
+                };
+                send_control_result(ws, session_key, &env.msg_id, run_id, &outcome, now_ms)?;
+                processed += 1;
+            }
+            // (A1 run-controls) REJECT — owner-authed refusal of ONE pending tool-approval.
+            // FLAG-GATED (keepalive when off). Same owner-auth as cancel.
+            Message::AgentRunReject {
+                ref run_id,
+                ref approval_id,
+                ref forwarded_principal,
+                ref auth_proof,
+            } if run_control_enabled => {
+                let now_ms = now_ms();
+                let outcome = match authenticate_control_caller(
+                    session_key,
+                    session_nonce,
+                    owner_allowlist,
+                    auth_proof,
+                    run_id,
+                    forwarded_principal,
+                ) {
+                    Some(caller) => friday_hub::agent_run_control::reject(
+                        runtime.db().conn(),
+                        run_id,
+                        approval_id,
+                        caller.principal(),
+                        now_ms,
+                    )
+                    .unwrap_or_else(|_| friday_hub::agent_run_control::ControlOutcome {
+                        op: "reject",
+                        accepted: false,
+                        status: "storage_failed".to_string(),
+                        audit_ref: None,
+                    }),
+                    None => friday_hub::agent_run_control::ControlOutcome {
+                        op: "reject",
+                        accepted: false,
+                        status: "auth_failed".to_string(),
+                        audit_ref: None,
+                    },
+                };
+                send_control_result(ws, session_key, &env.msg_id, run_id, &outcome, now_ms)?;
+                processed += 1;
+            }
             // Benign keepalive (S-B behaviour): echo the opened envelope back, sealed under the
-            // SAME session key, correlated to the request. NO dispatch.
+            // SAME session key, correlated to the request. NO dispatch. This is ALSO where a
+            // control message lands when the run-control flag is OFF (the guards above are not
+            // met), so a v13 control message on a DARK server is a harmless echo — no handling.
             _ => {
                 let reply = Envelope::new(env.msg_id.clone(), env.sent_at, env.message)
                     .with_correlation(env.msg_id.clone());
@@ -915,6 +1134,65 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+/// (A1 run-controls) Authenticate an owner-authed control op's forwarded principal against the
+/// sealed session — the SAME possession-of-session + nonce-bound-challenge + owner-allowlist chain
+/// the `AgentRunRequest` dispatch arm uses, bound to THIS control op's `run_id`. Returns the bound
+/// principal on success, `None` (fail-closed) on any failure (un-openable proof / forged / empty /
+/// anonymous / non-allowlisted). The caller then matches this principal to the run's bound owner.
+fn authenticate_control_caller(
+    session_key: &DataKey,
+    session_nonce: &[u8],
+    owner_allowlist: &[String],
+    auth_proof: &[u8],
+    run_id: &str,
+    forwarded_principal: &str,
+) -> Option<AuthedPrincipal> {
+    decode_sealed_proof(auth_proof).and_then(|proof| {
+        AuthedPrincipal::authenticate_forwarded(
+            session_key,
+            SESSION_AAD,
+            AUTH_CHALLENGE,
+            ForwardedAuth {
+                auth_proof: &proof,
+                session_nonce,
+                run_id,
+                forwarded_principal,
+            },
+            owner_allowlist,
+        )
+    })
+}
+
+/// (A1 run-controls) Send the REFS-ONLY [`Message::AgentRunControlResult`] receipt for a control
+/// op, sealed under the session and correlated to the request. Never a body — only the coarse
+/// op/accepted/status + a soft audit ref.
+fn send_control_result<S: Read + Write>(
+    ws: &mut WireWebSocket<S>,
+    session_key: &DataKey,
+    correlation_msg_id: &str,
+    run_id: &str,
+    outcome: &friday_hub::agent_run_control::ControlOutcome,
+    now_ms: i64,
+) -> Result<(), TransportError> {
+    eprintln!(
+        "hub_agent_run_server_control: run_id={run_id} op={} accepted={} status={}",
+        outcome.op, outcome.accepted, outcome.status
+    );
+    let result = Envelope::new(
+        format!("agent-run-control-result-{run_id}"),
+        now_ms,
+        Message::AgentRunControlResult {
+            run_id: run_id.to_string(),
+            op: outcome.op.to_string(),
+            accepted: outcome.accepted,
+            status: outcome.status.clone(),
+            audit_ref: outcome.audit_ref.clone(),
+        },
+    )
+    .with_correlation(correlation_msg_id.to_string());
+    ws_send_envelope(ws, session_key, &result, SESSION_AAD)
 }
 
 /// The REFS-ONLY terminal projection of a dispatch outcome: status + answer sha256/len +
@@ -1186,6 +1464,7 @@ mod tests {
                 forwarded_principal: principal.to_string(),
                 auth_proof: auth_proof_bytes(client_session, session_nonce, principal, run_id),
                 session_id: None,
+                constraints: None,
             },
         )
     }
@@ -1210,6 +1489,7 @@ mod tests {
                 forwarded_principal: principal.to_string(),
                 auth_proof: auth_proof_bytes(client_session, session_nonce, principal, run_id),
                 session_id: Some(session_id.to_string()),
+                constraints: None,
             },
         )
     }
@@ -1326,7 +1606,7 @@ mod tests {
 
         // SERVER on the main thread (holds the non-Send runtime).
         let processed = listener
-            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist)
+            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false)
             .unwrap();
         assert_eq!(processed, 1, "one authed dispatch processed");
 
@@ -1364,6 +1644,164 @@ mod tests {
         assert_eq!(opened, BODY.as_bytes(), "owner opens the sealed body");
     }
 
+    /// A MOCK transport that PROPOSES a mutating tool call (write_file) every turn. With the
+    /// runtime's `operator_vk: None` (DenyAll), the gate's `RequiresApproval` is never upgraded ⇒
+    /// the loop PAUSES and persists a `pending_approval_request` before returning the body-free
+    /// NoAnswer. Used by the deploy-safety pause-surfacing tests.
+    struct PauseTransport;
+    impl Transport for PauseTransport {
+        fn get_json(&self, _u: &str, _b: &str) -> Result<Value, DeepSeekError> {
+            Ok(json!({"data":[{"id":"deepseek-v4-flash"}]}))
+        }
+        fn post_json(&self, _u: &str, _b: &str, _body: &Value) -> Result<Value, DeepSeekError> {
+            // Propose a mutating write_file tool call (the gate Pauses it under DenyAll).
+            let content = r#"{"tool":"write_file","path":"out.txt","content":"X"}"#;
+            Ok(json!({
+                "model":"deepseek-v4-flash",
+                "choices":[{"message":{"content":content},"finish_reason":"stop"}],
+                "usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+            }))
+        }
+    }
+
+    /// Build a MOCK-transport runtime whose loop PAUSES on a mutating tool (operator_vk: None).
+    fn pausing_runtime(tag: &str, principal: &str) -> (HubRuntime<PauseTransport>, TempWs) {
+        let ws = TempWs::new(tag);
+        let client = DeepSeekClient::with_transport(PauseTransport, "k".into()); // pragma: allowlist secret
+        let agent = DeepSeekAgentLlmClient::new(client);
+        let rt = HubRuntime::new(
+            HubConfig {
+                db_path: std::env::temp_dir()
+                    .join(format!(
+                        "friday-execrun-pause-{}-{}-{}.sqlite",
+                        std::process::id(),
+                        tag,
+                        C.fetch_add(1, Ordering::Relaxed)
+                    ))
+                    .to_string_lossy()
+                    .into_owned(),
+                workspace_root: ws.0.clone(),
+                secret: b"execrun-pause-test-secret-0123456789".to_vec(), // pragma: allowlist secret
+                max_turns: 4,
+                principal_id: Some(principal.to_string()),
+                disabled_tools: vec![],
+                read_only: false,
+                operator_vk: None, // DenyAll ⇒ a mutating tool Pauses (never upgraded)
+            },
+            agent,
+            Box::new(DenyAllApprovals),
+        )
+        .unwrap();
+        (rt, ws)
+    }
+
+    /// Run ONE authed dispatch against a PAUSING runtime with the run-control flag set to
+    /// `run_control_enabled`, returning the client's first observed reply message.
+    fn dispatch_pausing_with_flag(tag: &str, run_control_enabled: bool) -> Message {
+        let (rt, _ws) = pausing_runtime(tag, OWNER);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        let client_kp = DeviceKeypair::generate();
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let client = spawn_client(addr, client_kp, |session, nonce| {
+            let req = agent_run_request("req-pause", "run-pause-1", OWNER, session, nonce);
+            (req, session.clone(), session.clone())
+        });
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                run_control_enabled,
+            )
+            .unwrap();
+        assert_eq!(processed, 1, "[{tag}] the paused dispatch is processed");
+        client.join().unwrap().result.expect("a reply is sent")
+    }
+
+    /// DEPLOY-SAFETY (the load-bearing test): with the run-control flag OFF, a PAUSED run emits
+    /// EXACTLY the pre-A1 `AgentRunResult{status:"no_answer"}` — byte-for-byte the current live
+    /// behavior, so deploying a v13 binary changes nothing. With the flag ON, the SAME paused run
+    /// emits `AgentRunPaused` (refs-only: nonce + digest + summary) instead. ONE test, BOTH legs.
+    #[test]
+    fn paused_run_emits_no_answer_when_flag_off_and_paused_when_on() {
+        // FLAG OFF ⇒ pre-A1 no_answer result (unchanged live behavior). The exact pre-A1 status
+        // for a paused/no-body run is `no_answer_safe_failure` (the `AuthedAnswer::NoAnswer`
+        // projection) — this is the byte-for-byte current behavior that must be preserved.
+        match dispatch_pausing_with_flag("pause-off", false) {
+            Message::AgentRunResult { run_id, status, .. } => {
+                assert_eq!(run_id, "run-pause-1");
+                assert_eq!(
+                    status, "no_answer_safe_failure",
+                    "flag OFF: a paused run MUST emit the pre-A1 no_answer result (deploy-safe)"
+                );
+            }
+            other => panic!("flag OFF must emit AgentRunResult, got {other:?}"),
+        }
+
+        // FLAG ON ⇒ AgentRunPaused with refs-only pause info.
+        match dispatch_pausing_with_flag("pause-on", true) {
+            Message::AgentRunPaused {
+                run_id,
+                nonce,
+                action_digest,
+                summary,
+            } => {
+                assert_eq!(run_id, "run-pause-1");
+                assert_eq!(nonce.len(), 64, "the CSPRNG approval nonce is surfaced");
+                assert_eq!(action_digest.len(), 64);
+                assert!(
+                    summary.contains("write_file"),
+                    "the action-verb summary is surfaced (refs-only)"
+                );
+                // CANARY: the pause frame never carries the tool body/args.
+                let frame = format!("{run_id}{nonce}{action_digest}{summary}");
+                assert!(!frame.contains("\"content\""), "pause leaked tool params");
+            }
+            other => panic!("flag ON must emit AgentRunPaused, got {other:?}"),
+        }
+    }
+
+    /// DARK-when-OFF for control MESSAGES: a control message (e.g. AgentRunCancel) arriving with
+    /// the run-control flag OFF is treated as a benign keepalive (echoed back), NOT handled — so a
+    /// v13 control message on a dark server effects no state change. (Flag-ON handling is covered
+    /// by the `agent_run_control` unit suite in tests/a1_run_control.rs.)
+    #[test]
+    fn control_message_is_keepalive_echo_when_flag_off() {
+        let (rt, _ws) = mock_runtime("ctl-off", OWNER);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        let client_kp = DeviceKeypair::generate();
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let client = spawn_client(addr, client_kp, |session, _nonce| {
+            let req = Envelope::new(
+                "req-cancel",
+                1000,
+                Message::AgentRunCancel {
+                    run_id: "run-x".into(),
+                    forwarded_principal: OWNER.into(),
+                    auth_proof: vec![1, 2, 3],
+                    reason: None,
+                },
+            );
+            (req, session.clone(), session.clone())
+        });
+        let processed = listener
+            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false)
+            .unwrap();
+        assert_eq!(processed, 1, "the control message is processed as a keepalive");
+        // The flag is OFF ⇒ the message is ECHOED verbatim (keepalive), NOT a control result.
+        match client.join().unwrap().result.expect("an echo reply") {
+            Message::AgentRunCancel { run_id, .. } => assert_eq!(run_id, "run-x"),
+            other => panic!("flag OFF must echo the control message, got {other:?}"),
+        }
+    }
+
     // (b) THE PRECONDITION: a correct-handshake peer (real session key) with a NON-ALLOWLISTED /
     // forged / empty / anonymous forwarded principal is REJECTED — NO run, NO body. A session key
     // is NOT authorization.
@@ -1385,7 +1823,7 @@ mod tests {
         });
 
         let processed = listener
-            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist)
+            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false)
             .unwrap();
         assert_eq!(processed, 0, "[{tag}] rejected dispatch processes ZERO");
 
@@ -1417,6 +1855,35 @@ mod tests {
             "padded true ⇒ enabled"
         );
         assert!(reaper_enabled_from(Some(" 1 ")), "padded 1 ⇒ enabled");
+    }
+
+    #[test]
+    fn agent_run_control_flag_is_default_off_and_fail_closed() {
+        // The on-wire run-control plane is DEFAULT-OFF: unset ⇒ disabled (deploy-safe). Only the
+        // exact opt-in values enable it; everything else is OFF.
+        assert!(
+            !agent_run_control_enabled_from(None),
+            "unset ⇒ disabled (default-off, deploy-safe)"
+        );
+        assert!(!agent_run_control_enabled_from(Some("")), "empty ⇒ disabled");
+        assert!(!agent_run_control_enabled_from(Some("0")), "0 ⇒ disabled");
+        assert!(
+            !agent_run_control_enabled_from(Some("false")),
+            "false ⇒ disabled"
+        );
+        assert!(
+            !agent_run_control_enabled_from(Some("on")),
+            "garbage ⇒ disabled"
+        );
+        assert!(agent_run_control_enabled_from(Some("1")), "1 ⇒ enabled");
+        assert!(
+            agent_run_control_enabled_from(Some("true")),
+            "true ⇒ enabled"
+        );
+        assert!(
+            agent_run_control_enabled_from(Some("  TRUE  ")),
+            "padded TRUE ⇒ enabled"
+        );
     }
 
     #[test]
@@ -1466,13 +1933,14 @@ mod tests {
                     forwarded_principal: OWNER.to_string(),
                     auth_proof: bad_proof,
                     session_id: None,
+                    constraints: None,
                 },
             );
             (req, session.clone(), session.clone())
         });
 
         let processed = listener
-            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist)
+            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false)
             .unwrap();
         assert_eq!(
             processed, 0,
@@ -1507,7 +1975,7 @@ mod tests {
         });
 
         let processed = listener
-            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist)
+            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false)
             .unwrap();
         assert_eq!(
             processed, 0,
@@ -1542,7 +2010,7 @@ mod tests {
             drop(stream);
         });
         // accept_one runs the REAL production path; a low-order key must make it return Err.
-        let outcome = listener.accept_one(&server_kp, &rt, &allowlist, &peer_allowlist);
+        let outcome = listener.accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false);
         client.join().unwrap();
         assert!(
             outcome.is_err(),
@@ -1812,6 +2280,7 @@ mod tests {
                     forwarded_principal: OWNER.to_string(),
                     auth_proof: proof,
                     session_id: None,
+                    constraints: None,
                 },
             );
             ws_send_envelope(&mut ws, &sess_c1, &req, SESSION_AAD).unwrap();
@@ -1819,7 +2288,7 @@ mod tests {
             let _ = ws_recv_envelope(&mut ws, &sess_c1, SESSION_AAD);
         });
         let processed1 = listener
-            .accept_one(&server_kp, &rt1, &allowlist, &peer_allowlist)
+            .accept_one(&server_kp, &rt1, &allowlist, &peer_allowlist, false)
             .unwrap();
         assert_eq!(processed1, 1, "connection-1 is a VALID dispatch");
         let captured_proof = rx.recv().unwrap();
@@ -1842,6 +2311,7 @@ mod tests {
                     forwarded_principal: OWNER.to_string(),
                     auth_proof: captured_proof,
                     session_id: None,
+                    constraints: None,
                 },
             );
             ws_send_envelope(&mut ws, &sess_c2, &req, SESSION_AAD).unwrap();
@@ -1851,7 +2321,7 @@ mod tests {
                 .map(|e| e.message)
         });
         let processed2 = listener
-            .accept_one(&server_kp, &rt2, &allowlist, &peer_allowlist)
+            .accept_one(&server_kp, &rt2, &allowlist, &peer_allowlist, false)
             .unwrap();
         assert_eq!(
             processed2, 0,
@@ -1902,7 +2372,7 @@ mod tests {
         });
 
         let processed = listener
-            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist)
+            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false)
             .unwrap();
         // The first keepalive was processed (echoed); the replayed msg_id ended the session.
         assert_eq!(
@@ -1970,7 +2440,7 @@ mod tests {
 
         let client = thread::spawn(move || try_preamble(addr, attacker_pub));
         // The server runs the REAL accept path; a non-allowlisted peer must make it FAIL CLOSED.
-        let outcome = listener.accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist);
+        let outcome = listener.accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist, false);
         let obs = client.join().unwrap();
 
         assert!(
@@ -2019,7 +2489,7 @@ mod tests {
             (req, session.clone(), session.clone())
         });
         let processed = listener
-            .accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist)
+            .accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist, false)
             .unwrap();
         assert_eq!(
             processed, 1,
@@ -2404,7 +2874,7 @@ mod tests {
         );
         // SERVER serves on the main thread (non-Send runtime); the TS client drives the socket.
         let processed = listener
-            .accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist)
+            .accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist, false)
             .expect("server serves the interop session");
         assert_eq!(processed, 1, "one authed dispatch processed");
 
@@ -2450,7 +2920,7 @@ mod tests {
         // The TS client uses its fixed secret (whose pubkey is NOT enrolled) ⇒ rejected at preamble.
         let child = spawn_ts_client(addr.port(), &ts_client_secret_hex(), OWNER, "run-forged");
         // The server rejects the peer pubkey and returns an Err (no session established).
-        let served = listener.accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist);
+        let served = listener.accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist, false);
         assert!(
             served.is_err(),
             "a forged/non-allowlisted peer establishes NO session"
@@ -2492,7 +2962,7 @@ mod tests {
             "run-badprincipal",
         );
         let processed = listener
-            .accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist)
+            .accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist, false)
             .expect("server serves the session but runs nothing");
         assert_eq!(
             processed, 0,
@@ -2592,7 +3062,7 @@ mod tests {
             "run-compose-ok",
         );
         let processed = listener
-            .accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist)
+            .accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist, false)
             .expect("server serves the compose-adapter session");
         assert_eq!(processed, 1, "one authed dispatch processed");
 
@@ -2639,7 +3109,7 @@ mod tests {
             OWNER,
             "run-compose-forged",
         );
-        let served = listener.accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist);
+        let served = listener.accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist, false);
         assert!(
             served.is_err(),
             "an unenrolled derived pubkey establishes NO session"
@@ -2692,7 +3162,7 @@ mod tests {
         });
 
         let processed = listener
-            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist)
+            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false)
             .unwrap();
         assert_eq!(processed, 1, "one sessioned dispatch processed");
 
@@ -2793,7 +3263,7 @@ mod tests {
         });
         assert_eq!(
             listener
-                .accept_one(&server_kp, &rt, &allowlist, &peer1)
+                .accept_one(&server_kp, &rt, &allowlist, &peer1, false)
                 .unwrap(),
             1
         );
@@ -2810,7 +3280,7 @@ mod tests {
         });
         assert_eq!(
             listener
-                .accept_one(&server_kp, &rt, &allowlist, &peer2)
+                .accept_one(&server_kp, &rt, &allowlist, &peer2, false)
                 .unwrap(),
             1
         );
@@ -2855,7 +3325,7 @@ mod tests {
         });
         assert_eq!(
             listener
-                .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist)
+                .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false)
                 .unwrap(),
             1
         );

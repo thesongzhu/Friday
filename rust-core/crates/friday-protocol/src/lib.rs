@@ -35,9 +35,24 @@ use thiserror::Error;
 /// later sub-slices (S-B/S-C). Bumping the wire version here keeps wire-compat
 /// honest (a peer that speaks v12 advertises these kinds exist), even while no
 /// production route emits them.
-pub const CURRENT_SCHEMA_VERSION: u16 = 12;
+///
+/// v13 (A1 run-controls) adds the on-wire run-CONTROL protocol for the live
+/// agent-run: `AgentRunPaused` (emitted when the loop's gate Pauses a mutating
+/// tool — today a Paused run drops into the NoAnswer black hole), `AgentRunResume`
+/// (TS is a pure COURIER of the operator's out-of-band Ed25519 signature, never its
+/// author), `AgentRunCancel` (owner-authed terminal stop), `AgentRunReject`
+/// (owner-authed `pending_approval_request.status='rejected'`), and the
+/// `AgentRunControlResult` receipt. These also land DARK: the new variants append
+/// to the enum (a peer that speaks v13 advertises they exist), but NOTHING emits or
+/// handles them in production until the A1 server handlers are wired behind the
+/// NEW default-off `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST` flag. With that flag OFF a
+/// Paused run emits exactly the pre-A1 `AgentRunResult{status:"no_answer"}` bytes —
+/// so deploying a v13 binary changes NO live behavior. The constraint fields added
+/// to `AgentRunRequest` are additive-optional (absent ⇒ byte-identical to the
+/// pre-A1 wire), so the live courier's current bytes still decode to no-constraints.
+pub const CURRENT_SCHEMA_VERSION: u16 = 13;
 /// The inclusive range of versions this build supports.
-pub const SUPPORTED: VersionRange = VersionRange { min: 1, max: 12 };
+pub const SUPPORTED: VersionRange = VersionRange { min: 1, max: 13 };
 
 /// A surface-safe Mission projection. This is the wire shape mobile, desktop, and
 /// channel surfaces may render. It intentionally has no raw provider ids, channel
@@ -754,6 +769,39 @@ pub enum ErrorCode {
     Internal,
 }
 
+/// (A1 run-controls) Per-run CONSTRAINTS carried on an `AgentRunRequest`. ADDITIVE +
+/// OPTIONAL on the wire: an absent field is `None` (`#[serde(default)]`) and a `None`
+/// constraints block is OMITTED from the wire (`skip_serializing_if`), so a request with
+/// no constraints is BYTE-IDENTICAL to the pre-A1 `AgentRunRequest`. This mirrors the
+/// `session_id` additive-optional discipline.
+///
+/// **SECURITY / TRUTH:** these are CLIENT-ASSERTED per-run restrictions the trusted-TS peer
+/// forwards; the server maps them onto the per-run `RunPolicy` (read-only / disabled-tool /
+/// max-turns) — they can only ever TIGHTEN a run (a constraint is a restriction, never a
+/// grant). Today the wire carries no constraints and read-only is enforced ONLY by the TS
+/// qualifier (per the A2 design doc); this is the wire shape that lets a run be constrained
+/// in Rust. A `None`/absent block ⇒ the server's existing default `RunPolicy` (unchanged
+/// live behavior). The server NEVER widens a run from these — an unknown/missing field
+/// fail-closes to the stricter interpretation.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentRunConstraintsWire {
+    /// When `true`, the run is constrained read-only: a mutating tool is blocked BEFORE
+    /// execution (strictly stricter than the gate's default Pause-pending-approval).
+    /// Absent ⇒ `false` (the run uses the gate's normal mutating-action discipline).
+    #[serde(default)]
+    pub read_only: bool,
+    /// Tools disabled for THIS run (an allowlist's complement, mirroring the TS oracle's
+    /// `disabledTools`). A disabled tool is rejected before classification/execution. Absent
+    /// ⇒ empty (no per-run disable beyond the gate). NEVER a grant — only a restriction.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_tools: Vec<String>,
+    /// A per-run `max_turns` cap, when the caller wants one tighter than the runtime default.
+    /// The server takes `min(runtime_default, this)` so a client-asserted value can only ever
+    /// LOWER the bound (never raise it past the runtime ceiling). Absent ⇒ the runtime default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_turns: Option<u64>,
+}
+
 /// First-slice message kinds (gate §4.2). Tagged by `kind`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
@@ -898,6 +946,16 @@ pub enum Message {
         /// owner's history by guessing a `session_id`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         session_id: Option<String>,
+        /// (A1 run-controls) Per-run CONSTRAINTS the server maps onto the run's `RunPolicy`
+        /// (read-only / disabled-tool / max-turns). ADDITIVE + OPTIONAL — an absent block
+        /// deserializes to `None` (`#[serde(default)]`) and a `None` value is OMITTED from
+        /// the wire (`skip_serializing_if`), so a constraint-free request is BYTE-IDENTICAL
+        /// to the pre-A1 wire and the live courier's current bytes decode to no-constraints.
+        /// SECURITY: a constraint can only TIGHTEN a run (a restriction, never a grant); see
+        /// [`AgentRunConstraintsWire`]. Threading these onto the per-run policy is the
+        /// prerequisite for any mutating run-control.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        constraints: Option<AgentRunConstraintsWire>,
     },
     /// hub->trusted-TS-peer: REFS-ONLY terminal receipt for an agent-run.
     /// **WS-transport substrate (S-A).** It carries a coarse loop-status label and
@@ -946,6 +1004,109 @@ pub enum Message {
         /// known. A COUNT only. Same DEFERRED-population note as `prompt_tokens`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         completion_tokens: Option<u64>,
+    },
+    /// hub->trusted-TS-peer: (A1 run-controls) the loop's gate PAUSED a mutating tool on
+    /// `run_id` waiting for an operator approval. Today a Paused run writes no `run_result`
+    /// and drops into the NoAnswer black hole (the TS courier sees `AgentRunResult{status:
+    /// "no_answer"}` and cannot tell a pause from a dead run). This variant surfaces the
+    /// pause so the operator can be prompted to sign (out-of-band) and the courier can later
+    /// relay an `AgentRunResume`. It is REFS-ONLY: it carries the single-use approval `nonce`
+    /// (= the `pending_approval_request.approval_id` the operator signs over) and the
+    /// `action_digest` (which transitively binds principal/scope/params) — and a coarse,
+    /// body-free `summary` of what paused (the action verb). It NEVER carries the tool body,
+    /// args, or the answer. **DARK + FLAG-GATED:** the server emits this ONLY when the
+    /// default-off `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST` flag is on; with the flag off the
+    /// server emits exactly the pre-A1 `AgentRunResult{status:"no_answer"}` bytes.
+    AgentRunPaused {
+        /// The run that paused (echoes `AgentRunRequest::run_id`).
+        run_id: String,
+        /// The single-use CSPRNG approval nonce the operator signs over (=
+        /// `pending_approval_request.approval_id`). It is a nonce, not a secret — it
+        /// identifies WHICH pause to resume; signing it requires the operator's private key.
+        nonce: String,
+        /// Hex SHA-256 of the request's `canonical_action_bytes` — binds the EXACT paused
+        /// action (and transitively principal/scope/params/derived-risk). A fingerprint, not
+        /// a body.
+        action_digest: String,
+        /// A coarse, body-free summary of WHAT paused (e.g. the action verb). NEVER the tool
+        /// args, the params, or any mutation body.
+        summary: String,
+    },
+    /// trusted-TS-peer->hub: (A1 run-controls) relay an operator's out-of-band approval to
+    /// RESUME a paused run. **The TS peer is a pure COURIER, never the author:** `signed_blob`
+    /// is the operator's canonical Ed25519-signed approval (the S6c CLI output), opaque to TS.
+    /// The server decodes it to a `CanonicalApproval` and delegates VERBATIM to the S6
+    /// `resume_with_approval` spine — which looks the pending row up by the approval's nonce,
+    /// cross-checks the action digest, Ed25519-verifies under the OPERATOR's public key,
+    /// CONSUMES the nonce (single-use), executes the ONE approved mutation, and records the
+    /// owner. The Hub holds only a VERIFY key — it can never mint this. A forged/replayed/
+    /// expired/HMAC blob is refused (no mutation). DARK + FLAG-GATED.
+    AgentRunResume {
+        /// The run to resume (echoes the paused `run_id`). Advisory context; the AUTHORITY is
+        /// the `signed_blob`'s nonce + digest, which the resume spine looks up independently.
+        run_id: String,
+        /// The operator's canonical Ed25519-signed approval bytes (JSON of a `CanonicalApproval`).
+        /// Opaque to the courier; verified by the server. Carries no secret (a signature +
+        /// public scope), and is single-use (the nonce is consumed on a successful verify).
+        signed_blob: Vec<u8>,
+    },
+    /// trusted-TS-peer->hub: (A1 run-controls) CANCEL a live agent-run — write a terminal
+    /// `cancelled` `agent_run.state` and stop the loop. **Owner-authed:** unlike resume (which
+    /// is self-authenticating via the operator signature), cancel carries a `forwarded_principal`
+    /// plus an `auth_proof` (the SAME sealed-session possession proof an `AgentRunRequest`
+    /// carries, bound to this `run_id`); the server verifies it against the session AND requires
+    /// the authenticated principal == the run's bound owner before writing the terminal state.
+    /// A non-owner / forged / ownerless-run cancel fails closed (no state change). DARK +
+    /// FLAG-GATED. Idempotent: cancelling an already-terminal run is a no-op success.
+    AgentRunCancel {
+        run_id: String,
+        /// The TS-token-resolved principal the trusted peer forwards. **A client assertion,
+        /// NOT an authority** — verified against the sealed session (`auth_proof`) and then
+        /// matched to the run's bound owner. Mirrors `AgentRunRequest::forwarded_principal`.
+        forwarded_principal: String,
+        /// The sealed possession proof (`AUTH_CHALLENGE || session_nonce`, AAD-bound to
+        /// `(principal, run_id)`). Mirrors `AgentRunRequest::auth_proof`. Opaque here.
+        auth_proof: Vec<u8>,
+        /// A coarse, body-free reason for the cancel (operator/audit context). NEVER a body.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    /// trusted-TS-peer->hub: (A1 run-controls) REJECT a pending tool-approval on a paused run —
+    /// mark `pending_approval_request.status='rejected'` (reuses the existing m0014 status
+    /// column; NO migration). **Owner-authed** on the SAME terms as `AgentRunCancel`: the
+    /// `forwarded_principal` + `auth_proof` are verified against the session, then the
+    /// authenticated principal must equal the pending row's bound owner (`principal_id`).
+    /// Reject is a SEPARATE leg from cancel: it refuses ONE pending mutation (the run stays
+    /// alive, just un-approved) rather than terminating the whole run. The load-bearing
+    /// single-use guarantee remains the gate's `consumed_approval` store; this status is
+    /// idempotent bookkeeping + the operator-facing "I said no" record. DARK + FLAG-GATED.
+    AgentRunReject {
+        run_id: String,
+        /// The pending approval to reject (= `pending_approval_request.approval_id` /
+        /// `AgentRunPaused::nonce`). Identifies WHICH pending mutation to refuse.
+        approval_id: String,
+        forwarded_principal: String,
+        auth_proof: Vec<u8>,
+    },
+    /// hub->trusted-TS-peer: (A1 run-controls) the body-free receipt for a control op
+    /// (`AgentRunResume` / `AgentRunCancel` / `AgentRunReject`). It carries a coarse outcome
+    /// status (e.g. `cancelled` / `already_terminal` / `rejected` / `mutation_completed` /
+    /// `denied` / `not_owner` / `unknown_run`) and a soft audit ref — NEVER a body, a tool
+    /// args, or an answer. `accepted=false` means the control op was refused (fail-closed);
+    /// the `status` says why at a coarse grain. Mirrors the refs-only discipline of
+    /// `AgentRunResult` and `MissionLifecycleResult`.
+    AgentRunControlResult {
+        run_id: String,
+        /// The control op this terminates (`resume` / `cancel` / `reject`).
+        op: String,
+        /// Whether the op was accepted (`true`) or refused fail-closed (`false`).
+        accepted: bool,
+        /// Coarse, body-free outcome label.
+        status: String,
+        /// Soft link to the hash-chained audit receipt for this control op, when one was
+        /// written. A ref, never a body.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        audit_ref: Option<String>,
     },
     /// either: explicit error code + message.
     Error { code: ErrorCode, message: String },
@@ -1909,6 +2070,8 @@ mod tests {
             auth_proof: vec![0xDE, 0xAD, 0xBE, 0xEF],
             // A2a Phase 1: a sessionless request (the pre-A2a shape) carries `None`.
             session_id: None,
+            // A1 run-controls: a constraint-free request carries `None`.
+            constraints: None,
         };
         let env = Envelope::new("m1", 1000, msg.clone()).with_correlation("c1");
         let json = env.encode().unwrap();
@@ -1931,11 +2094,19 @@ mod tests {
             forwarded_principal: "owner-1".into(),
             auth_proof: vec![0xDE, 0xAD, 0xBE, 0xEF],
             session_id: None,
+            constraints: None,
         };
         let json = Envelope::new("m1", 1000, msg).encode().unwrap();
         assert!(
             !json.contains("session_id"),
             "a sessionless AgentRunRequest must not carry a session_id key (byte-identical to pre-A2a): {json}"
+        );
+        // (A1 run-controls) absent constraints ⇒ NO `constraints` key on the wire
+        // (byte-identical to the pre-A1 AgentRunRequest, so the live courier's current
+        // bytes still decode to no-constraints).
+        assert!(
+            !json.contains("constraints"),
+            "a constraint-free AgentRunRequest must not carry a constraints key (byte-identical to pre-A1): {json}"
         );
     }
 
@@ -1952,6 +2123,7 @@ mod tests {
             forwarded_principal: "owner-1".into(),
             auth_proof: vec![0x01, 0x02],
             session_id: Some("sess-abc".into()),
+            constraints: None,
         };
         let env = Envelope::new("m2", 2000, msg.clone());
         let json = env.encode().unwrap();
@@ -2168,11 +2340,189 @@ mod tests {
     }
 
     #[test]
-    fn schema_version_bumped_to_twelve_for_ws_substrate() {
-        // S-A bumps the wire version so a v12 peer advertises these kinds exist
-        // (wire-compat honesty), even while nothing emits them yet (DARK).
-        assert_eq!(CURRENT_SCHEMA_VERSION, 12);
-        assert_eq!(SUPPORTED.max, 12);
+    fn schema_version_bumped_to_thirteen_for_run_controls() {
+        // A1 bumps the wire version so a v13 peer advertises the run-CONTROL kinds
+        // (Paused/Resume/Cancel/Reject/ControlResult) exist — wire-compat honesty — even
+        // while nothing emits them yet (DARK, behind the default-off flag). S-A's v12
+        // substrate kinds are still present and unchanged.
+        assert_eq!(CURRENT_SCHEMA_VERSION, 13);
+        assert_eq!(SUPPORTED.max, 13);
         assert_eq!(SUPPORTED.min, 1);
+    }
+
+    // --- A1 run-controls: the on-wire control protocol (v13) --------------------
+    // Per-behavior codec coverage for the NEW additive variants. These exercise ONLY
+    // the codec/shape — nothing here constructs a server or executes a control op
+    // (those are the friday-hub handlers, behind the default-off flag).
+
+    #[test]
+    fn agent_run_request_constraints_round_trip_and_are_additive_optional() {
+        // A constrained request round-trips its constraints; an absent block is byte-identical.
+        let constrained = Message::AgentRunRequest {
+            run_id: "run-c".into(),
+            task: "tidy the workspace".into(),
+            forwarded_principal: "owner-1".into(),
+            auth_proof: vec![0x01],
+            session_id: None,
+            constraints: Some(AgentRunConstraintsWire {
+                read_only: true,
+                disabled_tools: vec!["run_command".into(), "delete_file".into()],
+                max_turns: Some(3),
+            }),
+        };
+        let json = Envelope::new("m", 1, constrained.clone()).encode().unwrap();
+        assert!(json.contains("\"read_only\":true"));
+        assert!(json.contains("\"disabled_tools\":[\"run_command\",\"delete_file\"]"));
+        assert!(json.contains("\"max_turns\":3"));
+        assert_eq!(Envelope::decode(&json).unwrap().message, constrained);
+
+        // An empty-but-present constraints block omits the empty vec / None max_turns but keeps
+        // read_only (a bool always serializes) — still a tightening-only, body-free shape.
+        let empty = Message::AgentRunRequest {
+            run_id: "run-e".into(),
+            task: "go".into(),
+            forwarded_principal: "owner-1".into(),
+            auth_proof: vec![],
+            session_id: None,
+            constraints: Some(AgentRunConstraintsWire::default()),
+        };
+        let json = Envelope::new("m", 1, empty.clone()).encode().unwrap();
+        assert!(!json.contains("disabled_tools"));
+        assert!(!json.contains("max_turns"));
+        assert_eq!(Envelope::decode(&json).unwrap().message, empty);
+    }
+
+    #[test]
+    fn agent_run_paused_is_refs_only_and_round_trips() {
+        // Paused carries the nonce + digest + a coarse summary — NEVER a body/args.
+        const ARGS: &str = "rm -rf /Users/jarvis/private/secret";
+        let msg = Message::AgentRunPaused {
+            run_id: "run-1".into(),
+            nonce: "a".repeat(64),
+            action_digest: "b".repeat(64),
+            summary: "paused on delete_file".into(),
+        };
+        let env = Envelope::new("p1", 1000, msg.clone()).with_correlation("c1");
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"AgentRunPaused\""));
+        assert!(json.contains(&format!("\"schema_version\":{CURRENT_SCHEMA_VERSION}")));
+        // Structural body-free guard: no args/params/body key can appear (the struct has none).
+        for forbidden in [ARGS, "params", "args", "tool_params", "body", "final_message"] {
+            assert!(
+                !json.contains(forbidden),
+                "AgentRunPaused leaked {forbidden}: {json}"
+            );
+        }
+        assert_eq!(Envelope::decode(&json).unwrap(), env);
+    }
+
+    #[test]
+    fn agent_run_resume_is_a_courier_blob_and_round_trips() {
+        // The TS peer carries an opaque signed_blob (the operator's signature) — the courier
+        // never authors it; the server verifies it. The codec just carries the bytes.
+        let msg = Message::AgentRunResume {
+            run_id: "run-1".into(),
+            signed_blob: vec![0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01],
+        };
+        let env = Envelope::new("r1", 1001, msg.clone());
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"AgentRunResume\""));
+        assert_eq!(Envelope::decode(&json).unwrap().message, msg);
+    }
+
+    #[test]
+    fn agent_run_cancel_carries_owner_auth_and_round_trips() {
+        // Cancel is owner-authed: it carries the forwarded principal + the sealed proof
+        // (mirroring AgentRunRequest) plus an optional coarse reason.
+        let msg = Message::AgentRunCancel {
+            run_id: "run-1".into(),
+            forwarded_principal: "owner-1".into(),
+            auth_proof: vec![0x01, 0x02, 0x03],
+            reason: Some("operator changed their mind".into()),
+        };
+        let env = Envelope::new("x1", 1002, msg.clone());
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"AgentRunCancel\""));
+        assert!(json.contains("\"forwarded_principal\":\"owner-1\""));
+        assert_eq!(Envelope::decode(&json).unwrap().message, msg);
+
+        // Absent reason omits the key (additive-optional).
+        let no_reason = Message::AgentRunCancel {
+            run_id: "run-2".into(),
+            forwarded_principal: "owner-1".into(),
+            auth_proof: vec![],
+            reason: None,
+        };
+        let json = Envelope::new("x2", 1003, no_reason.clone()).encode().unwrap();
+        assert!(!json.contains("reason"));
+        assert_eq!(Envelope::decode(&json).unwrap().message, no_reason);
+    }
+
+    #[test]
+    fn agent_run_reject_carries_owner_auth_and_approval_id() {
+        let msg = Message::AgentRunReject {
+            run_id: "run-1".into(),
+            approval_id: "a".repeat(64),
+            forwarded_principal: "owner-1".into(),
+            auth_proof: vec![0x09],
+        };
+        let env = Envelope::new("j1", 1004, msg.clone());
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"AgentRunReject\""));
+        assert!(json.contains("\"approval_id\""));
+        assert_eq!(Envelope::decode(&json).unwrap().message, msg);
+    }
+
+    #[test]
+    fn agent_run_control_result_is_refs_only_and_round_trips() {
+        let msg = Message::AgentRunControlResult {
+            run_id: "run-1".into(),
+            op: "cancel".into(),
+            accepted: true,
+            status: "cancelled".into(),
+            audit_ref: Some("audit://agent-run-control/run-1".into()),
+        };
+        let env = Envelope::new("k1", 1005, msg.clone());
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"AgentRunControlResult\""));
+        assert!(json.contains("\"op\":\"cancel\""));
+        assert!(json.contains("\"accepted\":true"));
+        // Body-free guard.
+        for forbidden in ["body", "final_message", "answer\"", "params"] {
+            assert!(!json.contains(forbidden), "control result leaked {forbidden}");
+        }
+        assert_eq!(Envelope::decode(&json).unwrap().message, msg);
+
+        // A refused op (accepted=false) with no audit_ref omits the key.
+        let refused = Message::AgentRunControlResult {
+            run_id: "run-2".into(),
+            op: "reject".into(),
+            accepted: false,
+            status: "not_owner".into(),
+            audit_ref: None,
+        };
+        let json = Envelope::new("k2", 1006, refused.clone()).encode().unwrap();
+        assert!(!json.contains("audit_ref"));
+        assert_eq!(Envelope::decode(&json).unwrap().message, refused);
+    }
+
+    #[test]
+    fn pre_a1_agent_run_request_decodes_with_no_constraints() {
+        // FORWARD/BACKWARD-COMPAT: the live courier's CURRENT (pre-A1) AgentRunRequest JSON —
+        // which has no `constraints` key — still decodes on a v13 build to `constraints: None`
+        // (via `#[serde(default)]`). This is what makes deploying a v13 binary safe for the
+        // current peer.
+        let pre_a1 = r#"{"schema_version":12,"msg_id":"m","sent_at":1,"message":{"kind":"AgentRunRequest","run_id":"r","task":"t","forwarded_principal":"owner-1","auth_proof":[1,2]}}"#;
+        match Envelope::decode(pre_a1).expect("pre-A1 decode").message {
+            Message::AgentRunRequest {
+                session_id,
+                constraints,
+                ..
+            } => {
+                assert_eq!(session_id, None);
+                assert_eq!(constraints, None);
+            }
+            other => panic!("expected AgentRunRequest, got {other:?}"),
+        }
     }
 }

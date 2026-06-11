@@ -1932,6 +1932,14 @@ fn message_kind_name(m: &friday_protocol::Message) -> &'static str {
         // it cannot silently fall through a wildcard.
         M::AgentRunRequest { .. } => "AgentRunRequest",
         M::AgentRunResult { .. } => "AgentRunResult",
+        // A1 run-controls (v13) — the on-wire control protocol. DARK on the FFI surface (nothing
+        // here constructs or dispatches them); NAMED so the truth label carries the real kind and
+        // this match stays exhaustive.
+        M::AgentRunPaused { .. } => "AgentRunPaused",
+        M::AgentRunResume { .. } => "AgentRunResume",
+        M::AgentRunCancel { .. } => "AgentRunCancel",
+        M::AgentRunReject { .. } => "AgentRunReject",
+        M::AgentRunControlResult { .. } => "AgentRunControlResult",
         M::Error { .. } => "Error",
     }
 }
@@ -3387,6 +3395,7 @@ mod tests {
                 forwarded_principal: "p".into(),
                 auth_proof: vec![],
                 session_id: None,
+                constraints: None,
             },
         );
         match parse_hub_response(request.encode().unwrap()) {
