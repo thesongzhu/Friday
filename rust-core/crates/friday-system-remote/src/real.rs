@@ -154,10 +154,16 @@ struct PendingReg {
 }
 
 /// The pending assertion challenge state, bound to the stored credential it
-/// authenticates and its owner.
+/// authenticates and its owner. Carries the `Passkey` whose counter was the
+/// regression baseline for THIS ceremony, so `finish_assertion` can fold the
+/// verified advance back into an updated [`StoredCredential`] (the credential's
+/// system of record) and the caller can persist it.
 struct PendingAuth {
     owner: String,
     credential_id: Vec<u8>,
+    /// The baseline passkey (counter = the value the regression check compared
+    /// against). Advanced via `Passkey::update_credential` on a verified result.
+    baseline_passkey: Passkey,
     state: PasskeyAuthentication,
 }
 
@@ -329,7 +335,7 @@ impl RealWebAuthn {
         let passkey = stored.to_passkey()?;
         let (rcr, state) = self
             .webauthn
-            .start_passkey_authentication(&[passkey])
+            .start_passkey_authentication(std::slice::from_ref(&passkey))
             .map_err(map_webauthn_err)?;
         let ceremony_id = self.issue_ceremony_id();
         self.pending_auth.insert(
@@ -337,6 +343,7 @@ impl RealWebAuthn {
             PendingAuth {
                 owner: owner.to_string(),
                 credential_id: stored.credential_id.clone(),
+                baseline_passkey: passkey,
                 state,
             },
         );
@@ -347,8 +354,16 @@ impl RealWebAuthn {
     /// verifies the signature + RP-ID/origin/challenge binding, AND enforces the
     /// sign-count regression check.
     ///
-    /// Returns the minted [`VerifiedAssertion`] (carrying the verified, strictly-
-    /// advanced sign-count to persist) and the new sign-count value.
+    /// Returns the minted [`VerifiedAssertion`] (carrying the verified,
+    /// monotonically-advanced sign-count) AND the **updated [`StoredCredential`]**
+    /// — the baseline `Passkey`'s counter (and backup-state flags) folded forward
+    /// via `Passkey::update_credential`. The caller MUST persist this updated
+    /// credential as the credential's system of record: it is what a SUBSEQUENT
+    /// [`RealWebAuthn::begin_assertion`] uses as the next regression baseline, so
+    /// persisting it is exactly what makes a later REPLAY of an older (lower-count)
+    /// assertion trip [`RemoteError::ClonedAuthenticator`]. Without persisting it,
+    /// the baseline never advances across calls and the regression check is
+    /// toothless between ceremonies.
     ///
     /// Fail-closed:
     /// * unknown/already-consumed `ceremony_id` ⇒ [`RemoteError::UnknownCeremony`];
@@ -360,7 +375,7 @@ impl RealWebAuthn {
         &mut self,
         ceremony_id: &str,
         credential: &PublicKeyCredential,
-    ) -> Result<(VerifiedAssertion, u32)> {
+    ) -> Result<(VerifiedAssertion, StoredCredential)> {
         let pending = self
             .pending_auth
             .remove(ceremony_id)
@@ -377,10 +392,21 @@ impl RealWebAuthn {
                 "assertion credential id does not match ceremony".into(),
             ));
         }
-        let new_sign_count = auth_result.counter();
-        let assertion =
-            VerifiedAssertion::new_verified(pending.owner, pending.credential_id, new_sign_count);
-        Ok((assertion, new_sign_count))
+        // Fold the verified advance back into the baseline passkey (counter +
+        // backup-state). `update_credential` only moves the counter forward and
+        // returns None only on a cred-id mismatch (impossible here — we just
+        // asserted equality). This produces the credential's NEW system-of-record
+        // blob that the caller persists and a later begin_assertion re-derives its
+        // baseline from.
+        let mut advanced = pending.baseline_passkey;
+        let _ = advanced.update_credential(&auth_result);
+        let updated_stored = StoredCredential::from_passkey(&advanced)?;
+        let assertion = VerifiedAssertion::new_verified(
+            pending.owner,
+            pending.credential_id,
+            updated_stored.sign_count,
+        );
+        Ok((assertion, updated_stored))
     }
 
     /// Number of currently-pending registration ceremonies (test/introspection).
