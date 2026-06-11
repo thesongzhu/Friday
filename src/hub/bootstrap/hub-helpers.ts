@@ -1954,6 +1954,17 @@ export interface FridayHubConfig {
    * `resolveRouteProvidersViaRust` and fed into the api-runtime deps.
    */
   routeProvidersViaRust?: boolean;
+  /**
+   * Tier-2 WORKFLOW catalog-mutation route bridge (DARK): "route create/update/archive/
+   * publish/deploy via the Rust `hub_workflow_catalog` bin (#657)" flag. DEFAULT-FALSE —
+   * production hub creation must leave this unset so the catalog-mutation routes stay
+   * byte-identical to today's fail-closed `TS_RUNTIME_WORKFLOW_CATALOG_MUTATION_RETIRED`
+   * 503. When true, the catalog-mutation route handlers run auth then route to the
+   * refs-only Rust bridge (a `rust_wired_dev` DEV-DB ceiling — see the bridge service).
+   * Resolution: `resolveRouteWorkflowsViaRust` (explicit config wins; otherwise the
+   * `FRIDAY_ROUTE_WORKFLOWS_VIA_RUST` env knob).
+   */
+  routeWorkflowsViaRust?: boolean;
 }
 
 // ─── Resolved Hub Config ───
