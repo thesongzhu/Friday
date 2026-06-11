@@ -98,6 +98,25 @@ pub fn effective_run_policy(
     }
 }
 
+/// (A1 — APPLICATION) Compose a per-run [`AgentRunConstraintsWire`] ONTO an existing boot
+/// [`RunPolicy`], returning the effective per-run policy the loop's gate must consult. Unlike
+/// [`effective_run_policy`] (which REBUILDS a policy from owner+constraints and is correct only
+/// when the boot policy is unconstrained), this COMPOSES via [`RunPolicy::tightened_by`] so the
+/// only-tighten invariant holds UNCONDITIONALLY — a boot-configured `read_only`/`disabled_tools`
+/// can NEVER be loosened by a constraint that omits it (defense-in-depth against any future
+/// non-unconstrained boot config). `constraints: None` ⇒ a CLONE of the boot policy unchanged
+/// (the absent-constraint case = byte-identical pre-A1 behavior). This is the live-dispatch entry
+/// the runtime threads as a per-run override.
+pub fn effective_run_policy_over(
+    boot: &RunPolicy,
+    constraints: Option<&AgentRunConstraintsWire>,
+) -> RunPolicy {
+    match constraints {
+        None => boot.clone(),
+        Some(c) => boot.tightened_by(c.read_only, &c.disabled_tools),
+    }
+}
+
 /// The effective per-run `max_turns`: a wire-asserted cap can only ever LOWER the runtime ceiling
 /// (never raise it). `None`/absent ⇒ the runtime default unchanged.
 pub fn effective_max_turns(

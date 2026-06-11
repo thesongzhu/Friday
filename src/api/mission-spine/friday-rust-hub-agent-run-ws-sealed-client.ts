@@ -137,6 +137,32 @@ export interface FridayRustHubAgentRunSealedRequest {
    * owner is the authenticated `forwardedPrincipal`, verified server-side — never this key.**
    */
   readonly sessionKey?: string;
+  /**
+   * (A1 run-controls) Per-run CONSTRAINTS the trusted peer asserts; the Rust server COMPOSES
+   * them onto the run's `RunPolicy` (read-only / disabled-tools / max-turns) so they can ONLY
+   * ever TIGHTEN a run (a restriction, never a grant). ABSENT (`undefined`) ⇒ the `constraints`
+   * field is OMITTED from the wire entirely, so the envelope is BYTE-IDENTICAL to the pre-A1
+   * request and the server applies NO override (boot policy unchanged). DARK + DEPLOY-GO-gated:
+   * the server APPLIES these only behind its default-off `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST`
+   * flag, so emitting them changes no live behavior until that flag is on. Mirrors the
+   * `sessionKey` additive-optional discipline.
+   */
+  readonly constraints?: FridayRustHubAgentRunConstraints;
+}
+
+/**
+ * (A1 run-controls) The TS-side per-run constraint shape (camelCase; mapped to the snake_case
+ * `AgentRunConstraintsWire`). Every field is OPTIONAL and a RESTRICTION only — there is no field
+ * that can WIDEN a run. An all-absent object serializes to no wire field at all (see the emit
+ * site), preserving byte-identity.
+ */
+export interface FridayRustHubAgentRunConstraints {
+  /** When `true`, the run is read-only: a mutating tool is blocked before execution. */
+  readonly readOnly?: boolean;
+  /** Tools disabled for THIS run (the TS oracle's `disabledTools`); a restriction, never a grant. */
+  readonly disabledTools?: readonly string[];
+  /** A per-run `max_turns` cap; the server takes `min(runtime_default, this)` (can only LOWER). */
+  readonly maxTurns?: number;
 }
 
 /**
@@ -382,6 +408,58 @@ function sealAndSend(sender: WsSender, sessionKey: Uint8Array, envelope: unknown
   // CLIENT frames MUST be masked (tungstenite rejects unmasked client frames). The Sender was
   // constructed with a mask generator, so mask:true uses it.
   sender.send(Buffer.from(wire), { binary: true, mask: true, fin: true });
+}
+
+/**
+ * (A1 run-controls) Map the TS-side per-run constraints onto the snake_case
+ * `AgentRunConstraintsWire` shape — or `undefined` when NOTHING is asserted, so the caller OMITS
+ * the whole `constraints` key (byte-identity with the pre-A1 request).
+ *
+ * The emitted object MIRRORS the Rust serde discipline EXACTLY so the round-trip is faithful:
+ *   - `read_only` is emitted as a bool ONLY when the caller asserts `readOnly === true` (the Rust
+ *     field has `#[serde(default)]`, so an absent `read_only` deserializes to `false` — we never
+ *     emit `read_only: false`, keeping the block minimal and a read-only-off run byte-clean);
+ *   - `disabled_tools` is emitted ONLY when the normalized (trimmed, de-duped, non-empty) set is
+ *     non-empty (Rust `skip_serializing_if = "Vec::is_empty"`);
+ *   - `max_turns` is emitted ONLY when a finite positive integer cap is given (Rust
+ *     `skip_serializing_if = "Option::is_none"`).
+ * If, after normalization, NONE of the three is present, the run asserts no tightening at all and
+ * this returns `undefined` (no wire block). A constraint can ONLY tighten — there is no field that
+ * widens — so a hostile/garbled value at worst under-restricts to "no constraint", never a grant.
+ */
+export function buildConstraintsWire(
+  constraints: FridayRustHubAgentRunConstraints | undefined,
+): Record<string, unknown> | undefined {
+  if (constraints === undefined) {
+    return undefined;
+  }
+  const wire: Record<string, unknown> = {};
+  if (constraints.readOnly === true) {
+    wire.read_only = true;
+  }
+  if (Array.isArray(constraints.disabledTools)) {
+    // Normalize like the Rust `RunPolicy::new` / the TS oracle's `normalizeToolNameSet`: trim,
+    // drop empties, de-dup — so a whitespace/duplicate entry can never bloat or weaken the set.
+    const normalized = Array.from(
+      new Set(
+        constraints.disabledTools
+          .filter((t): t is string => typeof t === "string")
+          .map((t) => t.trim())
+          .filter((t) => t.length > 0),
+      ),
+    );
+    if (normalized.length > 0) {
+      wire.disabled_tools = normalized;
+    }
+  }
+  if (
+    typeof constraints.maxTurns === "number" &&
+    Number.isInteger(constraints.maxTurns) &&
+    constraints.maxTurns > 0
+  ) {
+    wire.max_turns = constraints.maxTurns;
+  }
+  return Object.keys(wire).length > 0 ? wire : undefined;
 }
 
 /** Open + decode one inbound sealed WS Binary payload into its inner message. */
@@ -692,6 +770,13 @@ export function createFridayRustHubAgentRunSealedClient(
               typeof request.sessionKey === "string" && request.sessionKey.trim().length > 0
                 ? request.sessionKey.trim()
                 : undefined;
+            // (A1 run-controls) Derive the snake_case `constraints` wire block from the request's
+            // per-run constraints, emitting it ONLY when the caller actually asserts a TIGHTENING
+            // (read-only, a non-empty disabled-tool set, or a max-turns cap). When NOTHING is
+            // asserted the whole `constraints` key is OMITTED, so the serialized envelope is
+            // BYTE-IDENTICAL to the pre-A1 request and the server applies no override. This
+            // mirrors the `session_id` conditional-spread discipline.
+            const constraintsWire = buildConstraintsWire(request.constraints);
             const envelope = {
               schema_version: SCHEMA_VERSION,
               msg_id: `agent-run-${request.runId}`,
@@ -706,6 +791,8 @@ export function createFridayRustHubAgentRunSealedClient(
                 auth_proof: Array.from(authProof),
                 // Conditional spread: present ⇒ `session_id` rides the wire; absent ⇒ no key.
                 ...(sessionId !== undefined ? { session_id: sessionId } : {}),
+                // Conditional spread: present ⇒ `constraints` rides the wire; absent ⇒ no key.
+                ...(constraintsWire !== undefined ? { constraints: constraintsWire } : {}),
               },
             };
             sealAndSend(sender, sessionKey, envelope);

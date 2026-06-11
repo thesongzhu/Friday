@@ -277,6 +277,10 @@ describe("FridayApiRuntime — execrun S-F-compose (DARK) Rust-route composition
     expect(ws.calls).toHaveLength(1);
     expect(ws.calls[0].runId).toBe(RUN_ID);
     expect(ws.calls[0].forwardedPrincipal).toBe(OWNER_PRINCIPAL);
+    // (A1 run-controls) compose forwards the per-run read-only constraint on the dispatch — the
+    // qualifier (clause 2) already REQUIRES readOnly:true, so the guarantee now travels on the
+    // wire + is enforced in Rust (defense-in-depth), not only by this TS qualifier.
+    expect(ws.calls[0].constraints).toEqual({ readOnly: true });
     // The sealed client receives the resolved 32-byte X25519 SECRET (NOT a pre-built authProof).
     expect(ws.calls[0].clientSecret.length).toBe(32);
     expect(readback.calls).toHaveLength(1);

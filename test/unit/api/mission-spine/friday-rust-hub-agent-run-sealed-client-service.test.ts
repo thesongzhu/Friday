@@ -27,6 +27,7 @@ function makeFakeClient(behavior: {
     task: string;
     forwardedPrincipal: string;
     sessionKey?: string;
+    constraints?: { readOnly?: boolean; disabledTools?: readonly string[]; maxTurns?: number };
   }> = [];
   const createClient = vi.fn(
     (options: CreateFridayRustHubAgentRunSealedClientOptions): FridayRustHubAgentRunSealedClient => {
@@ -214,6 +215,38 @@ describe("createFridayRustHubAgentRunSealedClientService (B1-compose, dark, adap
       // no sessionKey
     });
     expect("sessionKey" in fake.dispatched[0]).toBe(false);
+  });
+
+  it("(A1 run-controls) forwards per-run constraints to the underlying client", async () => {
+    const fake = makeFakeClient({ result: deliveredResult() });
+    const service = createFridayRustHubAgentRunSealedClientService({
+      port: 4123,
+      createClient: fake.createClient,
+    });
+    await service.dispatchRun({
+      runId: "run-1",
+      task: "read README.md",
+      forwardedPrincipal: "owner-1",
+      clientSecret: SECRET,
+      constraints: { readOnly: true },
+    });
+    expect(fake.dispatched[0].constraints).toEqual({ readOnly: true });
+  });
+
+  it("(A1 run-controls) does NOT set constraints on the inner dispatch when absent (byte-identical)", async () => {
+    const fake = makeFakeClient({ result: deliveredResult() });
+    const service = createFridayRustHubAgentRunSealedClientService({
+      port: 4123,
+      createClient: fake.createClient,
+    });
+    await service.dispatchRun({
+      runId: "run-1",
+      task: "read README.md",
+      forwardedPrincipal: "owner-1",
+      clientSecret: SECRET,
+      // no constraints
+    });
+    expect("constraints" in fake.dispatched[0]).toBe(false);
   });
 
   it("fails closed (503) when the underlying client construction throws (e.g. a non-32-byte secret)", async () => {

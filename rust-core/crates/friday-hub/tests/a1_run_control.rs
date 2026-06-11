@@ -17,8 +17,8 @@ use friday_core::gate::{
 };
 use friday_crypto::{OperatorSigningKey, OperatorVerifyingKey};
 use friday_hub::agent_run_control::{
-    cancel, detect_pause, effective_max_turns, effective_run_policy, reject, resolve_run_owner,
-    resume,
+    cancel, detect_pause, effective_max_turns, effective_run_policy, effective_run_policy_over,
+    reject, resolve_run_owner, resume,
 };
 use friday_hub::{
     build_request_with_policy, run_loop_with_policy, AgentError, AgentLlmClient, AgentStep,
@@ -433,4 +433,76 @@ fn effective_run_policy_maps_constraints_tightening_only() {
         "a higher asserted cap cannot raise the ceiling"
     );
     assert_eq!(effective_max_turns(8, None), 8, "None ⇒ runtime default");
+}
+
+/// (A1 APPLICATION) `effective_run_policy_over` COMPOSES onto an arbitrary boot policy so the
+/// only-tighten invariant holds UNCONDITIONALLY — the load-bearing property the live dispatch
+/// relies on (a constraint can NEVER loosen a boot-configured restriction).
+#[test]
+fn effective_run_policy_over_composes_only_tightens() {
+    // None over ANY boot ⇒ the boot policy unchanged (the absent-constraint path).
+    let boot_unconstrained = RunPolicy::new(Some(OWNER.into()), Vec::<String>::new(), false);
+    let p = effective_run_policy_over(&boot_unconstrained, None);
+    assert_eq!(p.principal_id(), Some(OWNER));
+    assert!(!p.is_read_only());
+
+    // A boot policy that is ITSELF read-only + disables `delete_file`.
+    let boot_strict = RunPolicy::new(Some(OWNER.into()), vec!["delete_file".to_string()], true);
+
+    // (1) None ⇒ boot strictness preserved (NOT reset to unconstrained — the REPLACE bug).
+    let p = effective_run_policy_over(&boot_strict, None);
+    assert!(p.is_read_only(), "None must NOT loosen a read-only boot");
+    assert!(
+        p.is_tool_disabled("delete_file"),
+        "None must NOT re-enable a boot-disabled tool"
+    );
+
+    // (2) A constraint that tries to LOOSEN (read_only:false + a DIFFERENT disabled set) cannot:
+    //     read_only stays true (OR), and the boot-disabled tool stays disabled (UNION).
+    let loosen = AgentRunConstraintsWire {
+        read_only: false,
+        disabled_tools: vec!["run_command".into()],
+        max_turns: None,
+    };
+    let p = effective_run_policy_over(&boot_strict, Some(&loosen));
+    assert!(p.is_read_only(), "OR: boot read-only cannot be turned off");
+    assert!(
+        p.is_tool_disabled("delete_file"),
+        "UNION: boot-disabled delete_file stays disabled"
+    );
+    assert!(
+        p.is_tool_disabled("run_command"),
+        "UNION: the constraint ADDS run_command to the disabled set"
+    );
+    assert_eq!(p.principal_id(), Some(OWNER), "owner is preserved verbatim");
+
+    // (3) A constraint TIGHTENS an unconstrained boot: read_only on, tool disabled.
+    let tighten = AgentRunConstraintsWire {
+        read_only: true,
+        disabled_tools: vec!["write_file".into()],
+        max_turns: Some(1),
+    };
+    let p = effective_run_policy_over(&boot_unconstrained, Some(&tighten));
+    assert!(p.is_read_only());
+    assert!(p.is_tool_disabled("write_file"));
+}
+
+/// `RunPolicy::tightened_by` directly: empty/whitespace entries are dropped (cannot widen), and
+/// composing with `(false, [])` is a NO-OP equal to the receiver.
+#[test]
+fn tightened_by_drops_empties_and_noop_on_empty_constraint() {
+    let boot = RunPolicy::new(Some(OWNER.into()), vec!["delete_file".to_string()], false);
+
+    // (false, []) over a non-read-only boot ⇒ equal to boot (no widening, no narrowing).
+    let same = boot.tightened_by(false, &[]);
+    assert!(!same.is_read_only());
+    assert!(same.is_tool_disabled("delete_file"));
+    assert!(!same.is_tool_disabled("write_file"));
+
+    // Empty / whitespace entries are normalized away (cannot pollute the disabled set).
+    let p = boot.tightened_by(true, &["".into(), "   ".into(), "write_file".into()]);
+    assert!(p.is_read_only());
+    assert!(p.is_tool_disabled("delete_file"));
+    assert!(p.is_tool_disabled("write_file"));
+    assert!(!p.is_tool_disabled(""), "empty entry never disables");
 }

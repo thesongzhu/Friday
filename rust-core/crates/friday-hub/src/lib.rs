@@ -1074,6 +1074,38 @@ impl RunPolicy {
         self.read_only
     }
 
+    /// (A1) Return a NEW policy that is THIS policy TIGHTENED by per-run constraints — never
+    /// loosened. It is the COMPOSITION (not a replacement) of the boot policy with a wire-
+    /// asserted per-run restriction, so the only-tighten invariant holds UNCONDITIONALLY,
+    /// independent of whether the boot config is itself unconstrained:
+    ///   - `read_only` is the LOGICAL-OR (`self || constraint`) — a read-only run can never be
+    ///     un-read-onlied by a constraint that omits the flag;
+    ///   - `disabled_tools` is the UNION (`self ∪ constraint`) — a tool the boot policy disables
+    ///     STAYS disabled even when the per-run constraint does not name it;
+    ///   - the bound `principal_id` is taken VERBATIM from `self` (a constraint is a restriction
+    ///     of WHAT the run may do, NEVER a re-binding of WHO it runs as — the owner is the
+    ///     authenticated caller the runtime is configured with, unchanged by any constraint).
+    ///
+    /// The `disabled_tools` arg is normalized exactly as [`RunPolicy::new`] (trim, drop empties),
+    /// so an empty/whitespace entry can never widen the set. Passing `read_only:false` + an empty
+    /// list yields a policy EQUAL to `self` (no widening) — the absent-constraint case the caller
+    /// instead represents as `None` (no override at all), but this still composes safely.
+    pub fn tightened_by(&self, read_only: bool, disabled_tools: &[String]) -> RunPolicy {
+        let mut merged: std::collections::BTreeSet<String> = self.disabled_tools.clone();
+        for n in disabled_tools {
+            let trimmed = n.trim();
+            if !trimmed.is_empty() {
+                merged.insert(trimmed.to_string());
+            }
+        }
+        RunPolicy {
+            principal_id: self.principal_id.clone(),
+            disabled_tools: merged,
+            // OR: a constraint can only ADD read-only, never remove a boot-configured one.
+            read_only: self.read_only || read_only,
+        }
+    }
+
     /// Fail-closed, name-reconciled resolution of a tool action against this run's
     /// disabled-set (executeRun-replacement slice 1 — security pre-req).
     ///

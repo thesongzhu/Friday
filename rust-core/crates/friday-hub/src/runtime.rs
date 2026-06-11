@@ -253,6 +253,45 @@ impl<T: Transport> HubRuntime<T> {
         task: &str,
         now_ms: i64,
     ) -> Result<(RoutedSelection, LoopOutcome), RoutedLoopError> {
+        // Pre-A1 entry: NO per-run override ⇒ the run uses the runtime's boot `self.policy` +
+        // `self.max_turns`. BYTE-IDENTICAL to the pre-A1 behavior (every existing caller — dev
+        // bins, tests, the mission-bound entry — stays on this path unchanged).
+        self.run_task_with_overrides(run_id, task, None, None, now_ms)
+    }
+
+    /// (A1) [`Self::run_task`] with an OPTIONAL per-run policy + max-turns override applied at
+    /// run-START. This is the live-dispatch entry the WS server uses to APPLY a peer's
+    /// [`friday_protocol::AgentRunConstraintsWire`] (read-only / disabled-tools / max-turns) onto
+    /// the gate the loop consults — closing the A1 deferral.
+    ///
+    /// ## The override semantics (only-tighten, fail-safe)
+    ///   - `policy_override: None` ⇒ the run uses the boot `self.policy` VERBATIM (the
+    ///     `run_task` path) — byte-identical pre-A1 behavior. The dispatch arm passes `None`
+    ///     precisely when the request carried NO `constraints` block.
+    ///   - `policy_override: Some(p)` ⇒ the run uses `p`, which the caller MUST have built by
+    ///     COMPOSING the boot policy with the constraint
+    ///     ([`crate::agent_run_control::effective_run_policy_over`]) so it can only ever TIGHTEN.
+    ///     The override REPLACES `self.policy` for THIS run's gate requests AND the owner-stamp —
+    ///     so this fn is internally consistent on ONE policy object (`p.principal_id()` is the
+    ///     stamped owner, which `effective_run_policy_over` preserves verbatim from boot, so the
+    ///     owner is UNCHANGED by any constraint).
+    ///   - `max_turns_override: None` ⇒ `self.max_turns`. `Some(cap)` ⇒ `self.max_turns.min(cap)`
+    ///     (a cap can only LOWER the ceiling, never raise it past the runtime default — the floor
+    ///     is applied HERE so a caller can pass the raw asserted cap).
+    pub fn run_task_with_overrides(
+        &self,
+        run_id: &str,
+        task: &str,
+        policy_override: Option<&RunPolicy>,
+        max_turns_override: Option<u64>,
+        now_ms: i64,
+    ) -> Result<(RoutedSelection, LoopOutcome), RoutedLoopError> {
+        // The effective per-run policy + ceiling. Absent override ⇒ boot config unchanged.
+        let policy = policy_override.unwrap_or(&self.policy);
+        let max_turns = match max_turns_override {
+            Some(cap) => self.max_turns.min(cap),
+            None => self.max_turns,
+        };
         agent_run::create_run(self.db.conn(), run_id, task, now_ms)?;
         // PROOF-MEMORY-001: recall this owner's confirmed memory, gate it through the
         // Context Passport, and inject it as a prompt PREAMBLE (the run's `task` stays
@@ -265,8 +304,8 @@ impl<T: Transport> HubRuntime<T> {
         // selection here.
         let request = RouteRequest::any();
         let approve = |req: &MutatingActionRequest| self.approval.approve(req);
-        // S4: thread the run policy so the bound principal reaches every gate request's
-        // Actor (and the action digest) and the disabled/read-only restrictions are
+        // S4: thread the (effective) run policy so the bound principal reaches every gate
+        // request's Actor (and the action digest) and the disabled/read-only restrictions are
         // enforced before any tool executes. S6d: thread the provisioned operator verify
         // key so a protected action authorizes via the Ed25519 verify-only policy (never
         // HMAC); `None` ⇒ fail-closed Pause.
@@ -281,14 +320,15 @@ impl<T: Transport> HubRuntime<T> {
             &recall_preamble,
             self.operator_vk.as_ref(),
             &approve,
-            &self.policy,
-            self.max_turns,
+            policy,
+            max_turns,
             now_ms,
         )?;
 
         // D1 OWNER-WIRING: a FINISHED run produced a deliverable ANSWER; persist it Hub-side
         // keyed by `run_id` with the run's BOUND OWNER principal recorded
-        // (`self.policy.principal_id()` — the SAME principal S4 binds into the gate Actor), so
+        // (`policy.principal_id()` — the SAME principal S4 binds into the gate Actor; the
+        // override preserves boot's principal verbatim, so this is the configured owner), so
         // the authenticated body projection [`friday_storage::get_run_answer_for_principal`]
         // releases the answer body ONLY to that owner. A run with NO bound principal records
         // NO owner ⇒ the body stays unreadable to everyone (fail-closed, correct).
@@ -304,7 +344,7 @@ impl<T: Transport> HubRuntime<T> {
                 outcome.final_message.clone().unwrap_or_default(),
                 None,
             );
-            if let Some(principal) = self.policy.principal_id() {
+            if let Some(principal) = policy.principal_id() {
                 result = result.with_owner_principal(principal);
             }
             persist_run_result(self.db.conn(), run_id, &result, now_ms)?;
@@ -357,6 +397,35 @@ impl<T: Transport> HubRuntime<T> {
         task: &str,
         now_ms: i64,
     ) -> AuthedAnswer {
+        // Pre-A1 sessioned entry: NO per-run override ⇒ boot policy + ceiling (byte-identical).
+        self.run_session_task_with_overrides(caller, run_id, session_id, task, None, None, now_ms)
+    }
+
+    /// (A1) [`Self::run_session_task`] with an OPTIONAL per-run policy + max-turns override —
+    /// the SESSIONED parity of [`Self::run_task_with_overrides`]. Same only-tighten semantics:
+    /// `None` ⇒ boot `self.policy`/`self.max_turns` verbatim (the `run_session_task` path);
+    /// `Some(p)` ⇒ the COMPOSED (only-tighten) per-run policy the dispatch arm built. The
+    /// override drives the SAME existing [`run_session_loop`] (no new loop code) — read-only /
+    /// disabled-tools are enforced by the loop's gate exactly as the sessionless entry, and a
+    /// constraint can never re-bind the session owner (`p`'s principal == boot's, the
+    /// authenticated `caller`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_session_task_with_overrides(
+        &self,
+        caller: &AuthedPrincipal,
+        run_id: &str,
+        session_id: &str,
+        task: &str,
+        policy_override: Option<&RunPolicy>,
+        max_turns_override: Option<u64>,
+        now_ms: i64,
+    ) -> AuthedAnswer {
+        // The effective per-run policy + ceiling. Absent override ⇒ boot config unchanged.
+        let policy = policy_override.unwrap_or(&self.policy);
+        let max_turns = match max_turns_override {
+            Some(cap) => self.max_turns.min(cap),
+            None => self.max_turns,
+        };
         // Create the run row FIRST — `run_session_loop` only `ensure_session`s the session
         // row; it does NOT create the `agent_run` row (its step-5 `persist_run_result`
         // would orphan without one). `run_task` does this too. A create failure is a SAFE
@@ -402,8 +471,8 @@ impl<T: Transport> HubRuntime<T> {
             &recall_preamble,
             self.operator_vk.as_ref(),
             &approve,
-            &self.policy,
-            self.max_turns,
+            policy,
+            max_turns,
             now_ms,
         ) {
             Ok(outcome) => outcome,
@@ -571,6 +640,22 @@ impl<T: Transport> HubRuntime<T> {
     /// identity, not a secret, but it is never logged/printed by this accessor's callers).
     pub(crate) fn configured_principal(&self) -> Option<&str> {
         self.policy.principal_id()
+    }
+
+    /// (A1) The runtime's BOOT [`RunPolicy`] (the `--owner` principal + boot disabled-tools /
+    /// read-only, built ONCE at [`HubRuntime::live`]). Exposed so the WS dispatch arm can COMPOSE
+    /// a peer's per-run constraints ONTO it ([`crate::agent_run_control::effective_run_policy_over`])
+    /// — the override can only ever TIGHTEN this boot policy, never loosen it. Read-only accessor;
+    /// it returns the SAME object the no-override `run_task` path uses, so an absent-constraint
+    /// run composed off this is byte-equivalent to the boot path.
+    pub fn policy(&self) -> &RunPolicy {
+        &self.policy
+    }
+
+    /// (A1) The runtime's BOOT `max_turns` ceiling. A per-run cap can only LOWER this (never
+    /// raise it past the runtime default); the floor is applied inside the run entries.
+    pub fn max_turns(&self) -> u64 {
+        self.max_turns
     }
 }
 
@@ -1804,5 +1889,343 @@ mod tests {
         if out.executed_tools > 0 {
             assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
         }
+    }
+
+    // ---- A1: per-run-constraints application (override threading) ------------
+    //
+    // These prove the live application of `AgentRunConstraintsWire` onto the per-run
+    // `RunPolicy` — the deferral #660 left open. The discriminating no-regression test (the
+    // one the advisor flagged) is `boot read_only/disabled + ABSENT or non-tightening
+    // override ⇒ STILL constrained` — it fails if the override REPLACES rather than COMPOSES
+    // the boot policy.
+
+    /// Build a runtime with EXPLICIT boot policy + max_turns (the parts `runtime_with` fixes).
+    fn runtime_with_boot(
+        tag: &str,
+        contents: &[&str],
+        principal_id: Option<String>,
+        disabled_tools: Vec<String>,
+        read_only: bool,
+        max_turns: u64,
+    ) -> (HubRuntime<ScriptTransport>, TempDir) {
+        let ws = TempDir::new(tag);
+        let transport = ScriptTransport::new(contents);
+        let client = DeepSeekClient::with_transport(transport, "k".into());
+        let agent = DeepSeekAgentLlmClient::new(client);
+        let rt = HubRuntime::new(
+            HubConfig {
+                db_path: tmp(tag),
+                workspace_root: ws.0.clone(),
+                secret: SECRET.to_vec(),
+                max_turns,
+                principal_id,
+                disabled_tools,
+                read_only,
+                operator_vk: None,
+            },
+            agent,
+            Box::new(DenyAllApprovals),
+        )
+        .unwrap();
+        (rt, ws)
+    }
+
+    fn constraints(
+        read_only: bool,
+        disabled_tools: &[&str],
+        max_turns: Option<u64>,
+    ) -> friday_protocol::AgentRunConstraintsWire {
+        friday_protocol::AgentRunConstraintsWire {
+            read_only,
+            disabled_tools: disabled_tools.iter().map(|s| s.to_string()).collect(),
+            max_turns,
+        }
+    }
+
+    /// Count the `tool.blocked:deny:run_is_read_only:<tool>` events for a run.
+    fn read_only_blocks(rt: &HubRuntime<ScriptTransport>, tool: &str) -> i64 {
+        rt.db()
+            .conn()
+            .query_row(
+                &format!(
+                    "SELECT count(*) FROM agent_run_event WHERE kind LIKE 'tool.blocked:deny:run_is_read_only:{tool}%'"
+                ),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    /// Count the `tool.blocked:deny:tool_disabled_for_run:<tool>` events for a run.
+    fn disabled_blocks(rt: &HubRuntime<ScriptTransport>, tool: &str) -> i64 {
+        rt.db()
+            .conn()
+            .query_row(
+                &format!(
+                    "SELECT count(*) FROM agent_run_event WHERE kind LIKE 'tool.blocked:deny:tool_disabled_for_run:{tool}%'"
+                ),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    /// TIGHTEN (the spec's named test): boot is read_only:FALSE, but an asserted
+    /// `read_only:true` constraint forces a gate-DENY of a mutating tool — even though boot
+    /// would have Paused-pending-approval. Proves the override is APPLIED, not dropped.
+    #[test]
+    fn a1_override_read_only_true_forces_block_though_boot_is_not_read_only() {
+        let (rt, root) = runtime_with_boot(
+            "a1-tighten-ro",
+            &["{\"tool\":\"write_file\",\"parameters\":{\"path\":\"out.txt\",\"content\":\"X\"}}"],
+            None,
+            vec![],
+            false, // boot: NOT read-only
+            6,
+        );
+        let c = constraints(true, &[], None); // per-run: read-only
+        let policy = crate::agent_run_control::effective_run_policy_over(rt.policy(), Some(&c));
+        let (_sel, out) = rt
+            .run_task_with_overrides("a1-ro", "write a file", Some(&policy), c.max_turns, 1000)
+            .unwrap();
+        assert_eq!(
+            out.status,
+            LoopStatus::Blocked,
+            "read_only:true override must BLOCK the mutating tool"
+        );
+        assert_eq!(out.executed_tools, 0, "nothing executes under read-only");
+        assert!(!root.join("out.txt").exists(), "no file written");
+        assert_eq!(
+            read_only_blocks(&rt, "write_file"),
+            1,
+            "the block is recorded with the run_is_read_only reason"
+        );
+    }
+
+    /// TIGHTEN: boot has NO disabled tools; an asserted `disabled_tools:[read_file]` constraint
+    /// blocks the read through the override.
+    #[test]
+    fn a1_override_disabled_tool_blocks_though_boot_disables_none() {
+        let (rt, root) = runtime_with_boot(
+            "a1-tighten-dis",
+            &[
+                "{\"tool\":\"read_file\",\"parameters\":{\"path\":\"notes.md\"}}",
+                "{\"tool\":\"none\"}",
+            ],
+            None,
+            vec![], // boot: nothing disabled
+            false,
+            6,
+        );
+        std::fs::write(root.join("notes.md"), b"secret").unwrap();
+        let c = constraints(false, &["read_file"], None);
+        let policy = crate::agent_run_control::effective_run_policy_over(rt.policy(), Some(&c));
+        let (_sel, out) = rt
+            .run_task_with_overrides("a1-dis", "read the notes", Some(&policy), None, 1000)
+            .unwrap();
+        assert_eq!(out.status, LoopStatus::Blocked, "disabled tool blocks");
+        assert_eq!(out.executed_tools, 0);
+        assert_eq!(disabled_blocks(&rt, "read_file"), 1);
+    }
+
+    /// NO-REGRESSION (the discriminating one): boot is read_only:TRUE, and the override is
+    /// ABSENT (`None`). The run MUST stay read-only. A REPLACE-the-boot-policy mistake would
+    /// pass `run_task`'s default unconstrained policy and let the write through — this catches
+    /// it. (`run_task` itself = the absent-override path.)
+    #[test]
+    fn a1_absent_override_preserves_boot_read_only() {
+        let (rt, root) = runtime_with_boot(
+            "a1-noreg-ro",
+            &["{\"tool\":\"write_file\",\"parameters\":{\"path\":\"out.txt\",\"content\":\"X\"}}"],
+            None,
+            vec![],
+            true, // boot: read-only
+            6,
+        );
+        // Absent override = the `run_task` path (delegates `(None, None)`).
+        let (_sel, out) = rt
+            .run_task("a1-noreg-ro-run", "write a file", 1000)
+            .unwrap();
+        assert_eq!(
+            out.status,
+            LoopStatus::Blocked,
+            "boot read-only must persist with NO override"
+        );
+        assert_eq!(out.executed_tools, 0);
+        assert!(!root.join("out.txt").exists());
+        assert_eq!(read_only_blocks(&rt, "write_file"), 1);
+    }
+
+    /// NO-REGRESSION (compose, not replace): boot is read_only:TRUE, and a PRESENT override
+    /// asserts read_only:FALSE (+ a max_turns cap). The OR semantics mean the run STAYS
+    /// read-only — a constraint can never UN-read-only a boot-configured read-only run. A
+    /// replace-mistake (taking the constraint verbatim) would loosen it.
+    #[test]
+    fn a1_override_cannot_loosen_boot_read_only() {
+        let (rt, root) = runtime_with_boot(
+            "a1-noloose-ro",
+            &["{\"tool\":\"write_file\",\"parameters\":{\"path\":\"out.txt\",\"content\":\"X\"}}"],
+            None,
+            vec![],
+            true, // boot: read-only
+            6,
+        );
+        let c = constraints(false, &[], Some(2)); // tries to turn read-only OFF
+        let policy = crate::agent_run_control::effective_run_policy_over(rt.policy(), Some(&c));
+        assert!(
+            policy.is_read_only(),
+            "composed policy stays read-only (boot OR constraint)"
+        );
+        let (_sel, out) = rt
+            .run_task_with_overrides(
+                "a1-noloose-ro-run",
+                "write a file",
+                Some(&policy),
+                c.max_turns,
+                1000,
+            )
+            .unwrap();
+        assert_eq!(out.status, LoopStatus::Blocked, "still read-only");
+        assert_eq!(out.executed_tools, 0);
+        assert!(!root.join("out.txt").exists());
+    }
+
+    /// NO-REGRESSION (union, not replace): boot disables `read_file`; a PRESENT override that
+    /// does NOT name `read_file` (disables something else) must STILL keep read_file disabled.
+    #[test]
+    fn a1_override_cannot_re_enable_boot_disabled_tool() {
+        let (rt, root) = runtime_with_boot(
+            "a1-noloose-dis",
+            &[
+                "{\"tool\":\"read_file\",\"parameters\":{\"path\":\"notes.md\"}}",
+                "{\"tool\":\"none\"}",
+            ],
+            None,
+            vec!["read_file".to_string()], // boot disables read_file
+            false,
+            6,
+        );
+        std::fs::write(root.join("notes.md"), b"secret").unwrap();
+        // Override names a DIFFERENT tool — does not mention read_file.
+        let c = constraints(false, &["delete_file"], None);
+        let policy = crate::agent_run_control::effective_run_policy_over(rt.policy(), Some(&c));
+        assert!(
+            policy.is_tool_disabled("read_file"),
+            "boot-disabled read_file stays disabled after compose"
+        );
+        let (_sel, out) = rt
+            .run_task_with_overrides(
+                "a1-noloose-dis-run",
+                "read the notes",
+                Some(&policy),
+                None,
+                1000,
+            )
+            .unwrap();
+        assert_eq!(out.status, LoopStatus::Blocked, "read_file still blocked");
+        assert_eq!(out.executed_tools, 0);
+        assert_eq!(disabled_blocks(&rt, "read_file"), 1);
+    }
+
+    /// max_turns: a per-run cap LOWERS the ceiling (cannot raise it). Boot ceiling = 6; an
+    /// override cap of 1 means the loop bounds after a single turn. (The floor is applied
+    /// inside `run_task_with_overrides` as `self.max_turns.min(cap)`.)
+    #[test]
+    fn a1_override_max_turns_cap_lowers_ceiling() {
+        // A script that keeps proposing a read (never "none") — without a cap it would run to
+        // the boot ceiling; the cap forces a Bounded outcome sooner.
+        let (rt, root) = runtime_with_boot(
+            "a1-maxturns",
+            &[
+                "{\"tool\":\"read_file\",\"parameters\":{\"path\":\"notes.md\"}}",
+                "{\"tool\":\"read_file\",\"parameters\":{\"path\":\"notes.md\"}}",
+                "{\"tool\":\"read_file\",\"parameters\":{\"path\":\"notes.md\"}}",
+                "{\"tool\":\"read_file\",\"parameters\":{\"path\":\"notes.md\"}}",
+                "{\"tool\":\"read_file\",\"parameters\":{\"path\":\"notes.md\"}}",
+                "{\"tool\":\"read_file\",\"parameters\":{\"path\":\"notes.md\"}}",
+            ],
+            None,
+            vec![],
+            false,
+            6, // boot ceiling
+        );
+        std::fs::write(root.join("notes.md"), b"hello").unwrap();
+        // cap=1: a cap can only lower; min(6,1)=1.
+        let c = constraints(false, &[], Some(1));
+        let policy = crate::agent_run_control::effective_run_policy_over(rt.policy(), Some(&c));
+        let (_sel, out) = rt
+            .run_task_with_overrides("a1-maxturns-run", "read", Some(&policy), c.max_turns, 1000)
+            .unwrap();
+        assert!(
+            out.turns <= 1,
+            "the max_turns cap (1) lowered the boot ceiling (6); got {} turns",
+            out.turns
+        );
+        // A cap of 1 cannot RAISE past boot: passing 100 must still floor to boot (6) — the loop
+        // never runs more than the boot ceiling.
+        let c_high = constraints(false, &[], Some(100));
+        let policy_high =
+            crate::agent_run_control::effective_run_policy_over(rt.policy(), Some(&c_high));
+        let (_sel2, out2) = rt
+            .run_task_with_overrides(
+                "a1-maxturns-high",
+                "read",
+                Some(&policy_high),
+                c_high.max_turns,
+                2000,
+            )
+            .unwrap();
+        assert!(
+            out2.turns <= 6,
+            "a cap above boot cannot raise the ceiling; got {} turns",
+            out2.turns
+        );
+    }
+
+    /// The override preserves the bound OWNER (a constraint restricts WHAT, never WHO). A
+    /// Finished run under a constraint still owner-stamps the boot principal — so the body is
+    /// releasable to that owner exactly as the no-override path.
+    #[test]
+    fn a1_override_preserves_bound_owner_on_finished_run() {
+        let (rt, _root) = runtime_with_boot(
+            "a1-owner",
+            &["{\"tool\":\"none\"}"], // finish immediately
+            Some("principal:owner-a1".to_string()),
+            vec![],
+            false,
+            6,
+        );
+        let c = constraints(true, &["delete_file"], Some(3)); // a tightening constraint
+        let policy = crate::agent_run_control::effective_run_policy_over(rt.policy(), Some(&c));
+        assert_eq!(
+            policy.principal_id(),
+            Some("principal:owner-a1"),
+            "compose preserves the boot principal verbatim"
+        );
+        let (_sel, out) = rt
+            .run_task_with_overrides(
+                "a1-owner-run",
+                "answer me",
+                Some(&policy),
+                c.max_turns,
+                1000,
+            )
+            .unwrap();
+        assert_eq!(out.status, LoopStatus::Finished);
+        // The owner was stamped: the result row records the boot owner.
+        let owner: Option<String> = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT owner_principal FROM run_result WHERE run_id = 'a1-owner-run'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            owner.as_deref(),
+            Some("principal:owner-a1"),
+            "the constrained run still owner-stamps the boot principal"
+        );
     }
 }

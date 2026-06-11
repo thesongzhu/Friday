@@ -131,7 +131,7 @@ use friday_crypto::{
     generate_approval_nonce, seal, DataKey, DeviceKeypair, FileSecureStore, Sealed, SecureStore,
 };
 use friday_deepseek::Transport;
-use friday_hub::hub_server::{run_authed_agent_loop, AuthedPrincipal, ForwardedAuth};
+use friday_hub::hub_server::{run_authed_agent_loop_with_policy, AuthedPrincipal, ForwardedAuth};
 use friday_hub::key_source::{PEER_PUBKEY_ALLOWLIST_ID, X25519_PUBKEY_LEN};
 use friday_hub::runtime::{HubConfig, HubRuntime};
 use friday_protocol::{Envelope, IdempotencyTracker, Message, Seen};
@@ -809,16 +809,13 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 forwarded_principal,
                 auth_proof,
                 session_id,
-                // (A1 run-controls) The per-run CONSTRAINTS the peer asserts. The wire SHAPE +
-                // the pure mapping onto a per-run `RunPolicy`
-                // ([`friday_hub::agent_run_control::effective_run_policy`]) are built + tested,
-                // but APPLYING them on the live dispatch requires the runtime to accept a per-run
-                // policy OVERRIDE (today `run_task` uses its OWN constructed `self.policy`).
-                // Threading that through the just-fixed live run-START path is a DEFERRED sub-AC
-                // (see the PR body) — so this slice does NOT apply the constraints on dispatch.
-                // `_constraints` is captured (not `..`) so the destructure stays exhaustive and a
-                // future field addition is a compile error, not a silent drop.
-                constraints: _constraints,
+                // (A1 run-controls — APPLICATION) The per-run CONSTRAINTS the peer asserts. The
+                // wire SHAPE + the pure mapping landed in #660; THIS slice APPLIES them on the live
+                // dispatch by COMPOSING them onto the runtime's boot policy
+                // ([`friday_hub::agent_run_control::effective_run_policy_over`]) and threading the
+                // result through the per-run policy override the runtime now accepts. ABSENT
+                // (`None`) ⇒ NO override ⇒ the boot policy/ceiling, byte-identical to pre-A1.
+                constraints,
             } => {
                 // The dispatch arm: AUTH BEFORE ANY RUN. The `auth_proof` is the peer-sealed
                 // challenge; reconstruct it as a `Sealed` for the session-key open. A malformed
@@ -861,13 +858,68 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 // share the IDENTICAL refs + owner-sealed-body emit below (the body is owner-gated
                 // by `project_answer_for_authed` in BOTH), so the only difference is which loop ran.
                 let now_ms = now_ms();
+
+                // (A1 run-controls — APPLICATION) Compute the per-run policy + max-turns OVERRIDE
+                // ONCE (before the session/sessionless branch) so BOTH arms apply the SAME
+                // effective gate. The override COMPOSES the peer's asserted `constraints` onto the
+                // runtime's boot policy ([`effective_run_policy_over`]) so it can ONLY TIGHTEN
+                // (read-only OR, disabled-tools UNION; the bound owner is unchanged).
+                //
+                // DARK + DEPLOY-GO-gated, TWO independent reasons it changes NO live behavior:
+                //   (1) FLAG: the override is built ONLY when `run_control_enabled`
+                //       (`FRIDAY_AGENT_RUN_CONTROL_VIA_RUST`, default-off). Flag OFF ⇒ `None`
+                //       override ⇒ the boot policy/ceiling, byte-identical to pre-A1 — even if a
+                //       peer somehow asserted constraints, they are IGNORED with the flag off.
+                //   (2) ABSENT: even with the flag on, a request that carries NO `constraints`
+                //       block (every live courier today) yields `effective_run_policy_over(boot,
+                //       None) == boot.clone()` ⇒ `Some(boot-equal)` which gates identically to the
+                //       boot policy, and `effective_max_turns(default, None) == default`. So the
+                //       only behavior change is for a request that EXPLICITLY asserts a TIGHTER
+                //       constraint while the flag is on — strictly a restriction.
+                //
+                // We pass the override as `Some(&effective_policy)` whenever the flag is on (even
+                // for absent constraints, where it equals boot) so the application path is
+                // exercised uniformly; absent + flag-on stays byte-equivalent because the composed
+                // policy equals boot. With the flag off we pass `None` so the runtime takes its
+                // own `self.policy` reference (no clone, the exact pre-A1 object).
+                let effective_policy = if run_control_enabled {
+                    Some(friday_hub::agent_run_control::effective_run_policy_over(
+                        runtime.policy(),
+                        constraints.as_ref(),
+                    ))
+                } else {
+                    None
+                };
+                let max_turns_override = if run_control_enabled {
+                    constraints.as_ref().and_then(|c| c.max_turns)
+                } else {
+                    None
+                };
+                let policy_override = effective_policy.as_ref();
+
                 let outcome = match session_id
                     .as_deref()
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                 {
-                    Some(sid) => runtime.run_session_task(&caller, &run_id, sid, &task, now_ms),
-                    None => run_authed_agent_loop(runtime, &caller, &run_id, &task, now_ms),
+                    Some(sid) => runtime.run_session_task_with_overrides(
+                        &caller,
+                        &run_id,
+                        sid,
+                        &task,
+                        policy_override,
+                        max_turns_override,
+                        now_ms,
+                    ),
+                    None => run_authed_agent_loop_with_policy(
+                        runtime,
+                        &caller,
+                        &run_id,
+                        &task,
+                        policy_override,
+                        max_turns_override,
+                        now_ms,
+                    ),
                 };
 
                 // (refs) REFS-ONLY terminal receipt over the wire: status + answer FINGERPRINT

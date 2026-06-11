@@ -141,6 +141,7 @@ import { createFridayCloudWorkerSetupService } from "#cloud-workers";
 // (the ECDH model — REPLACES #612's symmetric session-key resolver, which was the wrong shape).
 import { createFridayRustHubAgentRunSealedClientService } from "../mission-spine/friday-rust-hub-agent-run-sealed-client-service.js";
 import type { FridayRustHubAgentRunSealedClientService } from "../mission-spine/friday-rust-hub-agent-run-sealed-client-service.js";
+import type { FridayRustHubAgentRunConstraints } from "../mission-spine/friday-rust-hub-agent-run-ws-sealed-client.js";
 import { createFridayRustHubRunContinuityProjectorService } from "../mission-spine/friday-rust-hub-run-continuity-projector-service.js";
 import type { FridayRustHubRunContinuityProjectorService } from "../mission-spine/friday-rust-hub-run-continuity-projector-service.js";
 import { createFridayRustHubRunAnswerReadbackService } from "../mission-spine/friday-rust-hub-run-answer-readback-service.js";
@@ -1200,6 +1201,17 @@ async function composeRustReadOnlyAgentRun(args: {
    * scopes the session to the authenticated owner principal, never this key.
    */
   readonly sessionKey: string | undefined;
+  /**
+   * (A1 run-controls) The per-run CONSTRAINTS to forward on the sealed-WS dispatch so the Rust
+   * server COMPOSES them onto the run's `RunPolicy` (read-only / disabled-tools / max-turns) —
+   * they can only ever TIGHTEN. For a qualifying read-only Rust run this is `{ readOnly: true }`
+   * (clause 2 of {@link qualifiesForRustReadOnlyRoute} already REQUIRES `readOnly === true`, so
+   * forwarding it makes the read-only guarantee travel on the WIRE + be enforced in RUST, not
+   * only by the TS qualifier — the defense-in-depth A1 closes). ABSENT (`undefined`) ⇒ no
+   * `constraints` on the wire, byte-identical to the pre-A1 dispatch, server applies no override
+   * (gated additionally by the server's default-off run-control flag).
+   */
+  readonly constraints: FridayRustHubAgentRunConstraints | undefined;
   readonly providerId: string;
   readonly model: string;
   readonly wsClient: FridayRustHubAgentRunSealedClientService;
@@ -1273,6 +1285,10 @@ async function composeRustReadOnlyAgentRun(args: {
       // non-empty (absent/blank ⇒ byte-identical sessionless wire, today's behavior). The server
       // owner-scopes the session to `callerPrincipal` (the authenticated owner), never this key.
       ...(args.sessionKey !== undefined ? { sessionKey: args.sessionKey } : {}),
+      // (A1 run-controls) forward the per-run constraints; the WS client emits `constraints` only
+      // when something tightens (here `{ readOnly: true }`), else OMITS the field (byte-identical
+      // pre-A1 wire). The server composes them onto the run policy behind its default-off flag.
+      ...(args.constraints !== undefined ? { constraints: args.constraints } : {}),
     });
   } catch (err) {
     logFailClosed(
@@ -4541,6 +4557,15 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             // (A2a Phase 1) forward the session key so a SESSIONED qualifying run dispatches
             // `session_id`; absent/blank ⇒ byte-identical sessionless dispatch (today's behavior).
             sessionKey: input.sessionKey,
+            // (A1 run-controls) Derive the per-run constraints to forward on the wire. A run only
+            // reaches here when it QUALIFIED, which (clause 2) REQUIRES `constraints.readOnly ===
+            // true` — so forward `{ readOnly: true }`, making the read-only guarantee travel on
+            // the wire + be enforced in Rust (defense-in-depth), not only by this TS qualifier.
+            // We forward ONLY the verified-true `readOnly` (the qualifier's own contract); the
+            // disabled-tool / max-turns axes are not asserted by the read-only route today, so
+            // they stay absent (omitted on the wire). The server gates application behind its
+            // default-off run-control flag, so this remains DARK + DEPLOY-GO-gated.
+            constraints: { readOnly: true },
             providerId: input.providerId ?? RUST_ROUTE_DEEPSEEK_PROVIDER_ID,
             model: input.model ?? RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
             wsClient: rustWsClient,
