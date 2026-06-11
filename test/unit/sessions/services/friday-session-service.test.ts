@@ -600,7 +600,7 @@ describe("FridaySessionService", () => {
       );
     });
 
-    it("ROLLBACK (on->off): a HARDENED-persisted session keeps recalling via the defensive cache tail", async () => {
+    it("ROLLBACK (on->off): recall reads the PERSISTED hardened namespace ALONE — no re-derive regression (review must-fix)", async () => {
       // `getOrCreateSession` (the live runtime path) PERSISTS the resolved `memory_namespace`.
       // Under flag-ON it persists the HARDENED namespace for a dotted userId.
       process.env[FLAG] = "1";
@@ -612,16 +612,46 @@ describe("FridaySessionService", () => {
         "tenant.default.channel.discord.user.grace-hopper-example-com.shared",
       );
 
-      // Now ROLL BACK the flag (on -> off). The re-derived candidate is the LEGACY namespace
-      // only — which would ORPHAN the hardened-written rows — EXCEPT the defensive cache tail
-      // appends the persisted hardened namespace, so those rows are STILL recalled. This pins
-      // the reverse direction of the data-safety guarantee (no loss on rollback).
+      // Now ROLL BACK the flag (on -> off). Flag-off recall MUST be byte-identical to
+      // today (`getSessionMemoryNamespace`): the SINGLE persisted (authoritative)
+      // namespace, NOT a blind re-derivation. The persisted value here is the HARDENED
+      // namespace (what the rows were written under), so it — and ONLY it — is the
+      // recall target. The pre-fix bug demoted this to a defensive tail behind a
+      // re-derived legacy primary (an empty bucket searched first); the fix removes the
+      // dual-read/re-scope from the flag-off path entirely so there is zero regression
+      // regardless of any persisted-vs-re-derived drift.
       delete process.env[FLAG];
       const candidates = await service.getSessionMemoryNamespaceCandidates(key);
-      expect(candidates).toEqual([
-        "tenant.default.channel.discord.user.grace.hopper-example.com.shared", // re-derived legacy
-        persistedHardened, // defensive cache tail (the bucket the rows actually live in)
-      ]);
+      expect(candidates).toEqual([persistedHardened]);
+      // Byte-identical to `getSessionMemoryNamespace` (today's single-namespace recall).
+      const single = await service.getSessionMemoryNamespace(key);
+      expect(candidates).toEqual([single]);
+    });
+
+    it("FLAG-OFF (must-fix): persisted namespace DIFFERS from re-derived legacy — recall STILL reads the persisted bucket (no regression)", async () => {
+      // Drive the exact reviewer-specified adversarial case at the session-service
+      // boundary: a session whose PERSISTED `memory_namespace` differs from what a
+      // blind re-derivation of its current axes would produce. We construct this by
+      // persisting a HARDENED namespace under flag-on, then reading flag-off — the
+      // re-derived legacy (dotted) namespace differs from the persisted hardened one.
+      process.env[FLAG] = "1";
+      const key = "discord:default:ada.lovelace@example.com";
+      await service.getOrCreateSession(key);
+      const session = await service.getSession(key);
+      const persisted = session?.memoryNamespace;
+      expect(persisted).toBe(
+        "tenant.default.channel.discord.user.ada-lovelace-example-com.shared",
+      );
+
+      // Flag OFF: a blind re-derivation would yield the LEGACY (dotted) namespace, which
+      // is a DIFFERENT bucket than the persisted one. The fix guarantees recall uses the
+      // PERSISTED bucket (authoritative), never the divergent re-derivation.
+      delete process.env[FLAG];
+      const reDerivedLegacy = "tenant.default.channel.discord.user.ada.lovelace-example.com.shared";
+      expect(persisted).not.toBe(reDerivedLegacy); // confirm the drift is real
+      const candidates = await service.getSessionMemoryNamespaceCandidates(key);
+      expect(candidates).toEqual([persisted]);
+      expect(candidates).not.toContain(reDerivedLegacy);
     });
   });
 

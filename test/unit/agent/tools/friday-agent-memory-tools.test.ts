@@ -991,6 +991,54 @@ describe("FridayAgentMemoryTools", () => {
       expect(searchedNamespaces).toEqual([[AGENT_NS, LEGACY_NS]]);
     });
 
+    it("FLAG-OFF must-fix: persisted namespace DIFFERS from re-derived legacy — recall reads the PERSISTED bucket and finds the items (no regression)", async () => {
+      // The reviewer-specified adversarial case AT the live consumer. The session's
+      // PERSISTED memory namespace (the authoritative write-time value) differs from
+      // what a blind re-derivation would produce (e.g. after a rollback from flag-on,
+      // or any stored-vs-re-derived drift). The fixed flag-off `getSessionMemoryNamespace
+      // Candidates` returns the SINGLE persisted namespace — so the consumer searches the
+      // bucket the rows ACTUALLY live in, never the divergent re-derivation. This pins
+      // "flag-off recall is byte-identical to today" regardless of namespace drift.
+      const PERSISTED_NS = HARDENED_NS; // what the rows were written under (authoritative)
+      const RE_DERIVED_LEGACY_NS = LEGACY_NS; // what a blind re-derivation would yield (a DIFFERENT, empty bucket)
+      const persistedMemory = makeSearchResult({
+        item: makeItem({
+          id: "persisted-mem",
+          namespace: PERSISTED_NS,
+          content: "Codename is FALCON",
+        }),
+        score: 0.9,
+      });
+      const svc = mockMemoryService();
+      // The item lives ONLY in the persisted bucket. If recall blindly re-derived the
+      // legacy namespace (the pre-fix bug), it would search the EMPTY legacy bucket and
+      // miss this row → recall regression.
+      vi.mocked(svc.search).mockImplementation(async (_q, options) => {
+        const ns = options?.namespace;
+        const arr = Array.isArray(ns) ? ns : [ns];
+        return arr.includes(PERSISTED_NS) ? [persistedMemory] : [];
+      });
+      const [searchTool] = createFridayAgentMemoryTools({
+        memoryService: svc,
+        // The FIXED flag-off candidate list: the SINGLE authoritative persisted namespace
+        // (NOT [re-derived-legacy, persisted-tail], which was the regressing pre-fix shape).
+        resolveSessionMemoryNamespaceCandidates: async () => [PERSISTED_NS],
+      });
+
+      const result = await searchTool!.execute(
+        { query: "codename" },
+        signalWithContext({ sessionKey: SESSION_KEY }),
+      );
+
+      expect(result.isError).toBeUndefined();
+      // The persisted-bucket memory IS still recalled (no regression).
+      expect(JSON.parse(result.content)).toMatchObject([{ content: "Codename is FALCON" }]);
+      // The persisted namespace was searched; the divergent re-derived legacy bucket was NOT.
+      const searchedNamespaces = vi.mocked(svc.search).mock.calls.map(([, opts]) => opts?.namespace);
+      expect(searchedNamespaces).toEqual([[AGENT_NS, PERSISTED_NS]]);
+      expect(searchedNamespaces).not.toContainEqual([AGENT_NS, RE_DERIVED_LEGACY_NS]);
+    });
+
     it("FLAG-ON dedup-collapse: a non-dotted (single-candidate) namespace adds no extra query", async () => {
       // When hardened === legacy the dep collapses to one entry, so even with the flag
       // ON the common case issues exactly one query (the dedup-collapse guarantee).
