@@ -30,6 +30,7 @@ pub mod provider_timeline_store;
 pub mod run_result;
 pub mod schedule;
 mod schema;
+pub mod session_lifecycle;
 pub mod system_intent;
 pub mod workflow;
 pub mod workflow_catalog;
@@ -62,6 +63,7 @@ pub use run_result::{
     StoredRunResult,
 };
 pub use schema::{hub_migrations, phone_migrations, HUB_ONLY_TABLES, PHONE_ONLY_TABLES};
+pub use session_lifecycle::{sweep_lifecycle, SweepOutcome};
 
 use friday_core::{
     ActivityState, ActivityType, DeviceIdentity, FridayConversation, FridayPairPayload,

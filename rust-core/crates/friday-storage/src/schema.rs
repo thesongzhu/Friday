@@ -434,6 +434,33 @@ pub fn hub_migrations() -> Vec<Migration> {
             destructive: false,
             up: m0027_workflow_run_control_columns,
         },
+        // Rust-owned session lifecycle (DARK substrate + reaper): add the lifecycle
+        // status + per-transition timestamp columns to the Hub-only `agent_session`
+        // table, mirroring the TS `sessions` lifecycle axes the retired
+        // `session-lifecycle-sweep` operated over (`status`, `idle_at`, `archived_at`,
+        // `pruned_at`, `status_changed_at`, `last_activity_at`). This is the storage
+        // half of the Rust-owned reaper that REPLACES the retired (fail-closed) TS
+        // sweep: Rust now OWNS lifecycle on `agent_session` (the TS `sessions` table's
+        // historical lifecycle data is abandoned per operator decision, NOT migrated).
+        //
+        // All columns are additive (`status` NOT NULL DEFAULT 'active' with a
+        // vocabulary CHECK; the four timestamp columns NULLABLE epoch-ms). Every
+        // existing v27 row reads back `status = 'active'` with all lifecycle
+        // timestamps NULL — i.e. a freshly-active session, exactly the at-rest state
+        // a never-swept session should have. `last_activity_at` is a NULLABLE forward
+        // hook with NO writer yet (the hot `ensure_session`/`append_session_message`
+        // paths keep bumping only `updated_at`); the reaper drives active→idle off
+        // `COALESCE(last_activity_at, updated_at)` so the predicate fires off the
+        // genuinely-maintained `updated_at` until a future slice wires a dedicated
+        // last-activity writer. Purely additive (ALTER only) — touches no other table.
+        // The reaper TICK that consumes these is DEFAULT-OFF (env-gated), so this
+        // migration is dark on deploy. Hub-only — `agent_session` is a Hub-only table.
+        Migration {
+            version: 28,
+            name: "agent_session_lifecycle",
+            destructive: false,
+            up: m0028_agent_session_lifecycle,
+        },
     ]
 }
 
@@ -1989,5 +2016,50 @@ fn m0027_workflow_run_control_columns(tx: &Transaction) -> rusqlite::Result<()> 
     tx.execute_batch(
         "ALTER TABLE workflow_step ADD COLUMN attempt INTEGER NOT NULL DEFAULT 1;
          ALTER TABLE workflow_run ADD COLUMN cancel_reason TEXT;",
+    )
+}
+
+// Rust-owned session lifecycle: additive lifecycle columns on the Hub-only
+// `agent_session` table, mirroring the TS `sessions` lifecycle axes the retired
+// `session-lifecycle-sweep` operated over. This is the storage half of the
+// Rust-owned reaper (`crate::session_lifecycle::sweep_lifecycle`) that REPLACES
+// the retired TS sweep.
+//
+//   * `status` — the lifecycle phase. NOT NULL DEFAULT 'active' so every existing
+//     v27 row reads back as a freshly-active session; the CHECK admits ONLY the TS
+//     vocabulary ('active' | 'idle' | 'archived' | 'pruned') so an unknown status
+//     cannot be stored to LOOK like a phase the reaper would (or would not) advance
+//     (matches the house chat_kind/session_kind CHECK style).
+//   * `idle_at` / `archived_at` / `pruned_at` — the epoch-ms transition timestamps
+//     the SUBSEQUENT transition's predicate reads (idle→archived reads `idle_at`,
+//     archived→pruned reads `archived_at`, pruned→hard-delete reads `pruned_at`),
+//     exactly as the TS repo drives each step off its own per-phase timestamp.
+//     NULLABLE: a never-transitioned (active) session has all three NULL.
+//   * `status_changed_at` — bumped on EVERY transition (parity with the TS sweep,
+//     which always writes it); it is an observability axis, NOT a predicate driver.
+//   * `last_activity_at` — a NULLABLE FORWARD HOOK that mirrors the TS
+//     `sessions.last_activity_at` the active→idle predicate keys on. It has NO writer
+//     yet (the hot `ensure_session`/`append_session_message` paths keep bumping only
+//     `updated_at`, unchanged here), so it reads back NULL on every row. The reaper
+//     therefore drives active→idle off `COALESCE(last_activity_at, updated_at)` — the
+//     genuinely-maintained `updated_at` is the live signal until a future slice wires
+//     a dedicated last-activity writer; this column is added now so that wiring is a
+//     pure data change with no schema change. It is intentionally NOT backfilled to
+//     `updated_at` (a frozen snapshot would wrongly idle sessions that are still
+//     active after the migration runs).
+//
+// `agent_session`'s CREATE-DDL const stays FROZEN at its pre-v28 shape, so a fresh
+// install runs the base CREATE then these ALTERs (no duplicate-column on fresh
+// install) — mirrors how m0021/m0023 added their columns. Purely additive (ALTER
+// only) — touches no other table, so v27 rows/queries are unaffected. Hub-only.
+fn m0028_agent_session_lifecycle(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "ALTER TABLE agent_session ADD COLUMN status TEXT NOT NULL DEFAULT 'active'
+            CHECK(status IN ('active', 'idle', 'archived', 'pruned'));
+         ALTER TABLE agent_session ADD COLUMN idle_at INTEGER;
+         ALTER TABLE agent_session ADD COLUMN archived_at INTEGER;
+         ALTER TABLE agent_session ADD COLUMN pruned_at INTEGER;
+         ALTER TABLE agent_session ADD COLUMN status_changed_at INTEGER;
+         ALTER TABLE agent_session ADD COLUMN last_activity_at INTEGER;",
     )
 }
