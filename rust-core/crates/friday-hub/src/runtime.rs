@@ -541,6 +541,20 @@ impl<T: Transport> HubRuntime<T> {
     pub fn db(&self) -> &Db {
         &self.db
     }
+
+    /// FIX-Q2 (hardening) — the run-owner principal this runtime is CONFIGURED with (the
+    /// `--owner` allowlist's single entry, threaded via [`HubConfig::principal_id`] into the
+    /// [`RunPolicy`]). This is the principal `run_task` stamps as the run's owner, recalls
+    /// memory for, binds into the gate Actor, and bills. `None` ⇒ no owner configured.
+    ///
+    /// Exposed `pub(crate)` ONLY so the live exec entry ([`crate::run_authed_agent_loop`]) can
+    /// assert `authenticated_caller == configured_owner` BEFORE dispatch — turning the
+    /// single-owner doc convention ("the runtime MUST be configured with the SAME principal as
+    /// `caller`") into a code invariant. It is NOT a wire/proof surface (a principal id is an
+    /// identity, not a secret, but it is never logged/printed by this accessor's callers).
+    pub(crate) fn configured_principal(&self) -> Option<&str> {
+        self.policy.principal_id()
+    }
 }
 
 impl HubRuntime<UreqTransport> {
