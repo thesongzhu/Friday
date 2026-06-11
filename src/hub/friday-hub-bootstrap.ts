@@ -933,6 +933,34 @@ export function resolveRouteAgentRunViaRust(
 }
 
 /**
+ * GATE-AGENT-REPLACE A2b mutation-relax (DARK, default-off): single source of truth resolving
+ * the per-run `agentRunControlViaRust` flag from (1) an EXPLICIT
+ * {@link FridayHubConfig.agentRunControlViaRust} and, only as a fallback, (2) the
+ * `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST` env var — the SAME operator knob the Rust WS server gates
+ * its on-wire pause/resume control plane on (`hub_agent_run_server.rs:544`). This is what gates
+ * the TS qualifier's clause-2/4 MUTATION relax: with it OFF, a `readOnly:false` run stays
+ * disqualified to the 503 fence (byte-identical to today); the TS admission boundary and the
+ * Rust control plane flip together, never independently.
+ *
+ * PRECEDENCE + PARSE mirror {@link resolveRouteAgentRunViaRust} exactly: an explicit config
+ * boolean (true OR false) ALWAYS wins; the env is consulted ONLY when config does not specify.
+ * Case-insensitive, trimmed `"1"` or `"true"` ⇒ true; ABSENT, `""`, `"0"`, `"false"`, or ANY
+ * other value ⇒ false. DEFAULT (env unset, config unset) ⇒ false, so the mutation relax is dead
+ * code and a mutating run stays fail-closed (503), byte-identical to today.
+ */
+export function resolveAgentRunControlViaRust(
+  configValue: boolean | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  // Config explicit (true OR false) wins — env is the fallback for the unset gap only.
+  if (typeof configValue === "boolean") {
+    return configValue;
+  }
+  const raw = (env.FRIDAY_AGENT_RUN_CONTROL_VIA_RUST ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true";
+}
+
+/**
  * providers-bridge cut-over (DARK): single source of truth resolving the
  * `routeProvidersViaRust` flag from (1) an EXPLICIT
  * {@link FridayHubConfig.routeProvidersViaRust} and, only as a fallback, (2) the
@@ -7086,6 +7114,14 @@ export async function createFridayHub(
     // set (the default) this is `false`, so the `=== true` gate is never satisfied → the
     // predicate is never evaluated → byte-identical to today's fail-closed 503.
     routeAgentRunViaRust: resolveRouteAgentRunViaRust(config.routeAgentRunViaRust),
+    // GATE-AGENT-REPLACE A2b mutation-relax (DARK): default-false flag gating the qualifier's
+    // clause-2/4 MUTATION relax. SINGLE SOURCE OF TRUTH = `resolveAgentRunControlViaRust`: an
+    // explicit config boolean wins; otherwise the `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST` env knob
+    // fills the gap (case-insensitive "1"/"true" → true; anything else, incl. unset → false) —
+    // the SAME knob the Rust WS server gates its pause/resume control plane on. With nothing set
+    // (the default) this is `false`, so a `readOnly:false` run stays disqualified to the 503
+    // fence and the route is byte-identical to today.
+    agentRunControlViaRust: resolveAgentRunControlViaRust(config.agentRunControlViaRust),
     // providers-bridge cut-over (DARK): default-false master flag for routing the retired
     // Tier-2 PROVIDER surfaces to the merged Rust bins. SINGLE SOURCE OF TRUTH =
     // `resolveRouteProvidersViaRust` (explicit config wins; else FRIDAY_ROUTE_PROVIDERS_VIA_RUST,

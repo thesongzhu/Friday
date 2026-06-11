@@ -331,6 +331,16 @@ export interface CreateFridayApiRuntimeDeps {
    */
   routeAgentRunViaRust?: boolean;
   /**
+   * GATE-AGENT-REPLACE A2b mutation-relax (DARK, default-off): resolved on/off state of the
+   * Rust run-CONTROL plane flag (`FRIDAY_AGENT_RUN_CONTROL_VIA_RUST`) — the SAME knob the Rust
+   * WS server gates its pause/resume protocol on. DEFAULT-FALSE — leave unset in
+   * production/runtime. The startRun route wrapper threads this into
+   * `qualifiesForRustReadOnlyRoute`; with it unset/false the qualifier's clause-2/4 MUTATION
+   * relax is dead code and a `readOnly:false` run stays disqualified to the 503 fence,
+   * byte-identical to today. Sourced (in bootstrap) from `resolveAgentRunControlViaRust`.
+   */
+  agentRunControlViaRust?: boolean;
+  /**
    * providers-bridge cut-over (DARK): the master ON/OFF (resolved boolean) for routing
    * the retired Tier-2 PROVIDER surfaces — `providers.detect` (setup routes) and
    * `providers.doctor` / `providers.validate` / `capabilities.doctor` (provider routes)

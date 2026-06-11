@@ -1945,6 +1945,16 @@ export interface FridayHubConfig {
    */
   routeAgentRunViaRust?: boolean;
   /**
+   * GATE-AGENT-REPLACE A2b mutation-relax (DARK, default-off): the SAME operator knob the
+   * Rust WS server gates its on-wire pause/resume control plane on
+   * (`FRIDAY_AGENT_RUN_CONTROL_VIA_RUST`). DEFAULT-FALSE — production hub creation must leave
+   * this unset so the qualifier's clause-2/4 mutation relax is DEAD CODE and a `readOnly:false`
+   * run stays disqualified to the 503 fence (byte-identical to today). Resolved (in bootstrap)
+   * by `resolveAgentRunControlViaRust` (explicit config wins; else the env knob). The TS
+   * admission boundary and the Rust control plane flip TOGETHER, never independently.
+   */
+  agentRunControlViaRust?: boolean;
+  /**
    * providers-bridge cut-over (DARK): master ON/OFF for routing the retired Tier-2
    * PROVIDER surfaces (`providers.detect` / `providers.doctor` / `providers.validate` /
    * `capabilities.doctor`) to the merged Rust `hub_providers_detect` /

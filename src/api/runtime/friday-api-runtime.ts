@@ -983,6 +983,32 @@ export const RUST_ROUTE_READ_TOOL_ALLOWLIST = ["read_file", "list_dir", "stat_fi
 const RUST_ROUTE_DEEPSEEK_PROVIDER_ID = "deepseek";
 const RUST_ROUTE_DEEPSEEK_FLASH_MODEL = "deepseek-v4-flash";
 
+// (A2b Phase 2, mutation-relax — DARK, default-off) The CLOSED, NAMED allow-list of mutating
+// Rust tools a gated chat run may carry. Clause 4's admitted tool set is the read set
+// (RUST_ROUTE_READ_TOOL_ALLOWLIST) UNION an EXPLICITLY-GRANTED subset of THIS list — only
+// tools named here may ever be granted, and only when the grant is explicit. The runtime
+// Rust gate remains the real enforcer: every one of these Pauses pending an operator-signed
+// Ed25519 approval (the qualifier admits CANDIDACY, never EXECUTION). Mirrors the exact 6
+// mutating tools the Rust loop Pause-tests assert (write_file/append_file/edit_file/
+// delete_file/move_file/run_command, lib.rs:4614+).
+export const RUST_ROUTE_MUTATING_TOOL_ALLOWLIST = [
+  "write_file",
+  "append_file",
+  "edit_file",
+  "delete_file",
+  "move_file",
+  "run_command",
+] as const;
+
+// (A2b Phase 2, mutation-relax — DARK, default-off) The REQUIRED explicit opt-in marker on
+// a mutating run: a run with `readOnly:false` is admitted ONLY when it ALSO carries
+// `mutationGate === "operator_signed_ed25519"`. This makes "mutating" structurally
+// inseparable from "operator-gated" at the admission boundary — there is NO admission for
+// "mutating + no gate-marker". The value names the ONLY mutation-gating scheme the Rust
+// spine implements (single-use Ed25519 over the canonical action digest); it is never
+// inferred from `readOnly` flipping.
+const RUST_ROUTE_MUTATION_GATE_MARKER = "operator_signed_ed25519";
+
 export interface RustRouteQualificationInput {
   /**
    * Internal route marker. ONLY the createFridayAgentRoutes-bound startRun wrapper sets
@@ -1033,6 +1059,36 @@ export interface RustRouteQualificationInput {
    * composition slice wires the body-parse that populates this from the real startRun input.
    */
   planReviewOverride?: unknown;
+  /**
+   * (A2b Phase 2, mutation-relax — DARK, default-off) The resolved on/off state of the Rust
+   * run-CONTROL plane flag (`FRIDAY_AGENT_RUN_CONTROL_VIA_RUST`). The ENTIRE clause-2/4
+   * mutation relax is gated on this being EXACTLY `true`; absent / `undefined` / `false`
+   * (the default) ⇒ the mutating-admission branch is DEAD CODE and a `readOnly:false` run
+   * stays disqualified to the 503 fence, BYTE-IDENTICAL to today. The route wrapper sources
+   * this from the SAME resolved boolean the Rust server gates its pause/resume protocol on,
+   * so the TS admission boundary and the Rust control plane flip together.
+   */
+  agentRunControlViaRust?: boolean;
+  /**
+   * (A2b Phase 2, mutation-relax — DARK, default-off) The POSITIVE per-run grant of mutating
+   * Rust tools. A mutating run (`readOnly:false`) is admitted ONLY when this is a non-empty
+   * array whose EVERY element is a member of {@link RUST_ROUTE_MUTATING_TOOL_ALLOWLIST} (a
+   * subset of the closed 6 — any tool not on that list disqualifies). Mutation-permission is
+   * NEVER inferred from `readOnly` flipping; it requires this explicit positive grant exactly
+   * as clause 4 already requires a positive READ grant. Ignored entirely for a read-only run
+   * (a stray grant on a read-only run changes nothing). The composition slice wires the
+   * body-parse that populates this; today the startRun route never sets it.
+   */
+  mutatingToolGrant?: string[];
+  /**
+   * (A2b Phase 2, mutation-relax — DARK, default-off) The REQUIRED explicit operator-signed
+   * gate opt-in marker. A mutating run is admitted ONLY when this equals
+   * `"operator_signed_ed25519"` ({@link RUST_ROUTE_MUTATION_GATE_MARKER}). This makes
+   * "mutating" structurally inseparable from "operator-gated" at the admission boundary —
+   * there is NO admission for "mutating + no gate-marker". Ignored entirely for a read-only
+   * run. The composition slice wires the body-parse that populates this.
+   */
+  mutationGate?: string;
 }
 
 /**
@@ -1046,8 +1102,49 @@ export function qualifiesForRustReadOnlyRoute(input: RustRouteQualificationInput
     return false;
   }
 
-  // Clause 2 — readOnly (hard-blocks mutating tools in the runtime).
-  if (input.constraints?.readOnly !== true) {
+  // ── (A2b Phase 2, mutation-relax — DARK, default-off) GATED-MUTATING-RUN admission ──
+  //
+  // The SINGLE source of truth for whether this run is a VALID gated mutating run. Computed
+  // ONCE so clause 2 (the readOnly gate) and clause 4 (the tool allow-list) can NEVER diverge
+  // — clause 2 admits a mutating run ONLY if this is true, and clause 4 widens its allow-list
+  // ONLY by exactly the grant this validated. Every conjunct must hold; any uncertainty ⇒
+  // false ⇒ the run falls back to the read-only-only admission (today's behavior).
+  //
+  // BYTE-IDENTICAL-WHEN-OFF: the FIRST conjunct is `agentRunControlViaRust === true`. The flag
+  // is default-off (absent/undefined/false), so off ⇒ this is always false ⇒ clause 2's
+  // `readOnly !== true` disqualifies a mutating run EXACTLY as today, and clause 4 never widens.
+  // The mutating branch is dead code until the operator flips the SAME flag the Rust pause/
+  // resume control plane gates on. A read-only run never consults the mutating fields at all.
+  //
+  // COMPENSATING TIGHTENINGS (INV-2 + INV-7): every relaxation is matched by an added
+  // requirement so the admitted UNGATED-mutation surface stays EXACTLY ZERO —
+  //   (i)   an EXPLICIT positive `mutatingToolGrant` (never inferred from `readOnly` flipping),
+  //   (ii)  EVERY granted tool a member of the closed RUST_ROUTE_MUTATING_TOOL_ALLOWLIST,
+  //   (iii) an EXPLICIT `mutationGate === "operator_signed_ed25519"` opt-in marker, and
+  //   (iv)  a NON-EMPTY bound owner `principalId` (single-owner; the Rust server scopes the
+  //         body + owner-gated readback to it — a blank/whitespace owner cannot own a
+  //         mutating run, independent of any session sub-clause below).
+  // The Rust runtime gate remains the REAL enforcer: each granted mutating tool still Pauses
+  // pending an operator-signed Ed25519 approval. This admits CANDIDACY only, never EXECUTION.
+  const mutatingGrant = input.mutatingToolGrant;
+  const mutatingGrantWithinAllowList =
+    Array.isArray(mutatingGrant)
+    && mutatingGrant.length > 0
+    && mutatingGrant.every((tool) =>
+      (RUST_ROUTE_MUTATING_TOOL_ALLOWLIST as readonly string[]).includes(tool),
+    );
+  const hasBoundOwnerPrincipal =
+    typeof input.principalId === "string" && input.principalId.trim().length > 0;
+  const isGatedMutatingRun =
+    input.agentRunControlViaRust === true
+    && input.constraints?.readOnly === false
+    && mutatingGrantWithinAllowList
+    && input.mutationGate === RUST_ROUTE_MUTATION_GATE_MARKER
+    && hasBoundOwnerPrincipal;
+
+  // Clause 2 — readOnly (hard-blocks mutating tools in the runtime) OR a VALID gated mutating
+  // run (the only way `readOnly:false` is ever admitted; flag-off ⇒ this OR-arm is dead code).
+  if (input.constraints?.readOnly !== true && !isGatedMutatingRun) {
     return false;
   }
 
@@ -1076,7 +1173,14 @@ export function qualifiesForRustReadOnlyRoute(input: RustRouteQualificationInput
     return false;
   }
 
-  // Clause 4 — exactly the 4 Rust read tools, nothing else.
+  // Clause 4 — the admitted tool set.
+  //   • READ-ONLY run (today's behavior, byte-identical): EXACTLY the 4 Rust read tools,
+  //     nothing else. The `allowedRustRouteTools` grant must be precisely the read set.
+  //   • GATED MUTATING run (A2b, dark/default-off): the read set UNION the explicitly-granted
+  //     mutating subset — a NAMED, CLOSED allow-list. `allowedRustRouteTools` must still be
+  //     exactly the 4 reads (the base), and EVERY admitted extra must be a member of the
+  //     validated `mutatingToolGrant` (already proven ⊆ RUST_ROUTE_MUTATING_TOOL_ALLOWLIST by
+  //     `isGatedMutatingRun`). The runtime Rust gate remains the real enforcer of execution.
   const grant = input.allowedRustRouteTools;
   if (!Array.isArray(grant) || grant.length !== RUST_ROUTE_READ_TOOL_ALLOWLIST.length) {
     return false;
@@ -1090,6 +1194,10 @@ export function qualifiesForRustReadOnlyRoute(input: RustRouteQualificationInput
       return false;
     }
   }
+  // The mutating half of the union is `input.mutatingToolGrant`, already validated by
+  // `isGatedMutatingRun` (non-empty, ⊆ the closed mutating allow-list) and gated on the
+  // default-off flag. No further check is needed here: for a read-only run `isGatedMutatingRun`
+  // is false and the mutating grant is never consulted, so this stays byte-identical to today.
 
   // Clause 5 — no plan-review.
   if (input.requireReview === true) {
@@ -4317,6 +4425,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       // S-F-compose (DARK): an explicit plan-review override marker (clause-5 disqualifier).
       // Additive + optional; absent for every existing caller.
       planReviewOverride?: unknown;
+      // (A2b Phase 2, mutation-relax — DARK, default-off) the explicit POSITIVE grant of
+      // mutating Rust tools and the operator-signed gate opt-in marker. Purely additive +
+      // optional — every existing caller omits BOTH (→ undefined → the qualifier's mutating
+      // branch never opens → a `readOnly:false` run stays disqualified → byte-identical 503).
+      // Consulted by the qualifier ONLY behind the default-off `agentRunControlViaRust` flag.
+      mutatingToolGrant?: string[];
+      mutationGate?: string;
     }) => {
       if (deps.allowTestOnlyAgentRunStartExecution !== true) {
         void input;
@@ -4510,6 +4625,14 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           taskProfile: input.taskProfile,
           allowedRustRouteTools: input.allowedRustRouteTools,
           planReviewOverride: input.planReviewOverride,
+          // (A2b Phase 2, mutation-relax — DARK) the SAME default-off flag the Rust WS server
+          // gates its pause/resume control plane on. With it false (the default) the qualifier's
+          // clause-2/4 mutation relax is dead code and a `readOnly:false` run stays disqualified.
+          agentRunControlViaRust: deps.agentRunControlViaRust,
+          // The explicit positive mutating grant + operator-signed gate marker. Absent for every
+          // existing caller (→ the mutating branch never opens). Consulted only behind the flag.
+          mutatingToolGrant: input.mutatingToolGrant,
+          mutationGate: input.mutationGate,
         });
         if (qualifies) {
           // execrun S-F carry-forward (DARK) — apiRequestIdempotencyKey REPLAY precedence.
