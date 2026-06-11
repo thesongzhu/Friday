@@ -124,6 +124,7 @@ use std::env;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::path::PathBuf;
+use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use friday_crypto::{
@@ -445,7 +446,10 @@ fn run() -> Result<(), ServerError> {
     // them. `HubRuntime::live` only CONSTRUCTS the provider client (no network call); an actual
     // run needs the env key — the separate operator live-proof.
     let runtime = HubRuntime::live(HubConfig {
-        db_path,
+        // Clone here so the `db_path` binding stays alive for the session-reaper tick below,
+        // which opens its OWN connection to the SAME path (the accept-loop's runtime
+        // connection is never shared across threads).
+        db_path: db_path.clone(),
         workspace_root: PathBuf::from(&workspace_root),
         secret: ephemeral_dev_secret(pid, nanos),
         max_turns: 6,
@@ -467,6 +471,23 @@ fn run() -> Result<(), ServerError> {
         "hub_agent_run_server: listening (loopback-only) on {addr} — DARK (S-C: authed dispatch arm, no production caller)"
     );
 
+    // (2b) Rust-owned session-lifecycle REAPER tick (DARK, DEFAULT-OFF). Spawn a background
+    // thread that opens its OWN DB connection and runs `sweep_lifecycle` on an interval —
+    // BUT ONLY when the operator has explicitly enabled it. The thread is spawned ONLY when
+    // `FRIDAY_RUST_SESSION_REAPER_ENABLED` is "1"/"true"; unset/anything-else ⇒ NOT spawned
+    // ⇒ no second DB connection, no reaping. This is what makes deploying the new binary
+    // SAFE: the destructive reaper (it HARD-DELETES rows) does nothing until the flag is
+    // flipped — wire-live = (rebuild bin + deploy + set the env flag) is a SEPARATE
+    // operator-gated step. The reaper owns lifecycle on `agent_session` (the retired TS
+    // `session-lifecycle-sweep` replacement).
+    if reaper_enabled() {
+        spawn_session_reaper(db_path.clone());
+    } else {
+        eprintln!(
+            "hub_agent_run_server: session-lifecycle reaper DISABLED (set FRIDAY_RUST_SESSION_REAPER_ENABLED=1 to enable)"
+        );
+    }
+
     // (3) Long-lived accept loop. Each accepted connection: set the read timeout, read the peer
     // pubkey preamble, REJECT a non-allowlisted peer pubkey (S-F, the FIRST gate), reject low-order
     // points, run the WS handshake, derive the sealed session key, and serve sealed envelopes
@@ -478,6 +499,86 @@ fn run() -> Result<(), ServerError> {
             Err(_e) => continue,
         }
     }
+}
+
+/// The env flag that gates the session-lifecycle reaper tick. DEFAULT-OFF: the tick is
+/// spawned ONLY when `FRIDAY_RUST_SESSION_REAPER_ENABLED` is exactly `"1"` or `"true"`
+/// (case-insensitive). Unset — or any other value — leaves the reaper DISABLED, so the
+/// new binary deploys DARK (the destructive sweep never runs until the operator flips it).
+const SESSION_REAPER_ENABLED_ENV: &str = "FRIDAY_RUST_SESSION_REAPER_ENABLED";
+
+/// The reaper sweep cadence (120s), matching the old TS sweep's interval.
+const SESSION_REAPER_INTERVAL: Duration = Duration::from_secs(120);
+
+/// Whether the operator has explicitly enabled the session-lifecycle reaper. Fail-closed:
+/// only the exact opt-in values enable it; everything else (including unset) is OFF.
+fn reaper_enabled() -> bool {
+    reaper_enabled_from(env::var(SESSION_REAPER_ENABLED_ENV).ok().as_deref())
+}
+
+/// Pure flag-matcher (separated from the env read so it is testable without mutating the
+/// process-global environment). DEFAULT-OFF: `None` (unset) ⇒ false; only the exact opt-in
+/// values `"1"`/`"true"` (case-insensitive, trimmed) ⇒ true; everything else ⇒ false.
+fn reaper_enabled_from(raw: Option<&str>) -> bool {
+    matches!(
+        raw.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("1") | Some("true")
+    )
+}
+
+/// Spawn the DARK session-lifecycle reaper tick on its OWN thread + OWN DB connection.
+///
+/// The thread opens a SEPARATE `Db::open_hub` connection (NOT the accept-loop's, never
+/// shared across threads, and deliberately NOT `open_hub_concurrent` — that flips the prod
+/// DB to WAL persistently, which is an operator live-flip, not a dark deploy) and calls
+/// `sweep_lifecycle` every [`SESSION_REAPER_INTERVAL`]. Errors (a failed open, or a failed
+/// sweep) are LOGGED and the loop continues — the reaper never panics the daemon. A
+/// non-empty sweep logs its per-transition counts (refs-only: counts, never session bodies).
+fn spawn_session_reaper(db_path: String) {
+    thread::spawn(move || {
+        // Open this thread's OWN connection. A failed open is logged and the reaper exits
+        // (the daemon keeps serving); it does NOT crash the process.
+        let db = match friday_storage::Db::open_hub(&db_path) {
+            Ok(db) => db,
+            Err(_e) => {
+                // Category only — never the db_path (it can carry the operator's home/username).
+                eprintln!(
+                    "hub_agent_run_server: session reaper could not open its DB connection — reaper not running"
+                );
+                return;
+            }
+        };
+        eprintln!(
+            "hub_agent_run_server: session-lifecycle reaper ENABLED (interval={}s)",
+            SESSION_REAPER_INTERVAL.as_secs()
+        );
+        loop {
+            thread::sleep(SESSION_REAPER_INTERVAL);
+            let now_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            match friday_storage::sweep_lifecycle(db.conn(), now_ms) {
+                Ok(outcome) if !outcome.is_empty() => {
+                    eprintln!(
+                        "hub_agent_run_server: session sweep idled={} archived={} pruned={} hard_deleted={} messages_deleted={}",
+                        outcome.idled,
+                        outcome.archived,
+                        outcome.pruned,
+                        outcome.hard_deleted,
+                        outcome.messages_deleted,
+                    );
+                }
+                // An empty sweep is the common case — stay quiet to avoid log spam.
+                Ok(_) => {}
+                // A sweep error (e.g. a transient lock) is logged and the loop continues; the
+                // reaper never crashes the daemon. Category only — never row contents.
+                Err(_e) => {
+                    eprintln!("hub_agent_run_server: session sweep failed (continuing)");
+                }
+            }
+        }
+    });
 }
 
 /// The loopback-only S-C WS listener. Owns the socket lifecycle; the session/serve/dispatch
@@ -1295,6 +1396,27 @@ mod tests {
             "[{tag}] a rejected dispatch must end the session with no reply (no run, no body)"
         );
         assert!(obs.body_chunk.is_none(), "[{tag}] no body on rejection");
+    }
+
+    #[test]
+    fn session_reaper_flag_is_default_off_and_fail_closed() {
+        // The reaper tick is DEFAULT-OFF: unset ⇒ disabled. Only the exact opt-in values
+        // enable it; everything else (empty, "0", "yes", "false", garbage) is OFF.
+        assert!(!reaper_enabled_from(None), "unset ⇒ disabled (default-off)");
+        assert!(!reaper_enabled_from(Some("")), "empty ⇒ disabled");
+        assert!(!reaper_enabled_from(Some("0")), "0 ⇒ disabled");
+        assert!(!reaper_enabled_from(Some("false")), "false ⇒ disabled");
+        assert!(!reaper_enabled_from(Some("no")), "no ⇒ disabled");
+        assert!(!reaper_enabled_from(Some("enabled")), "garbage ⇒ disabled");
+        // Only the exact opt-in values enable it (case-insensitive, trimmed).
+        assert!(reaper_enabled_from(Some("1")), "1 ⇒ enabled");
+        assert!(reaper_enabled_from(Some("true")), "true ⇒ enabled");
+        assert!(reaper_enabled_from(Some("TRUE")), "TRUE ⇒ enabled");
+        assert!(
+            reaper_enabled_from(Some("  true  ")),
+            "padded true ⇒ enabled"
+        );
+        assert!(reaper_enabled_from(Some(" 1 ")), "padded 1 ⇒ enabled");
     }
 
     #[test]
