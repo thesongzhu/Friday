@@ -415,6 +415,31 @@ export function createFridayFleetDashboardService(
 ): FridayFleetDashboardService {
   const repo = createFridayFleetDashboardRepository();
 
+  // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+  // Defense-in-depth (orphan off-route leak audit, 2026-06-10): fleet satellite
+  // remediation was ROUTE-only-guarded (friday-fleet-routes asserts the test-
+  // oracle flag after the canonical-approval gate and before this method). No
+  // non-route caller reaches `executeSatelliteRemediationAction` today, but a
+  // future internal wiring would bypass the route fence. Fails closed BEFORE the
+  // remediation effect unless the explicit test-oracle flag is set. Mirrors the
+  // route's advertised 503 code (TS_RUNTIME_FLEET_REMEDIATION_RETIRED). Reads
+  // stay live (no guard on getOverview/listSatellites/getSatelliteDetail/etc.).
+  function assertFleetRemediationExecutionAllowed(): void {
+    if (deps.allowTestOnlyFleetRemediationExecution !== true) {
+      throw new FridayDomainError(
+        "TS_RUNTIME_FLEET_REMEDIATION_RETIRED",
+        "TypeScript fleet satellite remediation is fail-closed in default/live runtime; use the Rust-owned fleet remediation entrypoint.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_fleet_remediation_entrypoint_required",
+          },
+        },
+      );
+    }
+  }
+
   return {
     getOverview() {
       const now = deps.nowIso();
@@ -693,6 +718,7 @@ export function createFridayFleetDashboardService(
     },
 
     async executeSatelliteRemediationAction(input) {
+      assertFleetRemediationExecutionAllowed();
       const detail = this.getSatelliteDetail(input.satelliteId);
       if (!detail) {
         throw new FridayDomainError(

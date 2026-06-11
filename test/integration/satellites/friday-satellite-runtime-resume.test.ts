@@ -77,6 +77,11 @@ describe("FridaySatelliteRuntime offline -> resume integration", () => {
       nowIso: () => nowIso,
       onStatusTransition,
       onSatelliteResumeEligible,
+      // TS-runtime-retirement: exercise the legacy TypeScript inbound satellite
+      // mutations (heartbeat/sync) in this integration test; default/live hub
+      // leaves these unset so the methods fail closed.
+      allowTestOnlySatelliteRuntimeExecution: true,
+      allowTestOnlySatellitePairingExecution: true,
     });
 
     expect(runtime.resumeCoordinator).toBeDefined();

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { FridayDomainError } from "#errors";
 import type { FridaySqliteLayer } from "#state";
 import type { FridaySatelliteRegistrationInput } from "../model/friday-satellite.types.js";
 import type { FridaySatelliteRepository } from "../persistence/friday-satellite-repository.js";
@@ -27,6 +28,14 @@ export interface CreateRegistrationServiceDeps {
   idGenerator: () => string;
   nowIso: () => string;
   pairingTtlMs?: number;
+  /**
+   * Test-oracle only: allows the legacy TypeScript satellite-registration
+   * mutation (`register`) in isolated test/validation harnesses. Default/live
+   * runtime must leave this unset so the method fails closed for ALL callers,
+   * including any non-route caller (the HTTP pairing route guard is bypassed by
+   * a direct method call). Never default this flag on in production.
+   */
+  allowTestOnlySatellitePairingExecution?: boolean;
 }
 
 /** Default pairing request TTL: 10 minutes. */
@@ -37,8 +46,33 @@ export function createFridaySatelliteRegistrationService(
 ): FridaySatelliteRegistrationService {
   const pairingTtlMs = deps.pairingTtlMs ?? DEFAULT_PAIRING_TTL_MS;
 
+  // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+  // Defense-in-depth (orphan off-route leak audit, 2026-06-10): satellite
+  // registration was ROUTE-only-guarded (friday-satellite-pairing-routes asserts
+  // the test-oracle flag before the register route). Today no non-route caller
+  // reaches `register` — it is route-deps-only — but a FUTURE wiring (e.g. an
+  // auto-pairing loop) would silently reopen a G4-class leak. Guarding here fails
+  // ALL non-route callers closed BEFORE any satellite/pairing row write, unless
+  // the explicit test-oracle flag is set. Mirrors the route's advertised 503 code.
+  function assertSatelliteRegistrationExecutionAllowed(): void {
+    if (deps.allowTestOnlySatellitePairingExecution !== true) {
+      throw new FridayDomainError(
+        "TS_RUNTIME_SATELLITE_PAIRING_RETIRED",
+        "TypeScript satellite registration is fail-closed in default/live runtime; use the Rust-owned satellite pairing entrypoint.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_satellite_pairing_entrypoint_required",
+          },
+        },
+      );
+    }
+  }
+
   return {
     register(input) {
+      assertSatelliteRegistrationExecutionAllowed();
       return deps.db.withWriteTransaction((db) => {
         const satelliteId = deps.idGenerator();
         const requestId = deps.idGenerator();

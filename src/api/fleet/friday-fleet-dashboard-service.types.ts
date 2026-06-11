@@ -28,4 +28,13 @@ export interface CreateFridayFleetDashboardServiceDeps {
   nowIso: () => string;
   idGenerator: () => string;
   outboxQueueService?: FridayOutboxQueueService;
+  /**
+   * Test-oracle only: allows the legacy TypeScript fleet satellite-remediation
+   * mutation (`executeSatelliteRemediationAction`) in isolated test/validation
+   * harnesses. Default/live runtime must leave this unset so the method fails
+   * closed for ALL callers (the HTTP fleet route guard is bypassed by a direct
+   * method call). Reads (getOverview/listSatellites/getSatelliteDetail/
+   * getSatelliteRemediationPlan/getSecurityCenter) stay live. Never default on.
+   */
+  allowTestOnlyFleetRemediationExecution?: boolean;
 }

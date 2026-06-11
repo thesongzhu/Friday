@@ -1,3 +1,4 @@
+import { FridayDomainError } from "#errors";
 import type { FridaySqliteLayer } from "#state";
 import type { FridayLearningEventAppendInput } from "#ledger";
 import type { FridayResumeValidationResult } from "../model/friday-satellite-protocol.types.js";
@@ -66,13 +67,50 @@ export interface CreateSyncServiceDeps {
   nowIso: () => string;
   learningEventWriter?: (events: FridayLearningEventAppendInput[]) => void;
   remoteNodeResultWriter?: (input: FridaySyncNodeResultInput & { satelliteId: string }) => Promise<void>;
+  /**
+   * Test-oracle only: allows the legacy TypeScript satellite-sync mutations
+   * (`pull`/`push`) in isolated test/validation harnesses. Default/live runtime
+   * must leave this unset so the methods fail closed for ALL callers (the HTTP
+   * satellite-runtime route guard is bypassed by a direct method call). The
+   * satellite-side local runner is a different object (an injected API-client)
+   * that is not wired in the hub. Never default this flag on in production.
+   */
+  allowTestOnlySatelliteRuntimeExecution?: boolean;
 }
 
 export function createFridaySatelliteSyncService(
   deps: CreateSyncServiceDeps,
 ): FridaySatelliteSyncService {
+  // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+  // Defense-in-depth (orphan off-route leak audit, 2026-06-10): the inbound
+  // satellite sync mutations (pull leases the outbox command-queue + signs a
+  // cursor; push persists acks/node-results) were ROUTE-only-guarded
+  // (friday-satellite-runtime-routes pushSync/pullSync). No non-route caller
+  // reaches these in the hub today (the off-hub local-runner uses an injected
+  // API-client, not this engine), but a future inbound wiring would bypass the
+  // route fence. Fails closed BEFORE any checkpoint/outbox/result write unless
+  // the explicit test-oracle flag is set. Note: this guards the inbound sync
+  // engine only; the hub→satellite outbox command-queue (outbox.enqueue) and the
+  // retention GC are SEPARATE non-retired services and are NOT fenced here.
+  function assertSatelliteRuntimeExecutionAllowed(): void {
+    if (deps.allowTestOnlySatelliteRuntimeExecution !== true) {
+      throw new FridayDomainError(
+        "TS_RUNTIME_SATELLITE_RUNTIME_RETIRED",
+        "TypeScript satellite sync is fail-closed in default/live runtime; use the Rust-owned satellite runtime entrypoint.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_satellite_runtime_entrypoint_required",
+          },
+        },
+      );
+    }
+  }
+
   return {
     pull(input) {
+      assertSatelliteRuntimeExecutionAllowed();
       return deps.db.withWriteTransaction((db) => {
         const nowIso = deps.nowIso();
         const currentEpoch = deps.checkpointRepo.getEpoch(db);
@@ -147,6 +185,7 @@ export function createFridaySatelliteSyncService(
     },
 
     async push(input) {
+      assertSatelliteRuntimeExecutionAllowed();
       const acceptedNodeResults: FridaySyncPushResult["acceptedNodeResults"] = [];
       const nodeResultConflicts: FridaySyncPushResult["conflicts"] = [];
 

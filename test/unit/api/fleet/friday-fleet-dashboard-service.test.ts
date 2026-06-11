@@ -146,6 +146,10 @@ describe("FridayFleetDashboardService", () => {
       nowIso: () => NOW,
       idGenerator: createTestIdGenerator(),
       outboxQueueService,
+      // TS-runtime-retirement: exercise the legacy TypeScript remediation path in
+      // these unit tests; default/live runtime leaves this unset so it fails
+      // closed (the 503-by-default behavior is asserted in the dedicated guard test).
+      allowTestOnlyFleetRemediationExecution: true,
     });
   });
 

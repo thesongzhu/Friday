@@ -36,6 +36,9 @@ describe("FridaySatelliteCapabilityService", () => {
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,
       revisionCache: revisionCache ?? new Map(),
+      // TS-runtime-retirement: exercise the legacy TypeScript updateCapabilities
+      // path here; default/live hub leaves this unset so it fails closed.
+      allowTestOnlySatelliteRuntimeExecution: true,
     });
   }
 

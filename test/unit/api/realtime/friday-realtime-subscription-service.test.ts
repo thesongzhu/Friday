@@ -69,6 +69,10 @@ describe("FridayRealtimeSubscriptionService", () => {
       checkpointRepo,
       nowIso: () => NOW,
       currentEpoch: EPOCH,
+      // TS-runtime-retirement: exercise the legacy ackEvent path in these unit
+      // tests (ack acceptance/epoch/cursor logic). Default/live runtime leaves
+      // this unset so ackEvent fails closed (asserted in the dedicated guard test).
+      allowTestOnlyRealtimeExecution: true,
     });
   });
 

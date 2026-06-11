@@ -40,6 +40,7 @@ describe("FridaySatelliteHeartbeatService", () => {
       heartbeatRepo,
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,
+      allowTestOnlySatelliteRuntimeExecution: true,
     });
 
     const result = service.recordHeartbeat({
@@ -61,6 +62,7 @@ describe("FridaySatelliteHeartbeatService", () => {
       heartbeatRepo,
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,
+      allowTestOnlySatelliteRuntimeExecution: true,
     });
 
     const result = service.recordHeartbeat({
@@ -81,6 +83,7 @@ describe("FridaySatelliteHeartbeatService", () => {
       heartbeatRepo,
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,
+      allowTestOnlySatelliteRuntimeExecution: true,
     });
 
     const result = service.recordHeartbeat({
@@ -102,6 +105,7 @@ describe("FridaySatelliteHeartbeatService", () => {
       heartbeatRepo,
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,
+      allowTestOnlySatelliteRuntimeExecution: true,
       onStatusTransition,
     });
 
@@ -132,6 +136,7 @@ describe("FridaySatelliteHeartbeatService", () => {
       heartbeatRepo,
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,
+      allowTestOnlySatelliteRuntimeExecution: true,
     });
 
     const result = service.recordHeartbeat({
@@ -153,6 +158,7 @@ describe("FridaySatelliteHeartbeatService", () => {
       heartbeatRepo,
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,
+      allowTestOnlySatelliteRuntimeExecution: true,
     });
 
     const result = service.recordHeartbeat({
@@ -174,6 +180,7 @@ describe("FridaySatelliteHeartbeatService", () => {
       heartbeatRepo,
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,
+      allowTestOnlySatelliteRuntimeExecution: true,
       onStatusTransition,
     });
 
@@ -195,6 +202,7 @@ describe("FridaySatelliteHeartbeatService", () => {
       heartbeatRepo,
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,
+      allowTestOnlySatelliteRuntimeExecution: true,
     });
 
     service.recordHeartbeat({
@@ -225,6 +233,7 @@ describe("FridaySatelliteHeartbeatService", () => {
       heartbeatRepo,
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,
+      allowTestOnlySatelliteRuntimeExecution: true,
     });
 
     expect(() =>

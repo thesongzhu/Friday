@@ -1,3 +1,4 @@
+import { FridayDomainError } from "#errors";
 import type { FridaySqliteLayer } from "#state";
 import type { FridaySatelliteCapabilityReport } from "../model/friday-satellite.types.js";
 import type { FridaySatelliteRepository } from "../persistence/friday-satellite-repository.js";
@@ -18,6 +19,14 @@ export interface CreateCapabilityServiceDeps {
   nowIso: () => string;
   /** @deprecated Kept for API compatibility; revision is now persisted in hub_settings. */
   revisionCache?: Map<string, number>;
+  /**
+   * Test-oracle only: allows the legacy TypeScript satellite-capability
+   * mutation (`updateCapabilities`) in isolated test/validation harnesses.
+   * Default/live runtime must leave this unset so the method fails closed for
+   * ALL callers (the HTTP satellite-runtime route guard is bypassed by a direct
+   * method call). Never default this flag on in production.
+   */
+  allowTestOnlySatelliteRuntimeExecution?: boolean;
 }
 
 const REVISION_KEY_PREFIX = "capability_revision:";
@@ -25,8 +34,32 @@ const REVISION_KEY_PREFIX = "capability_revision:";
 export function createFridaySatelliteCapabilityService(
   deps: CreateCapabilityServiceDeps,
 ): FridaySatelliteCapabilityService {
+  // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+  // Defense-in-depth (orphan off-route leak audit, 2026-06-10): the satellite
+  // capability mutation was ROUTE-only-guarded (friday-satellite-runtime-routes).
+  // No non-route caller reaches `updateCapabilities` today, but a future inbound
+  // wiring would bypass the route fence. Fails closed BEFORE the capability/
+  // revision write unless the explicit test-oracle flag is set. Mirrors the
+  // route's advertised 503 code (TS_RUNTIME_SATELLITE_RUNTIME_RETIRED).
+  function assertSatelliteRuntimeExecutionAllowed(): void {
+    if (deps.allowTestOnlySatelliteRuntimeExecution !== true) {
+      throw new FridayDomainError(
+        "TS_RUNTIME_SATELLITE_RUNTIME_RETIRED",
+        "TypeScript satellite capability update is fail-closed in default/live runtime; use the Rust-owned satellite runtime entrypoint.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_satellite_runtime_entrypoint_required",
+          },
+        },
+      );
+    }
+  }
+
   return {
     updateCapabilities(report) {
+      assertSatelliteRuntimeExecutionAllowed();
       return deps.db.withWriteTransaction((db) => {
         // Enforce monotonic revision from persisted state
         const revisionKey = `${REVISION_KEY_PREFIX}${report.satelliteId}`;

@@ -100,6 +100,15 @@ export interface CreateFridayMcpServerUpgradeLifecycleServiceDeps {
   nowIso: () => string;
   stateDir?: string;
   canonicalMutationGate?: FridayMutatingActionGate;
+  /**
+   * Test-oracle only: allows the legacy TypeScript MCP-server upgrade-lifecycle
+   * mutations (`registerShadowVersion`/`recordCanaryResult`/`promote`/`rollback`)
+   * in isolated test/validation harnesses. Default/live runtime must leave this
+   * unset so the methods fail closed for ALL callers (the autonomy route guard,
+   * assertAutonomyLifecycleTestOracleAllowed, is bypassed by a direct method
+   * call). Reads (getLifecycleEvidence) stay live. Never default on in prod.
+   */
+  allowTestOnlyAutonomyLifecycleExecution?: boolean;
 }
 
 interface McpServerLifecycleSnapshot {
@@ -198,6 +207,31 @@ export function createFridayMcpServerLifecycleMutatingActionRequest(
 export function createFridayMcpServerUpgradeLifecycleService(
   deps: CreateFridayMcpServerUpgradeLifecycleServiceDeps,
 ): FridayMcpServerUpgradeLifecycleService {
+  // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+  // Defense-in-depth (orphan off-route leak audit, 2026-06-10): the autonomy MCP-
+  // server upgrade-lifecycle mutations were ROUTE-only-guarded (friday-autonomy-
+  // routes asserts allowTestOnlyAutonomyLifecycleExecution before the mcpServer-
+  // Actions handlers). No autonomy self-upgrade scheduler is wired today (these
+  // are route-deps-only), but a future auto-promotion loop would bypass the route
+  // fence. Each lifecycle mutation fails closed BEFORE the canonical-ticket check
+  // and any state write unless the explicit test-oracle flag is set. Mirrors the
+  // route's advertised 503 code (TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED).
+  function assertAutonomyLifecycleExecutionAllowed(): void {
+    if (deps.allowTestOnlyAutonomyLifecycleExecution !== true) {
+      throw new FridayDomainError(
+        "TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED",
+        "TypeScript MCP-server upgrade lifecycle is fail-closed in default/live runtime; use the Rust-owned autonomy lifecycle entrypoint.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_autonomy_lifecycle_entrypoint_required",
+          },
+        },
+      );
+    }
+  }
+
   function getServer(serverId: string): ReturnType<FridayMcpAdapter["listServers"]>[number] {
     const found = deps.mcpAdapter.listServers().find((server) => server.id === serverId);
     if (!found) {
@@ -361,6 +395,7 @@ export function createFridayMcpServerUpgradeLifecycleService(
 
   return {
     registerShadowVersion(input) {
+      assertAutonomyLifecycleExecutionAllowed();
       const ticket = requireCanonicalLifecycleTicket({
         action: "shadow",
         serverId: input.serverId,
@@ -404,6 +439,7 @@ export function createFridayMcpServerUpgradeLifecycleService(
     },
 
     async recordCanaryResult(input) {
+      assertAutonomyLifecycleExecutionAllowed();
       const state = getState(input.serverId);
       const shadowVersionId = state?.shadowVersionId;
       if (state?.promotionChannel !== "shadow" && state?.promotionChannel !== "canary") {
@@ -512,6 +548,7 @@ export function createFridayMcpServerUpgradeLifecycleService(
     },
 
     promote(input) {
+      assertAutonomyLifecycleExecutionAllowed();
       const current = getState(input.serverId);
       const evidence = readEvidence(input.serverId);
       if (current?.promotionChannel !== "canary") {
@@ -575,6 +612,7 @@ export function createFridayMcpServerUpgradeLifecycleService(
     },
 
     rollback(input) {
+      assertAutonomyLifecycleExecutionAllowed();
       const current = getCanaryStats(input.serverId);
       const evidence = readEvidence(input.serverId);
       const rollbackTarget = evidence.shadow?.previous;

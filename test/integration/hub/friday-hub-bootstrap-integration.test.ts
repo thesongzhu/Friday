@@ -200,6 +200,12 @@ describe("FridayHub Bootstrap Integration", () => {
   ): Promise<FridayHub> {
     const hub = await createFridayHub({
       allowTestOnlyWorkflowRunExecution: true, // TS-retirement method guard: test-oracle opt-in
+      // TS-retirement method guards (orphan off-route leak audit): these hub
+      // integration tests exercise the legacy TypeScript inbound satellite paths
+      // (sync/register/heartbeat) as part of self-learning/self-healing scenarios.
+      // Production hub creation leaves these unset so the methods fail closed.
+      allowTestOnlySatelliteRuntimeExecution: true,
+      allowTestOnlySatellitePairingExecution: true,
       stateDir,
       skillDirs: [bundledSkillsDir, managedSkillsDir],
     });

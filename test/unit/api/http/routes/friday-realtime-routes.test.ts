@@ -171,6 +171,10 @@ describe("FridayRealtimeRoutes", () => {
         nowIso: () => NOW,
         currentEpoch: EPOCH,
         cursorSecret: "test-secret",
+        // Mirror production (api-runtime passes the same flag to the route AND the
+        // subscription service): when the route flag is on, ackEvent's method
+        // guard must also be open so the live test-oracle path reaches the ack.
+        allowTestOnlyRealtimeExecution: allow,
       });
       return createFridayRealtimeRoutes({ subscriptionService, currentEpoch: EPOCH, allowTestOnlyRealtimeExecution: allow })
         .find((r) => r.operationId === "realtime.ack")!;

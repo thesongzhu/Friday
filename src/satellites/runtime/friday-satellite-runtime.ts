@@ -46,6 +46,21 @@ export interface CreateFridaySatelliteRuntimeOptions {
     explicitDisconnect?: boolean;
   }) => void;
   onSatelliteResumeEligible?: (signal: FridaySatelliteResumeSignal) => void;
+  /**
+   * Test-oracle only (TS Runtime Retirement, method-level guards): forwarded to
+   * the inbound satellite-runtime services (heartbeat/capabilities/sync) so the
+   * legacy TypeScript mutations remain reachable in test/validation harnesses.
+   * Default/live hub leaves this unset so the methods fail closed (mirroring the
+   * route fence). See the per-service guard for behavior.
+   */
+  allowTestOnlySatelliteRuntimeExecution?: boolean;
+  /**
+   * Test-oracle only (TS Runtime Retirement, method-level guards): forwarded to
+   * the inbound satellite-pairing services (registration/pairing) so the legacy
+   * TypeScript mutations remain reachable in test/validation harnesses.
+   * Default/live hub leaves this unset so the methods fail closed.
+   */
+  allowTestOnlySatellitePairingExecution?: boolean;
 }
 
 /**
@@ -68,6 +83,8 @@ export function createFridaySatelliteRuntime(
     remoteNodeResultWriter,
     onStatusTransition,
     onSatelliteResumeEligible,
+    allowTestOnlySatelliteRuntimeExecution,
+    allowTestOnlySatellitePairingExecution,
   } = options;
 
   // Repositories
@@ -117,6 +134,7 @@ export function createFridaySatelliteRuntime(
     idGenerator,
     nowIso,
     pairingTtlMs,
+    allowTestOnlySatellitePairingExecution,
   });
 
   const pairing = createFridaySatellitePairingService({
@@ -128,6 +146,7 @@ export function createFridaySatelliteRuntime(
     idGenerator,
     nowIso,
     tokenSecret,
+    allowTestOnlySatellitePairingExecution,
   });
 
   const capabilities = createFridaySatelliteCapabilityService({
@@ -137,6 +156,7 @@ export function createFridaySatelliteRuntime(
     idGenerator,
     nowIso,
     revisionCache: new Map(),
+    allowTestOnlySatelliteRuntimeExecution,
   });
 
   const heartbeat = createFridaySatelliteHeartbeatService({
@@ -147,6 +167,7 @@ export function createFridaySatelliteRuntime(
     nowIso,
     expectedIntervalMs: expectedHeartbeatIntervalMs,
     onStatusTransition: chainedStatusTransition,
+    allowTestOnlySatelliteRuntimeExecution,
   });
 
   const offlineSweeper = createFridaySatelliteOfflineSweeper({
@@ -176,6 +197,7 @@ export function createFridaySatelliteRuntime(
       learningLedger.appendBatch(events);
     }),
     remoteNodeResultWriter,
+    allowTestOnlySatelliteRuntimeExecution,
   });
   const localRunner = createFridaySatelliteLocalRunnerService({ sync });
 

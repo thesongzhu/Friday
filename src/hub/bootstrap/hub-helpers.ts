@@ -1894,6 +1894,10 @@ export interface FridayHubConfig {
   allowTestOnlyDiagnosisExecution?: boolean;
   /** Test-oracle only; production hub creation must leave the realtime checkpoint-ack mutation fail-closed. */
   allowTestOnlyRealtimeExecution?: boolean;
+  /** Test-oracle only; production hub creation must leave inbound satellite runtime mutations (heartbeat/capabilities/sync) fail-closed. */
+  allowTestOnlySatelliteRuntimeExecution?: boolean;
+  /** Test-oracle only; production hub creation must leave satellite registration/pairing mutations fail-closed. */
+  allowTestOnlySatellitePairingExecution?: boolean;
   /** Test-oracle only; production hub creation must leave skill-converter convert/import/pack mutations fail-closed. */
   allowTestOnlySkillConverterExecution?: boolean;
   /** Test-oracle only; production hub creation must leave scan-migrate local-scan + batch-convert product logic fail-closed. */

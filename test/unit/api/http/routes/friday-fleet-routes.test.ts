@@ -134,6 +134,11 @@ describe("FridayFleetRoutes", () => {
       nowIso: () => NOW,
       idGenerator: createTestIdGenerator(),
       outboxQueueService,
+      // Method-level test-oracle: let the shared service run the legacy path so the
+      // success case works. The "TS-runtime retirement" describe below builds routes
+      // WITHOUT the route flag and asserts the ROUTE guard 503s before the service is
+      // ever reached, so this method flag does not weaken that fail-close assertion.
+      allowTestOnlyFleetRemediationExecution: true,
     });
     routes = createFridayFleetRoutes({
       fleetService,

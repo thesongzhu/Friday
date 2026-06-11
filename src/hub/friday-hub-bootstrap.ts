@@ -6268,6 +6268,13 @@ export async function createFridayHub(
         },
       });
     },
+    // TS-runtime-retirement (method-level guards): same top-level flags the
+    // satellite-runtime + pairing ROUTES use, so the inbound satellite mutations
+    // (register/pairing/heartbeat/capabilities/sync) fail-close by default in
+    // live (route + method both fenced) and are reachable only under the test
+    // oracle. Live/prod config leaves these unset.
+    allowTestOnlySatelliteRuntimeExecution: config.allowTestOnlySatelliteRuntimeExecution,
+    allowTestOnlySatellitePairingExecution: config.allowTestOnlySatellitePairingExecution,
   });
 
   const workflowSatelliteDispatcher = createFridayWorkflowSatelliteDispatchService({

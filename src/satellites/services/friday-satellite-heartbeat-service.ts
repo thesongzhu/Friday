@@ -34,6 +34,14 @@ export interface CreateHeartbeatServiceDeps {
     failureRate1m?: number;
     explicitDisconnect?: boolean;
   }) => void;
+  /**
+   * Test-oracle only: allows the legacy TypeScript satellite-heartbeat mutation
+   * (`recordHeartbeat`) in isolated test/validation harnesses. Default/live
+   * runtime must leave this unset so the method fails closed for ALL callers
+   * (the HTTP satellite-runtime route guard is bypassed by a direct method
+   * call). Never default this flag on in production.
+   */
+  allowTestOnlySatelliteRuntimeExecution?: boolean;
 }
 
 /** Default expected heartbeat interval: 15 seconds. */
@@ -44,8 +52,32 @@ export function createFridaySatelliteHeartbeatService(
 ): FridaySatelliteHeartbeatService {
   const expectedIntervalMs = deps.expectedIntervalMs ?? DEFAULT_EXPECTED_INTERVAL_MS;
 
+  // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+  // Defense-in-depth (orphan off-route leak audit, 2026-06-10): the satellite
+  // heartbeat mutation was ROUTE-only-guarded (friday-satellite-runtime-routes).
+  // No non-route caller reaches `recordHeartbeat` today, but a future inbound
+  // wiring would bypass the route fence. Fails closed BEFORE the heartbeat/
+  // status-transition write unless the explicit test-oracle flag is set. Mirrors
+  // the route's advertised 503 code (TS_RUNTIME_SATELLITE_RUNTIME_RETIRED).
+  function assertSatelliteRuntimeExecutionAllowed(): void {
+    if (deps.allowTestOnlySatelliteRuntimeExecution !== true) {
+      throw new FridayDomainError(
+        "TS_RUNTIME_SATELLITE_RUNTIME_RETIRED",
+        "TypeScript satellite heartbeat is fail-closed in default/live runtime; use the Rust-owned satellite runtime entrypoint.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_satellite_runtime_entrypoint_required",
+          },
+        },
+      );
+    }
+  }
+
   return {
     recordHeartbeat(input) {
+      assertSatelliteRuntimeExecutionAllowed();
       let transition:
         | {
           satelliteId: string;

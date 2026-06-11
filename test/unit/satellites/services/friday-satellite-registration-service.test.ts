@@ -41,6 +41,9 @@ describe("FridaySatelliteRegistrationService", () => {
       capabilityRepo: createFridaySatelliteCapabilityRepository(),
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,
+      // TS-runtime-retirement: exercise the legacy TypeScript register path in
+      // these unit tests; default/live hub leaves this unset so it fails closed.
+      allowTestOnlySatellitePairingExecution: true,
     });
   }
 
@@ -107,6 +110,7 @@ describe("FridaySatelliteRegistrationService", () => {
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,
       pairingTtlMs: 5 * 60 * 1000, // 5 minutes
+      allowTestOnlySatellitePairingExecution: true,
     });
 
     const result = service.register(baseInput);
