@@ -43,13 +43,39 @@
 //!   owner-matched — a revoked device severs its sessions' liveness on the next
 //!   heartbeat. A refused heartbeat leaves the session row unmutated.
 //!
+//! # slice-3 / A8 addition (DARK, flag-gated-OFF, no route flip)
+//! [`real`] is the REAL WebAuthn/FIDO2 passkey engine over `webauthn-rs`,
+//! replacing the slice-1 cryptographic gap:
+//! * registration: attestation parse + COSE public-key extraction + strict
+//!   RP-ID-hash / origin / type / challenge binding;
+//! * assertion: real ES256/RS256/EdDSA signature verification over
+//!   `authenticatorData || sha256(clientDataJSON)` + the **sign-count regression
+//!   check** (non-increasing ⇒ possible cloned authenticator ⇒ REJECT);
+//! * stores ONLY public material ([`real::StoredCredential`] = a serialized
+//!   `Passkey`: public key + credential id + sign-count; NO private key);
+//! * single-use in-memory ceremony challenges (consumed on finish);
+//! * a FLAGGED first-device bootstrap posture: registration is authorized by an
+//!   already-trusted operator (an authorized-owner set), never self-authorizing.
+//!
+//! The engine is the privileged minter of the existing
+//! [`webauthn::VerifiedAttestation`]/[`webauthn::VerifiedAssertion`] typestate
+//! tokens — same fail-closed guarantee, now backed by real crypto. It is FULLY
+//! DARK and flag-gated-OFF: nothing constructs a [`real::RealWebAuthn`] in
+//! production; the shipped default verifier the public API exposes is STILL
+//! [`webauthn::DeferredVerifier`], and the `fail_closed` KATs continue to prove
+//! that default path rejects. Flipping the real verifier on is a later, operator-
+//! gated, DEPLOY-GO step.
+//!
 //! # What is STUB / DEFERRED (explicit)
-//! 1. **Real WebAuthn cryptographic verification.** [`webauthn::DeferredVerifier`]
-//!    FAILS CLOSED (`Err(WebAuthnVerifierNotWired)`) for every ceremony. COSE key
-//!    parsing, attestation-statement validation, signature/sign-count/origin/
-//!    rp-id/challenge checks are NOT implemented — a future slice wires a real
-//!    `WebAuthnVerifier` (e.g. over `webauthn-rs`). Until then NO device can be
-//!    registered and NO verified-path session can be opened.
+//! 1. **Hub wiring / route flip of the real verifier.** [`real::RealWebAuthn`]
+//!    EXISTS and performs genuine cryptography, but no production code constructs
+//!    it: the shipped default remains [`webauthn::DeferredVerifier`], which FAILS
+//!    CLOSED (`Err(WebAuthnVerifierNotWired)`). Binding the real engine to the 11
+//!    `system.remote.*` routes, CSPRNG challenge/ceremony-id issuance, the
+//!    deploy-gated relying-party identity, and the operator-seeded authorized-
+//!    owner trust root are all DEFERRED (operator-gated). Until that flip, NO
+//!    device is registered through the default path and NO verified-path session
+//!    opens — fail closed.
 //! 2. **Persistence.** Both stores are IN-MEMORY. A `friday-storage` migration
 //!    (`m00NN`) registering `remote_device` / `remote_session` in
 //!    `HUB_ONLY_TABLES` + a forward-migration KAT is DEFERRED. Rationale: that
@@ -74,11 +100,13 @@
 
 pub mod device;
 pub mod error;
+pub mod real;
 pub mod session;
 pub mod webauthn;
 
 pub use device::{DeviceStore, RegisteredDevice};
 pub use error::{RemoteError, Result};
+pub use real::{CeremonyId, RealWebAuthn, StoredCredential};
 pub use session::{RemoteSession, SessionState, SessionStore};
 pub use webauthn::{
     begin_assertion, begin_registration, AssertionChallenge, AssertionResponse,
