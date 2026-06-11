@@ -1365,6 +1365,27 @@ pub fn project_answer_for_authed(
 /// [`AuthedAnswer::NoAnswer`] — no panic, no partial/false success. The answer body, when
 /// delivered, is carried ONLY in [`AuthedAnswer::Delivered`] for in-process hand-off to the
 /// authed owner — it is NEVER placed on a refs-only/proof surface and NEVER logged.
+///
+/// FIX-Q2 (hardening — the symmetric twin of the merged FIX-Q3a) — BEFORE dispatching, assert
+/// the authenticated `caller` EQUALS the runtime's configured owner principal
+/// ([`HubRuntime::configured_principal`]). On a mismatch (or an unconfigured `None` owner) the
+/// loop NEVER executes and returns the body-free [`AuthedAnswer::NoAnswer`] — no run row, no
+/// memory recall, no gate Actor, no model spend, no owner-stamp.
+///
+/// WHY this is a code invariant, not just a doc convention: `run_task` derives the run OWNER from
+/// the runtime's STATIC CONFIG ([`RunPolicy::principal_id`]), NOT from `caller`. The audit's Q2
+/// gap is that under a future >1 owner allowlist, caller B could authenticate, trigger a run, and
+/// have it execute + recall + bill as the CONFIG owner A (an integrity/attribution/spend harm —
+/// the readback gate still denies B the body, but the EXEC was never caller-gated). The guard
+/// must precede `run_task` because the harm is the DISPATCH itself; an after-exec check is
+/// pointless (the spend already happened).
+///
+/// LIVE POSTURE: on the single-owner config this is a PROVABLE NO-OP — `caller` is drawn from the
+/// `--owner` allowlist (a ≤1 entry collection), the runtime principal is `owner_allowlist.first()`,
+/// and FIX-Q3a forces exactly one enrolled peer, so `caller == configured_principal` always holds.
+/// This slice does NOT enable multi-principal: it makes the single-owner invariant FAIL-CLOSED in
+/// code. The deeper FIX-Q2 (DERIVE the per-run owner from `caller` instead of the static config)
+/// remains a multi-principal prerequisite and is DEFERRED with FIX-Q3b.
 pub fn run_authed_agent_loop<T: Transport>(
     runtime: &HubRuntime<T>,
     caller: &AuthedPrincipal,
@@ -1372,6 +1393,18 @@ pub fn run_authed_agent_loop<T: Transport>(
     task: &str,
     now_ms: i64,
 ) -> AuthedAnswer {
+    // (FIX-Q2) caller == configured-owner, asserted BEFORE any dispatch. A mismatch — or an
+    // unconfigured (`None`) owner — fails CLOSED to a body-free `NoAnswer`: the loop never runs,
+    // so nothing is created/recalled/billed/owner-stamped under the wrong principal. On live
+    // (single owner) this is unreachable (caller is always the configured owner by construction).
+    match runtime.configured_principal() {
+        Some(owner) if owner == caller.principal() => {}
+        _ => {
+            return AuthedAnswer::NoAnswer {
+                run_id: run_id.to_string(),
+            };
+        }
+    }
     // (a) the caller is already authenticated (typed proof). (b) run the loop as that
     // principal; a route/provider failure is a SAFE FAILURE (no body, no panic).
     //
@@ -6012,6 +6045,120 @@ mod authed_route_tests {
             }
         ));
         assert!(!out.proof_refs_json().to_string().contains(BODY));
+    }
+
+    /// FIX-Q2 (hardening): a caller authenticated as a principal that is NOT the runtime's
+    /// configured owner must NEVER reach `run_task`. The loop returns the body-free `NoAnswer`
+    /// AND — the property that proves the invariant, not just the return value — NO run row is
+    /// ever created (the dispatch, recall, gate Actor, and model spend all never happen).
+    #[test]
+    fn authed_loop_mismatched_caller_never_dispatches_and_gets_no_body() {
+        // Runtime is configured for `principal:owner`; a DIFFERENT authenticated caller arrives.
+        let (rt, _ws) = runtime_with(
+            "loop-q2-mismatch",
+            FinishTransport {
+                answer: BODY.to_string(),
+            },
+            "principal:owner",
+        );
+        let intruder = authed("principal:intruder");
+        let out = run_authed_agent_loop(&rt, &intruder, "run-q2-mismatch", "answer me", 1000);
+
+        // (1) Body-free safe failure — no body, no leak of the configured owner principal.
+        assert!(
+            matches!(out, AuthedAnswer::NoAnswer { .. }),
+            "a mismatched caller must get the body-free NoAnswer"
+        );
+        assert!(out.delivered_body().is_none());
+        let proof = out.proof_refs_json().to_string();
+        assert!(!proof.contains(BODY), "no body on the refs surface");
+        assert!(
+            !proof.contains("principal:owner"),
+            "the configured owner principal must never leak to a mismatched caller"
+        );
+
+        // (2) THE INVARIANT: the run NEVER executed — `run_task`'s first act is `create_run`,
+        // so a guard that fires BEFORE dispatch leaves no `agent_run` row. (An after-exec check
+        // would already have created the row + paid the spend.)
+        let summary =
+            friday_storage::agent_run_read::get_run_summary(rt.db().conn(), "run-q2-mismatch")
+                .unwrap();
+        assert!(
+            summary.is_none(),
+            "FIX-Q2: a mismatched caller must NOT create a run row (no dispatch, no spend)"
+        );
+    }
+
+    /// FIX-Q2 (hardening): the matched single-owner path is a PROVABLE NO-OP — the configured
+    /// owner still dispatches and IS delivered the body, AND the run row IS created. This is the
+    /// live posture: the guard changes nothing when `caller == configured_principal`.
+    #[test]
+    fn authed_loop_matched_owner_still_dispatches_and_delivers_body() {
+        let (rt, _ws) = runtime_with(
+            "loop-q2-match",
+            FinishTransport {
+                answer: BODY.to_string(),
+            },
+            "principal:owner",
+        );
+        let caller = authed("principal:owner");
+        let out = run_authed_agent_loop(&rt, &caller, "run-q2-match", "answer me", 1000);
+        assert_eq!(
+            out.delivered_body(),
+            Some(BODY),
+            "the configured owner is still delivered the body (guard is a no-op on a match)"
+        );
+        // The run DID execute — a row exists (proving the guard did not block the live path).
+        let summary =
+            friday_storage::agent_run_read::get_run_summary(rt.db().conn(), "run-q2-match")
+                .unwrap();
+        assert!(
+            summary.is_some(),
+            "the matched owner's run must execute (FIX-Q2 guard is a no-op on a match)"
+        );
+    }
+
+    /// FIX-Q2 (hardening, fail-closed corner): an UNCONFIGURED runtime (no owner principal)
+    /// dispatches NOTHING — even a non-anonymous, well-formed caller is refused, because there
+    /// is no configured owner to match against. (Defends the `None` arm of the guard.)
+    #[test]
+    fn authed_loop_unconfigured_owner_never_dispatches() {
+        let ws = TempWs::new("loop-q2-noowner");
+        let client = DeepSeekClient::with_transport(
+            FinishTransport {
+                answer: BODY.to_string(),
+            },
+            "k".into(),
+        );
+        let agent = DeepSeekAgentLlmClient::new(client);
+        let rt = HubRuntime::new(
+            HubConfig {
+                db_path: tmp("loop-q2-noowner"),
+                workspace_root: ws.0.clone(),
+                secret: b"authed-route-test-secret-0123456789".to_vec(),
+                max_turns: 4,
+                principal_id: None, // NO configured owner
+                disabled_tools: vec![],
+                read_only: false,
+                operator_vk: None,
+            },
+            agent,
+            Box::new(DenyAllApprovals),
+        )
+        .unwrap();
+        let caller = authed("principal:owner");
+        let out = run_authed_agent_loop(&rt, &caller, "run-q2-noowner", "answer me", 1000);
+        assert!(
+            matches!(out, AuthedAnswer::NoAnswer { .. }),
+            "an unconfigured (None owner) runtime must dispatch nothing"
+        );
+        let summary =
+            friday_storage::agent_run_read::get_run_summary(rt.db().conn(), "run-q2-noowner")
+                .unwrap();
+        assert!(
+            summary.is_none(),
+            "FIX-Q2: a None-owner runtime must NOT create a run row"
+        );
     }
 
     #[test]
