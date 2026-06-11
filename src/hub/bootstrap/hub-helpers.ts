@@ -1944,6 +1944,27 @@ export interface FridayHubConfig {
    * in this slice (the later composition slice consumes it).
    */
   routeAgentRunViaRust?: boolean;
+  /**
+   * providers-bridge cut-over (DARK): master ON/OFF for routing the retired Tier-2
+   * PROVIDER surfaces (`providers.detect` / `providers.doctor` / `providers.validate` /
+   * `capabilities.doctor`) to the merged Rust `hub_providers_detect` /
+   * `hub_capability_doctor` bins instead of fail-closing with 503. DEFAULT-FALSE —
+   * production hub creation must leave this unset so the routes stay byte-identical to
+   * today. Resolved (config-explicit wins, else `FRIDAY_ROUTE_PROVIDERS_VIA_RUST`) by
+   * `resolveRouteProvidersViaRust` and fed into the api-runtime deps.
+   */
+  routeProvidersViaRust?: boolean;
+  /**
+   * Tier-2 WORKFLOW catalog-mutation route bridge (DARK): "route create/update/archive/
+   * publish/deploy via the Rust `hub_workflow_catalog` bin (#657)" flag. DEFAULT-FALSE —
+   * production hub creation must leave this unset so the catalog-mutation routes stay
+   * byte-identical to today's fail-closed `TS_RUNTIME_WORKFLOW_CATALOG_MUTATION_RETIRED`
+   * 503. When true, the catalog-mutation route handlers run auth then route to the
+   * refs-only Rust bridge (a `rust_wired_dev` DEV-DB ceiling — see the bridge service).
+   * Resolution: `resolveRouteWorkflowsViaRust` (explicit config wins; otherwise the
+   * `FRIDAY_ROUTE_WORKFLOWS_VIA_RUST` env knob).
+   */
+  routeWorkflowsViaRust?: boolean;
 }
 
 // ─── Resolved Hub Config ───

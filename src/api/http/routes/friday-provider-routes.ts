@@ -54,6 +54,10 @@ import {
   listFridayProviderTemplates,
 } from "#providers";
 import { FridayDomainError } from "#errors";
+import type {
+  FridayRustCapabilityDoctorReceipt,
+  FridayRustHubCapabilityDoctorService,
+} from "../../mission-spine/friday-rust-hub-capability-doctor-bridge-service.js";
 import {
   resolveExistingOAuthProvider,
   resolveOrProvisionOAuthProvider,
@@ -414,6 +418,34 @@ export interface FridayProviderRoutesDeps {
    * surfaces (GET/PUT /v1/model-routing), which remain operator_external_adapter.
    */
   allowTestOnlyProviderRoutingControlsExecution?: boolean;
+  /**
+   * DARK cut-over flag (DEFAULT-OFF). When `true`, the retired provider-probe routes
+   * (`providers.validate` / `providers.doctor` / `capabilities.doctor`) — instead of
+   * fail-closing with 503 — bridge to the merged Rust `hub_capability_doctor` bin
+   * (#658) via {@link rustCapabilityDoctor} and return its REFS-ONLY composite payload.
+   * When falsy (the default) those routes are byte-identical to today: they fail-close
+   * (503 TS_RUNTIME_PROVIDER_PROBE_RETIRED) unless the test-oracle flag re-enables the
+   * legacy probe.
+   *
+   * SURFACE-SHAPE: the Rust bin is a fixed codex/claude (CLI) + deepseek/anthropic
+   * (key) doctor with NO providerId input — it does NOT reproduce the legacy
+   * per-`:providerId` validate/doctor shapes. Flipping this flag CHANGES the response
+   * contract for clients — see the PR / operator note.
+   *
+   * QUOTA: only `capabilities.doctor` may opt into the bin's LIVE key-validation arm
+   * (~1-2 Anthropic tokens), and ONLY on an explicit `validateKeys: true` request body
+   * field; `providers.validate` / `providers.doctor` never pass `--validate-keys`. The
+   * resolved boolean is supplied by the runtime (sourced from
+   * `FRIDAY_ROUTE_PROVIDERS_VIA_RUST` / explicit config); this factory does NOT read
+   * the env itself.
+   */
+  routeProvidersViaRust?: boolean;
+  /**
+   * The Rust capability-doctor bridge service consulted ONLY when
+   * {@link routeProvidersViaRust} is `true`. Injected by the runtime (and by tests).
+   * When the flag is on but this is absent, those routes fail closed.
+   */
+  rustCapabilityDoctor?: FridayRustHubCapabilityDoctorService;
 }
 
 export function createFridayProviderSetupMutatingActionRequest(input: {
@@ -801,6 +833,26 @@ export function createFridayProviderRoutes(
     };
   }
 
+  /**
+   * DARK cut-over bridge for the retired provider-probe routes. Returns the Rust
+   * `hub_capability_doctor` refs-only payload. Fails closed (503) when the flag is on
+   * but the bridge was not wired. `validateKeys` is forwarded ONLY where an explicit
+   * request opts in (capabilities.doctor); the other probe routes pass false → the
+   * bin's zero-quota CLI-detect-only default.
+   */
+  async function bridgeCapabilityDoctorViaRust(
+    validateKeys: boolean,
+  ): Promise<FridayRustCapabilityDoctorReceipt> {
+    if (!deps.rustCapabilityDoctor) {
+      throwRetiredProviderRuntime(
+        "TS_RUNTIME_PROVIDER_PROBE_RETIRED",
+        "TypeScript provider probe execution (Rust route enabled but capability-doctor bridge not wired)",
+        "provider_probe",
+      );
+    }
+    return deps.rustCapabilityDoctor.doctor({ validateKeys });
+  }
+
   return [
     {
       operationId: "providers.templates.list",
@@ -865,7 +917,7 @@ export function createFridayProviderRoutes(
       path: "/v1/capabilities/doctor",
       auth: { public: true },
       rateLimitPolicyId: "provider.validate",
-      async handler(ctx): Promise<FridayRunCapabilityDoctorResponse> {
+      async handler(ctx): Promise<FridayRunCapabilityDoctorResponse | FridayRustCapabilityDoctorReceipt> {
         const raw = ctx.body as Record<string, unknown> | null;
         const providerIds = parseCapabilityDoctorProviderIds(raw);
         const ticket = maybeRequireProviderMutationTicket({
@@ -876,6 +928,17 @@ export function createFridayProviderRoutes(
           parameters: { providerIds: providerIds ?? "all-providers" },
           surface: "api:/v1/capabilities/doctor",
         });
+        // DARK cut-over (DEFAULT-OFF): bridge to the Rust hub_capability_doctor bin
+        // instead of fail-closing. The canonical mutation gate above still runs first
+        // (byte-identical gate ordering). QUOTA: this is the ONLY probe route that may
+        // request the bin's LIVE key-validation arm (~1-2 Anthropic tokens), and ONLY
+        // when the request body explicitly sets `validateKeys: true`; absent/false runs
+        // the bin's zero-quota CLI-detect-only default.
+        if (deps.routeProvidersViaRust === true) {
+          const validateKeys = raw?.validateKeys === true;
+          const receipt = await bridgeCapabilityDoctorViaRust(validateKeys);
+          return withCanonicalGate(receipt, ticket);
+        }
         assertProviderProbeTestOracleAllowed(deps);
         const report = await deps.providerService.runCapabilityDoctor({
           ownerUserId: ctx.principal?.userId,
@@ -1008,7 +1071,7 @@ export function createFridayProviderRoutes(
       path: "/v1/providers/:providerId/validate",
       auth: { public: true },
       rateLimitPolicyId: "provider.validate",
-      async handler(ctx): Promise<FridayValidateProviderResponse> {
+      async handler(ctx): Promise<FridayValidateProviderResponse | FridayRustCapabilityDoctorReceipt> {
         const { providerId } = ctx.params as { providerId: string };
         const body = (ctx.body ?? {}) as Record<string, unknown>;
         const ticket = maybeRequireProviderMutationTicket({
@@ -1019,6 +1082,16 @@ export function createFridayProviderRoutes(
           parameters: { providerId },
           surface: "api:/v1/providers/validate",
         });
+        // DARK cut-over (DEFAULT-OFF): bridge to the Rust hub_capability_doctor bin
+        // instead of fail-closing. The canonical mutation gate above still runs first.
+        // QUOTA: validate NEVER opts into the live key-validation arm (validateKeys
+        // false) — zero quota. SURFACE-SHAPE: the bin has no providerId input, so the
+        // returned doctor is the fixed codex/claude+deepseek/anthropic composite, not a
+        // per-`:providerId` validation result (see the deps doc + PR).
+        if (deps.routeProvidersViaRust === true) {
+          const receipt = await bridgeCapabilityDoctorViaRust(false);
+          return withCanonicalGate(receipt, ticket);
+        }
         assertProviderProbeTestOracleAllowed(deps);
         const validation =
           await deps.providerService.validateProvider(providerId, {
@@ -1033,8 +1106,17 @@ export function createFridayProviderRoutes(
       method: "GET",
       path: "/v1/providers/:providerId/doctor",
       auth: { public: true },
-      async handler(ctx): Promise<FridayGetProviderDoctorResponse> {
+      async handler(ctx): Promise<FridayGetProviderDoctorResponse | FridayRustCapabilityDoctorReceipt> {
         const { providerId } = ctx.params as { providerId: string };
+        // DARK cut-over (DEFAULT-OFF): bridge to the Rust hub_capability_doctor bin
+        // instead of fail-closing. QUOTA: doctor NEVER opts into the live key-validation
+        // arm (validateKeys false) — zero quota. SURFACE-SHAPE: the bin has no
+        // providerId input, so the returned doctor is the fixed
+        // codex/claude+deepseek/anthropic composite, not a per-`:providerId` health
+        // diagnostic (see the deps doc + PR).
+        if (deps.routeProvidersViaRust === true) {
+          return bridgeCapabilityDoctorViaRust(false);
+        }
         assertProviderProbeTestOracleAllowed(deps);
         const doctor = await deps.providerService.doctorProvider(providerId);
         return { doctor };

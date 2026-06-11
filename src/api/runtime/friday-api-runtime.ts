@@ -146,6 +146,9 @@ import { createFridayRustHubRunContinuityProjectorService } from "../mission-spi
 import type { FridayRustHubRunContinuityProjectorService } from "../mission-spine/friday-rust-hub-run-continuity-projector-service.js";
 import { createFridayRustHubRunAnswerReadbackService } from "../mission-spine/friday-rust-hub-run-answer-readback-service.js";
 import type { FridayRustHubRunAnswerReadbackService } from "../mission-spine/friday-rust-hub-run-answer-readback-service.js";
+import { createFridayRustHubProvidersDetectService } from "../mission-spine/friday-rust-hub-providers-detect-bridge-service.js";
+import { createFridayRustHubCapabilityDoctorService } from "../mission-spine/friday-rust-hub-capability-doctor-bridge-service.js";
+import { createFridayRustHubWorkflowCatalogBridgeService } from "../mission-spine/friday-rust-hub-workflow-catalog-bridge-service.js";
 import { resolveRustAgentRunWsClientX25519Secret } from "../mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
 import type { FridayRustAgentRunWsClientX25519SecretResolver } from "../mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
 import { createFridayStudioService } from "../../studio/index.js";
@@ -2579,9 +2582,21 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     routes.register(route);
   }
 
+  // Tier-2 WORKFLOW catalog-mutation route bridge (DARK): the refs-only TS→Rust bridge for the
+  // `hub_workflow_catalog` bin, consulted ONLY on the `routeWorkflowsViaRust`-on branch of the
+  // catalog-mutation handlers. Constructed lazily ONLY when the flag is on (default-off ⇒ the
+  // bridge is never built and the routes stay byte-identical to today's retirement 503). Tests
+  // inject a scripted-mock adapterBin bridge via `deps.rustWorkflowCatalogBridge`.
+  const routeWorkflowsViaRust = deps.routeWorkflowsViaRust === true;
+  const rustWorkflowCatalogBridge = routeWorkflowsViaRust
+    ? deps.rustWorkflowCatalogBridge ?? createFridayRustHubWorkflowCatalogBridgeService()
+    : undefined;
+
   // Register workflow routes (real service wiring)
   for (const route of createFridayWorkflowRoutes({
     allowTestOnlyWorkflowCatalogMutationExecution: deps.allowTestOnlyWorkflowCatalogMutationExecution,
+    routeWorkflowsViaRust,
+    rustWorkflowCatalogBridge,
     listWorkflows: (query) => {
       const workflows = workflowRuntime.crud.listWorkflows({
         tag: query.tag,
@@ -3636,6 +3651,17 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     routes.register(route);
   }
 
+  // providers-bridge cut-over (DARK, DEFAULT-OFF): the TS->Rust bridge services for the
+  // retired Tier-2 PROVIDER surfaces. They are constructed unconditionally (cheap; no
+  // spawn until consulted) but are consulted ONLY when deps.routeProvidersViaRust is
+  // true — the route handlers gate on that flag and otherwise fail-close exactly as
+  // today. Shared by the provider routes (doctor/validate/capabilities.doctor) and the
+  // setup routes (providers.detect). Tests inject scripted-fake-bin bridges via deps.
+  const rustProvidersDetectService =
+    deps.rustProvidersDetect ?? createFridayRustHubProvidersDetectService();
+  const rustCapabilityDoctorService =
+    deps.rustCapabilityDoctor ?? createFridayRustHubCapabilityDoctorService();
+
   // Register provider routes (BYOK)
   for (const route of createFridayProviderRoutes({
     providerService: deps.providerService,
@@ -3643,6 +3669,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     providerMutationGateRequired,
     allowTestOnlyProviderProbeExecution: deps.allowTestOnlyProviderProbeExecution,
     allowTestOnlyProviderRoutingControlsExecution: deps.allowTestOnlyProviderRoutingControlsExecution,
+    routeProvidersViaRust: deps.routeProvidersViaRust,
+    rustCapabilityDoctor: rustCapabilityDoctorService,
   })) {
     routes.register(route);
   }
@@ -3728,6 +3756,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       onChannelsSaved: deps.onSetupChannelsSaved,
       onSetupCompleted: deps.onSetupCompleted,
       allowTestOnlyProviderDetectExecution: deps.allowTestOnlyProviderDetectExecution,
+      routeProvidersViaRust: deps.routeProvidersViaRust,
+      rustProvidersDetect: rustProvidersDetectService,
     })) {
       routes.register(route);
     }

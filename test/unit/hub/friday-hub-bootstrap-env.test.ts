@@ -4,6 +4,8 @@ import {
   resolveFridayCanonicalMutatingActionGate,
   resolveFridayHubConfig,
   resolveRouteAgentRunViaRust,
+  resolveRouteProvidersViaRust,
+  resolveRouteWorkflowsViaRust,
 } from "#hub";
 import type { FridayHubConfig } from "#hub";
 
@@ -395,5 +397,73 @@ describe("resolveRouteAgentRunViaRust", () => {
     expect(resolveRouteAgentRunViaRust(false, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "1" })).toBe(false);
     expect(resolveRouteAgentRunViaRust(false, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "true" })).toBe(false);
     expect(resolveRouteAgentRunViaRust(false, emptyEnv())).toBe(false);
+  });
+});
+
+describe("resolveRouteProvidersViaRust", () => {
+  // DEFAULT-OFF: env unset (nothing set) → false → byte-identical to today's gated-off 503.
+  it("defaults to false when neither config nor env is set", () => {
+    expect(resolveRouteProvidersViaRust(undefined, emptyEnv())).toBe(false);
+  });
+
+  it("parses FRIDAY_ROUTE_PROVIDERS_VIA_RUST=1 / =true (case-insensitive, trimmed) as true", () => {
+    expect(resolveRouteProvidersViaRust(undefined, { FRIDAY_ROUTE_PROVIDERS_VIA_RUST: "1" })).toBe(true);
+    expect(resolveRouteProvidersViaRust(undefined, { FRIDAY_ROUTE_PROVIDERS_VIA_RUST: "true" })).toBe(true);
+    expect(resolveRouteProvidersViaRust(undefined, { FRIDAY_ROUTE_PROVIDERS_VIA_RUST: "TRUE" })).toBe(true);
+    expect(resolveRouteProvidersViaRust(undefined, { FRIDAY_ROUTE_PROVIDERS_VIA_RUST: " true " })).toBe(true);
+  });
+
+  // Fail-safe OFF: everything that is not exactly "1"/"true" → false.
+  it("treats 0, false, empty, and garbage env values as false (fail-safe off)", () => {
+    for (const raw of ["0", "false", "", "yes", "on", "enabled", "truthy", "2"]) {
+      expect(resolveRouteProvidersViaRust(undefined, { FRIDAY_ROUTE_PROVIDERS_VIA_RUST: raw })).toBe(false);
+    }
+  });
+
+  // PRECEDENCE: an explicit config boolean ALWAYS wins over the env.
+  it("uses explicit config true over the env (even when env says false)", () => {
+    expect(resolveRouteProvidersViaRust(true, { FRIDAY_ROUTE_PROVIDERS_VIA_RUST: "false" })).toBe(true);
+    expect(resolveRouteProvidersViaRust(true, emptyEnv())).toBe(true);
+  });
+
+  // The discriminating case: config=false MUST beat env=true (a `||` would wrongly return true here).
+  it("uses explicit config false over the env (config false beats env true)", () => {
+    expect(resolveRouteProvidersViaRust(false, { FRIDAY_ROUTE_PROVIDERS_VIA_RUST: "1" })).toBe(false);
+    expect(resolveRouteProvidersViaRust(false, emptyEnv())).toBe(false);
+  });
+});
+
+// ─── Tier-2 workflow catalog-mutation route bridge: routeWorkflowsViaRust (DARK, default-off) ───
+
+describe("resolveRouteWorkflowsViaRust", () => {
+  // DEFAULT-OFF: nothing set → false → byte-identical to today's retirement 503.
+  it("defaults to false when neither config nor env is set", () => {
+    expect(resolveRouteWorkflowsViaRust(undefined, emptyEnv())).toBe(false);
+  });
+
+  it("parses FRIDAY_ROUTE_WORKFLOWS_VIA_RUST 1/true (case-insensitive, trimmed) as true", () => {
+    expect(resolveRouteWorkflowsViaRust(undefined, { FRIDAY_ROUTE_WORKFLOWS_VIA_RUST: "1" })).toBe(true);
+    expect(resolveRouteWorkflowsViaRust(undefined, { FRIDAY_ROUTE_WORKFLOWS_VIA_RUST: "true" })).toBe(true);
+    expect(resolveRouteWorkflowsViaRust(undefined, { FRIDAY_ROUTE_WORKFLOWS_VIA_RUST: "TRUE" })).toBe(true);
+    expect(resolveRouteWorkflowsViaRust(undefined, { FRIDAY_ROUTE_WORKFLOWS_VIA_RUST: "  1  " })).toBe(true);
+    expect(resolveRouteWorkflowsViaRust(undefined, { FRIDAY_ROUTE_WORKFLOWS_VIA_RUST: " true " })).toBe(true);
+  });
+
+  // Fail-safe OFF: everything that is not exactly "1"/"true" → false.
+  it("treats 0, false, empty, and garbage env values as false (fail-safe off)", () => {
+    expect(resolveRouteWorkflowsViaRust(undefined, { FRIDAY_ROUTE_WORKFLOWS_VIA_RUST: "0" })).toBe(false);
+    expect(resolveRouteWorkflowsViaRust(undefined, { FRIDAY_ROUTE_WORKFLOWS_VIA_RUST: "false" })).toBe(false);
+    expect(resolveRouteWorkflowsViaRust(undefined, { FRIDAY_ROUTE_WORKFLOWS_VIA_RUST: "" })).toBe(false);
+    expect(resolveRouteWorkflowsViaRust(undefined, { FRIDAY_ROUTE_WORKFLOWS_VIA_RUST: "yes" })).toBe(false);
+    expect(resolveRouteWorkflowsViaRust(undefined, { FRIDAY_ROUTE_WORKFLOWS_VIA_RUST: "on" })).toBe(false);
+    expect(resolveRouteWorkflowsViaRust(undefined, { FRIDAY_ROUTE_WORKFLOWS_VIA_RUST: "2" })).toBe(false);
+  });
+
+  // PRECEDENCE: explicit config wins over env (true wins, AND the discriminating false-beats-env-true).
+  it("uses explicit config over the env (true wins; false beats env true)", () => {
+    expect(resolveRouteWorkflowsViaRust(true, { FRIDAY_ROUTE_WORKFLOWS_VIA_RUST: "0" })).toBe(true);
+    expect(resolveRouteWorkflowsViaRust(true, emptyEnv())).toBe(true);
+    expect(resolveRouteWorkflowsViaRust(false, { FRIDAY_ROUTE_WORKFLOWS_VIA_RUST: "1" })).toBe(false);
+    expect(resolveRouteWorkflowsViaRust(false, { FRIDAY_ROUTE_WORKFLOWS_VIA_RUST: "true" })).toBe(false);
   });
 });

@@ -1493,4 +1493,115 @@ describe("FridayProviderRoutes", () => {
       ).resolves.toBeDefined();
     });
   });
+
+  describe("DARK Rust cut-over for the probe surfaces (FRIDAY_ROUTE_PROVIDERS_VIA_RUST)", () => {
+    // A scripted capability-doctor bridge stub (no spawn, no cargo, no CLI, no live
+    // Anthropic round-trip, no quota). It records whether --validate-keys was requested.
+    function makeDoctorBridge() {
+      const calls: Array<{ validateKeys?: boolean }> = [];
+      const doctor = vi.fn(async (input?: { validateKeys?: boolean }) => {
+        calls.push({ validateKeys: input?.validateKeys });
+        return {
+          truthLabel: "rust_capability_doctor" as const,
+          proofOnly: true as const,
+          cliDetected: [{ provider: "codex", installed: true, authenticated: true, detail: "logged_in" }],
+          cliLoggedIn: ["codex"],
+          keyValidationProbed: input?.validateKeys === true,
+          keyValidation: input?.validateKeys === true ? [] : null,
+          confirmedValidKeys: input?.validateKeys === true ? [] : null,
+        };
+      });
+      return { rustCapabilityDoctor: { doctor }, calls, doctor };
+    }
+
+    function findRoute(operationId: string, extraDeps: Record<string, unknown>) {
+      const mockService = makeMockService();
+      const route = createFridayProviderRoutes({
+        providerService: mockService,
+        ...extraDeps,
+      } as never).find((entry) => entry.operationId === operationId);
+      if (!route) throw new Error(`route not found: ${operationId}`);
+      return { route, mockService };
+    }
+
+    it("flag OFF (default) stays byte-identical: providers.validate 503 even with the bridge wired", async () => {
+      const bridge = makeDoctorBridge();
+      const { route, mockService } = findRoute("providers.validate", {
+        rustCapabilityDoctor: bridge.rustCapabilityDoctor,
+      });
+      await expect(
+        route.handler(makeCtx({ params: { providerId: "prov-001" } })),
+      ).rejects.toMatchObject({ code: "TS_RUNTIME_PROVIDER_PROBE_RETIRED", httpStatus: 503 });
+      expect(bridge.doctor).not.toHaveBeenCalled();
+      expect(mockService.validateProvider).not.toHaveBeenCalled();
+    });
+
+    it("flag ON bridges providers.validate to the Rust capability-doctor and NEVER passes validateKeys", async () => {
+      const bridge = makeDoctorBridge();
+      const { route, mockService } = findRoute("providers.validate", {
+        routeProvidersViaRust: true,
+        rustCapabilityDoctor: bridge.rustCapabilityDoctor,
+      });
+      const result = await route.handler(makeCtx({ params: { providerId: "prov-001" } }));
+      expect(result).toMatchObject({ truthLabel: "rust_capability_doctor", proofOnly: true });
+      // validate is zero-quota: it must request validateKeys=false.
+      expect(bridge.calls).toEqual([{ validateKeys: false }]);
+      expect(mockService.validateProvider).not.toHaveBeenCalled();
+    });
+
+    it("flag ON bridges providers.doctor to the Rust capability-doctor and NEVER passes validateKeys", async () => {
+      const bridge = makeDoctorBridge();
+      const { route, mockService } = findRoute("providers.doctor", {
+        routeProvidersViaRust: true,
+        rustCapabilityDoctor: bridge.rustCapabilityDoctor,
+      });
+      const result = await route.handler(makeCtx({ params: { providerId: "prov-001" } }));
+      expect(result).toMatchObject({ truthLabel: "rust_capability_doctor", proofOnly: true });
+      expect(bridge.calls).toEqual([{ validateKeys: false }]);
+      expect(mockService.doctorProvider).not.toHaveBeenCalled();
+    });
+
+    it("flag ON bridges capabilities.doctor; validateKeys is OFF by default (quota gate)", async () => {
+      const bridge = makeDoctorBridge();
+      const { route } = findRoute("capabilities.doctor", {
+        routeProvidersViaRust: true,
+        rustCapabilityDoctor: bridge.rustCapabilityDoctor,
+      });
+      const result = await route.handler(makeCtx({ body: {} }));
+      expect(result).toMatchObject({ truthLabel: "rust_capability_doctor", keyValidationProbed: false });
+      // No explicit opt-in ⇒ zero quota.
+      expect(bridge.calls).toEqual([{ validateKeys: false }]);
+    });
+
+    it("flag ON capabilities.doctor opts into the LIVE key-validation arm ONLY on explicit validateKeys:true", async () => {
+      const bridge = makeDoctorBridge();
+      const { route } = findRoute("capabilities.doctor", {
+        routeProvidersViaRust: true,
+        rustCapabilityDoctor: bridge.rustCapabilityDoctor,
+      });
+      const result = await route.handler(makeCtx({ body: { validateKeys: true } }));
+      expect(result).toMatchObject({ truthLabel: "rust_capability_doctor", keyValidationProbed: true });
+      expect(bridge.calls).toEqual([{ validateKeys: true }]);
+    });
+
+    it("flag ON but bridge missing fails closed (503), never silently passing", async () => {
+      const { route } = findRoute("capabilities.doctor", { routeProvidersViaRust: true });
+      await expect(route.handler(makeCtx({ body: {} }))).rejects.toMatchObject({
+        code: "TS_RUNTIME_PROVIDER_PROBE_RETIRED",
+        httpStatus: 503,
+      });
+    });
+
+    it("flag ON still validates the capabilities.doctor body (400) before bridging", async () => {
+      const bridge = makeDoctorBridge();
+      const { route } = findRoute("capabilities.doctor", {
+        routeProvidersViaRust: true,
+        rustCapabilityDoctor: bridge.rustCapabilityDoctor,
+      });
+      await expect(
+        route.handler(makeCtx({ body: { providerIds: [] } })),
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR", httpStatus: 400 });
+      expect(bridge.doctor).not.toHaveBeenCalled();
+    });
+  });
 });

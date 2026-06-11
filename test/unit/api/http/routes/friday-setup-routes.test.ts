@@ -604,3 +604,111 @@ describe("createFridaySetupRoutes — providers.detect TS-runtime retirement", (
     await expect(route.handler(makeCtx({ body: {}, ip: "127.0.0.1" }))).rejects.toMatchObject({ httpStatus: 400 });
   });
 });
+
+describe("createFridaySetupRoutes — providers.detect DARK Rust cut-over (FRIDAY_ROUTE_PROVIDERS_VIA_RUST)", () => {
+  // A scripted bridge stub standing in for the real Rust hub_providers_detect bin (no
+  // spawn, no cargo, no CLI, no quota). It records the probe it was asked for.
+  function makeDetectBridge() {
+    const calls: Array<{ probe?: string }> = [];
+    const detect = vi.fn(async (input?: { probe?: string }) => {
+      calls.push({ probe: input?.probe });
+      return {
+        truthLabel: "rust_providers_detect" as const,
+        proofOnly: true as const,
+        detected: [{ provider: "codex", installed: true, authenticated: true, detail: "logged_in" }],
+        readyProviders: ["codex"],
+        anyAuthenticated: true,
+        allAuthenticated: false,
+      };
+    });
+    return { rustProvidersDetect: { detect }, calls, detect };
+  }
+
+  it("flag OFF (default) stays byte-identical: 503 TS_RUNTIME_PROVIDERS_DETECT_RETIRED even with the bridge wired", async () => {
+    const { deps } = makeDeps({ setupCompletedAt: null });
+    const bridge = makeDetectBridge();
+    // Bridge present, flag absent (default OFF), legacy probe also retired.
+    const routes = createFridaySetupRoutes({
+      ...deps,
+      allowTestOnlyProviderDetectExecution: false,
+      rustProvidersDetect: bridge.rustProvidersDetect,
+    } as unknown as FridaySetupRoutesDeps);
+    const route = findMutatingRoute(routes, "providers.detect");
+
+    await expect(route.handler(makeCtx({ body: { kind: "ollama" }, ip: "127.0.0.1" }))).rejects.toMatchObject({
+      code: "TS_RUNTIME_PROVIDERS_DETECT_RETIRED",
+      httpStatus: 503,
+    });
+    // Flag off ⇒ the bridge is NEVER consulted.
+    expect(bridge.detect).not.toHaveBeenCalled();
+  });
+
+  it("flag ON bridges to the Rust providers-detect bin and returns its refs-only payload", async () => {
+    const { deps } = makeDeps({ setupCompletedAt: null });
+    const bridge = makeDetectBridge();
+    const routes = createFridaySetupRoutes({
+      ...deps,
+      allowTestOnlyProviderDetectExecution: false,
+      routeProvidersViaRust: true,
+      rustProvidersDetect: bridge.rustProvidersDetect,
+    } as unknown as FridaySetupRoutesDeps);
+    const route = findMutatingRoute(routes, "providers.detect");
+
+    const result = await route.handler(makeCtx({ body: {}, ip: "127.0.0.1" }));
+
+    expect(result).toMatchObject({
+      truthLabel: "rust_providers_detect",
+      proofOnly: true,
+      readyProviders: ["codex"],
+    });
+    // Default probe selection is `both` when the body omits it.
+    expect(bridge.calls).toEqual([{ probe: "both" }]);
+  });
+
+  it("flag ON forwards an explicit probe selection", async () => {
+    const { deps } = makeDeps({ setupCompletedAt: null });
+    const bridge = makeDetectBridge();
+    const routes = createFridaySetupRoutes({
+      ...deps,
+      routeProvidersViaRust: true,
+      rustProvidersDetect: bridge.rustProvidersDetect,
+    } as unknown as FridaySetupRoutesDeps);
+    const route = findMutatingRoute(routes, "providers.detect");
+
+    await route.handler(makeCtx({ body: { probe: "claude" }, ip: "127.0.0.1" }));
+
+    expect(bridge.calls).toEqual([{ probe: "claude" }]);
+  });
+
+  it("flag ON still enforces the bootstrap boundary FIRST (non-localhost 403, bridge untouched)", async () => {
+    const { deps } = makeDeps({ setupCompletedAt: null });
+    const bridge = makeDetectBridge();
+    const routes = createFridaySetupRoutes({
+      ...deps,
+      routeProvidersViaRust: true,
+      rustProvidersDetect: bridge.rustProvidersDetect,
+    } as unknown as FridaySetupRoutesDeps);
+    const route = findMutatingRoute(routes, "providers.detect");
+
+    await expect(route.handler(makeCtx({ body: {}, ip: "10.0.0.5" }))).rejects.toMatchObject({
+      code: "SETUP_BOOTSTRAP_NOT_ALLOWED_NON_LOCALHOST",
+      httpStatus: 403,
+    });
+    expect(bridge.detect).not.toHaveBeenCalled();
+  });
+
+  it("flag ON but bridge missing fails closed (503), never silently passing", async () => {
+    const { deps } = makeDeps({ setupCompletedAt: null });
+    const routes = createFridaySetupRoutes({
+      ...deps,
+      routeProvidersViaRust: true,
+      // no rustProvidersDetect wired
+    } as unknown as FridaySetupRoutesDeps);
+    const route = findMutatingRoute(routes, "providers.detect");
+
+    await expect(route.handler(makeCtx({ body: {}, ip: "127.0.0.1" }))).rejects.toMatchObject({
+      code: "TS_RUNTIME_PROVIDERS_DETECT_RETIRED",
+      httpStatus: 503,
+    });
+  });
+});

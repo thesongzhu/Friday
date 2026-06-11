@@ -30,7 +30,10 @@ import type { FridayProviderService } from "#providers";
 import type { FridayRustHubAgentRunSealedClientService } from "../mission-spine/friday-rust-hub-agent-run-sealed-client-service.js";
 import type { FridayRustHubRunContinuityProjectorService } from "../mission-spine/friday-rust-hub-run-continuity-projector-service.js";
 import type { FridayRustHubRunAnswerReadbackService } from "../mission-spine/friday-rust-hub-run-answer-readback-service.js";
+import type { FridayRustHubProvidersDetectService } from "../mission-spine/friday-rust-hub-providers-detect-bridge-service.js";
+import type { FridayRustHubCapabilityDoctorService } from "../mission-spine/friday-rust-hub-capability-doctor-bridge-service.js";
 import type { FridayRustAgentRunWsClientX25519SecretResolver } from "../mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
+import type { FridayRustHubWorkflowCatalogBridgeService } from "../mission-spine/friday-rust-hub-workflow-catalog-bridge-service.js";
 import type { FridayMediaUnderstandingRoutesDeps } from "../http/routes/friday-media-understanding-routes.js";
 import type { FridaySocialImportRoutesDeps } from "../http/routes/friday-social-import-routes.js";
 import type { FridayTaskWorkflowRoutesDeps } from "../http/routes/friday-task-workflow-routes.js";
@@ -328,6 +331,32 @@ export interface CreateFridayApiRuntimeDeps {
    */
   routeAgentRunViaRust?: boolean;
   /**
+   * providers-bridge cut-over (DARK): the master ON/OFF (resolved boolean) for routing
+   * the retired Tier-2 PROVIDER surfaces — `providers.detect` (setup routes) and
+   * `providers.doctor` / `providers.validate` / `capabilities.doctor` (provider routes)
+   * — to the merged Rust `hub_providers_detect` / `hub_capability_doctor` bins instead
+   * of fail-closing with 503. DEFAULT-FALSE — leave unset in production/runtime so those
+   * routes stay byte-identical to today. Sourced (in bootstrap) from
+   * `FRIDAY_ROUTE_PROVIDERS_VIA_RUST` / explicit config via `resolveRouteProvidersViaRust`.
+   * When unset/false the bridge services below are constructed but NEVER consulted.
+   */
+  routeProvidersViaRust?: boolean;
+  /**
+   * providers-bridge cut-over (DARK): the providers-detect bridge service consulted by
+   * the `providers.detect` route ONLY when {@link routeProvidersViaRust} is true. OPTIONAL
+   * — when omitted the runtime lazily constructs the real service. Tests inject a bridge
+   * pointed at a scripted fake bin (no real cargo/provider, no spend, no network).
+   */
+  rustProvidersDetect?: FridayRustHubProvidersDetectService;
+  /**
+   * providers-bridge cut-over (DARK): the capability-doctor bridge service consulted by
+   * the `providers.doctor` / `providers.validate` / `capabilities.doctor` routes ONLY when
+   * {@link routeProvidersViaRust} is true. OPTIONAL — when omitted the runtime lazily
+   * constructs the real service. The bin's LIVE key-validation arm (~1-2 Anthropic tokens)
+   * runs ONLY when a caller explicitly opts in (capabilities.doctor `validateKeys: true`).
+   */
+  rustCapabilityDoctor?: FridayRustHubCapabilityDoctorService;
+  /**
    * execrun-replacement slice S-F-compose (DARK): the three dark-substrate services the
    * composition wires together when {@link routeAgentRunViaRust} is on AND a run qualifies.
    * ALL OPTIONAL — when omitted the composition lazily constructs the real services. Tests
@@ -355,6 +384,28 @@ export interface CreateFridayApiRuntimeDeps {
    * fails closed (no body) → 503. Tests point this at a hermetic fixture DB / stub readback.
    */
   rustAgentRunHubDbPath?: string;
+  /**
+   * Tier-2 WORKFLOW catalog-mutation route bridge (DARK): the master ON/OFF for routing the
+   * `workflows.create/update/archive/publish/deploy` mutations to the Rust `hub_workflow_catalog`
+   * bin (#657). DEFAULT-FALSE — leave unset in production/runtime so the catalog-mutation routes
+   * stay byte-identical to today's fail-closed `TS_RUNTIME_WORKFLOW_CATALOG_MUTATION_RETIRED` 503.
+   * When set true, each catalog-mutation route handler runs auth, then routes to the refs-only
+   * bridge ({@link rustWorkflowCatalogBridge}) and returns a refs-only receipt (a `rust_wired_dev`
+   * DEV-DB ceiling — the bin migrates the target DB on open and must NOT point at the production
+   * hub DB, so the production cut-over is a separate operator decision). Its resolution +
+   * precedence live in `resolveRouteWorkflowsViaRust` (explicit config wins; the
+   * `FRIDAY_ROUTE_WORKFLOWS_VIA_RUST` env knob fills the unset gap).
+   */
+  routeWorkflowsViaRust?: boolean;
+  /**
+   * Tier-2 WORKFLOW catalog-mutation route bridge (DARK): the refs-only TS→Rust catalog-mutation
+   * bridge consulted ONLY on the {@link routeWorkflowsViaRust}-on branch. OPTIONAL — when omitted
+   * the runtime lazily constructs the real bridge (reads the `FRIDAY_HUB_WORKFLOW_CATALOG_*`
+   * knobs: bin path + DEV DB path + timeout). NEVER consulted while the flag is off → byte-identical
+   * 503 path is untouched. Tests inject a scripted-mock `.mjs` adapterBin bridge so the flag-on
+   * path is mock-proven (no real Rust bin, no compile).
+   */
+  rustWorkflowCatalogBridge?: FridayRustHubWorkflowCatalogBridgeService;
   /**
    * Test-oracle only: allows legacy TypeScript agent run controls in isolated
    * mock/unit validation. Production/runtime callers must leave this unset so
