@@ -34,7 +34,7 @@ import {
 //     'admin-001', is short-lived, sessionless, minimally-scoped, and single-use (fresh tokenId).
 //   • The probe loopback POST is mocked — the real landing is proven at enable-time on prod.
 
-const SECRET = "test-token-secret-at-least-32-bytes-long-aaaa";
+const SECRET = "test-token-secret-at-least-32-bytes-long-aaaa"; // pragma: allowlist secret
 const FIXED_NOW_ISO = "2026-06-10T12:00:00.000Z";
 const FIXED_NOW_MS = new Date(FIXED_NOW_ISO).getTime();
 
