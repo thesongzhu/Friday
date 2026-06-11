@@ -33,6 +33,7 @@ import { createFridaySessionRepository } from "../persistence/friday-session-rep
 import { createFridaySessionMessageRepository } from "../persistence/friday-session-message-repository.js";
 import { buildFridaySubagentSessionKey, canonicalizeFridaySessionKey, normalizeFridaySessionKey, parseFridaySessionKey } from "./friday-session-key.js";
 import {
+  isFridayNamespaceHardeningEnabled,
   resolveFridaySessionMemoryNamespace,
   resolveFridaySessionMemoryNamespaceCandidates,
 } from "./friday-session-memory-namespace.js";
@@ -647,22 +648,43 @@ export function createFridaySessionService(
         );
       }
 
-      // Re-DERIVE both candidate namespaces from the session's axes (NOT the cached
-      // `session.memoryNamespace`). The cache holds whatever the WRITE path persisted
-      // — which, for a session created BEFORE the flag flip, is the legacy namespace.
-      // Re-deriving here is what makes dual-read find that legacy memory after the
-      // flip: the hardened candidate is the new write target, the legacy candidate
-      // recalls the pre-flip rows. With the flag OFF this returns the single legacy
-      // namespace (byte-identical to `getSessionMemoryNamespace`'s derived value).
+      // FLAG-OFF (default): recall MUST be byte-identical to today. "Today" =
+      // `getSessionMemoryNamespace`, which returns the PERSISTED (authoritative,
+      // write-time) `session.memoryNamespace` FIRST and only re-derives when it is
+      // absent. Returning a SINGLE persisted-first entry — with NO dual-read and NO
+      // defensive tail — guarantees there is zero regression when the persisted
+      // namespace drifts from a blind re-derivation (e.g. after a rollback from
+      // flag-on, or any stored-vs-re-derived drift): recall always reads the bucket
+      // the rows actually live in, exactly as before this change. The dual-read /
+      // re-scope logic below is reserved for the flag-ON path ONLY.
+      if (!isFridayNamespaceHardeningEnabled()) {
+        // Mirror `getSessionMemoryNamespace` EXACTLY (a truthy check, not `??`) so the
+        // two stay byte-identical even on the unreachable empty-string edge.
+        if (session.memoryNamespace) {
+          return [session.memoryNamespace];
+        }
+        return [
+          resolveFridaySessionMemoryNamespace(session, (k) =>
+            deps.db.withReadConnection((db) => sessionRepo.getByKey(db, k)),
+          ),
+        ];
+      }
+
+      // FLAG-ON: re-DERIVE both candidate namespaces from the session's axes (NOT the
+      // cached `session.memoryNamespace`). The cache holds whatever the WRITE path
+      // persisted — which, for a session created BEFORE the flag flip, is the legacy
+      // namespace. Re-deriving here is what makes dual-read find that legacy memory
+      // after the flip: the hardened candidate is the new write target, the legacy
+      // candidate recalls the pre-flip rows.
       const candidates = resolveFridaySessionMemoryNamespaceCandidates(session, (k) =>
         deps.db.withReadConnection((db) => sessionRepo.getByKey(db, k)),
       );
 
-      // Defense-in-depth: if the persisted (write-time) namespace differs from BOTH
-      // re-derived candidates (e.g. the session axes changed after creation without
-      // an alignSessionContext recompute), keep recalling it too so a re-scope can
-      // never silently drop the bucket the rows actually live in. Ordered last
-      // (lowest priority) and deduped.
+      // Defense-in-depth (flag-ON only): if the persisted (write-time) namespace
+      // differs from BOTH re-derived candidates (e.g. a session persisted HARDENED
+      // before a config change, or axes that drifted without an alignSessionContext
+      // recompute), keep recalling it too so a re-scope can never silently drop the
+      // bucket the rows actually live in. Ordered last (lowest priority) and deduped.
       if (session.memoryNamespace && !candidates.includes(session.memoryNamespace)) {
         return [...candidates, session.memoryNamespace];
       }
