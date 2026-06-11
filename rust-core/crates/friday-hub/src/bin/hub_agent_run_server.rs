@@ -720,6 +720,19 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 // are DEFERRED (`None`) — not on `LoopOutcome`. An absent count is omitted from
                 // the wire (`skip_serializing_if`) ⇒ byte-identical to the pre-A1 result.
                 let refs = result_refs(&outcome);
+                // (observability) Structured, body-free log of the answer-return so a 503
+                // can be traced to a leg (the run_id appeared in NO log for the
+                // 503-after-billing event). We log the run_id + the refs `status` + whether
+                // a body will be delivered — NEVER the answer body, sha, key, or task. The
+                // `has_body` flag lets the next failure distinguish a delivered-eligible run
+                // (DB row present, body to send) from a denied/no-answer one. `?` on the
+                // sends below means a transport drop ends the session; this line records that
+                // the refs leg was REACHED with the run_id, closing the diagnostic gap.
+                let has_body = outcome.delivered_body().is_some();
+                eprintln!(
+                    "hub_agent_run_server_dispatch: run_id={run_id} leg=refs status={} has_body={has_body}",
+                    refs.status
+                );
                 let result = Envelope::new(
                     format!("agent-run-result-{run_id}"),
                     now_ms,
@@ -735,7 +748,15 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                     },
                 )
                 .with_correlation(env.msg_id.clone());
-                ws_send_envelope(ws, session_key, &result, SESSION_AAD)?;
+                if let Err(err) = ws_send_envelope(ws, session_key, &result, SESSION_AAD) {
+                    // The refs frame could not be sent (transport closed). Log which leg
+                    // failed (run_id + leg) before ending the session — this is the leg-A
+                    // "closed-before-the-result" surface; the body is safely in the DB.
+                    eprintln!(
+                        "hub_agent_run_server_dispatch: run_id={run_id} leg=refs_send error=transport_closed"
+                    );
+                    return Err(err);
+                }
 
                 // (body) Deliver the answer BODY ONLY to the authed owner — SEALED back over the
                 // SAME session (the owner-only channel). The body NEVER travels in the refs
@@ -757,7 +778,21 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                         },
                     )
                     .with_correlation(env.msg_id.clone());
-                    ws_send_envelope(ws, session_key, &body_env, SESSION_AAD)?;
+                    if let Err(err) = ws_send_envelope(ws, session_key, &body_env, SESSION_AAD) {
+                        // The owner-sealed BODY frame could not be sent. This is the leg-A
+                        // "closed-before-the-body" surface: the refs were sent + the answer is
+                        // safely persisted in the DB, but the body frame dropped → the TS
+                        // sealed client 503s post-billing. Log run_id + leg (NEVER the body)
+                        // so the next occurrence is attributable. (See the deferred leg-A
+                        // decouple in the PR body.)
+                        eprintln!(
+                            "hub_agent_run_server_dispatch: run_id={run_id} leg=body_send error=transport_closed"
+                        );
+                        return Err(err);
+                    }
+                    eprintln!(
+                        "hub_agent_run_server_dispatch: run_id={run_id} leg=body_send status=delivered"
+                    );
                 }
                 processed += 1;
             }

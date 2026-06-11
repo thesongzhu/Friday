@@ -104,13 +104,23 @@ fn run() -> Result<String, ReadbackError> {
         arg_value(&args, "--caller-principal").ok_or(ReadbackError::new("bad_args"))?;
 
     // Read-only open: a readback can NEVER mutate an operator DB just because a caller asks.
-    let db = Db::open_hub_readonly(&db_path).map_err(|_| ReadbackError::new("open_failed"))?;
+    // (observability) On a failure, log {run_id, leg, error_kind} to stderr — body-free
+    // (the run_id is a uuid ref, never the answer/owner/path) — so the 503-after-billing
+    // readback failure that left NO log trail is attributable to a leg next time. As of the
+    // WAL + busy_timeout opener fix a contended open RETRIES instead of an immediate
+    // SQLITE_BUSY, so `open_failed` should be rare; logging it confirms that.
+    let db = Db::open_hub_readonly(&db_path).map_err(|_| {
+        eprintln!("hub_run_answer_readback: run_id={run_id} leg=open error_kind=open_failed");
+        ReadbackError::new("open_failed")
+    })?;
 
     // The OWNER-GATING decision lives entirely in this single storage primitive: it
     // releases the body ONLY inside `Granted` (caller == the run's bound owner); every
     // other arm is body-free AND owner-free (fail-closed).
-    let access = get_run_answer_for_principal(db.conn(), &run_id, &caller_principal)
-        .map_err(|_| ReadbackError::new("read_failed"))?;
+    let access = get_run_answer_for_principal(db.conn(), &run_id, &caller_principal).map_err(|_| {
+        eprintln!("hub_run_answer_readback: run_id={run_id} leg=read error_kind=read_failed");
+        ReadbackError::new("read_failed")
+    })?;
 
     match access {
         // OWNER == CALLER: release the answer BODY verbatim. This is the ONLY branch that
