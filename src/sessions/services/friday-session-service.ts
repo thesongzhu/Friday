@@ -32,7 +32,10 @@ import type {
 import { createFridaySessionRepository } from "../persistence/friday-session-repository.js";
 import { createFridaySessionMessageRepository } from "../persistence/friday-session-message-repository.js";
 import { buildFridaySubagentSessionKey, canonicalizeFridaySessionKey, normalizeFridaySessionKey, parseFridaySessionKey } from "./friday-session-key.js";
-import { resolveFridaySessionMemoryNamespace } from "./friday-session-memory-namespace.js";
+import {
+  resolveFridaySessionMemoryNamespace,
+  resolveFridaySessionMemoryNamespaceCandidates,
+} from "./friday-session-memory-namespace.js";
 import { resolveFridaySessionSendPolicy } from "./friday-session-send-policy.js";
 import type { CreateFridaySessionServiceDeps, FridaySessionService, FridaySessionSweepResult } from "./friday-session-service.types.js";
 
@@ -630,6 +633,40 @@ export function createFridaySessionService(
       return resolveFridaySessionMemoryNamespace(session, (k) =>
         deps.db.withReadConnection((db) => sessionRepo.getByKey(db, k)),
       );
+    },
+
+    async getSessionMemoryNamespaceCandidates(key) {
+      key = canonicalizeFridaySessionKey(key);
+
+      const session = deps.db.withReadConnection((db) => sessionRepo.getByKey(db, key));
+      if (!session) {
+        throw new FridayDomainError(
+          FRIDAY_SESSION_ERROR_CODES.NOT_FOUND,
+          `Session '${key}' not found`,
+          { httpStatus: 404 },
+        );
+      }
+
+      // Re-DERIVE both candidate namespaces from the session's axes (NOT the cached
+      // `session.memoryNamespace`). The cache holds whatever the WRITE path persisted
+      // — which, for a session created BEFORE the flag flip, is the legacy namespace.
+      // Re-deriving here is what makes dual-read find that legacy memory after the
+      // flip: the hardened candidate is the new write target, the legacy candidate
+      // recalls the pre-flip rows. With the flag OFF this returns the single legacy
+      // namespace (byte-identical to `getSessionMemoryNamespace`'s derived value).
+      const candidates = resolveFridaySessionMemoryNamespaceCandidates(session, (k) =>
+        deps.db.withReadConnection((db) => sessionRepo.getByKey(db, k)),
+      );
+
+      // Defense-in-depth: if the persisted (write-time) namespace differs from BOTH
+      // re-derived candidates (e.g. the session axes changed after creation without
+      // an alignSessionContext recompute), keep recalling it too so a re-scope can
+      // never silently drop the bucket the rows actually live in. Ordered last
+      // (lowest priority) and deduped.
+      if (session.memoryNamespace && !candidates.includes(session.memoryNamespace)) {
+        return [...candidates, session.memoryNamespace];
+      }
+      return candidates;
     },
 
     async alignSessionContext(key, input) {

@@ -7,11 +7,26 @@
 //! user's memory is isolated PER (account, channel) instead of being shared across every
 //! channel for the same user.
 //!
-//! Format (byte-identical to the TS — including the Unicode-aware lowercasing; see the
-//! normalization note on the dot-join residual that is SHARED with the TS oracle):
+//! Format (byte-identical to the TS — including the Unicode-aware lowercasing; the dot-join
+//! collision hardening is FLAG-GATED + DEFAULT-OFF + DUAL-READ — see the normalization note
+//! on [`is_kept`] and the dual-read note on
+//! [`resolve_session_memory_namespace_candidates`]):
 //! ```text
 //! tenant.<accountId>.channel.<channel>.user.<normalizedUserId>.shared
 //! ```
+//!
+//! ## Collision hardening (F5.5): FLAG-GATED, DEFAULT-OFF, DUAL-READ
+//! Dropping `.` from the segment keep-set closes the dot-join cross-tuple collision, but a
+//! naive deploy of that change RE-SCOPES (orphans) any existing memory whose segment
+//! legitimately contained a `.` (an email-shaped userId, a dotted account/channel) — a
+//! one-way data downgrade. So the hardening is gated behind the DEFAULT-OFF env flag
+//! [`NS_HARDENING_ENV_FLAG`]:
+//! - OFF (default): the keep-set KEEPS `.` exactly as before — every namespace is
+//!   BYTE-IDENTICAL to the legacy derivation. Zero re-scope on deploy.
+//! - ON: the WRITE/primary namespace is hardened, AND the READ path dual-reads BOTH the
+//!   hardened and legacy namespaces ([`resolve_session_memory_namespace_candidates`]), so
+//!   nothing written under the legacy namespace is lost. There is NO destructive re-key.
+//! PARITY: the TS half reads the SAME flag name under the SAME `"1"` semantics.
 //!
 //! ## How this binds to the Rust recall axis
 //! The Rust memory recall axis is a single `principal_id` string
@@ -63,9 +78,15 @@
 //! (legacy/unset) enables NEITHER fallback (fail-closed by construction).
 //!
 //! Truth label: byte-identical namespace + normalization port; DM-chatId + subagent
-//! parent-walk userId fallbacks ported (column-modeled). This improves PARITY only — it
-//! does NOT flip any TS-retirement state; the TS extraction path stays LIVE. PROOF-ONLY —
-//! NOT a v1 GO.
+//! parent-walk userId fallbacks ported (column-modeled). The F5.5 collision hardening is
+//! FLAG-GATED (DEFAULT-OFF) + DUAL-READ here too, byte-identical to the TS under the same
+//! flag. This improves PARITY only — it does NOT flip any TS-retirement state; the TS
+//! extraction path stays LIVE. The Rust recall PRINCIPAL is currently the configured
+//! `--owner` allowlist entry (`RunPolicy::principal_id`), NOT a session-derived namespace,
+//! so the dual-read recall helper ([`friday_storage::memory::recall_confirmed_multi`]) +
+//! candidate-list builder are wired as the GATED MECHANISM; the live recall-principal
+//! re-wiring to consult the candidate list is DARK-REMAINING (see the PR body). DARK +
+//! DEPLOY-GO-gated. PROOF-ONLY — NOT a v1 GO.
 
 use friday_storage::agent_session::SessionOwner;
 use friday_storage::StorageError;
@@ -86,6 +107,19 @@ const DEFAULT_CHANNEL: &str = "unknown";
 
 /// The empty-result fallback of [`normalize_namespace_segment`] (TS: `"default"`).
 const NORMALIZE_EMPTY_FALLBACK: &str = "default";
+
+/// The DEFAULT-OFF env flag governing the F5.5 dot-join collision hardening. ON only when
+/// the value is exactly `"1"` (after trimming). UNSET / empty / `"0"` / any other value ⇒
+/// OFF (the unchanged legacy derivation). Narrow + explicit so the hardening cannot be
+/// enabled by accident — same convention as `FRIDAY_CLAUDE_ROUTE_ENABLED`.
+///
+/// PARITY: the TS half (`FRIDAY_NS_HARDENING_ENV_FLAG`) reads the SAME name + semantics.
+pub const NS_HARDENING_ENV_FLAG: &str = "FRIDAY_NS_HARDENING_ENABLED";
+
+/// Read the DEFAULT-OFF [`NS_HARDENING_ENV_FLAG`].
+pub fn ns_hardening_enabled() -> bool {
+    matches!(std::env::var(NS_HARDENING_ENV_FLAG), Ok(v) if v.trim() == "1")
+}
 
 /// A typed namespace-resolution error. The single variant mirrors the TS
 /// `FRIDAY_SESSION_ERROR_CODES.MEMORY_NAMESPACE_UNRESOLVABLE`.
@@ -109,8 +143,12 @@ impl std::fmt::Display for NamespaceError {
 
 impl std::error::Error for NamespaceError {}
 
-/// Resolve the memory namespace (the composite store scope) for a session from its OWNER
-/// axes, mirroring the TS `resolveFridaySessionMemoryNamespace` for the DIRECT-userId case.
+/// Resolve the PRIMARY (write) memory namespace for a session from its OWNER axes,
+/// mirroring the TS `resolveFridaySessionMemoryNamespace` for the DIRECT-userId case. The
+/// F5.5 collision hardening is governed by the DEFAULT-OFF [`NS_HARDENING_ENV_FLAG`]: when
+/// OFF this is byte-identical to the legacy derivation. The READ path MUST use
+/// [`resolve_session_memory_namespace_candidates`] (dual-read) so a flag-on flip never
+/// orphans legacy-written memory.
 ///
 /// * `account_id`: falsy (`None` or empty) → `"default"`, then normalized.
 /// * `channel`: falsy (`None` or empty) → `"unknown"`, then normalized.
@@ -121,6 +159,19 @@ pub fn resolve_session_memory_namespace(
     account_id: Option<&str>,
     channel: Option<&str>,
     user_id: Option<&str>,
+) -> Result<String, NamespaceError> {
+    resolve_session_memory_namespace_with(account_id, channel, user_id, ns_hardening_enabled())
+}
+
+/// The pure derivation under an EXPLICIT `hardened` mode (the flag-reading wrappers above
+/// delegate here). `hardened == false` is the legacy keep-set (`.` kept); `hardened == true`
+/// drops `.` from every segment (the collision fix). Same fail-closed / falsy-default
+/// semantics as [`resolve_session_memory_namespace`].
+pub fn resolve_session_memory_namespace_with(
+    account_id: Option<&str>,
+    channel: Option<&str>,
+    user_id: Option<&str>,
+    hardened: bool,
 ) -> Result<String, NamespaceError> {
     // FAIL CLOSED when no userId (TS: `if (!userId) throw MEMORY_NAMESPACE_UNRESOLVABLE`).
     // JS `!userId` is falsy on `undefined` AND the empty string, so an empty `user_id`
@@ -136,9 +187,9 @@ pub fn resolve_session_memory_namespace(
     let account = falsy_or(account_id, DEFAULT_ACCOUNT_ID);
     let chan = falsy_or(channel, DEFAULT_CHANNEL);
 
-    let normalized_account = normalize_namespace_segment(account);
-    let normalized_channel = normalize_namespace_segment(chan);
-    let normalized_user = normalize_namespace_segment(user_id);
+    let normalized_account = normalize_namespace_segment_with(account, hardened);
+    let normalized_channel = normalize_namespace_segment_with(chan, hardened);
+    let normalized_user = normalize_namespace_segment_with(user_id, hardened);
 
     Ok([
         TENANT_SEGMENT,
@@ -150,6 +201,57 @@ pub fn resolve_session_memory_namespace(
         SHARED_SEGMENT,
     ]
     .join("."))
+}
+
+/// Resolve the ORDERED, DEDUPED set of namespaces to consult on the READ (recall) path —
+/// the non-destructive substitute for re-keying existing memory.
+///
+/// - Hardening OFF (default): `[legacy]` — a SINGLE namespace, byte-identical to today.
+/// - Hardening ON: `[hardened, legacy]` deduped. The hardened namespace is the new write
+///   target; the legacy namespace is consulted too so memory written before the flip is
+///   STILL recalled.
+///
+/// DEDUP-COLLAPSE: when no segment contains a `.`, the hardened and legacy derivations are
+/// IDENTICAL, so the list collapses to ONE entry even with the flag ON — the common
+/// (non-dotted) case has zero extra reads.
+///
+/// HONEST scope (mirrors the TS): the LEGACY namespace IS the colliding string, so
+/// dual-reading it re-reads the pre-hardening collision bucket. The hardening closes the
+/// cross-tuple collision for NEW (hardened) WRITES only; legacy data retains its pre-F5.5
+/// collision semantics (the same accepted behavior under the single-owner v1 threat model).
+/// Dual-read is strictly ≥ the pre-hardening state — it can never lose data — but it does
+/// NOT retroactively disambiguate already-colliding legacy rows (structurally impossible:
+/// one shared bucket cannot be split). Fails closed (no userId) exactly like the resolver.
+pub fn resolve_session_memory_namespace_candidates(
+    account_id: Option<&str>,
+    channel: Option<&str>,
+    user_id: Option<&str>,
+) -> Result<Vec<String>, NamespaceError> {
+    candidates_for(account_id, channel, user_id, ns_hardening_enabled())
+}
+
+/// The pure dual-read list construction under an EXPLICIT `hardened` mode (the public
+/// wrapper reads the flag and delegates here). Race-free + directly testable: `hardened ==
+/// false` ⇒ `[legacy]`; `hardened == true` ⇒ dedup `[hardened, legacy]` (collapses to one
+/// when no segment carries a `.`). Same fail-closed (no userId) rule as the resolver.
+fn candidates_for(
+    account_id: Option<&str>,
+    channel: Option<&str>,
+    user_id: Option<&str>,
+    hardened: bool,
+) -> Result<Vec<String>, NamespaceError> {
+    let legacy = resolve_session_memory_namespace_with(account_id, channel, user_id, false)?;
+    if !hardened {
+        return Ok(vec![legacy]);
+    }
+    let hardened_ns = resolve_session_memory_namespace_with(account_id, channel, user_id, true)?;
+    // Ordered (hardened first) + deduped: when both derivations agree (no dotted segment)
+    // the list collapses to a single entry.
+    if hardened_ns == legacy {
+        Ok(vec![hardened_ns])
+    } else {
+        Ok(vec![hardened_ns, legacy])
+    }
 }
 
 /// Resolve the EFFECTIVE userId for a session — the faithful port of the TS
@@ -281,7 +383,7 @@ fn falsy_or<'a>(value: Option<&'a str>, fallback: &'a str) -> &'a str {
     }
 }
 
-/// Byte-identical port of the TS `normalizeNamespaceSegment`:
+/// Byte-identical port of the TS `normalizeNamespaceSegment` (legacy, flag-OFF default):
 /// ```js
 /// value.toLowerCase()
 ///   .replace(/[^a-z0-9._-]/g, "-")
@@ -289,37 +391,40 @@ fn falsy_or<'a>(value: Option<&'a str>, fallback: &'a str) -> &'a str {
 ///   .replace(/^-|-$/g, "");
 /// // empty result -> "default"
 /// ```
-///
-/// We implement it with explicit char filtering (no `regex` dependency needed) and verify
-/// equivalence with the ported TS test vectors (`tests` below).
+/// This is the flag-aware entrypoint: it reads [`ns_hardening_enabled`] and delegates to
+/// [`normalize_namespace_segment_with`]. Default-OFF ⇒ legacy keep-set ⇒ byte-identical to
+/// the pre-hardening derivation.
+pub fn normalize_namespace_segment(value: &str) -> String {
+    normalize_namespace_segment_with(value, ns_hardening_enabled())
+}
+
+/// The pure segment normalizer under an EXPLICIT `hardened` mode. The keep-set is the only
+/// thing that depends on `hardened` (see [`is_kept`]):
+/// - `hardened == false` (LEGACY): keep-set `[a-z0-9._-]` — `.` KEPT (byte-identical to the
+///   TS legacy oracle `/[^a-z0-9._-]/g`).
+/// - `hardened == true`: keep-set `[a-z0-9_-]` — `.` maps to `-` (the TS hardened oracle
+///   `/[^a-z0-9_-]/g`). `.` is the SEGMENT JOINER, so dropping it makes the composite split
+///   into exactly the seven fixed-position parts → injective over normalized tuples.
 ///
 /// LOWERCASING (byte-parity with JS `String.toLowerCase()`): Step 1 uses Rust
 /// `str::to_lowercase()`, which — like JS `.toLowerCase()` — implements the Unicode
 /// DEFAULT case mapping (NOT plain ASCII lowering). So a non-ASCII char that JS lowercases
 /// INTO a kept ASCII char also lowers here BEFORE the keep-set filter, and is therefore
-/// kept identically: e.g. the Kelvin sign `K` (U+212A) → `k`, which is in `[a-z0-9._-]` and
-/// survives in BOTH impls (closing the earlier `to_ascii_lowercase` divergence where Rust
-/// would have mapped it to `-` and merged it with a plain `user` id — an isolation MERGE in
-/// the dangerous direction). Any char that lowers to something OUTSIDE the keep-set (most
-/// non-ASCII, e.g. `é`, CJK) maps to `-` in both. Both use Unicode default case mapping, so
-/// they agree on the single-codepoint mappings relevant to the keep-set; this is now a
-/// faithful port, not a documented gap.
-///
-/// Residual (genuinely shared with the TS, not a Rust divergence): the dot is in the
-/// keep-set and segments are `.`-joined, so an id literally containing the joiner/segment
-/// words could in principle collide with a different (account, channel, user) triple. This
-/// is byte-faithful to the TS oracle (same unescaped join + same keep-set), so it is NOT a
-/// Rust regression; closing it is a SHARED TS+Rust hardening follow-on (segment-escape /
-/// dot-reject), out of scope for this parity slice.
-pub fn normalize_namespace_segment(value: &str) -> String {
-    // Step 1: toLowerCase() then replace each char NOT in [a-z0-9._-] with '-'. Use the
+/// kept identically: e.g. the Kelvin sign `K` (U+212A) → `k`, which survives in BOTH impls
+/// (closing the earlier `to_ascii_lowercase` divergence where Rust would have mapped it to
+/// `-` and merged it with a plain `user` id — an isolation MERGE in the dangerous
+/// direction). Any char that lowers to something OUTSIDE the keep-set (most non-ASCII, e.g.
+/// `é`, CJK) maps to `-` in both. Both use Unicode default case mapping, so they agree on
+/// the single-codepoint mappings relevant to the keep-set.
+pub fn normalize_namespace_segment_with(value: &str, hardened: bool) -> String {
+    // Step 1: toLowerCase() then replace each char NOT in the keep-set with '-'. Use the
     // Unicode-aware `to_lowercase` (matches JS `.toLowerCase()`), NOT `to_ascii_lowercase`,
     // so a non-ASCII char JS folds into a kept ASCII char (e.g. Kelvin U+212A -> 'k') is
     // kept identically here instead of collapsing to '-'.
     let lowered = value.to_lowercase();
     let mut mapped = String::with_capacity(lowered.len());
     for ch in lowered.chars() {
-        if is_kept(ch) {
+        if is_kept(ch, hardened) {
             mapped.push(ch);
         } else {
             // Any character outside the keep-set (including multi-byte/non-ASCII) becomes a
@@ -357,10 +462,21 @@ pub fn normalize_namespace_segment(value: &str) -> String {
     }
 }
 
-/// The TS keep-set `[a-z0-9._-]` (applied AFTER `toLowerCase`, so uppercase A-Z is already
-/// lowered and never reaches here as uppercase).
-fn is_kept(ch: char) -> bool {
-    ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '.' || ch == '_' || ch == '-'
+/// The TS keep-set (applied AFTER `toLowerCase`, so uppercase A-Z is already lowered and
+/// never reaches here as uppercase). FLAG-GATED on `hardened`:
+/// - `hardened == false` (LEGACY, default): `[a-z0-9._-]` — `.` is KEPT (byte-identical to
+///   the TS legacy oracle `/[^a-z0-9._-]/g`).
+/// - `hardened == true` (F5.5): `[a-z0-9_-]` — the literal `.` is DROPPED (maps to `-`).
+///   `.` is the SEGMENT JOINER used by [`resolve_session_memory_namespace`] (`.join(".")`)
+///   and the composite is the memory `principal_id` SCOPE; stripping `.` from every segment
+///   makes the composite split into exactly the seven fixed-position parts → a userId
+///   literally containing `.` can no longer forge a different tuple's split (the
+///   CROSS-POSITION collision). Byte-identical to the TS hardened oracle `/[^a-z0-9_-]/g`;
+///   the two MUST stay in lockstep under the same flag.
+fn is_kept(ch: char, hardened: bool) -> bool {
+    let base = ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '-';
+    // Legacy keeps `.`; hardened drops it.
+    base || (!hardened && ch == '.')
 }
 
 #[cfg(test)]
@@ -431,7 +547,13 @@ mod tests {
 
     #[test]
     fn replaces_special_characters_in_user_id() {
-        // TS: "user@example.com" -> "user-example.com" ('@' -> '-', dots PRESERVED).
+        // FLAG-OFF (default): "user@example.com" -> "user-example.com" ('@' -> '-', dots
+        // PRESERVED). The hardening env var is unset in the test process, so the legacy
+        // keep-set applies — byte-identical to the pre-hardening derivation (no re-scope).
+        assert!(
+            !ns_hardening_enabled(),
+            "FRIDAY_NS_HARDENING_ENABLED must be unset/off in the test env"
+        );
         let ns = resolve_session_memory_namespace(
             Some("default"),
             Some("discord"),
@@ -478,6 +600,9 @@ mod tests {
 
     #[test]
     fn normalize_collapses_runs_and_trims_edges_and_empty_to_default() {
+        // FLAG-OFF (legacy) keep-set — the env var is unset in the test process, so the
+        // bare entrypoint resolves to the legacy derivation.
+        assert!(!ns_hardening_enabled());
         assert_eq!(normalize_namespace_segment("User-ABC"), "user-abc");
         assert_eq!(normalize_namespace_segment("Ops Team"), "ops-team");
         // Leading/trailing special chars are mapped to '-' then trimmed.
@@ -486,9 +611,9 @@ mod tests {
         assert_eq!(normalize_namespace_segment(""), "default");
         // Runs of disallowed chars collapse to ONE '-'.
         assert_eq!(normalize_namespace_segment("a   b---c"), "a-b-c");
-        // Dots, underscores, hyphens are KEPT.
+        // LEGACY: dots, underscores, hyphens are KEPT.
         assert_eq!(normalize_namespace_segment("a.b_c-d"), "a.b_c-d");
-        // user@example.com (the segment-level vector).
+        // user@example.com (the segment-level vector), legacy: dot PRESERVED.
         assert_eq!(
             normalize_namespace_segment("user@example.com"),
             "user-example.com"
@@ -496,6 +621,31 @@ mod tests {
         // Non-ASCII is outside the keep-set and becomes '-' (then collapses/trims).
         assert_eq!(normalize_namespace_segment("héllo"), "h-llo");
         assert_eq!(normalize_namespace_segment("名前"), "default");
+    }
+
+    #[test]
+    fn normalize_hardened_drops_dot_legacy_keeps_it_pure_no_env() {
+        // The pure `_with` variant takes the mode explicitly (no env), so this is race-free
+        // and asserts BOTH keep-sets directly.
+        // LEGACY keeps '.'; underscores/hyphens kept in both.
+        assert_eq!(
+            normalize_namespace_segment_with("a.b_c-d", false),
+            "a.b_c-d"
+        );
+        assert_eq!(
+            normalize_namespace_segment_with("user@example.com", false),
+            "user-example.com"
+        );
+        // HARDENED drops '.' (maps to '-', then collapses with adjacent '-').
+        assert_eq!(normalize_namespace_segment_with("a.b_c-d", true), "a-b_c-d");
+        assert_eq!(
+            normalize_namespace_segment_with("user@example.com", true),
+            "user-example-com"
+        );
+        // A bare run of dots: legacy keeps them; hardened collapses to '-' then trims to
+        // empty -> "default".
+        assert_eq!(normalize_namespace_segment_with("...", false), "...");
+        assert_eq!(normalize_namespace_segment_with("...", true), "default");
     }
 
     #[test]
@@ -541,6 +691,158 @@ mod tests {
         let msg = NamespaceError::UnresolvableNoUserId.to_string();
         assert!(msg.contains("unresolvable"));
         assert!(!msg.contains("Bearer"));
+    }
+
+    // ─── F5.5 dot-join collision hardening (FLAG-GATED, DEFAULT-OFF) + dual-read ───
+
+    #[test]
+    fn ns_hardening_flag_is_off_by_default_and_on_only_for_exactly_1() {
+        // Mirror the `claude_route` precedent: verify the exact-`"1"` predicate WITHOUT
+        // mutating the process env, and confirm the real helper reports OFF (env unset).
+        let on = |v: &str| v.trim() == "1";
+        assert!(on("1"));
+        assert!(on(" 1 "), "trimmed \"1\" enables");
+        for off in ["", "0", "true", "yes", "01", "1 0", "enabled"] {
+            assert!(!on(off), "{off:?} must NOT enable hardening");
+        }
+        assert!(
+            !ns_hardening_enabled(),
+            "FRIDAY_NS_HARDENING_ENABLED must be unset/off in the test env"
+        );
+    }
+
+    #[test]
+    fn hardened_closes_dot_join_cross_tuple_collision_for_new_writes_pure() {
+        // Pure `_with(true)`: race-free, no env. Pre-fix both DISTINCT tuples produced
+        //   `tenant.a.channel.b.user.x.user.y.shared`  ← a real cross-tuple collision.
+        // Hardened: the embedded `.user.` maps to `-user-`, so they are DISTINCT.
+        let forged =
+            resolve_session_memory_namespace_with(Some("a"), Some("b"), Some("x.user.y"), true)
+                .unwrap();
+        let victim =
+            resolve_session_memory_namespace_with(Some("a"), Some("b.user.x"), Some("y"), true)
+                .unwrap();
+        assert_ne!(
+            forged, victim,
+            "distinct tuples must NEVER produce the same hardened namespace"
+        );
+        assert_eq!(forged, "tenant.a.channel.b.user.x-user-y.shared");
+        assert_eq!(victim, "tenant.a.channel.b-user-x.user.y.shared");
+        // Injectivity by construction: exactly 7 dot-parts, no payload segment carries a '.'.
+        let parts: Vec<&str> = forged.split('.').collect();
+        assert_eq!(parts.len(), 7);
+        assert_eq!(parts[0], "tenant");
+        assert_eq!(parts[2], "channel");
+        assert_eq!(parts[4], "user");
+        assert_eq!(parts[6], "shared");
+        for payload in [parts[1], parts[3], parts[5]] {
+            assert!(!payload.contains('.'), "segment must not carry the joiner");
+        }
+    }
+
+    #[test]
+    fn legacy_dual_read_bucket_still_collides_honest_pure() {
+        // HONEST: under the LEGACY derivation (the dual-read tail) the two distinct tuples
+        // STILL share one bucket — hardening does NOT retroactively split it (structurally
+        // impossible). Dual-read is >= the pre-hardening state, not a retroactive fix.
+        let forged_legacy =
+            resolve_session_memory_namespace_with(Some("a"), Some("b"), Some("x.user.y"), false)
+                .unwrap();
+        let victim_legacy =
+            resolve_session_memory_namespace_with(Some("a"), Some("b.user.x"), Some("y"), false)
+                .unwrap();
+        assert_eq!(forged_legacy, "tenant.a.channel.b.user.x.user.y.shared");
+        assert_eq!(forged_legacy, victim_legacy);
+    }
+
+    #[test]
+    fn candidates_flag_off_is_single_legacy_namespace() {
+        // Env unset (default) ⇒ candidates is the SINGLE legacy namespace, byte-identical to
+        // `resolve_session_memory_namespace`. No extra read.
+        assert!(!ns_hardening_enabled());
+        let candidates = resolve_session_memory_namespace_candidates(
+            Some("default"),
+            Some("discord"),
+            Some("user@example.com"),
+        )
+        .unwrap();
+        let legacy = resolve_session_memory_namespace(
+            Some("default"),
+            Some("discord"),
+            Some("user@example.com"),
+        )
+        .unwrap();
+        assert_eq!(candidates, vec![legacy.clone()]);
+        assert_eq!(
+            legacy,
+            "tenant.default.channel.discord.user.user-example.com.shared"
+        );
+    }
+
+    #[test]
+    fn candidates_flag_off_fails_closed_no_user_id() {
+        assert_eq!(
+            resolve_session_memory_namespace_candidates(Some("default"), Some("discord"), None),
+            Err(NamespaceError::UnresolvableNoUserId)
+        );
+    }
+
+    /// FLAG-ON candidate behavior tested via the PURE `candidates_for(.., hardened=true)` —
+    /// NO process-env mutation, so it is race-free in cargo's parallel test runner (the
+    /// public wrapper just reads the flag and delegates here; the flag-read mapping is
+    /// covered by `ns_hardening_flag_is_off_by_default_and_on_only_for_exactly_1`).
+    #[test]
+    fn candidates_flag_on_dual_read_and_dedup_collapse_pure() {
+        // Dotted userId ⇒ dual-read `[hardened, legacy]`. The legacy entry is byte-identical
+        // to what the FLAG-OFF write path persisted — the link that makes flag-on recall
+        // find pre-flip memory.
+        let dual = candidates_for(
+            Some("default"),
+            Some("discord"),
+            Some("user@example.com"),
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            dual,
+            vec![
+                "tenant.default.channel.discord.user.user-example-com.shared".to_string(), // hardened
+                "tenant.default.channel.discord.user.user-example.com.shared".to_string(), // legacy
+            ]
+        );
+        // The legacy (second) candidate is exactly the FLAG-OFF (legacy) derivation.
+        assert_eq!(
+            dual[1],
+            resolve_session_memory_namespace_with(
+                Some("default"),
+                Some("discord"),
+                Some("user@example.com"),
+                false
+            )
+            .unwrap()
+        );
+
+        // DEDUP-COLLAPSE: a non-dotted segment ⇒ hardened == legacy ⇒ ONE candidate (zero
+        // extra reads) even with the flag ON.
+        let collapsed =
+            candidates_for(Some("default"), Some("discord"), Some("user-abc"), true).unwrap();
+        assert_eq!(
+            collapsed,
+            vec!["tenant.default.channel.discord.user.user-abc.shared".to_string()]
+        );
+
+        // FLAG-OFF (pure) ⇒ single legacy entry, identical to the public off path.
+        let off = candidates_for(
+            Some("default"),
+            Some("discord"),
+            Some("user@example.com"),
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            off,
+            vec!["tenant.default.channel.discord.user.user-example.com.shared".to_string()]
+        );
     }
 
     // ─── resolve_effective_user_id (the TS resolveEffectiveUserId port) ───

@@ -539,6 +539,92 @@ describe("FridaySessionService", () => {
     });
   });
 
+  // ─── getSessionMemoryNamespaceCandidates (F5.5 dual-read) ───
+
+  describe("getSessionMemoryNamespaceCandidates", () => {
+    const FLAG = "FRIDAY_NS_HARDENING_ENABLED";
+    const prior = process.env[FLAG];
+    afterEach(() => {
+      if (prior === undefined) delete process.env[FLAG];
+      else process.env[FLAG] = prior;
+    });
+
+    it("FLAG-OFF: returns the SINGLE legacy namespace (byte-identical to getSessionMemoryNamespace)", async () => {
+      delete process.env[FLAG];
+      await service.createSession({ channel: "discord", chatId: "user-ns1", userId: "user-ns1" });
+      const candidates = await service.getSessionMemoryNamespaceCandidates("discord:default:user-ns1");
+      const single = await service.getSessionMemoryNamespace("discord:default:user-ns1");
+      expect(candidates).toEqual([single]);
+      expect(candidates).toEqual(["tenant.default.channel.discord.user.user-ns1.shared"]);
+    });
+
+    it("FLAG-ON: a session created/persisted under FLAG-OFF is still recalled via the legacy candidate", async () => {
+      // Create the session with the flag OFF — the WRITE path persists the LEGACY
+      // (dotted) namespace, the real pre-flip data shape.
+      delete process.env[FLAG];
+      await service.createSession({
+        channel: "discord",
+        chatId: "ada.lovelace@example.com",
+        userId: "ada.lovelace@example.com",
+        chatKind: "dm",
+      });
+      const key = "discord:default:ada.lovelace@example.com";
+      const persistedLegacy = await service.getSessionMemoryNamespace(key);
+      expect(persistedLegacy).toBe(
+        "tenant.default.channel.discord.user.ada.lovelace-example.com.shared",
+      );
+
+      // Now flip the flag ON and read the dual-read candidates. The hardened namespace
+      // (new write target) comes first; the LEGACY namespace — byte-identical to what
+      // was persisted above — comes second, so the pre-flip memory is still found.
+      process.env[FLAG] = "1";
+      const candidates = await service.getSessionMemoryNamespaceCandidates(key);
+      expect(candidates).toEqual([
+        "tenant.default.channel.discord.user.ada-lovelace-example-com.shared", // hardened
+        "tenant.default.channel.discord.user.ada.lovelace-example.com.shared", // legacy
+      ]);
+      expect(candidates[1]).toBe(persistedLegacy);
+    });
+
+    it("FLAG-ON dedup-collapse: a non-dotted session yields ONE candidate", async () => {
+      process.env[FLAG] = "1";
+      await service.createSession({ channel: "discord", chatId: "user-ns1", userId: "user-ns1" });
+      const candidates = await service.getSessionMemoryNamespaceCandidates("discord:default:user-ns1");
+      expect(candidates).toEqual(["tenant.default.channel.discord.user.user-ns1.shared"]);
+    });
+
+    it("throws for nonexistent session", async () => {
+      await expectSessionError(
+        service.getSessionMemoryNamespaceCandidates("discord:default:nonexistent"),
+        FRIDAY_SESSION_ERROR_CODES.NOT_FOUND,
+      );
+    });
+
+    it("ROLLBACK (on->off): a HARDENED-persisted session keeps recalling via the defensive cache tail", async () => {
+      // `getOrCreateSession` (the live runtime path) PERSISTS the resolved `memory_namespace`.
+      // Under flag-ON it persists the HARDENED namespace for a dotted userId.
+      process.env[FLAG] = "1";
+      const key = "discord:default:grace.hopper@example.com";
+      await service.getOrCreateSession(key);
+      const session = await service.getSession(key);
+      const persistedHardened = session?.memoryNamespace;
+      expect(persistedHardened).toBe(
+        "tenant.default.channel.discord.user.grace-hopper-example-com.shared",
+      );
+
+      // Now ROLL BACK the flag (on -> off). The re-derived candidate is the LEGACY namespace
+      // only — which would ORPHAN the hardened-written rows — EXCEPT the defensive cache tail
+      // appends the persisted hardened namespace, so those rows are STILL recalled. This pins
+      // the reverse direction of the data-safety guarantee (no loss on rollback).
+      delete process.env[FLAG];
+      const candidates = await service.getSessionMemoryNamespaceCandidates(key);
+      expect(candidates).toEqual([
+        "tenant.default.channel.discord.user.grace.hopper-example.com.shared", // re-derived legacy
+        persistedHardened, // defensive cache tail (the bucket the rows actually live in)
+      ]);
+    });
+  });
+
   // ─── forkSession ───
 
   describe("forkSession", () => {
