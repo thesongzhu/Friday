@@ -2862,9 +2862,21 @@ mod tests {
     }
 
     // (1) FULL ROUND-TRIP: the real TS sealed client ↔ the real server. The allowlisted client +
-    // allowlisted principal ⇒ the loop runs, a REFS-ONLY result is returned, AND the TS client opens
-    // the owner-sealed body back to "PONG". Proves TS-seal → Rust-open (auth_proof accepted) AND
-    // Rust-seal → TS-open (owner body) over the REAL protocol.
+    // allowlisted principal ⇒ the loop runs and a REFS-ONLY result is returned. (leg-A decouple,
+    // #655 Part 4) The TS client now SETTLES on the refs envelope ALONE — it no longer awaits or
+    // surfaces the owner-sealed body frame (compose sources the body from the owner-gated DB
+    // readback). So we assert the REFS the client surfaces (status/sha256/len from the FIRST
+    // envelope); proving TS-seal → Rust-open (auth_proof accepted) + refs settle over the REAL
+    // protocol. The server STILL persists the body to the DB + STILL emits the body frame after
+    // the refs frame. For a SMALL body (this "PONG") `accept_one` returns Ok(1): the post-refs
+    // body send lands in the loopback send buffer before the client's teardown RST is processed.
+    // NOTE (characterized, flagged to the operator — NOT fixed here, server-logic is out of
+    // leg-A scope): for a LARGE answer (empirically ~256KB) the body write is still pending when
+    // the client's RST arrives, so `ws_send_envelope(body)` returns Err → `serve_sealed_session`
+    // returns Err → `accept_one` is Err and logs `leg=body_send error=transport_closed`. This is
+    // a benign log (the answer is committed in the DB and the client already settled on refs), but
+    // it fires on otherwise-healthy large-answer runs. Making the body send non-fatal is a
+    // follow-up server change.
     #[test]
     #[ignore = "needs `node` + the prebuilt interop bundle; opt in with --ignored"]
     fn interop_ts_client_full_round_trip_pong() {
@@ -2884,6 +2896,10 @@ mod tests {
             "run-interop-ok",
         );
         // SERVER serves on the main thread (non-Send runtime); the TS client drives the socket.
+        // (leg-A decouple) The dispatch still processes ONE authed run even though the client
+        // settles on refs and tears down before draining the body frame — for this SMALL body the
+        // body send lands in the loopback send buffer, so `serve_sealed_session` returns Ok (no
+        // error settle). (Large bodies can Err on the body send; see the NOTE on the test above.)
         let processed = listener
             .accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist, false)
             .expect("server serves the interop session");
@@ -2895,13 +2911,14 @@ mod tests {
             serde_json::json!(true),
             "TS client reports success: {v:?}"
         );
-        assert_eq!(
-            v["body"],
-            serde_json::json!(ANSWER),
-            "TS client opened the owner-sealed body"
+        // (leg-A decouple) The client no longer surfaces a body — it settles on the refs alone.
+        assert!(
+            v.get("body").is_none(),
+            "leg-A decouple: the client surfaces NO body (refs-only settle): {v:?}"
         );
         assert_eq!(v["runId"], serde_json::json!("run-interop-ok"));
-        // The refs fingerprint matches the body (TS surfaces sha256/len from the refs result).
+        // The refs fingerprint is surfaced from the FIRST (refs) envelope — sha256/len of the answer
+        // the server persisted (and which the owner-gated DB readback will return to compose).
         assert_eq!(
             v["answerSha256"],
             serde_json::json!(sha256_hex(ANSWER.as_bytes())),

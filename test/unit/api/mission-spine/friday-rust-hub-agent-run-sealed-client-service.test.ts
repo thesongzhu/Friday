@@ -88,7 +88,10 @@ describe("createFridayRustHubAgentRunSealedClientService (B1-compose, dark, adap
     });
   });
 
-  it("maps the sealed result to REFS-ONLY and DROPS the in-band body", async () => {
+  it("maps the sealed result to REFS-ONLY (the client no longer carries an in-band body)", async () => {
+    // (leg-A decouple, #655 Part 4) The underlying sealed client now SETTLES on the refs envelope
+    // alone and surfaces NO `body` — so the adapter receives refs-only and maps refs-only. (The
+    // adapter already dropped any body; this asserts the post-decouple shape end-to-end.)
     const fake = makeFakeClient({
       result: {
         truthLabel: "rust_wired",
@@ -96,7 +99,6 @@ describe("createFridayRustHubAgentRunSealedClientService (B1-compose, dark, adap
         status: "finished",
         answerSha256: "a".repeat(64),
         answerLen: 4,
-        body: "PONG", // the sealed client's belt-and-suspenders in-band body — must be DROPPED.
       },
     });
     const service = createFridayRustHubAgentRunSealedClientService({
@@ -118,7 +120,7 @@ describe("createFridayRustHubAgentRunSealedClientService (B1-compose, dark, adap
       answerSha256: "a".repeat(64),
       answerLen: 4,
     });
-    // The in-band body is NOT surfaced (compose's body source is the slice-3 DB readback).
+    // No body is surfaced (compose's body source is the slice-3 owner-gated DB readback).
     expect("body" in result).toBe(false);
   });
 
@@ -236,12 +238,13 @@ describe("createFridayRustHubAgentRunSealedClientService (B1-compose, dark, adap
 });
 
 function deliveredResult(): FridayRustHubAgentRunSealedResult {
+  // (leg-A decouple, #655 Part 4) A delivered result is REFS-ONLY — the client no longer surfaces
+  // an in-band body; the owner-gated DB readback supplies the answer to compose.
   return {
     truthLabel: "rust_wired",
     runId: "run-1",
     status: "finished",
     answerSha256: "a".repeat(64),
     answerLen: 4,
-    body: "PONG",
   };
 }
