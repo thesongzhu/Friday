@@ -932,6 +932,33 @@ export function resolveRouteAgentRunViaRust(
   return raw === "1" || raw === "true";
 }
 
+/**
+ * providers-bridge cut-over (DARK): single source of truth resolving the
+ * `routeProvidersViaRust` flag from (1) an EXPLICIT
+ * {@link FridayHubConfig.routeProvidersViaRust} and, only as a fallback, (2) the
+ * `FRIDAY_ROUTE_PROVIDERS_VIA_RUST` env var — the operator knob that flips the retired
+ * Tier-2 PROVIDER surfaces (`providers.detect` / `providers.doctor` /
+ * `providers.validate` / `capabilities.doctor`) from fail-closed (503) to bridging the
+ * merged Rust `hub_providers_detect` / `hub_capability_doctor` bins, WITHOUT a source
+ * edit.
+ *
+ * PRECEDENCE + PARSE mirror {@link resolveRouteAgentRunViaRust} exactly: an explicit
+ * config boolean (true OR false) ALWAYS wins; the env is consulted only for the unset
+ * gap. Case-insensitive, trimmed `"1"` or `"true"` ⇒ true; ABSENT / `""` / `"0"` /
+ * `"false"` / ANY other value ⇒ false. DEFAULT (env unset, config unset) ⇒ false, so
+ * the routes stay byte-identical to today's fail-closed 503.
+ */
+export function resolveRouteProvidersViaRust(
+  configValue: boolean | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (typeof configValue === "boolean") {
+    return configValue;
+  }
+  const raw = (env.FRIDAY_ROUTE_PROVIDERS_VIA_RUST ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true";
+}
+
 function normalizeFridayHubPort(value: number | undefined): number | undefined {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 65535) {
     return undefined;
@@ -7030,6 +7057,13 @@ export async function createFridayHub(
     // set (the default) this is `false`, so the `=== true` gate is never satisfied → the
     // predicate is never evaluated → byte-identical to today's fail-closed 503.
     routeAgentRunViaRust: resolveRouteAgentRunViaRust(config.routeAgentRunViaRust),
+    // providers-bridge cut-over (DARK): default-false master flag for routing the retired
+    // Tier-2 PROVIDER surfaces to the merged Rust bins. SINGLE SOURCE OF TRUTH =
+    // `resolveRouteProvidersViaRust` (explicit config wins; else FRIDAY_ROUTE_PROVIDERS_VIA_RUST,
+    // case-insensitive "1"/"true" → true; anything else incl. unset → false). With nothing set
+    // (the default) this is `false` → the route handlers' `=== true` gate is never satisfied →
+    // byte-identical to today's fail-closed 503.
+    routeProvidersViaRust: resolveRouteProvidersViaRust(config.routeProvidersViaRust),
     allowTestOnlyAgentRunControlExecution: config.allowTestOnlyAgentRunControlExecution,
     allowTestOnlyAutonomyLifecycleExecution: config.allowTestOnlyAutonomyLifecycleExecution,
     allowTestOnlyStandingAgendaExecution: config.allowTestOnlyStandingAgendaExecution,

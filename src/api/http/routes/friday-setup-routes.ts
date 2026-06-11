@@ -41,6 +41,10 @@ import { parseFridaySecretInput } from "../../../security/friday-secret-ref.js";
 import { isFridayLoopbackAddress } from "../friday-http-client-ip.js";
 import { isUnauthenticatedPublicPrincipal } from "../../../security/friday-owner-session-channel-capability.js";
 import type { FridayAuthPrincipal } from "../../model/friday-api-auth.types.js";
+import type {
+  FridayRustHubProvidersDetectService,
+  FridayRustProvidersDetectReceipt,
+} from "../../mission-spine/friday-rust-hub-providers-detect-bridge-service.js";
 
 // ─── Types ───
 
@@ -1922,6 +1926,28 @@ export interface FridaySetupRoutesDeps {
    * reconciliation note.
    */
   allowTestOnlyProviderDetectExecution?: boolean;
+  /**
+   * DARK cut-over flag (DEFAULT-OFF). When `true`, the retired `providers.detect`
+   * route — instead of fail-closing with 503 — bridges to the merged Rust
+   * `hub_providers_detect` bin (#591/#639) via {@link rustProvidersDetect} and returns
+   * its REFS-ONLY CLI-login-status payload. When falsy (the default) the route is
+   * byte-identical to today: it fail-closes (503 TS_RUNTIME_PROVIDERS_DETECT_RETIRED)
+   * unless the test-oracle flag re-enables the legacy BYOK probe.
+   *
+   * SURFACE-SHAPE: the Rust bin answers the codex/claude CLI-login question (input
+   * `--probe`), NOT the legacy BYOK probe (apiKey/kind/baseUrl -> /v1/models). Flipping
+   * this flag CHANGES the response contract for clients — see the PR / operator note.
+   * The resolved boolean is supplied by the runtime (sourced from
+   * `FRIDAY_ROUTE_PROVIDERS_VIA_RUST` / explicit config); this factory does NOT read
+   * the env itself.
+   */
+  routeProvidersViaRust?: boolean;
+  /**
+   * The Rust providers-detect bridge service consulted ONLY when
+   * {@link routeProvidersViaRust} is `true`. Injected by the runtime (and by tests).
+   * When the flag is on but this is absent, the route fails closed.
+   */
+  rustProvidersDetect?: FridayRustHubProvidersDetectService;
 }
 
 // ─── Factory ───
@@ -2120,8 +2146,45 @@ export function createFridaySetupRoutes(
       path: "/v1/providers/detect",
       auth: { public: true, allowUnauthenticatedMutation: true },
       rateLimitPolicyId: "provider.validate",
-      async handler(ctx): Promise<DetectProviderResponse> {
+      async handler(ctx): Promise<DetectProviderResponse | FridayRustProvidersDetectReceipt> {
         assertSetupBootstrapBoundary(ctx);
+
+        // DARK cut-over (DEFAULT-OFF): when FRIDAY_ROUTE_PROVIDERS_VIA_RUST is on
+        // (resolved into deps.routeProvidersViaRust), bridge to the Rust
+        // hub_providers_detect bin and return its REFS-ONLY CLI-login-status payload
+        // instead of fail-closing. The bootstrap boundary above still runs first
+        // (byte-identical to today's gate ordering). The legacy BYOK input validation
+        // below does NOT apply to the Rust surface — the bin validates its own argv —
+        // so it is intentionally bypassed on this branch. SURFACE-SHAPE differs from
+        // the legacy BYOK probe; see the deps doc + PR.
+        if (deps.routeProvidersViaRust === true) {
+          if (!deps.rustProvidersDetect) {
+            throw new FridayDomainError(
+              "TS_RUNTIME_PROVIDERS_DETECT_RETIRED",
+              "Provider detection is fail-closed: the Rust route is enabled but the providers-detect bridge is not wired.",
+              {
+                httpStatus: 503,
+                details: {
+                  classification: "fail_closed",
+                  replacement: "rust_owned_provider_detect_entrypoint_required",
+                },
+              },
+            );
+          }
+          const detectBody = ctx.body as DetectProviderRequest | null;
+          // Optional `probe` selector (`codex` | `claude` | `both`); default `both`.
+          // The legacy BYOK kind/apiKey/baseUrl fields are NOT consumed here.
+          const requestedProbe =
+            detectBody && typeof (detectBody as Record<string, unknown>).probe === "string"
+              ? ((detectBody as Record<string, unknown>).probe as string)
+              : undefined;
+          const probe =
+            requestedProbe === "codex" || requestedProbe === "claude" || requestedProbe === "both"
+              ? requestedProbe
+              : "both";
+          return deps.rustProvidersDetect.detect({ probe });
+        }
+
         const body = ctx.body as DetectProviderRequest | null;
         if (!body || typeof body !== "object") {
           throw new FridayDomainError("VALIDATION_ERROR", "Request body is required", { httpStatus: 400 });

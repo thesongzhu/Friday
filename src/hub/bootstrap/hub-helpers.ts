@@ -1944,6 +1944,16 @@ export interface FridayHubConfig {
    * in this slice (the later composition slice consumes it).
    */
   routeAgentRunViaRust?: boolean;
+  /**
+   * providers-bridge cut-over (DARK): master ON/OFF for routing the retired Tier-2
+   * PROVIDER surfaces (`providers.detect` / `providers.doctor` / `providers.validate` /
+   * `capabilities.doctor`) to the merged Rust `hub_providers_detect` /
+   * `hub_capability_doctor` bins instead of fail-closing with 503. DEFAULT-FALSE —
+   * production hub creation must leave this unset so the routes stay byte-identical to
+   * today. Resolved (config-explicit wins, else `FRIDAY_ROUTE_PROVIDERS_VIA_RUST`) by
+   * `resolveRouteProvidersViaRust` and fed into the api-runtime deps.
+   */
+  routeProvidersViaRust?: boolean;
 }
 
 // ─── Resolved Hub Config ───

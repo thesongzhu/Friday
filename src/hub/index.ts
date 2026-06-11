@@ -38,6 +38,7 @@ export {
   resolveFridayChannelSessionKey,
   resolveFridayHubConfig,
   resolveRouteAgentRunViaRust,
+  resolveRouteProvidersViaRust,
   sanitizeFridayChannelVisibleReply,
   shouldFailClosedForFridayWorkspaceContext,
   resolveTokenSecret,

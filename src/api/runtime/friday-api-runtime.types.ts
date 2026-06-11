@@ -30,6 +30,8 @@ import type { FridayProviderService } from "#providers";
 import type { FridayRustHubAgentRunSealedClientService } from "../mission-spine/friday-rust-hub-agent-run-sealed-client-service.js";
 import type { FridayRustHubRunContinuityProjectorService } from "../mission-spine/friday-rust-hub-run-continuity-projector-service.js";
 import type { FridayRustHubRunAnswerReadbackService } from "../mission-spine/friday-rust-hub-run-answer-readback-service.js";
+import type { FridayRustHubProvidersDetectService } from "../mission-spine/friday-rust-hub-providers-detect-bridge-service.js";
+import type { FridayRustHubCapabilityDoctorService } from "../mission-spine/friday-rust-hub-capability-doctor-bridge-service.js";
 import type { FridayRustAgentRunWsClientX25519SecretResolver } from "../mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
 import type { FridayMediaUnderstandingRoutesDeps } from "../http/routes/friday-media-understanding-routes.js";
 import type { FridaySocialImportRoutesDeps } from "../http/routes/friday-social-import-routes.js";
@@ -327,6 +329,32 @@ export interface CreateFridayApiRuntimeDeps {
    * flag holds the gate; it does not turn anything on.
    */
   routeAgentRunViaRust?: boolean;
+  /**
+   * providers-bridge cut-over (DARK): the master ON/OFF (resolved boolean) for routing
+   * the retired Tier-2 PROVIDER surfaces — `providers.detect` (setup routes) and
+   * `providers.doctor` / `providers.validate` / `capabilities.doctor` (provider routes)
+   * — to the merged Rust `hub_providers_detect` / `hub_capability_doctor` bins instead
+   * of fail-closing with 503. DEFAULT-FALSE — leave unset in production/runtime so those
+   * routes stay byte-identical to today. Sourced (in bootstrap) from
+   * `FRIDAY_ROUTE_PROVIDERS_VIA_RUST` / explicit config via `resolveRouteProvidersViaRust`.
+   * When unset/false the bridge services below are constructed but NEVER consulted.
+   */
+  routeProvidersViaRust?: boolean;
+  /**
+   * providers-bridge cut-over (DARK): the providers-detect bridge service consulted by
+   * the `providers.detect` route ONLY when {@link routeProvidersViaRust} is true. OPTIONAL
+   * — when omitted the runtime lazily constructs the real service. Tests inject a bridge
+   * pointed at a scripted fake bin (no real cargo/provider, no spend, no network).
+   */
+  rustProvidersDetect?: FridayRustHubProvidersDetectService;
+  /**
+   * providers-bridge cut-over (DARK): the capability-doctor bridge service consulted by
+   * the `providers.doctor` / `providers.validate` / `capabilities.doctor` routes ONLY when
+   * {@link routeProvidersViaRust} is true. OPTIONAL — when omitted the runtime lazily
+   * constructs the real service. The bin's LIVE key-validation arm (~1-2 Anthropic tokens)
+   * runs ONLY when a caller explicitly opts in (capabilities.doctor `validateKeys: true`).
+   */
+  rustCapabilityDoctor?: FridayRustHubCapabilityDoctorService;
   /**
    * execrun-replacement slice S-F-compose (DARK): the three dark-substrate services the
    * composition wires together when {@link routeAgentRunViaRust} is on AND a run qualifies.

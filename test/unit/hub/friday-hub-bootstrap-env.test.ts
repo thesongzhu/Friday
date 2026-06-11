@@ -4,6 +4,7 @@ import {
   resolveFridayCanonicalMutatingActionGate,
   resolveFridayHubConfig,
   resolveRouteAgentRunViaRust,
+  resolveRouteProvidersViaRust,
 } from "#hub";
 import type { FridayHubConfig } from "#hub";
 
@@ -395,5 +396,38 @@ describe("resolveRouteAgentRunViaRust", () => {
     expect(resolveRouteAgentRunViaRust(false, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "1" })).toBe(false);
     expect(resolveRouteAgentRunViaRust(false, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "true" })).toBe(false);
     expect(resolveRouteAgentRunViaRust(false, emptyEnv())).toBe(false);
+  });
+});
+
+describe("resolveRouteProvidersViaRust", () => {
+  // DEFAULT-OFF: env unset (nothing set) → false → byte-identical to today's gated-off 503.
+  it("defaults to false when neither config nor env is set", () => {
+    expect(resolveRouteProvidersViaRust(undefined, emptyEnv())).toBe(false);
+  });
+
+  it("parses FRIDAY_ROUTE_PROVIDERS_VIA_RUST=1 / =true (case-insensitive, trimmed) as true", () => {
+    expect(resolveRouteProvidersViaRust(undefined, { FRIDAY_ROUTE_PROVIDERS_VIA_RUST: "1" })).toBe(true);
+    expect(resolveRouteProvidersViaRust(undefined, { FRIDAY_ROUTE_PROVIDERS_VIA_RUST: "true" })).toBe(true);
+    expect(resolveRouteProvidersViaRust(undefined, { FRIDAY_ROUTE_PROVIDERS_VIA_RUST: "TRUE" })).toBe(true);
+    expect(resolveRouteProvidersViaRust(undefined, { FRIDAY_ROUTE_PROVIDERS_VIA_RUST: " true " })).toBe(true);
+  });
+
+  // Fail-safe OFF: everything that is not exactly "1"/"true" → false.
+  it("treats 0, false, empty, and garbage env values as false (fail-safe off)", () => {
+    for (const raw of ["0", "false", "", "yes", "on", "enabled", "truthy", "2"]) {
+      expect(resolveRouteProvidersViaRust(undefined, { FRIDAY_ROUTE_PROVIDERS_VIA_RUST: raw })).toBe(false);
+    }
+  });
+
+  // PRECEDENCE: an explicit config boolean ALWAYS wins over the env.
+  it("uses explicit config true over the env (even when env says false)", () => {
+    expect(resolveRouteProvidersViaRust(true, { FRIDAY_ROUTE_PROVIDERS_VIA_RUST: "false" })).toBe(true);
+    expect(resolveRouteProvidersViaRust(true, emptyEnv())).toBe(true);
+  });
+
+  // The discriminating case: config=false MUST beat env=true (a `||` would wrongly return true here).
+  it("uses explicit config false over the env (config false beats env true)", () => {
+    expect(resolveRouteProvidersViaRust(false, { FRIDAY_ROUTE_PROVIDERS_VIA_RUST: "1" })).toBe(false);
+    expect(resolveRouteProvidersViaRust(false, emptyEnv())).toBe(false);
   });
 });
