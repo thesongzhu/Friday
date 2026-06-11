@@ -283,7 +283,10 @@ fn mutation_receipt(
 }
 
 /// Re-read a catalog row by id, failing closed (`not_found`) if it vanished.
-fn require_row(conn: &rusqlite::Connection, workflow_id: &str) -> Result<WorkflowCatalogRow, BinError> {
+fn require_row(
+    conn: &rusqlite::Connection,
+    workflow_id: &str,
+) -> Result<WorkflowCatalogRow, BinError> {
     catalog::get(conn, workflow_id)
         .map_err(map_catalog_err)?
         .ok_or(BinError::new("not_found"))
@@ -562,7 +565,10 @@ mod tests {
         assert_eq!(updated["revision"], 2);
         assert_ne!(updated["etag"], created["etag"]);
         assert_eq!(updated["name_sha256"], sha256_hex(b"Research v2"));
-        assert_eq!(updated["tags_json_sha256"], sha256_hex(br#"["ai","research"]"#));
+        assert_eq!(
+            updated["tags_json_sha256"],
+            sha256_hex(br#"["ai","research"]"#)
+        );
 
         // PUBLISH v1: delegates the flip to S8; catalog revision UNCHANGED (2).
         let published = ok_value(&db, "publish", &["--workflow-id=wf1", "--version=1"]);
@@ -628,10 +634,7 @@ mod tests {
         );
         assert_eq!(added["op"], "add-version");
         assert_eq!(added["added_version"], 2);
-        assert_eq!(
-            added["version_checksum_sha256"].as_str().unwrap().len(),
-            64
-        );
+        assert_eq!(added["version_checksum_sha256"].as_str().unwrap().len(), 64);
         // add-version does NOT bump the catalog revision.
         assert_eq!(added["revision"], 1);
 
@@ -641,7 +644,10 @@ mod tests {
             "deploy",
             &["--workflow-id=wf1", "--expected-revision=1", "--now-ms=200"],
         );
-        assert_eq!(deployed["deployed_version"], 2, "deploy follows published v2");
+        assert_eq!(
+            deployed["deployed_version"], 2,
+            "deploy follows published v2"
+        );
     }
 
     #[test]
@@ -705,9 +711,13 @@ mod tests {
         assert_eq!(got["name_sha256"], sha256_hex(b"WF"));
 
         // UNKNOWN entry on publish → not_found.
-        let err = run(&argv(&db, "publish", &["--workflow-id=ghost", "--version=1"]))
-            .err()
-            .unwrap();
+        let err = run(&argv(
+            &db,
+            "publish",
+            &["--workflow-id=ghost", "--version=1"],
+        ))
+        .err()
+        .unwrap();
         assert_eq!(err.kind, "not_found");
     }
 
@@ -743,7 +753,12 @@ mod tests {
             run(&argv(
                 &db,
                 "update",
-                &["--workflow-id=wf1", "--expected-revision=2", "--name=X", "--now-ms=300"]
+                &[
+                    "--workflow-id=wf1",
+                    "--expected-revision=2",
+                    "--name=X",
+                    "--now-ms=300"
+                ]
             ))
             .err()
             .unwrap()
@@ -771,7 +786,12 @@ mod tests {
         let u1 = ok_value(
             &db,
             "update",
-            &["--workflow-id=wf1", "--expected-revision=1", "--name=WF2", "--now-ms=200"],
+            &[
+                "--workflow-id=wf1",
+                "--expected-revision=1",
+                "--name=WF2",
+                "--now-ms=200",
+            ],
         );
         assert_eq!(u1["description_sha256"], sha256_hex(b"initial"));
 
@@ -896,13 +916,10 @@ mod tests {
         );
         // Missing --op.
         assert_eq!(
-            run(&[
-                "bin".to_string(),
-                format!("--db={db}"),
-            ])
-            .err()
-            .unwrap()
-            .kind,
+            run(&["bin".to_string(), format!("--db={db}"),])
+                .err()
+                .unwrap()
+                .kind,
             "bad_args"
         );
         // create with an unparsable --now-ms.
