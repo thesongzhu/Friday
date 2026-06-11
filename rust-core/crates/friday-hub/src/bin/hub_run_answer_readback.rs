@@ -117,10 +117,11 @@ fn run() -> Result<String, ReadbackError> {
     // The OWNER-GATING decision lives entirely in this single storage primitive: it
     // releases the body ONLY inside `Granted` (caller == the run's bound owner); every
     // other arm is body-free AND owner-free (fail-closed).
-    let access = get_run_answer_for_principal(db.conn(), &run_id, &caller_principal).map_err(|_| {
-        eprintln!("hub_run_answer_readback: run_id={run_id} leg=read error_kind=read_failed");
-        ReadbackError::new("read_failed")
-    })?;
+    let access =
+        get_run_answer_for_principal(db.conn(), &run_id, &caller_principal).map_err(|_| {
+            eprintln!("hub_run_answer_readback: run_id={run_id} leg=read error_kind=read_failed");
+            ReadbackError::new("read_failed")
+        })?;
 
     match access {
         // OWNER == CALLER: release the answer BODY verbatim. This is the ONLY branch that

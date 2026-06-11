@@ -70,7 +70,7 @@ use friday_core::{
     SessionState, SurfaceEvent, SurfaceThread, TrustedDeviceProjection, WorkItem,
 };
 use friday_core::{ProcessLease, ProcessObservation, WorkspaceClaim};
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, ErrorCode, OpenFlags};
 
 /// Which process this database belongs to. Determines the schema (a phone DB
 /// omits the secret-/sensitive-bearing tables, gate 21 §2/§3).
@@ -147,6 +147,73 @@ pub struct Db {
 /// Hub openers so no opener is left racing on a zero timeout.
 pub const HUB_BUSY_TIMEOUT_MS: i64 = 5000;
 
+/// The SHORT busy_timeout (ms) set on the connection BEFORE the one-time WAL flip.
+///
+/// `PRAGMA journal_mode = WAL` performs a one-time DELETE→WAL file conversion that
+/// needs a brief EXCLUSIVE lock. EMPIRICALLY the flip HONORS whatever `busy_timeout`
+/// is in effect WHEN IT RUNS (0ms ⇒ BUSY in ~20µs; 250ms ⇒ waits ~250ms then BUSY).
+/// The earlier bug set `busy_timeout` only AFTER the flip, so the flip inherited
+/// SQLite's ~5s compiled-in default and stalled the boot multi-seconds per attempt.
+/// Setting a small timeout FIRST lets the flip absorb a transient contender quickly,
+/// then the bounded outer retry covers a longer one — so the boot fails CLOSED
+/// promptly instead of stalling. (The full [`HUB_BUSY_TIMEOUT_MS`] is RESTORED right
+/// after the flip for the long-lived writer connection.)
+const HUB_FLIP_BUSY_TIMEOUT_MS: i64 = 250;
+
+/// Bounded retry budget for the writable Hub open (the one-time WAL flip).
+///
+/// If a peer holds a write txn LONGER than [`HUB_FLIP_BUSY_TIMEOUT_MS`] at the flip
+/// instant, the flip still returns `SQLITE_BUSY`/`SQLITE_LOCKED`. Un-retried, that is
+/// the WS-server `init_failed` boundary: the first post-deploy opener racing a
+/// still-running writer ⇒ [`HubInitError::Storage`] ⇒ `ServerError::Init` ⇒ crash. So
+/// the writable open is wrapped in a SHORT bounded retry that re-attempts ONLY a
+/// busy/locked open. Once the file is in WAL, reopens are cheap no-ops that never
+/// re-trigger the flip, so this budget is paid at most once per file lifetime. The
+/// deploy procedure additionally mandates an UNCONTENDED first conversion, so this
+/// retry is a belt-and-suspenders backstop, not the primary defense.
+const HUB_OPEN_RETRY_ATTEMPTS: u32 = 5;
+
+/// Backoff between writable-open retry attempts. Total worst-case added latency is
+/// `(HUB_OPEN_RETRY_ATTEMPTS - 1) * HUB_OPEN_RETRY_BACKOFF` — kept small so a genuine
+/// contender (a mid-write peer at the flip instant) clears without a perceptible
+/// boot stall, while a never-clearing lock still fails closed promptly.
+const HUB_OPEN_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// True iff `e` is a SQLite busy/locked failure — the ONLY class the writable-open
+/// retry self-heals. Matched on the STRUCTURED `ErrorCode` (never the message string,
+/// which is locale/version-fragile) so a real init error — `SchemaTooNew`, a migration
+/// failure, an IO error — is NEVER masked as "retryable" and propagates immediately.
+/// Reaches through the `StorageError::Sqlite` wrapper so a busy surfaced from the WAL
+/// flip pragma OR from the migration write-txn is recognised identically.
+fn is_storage_busy(e: &StorageError) -> bool {
+    matches!(
+        e,
+        StorageError::Sqlite(rusqlite::Error::SqliteFailure(err, _))
+            if matches!(err.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
+    )
+}
+
+/// Run a writable-Hub open closure with a SHORT bounded retry on SQLite busy/locked.
+/// Each attempt re-runs `open` from scratch (a fresh `Connection` carries no partial
+/// state, and the WAL flip is atomic — a BUSY means the conversion did NOT happen — so
+/// a retry can never compound a half-converted file). Only the busy/locked case
+/// retries: every other error propagates on the FIRST attempt with zero delay (never
+/// mask a real init failure). After the final attempt the last busy error is returned
+/// so the caller still fails closed.
+fn open_hub_with_busy_retry(mut open: impl FnMut() -> Result<Db>) -> Result<Db> {
+    let mut attempt: u32 = 0;
+    loop {
+        match open() {
+            Ok(db) => return Ok(db),
+            Err(e) if is_storage_busy(&e) && attempt + 1 < HUB_OPEN_RETRY_ATTEMPTS => {
+                attempt += 1;
+                std::thread::sleep(HUB_OPEN_RETRY_BACKOFF);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
 impl Db {
     /// Open (and migrate) a Hub database — concurrency-safe.
     ///
@@ -177,6 +244,18 @@ impl Db {
     /// Both pragmas are set BEFORE `apply_migrations`, so the migration's own write
     /// txn also benefits (it never races another opener onto an immediate BUSY).
     ///
+    /// FLIP CONTENTION — the one-time `journal_mode = WAL` conversion needs a brief
+    /// EXCLUSIVE lock. It HONORS the `busy_timeout` in effect when it runs, so a SHORT
+    /// timeout ([`HUB_FLIP_BUSY_TIMEOUT_MS`]) is set BEFORE the flip (and the full
+    /// [`HUB_BUSY_TIMEOUT_MS`] RESTORED right after, for the long-lived writer). A peer
+    /// that holds a write txn LONGER than that short timeout still BUSYs the flip, so
+    /// the whole open is wrapped in a small bounded retry ([`open_hub_with_busy_retry`],
+    /// [`HUB_OPEN_RETRY_ATTEMPTS`]) that re-attempts ONLY a busy/locked open. Once the
+    /// file is WAL the flip is a no-op, so the retry budget is paid at most once per
+    /// file lifetime. The deploy procedure additionally mandates an UNCONTENDED first
+    /// conversion (stop all writers, then convert), so this retry is belt-and-suspenders,
+    /// not the primary defense.
+    ///
     /// `journal_mode = WAL` is a PERSISTENT file-mode change the instant a
     /// connection runs it on a file DB (it spawns the `-wal`/`-shm` sidecars); it
     /// is a no-op (`journal_mode` reads back `"memory"`) on an in-memory DB. The
@@ -185,22 +264,45 @@ impl Db {
     /// sidecars or checkpoint first; an existing `-journal` is resolved by SQLite on the
     /// first WAL open).
     pub fn open_hub_concurrent(path: &str) -> Result<Db> {
-        let mut conn = Connection::open(path)?;
-        conn.pragma_update(None, "foreign_keys", true)?;
-        // WAL is a no-op (returns "memory") on an in-memory DB; on a file DB it
-        // converts the journal mode persistently. busy_timeout is per-connection.
-        conn.pragma_update(None, "journal_mode", "WAL")?;
-        conn.pragma_update(None, "busy_timeout", HUB_BUSY_TIMEOUT_MS)?;
-        apply_migrations(
-            &mut conn,
-            path,
-            &schema::hub_migrations(),
-            "unit2-foundation",
-        )?;
-        Ok(Db {
-            conn,
-            path: path.to_string(),
-            profile: Profile::Hub,
+        // BOUNDED RETRY on busy/locked: the one-time WAL flip below honors the SHORT
+        // busy_timeout set just before it, but a peer holding the lock LONGER than that
+        // still BUSYs the flip. Without a retry, the first post-deploy WS-server open
+        // racing a still-running writer would crash with `init_failed` and never
+        // self-heal. Each attempt opens a FRESH connection, so no partial state carries
+        // across; once the file is WAL the flip is a no-op, so the budget is paid at
+        // most once per file lifetime.
+        open_hub_with_busy_retry(|| {
+            let mut conn = Connection::open(path)?;
+            conn.pragma_update(None, "foreign_keys", true)?;
+            // CRITICAL ORDERING: set a SHORT busy_timeout BEFORE the WAL flip. The
+            // `journal_mode = WAL` conversion HONORS the busy_timeout that is in effect
+            // WHEN IT RUNS (empirically: 0ms ⇒ fail in ~20µs, 250ms ⇒ wait ~250ms). The
+            // earlier bug set busy_timeout AFTER the flip, so the flip ran on SQLite's
+            // ~5s compiled-in default and stalled the whole boot. A small pre-flip
+            // timeout lets the flip wait briefly for a transient contender, then the
+            // bounded outer retry ([`open_hub_with_busy_retry`]) covers a contender that
+            // outlasts it — fast fail-closed instead of a multi-second per-attempt stall.
+            conn.pragma_update(None, "busy_timeout", HUB_FLIP_BUSY_TIMEOUT_MS)?;
+            // WAL is a no-op (returns "memory") on an in-memory DB; on a file DB it
+            // converts the journal mode persistently.
+            conn.pragma_update(None, "journal_mode", "WAL")?;
+            // RESTORE the full per-connection busy_timeout for the LONG-LIVED writer
+            // connection: this is the connection the WS-server runtime holds, and a
+            // contended write/read on it must retry for up to HUB_BUSY_TIMEOUT_MS (the
+            // original readback-503 fix) — not the short flip timeout. It is also set
+            // BEFORE `apply_migrations` so the migrate write-txn gets the full timeout.
+            conn.pragma_update(None, "busy_timeout", HUB_BUSY_TIMEOUT_MS)?;
+            apply_migrations(
+                &mut conn,
+                path,
+                &schema::hub_migrations(),
+                "unit2-foundation",
+            )?;
+            Ok(Db {
+                conn,
+                path: path.to_string(),
+                profile: Profile::Hub,
+            })
         })
     }
 
@@ -1101,4 +1203,129 @@ fn insert_activity_conn(conn: &Connection, a: &ActivityRow) -> rusqlite::Result<
         ],
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod busy_retry_tests {
+    use super::{
+        is_storage_busy, now_ms, open_hub_with_busy_retry, Db, Profile, StorageError,
+        HUB_OPEN_RETRY_ATTEMPTS,
+    };
+    use std::cell::Cell;
+
+    /// Build a synthetic busy/locked `StorageError` exactly as a contended SQLite open
+    /// surfaces one — the structured `SqliteFailure(DatabaseBusy/LOCKED)` the retry must
+    /// recognise (NOT a message-string match).
+    fn busy_storage_error(code: i32) -> StorageError {
+        StorageError::Sqlite(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(code),
+            Some("database is locked".to_string()),
+        ))
+    }
+
+    /// The predicate catches BOTH busy and locked on the structured code, and rejects a
+    /// non-busy SQLite error AND a non-Sqlite StorageError — so the retry can never mask
+    /// a real init failure (`SchemaTooNew`, IO, migration) as "retryable".
+    #[test]
+    fn predicate_matches_only_busy_or_locked() {
+        assert!(is_storage_busy(&busy_storage_error(
+            rusqlite::ffi::SQLITE_BUSY
+        )));
+        assert!(is_storage_busy(&busy_storage_error(
+            rusqlite::ffi::SQLITE_LOCKED
+        )));
+        // A different SQLite failure (e.g. SQLITE_CORRUPT) is NOT retryable.
+        assert!(!is_storage_busy(&busy_storage_error(
+            rusqlite::ffi::SQLITE_CORRUPT
+        )));
+        // A non-Sqlite StorageError is NOT retryable (real init failure → propagate).
+        assert!(!is_storage_busy(&StorageError::SchemaTooNew {
+            disk: 99,
+            code: 1
+        }));
+    }
+
+    /// The loop retries a busy open and SUCCEEDS once the contender clears — modeled
+    /// deterministically with an injected closure that is busy `attempts-1` times then
+    /// returns Ok (no threads, no real DB).
+    #[test]
+    fn retries_busy_then_succeeds() {
+        // A real on-disk Hub DB stands in for the recovered open (WAL/the backup guard
+        // both need a file path — an in-memory DB is rejected by the destructive-backup
+        // guard, so it can't model a successful Hub open).
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "friday-busy-retry-{}-{}.sqlite",
+            std::process::id(),
+            now_ms()
+        ));
+        let path_str = path.to_string_lossy().to_string();
+
+        let calls = Cell::new(0u32);
+        let busy_before_success = HUB_OPEN_RETRY_ATTEMPTS - 1;
+        let db = open_hub_with_busy_retry(|| {
+            let n = calls.get();
+            calls.set(n + 1);
+            if n < busy_before_success {
+                Err(busy_storage_error(rusqlite::ffi::SQLITE_BUSY))
+            } else {
+                Db::open_hub_concurrent(&path_str)
+            }
+        })
+        .expect("a busy open that later clears must succeed");
+        assert_eq!(db.profile, Profile::Hub);
+        assert_eq!(
+            calls.get(),
+            HUB_OPEN_RETRY_ATTEMPTS,
+            "must attempt exactly the full budget when busy clears on the last try"
+        );
+
+        drop(db);
+        let _ = std::fs::remove_file(&path_str);
+        let _ = std::fs::remove_file(format!("{path_str}-wal"));
+        let _ = std::fs::remove_file(format!("{path_str}-shm"));
+    }
+
+    /// A never-clearing busy open EXHAUSTS the bounded budget and FAILS CLOSED with the
+    /// last busy error (no infinite loop) — the boundary that keeps `init_failed`
+    /// deterministic rather than a hang.
+    #[test]
+    fn exhausts_budget_and_fails_closed_when_busy_never_clears() {
+        let calls = Cell::new(0u32);
+        let result = open_hub_with_busy_retry(|| {
+            calls.set(calls.get() + 1);
+            Err::<Db, _>(busy_storage_error(rusqlite::ffi::SQLITE_BUSY))
+        });
+        // `Db` is not `Debug`, so match instead of `expect_err`.
+        let err = match result {
+            Ok(_) => panic!("a never-clearing busy open must fail closed, not loop forever"),
+            Err(e) => e,
+        };
+        assert!(
+            is_storage_busy(&err),
+            "the surfaced error stays the busy error"
+        );
+        assert_eq!(
+            calls.get(),
+            HUB_OPEN_RETRY_ATTEMPTS,
+            "must attempt exactly the bounded budget, no more"
+        );
+    }
+
+    /// A non-busy error propagates on the FIRST attempt with NO retry — proving a real
+    /// init failure is never delayed or masked.
+    #[test]
+    fn non_busy_error_propagates_immediately_without_retry() {
+        let calls = Cell::new(0u32);
+        let result = open_hub_with_busy_retry(|| {
+            calls.set(calls.get() + 1);
+            Err::<Db, _>(StorageError::SchemaTooNew { disk: 99, code: 1 })
+        });
+        let err = match result {
+            Ok(_) => panic!("a non-busy error must propagate"),
+            Err(e) => e,
+        };
+        assert!(matches!(err, StorageError::SchemaTooNew { .. }));
+        assert_eq!(calls.get(), 1, "a non-busy error must NOT be retried");
+    }
 }
