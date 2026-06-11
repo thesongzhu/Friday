@@ -1412,7 +1412,10 @@ mod tests {
         assert!(reaper_enabled_from(Some("1")), "1 ⇒ enabled");
         assert!(reaper_enabled_from(Some("true")), "true ⇒ enabled");
         assert!(reaper_enabled_from(Some("TRUE")), "TRUE ⇒ enabled");
-        assert!(reaper_enabled_from(Some("  true  ")), "padded true ⇒ enabled");
+        assert!(
+            reaper_enabled_from(Some("  true  ")),
+            "padded true ⇒ enabled"
+        );
         assert!(reaper_enabled_from(Some(" 1 ")), "padded 1 ⇒ enabled");
     }
 

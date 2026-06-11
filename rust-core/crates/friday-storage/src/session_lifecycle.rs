@@ -282,15 +282,7 @@ mod tests {
                 "SELECT status, idle_at, archived_at, pruned_at, last_activity_at
                  FROM agent_session WHERE agent_session_id = 's1'",
                 [],
-                |r| {
-                    Ok((
-                        r.get(0)?,
-                        r.get(1)?,
-                        r.get(2)?,
-                        r.get(3)?,
-                        r.get(4)?,
-                    ))
-                },
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .unwrap();
         assert_eq!(status, "active");
@@ -338,13 +330,19 @@ mod tests {
         // Just UNDER the idle timeout: now = created + IDLE_TIMEOUT (not strictly greater).
         let just_under = created + IDLE_TIMEOUT_MS;
         let out = sweep_lifecycle(db.conn(), just_under).unwrap();
-        assert_eq!(out.idled, 0, "at-exactly-threshold does not fire (strict <)");
+        assert_eq!(
+            out.idled, 0,
+            "at-exactly-threshold does not fire (strict <)"
+        );
         assert_eq!(status_of(&db, "s1"), "active");
 
         // Just OVER: now = created + IDLE_TIMEOUT + 1.
         let just_over = created + IDLE_TIMEOUT_MS + 1;
         let out = sweep_lifecycle(db.conn(), just_over).unwrap();
-        assert_eq!(out.idled, 1, "past-threshold idles via COALESCE(updated_at)");
+        assert_eq!(
+            out.idled, 1,
+            "past-threshold idles via COALESCE(updated_at)"
+        );
         assert_eq!(status_of(&db, "s1"), "idle");
         // The transition wrote idle_at + status_changed_at + updated_at = now.
         let (idle_at, sca, upd): (i64, i64, i64) = db
@@ -389,7 +387,15 @@ mod tests {
         let db = Db::open_hub(&tmp("archive")).unwrap();
         let now = 100_000_000_000_i64;
         // idle_at just UNDER the archive timeout (not strictly past) → not archived.
-        seed(&db, "under", "idle", Some(now - ARCHIVE_TIMEOUT_MS), None, None, 1);
+        seed(
+            &db,
+            "under",
+            "idle",
+            Some(now - ARCHIVE_TIMEOUT_MS),
+            None,
+            None,
+            1,
+        );
         // idle_at just OVER → archived.
         seed(
             &db,
@@ -478,8 +484,14 @@ mod tests {
         );
         let out = sweep_lifecycle(db.conn(), now).unwrap();
         assert_eq!(out.hard_deleted, 1);
-        assert!(exists(&db, "keep"), "not-yet-expired pruned session is kept");
-        assert!(!exists(&db, "gone"), "past-timeout pruned session is removed");
+        assert!(
+            exists(&db, "keep"),
+            "not-yet-expired pruned session is kept"
+        );
+        assert!(
+            !exists(&db, "gone"),
+            "past-timeout pruned session is removed"
+        );
     }
 
     // --- hard-delete safety: only past-timeout pruned rows go -------------------
@@ -494,15 +506,7 @@ mod tests {
         seed(&db, "idl", "idle", Some(1), None, None, 1);
         seed(&db, "arc", "archived", None, Some(1), None, 1);
         // A pruned row NOT yet past the hard-delete timeout.
-        seed(
-            &db,
-            "fresh-pruned",
-            "pruned",
-            None,
-            None,
-            Some(now - 1),
-            1,
-        );
+        seed(&db, "fresh-pruned", "pruned", None, None, Some(now - 1), 1);
         // A pruned row past the timeout.
         seed(
             &db,
@@ -514,7 +518,10 @@ mod tests {
             1,
         );
         let out = sweep_lifecycle(db.conn(), now).unwrap();
-        assert_eq!(out.hard_deleted, 1, "only the expired pruned row is deleted");
+        assert_eq!(
+            out.hard_deleted, 1,
+            "only the expired pruned row is deleted"
+        );
         assert!(exists(&db, "fresh-pruned"));
         assert!(!exists(&db, "old-pruned"));
         // The other-phase rows DID advance (they were aged), but none was DELETED.
@@ -568,7 +575,10 @@ mod tests {
 
         let out = sweep_lifecycle(db.conn(), now).unwrap();
         assert_eq!(out.hard_deleted, 1);
-        assert_eq!(out.messages_deleted, 2, "both child messages of 'gone' removed");
+        assert_eq!(
+            out.messages_deleted, 2,
+            "both child messages of 'gone' removed"
+        );
         assert!(!exists(&db, "gone"));
         // No orphan messages for the deleted session.
         let orphans: i64 = db
@@ -600,7 +610,15 @@ mod tests {
         let db = Db::open_hub(&tmp("idem")).unwrap();
         let now = 100_000_000_000_i64;
         // One row per phase, each just-eligible to advance exactly one step.
-        seed(&db, "a", "active", None, None, None, now - IDLE_TIMEOUT_MS - 1);
+        seed(
+            &db,
+            "a",
+            "active",
+            None,
+            None,
+            None,
+            now - IDLE_TIMEOUT_MS - 1,
+        );
         seed(
             &db,
             "i",
@@ -639,7 +657,10 @@ mod tests {
 
         // Second sweep at the SAME now: nothing is newly eligible → no-op.
         let second = sweep_lifecycle(db.conn(), now).unwrap();
-        assert!(second.is_empty(), "second back-to-back sweep changes nothing");
+        assert!(
+            second.is_empty(),
+            "second back-to-back sweep changes nothing"
+        );
     }
 
     // --- fresh-DB / all-active no-op -------------------------------------------
@@ -654,7 +675,10 @@ mod tests {
         ensure_session(db.conn(), "s2", now - 1).unwrap();
         ensure_session(db.conn(), "s3", now - IDLE_TIMEOUT_MS).unwrap(); // exactly at boundary
         let out = sweep_lifecycle(db.conn(), now).unwrap();
-        assert!(out.is_empty(), "fresh all-active DB → zero transitions, zero deletes");
+        assert!(
+            out.is_empty(),
+            "fresh all-active DB → zero transitions, zero deletes"
+        );
         assert_eq!(status_of(&db, "s1"), "active");
         assert_eq!(status_of(&db, "s2"), "active");
         assert_eq!(status_of(&db, "s3"), "active");
