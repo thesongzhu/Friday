@@ -126,6 +126,16 @@ use rusqlite::Connection;
 /// `unavailable`. Adversarial review can grep for this to confirm no faked success.
 pub const UNIMPLEMENTED_EXECUTION_MARKER: &str = "rust_system_action_execution_unimplemented";
 
+/// The coarse marker an OBSERVE/DRY-RUN execution records as its result `message`
+/// (A7). The [`OsIntentExecutor`] in its DEFAULT dry-run posture LOGS the intended OS
+/// effect refs-only WITHOUT actuating it and records this marker. Like the
+/// unimplemented marker it records status `Unavailable` — NEVER `completed`, because
+/// no effect was performed — but it is a DISTINCT, greppable signal that the action
+/// was intentionally observed-not-actuated (the operator-approved A7 default), as
+/// opposed to an effect that has no backend at all. Adversarial review can grep for
+/// this to confirm the dry-run default is in force and never silently actuated.
+pub const DRY_RUN_OBSERVED_MARKER: &str = "rust_system_action_dry_run_observed";
+
 /// The TS retirement guard's declared replacement id. The Rust entrypoint IS this
 /// replacement; exported so the boundary is greppable across the two trees.
 pub const RUST_ENTRYPOINT_REPLACEMENT_ID: &str =
@@ -182,8 +192,15 @@ pub struct IntentInput {
 pub struct DispatchOutcome {
     pub result: IntentResultRecord,
     /// `true` when the result reflects a DEFERRED (unimplemented) OS action — i.e.
-    /// the executor is the [`UnavailableExecutor`] seam, not a real effect.
+    /// the executor reported the [`UNIMPLEMENTED_EXECUTION_MARKER`] (no real effect,
+    /// no backend), the [`UnavailableExecutor`] default.
     pub execution_deferred: bool,
+    /// `true` when the result reflects an OBSERVE / DRY-RUN — the executor LOGGED the
+    /// intended OS effect refs-only WITHOUT actuating it (the A7 operator-approved
+    /// default), recording the [`DRY_RUN_OBSERVED_MARKER`]. Like `execution_deferred`
+    /// the status is `Unavailable`, never `completed`: nothing was performed. Computed
+    /// as `status == Unavailable && message == DRY_RUN_OBSERVED_MARKER`.
+    pub dry_run: bool,
 }
 
 /// The boundary to the actual EFFECT of a protected action — the OS effect of a
@@ -221,6 +238,179 @@ impl SystemActionExecutor for UnavailableExecutor {
         ExecOutcome {
             status: IntentStatus::Unavailable,
             message: UNIMPLEMENTED_EXECUTION_MARKER.to_string(),
+        }
+    }
+}
+
+// ─── A7 OS-executor: per-IntentAction allowlist gate + dry-run-default + backend ──
+
+/// The OPERATOR-CURATED per-[`IntentAction`] ALLOWLIST (A7 decision #2). Only an action
+/// PRESENT here may even ATTEMPT actuation (and only then if the executor's actuate flag
+/// is on AND the action is not in the [`is_never_auto_execute`] set). The default —
+/// [`IntentActionAllowlist::empty`] — permits NOTHING, so the ship-default posture is
+/// "no action actuates" exactly as the operator approved. The allowlist is a positive
+/// gate ONLY: presence is necessary-but-not-sufficient to actuate; it can never WIDEN
+/// past the never-auto guard or the dry-run-default flag.
+///
+/// DARK: there is no production caller that populates this — it ships EMPTY. An operator
+/// curates it (out of band) before any actuate-flagged cutover.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct IntentActionAllowlist {
+    permitted: std::collections::BTreeSet<&'static str>,
+}
+
+impl IntentActionAllowlist {
+    /// The ship default: an EMPTY allowlist — NO action is permitted to actuate. Every
+    /// action falls through to dry-run/observe. This is the operator-approved A7 default.
+    pub fn empty() -> Self {
+        IntentActionAllowlist {
+            permitted: std::collections::BTreeSet::new(),
+        }
+    }
+
+    /// Build an allowlist from an explicit set of actions (an operator-curated list).
+    /// A never-auto action MAY appear here without effect: the executor's never-auto
+    /// guard still forces it to dry-run, so the allowlist can never override the guard.
+    pub fn from_actions<I: IntoIterator<Item = IntentAction>>(actions: I) -> Self {
+        IntentActionAllowlist {
+            permitted: actions.into_iter().map(|a| a.as_str()).collect(),
+        }
+    }
+
+    /// True iff `action` is present in the operator-curated allowlist. Necessary but NOT
+    /// sufficient for actuation (the actuate flag + the never-auto guard also apply).
+    pub fn permits(&self, action: IntentAction) -> bool {
+        self.permitted.contains(action.as_str())
+    }
+
+    /// The count of permitted actions (diagnostics; `0` for the ship default).
+    pub fn len(&self) -> usize {
+        self.permitted.len()
+    }
+
+    /// True for the ship-default empty allowlist.
+    pub fn is_empty(&self) -> bool {
+        self.permitted.is_empty()
+    }
+}
+
+/// The boundary to the ACTUAL host actuation of an OS action — the real
+/// `companionBridge` / `desktopSessionManager` / AppleScript / `execCommand` surface
+/// the TS `executeIntentInternal` switch bodies drive. An [`OsIntentExecutor`] only ever
+/// reaches a backend when ALL of {actuate-flag-on, allowlisted, NOT-never-auto} hold;
+/// even then the ONLY provided impl is [`UnavailableBackend`], which performs NOTHING
+/// and honestly reports `Unavailable` + the unimplemented marker. A real backend (a
+/// companion/Swift helper / least-privilege OS process) is out of scope for this dark
+/// slice and is a DEPLOY-GO-gated future seam. A backend MUST NOT report `Completed` for
+/// an effect it did not perform.
+pub trait OsActuationBackend {
+    /// Attempt the host effect of `action` on `target_ref`. The unavailable backend
+    /// returns `Unavailable` + the unimplemented marker (no effect performed).
+    fn actuate(&self, action: IntentAction, target_ref: Option<&str>) -> ExecOutcome;
+}
+
+/// The DEFAULT (and only) actuation backend: it performs NOTHING and reports the action
+/// `Unavailable` with [`UNIMPLEMENTED_EXECUTION_MARKER`] — the honest "no host backend is
+/// wired yet" seam. It is the precedent's analogue of the TS unavailable companion
+/// bridge. Even when the [`OsIntentExecutor`]'s every gate is satisfied, with this
+/// backend NOTHING actuates — so the dark slice can NEVER move the host, by construction.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UnavailableBackend;
+
+impl OsActuationBackend for UnavailableBackend {
+    fn actuate(&self, _action: IntentAction, _target_ref: Option<&str>) -> ExecOutcome {
+        ExecOutcome {
+            status: IntentStatus::Unavailable,
+            message: UNIMPLEMENTED_EXECUTION_MARKER.to_string(),
+        }
+    }
+}
+
+/// The A7 OS executor (DARK). It wires the operator-approved postures around any
+/// [`OsActuationBackend`]:
+///
+/// 1. **DRY-RUN / observe DEFAULT** (decision #1) — `actuate` is `false` by default
+///    ([`OsIntentExecutor::dry_run_default`]). In dry-run the intended OS effect is LOGGED
+///    refs-only (the [`DRY_RUN_OBSERVED_MARKER`] result, status `Unavailable` — NEVER
+///    `Completed`) and the backend is NEVER touched.
+/// 2. **Per-action ALLOWLIST gate** (decision #2) — actuation is attempted only for an
+///    action the operator-curated [`IntentActionAllowlist`] permits; the ship default is
+///    [`IntentActionAllowlist::empty`] (permits nothing).
+/// 3. **NEVER-AUTO guard** (decision #4) — any [`is_never_auto_execute`] action (the
+///    HIGH_RISK set + every OS-affecting action) is FORCED to dry-run regardless of the
+///    actuate flag and the allowlist. This guard is checked FIRST and cannot be widened.
+///
+/// The Ed25519 single-use digest-bound operator approval (decision #3) is enforced
+/// UPSTREAM by [`SystemIntentEntrypoint::dispatch_with_approval`] — a mutating action
+/// reaches this executor only after a verified `Allow`. This executor does not (and the
+/// trait signature cannot) re-check the approval; its job is the dry-run/allowlist/
+/// never-auto layer ON TOP of that. Because the never-auto set covers every OS-affecting
+/// action — including the NON-mutating observe verbs (`snapshot`/`search_file`/… ) that
+/// plain `dispatch` (no approval) can reach the executor with — turning the actuate flag
+/// on can NEVER fire an OS effect without an approval: those actions force dry-run, and
+/// the only actions left that could actuate (none today, since every OS-affecting action
+/// is never-auto) are gated by the allowlist anyway.
+///
+/// With the only provided backend ([`UnavailableBackend`]) NOTHING ever actuates even on
+/// the (currently unreachable) actuate path — the dark slice cannot move the host.
+pub struct OsIntentExecutor<B: OsActuationBackend = UnavailableBackend> {
+    actuate: bool,
+    allowlist: IntentActionAllowlist,
+    backend: B,
+}
+
+impl OsIntentExecutor<UnavailableBackend> {
+    /// The ship default (A7 operator-approved): dry-run/observe posture, EMPTY allowlist,
+    /// the unavailable backend. Nothing actuates; every action is logged refs-only and
+    /// recorded `Unavailable` + [`DRY_RUN_OBSERVED_MARKER`].
+    pub fn dry_run_default() -> Self {
+        OsIntentExecutor {
+            actuate: false,
+            allowlist: IntentActionAllowlist::empty(),
+            backend: UnavailableBackend,
+        }
+    }
+}
+
+impl<B: OsActuationBackend> OsIntentExecutor<B> {
+    /// Build an executor with the actuate flag set EXPLICITLY, an operator-curated
+    /// allowlist, and a backend. NEVER set `actuate = true` on a production path until
+    /// the DEPLOY-GO cutover is taken and a real backend exists. Even with `actuate =
+    /// true`, the never-auto guard + the allowlist still apply, and the
+    /// [`UnavailableBackend`] still performs nothing.
+    pub fn new(actuate: bool, allowlist: IntentActionAllowlist, backend: B) -> Self {
+        OsIntentExecutor {
+            actuate,
+            allowlist,
+            backend,
+        }
+    }
+
+    /// True if this executor would ATTEMPT actuation for `action` — i.e. all three of
+    /// {actuate flag on, allowlist permits, NOT never-auto} hold. Diagnostics / the
+    /// single source of truth the `execute` body branches on (so the gate logic is
+    /// testable in isolation and can never drift from the recorded outcome).
+    pub fn would_actuate(&self, action: IntentAction) -> bool {
+        self.actuate && !is_never_auto_execute(action) && self.allowlist.permits(action)
+    }
+}
+
+impl<B: OsActuationBackend> SystemActionExecutor for OsIntentExecutor<B> {
+    fn execute(&self, action: IntentAction, target_ref: Option<&str>) -> ExecOutcome {
+        if self.would_actuate(action) {
+            // All gates satisfied → DELEGATE to the backend. The only provided backend
+            // performs nothing and reports `Unavailable` + the unimplemented marker, so
+            // the dark slice still actuates NOTHING. A backend MUST NOT fake `Completed`.
+            self.backend.actuate(action, target_ref)
+        } else {
+            // The dry-run/observe DEFAULT (decision #1) and the catch-all for a
+            // never-auto / non-allowlisted / actuate-off action: LOG the intended effect
+            // refs-only (the marker IS the log) and record `Unavailable` — NEVER
+            // `Completed`, because nothing was performed.
+            ExecOutcome {
+                status: IntentStatus::Unavailable,
+                message: DRY_RUN_OBSERVED_MARKER.to_string(),
+            }
         }
     }
 }
@@ -373,22 +563,7 @@ impl<E: SystemActionExecutor> SystemIntentEntrypoint<E> {
         let exec = self
             .executor
             .execute(input.action, input.target_ref.as_deref());
-        let execution_deferred = exec.status == IntentStatus::Unavailable
-            && exec.message == UNIMPLEMENTED_EXECUTION_MARKER;
-        let result = IntentResultRecord {
-            intent_id: input.intent_id.clone(),
-            action: input.action,
-            status: exec.status,
-            message: exec.message,
-            control_lease_id: lease_id,
-            gate_reason: None,
-            created_at: now_ms,
-        };
-        insert_intent_result(conn, &result)?;
-        Ok(DispatchOutcome {
-            result,
-            execution_deferred,
-        })
+        self.persist_exec_result(conn, input, exec, lease_id, now_ms)
     }
 
     /// Dispatch a system intent WITH a canonical Ed25519 operator approval — the
@@ -542,22 +717,7 @@ impl<E: SystemActionExecutor> SystemIntentEntrypoint<E> {
         let exec = self
             .executor
             .execute(input.action, input.target_ref.as_deref());
-        let execution_deferred = exec.status == IntentStatus::Unavailable
-            && exec.message == UNIMPLEMENTED_EXECUTION_MARKER;
-        let result = IntentResultRecord {
-            intent_id: input.intent_id.clone(),
-            action: input.action,
-            status: exec.status,
-            message: exec.message,
-            control_lease_id: lease_id,
-            gate_reason: None,
-            created_at: now_ms,
-        };
-        insert_intent_result(conn, &result)?;
-        Ok(DispatchOutcome {
-            result,
-            execution_deferred,
-        })
+        self.persist_exec_result(conn, input, exec, lease_id, now_ms)
     }
 
     // ─── internals ────────────────────────────────────────────────────────────
@@ -783,6 +943,44 @@ impl<E: SystemActionExecutor> SystemIntentEntrypoint<E> {
         Ok(DispatchOutcome {
             result,
             execution_deferred: false,
+            dry_run: false,
+        })
+    }
+
+    /// Persist the result of running an action through the [`SystemActionExecutor`],
+    /// deriving the `execution_deferred` / `dry_run` diagnostics from the executor's
+    /// coarse outcome. The two executor-run paths ([`dispatch`] and
+    /// [`dispatch_with_approval`]'s `Allow` tail) share this so the diagnostic
+    /// derivation can NEVER drift between them. An effect is `execution_deferred`
+    /// (no backend) iff `Unavailable` + the unimplemented marker; it is `dry_run`
+    /// (observed-not-actuated, the A7 default) iff `Unavailable` + the dry-run marker.
+    /// Neither is ever `Completed` — both record an honest non-success status.
+    fn persist_exec_result(
+        &self,
+        conn: &Connection,
+        input: &IntentInput,
+        exec: ExecOutcome,
+        control_lease_id: Option<String>,
+        now_ms: i64,
+    ) -> Result<DispatchOutcome> {
+        let execution_deferred = exec.status == IntentStatus::Unavailable
+            && exec.message == UNIMPLEMENTED_EXECUTION_MARKER;
+        let dry_run =
+            exec.status == IntentStatus::Unavailable && exec.message == DRY_RUN_OBSERVED_MARKER;
+        let result = IntentResultRecord {
+            intent_id: input.intent_id.clone(),
+            action: input.action,
+            status: exec.status,
+            message: exec.message,
+            control_lease_id,
+            gate_reason: None,
+            created_at: now_ms,
+        };
+        insert_intent_result(conn, &result)?;
+        Ok(DispatchOutcome {
+            result,
+            execution_deferred,
+            dry_run,
         })
     }
 }
@@ -823,6 +1021,78 @@ fn resolve_risk(action: IntentAction) -> Risk {
         IntentAction::ClipboardWrite | IntentAction::LaunchApp => Risk::Medium,
         _ => Risk::Low,
     }
+}
+
+// ─── A7 never-auto classification (the operator-approved OS-executor gates) ─────
+
+/// The TS `HIGH_RISK_INTENTS` set: `close_app` / `clipboard_read` / `notification_act`.
+/// Per the A7 operator decision (#4) these NEVER auto-execute — the [`OsIntentExecutor`]
+/// forces the dry-run/observe posture for them REGARDLESS of the actuate flag or the
+/// allowlist (a future real backend may only ever actuate one of these under a separate
+/// explicit operator path that does not exist here). A public predicate so a reviewer
+/// can grep the set and a test can assert it.
+pub fn is_high_risk(action: IntentAction) -> bool {
+    matches!(
+        action,
+        IntentAction::CloseApp | IntentAction::NotificationAct | IntentAction::ClipboardRead
+    )
+}
+
+/// The OS-AFFECTING set (A7 decision #4): every action whose effect reaches OUTSIDE the
+/// Hub's own state — it moves/observes the desktop, an app, a url, the clipboard, a
+/// notification, the window layout, the companion overlay, or a screen snapshot. Per the
+/// operator decision these NEVER auto-execute: the executor forces dry-run for them
+/// regardless of the actuate flag / allowlist. This is deliberately CONSERVATIVE
+/// (over-inclusive): a false "is OS-affecting" only forces a safe dry-run, whereas a
+/// false "not OS-affecting" would be an actuation hole. It therefore includes BOTH the
+/// mutating desktop verbs the doc names (launch_app/open_url/close_app/focus/clipboard*/
+/// notification*/handoff*/arrange_windows/recover_ui/open/open_project) AND the
+/// READ/OBSERVE desktop verbs that `dispatch` (no approval) can reach the executor with
+/// (snapshot/search_file/read_notification/notification_list/triage_notifications) —
+/// because each touches the host (a screen grab, a filesystem search, the OS
+/// notification center). It EXCLUDES only the pure control-plane / Hub-state verbs:
+/// `request_control` / `release_control` (lease bookkeeping, never reach the executor)
+/// and `resume_task` (its deferred domain effect is task-pointer + event emission, not a
+/// desktop actuation) and `approve` / `deny` (gate verbs, never reach the executor).
+///
+/// NOTE: `resume_task`'s OS-affecting status is the one genuinely ambiguous call — its
+/// effect is in-Hub (an `activeTask` pointer + two event emissions), NOT a desktop
+/// actuation, so it is classified NOT-OS-affecting here. It nevertheless stays
+/// `unavailable` on every path because it is MUTATING (gate-gated) and its backend is
+/// deferred — so excluding it from this set never opens an actuation hole. This call is
+/// surfaced to the operator as an open question to ratify.
+pub fn is_os_affecting(action: IntentAction) -> bool {
+    matches!(
+        action,
+        IntentAction::Snapshot
+            | IntentAction::Open
+            | IntentAction::Focus
+            | IntentAction::ArrangeWindows
+            | IntentAction::LaunchApp
+            | IntentAction::CloseApp
+            | IntentAction::OpenUrl
+            | IntentAction::OpenProject
+            | IntentAction::SearchFile
+            | IntentAction::HandoffToBrowser
+            | IntentAction::HandoffToTerminal
+            | IntentAction::ReadNotification
+            | IntentAction::NotificationList
+            | IntentAction::NotificationAct
+            | IntentAction::TriageNotifications
+            | IntentAction::RecoverUi
+            | IntentAction::ClipboardRead
+            | IntentAction::ClipboardWrite
+    )
+}
+
+/// The NEVER-AUTO-EXECUTE union (A7 decision #4): an action that must NEVER actuate
+/// without the operator deciding to via a path that does not exist in this dark slice.
+/// It is the union of [`is_high_risk`] and [`is_os_affecting`] — i.e. every action the
+/// [`OsIntentExecutor`] forces to dry-run even when the actuate flag is on and the
+/// allowlist permits it. (high_risk ⊆ os_affecting today, but the union is spelled out
+/// so extending either set can never silently drop an action from the never-auto guard.)
+pub fn is_never_auto_execute(action: IntentAction) -> bool {
+    is_high_risk(action) || is_os_affecting(action)
 }
 
 fn risk_label(risk: Risk) -> RiskLabel {
@@ -1165,5 +1435,243 @@ mod tests {
         assert!(!is_mutating(IntentAction::NotificationList));
         assert!(!is_mutating(IntentAction::RequestControl));
         assert!(!is_mutating(IntentAction::ReleaseControl));
+    }
+
+    // ─── A7 OS-executor: dry-run-default + allowlist + never-auto guard ──────────
+
+    /// A backend that, if ever reached, reports a DISTINCT marker — so a test can prove
+    /// whether the executor's gates actually delegated to the backend or short-circuited
+    /// to dry-run. (No real impl would report `Completed` for a non-performed effect; this
+    /// is a test probe only — it asserts which BRANCH ran, not a faked success.)
+    #[derive(Clone, Copy, Debug)]
+    struct ProbeBackend;
+    const PROBE_REACHED_MARKER: &str = "test_probe_backend_was_reached";
+    impl OsActuationBackend for ProbeBackend {
+        fn actuate(&self, _action: IntentAction, _target_ref: Option<&str>) -> ExecOutcome {
+            ExecOutcome {
+                status: IntentStatus::Failed,
+                message: PROBE_REACHED_MARKER.to_string(),
+            }
+        }
+    }
+
+    #[test]
+    fn a7_never_auto_set_covers_high_risk_and_all_os_affecting() {
+        // The HIGH_RISK set (A7 decision #4) is exactly close_app / clipboard_read /
+        // notification_act.
+        assert!(is_high_risk(IntentAction::CloseApp));
+        assert!(is_high_risk(IntentAction::ClipboardRead));
+        assert!(is_high_risk(IntentAction::NotificationAct));
+        assert!(!is_high_risk(IntentAction::Snapshot));
+        assert!(!is_high_risk(IntentAction::LaunchApp));
+        // HIGH_RISK ⊆ OS-affecting ⊆ never-auto.
+        for a in [
+            IntentAction::CloseApp,
+            IntentAction::ClipboardRead,
+            IntentAction::NotificationAct,
+        ] {
+            assert!(is_os_affecting(a), "{a:?} high-risk must be os-affecting");
+            assert!(is_never_auto_execute(a));
+        }
+        // Every OS-affecting action — incl. the NON-mutating observe verbs reachable via
+        // plain dispatch — is never-auto.
+        for a in [
+            IntentAction::Snapshot,
+            IntentAction::Open,
+            IntentAction::Focus,
+            IntentAction::ArrangeWindows,
+            IntentAction::LaunchApp,
+            IntentAction::CloseApp,
+            IntentAction::OpenUrl,
+            IntentAction::OpenProject,
+            IntentAction::SearchFile,
+            IntentAction::HandoffToBrowser,
+            IntentAction::HandoffToTerminal,
+            IntentAction::ReadNotification,
+            IntentAction::NotificationList,
+            IntentAction::NotificationAct,
+            IntentAction::TriageNotifications,
+            IntentAction::RecoverUi,
+            IntentAction::ClipboardRead,
+            IntentAction::ClipboardWrite,
+        ] {
+            assert!(is_os_affecting(a), "{a:?} must be os-affecting");
+            assert!(is_never_auto_execute(a), "{a:?} must be never-auto");
+        }
+        // The pure control-plane / Hub-state verbs are NOT OS-affecting (they never reach
+        // the executor anyway, but the classification must reflect that).
+        for a in [
+            IntentAction::RequestControl,
+            IntentAction::ReleaseControl,
+            IntentAction::ResumeTask,
+            IntentAction::Approve,
+            IntentAction::Deny,
+        ] {
+            assert!(!is_os_affecting(a), "{a:?} must NOT be os-affecting");
+        }
+    }
+
+    #[test]
+    fn a7_ship_default_executor_dry_runs_everything_and_actuates_nothing() {
+        // The ship default (dry_run_default): EMPTY allowlist + actuate off. EVERY action
+        // (whether reachable via dispatch or as a hypothetical) short-circuits to a
+        // refs-only dry-run observe — status Unavailable + the dry-run marker, NEVER
+        // Completed, and `would_actuate` is false for everything.
+        let ex = OsIntentExecutor::dry_run_default();
+        for a in [
+            IntentAction::Snapshot,
+            IntentAction::SearchFile,
+            IntentAction::NotificationList,
+            IntentAction::LaunchApp,
+            IntentAction::CloseApp,
+            IntentAction::ClipboardRead,
+        ] {
+            assert!(!ex.would_actuate(a), "{a:?} must not actuate by default");
+            let out = ex.execute(a, Some("ref"));
+            assert_eq!(out.status, IntentStatus::Unavailable, "{a:?}");
+            assert_eq!(out.message, DRY_RUN_OBSERVED_MARKER, "{a:?}");
+            assert_ne!(out.status, IntentStatus::Completed);
+        }
+    }
+
+    #[test]
+    fn a7_dispatch_records_dry_run_diagnostic_for_a_non_mutating_observe_action() {
+        // Through the full dispatch path, a non-mutating observe action (snapshot, which
+        // plain dispatch reaches the executor with — no approval) records the dry-run
+        // diagnostic, NOT execution_deferred, and NEVER completed.
+        let db = Db::open_hub(&tmp("a7-dry-dispatch")).unwrap();
+        let ep =
+            SystemIntentEntrypoint::with_execution_enabled(OsIntentExecutor::dry_run_default());
+        let out = ep
+            .dispatch(
+                db.conn(),
+                &input("i-dry", IntentAction::Snapshot, "api-1", OwnerKind::Api),
+                100,
+            )
+            .unwrap();
+        assert_eq!(out.result.status, IntentStatus::Unavailable);
+        assert_eq!(out.result.message, DRY_RUN_OBSERVED_MARKER);
+        assert!(out.dry_run, "the dry-run diagnostic must be set");
+        assert!(
+            !out.execution_deferred,
+            "dry-run is distinct from no-backend-deferred"
+        );
+        assert_ne!(out.result.status, IntentStatus::Completed);
+    }
+
+    #[test]
+    fn a7_never_auto_action_forced_dry_run_even_when_actuate_on_and_allowlisted() {
+        // The never-auto guard (decision #4) is supreme: even with actuate=true AND the
+        // action explicitly in the allowlist, a never-auto action (close_app, a high-risk
+        // OS verb) is FORCED to dry-run — the probe backend is NEVER reached.
+        let ex = OsIntentExecutor::new(
+            true,
+            IntentActionAllowlist::from_actions([IntentAction::CloseApp]),
+            ProbeBackend,
+        );
+        assert!(
+            !ex.would_actuate(IntentAction::CloseApp),
+            "never-auto must override actuate+allowlist"
+        );
+        let out = ex.execute(IntentAction::CloseApp, Some("com.apple.Safari"));
+        assert_eq!(out.status, IntentStatus::Unavailable);
+        assert_eq!(out.message, DRY_RUN_OBSERVED_MARKER);
+        assert_ne!(
+            out.message, PROBE_REACHED_MARKER,
+            "the backend must NOT be reached for a never-auto action"
+        );
+    }
+
+    #[test]
+    fn a7_actuate_flag_off_is_dry_run_even_when_allowlisted_and_not_never_auto() {
+        // The dry-run DEFAULT (decision #1): an action that is NOT never-auto and IS
+        // allowlisted still dry-runs when the actuate flag is off. (We use a control-plane
+        // verb the executor would normally never see — request_control — purely to
+        // exercise the non-never-auto branch in isolation; the entrypoint routes it
+        // elsewhere, so this asserts the executor's own gate, not the dispatch path.)
+        let ex = OsIntentExecutor::new(
+            false, // actuate OFF (the default)
+            IntentActionAllowlist::from_actions([IntentAction::RequestControl]),
+            ProbeBackend,
+        );
+        assert!(!ex.would_actuate(IntentAction::RequestControl));
+        let out = ex.execute(IntentAction::RequestControl, None);
+        assert_eq!(out.message, DRY_RUN_OBSERVED_MARKER);
+    }
+
+    #[test]
+    fn a7_empty_allowlist_blocks_actuation_even_with_actuate_on() {
+        // The allowlist gate (decision #2): with actuate ON but the ship-default EMPTY
+        // allowlist, a non-never-auto action still dry-runs — presence is necessary.
+        let ex = OsIntentExecutor::new(true, IntentActionAllowlist::empty(), ProbeBackend);
+        assert!(IntentActionAllowlist::empty().is_empty());
+        assert_eq!(IntentActionAllowlist::empty().len(), 0);
+        assert!(!ex.would_actuate(IntentAction::RequestControl));
+        let out = ex.execute(IntentAction::RequestControl, None);
+        assert_eq!(out.message, DRY_RUN_OBSERVED_MARKER);
+    }
+
+    #[test]
+    fn a7_all_three_gates_satisfied_reaches_backend_which_actuates_nothing() {
+        // When actuate ON + allowlisted + NOT never-auto, the executor DELEGATES to the
+        // backend. The probe proves the branch ran; the only SHIPPED backend
+        // (UnavailableBackend) performs nothing and reports the unimplemented marker — so
+        // the dark slice never actuates the host even on this path.
+        let ex_probe = OsIntentExecutor::new(
+            true,
+            IntentActionAllowlist::from_actions([IntentAction::RequestControl]),
+            ProbeBackend,
+        );
+        assert!(ex_probe.would_actuate(IntentAction::RequestControl));
+        let out = ex_probe.execute(IntentAction::RequestControl, None);
+        assert_eq!(
+            out.message, PROBE_REACHED_MARKER,
+            "all gates satisfied must reach the backend"
+        );
+
+        // With the shipped UnavailableBackend, the same gate-satisfied path actuates
+        // NOTHING: it records the unimplemented marker (a deferred no-backend), never
+        // Completed.
+        let ex_unavail = OsIntentExecutor::new(
+            true,
+            IntentActionAllowlist::from_actions([IntentAction::RequestControl]),
+            UnavailableBackend,
+        );
+        let out2 = ex_unavail.execute(IntentAction::RequestControl, None);
+        assert_eq!(out2.status, IntentStatus::Unavailable);
+        assert_eq!(out2.message, UNIMPLEMENTED_EXECUTION_MARKER);
+        assert_ne!(out2.status, IntentStatus::Completed);
+    }
+
+    #[test]
+    fn a7_dispatch_with_approval_high_risk_allow_still_dry_runs_not_actuates() {
+        // The headline A7 property at the dispatch level: even on a path where a verified
+        // operator Allow would authorize a mutating high-risk action, an actuate-OFF
+        // executor (the default) keeps it dry-run. Here we use the plain-dispatch executor
+        // gate as the proxy the OsIntentExecutor enforces. (The full Ed25519 Allow→execute
+        // wiring is exercised in tests/r4s2_approval_execute.rs; this asserts that even an
+        // actuate-ON, allowlisted executor never actuates a high-risk action because the
+        // never-auto guard forces dry-run.)
+        let ex = OsIntentExecutor::new(
+            true,
+            IntentActionAllowlist::from_actions([
+                IntentAction::CloseApp,
+                IntentAction::ClipboardRead,
+                IntentAction::NotificationAct,
+            ]),
+            ProbeBackend,
+        );
+        for a in [
+            IntentAction::CloseApp,
+            IntentAction::ClipboardRead,
+            IntentAction::NotificationAct,
+        ] {
+            let out = ex.execute(a, Some("ref"));
+            assert_eq!(out.message, DRY_RUN_OBSERVED_MARKER, "{a:?} must dry-run");
+            assert_ne!(
+                out.message, PROBE_REACHED_MARKER,
+                "{a:?} backend not reached"
+            );
+        }
     }
 }

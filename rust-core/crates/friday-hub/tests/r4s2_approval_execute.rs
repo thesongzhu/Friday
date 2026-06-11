@@ -37,8 +37,9 @@ use friday_core::gate::{
 };
 use friday_crypto::{OperatorSigningKey, OperatorVerifyingKey};
 use friday_hub::system_intent::{
-    intent_action_digest, DispatchOutcome, IntentInput, SystemIntentEntrypoint,
-    UnavailableExecutor, UNIMPLEMENTED_EXECUTION_MARKER,
+    intent_action_digest, DispatchOutcome, IntentActionAllowlist, IntentInput, OsIntentExecutor,
+    SystemIntentEntrypoint, UnavailableExecutor, DRY_RUN_OBSERVED_MARKER,
+    UNIMPLEMENTED_EXECUTION_MARKER,
 };
 use friday_storage::system_intent::{
     get_intent_result, get_lease, list_approval_records, DecisionLabel, IntentAction, IntentStatus,
@@ -519,5 +520,116 @@ fn non_protected_action_is_refused_on_the_approval_path() {
     // Nothing was persisted and no nonce consumed (the guard is BEFORE the request insert).
     assert_eq!(db.count("system_intent_request").unwrap(), 0);
     assert_eq!(db.count("system_control_lease").unwrap(), 0);
+    assert_eq!(consumed_count(&db), 0);
+}
+
+// ─── A7 OS-executor: the dry-run-default property wired through the FULL path ────
+
+/// THE A7 HEADLINE PROPERTY (decision #1, end-to-end): wire the operator-approved
+/// SHIP-DEFAULT executor — [`OsIntentExecutor::dry_run_default`] (dry-run posture, EMPTY
+/// allowlist) — into the entrypoint, then drive a HIGH-RISK mutating action (`close_app`)
+/// through the FULL verified-Ed25519-approval → Allow path. Even though the operator
+/// approval is VALID and the gate grants `Allow` (the action IS authorized + the nonce IS
+/// consumed + the lease IS acquired), the executor LOGS the intended effect refs-only and
+/// records the DRY-RUN marker — status `Unavailable`, the `dry_run` diagnostic set, NEVER
+/// `Completed`. Approval is necessary but NOT sufficient: the actuate flag is off (the
+/// default), so nothing actuates. This is exactly what "dry-run default" means.
+#[test]
+fn a7_dry_run_default_executor_observes_high_risk_allow_without_actuating() {
+    let db = Db::open_hub(&tmp("a7-dryrun-allow")).unwrap();
+    // The operator-approved ship default: dry-run posture + empty allowlist.
+    let ep = SystemIntentEntrypoint::with_execution_enabled(OsIntentExecutor::dry_run_default());
+    let (sk, vk) = operator();
+    let mut inp = input("i-close", IntentAction::CloseApp, "api-1", OwnerKind::Api);
+    inp.target_ref = Some("com.apple.Safari".to_string());
+    let approval = ed25519_approval(&inp, &sk, "ap-close-1", Some(FUTURE));
+
+    let outcome = ep
+        .dispatch_with_approval(db.conn(), &inp, &approval, &vk, NOW)
+        .unwrap();
+
+    // The action was AUTHORIZED (the Allow is real) ...
+    let trail = list_approval_records(db.conn(), "i-close").unwrap();
+    assert_eq!(trail[0].decision, DecisionLabel::Allow);
+    assert_eq!(trail[0].reason, "canonical_approval_granted");
+    assert_eq!(
+        consumed_count(&db),
+        1,
+        "the nonce WAS consumed (Allow is real)"
+    );
+    assert!(
+        outcome.result.control_lease_id.is_some(),
+        "the lease WAS acquired"
+    );
+
+    // ... but it was OBSERVED, not actuated: the dry-run marker, never Completed.
+    assert_eq!(
+        outcome.result.status,
+        IntentStatus::Unavailable,
+        "dry-run default observes; it does not actuate"
+    );
+    assert_eq!(outcome.result.message, DRY_RUN_OBSERVED_MARKER);
+    assert!(outcome.dry_run, "the dry-run diagnostic must be set");
+    assert!(
+        !outcome.execution_deferred,
+        "this is a dry-run, distinct from a no-backend deferral"
+    );
+    assert_ne!(outcome.result.status, IntentStatus::Completed);
+    // The result is greppably the dry-run marker — NOT the no-backend unimplemented one.
+    assert_ne!(outcome.result.message, UNIMPLEMENTED_EXECUTION_MARKER);
+}
+
+/// EVEN AN ALLOWLISTED + ACTUATE-ON executor cannot fire a HIGH-RISK action: the
+/// never-auto guard (decision #4) is supreme. We build the most permissive executor a
+/// future cutover could (actuate ON, close_app explicitly in the allowlist) and prove a
+/// valid Allow on `close_app` STILL records the dry-run marker — the host is never moved.
+#[test]
+fn a7_never_auto_guard_holds_even_with_actuate_on_and_close_app_allowlisted() {
+    let db = Db::open_hub(&tmp("a7-neverauto-allow")).unwrap();
+    let executor = OsIntentExecutor::new(
+        true, // actuate ON (a hypothetical future cutover)
+        IntentActionAllowlist::from_actions([IntentAction::CloseApp]),
+        // The only shipped backend; even if the guard were bypassed it actuates nothing.
+        friday_hub::system_intent::UnavailableBackend,
+    );
+    let ep = SystemIntentEntrypoint::with_execution_enabled(executor);
+    let (sk, vk) = operator();
+    let mut inp = input("i-close2", IntentAction::CloseApp, "api-1", OwnerKind::Api);
+    inp.target_ref = Some("com.apple.Safari".to_string());
+    let approval = ed25519_approval(&inp, &sk, "ap-close-2", Some(FUTURE));
+
+    let outcome = ep
+        .dispatch_with_approval(db.conn(), &inp, &approval, &vk, NOW)
+        .unwrap();
+    // Authorized (Allow) ...
+    let trail = list_approval_records(db.conn(), "i-close2").unwrap();
+    assert_eq!(trail[0].decision, DecisionLabel::Allow);
+    // ... but the never-auto guard forced dry-run: a high-risk action NEVER actuates.
+    assert_eq!(outcome.result.status, IntentStatus::Unavailable);
+    assert_eq!(outcome.result.message, DRY_RUN_OBSERVED_MARKER);
+    assert!(outcome.dry_run);
+    assert_ne!(outcome.result.status, IntentStatus::Completed);
+}
+
+/// A NON-mutating OS-affecting observe action (`snapshot`) reaches the executor via plain
+/// `dispatch` (NO approval). With the ship-default executor it is OBSERVED (dry-run
+/// marker), never actuated — proving the never-auto set covers the non-approval-gated
+/// observe verbs too (so turning the actuate flag on can never fire one without approval).
+#[test]
+fn a7_non_mutating_observe_action_is_dry_run_via_plain_dispatch() {
+    let db = Db::open_hub(&tmp("a7-snapshot-dispatch")).unwrap();
+    let ep = SystemIntentEntrypoint::with_execution_enabled(OsIntentExecutor::dry_run_default());
+    let outcome = ep
+        .dispatch(
+            db.conn(),
+            &input("i-snap", IntentAction::Snapshot, "api-1", OwnerKind::Api),
+            NOW,
+        )
+        .unwrap();
+    assert_eq!(outcome.result.status, IntentStatus::Unavailable);
+    assert_eq!(outcome.result.message, DRY_RUN_OBSERVED_MARKER);
+    assert!(outcome.dry_run);
+    assert_ne!(outcome.result.status, IntentStatus::Completed);
+    // No approval was needed/consumed for a non-mutating action.
     assert_eq!(consumed_count(&db), 0);
 }
