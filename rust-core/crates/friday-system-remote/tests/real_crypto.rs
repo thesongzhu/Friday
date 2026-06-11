@@ -51,19 +51,23 @@ fn real_register(
     stored
 }
 
-/// Drive a full REAL assertion round-trip; returns the new sign-count.
+/// Drive a full REAL assertion round-trip; returns the verified new sign-count
+/// and the UPDATED stored credential (counter folded forward) the caller would
+/// persist as the next baseline.
 fn real_assert(
     engine: &mut RealWebAuthn,
     authenticator: &mut WebauthnAuthenticator<SoftPasskey>,
     owner: &str,
     stored: &StoredCredential,
-) -> Result<u32, RemoteError> {
+) -> Result<(u32, StoredCredential), RemoteError> {
     let (ceremony_id, rcr) = engine.begin_assertion(owner, stored)?;
     let origin = Url::parse(RP_ORIGIN).unwrap();
     let pkc = authenticator
         .do_authentication(origin, rcr)
         .expect("software authenticator performs assertion");
-    engine.finish_assertion(&ceremony_id, &pkc).map(|(_, c)| c)
+    engine
+        .finish_assertion(&ceremony_id, &pkc)
+        .map(|(_, updated)| (updated.sign_count(), updated))
 }
 
 #[test]
@@ -89,11 +93,50 @@ fn real_registration_then_assertion_round_trip() {
 
     // REAL assertion: the same authenticator signs a fresh challenge; the
     // signature is verified over authenticatorData || sha256(clientDataJSON).
-    let count =
+    let (count, _updated) =
         real_assert(&mut engine, &mut auth, OWNER, &stored).expect("a genuine assertion verifies");
     // SoftPasskey increments its counter per auth: first auth ⇒ 1 (> the stored 0).
     assert_eq!(count, 1);
     assert_eq!(engine.pending_assertion_count(), 0);
+}
+
+#[test]
+fn persisted_baseline_advances_across_real_assertions_and_catches_a_lagging_clone() {
+    // Closes the persistence loop the apply/persist contract claims: each real
+    // assertion returns an UPDATED StoredCredential whose counter has advanced;
+    // persisting it and re-deriving the next baseline from it advances the
+    // regression baseline ACROSS ceremonies (0 → 1 → 2 here, all real). Then a
+    // cloned/lagging authenticator (its counter behind the persisted baseline)
+    // producing a fresh, challenge-valid assertion is rejected on the COUNTER.
+    let mut engine = engine();
+    let mut auth = WebauthnAuthenticator::new(SoftPasskey::new(true));
+    let stored0 = real_register(&mut engine, &mut auth, OWNER); // baseline counter 0
+    assert_eq!(stored0.sign_count(), 0);
+
+    // First real assertion: counter 0 → 1; persist the advanced blob.
+    let (c1, stored1) = real_assert(&mut engine, &mut auth, OWNER, &stored0).unwrap();
+    assert_eq!(c1, 1);
+    assert_eq!(stored1.sign_count(), 1);
+
+    // Second real assertion AGAINST THE PERSISTED blob: counter 1 → 2. This is the
+    // proof the baseline genuinely advanced across calls — webauthn-rs accepted
+    // 2 > 1 only because the baseline it compared against was the persisted 1.
+    let (c2, stored2) = real_assert(&mut engine, &mut auth, OWNER, &stored1).unwrap();
+    assert_eq!(c2, 2);
+    assert_eq!(stored2.sign_count(), 2);
+
+    // Now model a CLONE that lags the persisted baseline: a credential blob at the
+    // advanced baseline (2) is what the server holds, but a cloned authenticator
+    // presents a LOWER counter. We drive a fresh, challenge-valid assertion whose
+    // baseline blob is bumped ABOVE what the authenticator will present, so the
+    // genuine signature is rejected purely on the sign-count regression.
+    let lagging_view = bump_stored_counter(&stored2, 50);
+    let cloned = real_assert(&mut engine, &mut auth, OWNER, &lagging_view);
+    assert_eq!(
+        cloned,
+        Err(RemoteError::ClonedAuthenticator),
+        "an assertion whose counter lags the persisted baseline must be rejected as a clone"
+    );
 }
 
 #[test]

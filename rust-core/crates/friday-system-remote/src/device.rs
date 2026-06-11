@@ -242,12 +242,18 @@ impl DeviceStore {
         if now > device.last_seen_at {
             device.last_seen_at = now;
         }
-        // Advance the sign-count regression baseline (forward-only). The verifier
-        // (crate::real) already proved this assertion's count strictly increased
-        // over the prior baseline; persisting it here is what makes a later REPLAY
-        // of an older assertion (re-verified against this stored baseline) trip the
-        // cloned-authenticator check. Forward-only as belt-and-braces against a
-        // verifier that returned a stale value.
+        // Advance this row's sign-count PROJECTION (forward-only). IMPORTANT: this
+        // `RegisteredDevice.sign_count` is a human-/audit-facing projection, NOT
+        // the value the real verifier compares against. The verifier
+        // (crate::real::RealWebAuthn) checks the counter inside the credential blob
+        // (`StoredCredential` / the serialized `Passkey`) it is handed at
+        // `begin_assertion`; the loop that actually enforces regression across
+        // ceremonies is "persist the updated `StoredCredential` that
+        // `finish_assertion` returns, then re-derive the next baseline from it".
+        // Where the authoritative blob lives in a device row (and whether this
+        // `u32` is folded into it or dropped) is a deferred persistence-schema
+        // decision — see this crate's open questions. Forward-only here so a stale
+        // value cannot rewind the projection.
         let asserted = assertion.new_sign_count();
         if asserted > device.sign_count {
             device.sign_count = asserted;
