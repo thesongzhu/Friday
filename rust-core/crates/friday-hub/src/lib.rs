@@ -37,6 +37,11 @@ pub mod operator_vk;
 
 pub mod resume;
 
+/// A1 — the Rust agent-run RUN-CONTROL plane (pause-surfacing / resume / cancel / reject). DARK +
+/// DEPLOY-GO-gated: the sealed-WS server emits/handles these ONLY behind the default-off
+/// `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST` flag.
+pub mod agent_run_control;
+
 pub mod routing;
 
 /// UNW-004 — Hub composition root: wires the built graph (Db + RouteRegistry + live
