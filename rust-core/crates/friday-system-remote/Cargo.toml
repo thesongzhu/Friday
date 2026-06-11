@@ -8,9 +8,40 @@ publish = false
 rust-version.workspace = true
 
 # DARK crate. No production caller, no hub route, no FFI exposure. It is a
-# self-contained R5 slice-1 foundation; it deliberately depends on NOTHING in the
-# workspace (not even friday-core) so it cannot contend with concurrent lanes and
-# carries no migration / schema coupling. Persistence is an explicit deferred
-# slice (see lib.rs) — there is no rusqlite dependency by design this slice.
+# self-contained R5 slice foundation; aside from the real WebAuthn verifier
+# (webauthn-rs, A8) it deliberately depends on NOTHING else in the workspace (not
+# even friday-core) so it cannot contend with concurrent lanes and carries no
+# migration / schema coupling. Persistence (pending-ceremony state + the stored
+# Passkey credential) is an explicit deferred slice (see lib.rs) — there is no
+# rusqlite dependency by design this slice; the credential + pending challenge
+# state are held IN-MEMORY.
 [dependencies]
 thiserror.workspace = true
+# Serialize the public `Passkey` credential blob (public key + credential id +
+# sign-count; NO private key) for the device row, and read its sign-count.
+serde_json.workspace = true
+# Derive a deterministic per-owner WebAuthn user handle (uuid bytes) from the
+# owner principal, without pulling the uuid `v5` feature into the graph.
+sha2.workspace = true
+# A8: real WebAuthn/FIDO2 passkey verification. Pinned to 0.5.5 (matches Cargo.lock).
+# We do NOT enable any origin/rp-id-weakening feature and we do NOT enable
+# `danger-allow-state-serialisation`: the pending ceremony state is held in-memory
+# and consumed single-use this DARK slice (serializing it for persistence is the
+# deferred persistence slice). `attestation` is left at its default-off: passkey
+# registration uses AttestationConveyancePreference::None (no attestation-CA trust
+# anchor configured), faithful to the consumer-passkey posture.
+webauthn-rs = "=0.5.5"
+# Force a statically-linked, vendored OpenSSL so the workspace compiles
+# reproducibly without a system libssl. webauthn-rs-core depends on openssl-sys
+# (^0.9.111) WITHOUT the vendored feature; declaring it here with `vendored`
+# unifies the feature across the whole dependency graph (Cargo feature
+# unification), so CI never depends on the runner having libssl-dev.
+openssl-sys = { version = "0.9.116", features = ["vendored"] }
+
+[dev-dependencies]
+# A8 round-trip PROOF: a pure-software FIDO2 authenticator that performs REAL
+# ES256 key generation + signing, driven entirely in-process (no USB/NFC/CTAP
+# transport). This lets the KATs exercise the genuine register→assert crypto path
+# end-to-end — NOT the cfg(test) AcceptingTestVerifier (which proves only the
+# device store, never the cryptography). Pinned to match the verifier crate.
+webauthn-authenticator-rs = { version = "=0.5.5", features = ["softpasskey"] }
