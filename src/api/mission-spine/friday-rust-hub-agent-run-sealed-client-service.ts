@@ -3,6 +3,7 @@ import { FridayDomainError } from "#errors";
 import {
   createFridayRustHubAgentRunSealedClient,
   type CreateFridayRustHubAgentRunSealedClientOptions,
+  type FridayRustHubAgentRunConstraints,
   type FridayRustHubAgentRunSealedClient,
 } from "./friday-rust-hub-agent-run-ws-sealed-client.js";
 
@@ -76,6 +77,13 @@ export interface FridayRustHubAgentRunSealedClientServiceRequest {
    * `forwardedPrincipal`, never this key.
    */
   readonly sessionKey?: string;
+  /**
+   * (A1 run-controls) Per-run CONSTRAINTS forwarded UNCHANGED to the underlying sealed client,
+   * which emits the snake_case `constraints` wire block ONLY when something tightens (else OMITS
+   * it ⇒ byte-identical pre-A1 wire). The Rust server COMPOSES them onto the run policy (read-only
+   * / disabled-tools / max-turns), tightening only, behind its default-off run-control flag.
+   */
+  readonly constraints?: FridayRustHubAgentRunConstraints;
 }
 
 /**
@@ -194,6 +202,9 @@ export function createFridayRustHubAgentRunSealedClientService(
           // (A2a Phase 1) forward the session key; the inner client emits `session_id` only when
           // non-empty (absent/blank ⇒ byte-identical sessionless wire).
           ...(request.sessionKey !== undefined ? { sessionKey: request.sessionKey } : {}),
+          // (A1 run-controls) forward the per-run constraints; the inner client emits the
+          // `constraints` wire block only when something tightens (absent ⇒ byte-identical wire).
+          ...(request.constraints !== undefined ? { constraints: request.constraints } : {}),
         });
       } catch (error) {
         throw error instanceof FridayDomainError

@@ -1393,10 +1393,37 @@ pub fn run_authed_agent_loop<T: Transport>(
     task: &str,
     now_ms: i64,
 ) -> AuthedAnswer {
+    // Pre-A1 entry: NO per-run override ⇒ the boot policy / ceiling (byte-identical). Every
+    // pre-A1 caller (dev bin, tests) stays on this path; only the WS dispatch arm opts into an
+    // override via `run_authed_agent_loop_with_policy`.
+    run_authed_agent_loop_with_policy(runtime, caller, run_id, task, None, None, now_ms)
+}
+
+/// (A1) [`run_authed_agent_loop`] with an OPTIONAL per-run policy + max-turns override applied at
+/// run-START — the SESSIONLESS dispatch entry that APPLIES a peer's
+/// [`friday_protocol::AgentRunConstraintsWire`]. `None`/`None` ⇒ the boot policy/ceiling
+/// (byte-identical pre-A1 path). `Some(p)` ⇒ the COMPOSED only-tighten policy the dispatch arm
+/// built via [`crate::agent_run_control::effective_run_policy_over`].
+///
+/// The FIX-Q2 `caller == configured_principal` guard is UNCHANGED and still precedes any dispatch:
+/// a per-run CONSTRAINT tightens WHAT the run may do, it does NOT change WHO it runs as — the owner
+/// gate is orthogonal and a constraint can never relax it. A non-owner caller still fails closed to
+/// a body-free `NoAnswer` regardless of the override.
+#[allow(clippy::too_many_arguments)]
+pub fn run_authed_agent_loop_with_policy<T: Transport>(
+    runtime: &HubRuntime<T>,
+    caller: &AuthedPrincipal,
+    run_id: &str,
+    task: &str,
+    policy_override: Option<&crate::RunPolicy>,
+    max_turns_override: Option<u64>,
+    now_ms: i64,
+) -> AuthedAnswer {
     // (FIX-Q2) caller == configured-owner, asserted BEFORE any dispatch. A mismatch — or an
     // unconfigured (`None`) owner — fails CLOSED to a body-free `NoAnswer`: the loop never runs,
     // so nothing is created/recalled/billed/owner-stamped under the wrong principal. On live
     // (single owner) this is unreachable (caller is always the configured owner by construction).
+    // The override does NOT touch this gate — a constraint cannot relax the owner check.
     match runtime.configured_principal() {
         Some(owner) if owner == caller.principal() => {}
         _ => {
@@ -1406,14 +1433,21 @@ pub fn run_authed_agent_loop<T: Transport>(
         }
     }
     // (a) the caller is already authenticated (typed proof). (b) run the loop as that
-    // principal; a route/provider failure is a SAFE FAILURE (no body, no panic).
+    // principal under the (effective) per-run policy; a route/provider failure is a SAFE FAILURE
+    // (no body, no panic).
     //
-    // A1 transport-truth: `run_task` ALREADY returns the `LoopOutcome { turns,
+    // A1 transport-truth: `run_task_with_overrides` ALREADY returns the `LoopOutcome { turns,
     // executed_tools, .. }` — this entry used to DISCARD it via `.is_err()`. Capture it so
     // the REFS-surface run COUNTS can ride the result. This is a no-behavior-change edit:
     // the `Err` arm still returns the identical body-free `NoAnswer`, and the `Ok` arm
     // still projects the identical owner-gated body — counts are pure additive metadata.
-    let outcome = match runtime.run_task(run_id, task, now_ms) {
+    let outcome = match runtime.run_task_with_overrides(
+        run_id,
+        task,
+        policy_override,
+        max_turns_override,
+        now_ms,
+    ) {
         Ok((_selection, outcome)) => outcome,
         Err(_) => {
             return AuthedAnswer::NoAnswer {
@@ -6182,6 +6216,151 @@ mod authed_route_tests {
                 )
                 .unwrap(),
             0
+        );
+    }
+
+    // ---- A1: per-run-constraints override on the LIVE dispatch entries -------
+    //
+    // These pin the override THREADING through the two hot dispatch entries the WS server
+    // calls: the SESSIONLESS `run_authed_agent_loop_with_policy` and the SESSIONED
+    // `run_session_task_with_overrides`. The spec's risk-flag names this path explicitly; the
+    // tests prove a `read_only:true` override actually BLOCKS a mutating tool (not just that the
+    // mapping is pure).
+
+    /// A transport that proposes ONE mutating `write_file` tool call on the first turn.
+    struct MutateTransport;
+    impl Transport for MutateTransport {
+        fn get_json(&self, _u: &str, _b: &str) -> Result<Value, DeepSeekError> {
+            Ok(serde_json::json!({"data":[{"id":"deepseek-v4-flash"}]}))
+        }
+        fn post_json(&self, _u: &str, _b: &str, _body: &Value) -> Result<Value, DeepSeekError> {
+            let content =
+                "{\"tool\":\"write_file\",\"parameters\":{\"path\":\"out.txt\",\"content\":\"X\"}}";
+            Ok(serde_json::json!({
+                "model":"deepseek-v4-flash",
+                "choices":[{"message":{"content":content},"finish_reason":"stop"}],
+                "usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}
+            }))
+        }
+    }
+
+    fn read_only_override(rt_principal: &str) -> crate::RunPolicy {
+        let c = friday_protocol::AgentRunConstraintsWire {
+            read_only: true,
+            disabled_tools: vec![],
+            max_turns: None,
+        };
+        // Compose onto the boot policy of a runtime configured with `rt_principal` (unconstrained
+        // boot) — exactly what the dispatch arm does with `runtime.policy()`.
+        let boot =
+            crate::RunPolicy::new(Some(rt_principal.to_string()), Vec::<String>::new(), false);
+        crate::agent_run_control::effective_run_policy_over(&boot, Some(&c))
+    }
+
+    /// (A1) SESSIONLESS dispatch entry: a `read_only:true` policy override BLOCKS a mutating tool
+    /// through `run_authed_agent_loop_with_policy`, writing no file. The override is APPLIED, not
+    /// dropped, on the hub_server live entry.
+    #[test]
+    fn a1_sessionless_override_read_only_blocks_mutating_tool() {
+        let (rt, ws) = runtime_with("a1-sessionless-ro", MutateTransport, "principal:owner");
+        let caller = authed("principal:owner");
+        let policy = read_only_override("principal:owner");
+        let out = run_authed_agent_loop_with_policy(
+            &rt,
+            &caller,
+            "a1-sl-ro",
+            "write a file",
+            Some(&policy),
+            None,
+            1000,
+        );
+        // Read-only Deny ⇒ non-Finished ⇒ body-free NoAnswer; nothing executed, no file written.
+        assert!(out.delivered_body().is_none(), "read-only blocks the body");
+        assert!(
+            !ws.0.join("out.txt").exists(),
+            "the read-only override withheld the write (no file)"
+        );
+        let blocked: i64 = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM agent_run_event WHERE run_id = 'a1-sl-ro' AND kind LIKE 'tool.blocked:deny:run_is_read_only:write_file%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(blocked, 1, "the read-only block is recorded for the run");
+    }
+
+    /// (A1) SESSIONED dispatch entry (the hot, live-reachable path the risk-flag names): a
+    /// `read_only:true` override BLOCKS a mutating tool through `run_session_task_with_overrides`
+    /// — proving the override threads symmetrically into `run_session_loop`, not just the
+    /// sessionless loop.
+    #[test]
+    fn a1_sessioned_override_read_only_blocks_mutating_tool() {
+        let (rt, ws) = runtime_with("a1-sessioned-ro", MutateTransport, "principal:owner");
+        let caller = authed("principal:owner");
+        let policy = read_only_override("principal:owner");
+        let out = rt.run_session_task_with_overrides(
+            &caller,
+            "a1-se-ro",
+            "chat-session-1",
+            "write a file",
+            Some(&policy),
+            None,
+            1000,
+        );
+        assert!(
+            out.delivered_body().is_none(),
+            "read-only blocks the body on the sessioned path too"
+        );
+        assert!(
+            !ws.0.join("out.txt").exists(),
+            "the read-only override withheld the write on the sessioned path (no file)"
+        );
+        let blocked: i64 = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM agent_run_event WHERE run_id = 'a1-se-ro' AND kind LIKE 'tool.blocked:deny:run_is_read_only:write_file%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            blocked, 1,
+            "the read-only block is recorded for the sessioned run"
+        );
+    }
+
+    /// (A1) Control: with NO override on the sessioned entry (the `run_session_task` path) and a
+    /// boot policy that is NOT read-only, the SAME mutating tool is NOT read-only-blocked (it
+    /// Pauses pending approval instead) — proving the block in the test above is the OVERRIDE, not
+    /// a broken loop.
+    #[test]
+    fn a1_sessioned_absent_override_is_not_read_only_blocked() {
+        let (rt, _ws) = runtime_with("a1-sessioned-noov", MutateTransport, "principal:owner");
+        let caller = authed("principal:owner");
+        // `run_session_task` = the absent-override path.
+        let _out = rt.run_session_task(
+            &caller,
+            "a1-se-noov",
+            "chat-session-2",
+            "write a file",
+            1000,
+        );
+        let ro_blocked: i64 = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM agent_run_event WHERE run_id = 'a1-se-noov' AND kind LIKE 'tool.blocked:deny:run_is_read_only:%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            ro_blocked, 0,
+            "with no override + non-read-only boot, the run is NOT read-only-blocked (the override is what blocks)"
         );
     }
 }
