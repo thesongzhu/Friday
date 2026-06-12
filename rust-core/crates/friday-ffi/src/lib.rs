@@ -1925,6 +1925,11 @@ fn message_kind_name(m: &friday_protocol::Message) -> &'static str {
         M::MissionTimelineSnapshot { .. } => "MissionTimelineSnapshot",
         M::MissionLifecycleRequest { .. } => "MissionLifecycleRequest",
         M::MissionLifecycleResult { .. } => "MissionLifecycleResult",
+        // S-R1 — the DARK sealed-WS READ-seam projection kinds. NAMED here so the exhaustive match
+        // holds and the truth label carries the real kind; nothing on the FFI surface constructs or
+        // dispatches them (the UI reads them directly over the sealed-WS read server, not via FFI).
+        M::WorkbenchProjectionRequest { .. } => "WorkbenchProjectionRequest",
+        M::WorkbenchProjectionSnapshot { .. } => "WorkbenchProjectionSnapshot",
         // WS-transport substrate (S-A..S-F) message kinds. Still DARK on the FFI
         // surface (nothing here constructs or dispatches them), but they are
         // NAMED so the truth label carries the real kind — and so this match

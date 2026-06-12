@@ -301,6 +301,24 @@ describe("Workflow trigger/scheduler retirement guard (method-level, §1)", () =
 
       expect(runRowCount()).toBe(0);
     });
+
+    // pauseRun was the ONE run-control mutator still unguarded while
+    // resume/retry/cancel were fenced (audit fix 2026-06-11). It writes paused
+    // run state via withWriteTransaction and publishes workflow.run.paused; it is
+    // reachable off-route via dispatchManagedAsync ← channel orchestration and a
+    // future auto-fix pause_workflow step. The guard must fire BEFORE any DB read
+    // (so it throws even for a non-existent runId, proving it precedes the
+    // WORKFLOW_RUN_NOT_FOUND lookup) and create/mutate NO run row.
+    it("direct pauseRun method throws retired error before any DB read", async () => {
+      const runtime = buildRuntime({ allowTestOnly: false });
+      publishWorkflow(runtime, "pause-wf");
+
+      await expect(
+        runtime.execution.pauseRun("00000000-0000-0000-0000-000000000004"),
+      ).rejects.toMatchObject({ code: RETIRED_CODE });
+
+      expect(runRowCount()).toBe(0);
+    });
   });
 
   // ─── Explicit test-oracle flag ON: legacy path still works ───
@@ -335,7 +353,7 @@ describe("Workflow trigger/scheduler retirement guard (method-level, §1)", () =
     // G4: with the flag ON, the run-control siblings pass the retirement guard
     // and reach their bodies — proven by the DOWNSTREAM not-found error (NOT the
     // retirement code), confirming the guard is the only thing fenced by the flag.
-    it("resume/retry/cancel reach the body (downstream not-found, NOT retired) when flag is on", async () => {
+    it("resume/retry/cancel/pause reach the body (downstream not-found, NOT retired) when flag is on", async () => {
       const runtime = buildRuntime({ allowTestOnly: true });
       publishWorkflow(runtime, "oracle-control-wf");
 
@@ -347,6 +365,9 @@ describe("Workflow trigger/scheduler retirement guard (method-level, §1)", () =
       ).rejects.toMatchObject({ code: "WORKFLOW_RUN_NOT_FOUND" });
       await expect(
         runtime.execution.cancelRun("00000000-0000-0000-0000-0000000000a3"),
+      ).rejects.toMatchObject({ code: "WORKFLOW_RUN_NOT_FOUND" });
+      await expect(
+        runtime.execution.pauseRun("00000000-0000-0000-0000-0000000000a4"),
       ).rejects.toMatchObject({ code: "WORKFLOW_RUN_NOT_FOUND" });
     });
   });

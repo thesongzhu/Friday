@@ -27,6 +27,7 @@ members = [
     "crates/friday-hub",
     "crates/friday-ffi",
     "crates/friday-operator-cli",
+    "crates/friday-operator-signer",
     "crates/friday-arch-tests",
 ]
 
@@ -69,6 +70,7 @@ friday-providers = { path = "crates/friday-providers" }
 friday-fs = { path = "crates/friday-fs" }
 friday-hub = { path = "crates/friday-hub" }
 friday-ffi = { path = "crates/friday-ffi" }
+friday-operator-cli = { path = "crates/friday-operator-cli" }
 
 [profile.dev]
 # bundled SQLite compiles faster with some opt; keep debug assertions on.

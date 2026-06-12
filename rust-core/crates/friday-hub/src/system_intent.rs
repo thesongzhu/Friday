@@ -372,6 +372,54 @@ impl OsIntentExecutor<UnavailableBackend> {
     }
 }
 
+// ─── Barrier 3: DEPLOY-GO compile-time gate on any real OS-actuation backend ──────
+//
+// `production_default` is THE production selector seam — the single function a runtime
+// composition root may call to obtain the OS executor without naming a backend. Its
+// return TYPE is the compile-time enforcement of the audited "a real backend can never be
+// flipped on at runtime" property:
+//
+//   * DEFAULT build (feature OFF) — the selector is concretely typed
+//     `OsIntentExecutor<UnavailableBackend>`. The ONLY constructible production backend is
+//     `UnavailableBackend`, which actuates NOTHING. There is NO `env::var` (or any runtime
+//     input) that could swap in a real backend: the choice is `#[cfg(feature = ...)]`-only.
+//   * DEPLOY-GO build (feature ON) — the arm is an explicit unbuilt seam. Shipping a real
+//     host-effecting backend requires a deliberate, reviewable, RECOMPILED cutover that
+//     both enables the feature AND supplies the impl here. Until then the feature-ON build
+//     does not compile, so the default binary can never link a real actuator by accident.
+//
+// This preserves the dark posture: the default build is byte-identical in behavior to
+// today (UnavailableBackend only, nothing actuates), and adds a compile-time barrier
+// against a runtime flip.
+impl OsIntentExecutor<UnavailableBackend> {
+    /// The production OS-executor selector (Barrier 3). On the DEFAULT build the return
+    /// type is pinned to `OsIntentExecutor<UnavailableBackend>` — the only constructible
+    /// production backend, which actuates NOTHING. A real backend is reachable ONLY via a
+    /// recompiled DEPLOY-GO cutover (the `os-actuation-deploy-go` feature), never a runtime
+    /// flag. The default-build executor is dry-run/observe + empty allowlist + unavailable
+    /// backend — identical to [`dry_run_default`](Self::dry_run_default) — so calling this
+    /// can never move the host on a default build.
+    #[cfg(not(feature = "os-actuation-deploy-go"))]
+    pub fn production_default() -> OsIntentExecutor<UnavailableBackend> {
+        // The default build offers EXACTLY ONE production backend: UnavailableBackend.
+        // No `env::var`, no runtime selection — the backend is fixed at compile time.
+        OsIntentExecutor::dry_run_default()
+    }
+}
+
+// DEPLOY-GO arm: the real, host-effecting backend selector is an explicit UNBUILT seam.
+// A real `OsActuationBackend` (a signed companion/Swift helper / least-privilege OS
+// process) is provisioned here ONLY at the DEPLOY-GO cutover, which is a deliberate,
+// reviewable RECOMPILE. Until that lands the feature-ON build intentionally does not
+// compile, so a real actuator can never be linked into a default binary.
+#[cfg(feature = "os-actuation-deploy-go")]
+compile_error!(
+    "os-actuation-deploy-go: no real OsActuationBackend is wired yet. Provisioning a \
+     host-effecting backend is a DEPLOY-GO cutover (deliberate, reviewable recompile) — \
+     wire the real backend + an `OsIntentExecutor::production_default` selector for this \
+     arm here before building with this feature."
+);
+
 impl<B: OsActuationBackend> OsIntentExecutor<B> {
     /// Build an executor with the actuate flag set EXPLICITLY, an operator-curated
     /// allowlist, and a backend. NEVER set `actuate = true` on a production path until
@@ -1532,6 +1580,57 @@ mod tests {
             assert_eq!(out.message, DRY_RUN_OBSERVED_MARKER, "{a:?}");
             assert_ne!(out.status, IntentStatus::Completed);
         }
+    }
+
+    #[test]
+    #[cfg(not(feature = "os-actuation-deploy-go"))]
+    fn barrier3_production_default_selector_cannot_actuate_on_default_build() {
+        // Barrier 3 (compile-time DEPLOY-GO gate): on the DEFAULT build the production
+        // selector `production_default()` returns an `OsIntentExecutor<UnavailableBackend>`
+        // — the backend type is PINNED at compile time, so the only constructible
+        // production backend is the one that actuates NOTHING. There is no runtime/env
+        // input that could swap in a real backend. Behaviorally: every action (mutating or
+        // observe) short-circuits to a refs-only dry-run, `would_actuate` is false for all,
+        // and nothing is ever `Completed`.
+        //
+        // The `let ex: OsIntentExecutor<UnavailableBackend>` annotation is itself part of
+        // the proof: it would FAIL TO COMPILE on the default build if the selector could
+        // return any other (e.g. real, host-effecting) backend.
+        let ex: OsIntentExecutor<UnavailableBackend> = OsIntentExecutor::production_default();
+        for a in [
+            IntentAction::Snapshot,
+            IntentAction::SearchFile,
+            IntentAction::NotificationList,
+            IntentAction::LaunchApp,
+            IntentAction::CloseApp,
+            IntentAction::OpenUrl,
+            IntentAction::OpenProject,
+            IntentAction::Focus,
+            IntentAction::ArrangeWindows,
+            IntentAction::ClipboardRead,
+            IntentAction::ClipboardWrite,
+            IntentAction::NotificationAct,
+        ] {
+            assert!(
+                !ex.would_actuate(a),
+                "{a:?} must never actuate on the default build"
+            );
+            let out = ex.execute(a, Some("ref"));
+            assert_eq!(out.status, IntentStatus::Unavailable, "{a:?}");
+            assert_eq!(out.message, DRY_RUN_OBSERVED_MARKER, "{a:?}");
+            assert_ne!(
+                out.status,
+                IntentStatus::Completed,
+                "{a:?} must never report Completed"
+            );
+        }
+        // Pin the equivalence to the dry-run ship default: the production selector is the
+        // unavailable-backend dry-run posture on the default build, by construction.
+        let baseline = OsIntentExecutor::dry_run_default();
+        assert_eq!(
+            ex.would_actuate(IntentAction::LaunchApp),
+            baseline.would_actuate(IntentAction::LaunchApp)
+        );
     }
 
     #[test]
