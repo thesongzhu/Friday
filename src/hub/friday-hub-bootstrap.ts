@@ -2079,6 +2079,13 @@ export async function createFridayHub(
         process.env.FRIDAY_DESKTOP_SANDBOX_ALLOWED_ROOTS,
         workspaceRoot,
       ),
+      // TS Runtime Retirement: method-head fail-closed guard for the desktop OS
+      // actuator. This flag defaults unset so executeAction / cancelAction /
+      // getActionLog fail closed for ALL off-route callers (agent desktop tool,
+      // autonomy engine, skill desktop helper) — the route fence alone left them
+      // reachable. Threaded from the same config knob the route deps use, so the
+      // method + route fences stay in lockstep.
+      allowTestOnlyDesktopActionExecution: config.allowTestOnlyDesktopActionExecution,
     });
 
     desktopSessionManager.connect();
