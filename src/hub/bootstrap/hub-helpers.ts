@@ -1945,6 +1945,16 @@ export interface FridayHubConfig {
    */
   routeAgentRunViaRust?: boolean;
   /**
+   * GATE-AGENT-REPLACE A3 courier (DARK): master ON/OFF arming the pause/resume PRODUCT
+   * TRANSPORT (the sealed WS courier's `AgentRunPaused` inbound + `resumeWithApproval` relay).
+   * DEFAULT-FALSE — production hub creation must leave this unset so the courier's paused/resume
+   * behavior is inert and the compose path is byte-identical to today. Resolved (config-explicit
+   * wins, else `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST`) by `resolveAgentRunControlViaRust` and fed into
+   * the api-runtime deps. Mirrors the Phase-2 Rust server's default-off flag of the SAME name; it
+   * admits NO mutating run (the read-only qualifier stays hard — a SEPARATE later PR).
+   */
+  agentRunControlViaRust?: boolean;
+  /**
    * providers-bridge cut-over (DARK): master ON/OFF for routing the retired Tier-2
    * PROVIDER surfaces (`providers.detect` / `providers.doctor` / `providers.validate` /
    * `capabilities.doctor`) to the merged Rust `hub_providers_detect` /

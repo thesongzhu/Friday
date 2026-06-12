@@ -1,12 +1,30 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { FridayDomainError } from "../../../../src/errors/friday-domain-error.js";
-import { createFridayRustHubAgentRunSealedClientService } from "../../../../src/api/mission-spine/friday-rust-hub-agent-run-sealed-client-service.js";
+import {
+  createFridayRustHubAgentRunSealedClientService,
+  isPausedDispatchOutcome,
+  type FridayRustHubAgentRunSealedClientServiceDispatchOutcome,
+  type FridayRustHubAgentRunSealedClientServiceResult,
+} from "../../../../src/api/mission-spine/friday-rust-hub-agent-run-sealed-client-service.js";
 import type {
   CreateFridayRustHubAgentRunSealedClientOptions,
+  FridayRustHubAgentRunPausedOutcome,
+  FridayRustHubAgentRunResumeRequest,
+  FridayRustHubAgentRunResumeResult,
   FridayRustHubAgentRunSealedClient,
   FridayRustHubAgentRunSealedResult,
 } from "../../../../src/api/mission-spine/friday-rust-hub-agent-run-ws-sealed-client.js";
+
+/** Narrow a service dispatch outcome to the refs-only result (asserts it is NOT paused). */
+function asResultOutcome(
+  outcome: FridayRustHubAgentRunSealedClientServiceDispatchOutcome,
+): FridayRustHubAgentRunSealedClientServiceResult {
+  if (isPausedDispatchOutcome(outcome)) {
+    throw new Error("expected a refs-only result, got a paused outcome");
+  }
+  return outcome;
+}
 
 // execrun B1-compose (DARK): the service ADAPTER that lets compose drive the PROVEN sealed WS
 // client through a `dispatchRun({...,clientSecret})` seam over the REAL ECDH protocol. These tests
@@ -16,10 +34,12 @@ import type {
 
 const SECRET = new Uint8Array(32).fill(7);
 
-/** A fake underlying sealed client + a recorder of how it was constructed/dispatched. */
+/** A fake underlying sealed client + a recorder of how it was constructed/dispatched/resumed. */
 function makeFakeClient(behavior: {
-  result?: FridayRustHubAgentRunSealedResult;
+  result?: FridayRustHubAgentRunSealedResult | FridayRustHubAgentRunPausedOutcome;
   reject?: unknown;
+  resumeResult?: FridayRustHubAgentRunResumeResult;
+  resumeReject?: unknown;
 }) {
   const constructed: CreateFridayRustHubAgentRunSealedClientOptions[] = [];
   const dispatched: Array<{
@@ -29,6 +49,7 @@ function makeFakeClient(behavior: {
     sessionKey?: string;
     constraints?: { readOnly?: boolean; disabledTools?: readonly string[]; maxTurns?: number };
   }> = [];
+  const resumed: FridayRustHubAgentRunResumeRequest[] = [];
   const createClient = vi.fn(
     (options: CreateFridayRustHubAgentRunSealedClientOptions): FridayRustHubAgentRunSealedClient => {
       constructed.push(options);
@@ -40,10 +61,20 @@ function makeFakeClient(behavior: {
           }
           return behavior.result!;
         }),
+        resumeWithApproval: vi.fn(async (req: FridayRustHubAgentRunResumeRequest) => {
+          resumed.push(req);
+          if (behavior.resumeReject !== undefined) {
+            throw behavior.resumeReject;
+          }
+          if (!behavior.resumeResult) {
+            throw new Error("resumeWithApproval not scripted for this fake");
+          }
+          return behavior.resumeResult;
+        }),
       };
     },
   );
-  return { createClient, constructed, dispatched };
+  return { createClient, constructed, dispatched, resumed };
 }
 
 describe("createFridayRustHubAgentRunSealedClientService (B1-compose, dark, adapter)", () => {
@@ -142,8 +173,9 @@ describe("createFridayRustHubAgentRunSealedClientService (B1-compose, dark, adap
     });
 
     expect(result).toEqual({ truthLabel: "rust_wired", runId: "run-1", status: "no_answer" });
-    expect(result.answerSha256).toBeUndefined();
-    expect(result.answerLen).toBeUndefined();
+    const refs = asResultOutcome(result);
+    expect(refs.answerSha256).toBeUndefined();
+    expect(refs.answerLen).toBeUndefined();
   });
 
   it("surfaces the underlying client's FridayDomainError (503) unchanged on a closed session", async () => {
@@ -267,6 +299,139 @@ describe("createFridayRustHubAgentRunSealedClientService (B1-compose, dark, adap
         clientSecret: new Uint8Array(16),
       }),
     ).rejects.toMatchObject({ httpStatus: 503 });
+  });
+
+  // ── (A3 courier) flag passthrough + paused/resume relay ───────────────────────────────────────
+  it("(A3) does NOT forward agentRunControlViaRust to the inner client when the flag is OFF (default)", async () => {
+    const fake = makeFakeClient({ result: deliveredResult() });
+    const service = createFridayRustHubAgentRunSealedClientService({
+      port: 4123,
+      createClient: fake.createClient,
+      // agentRunControlViaRust omitted → default OFF
+    });
+    await service.dispatchRun({
+      runId: "run-1",
+      task: "ping",
+      forwardedPrincipal: "owner-1",
+      clientSecret: SECRET,
+    });
+    // Flag-off ⇒ the option is OMITTED from the inner client construction (byte-identical to today).
+    expect("agentRunControlViaRust" in fake.constructed[0]).toBe(false);
+  });
+
+  it("(A3) forwards agentRunControlViaRust:true to the inner client when the flag is ON", async () => {
+    const fake = makeFakeClient({ result: deliveredResult() });
+    const service = createFridayRustHubAgentRunSealedClientService({
+      port: 4123,
+      createClient: fake.createClient,
+      agentRunControlViaRust: true,
+    });
+    await service.dispatchRun({
+      runId: "run-1",
+      task: "ping",
+      forwardedPrincipal: "owner-1",
+      clientSecret: SECRET,
+    });
+    expect(fake.constructed[0].agentRunControlViaRust).toBe(true);
+  });
+
+  it("(A3) surfaces a PAUSED dispatch outcome UNCHANGED (refs only — no signing material, INV-1)", async () => {
+    const paused: FridayRustHubAgentRunPausedOutcome = {
+      outcome: "paused",
+      truthLabel: "rust_wired",
+      runId: "run-9",
+      approvalId: "approval-nonce-abc",
+      actionDigest: "d".repeat(64),
+      ownerSealedSummary: "write_file",
+    };
+    const fake = makeFakeClient({ result: paused });
+    const service = createFridayRustHubAgentRunSealedClientService({
+      port: 4123,
+      createClient: fake.createClient,
+      agentRunControlViaRust: true,
+    });
+    const outcome = await service.dispatchRun({
+      runId: "run-9",
+      task: "edit notes",
+      forwardedPrincipal: "owner-1",
+      clientSecret: SECRET,
+    });
+    expect(isPausedDispatchOutcome(outcome)).toBe(true);
+    expect(outcome).toEqual(paused);
+  });
+
+  it("(A3) resumeWithApproval relays the OPAQUE blob + run id VERBATIM to the inner client (INV-1)", async () => {
+    const resumeResult: FridayRustHubAgentRunResumeResult = {
+      truthLabel: "rust_wired",
+      runId: "run-9",
+      op: "resume",
+      accepted: true,
+      status: "executed",
+      auditRef: "audit:abc",
+    };
+    const fake = makeFakeClient({ resumeResult });
+    const service = createFridayRustHubAgentRunSealedClientService({
+      port: 4123,
+      createClient: fake.createClient,
+      agentRunControlViaRust: true,
+    });
+    const blob = new Uint8Array([9, 8, 7, 6]);
+    const result = await service.resumeWithApproval({
+      runId: "run-9",
+      clientSecret: SECRET,
+      opaqueSignedBlob: blob,
+    });
+    expect(result).toEqual(resumeResult);
+    // INV-1: the blob is relayed VERBATIM (same bytes), and the adapter forwards ONLY {runId, blob}.
+    expect(fake.resumed).toHaveLength(1);
+    expect(fake.resumed[0].runId).toBe("run-9");
+    expect(Buffer.from(fake.resumed[0].opaqueSignedBlob).equals(Buffer.from(blob))).toBe(true);
+    expect(Object.keys(fake.resumed[0]).sort()).toEqual(["opaqueSignedBlob", "runId"]);
+  });
+
+  it("(A3) resumeWithApproval surfaces a REFUSAL (accepted=false) as a resolved outcome, not a throw", async () => {
+    const fake = makeFakeClient({
+      resumeResult: {
+        truthLabel: "rust_wired",
+        runId: "run-9",
+        op: "resume",
+        accepted: false,
+        status: "approval_replayed",
+      },
+    });
+    const service = createFridayRustHubAgentRunSealedClientService({
+      port: 4123,
+      createClient: fake.createClient,
+      agentRunControlViaRust: true,
+    });
+    const result = await service.resumeWithApproval({
+      runId: "run-9",
+      clientSecret: SECRET,
+      opaqueSignedBlob: new Uint8Array([1]),
+    });
+    expect(result.accepted).toBe(false);
+    expect(result.status).toBe("approval_replayed");
+  });
+
+  it("(A3) resumeWithApproval surfaces the inner client's FridayDomainError (503) unchanged", async () => {
+    const domainErr = new FridayDomainError(
+      "MISSION_SPINE_RUST_AGENT_RUN_SEALED_WS_CLIENT_UNAVAILABLE",
+      "Sealed agent-run client run-control is disabled (resume relay refused).",
+      { httpStatus: 503 },
+    );
+    const fake = makeFakeClient({ resumeReject: domainErr });
+    const service = createFridayRustHubAgentRunSealedClientService({
+      port: 4123,
+      createClient: fake.createClient,
+      agentRunControlViaRust: true,
+    });
+    await expect(
+      service.resumeWithApproval({
+        runId: "run-9",
+        clientSecret: SECRET,
+        opaqueSignedBlob: new Uint8Array([1]),
+      }),
+    ).rejects.toBe(domainErr);
   });
 });
 
