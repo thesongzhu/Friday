@@ -305,6 +305,18 @@ pub mod key_source;
 /// seam. No production route, no runtime caller, no live flip. NOT v1 GO.
 pub mod system_intent;
 
+/// **S-R0** — the SHARED sealed-WS transport/auth SUBSTRATE for the UI direct-read seam. The single
+/// source of truth for the handshake + S-F peer-pubkey allowlist + low-order check + sealed-proof
+/// codec used by BOTH the live agent-run WRITE server and the DARK read-projection server, so the
+/// two cannot drift in crypto/auth. Pure refactor for the write path (byte-identical behavior); the
+/// read server it enables is itself DARK (no LaunchAgent, no production caller). NOT v1 GO.
+pub mod sealed_ws;
+
+/// **S-R1** — the extracted Mission Workbench projection library fn (refs-only, with the forbidden-
+/// output guard run INSIDE) so the one-shot `mission_workbench_projection` bin AND the DARK
+/// read-projection server share ONE implementation. No model call, no credential, read-only. DARK.
+pub mod workbench_projection;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,
