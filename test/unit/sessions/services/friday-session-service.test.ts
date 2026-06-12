@@ -1050,6 +1050,10 @@ describe("FridaySessionService", () => {
         db,
         idGenerator: createTestIdGenerator(),
         nowIso: () => threeHoursAgo,
+        // forkSession is now method-fenced (A3 HOLE 2); the legacy fork path this
+        // sweep test depends on requires the test-oracle flag, same as the main
+        // service above.
+        allowTestOnlySessionExecution: true,
       });
       await oldSvc.createSession({ channel: "discord", chatId: "sweep-fork" });
       await oldSvc.forkSession("discord:default:sweep-fork", { taskId: "sweep-task" });

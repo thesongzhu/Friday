@@ -74,6 +74,21 @@ export interface SessionManagerConfig {
    * ALL callers. Mirrors the route's `allowTestOnlyDesktopActionExecution` flag.
    */
   readonly allowTestOnlyDesktopActionExecution?: boolean;
+  /**
+   * Test-oracle only: allows the legacy TypeScript desktop RECORDING lifecycle +
+   * replay sink (`startRecording` / `stopRecording` / `pauseRecording` /
+   * `resumeRecording` / `deleteRecording` / `replayRecording` — the latter drives
+   * the OS actuator to re-execute recorded steps) in isolated test/validation
+   * harnesses. The HTTP route is already retired
+   * (`TS_RUNTIME_DESKTOP_RECORDING_RETIRED`, route flag
+   * `allowTestOnlyDesktopRecordingExecution`) but consumed ONLY at the route, so
+   * the agent desktop tool reaches `startRecording`/`stopRecording` directly off
+   * route. Default/live runtime must leave this unset so the recording lifecycle +
+   * replay fail closed for ALL callers. SEPARATE retired family from the action
+   * actuator above (different flag + family code). Mirrors the route's
+   * `allowTestOnlyDesktopRecordingExecution` flag.
+   */
+  readonly allowTestOnlyDesktopRecordingExecution?: boolean;
 }
 
 /** Session metadata. */
@@ -283,6 +298,38 @@ export function createDesktopSessionManager(
     }
   }
 
+  // ─── TS Runtime Retirement: METHOD-level fail-closed guard (RECORDING) ───
+  // Phase 3 (route-only-guard defect, A3 HOLE 1): the desktop RECORDING lifecycle
+  // is ROUTE-only-retired (friday-desktop-routes fail-closes
+  // desktop.recordings.start/.stop/.pause/.resume/.list/.get/.steps/.replay/
+  // .delete via throwRetiredDesktopRecording before the route calls the service).
+  // The session-manager recording methods themselves had NO method guard, so the
+  // off-route caller — the agent desktop tool (start_recording → startRecording,
+  // stop_recording → stopRecording + getRecordingSteps) — reaches them directly,
+  // bypassing the route fence (and `replayRecording` re-drives the OS actuator to
+  // replay recorded steps). Guarding at the method head fails ALL non-route
+  // callers closed BEFORE ensureConnected / getRecordingEngine / any side-effect,
+  // unless the explicit test-oracle `allowTestOnlyDesktopRecordingExecution` flag
+  // is set. SEPARATE retired family from the action actuator above (its own flag
+  // + family code). Never default this flag on in production. Read-shaped getters
+  // (getRecording/getRecordingSteps/listRecordings) stay live, mirroring how the
+  // action surface left checkPermissions live.
+  function assertDesktopRecordingExecutionAllowed(): void {
+    if (config.allowTestOnlyDesktopRecordingExecution !== true) {
+      throw new FridayDomainError(
+        "TS_RUNTIME_DESKTOP_RECORDING_RETIRED",
+        "Desktop recording lifecycle and replay are fail-closed while runtime ownership is being moved out of TypeScript.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_desktop_recording_entrypoint_required",
+          },
+        },
+      );
+    }
+  }
+
   function getRecordingEngine(): RecordingEngine {
     if (!recordingEngine) {
       const platform = adapterManager.getDetectedPlatform() ?? "darwin";
@@ -433,6 +480,7 @@ export function createDesktopSessionManager(
     // ─── Recording ───
 
     startRecording(options: StartRecordingOptions): FridayDesktopRecording {
+      assertDesktopRecordingExecutionAllowed();
       ensureConnected();
       const engine = getRecordingEngine();
       const activeRecordings = engine
@@ -449,6 +497,7 @@ export function createDesktopSessionManager(
     },
 
     stopRecording(recordingId: UUID): FridayDesktopRecording {
+      assertDesktopRecordingExecutionAllowed();
       ensureConnected();
       const engine = getRecordingEngine();
       const result = engine.stop(recordingId);
@@ -459,11 +508,13 @@ export function createDesktopSessionManager(
     },
 
     pauseRecording(recordingId: UUID): FridayDesktopRecording {
+      assertDesktopRecordingExecutionAllowed();
       ensureConnected();
       return getRecordingEngine().pause(recordingId);
     },
 
     resumeRecording(recordingId: UUID): FridayDesktopRecording {
+      assertDesktopRecordingExecutionAllowed();
       ensureConnected();
       return getRecordingEngine().resume(recordingId);
     },
@@ -481,6 +532,7 @@ export function createDesktopSessionManager(
     },
 
     deleteRecording(recordingId: UUID): boolean {
+      assertDesktopRecordingExecutionAllowed();
       const engine = getRecordingEngine();
       if (activeRecordingId === recordingId) {
         activeRecordingId = null;
@@ -489,6 +541,7 @@ export function createDesktopSessionManager(
     },
 
     async replayRecording(recordingId: UUID, options?: ReplayOptions): Promise<ReplayResult> {
+      assertDesktopRecordingExecutionAllowed();
       ensureConnected();
       const engine = getRecordingEngine();
       const adapter = adapterManager.getActiveAdapter();

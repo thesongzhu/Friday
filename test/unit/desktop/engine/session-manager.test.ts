@@ -30,6 +30,12 @@ function makeConfig() {
     // retirement-guard test constructs a manager WITHOUT this flag to prove the
     // fail-closed default.
     allowTestOnlyDesktopActionExecution: true as const,
+    // Test-oracle opt-in for the SEPARATE recording-lifecycle/replay family
+    // (A3 HOLE 2): startRecording/stopRecording/pauseRecording/resumeRecording/
+    // deleteRecording/replayRecording are method-level fail-closed by default.
+    // The recording integration tests below exercise the intended-live path;
+    // the dedicated recording retirement-guard test omits this flag.
+    allowTestOnlyDesktopRecordingExecution: true as const,
   };
 }
 

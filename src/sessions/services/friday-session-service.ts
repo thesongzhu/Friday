@@ -749,6 +749,34 @@ export function createFridaySessionService(
     },
 
     async forkSession(parentKey, input) {
+      // ─── TS Runtime Retirement (A3 HOLE 2): METHOD-level fail-closed guard ───
+      // forkSession is ROUTE-retired (friday-session-routes
+      // assertSessionTestOracleAllowed → TS_RUNTIME_SESSION_RETIRED) but reached
+      // OFF-route by the subagent registry (deps.sessionService.forkSession during
+      // sub-agent fork-mode spawn). That registry path runs ONLY as a tool call
+      // inside agentRuntime.executeRun's loop, which is itself fail-closed by
+      // default (allowTestOnlyAgentRunExecution) — so both forkSession callers
+      // (the guarded route + the dark subagent path) are unreachable in
+      // default/live runtime. Unlike the sibling session mutators (addMessage /
+      // getOrCreateSession / setConversationFocus), forkSession has NO live caller,
+      // so a method-head guard fences it for completeness without degrading any
+      // live path. Fails ALL callers closed BEFORE the fork write transaction
+      // (and before the internal addMessage parent-summary write) unless the
+      // explicit test-oracle flag is set. Never default this flag on in production.
+      if (deps.allowTestOnlySessionExecution !== true) {
+        throw new FridayDomainError(
+          "TS_RUNTIME_SESSION_RETIRED",
+          "TypeScript session execution is fail-closed in default/live runtime; use the Rust-owned session_lifecycle entrypoint.",
+          {
+            httpStatus: 503,
+            details: {
+              classification: "fail_closed",
+              replacement: "rust_owned_session_lifecycle_entrypoint_required",
+            },
+          },
+        );
+      }
+
       parentKey = canonicalizeFridaySessionKey(parentKey);
 
       const taskId = input?.taskId ?? randomUUID().slice(0, 8);
