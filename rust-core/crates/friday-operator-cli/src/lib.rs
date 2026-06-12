@@ -277,6 +277,29 @@ pub fn keygen_to_path(key_path: &Path) -> Result<String, CliError> {
 /// reconstruct the canonical bytes, Ed25519-sign them, and return the signed
 /// approval. Fail-closed on every malformed input; never panics; never leaks the key.
 pub fn sign_request(key_path: &Path, req: &PendingRequest) -> Result<SignedApproval, CliError> {
+    let sk = read_signing_key(key_path)?;
+    sign_request_with_key(&sk, req)
+}
+
+/// sign with an ALREADY-LOADED operator signing key: validate the pending request,
+/// reconstruct the canonical bytes, Ed25519-sign them, and return the signed approval.
+///
+/// This is the byte-producing core that [`sign_request`] (file-sourced key) and any
+/// OTHER operator-controlled key source (e.g. a KEK-wrapped `SecureStore` seed) MUST
+/// both route through, so every signature is produced over the IDENTICAL
+/// [`canonical_bytes`] the Hub recomputes at verify time
+/// (`friday_core::gate::canonical_approval_signature_bytes`). Producing the bytes any
+/// other way is the one error that silently yields a signature the Hub rejects; reusing
+/// this function makes byte-identity true by construction.
+///
+/// The caller owns key custody (how the [`OperatorSigningKey`] was obtained); this
+/// function never reads a key source and never leaks key material (the signature is the
+/// only key-derived output, and a signature is public by construction). Fail-closed on
+/// every malformed field; never panics.
+pub fn sign_request_with_key(
+    sk: &OperatorSigningKey,
+    req: &PendingRequest,
+) -> Result<SignedApproval, CliError> {
     let decision = parse_decision(&req.decision)?;
     if req.approval_id.trim().is_empty() {
         return Err(CliError::BadRequest(
@@ -297,7 +320,6 @@ pub fn sign_request(key_path: &Path, req: &PendingRequest) -> Result<SignedAppro
         return Err(CliError::BadRequest("issuer must not be empty".to_string()));
     }
 
-    let sk = read_signing_key(key_path)?;
     let bytes = canonical_bytes(
         decision,
         &req.approval_id,
@@ -376,6 +398,34 @@ mod tests {
         );
         // Default issuer is the canonical gate issuer.
         assert_eq!(signed.issuer, CANONICAL_GATE_ISSUER);
+        std::fs::remove_file(&key_path).ok();
+    }
+
+    #[test]
+    fn sign_request_and_with_key_are_byte_identical() {
+        // The file-sourced `sign_request` and the already-loaded-key
+        // `sign_request_with_key` MUST produce the IDENTICAL signed approval for the
+        // same key + request — i.e. the split is a pure refactor and any other key
+        // source (e.g. a KEK-wrapped SecureStore seed) that routes through
+        // `sign_request_with_key` signs the same canonical bytes the Hub verifies.
+        let dir = std::env::temp_dir().join(format!("op-cli-unit-eq-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let key_path = dir.join("operator.key");
+        let _ = std::fs::remove_file(&key_path);
+        keygen_to_path(&key_path).unwrap();
+
+        let req = sample_request();
+        let from_file = sign_request(&key_path, &req).unwrap();
+        let sk = read_signing_key(&key_path).unwrap();
+        let from_key = sign_request_with_key(&sk, &req).unwrap();
+
+        assert_eq!(from_file.signature, from_key.signature);
+        assert_eq!(from_file.action_digest, from_key.action_digest);
+        assert_eq!(from_file.approval_id, from_key.approval_id);
+        assert_eq!(from_file.issuer, from_key.issuer);
+        assert_eq!(from_file.decision, from_key.decision);
+        assert_eq!(from_file.scheme, from_key.scheme);
+        assert_eq!(from_file.expires_at, from_key.expires_at);
         std::fs::remove_file(&key_path).ok();
     }
 
