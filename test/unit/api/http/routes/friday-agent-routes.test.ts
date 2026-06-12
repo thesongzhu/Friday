@@ -96,9 +96,9 @@ describe("FridayAgentRoutes", () => {
     };
   });
 
-  it("registers 18 agent routes", () => {
+  it("registers 19 agent routes", () => {
     const routes = createFridayAgentRoutes(stubDeps);
-    expect(routes).toHaveLength(18);
+    expect(routes).toHaveLength(19);
   });
 
   it("POST /v1/agent/runs requires agent.run scope with workflow.run compatibility", () => {
@@ -261,6 +261,217 @@ describe("FridayAgentRoutes", () => {
       },
       disabledToolNames: undefined,
     }));
+  });
+
+  // ─── B#1: mutating-tool grant + gate marker body-field extraction (DARK) ───
+
+  it("POST /v1/agent/runs FORWARDS a valid mutatingToolGrant + mutationGate from the body (B#1)", async () => {
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+
+    await route.handler({
+      body: {
+        task: "edit a file",
+        constraints: { readOnly: false },
+        mutatingToolGrant: ["write_file", "edit_file"],
+        mutationGate: "operator_signed_ed25519",
+      },
+      params: {},
+      query: {},
+      headers: {},
+      principal: createStubPrincipal(),
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(stubDeps.startRun).toHaveBeenCalledWith(expect.objectContaining({
+      mutatingToolGrant: ["write_file", "edit_file"],
+      mutationGate: "operator_signed_ed25519",
+    }));
+  });
+
+  it("POST /v1/agent/runs OMITS mutatingToolGrant/mutationGate when absent or malformed (byte-identical when off)", async () => {
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+
+    // No mutating fields at all → neither key is forwarded (every existing caller's shape).
+    await route.handler({
+      body: { task: "just a read" },
+      params: {},
+      query: {},
+      headers: {},
+      principal: createStubPrincipal(),
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const firstCall = (stubDeps.startRun as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(firstCall).not.toHaveProperty("mutatingToolGrant");
+    expect(firstCall).not.toHaveProperty("mutationGate");
+
+    // Malformed shapes (empty array, non-string element, empty/non-string gate) → undefined → omitted.
+    await route.handler({
+      body: {
+        task: "malformed grant",
+        mutatingToolGrant: [123, ""],
+        mutationGate: 42,
+      } as unknown as { task: string },
+      params: {},
+      query: {},
+      headers: {},
+      principal: createStubPrincipal(),
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const secondCall = (stubDeps.startRun as ReturnType<typeof vi.fn>).mock.calls[1][0];
+    expect(secondCall).not.toHaveProperty("mutatingToolGrant");
+    expect(secondCall).not.toHaveProperty("mutationGate");
+  });
+
+  // ─── B#2: the resume route (POST /v1/agent/runs/:runId/resume) — DARK, default-off ───
+
+  it("POST /v1/agent/runs/:runId/resume is registered with the right method/path/auth", () => {
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.resume");
+    expect(route).toBeDefined();
+    expect(route!.method).toBe("POST");
+    expect(route!.path).toBe("/v1/agent/runs/:runId/resume");
+    expect(route!.auth).toEqual({ public: true });
+  });
+
+  it("resume FLAG-OFF short-circuits to the byte-identical retired 503 BEFORE any run lookup (DARK)", async () => {
+    // Default stubDeps has no agentRunControlViaRust + no resumeRun ⇒ flag-off.
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.resume")!;
+
+    await expect(route.handler({
+      body: { signedApproval: Buffer.from("anything").toString("base64") },
+      params: { runId: "run-1" },
+      query: {},
+      headers: {},
+      principal: createStubPrincipal(),
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    })).rejects.toMatchObject({
+      code: "TS_RUNTIME_AGENT_RUNS_RETIRED",
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_agent_run_entrypoint_required",
+      },
+    });
+    // The flag-off short-circuit happens BEFORE any run lookup → no run-existence leak.
+    expect(stubDeps.getRun).not.toHaveBeenCalled();
+    expect(stubDeps.resumeRun).toBeUndefined();
+  });
+
+  it("resume FLAG-ON rejects a caller who is NOT the run's bound owner (fail-closed 403)", async () => {
+    const resumeRun = vi.fn();
+    stubDeps.agentRunControlViaRust = true;
+    stubDeps.resumeRun = resumeRun;
+    // The run is owned by "owner:alice" (stamped at metadata.apiRequest.principalId).
+    stubDeps.getRun = vi.fn().mockReturnValue(createStubRun({
+      metadata: { apiRequest: { operationId: "agent.runs.start", idempotencyKey: "k", payloadHash: "h", receivedAt: "t", principalId: "owner:alice" } },
+    }));
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.resume")!;
+
+    await expect(route.handler({
+      body: { signedApproval: Buffer.from("blob").toString("base64") },
+      params: { runId: "run-1" },
+      query: {},
+      headers: {},
+      // A DIFFERENT, bound principal (mallory) — authenticated but not the owner.
+      principal: createStubPrincipal({ principalId: "owner:mallory" }),
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    })).rejects.toMatchObject({
+      code: "AGENT_RUN_RESUME_PRINCIPAL_MISMATCH",
+      httpStatus: 403,
+    });
+    expect(resumeRun).not.toHaveBeenCalled();
+  });
+
+  it("resume FLAG-ON rejects an OWNERLESS run (no stamped owner ⇒ resumable by nobody)", async () => {
+    const resumeRun = vi.fn();
+    stubDeps.agentRunControlViaRust = true;
+    stubDeps.resumeRun = resumeRun;
+    stubDeps.getRun = vi.fn().mockReturnValue(createStubRun()); // no metadata.apiRequest.principalId
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.resume")!;
+
+    await expect(route.handler({
+      body: { signedApproval: Buffer.from("blob").toString("base64") },
+      params: { runId: "run-1" },
+      query: {},
+      headers: {},
+      principal: createStubPrincipal({ principalId: "owner:alice" }),
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    })).rejects.toMatchObject({
+      code: "AGENT_RUN_RESUME_PRINCIPAL_MISMATCH",
+      httpStatus: 403,
+    });
+    expect(resumeRun).not.toHaveBeenCalled();
+  });
+
+  it("resume FLAG-ON relays the OPAQUE base64 blob VERBATIM to deps.resumeRun for the bound owner", async () => {
+    const resumeRun = vi.fn().mockResolvedValue({
+      runId: "run-1",
+      op: "resume",
+      accepted: true,
+      status: "mutation_completed",
+      auditRef: "audit-1",
+    });
+    stubDeps.agentRunControlViaRust = true;
+    stubDeps.resumeRun = resumeRun;
+    stubDeps.getRun = vi.fn().mockReturnValue(createStubRun({
+      metadata: { apiRequest: { operationId: "agent.runs.start", idempotencyKey: "k", payloadHash: "h", receivedAt: "t", principalId: "owner:alice" } },
+    }));
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.resume")!;
+
+    const rawBlob = new Uint8Array([1, 2, 3, 250, 251, 0]);
+    const principal = createStubPrincipal({ principalId: "owner:alice" });
+    const response = await route.handler({
+      body: { signedApproval: Buffer.from(rawBlob).toString("base64") },
+      params: { runId: "run-1" },
+      query: {},
+      headers: {},
+      principal,
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(resumeRun).toHaveBeenCalledTimes(1);
+    const [relayedRunId, relayedBlob, relayedPrincipal] = resumeRun.mock.calls[0];
+    expect(relayedRunId).toBe("run-1");
+    // VERBATIM: the relayed bytes equal the decoded base64 exactly (no parse, no re-encode).
+    expect(Array.from(relayedBlob as Uint8Array)).toEqual(Array.from(rawBlob));
+    expect(relayedPrincipal).toBe(principal);
+    expect(response).toMatchObject({ accepted: true, status: "mutation_completed", auditRef: "audit-1" });
+  });
+
+  it("resume FLAG-ON 400s a missing/non-string/undecodable signedApproval (no relay)", async () => {
+    const resumeRun = vi.fn();
+    stubDeps.agentRunControlViaRust = true;
+    stubDeps.resumeRun = resumeRun;
+    stubDeps.getRun = vi.fn().mockReturnValue(createStubRun({
+      metadata: { apiRequest: { operationId: "agent.runs.start", idempotencyKey: "k", payloadHash: "h", receivedAt: "t", principalId: "owner:alice" } },
+    }));
+    const routes = createFridayAgentRoutes(stubDeps);
+    const route = routes.find((r) => r.operationId === "agent.runs.resume")!;
+    const principal = createStubPrincipal({ principalId: "owner:alice" });
+
+    await expect(route.handler({
+      body: {},
+      params: { runId: "run-1" },
+      query: {},
+      headers: {},
+      principal,
+      requestId: "req-1",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+    })).rejects.toMatchObject({ code: "AGENT_RUN_RESUME_SIGNED_APPROVAL_REQUIRED", httpStatus: 400 });
+    expect(resumeRun).not.toHaveBeenCalled();
   });
 
   it("GET /v1/agent/runs requires agent.read scope with workflow.run compatibility", () => {

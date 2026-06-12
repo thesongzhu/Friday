@@ -108,6 +108,17 @@ export interface FridayRustHubRunReceipt {
   readonly usageTotalTokens: number;
   /** ISO timestamp the Rust run completed (drives the TS continuity timestamps). */
   readonly completedAtIso: string;
+  /**
+   * (S6 mutating-chat) The run's BOUND OWNER principal — stamped onto the projected row's
+   * `metadata.apiRequest.principalId` (the SAME shape the delivered idempotency stamp + the read
+   * routes use) so a LATER owner-gated control op (the resume route) can match the authenticated
+   * caller to the run's owner. OPTIONAL + additive: absent ⇒ no owner stamp (byte-identical to
+   * today — the delivered-finished branch still stamps owner via its own idempotency merge, and a
+   * sessionless/ownerless run stays ownerless). Set by the PAUSED compose branch (which previously
+   * returned BEFORE any owner stamp, leaving a paused row ownerless) so a paused mutating run has a
+   * real owner to authorize its resume against. NEVER the body — a principal id is a ref.
+   */
+  readonly ownerPrincipalId?: string;
 }
 
 /** What the projector wrote/found (refs-only — no body). */
@@ -245,6 +256,13 @@ export function createFridayRustHubRunContinuityProjectorService(): FridayRustHu
           finalMessageLen: receipt.finalMessageLen,
           ...(receipt.errorCategory ? { errorCategory: receipt.errorCategory } : {}),
         },
+        // (S6 mutating-chat) Stamp the bound OWNER under the SAME `apiRequest.principalId` shape
+        // the delivered-finished idempotency merge + the read routes use, so the resume route can
+        // authorize an owner-gated control op against the run's owner. Conditional ⇒ omitted when
+        // absent (byte-identical to the pre-S6 row). A principal id is a ref, never a body.
+        ...(receipt.ownerPrincipalId
+          ? { apiRequest: { principalId: receipt.ownerPrincipalId } }
+          : {}),
       });
 
       // NOTE: `context_cost_summary_json` is left UNSET. That column is read via

@@ -6406,4 +6406,92 @@ mod authed_route_tests {
             "with no override + non-read-only boot, the run is NOT read-only-blocked (the override is what blocks)"
         );
     }
+
+    /// A non-read-only per-run constraint (`read_only:false`) composing onto a non-read-only boot
+    /// policy.
+    fn mutating_override(rt_principal: &str) -> crate::RunPolicy {
+        let c = friday_protocol::AgentRunConstraintsWire {
+            read_only: false,
+            disabled_tools: vec![],
+            max_turns: None,
+        };
+        let boot =
+            crate::RunPolicy::new(Some(rt_principal.to_string()), Vec::<String>::new(), false);
+        crate::agent_run_control::effective_run_policy_over(&boot, Some(&c))
+    }
+
+    /// (S6 mutating-chat — THE B#3 LOAD-BEARING TEST) A mutating run admitted under the LIVE
+    /// dispatch entry with a per-run `read_only:false` constraint composed onto the server's
+    /// `read_only:false` boot policy (exactly what the WS server's flag-on dispatch arm builds via
+    /// `effective_run_policy_over(runtime.policy(), constraints)`) must **PAUSE** the mutating tool
+    /// pending an operator-signed approval — NOT Deny it (that would force the read-only path), and
+    /// NOT silently Allow it (the catastrophic escalation the whole S6 model rests on NOT happening).
+    ///
+    /// This is the complement to `a1_sessionless_override_read_only_blocks_mutating_tool` (the
+    /// `read_only:true → BLOCK` case): together they pin both arms of the composed-policy gate. The
+    /// `read_only:false` composition is the ACTUAL mutating-chat dispatch — the existing test only
+    /// proved the tightening direction; this proves a permitted-but-ungated mutation HALTS, so the
+    /// only path to execution is the operator's Ed25519 signature (proven end-to-end by
+    /// `s6d_resume_ingestion.rs` / `a1_run_control.rs`).
+    #[test]
+    fn s6_mutating_override_read_only_false_pauses_not_allows_not_denies() {
+        let (rt, ws) = runtime_with("s6-mutate-pause", MutateTransport, "principal:owner");
+        let caller = authed("principal:owner");
+        let policy = mutating_override("principal:owner");
+
+        // The composed policy is NOT read-only (no escalation, no silent loosening did NOT happen)
+        // — a `read_only:false` constraint over a `read_only:false` boot stays mutating-CAPABLE.
+        assert!(
+            !policy.is_read_only(),
+            "read_only:false over read_only:false boot stays non-read-only (mutating-capable)"
+        );
+
+        let out = run_authed_agent_loop_with_policy(
+            &rt,
+            &caller,
+            "s6-mut-ro-false",
+            "write a file",
+            Some(&policy),
+            None,
+            1000,
+        );
+
+        // PAUSE ⇒ no body delivered, NO file written (the mutation did NOT execute).
+        assert!(
+            out.delivered_body().is_none(),
+            "a paused (ungated) mutating run delivers no body"
+        );
+        assert!(
+            !ws.0.join("out.txt").exists(),
+            "the mutating tool PAUSED — it must NOT have executed without an operator signature"
+        );
+
+        // It is NOT a read-only Deny (that would be the wrong, over-restrictive outcome): there is
+        // NO `run_is_read_only:*` block event for this run.
+        let ro_blocked: i64 = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM agent_run_event WHERE run_id = 's6-mut-ro-false' AND kind LIKE 'tool.blocked:deny:run_is_read_only:%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            ro_blocked, 0,
+            "a read_only:false mutating run must NOT be read-only-denied (it pauses, not denies)"
+        );
+
+        // It DID pause: a live `pending` approval row (CSPRNG nonce + the exact tool call + digest)
+        // was persisted — the single thing an operator signature later authorizes. This is the gate
+        // standing between an admitted mutating run and an unsigned mutation executing.
+        let pause = crate::agent_run_control::detect_pause(rt.db().conn(), "s6-mut-ro-false")
+            .unwrap();
+        let pause = pause.expect("an ungated mutating run must PAUSE pending approval");
+        assert_eq!(pause.nonce.len(), 64, "CSPRNG nonce is 32 bytes => 64 hex");
+        assert!(
+            pause.summary.contains("write_file"),
+            "the pause is for the mutating write_file action"
+        );
+    }
 }

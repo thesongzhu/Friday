@@ -6,6 +6,7 @@ import type {
   FridayGetAgentRunResponse,
   FridayListAgentRunsQuery,
   FridayListAgentRunsResponse,
+  FridayResumeAgentRunResponse,
   FridayStartAgentRunRequest,
   FridayStartAgentRunResponse,
 } from "../../model/friday-api-agent.types.js";
@@ -914,6 +915,14 @@ export interface FridayAgentRoutesDeps {
     // unchanged 503). Forwarded RAW — presence-only, never coerced/injected (route-not-method
     // pin: it may only DISQUALIFY, never grant). Absent for every existing caller.
     planReviewOverride?: unknown;
+    // (A2b Phase 2, mutation-relax — DARK, default-off) the explicit POSITIVE grant of mutating
+    // Rust tools + the operator-signed gate opt-in marker. Additive + optional; forwarded straight
+    // to the route-bound startRun wrapper, which (ONLY when the default-OFF
+    // `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST` flag is on) lets the qualifier admit a `readOnly:false`
+    // run. Absent for every existing caller (→ the mutating branch never opens → byte-identical
+    // 503). NEVER infers mutation-permission from `readOnly` flipping — both are explicit gates.
+    mutatingToolGrant?: string[];
+    mutationGate?: string;
   }) => Promise<FridayAgentRuntimeResult>;
   getRun: (runId: string) => FridayAgentRunRecord | null;
   listRuns: (query: {
@@ -939,6 +948,31 @@ export interface FridayAgentRoutesDeps {
   rollbackRun?: (runId: string) => { restoredCount: number; errors: Array<{ filePath: string; error: string }> } | null;
   eventEmitter: FridayAgentEventEmitter;
   automationService: FridayAgentAutomationService;
+  /**
+   * (S6 mutating-chat — DARK, default-off) The resolved on/off state of the Rust run-CONTROL plane
+   * flag (`FRIDAY_AGENT_RUN_CONTROL_VIA_RUST`). The resume route is gated on this being EXACTLY
+   * `true`; absent / `undefined` / `false` (the default) ⇒ the resume route SHORT-CIRCUITS to the
+   * SAME fail-closed 503 a non-routed (retired) run raises — BEFORE any run lookup, so a dark host
+   * leaks no run existence and is byte-identical to today. Sourced from the SAME
+   * `resolveAgentRunControlViaRust` boolean the Rust server + sealed client gate on, so the TS
+   * control surface and the Rust control plane flip together.
+   */
+  agentRunControlViaRust?: boolean;
+  /**
+   * (S6 mutating-chat — DARK, default-off) Relay an operator's OPAQUE Ed25519-signed approval to
+   * RESUME a paused mutating run. The route is a PURE COURIER: it relays `opaqueSignedBlob` VERBATIM
+   * to the Rust sealed-WS resume (INV-1 — TS NEVER parses/validates/inspects the signature/digest;
+   * verification happens ONLY in Rust under the operator verify key). The route enforces, BEFORE
+   * calling this, that the authenticated caller equals the run's bound owner. This fn resolves the
+   * WS client X25519 secret + dials the sealed resume; it fails CLOSED (the byte-identical 503) on a
+   * missing secret / WS error / flag-off. Returns the refs-only resume outcome. Provided ONLY by the
+   * runtime; absent ⇒ the route is unreachable (its flag gate has already 503'd).
+   */
+  resumeRun?: (
+    runId: string,
+    opaqueSignedBlob: Uint8Array,
+    principal: FridayAuthPrincipal | null,
+  ) => Promise<FridayResumeAgentRunResponse>;
 }
 
 interface FridayAgentPlanControlInput {
@@ -1166,6 +1200,34 @@ export function createFridayAgentRoutes(
       );
     }
     return run;
+  }
+
+  // (S6 mutating-chat) The byte-IDENTICAL fail-closed 503 a non-routed (retired) agent-run raises
+  // (same code/message/status/classification/replacement as the runtime's `failClosedRustAgentRun`
+  // + the retired `startRun`). The resume route throws this on the flag-OFF short-circuit — BEFORE
+  // any run lookup — so a DARK host's `/resume` is INDISTINGUISHABLE from the retired path: it leaks
+  // no run existence and is byte-identical to today.
+  function failClosedResumeRoute(): FridayDomainError {
+    return new FridayDomainError(
+      "TS_RUNTIME_AGENT_RUNS_RETIRED",
+      "Agent run execution is fail-closed while runtime ownership is being moved out of TypeScript.",
+      {
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_agent_run_entrypoint_required",
+        },
+      },
+    );
+  }
+
+  // (S6 mutating-chat) Read a run's BOUND OWNER principal from `metadata.apiRequest.principalId`
+  // (the SAME shape the compose paused/delivered projection stamps + the idempotency reads use).
+  // A blank/whitespace/absent value ⇒ `undefined` (fail-closed: an ownerless run can be resumed by
+  // NOBODY — every caller mismatches). NEVER the body — a principal id is a ref.
+  function readRunOwnerPrincipalId(run: FridayAgentRunRecord): string | undefined {
+    const owner = run.metadata?.apiRequest?.principalId;
+    return typeof owner === "string" && owner.trim().length > 0 ? owner.trim() : undefined;
   }
 
   function buildTenantContext(principal: unknown): FridayProviderTenantContext | undefined {
@@ -1417,6 +1479,28 @@ export function createFridayAgentRoutes(
         // disqualified instead of (incorrectly) qualifying.
         const hasPlanReviewOverride = "planReviewOverride" in body;
 
+        // (A2b Phase 2, mutation-relax — DARK, default-off) parse the explicit, optional per-run
+        // mutating-tool grant + the operator-signed gate marker. Mirrors the `allowedRustRouteTools`
+        // extraction EXACTLY: accepted ONLY as an array of non-empty strings (grant) / a non-empty
+        // string (gate); any other shape (or absence) ⇒ undefined. ADDITIVE: no existing caller sends
+        // either, so behavior is unchanged (→ the qualifier's mutating branch stays closed → today's
+        // 503). The gate is enforced downstream by the qualifier (closed allow-list + the
+        // `operator_signed_ed25519` marker) ONLY behind the default-off `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST`
+        // flag — these fields can ONLY make a `readOnly:false` run a CANDIDATE, never AUTHORIZE the
+        // mutation (the Rust gate Pauses every mutating tool pending an operator-signed Ed25519
+        // approval; this route never carries the signature). Mutation-permission is NEVER inferred
+        // from `readOnly` flipping — both the grant and the marker are explicit, required gates.
+        const mutatingToolGrant = Array.isArray(body.mutatingToolGrant)
+          && body.mutatingToolGrant.every(
+            (t): t is string => typeof t === "string" && t.length > 0,
+          )
+          ? body.mutatingToolGrant
+          : undefined;
+        const mutationGate =
+          typeof body.mutationGate === "string" && body.mutationGate.length > 0
+            ? body.mutationGate
+            : undefined;
+
         const result = await deps.startRun({
           task: body.task,
           taskPrompt,
@@ -1435,6 +1519,8 @@ export function createFridayAgentRoutes(
           ...(hasPlanReviewOverride
             ? { planReviewOverride: (body as Record<string, unknown>).planReviewOverride }
             : {}),
+          ...(mutatingToolGrant ? { mutatingToolGrant } : {}),
+          ...(mutationGate ? { mutationGate } : {}),
           ...(apiIdempotencyKey
             ? {
               apiIdempotencyKey,
@@ -1575,6 +1661,88 @@ export function createFridayAgentRoutes(
         deps.cancelRun(runId);
         const response: FridayCancelAgentRunResponse = { cancelled: true, runId };
         return response;
+      },
+    },
+
+    // ─── POST /v1/agent/runs/:runId/resume ───
+    // (S6 mutating-chat — DARK, default-off) Relay an operator's OPAQUE Ed25519-signed approval to
+    // RESUME a paused mutating run. GATED on `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST`:
+    //   * FLAG OFF (the default) ⇒ SHORT-CIRCUIT to the byte-identical retired 503 BEFORE any run
+    //     lookup — a DARK host's `/resume` is indistinguishable from the retired path (no run
+    //     existence leak, byte-identical to today).
+    //   * FLAG ON ⇒ require a bound owner principal, fetch the run, enforce the authenticated
+    //     principal === the run's bound owner (the run's `metadata.apiRequest.principalId`) — reject
+    //     fail-closed otherwise (this TS gate is LOAD-BEARING: Rust resume is signature-authed and
+    //     does NOT re-check the owner) — then relay the OPAQUE signed blob VERBATIM to Rust.
+    // INV-1 (opaque relay): the route NEVER parses/validates/inspects the signature/digest; it
+    // base64-decodes the operator's `signedApproval` to bytes and hands them through unchanged.
+    // Verification happens ONLY in Rust under the operator verify key (the hub holds no signing key).
+    {
+      operationId: "agent.runs.resume",
+      method: "POST",
+      path: "/v1/agent/runs/:runId/resume",
+      auth: { public: true },
+      async handler(ctx) {
+        const { runId } = ctx.params as { runId: string };
+
+        // (a) FLAG GATE — checked FIRST, BEFORE any run lookup. Flag off / resume fn absent ⇒ the
+        // byte-identical retired 503 (DARK: no run existence leak). `resumeRun` is provided ONLY by
+        // the runtime; its absence is treated identically to flag-off (defense-in-depth).
+        if (deps.agentRunControlViaRust !== true || !deps.resumeRun) {
+          throw failClosedResumeRoute();
+        }
+
+        // (b) BOUND OWNER required. The synthetic public principal can never own/resume a run.
+        const bound = assertBoundPrincipalForOperation(ctx.principal, "agent.run.resume", "api");
+
+        // (c) Fetch the run; enforce the authenticated principal === the run's BOUND OWNER. An
+        // ownerless run (no stamped owner) is resumable by NOBODY (fail-closed). Any mismatch ⇒
+        // 403, never executing the mutation under the wrong principal. (Rust does NOT re-check the
+        // owner on resume — it is signature-authed — so this gate is the owner boundary.)
+        const run = getVisibleRunOrThrow(runId);
+        const ownerPrincipalId = readRunOwnerPrincipalId(run);
+        if (!ownerPrincipalId || ownerPrincipalId !== bound.principalId) {
+          throw new FridayDomainError(
+            "AGENT_RUN_RESUME_PRINCIPAL_MISMATCH",
+            "The authenticated principal is not the bound owner of this run.",
+            { httpStatus: 403 },
+          );
+        }
+
+        // (d) OPAQUE relay. The operator's signed CanonicalApproval rides the body as a base64
+        // string (`signedApproval`); decode it to bytes VERBATIM and relay — NEVER parse/inspect the
+        // signature/digest (INV-1). A missing/non-string/undecodable value is a 400 (no relay, no
+        // mutation). We do NOT validate JSON-ness or any inner field — Rust owns verification.
+        const body = ctx.body as { signedApproval?: unknown } | null | undefined;
+        const signedApprovalB64 = body?.signedApproval;
+        if (typeof signedApprovalB64 !== "string" || signedApprovalB64.length === 0) {
+          throw new FridayDomainError(
+            "AGENT_RUN_RESUME_SIGNED_APPROVAL_REQUIRED",
+            "signedApproval (base64-encoded operator-signed approval) is required in the request body.",
+            { httpStatus: 400 },
+          );
+        }
+        let opaqueSignedBlob: Uint8Array;
+        try {
+          opaqueSignedBlob = new Uint8Array(Buffer.from(signedApprovalB64, "base64"));
+        } catch {
+          throw new FridayDomainError(
+            "AGENT_RUN_RESUME_SIGNED_APPROVAL_MALFORMED",
+            "signedApproval could not be base64-decoded.",
+            { httpStatus: 400 },
+          );
+        }
+        if (opaqueSignedBlob.length === 0) {
+          throw new FridayDomainError(
+            "AGENT_RUN_RESUME_SIGNED_APPROVAL_MALFORMED",
+            "signedApproval decoded to an empty blob.",
+            { httpStatus: 400 },
+          );
+        }
+
+        // (e) Relay VERBATIM to the runtime resume (which resolves the WS secret + dials the sealed
+        // resume; fails closed on any error). Returns the refs-only outcome (NEVER a body).
+        return await deps.resumeRun(runId, opaqueSignedBlob, ctx.principal);
       },
     },
 

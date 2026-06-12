@@ -147,7 +147,11 @@ import type {
   FridayRustHubAgentRunSealedClientService,
   FridayRustHubAgentRunSealedClientServiceDispatchOutcome,
 } from "../mission-spine/friday-rust-hub-agent-run-sealed-client-service.js";
-import type { FridayRustHubAgentRunConstraints } from "../mission-spine/friday-rust-hub-agent-run-ws-sealed-client.js";
+import type {
+  FridayRustHubAgentRunConstraints,
+  FridayRustHubAgentRunResumeResult,
+} from "../mission-spine/friday-rust-hub-agent-run-ws-sealed-client.js";
+import type { FridayResumeAgentRunResponse } from "../model/friday-api-agent.types.js";
 import { createFridayRustHubRunContinuityProjectorService } from "../mission-spine/friday-rust-hub-run-continuity-projector-service.js";
 import type { FridayRustHubRunContinuityProjectorService } from "../mission-spine/friday-rust-hub-run-continuity-projector-service.js";
 import { createFridayRustHubRunAnswerReadbackService } from "../mission-spine/friday-rust-hub-run-answer-readback-service.js";
@@ -1461,6 +1465,16 @@ async function composeRustReadOnlyAgentRun(args: {
         usageCompletionTokens: 0,
         usageTotalTokens: 0,
         completedAtIso: pausedAtIso,
+        // (S6 mutating-chat) Stamp the run's BOUND OWNER onto the paused row's
+        // `metadata.apiRequest.principalId`. The paused branch previously returned BEFORE any
+        // owner stamp (the delivered branch's idempotency merge below is unreached for a pause),
+        // leaving a paused row ownerless — so the resume route's owner-binding gate would reject
+        // EVERY resume, including the legitimate owner. `callerPrincipal` is the same bound owner
+        // the readback/qualifier require (clause `hasBoundOwnerPrincipal` already guaranteed it is
+        // non-empty for a gated mutating run). Safe for the flag-off invariant: the paused outcome
+        // is reachable ONLY flag-on (the courier never returns a pause when off), so this never
+        // changes byte-identical-when-off behavior.
+        ...(callerPrincipal ? { ownerPrincipalId: callerPrincipal } : {}),
       }),
     );
     // A pause is NOT a fail-closed 503 — it is an honest non-Finished settle that returns a row.
@@ -4830,6 +4844,53 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       return startRun(input);
     };
 
+    // (S6 mutating-chat — DARK, default-off) Runtime-level RESUME relay handed to the resume HTTP
+    // route. The route already (1) flag-gated on `deps.agentRunControlViaRust` BEFORE any run lookup
+    // and (2) enforced caller == the run's bound owner, so this fn is reached ONLY for an
+    // owner-authorized resume on a flag-on host. It is the pure courier's transport half: resolve
+    // the SecureStore X25519 client secret (the SAME ECDH secret the dispatch path uses), then dial
+    // the sealed-WS `resumeWithApproval`, relaying the OPAQUE blob VERBATIM (INV-1: it inspects
+    // NOTHING inside the blob; verification happens ONLY in Rust under the operator verify key).
+    // Fails CLOSED to the byte-identical retired 503 on a missing/short secret OR any WS error — it
+    // NEVER falls through to a TS-side resume (there is none). Returns the refs-only outcome.
+    const routeResumeRun = async (
+      runId: string,
+      opaqueSignedBlob: Uint8Array,
+      _principal: FridayAuthPrincipal | null,
+    ): Promise<FridayResumeAgentRunResponse> => {
+      // Defense-in-depth: even though the route flag-gated already, re-check here so this fn can
+      // NEVER relay while the control plane is off (a future caller can't bypass the dark posture).
+      if (deps.agentRunControlViaRust !== true) {
+        throw failClosedRustAgentRun();
+      }
+      // Resolve the X25519 client SECRET fail-closed BEFORE any WS connection (a non-32-byte secret
+      // ⇒ the byte-identical 503; never open an unauthenticated WS, never log the key).
+      const clientSecret = rustWsClientSecretResolver();
+      if (!clientSecret || clientSecret.length !== 32) {
+        throw failClosedRustAgentRun();
+      }
+      let outcome: FridayRustHubAgentRunResumeResult;
+      try {
+        outcome = await rustWsClient.resumeWithApproval({
+          runId,
+          clientSecret,
+          // INV-1: the OPAQUE operator-signed blob is relayed VERBATIM — the courier authors nothing.
+          opaqueSignedBlob,
+        });
+      } catch {
+        // Any sealed-WS failure (flag-off inner client, transport, refused) ⇒ the byte-identical
+        // 503; never a partial / TS-side resume.
+        throw failClosedRustAgentRun();
+      }
+      return {
+        runId: outcome.runId,
+        op: outcome.op,
+        accepted: outcome.accepted,
+        status: outcome.status,
+        ...(outcome.auditRef !== undefined ? { auditRef: outcome.auditRef } : {}),
+      };
+    };
+
     for (const route of createFridayAgentRoutes({
       validateRequestedRoute: async (providerId, model, tenantContext) => {
         await deps.providerService.resolveRoute(model, providerId, {
@@ -4955,6 +5016,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       },
       eventEmitter: deps.agentEventEmitter,
       automationService: routeAutomationService,
+      // (S6 mutating-chat — DARK, default-off) the SAME resolved control-plane flag the Rust server
+      // + sealed client gate on. With it off (the default), the resume route SHORT-CIRCUITS to the
+      // byte-identical retired 503 before any run lookup; on, it relays an owner-authorized resume.
+      agentRunControlViaRust: deps.agentRunControlViaRust,
+      resumeRun: routeResumeRun,
     })) {
       routes.register(route);
     }

@@ -192,6 +192,7 @@ function makeStubReadback(owner: string) {
 
 interface ComposeDeps {
   routeAgentRunViaRust?: boolean;
+  agentRunControlViaRust?: boolean;
   wsClient?: FridayRustHubAgentRunSealedClientService;
   readback?: FridayRustHubRunAnswerReadbackService;
   clientSecretResolver?: () => Uint8Array | null;
@@ -215,6 +216,7 @@ function makeRuntime(db: FridaySqliteLayer, opts: ComposeDeps) {
     // allowTestOnlyAgentRunStartExecution intentionally UNSET → production fail-closed 503
     // on the disqualified / flag-off path (matches production + slice-4).
     ...(opts.routeAgentRunViaRust === undefined ? {} : { routeAgentRunViaRust: opts.routeAgentRunViaRust }),
+    ...(opts.agentRunControlViaRust === undefined ? {} : { agentRunControlViaRust: opts.agentRunControlViaRust }),
     ...(opts.wsClient ? { rustAgentRunWsClient: opts.wsClient } : {}),
     ...(opts.readback ? { rustAgentRunAnswerReadback: opts.readback } : {}),
     // The REAL projector is used so the no-double-count contract is exercised against a db.
@@ -373,6 +375,19 @@ describe("FridayApiRuntime — execrun S-F-compose (DARK) Rust-route composition
     );
     expect(rowResponse).toContain("rust-run-body-ref:");
     expect(rowResponse).not.toBe(OWNER_BODY);
+
+    // (S6 mutating-chat) The paused row now STAMPS the run's BOUND OWNER at
+    // `metadata.apiRequest.principalId` — so the resume route's owner-binding gate has a real owner
+    // to authorize against. Before the fix the paused branch returned BEFORE any owner stamp, so the
+    // resume route would have rejected EVERY resume (including the legitimate owner). The owner is a
+    // ref, never the body.
+    const rowMetadata = db.withReadConnection((d) =>
+      (d.prepare("SELECT metadata_json FROM friday_agent_runs WHERE id = ?").get(RUN_ID) as
+        | { metadata_json: string | null }
+        | undefined)?.metadata_json ?? "{}",
+    );
+    const parsedMetadata = JSON.parse(rowMetadata) as { apiRequest?: { principalId?: string } };
+    expect(parsedMetadata.apiRequest?.principalId).toBe(OWNER_PRINCIPAL);
   });
 
   it("(b) flag OFF (default) → byte-identical 503; the WS path is NEVER touched", async () => {
@@ -807,5 +822,191 @@ describe("FridayApiRuntime — execrun S-F-compose (DARK) Rust-route composition
     expect(ws.calls).toHaveLength(0);
     expect(readback.calls).toHaveLength(0);
     expect(countRows(db, "friday_agent_runs", RUN_ID)).toBe(0);
+  });
+
+  // ─── (S6 mutating-chat) routeResumeRun — the runtime resume relay's fail-closed branches ───
+  //
+  // These exercise the RUNTIME function the resume route delegates to (NOT a mocked deps.resumeRun):
+  // the defense-in-depth flag check, the X25519-secret preflight, the WS-error fail-closed, and the
+  // success mapping. We drive a paused MUTATING run to the DB first (so the owner is stamped + the
+  // resume route's owner-binding passes), then call the resume route on that run.
+
+  // A mutating body that pauses on the gate: readOnly:false + the operator-signed gate marker + a
+  // grant ⊆ the closed mutating allow-list. The owner is OWNER_PRINCIPAL (stamped on the paused row).
+  const MUTATING_PAUSING_BODY = {
+    ...QUALIFYING_BODY,
+    constraints: { readOnly: false },
+    mutatingToolGrant: ["write_file"],
+    mutationGate: "operator_signed_ed25519",
+  };
+
+  /** Make a stub WS client whose resume returns/throws a scripted control outcome. */
+  function makeResumeWsClient(
+    resume: (req: { runId: string; clientSecret: Uint8Array; opaqueSignedBlob: Uint8Array }) =>
+      | Promise<{ truthLabel: "rust_wired"; runId: string; op: string; accepted: boolean; status: string; auditRef?: string }>,
+  ) {
+    const paused = makeStubPausedWsClient();
+    const resumeCalls: Array<{ runId: string; opaqueSignedBlob: Uint8Array }> = [];
+    const service: FridayRustHubAgentRunSealedClientService = {
+      dispatchRun: paused.service.dispatchRun,
+      resumeWithApproval: vi.fn(async (req: { runId: string; clientSecret: Uint8Array; opaqueSignedBlob: Uint8Array }) => {
+        resumeCalls.push({ runId: req.runId, opaqueSignedBlob: req.opaqueSignedBlob });
+        return resume(req);
+      }),
+    };
+    return { service, resumeCalls };
+  }
+
+  async function pauseAMutatingRun(
+    runtime: ReturnType<typeof createFridayApiRuntime>,
+  ): Promise<void> {
+    // Flag-on + mutating body ⇒ the paused dispatch ⇒ a continuity row stamped with OWNER_PRINCIPAL.
+    await callStartRoute(runtime, { ...MUTATING_PAUSING_BODY });
+  }
+
+  function resumeRoute(runtime: ReturnType<typeof createFridayApiRuntime>) {
+    const route = runtime.routes.getRoutes().find((r) => r.operationId === "agent.runs.resume");
+    expect(route).toBeDefined();
+    return route!;
+  }
+
+  async function callResume(
+    runtime: ReturnType<typeof createFridayApiRuntime>,
+    opts: { blob?: Uint8Array; principalId?: string } = {},
+  ) {
+    return resumeRoute(runtime).handler({
+      body: { signedApproval: Buffer.from(opts.blob ?? new Uint8Array([9, 9, 9])).toString("base64") },
+      params: { runId: RUN_ID },
+      principal: makeBoundPrincipal(opts.principalId ?? OWNER_PRINCIPAL),
+      receivedAt: NOW,
+    } as never);
+  }
+
+  it("(resume-ok) flag ON + owner + valid secret → relays the opaque blob VERBATIM and maps the outcome", async () => {
+    db = createTestDb();
+    const blob = new Uint8Array([1, 2, 3, 200, 0, 255]);
+    const ws = makeResumeWsClient(async (req) => ({
+      truthLabel: "rust_wired" as const,
+      runId: req.runId,
+      op: "resume",
+      accepted: true,
+      status: "mutation_completed",
+      auditRef: "audit-xyz",
+    }));
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      agentRunControlViaRust: true,
+      wsClient: ws.service,
+    });
+    await pauseAMutatingRun(runtime);
+
+    const res = (await callResume(runtime, { blob })) as { accepted: boolean; status: string; auditRef?: string; op: string };
+    expect(res).toMatchObject({ op: "resume", accepted: true, status: "mutation_completed", auditRef: "audit-xyz" });
+    // The opaque blob was relayed VERBATIM (no parse / re-encode).
+    expect(ws.resumeCalls).toHaveLength(1);
+    expect(Array.from(ws.resumeCalls[0].opaqueSignedBlob)).toEqual(Array.from(blob));
+  });
+
+  it("(resume-deny) flag ON + a Rust REFUSAL (forged/expired/replayed) → accepted:false, no throw", async () => {
+    db = createTestDb();
+    const ws = makeResumeWsClient(async (req) => ({
+      truthLabel: "rust_wired" as const,
+      runId: req.runId,
+      op: "resume",
+      accepted: false,
+      status: "approval_refused",
+    }));
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      agentRunControlViaRust: true,
+      wsClient: ws.service,
+    });
+    await pauseAMutatingRun(runtime);
+
+    const res = (await callResume(runtime)) as { accepted: boolean; status: string };
+    expect(res).toMatchObject({ accepted: false, status: "approval_refused" });
+  });
+
+  it("(resume-secret) flag ON but the X25519 secret is MISSING → byte-identical 503; WS resume NEVER called", async () => {
+    db = createTestDb();
+    const ws = makeResumeWsClient(async () => {
+      throw new Error("resume must not be reached when the secret is missing");
+    });
+    // Pre-seed an OWNED paused row DIRECTLY via the projector (so the owner-binding passes) — we
+    // cannot use the dispatch pause here because the dispatch preflight ALSO resolves the (null)
+    // secret and would 503 before pausing. This isolates the RESUME secret-preflight branch.
+    db.withWriteTransaction((d) =>
+      createFridayRustHubRunContinuityProjectorService().project(d, {
+        truthLabel: "rust_wired_dev",
+        proofOnly: true,
+        ok: true,
+        runId: RUN_ID,
+        routeId: "deepseek:deepseek-v4-flash",
+        providerId: "deepseek",
+        model: "deepseek-v4-flash",
+        loopStatus: "Paused",
+        turns: 0,
+        executedTools: 0,
+        finalMessageSha256: "d".repeat(64),
+        finalMessageLen: 0,
+        auditChainVerified: false,
+        usagePromptTokens: 0,
+        usageCompletionTokens: 0,
+        usageTotalTokens: 0,
+        completedAtIso: NOW,
+        ownerPrincipalId: OWNER_PRINCIPAL,
+      }),
+    );
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      agentRunControlViaRust: true,
+      wsClient: ws.service,
+      clientSecretResolver: () => null, // no SecureStore secret
+    });
+
+    await expect(callResume(runtime)).rejects.toMatchObject({
+      code: "TS_RUNTIME_AGENT_RUNS_RETIRED",
+      httpStatus: 503,
+    });
+    expect(ws.resumeCalls).toHaveLength(0);
+  });
+
+  it("(resume-wserror) flag ON but the sealed-WS resume THROWS → byte-identical 503 (fail-closed)", async () => {
+    db = createTestDb();
+    const ws = makeResumeWsClient(async () => {
+      throw new Error("transport closed");
+    });
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      agentRunControlViaRust: true,
+      wsClient: ws.service,
+    });
+    await pauseAMutatingRun(runtime);
+
+    await expect(callResume(runtime)).rejects.toMatchObject({
+      code: "TS_RUNTIME_AGENT_RUNS_RETIRED",
+      httpStatus: 503,
+    });
+  });
+
+  it("(resume-flagoff) flag OFF → the resume route short-circuits to the retired 503 BEFORE any run lookup", async () => {
+    db = createTestDb();
+    const ws = makeResumeWsClient(async () => {
+      throw new Error("resume must not be reached with the control flag off");
+    });
+    // routeAgentRunViaRust on (so we could pause) but agentRunControlViaRust OFF — except with the
+    // control flag off the dispatch never pauses; so just assert the resume route is 503 on a
+    // flag-off runtime regardless of run state.
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      // agentRunControlViaRust omitted → default off.
+      wsClient: ws.service,
+    });
+
+    await expect(callResume(runtime)).rejects.toMatchObject({
+      code: "TS_RUNTIME_AGENT_RUNS_RETIRED",
+      httpStatus: 503,
+    });
+    expect(ws.resumeCalls).toHaveLength(0);
   });
 });
