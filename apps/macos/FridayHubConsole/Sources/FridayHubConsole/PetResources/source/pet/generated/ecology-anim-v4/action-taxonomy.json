@@ -1,0 +1,47 @@
+{
+  "version": "anchor-prototype-20260605-eco-anim-v4-32",
+  "sourcePolicy": {
+    "reference": "v9 core sit/walk color, texture, outline, fur density, and proportions",
+    "generatedOnly": true,
+    "noDogColorPostProcessing": true,
+    "greenBackgroundNormalizationOnly": true
+  },
+  "groups": {
+    "self_play": {
+      "intent": "Puppy entertains itself when ignored.",
+      "actions": ["play-sniff-pounce", "play-ball-roll", "play-dig", "play-toy-nudge"]
+    },
+    "attention": {
+      "intent": "Puppy asks the user for attention after being ignored or clicked.",
+      "actions": ["attention-sit-hearts", "attention-beg-paws", "attention-look-up", "attention-tiny-whine"]
+    },
+    "rest": {
+      "intent": "Puppy winds down, sleeps, and can be woken by clicking.",
+      "actions": ["sleep-curl-zzz", "sleep-side-breathe", "rest-stretch-down", "wake-up-stretch"]
+    },
+    "curious": {
+      "intent": "Puppy notices small environmental changes and investigates.",
+      "actions": ["curious-look-left-right", "curious-butterfly", "curious-sniff-air", "curious-ear-perk"]
+    },
+    "food": {
+      "intent": "Puppy finds or reacts to tiny food-like cues.",
+      "actions": ["food-sniff-crumb", "food-bowl-nibble", "food-lick-lips", "food-find-treat"]
+    },
+    "turn": {
+      "intent": "Puppy checks behind itself without impossible head twists.",
+      "actions": ["turn-look-back", "turn-tail-wag-back"]
+    },
+    "sit": {
+      "intent": "Quiet waiting and listening beats between larger actions.",
+      "actions": ["sit-wait", "sit-head-tilt", "sit-paw-lift"]
+    },
+    "mood": {
+      "intent": "Short emotional reactions for clicks, wakeups, and transitions.",
+      "actions": ["happy-bounce", "happy-tail-wag", "mood-shy-blink", "mood-surprised"]
+    },
+    "roam": {
+      "intent": "Tiny patrol beats. Step-left and step-right may move in proof, patrol-sniff stays in place.",
+      "actions": ["roam-step-left", "roam-step-right", "roam-patrol-sniff"]
+    }
+  }
+}
