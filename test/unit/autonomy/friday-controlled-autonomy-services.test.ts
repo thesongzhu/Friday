@@ -475,6 +475,23 @@ describe("controlled autonomy closed loops", () => {
         httpStatus: 503,
       });
 
+      // approveAgendaItem (the agent controlled-autonomy `agenda_approve`
+      // off-route caller) must ALSO fail closed BEFORE the requireAgendaItem DB
+      // read — i.e. the guard fires even for a non-existent agenda id, proving
+      // guard-before-lookup (a missing guard would surface AGENDA_ITEM_NOT_FOUND
+      // 404 instead of the retirement 503).
+      let approveThrown: unknown;
+      try {
+        fencedService.approveAgendaItem({ agendaItemId: "any-agenda-id", userId: "fenced-user" });
+      } catch (error) {
+        approveThrown = error;
+      }
+      expect(approveThrown).toBeInstanceOf(FridayDomainError);
+      expect(approveThrown).toMatchObject({
+        code: "TS_RUNTIME_STANDING_AGENDA_RETIRED",
+        httpStatus: 503,
+      });
+
       // No persist happened — the goal list read stays live and is empty.
       expect(fencedService.listStandingGoals({ userId: "fenced-user" })).toEqual([]);
     });
@@ -489,6 +506,22 @@ describe("controlled autonomy closed loops", () => {
       });
       expect(result.goal.status).toBe("active");
       expect(standingAgendaService.listStandingGoals({ userId: "flag-on-user" })).toHaveLength(1);
+    });
+
+    it("allows the test-oracle path to approve an agenda item when the flag is set to true", async () => {
+      // The shared flag-on `standingAgendaService` (beforeEach) proves the
+      // intended-live approveAgendaItem path: it locates the agenda item and
+      // transitions it to "approved".
+      const created = await standingAgendaService.createStandingGoal({
+        userId: "approve-user",
+        objective: "需要审批的高风险目标",
+        title: "approval goal",
+      });
+      const approved = standingAgendaService.approveAgendaItem({
+        agendaItemId: created.agendaItem.id,
+        userId: "approve-user",
+      });
+      expect(approved.status).toBe("approved");
     });
   });
 
