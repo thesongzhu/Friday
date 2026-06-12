@@ -93,7 +93,7 @@ describe("FridayAgentSkillTool", () => {
 
   it("has correct name and parameters", () => {
     const executor = mockExecutor(makeResult());
-    const tool = createFridayAgentSkillTool({ skillExecutor: executor });
+    const tool = createFridayAgentSkillTool({ skillExecutor: executor, allowTestOnlySkillRunExecution: true });
 
     expect(tool.name).toBe("skill_run");
     expect(tool.description).toBeTruthy();
@@ -104,7 +104,7 @@ describe("FridayAgentSkillTool", () => {
 
   it("returns skill output on success", async () => {
     const executor = mockExecutor(makeResult());
-    const tool = createFridayAgentSkillTool({ skillExecutor: executor });
+    const tool = createFridayAgentSkillTool({ skillExecutor: executor, allowTestOnlySkillRunExecution: true });
 
     const result = await tool.execute(
       { skillId: "weather", input: { city: "Seattle" } },
@@ -125,7 +125,7 @@ describe("FridayAgentSkillTool", () => {
 
   it("passes correct parameters to executor", async () => {
     const executor = mockExecutor(makeResult());
-    const tool = createFridayAgentSkillTool({ skillExecutor: executor });
+    const tool = createFridayAgentSkillTool({ skillExecutor: executor, allowTestOnlySkillRunExecution: true });
 
     await tool.execute(
       { skillId: "my-skill", input: { key: "value" }, timeoutMs: 5000 },
@@ -150,7 +150,7 @@ describe("FridayAgentSkillTool", () => {
     const executor = mockExecutor(
       makeResult({ status: "failed", stderr: "skill not found" }),
     );
-    const tool = createFridayAgentSkillTool({ skillExecutor: executor });
+    const tool = createFridayAgentSkillTool({ skillExecutor: executor, allowTestOnlySkillRunExecution: true });
 
     const result = await tool.execute(
       { skillId: "bad-skill", input: {} },
@@ -168,7 +168,7 @@ describe("FridayAgentSkillTool", () => {
     const executor = mockExecutor(
       makeResult({ status: "timeout", stderr: "" }),
     );
-    const tool = createFridayAgentSkillTool({ skillExecutor: executor });
+    const tool = createFridayAgentSkillTool({ skillExecutor: executor, allowTestOnlySkillRunExecution: true });
 
     const result = await tool.execute(
       { skillId: "slow-skill", input: {} },
@@ -185,7 +185,7 @@ describe("FridayAgentSkillTool", () => {
     const executor = mockExecutor(
       makeResult({ status: "cancelled", stderr: "" }),
     );
-    const tool = createFridayAgentSkillTool({ skillExecutor: executor });
+    const tool = createFridayAgentSkillTool({ skillExecutor: executor, allowTestOnlySkillRunExecution: true });
 
     const result = await tool.execute(
       { skillId: "cancelled-skill", input: {} },
@@ -200,6 +200,7 @@ describe("FridayAgentSkillTool", () => {
     const executor = mockExecutor(makeResult());
     const tool = createFridayAgentSkillTool({
       skillExecutor: executor,
+      allowTestOnlySkillRunExecution: true,
       skillRegistry: mockRegistry({
         requirements: {
           bins: [],
@@ -266,6 +267,7 @@ describe("FridayAgentSkillTool", () => {
     });
     const tool = createFridayAgentSkillTool({
       skillExecutor: executor,
+      allowTestOnlySkillRunExecution: true,
       skillRegistry: registry,
     });
 
@@ -288,6 +290,7 @@ describe("FridayAgentSkillTool", () => {
     const executor = mockExecutor(makeResult());
     const tool = createFridayAgentSkillTool({
       skillExecutor: executor,
+      allowTestOnlySkillRunExecution: true,
       skillRegistry: mockRegistry(),
       getSkillLifecycleStatus: (skillId) =>
         skillId === "secure-skill" ? "not_installed" : undefined,
@@ -313,6 +316,7 @@ describe("FridayAgentSkillTool", () => {
     const executor = mockExecutor(makeResult());
     const tool = createFridayAgentSkillTool({
       skillExecutor: executor,
+      allowTestOnlySkillRunExecution: true,
       skillRegistry: {
         ...mockRegistry(),
         get: vi.fn((skillId: string) => {
@@ -368,6 +372,7 @@ describe("FridayAgentSkillTool", () => {
       const executor = mockExecutor(makeResult());
       const tool = createFridayAgentSkillTool({
         skillExecutor: executor,
+        allowTestOnlySkillRunExecution: true,
         skillRegistry: {
           ...mockRegistry(),
           get: vi.fn((skillId: string) => {
@@ -438,6 +443,7 @@ describe("FridayAgentSkillTool", () => {
     const executor = mockExecutor(makeResult());
     const tool = createFridayAgentSkillTool({
       skillExecutor: executor,
+      allowTestOnlySkillRunExecution: true,
       skillRegistry: {
         ...mockRegistry(),
         get: vi.fn((skillId: string) => {
@@ -494,7 +500,7 @@ describe("FridayAgentSkillTool", () => {
 
   it("throws on missing skillId", async () => {
     const executor = mockExecutor(makeResult());
-    const tool = createFridayAgentSkillTool({ skillExecutor: executor });
+    const tool = createFridayAgentSkillTool({ skillExecutor: executor, allowTestOnlySkillRunExecution: true });
 
     await expect(
       tool.execute({ skillId: "", input: {} }, signal()),
@@ -505,7 +511,7 @@ describe("FridayAgentSkillTool", () => {
 
   it("defaults to empty object for non-object input", async () => {
     const executor = mockExecutor(makeResult());
-    const tool = createFridayAgentSkillTool({ skillExecutor: executor });
+    const tool = createFridayAgentSkillTool({ skillExecutor: executor, allowTestOnlySkillRunExecution: true });
 
     await tool.execute(
       { skillId: "test", input: "not-an-object" },
@@ -531,7 +537,7 @@ describe("FridayAgentSkillTool", () => {
       cancel: vi.fn(),
     };
 
-    const tool = createFridayAgentSkillTool({ skillExecutor: executor });
+    const tool = createFridayAgentSkillTool({ skillExecutor: executor, allowTestOnlySkillRunExecution: true });
 
     const promise = tool.execute(
       { skillId: "long-skill", input: {} },
@@ -543,5 +549,63 @@ describe("FridayAgentSkillTool", () => {
 
     await expect(promise).rejects.toThrow("aborted");
     expect(executor.cancel).toHaveBeenCalledWith("run-abort");
+  });
+
+  // ─── TS Runtime Retirement — OF6 method-level fail-closed guard ───
+
+  it("fails closed with TS_RUNTIME_SKILL_RUNS_RETIRED when the skill-run flag is UNSET (default-off, no reliance on transitive upstream containment)", async () => {
+    const executor = mockExecutor(makeResult());
+    // Flag deliberately UNSET — mirrors production. The arbitrary-code skill
+    // sink must NOT be reachable via the agent tool just because an upstream
+    // agent/workflow flag happens to be on.
+    const tool = createFridayAgentSkillTool({ skillExecutor: executor });
+
+    await expect(
+      tool.execute({ skillId: "weather", input: { city: "Seattle" } }, signal()),
+    ).rejects.toMatchObject({
+      code: "TS_RUNTIME_SKILL_RUNS_RETIRED",
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_skill_run_entrypoint_required",
+      },
+    });
+    expect(executor.execute).not.toHaveBeenCalled();
+  });
+
+  it("PRESERVES the ai-inference BYOK shortcut even when the skill-run flag is UNSET (the guard must not retire provider inference)", async () => {
+    const executor = mockExecutor(makeResult());
+    const tool = createFridayAgentSkillTool({ skillExecutor: executor });
+
+    const result = await tool.execute(
+      { skillId: "ai-inference", input: { prompt: "hi" } },
+      signal(),
+    );
+
+    // ai-inference is exempt — it reaches the executor (which short-circuits to
+    // the provider service before any shell/python/node sink), so the guard does
+    // not 503 it.
+    expect(result.isError).toBeUndefined();
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.objectContaining({ skillId: "ai-inference" }),
+    );
+  });
+
+  it("proceeds past the guard for an arbitrary skill when the test-oracle flag is set true (guard is flag-gated, not a hard block)", async () => {
+    const executor = mockExecutor(makeResult());
+    const tool = createFridayAgentSkillTool({
+      skillExecutor: executor,
+      allowTestOnlySkillRunExecution: true,
+    });
+
+    const result = await tool.execute(
+      { skillId: "weather", input: { city: "Seattle" } },
+      signal(),
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.objectContaining({ skillId: "weather" }),
+    );
   });
 });

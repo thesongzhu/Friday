@@ -1461,6 +1461,35 @@ export async function createFridayHub(
       );
     }
 
+    // ─── TS Runtime Retirement — OF6 method-level fail-closed guard ───
+    // `invokeSkillForWorkflow` is a NON-route caller that reaches the shared
+    // `executor.execute` arbitrary-code sink (shell/python/node) keyed by an
+    // ARBITRARY workflow-supplied skillId. Fail closed unless the test oracle
+    // (or a future Rust-owned entrypoint) opts in via the SAME skill-run
+    // retirement flag the route + agent tool use (default-undefined → OFF →
+    // skill runs fail closed in production). EXEMPT `ai-inference`: that fixed
+    // (non-arbitrary) skillId short-circuits to the provider service inside the
+    // executor (friday-skill-executor.ts ai-inference shortcut) and returns
+    // BEFORE any code sink — it is the live BYOK path for the workflow AI node
+    // (workflow-ai-adapter.ts invokes "ai-inference" through this same fn), so
+    // guarding it would wrongly retire provider inference for workflows.
+    if (
+      skillId !== "ai-inference"
+      && config.allowTestOnlySkillRunExecution !== true
+    ) {
+      throw new FridayDomainError(
+        "TS_RUNTIME_SKILL_RUNS_RETIRED",
+        "Skill run execution is fail-closed while runtime ownership is being moved out of TypeScript.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_skill_run_entrypoint_required",
+          },
+        },
+      );
+    }
+
     const handle = executor.execute({
       skillId,
       input: payload,
@@ -3053,6 +3082,9 @@ export async function createFridayHub(
     skillExecutor: executor,
     skillRegistry: registry,
     getSkillLifecycleStatus: getPersistedSkillLifecycleStatus,
+    // OF6: fence the agent skill_run tool's arbitrary-code sink with the same
+    // skill-run retirement flag the route uses (default-off → fail-closed).
+    allowTestOnlySkillRunExecution: config.allowTestOnlySkillRunExecution,
     workflowCrudService: workflowRuntime.crud,
     workflowExecutionService: workflowRuntime.execution,
     memoryService,
@@ -5235,6 +5267,8 @@ export async function createFridayHub(
         skillExecutor: executor,
         skillRegistry: registry,
         getSkillLifecycleStatus: getPersistedSkillLifecycleStatus,
+        // OF6: same skill-run retirement fence on subagent child tools.
+        allowTestOnlySkillRunExecution: config.allowTestOnlySkillRunExecution,
         workflowCrudService: workflowRuntime.crud,
         workflowExecutionService: workflowRuntime.execution,
         memoryService,
