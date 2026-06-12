@@ -336,6 +336,80 @@ fn cancelled_run_cannot_be_resumed_no_mutation() {
     );
 }
 
+/// THE WIRE-RUN BINDING (security MUST-FIX). The spine selects the run to execute SOLELY from the
+/// blob's nonce (`pending.run_id`) and takes no run_id, while the TS route owner-gates the run named
+/// by the WIRE run_id. Without the resume handler's `pending.run_id == run_id` pre-check, an
+/// attacker who owns run A could resume A on the wire while carrying a nonce whose pending row
+/// belongs to victim run B — executing B's mutation past A's owner gate. This proves the binding:
+/// a resume whose wire run_id != the blob's `pending.run_id` is REFUSED (`run_mismatch`) and NO
+/// mutation runs. (The wire run here is a real, non-cancelled run, so the check lands on the binding
+/// — not on the cancel pre-check.)
+#[test]
+fn resume_wire_run_mismatch_is_refused_no_mutation() {
+    let (sk, vk) = operator();
+    // The victim run is paused on a mutation; `nonce`/`request` describe THAT pending action.
+    let (db, ws, nonce, request) = pause_owned_run("wire-mismatch", &vk);
+    let exec = FsToolExecutor::new(&ws.0);
+
+    // A SECOND, real, non-cancelled run the attacker controls on the wire (NOT the run the nonce
+    // belongs to). It exists so the resume passes the `is_cancelled` pre-check and lands squarely on
+    // the wire-run binding rather than failing for an unrelated reason.
+    agent_run::create_run(db.conn(), "run-attacker", "attacker run", 1).unwrap();
+
+    // A correctly-signed approval for the VICTIM's paused action, but the resume names the ATTACKER's
+    // wire run_id. The binding must refuse before the spine can consume the nonce + execute.
+    let approval = ed_approval(&request, &sk, &nonce, Some(FUTURE));
+    let out = resume(
+        db.conn(),
+        &exec,
+        &vk,
+        "run-attacker",
+        &signed_blob(&approval),
+        NOW,
+    )
+    .unwrap();
+    assert!(
+        !out.accepted,
+        "a resume whose wire run_id != the nonce's pending.run_id must be refused"
+    );
+    assert_eq!(out.status, "run_mismatch");
+    assert!(
+        out.audit_ref.is_none(),
+        "a refused-before-spine resume writes no receipt"
+    );
+    assert!(
+        !ws.join("out.txt").exists(),
+        "the mismatched resume must NOT have executed the victim's mutation"
+    );
+    // The victim's pending row is untouched (still `pending`, nonce NOT consumed) — so the legitimate
+    // owner can still resume it on the correct wire run_id.
+    assert_eq!(
+        get_pending_request(db.conn(), &nonce)
+            .unwrap()
+            .unwrap()
+            .status,
+        "pending"
+    );
+
+    // POSITIVE CONTROL: the SAME approval on the CORRECT wire run_id (the victim's) executes — the
+    // binding refuses only the mismatch, never a legitimate resume.
+    let out = resume(
+        db.conn(),
+        &exec,
+        &vk,
+        "run-ctl",
+        &signed_blob(&approval),
+        NOW,
+    )
+    .unwrap();
+    assert!(out.accepted, "the matching wire run_id resumes normally");
+    assert_eq!(out.status, "mutation_completed");
+    assert_eq!(
+        std::fs::read_to_string(ws.join("out.txt")).unwrap(),
+        "RESUMED"
+    );
+}
+
 // ─────────────────────────── resume happy path + fail-closed ───────────────────────────
 
 /// The positive control: a correctly-signed resume of a non-cancelled/non-rejected paused run

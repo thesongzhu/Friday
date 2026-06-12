@@ -1670,10 +1670,15 @@ export function createFridayAgentRoutes(
     //   * FLAG OFF (the default) ⇒ SHORT-CIRCUIT to the byte-identical retired 503 BEFORE any run
     //     lookup — a DARK host's `/resume` is indistinguishable from the retired path (no run
     //     existence leak, byte-identical to today).
-    //   * FLAG ON ⇒ require a bound owner principal, fetch the run, enforce the authenticated
-    //     principal === the run's bound owner (the run's `metadata.apiRequest.principalId`) — reject
-    //     fail-closed otherwise (this TS gate is LOAD-BEARING: Rust resume is signature-authed and
-    //     does NOT re-check the owner) — then relay the OPAQUE signed blob VERBATIM to Rust.
+    //   * FLAG ON ⇒ require a bound owner principal, fetch the run named by the WIRE `runId`, and
+    //     enforce the authenticated principal === THAT run's bound owner (its
+    //     `metadata.apiRequest.principalId`) — reject fail-closed otherwise — then relay the OPAQUE
+    //     signed blob VERBATIM to Rust. This TS gate checks the owner of the WIRE `runId`; Rust
+    //     resume is signature-authed and does NOT re-check the owner, but (since the s6-687 fix) the
+    //     Rust side BINDS `pending.run_id == run_id`, so the owner-gated run (wire `runId`) and the
+    //     run the nonce actually executes are guaranteed to be the SAME run — a resume whose wire
+    //     `runId` mismatches the nonce's pending row is refused in Rust (`run_mismatch`) and runs
+    //     nothing.
     // INV-1 (opaque relay): the route NEVER parses/validates/inspects the signature/digest; it
     // base64-decodes the operator's `signedApproval` to bytes and hands them through unchanged.
     // Verification happens ONLY in Rust under the operator verify key (the hub holds no signing key).
@@ -1695,10 +1700,14 @@ export function createFridayAgentRoutes(
         // (b) BOUND OWNER required. The synthetic public principal can never own/resume a run.
         const bound = assertBoundPrincipalForOperation(ctx.principal, "agent.run.resume", "api");
 
-        // (c) Fetch the run; enforce the authenticated principal === the run's BOUND OWNER. An
-        // ownerless run (no stamped owner) is resumable by NOBODY (fail-closed). Any mismatch ⇒
-        // 403, never executing the mutation under the wrong principal. (Rust does NOT re-check the
-        // owner on resume — it is signature-authed — so this gate is the owner boundary.)
+        // (c) Fetch the run named by the WIRE `runId`; enforce the authenticated principal === THAT
+        // run's BOUND OWNER. An ownerless run (no stamped owner) is resumable by NOBODY
+        // (fail-closed). Any mismatch ⇒ 403, never executing the mutation under the wrong principal.
+        // Rust does NOT re-check the owner on resume (it is signature-authed), but it DOES bind
+        // `pending.run_id == run_id` (the s6-687 wire-run binding) — so the run this gate owner-checks
+        // (the wire `runId`) and the run the nonce executes are the SAME run; a wire/nonce run
+        // mismatch is refused in Rust before any execution. This gate is thus the owner boundary for
+        // the run that actually resumes.
         const run = getVisibleRunOrThrow(runId);
         const ownerPrincipalId = readRunOwnerPrincipalId(run);
         if (!ownerPrincipalId || ownerPrincipalId !== bound.principalId) {

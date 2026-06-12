@@ -29,17 +29,25 @@
 //!   OPERATOR's key, consume the nonce single-use, execute the ONE approved mutation, record the
 //!   owner). It does NOT re-implement verification/execution.
 //!
-//! ## The reject/cancel ↔ resume coupling (a REAL hole this module closes locally)
-//! The S6 spine's single-use guarantee is the gate's `consumed_approval` nonce store — NOT the
-//! `pending_approval_request.status` and NOT `agent_run.state`. [`resume_with_approval`] looks the
-//! pending row up by nonce and never reads either of those. So writing `status='rejected'` (reject)
-//! or `state='cancelled'` (cancel) ALONE does not block a later correctly-signed resume of the same
-//! approval — the mutation would still execute. To make reject/cancel REAL rather than cosmetic,
-//! [`resume`] PRE-CHECKS, before delegating: it refuses if the run is cancelled OR the pending row
-//! is rejected. This is a local, fail-closed bridge. A more robust spine-level fix (burn the nonce
-//! in `consumed_approval` on reject/cancel) needs a consumed-store insert API that does not exist
-//! yet, and the SAME pre-check is also absent from the existing `hub_resume_approval` dev bridge —
-//! both are surfaced as concerns.
+//! ## The wire-run binding + reject/cancel ↔ resume coupling (REAL holes this module closes locally)
+//! [`resume_with_approval`] takes NO `run_id`: it looks the pending row up by the blob's nonce and
+//! executes whatever run that pending row names (`pending.run_id`). It also never reads
+//! `pending_approval_request.status` or `agent_run.state` (the spine's single-use guarantee is the
+//! gate's `consumed_approval` nonce store ALONE). So [`resume`] must enforce three things against
+//! the WIRE `run_id` before delegating, all fail-closed:
+//!   1. **Wire-run binding (security).** `pending.run_id == run_id`, else `run_mismatch`. The TS
+//!      resume route owner-gates the run named by the wire `run_id`; without this the owner-gated
+//!      run and the executed (nonce-selected) run could differ — an attacker owning run A could
+//!      resume A on the wire while carrying a nonce belonging to victim run B, executing B's
+//!      mutation past A's owner gate. Mirrors [`reject`]'s existing `run_mismatch` binding.
+//!   2. **Cancel coupling.** Refuse if the run is cancelled (`state='cancelled'`) — else a
+//!      correctly-signed resume would still execute a cancelled run's mutation.
+//!   3. **Reject coupling.** Refuse if the pending row is rejected (`status='rejected'`).
+//! Binding (1) also makes the cancel pre-check (2) CONSISTENT: every path that proceeds has
+//! `run_id == pending.run_id`, so `is_cancelled(run_id)` keys on the SAME run the spine executes.
+//! A more robust spine-level fix (burn the nonce in `consumed_approval` on reject/cancel) needs a
+//! consumed-store insert API that does not exist yet, and the SAME pre-checks are also absent from
+//! the existing `hub_resume_approval` dev bridge — both are surfaced as concerns.
 //!
 //! ## Auth model (HONEST)
 //! RESUME is self-authenticating: the AUTHORITY is the operator's Ed25519 signature over the
@@ -381,13 +389,19 @@ fn parse_decision(s: &str) -> Option<ApprovalDecision> {
 /// single-use, execute the ONE approved mutation, record the owner). It NEVER re-implements
 /// verification/execution.
 ///
-/// **The reject/cancel coupling (REAL, not cosmetic).** BEFORE delegating, this PRE-CHECKS the run
-/// is not cancelled and the targeted pending row is not rejected — because the spine's single-use
-/// guard is the `consumed_approval` store, not `agent_run.state`/`pending.status`, so without this
-/// check a correctly-signed resume would still execute a rejected/cancelled run's mutation.
-/// Fail-closed outcomes: `malformed_blob`, `run_cancelled`, `approval_rejected`, and the bounded
-/// resume-error tokens. Accepted maps the gate decision: `mutation_completed` (executed) /
-/// `mutation_exec_failed` / `approval_refused` (gate Deny — replay/expired/bad-signature).
+/// **The wire-run binding (security MUST-FIX) + reject/cancel coupling (REAL, not cosmetic).**
+/// BEFORE delegating, this PRE-CHECKS, against the WIRE `run_id`: (a) that the nonce's pending row
+/// belongs to the SAME run as the wire `run_id` (`pending.run_id == run_id`) — the spine selects
+/// the run to execute SOLELY from the nonce, so without this the route's owner gate (keyed on the
+/// wire `run_id`) and the executed run could differ (`run_mismatch`); (b) that the run is not
+/// cancelled; and (c) that the targeted pending row is not rejected. (b)/(c) are needed because the
+/// spine's single-use guard is the `consumed_approval` store, not `agent_run.state`/`pending.status`,
+/// so without them a correctly-signed resume would still execute a rejected/cancelled run's
+/// mutation. The (a) binding ALSO makes the (b) `is_cancelled` pre-check consistent (it keys on the
+/// same run the spine executes). Fail-closed outcomes: `malformed_blob`, `run_mismatch`,
+/// `run_cancelled`, `approval_rejected`, and the bounded resume-error tokens. Accepted maps the gate
+/// decision: `mutation_completed` (executed) / `mutation_exec_failed` / `approval_refused` (gate
+/// Deny — replay/expired/bad-signature).
 pub fn resume(
     conn: &Connection,
     executor: &dyn ToolExecutor,
@@ -428,6 +442,21 @@ pub fn resume(
         return Ok(ControlOutcome::refused("resume", "run_cancelled"));
     }
     if let Some(pending) = get_pending_request(conn, &approval.approval_id)? {
+        // (2a) WIRE-RUN ↔ EXECUTED-RUN BINDING (security MUST-FIX). The TS resume route owner-gates
+        //      the run named by the WIRE `run_id` (it 403s unless the authed caller owns THAT run),
+        //      but the spine selects the run to execute SOLELY from the blob's nonce
+        //      (`pending.run_id`) and takes no `run_id`. Without this check the owner-gated run and
+        //      the executed run could DIFFER: an attacker who owns run A could resume A on the wire
+        //      while carrying a nonce whose pending row belongs to victim run B, executing B's
+        //      mutation past A's owner gate. Refuse fail-closed unless the wire run is the SAME run
+        //      the nonce will execute (mirrors `reject`'s `run_mismatch` binding — same wire vocab,
+        //      no protocol change). This ALSO makes the `is_cancelled(conn, run_id)` pre-check above
+        //      consistent: every path that proceeds now has `run_id == pending.run_id`, so the
+        //      cancel pre-check keys on the SAME run the spine will execute (the latent coupling the
+        //      review flagged is closed by this one binding).
+        if pending.run_id != run_id {
+            return Ok(ControlOutcome::refused("resume", "run_mismatch"));
+        }
         if pending.status == PENDING_STATUS_REJECTED {
             return Ok(ControlOutcome::refused("resume", "approval_rejected"));
         }

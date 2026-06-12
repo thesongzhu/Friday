@@ -6485,8 +6485,8 @@ mod authed_route_tests {
         // It DID pause: a live `pending` approval row (CSPRNG nonce + the exact tool call + digest)
         // was persisted — the single thing an operator signature later authorizes. This is the gate
         // standing between an admitted mutating run and an unsigned mutation executing.
-        let pause = crate::agent_run_control::detect_pause(rt.db().conn(), "s6-mut-ro-false")
-            .unwrap();
+        let pause =
+            crate::agent_run_control::detect_pause(rt.db().conn(), "s6-mut-ro-false").unwrap();
         let pause = pause.expect("an ungated mutating run must PAUSE pending approval");
         assert_eq!(pause.nonce.len(), 64, "CSPRNG nonce is 32 bytes => 64 hex");
         assert!(
