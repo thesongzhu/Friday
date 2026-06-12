@@ -18,11 +18,11 @@ private let katMasterHex =
 
 /// `secret = sha256("friday.rust.agent_run.ws.x25519_secret.v1" ‖ 0x42×32)` — the Rust KAT.
 private let katSecretHex =
-  "84a7b3761b283c9adc27b8a169f83c7ea795852a8bdbb0fa1311ca24dac0613d"
+  "84a7b3761b283c9adc27b8a169f83c7ea795852a8bdbb0fa1311ca24dac0613d" // pragma: allowlist secret (public Rust key_source KAT vector, not a secret)
 
 /// `pubkey = X25519-public(secret)` — the value the enroll CLI registered, the Rust KAT vector.
 private let katPubkeyHex =
-  "1d4a03c1c3af1a4639b616951c9b0e1cd1c957c9b0f25fe7a99b85101598de56"
+  "1d4a03c1c3af1a4639b616951c9b0e1cd1c957c9b0f25fe7a99b85101598de56" // pragma: allowlist secret (public Rust key_source KAT vector, not a secret)
 
 @Test
 func masterDerivedSecretScalarMatchesRustKat() {
