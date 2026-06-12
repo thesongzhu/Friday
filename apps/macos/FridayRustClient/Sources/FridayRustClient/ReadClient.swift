@@ -85,7 +85,11 @@ public protocol SealedWSTransport {
 
 /// The clean product-facing read client. A UI depends on THIS, not the transport. Returns
 /// the refs-only typed `WorkbenchSnapshot` mirroring the Rust `WorkbenchProjectionSnapshot`.
-public protocol FridayRustReadClient {
+///
+/// `Sendable` so a concurrent/actor-backed real client (and the SwiftUI view model that
+/// stores one) conforms cleanly under Swift 6 strict concurrency. (This was the Console's
+/// duplicate-protocol constraint; the two protocols are reconciled to this single one.)
+public protocol FridayRustReadClient: Sendable {
   /// Fetch the Mission Workbench refs-only projection over the sealed-WS read seam:
   /// handshake → owner-authed request → open the owner-sealed snapshot → typed result.
   func fetchWorkbench() async throws -> WorkbenchSnapshot
@@ -95,7 +99,12 @@ public protocol FridayRustReadClient {
 
 /// The sealed-WS read client. Drives the full handshake + request/response LOGIC over an
 /// injected `SealedWSTransport`. Pure byte-exact logic; the network is the injected pipe.
-public final class SealedWSReadClient: FridayRustReadClient {
+///
+/// `@unchecked Sendable`: every stored property is an immutable `let` (the keypair, the
+/// principal, the injected `@escaping` factory/closures). The closures are not statically
+/// `@Sendable` (so the protocol's `Sendable` is not auto-satisfied), but the instance carries
+/// no mutable shared state across the `await`, so it is safe to send. Asserted, not derived.
+public final class SealedWSReadClient: FridayRustReadClient, @unchecked Sendable {
   private let keypair: FridayCrypto.DeviceKeypair
   private let forwardedPrincipal: String
   private let missionId: String?
