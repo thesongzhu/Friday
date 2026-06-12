@@ -1,53 +1,37 @@
 import SwiftUI
 
-/// The Retro-LCD Hero Pet (locked: petStyle = retroLcd, petProminence = heroPet).
+/// The Friday Home Hero Pet — the locked 155px animated v9 mobile companion (petStyle =
+/// retroLcd, petProminence = heroPet), rendered as the PURE-DOG hero card from the locked mobile
+/// design (`mobile-gallery.html` `heroBlock()` / `.hero.pet-stage-card`).
 ///
-/// A mood companion, NOT a status source of truth: its "here vs offline" face is
-/// driven by the projection's honest online/health signal, and the real status is
-/// always also shown as text/chips elsewhere on Home. Pure local Canvas drawing —
-/// no token, no model call, no image leaves the device.
+/// This is the bare pet STAGE: NO text, NO status badges inside the card (the gallery's home pet
+/// stage is a bare `#eef3e8` card with only the dog). The honest read-seam status truth lives in
+/// the Status card below — the pet is a mood companion, NOT a status source of truth (mirroring
+/// the desktop `CompanionPetView`, which takes no `online` param). The animation runs the EXISTING
+/// `pet-stage-engine.js` against the bundled v9 assets via `MobilePetView` (WKWebView). Pure local
+/// CSS-JS-canvas — no token, no model call, no image leaves the device.
 struct HeroPet: View {
-  var online: Bool
-
-  /// A small pixel cat face drawn on a retro-LCD panel.
-  private let face: [String] = [
-    "X..XX..X",
-    ".XXXXXX.",
-    "X.XOXO.X",
-    "X.XXXX.X",
-    "X.X..X.X",
-    ".XXXXXX.",
-  ]
-
   var body: some View {
-    VStack(spacing: 8) {
-      Canvas { ctx, size in
-        let cols = 8
-        let rows = face.count
-        let cell = min(size.width / CGFloat(cols), size.height / CGFloat(rows))
-        for (r, line) in face.enumerated() {
-          for (c, ch) in Array(line).enumerated() where ch != "." {
-            let on = ch == "X"
-            let rect = CGRect(
-              x: CGFloat(c) * cell + 1, y: CGFloat(r) * cell + 1,
-              width: cell - 2, height: cell - 2)
-            ctx.fill(
-              Path(roundedRect: rect, cornerRadius: 1),
-              with: .color(online ? (on ? MobileTheme.lcd : MobileTheme.lcd.opacity(0.35))
-                : MobileTheme.lcd.opacity(0.18)))
-          }
-        }
-      }
-      .frame(width: 156, height: 118)
-      .padding(12)
-      .background(MobileTheme.lcdBg, in: RoundedRectangle(cornerRadius: 16))
-      .overlay(
-        RoundedRectangle(cornerRadius: 16)
-          .strokeBorder(MobileTheme.lcd.opacity(online ? 0.30 : 0.12), lineWidth: 1))
-
-      Text(online ? "Friday is here" : "Friday is offline")
-        .font(.subheadline)
+    ZStack {
+      // The 155px pure-dog hero card (locked: #eef3e8 stage bg, 16pt corner).
+      RoundedRectangle(cornerRadius: MobileTheme.cornerRadius, style: .continuous)
+        .fill(MobileTheme.petStageBg)
+      #if canImport(WebKit)
+      MobilePetView()
+      #else
+      // macOS host build (no WebKit-backed pet): honest placeholder, never a fake pet.
+      Text("Friday companion (WebKit unavailable on host build)")
+        .font(.caption2)
         .foregroundStyle(MobileTheme.textSecondary)
+        .multilineTextAlignment(.center)
+        .padding(.horizontal, 16)
+      #endif
     }
+    .frame(height: 155)
+    .clipShape(RoundedRectangle(cornerRadius: MobileTheme.cornerRadius, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: MobileTheme.cornerRadius, style: .continuous)
+        .strokeBorder(MobileTheme.glassPanelBorder, lineWidth: 1))
+    .accessibilityLabel("Friday dog companion")
   }
 }

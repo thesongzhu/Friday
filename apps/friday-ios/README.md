@@ -5,16 +5,27 @@ A SwiftUI iOS app implementing the **LOCKED mobile design baseline**
 **real-client + Friday Chat read-WRITE + S6** integration (a redo of #683 onto the
 current `FridayMobileShell` shell):
 
-- **Launch = Home** (locked). Home = **Status + heroPet** reading the refs-only
-  Mission Workbench projection over the package's `SealedWSReadClient`. The
+- **Launch = Home** (locked). Home = the **155px pure-dog Hero Pet card** (always
+  on, a local zero-token v9 companion) over **Status** reading the refs-only
+  Mission Workbench projection on the package's `SealedWSReadClient`. The
   **Friday Chat entry is the top-bar 💬** — there is NO on-Home chat card.
+- **The Hero Pet (I4 / mirrors desktop D-PR1 #690)** is the locked 155px animated
+  v9 dog: a `WKWebView` (`MobilePetView` `UIViewRepresentable`) loads the bundled
+  mobile `pet-host.html` over a custom `friday-pet://` scheme (`MobilePetScheme`,
+  `Bundle.module`) and runs the EXISTING `pet-stage-engine.js` VERBATIM against the
+  bundled v9 assets, calling the locked design API exactly:
+  `createStage(stage, {surface:"mobile", height:155, behavior:"locked-core-only",
+  ecoAllowlist:[]})`. Zero token, pure-local CSS-JS-canvas, assets unmodified
+  (ONE size, 155px). The pet stage carries no text/status badges — the honest
+  status truth lives in the Status card below (the pet is a mood companion, NOT a
+  status source of truth).
 - The composer lives in a separate **full-screen, pet-centered Friday Chat**
   surface that drives the **4-state read-WRITE / S6 loop**: compose → send →
   refs-only answer; mutating → `AgentRunPaused` → S6 approval card →
   operator-signs (relay-only) → `resumeWithApproval` VERBATIM → refs-only receipt.
 - The **Command Sheet** is a full-screen grid launcher opened from the top-left.
 - Tokens: cyanCoral palette · warmOffWhite background · glassNative form · light
-  theme · retroLcd Hero Pet.
+  theme · the 155px v9 Hero Pet (`petStageBg` `#eef3e8`).
 
 ## The integration (the package's types WIN)
 

@@ -137,6 +137,28 @@ public final class HomeViewModel: ObservableObject {
   }
 }
 
+// MARK: - HonestlyUnavailableReadClient (the no-key, no-network DEFAULT)
+
+/// A `FridayRustReadClient` that ALWAYS throws — so the Home renders honest "unavailable".
+///
+/// This is the iOS app's DEFAULT read client (see `FridaySession`). It is the
+/// SINGLE-PEER-TRAP-safe default: it mints NO X25519 keypair, opens NO socket, and touches NO
+/// SecureStore — so the simulator render can never accidentally generate a fresh peer key or
+/// connect to the live read-projection server. It can never fabricate readiness; every fetch is
+/// the honest dark-server state (the EXPECTED state while the Rust servers are dark / slice-6 is
+/// un-flipped). The master-derived live read path is the slice-6 deferred AC (mirrors the desktop
+/// `RealReadClientFactory.makeLive` / `MasterKeyPeer` derivation — NOT wired on the phone, which
+/// has no master key; that is the J2 pairing problem, deferred).
+public struct HonestlyUnavailableReadClient: FridayRustReadClient {
+  private let reason: String
+  public init(reason: String = "live Hub transport not wired (Rust servers dark — slice-6 gate)") {
+    self.reason = reason
+  }
+  public func fetchWorkbench() async throws -> WorkbenchSnapshot {
+    throw FridayReadClientError.transport(reason)
+  }
+}
+
 // MARK: - PreviewReadClient (PREVIEW / DEBUG ONLY — clearly labeled)
 
 /// **A PREVIEW/DEBUG-ONLY read client returning a static sample projection.** Used behind a

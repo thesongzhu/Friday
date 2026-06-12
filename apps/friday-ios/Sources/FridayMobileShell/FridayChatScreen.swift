@@ -15,13 +15,10 @@ import SwiftUI
 /// (every surfaced field is a ref/label/count/fingerprint — never an inline body).
 struct FridayChatScreen: View {
   @StateObject private var viewModel: FridayChatViewModel
-  /// Drives the heroPet mood — passed from Home's projection (mood only, not truth).
-  let online: Bool
   /// Whether the S6 pause/approve/resume is enabled (the run-control flag). OFF ⇒ read-only.
   private let runControlEnabled: Bool
 
-  init(session: FridaySession, online: Bool) {
-    self.online = online
+  init(session: FridaySession) {
     self.runControlEnabled = session.runControlEnabled
     _viewModel = StateObject(wrappedValue: FridayChatViewModel(
       writeClient: session.writeClient, signer: session.signer))
@@ -35,7 +32,7 @@ struct FridayChatScreen: View {
         VStack(spacing: 16) {
           Spacer(minLength: 12)
           // Pet-centered: the Hero Pet anchors the chat surface.
-          HeroPet(online: online)
+          HeroPet()
           Text("Friday Chat")
             .font(.title3).bold()
             .foregroundStyle(MobileTheme.textPrimary)
@@ -235,6 +232,6 @@ struct FridayChatScreen: View {
 
 #if DEBUG
 #Preview("Friday Chat · live write client (dark ⇒ honest-unavailable)") {
-  NavigationStack { FridayChatScreen(session: FridaySession(), online: true) }
+  NavigationStack { FridayChatScreen(session: FridaySession()) }
 }
 #endif

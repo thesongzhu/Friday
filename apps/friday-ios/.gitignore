@@ -1,4 +1,8 @@
-# Local build artifacts (SwiftPM build dir, sim .app bundle, screenshots).
+# Local build artifacts (SwiftPM build dir, sim .app bundle, screenshots — all under .build*/).
 .build/
 .build-sim/
-*.png
+
+# NOTE: do NOT add a blanket `*.png` here — the bundled v9 pet assets under
+# Sources/FridayMobileShellCore/PetResources/source/pet/*.png are SOURCE (served by the pet
+# WKWebView) and MUST be committed (mirroring the desktop FridayHubConsole). The sim screenshot
+# artifact lives under `.build-sim/` and is already ignored above.

@@ -37,7 +37,15 @@ let package = Package(
       dependencies: [
         .product(name: "FridayRustClient", package: "FridayRustClient"),
       ],
-      path: "Sources/FridayMobileShellCore"
+      path: "Sources/FridayMobileShellCore",
+      // The design-handoff pet engine + v9 assets + the mobile `pet-host.html`, copied VERBATIM
+      // and declared as a `.copy` resource so the folder layout (`/source/pet/...`) is preserved
+      // 1:1 in the bundle. `MobilePetScheme` (here, `Bundle.module`) serves it to the Home pet
+      // WKWebView over the local `friday-pet://` scheme (zero token, no network, assets unmodified).
+      // Mirrors the desktop D-PR1 `.copy("PetResources")` on `FridayHubConsole`.
+      resources: [
+        .copy("PetResources"),
+      ]
     ),
     .testTarget(
       name: "FridayMobileShellCoreTests",
