@@ -167,6 +167,87 @@ describe("Session lifecycle sweep TS-retirement method guard", () => {
   });
 });
 
+describe("Session forkSession TS-retirement method guard (A3 HOLE 2)", () => {
+  const allocatedDbs: FridaySqliteLayer[] = [];
+  const PARENT_KEY = "discord:default:user1";
+
+  afterEach(() => {
+    while (allocatedDbs.length > 0) {
+      allocatedDbs.pop()!.close();
+    }
+    vi.restoreAllMocks();
+  });
+
+  function buildSessionService(
+    allowTestOnlySessionExecution?: boolean,
+  ): { db: FridaySqliteLayer; service: FridaySessionService } {
+    const db = createTestDb();
+    allocatedDbs.push(db);
+    const service = createFridaySessionService({
+      db,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => NOW,
+      ...(allowTestOnlySessionExecution === undefined
+        ? {}
+        : { allowTestOnlySessionExecution }),
+    });
+    return { db, service };
+  }
+
+  async function seedParent(service: FridaySessionService): Promise<void> {
+    await service.createSession({ channel: "discord", chatId: "user1", userId: "user1" });
+    await service.addMessage(PARENT_KEY, { role: "user", content: "parent message" });
+  }
+
+  it("fails closed by default: 503 fail_closed and creates NO fork session", async () => {
+    // Seed the parent under an open service, then fork under a DEFAULT (flag
+    // unset) service so the guard is the only thing that can stop the fork.
+    const { db, service: seedService } = buildSessionService(true);
+    await seedParent(seedService);
+
+    const forkService = createFridaySessionService({
+      db,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => NOW,
+    });
+
+    const before = await forkService.listSessions({});
+    const beforeCount = before.length;
+
+    let caught: unknown;
+    try {
+      await forkService.forkSession(PARENT_KEY, { taskId: "fork-task" });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(FridayDomainError);
+    const domainError = caught as FridayDomainError;
+    expect(domainError.code).toBe("TS_RUNTIME_SESSION_RETIRED");
+    expect(domainError.httpStatus).toBe(503);
+    expect(domainError.details?.classification).toBe("fail_closed");
+
+    // No fork was created: guard fired BEFORE the write transaction.
+    const after = await forkService.listSessions({});
+    expect(after.length).toBe(beforeCount);
+  });
+
+  it("fails closed with explicit allowTestOnlySessionExecution=false", async () => {
+    const { service } = buildSessionService(false);
+    await expect(service.forkSession(PARENT_KEY, { taskId: "fork-task" })).rejects.toMatchObject({
+      code: "TS_RUNTIME_SESSION_RETIRED",
+    });
+  });
+
+  it("creates the fork when allowTestOnlySessionExecution=true (legacy path)", async () => {
+    const { service } = buildSessionService(true);
+    await seedParent(service);
+    const result = await service.forkSession(PARENT_KEY, { taskId: "fork-task" });
+    expect(result.forkSession).toBeDefined();
+    expect(result.forkSession.key).not.toBe(PARENT_KEY);
+  });
+});
+
 describe("Session memory extraction TS-retirement method guard", () => {
   let db: FridaySqliteLayer;
   let sessionService: FridaySessionService;

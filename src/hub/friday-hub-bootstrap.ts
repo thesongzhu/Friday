@@ -2086,6 +2086,14 @@ export async function createFridayHub(
       // reachable. Threaded from the same config knob the route deps use, so the
       // method + route fences stay in lockstep.
       allowTestOnlyDesktopActionExecution: config.allowTestOnlyDesktopActionExecution,
+      // TS Runtime Retirement (A3 HOLE 1): method-head fail-closed guard for the
+      // desktop RECORDING lifecycle + replay. Defaults unset so startRecording /
+      // stopRecording / pauseRecording / resumeRecording / deleteRecording /
+      // replayRecording fail closed for the off-route caller (agent desktop tool).
+      // SEPARATE retired family from the action actuator; threaded from the same
+      // recording config knob the route deps use so the method + route fences stay
+      // in lockstep.
+      allowTestOnlyDesktopRecordingExecution: config.allowTestOnlyDesktopRecordingExecution,
     });
 
     desktopSessionManager.connect();
@@ -6830,6 +6838,10 @@ export async function createFridayHub(
   const desktopRouteDeps: Parameters<typeof createFridayApiRuntime>[0]["desktop"] = desktopSessionManager
     ? {
       allowTestOnlyDesktopActionExecution: config.allowTestOnlyDesktopActionExecution,
+      // TS Runtime Retirement (A3 HOLE 1): keep the recording-route fence
+      // (throwRetiredDesktopRecording, gated on this flag) in lockstep with the
+      // new session-manager method guard, both driven by the same config knob.
+      allowTestOnlyDesktopRecordingExecution: config.allowTestOnlyDesktopRecordingExecution,
       actions: {
         async execute(req) { return desktopSessionManager!.executeAction(req.action as never) as never; },
         async batch(req) {
