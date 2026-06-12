@@ -32,9 +32,15 @@ export interface CreateFridayStandingAgendaServiceDeps {
   allowTestOnlyStandingAgendaExecution?: boolean;
 }
 
+/** Result of creating a standing goal: the goal plus its seeded agenda item. */
+export interface FridayCreateStandingGoalResult {
+  goal: FridayStandingGoal;
+  agendaItem: FridayAgendaItem;
+}
+
 export interface FridayStandingAgendaService {
   listStandingGoals(input: { userId: string; includeArchived?: boolean }): FridayStandingGoal[];
-  createStandingGoal(input: FridayCreateStandingGoalInput): Promise<{ goal: FridayStandingGoal; agendaItem: FridayAgendaItem }>;
+  createStandingGoal(input: FridayCreateStandingGoalInput): Promise<FridayCreateStandingGoalResult>;
   updateStandingGoal(goalId: string, input: FridayUpdateStandingGoalInput): FridayStandingGoal;
   listAgenda(input: { userId: string; status?: string; limit?: number }): FridayAgendaItem[];
   approveAgendaItem(input: { agendaItemId: string; userId: string }): FridayAgendaItem;
@@ -105,16 +111,20 @@ export function createFridayStandingAgendaService(
   // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
   // Phase 3 (route-only-guard defect): the standing-agenda retirement was
   // ROUTE-only (friday-autonomy-routes fail-closes standing.goals.create /
-  // standing.goals.patch to TS_RUNTIME_STANDING_AGENDA_RETIRED before the route
-  // calls the service). The agenda WRITE mutators (`createStandingGoal` /
-  // `updateStandingGoal`) had NO method guard, so any non-route caller reaches
-  // them directly, bypassing the route fence. Guarding here fails ALL non-route
+  // standing.goals.patch / agenda.approve to TS_RUNTIME_STANDING_AGENDA_RETIRED
+  // before the route calls the service). The agenda WRITE mutators
+  // (`createStandingGoal` / `updateStandingGoal` / `approveAgendaItem`) had NO
+  // method guard, so any non-route caller — the agent controlled-autonomy tool
+  // (standing_goal_create / standing_goal_update / agenda_approve) — reaches them
+  // directly, bypassing the route fence. Guarding here fails ALL non-route
   // callers closed BEFORE any DB read or persist — unless the explicit
   // test-oracle flag is set. Never default this flag on in production. Reads
-  // (listStandingGoals/getStandingGoal/listAgenda) stay live; only the goal
-  // write mutators are retired, mirroring the route surface (which asserts only
-  // on create/patch). Mirrors capability-acquisition-service /
-  // autonomy-policy-service updatePolicy.
+  // (listStandingGoals/getStandingGoal/listAgenda) stay live; only the goal/
+  // agenda write mutators are retired, mirroring the route surface. runAgendaItem
+  // is fenced by a DIFFERENT mechanism (it calls the already method-guarded
+  // acquisitionService.startRun, which 503s in default/live runtime, and carries
+  // its own terminal-state-on-throw guard). Mirrors capability-acquisition-service
+  // / autonomy-policy-service updatePolicy.
   function assertStandingAgendaExecutionAllowed(): void {
     if (deps.allowTestOnlyStandingAgendaExecution !== true) {
       throw new FridayDomainError(
@@ -143,7 +153,7 @@ export function createFridayStandingAgendaService(
     return rows.map(rowToStandingGoal);
   }
 
-  async function createStandingGoal(input: FridayCreateStandingGoalInput): Promise<{ goal: FridayStandingGoal; agendaItem: FridayAgendaItem }> {
+  async function createStandingGoal(input: FridayCreateStandingGoalInput): Promise<FridayCreateStandingGoalResult> {
     assertStandingAgendaExecutionAllowed();
     const now = nowIso();
     const goal: FridayStandingGoal = {
@@ -218,6 +228,7 @@ export function createFridayStandingAgendaService(
   }
 
   function approveAgendaItem(input: { agendaItemId: string; userId: string }): FridayAgendaItem {
+    assertStandingAgendaExecutionAllowed();
     const item = requireAgendaItem(input.agendaItemId, input.userId);
     const approved = {
       ...item,

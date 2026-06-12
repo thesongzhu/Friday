@@ -23,6 +23,13 @@ function makeConfig() {
     generateId: () => `id-${++idCounter}`,
     nowIso: () => NOW,
     principalId: "user-1",
+    // Test-oracle opt-in: the desktop action sink (executeAction) and its
+    // control/audit surfaces (cancelAction/getActionLog) are method-level
+    // fail-closed by default (route-only-guard defect fix). These functional
+    // tests exercise the intended-live path, so they opt in; the dedicated
+    // retirement-guard test constructs a manager WITHOUT this flag to prove the
+    // fail-closed default.
+    allowTestOnlyDesktopActionExecution: true as const,
   };
 }
 

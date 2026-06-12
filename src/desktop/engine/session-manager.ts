@@ -62,6 +62,18 @@ export interface SessionManagerConfig {
   readonly permissionPromptTimeoutMs?: number;
   readonly sandboxAllowedRoots?: readonly string[];
   readonly promptResolver?: PermissionPromptResolver;
+  /**
+   * Test-oracle only: allows the legacy TypeScript desktop ACTION sink +
+   * control/audit surfaces (`executeAction` — arbitrary OS-level click/type/
+   * keypress/drag/launch_app/close_app/clipboard/file-ops — plus `cancelAction`
+   * and `getActionLog`) in isolated test/validation harnesses. The HTTP route is
+   * already retired (`TS_RUNTIME_DESKTOP_ACTION_EXECUTION_RETIRED`) but consumed
+   * ONLY at the route, so non-route callers (agent desktop tool, autonomy engine,
+   * skill desktop helper) reach these methods directly. Default/live runtime must
+   * leave this unset so the actuator + its control/audit surfaces fail closed for
+   * ALL callers. Mirrors the route's `allowTestOnlyDesktopActionExecution` flag.
+   */
+  readonly allowTestOnlyDesktopActionExecution?: boolean;
 }
 
 /** Session metadata. */
@@ -240,6 +252,37 @@ export function createDesktopSessionManager(
     }
   }
 
+  // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+  // Phase 3 (route-only-guard defect): the desktop action surface was
+  // ROUTE-only-retired (friday-desktop-routes fail-closes
+  // desktop.actions.execute / .cancel / .log before the route calls the
+  // service). The session-manager methods themselves (`executeAction`,
+  // `cancelAction`, `getActionLog`) had NO method guard, so off-route callers —
+  // the agent desktop tool (handleExecute/handleScreenshot), the autonomous
+  // engine (captureDesktopScreenshot), and the skill desktop helper
+  // (executeAction/getActionLog) — reach the live OS actuator/audit directly,
+  // bypassing the route fence. Guarding at the method head fails ALL non-route
+  // callers closed BEFORE ensureConnected / adapter-lookup / any side-effect,
+  // unless the explicit test-oracle `allowTestOnlyDesktopActionExecution` flag is
+  // set. Never default this flag on in production. Recording lifecycle/replay,
+  // element inspection, and permissions are SEPARATE retired families and are
+  // NOT covered here.
+  function assertDesktopActionExecutionAllowed(): void {
+    if (config.allowTestOnlyDesktopActionExecution !== true) {
+      throw new FridayDomainError(
+        "TS_RUNTIME_DESKTOP_ACTION_EXECUTION_RETIRED",
+        "Desktop action execution is fail-closed while runtime ownership is being moved out of TypeScript.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_desktop_action_execution_entrypoint_required",
+          },
+        },
+      );
+    }
+  }
+
   function getRecordingEngine(): RecordingEngine {
     if (!recordingEngine) {
       const platform = adapterManager.getDetectedPlatform() ?? "darwin";
@@ -314,6 +357,7 @@ export function createDesktopSessionManager(
       action: FridayDesktopAction,
       options?: ExecuteActionOptions,
     ): Promise<FridayDesktopActionResult> {
+      assertDesktopActionExecutionAllowed();
       ensureConnected();
       const adapter = adapterManager.getActiveAdapter();
 
@@ -346,10 +390,12 @@ export function createDesktopSessionManager(
     },
 
     cancelAction(actionId: UUID): boolean {
+      assertDesktopActionExecutionAllowed();
       return actionExecutor.cancel(actionId);
     },
 
     getActionLog(): readonly FridayDesktopActionResult[] {
+      assertDesktopActionExecutionAllowed();
       return toFrozenSnapshot(actionExecutor.getActionLog());
     },
 
