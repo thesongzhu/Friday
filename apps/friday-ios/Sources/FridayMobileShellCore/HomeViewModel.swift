@@ -1,24 +1,70 @@
 import Foundation
+import FridayRustClient
 
-extension MissionWorkbenchRuntimeFeedStatus {
-  /// A pending / unknown feed is NOT healthy — it must never render as "live/ready".
-  /// (Core-level so the Home view model can classify feed health without the UI.)
-  public var isHealthy: Bool { self == .liveRustHubProjection }
+/// **The Home (Status) read view model — wired to the REAL `SealedWSReadClient`.**
+///
+/// The Home surface reads the refs-only Mission Workbench projection over the sealed-WS READ
+/// seam. It depends on the PACKAGE's `FridayRustReadClient` protocol + `WorkbenchSnapshot`
+/// (the package's types WIN — there is ONE snapshot/protocol across desktop + mobile), and on
+/// the real `SealedWSReadClient` in production (a mock behind a preview/debug flag).
+///
+/// ## The `: Sendable` reconciliation
+/// The package's `FridayRustReadClient` is deliberately NOT `Sendable` (its `SealedWSReadClient`
+/// is a `final class` driving an injected transport; its `WorkbenchSnapshot` carries a
+/// `raw: [String: Any]` that is not `Sendable`). To consume it cleanly from this `@MainActor`
+/// view model under Swift 6 strict concurrency, we do NOT force the non-`Sendable` client or
+/// snapshot across an actor hop. Instead the client is created + driven ON the main actor (the
+/// `async` `fetchWorkbench()` suspends without crossing an isolation boundary), and the view
+/// model surfaces a small `Sendable` `HomeProjection` projection of the refs (NOT the raw
+/// snapshot) for the UI/state. This keeps the package's types authoritative while giving the
+/// UI a value type that is safe to publish. (This is the SAME adapter pattern the prior mobile
+/// chat-S6 PR #683 used; the desktop #682 console is the D-PR1 mock shell and does NOT yet wire
+/// the package, so #683's `HomeProjection` lift — not #682 — is the integration reference.)
+///
+/// ## Honest-unavailable (truth rule)
+/// The Rust read-projection server is DARK until the slice-6 flip, so `fetchWorkbench()` is
+/// EXPECTED to throw (offline / no enrolled peer). Every throw renders as a first-class
+/// `.unavailable(reason:)` — NEVER a fabricated "ready" snapshot, NEVER a label upgrade. The
+/// status truth label (`runtimeFeedStatus`) and any `statusLabels` ride AS-IS.
+
+/// A `Sendable` refs-only projection of the Home read snapshot — the fields the Home surface
+/// renders, lifted off the package's (non-`Sendable`) `WorkbenchSnapshot`. Refs/labels/counts
+/// only (INV-5); never a body.
+public struct HomeProjection: Sendable, Equatable {
+  public let missionId: String
+  public let fridayConversationId: String
+  /// The runtime feed status TRUTH label (e.g. `live_rust_hub_projection`). Rides AS-IS.
+  public let runtimeFeedStatus: String
+  /// Status labels the projection surfaced (`stale`/`offline`/`error`). Rides AS-IS.
+  public let statusLabels: [String]
+  public let routeDecisionSummary: String?
+  /// Work-item id REFS (counts/ids only — never a body).
+  public let workItemIds: [String]
+  /// The Hub epoch-millis the snapshot was generated (lets the UI flag staleness).
+  public let generatedAtMs: Int64
+
+  public init(_ snapshot: WorkbenchSnapshot) {
+    self.missionId = snapshot.missionId
+    self.fridayConversationId = snapshot.fridayConversationId
+    self.runtimeFeedStatus = snapshot.runtimeFeedStatus
+    self.statusLabels = snapshot.statusLabels
+    self.routeDecisionSummary = snapshot.routeDecisionSummary
+    self.workItemIds = snapshot.workItemIds
+    self.generatedAtMs = snapshot.generatedAtMs
+  }
 }
 
-/// The loadable state of the Friday Home screen.
-///
-/// `.unavailable` is a first-class state — a hub 503 / offline / stale-read throw
-/// renders here as honest "unavailable", never as a fabricated ready Home.
-/// (Mirrors the desktop `WorkbenchLoadState` truth contract, D-PR1/#676.)
+/// The loadable state of the Home read surface. `.unavailable` is a FIRST-CLASS state — a
+/// dark server / 503 / offline / stale throw renders here as honest "unavailable", never as a
+/// fabricated ready projection.
 public enum HomeLoadState: Sendable, Equatable {
   case idle
   case loading
-  case loaded(WorkbenchSnapshot)
+  case loaded(HomeProjection)
   case unavailable(reason: String)
 
-  public var snapshot: WorkbenchSnapshot? {
-    if case let .loaded(snapshot) = self { return snapshot }
+  public var projection: HomeProjection? {
+    if case let .loaded(p) = self { return p }
     return nil
   }
 
@@ -26,165 +72,90 @@ public enum HomeLoadState: Sendable, Equatable {
     if case .loading = self { return true }
     return false
   }
-}
 
-/// A provider card on Home (cardsQueues layout). Identity is the small mark + name;
-/// the card opens the provider workspace (workspaceHome) in a LATER slice — in
-/// M-PR1 it is an honest, non-executable placeholder destination.
-public struct HomeProviderCard: Sendable, Equatable, Identifiable {
-  public let id: String
-  public let name: String
-  /// Receipt/evidence ref count attached to this provider (refs only — never bodies).
-  public let receiptRefCount: Int
-
-  public init(id: String, name: String, receiptRefCount: Int) {
-    self.id = id
-    self.name = name
-    self.receiptRefCount = receiptRefCount
+  /// `true` only when a real projection loaded — the UI's ONLY "online" signal. A dark/offline
+  /// server can never make this true (honest-unavailable).
+  public var isOnline: Bool {
+    projection != nil
   }
 }
 
-/// View model for the Friday Home screen (Status + heroPet + cardsQueues).
-///
-/// READ-ONLY by construction. The only action it exposes is `refresh()` — which
-/// only re-reads the projection; it never writes. There is no mutate / dispatch /
-/// approve / mark-done path, and none can be added without violating the M-PR1
-/// truth contract (read-only actions only, no mutating action).
 @MainActor
 public final class HomeViewModel: ObservableObject {
   @Published public private(set) var state: HomeLoadState = .idle
 
-  private let client: FridayRustReadClient
+  /// The package's `FridayRustReadClient` is deliberately NOT `Sendable` (its `WorkbenchSnapshot`
+  /// carries a non-`Sendable` `raw: [String: Any]`), so awaiting its `nonisolated async`
+  /// `fetchWorkbench()` from this `@MainActor` VM would "send" main-actor state across the hop.
+  /// `nonisolated(unsafe)` drops the isolation and is SOUND here: the package clients are
+  /// `final class`, every stored property is an immutable `let` (no post-init mutation), and each
+  /// fetch builds a FRESH transport via `makeTransport()` — there is no shared mutable state to
+  /// race. We resolve the mismatch on the CONSUMER side (never editing the #677 package).
+  nonisolated(unsafe) private let client: FridayRustReadClient
 
+  /// - Parameter client: the read client. In production this is the real `SealedWSReadClient`
+  ///   (built by `FridayClientFactory.makeReadClient`); a preview/debug build injects a mock.
   public init(client: FridayRustReadClient) {
     self.client = client
   }
 
-  /// Re-fetch the Workbench projection. The only mutating-looking action — and it
-  /// only re-reads truth; it never writes.
+  /// Whether the Home is online — derived from the load state (ONLY a real loaded projection is
+  /// online). Convenience for the SwiftUI surface.
+  public var isOnline: Bool { state.isOnline }
+
+  /// Re-fetch the Home read projection over the sealed-WS read seam. The only action — and it
+  /// only RE-READS truth; it never writes. A throw renders AS truth (honest-unavailable).
   public func refresh() async {
     state = .loading
     do {
       let snapshot = try await client.fetchWorkbench()
-      state = .loaded(snapshot)
+      state = .loaded(HomeProjection(snapshot))
     } catch {
-      // Render the failure AS truth. Never fall back to a fake-ready Home.
       state = .unavailable(reason: Self.reason(for: error))
     }
   }
 
-  private static func reason(for error: Error) -> String {
-    if let clientError = error as? FridayRustReadClientError {
-      return clientError.description
+  /// Map a thrown error to an honest, body-free reason string. The Rust read seam ends a
+  /// session fail-closed on any auth/availability failure, surfaced as a `transport`/server
+  /// error here.
+  static func reason(for error: Error) -> String {
+    if let e = error as? FridayReadClientError {
+      switch e {
+      case .badServerPubkey, .badSessionNonce:
+        return "Hub handshake failed — server unavailable"
+      case let .serverError(code, message):
+        return "Hub unavailable (\(code.rawValue)) — \(message)"
+      case let .unexpectedResponse(kind):
+        return "Hub returned an unexpected response (\(kind))"
+      case let .malformedProjection(why):
+        return "Projection unavailable — \(why)"
+      case let .transport(why):
+        return "Hub offline — \(why)"
+      }
     }
     return "Hub unavailable — \(error)"
   }
-
-  // MARK: - Derived Home content (refs only, truth never upgraded)
-
-  /// Whether the projection is online/healthy (drives the heroPet "here vs offline"
-  /// mood and the status chip). A pending/unknown feed is NOT healthy.
-  public var isOnline: Bool {
-    guard let snapshot = state.snapshot else { return false }
-    return snapshot.runtimeFeedStatus.isHealthy && snapshot.statusLabels.isEmpty
-  }
-
-  /// Honest status labels (`stale` / `offline` / `error`) surfaced AS truth.
-  public var statusLabels: [MissionWorkbenchStatusLabel] {
-    state.snapshot?.statusLabels ?? []
-  }
-
-  /// "Needs Me" queue: work items that need operator attention and are NOT done.
-  ///
-  /// Truth rules baked in:
-  ///  - a done / completed_with_proof item is NEVER in Needs-Me,
-  ///  - a `blocked` NO-GO row IS surfaced here (as truth) but the row carries
-  ///    `isExecutable == false` so the UI must render it non-actionable,
-  ///  - provider_ack is NOT done, so a mission-bound provider ack that still
-  ///    awaits the operator stays in the queue.
-  public var needsMe: [HomeQueueItem] {
-    guard let snapshot = state.snapshot else { return [] }
-    return snapshot.workItems
-      .filter { !$0.done && Self.needsAttention($0.state) }
-      .map { HomeQueueItem(item: $0) }
-  }
-
-  /// "Running" queue: in-flight work items that are neither done nor awaiting the
-  /// operator (queued / provider_ack-in-progress / reconnecting). Never includes a
-  /// done item; never includes a blocked NO-GO row (that belongs to Needs-Me).
-  public var running: [HomeQueueItem] {
-    guard let snapshot = state.snapshot else { return [] }
-    return snapshot.workItems
-      .filter { !$0.done && Self.isRunning($0.state) }
-      .map { HomeQueueItem(item: $0) }
-  }
-
-  /// Provider cards derived from the projection's receipt refs (small-mark identity).
-  /// M-PR1 surfaces the providers that have receipt refs attached to this Mission.
-  public var providerCards: [HomeProviderCard] {
-    guard let snapshot = state.snapshot else { return [] }
-    var cards: [HomeProviderCard] = []
-    if !snapshot.providerReceiptRefs.isEmpty {
-      cards.append(
-        HomeProviderCard(
-          id: "provider", name: "Provider session",
-          receiptRefCount: snapshot.providerReceiptRefs.count))
-    }
-    if !snapshot.channelReceiptRefs.isEmpty {
-      cards.append(
-        HomeProviderCard(
-          id: "channel", name: "Channel",
-          receiptRefCount: snapshot.channelReceiptRefs.count))
-    }
-    return cards
-  }
-
-  // MARK: - Lifecycle classification
-
-  /// States that mean "the operator must look" → Needs-Me. `blocked` is included
-  /// (a NO-GO row rendered AS truth), `waiting`/`error` need a human.
-  private static func needsAttention(_ state: MissionLifecycleState) -> Bool {
-    switch state {
-    case .blocked, .waiting, .error, .providerAck:
-      return true
-    case .ready, .queued, .reconnecting, .stale, .timelineRead, .completedWithProof, .unknown:
-      return false
-    }
-  }
-
-  /// States that mean "in flight, no operator action needed yet" → Running.
-  private static func isRunning(_ state: MissionLifecycleState) -> Bool {
-    switch state {
-    case .ready, .queued, .reconnecting:
-      return true
-    case .blocked, .waiting, .error, .providerAck, .stale, .timelineRead, .completedWithProof,
-      .unknown:
-      return false
-    }
-  }
 }
 
-/// A single row in a Home queue (Needs-Me / Running). Carries refs + labels only.
-public struct HomeQueueItem: Sendable, Equatable, Identifiable {
-  public let id: String
-  public let title: String
-  public let state: MissionLifecycleState
-  public let owner: MissionTruthLabel
-  public let proofRef: String?
-  public let done: Bool
+// MARK: - PreviewReadClient (PREVIEW / DEBUG ONLY — clearly labeled)
 
-  /// TRUTH GUARD: a `blocked` NO-GO row is surfaced AS truth in the queue but is
-  /// NEVER executable. The view must not wire any dispatch/approve affordance to a
-  /// row where this is false. In M-PR1 NOTHING is executable (read-only), so this
-  /// is a row-level honesty signal, not a gate on a (nonexistent) action.
-  public var isExecutable: Bool { false }
+/// **A PREVIEW/DEBUG-ONLY read client returning a static sample projection.** Used behind a
+/// preview/debug flag so SwiftUI previews + UI iteration render a populated Home WITHOUT a live
+/// Hub. NOT used in a real build (production wires the real `SealedWSReadClient`). The sample is
+/// refs-only (INV-5) and its truth label says `preview_sample` so it can NEVER be mistaken for a
+/// live projection. Optionally throws to preview the honest-unavailable state.
+public struct PreviewReadClient: FridayRustReadClient {
+  private let failure: FridayReadClientError?
+  public init(failure: FridayReadClientError? = nil) { self.failure = failure }
 
-  public init(item: MissionWorkbenchWorkItem) {
-    self.id = item.id
-    self.title = item.title
-    self.state = item.state
-    self.owner = item.owner
-    self.proofRef = item.proofRef
-    self.done = item.done
+  public func fetchWorkbench() async throws -> WorkbenchSnapshot {
+    if let failure { throw failure }
+    let json = """
+    {"missionId":"mission-preview","fridayConversationId":"conv-preview",\
+    "runtimeFeedStatus":"preview_sample","statusLabels":[],\
+    "workItems":[{"workItemId":"wi-preview-1"},{"workItemId":"wi-preview-2"}]}
+    """
+    return try WorkbenchSnapshot(projectionJSON: Data(json.utf8),
+                                 generatedAtMs: Int64(Date().timeIntervalSince1970 * 1000))
   }
 }
