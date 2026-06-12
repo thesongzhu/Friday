@@ -104,6 +104,20 @@ const QUALIFYING_SHAPED_BODY = {
   constraints: { readOnly: true },
 };
 
+// A MUTATING-shaped request body: readOnly:false + an explicit positive mutatingToolGrant (a member
+// of RUST_ROUTE_MUTATING_TOOL_ALLOWLIST) + the operator-signed gate marker. This is the shape the
+// isGatedMutatingRun qualifier inspects. With the route's Rust-route flag OFF the qualifier's FIRST
+// conjunct (agentRunControlViaRust === true) is false, so the mutating branch is dead code and the
+// run disqualifies to the SAME retired 503 as a read-only run does — byte-identical when off.
+const MUTATING_SHAPED_BODY = {
+  task: "Write the result to out.txt in the workspace.",
+  providerId: "deepseek",
+  model: "deepseek-v4-flash",
+  constraints: { readOnly: false },
+  mutatingToolGrant: ["write_file"],
+  mutationGate: "operator_signed_ed25519",
+};
+
 async function callStartRoute(
   runtime: ReturnType<typeof createFridayApiRuntime>,
   body: Record<string, unknown>,
@@ -151,5 +165,18 @@ describe("FridayApiRuntime — execrun slice 4 per-run Rust-route flag (dark)", 
     db = createTestDb();
     const runtime = makeRuntime(db, true);
     await expectByteIdentical503(callStartRoute(runtime, { ...QUALIFYING_SHAPED_BODY }));
+  });
+
+  it("flag OFF: a MUTATING body (readOnly:false + grant + ed25519 gate) is byte-identical 503", async () => {
+    // Coverage complement to the read-only flag-off test: a fully mutating-shaped body (an explicit
+    // mutatingToolGrant + mutationGate:"operator_signed_ed25519" + readOnly:false) disqualifies to
+    // the EXACT same retired 503 (TS_RUNTIME_AGENT_RUNS_RETIRED / 503) when the route's Rust-route
+    // flag is off. The makeRuntime flag here is the START-route flag (routeAgentRunViaRust); the
+    // qualifier's mutating branch keys on agentRunControlViaRust, which is unset here — so the
+    // mutating branch is dead code and the body is admitted/disqualified identically to today. No
+    // run is created, executeRun is never reached, no mutating surface is opened.
+    db = createTestDb();
+    const runtime = makeRuntime(db, false);
+    await expectByteIdentical503(callStartRoute(runtime, { ...MUTATING_SHAPED_BODY }));
   });
 });
