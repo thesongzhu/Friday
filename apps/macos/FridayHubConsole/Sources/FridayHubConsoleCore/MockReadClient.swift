@@ -1,7 +1,9 @@
 import Foundation
+import FridayRustClient
 
-/// In-memory `FridayRustReadClient` used so the app builds, previews, and
-/// view-model tests run without the real `FridayRustClient` package.
+/// In-memory `FridayRustReadClient` used for SwiftUI previews and view-model truth-rule
+/// tests, so the app builds + previews + `swift test` run without a live read-projection
+/// server. The REAL path is `SealedWSReadClient` (see RealReadClientFactory).
 ///
 /// The representative snapshot mirrors the Rust `mission_workbench_probe` fixture
 /// and intentionally exercises every honest-rendering rule:
@@ -24,13 +26,28 @@ public struct MockReadClient: FridayRustReadClient {
     self.behavior = behavior
   }
 
-  public func fetchWorkbench() async throws -> WorkbenchSnapshot {
+  /// Conform to the unified `FridayRustReadClient` protocol: it returns the package's THIN
+  /// refs-only wire snapshot (`FridayRustClient.WorkbenchSnapshot`). The mock encodes its rich
+  /// `representativeSnapshot` to the camelCase contract JSON and wraps it as the wire snapshot
+  /// (its `raw` then carries the full projection), so the view model's adapter re-decodes it
+  /// back to the rich display model — exercising the SAME wire→display path the real client uses.
+  public func fetchWorkbench() async throws -> FridayRustClient.WorkbenchSnapshot {
     switch behavior {
     case .loaded:
-      return MockReadClient.representativeSnapshot
+      return try MockReadClient.representativeWireSnapshot()
     case let .unavailable(error):
       throw error
     }
+  }
+
+  /// The rich representative snapshot, encoded to contract JSON and wrapped as the package's
+  /// thin wire snapshot (so its `raw` carries the full projection for the adapter to re-decode).
+  ///
+  /// A throwing factory (not a stored `let`): the package's wire `WorkbenchSnapshot` carries an
+  /// `[String: Any] raw` and is intentionally NOT `Sendable`, so it cannot be a global `let`.
+  public static func representativeWireSnapshot() throws -> FridayRustClient.WorkbenchSnapshot {
+    let json = try JSONEncoder().encode(representativeSnapshot)
+    return try FridayRustClient.WorkbenchSnapshot(projectionJSON: json, generatedAtMs: 0)
   }
 
   /// Representative sample projection (refs are already-redacted `proof://` fingerprints,
