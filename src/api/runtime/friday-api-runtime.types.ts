@@ -331,13 +331,19 @@ export interface CreateFridayApiRuntimeDeps {
    */
   routeAgentRunViaRust?: boolean;
   /**
-   * GATE-AGENT-REPLACE A2b mutation-relax (DARK, default-off): resolved on/off state of the
-   * Rust run-CONTROL plane flag (`FRIDAY_AGENT_RUN_CONTROL_VIA_RUST`) — the SAME knob the Rust
-   * WS server gates its pause/resume protocol on. DEFAULT-FALSE — leave unset in
-   * production/runtime. The startRun route wrapper threads this into
-   * `qualifiesForRustReadOnlyRoute`; with it unset/false the qualifier's clause-2/4 MUTATION
-   * relax is dead code and a `readOnly:false` run stays disqualified to the 503 fence,
-   * byte-identical to today. Sourced (in bootstrap) from `resolveAgentRunControlViaRust`.
+   * GATE-AGENT-REPLACE A3 courier (DARK): the master ON/OFF (resolved boolean) for the
+   * pause/resume PRODUCT TRANSPORT. DEFAULT-FALSE — leave unset in production/runtime. Mirrors the
+   * Phase-2 Rust server's default-off `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST` flag posture EXACTLY.
+   * When FALSE (default): the sealed WS courier's new `AgentRunPaused` inbound branch fails closed
+   * (a paused frame is an unknown message) and its `resumeWithApproval` relay is inert — so the
+   * compose path NEVER sees a paused outcome and behavior is BYTE-IDENTICAL to today. When TRUE:
+   * the courier admits a server `AgentRunPaused` (settling with a refs-only paused outcome →
+   * compose projects an honest non-Finished row) and relays an opaque operator-signed approval over
+   * a fresh sealed session. This flag ADMITS the ability to handle a paused run + relay a signature;
+   * it admits NO mutating run (the read-only qualifier stays hard — a SEPARATE later PR). Sourced in
+   * bootstrap from `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST` / explicit config via
+   * `resolveAgentRunControlViaRust`. When unset/false the courier is constructed but its new
+   * behavior is never reached (byte-identical 503 / result paths untouched).
    */
   agentRunControlViaRust?: boolean;
   /**

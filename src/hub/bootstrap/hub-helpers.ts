@@ -1945,13 +1945,13 @@ export interface FridayHubConfig {
    */
   routeAgentRunViaRust?: boolean;
   /**
-   * GATE-AGENT-REPLACE A2b mutation-relax (DARK, default-off): the SAME operator knob the
-   * Rust WS server gates its on-wire pause/resume control plane on
-   * (`FRIDAY_AGENT_RUN_CONTROL_VIA_RUST`). DEFAULT-FALSE — production hub creation must leave
-   * this unset so the qualifier's clause-2/4 mutation relax is DEAD CODE and a `readOnly:false`
-   * run stays disqualified to the 503 fence (byte-identical to today). Resolved (in bootstrap)
-   * by `resolveAgentRunControlViaRust` (explicit config wins; else the env knob). The TS
-   * admission boundary and the Rust control plane flip TOGETHER, never independently.
+   * GATE-AGENT-REPLACE A3 courier (DARK): master ON/OFF arming the pause/resume PRODUCT
+   * TRANSPORT (the sealed WS courier's `AgentRunPaused` inbound + `resumeWithApproval` relay).
+   * DEFAULT-FALSE — production hub creation must leave this unset so the courier's paused/resume
+   * behavior is inert and the compose path is byte-identical to today. Resolved (config-explicit
+   * wins, else `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST`) by `resolveAgentRunControlViaRust` and fed into
+   * the api-runtime deps. Mirrors the Phase-2 Rust server's default-off flag of the SAME name; it
+   * admits NO mutating run (the read-only qualifier stays hard — a SEPARATE later PR).
    */
   agentRunControlViaRust?: boolean;
   /**

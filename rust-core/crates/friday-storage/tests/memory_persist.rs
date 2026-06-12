@@ -603,3 +603,102 @@ fn recall_orders_most_recently_confirmed_first_and_returns_sensitive() {
     let pii = recalled.iter().find(|m| m.memory_id == "pii").unwrap();
     assert!(pii.sensitive);
 }
+
+// ─── F5.5 dual-read recall (recall_confirmed_multi) ───
+
+#[test]
+fn recall_confirmed_multi_unions_dedups_and_preserves_single_principal_isolation() {
+    let p = temp_db_path("mem-recall-dual");
+    let db = Db::open_hub(&p).unwrap();
+
+    // The HARDENED namespace (new write target) and the LEGACY namespace (where pre-flip
+    // memory lives). A row written under the legacy namespace must still be recalled when
+    // we dual-read [hardened, legacy].
+    let hardened = "tenant.a.channel.discord.user.user-example-com.shared";
+    let legacy = "tenant.a.channel.discord.user.user-example.com.shared";
+    // A foreign principal whose memory must NEVER leak into the dual-read.
+    let foreign = "tenant.a.channel.discord.user.someone-else.shared";
+
+    // One row in EACH bucket: a new hardened-write, a pre-flip legacy-write, a foreign one.
+    memory::record_candidate(
+        db.conn(),
+        &owned_cand("h1", "hardened fact", hardened, false, 1),
+    )
+    .unwrap();
+    memory::confirm(db.conn(), "h1", 30).unwrap();
+    memory::record_candidate(
+        db.conn(),
+        &owned_cand("l1", "legacy fact", legacy, false, 2),
+    )
+    .unwrap();
+    memory::confirm(db.conn(), "l1", 20).unwrap();
+    memory::record_candidate(
+        db.conn(),
+        &owned_cand("f1", "foreign fact", foreign, false, 3),
+    )
+    .unwrap();
+    memory::confirm(db.conn(), "f1", 10).unwrap();
+
+    // DUAL-READ: the union of the hardened + legacy buckets. The legacy fact IS recalled.
+    let dual = memory::recall_confirmed_multi(db.conn(), &[hardened, legacy]).unwrap();
+    let ids: Vec<&str> = dual.iter().map(|m| m.memory_id.as_str()).collect();
+    assert!(ids.contains(&"h1"), "hardened-bucket memory recalled");
+    assert!(
+        ids.contains(&"l1"),
+        "legacy-bucket memory recalled (no data loss)"
+    );
+    // ISOLATION (the core invariant the dual-read must NOT widen): the foreign principal's
+    // memory NEVER appears even though we passed two namespaces.
+    assert!(
+        !ids.contains(&"f1"),
+        "foreign-principal memory must never leak"
+    );
+    assert_eq!(dual.len(), 2);
+
+    // FLAG-OFF parity: a single-element list is exactly `recall_confirmed`.
+    let single = memory::recall_confirmed_multi(db.conn(), &[legacy]).unwrap();
+    assert_eq!(single, memory::recall_confirmed(db.conn(), legacy).unwrap());
+    assert_eq!(
+        single
+            .iter()
+            .map(|m| m.memory_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["l1"]
+    );
+
+    // Empty list ⇒ empty result.
+    assert!(memory::recall_confirmed_multi(db.conn(), &[])
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn recall_confirmed_multi_dedups_a_row_present_in_both_buckets_first_principal_wins() {
+    let p = temp_db_path("mem-recall-dual-dedup");
+    let db = Db::open_hub(&p).unwrap();
+    let hardened = "tenant.a.channel.discord.user.u-h.shared";
+    let legacy = "tenant.a.channel.discord.user.u.h.shared";
+
+    // The SAME memory_id cannot exist twice (PK), so a true cross-bucket duplicate of one id
+    // is not storable; the dedup guards the case where ordered iteration would otherwise
+    // re-emit an id. Here we store DISTINCT ids per bucket and assert no duplication and
+    // that hardened (first principal) ordering leads.
+    memory::record_candidate(db.conn(), &owned_cand("h1", "h fact", hardened, false, 1)).unwrap();
+    memory::confirm(db.conn(), "h1", 50).unwrap();
+    memory::record_candidate(db.conn(), &owned_cand("l1", "l fact", legacy, false, 2)).unwrap();
+    memory::confirm(db.conn(), "l1", 40).unwrap();
+
+    let dual = memory::recall_confirmed_multi(db.conn(), &[hardened, legacy]).unwrap();
+    let ids: Vec<&str> = dual.iter().map(|m| m.memory_id.as_str()).collect();
+    // Hardened bucket consulted first ⇒ its row appears before the legacy row.
+    assert_eq!(ids, vec!["h1", "l1"]);
+    // No id appears twice.
+    let mut sorted = ids.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(
+        sorted.len(),
+        ids.len(),
+        "no duplicate ids in the dual-read union"
+    );
+}

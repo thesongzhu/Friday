@@ -401,38 +401,33 @@ describe("resolveRouteAgentRunViaRust", () => {
   });
 });
 
-describe("resolveAgentRunControlViaRust (A2b mutation-relax gate)", () => {
-  // DEFAULT-OFF: nothing set → false → the qualifier's clause-2/4 mutation relax is dead code
-  // and a `readOnly:false` run stays fail-closed (503), byte-identical to today.
+describe("resolveAgentRunControlViaRust (A3 courier pause/resume flag)", () => {
+  // DEFAULT-OFF: env unset → false → the courier's paused/resume behavior is inert (byte-identical).
   it("defaults to false when neither config nor env is set", () => {
     expect(resolveAgentRunControlViaRust(undefined, emptyEnv())).toBe(false);
   });
 
-  it("parses FRIDAY_AGENT_RUN_CONTROL_VIA_RUST=1 / true as true (case-insensitive, trimmed)", () => {
+  it("parses FRIDAY_AGENT_RUN_CONTROL_VIA_RUST=1 / =true (case-insensitive, trimmed) as true", () => {
     expect(resolveAgentRunControlViaRust(undefined, { FRIDAY_AGENT_RUN_CONTROL_VIA_RUST: "1" })).toBe(true);
     expect(resolveAgentRunControlViaRust(undefined, { FRIDAY_AGENT_RUN_CONTROL_VIA_RUST: "true" })).toBe(true);
     expect(resolveAgentRunControlViaRust(undefined, { FRIDAY_AGENT_RUN_CONTROL_VIA_RUST: "TRUE" })).toBe(true);
-    expect(resolveAgentRunControlViaRust(undefined, { FRIDAY_AGENT_RUN_CONTROL_VIA_RUST: " true " })).toBe(true);
     expect(resolveAgentRunControlViaRust(undefined, { FRIDAY_AGENT_RUN_CONTROL_VIA_RUST: "  1  " })).toBe(true);
+    expect(resolveAgentRunControlViaRust(undefined, { FRIDAY_AGENT_RUN_CONTROL_VIA_RUST: " true " })).toBe(true);
   });
 
-  // Fail-safe OFF: everything that is not exactly "1"/"true" → false (narrower than canonical true-set).
+  // Fail-safe OFF: everything that is not exactly "1"/"true" → false (narrower than the canonical set).
   it("treats 0, false, empty, and garbage env values as false (fail-safe off)", () => {
     for (const raw of ["0", "false", "", "yes", "on", "enabled", "truthy", "2"]) {
       expect(resolveAgentRunControlViaRust(undefined, { FRIDAY_AGENT_RUN_CONTROL_VIA_RUST: raw })).toBe(false);
     }
   });
 
-  // PRECEDENCE mirrors resolveRouteAgentRunViaRust exactly: an explicit config boolean wins.
-  it("uses explicit config true over the env (even when env says false)", () => {
-    expect(resolveAgentRunControlViaRust(true, { FRIDAY_AGENT_RUN_CONTROL_VIA_RUST: "false" })).toBe(true);
+  // PRECEDENCE: an explicit config boolean ALWAYS wins over the env (config false MUST beat env true).
+  it("uses explicit config over the env (true wins; the discriminating config=false beats env=true)", () => {
+    expect(resolveAgentRunControlViaRust(true, { FRIDAY_AGENT_RUN_CONTROL_VIA_RUST: "0" })).toBe(true);
     expect(resolveAgentRunControlViaRust(true, emptyEnv())).toBe(true);
-  });
-
-  it("uses explicit config false over the env (config false beats env true)", () => {
     expect(resolveAgentRunControlViaRust(false, { FRIDAY_AGENT_RUN_CONTROL_VIA_RUST: "1" })).toBe(false);
     expect(resolveAgentRunControlViaRust(false, { FRIDAY_AGENT_RUN_CONTROL_VIA_RUST: "true" })).toBe(false);
-    expect(resolveAgentRunControlViaRust(false, emptyEnv())).toBe(false);
   });
 });
 

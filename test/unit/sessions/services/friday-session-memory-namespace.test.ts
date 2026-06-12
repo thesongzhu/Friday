@@ -1,7 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect } from "vitest";
 import { FridayDomainError } from "#errors";
 import {
   resolveFridaySessionMemoryNamespace,
+  resolveFridaySessionMemoryNamespaceCandidates,
+  isFridayNamespaceHardeningEnabled,
+  FRIDAY_NS_HARDENING_ENV_FLAG,
   buildFridaySessionMemorySource,
   buildFridaySessionMemoryMetadata,
   FRIDAY_SESSION_ERROR_CODES,
@@ -95,7 +98,10 @@ describe("FridaySessionMemoryNamespace", () => {
       }
     });
 
-    it("replaces special characters in userId", () => {
+    it("replaces special characters in userId (FLAG-OFF: dot PRESERVED — byte-identical to pre-#661)", () => {
+      // The hardening flag is DEFAULT-OFF, so the legacy keep-set keeps `.`. This is the
+      // exact pre-hardening behavior: NO re-scope of an email-shaped userId.
+      expect(isFridayNamespaceHardeningEnabled()).toBe(false);
       const session = makeSession({ userId: "user@example.com" });
       const ns = resolveFridaySessionMemoryNamespace(session);
       expect(ns).toBe("tenant.default.channel.discord.user.user-example.com.shared");
@@ -191,6 +197,117 @@ describe("FridaySessionMemoryNamespace", () => {
         expect(err).toBeInstanceOf(FridayDomainError);
         expect((err as FridayDomainError).code).toBe(FRIDAY_SESSION_ERROR_CODES.MEMORY_NAMESPACE_UNRESOLVABLE);
       }
+    });
+  });
+
+  // ─── F5.5 dot-join collision hardening (FLAG-GATED, DEFAULT-OFF) + dual-read ───
+
+  describe("namespace hardening flag + dual-read", () => {
+    const PRIOR = process.env[FRIDAY_NS_HARDENING_ENV_FLAG];
+    beforeEach(() => {
+      delete process.env[FRIDAY_NS_HARDENING_ENV_FLAG];
+    });
+    afterEach(() => {
+      if (PRIOR === undefined) {
+        delete process.env[FRIDAY_NS_HARDENING_ENV_FLAG];
+      } else {
+        process.env[FRIDAY_NS_HARDENING_ENV_FLAG] = PRIOR;
+      }
+    });
+
+    it("FLAG-OFF: the flag is off by default and only exactly '1' enables it", () => {
+      expect(isFridayNamespaceHardeningEnabled()).toBe(false);
+      for (const v of ["", "0", "true", "yes", "2", " 1 "]) {
+        // " 1 " trims to "1" so it IS on; assert the trim explicitly.
+        process.env[FRIDAY_NS_HARDENING_ENV_FLAG] = v;
+        expect(isFridayNamespaceHardeningEnabled()).toBe(v.trim() === "1");
+      }
+      process.env[FRIDAY_NS_HARDENING_ENV_FLAG] = "1";
+      expect(isFridayNamespaceHardeningEnabled()).toBe(true);
+    });
+
+    it("FLAG-OFF: a dotted userId is NOT re-scoped (byte-identical to legacy)", () => {
+      // No re-scope/data-downgrade when the flag is off: the dot stays in the segment.
+      const session = makeSession({ userId: "alice.jr@example.com" });
+      expect(resolveFridaySessionMemoryNamespace(session)).toBe(
+        "tenant.default.channel.discord.user.alice.jr-example.com.shared",
+      );
+    });
+
+    it("FLAG-OFF: candidates is the SINGLE legacy namespace (one query, no behavior change)", () => {
+      const session = makeSession({ userId: "user@example.com" });
+      const candidates = resolveFridaySessionMemoryNamespaceCandidates(session);
+      expect(candidates).toEqual(["tenant.default.channel.discord.user.user-example.com.shared"]);
+    });
+
+    it("FLAG-ON: the dotted segment is hardened (dot -> '-')", () => {
+      process.env[FRIDAY_NS_HARDENING_ENV_FLAG] = "1";
+      const session = makeSession({ userId: "user@example.com" });
+      expect(resolveFridaySessionMemoryNamespace(session)).toBe(
+        "tenant.default.channel.discord.user.user-example-com.shared",
+      );
+    });
+
+    it("FLAG-ON: dual-read returns [hardened, legacy] so legacy memory is still recalled", () => {
+      process.env[FRIDAY_NS_HARDENING_ENV_FLAG] = "1";
+      const session = makeSession({ userId: "user@example.com" });
+      const candidates = resolveFridaySessionMemoryNamespaceCandidates(session);
+      expect(candidates).toEqual([
+        "tenant.default.channel.discord.user.user-example-com.shared", // hardened (new writes)
+        "tenant.default.channel.discord.user.user-example.com.shared", // legacy (pre-flip rows)
+      ]);
+      // The LEGACY candidate is byte-identical to what the FLAG-OFF write path persisted —
+      // this is the link that makes flag-on recall find pre-flip memory.
+      delete process.env[FRIDAY_NS_HARDENING_ENV_FLAG];
+      expect(resolveFridaySessionMemoryNamespace(session)).toBe(candidates[1]);
+    });
+
+    it("FLAG-ON, DEDUP-COLLAPSE: a non-dotted segment yields ONE candidate (zero extra reads)", () => {
+      process.env[FRIDAY_NS_HARDENING_ENV_FLAG] = "1";
+      // No `.` in any segment ⇒ hardened === legacy ⇒ the dual-read list collapses to one.
+      const session = makeSession({ userId: "user-abc" });
+      const candidates = resolveFridaySessionMemoryNamespaceCandidates(session);
+      expect(candidates).toEqual(["tenant.default.channel.discord.user.user-abc.shared"]);
+    });
+
+    it("FLAG-ON: the dot-join cross-tuple collision is closed for NEW (hardened) writes", () => {
+      process.env[FRIDAY_NS_HARDENING_ENV_FLAG] = "1";
+      // Pre-fix both DISTINCT tuples produced `tenant.a.channel.b.user.x.user.y.shared`.
+      // Hardened: the embedded `.user.` maps to `-user-`, so they are DISTINCT.
+      const forged = resolveFridaySessionMemoryNamespace(
+        makeSession({ accountId: "a", channel: "b", userId: "x.user.y" }),
+      );
+      const victim = resolveFridaySessionMemoryNamespace(
+        makeSession({ accountId: "a", channel: "b.user.x", userId: "y" }),
+      );
+      expect(forged).not.toBe(victim);
+      expect(forged).toBe("tenant.a.channel.b.user.x-user-y.shared");
+      expect(victim).toBe("tenant.a.channel.b-user-x.user.y.shared");
+      // Injectivity by construction: exactly 7 dot-parts, no payload segment carries a dot.
+      const parts = forged.split(".");
+      expect(parts.length).toBe(7);
+      expect([parts[0], parts[2], parts[4], parts[6]]).toEqual(["tenant", "channel", "user", "shared"]);
+      for (const payload of [parts[1], parts[3], parts[5]]) {
+        expect(payload).not.toContain(".");
+      }
+    });
+
+    it("HONEST: the LEGACY dual-read bucket still carries the pre-hardening collision", () => {
+      process.env[FRIDAY_NS_HARDENING_ENV_FLAG] = "1";
+      // The two distinct tuples write to DISTINCT hardened namespaces (collision closed for
+      // new writes), but they STILL share ONE legacy bucket on the dual-read tail — so
+      // hardening does NOT retroactively split already-colliding legacy rows. Dual-read is
+      // strictly >= the pre-#661 state (no data loss), not a retroactive fix. Documented,
+      // not "fixed" (structurally impossible to split one shared bucket).
+      const forgedLegacy = resolveFridaySessionMemoryNamespaceCandidates(
+        makeSession({ accountId: "a", channel: "b", userId: "x.user.y" }),
+      )[1];
+      const victimLegacy = resolveFridaySessionMemoryNamespaceCandidates(
+        makeSession({ accountId: "a", channel: "b.user.x", userId: "y" }),
+      )[1];
+      expect(forgedLegacy).toBe("tenant.a.channel.b.user.x.user.y.shared");
+      expect(victimLegacy).toBe("tenant.a.channel.b.user.x.user.y.shared");
+      expect(forgedLegacy).toBe(victimLegacy);
     });
   });
 

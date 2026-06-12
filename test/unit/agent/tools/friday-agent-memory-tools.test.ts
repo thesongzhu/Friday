@@ -920,4 +920,216 @@ describe("FridayAgentMemoryTools", () => {
       );
     });
   });
+
+  // ─── F5.5 dual-read recall (flag-gated namespace hardening) ───
+  //
+  // These prove the operator's mandate AT the LIVE recall consumer (not just the
+  // resolver helper): when hardening is ON the recall path consults BOTH the hardened
+  // and the legacy session namespaces, so memory written under the legacy namespace
+  // (before the flag flip) is STILL recalled — no destructive re-key.
+  describe("F5.5 dual-read recall (namespace hardening)", () => {
+    const HARDENED_NS = "tenant.default.channel.webchat.user.user-example-com.shared";
+    const LEGACY_NS = "tenant.default.channel.webchat.user.user-example.com.shared";
+    const SESSION_KEY = "webchat:default:chat-1";
+    // The agent base namespace is scoped to the session key in context.
+    const AGENT_NS = `agent:${SESSION_KEY}`;
+
+    it("FLAG-ON: dual-read finds memory written under the LEGACY namespace", async () => {
+      // The memory lives ONLY in the legacy bucket (it was written pre-flip). The
+      // hardened (primary) search returns nothing; the legacy dual-read leg finds it.
+      const legacyOnlyMemory = makeSearchResult({
+        item: makeItem({
+          id: "legacy-mem",
+          namespace: LEGACY_NS,
+          content: "Codename is BLUEJAY",
+        }),
+        score: 0.9,
+      });
+      const svc = mockMemoryService();
+      // search(query, { namespace: [agentNs, ns] }) — return the legacy memory ONLY
+      // when the legacy namespace is in the requested array; empty otherwise.
+      vi.mocked(svc.search).mockImplementation(async (_q, options) => {
+        const ns = options?.namespace;
+        const arr = Array.isArray(ns) ? ns : [ns];
+        return arr.includes(LEGACY_NS) ? [legacyOnlyMemory] : [];
+      });
+      const [searchTool] = createFridayAgentMemoryTools({
+        memoryService: svc,
+        // The dual-read dep: hardened-on returns [hardened, legacy].
+        resolveSessionMemoryNamespaceCandidates: async () => [HARDENED_NS, LEGACY_NS],
+      });
+
+      const result = await searchTool!.execute(
+        { query: "codename" },
+        signalWithContext({ sessionKey: SESSION_KEY }),
+      );
+
+      expect(result.isError).toBeUndefined();
+      // The legacy-bucket memory IS recalled through the dual-read leg.
+      expect(JSON.parse(result.content)).toMatchObject([{ content: "Codename is BLUEJAY" }]);
+      // BOTH namespaces were searched: the primary (hardened) and the legacy tail.
+      const searchedNamespaces = vi.mocked(svc.search).mock.calls.map(([, opts]) => opts?.namespace);
+      expect(searchedNamespaces).toContainEqual([AGENT_NS, HARDENED_NS]);
+      expect(searchedNamespaces).toContainEqual([AGENT_NS, LEGACY_NS]);
+    });
+
+    it("FLAG-OFF (single candidate): only the legacy namespace is searched — byte-identical to today", async () => {
+      // Hardening OFF ⇒ the dep returns a SINGLE namespace ⇒ NO extra dual-read query.
+      const svc = mockMemoryService([]);
+      const [searchTool] = createFridayAgentMemoryTools({
+        memoryService: svc,
+        resolveSessionMemoryNamespaceCandidates: async () => [LEGACY_NS],
+      });
+
+      await searchTool!.execute(
+        { query: "codename" },
+        signalWithContext({ sessionKey: SESSION_KEY }),
+      );
+
+      const searchedNamespaces = vi.mocked(svc.search).mock.calls.map(([, opts]) => opts?.namespace);
+      // Exactly ONE primary search over [agent, legacy]; no second (dual-read) query.
+      expect(searchedNamespaces).toEqual([[AGENT_NS, LEGACY_NS]]);
+    });
+
+    it("FLAG-OFF must-fix: persisted namespace DIFFERS from re-derived legacy — recall reads the PERSISTED bucket and finds the items (no regression)", async () => {
+      // The reviewer-specified adversarial case AT the live consumer. The session's
+      // PERSISTED memory namespace (the authoritative write-time value) differs from
+      // what a blind re-derivation would produce (e.g. after a rollback from flag-on,
+      // or any stored-vs-re-derived drift). The fixed flag-off `getSessionMemoryNamespace
+      // Candidates` returns the SINGLE persisted namespace — so the consumer searches the
+      // bucket the rows ACTUALLY live in, never the divergent re-derivation. This pins
+      // "flag-off recall is byte-identical to today" regardless of namespace drift.
+      const PERSISTED_NS = HARDENED_NS; // what the rows were written under (authoritative)
+      const RE_DERIVED_LEGACY_NS = LEGACY_NS; // what a blind re-derivation would yield (a DIFFERENT, empty bucket)
+      const persistedMemory = makeSearchResult({
+        item: makeItem({
+          id: "persisted-mem",
+          namespace: PERSISTED_NS,
+          content: "Codename is FALCON",
+        }),
+        score: 0.9,
+      });
+      const svc = mockMemoryService();
+      // The item lives ONLY in the persisted bucket. If recall blindly re-derived the
+      // legacy namespace (the pre-fix bug), it would search the EMPTY legacy bucket and
+      // miss this row → recall regression.
+      vi.mocked(svc.search).mockImplementation(async (_q, options) => {
+        const ns = options?.namespace;
+        const arr = Array.isArray(ns) ? ns : [ns];
+        return arr.includes(PERSISTED_NS) ? [persistedMemory] : [];
+      });
+      const [searchTool] = createFridayAgentMemoryTools({
+        memoryService: svc,
+        // The FIXED flag-off candidate list: the SINGLE authoritative persisted namespace
+        // (NOT [re-derived-legacy, persisted-tail], which was the regressing pre-fix shape).
+        resolveSessionMemoryNamespaceCandidates: async () => [PERSISTED_NS],
+      });
+
+      const result = await searchTool!.execute(
+        { query: "codename" },
+        signalWithContext({ sessionKey: SESSION_KEY }),
+      );
+
+      expect(result.isError).toBeUndefined();
+      // The persisted-bucket memory IS still recalled (no regression).
+      expect(JSON.parse(result.content)).toMatchObject([{ content: "Codename is FALCON" }]);
+      // The persisted namespace was searched; the divergent re-derived legacy bucket was NOT.
+      const searchedNamespaces = vi.mocked(svc.search).mock.calls.map(([, opts]) => opts?.namespace);
+      expect(searchedNamespaces).toEqual([[AGENT_NS, PERSISTED_NS]]);
+      expect(searchedNamespaces).not.toContainEqual([AGENT_NS, RE_DERIVED_LEGACY_NS]);
+    });
+
+    it("FLAG-ON dedup-collapse: a non-dotted (single-candidate) namespace adds no extra query", async () => {
+      // When hardened === legacy the dep collapses to one entry, so even with the flag
+      // ON the common case issues exactly one query (the dedup-collapse guarantee).
+      const plainNs = "tenant.default.channel.webchat.user.user-abc.shared";
+      const svc = mockMemoryService([]);
+      const [searchTool] = createFridayAgentMemoryTools({
+        memoryService: svc,
+        resolveSessionMemoryNamespaceCandidates: async () => [plainNs],
+      });
+
+      await searchTool!.execute(
+        { query: "q" },
+        signalWithContext({ sessionKey: SESSION_KEY }),
+      );
+
+      const searchedNamespaces = vi.mocked(svc.search).mock.calls.map(([, opts]) => opts?.namespace);
+      expect(searchedNamespaces).toEqual([[AGENT_NS, plainNs]]);
+    });
+
+    it("dedups a row that appears in BOTH hardened and legacy buckets (no duplicate result)", async () => {
+      const dupMemory = makeSearchResult({
+        item: makeItem({ id: "dup-mem", content: "Shared fact" }),
+        score: 0.8,
+      });
+      const svc = mockMemoryService();
+      // The SAME item id is returned for both namespaces (it was re-written hardened
+      // while the legacy copy lingers) — the consumer must dedup by id.
+      vi.mocked(svc.search).mockResolvedValue([dupMemory]);
+      const [searchTool] = createFridayAgentMemoryTools({
+        memoryService: svc,
+        resolveSessionMemoryNamespaceCandidates: async () => [HARDENED_NS, LEGACY_NS],
+      });
+
+      const result = await searchTool!.execute(
+        { query: "shared" },
+        signalWithContext({ sessionKey: SESSION_KEY }),
+      );
+
+      const parsed = JSON.parse(result.content) as Array<{ metadata: { id: string } }>;
+      expect(parsed.filter((r) => r.metadata.id === "dup-mem")).toHaveLength(1);
+    });
+
+    it("falls back to the single-namespace dep when the dual-read dep is absent", async () => {
+      // Older callers that only wired resolveSessionMemoryNamespace keep working (the
+      // candidate list then has at most one entry — pre-dual-read behavior).
+      const svc = mockMemoryService([]);
+      const [searchTool] = createFridayAgentMemoryTools({
+        memoryService: svc,
+        resolveSessionMemoryNamespace: async () => LEGACY_NS,
+      });
+
+      await searchTool!.execute(
+        { query: "q" },
+        signalWithContext({ sessionKey: SESSION_KEY }),
+      );
+
+      const searchedNamespaces = vi.mocked(svc.search).mock.calls.map(([, opts]) => opts?.namespace);
+      expect(searchedNamespaces).toEqual([[AGENT_NS, LEGACY_NS]]);
+    });
+
+    it("FLAG-ON: the LEXICAL fallback also scans the legacy namespace (no recall-quality downgrade)", async () => {
+      // The semantic search finds nothing, triggering the lexical fallback. The wanted
+      // memory lives ONLY in the legacy bucket — the lexical scan must list() the legacy
+      // namespace too, not just the hardened primary.
+      const legacyLexical = makeItem({
+        id: "legacy-lex",
+        namespace: LEGACY_NS,
+        content: "codename bluejay lives here",
+        source: `session:${SESSION_KEY}`,
+        tags: [`session:${SESSION_KEY}`],
+      });
+      const svc = mockMemoryService([]); // semantic search: empty
+      vi.mocked(svc.list).mockImplementation(async (opts) =>
+        opts?.namespace === LEGACY_NS ? [legacyLexical] : [],
+      );
+      const [searchTool] = createFridayAgentMemoryTools({
+        memoryService: svc,
+        resolveSessionMemoryNamespaceCandidates: async () => [HARDENED_NS, LEGACY_NS],
+      });
+
+      const result = await searchTool!.execute(
+        { query: "codename" },
+        signalWithContext({ sessionKey: SESSION_KEY }),
+      );
+
+      // The legacy memory is recalled via the lexical fallback...
+      expect(JSON.parse(result.content)).toMatchObject([{ content: "codename bluejay lives here" }]);
+      // ...and BOTH namespaces were list()ed (the fallback dual-reads).
+      const listedNamespaces = vi.mocked(svc.list).mock.calls.map(([opts]) => opts?.namespace);
+      expect(listedNamespaces).toContain(HARDENED_NS);
+      expect(listedNamespaces).toContain(LEGACY_NS);
+    });
+  });
 });
