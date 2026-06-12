@@ -1,5 +1,18 @@
 # Friday — native Android shell (Unit 5c, emulator)
 
+This directory holds **two** Gradle modules:
+
+- **`:app`** (this file) — the **real-UniFFI Unit-5c** shell (Android Views) that
+  renders values from the all-Rust core via generated Kotlin bindings; built and
+  screenshotted by `build-emu.sh` (NDK cross-compile).
+- **`:mock`** ([`mock/README.md`](mock/README.md)) — a minimal **Jetpack Compose**
+  shell that proves the **device-pairing + Hub↔phone sync FLOW** on the emulator.
+  It is a self-contained MOCK (no UniFFI, no NDK, no sealed-WS client) and builds
+  with `gradle :mock:assembleDebug` (Maven only). The `:app` module below is left
+  fully intact — `:mock` is added alongside it, not in place of it.
+
+## `:app` — real-UniFFI bridge proof (Unit 5c)
+
 A minimal Activity that renders values computed by the **all-Rust core**
 (`friday-ffi`) through the generated **UniFFI Kotlin** bindings — the Android
 mirror of `apps/friday-ios`. It proves the Kotlin ↔ Rust bridge runs on the
