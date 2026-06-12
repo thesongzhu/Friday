@@ -4,8 +4,10 @@ import SwiftUI
 /// The right-docked proof inspector (locked: proofInspector = rightDocked).
 ///
 /// Shows the redacted refs for the currently selected row — refs only, no body
-/// load. Also hosts the subtleStatus pet accent (desktopPet = subtleStatus):
-/// a small status dot tinted by feed health, an accent only.
+/// load. Also hosts the locked `Inspector → Companion` pet: the 176px animated v9 companion
+/// (`CompanionPane` → `CompanionPetView`), with the `subtleStatus` health dot retained as a
+/// secondary accent. The companion runs the existing pet engine + bundled assets, zero token,
+/// local-only.
 struct ProofInspector: View {
   let state: WorkbenchLoadState
   let selection: InspectorSelection
@@ -20,6 +22,11 @@ struct ProofInspector: View {
           .foregroundStyle(HubTheme.textPrimary)
         Spacer()
       }
+
+      // Inspector → Companion: the locked 176px animated pet companion.
+      CompanionPane(state: state)
+
+      Divider().opacity(0.4)
 
       Text("Refs only · bodies never inlined")
         .font(.system(size: 10))

@@ -23,6 +23,21 @@ import SwiftUI
 /// purely a launch-behavior choice (tests inject their own clients, so CI is unaffected).
 @main
 struct FridayHubConsoleApp: App {
+  init() {
+    // Env/flag-gated pet render proof — renders the Companion pet offscreen, snapshots a PNG,
+    // and exits BEFORE the normal scene. Never runs in the default launch or in CI.
+    #if canImport(WebKit) && canImport(AppKit)
+    if let out = PetRenderProof.requestedOutputPath() {
+      PetRenderProof.run(outputPath: out)  // never returns
+    }
+    #endif
+    #if canImport(AppKit)
+    if let dir = StateRenderProof.requestedOutputDir() {
+      StateRenderProof.run(outputDir: dir)  // never returns
+    }
+    #endif
+  }
+
   var body: some Scene {
     WindowGroup("Friday Hub Console") {
       HubConsoleShell(client: Self.readClient)
