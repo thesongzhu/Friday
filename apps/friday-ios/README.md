@@ -1,9 +1,40 @@
 # Friday — native iOS shell (Unit 5b, simulator)
 
-A minimal SwiftUI app that renders values computed by the **all-Rust core**
-(`friday-ffi`) through the generated **UniFFI Swift bindings**. It is the
-first native iOS proof that the Swift ↔ Rust bridge runs on-device(sim):
-connection-state projection + protocol schema version/negotiation, all from Rust.
+A SwiftUI app that renders values computed by the **all-Rust core** (`friday-ffi`)
+through the generated **UniFFI Swift bindings**, AND integrates the **real sealed-WS
+Rust client** for the Home read surface + the **Friday Chat read-WRITE S6 loop**.
+
+## Real-client integration (`FridayiOSCore`)
+
+`Package.swift` builds a UI-free **`FridayiOSCore`** library (host-buildable +
+host-testable with plain `swift build` / `swift test` — no Xcode/simulator/bindings)
+that depends on the local **`FridayRustClient`** SPM package (the real sealed-WS
+read+write client + Swift↔Rust crypto-parity stack). The package's types WIN — there
+is ONE `WorkbenchSnapshot` / one client protocol across desktop + mobile.
+
+- **Home** → the real `SealedWSReadClient` (`HomeViewModel`): reads the refs-only
+  Mission Workbench projection; a dark/offline/503/stale throw renders **honest-
+  unavailable**, never a fabricated snapshot.
+- **Friday Chat** → the real `SealedWSWriteClient` + the `OperatorSigner` relay
+  (`FridayChatViewModel`): the 4-state S6 loop — compose→send→answer (refs-only),
+  mutating→paused→**approval card**, approve→**resume relays the operator's opaque
+  signed blob VERBATIM**→receipt.
+
+**Invariants enforced at the view-model level:** the app NEVER mints/holds a signing
+key (INV-1, relay-only); mutating actions ALWAYS pause for approval (INV-2, no
+bypass); everything is refs-only (INV-5); honest-unavailable when the server is dark.
+
+The `OperatorSigner` is a **mock** today (`MockOperatorSigner` — a clearly-labeled
+NON-real placeholder, not a signature). The **real** signer is the desktop
+operator-signer helper (PR #671) reading the operator's isolated SecureStore; wiring
+it + the live `NWConnection` transport + a live, server-accepted S6 resume is the
+**slice-6 / operator-key gate** (deferred).
+
+The `: Sendable` mismatch (the package's read/write client protocols + `WorkbenchSnapshot`
+are not `Sendable`) is resolved on the CONSUMER side: the `@MainActor` view models hold
+the clients `nonisolated(unsafe)` (sound — the package clients are immutable `final class`
+and build a FRESH transport per call) and surface `Sendable` value projections. The #677
+package is never edited.
 
 This is **simulator-level** proof only. Physical-device proof and App Store
 release remain operator-gated. Overall Friday v1 is **NO-GO**.

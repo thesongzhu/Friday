@@ -10,6 +10,8 @@
 // (friday_ffi). No model call, no provider secret on the phone.
 
 import SwiftUI
+import FridayiOSCore
+import FridayRustClient
 
 // MARK: - Design tokens (Cyan + Coral, Glass Native, Neutral Plus)
 
@@ -133,6 +135,7 @@ private func sectionHeader(_ title: String, _ sub: String) -> some View {
 // MARK: - Root (Command Sheet menu, Friday-first)
 
 struct RootView: View {
+    @EnvironmentObject private var session: FridaySession
     @State private var dest: Dest = .friday
     @State private var menuOpen = false
     @State private var path: [SessionRef] = []
@@ -141,7 +144,7 @@ struct RootView: View {
         NavigationStack(path: $path) {
             Group {
                 switch dest {
-                case .friday: FridayHome(path: $path)
+                case .friday: FridayHome(path: $path, session: session)
                 case .platform: PlatformView(path: $path)
                 case .workflows: WorkflowsView()
                 case .activity: ActivityView(path: $path)
@@ -162,11 +165,15 @@ struct RootView: View {
                 }
             }
             .navigationDestination(for: SessionRef.self) { SessionDetail(ref: $0) }
+            .navigationDestination(for: ChatRoute.self) { _ in FridayChatView(session: session) }
         }
         .tint(Theme.cyan)
         .sheet(isPresented: $menuOpen) { CommandSheet(dest: $dest, open: $menuOpen) }
     }
 }
+
+/// A navigation target for the dedicated Friday Chat read-WRITE surface.
+enum ChatRoute: Hashable { case open }
 
 // Command Sheet: the locked top-left menu.
 struct CommandSheet: View {
@@ -199,46 +206,47 @@ struct CommandSheet: View {
     }
 }
 
-// MARK: - Friday Home (Chat + Status, Hero Pet)
+// MARK: - Friday Home (Chat + Status, Hero Pet) — wired to the REAL Rust read client
 
 struct FridayHome: View {
     @Binding var path: [SessionRef]
-    private let state = initialConnectionState()
+    let session: FridaySession
+    @StateObject private var home: HomeViewModel
     private let inbox = sampleActivityInbox()
-    private var online: Bool { connectionIsOnline(state: state) }
+
+    init(path: Binding<[SessionRef]>, session: FridaySession) {
+        self._path = path
+        self.session = session
+        // The Home read VM is built from the injected session's read client (real in production;
+        // the labeled PreviewReadClient behind the session's preview flag for SwiftUI previews).
+        self._home = StateObject(wrappedValue: HomeViewModel(client: session.readClient))
+    }
+
+    // Honest online: ONLY a real loaded projection is "online". A dark/offline server is offline.
+    private var online: Bool { home.state.isOnline }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
                 HeroPet(online: online).padding(.top, 4)
 
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text("Status").font(.headline)
-                        Spacer()
-                        Chip(text: String(describing: state).lowercased(),
-                             color: online ? Theme.cyan : Theme.coral)
-                    }
-                    statusRow("link", online ? "online" : "offline / stale", online ? Theme.cyan : Theme.coral)
-                    statusRow("number", "protocol v\(protocolSchemaVersion())", Theme.sub)
-                    statusRow("arrow.left.arrow.right",
-                              "negotiated \(negotiateSchemaVersion(localMin: 1, localMax: 3, remoteMin: 2, remoteMax: 5).map { "\($0)" } ?? "—")",
-                              Theme.sub)
-                }.glass()
+                statusCard
 
-                // Chat composer (honest: real Friday chat needs a connected Hub).
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Chat").font(.headline)
+                // The dedicated Friday Chat read-WRITE surface (the S6 needle) — a navigation entry.
+                NavigationLink(value: ChatRoute.open) {
                     HStack {
-                        Text("Ask Friday…").foregroundStyle(Theme.sub)
+                        Image(systemName: "bubble.left.and.text.bubble.right").foregroundStyle(Theme.cyan)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Friday Chat").font(.headline).foregroundStyle(Theme.ink)
+                            Text(session.runControlEnabled
+                                 ? "ask Friday · mutating actions pause for your approval (S6)"
+                                 : "ask Friday · read-only (approvals enable at slice-6)")
+                                .font(.caption2).foregroundStyle(Theme.sub)
+                        }
                         Spacer()
-                        Image(systemName: "arrow.up.circle.fill").foregroundStyle(Theme.cyan.opacity(0.4))
-                    }
-                    .padding(12)
-                    .background(Color(white: 0.5).opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-                    Text("connect a Hub to chat (Hub↔phone sync is operator/env-gated)")
-                        .font(.caption2).foregroundStyle(Theme.sub)
-                }.glass()
+                        Image(systemName: "chevron.right").foregroundStyle(Theme.sub)
+                    }.glass()
+                }.buttonStyle(.plain)
 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack { Text("Needs Me").font(.headline); Spacer(); Chip(text: "\(inbox.count)", color: Theme.coral) }
@@ -252,7 +260,36 @@ struct FridayHome: View {
             }.padding(16)
         }
         .background(bg)
+        .task { await home.refresh() } // fetch the real read projection (dark ⇒ honest-unavailable)
     }
+
+    @ViewBuilder private var statusCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Status").font(.headline)
+                Spacer()
+                Chip(text: online ? "online" : "offline / stale", color: online ? Theme.cyan : Theme.coral)
+            }
+            switch home.state {
+            case .idle, .loading:
+                statusRow("hourglass", "reading hub projection…", Theme.sub)
+            case .loaded(let p):
+                // Truth labels ride AS-IS — never upgraded (INV-5: refs/labels only).
+                statusRow("link", "online", Theme.cyan)
+                statusRow("number", "feed: \(p.runtimeFeedStatus)", Theme.sub)
+                if !p.statusLabels.isEmpty {
+                    statusRow("exclamationmark.triangle", p.statusLabels.joined(separator: " · "), Theme.coral)
+                }
+                statusRow("tray.full", "\(p.workItemIds.count) work item refs", Theme.sub)
+            case .unavailable(let reason):
+                // Honest-unavailable: the dark-server EXPECTED state. Never a fabricated snapshot.
+                statusRow("link.badge.plus", "offline / stale", Theme.coral)
+                Text(reason).font(.caption2).foregroundStyle(Theme.sub)
+            }
+            statusRow("number", "protocol v\(protocolSchemaVersion())", Theme.sub)
+        }.glass()
+    }
+
     private func statusRow(_ icon: String, _ text: String, _ color: Color) -> some View {
         HStack(spacing: 10) {
             Image(systemName: icon).frame(width: 22).foregroundStyle(color)
@@ -460,7 +497,220 @@ struct SessionDetail: View {
     }
 }
 
+// MARK: - FridaySession (the app's real-client wiring)
+
+/// Holds the app's device keypair + the REAL sealed-WS read/write clients (built via the
+/// `FridayClientFactory`) + the operator-signer RELAY seam. This is the single place the iOS
+/// app binds to the all-Rust core.
+///
+/// INV-1: the device keypair is the X25519 SESSION keypair (transport identity) — it is NOT a
+/// signing key and CANNOT mint an approval. The operator's Ed25519 signing key lives ONLY in the
+/// desktop signer's isolated SecureStore (PR #671); on the phone the signer is an injected relay.
+///
+/// The live network transport (a `NWConnection`-backed `SealedWSTransport`) is the DEFERRED
+/// slice-6 AC; until it is wired the default factory transport throws and every surface renders
+/// honest-unavailable — the EXPECTED state while the Rust servers are DARK.
+@MainActor
+final class FridaySession: ObservableObject {
+    /// A process-wide instance so view inits (which run before `environmentObject` injects) can
+    /// build their view models from the same clients the environment carries.
+    static let shared = FridaySession()
+
+    /// DEFAULT-OFF run-control (the S6 pause/approve/resume). Flipping this ON in production is
+    /// part of the slice-6 operator gate; OFF ⇒ the chat loop is read-only (a pause fails closed).
+    let runControlEnabled = false
+
+    let readClient: FridayRustReadClient
+    let writeClient: FridayRustWriteClient
+    /// The operator-signing RELAY. Mock today (NOT a real signature); the real desktop signer
+    /// (PR #671) is the slice-6 / operator-key gate. The phone holds NO signing key (INV-1).
+    let signer: OperatorSigner
+
+    /// - Parameter preview: when `true`, the Home read client is the labeled `PreviewReadClient`
+    ///   (a static sample projection) so SwiftUI previews + UI iteration render a populated Home
+    ///   without a live Hub. DEFAULT `false` ⇒ the REAL `SealedWSReadClient` (honest-unavailable
+    ///   while the servers are dark). A real build NEVER passes `preview: true`.
+    init(preview: Bool = false) {
+        // The device X25519 transport keypair. In production this is loaded from / generated into
+        // the device keychain (the device-pairing seam); a fresh ephemeral keypair here keeps the
+        // honest-unavailable default sound (a non-enrolled peer is refused — which is correct
+        // while the servers are dark).
+        let keypair = FridayCrypto.DeviceKeypair()
+        // The owner principal + endpoint come from the operator's paired-Hub config at runtime.
+        let endpoint = FridayClientFactory.Endpoint(
+            forwardedPrincipal: "principal:owner-device",
+            agentRunControlViaRust: runControlEnabled)
+        // No live transport is wired (slice-6 deferred AC) ⇒ the default factory transport throws
+        // ⇒ honest-unavailable. When slice-6 lands, inject a live `NWConnection` transport here.
+        self.readClient = preview
+            ? PreviewReadClient()
+            : FridayClientFactory.makeReadClient(keypair: keypair, endpoint: endpoint)
+        self.writeClient = FridayClientFactory.makeWriteClient(keypair: keypair, endpoint: endpoint)
+        self.signer = MockOperatorSigner()
+    }
+
+    #if DEBUG
+    /// A preview/debug session whose Home renders a labeled sample projection (no live Hub).
+    static let preview = FridaySession(preview: true)
+    #endif
+}
+
+// MARK: - Friday Chat read-WRITE surface (the strict needle — 4-state S6 loop)
+
+/// The dedicated Friday Chat surface: compose→send→answer, mutating→paused→S6 approval card,
+/// approve→resume→receipt, honest-unavailable when the server is dark. Drives `FridayChatViewModel`
+/// (the package's real `SealedWSWriteClient` + the `OperatorSigner` relay). Refs-only throughout.
+struct FridayChatView: View {
+    let session: FridaySession
+    @StateObject private var chat: FridayChatViewModel
+    @State private var draft = ""
+
+    init(session: FridaySession) {
+        self.session = session
+        self._chat = StateObject(wrappedValue: FridayChatViewModel(
+            writeClient: session.writeClient, signer: session.signer))
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                phaseCard
+            }.padding(16)
+        }
+        .background(bg)
+        .navigationTitle("Friday Chat")
+        .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .bottom) { composer }
+    }
+
+    // The 4-state loop, rendered.
+    @ViewBuilder private var phaseCard: some View {
+        switch chat.phase {
+        case .composing:
+            placeholder("Ask Friday anything.", "Answers are refs-only (a fingerprint + counts). " +
+                        (session.runControlEnabled
+                         ? "A mutating action pauses for your approval (S6)."
+                         : "Read-only — approvals enable at slice-6."))
+        case .dispatching(let task):
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) { ProgressView(); Text("Friday is working…").font(.headline) }
+                Text(task).font(.caption2).foregroundStyle(Theme.sub)
+            }.glass()
+        case .answered(let r):
+            answerCard(r)
+        case .pendingApproval(let card):
+            approvalCard(card)
+        case .resuming(let card):
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) { ProgressView(); Text("Relaying your approval…").font(.headline) }
+                Text("\(card.actionVerb) · \(short(card.actionDigest))").font(.caption2).monospaced().foregroundStyle(Theme.sub)
+            }.glass()
+        case .resumed(let r):
+            resumeCard(r)
+        case .unavailable(let reason):
+            VStack(alignment: .leading, spacing: 8) {
+                HStack { Image(systemName: "wifi.slash").foregroundStyle(Theme.coral); Text("Unavailable").font(.headline) }
+                Text(reason).font(.caption2).foregroundStyle(Theme.sub)
+                Button("Start over") { chat.newTurn() }.font(.caption).foregroundStyle(Theme.cyan)
+            }.glass()
+        }
+    }
+
+    // Compose → Send.
+    private var composer: some View {
+        HStack(spacing: 10) {
+            TextField("Ask Friday…", text: $draft, axis: .vertical)
+                .textFieldStyle(.plain).lineLimit(1...4)
+                .padding(12)
+                .background(Color(white: 0.5).opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+                .disabled(chat.phase.isBusy || chat.phase.isAwaitingApproval)
+            Button {
+                let task = draft; draft = ""
+                Task { await chat.send(task) }
+            } label: {
+                Image(systemName: "arrow.up.circle.fill").font(.title2)
+                    .foregroundStyle(canSend ? Theme.cyan : Theme.cyan.opacity(0.3))
+            }.disabled(!canSend)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 10)
+        .background(.ultraThinMaterial)
+    }
+    private var canSend: Bool {
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !chat.phase.isBusy && !chat.phase.isAwaitingApproval
+    }
+
+    // The refs-only answer receipt (INV-5: a fingerprint + counts, never a body).
+    private func answerCard(_ r: ChatAnswerReceipt) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack { Chip(text: r.status.uppercased(), color: Theme.risk(r.status)); Spacer()
+                Button("New") { chat.newTurn() }.font(.caption).foregroundStyle(Theme.cyan) }
+            Text("Friday answered").font(.headline)
+            Text("answer is delivered refs-only — fingerprint + counts (the body rides the owner-gated readback)")
+                .font(.caption2).foregroundStyle(Theme.sub)
+            if let sha = r.answerSha256 { kv("answer_sha256", short(sha)) }
+            if let len = r.answerLen { kv("answer_len", "\(len)") }
+            if let turns = r.turns { kv("turns", "\(turns)") }
+            if let tools = r.executedTools { kv("executed_tools", "\(tools)") }
+        }.glass()
+    }
+
+    // The S6 approval card — summary-then-proof (the verb + summary, then the digest the operator
+    // signs over). Refs-only; carries NO signing material (INV-1). The app relays an OPAQUE blob.
+    private func approvalCard(_ card: ApprovalCard) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack { Image(systemName: "hand.raised.fill").foregroundStyle(Theme.coral)
+                Text("Approval required").font(.headline); Spacer(); Chip(text: card.truthLabel, color: Theme.coral) }
+            // SUMMARY (what paused) — coarse verb + the owner-sealed summary.
+            Text(card.actionVerb).font(.title3).bold().foregroundStyle(Theme.ink)
+            if let summary = card.ownerSealedSummary {
+                Text(summary).font(.callout).foregroundStyle(Theme.ink)
+            }
+            // PROOF (the digest the operator signs over) — never a body.
+            kv("action_digest", short(card.actionDigest))
+            kv("approval_id", card.approvalId)
+            Text("Friday paused this mutating action. Approving asks the operator signer for a signature; " +
+                 "the phone relays it but never signs (INV-1).")
+                .font(.caption2).foregroundStyle(Theme.sub)
+            HStack(spacing: 12) {
+                Button { Task { await chat.approve() } } label: {
+                    Label("Approve", systemImage: "checkmark.seal").bold()
+                }.buttonStyle(.borderedProminent).tint(Theme.cyan)
+                Button(role: .destructive) { chat.reject() } label: {
+                    Label("Reject", systemImage: "xmark").foregroundStyle(Theme.coral)
+                }.buttonStyle(.bordered)
+            }
+        }.glass()
+    }
+
+    // The refs-only resume receipt (accepted ⇒ executed; refused ⇒ a successful relay of a refusal).
+    private func resumeCard(_ r: ChatResumeReceipt) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack { Chip(text: r.accepted ? "EXECUTED" : "REFUSED", color: r.accepted ? Theme.cyan : Theme.coral)
+                Spacer(); Button("New") { chat.newTurn() }.font(.caption).foregroundStyle(Theme.cyan) }
+            Text(r.accepted ? "Approved action executed" : "Action refused").font(.headline)
+            kv("op", r.op); kv("status", r.status)
+            if let audit = r.auditRef { kv("audit_ref", audit) }
+            Text(r.accepted ? "receipt is refs-only — no body" : "the action did NOT execute")
+                .font(.caption2).foregroundStyle(Theme.sub)
+        }.glass()
+    }
+
+    private func placeholder(_ title: String, _ sub: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.headline).foregroundStyle(Theme.ink)
+            Text(sub).font(.caption2).foregroundStyle(Theme.sub)
+        }.glass()
+    }
+    private func kv(_ k: String, _ v: String) -> some View {
+        HStack { Text(k).font(.caption2).monospaced().foregroundStyle(Theme.sub); Spacer()
+            Text(v).font(.caption2).monospaced().foregroundStyle(Theme.ink) }
+    }
+    private func short(_ s: String) -> String { s.count > 16 ? "\(s.prefix(10))…\(s.suffix(4))" : s }
+}
+
 @main
 struct FridayApp: App {
-    var body: some Scene { WindowGroup { RootView() } }
+    @StateObject private var session = FridaySession.shared
+    var body: some Scene { WindowGroup { RootView().environmentObject(session) } }
 }
