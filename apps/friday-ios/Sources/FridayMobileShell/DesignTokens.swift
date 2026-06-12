@@ -27,9 +27,10 @@ enum MobileTheme {
   static let textSecondary = Color(red: 0.40, green: 0.40, blue: 0.42)
   static let textMono = Color(red: 0.30, green: 0.34, blue: 0.40)
 
-  /// Retro-LCD phosphor (locked pet rendering).
-  static let lcd = Color(red: 0.55, green: 0.95, blue: 0.70)
-  static let lcdBg = Color(red: 0.06, green: 0.10, blue: 0.09)
+  /// The 155px Hero Pet stage card background (locked: `#eef3e8`, from the mobile gallery's
+  /// `.hero.pet-stage-card`). The pet itself is the v9 `pet-stage-engine.js` companion rendered
+  /// over a transparent WKWebView (see `MobilePetView`), so this is just the card behind it.
+  static let petStageBg = Color(red: 0.933, green: 0.953, blue: 0.910)  // #eef3e8
 
   // MARK: Form (glass native)
 
