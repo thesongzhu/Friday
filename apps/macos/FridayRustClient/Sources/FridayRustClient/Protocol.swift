@@ -99,8 +99,29 @@ public enum FridayMessage: Equatable {
   case workbenchProjectionRequest(WorkbenchProjectionRequestWire)
   case workbenchProjectionSnapshot(WorkbenchProjectionSnapshotWire)
   case error(code: FridayErrorCode, message: String)
-  /// A decoded-but-not-handled message kind (the read server can only answer with the
-  /// above three). Carries the raw `kind` for truth-labeled surfacing.
+
+  // MARK: - WRITE / agent-run seam (GATE-AGENT-REPLACE)
+
+  /// trusted-peer→hub: dispatch one production agent-run to the Rust loop over the sealed WS
+  /// WRITE session. Mirrors `friday_protocol::Message::AgentRunRequest`. The `auth_proof` is
+  /// the sealed possession-of-session proof bound to `(forwarded_principal, run_id)`; `constraints`
+  /// can ONLY tighten the run (a restriction, never a grant).
+  case agentRunRequest(AgentRunRequestWire)
+  /// hub→trusted-peer: REFS-ONLY terminal receipt (status + answer fingerprint + counts — NEVER
+  /// the body). Mirrors `friday_protocol::Message::AgentRunResult`.
+  case agentRunResult(AgentRunResultWire)
+  /// hub→trusted-peer: the loop's gate PAUSED a mutating tool, awaiting an operator approval.
+  /// REFS-ONLY (nonce + action_digest + summary). Mirrors `friday_protocol::Message::AgentRunPaused`.
+  case agentRunPaused(AgentRunPausedWire)
+  /// trusted-peer→hub: relay an operator's OPAQUE Ed25519-signed approval to resume a paused run.
+  /// The courier authors NOTHING in `signed_blob` (INV-1). Mirrors `Message::AgentRunResume`.
+  case agentRunResume(runId: String, signedBlob: [UInt8])
+  /// hub→trusted-peer: the body-free receipt for a control op (resume/cancel/reject). Mirrors
+  /// `friday_protocol::Message::AgentRunControlResult`.
+  case agentRunControlResult(AgentRunControlResultWire)
+
+  /// A decoded-but-not-handled message kind. Carries the raw `kind` for truth-labeled surfacing
+  /// (e.g. an `AgentRunPaused` reaching the read client, or any frame the client cannot handle).
   case unsupported(kind: String)
 }
 
@@ -109,6 +130,33 @@ extension FridayMessage: Codable {
   private enum SnapshotKey: String, CodingKey { case snapshot }
   private enum RequestKey: String, CodingKey { case request }
   private enum ErrorKey: String, CodingKey { case code, message }
+  /// The flattened keys the WRITE variants carry as SIBLINGS of `kind` (serde's internally-tagged
+  /// shape for struct variants with named fields). The read variants nest a single `request`/
+  /// `snapshot` field; the write variants flatten — exactly as `friday_protocol::Message`
+  /// serializes (`{"kind":"AgentRunRequest","run_id":...,"task":...}`).
+  private enum WriteKey: String, CodingKey {
+    case kind
+    case runId = "run_id"
+    case task
+    case forwardedPrincipal = "forwarded_principal"
+    case authProof = "auth_proof"
+    case sessionId = "session_id"
+    case constraints
+    case status
+    case answerSha256 = "answer_sha256"
+    case answerLen = "answer_len"
+    case turns
+    case executedTools = "executed_tools"
+    case promptTokens = "prompt_tokens"
+    case completionTokens = "completion_tokens"
+    case nonce
+    case actionDigest = "action_digest"
+    case summary
+    case signedBlob = "signed_blob"
+    case op
+    case accepted
+    case auditRef = "audit_ref"
+  }
 
   public init(from decoder: Decoder) throws {
     let tag = try decoder.container(keyedBy: TagKey.self)
@@ -124,6 +172,50 @@ extension FridayMessage: Codable {
       let c = try decoder.container(keyedBy: ErrorKey.self)
       self = .error(code: try c.decode(FridayErrorCode.self, forKey: .code),
                     message: try c.decode(String.self, forKey: .message))
+    case "AgentRunRequest":
+      let c = try decoder.container(keyedBy: WriteKey.self)
+      self = .agentRunRequest(AgentRunRequestWire(
+        runId: try c.decode(String.self, forKey: .runId),
+        task: try c.decode(String.self, forKey: .task),
+        forwardedPrincipal: try c.decode(String.self, forKey: .forwardedPrincipal),
+        authProof: try c.decode([UInt8].self, forKey: .authProof),
+        sessionId: try c.decodeIfPresent(String.self, forKey: .sessionId),
+        constraints: try c.decodeIfPresent(AgentRunConstraintsWire.self, forKey: .constraints)
+      ))
+    case "AgentRunResult":
+      let c = try decoder.container(keyedBy: WriteKey.self)
+      self = .agentRunResult(AgentRunResultWire(
+        runId: try c.decode(String.self, forKey: .runId),
+        status: try c.decode(String.self, forKey: .status),
+        answerSha256: try c.decodeIfPresent(String.self, forKey: .answerSha256),
+        answerLen: try c.decodeIfPresent(UInt64.self, forKey: .answerLen),
+        turns: try c.decodeIfPresent(UInt64.self, forKey: .turns),
+        executedTools: try c.decodeIfPresent(UInt64.self, forKey: .executedTools),
+        promptTokens: try c.decodeIfPresent(UInt64.self, forKey: .promptTokens),
+        completionTokens: try c.decodeIfPresent(UInt64.self, forKey: .completionTokens)
+      ))
+    case "AgentRunPaused":
+      let c = try decoder.container(keyedBy: WriteKey.self)
+      self = .agentRunPaused(AgentRunPausedWire(
+        runId: try c.decode(String.self, forKey: .runId),
+        nonce: try c.decode(String.self, forKey: .nonce),
+        actionDigest: try c.decode(String.self, forKey: .actionDigest),
+        summary: try c.decode(String.self, forKey: .summary)
+      ))
+    case "AgentRunResume":
+      let c = try decoder.container(keyedBy: WriteKey.self)
+      self = .agentRunResume(
+        runId: try c.decode(String.self, forKey: .runId),
+        signedBlob: try c.decode([UInt8].self, forKey: .signedBlob))
+    case "AgentRunControlResult":
+      let c = try decoder.container(keyedBy: WriteKey.self)
+      self = .agentRunControlResult(AgentRunControlResultWire(
+        runId: try c.decode(String.self, forKey: .runId),
+        op: try c.decode(String.self, forKey: .op),
+        accepted: try c.decode(Bool.self, forKey: .accepted),
+        status: try c.decode(String.self, forKey: .status),
+        auditRef: try c.decodeIfPresent(String.self, forKey: .auditRef)
+      ))
     default:
       self = .unsupported(kind: kind)
     }
@@ -145,6 +237,55 @@ extension FridayMessage: Codable {
       var c = encoder.container(keyedBy: ErrorKey.self)
       try c.encode(code, forKey: .code)
       try c.encode(message, forKey: .message)
+    case .agentRunRequest(let req):
+      var c = encoder.container(keyedBy: WriteKey.self)
+      // Field order MIRRORS the Rust serde struct-variant order: kind, run_id, task,
+      // forwarded_principal, auth_proof, [session_id], [constraints]. Optional fields are
+      // OMITTED when nil/empty (serde `skip_serializing_if`), keeping a sessionless/
+      // constraint-free request byte-identical to the pre-A1/A2a wire.
+      try c.encode("AgentRunRequest", forKey: .kind)
+      try c.encode(req.runId, forKey: .runId)
+      try c.encode(req.task, forKey: .task)
+      try c.encode(req.forwardedPrincipal, forKey: .forwardedPrincipal)
+      try c.encode(req.authProof, forKey: .authProof)
+      if let sessionId = req.sessionId { try c.encode(sessionId, forKey: .sessionId) }
+      if let constraints = req.constraints, !constraints.isWireEmpty {
+        try c.encode(constraints, forKey: .constraints)
+      }
+    case .agentRunResult(let r):
+      var c = encoder.container(keyedBy: WriteKey.self)
+      try c.encode("AgentRunResult", forKey: .kind)
+      try c.encode(r.runId, forKey: .runId)
+      try c.encode(r.status, forKey: .status)
+      if let v = r.answerSha256 { try c.encode(v, forKey: .answerSha256) }
+      if let v = r.answerLen { try c.encode(v, forKey: .answerLen) }
+      if let v = r.turns { try c.encode(v, forKey: .turns) }
+      if let v = r.executedTools { try c.encode(v, forKey: .executedTools) }
+      if let v = r.promptTokens { try c.encode(v, forKey: .promptTokens) }
+      if let v = r.completionTokens { try c.encode(v, forKey: .completionTokens) }
+    case .agentRunPaused(let p):
+      var c = encoder.container(keyedBy: WriteKey.self)
+      try c.encode("AgentRunPaused", forKey: .kind)
+      try c.encode(p.runId, forKey: .runId)
+      try c.encode(p.nonce, forKey: .nonce)
+      try c.encode(p.actionDigest, forKey: .actionDigest)
+      try c.encode(p.summary, forKey: .summary)
+    case .agentRunResume(let runId, let signedBlob):
+      var c = encoder.container(keyedBy: WriteKey.self)
+      // Field order MIRRORS the Rust serde struct-variant order: kind, run_id, signed_blob.
+      // `signed_blob` is serde `Vec<u8>` ⇒ a JSON ARRAY of byte numbers (NOT base64/hex), the
+      // SAME encoding as `auth_proof`. The blob rides VERBATIM (INV-1: a pure relay).
+      try c.encode("AgentRunResume", forKey: .kind)
+      try c.encode(runId, forKey: .runId)
+      try c.encode(signedBlob, forKey: .signedBlob)
+    case .agentRunControlResult(let r):
+      var c = encoder.container(keyedBy: WriteKey.self)
+      try c.encode("AgentRunControlResult", forKey: .kind)
+      try c.encode(r.runId, forKey: .runId)
+      try c.encode(r.op, forKey: .op)
+      try c.encode(r.accepted, forKey: .accepted)
+      try c.encode(r.status, forKey: .status)
+      if let v = r.auditRef { try c.encode(v, forKey: .auditRef) }
     case .unsupported(let kind):
       try tag.encode(kind, forKey: .kind)
     }

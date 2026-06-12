@@ -208,6 +208,18 @@ public final class SealedWSReadClient: FridayRustReadClient {
       throw FridayReadClientError.serverError(code: code, message: message)
     case .workbenchProjectionRequest:
       throw FridayReadClientError.unexpectedResponse(kind: "WorkbenchProjectionRequest")
+    // The WRITE / agent-run variants share the `FridayMessage` enum but are NEVER answers a READ
+    // server gives — surface them as unexpected (the read seam only answers a snapshot / Error).
+    case .agentRunRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "AgentRunRequest")
+    case .agentRunResult:
+      throw FridayReadClientError.unexpectedResponse(kind: "AgentRunResult")
+    case .agentRunPaused:
+      throw FridayReadClientError.unexpectedResponse(kind: "AgentRunPaused")
+    case .agentRunResume:
+      throw FridayReadClientError.unexpectedResponse(kind: "AgentRunResume")
+    case .agentRunControlResult:
+      throw FridayReadClientError.unexpectedResponse(kind: "AgentRunControlResult")
     case .unsupported(let kind):
       throw FridayReadClientError.unexpectedResponse(kind: kind)
     }
