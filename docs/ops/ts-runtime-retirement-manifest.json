@@ -56,7 +56,7 @@
       "doc": "Anti-shrinkage floor: a CI-comparable baseline of manifest entry counts + per-surface method-guard counts. The assertion fails if any count drops BELOW its baseline, forcing a conscious, reviewable baseline edit in the same PR when a surface is legitimately removed/reclassified or a guard is intentionally retired. perSurfaceMethodsMin floors EACH registered surface (present + >= its method count) so 'drop a surface + add filler' cannot hold the grand total. behavioralTestsMin floors the count of surfaces backed by an existing behavioral test so one documented missing-test gap cannot be copied to null out the others. byClassification is EMITTED for review but NOT floored: fail_closed legitimately shrinks as surfaces move to Rust ownership.",
       "surfacesMin": 279,
       "routeFamiliesMin": 18,
-      "guardedMethodsMin": 34,
+      "guardedMethodsMin": 39,
       "perSurfaceMethodsMin": {
         "capability_acquisition": 3,
         "workflow_generator": 5,
@@ -72,11 +72,12 @@
         "realtime_ack": 1,
         "autonomy_mcp_lifecycle": 4,
         "node_runner_execution": 1,
-        "retry_pipeline": 6
+        "retry_pipeline": 6,
+        "workflow_run_execution": 5
       },
-      "behavioralTestsMin": 15,
+      "behavioralTestsMin": 16,
       "baselineCommit": "e6b39186",
-      "baselineNote": "Set from origin/main e6b39186 (post-#628 TS-R1 4-surface mirror + #597 autonomy-policy), then RAISED for the orphan off-route leak audit (2026-06-10) defense-in-depth wave: guardedMethodsMin 12->34, behavioralTestsMin 5->15 with the 10 new method-guarded orphan surfaces (satellite registration/pairing/capability/heartbeat/sync, fleet remediation, realtime ack, autonomy MCP lifecycle, node-runner execution, retry pipeline). Lower a *Min / drop a perSurfaceMethodsMin entry only in a PR that also removes the corresponding entry/guard, so the reviewer sees the de-retirement."
+      "baselineNote": "Set from origin/main e6b39186 (post-#628 TS-R1 4-surface mirror + #597 autonomy-policy), then RAISED for the orphan off-route leak audit (2026-06-10) defense-in-depth wave: guardedMethodsMin 12->34, behavioralTestsMin 5->15 with the 10 new method-guarded orphan surfaces (satellite registration/pairing/capability/heartbeat/sync, fleet remediation, realtime ack, autonomy MCP lifecycle, node-runner execution, retry pipeline). RAISED AGAIN (2026-06-11 audit) for the workflow_run_execution surface: guardedMethodsMin 34->39, behavioralTestsMin 15->16 — its 5 run-control mutators (startRun/resumeRun/pauseRun/cancelRun/retryRun) were already METHOD-guarded in friday-workflow-execution-service.ts (§1 reconciliation, pauseRun fenced in this PR) but the service file was NOT registered in methodRetiredSurfaces, so its guards were never anti-shrinkage-floored. Lower a *Min / drop a perSurfaceMethodsMin entry only in a PR that also removes the corresponding entry/guard, so the reviewer sees the de-retirement."
     },
     "surfaces": [
       {
@@ -259,6 +260,21 @@
         "behavioralTest": "test/unit/api/runtime/friday-deterministic-pipeline-retirement-guard.test.ts",
         "off_route_callers": "none today (route-deps-only, same as node_runner_execution)",
         "note": "Orphan off-route leak audit (2026-06-10), F3.4 top-priority: retry.* mutations were ROUTE-only-guarded. Guards the route-deps WRAPPERS (retry.createPolicy/updatePolicy/deletePolicy/classifyFailure/decideRetry/acknowledgeEscalation) — local retryRepository/failureClassifier, not the shared engine. Converted from arrow-property closures to object-method shorthand for the validator. create/update/delete are mutatorVerbs (auto-flagged); classify/decide/acknowledge are declared explicitly. Reads (getPolicy/listPolicies/getTrace/listTraces/getCostSummary/listEscalations/listCircuitBreakers) stay arrow closures. Same serviceFile as node_runner_execution; the validator scans the file once and both surfaces' declared methods are located by name."
+      },
+      {
+        "id": "workflow_run_execution",
+        "family_code": "TS_RUNTIME_WORKFLOW_RUNS_RETIRED",
+        "serviceFile": "src/workflows/services/friday-workflow-execution-service.ts",
+        "flag": "allowTestOnlyWorkflowRunExecution",
+        "mutatingMethods": ["startRun", "resumeRun", "pauseRun", "cancelRun", "retryRun"],
+        "allowlistMutators": [
+          { "method": "runId", "reason": "FALSE MATCH, not a method: 'runId' is the first PARAMETER name on the multi-line interface signatures of pauseRun/cancelRun/retryRun/getRunNodes (`runId: UUID,`), which the validator's interface-member regex (`^\\s*([A-Za-z0-9_$]+)\\s*[(<:]`) captures as a member because 'run' is a mutator-verb prefix. There is no `runId(...)` method on this service. Documented textual-gate limit (verb-prefix heuristic on a param name). Allowlisted so the false positive is consciously recorded rather than silenced by renaming a real method." },
+          { "method": "sweepTimedOutRuns", "reason": "Internal scheduler-driven timeout-maintenance sweep (friday-workflow-timeout-job → executionService.sweepTimedOutRuns), NOT a route-retired product run mutator. It finalizes runs that have already exceeded their deadline as 'failed' (a GC/janitor effect), runs on the DEFAULT path today, and has no HTTP route. Verb-prefix 'sweep' false-matches the registration scan. Fencing it would change default behavior (live timeout cleanup would 503) and is out of this audit's scope — it is a follow-up parallel-family maintenance-sweep item (mirrors the autonomy_mcp_lifecycle sibling-family deferral). Allowlisted (not folded into mutatingMethods) so this conscious de-coverage is visible in the manifest diff." },
+          { "method": "sweepTimedOutNodes", "reason": "Same as sweepTimedOutRuns: internal scheduler-driven timeout-maintenance sweep (friday-workflow-timeout-job) that fails over-timeout running NODES. Default-path GC effect, no route, verb-prefix 'sweep' false-match. Fencing changes default behavior + is out of scope (follow-up maintenance-sweep family). Allowlisted for visibility." }
+        ],
+        "behavioralTest": "test/integration/workflows/friday-workflow-trigger-retirement-guard.test.ts",
+        "off_route_callers": "default-on 60s cron scheduler tickCron, webhook/event ingress, and channel-orchestration dispatchManagedAsync → resume/retry/cancel; workflow-approval approve → resumeRun; any future auto-fix pause_workflow step → pauseRun",
+        "note": "Audit fix (2026-06-11): the §1 reconciliation already METHOD-guarded the run-control mutators in friday-workflow-execution-service.ts (the route guard was POST-only; cron/webhook/event/channel reach the methods directly), but the SERVICE FILE was never registered in methodRetiredSurfaces, so its guards were not anti-shrinkage-floored. Registering it here floors all 5 run-control mutators. pauseRun was the ONE still-unguarded run-control mutator (resume/retry/cancel/start were already fenced); it is method-fenced in this PR, making the cancelRun comment's 'EVERY run-control mutator is method-fenced' claim TRUE. INLINE-guarded (no guardHelper): each method body shows its own `allowTestOnlyWorkflowRunExecution !== true` throw (the brace-matched per-method body check requires each to show its own form). The two sweepTimedOut* timeout-maintenance sweeps are allowlisted (default-path GC, out of scope). Reads (getRun/listRuns/listActiveRuns/getRunNodes), setDistributedDispatcher (no mutator verb), recoverActiveRuns/reportRemoteNodeResult/reapExpiredLeases (verbs recover/report/reap not in mutatorVerbs) stay live."
       }
     ]
   },

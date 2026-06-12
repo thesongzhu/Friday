@@ -1,0 +1,43 @@
+[package]
+name = "friday-operator-signer"
+description = "Friday Rust Core — DESKTOP operator-signing helper (GATE-AGENT-REPLACE D3 key-custody bridge). Like the S6c offline CLI, but reads the operator's PRIVATE Ed25519 signing seed from an ISOLATED KEK-wrapped SecureStore the HUB CANNOT OPEN — a separate store directory sealed under a KEK derived from a separate operator-only master (FRIDAY_OPERATOR_SIGNER_MASTER) with a distinct purpose tag (option (c) of the A2 design key-custody decision, isolated per the operator 'isolate now' decision) — and produces an Ed25519 SignedApproval over the Hub-computed canonical action digest — EXACTLY what resume_with_approval verifies under OperatorVerifyingKey. ISOLATION upholds INV-1/INV-6: the seed is no longer co-resident with the Hub's store and the Hub cannot derive the unwrapping KEK. DARK: a standalone helper, NOT wired into prod, NEVER auto-run by the hub/coordinator. Deliberately depends on friday-core + friday-crypto + friday-operator-cli (the operator side) and NEVER friday-hub at runtime (the hub holds ONLY the verify key; the signer is the operator). PROOF-ONLY; NOT v1 GO."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+
+[dependencies]
+# CanonicalApproval issuer / ApprovalDecision shapes echoed for operator review.
+friday-core.workspace = true
+# OperatorSigningKey (S6a Ed25519 primitive) + the KEK-wrapped FileSecureStore. This
+# crate is the OPERATOR side that holds the PRIVATE key in an ISOLATED store the Hub
+# cannot open; the Hub holds only OperatorVerifyingKey.
+friday-crypto.workspace = true
+# Reuse the EXACT byte-producing signer (`sign_request_with_key`) + the
+# PendingRequest / SignedApproval shapes the S6c CLI defines, so the signature is
+# produced over the IDENTICAL canonical bytes the Hub recomputes at verify time —
+# byte-identity by construction, not re-implemented.
+friday-operator-cli.workspace = true
+# Master-key-derived KEK derivation (sha256(purpose || master)).
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+# Wipe transient secret buffers (decoded seed / master key) after use.
+zeroize.workspace = true
+
+[dev-dependencies]
+# TEST-ONLY: prove ISOLATION — the inverted KAT
+# (`hub_kek_cannot_open_the_operator_signer_seed`) asserts the Hub's own
+# `friday_hub::key_source::derive_file_store_kek` CANNOT open a store this crate sealed
+# the seed into (distinct purpose tag + separate operator-only master + separate dir),
+# and `signer_store_dir_differs_from_hub_store_dir` asserts the dirs differ via the Hub's
+# pub `default_store_dir`. friday-hub is a DEV dependency ONLY; it is NOT compiled into the
+# shipped `friday-operator-sign` binary (which must stay decoupled from the Hub's
+# secret-bearing graph).
+friday-hub.workspace = true
+
+[[bin]]
+name = "friday-operator-sign"
+path = "src/main.rs"

@@ -127,18 +127,21 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use friday_crypto::{
-    generate_approval_nonce, seal, DataKey, DeviceKeypair, FileSecureStore, Sealed, SecureStore,
-};
+use friday_crypto::{seal, DataKey, DeviceKeypair, FileSecureStore};
 use friday_deepseek::Transport;
 use friday_hub::hub_server::{run_authed_agent_loop_with_policy, AuthedPrincipal, ForwardedAuth};
 use friday_hub::key_source::{PEER_PUBKEY_ALLOWLIST_ID, X25519_PUBKEY_LEN};
 use friday_hub::runtime::{HubConfig, HubRuntime};
-use friday_protocol::{Envelope, IdempotencyTracker, Message, Seen};
-use friday_transport::{
-    read_frame, write_frame, ws_accept, ws_recv_envelope, ws_send_envelope, TransportError,
-    WireWebSocket,
+// S-R0: the handshake + peer-allowlist + low-order check + sealed-proof codec now come from the
+// SHARED substrate so the read server and this write server cannot drift in crypto/auth. The write
+// path re-expresses its prior behavior through these — byte-identical (same preamble framing, same
+// constants, same `bound_context = run_id.as_bytes()`).
+use friday_hub::sealed_ws::{
+    decode_sealed_proof, encode_sealed_proof, enforce_single_peer, establish_session,
+    load_peer_allowlist,
 };
+use friday_protocol::{Envelope, IdempotencyTracker, Message, Seen};
+use friday_transport::{ws_recv_envelope, ws_send_envelope, TransportError, WireWebSocket};
 
 /// The session AAD binding every sealed envelope on an S-C session to this protocol/version.
 /// A fixed, public, non-secret constant (the confidentiality is in the session key, not the AAD).
@@ -152,13 +155,6 @@ const SESSION_AAD: &[u8] = b"friday:execrun:ws:s-c:agent-run-session:aad:v1";
 /// verifies); the security against forgery is still in possessing the session key.
 const AUTH_CHALLENGE: &[u8] = b"friday:execrun:ws:s-c:authed-run:challenge:v1";
 
-/// S-E anti-replay: the byte length of the fresh per-handshake nonce the server generates and
-/// sends in cleartext. [`generate_approval_nonce`] returns 32 CSPRNG bytes hex-encoded = 64
-/// lowercase-hex ASCII chars; we bind those 64 fixed-width bytes (a fixed length keeps the
-/// `challenge || nonce` concat unambiguous). A malformed nonce frame of any other length is a
-/// fail-closed handshake error (no session).
-const SESSION_NONCE_LEN: usize = 64;
-
 /// Per-connection read timeout: a stalled peer cannot wedge the long-lived accept loop before
 /// auth/dispatch. Set on the `TcpStream` BEFORE the cleartext preamble read; it propagates
 /// through the WS layer (the underlying stream is the same socket).
@@ -170,68 +166,6 @@ const READ_TIMEOUT: Duration = Duration::from_secs(30);
 // edit silently desync the enroll-CLI's id/len from the server's, fail-closing the allowlist read
 // at cutover. The server now redefines NONE of {the id, the pubkey length, the KEK derivation, the
 // store-dir default} — all come from key_source.
-
-/// The canonical low-order X25519 points (the libsodium `has_small_order` set), stored in their
-/// **bit-255-masked** canonical form. A peer public key that decodes to one of these drives an
-/// all-zero shared secret — i.e. a NON-CONTRIBUTORY agreement that `was_contributory()` would
-/// reject. Because `agree()` discards that signal, we reject these points at
-/// [`establish_session`] BEFORE deriving the session key, via [`is_low_order_x25519`] which
-/// **masks byte 31's high bit before comparing** (RFC 7748 `decodeUCoordinate` ignores bit 255,
-/// so a blacklisted point with the high bit flipped decodes to the SAME degenerate point and
-/// MUST also be rejected). Pure byte-comparison (no new crypto dep) — the standard mitigation.
-const LOW_ORDER_X25519_POINTS: [[u8; 32]; 7] = [
-    // 0 (the identity / all-zero point).
-    [0u8; 32],
-    // 1.
-    [
-        0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0,
-    ],
-    // 325606250916557431795983626356110631294008115727848805560023387167927233504 (order 8).
-    [
-        0xe0, 0xeb, 0x7a, 0x7c, 0x3b, 0x41, 0xb8, 0xae, 0x16, 0x56, 0xe3, 0xfa, 0xf1, 0x9f, 0xc4,
-        0x6a, 0xda, 0x09, 0x8d, 0xeb, 0x9c, 0x32, 0xb1, 0xfd, 0x86, 0x62, 0x05, 0x16, 0x5f, 0x49,
-        0xb8, 0x00,
-    ],
-    // 39382357235489614581723060781553021112529911719440698176882885853963445705823 (order 8).
-    [
-        0x5f, 0x9c, 0x95, 0xbc, 0xa3, 0x50, 0x8c, 0x24, 0xb1, 0xd0, 0xb1, 0x55, 0x9c, 0x83, 0xef,
-        0x5b, 0x04, 0x44, 0x5c, 0xc4, 0x58, 0x1c, 0x8e, 0x86, 0xd8, 0x22, 0x4e, 0xdd, 0xd0, 0x9f,
-        0x11, 0x57,
-    ],
-    // p-1 (= 2^255 - 20).
-    [
-        0xec, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-        0xff, 0x7f,
-    ],
-    // p (= 2^255 - 19).
-    [
-        0xed, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-        0xff, 0x7f,
-    ],
-    // p+1 (= 2^255 - 18).
-    [
-        0xee, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-        0xff, 0x7f,
-    ],
-];
-
-/// True if `peer_pub` DECODES to a known low-order / non-contributory X25519 point that must be
-/// rejected before a session is derived. We **mask byte 31's high bit** before comparing because
-/// X25519 (RFC 7748 `decodeUCoordinate`, which curve25519-dalek follows) ignores bit 255 — so a
-/// blacklisted point with the high bit flipped decodes to the SAME degenerate point and would
-/// otherwise sail past an exact-match table (an auth bypass: the all-zero shared secret is
-/// attacker-predictable, independent of the server's private key). Masking is safe whether or
-/// not the curve impl masks (if it didn't, the high-bit variant is a different point and the
-/// mask is harmless). Constant-time-ness is NOT required (the pubkey is public).
-fn is_low_order_x25519(peer_pub: &[u8; 32]) -> bool {
-    let mut p = *peer_pub;
-    p[31] &= 0x7f;
-    LOW_ORDER_X25519_POINTS.contains(&p)
-}
 
 /// A boot-time failure category. Coarse + safe — the raw detail is NOT surfaced so a storage/init
 /// error cannot leak a path or a key.
@@ -260,84 +194,6 @@ enum ServerError {
     /// store dir is unresolvable, or the open failed) ⇒ FAIL CLOSED. The category only — never the
     /// path (a path can carry the operator's home/username).
     StoreUnavailable,
-}
-
-/// Why a SecureStore peer-pubkey allowlist load failed. Coarse + non-leaking: it names the failure
-/// CATEGORY only, never the (would-be) pubkey bytes.
-#[derive(Debug, PartialEq, Eq)]
-enum PeerAllowlistError {
-    /// No allowlist entry exists in the SecureStore (a MISSING entry — never "open").
-    Missing,
-    /// The entry exists but is malformed: empty, or not a NONZERO multiple of [`X25519_PUBKEY_LEN`].
-    Invalid,
-    /// FIX-Q3a: the entry parsed cleanly but holds MORE THAN ONE pubkey (or, defensively, zero).
-    /// Refused until the multi-principal bindings land — see [`enforce_single_peer`].
-    MultiPeer,
-}
-
-/// Load + validate the authorized peer-pubkey allowlist from the [`SecureStore`] (S-F). The stored
-/// value is a concatenation of raw 32-byte X25519 public keys.
-///
-/// FAIL-CLOSED contract — there is NO "open"/empty-allowlist fallthrough:
-/// * a MISSING entry (`get` ⇒ `None`)            ⇒ [`PeerAllowlistError::Missing`];
-/// * an EMPTY value (zero bytes)                  ⇒ [`PeerAllowlistError::Invalid`];
-/// * a value whose length is not a multiple of 32 ⇒ [`PeerAllowlistError::Invalid`].
-///
-/// On success returns the non-empty `Vec<[u8; 32]>` of allowlisted pubkeys. The raw bytes are
-/// returned to the caller but NEVER logged/printed by this bin (only a count is reported).
-fn load_peer_allowlist(
-    store: &dyn SecureStore,
-    id: &str,
-) -> Result<Vec<[u8; X25519_PUBKEY_LEN]>, PeerAllowlistError> {
-    let bytes = store.get(id).ok_or(PeerAllowlistError::Missing)?;
-    if bytes.is_empty() || bytes.len() % X25519_PUBKEY_LEN != 0 {
-        return Err(PeerAllowlistError::Invalid);
-    }
-    let allowlist: Vec<[u8; X25519_PUBKEY_LEN]> = bytes
-        .chunks_exact(X25519_PUBKEY_LEN)
-        .map(|c| {
-            let mut k = [0u8; X25519_PUBKEY_LEN];
-            k.copy_from_slice(c);
-            k
-        })
-        .collect();
-    // `chunks_exact` on a nonzero-multiple length yields ≥1 chunk and no remainder, so this is
-    // guaranteed non-empty — but assert the invariant rather than trust it (fail closed).
-    if allowlist.is_empty() {
-        return Err(PeerAllowlistError::Invalid);
-    }
-    Ok(allowlist)
-}
-
-/// True iff `peer_pub` is one of the authorized peer pubkeys. Plain byte-equality over the raw
-/// 32-byte keys — constant-time-ness is NOT required (a public key is not secret), and the value
-/// is fixed-width so there is no length oracle. This is the S-F PEER gate.
-fn peer_is_allowlisted(allowlist: &[[u8; X25519_PUBKEY_LEN]], peer_pub: &[u8; 32]) -> bool {
-    allowlist.contains(peer_pub)
-}
-
-/// FIX-Q3a (hardening) — fail closed unless the allowlist holds EXACTLY ONE peer pubkey.
-///
-/// `load_peer_allowlist` is intentionally a multi-key PARSER (any nonzero multiple of 32 bytes →
-/// N keys), so the single-peer guarantee was, until now, only the enroll CLI's CONVENTION — the
-/// server would happily admit N. This guard converts that convention into a SERVER invariant.
-///
-/// Why refuse >1 today: there is no cryptographic pubkey↔principal binding (the run principal is the
-/// client-asserted `forwarded_principal`, checked only against the `--owner` allowlist ceiling). A
-/// SECOND enrolled pubkey + the single owner string therefore forms a confidentiality-leaking chain
-/// — any enrolled peer can forward the owner principal, pass the ceiling, and receive the
-/// owner-sealed body. Multi-peer is gated behind the (currently unbuilt) multi-principal bindings:
-///   * FIX-Q2  — bind the exec owner to the AUTHENTICATED caller (not the static runtime config);
-///   * FIX-Q3b — a tamper-evident pubkey→principal map so the caller principal is DERIVED from the
-///     matched enrolled pubkey rather than trusted from the wire.
-///
-/// Until both land, `len() != 1` is refused. `!= 1` (not `> 1`) also catches an impossible-0 list
-/// fail-closed; the parser guarantees ≥1, so this is purely belt-and-suspenders for the 0 case.
-fn enforce_single_peer(allowlist: &[[u8; X25519_PUBKEY_LEN]]) -> Result<(), PeerAllowlistError> {
-    if allowlist.len() != 1 {
-        return Err(PeerAllowlistError::MultiPeer);
-    }
-    Ok(())
 }
 
 fn main() {
@@ -671,86 +527,6 @@ impl AgentRunWsListener {
     }
 }
 
-/// Establish the sealed session for one connection.
-///
-/// **Key-source abstraction (dev/test exchange; prod source deferred):** the server holds its
-/// OWN `server_kp`; the EXTERNAL peer's public key is read from the wire as a cleartext
-/// length-prefixed preamble BEFORE the WS upgrade. The server then ECDHs
-/// `server_kp.agree(peer_pub)` → the per-session [`DataKey`].
-///
-/// FAIL-CLOSED gates BEFORE the session is derived (in order):
-/// * a peer-pubkey frame that is not exactly 32 bytes (a malformed preamble can never yield a
-///   session);
-/// * **S-F PEER AUTH:** the peer pubkey is NOT in the SecureStore-derived allowlist (a fresh local
-///   keypair cannot forge a session — this is the FORGERY gate, and it runs FIRST, before we send
-///   our own pubkey/nonce, so a non-allowlisted peer learns NOTHING); and
-/// * a known low-order / NON-CONTRIBUTORY X25519 point (which would drive an all-zero shared
-///   secret) — see [`is_low_order_x25519`].
-///
-/// **S-E anti-replay — per-handshake nonce.** After the low-order check and AFTER sending our own
-/// pubkey, but BEFORE the WS upgrade (the cleartext preamble is the only place we can `write_frame`
-/// raw bytes), the server generates a FRESH CSPRNG nonce ([`generate_approval_nonce`], the same
-/// OsRng source used for keys/approval nonces) and sends it cleartext. A nonce is NOT a secret;
-/// its job is to make the challenge the peer must seal UNIQUE per connection, so a captured
-/// `auth_proof` from a prior handshake (a different nonce) cannot re-authenticate. The nonce is
-/// returned with the session key and threaded into [`AuthedPrincipal::authenticate_forwarded`].
-/// The low-order-check-BEFORE-agree ordering (an S-C property) is preserved.
-fn establish_session<S: Read + Write>(
-    mut stream: S,
-    server_kp: &DeviceKeypair,
-    peer_allowlist: &[[u8; X25519_PUBKEY_LEN]],
-) -> Result<(WireWebSocket<S>, DataKey, Vec<u8>), TransportError> {
-    // (a) Receive the peer's X25519 public key (cleartext preamble). The peer pubkey is ALWAYS an
-    // input read from the wire — the server never fabricates the peer's ECDH half.
-    let peer_pub_bytes = read_frame(&mut stream)?;
-    let peer_pub: [u8; 32] = peer_pub_bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| TransportError::Protocol("peer pubkey must be 32 bytes".into()))?;
-
-    // (a') S-F PEER AUTH (the FORGERY gate — FIRST, before any other check). Verify the peer pubkey
-    // is in the SecureStore-derived allowlist. A non-allowlisted pubkey ⇒ NO session: we return
-    // BEFORE sending our own pubkey or the nonce and BEFORE the `agree()`, so a fresh local keypair
-    // (which can otherwise complete the handshake and forge an `auth_proof` for an allowlisted owner
-    // string) cannot establish a session and the peer learns nothing. We do NOT log the rejected
-    // pubkey (a public value, but kept out of logs on principle).
-    if !peer_is_allowlisted(peer_allowlist, &peer_pub) {
-        return Err(TransportError::Protocol(
-            "peer pubkey not in SecureStore allowlist".into(),
-        ));
-    }
-
-    // HARDENING: reject a non-contributory (known low-order) peer key BEFORE deriving the
-    // session — such a key would yield an all-zero shared secret a peer never has to "prove".
-    if is_low_order_x25519(&peer_pub) {
-        return Err(TransportError::Protocol(
-            "non-contributory (low-order) peer key rejected".into(),
-        ));
-    }
-
-    // (b) Send our OWN public key so the peer can derive the same session key.
-    write_frame(&mut stream, &server_kp.public_bytes())?;
-
-    // (b') S-E: generate + send a FRESH per-handshake CSPRNG nonce (cleartext; not a secret). The
-    // peer must seal `AUTH_CHALLENGE || session_nonce` in its `auth_proof`, so a proof captured
-    // from a PRIOR handshake (a different nonce) cannot re-authenticate on THIS connection.
-    let session_nonce = generate_approval_nonce().into_bytes();
-    // Invariant guard (fail-closed): the CSPRNG nonce must be the expected fixed width, so the
-    // `challenge || nonce` concat the peer seals is unambiguous. Any deviation aborts the
-    // handshake (no session) rather than deriving a weak/ambiguous binding.
-    if session_nonce.len() != SESSION_NONCE_LEN {
-        return Err(TransportError::Protocol(
-            "session nonce has unexpected length".into(),
-        ));
-    }
-    write_frame(&mut stream, &session_nonce)?;
-
-    // (c) WS upgrade over the (now preamble-consumed) stream, then derive the sealed session key.
-    let ws = ws_accept(stream)?;
-    let session_key = server_kp.agree(&peer_pub);
-    Ok((ws, session_key, session_nonce))
-}
-
 /// Serve sealed envelopes over ONE established session until the peer disconnects, sends an
 /// envelope that fails to open under the session key, OR completes/fails an agent-run dispatch.
 ///
@@ -830,7 +606,10 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                         ForwardedAuth {
                             auth_proof: &proof,
                             session_nonce,
-                            run_id: &run_id,
+                            // S-R0: the write path binds the proof to the `run_id` bytes — the
+                            // SAME bytes the prior `run_id: &str` field produced, so the AAD is
+                            // byte-unchanged for writes.
+                            bound_context: run_id.as_bytes(),
                             forwarded_principal: &forwarded_principal,
                         },
                         owner_allowlist,
@@ -1213,7 +992,9 @@ fn authenticate_control_caller(
             ForwardedAuth {
                 auth_proof: &proof,
                 session_nonce,
-                run_id,
+                // S-R0: control ops bind to the `run_id` bytes — byte-unchanged vs the prior
+                // `run_id: &str` field.
+                bound_context: run_id.as_bytes(),
                 forwarded_principal,
             },
             owner_allowlist,
@@ -1293,33 +1074,6 @@ fn result_refs(outcome: &friday_hub::hub_server::AuthedAnswer) -> ResultRefs {
     }
 }
 
-/// On-wire form for a `Sealed`: `[nonce_len: u8][nonce][ciphertext]`. Mirrors the transport's
-/// internal `encode_sealed` (kept local — the transport does not expose it). Carries no key.
-fn encode_sealed_proof(s: &Sealed) -> Vec<u8> {
-    let mut out = Vec::with_capacity(1 + s.nonce.len() + s.ciphertext.len());
-    out.push(s.nonce.len() as u8);
-    out.extend_from_slice(&s.nonce);
-    out.extend_from_slice(&s.ciphertext);
-    out
-}
-
-/// Decode a wire `auth_proof` (`[nonce_len][nonce][ciphertext]`) back into a `Sealed` for the
-/// session-key open. Returns `None` on any malformed input (treated as an auth failure upstream,
-/// never a panic).
-fn decode_sealed_proof(wire: &[u8]) -> Option<Sealed> {
-    if wire.is_empty() {
-        return None;
-    }
-    let nlen = wire[0] as usize;
-    if wire.len() < 1 + nlen {
-        return None;
-    }
-    Some(Sealed {
-        nonce: wire[1..1 + nlen].to_vec(),
-        ciphertext: wire[1 + nlen..].to_vec(),
-    })
-}
-
 fn arg_value(args: &[String], name: &str) -> Option<String> {
     args.windows(2)
         .find_map(|pair| (pair[0] == name).then(|| pair[1].clone()))
@@ -1357,12 +1111,19 @@ mod tests {
     // import lives here — keeping it top-level would be an unused import in the non-test bin compile
     // (clippy `-D warnings`). `FileSecureStore` is imported via `use super::*` (run() uses it).
     use friday_crypto::open as crypto_open;
-    use friday_crypto::InMemorySecureStore;
+    use friday_crypto::{InMemorySecureStore, SecureStore};
     use friday_deepseek::{DeepSeekClient, DeepSeekError};
     use friday_hub::hub_server::{auth_aad, nonce_bound_challenge};
     use friday_hub::runtime::DenyAllApprovals;
+    // S-R0: the substrate items the tests exercise directly (the non-test bin imports only the
+    // subset `run()`/`accept_one` use, to keep clippy `-D warnings` clean). These are the shared
+    // peer-gate / low-order / codec / nonce-width primitives the migrated S-F/S-E tests drive.
+    use friday_hub::sealed_ws::{
+        is_low_order_x25519, peer_is_allowlisted, PeerAllowlistError, LOW_ORDER_X25519_POINTS,
+        SESSION_NONCE_LEN,
+    };
     use friday_hub::DeepSeekAgentLlmClient;
-    use friday_transport::{ws_connect, ws_send_envelope};
+    use friday_transport::{read_frame, write_frame, ws_connect, ws_send_envelope};
     use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
     use std::net::TcpStream;
@@ -1496,7 +1257,7 @@ mod tests {
         run_id: &str,
     ) -> Vec<u8> {
         let challenge = nonce_bound_challenge(AUTH_CHALLENGE, session_nonce);
-        let req_aad = auth_aad(SESSION_AAD, principal, run_id);
+        let req_aad = auth_aad(SESSION_AAD, principal, run_id.as_bytes());
         let sealed = seal(client_session, &challenge, &req_aad).unwrap();
         encode_sealed_proof(&sealed)
     }
@@ -1984,7 +1745,7 @@ mod tests {
             // Bind the CORRECT nonce + AAD so the failure is attributable to the WRONG key, not a
             // missing nonce binding.
             let challenge = nonce_bound_challenge(AUTH_CHALLENGE, nonce);
-            let req_aad = auth_aad(SESSION_AAD, OWNER, "run-badproof");
+            let req_aad = auth_aad(SESSION_AAD, OWNER, b"run-badproof");
             let bad_proof = encode_sealed_proof(&seal(&wrong, &challenge, &req_aad).unwrap());
             let req = Envelope::new(
                 "req-badproof",

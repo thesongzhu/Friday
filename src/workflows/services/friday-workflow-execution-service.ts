@@ -1574,6 +1574,32 @@ export function createFridayWorkflowExecutionService(
     },
 
     async pauseRun(runId, reason) {
+      // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+      // Sibling of `startRun` (§1 reconciliation). `pauseRun` is an off-route
+      // run-control mutator (reachable via `dispatchManagedAsync` ← channel
+      // orchestration and any future auto-fix `pause_workflow` step) that writes
+      // terminal/paused run state via withWriteTransaction and publishes a
+      // `workflow.run.paused` event. It was the ONE run-control mutator still
+      // unguarded while resume/retry/cancel were fenced — closing that gap so
+      // EVERY run-control mutator is genuinely method-fenced (see cancelRun).
+      // Fails ALL non-route callers closed BEFORE any DB read or write unless
+      // the explicit test-oracle flag is set. Same flag and family as `startRun`;
+      // never default this flag on in prod.
+      if (deps.allowTestOnlyWorkflowRunExecution !== true) {
+        void runId;
+        void reason;
+        throw new FridayDomainError(
+          "TS_RUNTIME_WORKFLOW_RUNS_RETIRED",
+          "Workflow run execution and controls are fail-closed while runtime ownership is being moved out of TypeScript.",
+          {
+            httpStatus: 503,
+            details: {
+              classification: "fail_closed",
+              replacement: "rust_owned_workflow_run_entrypoint_required",
+            },
+          },
+        );
+      }
       const runEntity = deps.db.withReadConnection((db) =>
         deps.runRepo.getRunById(db, runId),
       );
@@ -1609,9 +1635,10 @@ export function createFridayWorkflowExecutionService(
       // resume/retry (no node re-entry) but it still aborts in-flight
       // controllers and writes terminal run/node state via withWriteTransaction,
       // reachable off-route via `dispatchManagedAsync` ← channel orchestration.
-      // Guarded for consistency so EVERY route-retired run-control mutator is
-      // method-fenced. Same flag and family as `startRun`; never default on in
-      // prod.
+      // Guarded for consistency so EVERY route-retired run-control mutator
+      // (startRun, resumeRun, pauseRun, cancelRun, retryRun) is now method-fenced
+      // — pauseRun was the last unguarded one and is fenced as of this audit fix.
+      // Same flag and family as `startRun`; never default on in prod.
       if (deps.allowTestOnlyWorkflowRunExecution !== true) {
         void runId;
         void reason;
