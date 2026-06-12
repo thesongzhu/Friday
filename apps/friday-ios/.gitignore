@@ -1,3 +1,4 @@
-# Local build artifacts (staticlib, generated bindings, .app bundle, screenshots).
+# Local build artifacts (SwiftPM build dir, sim .app bundle, screenshots).
 .build/
+.build-sim/
 *.png
