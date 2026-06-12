@@ -2020,6 +2020,22 @@ export function createFridayWorkflowExecutionService(
     },
 
     async reapExpiredLeases() {
+      // ─── TS Runtime Retirement: timeout-sweep janitor fail-closed (NO-OP) ───
+      // Phase 3 (route-only-guard defect, defense-in-depth): the run-control
+      // mutators (startRun/resumeRun/pauseRun/cancelRun/retryRun) are method
+      // guarded with `allowTestOnlyWorkflowRunExecution !== true → 503`. These
+      // timeout-sweep janitors (reapExpiredLeases/sweepTimedOutRuns/
+      // sweepTimedOutNodes) finalize/reap workflow run state and lacked the
+      // symmetric fence. We INTENTIONALLY return a no-op (NOT a 503 throw) here:
+      // the ONLY caller is the recurring 30s `workflow-timeout-sweep` scheduler
+      // job, which has no try/catch — a per-tick throw would recreate the exact
+      // `session-lifecycle-sweep` SEV-1 fail-loop (markFailed + reschedule with
+      // backoff forever; see friday-hub-bootstrap.ts). No-op IS fail-closed for a
+      // fire-and-forget janitor: when ownership is retired, TS finalizes/reaps
+      // nothing. When the flag is on (tests/intended-live), behavior is unchanged.
+      if (deps.allowTestOnlyWorkflowRunExecution !== true) {
+        return 0;
+      }
       const nowIso = deps.nowIso();
       const expired = deps.db.withReadConnection((db) =>
         deps.nodeRepo.listExpiredLeases(db, nowIso),
@@ -2070,6 +2086,13 @@ export function createFridayWorkflowExecutionService(
     },
 
     async sweepTimedOutRuns(nowIso?: string) {
+      // TS Runtime Retirement: timeout-sweep janitor fail-closed (NO-OP) — see
+      // reapExpiredLeases for the no-op-not-throw rationale (avoids the recurring
+      // scheduler fail-loop). Returns 0 swept when ownership is retired.
+      if (deps.allowTestOnlyWorkflowRunExecution !== true) {
+        void nowIso;
+        return 0;
+      }
       const now = nowIso ?? deps.nowIso();
       // Find active runs that have exceeded their deadline
       const activeRuns = deps.db.withReadConnection((db) =>
@@ -2111,6 +2134,13 @@ export function createFridayWorkflowExecutionService(
     },
 
     async sweepTimedOutNodes(nowIso?: string) {
+      // TS Runtime Retirement: timeout-sweep janitor fail-closed (NO-OP) — see
+      // reapExpiredLeases for the no-op-not-throw rationale (avoids the recurring
+      // scheduler fail-loop). Returns 0 swept when ownership is retired.
+      if (deps.allowTestOnlyWorkflowRunExecution !== true) {
+        void nowIso;
+        return 0;
+      }
       const now = nowIso ?? deps.nowIso();
       const nowMs = new Date(now).getTime();
 

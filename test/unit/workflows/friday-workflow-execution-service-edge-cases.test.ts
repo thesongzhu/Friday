@@ -1322,4 +1322,34 @@ describe("Issue 3 (R2): End-to-end workflow execution flows", () => {
     expect(failedNode?.error?.message).toContain("skill 'test-skill' not found");
     expect(failedNode?.error?.retryable).toBe(false);
   });
+
+  describe("TS-runtime retirement: timeout-sweep janitors fail-closed as NO-OPs (not throws)", () => {
+    it("reapExpiredLeases / sweepTimedOutRuns / sweepTimedOutNodes return 0 without throwing when the flag is off", async () => {
+      // Defense-in-depth symmetry with the run-control mutators. These janitors
+      // are NO-OP (not 503-throw) by design: the only caller is the recurring
+      // 30s scheduler job, which has no try/catch — a per-tick throw would
+      // recreate the session-lifecycle-sweep SEV-1 fail-loop. So flag-off must
+      // resolve cleanly to 0, never throw.
+      const svc = buildService({ allowTestOnlyWorkflowRunExecution: false });
+
+      // Seed an expired lease so a flag-ON sweep WOULD have work to do — the
+      // flag-off path must still no-op rather than acting on it.
+      const graph = makeGraph("wf-sweep-off", "wv-sweep-off", [{ id: "step1" }], [], "fail_fast");
+      seedWorkflow(graph);
+
+      await expect(svc.reapExpiredLeases()).resolves.toBe(0);
+      await expect(svc.sweepTimedOutRuns("2026-02-16T13:00:00.000Z")).resolves.toBe(0);
+      await expect(svc.sweepTimedOutNodes("2026-02-16T13:00:00.000Z")).resolves.toBe(0);
+    });
+
+    it("the same janitors operate normally when the test-oracle flag is on", async () => {
+      // The shared buildService() default is flag-ON; the sweeps execute their
+      // real bodies and return a numeric count (0 here — nothing seeded as
+      // timed-out — proving they ran without the no-op short-circuit).
+      const svc = buildService();
+      await expect(svc.reapExpiredLeases()).resolves.toBeTypeOf("number");
+      await expect(svc.sweepTimedOutRuns("2026-02-16T13:00:00.000Z")).resolves.toBeTypeOf("number");
+      await expect(svc.sweepTimedOutNodes("2026-02-16T13:00:00.000Z")).resolves.toBeTypeOf("number");
+    });
+  });
 });

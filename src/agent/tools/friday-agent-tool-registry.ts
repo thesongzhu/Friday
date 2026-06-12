@@ -135,6 +135,15 @@ export interface CreateFridayAgentToolRegistryOptions {
   extractionService?: FridaySessionMemoryExtractionService;
   /** Provider service for LLM provider management tool. */
   providerService?: FridayProviderService;
+  /**
+   * TS Runtime Retirement — CALLER-scoped guard for the agent `provider` tool's
+   * `validate` action (a NON-route caller of the live, billable
+   * `validateProvider` probe). Threaded into the provider tool's options;
+   * default-undefined → OFF → the validate action fails closed. Same flag as the
+   * provider route (`allowTestOnlyProviderProbeExecution`); the SHARED
+   * auto-validate routing path is intentionally NOT touched.
+   */
+  allowTestOnlyProviderProbeExecution?: boolean;
   /** Web search provider: "auto" | "serper" | "tavily" | "duckduckgo" | "google_news_rss". Defaults to "auto". */
   webSearchProvider?: string;
   /** API key for the configured web search provider. */
@@ -373,7 +382,12 @@ export function createFridayAgentToolRegistry(
 
   if (options?.providerService) {
     tools.push(
-      createFridayAgentProviderTool({ providerService: options.providerService }),
+      createFridayAgentProviderTool({
+        providerService: options.providerService,
+        // CALLER-scoped probe fence: default-OFF unless the test-oracle flag is
+        // threaded from bootstrap. The validate action fails closed otherwise.
+        allowTestOnlyProviderProbeExecution: options.allowTestOnlyProviderProbeExecution,
+      }),
     );
   }
 

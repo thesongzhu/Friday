@@ -20,6 +20,16 @@ export interface CreateFridayStandingAgendaServiceDeps {
   nowIso: () => string;
   policyService: FridayAutonomyPolicyService;
   acquisitionService: FridayCapabilityAcquisitionService;
+  /**
+   * Test-oracle only: allows the legacy TypeScript standing-agenda WRITE
+   * mutations (`createStandingGoal`/`updateStandingGoal`) in isolated
+   * test/validation harnesses. The HTTP route is already retired
+   * (`TS_RUNTIME_STANDING_AGENDA_RETIRED`) but consumed ONLY at the route, so
+   * non-route callers reach these mutators directly. Default/live runtime must
+   * leave this unset so the mutators fail closed for ALL callers. Reads
+   * (`listStandingGoals`/`listAgenda`/...) stay live regardless.
+   */
+  allowTestOnlyStandingAgendaExecution?: boolean;
 }
 
 export interface FridayStandingAgendaService {
@@ -92,6 +102,35 @@ export function createFridayStandingAgendaService(
 ): FridayStandingAgendaService {
   const { db, idGenerator, nowIso, policyService, acquisitionService } = deps;
 
+  // ─── TS Runtime Retirement: METHOD-level fail-closed guard ───
+  // Phase 3 (route-only-guard defect): the standing-agenda retirement was
+  // ROUTE-only (friday-autonomy-routes fail-closes standing.goals.create /
+  // standing.goals.patch to TS_RUNTIME_STANDING_AGENDA_RETIRED before the route
+  // calls the service). The agenda WRITE mutators (`createStandingGoal` /
+  // `updateStandingGoal`) had NO method guard, so any non-route caller reaches
+  // them directly, bypassing the route fence. Guarding here fails ALL non-route
+  // callers closed BEFORE any DB read or persist — unless the explicit
+  // test-oracle flag is set. Never default this flag on in production. Reads
+  // (listStandingGoals/getStandingGoal/listAgenda) stay live; only the goal
+  // write mutators are retired, mirroring the route surface (which asserts only
+  // on create/patch). Mirrors capability-acquisition-service /
+  // autonomy-policy-service updatePolicy.
+  function assertStandingAgendaExecutionAllowed(): void {
+    if (deps.allowTestOnlyStandingAgendaExecution !== true) {
+      throw new FridayDomainError(
+        "TS_RUNTIME_STANDING_AGENDA_RETIRED",
+        "TypeScript standing-agenda execution is fail-closed in default/live runtime; use the Rust-owned standing_agenda entrypoint.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_standing_agenda_entrypoint_required",
+          },
+        },
+      );
+    }
+  }
+
   function listStandingGoals(input: { userId: string; includeArchived?: boolean }): FridayStandingGoal[] {
     const rows = db.withReadConnection((conn) =>
       conn.prepare(
@@ -105,6 +144,7 @@ export function createFridayStandingAgendaService(
   }
 
   async function createStandingGoal(input: FridayCreateStandingGoalInput): Promise<{ goal: FridayStandingGoal; agendaItem: FridayAgendaItem }> {
+    assertStandingAgendaExecutionAllowed();
     const now = nowIso();
     const goal: FridayStandingGoal = {
       id: idGenerator(),
@@ -134,6 +174,7 @@ export function createFridayStandingAgendaService(
   }
 
   function updateStandingGoal(goalId: string, input: FridayUpdateStandingGoalInput): FridayStandingGoal {
+    assertStandingAgendaExecutionAllowed();
     const current = getStandingGoal(goalId);
     if (!current) {
       throw new FridayDomainError("STANDING_GOAL_NOT_FOUND", "Standing goal not found", {

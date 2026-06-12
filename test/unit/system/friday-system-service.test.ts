@@ -270,6 +270,7 @@ async function createServiceFixtureWithOptions(options?: {
   warn?: (message: string) => void;
   canonicalMutationGate?: boolean;
   canonicalApprovalSecret?: string;
+  allowTestOnlySystemIntentExecution?: boolean;
 }) {
   const db = options?.db ?? createTestDb();
   const fixtureId = ++fixtureSequence;
@@ -304,8 +305,11 @@ async function createServiceFixtureWithOptions(options?: {
       origin: "http://localhost:3141",
     },
     // Test-oracle opt-in: these tests exercise legacy `executeIntent`, which is
-    // method-level fail-closed by default (TS-R1).
-    allowTestOnlySystemIntentExecution: true,
+    // method-level fail-closed by default (TS-R1). The same flag also opens the
+    // `captureSnapshot` screen-read sink inside buildSnapshot; default fixtures
+    // keep it on so connected-companion snapshot reads behave as before. Tests
+    // that need the flag OFF pass `allowTestOnlySystemIntentExecution: false`.
+    allowTestOnlySystemIntentExecution: options?.allowTestOnlySystemIntentExecution ?? true,
   });
   return {
     db,
@@ -450,6 +454,69 @@ describe("createFridaySystemService", () => {
     expect(state.windows).toEqual([]);
     expect(state.notifications).toEqual([]);
     expect(state.health.status).toBe("unavailable");
+  });
+
+  it("TS-runtime retirement: getState does NOT capture a companion screen-read snapshot when the test-oracle flag is off, even with the companion connected, while other reads stay live", async () => {
+    // Route-only-guard defect: getState() is read-classified and reaches
+    // buildSnapshot WITHOUT the executeIntent guard, so the agent guide_lens
+    // tool / skill system.getSnapshot node could drive a live screen-read. With
+    // the flag OFF (production default), the captureSnapshot sink must NOT fire,
+    // but health/permissions/lease reads (sourced elsewhere) must stay live.
+    const captureSnapshot = vi.fn(async () => {
+      throw new Error("captureSnapshot must NOT be called when the probe flag is off");
+    });
+    const fixture = await createServiceFixtureWithOptions({
+      allowTestOnlySystemIntentExecution: false,
+      companionBridge: {
+        ...createCompanionBridge(),
+        // Report a CONNECTED companion (the disconnected-case test already covers
+        // connected=false). The gate, not connectivity, must suppress the read.
+        isConnected() {
+          return true;
+        },
+        async getStatus() {
+          return {
+            id: "companion-connected",
+            platform: "darwin" as const,
+            connected: true,
+            transport: {
+              mode: "in_process" as const,
+              protocol: "jsonrpc-2.0" as const,
+              authenticated: true,
+              socketPath: `${WORKSPACE_ROOT}/companion.sock`,
+            },
+            launchAtLoginEnabled: true,
+            panicHotkey: "cmd+shift+escape",
+            safeMode: false,
+            overlayVisible: false,
+            lastHeartbeatAt: "2026-03-06T12:00:00.000Z",
+            capabilities: createCompanionCapabilities(true),
+            permissions: [],
+          };
+        },
+        captureSnapshot,
+      },
+    });
+    allocatedDbs.push(fixture.db);
+
+    const state = await fixture.service.getState();
+
+    // The screen-read sink is fenced: empty companion snapshot, no daemon call.
+    expect(captureSnapshot).not.toHaveBeenCalled();
+    expect(state.apps).toEqual([]);
+    expect(state.windows).toEqual([]);
+    expect(state.notifications).toEqual([]);
+    expect(state.frontmostAppId).toBeUndefined();
+    expect(state.frontmostWindowId).toBeUndefined();
+
+    // Other getState-derived reads stay LIVE: companion status reflects the
+    // connected daemon, health is computed, lease/approvals summaries present.
+    expect(state.companion.connected).toBe(true);
+    expect(state.health).toBeDefined();
+    expect(state.health.status).toBeDefined();
+    expect(state.permissions).toBeDefined();
+    expect(state.approvalsSummary).toBeDefined();
+    expect(state.remoteDevicesSummary).toBeDefined();
   });
 
   it("deduplicates degraded companion startup warnings across service instances when only the socket path changes", async () => {
