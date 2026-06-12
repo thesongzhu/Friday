@@ -2226,6 +2226,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     nowIso: deps.nowIso,
     policyService: autonomyPolicyService,
     acquisitionService: capabilityAcquisitionService,
+    // METHOD-level retirement guard: plumb the same test-oracle flag the route
+    // honors so the shared service instance fails closed for every non-route
+    // caller (e.g. a future agent/background caller of createStandingGoal /
+    // updateStandingGoal) unless explicitly enabled. Production leaves this unset.
+    allowTestOnlyStandingAgendaExecution: deps.allowTestOnlyStandingAgendaExecution,
   });
 
   // Route registry

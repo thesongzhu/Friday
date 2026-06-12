@@ -41,6 +41,11 @@ describe("controlled autonomy closed loops", () => {
       nowIso,
       policyService,
       acquisitionService,
+      // Test-oracle opt-in: these tests exercise the legacy standing-agenda WRITE
+      // mutations (createStandingGoal/updateStandingGoal), which are method-level
+      // fail-closed by default (route-only-guard defect fix). The dedicated
+      // guard describe-block below constructs a service WITHOUT this flag.
+      allowTestOnlyStandingAgendaExecution: true,
     });
   });
 
@@ -429,6 +434,64 @@ describe("controlled autonomy closed loops", () => {
     });
   });
 
+  describe("TS-runtime retirement: standing-agenda mutators METHOD-level fail-closed guard", () => {
+    it("fails closed (503) for create/update when the test-oracle flag is unset, before any persist; reads stay live", async () => {
+      // Construct WITHOUT allowTestOnlyStandingAgendaExecution (mirrors
+      // production/runtime + any non-route caller). The route is already
+      // retired; this fences the off-route method callers.
+      const fencedService = createFridayStandingAgendaService({
+        db,
+        idGenerator: createTestIdGenerator(),
+        nowIso: () => `2026-04-25T00:01:${String(++nowCounter).padStart(2, "0")}.000Z`,
+        policyService,
+        acquisitionService,
+      });
+
+      let createThrown: unknown;
+      try {
+        await fencedService.createStandingGoal({
+          userId: "fenced-user",
+          objective: "应当被退役守卫拦截的目标",
+          title: "blocked goal",
+        });
+      } catch (error) {
+        createThrown = error;
+      }
+      expect(createThrown).toBeInstanceOf(FridayDomainError);
+      expect(createThrown).toMatchObject({
+        code: "TS_RUNTIME_STANDING_AGENDA_RETIRED",
+        httpStatus: 503,
+      });
+
+      let updateThrown: unknown;
+      try {
+        fencedService.updateStandingGoal("any-goal-id", { title: "x" });
+      } catch (error) {
+        updateThrown = error;
+      }
+      expect(updateThrown).toBeInstanceOf(FridayDomainError);
+      expect(updateThrown).toMatchObject({
+        code: "TS_RUNTIME_STANDING_AGENDA_RETIRED",
+        httpStatus: 503,
+      });
+
+      // No persist happened — the goal list read stays live and is empty.
+      expect(fencedService.listStandingGoals({ userId: "fenced-user" })).toEqual([]);
+    });
+
+    it("allows the test-oracle path to create a standing goal when the flag is set to true", async () => {
+      // The shared flag-on `standingAgendaService` (beforeEach) proves the
+      // intended-live path: create proceeds and persists.
+      const result = await standingAgendaService.createStandingGoal({
+        userId: "flag-on-user",
+        objective: "已授权的目标",
+        title: "allowed goal",
+      });
+      expect(result.goal.status).toBe("active");
+      expect(standingAgendaService.listStandingGoals({ userId: "flag-on-user" })).toHaveLength(1);
+    });
+  });
+
   it("creates standing-goal agenda and records strategy-only improvement after a low-risk run", async () => {
     const result = await standingAgendaService.createStandingGoal({
       userId: "test-user",
@@ -490,6 +553,11 @@ describe("controlled autonomy closed loops", () => {
         nowIso: () => `2026-04-26T01:00:${String(++nowCounter).padStart(2, "0")}.000Z`,
         policyService,
         acquisitionService: failClosedAcquisition,
+        // Standing-agenda WRITE is allowed here (this test's subject is the
+        // CAPABILITY-acquisition guard firing inside runAgendaItem, not the
+        // standing-agenda guard); createStandingGoal is only setup. The
+        // capability flag stays UNSET so the 503 still fires in runAgendaItem.
+        allowTestOnlyStandingAgendaExecution: true,
       });
 
       const { agendaItem } = await agendaService.createStandingGoal({

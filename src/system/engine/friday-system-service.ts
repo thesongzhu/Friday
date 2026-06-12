@@ -683,7 +683,23 @@ export async function createFridaySystemService(
 
   async function buildSnapshot(): Promise<FridaySystemSnapshot> {
     const companion = await deps.companionBridge.getStatus();
-    const companionSnapshot = companion.connected
+    // ─── TS Runtime Retirement: companion screen-read SINK gate ───
+    // Phase 3 (route-only-guard defect): `companionBridge.captureSnapshot()` is a
+    // live screen/app/window read at the Swift companion daemon. It is reachable
+    // through `getState()` (read-classified), which the agent `guide_lens` tool
+    // and the skill `system.getSnapshot` node both call. getState BYPASSES the
+    // `executeIntent` method guard (executeIntent is the only place the same
+    // test-oracle flag is otherwise consumed), so on the default/live path an
+    // agent run could drive a real screen-read it should not. Gate ONLY this
+    // captureSnapshot branch behind the SAME flag: unless explicitly enabled, the
+    // snapshot degrades to the disconnected/empty shape (no daemon screen-read).
+    // executeIntent's own guard already fences the intent-execution callers
+    // (snapshot/recover_ui), which only reach buildSnapshot AFTER passing it — so
+    // when the flag is on (tests/intents) behavior is unchanged. ALL other
+    // getState-derived reads (health/permissions/lease/approvals/remote) come
+    // from other sources and stay LIVE; this gate touches only the apps/windows/
+    // notifications/frontmost fields. Never default this flag on in production.
+    const companionSnapshot = companion.connected && deps.allowTestOnlySystemIntentExecution === true
       ? await deps.companionBridge.captureSnapshot()
       : {
         apps: [],

@@ -37,6 +37,18 @@ import {
 
 export interface CreateFridayAgentProviderToolOptions {
   providerService: FridayProviderService;
+  /**
+   * TS Runtime Retirement — CALLER-scoped fail-closed guard for the agent
+   * provider tool's `validate` action. `providerService.validateProvider` is a
+   * live, billable provider probe, and it is SHARED by the intended-live
+   * auto-validate routing path (provider-service auto-validate-on-save), so it
+   * MUST NOT be method-guarded. Instead this AGENT TOOL caller is fenced: unless
+   * this flag is explicitly set, the `validate` action fails closed
+   * (TS_RUNTIME_PROVIDER_PROBE_RETIRED) so an agent run cannot trigger a billable
+   * probe off-route. Mirrors the route's `allowTestOnlyProviderProbeExecution`
+   * but scoped to this caller. Default-undefined → OFF → fail-closed.
+   */
+  allowTestOnlyProviderProbeExecution?: boolean;
 }
 
 type ProviderAction =
@@ -104,6 +116,7 @@ export function createFridayAgentProviderTool(
   options: CreateFridayAgentProviderToolOptions,
 ): FridayAgentToolDefinition {
   const { providerService } = options;
+  const allowTestOnlyProviderProbeExecution = options.allowTestOnlyProviderProbeExecution === true;
 
   return {
     name: "provider",
@@ -477,6 +490,22 @@ export function createFridayAgentProviderTool(
   }
 
   async function handleValidate(args: Record<string, unknown>): Promise<FridayAgentToolResult> {
+    // ─── TS Runtime Retirement: CALLER-scoped fail-closed guard ───
+    // Phase 3 (route-only-guard defect): `validateProvider` is a live, billable
+    // provider probe SHARED by the intended-live auto-validate routing path
+    // (provider-service auto-validate-on-save), so the METHOD must not be guarded.
+    // This agent-tool caller is fenced instead: off-route, an agent run could
+    // otherwise drive billable probes. Fail closed (errorResult, not a throw —
+    // the tool contract returns a result) unless the explicit test-oracle flag is
+    // set. Never default this flag on in production.
+    if (!allowTestOnlyProviderProbeExecution) {
+      return errorResult(
+        "TypeScript provider validate-probe is fail-closed for the agent provider tool in default/live runtime; "
+          + "use the Rust-owned provider validation entrypoint.",
+        { errorCode: "TS_RUNTIME_PROVIDER_PROBE_RETIRED" },
+      );
+    }
+
     const providerId = readStringParam(args, "providerId", { required: true });
 
     const validation = await providerService.validateProvider(providerId);

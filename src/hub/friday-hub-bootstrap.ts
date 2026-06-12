@@ -1040,10 +1040,23 @@ export function resolveRouteWorkflowsViaRust(
  * default the flag on in production; the flag is the test-oracle escape hatch only.
  *
  * NOTE: the `systemService` consumer is NOT routed through this helper — it keeps
- * the live bridge and is fenced separately at the method level by
- * `executeIntent`'s own guard (it threads the same flag through
- * `createFridaySystemService`). Severing the agent-reachable bypasses here mirrors
- * that method-level fail-closed posture for the two consumers that lacked it.
+ * the live bridge (it threads the same flag through `createFridaySystemService`),
+ * but is fenced at TWO distinct sinks inside the service, NOT only by
+ * `executeIntent`'s guard:
+ *   1. `executeIntent`'s method guard fails ALL intent-execution callers closed
+ *      (the route is also retired). This covers the WRITE/mutating companion
+ *      calls (overlay/launch/focus/openUrl/arrangeWindows) reached via intents.
+ *   2. The `captureSnapshot` screen-read sink inside `buildSnapshot` is gated by
+ *      the SAME flag. This is REQUIRED because `getState()` is read-classified
+ *      and reaches `buildSnapshot` WITHOUT passing through the executeIntent
+ *      guard — so executeIntent alone does NOT fence the agent `guide_lens` tool
+ *      / skill `system.getSnapshot` node screen-read (a prior comment here
+ *      claimed it did; that was false). When the flag is off, getState returns an
+ *      empty companion snapshot (apps/windows/notifications) while all other
+ *      getState reads (health/permissions/lease/approvals/remote) stay live.
+ * Severing the agent-reachable bypasses here mirrors that method-level
+ * fail-closed posture for the two consumers (guide_lens overlay, setup assistant)
+ * that reach the bridge directly without either service-internal fence.
  */
 function resolveAgentReachableCompanionBridge<TBridge>(
   liveBridge: TBridge,
@@ -3085,6 +3098,11 @@ export async function createFridayHub(
     // OF6: fence the agent skill_run tool's arbitrary-code sink with the same
     // skill-run retirement flag the route uses (default-off → fail-closed).
     allowTestOnlySkillRunExecution: config.allowTestOnlySkillRunExecution,
+    // Route-only-guard defect: fence the agent provider tool's `validate` action
+    // (live billable probe) with the same probe retirement flag the route uses
+    // (default-off → fail-closed). The shared auto-validate routing path is
+    // NOT touched.
+    allowTestOnlyProviderProbeExecution: config.allowTestOnlyProviderProbeExecution,
     workflowCrudService: workflowRuntime.crud,
     workflowExecutionService: workflowRuntime.execution,
     memoryService,
@@ -5269,6 +5287,9 @@ export async function createFridayHub(
         getSkillLifecycleStatus: getPersistedSkillLifecycleStatus,
         // OF6: same skill-run retirement fence on subagent child tools.
         allowTestOnlySkillRunExecution: config.allowTestOnlySkillRunExecution,
+        // Route-only-guard defect: same provider validate-probe fence on subagent
+        // child tools (default-off → fail-closed).
+        allowTestOnlyProviderProbeExecution: config.allowTestOnlyProviderProbeExecution,
         workflowCrudService: workflowRuntime.crud,
         workflowExecutionService: workflowRuntime.execution,
         memoryService,

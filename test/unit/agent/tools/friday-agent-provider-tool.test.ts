@@ -533,7 +533,12 @@ describe("createFridayAgentProviderTool", () => {
         httpStatus: 401,
       }),
     });
-    const tool = createFridayAgentProviderTool({ providerService });
+    // Test-oracle opt-in: the validate action is CALLER-scoped fail-closed by
+    // default (route-only-guard defect fix); this test exercises the legacy probe.
+    const tool = createFridayAgentProviderTool({
+      providerService,
+      allowTestOnlyProviderProbeExecution: true,
+    });
 
     const result = await tool.execute(
       { action: "validate", providerId: "provider-validate-x" },
@@ -558,6 +563,25 @@ describe("createFridayAgentProviderTool", () => {
     });
     expect(parsed).not.toHaveProperty("errorMessage");
     expect(JSON.stringify(parsed)).not.toContain("validator-detail-must-not-leak-via-validate-action");
+  });
+
+  it("TS-runtime retirement: validate action fails closed for the agent tool when the probe flag is off, without calling the billable probe", async () => {
+    // Route-only-guard defect: validateProvider is a live billable probe SHARED
+    // by the intended-live auto-validate routing path, so the METHOD is not
+    // guarded — the agent-tool CALLER is. Default (no flag) → fail closed.
+    const validateProvider = vi.fn().mockResolvedValue({ status: "ok" });
+    const providerService = createMockProviderService({ validateProvider });
+    const tool = createFridayAgentProviderTool({ providerService }); // no probe flag
+
+    const result = await tool.execute(
+      { action: "validate", providerId: "provider-validate-fenced" },
+      signal(),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.errorCode).toBe("TS_RUNTIME_PROVIDER_PROBE_RETIRED");
+    // The billable probe was never invoked — fenced before any provider call.
+    expect(validateProvider).not.toHaveBeenCalled();
   });
 
   it("list combines multiple blockers when multiple conditions fail", async () => {
