@@ -562,6 +562,19 @@
       "next_action": "Replace fail-closed response with a Rust-owned agent run control entrypoint when available."
     },
     {
+      "id": "agent_runs_resume",
+      "route": {
+        "method": "POST",
+        "path": "/v1/agent/runs/:runId/resume",
+        "operationId": "agent.runs.resume"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-agent-routes.ts gates agent.runs.resume on FRIDAY_AGENT_RUN_CONTROL_VIA_RUST (default-off): flag-off short-circuits to the byte-identical TS_RUNTIME_AGENT_RUNS_RETIRED 503 BEFORE any run lookup (no run-existence leak). Flag-on enforces caller==the wire run's bound owner, then relays the OPAQUE operator-signed Ed25519 approval blob verbatim to the Rust sealed-WS resumeWithApproval (INV-1: TS never parses/validates/inspects the signature/digest); the wire runId is bound to the executed run (pending.run_id==run_id, the s6-687 fix). TS performs NO agent/mutation execution — signature verification and the single approved mutation are Rust-owned under the operator Ed25519 verify key.",
+      "next_action": "Replace the flag-gated TS courier relay with a Rust-owned resume entrypoint when the UI connects the Rust hub directly (slice-6 end-state)."
+    },
+    {
       "id": "agent_runs_rollback",
       "route": {
         "method": "POST",
