@@ -933,9 +933,13 @@ pub struct ForwardedAuth<'a> {
     /// never wire-read.** A captured proof sealed a DIFFERENT nonce will not verify here; a
     /// missing/short nonce is REJECTED by the verifier (it must be `SESSION_NONCE_LEN` wide).
     pub session_nonce: &'a [u8],
-    /// The run the proof is bound to (length-delimited into the AAD) — a proof can't be lifted to
-    /// a different run.
-    pub run_id: &'a str,
+    /// The OPAQUE per-request context the proof is bound to (length-delimited into the AAD) — a
+    /// proof can't be lifted to a different request. **S-R0 generalization:** this was `run_id:
+    /// &str` (write path). It is now an opaque `&[u8]` so a READ request (which has no run) can
+    /// bind the proof to its own per-request id (e.g. the request's `request_id`) instead. The
+    /// WRITE path passes `run_id.as_bytes()`, which produces the IDENTICAL AAD bytes the prior
+    /// `run_id: &str` field did — the write-path AAD is byte-unchanged (see the frozen-AAD KAT).
+    pub bound_context: &'a [u8],
     /// The trusted-peer-forwarded principal (allowlist-checked; also length-delimited into the
     /// AAD — a proof can't be lifted to a different principal).
     pub forwarded_principal: &'a str,
@@ -1044,7 +1048,7 @@ impl AuthedPrincipal {
         let ForwardedAuth {
             auth_proof,
             session_nonce,
-            run_id,
+            bound_context,
             forwarded_principal,
         } = req;
         // (0) SELF-ENFORCE the anti-replay invariant AT this verification boundary (the one that
@@ -1063,7 +1067,7 @@ impl AuthedPrincipal {
         // key, OR a captured proof from a PRIOR handshake (different nonce), OR a proof lifted
         // from a different (principal, run_id) — fails closed here. A session key alone is NOT
         // enough, and a stale `auth_proof` is NOT replayable.
-        let req_aad = auth_aad(aad, forwarded_principal, run_id);
+        let req_aad = auth_aad(aad, forwarded_principal, bound_context);
         let opened = open(session_key, auth_proof, &req_aad).ok()?;
         let expected = nonce_bound_challenge(expected_challenge, session_nonce);
         if opened != expected {
@@ -1114,24 +1118,30 @@ pub fn nonce_bound_challenge(challenge: &[u8], session_nonce: &[u8]) -> Vec<u8> 
 }
 
 /// S-E anti-replay — the per-REQUEST auth AAD: the session `aad` plus the `forwarded_principal`
-/// and `run_id`, each LENGTH-DELIMITED (a 4-byte big-endian length prefix per field) so the
-/// encoding is unambiguous — `("ab","c")` and `("a","bc")` produce DISTINCT AADs. Binding both
-/// into the AAD means an `auth_proof` sealed for one `(principal, run_id)` cannot be LIFTED to a
-/// different one: substituting either field changes the AAD, so `open` fails (the AEAD tag no
-/// longer authenticates). The AAD is NOT secret (it is reconstructed by the verifier from the
-/// cleartext request fields); its job is binding, not confidentiality.
+/// and the opaque `bound_context`, each LENGTH-DELIMITED (a 4-byte big-endian length prefix per
+/// field) so the encoding is unambiguous — `("ab","c")` and `("a","bc")` produce DISTINCT AADs.
+/// Binding both into the AAD means an `auth_proof` sealed for one `(principal, bound_context)`
+/// cannot be LIFTED to a different one: substituting either field changes the AAD, so `open` fails
+/// (the AEAD tag no longer authenticates). The AAD is NOT secret (it is reconstructed by the
+/// verifier from the cleartext request fields); its job is binding, not confidentiality.
+///
+/// **S-R0 generalization (byte-identical for writes).** The third argument was `run_id: &str`. It
+/// is now an opaque `bound_context: &[u8]` so a READ request — which has no run — can bind its
+/// own per-request id instead. The WRITE path passes `run_id.as_bytes()`; since the prior code
+/// took exactly those bytes (`run_id.as_bytes()`) internally, the emitted AAD is BYTE-IDENTICAL
+/// for the write path (a length prefix over the same bytes), so no write proof's verification
+/// changes. The frozen-AAD KAT (`auth_aad_write_path_is_byte_unchanged`) pins this.
 ///
 /// `pub` for the same reason as [`nonce_bound_challenge`]: the prover and the verifier must
-/// derive the SAME AAD bytes from the same `(aad, principal, run_id)` triple.
-pub fn auth_aad(aad: &[u8], forwarded_principal: &str, run_id: &str) -> Vec<u8> {
+/// derive the SAME AAD bytes from the same `(aad, principal, bound_context)` triple.
+pub fn auth_aad(aad: &[u8], forwarded_principal: &str, bound_context: &[u8]) -> Vec<u8> {
     let principal = forwarded_principal.as_bytes();
-    let run = run_id.as_bytes();
-    let mut out = Vec::with_capacity(aad.len() + 8 + principal.len() + run.len());
+    let mut out = Vec::with_capacity(aad.len() + 8 + principal.len() + bound_context.len());
     out.extend_from_slice(aad);
     out.extend_from_slice(&(principal.len() as u32).to_be_bytes());
     out.extend_from_slice(principal);
-    out.extend_from_slice(&(run.len() as u32).to_be_bytes());
-    out.extend_from_slice(run);
+    out.extend_from_slice(&(bound_context.len() as u32).to_be_bytes());
+    out.extend_from_slice(bound_context);
     out
 }
 
@@ -5515,6 +5525,38 @@ mod authed_route_tests {
     // --- S-C: authenticate_forwarded (the trusted-peer-forwarded principal sibling) ----------
     // --- S-E: per-handshake nonce + (principal, run_id) AAD binding (anti-replay) ------------
 
+    // --- S-R0: the write-path AAD is BYTE-UNCHANGED by the `bound_context` generalization -----
+    /// FROZEN-AAD KAT. The S-R0 refactor generalized [`auth_aad`]'s third argument from
+    /// `run_id: &str` to an opaque `bound_context: &[u8]`. This KAT pins the EXACT bytes [`auth_aad`]
+    /// emits for a known write-path `(aad, principal, run_id)` triple — a literal `Vec<u8>`, not an
+    /// old-fn==new-fn comparison (the old fn is gone). It is the structural proof that the write
+    /// path's auth AAD did not change: the session AAD, then a 4-byte BE length + the principal
+    /// bytes, then a 4-byte BE length + the run_id bytes (now passed as `run_id.as_bytes()`). If a
+    /// future edit perturbs the encoding, every captured write `auth_proof` would stop verifying —
+    /// this test red-flags that BEFORE it ships.
+    #[test]
+    fn auth_aad_write_path_is_byte_unchanged() {
+        let aad = b"friday:execrun:ws:s-c:agent-run-session:aad:v1";
+        let principal = "principal:owner-allowlisted";
+        let run_id = "run-x";
+        // The write path passes `run_id.as_bytes()` (the byte-identical-for-writes substitution).
+        let got = auth_aad(aad, principal, run_id.as_bytes());
+        // Construct the EXPECTED bytes independently: aad || be32(plen) || principal || be32(rlen) ||
+        // run_id. Frozen literal lengths: principal = 27 bytes, run_id = 5 bytes.
+        let mut expected = Vec::new();
+        expected.extend_from_slice(aad);
+        expected.extend_from_slice(&27u32.to_be_bytes());
+        expected.extend_from_slice(principal.as_bytes());
+        expected.extend_from_slice(&5u32.to_be_bytes());
+        expected.extend_from_slice(run_id.as_bytes());
+        assert_eq!(principal.len(), 27, "frozen principal length");
+        assert_eq!(run_id.len(), 5, "frozen run_id length");
+        assert_eq!(
+            got, expected,
+            "the write-path auth AAD bytes must be byte-identical after the bound_context generalization"
+        );
+    }
+
     /// The allowlisted single Hub owner used by the forwarded-auth tests.
     const FWD_OWNER: &str = "principal:forwarded-owner";
     /// A fixed per-handshake nonce stand-in for the unit tests (the bin tests drive the REAL
@@ -5528,7 +5570,8 @@ mod authed_route_tests {
     const FWD_RUN: &str = "run:fwd-unit";
 
     /// Build a valid forwarded auth_proof sealed under the peer's session view, BOUND to the
-    /// given handshake `nonce` and `(principal, run_id)` AAD — the S-E binding the peer performs.
+    /// given handshake `nonce` and `(principal, bound_context)` AAD — the S-E binding the peer
+    /// performs. The write path's `bound_context` is `run_id.as_bytes()`.
     fn fwd_proof_bound(
         caller_session: &DataKey,
         nonce: &[u8],
@@ -5536,7 +5579,7 @@ mod authed_route_tests {
         run_id: &str,
     ) -> Sealed {
         let challenge = nonce_bound_challenge(CHALLENGE, nonce);
-        let req_aad = auth_aad(AAD, principal, run_id);
+        let req_aad = auth_aad(AAD, principal, run_id.as_bytes());
         seal(caller_session, &challenge, &req_aad).unwrap()
     }
 
@@ -5556,7 +5599,7 @@ mod authed_route_tests {
             ForwardedAuth {
                 auth_proof: &proof,
                 session_nonce: FWD_NONCE,
-                run_id: FWD_RUN,
+                bound_context: FWD_RUN.as_bytes(),
                 forwarded_principal: FWD_OWNER,
             },
             &[FWD_OWNER.to_string()],
@@ -5588,7 +5631,7 @@ mod authed_route_tests {
                 ForwardedAuth {
                     auth_proof: &proof,
                     session_nonce: short,
-                    run_id: FWD_RUN,
+                    bound_context: FWD_RUN.as_bytes(),
                     forwarded_principal: FWD_OWNER,
                 },
                 &[FWD_OWNER.to_string()],
@@ -5615,7 +5658,7 @@ mod authed_route_tests {
                 ForwardedAuth {
                     auth_proof: &captured,
                     session_nonce: FWD_NONCE_2, // the new handshake's nonce
-                    run_id: FWD_RUN,
+                    bound_context: FWD_RUN.as_bytes(),
                     forwarded_principal: FWD_OWNER,
                 },
                 &[FWD_OWNER.to_string()],
@@ -5632,7 +5675,7 @@ mod authed_route_tests {
                 ForwardedAuth {
                     auth_proof: &captured,
                     session_nonce: FWD_NONCE, // its own nonce
-                    run_id: FWD_RUN,
+                    bound_context: FWD_RUN.as_bytes(),
                     forwarded_principal: FWD_OWNER,
                 },
                 &[FWD_OWNER.to_string()],
@@ -5658,7 +5701,7 @@ mod authed_route_tests {
                 ForwardedAuth {
                     auth_proof: &proof,
                     session_nonce: FWD_NONCE,
-                    run_id: "run:some-other-run", // lifted to a different run
+                    bound_context: b"run:some-other-run", // lifted to a different run
                     forwarded_principal: FWD_OWNER,
                 },
                 &[FWD_OWNER.to_string()],
@@ -5673,8 +5716,8 @@ mod authed_route_tests {
     #[test]
     fn auth_aad_is_unambiguous_across_field_boundaries() {
         assert_ne!(
-            auth_aad(AAD, "ab", "c"),
-            auth_aad(AAD, "a", "bc"),
+            auth_aad(AAD, "ab", b"c"),
+            auth_aad(AAD, "a", b"bc"),
             "length-delimited AAD must distinguish field boundaries"
         );
         // And end-to-end: a proof for ("ab","c") must not open for ("a","bc").
@@ -5688,7 +5731,7 @@ mod authed_route_tests {
                 ForwardedAuth {
                     auth_proof: &proof,
                     session_nonce: FWD_NONCE,
-                    run_id: "bc",
+                    bound_context: b"bc",
                     forwarded_principal: "principal:a",
                 },
                 &["principal:a".to_string()],
@@ -5715,7 +5758,7 @@ mod authed_route_tests {
                 ForwardedAuth {
                     auth_proof: &proof,
                     session_nonce: FWD_NONCE,
-                    run_id: FWD_RUN,
+                    bound_context: FWD_RUN.as_bytes(),
                     forwarded_principal: attacker,
                 },
                 &[FWD_OWNER.to_string()],
@@ -5740,7 +5783,7 @@ mod authed_route_tests {
                     ForwardedAuth {
                         auth_proof: &proof,
                         session_nonce: FWD_NONCE,
-                        run_id: FWD_RUN,
+                        bound_context: FWD_RUN.as_bytes(),
                         forwarded_principal: bad,
                     },
                     // Even if (pathologically) the anonymous sentinel were on the allowlist,
@@ -5771,7 +5814,7 @@ mod authed_route_tests {
                 ForwardedAuth {
                     auth_proof: &proof,
                     session_nonce: FWD_NONCE,
-                    run_id: FWD_RUN,
+                    bound_context: FWD_RUN.as_bytes(),
                     forwarded_principal: FWD_OWNER,
                 },
                 &[FWD_OWNER.to_string()],
@@ -5785,7 +5828,7 @@ mod authed_route_tests {
     fn authenticate_forwarded_rejects_a_wrong_challenge_seal() {
         let (hub_session, caller_session) = paired_sessions();
         // Opens (correct session key + correct AAD) but is NOT the agreed (nonce-bound) challenge.
-        let req_aad = auth_aad(AAD, FWD_OWNER, FWD_RUN);
+        let req_aad = auth_aad(AAD, FWD_OWNER, FWD_RUN.as_bytes());
         let proof_wrong = seal(&caller_session, b"not-the-challenge", &req_aad).unwrap();
         assert!(
             AuthedPrincipal::authenticate_forwarded(
@@ -5795,7 +5838,7 @@ mod authed_route_tests {
                 ForwardedAuth {
                     auth_proof: &proof_wrong,
                     session_nonce: FWD_NONCE,
-                    run_id: FWD_RUN,
+                    bound_context: FWD_RUN.as_bytes(),
                     forwarded_principal: FWD_OWNER,
                 },
                 &[FWD_OWNER.to_string()],
@@ -5818,7 +5861,7 @@ mod authed_route_tests {
                 ForwardedAuth {
                     auth_proof: &proof,
                     session_nonce: FWD_NONCE,
-                    run_id: FWD_RUN,
+                    bound_context: FWD_RUN.as_bytes(),
                     forwarded_principal: FWD_OWNER,
                 },
                 &[],

@@ -802,6 +802,47 @@ pub struct AgentRunConstraintsWire {
     pub max_turns: Option<u64>,
 }
 
+/// **S-R1** — client→read-server request for the Mission Workbench read projection over the DARK
+/// sealed-WS READ seam. This is a PURE READ: it must never cause a model/provider call. The read
+/// server runs the SAME owner-auth chain a write request does — `forwarded_principal` + `auth_proof`
+/// are verified against the sealed session (possession-of-session + per-handshake nonce +
+/// owner-allowlist), and the proof is bound to `request_id` (the read analog of the write path's
+/// `run_id` — a read has no run). The projection is released ONLY to the bound authenticated
+/// principal, never a client-asserted id.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkbenchProjectionRequestWire {
+    /// Optional Mission id; absent ⇒ the first active Mission (mirrors the bin's `--mission-id`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mission_id: Option<String>,
+    /// The TS-token-resolved / device-resolved principal conveyed by the peer. VERIFIED against the
+    /// sealed session before release — never trusted as an authority on its own.
+    pub forwarded_principal: String,
+    /// The sealed possession-of-session proof, bound to `request_id` + `forwarded_principal` in its
+    /// AAD (the read analog of the write `auth_proof`). Opaque bytes here.
+    pub auth_proof: Vec<u8>,
+    /// The opaque per-request id the `auth_proof` is bound to (the read analog of `run_id`). Binding
+    /// the proof to a fresh request id is what gives reads the IDENTICAL anti-lift guarantee writes
+    /// have without a run.
+    pub request_id: String,
+}
+
+/// **S-R1** — read-server→client refs-only Mission Workbench snapshot. Carries the refs-only
+/// projection JSON as a STRING (the projection is already the shared library fn's guarded, refs-only
+/// output; re-typing the whole nested tree here would only invite drift). `truth_status`/labels ride
+/// inside the JSON as-is — never upgraded. The body is sealed under the owner-only session by the
+/// transport before it leaves the server.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkbenchProjectionSnapshotWire {
+    /// Echoes the request id this snapshot answers (correlation).
+    pub request_id: String,
+    /// The refs-only projection JSON (the shared `project_workbench` output, serialized). Refs only
+    /// — `ledger_id`/`result_link`/`activity_id`/counts/labels, never an inline body. The read
+    /// server runs the forbidden-output guard (inside `project_workbench`) before sealing this.
+    pub projection_json: String,
+    /// Hub epoch-millis at which the snapshot was generated (lets the UI flag a stale snapshot).
+    pub generated_at_ms: i64,
+}
+
 /// First-slice message kinds (gate §4.2). Tagged by `kind`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
@@ -909,6 +950,20 @@ pub enum Message {
     /// hub->client: lifecycle mutation receipt. Status changes here are Mission
     /// management facts, not provider completion unless proof_ref says so.
     MissionLifecycleResult { result: MissionLifecycleResultWire },
+    /// **S-R1** — UI→DARK read-server: request the Mission Workbench read projection over the
+    /// sealed-WS READ seam. PURE READ — no model/provider call. Owner-scoped: the read server
+    /// authenticates `forwarded_principal`/`auth_proof` against the sealed session (the SAME chain a
+    /// write uses, with the proof bound to `request_id`) and releases the snapshot ONLY to the bound
+    /// principal. DARK: nothing in production constructs or dispatches this yet.
+    WorkbenchProjectionRequest {
+        request: WorkbenchProjectionRequestWire,
+    },
+    /// **S-R1** — DARK read-server→UI: the owner-sealed, refs-only Mission Workbench snapshot. The
+    /// projection JSON is refs-only (the shared `project_workbench` fn ran the forbidden-output
+    /// guard before this was built); truth labels ride as-is, never upgraded.
+    WorkbenchProjectionSnapshot {
+        snapshot: WorkbenchProjectionSnapshotWire,
+    },
     /// trusted-TS-peer->hub: dispatch one production agent-run to the Rust loop
     /// over the long-lived sealed WS session. **WS-transport substrate (S-A) for
     /// the executeRun-replacement.** This slice defines ONLY the wire shape — it
