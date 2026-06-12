@@ -1,0 +1,70 @@
+#!/bin/sh
+# rust-agent-run-ws-server-run.sh — STAGED S6 EDIT (slice-6 live-activation infra, DARK/STAGED).
+#
+# ============================ DARK — NOT APPLIED ============================
+# This is the STAGED S6 form of the agent-run WS server's key-delivery wrapper. It is
+# NOT the live wrapper and is NOT applied by this slice. It exists in the PR so the
+# operator can diff it against the live wrapper at ~/.friday/launchd/rust-agent-run-ws-server-run.sh
+# and, at the slice-6 GO (gated on O-2, the operator signing-seed + verify-key provision),
+# install it by hand. Until then the live wrapper is unchanged and S6 stays DARK.
+#
+# WHAT THIS ADDS over the live wrapper (exactly two `export` lines before `exec`):
+#   * FRIDAY_AGENT_RUN_CONTROL_VIA_RUST=1
+#       Enables the on-wire run-CONTROL plane in hub_agent_run_server (the S6 pause/resume
+#       path). With it unset/0 the server emits the flag-OFF shape (no on-wire control);
+#       with it =1 the server reads it (see hub_agent_run_server.rs AGENT_RUN_CONTROL_ENABLED_ENV)
+#       and ENABLES the run-control plane at boot.
+#   * FRIDAY_OPERATOR_VK_PATH="$HOME/.friday/operator-approval.vk"
+#       Names the operator's PUBLIC Ed25519 verify-key FILE (64-hex). HubRuntime::live reads it
+#       via operator_vk::provision_operator_vk_from_env. The hub holds ONLY the verify key — never
+#       a signing key. UNSET ⇒ fail-closed (protected actions Pause). SET-but-missing/malformed ⇒
+#       a HARD boot error (refuse-to-boot) — by design, so a broken provision never silently
+#       degrades to "no key / always pause".
+#
+# OPERATOR PREREQUISITE (O-2 — provisioned SEPARATELY, off this PR):
+#   The .vk file does NOT exist until the operator provisions it. Using the isolated operator
+#   signer (friday-operator-sign, KEK from FRIDAY_OPERATOR_SIGNER_MASTER / ~/.friday/operator-signer.key
+#   per #671 — a master the Hub CANNOT derive, INV-6), the operator:
+#     1. provisions the 32-byte Ed25519 SIGNING seed into the isolated operator-signer SecureStore
+#        (the PRIVATE seed lives ONLY with the operator, off-box; never in this wrapper/plist);
+#     2. writes the PUBLIC verify key (64-hex) to ~/.friday/operator-approval.vk (NOT secret, but
+#        operator-controlled).
+#   Only after BOTH exist may this staged wrapper be installed (else the server refuses to boot).
+#   NEITHER the signing seed NOR the verify key is embedded here — only the .vk file PATH.
+#
+# HOW TO APPLY AT GO (operator, by hand — NOT this slice):
+#   cp scripts/ops/launchd/rust-agent-run-ws-server-run.sh.s6-staged \
+#      ~/.friday/launchd/rust-agent-run-ws-server-run.sh
+#   chmod 0700 ~/.friday/launchd/rust-agent-run-ws-server-run.sh
+#   launchctl kickstart -k "gui/$UID/com.friday.rust-agent-run-ws-server"
+#   # VERIFY stderr shows: "hub_agent_run_server: on-wire run-CONTROL plane ENABLED
+#   #                       (FRIDAY_AGENT_RUN_CONTROL_VIA_RUST)" and a clean boot (no OperatorVk hard-error).
+# ROLLBACK: restore the snapshotted original wrapper (no S6 exports) + kickstart -k → S6-dark.
+#
+# Everything BELOW this banner is byte-identical to the live wrapper EXCEPT the two new export
+# lines (marked "# S6 EDIT") inserted immediately before `exec`.
+set -eu
+ENV_FILE="$HOME/.config/friday/phase24-live-channels.env"
+if [ ! -r "$ENV_FILE" ]; then
+  echo "rust-agent-run-ws-server-run: env file missing/unreadable" >&2
+  exit 2
+fi
+# Extract only the one needed key; never echo values.
+FRIDAY_DEEPSEEK_API_KEY="$(
+  set -a
+  . "$ENV_FILE" >/dev/null 2>&1
+  printf %s "${FRIDAY_DEEPSEEK_API_KEY:-${DEEPSEEK_API_KEY:-}}"
+)"
+if [ -z "$FRIDAY_DEEPSEEK_API_KEY" ]; then
+  echo "rust-agent-run-ws-server-run: DeepSeek key missing in env file" >&2
+  exit 2
+fi
+export FRIDAY_DEEPSEEK_API_KEY
+export FRIDAY_AGENT_RUN_CONTROL_VIA_RUST=1                          # S6 EDIT: on-wire run-CONTROL + pause/resume
+export FRIDAY_OPERATOR_VK_PATH="$HOME/.friday/operator-approval.vk" # S6 EDIT: operator PUBLIC verify key file (O-2)
+exec /Users/jarvis/Projects/Friday/rust-core/target/release/hub_agent_run_server \
+  --workspace /Users/jarvis/.friday/agent-run-workspace \
+  --db "/Users/jarvis/Library/Application Support/Friday/state/rust-hub.sqlite" \
+  --port 48750 \
+  --owner admin-001 \
+  --store-dir /Users/jarvis/.friday/agent-run-securestore
