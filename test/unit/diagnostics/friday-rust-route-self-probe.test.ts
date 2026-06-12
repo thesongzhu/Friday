@@ -249,16 +249,17 @@ describe("isRetryableConnectionFailure (spend-safe boot-race gate)", () => {
   }
 
   it("is TRUE for undici TypeError('fetch failed') with a pre-connect errno cause", () => {
-    for (const code of ["ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN"]) {
+    for (const code of ["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"]) {
       expect(isRetryableConnectionFailure(fetchFailed(code))).toBe(true);
     }
   });
 
-  it("is FALSE for a TypeError without a connection-level cause code", () => {
+  it("is FALSE for a TypeError without a connection-level cause code, and for ECONNRESET (can be mid-stream → run may have started server-side)", () => {
     expect(isRetryableConnectionFailure(new TypeError("fetch failed"))).toBe(false);
     const other = new TypeError("fetch failed");
     (other as { cause?: unknown }).cause = { code: "ERR_SOMETHING_ELSE" };
     expect(isRetryableConnectionFailure(other)).toBe(false);
+    expect(isRetryableConnectionFailure(fetchFailed("ECONNRESET"))).toBe(false);
   });
 
   it("is FALSE for a generic Error, an AbortError, and a plain ECONNREFUSED-message Error", () => {
