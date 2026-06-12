@@ -296,9 +296,12 @@ export const RUST_ROUTE_DIAGNOSTIC_CONNECT_RETRY_BACKOFF_MS = 500;
  * fires before the hub HTTP server's `listen()` has finished accepting on 127.0.0.1:<port>).
  *
  * undici/Node surface this as a `TypeError: fetch failed` whose `cause.code` is a connection-level
- * errno — `ECONNREFUSED` (server not listening yet), or the closely-related `ECONNRESET` /
- * `ENOTFOUND` / `EAI_AGAIN`. In ALL of those the request never reached the agent-run handler, so no
- * run was started and a retry cannot double-spend.
+ * errno. We retry ONLY `ECONNREFUSED` (server not listening yet — the actual boot-race symptom: no
+ * listener → kernel RST before any request bytes leave, so the run never started) plus `ENOTFOUND` /
+ * `EAI_AGAIN` (DNS-resolution failures that are pre-connection and cannot occur on the numeric
+ * loopback host anyway). We deliberately do NOT retry `ECONNRESET`: a reset can arrive MID-STREAM
+ * (after the request was sent — e.g. a hub crash like SQLITE_BUSY), meaning the agent run may already
+ * have started server-side and a retry would double-spend.
  *
  * It deliberately does NOT match AbortError/timeout (the run may have already started server-side →
  * retrying could double-spend) nor any non-2xx HTTP status (the server WAS reached). Those are
@@ -313,7 +316,6 @@ export function isRetryableConnectionFailure(err: unknown): boolean {
     ? (cause as { code?: unknown }).code
     : undefined;
   return code === "ECONNREFUSED"
-    || code === "ECONNRESET"
     || code === "ENOTFOUND"
     || code === "EAI_AGAIN";
 }
