@@ -1930,6 +1930,14 @@ fn message_kind_name(m: &friday_protocol::Message) -> &'static str {
         // dispatches them (the UI reads them directly over the sealed-WS read server, not via FFI).
         M::WorkbenchProjectionRequest { .. } => "WorkbenchProjectionRequest",
         M::WorkbenchProjectionSnapshot { .. } => "WorkbenchProjectionSnapshot",
+        // S-R2/S-R3 — the DARK sealed-WS READ-seam sibling projection kinds (run-readback +
+        // providers-doctor). NAMED here for the same reason as S-R1: nothing on the FFI surface
+        // constructs/dispatches them (the UI reads them directly over the sealed-WS read server),
+        // but naming them keeps this match exhaustive and carries the real kind in the truth label.
+        M::RunReadbackRequest { .. } => "RunReadbackRequest",
+        M::RunReadbackSnapshot { .. } => "RunReadbackSnapshot",
+        M::ProvidersDoctorRequest { .. } => "ProvidersDoctorRequest",
+        M::ProvidersDoctorSnapshot { .. } => "ProvidersDoctorSnapshot",
         // WS-transport substrate (S-A..S-F) message kinds. Still DARK on the FFI
         // surface (nothing here constructs or dispatches them), but they are
         // NAMED so the truth label carries the real kind — and so this match

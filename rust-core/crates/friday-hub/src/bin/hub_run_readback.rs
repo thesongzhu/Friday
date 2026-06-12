@@ -39,8 +39,7 @@
 use std::env;
 use std::path::Path;
 
-use friday_storage::agent_run_read::{db_wide_token_totals, get_run_summary, list_event_kinds};
-use friday_storage::audit::verify_audit_chain;
+use friday_hub::run_readback_projection::project_run_readback;
 use friday_storage::Db;
 use serde_json::json;
 
@@ -70,11 +69,11 @@ fn main() {
                 "ok": false,
                 "error_kind": err.kind,
             });
-            // Defense-in-depth: route the error payload through the SAME guard as the
-            // success path (fail closed if a marker ever leaked). `error_kind` is a
-            // static closed-vocab token today, so this never suppresses output.
+            // Defense-in-depth: route the error payload through the SAME shared guard as the
+            // success path (fail closed if a marker ever leaked). `error_kind` is a static
+            // closed-vocab token today, so this never suppresses output.
             let rendered = payload.to_string();
-            if reject_forbidden_output(&rendered).is_ok() {
+            if friday_hub::run_readback_projection::reject_forbidden_output(&rendered).is_ok() {
                 println!("{rendered}");
             }
             eprintln!("hub_run_readback_unavailable: {}", err.kind);
@@ -95,52 +94,25 @@ fn run() -> Result<String, ReadbackError> {
     // Read-only open: a readback can NEVER mutate an operator DB just because TS asks.
     let db = Db::open_hub_readonly(&db_path).map_err(|_| ReadbackError::new("open_failed"))?;
 
-    let summary = get_run_summary(db.conn(), &run_id)
-        .map_err(|_| ReadbackError::new("read_failed"))?
-        .ok_or(ReadbackError::new("run_not_found"))?;
+    // S-R2: the refs-only projection (state/loop-status/event-kinds/counts + DB-WIDE token totals,
+    // with the forbidden-output guard run INSIDE) is the SHARED library fn so this bin and the DARK
+    // read-projection server cannot drift. Map the projection's coarse error string back to this
+    // bin's exact error-kind vocabulary (so its stderr/exit contract is unchanged).
+    let snapshot = project_run_readback(&db, &run_id).map_err(map_projection_error)?;
+    serde_json::to_string(&snapshot).map_err(|_| ReadbackError::new("serialize_failed"))
+}
 
-    let event_kinds =
-        list_event_kinds(db.conn(), &run_id).map_err(|_| ReadbackError::new("read_failed"))?;
-
-    let loop_status_derived = derive_loop_status(&event_kinds);
-    let turn_count = event_kinds
-        .iter()
-        .filter(|kind| kind.starts_with("plan."))
-        .count();
-    let executed_tool_count = event_kinds
-        .iter()
-        .filter(|kind| kind.starts_with("tool.executed:"))
-        .count();
-
-    // Audit chain verification over the readback DB (a bool, never the rows).
-    let audit_chain_verified = verify_audit_chain(db.conn()).is_ok();
-
-    // DB-wide token totals (NOT run-attributable — see module docs). Ints only.
-    let totals = db_wide_token_totals(db.conn()).map_err(|_| ReadbackError::new("read_failed"))?;
-
-    let payload = json!({
-        "truth_label": "rust_wired_dev",
-        "proof_only": true,
-        "ok": true,
-        "run_id": summary.run_id,
-        "run_state": summary.state,
-        "created_at_ms": summary.created_at,
-        "updated_at_ms": summary.updated_at,
-        "loop_status_derived": loop_status_derived,
-        "turn_count": turn_count,
-        "executed_tool_count": executed_tool_count,
-        "event_count": event_kinds.len(),
-        "event_kinds": event_kinds,
-        "audit_chain_verified": audit_chain_verified,
-        "db_wide_token_prompt_total": totals.prompt,
-        "db_wide_token_completion_total": totals.completion,
-        "db_wide_token_total": totals.total,
-    });
-
-    let rendered =
-        serde_json::to_string(&payload).map_err(|_| ReadbackError::new("serialize_failed"))?;
-    reject_forbidden_output(&rendered)?;
-    Ok(rendered)
+/// Map the shared projection's coarse error string into this bin's `&'static str` error-kind
+/// vocabulary so the bin's stderr/exit-2 contract is byte-unchanged from before the extraction.
+fn map_projection_error(err: String) -> ReadbackError {
+    let kind = match err.as_str() {
+        "run_not_found" => "run_not_found",
+        "serialize_failed" => "serialize_failed",
+        _ if err.starts_with("forbidden marker") => "output_guard",
+        // "read_failed" and any other coarse read/serialize failure.
+        _ => "read_failed",
+    };
+    ReadbackError::new(kind)
 }
 
 fn arg_value(args: &[String], name: &str) -> Option<String> {
@@ -153,48 +125,9 @@ fn arg_value(args: &[String], name: &str) -> Option<String> {
         })
 }
 
-/// Derive a coarse, refs-only loop-status LABEL from the ordered event kinds.
-///
-/// The readback opens the DB read-only and does NOT re-run the loop, so the status
-/// is reconstructed from terminal markers in the event log. Returns ONLY a fixed
-/// `&'static str` from a closed vocabulary — never any slice of an event kind — so
-/// no event-embedded text can leak through this label.
-fn derive_loop_status(kinds: &[String]) -> &'static str {
-    if kinds.iter().any(|kind| kind == "agent.finished") {
-        "finished"
-    } else if kinds.iter().any(|kind| kind.starts_with("agent.error:")) {
-        "errored"
-    } else if kinds.iter().any(|kind| kind == "agent.loop_bounded") {
-        "bounded"
-    } else if kinds.iter().any(|kind| kind.starts_with("tool.paused")) {
-        "paused"
-    } else if kinds.iter().any(|kind| kind.starts_with("tool.blocked")) {
-        "blocked"
-    } else if kinds.is_empty() {
-        "no_events"
-    } else {
-        "in_progress"
-    }
-}
-
-/// Defense-in-depth: refuse to print if any forbidden marker leaked into the
-/// refs-only projection. Mirrors `mission_workbench_projection` / `hub_run_task`.
-/// Note: relative filenames inside a `tool.executed:` kind are NOT forbidden —
-/// only absolute paths (`/Users/`, `/private/`) and secret markers are.
-fn reject_forbidden_output(rendered: &str) -> Result<(), ReadbackError> {
-    // Delegates to the single shared guard (common secret/path markers
-    // Authorization/Bearer/sk-/`/Users/`/`/private/`) and adds this bin's body-field
-    // marker. `"task"` (the run task body) must never appear (only run_id/state/labels
-    // do). Relative filenames inside a `tool.executed:` kind have no leading slash and
-    // remain permitted — including interior `etc`/`var`/`tmp`/`home` dir segments.
-    friday_hub::refs_guard::reject_forbidden_output(rendered, &["\"task\""])
-        .map_err(|_| ReadbackError::new("output_guard"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::{from_str, Value};
 
     #[test]
     fn arg_value_supports_space_and_equals_forms() {
@@ -210,76 +143,29 @@ mod tests {
     }
 
     #[test]
-    fn derive_loop_status_maps_terminal_markers_to_bounded_labels() {
+    fn map_projection_error_preserves_the_exact_error_kind_vocabulary() {
+        // The shared projection's coarse strings map back to this bin's stable `&'static str`
+        // error-kind vocab (so the bin's stderr/exit-2 contract is unchanged by the extraction).
         assert_eq!(
-            derive_loop_status(&["plan.none".into(), "agent.finished".into()]),
-            "finished"
-        );
-        // finished wins even if an error appears earlier (terminal success marker present).
-        assert_eq!(
-            derive_loop_status(&["agent.error:x".into(), "agent.finished".into()]),
-            "finished"
+            map_projection_error("run_not_found".into()).kind,
+            "run_not_found"
         );
         assert_eq!(
-            derive_loop_status(&["plan.none".into(), "agent.error:parse_error".into()]),
-            "errored"
+            map_projection_error("read_failed".into()).kind,
+            "read_failed"
         );
         assert_eq!(
-            derive_loop_status(&["plan.none".into(), "agent.loop_bounded".into()]),
-            "bounded"
+            map_projection_error("serialize_failed".into()).kind,
+            "serialize_failed"
         );
         assert_eq!(
-            derive_loop_status(&["tool.paused:requires_approval:write_file".into()]),
-            "paused"
+            map_projection_error("forbidden marker in projection: Bearer".into()).kind,
+            "output_guard"
         );
+        // An unknown coarse string fails closed to `read_failed` (never a panic / never a leak).
         assert_eq!(
-            derive_loop_status(&["tool.blocked:deny:reason".into()]),
-            "blocked"
-        );
-        assert_eq!(derive_loop_status(&[]), "no_events");
-        assert_eq!(derive_loop_status(&["plan.none".into()]), "in_progress");
-        // The returned label is always from the closed vocabulary (never an event slice).
-        let label = derive_loop_status(&["agent.error:LEAK_CANARY_modeltext".into()]);
-        assert_eq!(label, "errored");
-        assert!(!label.contains("LEAK_CANARY_modeltext"));
-    }
-
-    #[test]
-    fn forbidden_output_guard_blocks_task_body_and_secret_markers() {
-        assert!(reject_forbidden_output(r#"{"task":"raw run body"}"#).is_err());
-        assert!(reject_forbidden_output(r#"{"x":"Bearer abc"}"#).is_err());
-        assert!(reject_forbidden_output(r#"{"k":"/Users/jarvis/secret"}"#).is_err());
-        // A RELATIVE filename inside an event kind is allowed (not over-redacted).
-        assert!(reject_forbidden_output(
-            r#"{"event_kinds":["tool.executed:read 15 bytes from notes.md"],"ok":true}"#
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn refs_only_payload_shape_excludes_task_body() {
-        // Mirror the success payload shape and assert the refs-only contract holds.
-        let payload = json!({
-            "truth_label": "rust_wired_dev",
-            "proof_only": true,
-            "ok": true,
-            "run_id": "run-xyz",
-            "run_state": "awaiting_clarification",
-            "loop_status_derived": "finished",
-            "turn_count": 2,
-            "executed_tool_count": 1,
-            "event_count": 3,
-            "event_kinds": ["plan.none", "tool.executed:read 15 bytes from notes.md", "agent.finished"],
-            "audit_chain_verified": true,
-            "db_wide_token_total": 0,
-        });
-        let rendered = serde_json::to_string(&payload).unwrap();
-        assert!(reject_forbidden_output(&rendered).is_ok());
-        let parsed: Value = from_str(&rendered).unwrap();
-        assert_eq!(parsed["truth_label"], "rust_wired_dev");
-        assert!(
-            parsed.get("task").is_none(),
-            "must never carry the run task body"
+            map_projection_error("something_else".into()).kind,
+            "read_failed"
         );
     }
 }

@@ -186,8 +186,10 @@ pub fn parse_status(
     }
 }
 
-/// Detect a provider's auth readiness (installed + authenticated) via the probe.
-pub fn detect<P: ProviderProbe>(probe: &P, provider: Provider) -> ProviderAuthStatus {
+/// Detect a provider's auth readiness (installed + authenticated) via the probe. `?Sized` so a
+/// `&dyn ProviderProbe` trait object works (the DARK read-projection server threads the probe as a
+/// trait object through its dispatch — the concrete `CliProbe`/`MockProbe` still bind unchanged).
+pub fn detect<P: ProviderProbe + ?Sized>(probe: &P, provider: Provider) -> ProviderAuthStatus {
     parse_status(provider, probe.status(provider))
 }
 

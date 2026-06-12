@@ -317,6 +317,17 @@ pub mod sealed_ws;
 /// read-projection server share ONE implementation. No model call, no credential, read-only. DARK.
 pub mod workbench_projection;
 
+/// **S-R2** — the extracted run-readback projection library fn (refs-only, guard run INSIDE) so the
+/// one-shot `hub_run_readback` bin AND the DARK read-projection server share ONE implementation. No
+/// model call, no credential, read-only. Token totals are DB-WIDE, never run cost. DARK.
+pub mod run_readback_projection;
+
+/// **S-R3** — the extracted providers-doctor projection library fn (refs-only, guard run INSIDE) so
+/// the one-shot `hub_providers_detect` bin AND the DARK read-projection server share ONE
+/// implementation. NOT a DB read — runs each provider CLI's read-only status command (no model call,
+/// no quota, no credential read); provider lanes are conservatively `linked_only`. DARK.
+pub mod providers_doctor_projection;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,
