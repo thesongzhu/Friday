@@ -20,7 +20,12 @@ enum TestKeys {
 final class HomeViewModelTests: XCTestCase {
 
   /// A scripted read client — returns a refs-only snapshot or throws (honest-unavailable).
-  final class FakeReadClient: FridayRustReadClient {
+  ///
+  /// `@unchecked Sendable`: the package's `FridayRustReadClient` protocol is `Sendable`, but the
+  /// scripted `WorkbenchSnapshot` carries a non-`Sendable` `raw: [String: Any]` (the same reason
+  /// the package's own `SealedWSReadClient` is `@unchecked Sendable`). This fixture is a single
+  /// immutable `let` driven on one actor in the test, so the override is sound.
+  final class FakeReadClient: FridayRustReadClient, @unchecked Sendable {
     enum Script { case snapshot(WorkbenchSnapshot); case fail(FridayReadClientError) }
     let script: Script
     init(_ script: Script) { self.script = script }

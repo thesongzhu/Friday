@@ -49,21 +49,27 @@ final class FridaySession: ObservableObject {
   ///   without a live Hub. DEFAULT `false` ⇒ the REAL `SealedWSReadClient` (honest-unavailable
   ///   while the servers are dark). A real build NEVER passes `preview: true`.
   init(preview: Bool = false) {
-    // The device X25519 transport keypair. In production this is loaded from / generated into
-    // the device keychain (the device-pairing seam); a fresh ephemeral keypair here keeps the
-    // honest-unavailable default sound (a non-enrolled peer is refused — which is correct while
-    // the servers are dark).
-    let keypair = FridayCrypto.DeviceKeypair()
-    // The owner principal + endpoint come from the operator's paired-Hub config at runtime.
+    // SINGLE-PEER-TRAP SAFETY: the DEFAULT read client mints NO X25519 keypair, opens NO socket,
+    // and touches NO SecureStore — it is the no-key `HonestlyUnavailableReadClient`, which always
+    // renders the honest dark-server state. This deliberately does NOT generate a fresh peer key:
+    // the live read-projection store enrolls EXACTLY the master-derived peer (count=1), so minting
+    // any other key here would be wrong, and connecting at all is the slice-6 deferred AC. The
+    // master-derived LIVE read path (mirroring the desktop `RealReadClientFactory.makeLive` /
+    // `MasterKeyPeer` derivation) is deferred to slice-6 + the J2 device-pairing problem — a real
+    // phone has no host master key. On the simulator the honest-unavailable default is correct.
+    self.readClient = preview ? PreviewReadClient() : HonestlyUnavailableReadClient()
+
+    // The write client (Friday Chat read-WRITE / S6 surface) also has NO live transport wired
+    // (slice-6 deferred AC) ⇒ its default factory transport throws ⇒ honest-unavailable. Its
+    // transport keypair is an ephemeral X25519 SESSION key (transport identity only, NOT a
+    // signing key — INV-1) that NEVER reaches the live store because no socket is opened; it is
+    // confined to honest-unavailable construction. When slice-6 lands, inject a master-derived
+    // keypair + a live `NWConnection` transport here.
+    let writeKeypair = FridayCrypto.DeviceKeypair()
     let endpoint = FridayClientFactory.Endpoint(
       forwardedPrincipal: "principal:owner-device",
       agentRunControlViaRust: runControlEnabled)
-    // No live transport is wired (slice-6 deferred AC) ⇒ the default factory transport throws ⇒
-    // honest-unavailable. When slice-6 lands, inject a live `NWConnection` transport here.
-    self.readClient = preview
-      ? PreviewReadClient()
-      : FridayClientFactory.makeReadClient(keypair: keypair, endpoint: endpoint)
-    self.writeClient = FridayClientFactory.makeWriteClient(keypair: keypair, endpoint: endpoint)
+    self.writeClient = FridayClientFactory.makeWriteClient(keypair: writeKeypair, endpoint: endpoint)
     self.signer = MockOperatorSigner()
   }
 
@@ -132,7 +138,7 @@ struct RootView: View {
       .navigationDestination(isPresented: $chatOpen) {
         // The Friday Chat read-WRITE / S6 surface, driven by the session's REAL write client
         // + the operator-signer relay.
-        FridayChatScreen(session: session, online: homeVM.isOnline)
+        FridayChatScreen(session: session)
       }
     }
     .tint(MobileTheme.cyan)

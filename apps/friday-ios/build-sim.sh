@@ -66,6 +66,19 @@ xcrun --sdk iphonesimulator swiftc \
     -o "$APP/FridayShell"
 cp "$HERE/Info.plist" "$APP/Info.plist"
 
+# Bundle the FridayMobileShellCore resource bundle (the pet engine + v9 assets + mobile
+# pet-host.html, declared `.copy("PetResources")`) into the .app. `Bundle.module` (used by
+# `MobilePetScheme` to serve the pet over the `friday-pet://` scheme) resolves this bundle next
+# to the executable inside the .app — so the 155px v9 Hero Pet renders LOCALLY (zero token, no
+# network). Without this, the pet host page 404s its `/source/...` fetches and the canvas is blank.
+echo "== 2b. copy the pet resource bundle into the .app =="
+PET_BUNDLE="$SPMBIN/FridayMobileShell_FridayMobileShellCore.bundle"
+if [ ! -d "$PET_BUNDLE" ]; then
+  echo "ERROR: pet resource bundle not found at $PET_BUNDLE (did the .copy(\"PetResources\") build?)" >&2
+  exit 1
+fi
+cp -R "$PET_BUNDLE" "$APP/"
+
 echo "== 3. pick a simulator =="
 UDID="$(xcrun simctl list devices available | grep -Eo '\(([0-9A-F-]{36})\) \(Booted\)' | grep -Eo '[0-9A-F-]{36}' | head -1 || true)"
 if [ -z "$UDID" ]; then
@@ -78,6 +91,11 @@ open -a Simulator || true
 echo "== 4. install + launch + screenshot =="
 xcrun simctl install "$UDID" "$APP"
 xcrun simctl launch "$UDID" com.friday.shell
-sleep 4
+# Give the WKWebView time to load the host page over `friday-pet://`, fetch the bundled engine +
+# v9 assets, and start the canvas animation before the screenshot. Per the design CLAUDE.md hard
+# rule 5, the pet is verified by the RENDERED image (open $SHOT), not by code/bbox numbers — a
+# scheme/fetch bug yields a BLANK card (the host page sets window.__petError), so inspect the shot.
+sleep 6
 xcrun simctl io "$UDID" screenshot "$SHOT"
 echo "screenshot: $SHOT"
+echo "VERIFY: open the screenshot and confirm the 155px Hero Pet card shows the v9 DOG (not blank)."

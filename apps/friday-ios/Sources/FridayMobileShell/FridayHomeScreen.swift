@@ -18,14 +18,24 @@ struct FridayHomeScreen: View {
 
   var body: some View {
     ScrollView {
-      switch viewModel.state {
-      case .idle, .loading:
-        loadingView
-      case .loaded(let projection):
-        loadedView(projection)
-      case let .unavailable(reason):
-        UnavailableView(reason: reason)
+      VStack(spacing: 16) {
+        // The 155px pure-dog Hero Pet card ALWAYS anchors Home (locked: petProminence = heroPet
+        // on Friday Home, mobile-gallery.html `heroBlock()`). It is a LOCAL, zero-token mood
+        // companion — independent of the read seam — so it renders regardless of read state
+        // (loading / loaded / honest-unavailable). It carries NO status text/badges; the honest
+        // read-seam status truth lives in the state-driven content below.
+        HeroPet().padding(.top, 6)
+
+        switch viewModel.state {
+        case .idle, .loading:
+          loadingView
+        case .loaded(let projection):
+          loadedContent(projection)
+        case let .unavailable(reason):
+          UnavailableView(reason: reason)
+        }
       }
+      .padding(16)
     }
     .background(MobileTheme.backgroundWarmOffWhite.ignoresSafeArea())
   }
@@ -37,24 +47,20 @@ struct FridayHomeScreen: View {
         .font(.footnote)
         .foregroundStyle(MobileTheme.textSecondary)
     }
-    .frame(maxWidth: .infinity, minHeight: 320)
+    .frame(maxWidth: .infinity, minHeight: 160)
   }
 
+  /// The state-driven Home content BELOW the always-present Hero Pet card. Refs-only (INV-5);
+  /// truth labels ride AS-IS; never a fabricated ready view.
   @ViewBuilder
-  private func loadedView(_ projection: HomeProjection) -> some View {
-    VStack(spacing: 16) {
-      // Hero Pet — mood companion; status shown honestly below.
-      HeroPet(online: viewModel.isOnline).padding(.top, 6)
-
-      // Honest status banner — any stale/offline/error label rides AS truth.
-      if !projection.statusLabels.isEmpty {
-        StatusBanner(labels: projection.statusLabels)
-      }
-
-      statusCard(projection)
-      workItemsCard(projection)
+  private func loadedContent(_ projection: HomeProjection) -> some View {
+    // Honest status banner — any stale/offline/error label rides AS truth.
+    if !projection.statusLabels.isEmpty {
+      StatusBanner(labels: projection.statusLabels)
     }
-    .padding(16)
+
+    statusCard(projection)
+    workItemsCard(projection)
   }
 
   private func statusCard(_ projection: HomeProjection) -> some View {
@@ -154,7 +160,7 @@ struct UnavailableView: View {
         .multilineTextAlignment(.center)
     }
     .padding(28)
-    .frame(maxWidth: .infinity, minHeight: 320)
+    .frame(maxWidth: .infinity, minHeight: 200)
   }
 }
 
