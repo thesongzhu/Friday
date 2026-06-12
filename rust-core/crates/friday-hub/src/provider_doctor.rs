@@ -64,7 +64,7 @@ impl ProviderDoctor {
     /// ([`Provider::all`]) — the onboarding default. Generic over the probe so
     /// production ships [`friday_providers::CliProbe`] and tests inject a mock
     /// through the identical path.
-    pub fn run<P: ProviderProbe>(probe: &P) -> Self {
+    pub fn run<P: ProviderProbe + ?Sized>(probe: &P) -> Self {
         Self::run_for(probe, Provider::all())
     }
 
@@ -72,7 +72,7 @@ impl ProviderDoctor {
     /// `--probe codex|claude|both`). Composes the existing parsed
     /// [`friday_providers::ProviderAuthStatus`] for each — no new probing beyond the
     /// `detect` the substrate already performs, no model call, no fallback.
-    pub fn run_for<P: ProviderProbe>(probe: &P, providers: &[Provider]) -> Self {
+    pub fn run_for<P: ProviderProbe + ?Sized>(probe: &P, providers: &[Provider]) -> Self {
         let statuses = providers.iter().map(|&p| detect(probe, p)).collect();
         Self { statuses }
     }

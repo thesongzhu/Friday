@@ -843,6 +843,82 @@ pub struct WorkbenchProjectionSnapshotWire {
     pub generated_at_ms: i64,
 }
 
+/// **S-R2** — client→read-server request for the run-readback read projection over the DARK
+/// sealed-WS READ seam. The sibling of [`WorkbenchProjectionRequestWire`]: a PURE READ (never a
+/// model/provider call) that runs the SAME owner-auth chain — `forwarded_principal` + `auth_proof`
+/// are verified against the sealed session (possession-of-session + per-handshake nonce +
+/// owner-allowlist), the proof bound to `request_id` (the read analog of `run_id`). The snapshot is
+/// released ONLY to the bound authenticated principal. DARK: nothing in production constructs this.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunReadbackRequestWire {
+    /// The run id to read back (refs-only summary: state/loop-status/event-kinds/counts). REQUIRED —
+    /// a run readback has no "first active" default (unlike the workbench's optional mission id).
+    pub run_id: String,
+    /// The TS-token-resolved / device-resolved principal conveyed by the peer. VERIFIED against the
+    /// sealed session before release — never trusted as an authority on its own.
+    pub forwarded_principal: String,
+    /// The sealed possession-of-session proof, bound to `request_id` + `forwarded_principal` in its
+    /// AAD (the read analog of the write `auth_proof`). Opaque bytes here.
+    pub auth_proof: Vec<u8>,
+    /// The opaque per-request id the `auth_proof` is bound to (the read analog of `run_id` for the
+    /// AUTH binding — distinct from the `run_id` being read). Binding the proof to a fresh request
+    /// id gives reads the IDENTICAL anti-lift guarantee writes have without a run.
+    pub request_id: String,
+}
+
+/// **S-R2** — read-server→client refs-only run-readback snapshot. Carries the refs-only projection
+/// JSON as a STRING (the shared `project_run_readback` fn's guarded, refs-only output;
+/// state/loop_status/event-kinds/counts + DB-WIDE token totals labelled as such — never as run
+/// cost). The body is sealed under the owner-only session by the transport before it leaves.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunReadbackSnapshotWire {
+    /// Echoes the request id this snapshot answers (correlation).
+    pub request_id: String,
+    /// The refs-only projection JSON (the shared `project_run_readback` output, serialized). Refs
+    /// only — run_id/state/loop_status/event-kinds/counts + DB-wide token totals, never a body. The
+    /// read server runs the forbidden-output guard (inside the projection fn) before sealing this.
+    pub projection_json: String,
+    /// Hub epoch-millis at which the snapshot was generated (lets the UI flag a stale snapshot).
+    pub generated_at_ms: i64,
+}
+
+/// **S-R3** — client→read-server request for the providers-doctor read projection over the DARK
+/// sealed-WS READ seam. The sibling of [`WorkbenchProjectionRequestWire`]: a PURE READ that runs
+/// the SAME owner-auth chain. Unlike the workbench/run-readback reads, the providers-doctor does NOT
+/// read the hub DB — it runs each provider CLI's OFFICIAL read-only status command (no prompt/send,
+/// no model call, no quota, no credential read). Owner-scoped + DARK like the rest.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProvidersDoctorRequestWire {
+    /// Which providers to probe: `codex` | `claude` | `both` (default `both` when absent). Mirrors
+    /// the `hub_providers_detect` bin's `--probe` selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe: Option<String>,
+    /// The TS-token-resolved / device-resolved principal conveyed by the peer. VERIFIED against the
+    /// sealed session before release — never trusted as an authority on its own.
+    pub forwarded_principal: String,
+    /// The sealed possession-of-session proof, bound to `request_id` + `forwarded_principal` in its
+    /// AAD (the read analog of the write `auth_proof`). Opaque bytes here.
+    pub auth_proof: Vec<u8>,
+    /// The opaque per-request id the `auth_proof` is bound to (the read analog of `run_id`).
+    pub request_id: String,
+}
+
+/// **S-R3** — read-server→client refs-only providers-doctor snapshot. Carries the refs-only
+/// projection JSON as a STRING (the shared `project_providers_doctor` fn's guarded output:
+/// per-provider `installed`/`authenticated` booleans + coarse static `detail` + `ready_providers`,
+/// each provider lane CONSERVATIVELY truth-labelled `linked_only` — never upgraded, never raw
+/// account info). The body is sealed under the owner-only session before it leaves.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProvidersDoctorSnapshotWire {
+    /// Echoes the request id this snapshot answers (correlation).
+    pub request_id: String,
+    /// The refs-only projection JSON (the shared `project_providers_doctor` output, serialized).
+    /// Booleans + labels only — never the raw `ProbeOutput` (CLI stdout/stderr), never account ids.
+    pub projection_json: String,
+    /// Hub epoch-millis at which the snapshot was generated.
+    pub generated_at_ms: i64,
+}
+
 /// First-slice message kinds (gate §4.2). Tagged by `kind`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
@@ -963,6 +1039,24 @@ pub enum Message {
     /// guard before this was built); truth labels ride as-is, never upgraded.
     WorkbenchProjectionSnapshot {
         snapshot: WorkbenchProjectionSnapshotWire,
+    },
+    /// **S-R2** — UI→DARK read-server: request the run-readback read projection over the sealed-WS
+    /// READ seam. PURE READ — no model/provider call. Owner-scoped (the SAME chain a write uses,
+    /// proof bound to `request_id`), snapshot released ONLY to the bound principal. DARK.
+    RunReadbackRequest { request: RunReadbackRequestWire },
+    /// **S-R2** — DARK read-server→UI: owner-sealed, refs-only run-readback snapshot
+    /// (state/loop-status/event-kinds/counts + DB-WIDE token totals labelled as such, never run
+    /// cost). The shared projection fn ran the forbidden-output guard; truth labels never upgraded.
+    RunReadbackSnapshot { snapshot: RunReadbackSnapshotWire },
+    /// **S-R3** — UI→DARK read-server: request the providers-doctor read projection over the
+    /// sealed-WS READ seam. PURE READ — runs each provider CLI's read-only status command only (no
+    /// prompt/send, no model call, no quota). Owner-scoped + DARK.
+    ProvidersDoctorRequest { request: ProvidersDoctorRequestWire },
+    /// **S-R3** — DARK read-server→UI: owner-sealed, refs-only providers-doctor snapshot
+    /// (installed/authenticated booleans + ready_providers, each provider lane conservatively
+    /// `linked_only` — never upgraded, never raw account info). Guard ran before sealing.
+    ProvidersDoctorSnapshot {
+        snapshot: ProvidersDoctorSnapshotWire,
     },
     /// trusted-TS-peer->hub: dispatch one production agent-run to the Rust loop
     /// over the long-lived sealed WS session. **WS-transport substrate (S-A) for

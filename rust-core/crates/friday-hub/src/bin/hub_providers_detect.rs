@@ -44,7 +44,7 @@
 use std::env;
 use std::ffi::OsString;
 
-use friday_hub::provider_doctor::ProviderDoctor;
+use friday_hub::providers_doctor_projection::project_providers_doctor;
 use friday_providers::{CliProbe, Provider, ProviderProbe};
 use serde_json::json;
 
@@ -141,46 +141,25 @@ fn render_detect<P: ProviderProbe>(
     probe: &P,
     providers: &[Provider],
 ) -> Result<String, BridgeError> {
-    let doctor = ProviderDoctor::run_for(probe, providers);
+    // S-R3: the refs-only JSON-shaping (per-provider installed/authenticated booleans + coarse
+    // `detail` + conservative `linked_only` truth label, `ready_providers`, any/all-authenticated,
+    // with the forbidden-output guard run INSIDE) is the SHARED library fn so this bin and the DARK
+    // read-projection server cannot drift. Map the projection's coarse error string back to this
+    // bin's error-kind vocabulary (so its stderr/exit-2 contract is unchanged).
+    let snapshot = project_providers_doctor(probe, providers).map_err(map_projection_error)?;
+    serde_json::to_string(&snapshot).map_err(|_| BridgeError::new("serialize_failed"))
+}
 
-    let detected: Vec<_> = doctor
-        .statuses
-        .iter()
-        .map(|status| {
-            json!({
-                "provider": status.provider.as_str(),
-                "installed": status.installed,
-                "authenticated": status.authenticated,
-                "detail": status.detail,
-            })
-        })
-        .collect();
-
-    // Aggregate onboarding-readiness signals from the doctor (derived per-provider,
-    // no-fallback): the safe `as_str` labels of the ready providers, plus the
-    // any/all-authenticated booleans. These carry no account info (provider labels +
-    // booleans only) and let an onboarding caller see what is usable without hiding
-    // which provider is down (the per-provider truth stays in `detected`).
-    let ready: Vec<&str> = doctor
-        .ready_providers()
-        .iter()
-        .map(|p| p.as_str())
-        .collect();
-
-    let payload = json!({
-        "truth_label": "rust_providers_detect",
-        "proof_only": true,
-        "ok": true,
-        "detected": detected,
-        "ready_providers": ready,
-        "any_authenticated": doctor.any_authenticated(),
-        "all_authenticated": doctor.all_authenticated(),
-    });
-
-    let rendered =
-        serde_json::to_string(&payload).map_err(|_| BridgeError::new("serialize_failed"))?;
-    reject_forbidden_output(&rendered)?;
-    Ok(rendered)
+/// Map the shared projection's coarse error string into this bin's `&'static str` error-kind
+/// vocabulary so the bin's stderr/exit-2 contract is byte-unchanged from before the extraction.
+fn map_projection_error(err: String) -> BridgeError {
+    let kind = if err.starts_with("forbidden marker") {
+        "output_guard"
+    } else {
+        // "serialize_failed" and any other coarse failure.
+        "serialize_failed"
+    };
+    BridgeError::new(kind)
 }
 
 fn arg_value(args: &[String], name: &str) -> Option<String> {
@@ -295,26 +274,31 @@ mod tests {
         let detected = v["detected"].as_array().expect("detected is an array");
         assert_eq!(detected.len(), 2);
 
-        // codex: installed + authenticated + logged_in.
+        // codex: installed + authenticated + logged_in + conservative linked_only label.
         assert_eq!(detected[0]["provider"], "codex");
         assert_eq!(detected[0]["installed"], true);
         assert_eq!(detected[0]["authenticated"], true);
         assert_eq!(detected[0]["detail"], "logged_in");
+        assert_eq!(detected[0]["truthLabel"], "linked_only");
 
-        // claude: installed but not authenticated.
+        // claude: installed but not authenticated, still linked_only.
         assert_eq!(detected[1]["provider"], "claude");
         assert_eq!(detected[1]["installed"], true);
         assert_eq!(detected[1]["authenticated"], false);
         assert_eq!(detected[1]["detail"], "not_logged_in");
+        assert_eq!(detected[1]["truthLabel"], "linked_only");
 
-        // EXACT shape: each entry has ONLY the four safe keys (no raw fields).
+        // EXACT shape: each entry has ONLY the five safe keys (no raw fields). S-R3 adds the
+        // conservative `truthLabel` (a provider lane is `linked_only`, never upgraded) so the bin
+        // and the DARK read server share one impl — the only shape change from R6's four keys.
         for entry in detected {
             let obj = entry.as_object().expect("entry is an object");
-            assert_eq!(obj.len(), 4, "entry must carry exactly 4 safe keys");
+            assert_eq!(obj.len(), 5, "entry must carry exactly 5 safe keys");
             assert!(obj.contains_key("provider"));
             assert!(obj.contains_key("installed"));
             assert!(obj.contains_key("authenticated"));
             assert!(obj.contains_key("detail"));
+            assert_eq!(obj["truthLabel"], "linked_only");
         }
 
         // R6: the aggregate onboarding-readiness signals from the hub-library
