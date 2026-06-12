@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  slice-6 LIVE-ACTIVATION INFRA (DARK/STAGED) — launchd plist TEMPLATE for the
+  long-lived Rust READ-PROJECTION WS server (the S-R1 `hub_read_projection_server`
+  bin). This is the read-seam analog of com.friday.rust-agent-run-ws-server.plist.
+
+  ============================ DARK — NOT LOADED ============================
+  This file is ADDED by the slice-6 live-activation INFRA slice but is NOT
+  installed and NOT loaded by it. The read-projection server is DEFAULT-OFF: it
+  has no production caller and is reachable ONLY when explicitly supervised. The
+  LIVE-FLIP — filling this template, copying the result into ~/Library/LaunchAgents,
+  and `launchctl bootstrap`-ing it — is the slice-6 OPERATOR gate (G2, the FREEZE
+  tripwire). Until then nothing here runs and NO UI needle moves. Built != flipped.
+
+  Operator decision encoded here (transport 2b on a 2c substrate): the UI direct
+  READ path is UI -> Rust over a SEPARATE sealed-WS read server on its OWN loopback
+  port (default 48751), distinct from the agent-run WRITE server (48750) and the TS
+  hub (3141). launchd OWNS supervision; RunAtLoad + KeepAlive give the single
+  persistent loopback read server the UI client connects to.
+
+  WHY SIMPLER THAN THE WRITE SERVER: the read server builds NO HubRuntime and NO
+  DeepSeekClient — it has NO model-call path and holds NO provider credential, and
+  it opens the hub DB READ-ONLY. So unlike the write server it needs:
+    * NO DeepSeek key, hence NO key-delivery wrapper is REQUIRED (a direct-exec
+      plist boots fine). A thin run-wrapper is still provided (run-wrapper template
+      below) ONLY for FRIDAY_MASTER_KEY env-file delivery parity when
+      ~/.friday/master.key is not used; in the common path it is unnecessary.
+    * NO --workspace arg (it never runs a read-only loop; it serves projections).
+
+  PLACEHOLDERS to fill at live-flip (slice 6), NOT real values:
+    __REPO_DIR__            absolute repo root (e.g. /Users/<you>/Projects/Friday)
+    __RUST_SERVER_BIN__     prebuilt hub_read_projection_server path
+    __HUB_DB_PATH__         the Rust Hub SQLite the read projections read (READ-ONLY;
+                            the SAME DB the write server + TS hub use)
+    __WS_PORT__             the loopback read port (default 48751; MUST be concrete +
+                            non-zero + free + != the write server port + != the TS
+                            hub port). The bin binds 127.0.0.1 ONLY (never the LAN).
+                            CRITICAL: the bin's --port DEFAULTS TO 0 (OS-assigned) if
+                            omitted — a launchd-supervised server a client dials by
+                            number MUST pass an explicit non-zero port.
+    __OWNER_PRINCIPAL__     the bound-owner allowlist entry (--owner). An EMPTY/missing
+                            --owner ⇒ an EMPTY owner allowlist ⇒ EVERY read REJECTED
+                            (fail-closed). Mirror the write server's bound owner
+                            (e.g. admin-001).
+    __STORE_DIR__           the PERSISTENT FileSecureStore dir the peer-pubkey allowlist
+                            lives in (--store-dir). MUST be the SAME dir the operator
+                            enrolls the UI peer pubkey into via hub_read_seam_enroll
+                            (default ~/.friday/agent-run-securestore — the SAME store
+                            the write server uses; the desktop UI peer == the write
+                            peer). A mismatch ⇒ the server boots, finds no allowlist,
+                            and FAILS CLOSED (peer_allowlist_unavailable). NOTE:
+                            launchd does NOT expand `~`; the filled value MUST be
+                            an absolute path.
+    __LOG_DIR__             ~/.friday/launchd (matches install-friday-launchagent.sh)
+
+  SECRET REDACTION: no secret/token/key is placed in this plist or its log paths.
+  The server reads its OWN master key from ~/.friday/master.key (or FRIDAY_MASTER_KEY
+  in the operator's own login session — NOT pinned here) and derives the FileSecureStore
+  KEK itself; no key bytes ever appear in this plist or on the command line. The
+  per-session sealed-WS key is derived per-handshake from the enrolled peer pubkey —
+  never an env var. RUST_LOG is pinned low and FRIDAY_LOG_REDACT_SECRETS=true so the
+  server logs carry NO secret material; logs go to dedicated dark log files.
+
+  NOTE ON FRIDAY_MASTER_KEY_SOURCE: there is deliberately NO such env key here. The
+  Rust read server's key_source::read_master_key reads FRIDAY_MASTER_KEY (env) OR
+  ~/.friday/master.key (file) — it does NOT consult the macOS keychain. A
+  FRIDAY_MASTER_KEY_SOURCE=keychain env would be INERT (ignored by the bin); omitting
+  it avoids a misleading no-op.
+
+  NO ROUTE FLAG / NO HUB FLAG: there is NO hub-side env flip that turns the read seam
+  "live". Per the operator-locked 2b topology the read path is activated by (a)
+  installing THIS LaunchAgent and (b) the UI presenting an allowlisted peer key. The
+  read server reads no route flag; do NOT add one here.
+
+  ENV ENTRIES BELOW: RUST_LOG / RUST_BACKTRACE / FRIDAY_LOG_REDACT_SECRETS ARE
+  load-bearing (they shape the process's logging). FRIDAY_READ_PROJECTION_WS_* are
+  in-file documentation mirroring the CLI args and are inert for this bin (it reads
+  port/db/store/owner from ProgramArguments, not env).
+
+  HEALTH / STATUS: KeepAlive(SuccessfulExit=false) restarts the server if it exits
+  abnormally; ThrottleInterval bounds the restart rate. The server binds loopback
+  and fails closed (exits non-zero, code 2) when it cannot bind / source the master
+  key / load the peer allowlist / open the DB read-only — launchd then surfaces the
+  failure rather than masking it. A UI client treats an unreachable read server as
+  fail-closed (no snapshot), never a silent/unauthenticated path.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.friday.read-projection-server</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__RUST_SERVER_BIN__</string>
+    <string>--db</string>
+    <string>__HUB_DB_PATH__</string>
+    <string>--port</string>
+    <string>__WS_PORT__</string>
+    <string>--owner</string>
+    <string>__OWNER_PRINCIPAL__</string>
+    <!-- The PERSISTENT FileSecureStore the peer-pubkey allowlist is read from at boot.
+         The read server resolves the allowlist from this dir; it MUST be the SAME dir
+         hub_read_seam_enroll wrote the UI peer pubkey into. The bin defaults to
+         key_source::default_store_dir() (~/.friday/agent-run-securestore) when omitted,
+         but we pin it EXPLICITLY here so the supervised server and the enroll CLI can
+         never silently disagree. NO secret is passed on the command line — only the dir
+         PATH (the KEK is derived from the master key the server reads itself). -->
+    <string>--store-dir</string>
+    <string>__STORE_DIR__</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO_DIR__</string>
+
+  <!-- launchd owns supervision: start at load, keep the single read server alive. -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <!-- Restart only on abnormal exit; a clean shutdown stays down (health gate). -->
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- Loopback-only WS endpoint (informational; the bin reads --port from args). -->
+    <key>FRIDAY_READ_PROJECTION_WS_HOST</key>
+    <string>127.0.0.1</string>
+    <key>FRIDAY_READ_PROJECTION_WS_PORT</key>
+    <string>__WS_PORT__</string>
+    <!-- SECRET-REDACTED logging: low log level + explicit secret redaction; no backtrace. -->
+    <key>RUST_LOG</key>
+    <string>warn</string>
+    <key>RUST_BACKTRACE</key>
+    <string>0</string>
+    <key>FRIDAY_LOG_REDACT_SECRETS</key>
+    <string>true</string>
+  </dict>
+
+  <!-- Dedicated dark log files (secret-redacted by the env above); never the shell tty. -->
+  <key>StandardOutPath</key>
+  <string>__LOG_DIR__/friday-read-projection-server.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG_DIR__/friday-read-projection-server.stderr.log</string>
+</dict>
+</plist>

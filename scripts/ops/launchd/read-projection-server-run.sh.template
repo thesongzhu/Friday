@@ -1,0 +1,50 @@
+#!/bin/sh
+# read-projection-server-run.sh — OPTIONAL run-wrapper TEMPLATE for
+# com.friday.read-projection-server (slice-6 live-activation infra, DARK/STAGED).
+#
+# ============================ DARK — NOT INSTALLED ============================
+# This is a TEMPLATE with sed placeholders, NOT an installed wrapper. The
+# build-and-install-read-projection-server.sh tool FILLS it (only when you pass
+# --master-key-env-file) and STAGES the result; the operator installs the filled
+# copy by hand at the slice-6 GO. Nothing here runs until then.
+#
+# WHEN YOU NEED THIS WRAPPER (most installs DO NOT):
+#   The read-projection server reads its master key from ~/.friday/master.key (or
+#   FRIDAY_MASTER_KEY in its own login session). It needs NO DeepSeek key and NO
+#   provider credential (it builds no HubRuntime / DeepSeekClient and opens the DB
+#   read-only) — so a DIRECT-EXEC plist boots fine in the common path, and this
+#   wrapper is UNNECESSARY. Use it ONLY when ~/.friday/master.key is not present
+#   for the supervised login user and you must deliver FRIDAY_MASTER_KEY at runtime
+#   from an operator-approved 0600/0400 env file instead (the same no-secret-in-plist
+#   discipline the write server's wrapper uses for its DeepSeek key).
+#
+# FAIL-CLOSED: missing/unreadable env file, or env file without a non-empty
+# FRIDAY_MASTER_KEY → exit 2 WITHOUT starting the server (matches the server's own
+# refuse-to-boot posture; launchd KeepAlive surfaces the failure instead of masking
+# it). No secret is stored in this script or in the plist — only the env-file PATH.
+#
+# ROTATION: edit the env file in place (keep mode 0600), then
+#   launchctl kickstart -k "gui/$UID/com.friday.read-projection-server"
+set -eu
+ENV_FILE='__MASTER_KEY_ENV_FILE__'
+if [ ! -r "$ENV_FILE" ]; then
+  echo "read-projection-server-run: master-key env file missing/unreadable" >&2
+  exit 2
+fi
+# Extract only the one needed key; never echo values.
+FRIDAY_MASTER_KEY="$(
+  set -a
+  # shellcheck source=/dev/null
+  . "$ENV_FILE" >/dev/null 2>&1
+  printf %s "${FRIDAY_MASTER_KEY:-}"
+)"
+if [ -z "$FRIDAY_MASTER_KEY" ]; then
+  echo "read-projection-server-run: FRIDAY_MASTER_KEY missing in env file" >&2
+  exit 2
+fi
+export FRIDAY_MASTER_KEY
+exec '__RUST_SERVER_BIN__' \
+  --db '__HUB_DB_PATH__' \
+  --port '__WS_PORT__' \
+  --owner '__OWNER_PRINCIPAL__' \
+  --store-dir '__STORE_DIR__'
