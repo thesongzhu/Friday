@@ -281,6 +281,7 @@ describe("createFridayAgentToolRegistry", () => {
         execute,
         cancel: vi.fn(),
       } as never,
+      allowTestOnlySkillRunExecution: true,
       skillRegistry: stubMcpRequiredSkillRegistry(),
       mcpAdapter: stubMcpAdapter(),
       getMcpServerAvailability: () => ({ available: false, promotionChannel: "shadow" }),
@@ -319,6 +320,7 @@ describe("createFridayAgentToolRegistry", () => {
         execute,
         cancel: vi.fn(),
       } as never,
+      allowTestOnlySkillRunExecution: true,
       skillRegistry: stubMcpRequiredSkillRegistry(),
       getSkillLifecycleStatus: (skillId) =>
         skillId === "mcp-skill" ? "not_installed" : undefined,

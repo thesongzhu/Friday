@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 import Database from "better-sqlite3";
 import { beforeEach, describe, it, expect, afterEach, vi } from "vitest";
@@ -47,6 +48,18 @@ function createTestChannelPlugin(kind = "testchannel"): {
   };
 }
 
+// Absolute path to the repo's real bundled skills dir (test file lives at
+// test/unit/hub/, so the repo root is three levels up). Used by the OF6 guard
+// proofs to register a REAL bundled shell skill (audit-shell-env-presence-probe)
+// so it RESOLVES through the workflow node executor and reaches the guarded
+// `invokeSkillForWorkflow` caller — an unregistered skillId would die at skill
+// resolution before the guard, proving nothing.
+const REPO_SKILLS_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../../skills",
+);
+const OF6_RESOLVABLE_SKILL_ID = "audit-shell-env-presence-probe";
+
 function sha256(content: string): string {
   return crypto.createHash("sha256").update(content).digest("hex");
 }
@@ -76,6 +89,43 @@ function makeChannelApprovedWorkflowGraph(
         },
       ],
       edges: [{ id: "edge-trigger-receipt", sourceNodeId: "trigger", targetNodeId: "receipt" }],
+    },
+    failurePolicy: { onFailure: "fail_fast", notifyUser: false },
+    tests: [],
+    checksum: "placeholder-checksum",
+  };
+  return {
+    ...graph,
+    checksum: sha256(JSON.stringify({ ...graph, checksum: "" })),
+  };
+}
+
+// OF6 method-level guard proof: a minimal published workflow whose single
+// post-trigger node is an `action` (skill) node. Running it drives the hub's
+// `invokeSkillForWorkflow` NON-route caller into the shared skill executor — the
+// path the OF6 guard fences. The skillId is ARBITRARY (not `ai-inference`), so
+// the guard must fail it closed when the skill-run flag is unset.
+function makeSingleSkillNodeWorkflowGraph(
+  skillId: string,
+  workflowId = "wf-placeholder",
+  versionId = "wv-placeholder",
+): FridayCompiledWorkflowGraphV2 {
+  const graph: FridayCompiledWorkflowGraphV2 = {
+    schemaVersion: "2.0",
+    workflowId,
+    workflowVersionId: versionId,
+    sourceSpecSchemaVersion: "1.0",
+    graph: {
+      nodes: [
+        { id: "trigger", type: "trigger", label: "Manual trigger", config: {} },
+        {
+          id: "skill-action",
+          type: "action",
+          label: "Run a skill via the workflow invoke path",
+          config: { skillId, args: {} },
+        },
+      ],
+      edges: [{ id: "edge-trigger-skill", sourceNodeId: "trigger", targetNodeId: "skill-action" }],
     },
     failurePolicy: { onFailure: "fail_fast", notifyUser: false },
     tests: [],
@@ -1372,5 +1422,100 @@ describe("createFridayHub", () => {
       }
     }
   }, 60_000);
+
+  // ─── TS Runtime Retirement — OF6 method-level fail-closed guard (Caller 2) ───
+  // Proves the workflow skill-invoke NON-route caller (invokeSkillForWorkflow)
+  // no longer relies on transitive upstream containment: with BOTH upstream
+  // run-execution flags ON but the skill-run flag UNSET, a workflow skill-node
+  // fails closed with TS_RUNTIME_SKILL_RUNS_RETIRED before reaching the shared
+  // arbitrary-code skill sink. A separate positive case proves the guard is
+  // flag-gated (test-oracle ON → past the guard).
+  it("OF6: a workflow skill-node fails closed (TS_RUNTIME_SKILL_RUNS_RETIRED) when the skill-run flag is UNSET even with the workflow + agent run flags ON", async () => {
+    hub = await createIsolatedHub({
+      // Point the bundled-skills root at the repo's real skills dir so the shell
+      // skill auto-installs (bundled origin) and RESOLVES through node execution.
+      skillDirs: [REPO_SKILLS_DIR, path.join(os.tmpdir(), "of6-managed-empty")],
+      allowTestOnlyWorkflowRunExecution: true,
+      allowTestOnlyAgentRunExecution: true,
+      // allowTestOnlySkillRunExecution intentionally UNSET → fail-closed.
+    });
+    await hub.start();
+
+    // owner/createdBy/startedBy left NULL — workflows.owner_user_id etc. are
+    // nullable FKs to users(id); no user row is needed for this guard proof.
+    const { workflow, version } = hub.workflowRuntime.crud.createWorkflowWithVersion(
+      {
+        slug: "of6-skill-node-failclosed",
+        name: "OF6 skill-node fail-closed proof",
+        description: "Single resolvable shell skill node to exercise the OF6 guard.",
+        tags: ["of6-skill-run-retirement"],
+      },
+      makeSingleSkillNodeWorkflowGraph(OF6_RESOLVABLE_SKILL_ID),
+      undefined,
+      "OF6 method-level guard local proof.",
+    );
+    const published = hub.workflowRuntime.crud.publishVersion(workflow.id, version.versionNumber);
+
+    const run = await hub.workflowRuntime.execution.startRun({
+      workflowId: workflow.id,
+      workflowVersionId: published.id,
+      triggerType: "manual",
+      triggerPayload: {},
+    });
+    const finalStatus = await waitForWorkflowRunStable(hub, run.id);
+    expect(finalStatus).not.toBe("completed");
+
+    const nodes = hub.workflowRuntime.execution.getRunNodes(run.id);
+    const skillNode = nodes.find((node) => node.nodeId === "skill-action");
+    expect(skillNode).toBeTruthy();
+    const errorBlob = JSON.stringify(skillNode?.error ?? {});
+    // The guard fired (the skill RESOLVED, then failed CLOSED) — proven by the
+    // verbatim retirement message, NOT a generic "not found". The node executor
+    // re-codes the thrown FridayDomainError as NODE_EXECUTION_FAILED but preserves
+    // the original fail-closed message, which is the load-bearing signature here.
+    expect(errorBlob).toContain("fail-closed");
+    expect(errorBlob).toContain("runtime ownership is being moved out of TypeScript");
+  }, 30_000);
+
+  it("OF6: a workflow skill-node proceeds past the guard when the test-oracle skill-run flag is set true", async () => {
+    hub = await createIsolatedHub({
+      skillDirs: [REPO_SKILLS_DIR, path.join(os.tmpdir(), "of6-managed-empty-on")],
+      allowTestOnlyWorkflowRunExecution: true,
+      allowTestOnlySkillRunExecution: true,
+    });
+    await hub.start();
+
+    const { workflow, version } = hub.workflowRuntime.crud.createWorkflowWithVersion(
+      {
+        slug: "of6-skill-node-flag-on",
+        name: "OF6 skill-node flag-on proof",
+        description: "Single resolvable shell skill node with the skill-run flag on.",
+        tags: ["of6-skill-run-retirement"],
+      },
+      makeSingleSkillNodeWorkflowGraph(OF6_RESOLVABLE_SKILL_ID),
+      undefined,
+      "OF6 method-level guard flag-on local proof.",
+    );
+    const published = hub.workflowRuntime.crud.publishVersion(workflow.id, version.versionNumber);
+
+    const run = await hub.workflowRuntime.execution.startRun({
+      workflowId: workflow.id,
+      workflowVersionId: published.id,
+      triggerType: "manual",
+      triggerPayload: {},
+    });
+    await waitForWorkflowRunStable(hub, run.id);
+
+    // With the flag on, the guard is BYPASSED: the node reaches the real shell
+    // executor (whatever its execution outcome). The retirement signature must
+    // be ABSENT — that distinguishes "guard bypassed" from "guard fired", proving
+    // the guard is flag-gated rather than a hard block.
+    const nodes = hub.workflowRuntime.execution.getRunNodes(run.id);
+    const skillNode = nodes.find((node) => node.nodeId === "skill-action");
+    expect(skillNode).toBeTruthy();
+    const errorBlob = JSON.stringify(skillNode?.error ?? {});
+    expect(errorBlob).not.toContain("TS_RUNTIME_SKILL_RUNS_RETIRED");
+    expect(errorBlob).not.toContain("runtime ownership is being moved out of TypeScript");
+  }, 30_000);
 
 });

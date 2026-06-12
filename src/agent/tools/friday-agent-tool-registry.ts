@@ -75,6 +75,13 @@ export interface CreateFridayAgentToolRegistryOptions {
   skillExecutor?: FridaySkillExecutor;
   skillRegistry?: FridaySkillRegistry;
   getSkillLifecycleStatus?: (skillId: string) => SkillLifecycleStatus | null | undefined;
+  /**
+   * TS Runtime Retirement — OF6 method-level guard for the agent `skill_run`
+   * tool (a NON-route caller of the arbitrary-code skill sink). Threaded into
+   * the skill tool's deps; default-undefined → OFF → fail-closed. Same flag as
+   * the skill route. See createFridayAgentSkillTool for the exemption details.
+   */
+  allowTestOnlySkillRunExecution?: boolean;
   workflowCrudService?: FridayWorkflowCrudService;
   workflowExecutionService?: FridayWorkflowExecutionService;
   memoryService?: FridayMemoryService;
@@ -203,6 +210,7 @@ export function createFridayAgentToolRegistry(
         skillRegistry: options.skillRegistry,
         listMcpServerReadiness,
         getSkillLifecycleStatus: options?.getSkillLifecycleStatus,
+        allowTestOnlySkillRunExecution: options?.allowTestOnlySkillRunExecution,
       }),
     );
   }

@@ -1,4 +1,5 @@
 import type { FridayAgentToolDefinition, FridayAgentToolResult } from "../model/friday-agent.types.js";
+import { FridayDomainError } from "#errors";
 import {
   canRunFridayBundledSystemNodeSkillWithoutGate,
   evaluateFridaySkillExecutionReadiness,
@@ -26,6 +27,19 @@ export interface CreateFridayAgentSkillToolDeps {
   skillRegistry?: FridaySkillRegistry;
   listMcpServerReadiness?: () => readonly FridayMcpServerReadiness[];
   getSkillLifecycleStatus?: (skillId: string) => SkillLifecycleStatus | null | undefined;
+  /**
+   * TS Runtime Retirement — OF6 method-level fail-closed guard. The agent
+   * `skill_run` tool is a NON-route caller that reaches the shared
+   * `skillExecutor.execute` arbitrary-code sink (shell/python/node) keyed by an
+   * ARBITRARY caller-supplied skillId. The public skill route is already fenced
+   * by `allowTestOnlySkillRunExecution` at friday-skill-routes.ts; this is the
+   * SAME flag for the whole skill-run retirement surface. Default-undefined →
+   * OFF → skill runs fail closed (the intended retired state in production).
+   * Only the test oracle (or a future Rust-owned entrypoint flip) sets it true.
+   * The `ai-inference` BYOK shortcut is exempt below (it short-circuits to the
+   * provider service inside the executor and never reaches the code sink).
+   */
+  allowTestOnlySkillRunExecution?: boolean;
 }
 
 // ─── Factory ───
@@ -50,6 +64,33 @@ export function createFridayAgentSkillTool(
       signal: AbortSignal,
     ): Promise<FridayAgentToolResult> {
       const skillId = readStringParam(args, "skillId", { required: true });
+
+      // ─── TS Runtime Retirement — OF6 method-level fail-closed guard ───
+      // This NON-route caller reaches the shared `skillExecutor.execute`
+      // arbitrary-code sink with a caller-supplied skillId. Fail closed unless
+      // the test oracle (or a future Rust-owned entrypoint) opts in via the same
+      // flag the skill route uses. EXEMPT `ai-inference`: that skillId
+      // short-circuits to the provider service inside the executor
+      // (friday-skill-executor.ts ai-inference shortcut) and returns BEFORE any
+      // shell/python/node sink — it is a fixed (non-arbitrary) BYOK path that
+      // must stay live, so guarding it would wrongly retire provider inference.
+      if (
+        skillId !== "ai-inference"
+        && deps.allowTestOnlySkillRunExecution !== true
+      ) {
+        throw new FridayDomainError(
+          "TS_RUNTIME_SKILL_RUNS_RETIRED",
+          "Skill run execution is fail-closed while runtime ownership is being moved out of TypeScript.",
+          {
+            httpStatus: 503,
+            details: {
+              classification: "fail_closed",
+              replacement: "rust_owned_skill_run_entrypoint_required",
+            },
+          },
+        );
+      }
+
       const timeoutMs =
         readNumberParam(args, "timeoutMs", { integer: true }) ??
         FRIDAY_AGENT_TOOL_TIMEOUT_MS;
