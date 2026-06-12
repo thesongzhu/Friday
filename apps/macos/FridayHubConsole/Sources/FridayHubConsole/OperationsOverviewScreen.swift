@@ -71,22 +71,29 @@ struct OperationsOverviewScreen: View {
   @ViewBuilder
   private func loadedView(_ snapshot: WorkbenchSnapshot) -> some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: 16) {
-        // Honest status banner — stale/offline/error labels render AS truth.
-        if !snapshot.statusLabels.isEmpty || !snapshot.runtimeFeedStatus.isHealthy {
-          StatusBanner(snapshot: snapshot)
-        }
-
-        missionCard(snapshot)
-        routeDecisionCard(snapshot)
-        workItemsCard(snapshot)
-        capabilityCard(snapshot)
-        receiptsCard(snapshot)
-        transcriptCard(snapshot)
-        memoryCard(snapshot)
-      }
-      .padding(20)
+      loadedContent(snapshot)
     }
+  }
+
+  /// The loaded card stack. Factored out of `ScrollView` so the visual-QA proof harness can
+  /// rasterize it directly (`ImageRenderer` does not expand a `ScrollView`'s lazy content).
+  @ViewBuilder
+  func loadedContent(_ snapshot: WorkbenchSnapshot) -> some View {
+    VStack(alignment: .leading, spacing: 16) {
+      // Honest status banner — stale/offline/error labels render AS truth.
+      if !snapshot.statusLabels.isEmpty || !snapshot.runtimeFeedStatus.isHealthy {
+        StatusBanner(snapshot: snapshot)
+      }
+
+      missionCard(snapshot)
+      routeDecisionCard(snapshot)
+      workItemsCard(snapshot)
+      capabilityCard(snapshot)
+      receiptsCard(snapshot)
+      transcriptCard(snapshot)
+      memoryCard(snapshot)
+    }
+    .padding(20)
   }
 
   private func missionCard(_ snapshot: WorkbenchSnapshot) -> some View {

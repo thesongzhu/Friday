@@ -29,10 +29,17 @@ let package = Package(
       path: "Sources/FridayHubConsoleCore"
     ),
     // Executable: the SwiftUI shell (three-pane Hub Console + Operations Overview).
+    // `PetResources/` is the design-handoff pet engine + v9 assets, copied VERBATIM and
+    // declared as a `.copy` resource so the folder layout (`/source/pet/...`) is preserved 1:1
+    // in the bundle — the `PetSchemeHandler` serves it to the Companion WKWebView over the
+    // local `friday-pet://` scheme (zero token, no network, assets unmodified).
     .executableTarget(
       name: "FridayHubConsole",
       dependencies: ["FridayHubConsoleCore"],
-      path: "Sources/FridayHubConsole"
+      path: "Sources/FridayHubConsole",
+      resources: [
+        .copy("PetResources"),
+      ]
     ),
     .testTarget(
       name: "FridayHubConsoleCoreTests",

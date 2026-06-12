@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<!--
+  Friday desktop Inspector→Companion pet host (D-PR1).
+
+  Loaded by `CompanionPetView` (WKWebView) via the custom `friday-pet://` scheme so the
+  engine's ABSOLUTE `/source/...` fetches resolve same-origin to bundled resources (see
+  `PetSchemeHandler.swift`). This is the EXACT locked design call from the design handoff's
+  desktop gallery:
+
+      FridayPetStage.createStage(stage,
+        { surface:"desktop", height:176, behavior:"locked-core-only", ecoAllowlist:[] })
+
+  HARD RULES (design CLAUDE.md): zero token / pure local CSS-JS-canvas (no model calls, images
+  never leave the machine), assets bundled VERBATIM (not modified/recolored/rescaled), ONE size.
+  The CSS below is copied from `html/desktop-gallery.html` so layout/anchoring match the gallery.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+  }
+  :root { --r-md: 12px; }
+  .desktop-pet-stage {
+    position: relative;
+    width: 100%;
+    height: 176px;
+    overflow: hidden;
+    border-radius: var(--r-md);
+    background: #eef3e8;
+    border: 0;
+    box-shadow: none;
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .friday-pet-stage { position: relative; overflow: hidden; }
+  .friday-pet-actor {
+    --face: 1;
+    --foot-css-x: 50%;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 190px;
+    height: 160px;
+    transform-origin: var(--foot-css-x) 100%;
+    transform: scaleX(var(--face));
+    will-change: left, transform;
+  }
+  .friday-pet-actor canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  .friday-pet-actor.boing { animation: fridayPetBoing .36s ease-out; }
+  @keyframes fridayPetBoing {
+    0% { transform: scaleX(var(--face)) scaleY(1); }
+    30% { transform: scaleX(var(--face)) scaleY(1.05); }
+    100% { transform: scaleX(var(--face)) scaleY(1); }
+  }
+  .friday-pet-fx {
+    position: absolute;
+    left: 50%;
+    top: 4px;
+    width: 120px;
+    height: 82px;
+    transform: translateX(-50%);
+    pointer-events: none;
+    color: #e33131;
+  }
+  .friday-pet-fx span {
+    position: absolute;
+    left: 50%;
+    bottom: 0;
+    font-size: 18px;
+    line-height: 1;
+    color: #e33131;
+    text-shadow: 0 1px 0 #fff5f2, 0 2px 5px rgba(165,35,35,.18);
+    opacity: 0;
+    transform: translate(-50%, 8px) scale(.55);
+  }
+  .friday-pet-fx.go span { animation: fridayPetHeartFloat 1.15s ease-out both; }
+  .friday-pet-fx.go span:nth-child(2) { animation-delay: .05s; }
+  .friday-pet-fx.go span:nth-child(3) { animation-delay: .11s; }
+  .friday-pet-fx.go span:nth-child(4) { animation-delay: .17s; }
+  .friday-pet-fx.go span:nth-child(5) { animation-delay: .23s; }
+  @keyframes fridayPetHeartFloat {
+    0% { opacity: 0; transform: translate(-50%, 8px) scale(.55); }
+    18% { opacity: 1; }
+    100% { opacity: 0; transform: translate(calc(-50% + var(--dx)), var(--dy)) scale(var(--s)); }
+  }
+  .friday-pet-fallback {
+    position: absolute;
+    left: 50%;
+    bottom: 13px;
+    width: 112px;
+    height: 140px;
+    overflow: hidden;
+    transform: translateX(-50%);
+    pointer-events: none;
+  }
+  .friday-pet-fallback img {
+    position: absolute;
+    left: -69px;
+    top: -38px;
+    width: 1974px;
+    height: 187px;
+    max-width: none;
+    image-rendering: auto;
+  }
+</style>
+</head>
+<body>
+  <div class="desktop-pet-stage friday-pet-stage"
+       data-friday-pet-stage="desktop"
+       aria-label="Friday dog companion stage">
+    <div class="friday-pet-fallback" aria-hidden="true">
+      <img src="/source/pet/g-sit.png?v=anchor-prototype-20260605-9" alt="">
+    </div>
+  </div>
+
+  <!-- Engine loaded VERBATIM from the bundle via the same-origin custom scheme. -->
+  <script src="/pet-stage-engine.js?v=desktop-pet-eco-v4-20260606-1"></script>
+  <script>
+    // Silent-failure instrumentation (spec R5): a fetch/scheme bug yields a never-resolving
+    // promise + a blank canvas, NOT an exception. The Swift host polls these flags to know the
+    // pet truly rendered (or to surface the precise error) — never a false "looks done".
+    window.__petReady = false;
+    window.__petError = null;
+    window.onerror = function (msg, src, line, col, err) {
+      window.__petError = "onerror: " + msg + " @" + (src || "") + ":" + line;
+      return false;
+    };
+    (function () {
+      var stage = document.querySelector('[data-friday-pet-stage="desktop"]');
+      if (!stage || !window.FridayPetStage) {
+        window.__petError = "FridayPetStage engine or stage element missing";
+        return;
+      }
+      // The EXACT locked design call — verbatim, no asset edits, zero token, all local.
+      window.FridayPetStage.createStage(stage, {
+        surface: "desktop",
+        height: 176,
+        behavior: "locked-core-only",
+        ecoAllowlist: []
+      }).then(function (runtime) {
+        window.__petRuntime = runtime;
+        window.__petReady = true;
+      }).catch(function (e) {
+        window.__petError = "createStage rejected: " + (e && e.message ? e.message : String(e));
+      });
+    })();
+  </script>
+</body>
+</html>
