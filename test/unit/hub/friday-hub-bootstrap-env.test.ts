@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { createRequire } from "node:module";
 import {
+  resolveAgentRunControlViaRust,
   resolveFridayCanonicalMutatingActionGate,
   resolveFridayHubConfig,
   resolveRouteAgentRunViaRust,
@@ -397,6 +398,36 @@ describe("resolveRouteAgentRunViaRust", () => {
     expect(resolveRouteAgentRunViaRust(false, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "1" })).toBe(false);
     expect(resolveRouteAgentRunViaRust(false, { FRIDAY_ROUTE_AGENT_RUN_VIA_RUST: "true" })).toBe(false);
     expect(resolveRouteAgentRunViaRust(false, emptyEnv())).toBe(false);
+  });
+});
+
+describe("resolveAgentRunControlViaRust (A3 courier pause/resume flag)", () => {
+  // DEFAULT-OFF: env unset → false → the courier's paused/resume behavior is inert (byte-identical).
+  it("defaults to false when neither config nor env is set", () => {
+    expect(resolveAgentRunControlViaRust(undefined, emptyEnv())).toBe(false);
+  });
+
+  it("parses FRIDAY_AGENT_RUN_CONTROL_VIA_RUST=1 / =true (case-insensitive, trimmed) as true", () => {
+    expect(resolveAgentRunControlViaRust(undefined, { FRIDAY_AGENT_RUN_CONTROL_VIA_RUST: "1" })).toBe(true);
+    expect(resolveAgentRunControlViaRust(undefined, { FRIDAY_AGENT_RUN_CONTROL_VIA_RUST: "true" })).toBe(true);
+    expect(resolveAgentRunControlViaRust(undefined, { FRIDAY_AGENT_RUN_CONTROL_VIA_RUST: "TRUE" })).toBe(true);
+    expect(resolveAgentRunControlViaRust(undefined, { FRIDAY_AGENT_RUN_CONTROL_VIA_RUST: "  1  " })).toBe(true);
+    expect(resolveAgentRunControlViaRust(undefined, { FRIDAY_AGENT_RUN_CONTROL_VIA_RUST: " true " })).toBe(true);
+  });
+
+  // Fail-safe OFF: everything that is not exactly "1"/"true" → false (narrower than the canonical set).
+  it("treats 0, false, empty, and garbage env values as false (fail-safe off)", () => {
+    for (const raw of ["0", "false", "", "yes", "on", "enabled", "truthy", "2"]) {
+      expect(resolveAgentRunControlViaRust(undefined, { FRIDAY_AGENT_RUN_CONTROL_VIA_RUST: raw })).toBe(false);
+    }
+  });
+
+  // PRECEDENCE: an explicit config boolean ALWAYS wins over the env (config false MUST beat env true).
+  it("uses explicit config over the env (true wins; the discriminating config=false beats env=true)", () => {
+    expect(resolveAgentRunControlViaRust(true, { FRIDAY_AGENT_RUN_CONTROL_VIA_RUST: "0" })).toBe(true);
+    expect(resolveAgentRunControlViaRust(true, emptyEnv())).toBe(true);
+    expect(resolveAgentRunControlViaRust(false, { FRIDAY_AGENT_RUN_CONTROL_VIA_RUST: "1" })).toBe(false);
+    expect(resolveAgentRunControlViaRust(false, { FRIDAY_AGENT_RUN_CONTROL_VIA_RUST: "true" })).toBe(false);
   });
 });
 

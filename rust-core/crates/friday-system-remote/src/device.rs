@@ -39,6 +39,14 @@ pub struct RegisteredDevice {
     /// Credential public key (from the verified attestation). A real verifier
     /// extracts this from the COSE key in `authData`.
     pub public_key: Vec<u8>,
+    /// The authenticator sign-count regression baseline (A8). Seeded from the
+    /// verified attestation at registration and advanced (forward-only) on each
+    /// verified assertion. A real verifier (see [`crate::real`]) rejects an
+    /// assertion whose presented sign-count does not strictly increase over this
+    /// stored value (a cloned-authenticator signal); this field is that stored
+    /// value. Many synced passkeys keep it 0 forever (spec-legal; see
+    /// [`crate::real`]).
+    pub sign_count: u32,
     /// Optional human label (e.g. "Jarvis's iPhone").
     pub label: String,
     /// Creation timestamp (ms since epoch; caller-supplied clock).
@@ -102,6 +110,8 @@ impl DeviceStore {
             rp_id: attestation.rp_id().to_string(),
             credential_id: attestation.credential_id().to_vec(),
             public_key: attestation.public_key().to_vec(),
+            // Seed the sign-count regression baseline from the verified attestation.
+            sign_count: attestation.sign_count(),
             label: label.to_string(),
             created_at: now,
             last_seen_at: now,
@@ -231,6 +241,22 @@ impl DeviceStore {
             .ok_or_else(|| RemoteError::DeviceNotFound(device_id.clone()))?;
         if now > device.last_seen_at {
             device.last_seen_at = now;
+        }
+        // Advance this row's sign-count PROJECTION (forward-only). IMPORTANT: this
+        // `RegisteredDevice.sign_count` is a human-/audit-facing projection, NOT
+        // the value the real verifier compares against. The verifier
+        // (crate::real::RealWebAuthn) checks the counter inside the credential blob
+        // (`StoredCredential` / the serialized `Passkey`) it is handed at
+        // `begin_assertion`; the loop that actually enforces regression across
+        // ceremonies is "persist the updated `StoredCredential` that
+        // `finish_assertion` returns, then re-derive the next baseline from it".
+        // Where the authoritative blob lives in a device row (and whether this
+        // `u32` is folded into it or dropped) is a deferred persistence-schema
+        // decision — see this crate's open questions. Forward-only here so a stale
+        // value cannot rewind the projection.
+        let asserted = assertion.new_sign_count();
+        if asserted > device.sign_count {
+            device.sign_count = asserted;
         }
         Ok(device.clone())
     }
@@ -484,6 +510,41 @@ mod tests {
         let stale = verified_assertion("owner-1", vec![7, 7, 7]);
         let again = store.apply_assertion(&stale, 200).unwrap();
         assert_eq!(again.last_seen_at, 500);
+    }
+
+    #[test]
+    fn apply_assertion_advances_sign_count_forward_only() {
+        // A8: the store advances its sign-count regression baseline to the
+        // verified assertion's value (forward-only). The verifier (crate::real)
+        // already proved the strict increase; this pins the store's persistence of
+        // it. We mint VerifiedAssertions directly via the pub(crate) constructor to
+        // control the sign-count (the AcceptingTestVerifier always emits 0).
+        let mut store = DeviceStore::new();
+        store
+            .register(
+                "dev-1",
+                &verified_attestation("owner-1", vec![7, 7, 7]),
+                "",
+                100,
+            )
+            .unwrap();
+        assert_eq!(
+            store.get_for_owner("dev-1", "owner-1").unwrap().sign_count,
+            0
+        );
+
+        // Assertion presenting sign-count 5 advances the baseline to 5.
+        let a5 = VerifiedAssertion::new_verified("owner-1".into(), vec![7, 7, 7], 5);
+        let d = store.apply_assertion(&a5, 200).unwrap();
+        assert_eq!(d.sign_count, 5);
+
+        // A later assertion presenting a LOWER count (3) does NOT rewind the stored
+        // baseline (forward-only, belt-and-braces). (The real verifier would have
+        // rejected such an assertion outright as a clone before it ever reached
+        // here; this guards a verifier that returned a stale value.)
+        let a3 = VerifiedAssertion::new_verified("owner-1".into(), vec![7, 7, 7], 3);
+        let d = store.apply_assertion(&a3, 300).unwrap();
+        assert_eq!(d.sign_count, 5, "stored sign-count must not rewind");
     }
 
     #[test]

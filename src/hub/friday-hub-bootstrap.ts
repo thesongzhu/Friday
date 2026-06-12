@@ -933,6 +933,36 @@ export function resolveRouteAgentRunViaRust(
 }
 
 /**
+ * GATE-AGENT-REPLACE A3 courier (DARK): single source of truth resolving the
+ * `agentRunControlViaRust` flag from (1) an EXPLICIT {@link FridayHubConfig.agentRunControlViaRust}
+ * and, only as a fallback, (2) the `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST` env var — the operator knob
+ * that arms the pause/resume PRODUCT TRANSPORT (the sealed WS courier's `AgentRunPaused` inbound +
+ * `resumeWithApproval` relay) WITHOUT a source edit.
+ *
+ * It deliberately reuses the SAME env var name as the Phase-2 Rust server's default-off flag so the
+ * TS courier and the Rust server are armed by ONE operator knob — but it is consulted ONLY for the
+ * TS courier's client-side behavior; it grants NO mutating run (the read-only qualifier stays hard;
+ * relaxing it is a SEPARATE later PR).
+ *
+ * PRECEDENCE + PARSE mirror {@link resolveRouteAgentRunViaRust} EXACTLY: an explicit config boolean
+ * (true OR false) ALWAYS wins; the env is consulted ONLY when config does not specify. Case-
+ * insensitive, trimmed `"1"` or `"true"` ⇒ true; ABSENT / `""` / `"0"` / `"false"` / ANY other
+ * value ⇒ false. DEFAULT (both unset) ⇒ false, so the courier's paused/resume behavior stays inert
+ * and the compose path is byte-identical to today.
+ */
+export function resolveAgentRunControlViaRust(
+  configValue: boolean | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  // Config explicit (true OR false) wins — env is the fallback for the unset gap only.
+  if (typeof configValue === "boolean") {
+    return configValue;
+  }
+  const raw = (env.FRIDAY_AGENT_RUN_CONTROL_VIA_RUST ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true";
+}
+
+/**
  * providers-bridge cut-over (DARK): single source of truth resolving the
  * `routeProvidersViaRust` flag from (1) an EXPLICIT
  * {@link FridayHubConfig.routeProvidersViaRust} and, only as a fallback, (2) the
@@ -986,6 +1016,40 @@ export function resolveRouteWorkflowsViaRust(
   }
   const raw = (env.FRIDAY_ROUTE_WORKFLOWS_VIA_RUST ?? "").trim().toLowerCase();
   return raw === "1" || raw === "true";
+}
+
+/**
+ * Barrier 5 (companion hardening): gate the live system companion bridge for
+ * AGENT-REACHABLE consumers behind the SAME test-only flag that fences
+ * `friday-system-service.executeIntent` (the `TS_RUNTIME_SYSTEM_INTENT_RETIRED`
+ * guard at `friday-system-service.ts`, opened only by
+ * `allowTestOnlySystemIntentExecution === true`).
+ *
+ * The `guide_lens` agent tool and the setup assistant reach the live Swift
+ * companion daemon via `companionBridge` WITHOUT passing through that
+ * `executeIntent` retirement guard, so on the default/production path they were a
+ * bypass: an agent run could drive overlay draws and a `captureSnapshot`
+ * screen-read at the daemon even though the executeIntent route is 503.
+ *
+ * This helper SEVERS that bypass by default: unless the explicit test-only flag is
+ * set, agent-reachable consumers receive `undefined` instead of the live bridge.
+ * Both consumers already null-check `companionBridge` (`friday-guide-lens-service.ts`
+ * `showNativeOverlay`/`clearNativeOverlay`/`captureSnapshot`;
+ * `friday-setup-assistant.ts` `setOverlayVisible`), so an absent bridge degrades
+ * them to fail-closed no-ops — no daemon call, no overlay, no screen read. NEVER
+ * default the flag on in production; the flag is the test-oracle escape hatch only.
+ *
+ * NOTE: the `systemService` consumer is NOT routed through this helper — it keeps
+ * the live bridge and is fenced separately at the method level by
+ * `executeIntent`'s own guard (it threads the same flag through
+ * `createFridaySystemService`). Severing the agent-reachable bypasses here mirrors
+ * that method-level fail-closed posture for the two consumers that lacked it.
+ */
+function resolveAgentReachableCompanionBridge<TBridge>(
+  liveBridge: TBridge,
+  allowTestOnlySystemIntentExecution: boolean | undefined,
+): TBridge | undefined {
+  return allowTestOnlySystemIntentExecution === true ? liveBridge : undefined;
 }
 
 function normalizeFridayHubPort(value: number | undefined): number | undefined {
@@ -2381,7 +2445,16 @@ export async function createFridayHub(
       idGenerator,
       nowIso,
       systemService,
-      companionBridge: systemCompanionBridge,
+      // Barrier 5: the guide_lens agent tool bypasses the executeIntent retirement
+      // guard, so on the default/prod path it must NOT receive the live companion
+      // bridge (it would let an agent drive overlay draws + a captureSnapshot
+      // screen-read at the daemon). Fail closed to `undefined` unless the same
+      // test-only flag that opens executeIntent is set; the service null-checks the
+      // bridge and degrades overlay/snapshot to no-ops when absent.
+      companionBridge: resolveAgentReachableCompanionBridge(
+        systemCompanionBridge,
+        config.allowTestOnlySystemIntentExecution,
+      ),
       parserAdapter: guideLensParserAdapter,
       defaultPreferences: {
         defaultSurface: "native_desktop",
@@ -7086,6 +7159,14 @@ export async function createFridayHub(
     // set (the default) this is `false`, so the `=== true` gate is never satisfied → the
     // predicate is never evaluated → byte-identical to today's fail-closed 503.
     routeAgentRunViaRust: resolveRouteAgentRunViaRust(config.routeAgentRunViaRust),
+    // GATE-AGENT-REPLACE A3 courier (DARK): default-false master flag arming the pause/resume
+    // PRODUCT TRANSPORT (the sealed WS courier's `AgentRunPaused` inbound + `resumeWithApproval`
+    // relay). SINGLE SOURCE OF TRUTH = `resolveAgentRunControlViaRust` (explicit config wins; else
+    // the `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST` env knob, case-insensitive "1"/"true" → true; anything
+    // else incl. unset → false). With nothing set (the default) this is `false`, so the courier's
+    // paused/resume behavior is inert → the compose path never sees a paused outcome → byte-identical
+    // to today. It admits NO mutating run (the read-only qualifier stays hard — a SEPARATE later PR).
+    agentRunControlViaRust: resolveAgentRunControlViaRust(config.agentRunControlViaRust),
     // providers-bridge cut-over (DARK): default-false master flag for routing the retired
     // Tier-2 PROVIDER surfaces to the merged Rust bins. SINGLE SOURCE OF TRUTH =
     // `resolveRouteProvidersViaRust` (explicit config wins; else FRIDAY_ROUTE_PROVIDERS_VIA_RUST,
@@ -8167,7 +8248,15 @@ export async function createFridayHub(
       environmentScanner,
       coordinator: setupCoordinator,
       prerequisiteInstaller,
-      companionBridge: systemCompanionBridge,
+      // Barrier 5: the setup assistant is a SECOND agent-reachable token-holder of
+      // the live companion bridge that bypasses the executeIntent retirement guard.
+      // Fail closed to `undefined` on the default/prod path (it null-checks the
+      // bridge and degrades setOverlayVisible to a no-op when absent), opened only
+      // by the same test-only flag that fences executeIntent.
+      companionBridge: resolveAgentReachableCompanionBridge(
+        systemCompanionBridge,
+        config.allowTestOnlySystemIntentExecution,
+      ),
       eventEmitter: {
         emit: (event, payload) => {
           agentEventEmitter.emit(event as never, payload as never);

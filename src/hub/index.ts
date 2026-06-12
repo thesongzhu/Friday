@@ -37,6 +37,7 @@ export {
   resolveFridayChannelDisabledToolNames,
   resolveFridayChannelSessionKey,
   resolveFridayHubConfig,
+  resolveAgentRunControlViaRust,
   resolveRouteAgentRunViaRust,
   resolveRouteProvidersViaRust,
   resolveRouteWorkflowsViaRust,
