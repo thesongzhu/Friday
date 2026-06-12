@@ -1,54 +1,54 @@
 #!/usr/bin/env bash
-# Unit 5b — build the Friday native iOS shell for the SIMULATOR, install it, and
-# screenshot it. Proves the SwiftUI app renders values computed by the all-Rust
-# core via the generated UniFFI Swift bindings.
+# M-PR1 — build the Friday Mobile iOS SHELL for the SIMULATOR, install it, and
+# screenshot it. This is the read-only v1 mobile UI shell: Home (Status + top-bar
+# 💬 chat-entry + heroPet + cardsQueues) + the full-screen pet-centered Friday Chat
+# skeleton + the Command Sheet launcher, all reading a `WorkbenchSnapshot` through
+# the `FridayRustReadClient` protocol backed by `MockReadClient`.
 #
-# Toolchain reconciliation (see goal file 33): the stable rustup toolchain has the
-# iOS std but brew rust 1.95.0 shadows it, so we put the toolchain's own bin dir
-# FIRST on PATH (rust-toolchain.toml is left untouched for CI reproducibility).
+# M-PR1 has NO Rust/UniFFI seam (the real `FridayRustClient` package is integrated
+# in a later PR via the same protocol), so — unlike the old prototype — this script
+# does NOT cross-compile a Rust staticlib or generate UniFFI bindings. It compiles
+# the UI-free `FridayMobileShellCore` as a Swift module, then compiles the SwiftUI
+# app against it for the iOS Simulator SDK.
+#
+# The UI-FREE core + its truth tests are also runnable on the host with no Xcode:
+#   swift test
+#
+# Device/simulator SCREENSHOT proof is operator-gated (needs Xcode + a booted
+# simulator / physical device); this script is a LOCAL proof, not a CI step.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-RUSTCORE="$(cd "$HERE/../../rust-core" && pwd)"
-TC="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin"
-BUILD="$HERE/.build"
+BUILD="$HERE/.build-sim"
 APP="$BUILD/FridayShell.app"
-SIM_TARGET="aarch64-apple-ios-sim"
 SHOT="${1:-$BUILD/friday-ios-sim.png}"
+TARGET="arm64-apple-ios17.0-simulator"  # Apple-Silicon host (arm64 sim slice)
 
-rm -rf "$BUILD"; mkdir -p "$BUILD" "$BUILD/headers"
+CORE="$HERE/Sources/FridayMobileShellCore"
+APPSRC="$HERE/Sources/FridayMobileShell"
 
-echo "== 1. build sim staticlib =="
-( cd "$RUSTCORE" && PATH="$TC:$PATH" cargo build -p friday-ffi --target "$SIM_TARGET" )
-LIBDIR="$RUSTCORE/target/$SIM_TARGET/debug"
+rm -rf "$BUILD"; mkdir -p "$BUILD" "$APP"
 
-echo "== 2. generate Swift bindings =="
-( cd "$RUSTCORE" && PATH="$TC:$PATH" cargo run -q -p friday-ffi --bin uniffi-bindgen -- \
-    generate --library "$LIBDIR/libfriday_ffi.dylib" --language swift --out-dir "$BUILD/bindings" )
-
-echo "== 3. assemble module headers =="
-cp "$BUILD/bindings/friday_ffiFFI.h" "$BUILD/headers/"
-# clang discovers a module via a file named `module.modulemap` on the -I path.
-cp "$BUILD/bindings/friday_ffiFFI.modulemap" "$BUILD/headers/module.modulemap"
-
-echo "== 4. compile SwiftUI app for the simulator =="
-# Apple-Silicon host only (arm64 sim slice). The Rust core is linked as the
-# STATIC archive by full path (cargo also emits a .dylib used only for bindgen;
-# `-l` would prefer that .dylib, so we pass the .a explicitly) — the resulting
-# executable is self-contained, with no dependency on a build-tree dylib path.
 SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)"
-mkdir -p "$APP"
+
+echo "== 1. compile FridayMobileShellCore as a Swift module (UI-free) =="
 xcrun --sdk iphonesimulator swiftc \
-    -target arm64-apple-ios17.0-simulator \
-    -sdk "$SDK" \
-    -I "$BUILD/headers" \
-    -lc++ -framework Security -framework SystemConfiguration \
-    "$HERE/Sources/FridayApp.swift" "$BUILD/bindings/friday_ffi.swift" \
-    -Xlinker "$LIBDIR/libfriday_ffi.a" \
+    -target "$TARGET" -sdk "$SDK" \
+    -emit-module -emit-library -static \
+    -module-name FridayMobileShellCore \
+    -emit-module-path "$BUILD/FridayMobileShellCore.swiftmodule" \
+    -o "$BUILD/libFridayMobileShellCore.a" \
+    "$CORE"/*.swift
+
+echo "== 2. compile the SwiftUI app against the core module =="
+xcrun --sdk iphonesimulator swiftc \
+    -target "$TARGET" -sdk "$SDK" \
+    -I "$BUILD" -L "$BUILD" -lFridayMobileShellCore \
+    "$APPSRC"/*.swift \
     -o "$APP/FridayShell"
 cp "$HERE/Info.plist" "$APP/Info.plist"
 
-echo "== 5. pick a simulator =="
+echo "== 3. pick a simulator =="
 UDID="$(xcrun simctl list devices available | grep -Eo '\(([0-9A-F-]{36})\) \(Booted\)' | grep -Eo '[0-9A-F-]{36}' | head -1 || true)"
 if [ -z "$UDID" ]; then
   UDID="$(xcrun simctl list devices available | grep -E 'iPhone' | grep -Eo '[0-9A-F-]{36}' | head -1)"
@@ -57,7 +57,7 @@ fi
 echo "using simulator $UDID"
 open -a Simulator || true
 
-echo "== 6. install + launch + screenshot =="
+echo "== 4. install + launch + screenshot =="
 xcrun simctl install "$UDID" "$APP"
 xcrun simctl launch "$UDID" com.friday.shell
 sleep 4
