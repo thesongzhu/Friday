@@ -1,4 +1,4 @@
-// Friday — native iOS app shell (M-PR1, the v1 mobile UI).
+// Friday — native iOS app shell (the v1 mobile UI), now wired to the REAL Rust clients.
 //
 // LOCKED mobile baseline (friday-design-handoff-20260602/saved/mobile-selection.json):
 //   launch = Home; homeLayout = Status + chat-entry (the chat entry is the top-bar
@@ -7,26 +7,84 @@
 //   commandSheet (full-screen grid launcher from top-left); petProminence = heroPet;
 //   palette = cyanCoral; background = warmOffWhite; form = glassNative; theme = light.
 //
-// M-PR1 is the READ-ONLY shell: it reads a `WorkbenchSnapshot` projection through
-// the `FridayRustReadClient` protocol (the SAME shape the desktop sibling #676/#677
-// uses) backed here by `MockReadClient`. The real `FridayRustClient` package is
-// integrated in a later PR via the same protocol. Truth rules (refs-only,
-// truth_status never upgraded, 503/stale/offline AS truth, read-only actions only,
-// no mutating action, no NO-GO row executable) mirror #676.
+// This shell now consumes the PACKAGE's real sealed-WS clients (`FridayRustClient`): the
+// Home reads the refs-only Mission Workbench projection over `SealedWSReadClient`; the
+// Friday Chat surface drives the read-WRITE / S6 loop over `SealedWSWriteClient` + the
+// `OperatorSigner` relay (mock now; the real desktop signer / PR #671 is the slice-6 gate).
+// The live `NWConnection` transport is the DEFERRED slice-6 AC, so every surface renders
+// honest-unavailable while the Rust servers are DARK — the EXPECTED state. Truth rules
+// (refs-only, truth labels never upgraded, 503/stale/offline AS truth, no key on the app,
+// a mutation ONLY via operator approval) are enforced in `FridayMobileShellCore`.
 
 import FridayMobileShellCore
+import FridayRustClient
 import SwiftUI
+
+/// The app's real-client wiring: the device X25519 transport keypair + the REAL sealed-WS
+/// read/write clients (built via `FridayClientFactory`) + the operator-signer RELAY seam.
+/// This is the single place the iOS app binds to the all-Rust core.
+///
+/// INV-1: the device keypair is the X25519 SESSION keypair (transport identity) — it is NOT a
+/// signing key and CANNOT mint an approval. The operator's Ed25519 signing key lives ONLY in
+/// the desktop signer's isolated SecureStore (PR #671); on the phone the signer is an injected
+/// relay (`MockOperatorSigner` today — NOT a real signature).
+///
+/// The live network transport (a `NWConnection`-backed `SealedWSTransport`) is the DEFERRED
+/// slice-6 AC; until it is wired the default factory transport throws and every surface renders
+/// honest-unavailable — the EXPECTED state while the Rust servers are DARK.
+@MainActor
+final class FridaySession: ObservableObject {
+  /// DEFAULT-OFF run-control (the S6 pause/approve/resume). Flipping this ON in production is
+  /// part of the slice-6 operator gate; OFF ⇒ the chat loop is read-only (a pause fails closed).
+  let runControlEnabled = false
+
+  let readClient: FridayRustReadClient
+  let writeClient: FridayRustWriteClient
+  /// The operator-signing RELAY. Mock today (NOT a real signature); the real desktop signer
+  /// (PR #671) is the slice-6 / operator-key gate. The phone holds NO signing key (INV-1).
+  let signer: OperatorSigner
+
+  /// - Parameter preview: when `true`, the Home read client is the labeled `PreviewReadClient`
+  ///   (a static sample projection) so SwiftUI previews + UI iteration render a populated Home
+  ///   without a live Hub. DEFAULT `false` ⇒ the REAL `SealedWSReadClient` (honest-unavailable
+  ///   while the servers are dark). A real build NEVER passes `preview: true`.
+  init(preview: Bool = false) {
+    // The device X25519 transport keypair. In production this is loaded from / generated into
+    // the device keychain (the device-pairing seam); a fresh ephemeral keypair here keeps the
+    // honest-unavailable default sound (a non-enrolled peer is refused — which is correct while
+    // the servers are dark).
+    let keypair = FridayCrypto.DeviceKeypair()
+    // The owner principal + endpoint come from the operator's paired-Hub config at runtime.
+    let endpoint = FridayClientFactory.Endpoint(
+      forwardedPrincipal: "principal:owner-device",
+      agentRunControlViaRust: runControlEnabled)
+    // No live transport is wired (slice-6 deferred AC) ⇒ the default factory transport throws ⇒
+    // honest-unavailable. When slice-6 lands, inject a live `NWConnection` transport here.
+    self.readClient = preview
+      ? PreviewReadClient()
+      : FridayClientFactory.makeReadClient(keypair: keypair, endpoint: endpoint)
+    self.writeClient = FridayClientFactory.makeWriteClient(keypair: keypair, endpoint: endpoint)
+    self.signer = MockOperatorSigner()
+  }
+
+  #if DEBUG
+  /// A preview/debug session whose Home renders a labeled sample projection (no live Hub).
+  static let preview = FridaySession(preview: true)
+  #endif
+}
 
 /// The app shell: a NavigationStack with the top-left Command Sheet launcher and the
 /// top-bar 💬 Friday Chat entry. Launch screen = Home (locked).
 struct RootView: View {
   @StateObject private var homeVM: HomeViewModel
+  private let session: FridaySession
   @State private var destination: MobileDestination = .home
   @State private var commandOpen = false
   @State private var chatOpen = false
 
-  init(client: FridayRustReadClient) {
-    _homeVM = StateObject(wrappedValue: HomeViewModel(client: client))
+  init(session: FridaySession) {
+    self.session = session
+    _homeVM = StateObject(wrappedValue: HomeViewModel(client: session.readClient))
   }
 
   var body: some View {
@@ -72,7 +130,9 @@ struct RootView: View {
         }
       }
       .navigationDestination(isPresented: $chatOpen) {
-        FridayChatScreen(online: homeVM.isOnline)
+        // The Friday Chat read-WRITE / S6 surface, driven by the session's REAL write client
+        // + the operator-signer relay.
+        FridayChatScreen(session: session, online: homeVM.isOnline)
       }
     }
     .tint(MobileTheme.cyan)
@@ -80,7 +140,7 @@ struct RootView: View {
       CommandSheet(destination: $destination, isOpen: $commandOpen)
     }
     .task {
-      // Initial read on launch.
+      // Initial read on launch (dark server ⇒ honest-unavailable).
       if case .idle = homeVM.state {
         await homeVM.refresh()
       }
@@ -90,25 +150,25 @@ struct RootView: View {
 
 @main
 struct FridayApp: App {
+  @StateObject private var session = FridaySession()
+
   var body: some Scene {
     WindowGroup {
-      // M-PR1 wires the shell to the MockReadClient; the real FridayRustClient
-      // package is integrated later via the same FridayRustReadClient protocol.
-      RootView(client: MockReadClient(behavior: .loaded))
+      // The shell wires the REAL clients via the session; the live transport is the slice-6
+      // deferred AC, so the surfaces render honest-unavailable while the Rust servers are dark.
+      RootView(session: session)
     }
   }
 }
 
 // MARK: - Previews
 
-#Preview("Home · loaded (mock)") {
-  RootView(client: MockReadClient(behavior: .loaded))
+#if DEBUG
+#Preview("Home · preview sample (labeled)") {
+  RootView(session: .preview)
 }
 
-#Preview("Home · unavailable (503)") {
-  RootView(client: MockReadClient(behavior: .unavailable(.hubUnavailable(statusCode: 503))))
+#Preview("Home · live client (dark ⇒ honest-unavailable)") {
+  RootView(session: FridaySession())
 }
-
-#Preview("Home · offline") {
-  RootView(client: MockReadClient(behavior: .unavailable(.offline)))
-}
+#endif

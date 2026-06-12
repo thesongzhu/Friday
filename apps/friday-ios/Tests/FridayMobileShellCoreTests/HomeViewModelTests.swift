@@ -1,293 +1,235 @@
-import Foundation
-import Testing
-
+import XCTest
 @testable import FridayMobileShellCore
+@testable import FridayRustClient
 
-// MARK: - Home view-model truth tests (mobile M-PR1)
+/// Deterministic X25519 secret fixtures for the wiring tests. These need NOT byte-match the
+/// Rust KATs (the package's Rust-anchored KATs own crypto byte-parity); ANY valid 32-byte
+/// secret yields a self-consistent client↔emulator session, which is all a WIRING test needs.
+enum TestKeys {
+  static let clientSecret = "070b0d1113171d1f25292b2f353b3d4347494f53596165676b6d717f83898b95" // pragma: allowlist secret
+  static let serverSecret = "020305070b0d1113171d1f25292b2f353b3d4347494f53596165676b6d717f83" // pragma: allowlist secret
+  /// 64 ASCII bytes (the read/write servers emit a 64-byte hex-of-32 nonce; the client binds it
+  /// VERBATIM, so any 64-byte value works for a wiring round-trip).
+  static let sessionNonce = Array("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".utf8) // pragma: allowlist secret
+}
 
-@Test
+/// **View-model-level tests for the Home read surface** — proves the Home wires the PACKAGE's
+/// `FridayRustReadClient` (the package's types WIN), surfaces a refs-only `HomeProjection`, and
+/// renders honest-unavailable on a dark/offline server (the EXPECTED slice-6 state).
 @MainActor
-func refreshLoadsRepresentativeSnapshot() async {
-  let vm = HomeViewModel(client: MockReadClient(behavior: .loaded))
-  await vm.refresh()
-  let snapshot = vm.state.snapshot
-  #expect(snapshot != nil)
-  #expect(snapshot?.missionId == "mission_workbench_probe_20260605")
-  #expect(snapshot?.runtimeFeedStatus == .liveRustHubProjection)
-}
+final class HomeViewModelTests: XCTestCase {
 
-@Test
-@MainActor
-func refreshRendersUnavailableAsTruthOn503() async {
-  let vm = HomeViewModel(
-    client: MockReadClient(behavior: .unavailable(.hubUnavailable(statusCode: 503))))
-  await vm.refresh()
-  // A 503 throw must land in `.unavailable`, NOT a fake-ready Home.
-  guard case let .unavailable(reason) = vm.state else {
-    Issue.record("expected .unavailable, got \(vm.state)")
-    return
-  }
-  #expect(reason.contains("503"))
-  #expect(vm.state.snapshot == nil)
-  // A fake-ready Home is NOT produced: no online status, no queue items.
-  #expect(vm.isOnline == false)
-  #expect(vm.needsMe.isEmpty)
-  #expect(vm.running.isEmpty)
-}
-
-@Test
-@MainActor
-func refreshRendersUnavailableWhenOffline() async {
-  let vm = HomeViewModel(client: MockReadClient(behavior: .unavailable(.offline)))
-  await vm.refresh()
-  guard case .unavailable = vm.state else {
-    Issue.record("expected .unavailable for offline")
-    return
-  }
-  #expect(vm.state.snapshot == nil)
-  #expect(vm.isOnline == false)
-}
-
-@Test
-@MainActor
-func staleStatusLabelMakesHomeNotOnlineAndSurfacesBanner() async {
-  // The representative snapshot is flagged `[.stale]` — Home must NOT show online,
-  // and the stale label must be surfaced AS truth (drives the honest banner).
-  let vm = HomeViewModel(client: MockReadClient(behavior: .loaded))
-  await vm.refresh()
-  #expect(vm.statusLabels.contains(.stale))
-  #expect(vm.isOnline == false)  // a live feed flagged stale is NOT "online".
-}
-
-@Test
-@MainActor
-func needsMeExcludesDoneAndIncludesBlockedNoGoNonExecutable() async {
-  let vm = HomeViewModel(client: MockReadClient(behavior: .loaded))
-  await vm.refresh()
-
-  // A completed_with_proof / done item is NEVER in Needs-Me.
-  #expect(!vm.needsMe.contains { $0.id == "work_probe_done" })
-  #expect(vm.needsMe.allSatisfy { !$0.done })
-
-  // The blocked NO-GO row IS surfaced in Needs-Me (as truth) but is non-executable.
-  let blocked = vm.needsMe.first { $0.state == .blocked }
-  #expect(blocked != nil)
-  #expect(blocked?.isExecutable == false)
-
-  // Truth guard: EVERY queue row is non-executable in this read-only shell.
-  #expect(vm.needsMe.allSatisfy { !$0.isExecutable })
-  #expect(vm.running.allSatisfy { !$0.isExecutable })
-}
-
-@Test
-@MainActor
-func providerAckIsNotDoneAndStaysInNeedsMe() async {
-  let vm = HomeViewModel(client: MockReadClient(behavior: .loaded))
-  await vm.refresh()
-  // provider_ack ≠ done: the provider-lane item awaits the operator → Needs-Me.
-  let provider = vm.needsMe.first { $0.id == "work_probe_provider" }
-  #expect(provider != nil)
-  #expect(provider?.state == .providerAck)
-  #expect(provider?.done == false)
-}
-
-@Test
-@MainActor
-func runningExcludesDoneAndBlocked() async {
-  // The shared MockReadClient is byte-identical to the desktop fixture (the Rust
-  // `mission_workbench_probe` mirror) and has NO ready/queued/reconnecting item, so
-  // `running` is empty under it. To exercise the real needsAttention-vs-isRunning
-  // classification we feed a focused inline snapshot via a test-only read client.
-  let vm = HomeViewModel(client: FixedSnapshotClient(snapshot: classificationSnapshot))
-  await vm.refresh()
-
-  // A `.ready` non-done item lands in Running, NOT Needs-Me.
-  #expect(vm.running.contains { $0.id == "wi_ready" })
-  #expect(!vm.needsMe.contains { $0.id == "wi_ready" })
-
-  // A `.blocked` NO-GO item lands in Needs-Me, NOT Running — and is non-executable.
-  #expect(vm.needsMe.contains { $0.id == "wi_blocked" })
-  #expect(!vm.running.contains { $0.id == "wi_blocked" })
-  #expect(vm.needsMe.first { $0.id == "wi_blocked" }?.isExecutable == false)
-
-  // A done item is in neither queue.
-  #expect(!vm.running.contains { $0.id == "wi_done" })
-  #expect(!vm.needsMe.contains { $0.id == "wi_done" })
-
-  // Neither queue ever contains a done item.
-  #expect(vm.running.allSatisfy { !$0.done })
-  #expect(vm.needsMe.allSatisfy { !$0.done })
-}
-
-/// A test-only read client returning a caller-supplied snapshot (so classification
-/// logic can be tested without diverging the byte-identical shared MockReadClient).
-private struct FixedSnapshotClient: FridayRustReadClient {
-  let snapshot: WorkbenchSnapshot
-  func fetchWorkbench() async throws -> WorkbenchSnapshot { snapshot }
-}
-
-/// A focused snapshot with one item per classification bucket: a `.ready` running
-/// item, a `.blocked` NO-GO needs-me item, and a done item that's in neither queue.
-private let classificationSnapshot: WorkbenchSnapshot = {
-  func item(_ id: String, _ state: MissionLifecycleState, done: Bool) -> MissionWorkbenchWorkItem {
-    MissionWorkbenchWorkItem(
-      id: id, title: id, state: state, owner: .fridayOwned, proofRef: nil, done: done)
-  }
-  return WorkbenchSnapshot(
-    missionId: "mission_classify",
-    fridayConversationId: "fconv_classify",
-    runtimeFeedStatus: .liveRustHubProjection,
-    statusLabels: [],
-    duplicatePreflight: MissionWorkbenchDuplicatePreflight(
-      status: "opens_existing_mission", duplicateMissionId: "mission_classify",
-      duplicateWorkItemId: "wi_ready"),
-    routeDecision: MissionWorkbenchRouteDecision(
-      advisorSummary: "", selectedRoute: "proof://route/x", alternatives: [],
-      truthLabel: .fridayOwned),
-    providerReceiptRefs: [],
-    channelReceiptRefs: [],
-    workItems: [
-      item("wi_ready", .ready, done: false),
-      item("wi_blocked", .blocked, done: false),
-      item("wi_done", .completedWithProof, done: true),
-    ],
-    timelinePages: [],
-    memoryCandidates: [],
-    capabilityStates: [],
-    transcriptSections: [])
-}()
-
-@Test
-@MainActor
-func providerCardsDerivedFromReceiptRefs() async {
-  let vm = HomeViewModel(client: MockReadClient(behavior: .loaded))
-  await vm.refresh()
-  // The representative snapshot has provider + channel receipt refs.
-  #expect(vm.providerCards.contains { $0.id == "provider" })
-  #expect(vm.providerCards.first { $0.id == "provider" }?.receiptRefCount == 2)
-}
-
-// MARK: - Chat skeleton (read-only) truth tests
-
-@Test
-@MainActor
-func chatSkeletonHasNoSendPath() {
-  let vm = ChatViewModel()
-  // M-PR1: the chat surface is a shell — the send path is NOT wired.
-  #expect(vm.sendEnabled == false)
-  #expect(!vm.skeletonNotice.isEmpty)
-}
-
-// MARK: - Contract / wire-identity tests (carried verbatim from desktop #676)
-
-@Test
-func snapshotExercisesEveryHonestRenderingRule() {
-  let snapshot = MockReadClient.representativeSnapshot
-
-  // A provider_ack / linked_only item must be NOT done.
-  let provider = snapshot.workItems.first { $0.id == "work_probe_provider" }
-  #expect(provider?.state == .providerAck)
-  #expect(provider?.owner == .linkedOnly)
-  #expect(provider?.done == false)
-
-  // A completed item must be done + friday_owned.
-  let done = snapshot.workItems.first { $0.id == "work_probe_done" }
-  #expect(done?.state == .completedWithProof)
-  #expect(done?.owner == .fridayOwned)
-  #expect(done?.done == true)
-
-  // There must be a blocked NO-GO row (never made executable; not done).
-  let blocked = snapshot.workItems.first { $0.state == .blocked }
-  #expect(blocked != nil)
-  #expect(blocked?.done == false)
-
-  // Honest status: stale must be present.
-  #expect(snapshot.statusLabels.contains(.stale))
-
-  // Memory candidates never grant authority.
-  #expect(snapshot.memoryCandidates.allSatisfy { !$0.grantsMemoryAuthority })
-}
-
-@Test
-func unknownEnumValuesDecodeToUnavailableNotReady() throws {
-  // truth_status must NOT be upgraded by the UI: an unknown lifecycle/truth value
-  // must decode to `.unknown` (honest unavailable), never `.ready`/`.fridayOwned`.
-  let json = """
-    {
-      "id": "wi_unknown",
-      "title": "Unknown-state item",
-      "state": "some_future_state_we_dont_know",
-      "owner": "some_future_owner",
-      "done": false
+  /// A scripted read client — returns a refs-only snapshot or throws (honest-unavailable).
+  final class FakeReadClient: FridayRustReadClient {
+    enum Script { case snapshot(WorkbenchSnapshot); case fail(FridayReadClientError) }
+    let script: Script
+    init(_ script: Script) { self.script = script }
+    func fetchWorkbench() async throws -> WorkbenchSnapshot {
+      switch script {
+      case .snapshot(let s): return s
+      case .fail(let e): throw e
+      }
     }
-    """.data(using: .utf8)!
-  let item = try JSONDecoder().decode(MissionWorkbenchWorkItem.self, from: json)
-  #expect(item.state == .unknown)
-  #expect(item.owner == .unknown)
-  #expect(item.state != .ready)
-  #expect(item.owner != .fridayOwned)
-}
+  }
 
-@Test
-func snapshotRoundTripsThroughContractJSON() throws {
-  // Proves the Swift model is wire-compatible with the camelCase contract JSON the
-  // future FridayRustClient package will decode (byte-identical to desktop #676).
-  let original = MockReadClient.representativeSnapshot
-  let encoded = try JSONEncoder().encode(original)
-  let decoded = try JSONDecoder().decode(WorkbenchSnapshot.self, from: encoded)
-  #expect(decoded == original)
-}
-
-@Test
-func decodesRustProjectionShapedJSON() throws {
-  // A minimal snapshot in the exact field shape emitted by
-  // mission_workbench_projection.rs must decode cleanly.
-  let json = """
+  private func sampleSnapshot() throws -> WorkbenchSnapshot {
+    let json = """
     {
-      "missionId": "mission_x",
-      "fridayConversationId": "fconv_x",
+      "missionId": "mission-7",
+      "fridayConversationId": "conv-7",
       "runtimeFeedStatus": "live_rust_hub_projection",
-      "statusLabels": ["stale", "offline", "error"],
-      "duplicatePreflight": {
-        "status": "opens_existing_mission",
-        "duplicateMissionId": "mission_x",
-        "duplicateWorkItemId": "wi_x"
-      },
-      "routeDecision": {
-        "advisorSummary": "why",
-        "selectedRoute": "proof://route-decision/abc",
-        "alternatives": ["a", "b"],
-        "truthLabel": "friday_owned"
-      },
-      "providerReceiptRefs": ["proof://provider-receipt/1"],
-      "channelReceiptRefs": [],
-      "workItems": [
-        {"id": "wi_x", "title": "t", "state": "provider_ack", "owner": "linked_only",
-         "proofRef": "proof://provider-receipt/1", "done": false}
-      ],
-      "timelinePages": [
-        {"page": 1, "cursor": "start", "nextCursor": "offset:1", "eventRefs": ["e0"]}
-      ],
-      "memoryCandidates": [],
-      "capabilityStates": [
-        {"id": "cap", "label": "Advisor", "kind": "advisor", "truthLabel": "friday_owned",
-         "approvalState": "not_required", "dispatchAllowed": false, "summary": "s",
-         "proofRef": "proof://route-decision/abc"}
-      ],
-      "transcriptSections": [
-        {"id": "sec", "title": "Mission", "groupKind": "mission", "missionId": "mission_x",
-         "truthLabel": "friday_owned", "status": "waiting", "events": [
-           {"id": "e0", "missionId": "mission_x", "surface": "desktop", "status": "waiting",
-            "truthLabel": "friday_owned", "summary": "s",
-            "evidenceRefs": {"timelineRef": "timeline://mission/mission_x/0"},
-            "capturedAt": "unix_ms:1"}
-         ]}
-      ]
+      "statusLabels": ["stale"],
+      "routeDecision": { "advisorSummary": "route: deepseek (refs-only)" },
+      "workItems": [ { "workItemId": "wi-1" }, { "workItemId": "wi-2" } ]
     }
-    """.data(using: .utf8)!
-  let snapshot = try JSONDecoder().decode(WorkbenchSnapshot.self, from: json)
-  #expect(snapshot.missionId == "mission_x")
-  #expect(snapshot.statusLabels == [.stale, .offline, .error])
-  #expect(snapshot.workItems.first?.state == .providerAck)
-  #expect(snapshot.transcriptSections.first?.events.first?.evidenceRefs.timelineRef != nil)
+    """
+    return try WorkbenchSnapshot(projectionJSON: Data(json.utf8), generatedAtMs: 1_780_640_000_000)
+  }
+
+  func testRefresh_loadsRefsOnlyProjection() async throws {
+    let snapshot = try sampleSnapshot()
+    let vm = HomeViewModel(client: FakeReadClient(.snapshot(snapshot)))
+    await vm.refresh()
+    guard case .loaded(let p) = vm.state else { return XCTFail("expected .loaded, got \(vm.state)") }
+    XCTAssertEqual(p.missionId, "mission-7")
+    XCTAssertEqual(p.runtimeFeedStatus, "live_rust_hub_projection") // truth label rides AS-IS
+    XCTAssertEqual(p.statusLabels, ["stale"])                       // no label upgrade
+    XCTAssertEqual(p.workItemIds, ["wi-1", "wi-2"])                 // refs/ids only (INV-5)
+    XCTAssertTrue(vm.state.isOnline)
+  }
+
+  func testRefresh_transportFailure_isHonestUnavailable() async {
+    let vm = HomeViewModel(client: FakeReadClient(.fail(.transport("connection refused (server dark)"))))
+    await vm.refresh()
+    guard case .unavailable(let reason) = vm.state else { return XCTFail("expected .unavailable, got \(vm.state)") }
+    XCTAssertTrue(reason.contains("offline"), "reason: \(reason)")
+    XCTAssertFalse(vm.state.isOnline) // a dark server is NEVER online
+  }
+
+  func testRefresh_serverError_isHonestUnavailable_noFakeReady() async {
+    let vm = HomeViewModel(client: FakeReadClient(.fail(.serverError(code: .hubOffline, message: "no active mission"))))
+    await vm.refresh()
+    guard case .unavailable(let reason) = vm.state else { return XCTFail("expected .unavailable") }
+    XCTAssertTrue(reason.contains("HUB_OFFLINE"), "reason: \(reason)")
+    XCTAssertNil(vm.state.projection) // never a fabricated ready projection
+  }
+}
+
+/// **Read-client integration over an in-memory read-server transport** — proves the REAL
+/// `SealedWSReadClient` (built via `FridayClientFactory.makeReadClient`) drives the full
+/// handshake→owner-authed-request→open-the-owner-sealed-snapshot path against an emulated read
+/// server, AND that the DEFAULT (no live transport) factory yields honest-unavailable.
+///
+/// HONEST LABEL: wiring-only (the emulated server seals with the SAME Swift primitives — see the
+/// circular-roundtrip caveat in the package's `WriteClientWiringTests`). Crypto byte-parity is
+/// proven by the package's Rust-anchored KATs; the live round-trip is the slice-6 deferred AC.
+@MainActor
+final class ReadClientFactoryTests: XCTestCase {
+
+  /// The DEFAULT factory has NO live transport wired (the slice-6 deferred AC) — so a fetch
+  /// throws and the Home renders honest-unavailable. This is the EXPECTED dark-server state.
+  func testDefaultFactory_noLiveTransport_yieldsHonestUnavailable() async throws {
+    let kp = try FridayCrypto.DeviceKeypair(secretBytes: try Hex.decode(TestKeys.clientSecret))
+    let client = FridayClientFactory.makeReadClient(
+      keypair: kp,
+      endpoint: .init(forwardedPrincipal: "principal:owner"))
+    let vm = HomeViewModel(client: client)
+    await vm.refresh()
+    guard case .unavailable(let reason) = vm.state else { return XCTFail("expected .unavailable, got \(vm.state)") }
+    XCTAssertTrue(reason.contains("offline") || reason.contains("not wired") || reason.contains("dark"),
+                  "reason: \(reason)")
+    XCTAssertFalse(vm.state.isOnline)
+  }
+
+  /// With an emulated read-server transport injected, the REAL client completes the sealed-WS
+  /// read round-trip and the Home loads the refs-only projection.
+  func testRealClient_emulatedServer_loadsProjection() async throws {
+    let owner = "principal:owner-allowlisted"
+    let clientKp = try FridayCrypto.DeviceKeypair(secretBytes: try Hex.decode(TestKeys.clientSecret))
+    let serverKp = try FridayCrypto.DeviceKeypair(secretBytes: try Hex.decode(TestKeys.serverSecret))
+    let nonce = TestKeys.sessionNonce
+
+    let transport = EmulatedReadServerTransport(
+      serverKeypair: serverKp, sessionNonce: nonce,
+      peerAllowlist: [clientKp.publicKey], ownerAllowlist: [owner])
+    let client = FridayClientFactory.makeReadClient(
+      keypair: clientKp,
+      endpoint: .init(forwardedPrincipal: owner),
+      makeTransport: { transport })
+    let vm = HomeViewModel(client: client)
+    await vm.refresh()
+    guard case .loaded(let p) = vm.state else { return XCTFail("expected .loaded, got \(vm.state)") }
+    XCTAssertEqual(p.missionId, "mission-emulated")
+    XCTAssertEqual(p.runtimeFeedStatus, "live_rust_hub_projection")
+    XCTAssertEqual(p.workItemIds, ["wi-a"])
+  }
+
+  /// A non-allowlisted peer is rejected at the handshake ⇒ honest-unavailable (fail-closed).
+  func testRealClient_nonAllowlistedPeer_failsClosed() async throws {
+    let owner = "principal:owner-allowlisted"
+    let clientKp = try FridayCrypto.DeviceKeypair(secretBytes: try Hex.decode(TestKeys.clientSecret))
+    let serverKp = try FridayCrypto.DeviceKeypair(secretBytes: try Hex.decode(TestKeys.serverSecret))
+    let nonce = TestKeys.sessionNonce
+    let transport = EmulatedReadServerTransport(
+      serverKeypair: serverKp, sessionNonce: nonce,
+      peerAllowlist: [serverKp.publicKey], ownerAllowlist: [owner]) // client NOT enrolled
+    let client = FridayClientFactory.makeReadClient(
+      keypair: clientKp, endpoint: .init(forwardedPrincipal: owner), makeTransport: { transport })
+    let vm = HomeViewModel(client: client)
+    await vm.refresh()
+    guard case .unavailable = vm.state else { return XCTFail("a non-allowlisted peer must be unavailable, got \(vm.state)") }
+    XCTAssertFalse(vm.state.isOnline)
+  }
+}
+
+// MARK: - Emulated read-server transport (mirrors the package's write-server emulator)
+
+/// An in-memory transport playing the Rust read-projection server's half: the cleartext preamble
+/// (server pubkey + 64-byte nonce), the S-F peer-allowlist gate, the owner-auth verify on the
+/// READ constants, then an owner-sealed `WorkbenchProjectionSnapshot`.
+final class EmulatedReadServerTransport: SealedWSTransport {
+  private let serverKeypair: FridayCrypto.DeviceKeypair
+  private let sessionNonce: [UInt8]
+  private let peerAllowlist: [[UInt8]]
+  private let ownerAllowlist: [String]
+
+  private var clientPub: [UInt8]?
+  private var sessionKey: [UInt8]?
+  private var upgraded = false
+  private var queued: [[UInt8]] = []
+
+  init(serverKeypair: FridayCrypto.DeviceKeypair, sessionNonce: [UInt8],
+       peerAllowlist: [[UInt8]], ownerAllowlist: [String]) {
+    self.serverKeypair = serverKeypair
+    self.sessionNonce = sessionNonce
+    self.peerAllowlist = peerAllowlist
+    self.ownerAllowlist = ownerAllowlist
+  }
+
+  func writeFrame(_ payload: [UInt8]) throws {
+    if clientPub == nil {
+      guard peerAllowlist.contains(payload) else {
+        throw FridayReadClientError.transport("peer pubkey not in allowlist")
+      }
+      clientPub = payload
+      queued.append(serverKeypair.publicKey)
+      queued.append(sessionNonce)
+    }
+  }
+
+  func readFrame() throws -> [UInt8] {
+    guard !queued.isEmpty else { throw FridayReadClientError.transport("no preamble frame queued") }
+    return queued.removeFirst()
+  }
+
+  func upgrade() throws {
+    guard let clientPub else { throw FridayReadClientError.transport("no client pubkey before upgrade") }
+    sessionKey = try serverKeypair.agree(peerPublicKey: clientPub)
+    upgraded = true
+  }
+
+  func sendMessage(_ body: [UInt8]) throws {
+    guard upgraded, let sessionKey else { throw FridayReadClientError.transport("not upgraded") }
+    let env = try FridayEnvelope.decodeJSON(Data(try FridayCrypto.open(
+      key: sessionKey, sealed: FridayCrypto.decodeSealed(body), aad: readSessionAad)))
+    guard case .workbenchProjectionRequest(let req) = env.message else {
+      throw FridayReadClientError.transport("unexpected inbound on the read session")
+    }
+    // AUTH — open the auth_proof under the session key with auth_aad(read_aad, principal,
+    // request_id); it must equal the READ nonce-bound challenge; principal must be allowlisted.
+    let reqAad = FridayCrypto.authAad(readSessionAad, forwardedPrincipal: req.forwardedPrincipal, boundContext: Array(req.requestId.utf8))
+    let opened: [UInt8]
+    do {
+      opened = try FridayCrypto.open(key: sessionKey, sealed: FridayCrypto.decodeSealed(req.authProof), aad: reqAad)
+    } catch {
+      return // fail-closed: NO snapshot, session ends.
+    }
+    let expected = FridayCrypto.nonceBoundChallenge(readAuthChallenge, sessionNonce: sessionNonce)
+    guard opened == expected, ownerAllowlist.contains(req.forwardedPrincipal) else { return }
+
+    // AUTHENTICATED — owner-seal a refs-only projection and answer.
+    let projection = """
+    {"missionId":"mission-emulated","fridayConversationId":"conv-emulated",\
+    "runtimeFeedStatus":"live_rust_hub_projection","statusLabels":[],\
+    "workItems":[{"workItemId":"wi-a"}]}
+    """
+    let innerSealed = try FridayCrypto.seal(key: sessionKey, plaintext: Array(projection.utf8), aad: readSessionAad)
+    let projectionHex = Hex.encode(FridayCrypto.encodeSealed(innerSealed))
+    // `WorkbenchProjectionSnapshotWire` has no public memberwise init (the package only
+    // synthesizes an internal one); construct it via its `Codable` shape, exactly as the wire
+    // carries it.
+    let snapJSON = """
+    {"request_id":"\(req.requestId)","projection_json":"\(projectionHex)","generated_at_ms":1780640000000}
+    """
+    let snap = try JSONDecoder().decode(WorkbenchProjectionSnapshotWire.self, from: Data(snapJSON.utf8))
+    let resp = FridayEnvelope(msgId: "snap-\(req.requestId)", sentAt: 1_780_640_000_000,
+                              message: .workbenchProjectionSnapshot(snap)).withCorrelation(env.msgId)
+    queued.append(try FridayCrypto.encodeSealed(try FridayCrypto.seal(
+      key: sessionKey, plaintext: [UInt8](resp.encodeJSON()), aad: readSessionAad)))
+  }
+
+  func recvMessage() throws -> [UInt8] {
+    guard !queued.isEmpty else { throw FridayReadClientError.transport("session ended (no response)") }
+    return queued.removeFirst()
+  }
 }

@@ -1,53 +1,69 @@
-# Friday — native iOS app shell (M-PR1, the v1 mobile UI)
+# Friday — native iOS app (the v1 mobile UI), wired to the REAL Rust clients
 
-A SwiftUI iOS app shell implementing the **LOCKED mobile design baseline**
-(`friday-design-handoff-20260602/saved/mobile-selection.json`):
+A SwiftUI iOS app implementing the **LOCKED mobile design baseline**
+(`friday-design-handoff-20260602/saved/mobile-selection.json`) and the mobile
+**real-client + Friday Chat read-WRITE + S6** integration (a redo of #683 onto the
+current `FridayMobileShell` shell):
 
-- **Launch = Home** (locked). Home = **Status + heroPet + cardsQueues** (provider
-  cards + "Needs Me" / "Running" queues). The **Friday Chat entry is the top-bar
-  💬** — there is NO on-Home chat card.
+- **Launch = Home** (locked). Home = **Status + heroPet** reading the refs-only
+  Mission Workbench projection over the package's `SealedWSReadClient`. The
+  **Friday Chat entry is the top-bar 💬** — there is NO on-Home chat card.
 - The composer lives in a separate **full-screen, pet-centered Friday Chat**
-  surface (M-PR1: a **skeleton** — the chat read-WRITE loop + S6 approval is a
-  later slice; the composer is honestly inert).
+  surface that drives the **4-state read-WRITE / S6 loop**: compose → send →
+  refs-only answer; mutating → `AgentRunPaused` → S6 approval card →
+  operator-signs (relay-only) → `resumeWithApproval` VERBATIM → refs-only receipt.
 - The **Command Sheet** is a full-screen grid launcher opened from the top-left.
 - Tokens: cyanCoral palette · warmOffWhite background · glassNative form · light
   theme · retroLcd Hero Pet.
 
-This is the **read-only shell**. It reads a `WorkbenchSnapshot` projection through
-the **`FridayRustReadClient`** protocol — the SAME protocol shape the desktop
-sibling (`apps/macos/FridayHubConsole`, PR #676) and the sealed-WS read client
-(`apps/macos/FridayRustClient`, PR #677) use — backed here by a `MockReadClient`
-with representative sample data. The real `FridayRustClient` package is integrated
-in a later PR via the same protocol; the snapshot model + mock are **byte-identical**
-to the desktop sibling so both decode the future Rust Hub Mission Workbench
-projection JSON the same way.
+## The integration (the package's types WIN)
 
-## Truth rules (binding, mirror #676)
+The shell depends on the **`FridayRustClient`** SPM package (the sealed-WS read +
+write clients + crypto, shared with the desktop). There is **ONE**
+`WorkbenchSnapshot` + `FridayRustReadClient` / `FridayRustWriteClient` across desktop
+and mobile — the package's. The shell **adapter-bridges** the package's
+(non-`Sendable`, refs-only) `WorkbenchSnapshot` to a small `Sendable` `HomeProjection`
+for the UI (the same lift #683 used; the desktop #682 console is the D-PR1 mock shell
+and does not yet wire the package, so #683's `HomeProjection` pattern — not #682 — is
+the integration reference). The `: Sendable` mismatch is resolved on the **consumer**
+side with `nonisolated(unsafe) let` clients (the package is never edited).
 
-- **Refs only** — `proofRef` / evidence refs / receipt refs are carried; never
-  inline bodies. There is no body/content field anywhere.
-- **truth_status is never upgraded** — unknown enum values decode to `.unknown`
-  and render as honest "unavailable"; provider_ack ≠ done; linked_only ≠ owned.
-- **503 / stale / offline render AS truth** — a `fetchWorkbench()` throw lands in
-  an honest `.unavailable` Home; `[.stale]` drives a visible banner; the UI never
-  falls back to a fabricated ready snapshot.
-- **Read-only actions only** — the only action is Refresh (re-read). There is NO
-  mutating action, NO dispatch/approve, and NO NO-GO row is executable.
+## Truth rules (binding)
+
+- **Refs only (INV-5)** — every surfaced field is a ref/label/count/fingerprint;
+  the answer is `{status, answer_sha256, answer_len, turns}`, never an inline body;
+  the pause is `{summary, action_digest}`; the receipt is `{op, accepted, status,
+  audit_ref}`. There is no body/content field anywhere.
+- **No signing key on the app (INV-1)** — the phone is a PURE COURIER for S6
+  approvals: it holds no key and mints no signature. The only source of approval
+  bytes is the injected `OperatorSigner`, relayed VERBATIM to `resumeWithApproval`.
+  The shipped signer is a clearly-labeled `MockOperatorSigner` (NOT a real
+  signature); the real desktop signer (PR #671) is the slice-6 / operator-key gate.
+- **Mutation ONLY via approval (INV-2)** — a mutation executes ONLY via the resume
+  path, reachable ONLY from `.pendingApproval`, reached ONLY by a server pause.
+  `approve()` is a no-op without a pending pause; there is no bypass.
+- **Honest-unavailable** — the Rust read/write servers are DARK until the slice-6
+  flip, so `fetchWorkbench()` / `dispatchAgentRun()` / `resumeWithApproval()` are
+  EXPECTED to throw; every throw renders a first-class `.unavailable` state, never a
+  fabricated answer/approval/receipt, never a truth-label upgrade. `runtimeFeedStatus`
+  + `statusLabels` ride AS-IS.
 
 ## Module layout
 
-- `Sources/FridayMobileShellCore/` — **UI-free** SwiftPM library: the snapshot
-  truth model, the read-only client protocol, the mock, and the view models
-  (`HomeViewModel`, `ChatViewModel`). Kept UI-free so the M-PR1 truth rules are
-  unit-testable on a mac host with no Xcode/simulator:
+- `Sources/FridayMobileShellCore/` — **UI-free** SwiftPM library (depends on
+  `FridayRustClient`): the integration factory (`FridayClientFactory`), the
+  operator-signing relay seam (`OperatorSigner` / `MockOperatorSigner`), and the
+  view models (`HomeViewModel` + `HomeProjection`, `FridayChatViewModel` + the
+  4-state `ChatPhase` + the refs-only `ApprovalCard` / receipts). Kept UI-free so the
+  truth rules + the S6 loop are unit-testable on a mac host with no Xcode/simulator:
 
   ```sh
-  swift test          # -> 13 truth tests
+  swift build && swift test    # -> 19 XCTest cases (chat-S6 loop + home read + factory)
   ```
 
-- `Sources/FridayMobileShell/` — the SwiftUI iOS app (Home, Friday Chat skeleton,
-  Command Sheet, Hero Pet, design tokens, truth chips). iOS-only APIs, so it is
-  **not** a SwiftPM target — it is compiled against the iOS Simulator SDK by
+- `Sources/FridayMobileShell/` — the SwiftUI iOS app (Home, the Friday Chat
+  read-WRITE/S6 surface, Command Sheet, Hero Pet, design tokens). iOS-only APIs, so
+  it is **not** a SwiftPM target — it is compiled against the iOS Simulator SDK by
   `build-sim.sh`.
 
 ## Build + screenshot (simulator)
@@ -56,16 +72,22 @@ projection JSON the same way.
 apps/friday-ios/build-sim.sh   # -> .build-sim/friday-ios-sim.png
 ```
 
-The script compiles `FridayMobileShellCore` as a Swift module, compiles the SwiftUI
-app against it for the `arm64-apple-ios17.0-simulator` SDK, assembles
-`FridayShell.app`, then installs/launches/screenshots it on a booted simulator.
+Because the core now depends on `FridayRustClient` → swift-sodium (libsodium via the
+vendored `Clibsodium.xcframework`), the script first cross-compiles the whole SPM
+dependency graph for `arm64-apple-ios17.0-simulator` via `swift build --triple …`
+(resolving swift-sodium + linking the xcframework's ios-simulator libsodium slice),
+then compiles the SwiftUI app against those sim-built modules with `swiftc`, assembles
+`FridayShell.app`, and installs/launches/screenshots it on a booted simulator.
 
 **Device/simulator screenshot proof is operator-gated** (it needs Xcode + a booted
 simulator or a physical device); it is a deferred acceptance criterion. The
-load-bearing local checks are `swift test` (the truth rules) and the swiftc compile
-of the app against the simulator SDK.
+load-bearing local checks are host `swift build` + `swift test` (the truth rules + the
+S6 loop) and the swiftc compile/link of the app against the simulator SDK (both proven
+locally).
 
 ## Not built in CI
 
-The simulator build needs Xcode, so `build-sim.sh` is a local proof, not a CI step
-(matching the desktop sibling #676). Overall Friday v1 remains **NO-GO**.
+The simulator build needs Xcode, so `build-sim.sh` is a local proof, not a CI step.
+The live `NWConnection` transport against running Rust servers (with the UI peer
+pubkey enrolled + the operator signer provisioned) is the slice-6 deferred AC.
+Overall Friday v1 remains **NO-GO**.
