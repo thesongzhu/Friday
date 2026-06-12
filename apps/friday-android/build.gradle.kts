@@ -3,4 +3,7 @@
 // plugin is applied (see apps/friday-android/README.md).
 plugins {
     id("com.android.application") version "9.2.1" apply false
+    // Compose compiler plugin for the :mock module. AGP 9 ships built-in Kotlin;
+    // the standalone compose plugin must match that bundled Kotlin version.
+    id("org.jetbrains.kotlin.plugin.compose") version "2.2.0" apply false
 }
