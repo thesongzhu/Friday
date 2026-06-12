@@ -34,6 +34,19 @@ export interface FridayStartAgentRunRequest {
    * readOnly — this is the independent clause-4 gate.
    */
   allowedRustRouteTools?: string[];
+  /**
+   * (A2b Phase 2, mutation-relax — DARK, default-off) the explicit POSITIVE grant of mutating
+   * Rust tools (a subset of write_file/append_file/edit_file/delete_file/move_file/run_command)
+   * and the REQUIRED operator-signed gate opt-in marker (`"operator_signed_ed25519"`). Additive +
+   * optional — every existing caller omits BOTH. A `readOnly:false` run is admitted to the Rust
+   * route ONLY when the default-OFF `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST` flag is on AND it carries a
+   * non-empty grant ⊆ the closed mutating allow-list AND `mutationGate === "operator_signed_ed25519"`
+   * AND a bound owner principal. These admit CANDIDACY only — the Rust runtime gate Pauses every
+   * mutating tool pending an operator-signed Ed25519 approval (the signature, NOT this field, is the
+   * authority). Absent / flag-off ⇒ a `readOnly:false` run stays disqualified ⇒ today's 503.
+   */
+  mutatingToolGrant?: string[];
+  mutationGate?: string;
 }
 
 export interface FridayAgentRunExecutionResponse {
@@ -73,4 +86,21 @@ export interface FridayGetAgentRunResponse {
 export interface FridayCancelAgentRunResponse {
   cancelled: boolean;
   runId: string;
+}
+
+/**
+ * (S6 mutating-chat — DARK, default-off) The REFS-ONLY outcome of relaying an operator-signed
+ * approval to RESUME a paused mutating run. Mirrors the Rust `AgentRunControlResult` the sealed-WS
+ * resume returns: the coarse op/accepted/status + an optional soft audit ref — NEVER the mutation
+ * body, args, or answer. `accepted=false` is a fail-closed refusal (forged/replayed/expired
+ * signature, unprovisioned verify key, or a rejected/cancelled run); `status` says why at a coarse
+ * grain. The TS route is a pure courier — it relays the OPAQUE signed blob verbatim and NEVER
+ * inspects the signature/digest (INV-1: verification happens ONLY in Rust under the operator key).
+ */
+export interface FridayResumeAgentRunResponse {
+  runId: string;
+  op: string;
+  accepted: boolean;
+  status: string;
+  auditRef?: string;
 }

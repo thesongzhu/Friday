@@ -50,6 +50,7 @@ export type FridayPublicMutationOperation =
   | "agent.plan.reject"
   | "agent.tool.approve"
   | "agent.tool.reject"
+  | "agent.run.resume"
   | "satellite.pairing.approve"
   | "satellite.pairing.reject"
   | "satellite.revoke"

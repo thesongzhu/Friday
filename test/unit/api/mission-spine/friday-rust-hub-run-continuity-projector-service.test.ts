@@ -203,6 +203,28 @@ describe("FridayRustHubRunContinuityProjector (executeRun-replace slice 2, fork 
     expect(listed.some((r) => r.id === FIXTURE_RECEIPT.runId)).toBe(true);
   });
 
+  it("(S6 mutating-chat) an ownerPrincipalId receipt round-trips to metadata.apiRequest.principalId through the REAL read path", () => {
+    // This pins the seam the resume route's owner-binding gate depends on: a paused projection
+    // stamps the bound owner, and the SAME repository read the route uses (getById → rowToRecord →
+    // parseRunMetadata) must deserialize it back to `record.metadata.apiRequest.principalId`. A
+    // PARTIAL `apiRequest` (only `principalId`) must survive — `parseRunMetadata` does no schema
+    // strip — so the route has a real owner to authorize the resume against (a regression here would
+    // 403 EVERY legitimate resume in prod while every mocked test stayed green).
+    const db = freshDb();
+    const projector = createFridayRustHubRunContinuityProjectorService();
+    projector.project(db, { ...FIXTURE_RECEIPT, runId: "owned-paused-run", ownerPrincipalId: "owner:alice" });
+
+    const repo = createFridayAgentRunRepository();
+    const got = repo.getById(db, "owned-paused-run");
+    expect(got).not.toBeNull();
+    expect(got?.metadata?.apiRequest?.principalId).toBe("owner:alice");
+
+    // A receipt WITHOUT an owner stamps NO apiRequest (byte-identical to the pre-S6 row).
+    projector.project(db, { ...FIXTURE_RECEIPT, runId: "unowned-run" });
+    const unowned = repo.getById(db, "unowned-run");
+    expect(unowned?.metadata?.apiRequest).toBeUndefined();
+  });
+
   it("the projected row carries NO answer body — responseText is a ref, never the body", () => {
     const db = freshDb();
     const projector = createFridayRustHubRunContinuityProjectorService();
