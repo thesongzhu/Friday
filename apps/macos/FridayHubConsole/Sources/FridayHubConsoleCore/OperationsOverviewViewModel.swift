@@ -1,4 +1,5 @@
 import Foundation
+import FridayRustClient
 
 /// What the right-docked proof inspector is currently focused on.
 /// Each case carries only refs/labels — never a body to load.
@@ -51,10 +52,16 @@ public final class OperationsOverviewViewModel: ObservableObject {
 
   /// Re-fetch the Workbench projection. The only mutating-looking action — and it
   /// only re-reads truth; it never writes.
+  ///
+  /// `client.fetchWorkbench()` returns the package's THIN refs-only wire snapshot; the
+  /// adapter re-decodes its `raw` projection JSON into the rich display model. A transport
+  /// throw (the dark/un-flipped read server — the NORMAL pre-slice-6 state) OR an adapter
+  /// decode failure both land in `.unavailable`, rendered AS truth — never a fake-ready snapshot.
   public func refresh() async {
     state = .loading
     do {
-      let snapshot = try await client.fetchWorkbench()
+      let wire = try await client.fetchWorkbench()
+      let snapshot = try WorkbenchSnapshotAdapter.display(from: wire)
       state = .loaded(snapshot)
     } catch {
       // Render the failure AS truth. Never fall back to a fake-ready snapshot.
@@ -68,10 +75,35 @@ public final class OperationsOverviewViewModel: ObservableObject {
   }
 
   private static func reason(for error: Error) -> String {
+    // Mock / preview / adapter vocabulary (503 / offline / projection-unavailable).
     if let clientError = error as? FridayRustReadClientError {
       return clientError.description
     }
+    // The REAL `SealedWSReadClient` throws the package's error type. Each variant maps to an
+    // honest "unavailable" reason — including a closed/refused transport, which is exactly the
+    // dark/un-flipped read server (the NORMAL state until the slice-6 operator flip).
+    if let readError = error as? FridayReadClientError {
+      return Self.reason(for: readError)
+    }
     return "Hub unavailable — \(error)"
+  }
+
+  /// Map the package read client's typed error to an honest unavailable reason string.
+  private static func reason(for error: FridayReadClientError) -> String {
+    switch error {
+    case let .transport(detail):
+      return "Hub offline — no connection (\(detail))"
+    case .badServerPubkey:
+      return "Hub unavailable — invalid server identity"
+    case .badSessionNonce:
+      return "Hub unavailable — invalid session handshake"
+    case let .serverError(code, message):
+      return "Hub unavailable — server error \(code): \(message)"
+    case let .unexpectedResponse(kind):
+      return "Hub unavailable — unexpected response (\(kind))"
+    case let .malformedProjection(detail):
+      return "Projection unavailable: \(detail)"
+    }
   }
 
   // MARK: - Derived inspector content (refs only)
