@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   qualifiesForRustReadOnlyRoute,
   RUST_ROUTE_READ_TOOL_ALLOWLIST,
+  RUST_ROUTE_MUTATING_TOOL_ALLOWLIST,
   type RustRouteQualificationInput,
 } from "../../../../src/api/runtime/friday-api-runtime.js";
 
@@ -336,5 +337,182 @@ describe("qualifiesForRustReadOnlyRoute (execrun slice 4, dark predicate)", () =
     expect([...RUST_ROUTE_READ_TOOL_ALLOWLIST].sort()).toEqual(
       ["list_dir", "read_file", "search", "stat_file"],
     );
+  });
+
+  // ── Clause 2/4 MUTATION-RELAX (A2b Phase 2, DARK, default-off) ────────────────
+  // The security-critical admission boundary. A `readOnly:false` run is admitted ONLY when
+  // ALL of: the default-off `agentRunControlViaRust` flag is ON, an EXPLICIT non-empty
+  // `mutatingToolGrant` ⊆ the closed mutating allow-list, an EXPLICIT
+  // `mutationGate === "operator_signed_ed25519"`, AND a non-empty bound owner principalId.
+  // The relaxed clauses are each matched by an added requirement so the ungated-mutation
+  // admission surface stays EXACTLY ZERO (INV-2 + INV-7). Flag-off ⇒ byte-identical disqualify.
+  describe("clause-2/4 mutation relax (grant-gated, flag-off, dark)", () => {
+    /** A fully-qualifying GATED MUTATING run: flag-on + readOnly:false + valid grant + gate + owner. */
+    function gatedMutatingInput(): RustRouteQualificationInput {
+      return {
+        ...qualifyingInput(),
+        agentRunControlViaRust: true,
+        constraints: { readOnly: false },
+        // base read set stays exactly the 4 reads; the mutating half rides mutatingToolGrant
+        allowedRustRouteTools: [...RUST_ROUTE_READ_TOOL_ALLOWLIST],
+        mutatingToolGrant: ["write_file", "edit_file"],
+        mutationGate: "operator_signed_ed25519",
+        principalId: "principal:owner-1",
+      };
+    }
+
+    // (b) readOnly:false + valid grant + gate-marker + flag-on ⇒ QUALIFIES.
+    it("(b) admits a gated mutating run: flag-on + readOnly:false + valid grant + gate-marker + bound owner", () => {
+      expect(qualifiesForRustReadOnlyRoute(gatedMutatingInput())).toBe(true);
+    });
+
+    it("(b') admits a single-tool grant and the FULL closed mutating allow-list (subset of the 6)", () => {
+      expect(
+        qualifiesForRustReadOnlyRoute({ ...gatedMutatingInput(), mutatingToolGrant: ["run_command"] }),
+      ).toBe(true);
+      expect(
+        qualifiesForRustReadOnlyRoute({
+          ...gatedMutatingInput(),
+          mutatingToolGrant: [...RUST_ROUTE_MUTATING_TOOL_ALLOWLIST],
+        }),
+      ).toBe(true);
+    });
+
+    // (a) readOnly:false + NO grant ⇒ DISQUALIFIED (never infer mutation from readOnly flipping).
+    it("(a) disqualifies readOnly:false with NO mutatingToolGrant (even flag-on, gate-marker present, bound owner)", () => {
+      expect(
+        qualifiesForRustReadOnlyRoute({ ...gatedMutatingInput(), mutatingToolGrant: undefined }),
+      ).toBe(false);
+      expect(
+        qualifiesForRustReadOnlyRoute({ ...gatedMutatingInput(), mutatingToolGrant: [] }),
+      ).toBe(false);
+    });
+
+    it("(a') disqualifies readOnly:false with a grant but NO gate-marker (no admission for mutating + no gate)", () => {
+      expect(
+        qualifiesForRustReadOnlyRoute({ ...gatedMutatingInput(), mutationGate: undefined }),
+      ).toBe(false);
+      expect(
+        qualifiesForRustReadOnlyRoute({ ...gatedMutatingInput(), mutationGate: "some_other_scheme" }),
+      ).toBe(false);
+    });
+
+    // (c) flag-OFF ⇒ byte-identical disqualify (the mutating OR-arm is dead code).
+    it("(c) flag-off ⇒ a fully-formed mutating run stays DISQUALIFIED (byte-identical to today's readOnly fence)", () => {
+      // Identical to the qualifying gated input EXCEPT the flag is off → readOnly:false fences it.
+      expect(
+        qualifiesForRustReadOnlyRoute({ ...gatedMutatingInput(), agentRunControlViaRust: false }),
+      ).toBe(false);
+      // Flag absent (undefined) is the production default — same disqualify.
+      expect(
+        qualifiesForRustReadOnlyRoute({ ...gatedMutatingInput(), agentRunControlViaRust: undefined }),
+      ).toBe(false);
+    });
+
+    it("(c') flag-off mutating fields on a READ-ONLY run change NOTHING (stray grant/gate ignored, still qualifies)", () => {
+      // A read-only run with stray mutating fields and the flag off must be byte-identical to a
+      // plain read-only run (the mutating fields are never consulted on the read-only path).
+      expect(
+        qualifiesForRustReadOnlyRoute({
+          ...qualifyingInput(),
+          agentRunControlViaRust: false,
+          mutatingToolGrant: ["write_file"],
+          mutationGate: "operator_signed_ed25519",
+        }),
+      ).toBe(true);
+      // Even flag-ON, a read-only run ignores the mutating fields entirely → still qualifies.
+      expect(
+        qualifiesForRustReadOnlyRoute({
+          ...qualifyingInput(),
+          agentRunControlViaRust: true,
+          mutatingToolGrant: ["write_file"],
+          mutationGate: "operator_signed_ed25519",
+        }),
+      ).toBe(true);
+    });
+
+    // (d) clause 1 (route-marker) + clause 3 (deepseek-flash) + bound-owner STILL enforced.
+    it("(d) a gated mutating run STILL requires clause 1 (route marker)", () => {
+      expect(
+        qualifiesForRustReadOnlyRoute({ ...gatedMutatingInput(), invokedFromHttpStartRunRoute: false }),
+      ).toBe(false);
+    });
+
+    it("(d) a gated mutating run STILL requires clause 3 (deepseek-flash only; not Claude/pro)", () => {
+      expect(
+        qualifiesForRustReadOnlyRoute({ ...gatedMutatingInput(), providerId: "anthropic", model: "claude-3-7" }),
+      ).toBe(false);
+      expect(
+        qualifiesForRustReadOnlyRoute({ ...gatedMutatingInput(), model: "deepseek-v4-pro" }),
+      ).toBe(false);
+    });
+
+    it("(d) a gated mutating run STILL requires a NON-EMPTY bound owner principalId (the compensating tightening)", () => {
+      // The owner check is in the mutating-admission predicate ITSELF (not session-scoped),
+      // so a SESSIONLESS mutating run with a blank/absent owner must also disqualify.
+      expect(
+        qualifiesForRustReadOnlyRoute({ ...gatedMutatingInput(), principalId: undefined }),
+      ).toBe(false);
+      expect(
+        qualifiesForRustReadOnlyRoute({ ...gatedMutatingInput(), principalId: "" }),
+      ).toBe(false);
+      expect(
+        qualifiesForRustReadOnlyRoute({ ...gatedMutatingInput(), principalId: "   " }),
+      ).toBe(false);
+    });
+
+    it("(d') a gated mutating run STILL requires the exact 4-read base in allowedRustRouteTools", () => {
+      // The mutating grant rides mutatingToolGrant; the read base must still be exactly the 4.
+      expect(
+        qualifiesForRustReadOnlyRoute({
+          ...gatedMutatingInput(),
+          allowedRustRouteTools: ["read_file", "list_dir", "stat_file"],
+        }),
+      ).toBe(false);
+      // Mutating tools must NOT be smuggled into the read grant (that grant is reads-exact).
+      expect(
+        qualifiesForRustReadOnlyRoute({
+          ...gatedMutatingInput(),
+          allowedRustRouteTools: [...RUST_ROUTE_READ_TOOL_ALLOWLIST, "write_file"],
+        }),
+      ).toBe(false);
+    });
+
+    // (e) granted-but-not-in-allowlist tool ⇒ DISQUALIFIED (closed allow-list).
+    it("(e) disqualifies a grant containing a tool NOT in the closed mutating allow-list", () => {
+      expect(
+        qualifiesForRustReadOnlyRoute({
+          ...gatedMutatingInput(),
+          mutatingToolGrant: ["write_file", "spawn_subagent"],
+        }),
+      ).toBe(false);
+      expect(
+        qualifiesForRustReadOnlyRoute({
+          ...gatedMutatingInput(),
+          mutatingToolGrant: ["read_file"], // a read tool is not a granted mutating tool
+        }),
+      ).toBe(false);
+      expect(
+        qualifiesForRustReadOnlyRoute({
+          ...gatedMutatingInput(),
+          mutatingToolGrant: ["exec_arbitrary"],
+        }),
+      ).toBe(false);
+    });
+
+    it("the mutating allow-list is exactly the closed 6 (write/append/edit/delete/move/run_command)", () => {
+      expect([...RUST_ROUTE_MUTATING_TOOL_ALLOWLIST].sort()).toEqual(
+        ["append_file", "delete_file", "edit_file", "move_file", "run_command", "write_file"],
+      );
+    });
+
+    it("a gated mutating run that is ALSO sessioned still qualifies (bound owner satisfies both)", () => {
+      expect(
+        qualifiesForRustReadOnlyRoute({
+          ...gatedMutatingInput(),
+          sessionKey: "chat-session-xyz",
+        }),
+      ).toBe(true);
+    });
   });
 });
