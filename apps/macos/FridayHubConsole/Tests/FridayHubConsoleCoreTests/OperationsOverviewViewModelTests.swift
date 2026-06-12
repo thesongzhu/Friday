@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import FridayHubConsoleCore
+@testable import FridayRustClient
 
 @Test
 @MainActor
@@ -166,4 +167,99 @@ func decodesRustProjectionShapedJSON() throws {
   #expect(snapshot.statusLabels == [.stale, .offline, .error])
   #expect(snapshot.workItems.first?.state == .providerAck)
   #expect(snapshot.transcriptSections.first?.events.first?.evidenceRefs.timelineRef != nil)
+}
+
+// MARK: - Real FridayRustClient integration (wire → display reconciliation)
+
+@Test
+func mockWireSnapshotRoundTripsThroughAdapterToRichDisplay() throws {
+  // The reconciliation keystone: the package returns a THIN refs-only wire snapshot
+  // (`FridayRustClient.WorkbenchSnapshot`); the Console's `WorkbenchSnapshotAdapter` re-decodes
+  // its `raw` projection JSON into the rich display model. Adapting the representative wire
+  // snapshot must reproduce an EQUAL rich snapshot — proving the bridge is lossless for the
+  // fields the UI consumes (this is the same path the REAL client's response takes).
+  let wire = try MockReadClient.representativeWireSnapshot()
+  let display = try WorkbenchSnapshotAdapter.display(from: wire)
+  #expect(display == MockReadClient.representativeSnapshot)
+}
+
+@Test
+func adapterSurfacesMalformedProjectionAsUnavailableNotReady() throws {
+  // A wire snapshot whose `raw` is NOT a valid Workbench projection must throw (→ honest
+  // unavailable), never a partial-but-ready snapshot. We never fabricate readiness from
+  // unparseable JSON.
+  let junk = try FridayRustClient.WorkbenchSnapshot(
+    projectionJSON: #"{"missionId":"m"}"#.data(using: .utf8)!,
+    generatedAtMs: 0)
+  #expect(throws: FridayRustReadClientError.self) {
+    _ = try WorkbenchSnapshotAdapter.display(from: junk)
+  }
+}
+
+@Test
+@MainActor
+func realClientConnectionFailureRendersHonestUnavailable() async {
+  // THE REQUIRED TRUTH TEST — exercises the REAL `SealedWSReadClient`, not the mock.
+  //
+  // Pre-slice-6 the Rust read-projection server is DARK / not flipped, so the real client
+  // CANNOT connect — the EXPECTED normal state. We inject a transport that fails exactly as a
+  // dark/refused server does (`makeTransport` throws, which `fetchWorkbench()` calls FIRST,
+  // before any socket I/O — deterministic, no flaky real network). The view model MUST render
+  // this as the honest `.unavailable` state, never a fake-ready snapshot and never a crash.
+  let realClient = SealedWSReadClient(
+    keypair: FridayCrypto.DeviceKeypair(),
+    forwardedPrincipal: "owner:hub-console-desktop",
+    makeTransport: {
+      throw FridayReadClientError.transport("connection refused (read-projection server dark)")
+    })
+  let vm = OperationsOverviewViewModel(client: realClient)
+  await vm.refresh()
+
+  guard case let .unavailable(reason) = vm.state else {
+    Issue.record("real-client connect failure must render .unavailable, got \(vm.state)")
+    return
+  }
+  // The package error maps to an honest offline reason, and NO snapshot is fabricated.
+  #expect(reason.contains("offline") || reason.contains("connection"))
+  #expect(vm.state.snapshot == nil)
+}
+
+@Test
+@MainActor
+func loopbackTransportAgainstDarkServerRendersHonestUnavailable() async {
+  // THE PRODUCTION HONEST-UNAVAILABLE PATH — drives the REAL `LoopbackSealedWSTransport`
+  // (NWConnection + the synchronous bridge), NOT an injected throwing closure.
+  //
+  // Pre-slice-6 the read-projection server is DARK; nothing listens on the loopback port. The
+  // transport must fail at connect (refused / `.waiting` / bounded timeout) and the view model
+  // must render `.unavailable` — never fake-ready, never a hang, never a crash. We use a high
+  // loopback port nothing listens on + a short connectTimeout so the bound is observable.
+  let start = Date()
+  let client = RealReadClientFactory.make(
+    config: ReadProjectionServerConfig(host: "127.0.0.1", port: 49231, connectTimeout: 3),
+    forwardedPrincipal: "owner:hub-console-desktop")
+  let vm = OperationsOverviewViewModel(client: client)
+  await vm.refresh()
+  let elapsed = Date().timeIntervalSince(start)
+
+  guard case .unavailable = vm.state else {
+    Issue.record("dark loopback server must render .unavailable, got \(vm.state)")
+    return
+  }
+  // No fabricated snapshot, and the failure is BOUNDED (did not hang) — well under the timeout
+  // ceiling for a refused connect; comfortably under the test wall even if it times out.
+  #expect(vm.state.snapshot == nil)
+  #expect(elapsed < 10)
+}
+
+@Test
+func realClientFactoryBuildsAgainstLoopbackConfig() {
+  // The factory builds a real `SealedWSReadClient` (conforming to the unified protocol) for the
+  // read-projection server's loopback seam. This is wiring-only; the live round-trip against a
+  // RUNNING server is the deferred slice-6 acceptance criterion.
+  let client = RealReadClientFactory.make(
+    config: .slice6LoopbackPlaceholder,
+    forwardedPrincipal: "owner:hub-console-desktop")
+  #expect(client is SealedWSReadClient)
+  #expect(ReadProjectionServerConfig.slice6LoopbackPlaceholder.host == "127.0.0.1")
 }
