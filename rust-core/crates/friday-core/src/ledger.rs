@@ -11,12 +11,17 @@ use crate::error::CoreError;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProviderKind {
     DeepSeek,
+    /// (C2) The Claude/Anthropic route. Recorded so a Claude model call is NEVER
+    /// mis-attributed as DeepSeek; reachable only through the gated, dark Claude
+    /// path (the DeepSeek route is unchanged).
+    Anthropic,
 }
 
 impl ProviderKind {
     pub fn as_str(&self) -> &'static str {
         match self {
             ProviderKind::DeepSeek => "deepseek",
+            ProviderKind::Anthropic => "anthropic",
         }
     }
 }
@@ -113,6 +118,38 @@ impl LedgerEntry {
             created_at,
         )
     }
+
+    /// (C2) A Claude/Anthropic route entry, mirroring [`LedgerEntry::friday_route`]
+    /// but with [`ProviderKind::Anthropic`] + host `api.anthropic.com`. `fallback` is
+    /// hard-wired to `false` (the Claude route is a no-fallback route, like DeepSeek).
+    /// This is what keeps a Claude model call from being recorded as DeepSeek.
+    #[allow(clippy::too_many_arguments)]
+    pub fn anthropic_route(
+        ledger_id: impl Into<String>,
+        session_id: impl Into<String>,
+        activity_id: impl Into<String>,
+        model: impl Into<String>,
+        prompt_tokens: i64,
+        completion_tokens: i64,
+        cost_estimate: Option<f64>,
+        result_link: Option<String>,
+        created_at: i64,
+    ) -> Result<LedgerEntry, CoreError> {
+        LedgerEntry::new(
+            ledger_id,
+            session_id,
+            activity_id,
+            ProviderKind::Anthropic,
+            model,
+            "api.anthropic.com",
+            prompt_tokens,
+            completion_tokens,
+            cost_estimate,
+            false, // fallback: never true on the Claude route either
+            result_link,
+            created_at,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -177,5 +214,29 @@ mod tests {
         assert!(!e.fallback);
         assert_eq!(e.base_url_host, "api.deepseek.com");
         assert_eq!(e.total_tokens, 150);
+    }
+
+    #[test]
+    fn anthropic_route_ledger_entry_shape() {
+        // (C2) The Claude route entry records the Anthropic provider kind + host, never
+        // fallback, with the total computed from the parts.
+        let e = LedgerEntry::anthropic_route(
+            "l3",
+            "s1",
+            "a1",
+            "claude-opus-4-8",
+            11,
+            8,
+            None,
+            None,
+            3000,
+        )
+        .unwrap();
+        assert_eq!(e.provider_kind, ProviderKind::Anthropic);
+        assert_eq!(e.provider_kind.as_str(), "anthropic");
+        assert_eq!(e.base_url_host, "api.anthropic.com");
+        assert!(!e.fallback);
+        assert_eq!(e.total_tokens, 19);
+        assert_eq!(e.cost_estimate, None);
     }
 }
