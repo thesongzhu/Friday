@@ -360,6 +360,21 @@ fn run() -> Result<(), ServerError> {
         );
     }
 
+    // (NS-4) Read the MISSION-BOUND run seam flag ONCE at boot (default-off). When false the
+    // dispatch arm NEVER enters the bound-seam code — every run takes the EXACT pre-NS-4 unbound
+    // path, so deploying this binary changes NO live behavior until the operator flips this flag.
+    let mission_bound_run_enabled =
+        mission_bound_run_enabled_from(env::var(MISSION_BOUND_RUN_ENABLED_ENV).ok().as_deref());
+    if mission_bound_run_enabled {
+        eprintln!(
+            "hub_agent_run_server: MISSION-BOUND run seam ENABLED (FRIDAY_MISSION_BOUND_RUN) — a run whose session resolves to a live Mission is dispatched bound"
+        );
+    } else {
+        eprintln!(
+            "hub_agent_run_server: MISSION-BOUND run seam DISABLED (set FRIDAY_MISSION_BOUND_RUN=1 to enable) — all runs dispatch unbound"
+        );
+    }
+
     // (3) Long-lived accept loop. Each accepted connection: set the read timeout, read the peer
     // pubkey preamble, REJECT a non-allowlisted peer pubkey (S-F, the FIRST gate), reject low-order
     // points, run the WS handshake, derive the sealed session key, and serve sealed envelopes
@@ -371,6 +386,7 @@ fn run() -> Result<(), ServerError> {
             &owner_allowlist,
             &peer_allowlist,
             run_control_enabled,
+            mission_bound_run_enabled,
         ) {
             Ok(_served) => {}
             // A connection-level error ends THAT connection only; the server keeps listening.
@@ -402,6 +418,30 @@ const AGENT_RUN_CONTROL_ENABLED_ENV: &str = "FRIDAY_AGENT_RUN_CONTROL_VIA_RUST";
 /// Whether the operator has explicitly enabled the on-wire run-control plane. Fail-closed: only
 /// the exact opt-in values enable it; everything else (including unset) is OFF.
 fn agent_run_control_enabled_from(raw: Option<&str>) -> bool {
+    matches!(
+        raw.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("1") | Some("true")
+    )
+}
+
+/// (NS-4) The env flag that gates the MISSION-BOUND run seam. DEFAULT-OFF: a run is dispatched
+/// through the Mission-bound entry ([`friday_hub::run_authed_agent_loop_mission_bound`] — which
+/// mints the mission-birth + WorkItem bind) ONLY when `FRIDAY_MISSION_BOUND_RUN` is exactly
+/// `"1"`/`"true"` (case-insensitive). Unset — or any other value — leaves the seam DARK: every
+/// run takes the EXISTING unbound dispatch (`run_authed_agent_loop_with_policy` /
+/// `run_session_task_with_overrides`), BYTE-IDENTICAL to today, so deploying this binary changes
+/// NO live behavior until the operator flips this SEPARATE flag. Even with the flag ON, a run is
+/// bound only if a `MissionContextLookup` resolves (no prod surface-thread-keyed session exists
+/// yet); otherwise it falls through unbound. SEPARATE from `FRIDAY_ROUTE_AGENT_RUN_VIA_RUST`
+/// (run-START) and `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST` (run-CONTROL); flipping THIS one is an
+/// operator cutover decision gated on organic Mission ingress.
+const MISSION_BOUND_RUN_ENABLED_ENV: &str = "FRIDAY_MISSION_BOUND_RUN";
+
+/// Pure flag-matcher for [`MISSION_BOUND_RUN_ENABLED_ENV`] (separated from the env read so it is
+/// testable without mutating the process-global environment). DEFAULT-OFF: `None` (unset) ⇒
+/// false; only the exact opt-in values `"1"`/`"true"` (case-insensitive, trimmed) ⇒ true;
+/// everything else ⇒ false.
+fn mission_bound_run_enabled_from(raw: Option<&str>) -> bool {
     matches!(
         raw.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
         Some("1") | Some("true")
@@ -509,6 +549,7 @@ impl AgentRunWsListener {
         owner_allowlist: &[String],
         peer_allowlist: &[[u8; X25519_PUBKEY_LEN]],
         run_control_enabled: bool,
+        mission_bound_run_enabled: bool,
     ) -> Result<usize, TransportError> {
         let (stream, _peer) = self.listener.accept()?;
         // HARDENING: a per-connection read timeout BEFORE any read, so a stalled peer cannot
@@ -523,6 +564,7 @@ impl AgentRunWsListener {
             runtime,
             owner_allowlist,
             run_control_enabled,
+            mission_bound_run_enabled,
         )
     }
 }
@@ -560,6 +602,7 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
     runtime: &HubRuntime<T>,
     owner_allowlist: &[String],
     run_control_enabled: bool,
+    mission_bound_run_enabled: bool,
 ) -> Result<usize, TransportError> {
     let mut processed = 0usize;
     // S-E: per-session msg_id dedup. A reconnect mints a FRESH tracker (so it is not a
@@ -676,29 +719,56 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 };
                 let policy_override = effective_policy.as_ref();
 
-                let outcome = match session_id
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                {
-                    Some(sid) => runtime.run_session_task_with_overrides(
-                        &caller,
-                        &run_id,
-                        sid,
-                        &task,
-                        policy_override,
-                        max_turns_override,
-                        now_ms,
-                    ),
-                    None => run_authed_agent_loop_with_policy(
+                // (NS-4) MISSION-BOUND seam — FLAG-GATED, the FIRST dispatch consulted. When
+                // `FRIDAY_MISSION_BOUND_RUN` is ON **and** this run's `session_id` resolves to a
+                // live DeepSeek-lane Mission surface, the run is dispatched BOUND (minting the
+                // mission-birth + WorkItem bind) and the seam returns `Some(answer)`. Otherwise it
+                // returns `None` and we fall through to the EXISTING unbound dispatch below —
+                // BYTE-IDENTICAL to the pre-NS-4 path. With the flag OFF the `else` arm binds
+                // `None` WITHOUT ever calling the seam, so a flag-off run takes the exact same
+                // `match session_id` it always has.
+                let mission_bound = if mission_bound_run_enabled {
+                    friday_hub::hub_server::run_authed_agent_loop_mission_bound(
                         runtime,
                         &caller,
                         &run_id,
                         &task,
+                        session_id.as_deref(),
                         policy_override,
                         max_turns_override,
                         now_ms,
-                    ),
+                    )
+                } else {
+                    None
+                };
+
+                let outcome = if let Some(answer) = mission_bound {
+                    answer
+                } else {
+                    match session_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    {
+                        Some(sid) => runtime.run_session_task_with_overrides(
+                            &caller,
+                            &run_id,
+                            sid,
+                            &task,
+                            policy_override,
+                            max_turns_override,
+                            now_ms,
+                        ),
+                        None => run_authed_agent_loop_with_policy(
+                            runtime,
+                            &caller,
+                            &run_id,
+                            &task,
+                            policy_override,
+                            max_turns_override,
+                            now_ms,
+                        ),
+                    }
                 };
 
                 // (refs) REFS-ONLY terminal receipt over the wire: status + answer FINGERPRINT
@@ -1423,7 +1493,7 @@ mod tests {
 
         // SERVER on the main thread (holds the non-Send runtime).
         let processed = listener
-            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false)
+            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false, false)
             .unwrap();
         assert_eq!(processed, 1, "one authed dispatch processed");
 
@@ -1533,6 +1603,7 @@ mod tests {
                 &allowlist,
                 &peer_allowlist,
                 run_control_enabled,
+                false, // (NS-4) mission-bound seam OFF for the run-control flag tests
             )
             .unwrap();
         assert_eq!(processed, 1, "[{tag}] the paused dispatch is processed");
@@ -1609,7 +1680,7 @@ mod tests {
             (req, session.clone(), session.clone())
         });
         let processed = listener
-            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false)
+            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false, false)
             .unwrap();
         assert_eq!(
             processed, 1,
@@ -1643,7 +1714,7 @@ mod tests {
         });
 
         let processed = listener
-            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false)
+            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false, false)
             .unwrap();
         assert_eq!(processed, 0, "[{tag}] rejected dispatch processes ZERO");
 
@@ -1710,6 +1781,39 @@ mod tests {
     }
 
     #[test]
+    fn mission_bound_run_flag_is_default_off_and_fail_closed() {
+        // (NS-4) The mission-bound run seam is DEFAULT-OFF: unset ⇒ disabled (deploy-safe, the
+        // dispatch arm never enters the bound-seam code). Only the exact opt-in values enable it;
+        // everything else is OFF.
+        assert!(
+            !mission_bound_run_enabled_from(None),
+            "unset ⇒ disabled (default-off, deploy-safe)"
+        );
+        assert!(
+            !mission_bound_run_enabled_from(Some("")),
+            "empty ⇒ disabled"
+        );
+        assert!(!mission_bound_run_enabled_from(Some("0")), "0 ⇒ disabled");
+        assert!(
+            !mission_bound_run_enabled_from(Some("false")),
+            "false ⇒ disabled"
+        );
+        assert!(
+            !mission_bound_run_enabled_from(Some("on")),
+            "garbage ⇒ disabled"
+        );
+        assert!(mission_bound_run_enabled_from(Some("1")), "1 ⇒ enabled");
+        assert!(
+            mission_bound_run_enabled_from(Some("true")),
+            "true ⇒ enabled"
+        );
+        assert!(
+            mission_bound_run_enabled_from(Some("  TRUE  ")),
+            "padded TRUE ⇒ enabled"
+        );
+    }
+
+    #[test]
     fn non_allowlisted_principal_is_rejected_no_run_no_body() {
         reject_case("rej-forged", "principal:attacker-not-allowlisted");
     }
@@ -1763,7 +1867,7 @@ mod tests {
         });
 
         let processed = listener
-            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false)
+            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false, false)
             .unwrap();
         assert_eq!(
             processed, 0,
@@ -1798,7 +1902,7 @@ mod tests {
         });
 
         let processed = listener
-            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false)
+            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false, false)
             .unwrap();
         assert_eq!(
             processed, 0,
@@ -1833,7 +1937,8 @@ mod tests {
             drop(stream);
         });
         // accept_one runs the REAL production path; a low-order key must make it return Err.
-        let outcome = listener.accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false);
+        let outcome =
+            listener.accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false, false);
         client.join().unwrap();
         assert!(
             outcome.is_err(),
@@ -2111,7 +2216,7 @@ mod tests {
             let _ = ws_recv_envelope(&mut ws, &sess_c1, SESSION_AAD);
         });
         let processed1 = listener
-            .accept_one(&server_kp, &rt1, &allowlist, &peer_allowlist, false)
+            .accept_one(&server_kp, &rt1, &allowlist, &peer_allowlist, false, false)
             .unwrap();
         assert_eq!(processed1, 1, "connection-1 is a VALID dispatch");
         let captured_proof = rx.recv().unwrap();
@@ -2144,7 +2249,7 @@ mod tests {
                 .map(|e| e.message)
         });
         let processed2 = listener
-            .accept_one(&server_kp, &rt2, &allowlist, &peer_allowlist, false)
+            .accept_one(&server_kp, &rt2, &allowlist, &peer_allowlist, false, false)
             .unwrap();
         assert_eq!(
             processed2, 0,
@@ -2195,7 +2300,7 @@ mod tests {
         });
 
         let processed = listener
-            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false)
+            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false, false)
             .unwrap();
         // The first keepalive was processed (echoed); the replayed msg_id ended the session.
         assert_eq!(
@@ -2263,8 +2368,14 @@ mod tests {
 
         let client = thread::spawn(move || try_preamble(addr, attacker_pub));
         // The server runs the REAL accept path; a non-allowlisted peer must make it FAIL CLOSED.
-        let outcome =
-            listener.accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist, false);
+        let outcome = listener.accept_one(
+            &server_kp,
+            &rt,
+            &owner_allowlist,
+            &peer_allowlist,
+            false,
+            false,
+        );
         let obs = client.join().unwrap();
 
         assert!(
@@ -2313,7 +2424,14 @@ mod tests {
             (req, session.clone(), session.clone())
         });
         let processed = listener
-            .accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist, false)
+            .accept_one(
+                &server_kp,
+                &rt,
+                &owner_allowlist,
+                &peer_allowlist,
+                false,
+                false,
+            )
             .unwrap();
         assert_eq!(
             processed, 1,
@@ -2714,7 +2832,14 @@ mod tests {
         // body send lands in the loopback send buffer, so `serve_sealed_session` returns Ok (no
         // error settle). (Large bodies can Err on the body send; see the NOTE on the test above.)
         let processed = listener
-            .accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist, false)
+            .accept_one(
+                &server_kp,
+                &rt,
+                &owner_allowlist,
+                &peer_allowlist,
+                false,
+                false,
+            )
             .expect("server serves the interop session");
         assert_eq!(processed, 1, "one authed dispatch processed");
 
@@ -2761,7 +2886,14 @@ mod tests {
         // The TS client uses its fixed secret (whose pubkey is NOT enrolled) ⇒ rejected at preamble.
         let child = spawn_ts_client(addr.port(), &ts_client_secret_hex(), OWNER, "run-forged");
         // The server rejects the peer pubkey and returns an Err (no session established).
-        let served = listener.accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist, false);
+        let served = listener.accept_one(
+            &server_kp,
+            &rt,
+            &owner_allowlist,
+            &peer_allowlist,
+            false,
+            false,
+        );
         assert!(
             served.is_err(),
             "a forged/non-allowlisted peer establishes NO session"
@@ -2803,7 +2935,14 @@ mod tests {
             "run-badprincipal",
         );
         let processed = listener
-            .accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist, false)
+            .accept_one(
+                &server_kp,
+                &rt,
+                &owner_allowlist,
+                &peer_allowlist,
+                false,
+                false,
+            )
             .expect("server serves the session but runs nothing");
         assert_eq!(
             processed, 0,
@@ -2903,7 +3042,14 @@ mod tests {
             "run-compose-ok",
         );
         let processed = listener
-            .accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist, false)
+            .accept_one(
+                &server_kp,
+                &rt,
+                &owner_allowlist,
+                &peer_allowlist,
+                false,
+                false,
+            )
             .expect("server serves the compose-adapter session");
         assert_eq!(processed, 1, "one authed dispatch processed");
 
@@ -2950,7 +3096,14 @@ mod tests {
             OWNER,
             "run-compose-forged",
         );
-        let served = listener.accept_one(&server_kp, &rt, &owner_allowlist, &peer_allowlist, false);
+        let served = listener.accept_one(
+            &server_kp,
+            &rt,
+            &owner_allowlist,
+            &peer_allowlist,
+            false,
+            false,
+        );
         assert!(
             served.is_err(),
             "an unenrolled derived pubkey establishes NO session"
@@ -3003,7 +3156,7 @@ mod tests {
         });
 
         let processed = listener
-            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false)
+            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false, false)
             .unwrap();
         assert_eq!(processed, 1, "one sessioned dispatch processed");
 
@@ -3104,7 +3257,7 @@ mod tests {
         });
         assert_eq!(
             listener
-                .accept_one(&server_kp, &rt, &allowlist, &peer1, false)
+                .accept_one(&server_kp, &rt, &allowlist, &peer1, false, false)
                 .unwrap(),
             1
         );
@@ -3121,7 +3274,7 @@ mod tests {
         });
         assert_eq!(
             listener
-                .accept_one(&server_kp, &rt, &allowlist, &peer2, false)
+                .accept_one(&server_kp, &rt, &allowlist, &peer2, false, false)
                 .unwrap(),
             1
         );
@@ -3166,7 +3319,7 @@ mod tests {
         });
         assert_eq!(
             listener
-                .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false)
+                .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false, false)
                 .unwrap(),
             1
         );
