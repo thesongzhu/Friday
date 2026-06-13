@@ -43,6 +43,7 @@ import {
   parseFridayChannelsConfig,
   parseFridayChannelSecretRef,
 } from "#channels";
+import { FridayDomainError } from "#errors";
 import { createFridayHub, resolveFridayHubConfig } from "#hub";
 import type { FridayHubConfig } from "#hub";
 import {
@@ -1598,6 +1599,36 @@ export async function runCliSkillCommand(
   }
 
   const config = buildConfig(parsed);
+
+  // ─── TS Runtime Retirement — local-mode skill-run fail-closed guard ───
+  // The REMOTE branch above already returned via the route-guarded HTTP surface.
+  // This LOCAL-hub branch boots an in-process hub and reaches the shared
+  // `hub.executor.execute` arbitrary-code sink (shell/python) DIRECTLY with a
+  // caller-supplied skillId, bypassing the route guard. Mirror the SAME
+  // per-caller guard the agent skill_run tool (friday-agent-skill-tool.ts) and
+  // workflow invokeSkillForWorkflow (friday-hub-bootstrap.ts) use: fail closed
+  // unless the test oracle (or a future Rust-owned entrypoint) opts in via the
+  // SAME flag — sourced from config (CLI buildConfig leaves it undefined → OFF →
+  // fail closed by default). EXEMPT `ai-inference`: that fixed (non-arbitrary)
+  // skillId short-circuits to the provider service inside the executor and
+  // returns BEFORE any code sink, so it is the live BYOK path that must stay live.
+  if (
+    parsed.skillId !== "ai-inference"
+    && config.allowTestOnlySkillRunExecution !== true
+  ) {
+    throw new FridayDomainError(
+      "TS_RUNTIME_SKILL_RUNS_RETIRED",
+      "Skill run execution is fail-closed while runtime ownership is being moved out of TypeScript.",
+      {
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_skill_run_entrypoint_required",
+        },
+      },
+    );
+  }
+
   const hub = await (deps.createHub ?? createFridayHub)(config);
 
   await hub.start();
