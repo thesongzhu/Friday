@@ -500,10 +500,13 @@ pub fn attach_provider_timeline_state(
 ///
 /// `guarded = true` routes the SAME legal status advance through
 /// [`friday_storage::Db::transition_work_item_status`], which transitions the WorkItem AND
-/// writes ONE hash-chained `audit_ledger` lifecycle row in a single transaction. The SOLE
-/// behavioral delta vs OFF is that atomic audit row: the resulting status is identical, the
-/// MissionLink is identical, and the mission's `proof_refs`/`updated_at_ms` are updated on
-/// completion exactly as before (the primitive touches only the WorkItem, never the mission).
+/// writes ONE hash-chained `audit_ledger` lifecycle row in a single transaction. The ON path
+/// has TWO deltas vs OFF: (a) the hash-chained `audit_ledger` lifecycle rows, and (b) an ON-only
+/// `updated_at_ms` +offset (≤ +4ms, one per hop index — see the per-hop `now_ms` in
+/// [`crate::mission_runtime::attach_agent_loop_provider_state`]) on the WorkItem AND, on
+/// completion, the Mission row. The resulting status, `proof_refs`, and the MissionLink
+/// (`created_at_ms` is preserved from the first hop = base `now_ms`, identical to OFF) are the
+/// same on both paths. The OFF path is byte-identical to pre-WI-1.
 ///
 /// The legal-hop pre-check (`can_transition_to`) is SHARED and UNGUARDED across both paths and
 /// runs BEFORE the `guarded` fork, so an illegal hop returns the SAME `Ok(Blocked{illegal_...})`

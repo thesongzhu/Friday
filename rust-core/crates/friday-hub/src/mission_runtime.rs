@@ -523,10 +523,14 @@ fn attach_completed_provider_state_for_ask(
 /// [`friday_storage::Db::transition_work_item_status`], writing one hash-chained `audit_ledger`
 /// lifecycle row per transition in its own transaction. A completed loop drives 5 legal hops
 /// (ReadyToDispatch → … → CompletedWithProof) ⇒ 5 lifecycle audit rows. The resulting WorkItem
-/// status and the MissionLink are unchanged either way. NOTE: ON-path only, each hop is given a
-/// distinct `now_ms` (a per-hop monotonic offset) so the per-hop audit_ids — derived from
-/// `(work_item_id, now_ms)`, the `audit_ledger` PRIMARY KEY — are unique across the multi-hop
-/// drive and the run never errors on a PK collision. OFF keeps the single caller-side `now_ms`.
+/// status and the MissionLink (its `created_at_ms` is preserved from the first hop = base
+/// `now_ms`) are unchanged either way. The ON path has TWO deltas vs OFF: (a) those hash-chained
+/// audit rows, and (b) an ON-only `updated_at_ms` +offset (≤ +4ms, one per hop index) on the
+/// WorkItem and, on completion, the Mission row — a direct consequence of the per-hop `now_ms`
+/// below. NOTE: ON-path only, each hop is given a distinct `now_ms` (a per-hop monotonic offset)
+/// so the per-hop audit_ids — derived from `(work_item_id, now_ms)`, the `audit_ledger` PRIMARY
+/// KEY — are unique across the multi-hop drive and the run never errors on a PK collision. OFF
+/// keeps the single caller-side `now_ms` (byte-identical to pre-WI-1).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn attach_agent_loop_provider_state(
     db: &Db,
@@ -1437,6 +1441,18 @@ mod tests {
         assert!(item
             .proof_receipts
             .contains(&"friday://agent-run/run-loop-1".to_string()));
+
+        // WI-1 honesty pin: the ON-only `updated_at_ms` +offset is EXACTLY the documented value,
+        // not an arbitrary drift. 5 status-changing hops are driven (idx 0..=4); each enters the
+        // guarded branch and the primitive sets `updated_at_ms = base_now_ms + idx` (mission.rs).
+        // The final hop is the CompletedWithProof transition at idx=4, so the persisted WorkItem
+        // `updated_at_ms` MUST equal base_now_ms + 4. A future change can't silently widen it.
+        let final_hop_idx = 4;
+        assert_eq!(
+            item.updated_at_ms,
+            now + final_hop_idx,
+            "ON-path WorkItem updated_at_ms must be the base now_ms + final hop index, not a wider drift"
+        );
 
         // 5 legal hops (ReadyToDispatch → … → CompletedWithProof) ⇒ 5 lifecycle audit rows,
         // each with a DISTINCT audit_id despite the single caller-side now_ms, and the chain verifies.
