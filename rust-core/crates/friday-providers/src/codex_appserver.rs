@@ -18,6 +18,17 @@ use friday_core::ProviderSessionEvent;
 pub const CODEX_APP_SERVER_SYNC_MODE: &str = "provider_app_server_local";
 pub const CODEX_APP_SERVER_CLI_VERSION: &str = "codex-cli 0.136.0";
 
+/// Approval policy pinned for a [`CodexAppServerClient::run_turn`] model turn. `"never"`
+/// (a value of `v2/AskForApproval`) keeps a non-interactive completion from triggering an
+/// approval ask in this dark, no-operator-in-the-loop slice. Interactive approval routing
+/// is explicitly out of scope here (a mid-turn approval REQUEST fails closed).
+pub const MODEL_TURN_APPROVAL_POLICY: &str = "never";
+
+/// Hard upper bound on JSON-RPC messages [`CodexAppServerClient::run_turn`] will read
+/// before giving up with a typed `turn-no-completion` error. Guarantees a malformed or
+/// never-completing notification stream terminates the loop instead of spinning forever.
+pub const MODEL_TURN_MAX_MESSAGES: usize = 100_000;
+
 pub const REQUIRED_CLIENT_METHODS: &[&str] = &[
     "initialize",
     "thread/list",
@@ -122,6 +133,38 @@ pub struct TurnSummary {
 pub struct InterruptSummary {
     pub thread_id: String,
     pub turn_id: String,
+}
+
+/// Token usage for one model turn, projected from a `thread/tokenUsage/updated`
+/// notification's `tokenUsage.last` breakdown (per `v2/ThreadTokenUsageUpdatedNotification.json`).
+/// Optional on [`ModelTurnOutcome`] because the protocol does not guarantee the
+/// notification arrives every turn — its absence is NOT a turn failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CodexTokenUsage {
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub total_tokens: i64,
+}
+
+/// The result of one Codex app-server MODEL TURN (`turn/start` → drive the notification
+/// stream to `turn/completed`). Mirrors `friday_anthropic::ModelCallOutcome`: it carries
+/// the assistant text + a terminal status + (when the protocol emitted it) token usage.
+///
+/// `content` is assembled from the AUTHORITATIVE `item/completed` agent-message items
+/// (`AgentMessageThreadItem.text`, per `v2/ItemCompletedNotification.json` →
+/// `ThreadItem`), NOT the `item/agentMessage/delta` concatenation — the schema warns the
+/// completed item is authoritative and may not match the delta concat.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelTurnOutcome {
+    pub thread_id: String,
+    pub turn_id: String,
+    /// Terminal turn status (`completed` / `interrupted` / `failed`), from
+    /// `turn/completed`'s `turn.status` (`v2/TurnStatus`).
+    pub status: String,
+    /// Concatenated authoritative agent-message text for this turn.
+    pub content: String,
+    /// Token usage if a `thread/tokenUsage/updated` arrived for this turn; else `None`.
+    pub usage: Option<CodexTokenUsage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -251,6 +294,62 @@ pub struct JsonRpcErrorEnvelope {
     pub message: Option<String>,
 }
 
+/// One JSON-RPC message read off the app-server's stdout, classified by its shape so
+/// the model-turn loop ([`CodexAppServerClient::run_turn`]) can route it. The Codex
+/// app-server multiplexes three message kinds on the SAME stdout channel during a turn:
+/// the synchronous `result`/`error` of a client request, server→client *notifications*
+/// (no `id`, e.g. `turn/completed`), and server→client *requests* (an `id` + a `method`,
+/// e.g. `item/commandExecution/requestApproval`) that expect a response.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CodexInboundMessage {
+    /// A reply to a client request (`id` matches, carries `result` or `error`).
+    Response(JsonRpcResponse),
+    /// A server-initiated notification (no `id`): carries a `method` + `params`.
+    Notification { method: String, params: Value },
+    /// A server-initiated REQUEST (has both an `id` and a `method`): expects a
+    /// client response. During a non-interactive dark turn these are approval/elicitation
+    /// asks; the turn loop surfaces them as a typed blocker (it does not route interactive
+    /// approvals in this slice) rather than dropping them (which would hang the server).
+    ServerRequest {
+        id: Value,
+        method: String,
+        params: Value,
+    },
+}
+
+/// Classify a raw JSON-RPC message value into a [`CodexInboundMessage`]. Shared by the
+/// real [`JsonLineTransport`] and any in-memory transport so the SAME classification is
+/// exercised in KATs and live. A value with both `id` and `method` is a server request;
+/// `method` without `id` is a notification; everything else is a response.
+pub fn classify_inbound(value: Value) -> Result<CodexInboundMessage, CodexAppServerError> {
+    let has_method = value.get("method").and_then(Value::as_str).is_some();
+    let id = value.get("id").cloned().filter(|v| !v.is_null());
+    match (has_method, id) {
+        (true, Some(id)) => Ok(CodexInboundMessage::ServerRequest {
+            id,
+            method: value
+                .get("method")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            params: value.get("params").cloned().unwrap_or(Value::Null),
+        }),
+        (true, None) => Ok(CodexInboundMessage::Notification {
+            method: value
+                .get("method")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            params: value.get("params").cloned().unwrap_or(Value::Null),
+        }),
+        (false, _) => serde_json::from_value(value)
+            .map(CodexInboundMessage::Response)
+            .map_err(|_| CodexAppServerError::Protocol {
+                code: "response-json",
+            }),
+    }
+}
+
 pub trait CodexAppServerTransport {
     fn request(&mut self, request: JsonRpcRequest) -> Result<JsonRpcResponse, CodexAppServerError>;
 
@@ -259,6 +358,24 @@ pub trait CodexAppServerTransport {
     /// [`JsonLineTransport`] overrides it. Used for the post-`initialize` `initialized`
     /// handshake the app-server expects before thread/turn calls.
     fn notify(&mut self, _method: &str, _params: Option<Value>) -> Result<(), CodexAppServerError> {
+        Ok(())
+    }
+
+    /// Read the NEXT JSON-RPC message off the channel and classify it. Drives the
+    /// model-turn loop, which (unlike a single request/response) must consume the
+    /// interleaved notification + server-request stream until `turn/completed`. The
+    /// default errors so a transport that cannot stream (e.g. the request/response-only
+    /// [`MockCodexAppServerTransport`]) fails closed rather than silently hanging a turn.
+    fn read_message(&mut self) -> Result<CodexInboundMessage, CodexAppServerError> {
+        Err(CodexAppServerError::Transport {
+            code: "read-message-unsupported",
+        })
+    }
+
+    /// Send a JSON-RPC RESPONSE to a server-initiated request (used to unblock an
+    /// interleaved approval/elicitation ask so the turn does not hang). Default no-op
+    /// for transports that do not stream; the real [`JsonLineTransport`] overrides it.
+    fn respond(&mut self, _id: &Value, _result: Value) -> Result<(), CodexAppServerError> {
         Ok(())
     }
 }
@@ -299,6 +416,42 @@ impl<R: Read, W: Write> CodexAppServerTransport for JsonLineTransport<R, W> {
             .and_then(|_| self.writer.flush())
             .map_err(|_| CodexAppServerError::Transport {
                 code: "notify-write",
+            })
+    }
+
+    fn read_message(&mut self) -> Result<CodexInboundMessage, CodexAppServerError> {
+        let mut line = String::new();
+        let read =
+            self.reader
+                .read_line(&mut line)
+                .map_err(|_| CodexAppServerError::Transport {
+                    code: "stream-read",
+                })?;
+        if read == 0 {
+            return Err(CodexAppServerError::Transport { code: "stream-eof" });
+        }
+        let value: Value =
+            serde_json::from_str(&line).map_err(|_| CodexAppServerError::Protocol {
+                code: "stream-json",
+            })?;
+        classify_inbound(value)
+    }
+
+    fn respond(&mut self, id: &Value, result: Value) -> Result<(), CodexAppServerError> {
+        let encoded = serde_json::to_vec(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": result,
+        }))
+        .map_err(|_| CodexAppServerError::Protocol {
+            code: "respond-encode",
+        })?;
+        self.writer
+            .write_all(&encoded)
+            .and_then(|_| self.writer.write_all(b"\n"))
+            .and_then(|_| self.writer.flush())
+            .map_err(|_| CodexAppServerError::Transport {
+                code: "respond-write",
             })
     }
 
@@ -592,6 +745,118 @@ impl<T: CodexAppServerTransport> CodexAppServerClient<T> {
         })
     }
 
+    /// Run a COMPLETE Codex model turn: send a `turn/start` text input on `thread_id`,
+    /// then drive the server's notification stream until the matching `turn/completed`,
+    /// returning the authoritative assistant text + terminal status + (if emitted) token
+    /// usage. This is the C1 model-turn capability — the actual "run a Codex completion",
+    /// distinct from the metadata-only `thread/list`/`thread/read` reads.
+    ///
+    /// The turn is started with `approvalPolicy: "never"` (`v2/AskForApproval`) so a plain
+    /// text completion does NOT trigger an interactive approval ask. Defensively, if the
+    /// server DOES interleave an `item/*/requestApproval` / elicitation REQUEST mid-turn,
+    /// the loop fails closed with a typed `interactive-approval-unsupported` blocker rather
+    /// than hanging — this dark slice does not route interactive approvals. (After
+    /// surfacing the blocker the caller should `interrupt_turn` to release the server.)
+    ///
+    /// `turn/completed` (terminal `status`) is the ONLY normal loop exit; a `failed` turn
+    /// still returns `Ok` carrying `status = "failed"` (the controlled `turn.error.message`
+    /// is intentionally NOT inlined here — error text stays out of the typed outcome,
+    /// consistent with this module's `metadata_only` hygiene). A bounded iteration cap
+    /// guarantees a malformed/never-completing stream yields a typed transport error, not
+    /// a spin. Requires the transport to support `read_message` (the request/response-only
+    /// mock does not, and fails closed).
+    pub fn run_turn(
+        &mut self,
+        thread_id: &str,
+        client_user_message_id: Option<&str>,
+        text: &str,
+    ) -> Result<ModelTurnOutcome, CodexAppServerError> {
+        let start = self.call(
+            "turn/start",
+            json!({
+                "threadId": thread_id,
+                "clientUserMessageId": client_user_message_id,
+                "approvalPolicy": MODEL_TURN_APPROVAL_POLICY,
+                "input": [
+                    {
+                        "type": "text",
+                        "text": text,
+                    }
+                ],
+            }),
+        )?;
+        let turn = start.get("turn").ok_or(CodexAppServerError::Protocol {
+            code: "turn-missing",
+        })?;
+        let turn_id = required_string(turn, "id")?;
+
+        let mut content = String::new();
+        let mut usage: Option<CodexTokenUsage> = None;
+
+        for _ in 0..MODEL_TURN_MAX_MESSAGES {
+            match self.transport.read_message()? {
+                CodexInboundMessage::Notification { method, params } => {
+                    // Ignore traffic for a different concurrent turn.
+                    if extract_optional_string(&params, "turnId").as_deref()
+                        == Some(turn_id.as_str())
+                        || params
+                            .get("turn")
+                            .and_then(|t| extract_optional_string(t, "id"))
+                            .as_deref()
+                            == Some(turn_id.as_str())
+                    {
+                        match method.as_str() {
+                            "item/completed" => {
+                                if let Some(text) = agent_message_item_text(&params) {
+                                    content.push_str(&text);
+                                }
+                            }
+                            "thread/tokenUsage/updated" => {
+                                if let Some(u) = token_usage_from_notification(&params) {
+                                    usage = Some(u);
+                                }
+                            }
+                            "turn/completed" => {
+                                let status = params
+                                    .get("turn")
+                                    .and_then(status_string)
+                                    .unwrap_or_else(|| "completed".to_string());
+                                return Ok(ModelTurnOutcome {
+                                    thread_id: thread_id.to_string(),
+                                    turn_id,
+                                    status,
+                                    content,
+                                    usage,
+                                });
+                            }
+                            // agentMessage/delta (streaming only — not the authoritative
+                            // text), turn/started, item/started, diffs, plan, etc.: skip.
+                            _ => {}
+                        }
+                    }
+                }
+                // A server→client REQUEST mid-turn (approval/elicitation). Not routed in
+                // this dark slice — fail closed with a typed blocker so the turn can never
+                // hang waiting for a response we will not send.
+                CodexInboundMessage::ServerRequest { .. } => {
+                    return Err(CodexAppServerError::Protocol {
+                        code: "interactive-approval-unsupported",
+                    });
+                }
+                // A stray response (no in-flight client request during the loop) is a
+                // protocol violation — fail closed rather than loop on it.
+                CodexInboundMessage::Response(_) => {
+                    return Err(CodexAppServerError::Protocol {
+                        code: "unexpected-response-in-turn",
+                    });
+                }
+            }
+        }
+        Err(CodexAppServerError::Transport {
+            code: "turn-no-completion",
+        })
+    }
+
     fn call(&mut self, method: &str, params: Value) -> Result<Value, CodexAppServerError> {
         let id = self.next_id;
         self.next_id += 1;
@@ -832,6 +1097,40 @@ fn extract_optional_string(value: &Value, field: &str) -> Option<String> {
         .get(field)
         .and_then(Value::as_str)
         .map(ToString::to_string)
+}
+
+/// Extract the authoritative agent-message text from an `item/completed` notification's
+/// `item` (a `ThreadItem`). Per `v2/ItemCompletedNotification.json` → `ThreadItem`, an
+/// `AgentMessageThreadItem` is `{ type: "agentMessage", text: string, .. }`. Returns
+/// `None` for any non-agent-message item (tool calls, reasoning, command exec, …) so
+/// only assistant prose contributes to the turn content.
+fn agent_message_item_text(params: &Value) -> Option<String> {
+    let item = params.get("item")?;
+    if item.get("type").and_then(Value::as_str) != Some("agentMessage") {
+        return None;
+    }
+    item.get("text")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
+/// Project a `thread/tokenUsage/updated` notification into [`CodexTokenUsage`]. Per
+/// `v2/ThreadTokenUsageUpdatedNotification.json`, `params.tokenUsage.last` is a
+/// `TokenUsageBreakdown { inputTokens, outputTokens, totalTokens, .. }` (int64). Returns
+/// `None` if the shape is absent/partial (a missing usage update is never a turn failure).
+fn token_usage_from_notification(params: &Value) -> Option<CodexTokenUsage> {
+    let breakdown = params.get("tokenUsage").and_then(|tu| tu.get("last"))?;
+    let input_tokens = breakdown.get("inputTokens").and_then(Value::as_i64)?;
+    let output_tokens = breakdown.get("outputTokens").and_then(Value::as_i64)?;
+    let total_tokens = breakdown
+        .get("totalTokens")
+        .and_then(Value::as_i64)
+        .unwrap_or_else(|| input_tokens.saturating_add(output_tokens));
+    Some(CodexTokenUsage {
+        input_tokens,
+        output_tokens,
+        total_tokens,
+    })
 }
 
 #[derive(Debug, Default)]
@@ -1228,5 +1527,238 @@ mod tests {
             err.to_string(),
             "codex app-server protocol error: server-error"
         );
+    }
+
+    // ---- C1 model-turn (run_turn) KATs ----
+    //
+    // These drive the REAL `JsonLineTransport` over a `&[u8]` byte stream so the actual
+    // line-read + `classify_inbound` + `run_turn` notification loop is exercised — NOT a
+    // pre-parsed mock that would bypass the parsing under test. Every fixture line is
+    // shaped per the codex CLI's `app-server generate-json-schema` v2 bundle (the same
+    // creds-free schema source `codex_appserver_live_schema.rs` validates); the source
+    // schema file is named in each comment so "not guessed" is auditable.
+
+    fn run_turn_client(
+        stream: &'static str,
+    ) -> CodexAppServerClient<JsonLineTransport<&'static [u8], Vec<u8>>> {
+        CodexAppServerClient::new(JsonLineTransport::new(stream.as_bytes(), Vec::<u8>::new()))
+    }
+
+    #[test]
+    fn run_turn_collects_authoritative_text_and_usage_then_completes() {
+        // turn/start response (v2/TurnStartResponse: {turn: Turn{id,status,items}}),
+        // then the notification stream the server interleaves on the same channel:
+        // a streaming delta (v2/AgentMessageDeltaNotification) that must be IGNORED for
+        // content, the authoritative item/completed (v2/ItemCompletedNotification ->
+        // ThreadItem AgentMessageThreadItem{type:"agentMessage",text}), a
+        // thread/tokenUsage/updated (v2/ThreadTokenUsageUpdatedNotification ->
+        // tokenUsage.last TokenUsageBreakdown), and finally turn/completed
+        // (v2/TurnCompletedNotification: {threadId, turn{status}}).
+        let stream = concat!(
+            r#"{"id":1,"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"method":"item/agentMessage/delta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","delta":"PO"}}"#,
+            "\n",
+            r#"{"method":"item/agentMessage/delta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","delta":"NG-stream-not-authoritative"}}"#,
+            "\n",
+            r#"{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","completedAtMs":1,"item":{"id":"item-1","type":"agentMessage","text":"PONG"}}}"#,
+            "\n",
+            r#"{"method":"thread/tokenUsage/updated","params":{"threadId":"thread-1","turnId":"turn-1","tokenUsage":{"last":{"cachedInputTokens":0,"inputTokens":11,"outputTokens":8,"reasoningOutputTokens":0,"totalTokens":19},"total":{"cachedInputTokens":0,"inputTokens":11,"outputTokens":8,"reasoningOutputTokens":0,"totalTokens":19}}}}"#,
+            "\n",
+            r#"{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[]}}}"#,
+            "\n",
+        );
+        let mut client = run_turn_client(stream);
+        let out = client
+            .run_turn("thread-1", Some("client-msg-1"), "ping")
+            .unwrap();
+        assert_eq!(out.thread_id, "thread-1");
+        assert_eq!(out.turn_id, "turn-1");
+        assert_eq!(out.status, "completed");
+        // Authoritative item text, NOT the delta concat ("PONG-stream-not-authoritative").
+        assert_eq!(out.content, "PONG");
+        assert_eq!(
+            out.usage,
+            Some(CodexTokenUsage {
+                input_tokens: 11,
+                output_tokens: 8,
+                total_tokens: 19,
+            })
+        );
+
+        // The request actually written to the wire is a well-formed turn/start with the
+        // pinned non-interactive approval policy + the text input.
+        let (_r, written) = client.into_transport().into_parts();
+        let sent = String::from_utf8(written).unwrap();
+        let req: Value = serde_json::from_str(sent.lines().next().unwrap()).unwrap();
+        assert_eq!(req["jsonrpc"], "2.0");
+        assert_eq!(req["method"], "turn/start");
+        assert_eq!(req["params"]["threadId"], "thread-1");
+        assert_eq!(req["params"]["clientUserMessageId"], "client-msg-1");
+        assert_eq!(req["params"]["approvalPolicy"], MODEL_TURN_APPROVAL_POLICY);
+        assert_eq!(
+            req["params"]["input"],
+            json!([{ "type": "text", "text": "ping" }])
+        );
+    }
+
+    #[test]
+    fn run_turn_multiple_agent_items_concatenate_and_skip_non_agent_items() {
+        // Two authoritative agentMessage items concatenate; a reasoning / command item
+        // (any non-"agentMessage" ThreadItem type) is skipped. No tokenUsage notification
+        // arrives — usage MUST be None (absence is not a turn failure).
+        let stream = concat!(
+            r#"{"id":1,"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","completedAtMs":1,"item":{"id":"r-1","type":"reasoning","text":"internal not surfaced"}}}"#,
+            "\n",
+            r#"{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","completedAtMs":2,"item":{"id":"a-1","type":"agentMessage","text":"Hello "}}}"#,
+            "\n",
+            r#"{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","completedAtMs":3,"item":{"id":"a-2","type":"agentMessage","text":"world"}}}"#,
+            "\n",
+            r#"{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[]}}}"#,
+            "\n",
+        );
+        let out = run_turn_client(stream)
+            .run_turn("thread-1", None, "hi")
+            .unwrap();
+        assert_eq!(out.content, "Hello world");
+        assert!(!out.content.contains("internal not surfaced"));
+        assert_eq!(out.usage, None);
+        assert_eq!(out.status, "completed");
+    }
+
+    #[test]
+    fn run_turn_ignores_other_turn_notifications() {
+        // A notification for a DIFFERENT turn id must not contribute to this turn's
+        // content (concurrent-turn isolation).
+        let stream = concat!(
+            r#"{"id":1,"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-OTHER","completedAtMs":1,"item":{"id":"x","type":"agentMessage","text":"WRONG-TURN"}}}"#,
+            "\n",
+            r#"{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","completedAtMs":2,"item":{"id":"a","type":"agentMessage","text":"RIGHT"}}}"#,
+            "\n",
+            r#"{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[]}}}"#,
+            "\n",
+        );
+        let out = run_turn_client(stream)
+            .run_turn("thread-1", None, "hi")
+            .unwrap();
+        assert_eq!(out.content, "RIGHT");
+    }
+
+    #[test]
+    fn run_turn_failed_status_returns_ok_with_failed_no_inlined_error() {
+        // A failed turn (v2/TurnStatus "failed", v2/TurnError populated) returns Ok with
+        // status="failed"; the controlled turn.error.message is NOT inlined into the
+        // typed outcome (metadata-only hygiene).
+        let stream = concat!(
+            r#"{"id":1,"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"failed","items":[],"error":{"message":"SECRET-PROVIDER-ERROR-DETAIL"}}}}"#,
+            "\n",
+        );
+        let out = run_turn_client(stream)
+            .run_turn("thread-1", None, "hi")
+            .unwrap();
+        assert_eq!(out.status, "failed");
+        assert_eq!(out.content, "");
+        let rendered = format!("{out:?}");
+        assert!(
+            !rendered.contains("SECRET-PROVIDER-ERROR-DETAIL"),
+            "turn outcome must not inline raw provider error text: {rendered}"
+        );
+    }
+
+    #[test]
+    fn run_turn_mid_turn_approval_request_fails_closed_does_not_hang() {
+        // The server interleaves an item/commandExecution/requestApproval REQUEST (an
+        // id-bearing server->client request per v2/ServerRequest) mid-turn. This dark
+        // slice does not route interactive approvals, so run_turn fails CLOSED with the
+        // typed blocker rather than dropping it (which would hang the server) — and never
+        // surfaces the raw command text.
+        let stream = concat!(
+            r#"{"id":1,"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"id":42,"method":"item/commandExecution/requestApproval","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"i","approvalId":"ap-1","command":"rm -rf /private/project"}}"#,
+            "\n",
+        );
+        let err = run_turn_client(stream)
+            .run_turn("thread-1", None, "hi")
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            CodexAppServerError::Protocol {
+                code: "interactive-approval-unsupported"
+            }
+        ));
+        let rendered = format!("{err:?} {err}");
+        assert!(
+            !rendered.contains("rm -rf"),
+            "approval blocker must not surface raw command text: {rendered}"
+        );
+    }
+
+    #[test]
+    fn run_turn_eof_before_completion_is_typed_transport_error_not_hang() {
+        // Stream ends (EOF) before turn/completed — must yield a typed transport error,
+        // never a spin/hang.
+        let stream = concat!(
+            r#"{"id":1,"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","completedAtMs":1,"item":{"id":"a","type":"agentMessage","text":"partial"}}}"#,
+            "\n",
+        );
+        let err = run_turn_client(stream)
+            .run_turn("thread-1", None, "hi")
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            CodexAppServerError::Transport { code: "stream-eof" }
+        ));
+    }
+
+    #[test]
+    fn run_turn_requires_streaming_transport_mock_fails_closed() {
+        // The request/response-only mock does not implement read_message — a turn that
+        // needs to drain the notification stream fails closed (never silently "succeeds"
+        // off the turn/start envelope alone).
+        let transport = MockCodexAppServerTransport::new(vec![ok(json!({
+            "turn": {"id": "turn-1", "status": "inProgress", "items": []}
+        }))]);
+        let mut client = CodexAppServerClient::new(transport);
+        let err = client.run_turn("thread-1", None, "hi").unwrap_err();
+        assert!(matches!(
+            err,
+            CodexAppServerError::Transport {
+                code: "read-message-unsupported"
+            }
+        ));
+    }
+
+    #[test]
+    fn classify_inbound_distinguishes_response_notification_and_server_request() {
+        // The shared classifier the turn loop depends on: id+method => ServerRequest,
+        // method only => Notification, neither method => Response.
+        assert!(matches!(
+            classify_inbound(json!({"id":7,"method":"item/tool/requestUserInput","params":{}})).unwrap(),
+            CodexInboundMessage::ServerRequest { method, .. } if method == "item/tool/requestUserInput"
+        ));
+        assert!(matches!(
+            classify_inbound(json!({"method":"turn/completed","params":{}})).unwrap(),
+            CodexInboundMessage::Notification { method, .. } if method == "turn/completed"
+        ));
+        assert!(matches!(
+            classify_inbound(json!({"id":1,"result":{"ok":true}})).unwrap(),
+            CodexInboundMessage::Response(_)
+        ));
+        // A null id alongside a method is still a notification (not a server request).
+        assert!(matches!(
+            classify_inbound(json!({"id":null,"method":"turn/started","params":{}})).unwrap(),
+            CodexInboundMessage::Notification { .. }
+        ));
     }
 }
