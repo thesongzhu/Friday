@@ -33,6 +33,9 @@
 //! does pure reads + JSON shaping. It never touches a provider credential or the model path.
 
 use friday_storage::agent_run_read::{db_wide_token_totals, get_run_summary, list_event_kinds};
+use friday_storage::agent_session::{
+    link_state_for_owner, LINK_OFFLINE_AFTER_MS, LINK_STALE_AFTER_MS,
+};
 use friday_storage::audit::verify_audit_chain;
 use friday_storage::Db;
 use serde_json::{json, Value};
@@ -126,6 +129,61 @@ pub fn derive_loop_status(kinds: &[String]) -> &'static str {
 pub fn reject_forbidden_output(rendered: &str) -> Result<(), String> {
     crate::refs_guard::reject_forbidden_output(rendered, &["\"task\""])
         .map_err(|marker| format!("forbidden marker in projection: {marker}"))
+}
+
+/// (C2-8) OWNER-GATED refs-only projection of a routed session's offline/stale LINK-STATE,
+/// derived from the session's last-activity timestamp (`agent_session.updated_at`) vs the
+/// injected `now_ms`. `Ok(None)` ⇒ the caller does not own the session (or it is absent /
+/// owner-less) — fail-closed, no existence/state oracle for a non-owner (the SAME owner axis
+/// as the C2-4 read API). `Ok(Some(snapshot))` ⇒ the owner's link-state label
+/// (`fresh`/`stale`/`offline`) plus the thresholds it was derived against.
+///
+/// DARK / pure clock-driven compute: the state is DERIVED on read from `updated_at + now_ms`
+/// — nothing is persisted, no model call, no ledger row, no mutation of the run path. The
+/// timestamp keys off the REAL routed session's activity (the metered turn's folded
+/// `append_session_message` bumps `updated_at`), NOT a `provider_session_link` claude_control
+/// mirror heartbeat. `now_ms` is INJECTED (never a wall clock) so transitions are
+/// deterministically testable.
+///
+/// Refs-only by construction: the snapshot carries only the session id, the closed-vocabulary
+/// state label, the last-activity timestamp, and the static thresholds — never a message body
+/// or the run `task`. The shared [`reject_forbidden_output`] guard runs INSIDE this fn, so it
+/// inherits the same refs-only discipline as [`project_run_readback`].
+pub fn project_session_link_state(
+    db: &Db,
+    user_id: &str,
+    agent_session_id: &str,
+    now_ms: i64,
+) -> Result<Option<Value>, String> {
+    let conn = db.conn();
+
+    let state = match link_state_for_owner(conn, user_id, agent_session_id, now_ms)
+        .map_err(|_| "read_failed".to_string())?
+    {
+        // Fail-closed: a non-owner / absent / owner-less session reads back None — never a
+        // distinguishable error, so a non-owner gets no existence/state oracle.
+        None => return Ok(None),
+        Some(state) => state,
+    };
+
+    let snapshot = json!({
+        "truth_label": "rust_wired_dev",
+        "proof_only": true,
+        "ok": true,
+        "agent_session_id": agent_session_id,
+        // Closed-vocabulary label only (never any session text): fresh | stale | offline.
+        "link_state": state.as_str(),
+        "now_ms": now_ms,
+        // The static thresholds the state was derived against (so a UI can render the bands).
+        "stale_after_ms": LINK_STALE_AFTER_MS,
+        "offline_after_ms": LINK_OFFLINE_AFTER_MS,
+    });
+
+    // Inherit the refs-only guard (the payload is body-free, so it passes — but run it so this
+    // projection matches the file's discipline and can never regress to carrying a body).
+    let rendered = serde_json::to_string(&snapshot).map_err(|_| "serialize_failed".to_string())?;
+    reject_forbidden_output(&rendered)?;
+    Ok(Some(snapshot))
 }
 
 #[cfg(test)]

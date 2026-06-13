@@ -955,6 +955,29 @@ impl<T: Transport> HubRuntime<T> {
         friday_storage::open_session_for_owner(self.db.conn(), caller.principal(), agent_session_id)
     }
 
+    /// (C2-8) OWNER-GATED refs-only LINK-STATE projection for one routed session: the
+    /// connectivity/staleness label (`fresh`/`stale`/`offline`) DERIVED from the session's
+    /// last-activity timestamp (`agent_session.updated_at`, which the metered turn's folded
+    /// `append_session_message` bumps) vs the injected `now_ms`. `Some(snapshot)` ONLY when
+    /// `caller` owns `agent_session_id`, else `None` (fail-closed — a non-owner cannot read
+    /// another's link-state by guessing the id; the SAME owner axis as
+    /// [`Self::open_session_for_owner`]). DARK / pure clock-driven compute: no model call, no
+    /// ledger row, no write — the state keys off the REAL routed session's activity, never a
+    /// claude_control mirror heartbeat. ADDITIVE, read-only accessor.
+    pub fn project_session_link_state(
+        &self,
+        caller: &AuthedPrincipal,
+        agent_session_id: &str,
+        now_ms: i64,
+    ) -> Result<Option<serde_json::Value>, String> {
+        crate::run_readback_projection::project_session_link_state(
+            &self.db,
+            caller.principal(),
+            agent_session_id,
+            now_ms,
+        )
+    }
+
     /// (A1 run-controls) The composed `FsToolExecutor` (workspace-root-contained, gate-mandatory).
     /// Exposed so the sealed-WS server's RESUME control handler can delegate to the S6
     /// [`crate::resume::resume_with_approval`] spine (which executes the ONE approved mutation
@@ -1899,6 +1922,112 @@ mod tests {
             rt.db().list_token_usage().unwrap().len(),
             ledger_baseline,
             "list/open/read are pure reads — no new ledger row"
+        );
+    }
+
+    #[test]
+    fn c2_8_offline_stale_link_state_keys_off_the_real_metered_turn() {
+        // C2-8 FAITHFUL DARK PROOF: drive ONE claude-pinned SESSIONED turn through the REAL
+        // `run_session_task_pinned` entry at a recorded last-turn time T. The metered turn folds
+        // its `append_session_message`, bumping `agent_session.updated_at = T`, AND bills the
+        // anthropic ledger row (ASSERTED) — so the link-state keys off the REAL routed session's
+        // metered-turn activity, NOT a synthesized mirror heartbeat.
+        //
+        // Then compute the owner-gated link-state at three INJECTED `now`s and prove the pure
+        // clock-driven transitions:
+        //   - now just after the turn          → fresh
+        //   - now past the stale threshold      → stale
+        //   - now past the offline bound        → offline
+        // Assert NO new ledger row across all three reads (the state is computed, never a model
+        // call), and that a DIFFERENT principal cannot read the link-state (fail-closed).
+        // NO key, NO network — the claude stub bills the anthropic row.
+        use friday_storage::agent_session::{LINK_OFFLINE_AFTER_MS, LINK_STALE_AFTER_MS};
+
+        let (rt, _ws) = runtime_with_claude_wired(
+            "c2-8-link-state",
+            vec![AgentStep::Finish {
+                message: "PONG".to_string(),
+            }],
+            Box::new(DenyAllApprovals),
+        );
+        let owner = authed_caller("principal:c2-8-owner");
+        let other = authed_caller("principal:c2-8-intruder");
+
+        let last_turn = 2_000_000_i64;
+        let (sel, _a) = rt
+            .run_session_task_pinned(
+                &owner,
+                "run-c2-8",
+                "sess-c2-8",
+                "first turn",
+                "claude",
+                last_turn,
+            )
+            .expect("claude sessioned turn runs");
+        assert_eq!(sel.provider_id, "claude");
+
+        // ASSERT the REAL anthropic ledger row exists (the session is genuinely metered — this is
+        // what makes the link-state's timestamp the REAL routed turn's, not a synthesized one).
+        let rows = rt.db().list_run_token_usage("run-c2-8").unwrap();
+        assert_eq!(
+            rows.len(),
+            1,
+            "one anthropic row for the single claude turn"
+        );
+        assert_eq!(
+            rows[0].provider_kind, "anthropic",
+            "the session ties to a REAL anthropic turn, never a mirror link"
+        );
+        assert_eq!(rows[0].base_url_host, "api.anthropic.com");
+        assert!(!rows[0].fallback, "the claude route is never a fallback");
+
+        // The no-new-ledger BASELINE is 1 (the one metered turn billed one anthropic row).
+        let ledger_baseline = rt.db().list_token_usage().unwrap().len();
+        assert_eq!(
+            ledger_baseline, 1,
+            "one claude turn billed one anthropic row"
+        );
+
+        // --- fresh → stale → offline on the injected clock (the metered turn set updated_at=T) ---
+        let fresh = rt
+            .project_session_link_state(&owner, "sess-c2-8", last_turn + 1)
+            .unwrap()
+            .expect("the owner reads her own link-state");
+        assert_eq!(fresh["link_state"], "fresh", "just after the turn → fresh");
+        assert_eq!(fresh["stale_after_ms"], LINK_STALE_AFTER_MS);
+        assert_eq!(fresh["offline_after_ms"], LINK_OFFLINE_AFTER_MS);
+
+        let stale = rt
+            .project_session_link_state(&owner, "sess-c2-8", last_turn + LINK_STALE_AFTER_MS)
+            .unwrap()
+            .expect("owner read");
+        assert_eq!(
+            stale["link_state"], "stale",
+            "past the stale threshold → stale"
+        );
+
+        let offline = rt
+            .project_session_link_state(&owner, "sess-c2-8", last_turn + LINK_OFFLINE_AFTER_MS)
+            .unwrap()
+            .expect("owner read");
+        assert_eq!(
+            offline["link_state"], "offline",
+            "past the offline bound → offline"
+        );
+
+        // --- a DIFFERENT principal cannot read the link-state (fail-closed, no state oracle) -----
+        assert_eq!(
+            rt.project_session_link_state(&other, "sess-c2-8", last_turn + 1)
+                .unwrap(),
+            None,
+            "a guessed session id does not let a non-owner read the link-state"
+        );
+
+        // --- NO new ledger row across ALL transitions (state is computed, never a model call) ----
+        assert_eq!(
+            rt.db().list_token_usage().unwrap().len(),
+            ledger_baseline,
+            "link-state reads are pure compute — no new ledger row across fresh/stale/offline"
         );
     }
 
