@@ -462,6 +462,7 @@ pub fn run_routed_loop(
         &crate::RunPolicy::default(),
         max_turns,
         None, // cancel: no cancellation handle — pre-C2-1 behavior, byte-identical
+        None, // steer: no steer handle — pre-C2-2 behavior, byte-identical
         now_ms,
     )
 }
@@ -485,6 +486,7 @@ pub fn run_routed_loop_with_policy(
     policy: &crate::RunPolicy,
     max_turns: u64,
     cancel: Option<&crate::CancelToken>,
+    steer: Option<&crate::SteerHandle>,
     now_ms: i64,
 ) -> Result<(RoutedSelection, LoopOutcome), RoutedLoopError> {
     let route = select_route(registry, request)?;
@@ -502,6 +504,8 @@ pub fn run_routed_loop_with_policy(
     // Ed25519 verify-only policy (never the HMAC authorize). `None` ⇒ fail-closed Pause.
     // C2-1: thread the cooperative cancellation handle VERBATIM (checked at each turn
     // boundary); `None` ⇒ no cancellation, byte-identical to the pre-C2-1 routed loop.
+    // C2-2: thread the cooperative steer handle VERBATIM (drained at each turn boundary,
+    // folded into that turn's prompt); `None` ⇒ no steer, byte-identical to before.
     let outcome = run_loop_with_policy(
         client,
         executor,
@@ -514,6 +518,7 @@ pub fn run_routed_loop_with_policy(
         policy,
         max_turns,
         cancel,
+        steer,
         now_ms,
     )?;
     Ok((selection, outcome))

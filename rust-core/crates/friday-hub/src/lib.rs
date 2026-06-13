@@ -2091,6 +2091,55 @@ impl CancelToken {
     }
 }
 
+/// (C2-2) A cooperative STEER handle for the routed run loop: an OPTIONAL slot holding at most
+/// ONE pending operator instruction. The loop [`SteerHandle::drain`]s it at the TOP of each turn
+/// (AFTER the [`CancelToken`] check, BEFORE the model call), and a drained instruction is folded
+/// into the prompt the model sees for that turn — so the NEXT `next_step_metered` carries it and
+/// produces a REAL extra billed turn whose chat is grounded on the steer. It is NOT a no-op
+/// mirror event and NOT a follow-up of its own: it changes the CONTENT of the turn the loop was
+/// already about to take. Cooperative/between-turns like the cancel: a turn already in flight is
+/// not re-prompted; the steer lands at the NEXT turn boundary the loop reaches. (It therefore
+/// cannot resurrect a loop that has already `Finish`ed — there is no next boundary.)
+///
+/// Clone-cheap (`Arc<Mutex<..>>`); the holder keeps a clone and calls [`SteerHandle::steer`] from
+/// another point (in a single-threaded test the stub injects it between scripted turns; the live
+/// test injects from a background thread, the same way the cancel is tripped). [`SteerHandle::drain`]
+/// returns `None` when empty — the no-op the no-steer path relies on. A drained instruction is
+/// consumed (`take`) so it is FOLDED IN exactly ONCE (the drain never re-fires on a later turn);
+/// having been folded into the prompt it then REMAINS in the model's context for the rest of the
+/// run, BY DESIGN — the loop's history (`TurnTrace`) has no slot to carry a free-form instruction,
+/// so dropping it after a single turn would make the model forget the operator's steer mid-task.
+///
+/// DARK: this is the steer substrate the routed-claude parity harness needs (the provider-workspace
+/// `SteerTurn=Unsupported` mirror is NOT a metered turn — this is). The no-key in-crate test, which
+/// asserts the stub OBSERVED the injected instruction in its `task` argument on the steered turn and
+/// NOT before, is its deterministic proof.
+#[derive(Clone, Debug, Default)]
+pub struct SteerHandle(std::sync::Arc<std::sync::Mutex<Option<String>>>);
+
+impl SteerHandle {
+    /// A fresh, empty steer handle (no pending instruction).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Queue an operator instruction to fold into the model's NEXT turn. Replaces any prior
+    /// un-drained instruction (the slot holds at most one — the latest steer wins). Observed by
+    /// the loop at the next turn boundary; no effect on a turn already in flight.
+    pub fn steer(&self, instruction: impl Into<String>) {
+        if let Ok(mut slot) = self.0.lock() {
+            *slot = Some(instruction.into());
+        }
+    }
+
+    /// Take the pending instruction if any, leaving the slot empty. Returns `None` (a no-op)
+    /// when empty — the no-steer path. A poisoned lock is treated as empty (fail-closed: no
+    /// fabricated steer), never a panic in the hot loop.
+    pub fn drain(&self) -> Option<String> {
+        self.0.lock().ok().and_then(|mut slot| slot.take())
+    }
+}
+
 /// How a [`run_loop`] ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoopStatus {
@@ -2532,6 +2581,7 @@ pub fn run_loop(
         &RunPolicy::default(),
         max_turns,
         None, // cancel: no cancellation handle — pre-C2-1 behavior, byte-identical
+        None, // steer: no steer handle — pre-C2-2 behavior, byte-identical
         now_ms,
     )
 }
@@ -2592,6 +2642,18 @@ const RUN_LOOP_MAX_PROVIDER_ATTEMPTS: u32 = 3;
 /// pre-C2-1 behavior, BYTE-IDENTICAL — no check, no new stop. Cooperative/between-turns:
 /// a turn already in flight completes and is billed normally; the cancel takes effect at
 /// the NEXT turn boundary only.
+///
+/// `steer` (C2-2) is an OPTIONAL cooperative steer handle drained at the TOP of each turn,
+/// AFTER the cancel check and BEFORE the model call. When `Some` and holding a pending
+/// instruction at a turn boundary, the instruction is folded into the prompt for THIS turn —
+/// so the turn's `next_step_metered` carries it and produces a REAL billed model call grounded
+/// on the steer (an additional metered turn if the loop was continuing). `None`/empty (the
+/// default for every existing caller, and any turn with nothing pending) is BYTE-IDENTICAL to
+/// pre-C2-2: the drain is a no-op and `prompt_task` is unchanged. Cooperative/between-turns:
+/// a turn already in flight is not re-prompted; the steer lands at the next boundary. It folds
+/// into exactly one turn (the drain consumes it), and it cannot revive a `Finish`ed loop (there
+/// is no next boundary). It changes the prompt the model sees, never the run row / classification
+/// / billing attribution — the billed row is the ordinary per-turn anthropic/deepseek row.
 #[allow(clippy::too_many_arguments)]
 pub fn run_loop_with_policy(
     client: &dyn AgentLlmClient,
@@ -2605,6 +2667,7 @@ pub fn run_loop_with_policy(
     policy: &RunPolicy,
     max_turns: u64,
     cancel: Option<&CancelToken>,
+    steer: Option<&SteerHandle>,
     now_ms: i64,
 ) -> Result<LoopOutcome, StorageError> {
     // Plan classification recorded ONCE (it is a property of the task, constant across
@@ -2631,7 +2694,10 @@ pub fn run_loop_with_policy(
     // read file could contain adversarial instructions. The SAME backstop holds: that
     // content only ever reaches the prompt, and the gate still evaluates every subsequent
     // tool call regardless of what the file said; it is not a new mutation path.
-    let prompt_task = if recall_preamble.is_empty() {
+    // (C2-2) `mut` so a drained steer instruction can be folded in at a turn boundary below.
+    // Absent any steer (every pre-C2-2 caller, and any turn with nothing pending) this is never
+    // reassigned, so the prompt is byte-identical to before.
+    let mut prompt_task = if recall_preamble.is_empty() {
         task.to_string()
     } else {
         format!("{recall_preamble}{task}")
@@ -2674,6 +2740,31 @@ pub fn run_loop_with_policy(
                 final_message: None,
                 detail: format!("interrupted:turn={turn_index}"),
             });
+        }
+
+        // (C2-2) Cooperative steer, drained at the TOP of the turn — AFTER the cancel check
+        // (never re-prompt a turn an interrupt is about to cancel) and BEFORE the model call —
+        // so a pending operator instruction is folded into THIS turn's prompt and carried by
+        // `next_step_metered` below, producing a REAL billed model call grounded on the steer.
+        // The drain CONSUMES the instruction so it is folded in exactly ONCE (the drain never
+        // re-fires on a later turn). NOTE `prompt_task` is mutated IN PLACE and that mutation
+        // PERSISTS for the rest of the run — having been folded in, the steer REMAINS in the
+        // model's context on every subsequent turn, BY DESIGN (the loop's `history`/`TurnTrace`
+        // has no slot to carry a free-form instruction, so dropping it after one turn would make
+        // the model forget the operator's steer mid-task). When `steer` is `None` (every pre-C2-2
+        // caller) OR holds nothing, `drain()` returns `None`, `prompt_task` is left untouched, and
+        // this turn is byte-identical to before — billing/accounting/status unchanged (non-steered).
+        // The steer enters the agent's INSTRUCTION context (a prompt-injection-inward surface, like
+        // the recall preamble and the threaded-back tool-result content): the UNW-001 gate still
+        // evaluates EVERY subsequent tool call regardless of the steer text, so it is not a new
+        // mutation path. A refs-only `agent.steered` marker is recorded (NO ledger row — the
+        // billing is the ordinary per-turn row written below); this marker is evidence, NOT the
+        // metered turn itself.
+        if let Some(instruction) = steer.and_then(SteerHandle::drain) {
+            if !instruction.is_empty() {
+                prompt_task = format!("{prompt_task}\n\n[operator steer]: {instruction}");
+                agent_run::record_event(conn, &ev("steered"), run_id, "agent.steered", now_ms)?;
+            }
         }
 
         // S1.2 usage-parity: ONE metered model call per turn. An OUTER `Err` is a
@@ -3003,6 +3094,12 @@ pub fn run_loop_with_policy(
 /// turn is still appended (the operator asked it), but no `assistant` answer and no
 /// owner-wired `run_result` (those are gated on `Finished`). `None` (every existing
 /// caller) is byte-identical to the pre-C2-1 sessioned behavior.
+/// `steer` (C2-2) is the OPTIONAL cooperative steer handle, threaded VERBATIM into the inner
+/// [`run_loop_with_policy`] (drained at each turn boundary, folded into that turn's prompt). It
+/// affects only the model's PROMPT for the steered turn — the session's persisted `user`/`assistant`
+/// messages (the clean `task` and the loop's final answer) are unchanged, so the steer never
+/// rewrites the durable session transcript. `None` (every existing caller) is byte-identical to the
+/// pre-C2-2 sessioned behavior.
 #[allow(clippy::too_many_arguments)]
 pub fn run_session_loop(
     client: &dyn AgentLlmClient,
@@ -3018,6 +3115,7 @@ pub fn run_session_loop(
     policy: &RunPolicy,
     max_turns: u64,
     cancel: Option<&CancelToken>,
+    steer: Option<&SteerHandle>,
     now_ms: i64,
 ) -> Result<LoopOutcome, StorageError> {
     // 1. Ensure the session exists and LOAD its prior turns BEFORE persisting the
@@ -3036,7 +3134,7 @@ pub fn run_session_loop(
     let session_preamble = render_session_history(&prior);
     let combined_preamble = format!("{session_preamble}{recall_preamble}");
 
-    // 3. Run the SAME gate-mandatory loop (principal/scope/operator-key/cancel aware).
+    // 3. Run the SAME gate-mandatory loop (principal/scope/operator-key/cancel/steer aware).
     let outcome = run_loop_with_policy(
         client,
         executor,
@@ -3049,6 +3147,7 @@ pub fn run_session_loop(
         policy,
         max_turns,
         cancel,
+        steer,
         now_ms,
     )?;
 
@@ -4788,6 +4887,7 @@ mod tests {
             &RunPolicy::default(),
             5,
             None, // cancel: not exercised by this test
+            None, // steer: not exercised by this test
             1000,
         )
         .expect("routed claude loop runs");
@@ -5877,6 +5977,7 @@ mod tests {
                 &RunPolicy::new(None, Vec::<String>::new(), true), // read-only ⇒ Deny mutations
                 5,
                 None, // cancel: not exercised by this test
+                None, // steer: not exercised by this test
                 1000,
             )
             .unwrap();
@@ -6209,6 +6310,7 @@ mod tests {
             &RunPolicy::default(),
             10,
             None, // cancel: not exercised by this test
+            None, // steer: not exercised by this test
             10,
         )
         .unwrap();
@@ -6277,6 +6379,7 @@ mod tests {
             &RunPolicy::default(),
             5,
             None, // cancel: not exercised by this test
+            None, // steer: not exercised by this test
             10,
         )
         .unwrap();
@@ -6303,6 +6406,7 @@ mod tests {
             &RunPolicy::default(),
             5,
             None, // cancel: not exercised by this test
+            None, // steer: not exercised by this test
             20,
         )
         .unwrap();
@@ -6399,6 +6503,7 @@ mod tests {
             &RunPolicy::default(),
             5,
             None, // cancel: not exercised by this test
+            None, // steer: not exercised by this test
             100,
         )
         .unwrap();
@@ -6442,6 +6547,7 @@ mod tests {
             &policy,
             5,
             None, // cancel: not exercised by this test
+            None, // steer: not exercised by this test
             10,
         )
         .unwrap();
@@ -6503,6 +6609,7 @@ mod tests {
             &RunPolicy::default(), // no principal bound
             5,
             None, // cancel: not exercised by this test
+            None, // steer: not exercised by this test
             10,
         )
         .unwrap();
@@ -6550,6 +6657,7 @@ mod tests {
             &policy,
             5,
             None, // cancel: not exercised by this test
+            None, // steer: not exercised by this test
             10,
         )
         .unwrap();
@@ -6602,6 +6710,7 @@ mod tests {
             &RunPolicy::default(),
             5,
             None, // cancel: not exercised by this test
+            None, // steer: not exercised by this test
             10,
         )
         .unwrap();
@@ -6638,6 +6747,7 @@ mod tests {
             &RunPolicy::default(),
             5,
             None, // cancel: not exercised by this test
+            None, // steer: not exercised by this test
             20,
         )
         .unwrap();
@@ -6679,6 +6789,7 @@ mod tests {
             &RunPolicy::default(),
             5,
             None, // cancel: not exercised by this test
+            None, // steer: not exercised by this test
             10,
         )
         .unwrap();
