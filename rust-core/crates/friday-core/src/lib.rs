@@ -52,9 +52,9 @@ pub use mechanism_matrix::{
     MechanismStatus,
 };
 pub use memory::{
-    decide_candidate, gate_transfer, redact_passport_for_projection, resolve_conflict, Confidence,
-    ConflictResolution, MemoryScope, MemoryState, PassportItem, PassportItemKind,
-    RedactedPassportItem,
+    decide_candidate, gate_transfer, memory_review_needs_me, redact_passport_for_projection,
+    resolve_conflict, Confidence, ConflictResolution, MemoryScope, MemoryState, PassportItem,
+    PassportItemKind, RedactedPassportItem, MEMORY_REVIEW_PRIORITY,
 };
 pub use mission::{
     find_duplicate_mission, find_duplicate_work_item, requires_context_passport,

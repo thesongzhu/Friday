@@ -12,7 +12,9 @@
 //!   secrets / raw tokens never transfer; a sensitive included item needs
 //!   explicit approval; only included items transfer.
 
+use crate::activity::ActivityType;
 use crate::error::CoreError;
+use crate::workflow::NeedsMeItem;
 
 /// Layer/scope of a memory item (`02` §11).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,6 +102,56 @@ pub fn decide_candidate(state: MemoryState, user_confirmed: Option<bool>) -> Mem
         (MemoryState::Candidate, Some(false)) => MemoryState::Rejected,
         (MemoryState::Candidate, None) => MemoryState::Candidate, // still pending; not written
         (other, _) => other,
+    }
+}
+
+/// Default urgency of a Memory-Review Needs-Me item. A pending memory candidate
+/// is a low-noise review nudge (the user decides confirm/reject/edit at their
+/// pace), so it sits below action items that block live work — but it is still
+/// surfaced (never silently dropped or auto-confirmed). Kept a named constant so
+/// the projection's priority is auditable in one place.
+pub const MEMORY_REVIEW_PRIORITY: u8 = 1;
+
+/// Project a single memory candidate into a [`NeedsMeItem`] for the Needs-Me /
+/// Memory-Review surface — the pure half of the Memory-confirmation loop
+/// (`07` §6/§7, `08` §2). A memory becomes durable ONLY by explicit user
+/// decision, so a pending `Candidate` is the ONLY state that needs the user:
+///
+/// - `Candidate` (pending) -> `Some(NeedsMeItem)` of [`ActivityType::MemoryReview`]
+///   kind (its `source` is the activity-type wire string, keeping the surface and
+///   the activity taxonomy in lockstep).
+/// - `Confirmed` / `Rejected` (terminal) -> `None`: the decision is already made,
+///   so it does NOT need the user and must not re-surface (no nagging on a
+///   resolved item, mirroring the terminal-is-final lifecycle invariant).
+///
+/// Pure + total over `MemoryState`; takes primitives (no storage row dependency)
+/// so it composes with either an in-memory candidate or a persisted `MemoryRow`.
+/// `summary` is a short, already-redaction-safe label for the card (the caller is
+/// responsible for not passing secret material — the Context Passport gate governs
+/// what content may leave the Hub; see [`redact_passport_for_projection`]).
+pub fn memory_review_needs_me(
+    memory_id: &str,
+    state: MemoryState,
+    scope: MemoryScope,
+    summary: &str,
+) -> Option<NeedsMeItem> {
+    match state {
+        // Only a pending candidate needs the user's review.
+        MemoryState::Candidate => Some(NeedsMeItem {
+            source: ActivityType::MemoryReview.as_str().to_string(),
+            id: memory_id.to_string(),
+            reason: if summary.is_empty() {
+                "Review a new memory candidate".to_string()
+            } else {
+                format!("Review memory candidate: {summary}")
+            },
+            priority: MEMORY_REVIEW_PRIORITY,
+            // Where the user acts on it: the memory item's review entry.
+            destination: format!("memory/{}/{}", scope.as_str(), memory_id),
+        }),
+        // A confirmed or rejected memory is terminal — the decision is made; it
+        // never re-surfaces for review.
+        MemoryState::Confirmed | MemoryState::Rejected => None,
     }
 }
 
@@ -261,6 +313,45 @@ mod tests {
             MemoryState::Rejected
         );
         assert!(!MemoryState::Rejected.is_durable());
+    }
+
+    // k5 — Memory-Review Needs-Me projection.
+    #[test]
+    fn memory_review_needs_me_projects_only_pending_candidates() {
+        // A pending Candidate -> a MemoryReview Needs-Me item.
+        let pending = memory_review_needs_me(
+            "m1",
+            MemoryState::Candidate,
+            MemoryScope::Global,
+            "likes rust",
+        )
+        .expect("a pending candidate must surface for review");
+        assert_eq!(pending.id, "m1");
+        // Source is wired to the ActivityType wire string (surface <-> taxonomy lockstep).
+        assert_eq!(pending.source, ActivityType::MemoryReview.as_str());
+        assert_eq!(pending.source, "memory_review");
+        assert_eq!(pending.priority, MEMORY_REVIEW_PRIORITY);
+        assert!(pending.reason.contains("likes rust"));
+        assert_eq!(pending.destination, "memory/global/m1");
+
+        // A Confirmed or Rejected (terminal) memory does NOT surface — the decision
+        // is already made; it must not re-nag the user.
+        assert!(
+            memory_review_needs_me("m1", MemoryState::Confirmed, MemoryScope::Global, "x")
+                .is_none(),
+            "a confirmed memory is terminal and never needs review"
+        );
+        assert!(
+            memory_review_needs_me("m1", MemoryState::Rejected, MemoryScope::Session, "x")
+                .is_none(),
+            "a rejected memory is terminal and never needs review"
+        );
+
+        // Empty summary still yields a usable, non-empty reason (no blank card).
+        let blank =
+            memory_review_needs_me("m2", MemoryState::Candidate, MemoryScope::Project, "").unwrap();
+        assert!(!blank.reason.is_empty());
+        assert_eq!(blank.destination, "memory/project/m2");
     }
 
     #[test]
