@@ -196,6 +196,85 @@ pub fn reject(conn: &Connection, memory_id: &str, now: i64) -> Result<MemoryStat
     decide(conn, memory_id, false, now)
 }
 
+/// Edit a PENDING memory candidate (the Memory-confirmation loop's "edit"
+/// action, `07` §6/§7). The edit is modeled as a SUCCESSOR, never an in-place
+/// mutation: the old candidate is `reject`-ed (becomes a terminal `Rejected`
+/// row, untouched thereafter) and the edited content is recorded as a NEW
+/// `Candidate` row. The two rows COEXIST — the prior content is preserved as a
+/// terminal Rejected record, so the edit is reversible by a SUCCESSOR
+/// (re-propose / a future re-edit) without ever rewriting or resurrecting a
+/// terminal row. There is no provenance column (that would need a migration);
+/// reversibility lives in the coexisting rows, not a stored edge.
+///
+/// **PENDING-only by construction.** The edit composes `reject` first, and
+/// `reject`/`decide` already refuse a terminal row — so editing a `Confirmed`
+/// memory ERRORS (and inserts nothing), which is the EXPLICIT deferred AC
+/// (revising a confirmed memory = retire-on-confirm, NOT built here); editing an
+/// already-`Rejected` source also errors (use [`repropose_from_rejected`]). No
+/// separate state guard is needed — the lifecycle enforces the scope.
+///
+/// **Atomic.** Both writes run in one transaction: if recording the new
+/// candidate fails (e.g. a colliding `new_memory_id`), the rejection of the old
+/// candidate is rolled back too — there is never a half-edit that leaves the old
+/// candidate Rejected with no replacement.
+///
+/// Returns the id of the new candidate on success.
+pub fn edit_candidate(
+    conn: &Connection,
+    old_memory_id: &str,
+    edited: &NewMemoryCandidate,
+    now: i64,
+) -> Result<String> {
+    let tx = conn.unchecked_transaction()?;
+    // Reject the old candidate FIRST: `reject`/`decide` errors on a terminal
+    // (Confirmed/Rejected) row, so a Confirmed source is refused here (deferred
+    // AC) and a Rejected source is refused (use repropose) — PENDING-only scope
+    // falls out of the lifecycle, no extra guard.
+    reject(&tx, old_memory_id, now)?;
+    // Record the edited content as a brand-new candidate (NEVER durable).
+    record_candidate(&tx, edited)?;
+    tx.commit()?;
+    Ok(edited.memory_id.to_string())
+}
+
+/// Re-propose a NEW candidate sourced from a previously-`Rejected` memory (the
+/// Memory-confirmation loop's "re-propose" action, `07` §6/§7). This records a
+/// fresh `Candidate` row and leaves the source `Rejected` row ENTIRELY UNTOUCHED
+/// — the rejection stays terminal and final (re-asserting `decide` on it still
+/// errors; a re-propose does NOT resurrect or rewrite the old row). Reversibility
+/// is forward-only: a successor candidate is created; the historical Rejected
+/// record is preserved as-is.
+///
+/// A light guard confirms the source exists and is `Rejected` (symmetry with
+/// [`edit_candidate`]'s PENDING-only scope: re-propose is the path FROM a
+/// terminal Rejected, edit is the path FROM a pending Candidate). The source is
+/// only READ, never written. Returns the id of the new candidate.
+pub fn repropose_from_rejected(
+    conn: &Connection,
+    source_memory_id: &str,
+    reproposed: &NewMemoryCandidate,
+    // Reserved for API symmetry with `edit_candidate(.., now)`. Unused here: the
+    // new candidate's timestamp comes from `reproposed.created_at`, and the source
+    // Rejected row is never re-stamped (it stays terminal/untouched).
+    _now: i64,
+) -> Result<String> {
+    let src = current_state(conn, source_memory_id)?.ok_or_else(|| {
+        StorageError::Unsupported(format!(
+            "memory_item '{source_memory_id}' not found; nothing to re-propose"
+        ))
+    })?;
+    if src != MemoryState::Rejected {
+        return Err(StorageError::Unsupported(format!(
+            "memory_item '{source_memory_id}' is {} (not rejected); re-propose only applies to a \
+             rejected memory — edit a pending candidate with edit_candidate instead",
+            src.as_str()
+        )));
+    }
+    // Record-only: the source Rejected row is never written here.
+    record_candidate(conn, reproposed)?;
+    Ok(reproposed.memory_id.to_string())
+}
+
 /// Candidates awaiting the user's decision, oldest first (`07` §6/§7) — the
 /// data-layer query that **backs** the Memory Review schedule (the schedule's
 /// settings/cron/morning-card UI is deferred, `07` §7). These are surfaced for

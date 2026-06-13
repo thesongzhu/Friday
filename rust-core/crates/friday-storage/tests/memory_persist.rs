@@ -361,6 +361,186 @@ fn memory_review_queue_is_oldest_first_and_only_candidates() {
     assert_eq!(queue, vec!["old".to_string(), "new".to_string()]);
 }
 
+// --- Memory-confirmation loop: edit / re-propose (successor, not mutation) ---
+
+#[test]
+fn k3_edit_candidate_rejects_old_and_creates_new_candidate() {
+    let p = temp_db_path("mem-edit");
+    let db = Db::open_hub(&p).unwrap();
+    // A pending candidate the user wants to revise.
+    memory::record_candidate(
+        db.conn(),
+        &cand("orig", MemoryScope::Global, Some("typo: lieks rust"), 1),
+    )
+    .unwrap();
+    assert_eq!(state_of(&db, "orig"), "candidate");
+
+    // Edit it: the edit is a NEW candidate; the old becomes Rejected (reversible
+    // by a successor, NOT an in-place row mutation).
+    let new_id = memory::edit_candidate(
+        db.conn(),
+        "orig",
+        &cand("edited", MemoryScope::Global, Some("likes rust"), 2),
+        100,
+    )
+    .unwrap();
+    assert_eq!(new_id, "edited");
+
+    // The OLD candidate is now a terminal Rejected row (still present, untouched
+    // content) — reversibility = coexisting rows, not a rewrite.
+    let old = memory::get(db.conn(), "orig").unwrap().unwrap();
+    assert_eq!(old.state, MemoryState::Rejected);
+    assert_eq!(old.content_ref.as_deref(), Some("typo: lieks rust"));
+    assert!(!old.state.is_durable());
+
+    // A NEW Candidate row exists with the edited content, pending the user's decision.
+    let new = memory::get(db.conn(), "edited").unwrap().unwrap();
+    assert_eq!(new.state, MemoryState::Candidate);
+    assert_eq!(new.content_ref.as_deref(), Some("likes rust"));
+    // The new candidate is in the review queue; the old rejected one is not.
+    let queue: Vec<String> = memory::pending_review(db.conn())
+        .unwrap()
+        .into_iter()
+        .map(|m| m.memory_id)
+        .collect();
+    assert_eq!(queue, vec!["edited".to_string()]);
+}
+
+#[test]
+fn k3_edit_is_pending_only_confirmed_edit_is_refused_deferred_ac() {
+    // Editing a CONFIRMED memory (retire-on-confirm) is the EXPLICIT deferred AC —
+    // it must be refused, and refused ATOMICALLY (no new row leaks in).
+    let p = temp_db_path("mem-edit-confirmed");
+    let db = Db::open_hub(&p).unwrap();
+    memory::record_candidate(db.conn(), &cand("c", MemoryScope::Global, Some("fact"), 1)).unwrap();
+    memory::confirm(db.conn(), "c", 10).unwrap();
+    assert_eq!(state_of(&db, "c"), "confirmed");
+
+    let res = memory::edit_candidate(
+        db.conn(),
+        "c",
+        &cand("c_edited", MemoryScope::Global, Some("revised fact"), 2),
+        20,
+    );
+    assert!(
+        res.is_err(),
+        "editing a CONFIRMED memory must be refused (deferred AC)"
+    );
+    // Atomicity: the confirmed source is untouched AND the would-be new row never landed.
+    assert_eq!(state_of(&db, "c"), "confirmed");
+    assert!(memory::get(db.conn(), "c_edited").unwrap().is_none());
+    // The confirmed memory is still auto-usable (not collaterally rejected).
+    assert!(memory::auto_usable(db.conn())
+        .unwrap()
+        .iter()
+        .any(|m| m.memory_id == "c"));
+}
+
+#[test]
+fn k3_edit_is_atomic_no_half_edit_on_new_id_collision() {
+    // If recording the new candidate fails (PK collision on the new id), the
+    // rejection of the old candidate must roll back — never a half-edit.
+    let p = temp_db_path("mem-edit-atomic");
+    let db = Db::open_hub(&p).unwrap();
+    memory::record_candidate(db.conn(), &cand("orig", MemoryScope::Global, Some("a"), 1)).unwrap();
+    // A pre-existing row that will collide with the edit's new id.
+    memory::record_candidate(db.conn(), &cand("taken", MemoryScope::Global, Some("b"), 2)).unwrap();
+
+    let res = memory::edit_candidate(
+        db.conn(),
+        "orig",
+        &cand("taken", MemoryScope::Global, Some("c"), 3), // collides
+        50,
+    );
+    assert!(res.is_err(), "colliding new id must error");
+    // ATOMIC: the old candidate was NOT left rejected — the whole edit rolled back.
+    assert_eq!(
+        state_of(&db, "orig"),
+        "candidate",
+        "a failed edit must not leave the old candidate Rejected (no half-edit)"
+    );
+    // The pre-existing "taken" row is unchanged (still its own candidate).
+    let taken = memory::get(db.conn(), "taken").unwrap().unwrap();
+    assert_eq!(taken.content_ref.as_deref(), Some("b"));
+}
+
+#[test]
+fn k4_repropose_from_rejected_creates_new_candidate_source_stays_terminal() {
+    let p = temp_db_path("mem-repropose");
+    let db = Db::open_hub(&p).unwrap();
+    // A rejected memory the user changed their mind about.
+    memory::record_candidate(
+        db.conn(),
+        &cand("src", MemoryScope::Global, Some("plays guitar"), 1),
+    )
+    .unwrap();
+    memory::reject(db.conn(), "src", 10).unwrap();
+    assert_eq!(state_of(&db, "src"), "rejected");
+
+    // Re-propose: a NEW candidate; the source Rejected row is left UNTOUCHED.
+    let new_id = memory::repropose_from_rejected(
+        db.conn(),
+        "src",
+        &cand("repro", MemoryScope::Global, Some("plays guitar"), 2),
+        100,
+    )
+    .unwrap();
+    assert_eq!(new_id, "repro");
+
+    // The NEW candidate exists and is pending.
+    let new = memory::get(db.conn(), "repro").unwrap().unwrap();
+    assert_eq!(new.state, MemoryState::Candidate);
+
+    // THE k4 invariant: the source Rejected row is STILL terminal — re-asserting
+    // a decision on it STILL errors (reversibility does NOT resurrect the old row).
+    assert_eq!(state_of(&db, "src"), "rejected");
+    assert!(
+        memory::confirm(db.conn(), "src", 200).is_err(),
+        "the source Rejected row must stay terminal (no resurrection)"
+    );
+    assert!(memory::reject(db.conn(), "src", 200).is_err());
+    assert_eq!(state_of(&db, "src"), "rejected");
+}
+
+#[test]
+fn k4_repropose_only_from_a_rejected_source() {
+    let p = temp_db_path("mem-repropose-guard");
+    let db = Db::open_hub(&p).unwrap();
+    // From a non-existent source: error, no silent create.
+    assert!(memory::repropose_from_rejected(
+        db.conn(),
+        "ghost",
+        &cand("x", MemoryScope::Global, None, 1),
+        10
+    )
+    .is_err());
+    assert!(memory::get(db.conn(), "x").unwrap().is_none());
+
+    // From a still-PENDING candidate: refused (use edit_candidate, not re-propose).
+    memory::record_candidate(db.conn(), &cand("pend", MemoryScope::Global, Some("p"), 1)).unwrap();
+    assert!(memory::repropose_from_rejected(
+        db.conn(),
+        "pend",
+        &cand("y", MemoryScope::Global, None, 2),
+        10
+    )
+    .is_err());
+    assert!(memory::get(db.conn(), "y").unwrap().is_none());
+    assert_eq!(state_of(&db, "pend"), "candidate"); // source untouched
+
+    // From a CONFIRMED memory: also refused (re-propose is from a Rejected source only).
+    memory::record_candidate(db.conn(), &cand("conf", MemoryScope::Global, Some("c"), 1)).unwrap();
+    memory::confirm(db.conn(), "conf", 5).unwrap();
+    assert!(memory::repropose_from_rejected(
+        db.conn(),
+        "conf",
+        &cand("z", MemoryScope::Global, None, 3),
+        10
+    )
+    .is_err());
+    assert!(memory::get(db.conn(), "z").unwrap().is_none());
+}
+
 #[test]
 fn memory_item_is_hub_only_absent_on_phone() {
     let p = temp_db_path("mem-phone");

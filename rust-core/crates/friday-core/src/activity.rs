@@ -11,6 +11,11 @@ pub enum ActivityType {
     OfflineResult,
     /// A verified channel-origin inbound recorded as a Hub event (Channels track A-PR4).
     ChannelInbound,
+    /// A pending memory candidate surfaced for the user's explicit review
+    /// (confirm/reject/edit) — the Memory-confirmation loop (`07` §6/§7). A
+    /// candidate is never auto-confirmed; surfacing it for review is how the
+    /// "no silent long-term write" invariant reaches the user.
+    MemoryReview,
 }
 
 impl ActivityType {
@@ -21,6 +26,7 @@ impl ActivityType {
             ActivityType::OfflineQueued => "offline_queued",
             ActivityType::OfflineResult => "offline_result",
             ActivityType::ChannelInbound => "channel_inbound",
+            ActivityType::MemoryReview => "memory_review",
         }
     }
 }
@@ -83,6 +89,7 @@ mod tests {
         assert_eq!(ActivityType::AskReceipt.as_str(), "ask_receipt");
         assert_eq!(ActivityType::OfflineResult.as_str(), "offline_result");
         assert_eq!(ActivityType::ChannelInbound.as_str(), "channel_inbound");
+        assert_eq!(ActivityType::MemoryReview.as_str(), "memory_review");
     }
 
     #[test]
