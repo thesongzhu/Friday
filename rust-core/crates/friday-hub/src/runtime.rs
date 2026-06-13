@@ -840,6 +840,42 @@ impl<T: Transport> HubRuntime<T> {
         task: &str,
         now_ms: i64,
     ) -> Result<MissionBoundLoopOutcome, RoutedLoopError> {
+        // Boot policy / ceiling (no per-run override) — the byte-identical pre-NS-4 body.
+        self.run_agent_loop_for_mission_with_overrides(
+            mission_lookup,
+            session_id,
+            run_id,
+            task,
+            None,
+            None,
+            now_ms,
+        )
+    }
+
+    /// (NS-4) [`Self::run_agent_loop_for_mission`] with an OPTIONAL per-run policy + max-turns
+    /// override threaded onto the composed loop — the Mission-bound parity of
+    /// [`Self::run_task_with_overrides`]. `None`/`None` ⇒ the boot policy/ceiling, byte-identical
+    /// to the pre-NS-4 entry. `Some(p)` ⇒ the COMPOSED only-tighten policy the live WS dispatch
+    /// arm built via [`crate::agent_run_control::effective_run_policy_over`].
+    ///
+    /// WHY this exists: the live mission-bound seam ([`crate::run_authed_agent_loop_mission_bound`])
+    /// is reached on the SAME dispatch arm that applies a peer's per-run CONSTRAINTS. The unbound
+    /// path threads those onto its loop; the Mission-bound loop MUST enforce the IDENTICAL
+    /// tightening (read-only / disabled-tools / max-turns) or a constraint asserted on a
+    /// mission-bound run would be silently dropped. The override CANNOT relax the run — it only
+    /// tightens — and it never re-binds the owner (the FIX-Q2 owner gate is orthogonal, enforced
+    /// at the seam before this is ever called).
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_agent_loop_for_mission_with_overrides(
+        &self,
+        mission_lookup: MissionContextLookup,
+        session_id: &str,
+        run_id: &str,
+        task: &str,
+        policy_override: Option<&RunPolicy>,
+        max_turns_override: Option<u64>,
+        now_ms: i64,
+    ) -> Result<MissionBoundLoopOutcome, RoutedLoopError> {
         // PREFLIGHT (fail-closed): validate the Mission/work-item BEFORE any run exists. On
         // Blocked we return without ever calling `run_task`, so no `agent_run` row and no
         // model call happen for an invalid Mission — mirroring the ask path's preflight.
@@ -864,8 +900,16 @@ impl<T: Transport> HubRuntime<T> {
             }
         };
 
-        // Run the SAME composed loop as the unbound entry (no divergence).
-        let (selection, outcome) = self.run_task(run_id, task, now_ms)?;
+        // Run the SAME composed loop as the unbound entry (no divergence), threading the
+        // (effective) per-run policy + ceiling so a mission-bound run enforces the IDENTICAL
+        // tightening the unbound dispatch arm applies. Absent override ⇒ boot config unchanged.
+        let (selection, outcome) = self.run_task_with_overrides(
+            run_id,
+            task,
+            policy_override,
+            max_turns_override,
+            now_ms,
+        )?;
 
         // Bind the run to the Mission via the ask path's provider-timeline attachment.
         // Truth-honest: complete the WorkItem with the run as proof ONLY when the loop
