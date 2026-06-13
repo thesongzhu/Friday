@@ -2545,14 +2545,44 @@ pub(crate) fn gate_dispatch_with_policy_enforced(
     if enforce_trust && request.mutating() {
         match policy.action_context() {
             Some(ctx) => {
+                // (NS-2 / TP-PR1) ENRICH `ctx.tool` from the dispatched action BEFORE the trust
+                // check. `friday_core::check_grant` evaluates the `allowed_tools` allowlist ONLY
+                // when the ctx carries `Some(tool)` (`if let Some(tool) = check.tool`); the live
+                // producer (TP-PR2) attaches a BOOT context whose `tool` is `None` (run-level dims
+                // only). Without this enrich the tool dimension would be SILENTLY SKIPPED — a grant
+                // scoped `allowed_tools=[read_file]` would PASS for EVERY tool = fail-OPEN. We
+                // canonicalize the dispatched `raw.action` through the SAME `canonical_rust_name`
+                // map the disabled-set resolver uses (see `RunPolicy::resolve_tool`), so the
+                // operator's `allowed_tools` (canonical Rust names) is checked against the canonical
+                // tool. An action that canonicalizes to nothing (foreign / unknown) FAILS CLOSED:
+                // we carry the raw name forward as `Some(raw.action)`, which no operator allowlist
+                // will contain → `check_grant` Denies `trust_grant_tool_not_allowed` (NEVER skips).
+                //
+                // This is a RESTRICTION-ONLY local mutation: it can ONLY make `check_grant` ADD a
+                // tool-dimension `Deny`; it can NEVER turn a Deny/RequiresApproval into an Allow
+                // (the enriched dimension only adds a deny branch — every other dimension and the
+                // authoritative step (2) below are untouched). The original boot `ctx` is unchanged.
+                let mut enriched = ctx.clone();
+                enriched.tool = Some(
+                    tool_name_map::canonical_rust_name(&raw.action)
+                        .map(|canon| canon.to_string())
+                        .unwrap_or_else(|| raw.action.clone()),
+                );
                 // `approval`/`secret` are passed as None/`&[]`: ONLY the trust-gate Deny
                 // (`authorize_agent_action` steps 1–3 — load grant / revoked-expired / boundary
-                // check) is consumed, and those steps read NEITHER. Its step (4) re-runs the
-                // existing mutating-action compose, but we DISCARD that result here (the existing
-                // step (2) below is authoritative), and step (4) never emits
-                // `denied_by="trust_grant"`, so the discriminator below can never misfire.
-                let trust =
-                    friday_storage::authorize_agent_action(conn, &request, ctx, None, &[], now_ms)?;
+                // check, the boundary check now incl. the enriched tool allowlist) is consumed, and
+                // those steps read NEITHER. Its step (4) re-runs the existing mutating-action
+                // compose, but we DISCARD that result here (the existing step (2) below is
+                // authoritative), and step (4) never emits `denied_by="trust_grant"`, so the
+                // discriminator below can never misfire.
+                let trust = friday_storage::authorize_agent_action(
+                    conn,
+                    &request,
+                    &enriched,
+                    None,
+                    &[],
+                    now_ms,
+                )?;
                 // Short-circuit ONLY on the trust layer's OWN Deny (it alone sets
                 // `denied_by="trust_grant"`). Any other outcome (Allow / RequiresApproval / a
                 // base-gate Deny) falls through to the unchanged existing decision.
@@ -4741,6 +4771,330 @@ mod tests {
             "a read-only action is base-Allow even flag-ON (the trust branch is mutating-only)"
         );
         assert_eq!(exec2.calls.get(), 1, "the read executed exactly once");
+    }
+
+    // ── TP-PR1: NS-2 fail-OPEN-for-tool fix — enrich ctx.tool at the chokepoint so the
+    //    `allowed_tools` allowlist is actually evaluated (not silently skipped) ──────────
+    //
+    // These tests model the PRODUCER's real boot context (TP-PR2): `tool: None` (run-level dims
+    // only). The pre-existing `ns2_ctx()` carries `tool: Some("write_file")`, which already
+    // matched the grant — so the OLD tests could not surface the fail-open. The fix derives the
+    // tool dimension from the dispatched action via `canonical_rust_name`, so the allowlist is
+    // enforced even when the producer attaches `tool: None`.
+
+    /// The producer's real boot context: agent `friday`, NO tool dimension (the run-level dims
+    /// only). Before TP-PR1, `check_grant` skipped `allowed_tools` for this ctx = fail-open.
+    fn tp1_producer_ctx_tool_none() -> friday_storage::AgentActionContext {
+        friday_storage::AgentActionContext {
+            agent_id: "friday".to_string(),
+            workspace: None,
+            tool: None,
+            provider: None,
+            channel: None,
+            workflow_family: None,
+            skill_family: None,
+        }
+    }
+
+    /// A within-boundaries grant for `friday` that allows ONLY `read_file` (every other
+    /// dimension passes: not revoked/expired, agent matches, Critical risk ceiling ≥ any write
+    /// risk, unscoped workspace). The SOLE objection it can raise is the tool allowlist — which
+    /// is exactly the dimension TP-PR1 makes reachable.
+    fn tp1_grant_allows_only_read_file() -> friday_core::TrustGrant {
+        friday_core::TrustGrant {
+            grant_id: "g-tp1-readonly-tool".to_string(),
+            agent_id: "friday".to_string(),
+            granted_at: 1,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            boundaries: friday_core::TrustBoundaries {
+                workspace: None,
+                risk_ceiling: friday_core::Risk::Critical,
+                token_ceiling: None,
+                max_runs: None,
+                allowed_channels: vec![],
+                allowed_providers: vec![],
+                allowed_tools: vec!["read_file".to_string()],
+                allowed_workflow_families: vec![],
+                allowed_skill_families: vec![],
+            },
+        }
+    }
+
+    #[test]
+    fn tp1_enrich_enforces_tool_allowlist_denies_disallowed_tool() {
+        // THE FIX: flag ON + a grant allowing ONLY `read_file` + a mutating `write_file` action +
+        // a producer ctx with `tool: None`. Before TP-PR1 the tool dimension was SKIPPED, so the
+        // grant fail-OPENED to within-boundaries and the action fell through to step (2) (a Pause
+        // under DenyAll). With the enrich, `ctx.tool` becomes the canonical `write_file`, which is
+        // NOT in `allowed_tools=[read_file]` → the trust layer Denies `trust_grant_tool_not_allowed`
+        // and the executor is never reached.
+        let db = Db::open_hub(&temp_path("tp1-deny-tool")).unwrap();
+        let ws = temp_ws("tp1-deny-tool");
+        let fs = FsToolExecutor::new(ws.clone());
+        let exec = CountingExecutor {
+            inner: &fs,
+            calls: std::cell::Cell::new(0),
+        };
+        let approve = no_approval();
+        friday_storage::grant_trust(db.conn(), &tp1_grant_allows_only_read_file(), 1).unwrap();
+        let policy = RunPolicy::new(Some("friday".to_string()), Vec::<String>::new(), false)
+            .with_action_context(tp1_producer_ctx_tool_none());
+
+        let out = gate_dispatch_with_policy_enforced(
+            db.conn(),
+            &exec,
+            &ns2_write(), // write_file
+            AuthzMode::DenyAll,
+            &approve,
+            &policy,
+            1000,
+            true, // flag ON
+        )
+        .unwrap();
+
+        match out {
+            GateDispatch::Denied(reason) => assert_eq!(
+                reason, "trust_grant_tool_not_allowed",
+                "the enriched tool dimension must deny a tool absent from allowed_tools \
+                 (previously this fail-OPENED to a Pass because ctx.tool was None)"
+            ),
+            _ => panic!("expected the tool-allowlist Deny, got a non-Deny dispatch outcome"),
+        }
+        assert_eq!(
+            exec.calls.get(),
+            0,
+            "no executor call when the trust tool-allowlist Denies"
+        );
+        assert!(
+            !ws.join("out.txt").exists(),
+            "no file written when the tool is not in the grant's allowed_tools"
+        );
+    }
+
+    #[test]
+    fn tp1_enrich_allows_tool_in_allowlist_falls_through_not_tool_denied() {
+        // TOOL DIMENSION PASSES: flag ON + a grant whose `allowed_tools` INCLUDES the action's
+        // canonical tool (`write_file`) + a producer ctx with `tool: None`. The enrich derives
+        // `write_file`, which IS allowed, so the trust layer raises NO tool objection and we fall
+        // through to the UNCHANGED step (2) — under DenyAll + no approval that is RequiresApproval,
+        // NOT Allow. We assert it is NOT the tool Deny (and not any other trust Deny) and that the
+        // existing decision (Pause) is preserved — the enrich never upgrades to Allow.
+        let db = Db::open_hub(&temp_path("tp1-allow-tool")).unwrap();
+        let ws = temp_ws("tp1-allow-tool");
+        let fs = FsToolExecutor::new(ws.clone());
+        let exec = CountingExecutor {
+            inner: &fs,
+            calls: std::cell::Cell::new(0),
+        };
+        let approve = no_approval();
+        // `ns2_within_boundaries_grant()` allows `write_file`.
+        friday_storage::grant_trust(db.conn(), &ns2_within_boundaries_grant(), 1).unwrap();
+        let policy = RunPolicy::new(Some("friday".to_string()), Vec::<String>::new(), false)
+            .with_action_context(tp1_producer_ctx_tool_none());
+
+        let out = gate_dispatch_with_policy_enforced(
+            db.conn(),
+            &exec,
+            &ns2_write(), // write_file — allowed by the grant
+            AuthzMode::DenyAll,
+            &approve,
+            &policy,
+            1000,
+            true, // flag ON
+        )
+        .unwrap();
+
+        // The tool dimension passes ⇒ NOT a tool-denied dispatch; the existing compose Pauses.
+        assert!(
+            matches!(out, GateDispatch::RequiresApproval),
+            "an allowed tool falls through to the unchanged step (2) = RequiresApproval (the \
+             enrich must NOT upgrade to Allow)"
+        );
+        assert_eq!(
+            exec.calls.get(),
+            0,
+            "a paused mutating action never executes"
+        );
+    }
+
+    #[test]
+    fn tp1_unknown_tool_fails_closed_not_open() {
+        // FAIL-CLOSED on an unknown tool: a mutating action whose name canonicalizes to NOTHING
+        // (`canonical_rust_name` → None) must NOT skip the tool check (that would be fail-open).
+        // The enrich carries the RAW name forward as `Some(name)`, which no operator allowlist
+        // contains → `trust_grant_tool_not_allowed`. (Note: a tool with no Rust executor is
+        // normally caught earlier as `Unregistered`; this asserts the trust enrich itself never
+        // fails open even if such a name reached the arm.) We exercise the enrich logic directly
+        // since the chokepoint short-circuits unknown actions to `Unregistered` before the trust
+        // branch — the property under test is the enrich's `unwrap_or_else(raw.action.clone())`.
+        let unknown = "totally_foreign_tool";
+        assert_eq!(
+            tool_name_map::canonical_rust_name(unknown),
+            None,
+            "precondition: the name must be foreign (canonicalizes to nothing)"
+        );
+        let enriched_tool = tool_name_map::canonical_rust_name(unknown)
+            .map(|canon| canon.to_string())
+            .unwrap_or_else(|| unknown.to_string());
+        assert_eq!(
+            enriched_tool, unknown,
+            "an unknown tool is carried forward by name (fail-closed), never dropped to None"
+        );
+        // And that name is NOT in a read-only grant's allowed_tools ⇒ check_grant Denies it.
+        let grant = tp1_grant_allows_only_read_file();
+        let check = friday_core::GrantCheck {
+            agent_id: "friday".to_string(),
+            now: 100,
+            effective_risk: friday_core::Risk::ReadOnly,
+            workspace: None,
+            tool: Some(enriched_tool),
+            provider: None,
+            channel: None,
+            workflow_family: None,
+            skill_family: None,
+        };
+        let (decision, reason) = friday_core::check_grant(&grant, &check);
+        assert_eq!(decision, GateDecision::Deny);
+        assert_eq!(
+            reason, "trust_grant_tool_not_allowed",
+            "an unknown tool is denied (fail-closed), never allowed"
+        );
+    }
+
+    #[test]
+    fn tp1_enrich_only_adds_deny_never_upgrades_to_allow() {
+        // ONLY-ADDS-DENY PROPERTY (the load-bearing triple, anchored on a RequiresApproval
+        // baseline — a Deny baseline would prove nothing). For the SAME producer ctx (`tool: None`)
+        // and the SAME mutating `write_file`:
+        //   (1) enforce-OFF                        ⇒ RequiresApproval   (the byte-identical anchor)
+        //   (2) enforce-ON, grant ALLOWS write_file ⇒ RequiresApproval  (enrich transparent — the
+        //                                              case that would expose an accidental upgrade)
+        //   (3) enforce-ON, grant DENIES write_file ⇒ Denied(trust_grant_tool_not_allowed) (added)
+        // The enrich can only move (1)→(3) (add a Deny); it can NEVER move a Pause/Deny to Allow.
+        let ws = temp_ws("tp1-property");
+        let fs = FsToolExecutor::new(ws.clone());
+        let approve = no_approval();
+        let policy = RunPolicy::new(Some("friday".to_string()), Vec::<String>::new(), false)
+            .with_action_context(tp1_producer_ctx_tool_none());
+
+        let label = |d: &GateDispatch| -> String {
+            match d {
+                GateDispatch::Executed(_) => "executed".to_string(),
+                GateDispatch::RequiresApproval => "requires_approval".to_string(),
+                GateDispatch::Denied(r) => format!("denied:{r}"),
+                GateDispatch::Unregistered(a) => format!("unregistered:{a}"),
+                GateDispatch::ExecError(_) => "exec_error".to_string(),
+            }
+        };
+        let dispatch = |conn: &rusqlite::Connection, enforce: bool| -> String {
+            let exec = CountingExecutor {
+                inner: &fs,
+                calls: std::cell::Cell::new(0),
+            };
+            let out = gate_dispatch_with_policy_enforced(
+                conn,
+                &exec,
+                &ns2_write(),
+                AuthzMode::DenyAll,
+                &approve,
+                &policy,
+                1000,
+                enforce,
+            )
+            .unwrap();
+            label(&out)
+        };
+
+        // (1) enforce-OFF anchor (a grant in the DB is irrelevant when off — never consulted).
+        let db_allow = Db::open_hub(&temp_path("tp1-property-allow")).unwrap();
+        friday_storage::grant_trust(db_allow.conn(), &ns2_within_boundaries_grant(), 1).unwrap();
+        assert_eq!(
+            dispatch(db_allow.conn(), false),
+            "requires_approval",
+            "(1) enforce-OFF baseline = RequiresApproval"
+        );
+        // (2) enforce-ON + the tool IS allowed ⇒ still RequiresApproval (enrich transparent, NOT
+        //     upgraded to Allow).
+        assert_eq!(
+            dispatch(db_allow.conn(), true),
+            "requires_approval",
+            "(2) enforce-ON + allowed tool stays RequiresApproval (never upgraded to Allow)"
+        );
+        // (3) enforce-ON + the tool is DISALLOWED ⇒ the enrich ADDS the tool Deny.
+        let db_deny = Db::open_hub(&temp_path("tp1-property-deny")).unwrap();
+        friday_storage::grant_trust(db_deny.conn(), &tp1_grant_allows_only_read_file(), 1).unwrap();
+        assert_eq!(
+            dispatch(db_deny.conn(), true),
+            "denied:trust_grant_tool_not_allowed",
+            "(3) enforce-ON + disallowed tool ADDS a Deny"
+        );
+    }
+
+    #[test]
+    fn tp1_flag_off_byte_identical_with_producer_ctx_tool_none() {
+        // FLAG-OFF BYTE-IDENTICAL: with the producer ctx (`tool: None`) — the exact context that
+        // WOULD be tool-denied under enforce-ON — flag OFF yields the unchanged NS-1 outcomes for
+        // read/write/read-only, regardless of which grant sits in the DB. The enrich runs ONLY
+        // inside the `enforce_trust` arm, so when off the chokepoint is byte-identical to current.
+        let db = Db::open_hub(&temp_path("tp1-off")).unwrap();
+        let ws = temp_ws("tp1-off");
+        std::fs::write(ws.join("notes.md"), b"hello").unwrap();
+        let fs = FsToolExecutor::new(ws.clone());
+        let approve = no_approval();
+        // A read-only-tool grant is in the DB; flag OFF means it is never consulted.
+        friday_storage::grant_trust(db.conn(), &tp1_grant_allows_only_read_file(), 1).unwrap();
+
+        let label = |d: &GateDispatch| -> String {
+            match d {
+                GateDispatch::Executed(_) => "executed".to_string(),
+                GateDispatch::RequiresApproval => "requires_approval".to_string(),
+                GateDispatch::Denied(r) => format!("denied:{r}"),
+                GateDispatch::Unregistered(a) => format!("unregistered:{a}"),
+                GateDispatch::ExecError(_) => "exec_error".to_string(),
+            }
+        };
+        let dispatch = |policy: &RunPolicy, raw: &RawToolCall| -> String {
+            let exec = CountingExecutor {
+                inner: &fs,
+                calls: std::cell::Cell::new(0),
+            };
+            let out = gate_dispatch_with_policy_enforced(
+                db.conn(),
+                &exec,
+                raw,
+                AuthzMode::DenyAll,
+                &approve,
+                policy,
+                1000,
+                false, // flag OFF
+            )
+            .unwrap();
+            label(&out)
+        };
+
+        let open = RunPolicy::new(Some("friday".to_string()), Vec::<String>::new(), false)
+            .with_action_context(tp1_producer_ctx_tool_none());
+        let ro = RunPolicy::new(Some("friday".to_string()), Vec::<String>::new(), true)
+            .with_action_context(tp1_producer_ctx_tool_none());
+
+        // The write that WOULD be tool-denied under enforce-ON is unaffected when off (Pauses).
+        assert_eq!(
+            dispatch(&open, &read_only_proposal()),
+            "executed",
+            "(a) read→Allow (flag OFF, producer ctx)"
+        );
+        assert_eq!(
+            dispatch(&open, &ns2_write()),
+            "requires_approval",
+            "(b) write→Pause, NOT tool-denied (flag OFF — enrich never runs)"
+        );
+        assert_eq!(
+            dispatch(&ro, &ns2_write()),
+            "denied:run_is_read_only:write_file",
+            "(c) read-only run→Deny (flag OFF, unchanged reason)"
+        );
     }
 
     // --- §5-PR2: prompt + strict parse (offline) ---
