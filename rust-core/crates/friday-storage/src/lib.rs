@@ -107,6 +107,27 @@ pub struct TokenUsageRow {
     pub created_at: i64,
 }
 
+/// (C2) A RUN-SCOPED token-ledger row — the read projection the routed-parity proof needs
+/// to assert, PER FLOW, that exactly the model calls of a given run were billed to the
+/// expected provider. It surfaces the two fields a UI summary omits but a provider-parity
+/// proof requires: `base_url_host` (so a Claude call's `api.anthropic.com` host is
+/// verifiable, not just its `provider_kind`) and `ledger_id` (so the per-turn row ids are
+/// inspectable). The `fallback` flag is always surfaced. The run-attribution column is
+/// `session_id` (a loop run has no separate session; `bill_model_call` stamps `run_id`
+/// there — see the `idx_ledger_session_created` index), so this filters on it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RunTokenUsageRow {
+    pub ledger_id: String,
+    pub provider_kind: String,
+    pub model: String,
+    pub base_url_host: String,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub total_tokens: i64,
+    pub fallback: bool,
+    pub created_at: i64,
+}
+
 /// A UI-facing activity summary (a read projection of `activity_item`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActivitySummary {
@@ -467,6 +488,41 @@ impl Db {
                 cost_estimate: r.get(3)?,
                 fallback: r.get::<_, i64>(4)? != 0,
                 created_at: r.get(5)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// (C2) RUN-SCOPED token-ledger read: every billable model call attributed to `run_id`,
+    /// oldest-first. The loop biller (`bill_model_call`) stamps the owning run into the
+    /// ledger's `session_id` column (a loop run has no separate session; the run id IS the
+    /// attribution key), so filtering on `session_id = ?` returns exactly THIS run's rows —
+    /// N turns ⇒ N rows. Surfaces `base_url_host` + `ledger_id` (which the UI-facing
+    /// [`Db::list_token_usage`] omits) so the routed provider-parity proof can assert, per
+    /// flow, that a Claude turn was billed to `provider_kind="anthropic"` /
+    /// `api.anthropic.com` — never mis-attributed. An empty result is honest (no model call
+    /// was billed for that run), never a fabricated row.
+    pub fn list_run_token_usage(&self, run_id: &str) -> Result<Vec<RunTokenUsageRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT ledger_id, provider_kind, model, base_url_host, prompt_tokens, \
+                    completion_tokens, total_tokens, fallback, created_at
+             FROM token_ledger WHERE session_id = ?1 ORDER BY created_at, ledger_id",
+        )?;
+        let rows = stmt.query_map([run_id], |r| {
+            Ok(RunTokenUsageRow {
+                ledger_id: r.get(0)?,
+                provider_kind: r.get(1)?,
+                model: r.get(2)?,
+                base_url_host: r.get(3)?,
+                prompt_tokens: r.get(4)?,
+                completion_tokens: r.get(5)?,
+                total_tokens: r.get(6)?,
+                fallback: r.get::<_, i64>(7)? != 0,
+                created_at: r.get(8)?,
             })
         })?;
         let mut out = Vec::new();
@@ -1329,5 +1385,97 @@ mod busy_retry_tests {
         };
         assert!(matches!(err, StorageError::SchemaTooNew { .. }));
         assert_eq!(calls.get(), 1, "a non-busy error must NOT be retried");
+    }
+}
+
+#[cfg(test)]
+mod run_token_usage_tests {
+    use super::Db;
+
+    fn tmp(tag: &str) -> String {
+        let mut p = std::env::temp_dir();
+        p.push(format!(
+            "friday-run-token-usage-{}-{}-{tag}.sqlite",
+            std::process::id(),
+            super::now_ms()
+        ));
+        p.to_string_lossy().into_owned()
+    }
+
+    /// (C2) `list_run_token_usage(run_id)` returns EXACTLY the rows whose ledger `session_id`
+    /// equals the run id (the loop biller stamps the run there), surfacing `base_url_host` so a
+    /// Claude row's `api.anthropic.com` is verifiable — and it ISOLATES one run from another
+    /// (an unrelated run's rows never leak in). An unknown run returns empty (honest, no
+    /// fabricated row).
+    #[test]
+    fn list_run_token_usage_is_run_scoped_and_surfaces_host() {
+        let db = Db::open_hub(&tmp("scoped")).unwrap();
+
+        // Run A: one Anthropic turn (the C2 Claude leg) + one DeepSeek turn.
+        db.insert_token_ledger(
+            &friday_core::LedgerEntry::anthropic_route(
+                "runA:t0:ledger",
+                "runA",
+                "runA:t0:askreceipt",
+                "claude-opus-4-8",
+                11,
+                8,
+                None,
+                None,
+                10,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        db.insert_token_ledger(
+            &friday_core::LedgerEntry::friday_route(
+                "runA:t1:ledger",
+                "runA",
+                "runA:t1:askreceipt",
+                "deepseek-v4-flash",
+                5,
+                3,
+                None,
+                None,
+                20,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        // Run B: a DIFFERENT run — must never leak into run A's scoped read.
+        db.insert_token_ledger(
+            &friday_core::LedgerEntry::anthropic_route(
+                "runB:t0:ledger",
+                "runB",
+                "runB:t0:askreceipt",
+                "claude-opus-4-8",
+                7,
+                2,
+                None,
+                None,
+                30,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let a = db.list_run_token_usage("runA").unwrap();
+        assert_eq!(a.len(), 2, "run A's two rows, oldest-first, no run-B leak");
+        assert_eq!(a[0].provider_kind, "anthropic");
+        assert_eq!(a[0].base_url_host, "api.anthropic.com");
+        assert_eq!(a[0].model, "claude-opus-4-8");
+        assert_eq!(a[0].total_tokens, 19, "11 + 8");
+        assert!(!a[0].fallback);
+        assert_eq!(a[1].provider_kind, "deepseek");
+        assert_eq!(a[1].base_url_host, "api.deepseek.com");
+
+        let b = db.list_run_token_usage("runB").unwrap();
+        assert_eq!(b.len(), 1, "run B isolated from run A");
+        assert_eq!(b[0].provider_kind, "anthropic");
+
+        assert!(
+            db.list_run_token_usage("no-such-run").unwrap().is_empty(),
+            "an unknown run is empty, never a fabricated row"
+        );
     }
 }

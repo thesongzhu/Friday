@@ -844,7 +844,7 @@ impl<T: Transport> ProviderClientResolver for HubRuntime<T> {
 mod tests {
     use super::*;
     use crate::routing::RouteError;
-    use crate::{mint_approval, LoopStatus};
+    use crate::{mint_approval, AgentStep, LoopStatus};
     use friday_deepseek::DeepSeekError;
     use serde_json::Value;
     use std::cell::Cell;
@@ -1137,6 +1137,274 @@ mod tests {
             post_calls.get(),
             0,
             "no provider call: route never dispatched"
+        );
+    }
+
+    // ---- C2 item 3: routed Claude parity (no-key, in-crate) ------------------
+    //
+    // These two tests are the DETERMINISTIC, no-key core of the C2 routed-parity proof:
+    // they drive the REAL public `HubRuntime::run_task_pinned("claude", ..)` entry — through
+    // `with_claude` + the in-process route promotion the gated `live()` path uses — to a STUB
+    // Claude client that surfaces an Anthropic-kind `BilledUsage` exactly as the live
+    // `ClaudeAgentLlmClient::next_step_metered` would after a real chat. This is the genuinely
+    // new coverage over the lib.rs `claude_step_writes_anthropic_provider_row` test, which
+    // BYPASSES the runtime (hand-built resolver + registry). NO key, NO network is needed; the
+    // `#[ignore]`'d `tests/routed_claude_parity.rs` harness drives the SAME entry against a
+    // LIVE Claude key (the operator run that spends quota).
+
+    /// A stub Claude client: each metered step surfaces an Anthropic-kind [`BilledUsage`] (the
+    /// bits the live `ClaudeAgentLlmClient` maps from a real chat) plus the next scripted step.
+    /// Once the script is exhausted it finishes (so a tool turn that Pauses leaves no dangling
+    /// turn). `propose_tool_call` is unused by the routed loop (it uses `next_step_metered`).
+    struct StubClaudeMeteredClient {
+        steps: Vec<AgentStep>,
+        prompt_tokens: i64,
+        completion_tokens: i64,
+        model: String,
+        calls: Cell<usize>,
+    }
+    impl StubClaudeMeteredClient {
+        fn new(steps: Vec<AgentStep>, prompt_tokens: i64, completion_tokens: i64) -> Self {
+            Self {
+                steps,
+                prompt_tokens,
+                completion_tokens,
+                model: friday_anthropic::DEFAULT_MODEL.to_string(),
+                calls: Cell::new(0),
+            }
+        }
+    }
+    impl crate::AgentLlmClient for StubClaudeMeteredClient {
+        fn propose_tool_call(&self, _task: &str) -> Result<crate::RawToolCall, crate::AgentError> {
+            unreachable!("routed loop uses next_step_metered")
+        }
+        fn next_step_metered(
+            &self,
+            _task: &str,
+            _history: &[crate::TurnTrace],
+        ) -> Result<crate::MeteredStep, crate::AgentError> {
+            let i = self.calls.get();
+            self.calls.set(i + 1);
+            let step = self.steps.get(i).cloned().unwrap_or(AgentStep::Finish {
+                message: "done".to_string(),
+            });
+            let usage = crate::BilledUsage {
+                provider_kind: friday_core::ProviderKind::Anthropic,
+                model: self.model.clone(),
+                prompt_tokens: self.prompt_tokens,
+                completion_tokens: self.completion_tokens,
+            };
+            Ok((Ok(step), Some(usage)))
+        }
+    }
+
+    /// Build a runtime with the DARK Claude client WIRED and its in-process route promoted to
+    /// dispatchable — the SAME two flips the gated `live()` path performs
+    /// (`with_claude` + `mark_route_available` + `mark_route_validated`), but WITHOUT a live key
+    /// (no `validate_and_enable_claude` probe). This is legal in-crate because the test module is
+    /// a child of the impl, so it may call the private route-promotion helpers; it does NOT add
+    /// any public no-key route-enable (the dark/default-off invariant is untouched — the
+    /// autonomous baseline still marks `claude` `available:false`).
+    fn runtime_with_claude_wired(
+        tag: &str,
+        steps: Vec<AgentStep>,
+        approval: Box<dyn ApprovalPolicy>,
+    ) -> (HubRuntime<ScriptTransport>, TempDir) {
+        let ws = TempDir::new(tag);
+        // The DeepSeek transport is present (required by the runtime type) but never reached:
+        // the claude pin routes to the wired Claude stub, not deepseek.
+        let transport = ScriptTransport::new(&["{\"tool\":\"none\"}"]);
+        let client = DeepSeekClient::with_transport(transport, "k".into());
+        let agent = DeepSeekAgentLlmClient::new(client);
+        let mut rt = HubRuntime::new(
+            HubConfig {
+                db_path: tmp(tag),
+                workspace_root: ws.0.clone(),
+                secret: SECRET.to_vec(),
+                max_turns: 6,
+                principal_id: None,
+                disabled_tools: vec![],
+                read_only: false,
+                operator_vk: None, // fail-closed Pause on a mutating action (no auto-approve)
+            },
+            agent,
+            approval,
+        )
+        .unwrap();
+        rt = rt.with_claude(Box::new(StubClaudeMeteredClient::new(steps, 11, 8)));
+        // The gated `live()` path does these two flips behind FRIDAY_CLAUDE_ROUTE_ENABLED + a
+        // live key probe; we do them directly (no key) for the deterministic in-crate proof.
+        rt.mark_route_available("claude");
+        rt.mark_route_validated("claude");
+        (rt, ws)
+    }
+
+    #[test]
+    fn run_task_pinned_claude_routes_through_runtime_and_writes_anthropic_row() {
+        // CHAT FLOW (send message / Ask Friday): a `run_task_pinned("claude")` through the REAL
+        // HubRuntime entry routes to the wired Claude client, finishes, and records EXACTLY ONE
+        // run-scoped token_ledger row attributed to Anthropic — host api.anthropic.com, the
+        // claude model, fallback=false. NO key, NO network. This is the deterministic mirror of
+        // the live `tests/routed_claude_parity.rs` chat leg.
+        let (rt, _ws) = runtime_with_claude_wired(
+            "c2-pinned-claude-chat",
+            vec![AgentStep::Finish {
+                message: "PONG".to_string(),
+            }],
+            Box::new(DenyAllApprovals),
+        );
+        let (selection, outcome) = rt
+            .run_task_pinned("run-c2-chat", "say pong", "claude", 1_000)
+            .expect("pinned claude runs through the runtime");
+        assert_eq!(selection.provider_id, "claude", "the pin routed to claude");
+        assert_eq!(outcome.status, LoopStatus::Finished);
+
+        let rows = rt.db().list_run_token_usage("run-c2-chat").unwrap();
+        assert_eq!(
+            rows.len(),
+            1,
+            "one anthropic row for the single claude turn"
+        );
+        let row = &rows[0];
+        assert_eq!(
+            row.provider_kind, "anthropic",
+            "NOT mis-attributed as deepseek"
+        );
+        assert_eq!(row.base_url_host, "api.anthropic.com");
+        assert_eq!(row.model, friday_anthropic::DEFAULT_MODEL);
+        assert_eq!(row.total_tokens, 19, "11 + 8 (summed by the ledger)");
+        assert!(!row.fallback, "the claude route is never a fallback");
+
+        // The whole-ledger projection agrees (only this anthropic row exists; no hidden call).
+        let all = rt.db().list_token_usage().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].provider_kind, "anthropic");
+    }
+
+    #[test]
+    fn claude_mutating_turn_bills_anthropic_row_then_pauses_for_approval() {
+        // APPROVAL-REQUEST FLOW (routed + metered): a claude-pinned turn that proposes a MUTATING
+        // tool (`write_file`) is BILLED an anthropic row (the chat that produced the proposal
+        // spent tokens) and THEN the gate withholds it — with no operator key the run Pauses
+        // (RequiresApproval), executes nothing, and persists a pending approval the offline
+        // operator could sign. This proves "approval request" is a ROUTED+METERED Claude flow,
+        // not a deferred one: the metered turn IS the claude turn, and the Pause is the gate
+        // mechanics on top. NO key, NO network.
+        let (rt, ws) = runtime_with_claude_wired(
+            "c2-pinned-claude-approval",
+            vec![AgentStep::Tool(crate::RawToolCall {
+                action: "write_file".to_string(),
+                params: vec![
+                    ("path".to_string(), "out.txt".to_string()),
+                    ("content".to_string(), "C2".to_string()),
+                ],
+            })],
+            Box::new(DenyAllApprovals),
+        );
+        let (selection, outcome) = rt
+            .run_task_pinned("run-c2-appr", "write a file", "claude", 2_000)
+            .expect("pinned claude runs through the runtime");
+        assert_eq!(selection.provider_id, "claude", "the pin routed to claude");
+        assert_eq!(
+            outcome.status,
+            LoopStatus::Paused,
+            "no operator key ⇒ the mutating action Pauses (RequiresApproval), never executes"
+        );
+
+        // The model call that PROPOSED the mutation was billed BEFORE the gate dispatch — one
+        // anthropic row, correctly attributed.
+        let rows = rt.db().list_run_token_usage("run-c2-appr").unwrap();
+        assert_eq!(rows.len(), 1, "the proposing claude turn was billed");
+        assert_eq!(rows[0].provider_kind, "anthropic");
+        assert_eq!(rows[0].base_url_host, "api.anthropic.com");
+
+        // The gate withheld the write — no file was created (no execute-on-Pause bypass).
+        assert!(
+            !ws.0.join("out.txt").exists(),
+            "the gate withheld the write — no file created"
+        );
+
+        // A pending approval was persisted for the OFFLINE operator to sign (the resume leg).
+        let pending: i64 = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM pending_approval_request WHERE run_id = 'run-c2-appr'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(pending, 1, "one pending approval recorded for resume");
+    }
+
+    #[test]
+    fn claude_route_error_fails_run_closed_and_bills_nothing() {
+        // ERROR HANDLING (§3): a claude turn whose model call FAILS (an OUTER AgentError — what
+        // the live ClaudeAgentLlmClient surfaces on a transport/HTTP error) fails the run CLOSED
+        // (LoopStatus::Errored) with NO reroute to deepseek and NO ledger row (a call that
+        // produced no usage bills nothing — the honest default). This makes "error handling" a
+        // genuinely covered chat-expressible flow, not an assumed one. NO key, NO network.
+        struct ErroringClaudeClient;
+        impl crate::AgentLlmClient for ErroringClaudeClient {
+            fn propose_tool_call(
+                &self,
+                _task: &str,
+            ) -> Result<crate::RawToolCall, crate::AgentError> {
+                unreachable!("routed loop uses next_step_metered")
+            }
+            fn next_step_metered(
+                &self,
+                _task: &str,
+                _history: &[crate::TurnTrace],
+            ) -> Result<crate::MeteredStep, crate::AgentError> {
+                // The live adapter maps a ClaudeError into AgentError::Model (retry-classification
+                // deferred); a Model error is TERMINAL (never retried) ⇒ the run fails closed.
+                Err(crate::AgentError::Model("claude route error".to_string()))
+            }
+        }
+
+        let ws = TempDir::new("c2-claude-route-error");
+        let transport = ScriptTransport::new(&["{\"tool\":\"none\"}"]);
+        let client = DeepSeekClient::with_transport(transport, "k".into());
+        let agent = DeepSeekAgentLlmClient::new(client);
+        let mut rt = HubRuntime::new(
+            HubConfig {
+                db_path: tmp("c2-claude-route-error"),
+                workspace_root: ws.0.clone(),
+                secret: SECRET.to_vec(),
+                max_turns: 6,
+                principal_id: None,
+                disabled_tools: vec![],
+                read_only: false,
+                operator_vk: None,
+            },
+            agent,
+            Box::new(DenyAllApprovals),
+        )
+        .unwrap();
+        rt = rt.with_claude(Box::new(ErroringClaudeClient));
+        rt.mark_route_available("claude");
+        rt.mark_route_validated("claude");
+
+        let (selection, outcome) = rt
+            .run_task_pinned("run-c2-err", "say pong", "claude", 1_000)
+            .expect("a claude route error is a loop outcome, not a routing error");
+        assert_eq!(
+            selection.provider_id, "claude",
+            "the pin routed to claude (no reroute)"
+        );
+        assert_eq!(
+            outcome.status,
+            LoopStatus::Errored,
+            "a model-call error fails the run closed"
+        );
+        // A failed call produced no usage ⇒ NO ledger row (never a half-billed row).
+        assert!(
+            rt.db()
+                .list_run_token_usage("run-c2-err")
+                .unwrap()
+                .is_empty(),
+            "a route error bills nothing"
         );
     }
 
