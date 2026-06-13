@@ -131,7 +131,7 @@
 use friday_crypto::{seal, DeviceKeypair};
 use friday_hub::hub_server::AuthedPrincipal;
 use friday_hub::runtime::{HubConfig, HubRuntime, ENV_CLAUDE_ROUTE_ENABLED};
-use friday_hub::LoopStatus;
+use friday_hub::{CancelToken, LoopStatus};
 use friday_providers::KeyValidationOutcome;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -471,4 +471,85 @@ fn auth_failure_keeps_claude_undispatchable_no_reroute() {
         .run_task_pinned("live-claude-authfail", "say pong", "claude", 1_000)
         .expect_err("an unvalidated claude route must fail the pin closed, never reroute");
     eprintln!("LIVE OK: auth failure → claude undispatchable, pin failed closed: {err:?}");
+}
+
+// ---- C2-1 interrupt / stop: cooperative cancellation, LIVE -----------------------------------
+//
+// The live mirror of the deterministic, no-key in-crate proof
+// (`runtime.rs::run_task_pinned_cancellable_interrupts_claude_loop_after_one_billed_turn`).
+// The in-crate test is the REAL dark proof (it forces the trip deterministically between two
+// scripted turns); this LIVE test exercises the SAME `run_task_pinned_cancellable` entry against
+// a real Anthropic key, tripping the shared `CancelToken` from a background thread shortly after
+// the run starts. It is `#[ignore]`'d like every live test here — only the operator run spends
+// quota — and timing-dependent (a fast/slow model may interrupt at turn 0 vs. a later boundary),
+// so it asserts only the COOPERATIVE-STOP invariants that hold regardless of WHEN the trip lands:
+//   - the run terminates (no hang) routed to claude (no reroute);
+//   - the terminal status is `Interrupted` whenever the trip lands at or before a turn boundary
+//     the loop reaches (the common case for a multi-turn task);
+//   - EVERY recorded ledger row is anthropic / api.anthropic.com / non-fallback, and the row
+//     count equals `outcome.turns` (each counted turn billed exactly once; NOTHING billed after
+//     the trip — the same no-bill-after-trip property the in-crate test pins deterministically).
+// Only the `CancelToken` clone (Send) crosses the thread boundary; the runtime stays on this
+// thread.
+#[test]
+#[ignore = "live: needs FRIDAY_CLAUDE_ROUTE_ENABLED=1 + both provider keys; spends Anthropic quota; run with --ignored"]
+fn interrupt_stop_cancels_live_claude_loop_and_bills_nothing_after_trip() {
+    let (rt, _ws) = live_claude_runtime("interrupt-stop");
+    let cancel = CancelToken::new();
+    // Trip the cancel shortly after the run begins, from a background thread (only the token
+    // clone — which is Send — crosses the boundary; the runtime never leaves this thread).
+    let canceller = cancel.clone();
+    let handle = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        canceller.cancel();
+    });
+    let (selection, outcome) = rt
+        .run_task_pinned_cancellable(
+            "live-claude-interrupt",
+            // A deliberately multi-step task so the loop reaches a turn boundary where the
+            // (already-tripped) cancel can stop it after a real billed claude turn.
+            "Think step by step and use tools across several turns; do not finish immediately.",
+            "claude",
+            &cancel,
+            1_000,
+        )
+        .expect("a cancellable live pinned-claude run terminates (no hang, no reroute)");
+    handle.join().unwrap();
+    assert_eq!(
+        selection.provider_id, "claude",
+        "the pin routed to claude, no reroute"
+    );
+    // Whenever the loop reached a boundary after the trip, the status is Interrupted; a model
+    // that finished within the first turn before the trip landed would be Finished/Bounded —
+    // either way the metering invariant below must hold.
+    assert!(
+        matches!(
+            outcome.status,
+            LoopStatus::Interrupted | LoopStatus::Finished | LoopStatus::Bounded
+        ),
+        "cooperative stop or a fast finish; got {:?}",
+        outcome.status
+    );
+    // No-bill-after-trip + all-anthropic: one anthropic row per counted turn, nothing after.
+    let rows = rt
+        .db()
+        .list_run_token_usage("live-claude-interrupt")
+        .unwrap();
+    assert_eq!(
+        rows.len(),
+        outcome.turns as usize,
+        "exactly one anthropic row per counted turn; nothing billed after the cancel trip"
+    );
+    for row in &rows {
+        assert_eq!(
+            row.provider_kind, "anthropic",
+            "NOT mis-attributed as deepseek"
+        );
+        assert_eq!(row.base_url_host, "api.anthropic.com");
+        assert!(!row.fallback, "the claude route is never a fallback");
+    }
+    eprintln!(
+        "LIVE OK: interrupt/stop → claude, status {:?}, {} billed anthropic turn(s), nothing after trip",
+        outcome.status, outcome.turns
+    );
 }

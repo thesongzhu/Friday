@@ -171,6 +171,7 @@ fn pause_owned_run(
         &no_approval(),
         &policy,
         5,
+        None, // cancel: not exercised by this test
         NOW,
     )
     .unwrap();

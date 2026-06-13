@@ -44,8 +44,8 @@ use crate::routing::{
     RouteRequest, RoutedLoopError, RoutedSelection,
 };
 use crate::{
-    run_session_loop, AgentLlmClient, DeepSeekAgentLlmClient, FsToolExecutor, LoopOutcome,
-    LoopStatus, RunPolicy,
+    run_session_loop, AgentLlmClient, CancelToken, DeepSeekAgentLlmClient, FsToolExecutor,
+    LoopOutcome, LoopStatus, RunPolicy,
 };
 
 /// S1.3 — the outcome of [`HubRuntime::run_agent_loop_for_mission`], mirroring
@@ -345,6 +345,7 @@ impl<T: Transport> HubRuntime<T> {
             &RouteRequest::any(),
             policy_override,
             max_turns_override,
+            None,
             now_ms,
         )
     }
@@ -368,13 +369,40 @@ impl<T: Transport> HubRuntime<T> {
             preferred_provider: Some(provider_id.to_string()),
             ..RouteRequest::any()
         };
-        self.run_with_request(run_id, task, &request, None, None, now_ms)
+        self.run_with_request(run_id, task, &request, None, None, None, now_ms)
+    }
+
+    /// (C2-1) [`Self::run_task_pinned`] with a cooperative [`CancelToken`] threaded into the
+    /// routed loop — the interrupt/stop entry the routed-claude parity harness's `interrupt /
+    /// stop` flow needs. The token is checked at the TOP of each turn (BEFORE the model call):
+    /// when tripped at a turn boundary the loop stops with [`LoopStatus::Interrupted`], makes
+    /// NO further model call, and bills NOTHING after the trip. The holder keeps a clone of the
+    /// same `cancel` to call [`CancelToken::cancel`] from another point (in a single-threaded
+    /// test it is tripped between scripted turns via a cancel-on-call stub). Identical to
+    /// `run_task_pinned` in every other respect; passing a fresh/un-tripped token reproduces
+    /// `run_task_pinned` exactly.
+    pub fn run_task_pinned_cancellable(
+        &self,
+        run_id: &str,
+        task: &str,
+        provider_id: &str,
+        cancel: &CancelToken,
+        now_ms: i64,
+    ) -> Result<(RoutedSelection, LoopOutcome), RoutedLoopError> {
+        let request = RouteRequest {
+            preferred_provider: Some(provider_id.to_string()),
+            ..RouteRequest::any()
+        };
+        self.run_with_request(run_id, task, &request, None, None, Some(cancel), now_ms)
     }
 
     /// (C2) The SHARED composed-loop body for [`Self::run_task_with_overrides`] (open request)
     /// and [`Self::run_task_pinned`] (provider-pinned request). Factored out so there is ONE
-    /// composed loop — the ONLY variable between the two entries is `request`. The default path
-    /// remains byte-identical: `run_task_with_overrides` calls this with `&RouteRequest::any()`.
+    /// composed loop — the ONLY variable between the two entries is `request` (C2-1 adds the
+    /// optional `cancel` handle, `None` for the default/pinned non-cancellable entries). The
+    /// default path remains byte-identical: `run_task_with_overrides` calls this with
+    /// `&RouteRequest::any()` and `cancel: None`.
+    #[allow(clippy::too_many_arguments)]
     fn run_with_request(
         &self,
         run_id: &str,
@@ -382,6 +410,7 @@ impl<T: Transport> HubRuntime<T> {
         request: &RouteRequest,
         policy_override: Option<&RunPolicy>,
         max_turns_override: Option<u64>,
+        cancel: Option<&CancelToken>,
         now_ms: i64,
     ) -> Result<(RoutedSelection, LoopOutcome), RoutedLoopError> {
         // The effective per-run policy + ceiling. Absent override ⇒ boot config unchanged.
@@ -419,6 +448,7 @@ impl<T: Transport> HubRuntime<T> {
             &approve,
             policy,
             max_turns,
+            cancel,
             now_ms,
         )?;
 
@@ -570,6 +600,7 @@ impl<T: Transport> HubRuntime<T> {
             &approve,
             policy,
             max_turns,
+            None, // cancel: the sessioned entry is not cancellable (C2-1 is sessionless)
             now_ms,
         ) {
             Ok(outcome) => outcome,
@@ -707,6 +738,7 @@ impl<T: Transport> HubRuntime<T> {
             &approve,
             policy,
             max_turns,
+            None, // cancel: the sessioned entry is not cancellable (C2-1 is sessionless)
             now_ms,
         ) {
             Ok(outcome) => outcome,
@@ -1681,6 +1713,235 @@ mod tests {
             )
             .unwrap();
         assert_eq!(run_rows, 0, "no agent_run row was created for the dark pin");
+    }
+
+    // ---- C2-1 interrupt / stop: cooperative cancellation in the routed loop ----------------
+    //
+    // The §3 "interrupt / stop" flow the routed-claude parity harness lists as DEFERRED
+    // ("there is no cancel handle on run_task_pinned. WIRING NEEDED: a cancellation token
+    // threaded into the routed loop"). This is the GENUINE interrupt: a real metered claude
+    // turn is billed, then a hard cancel trips at the turn boundary and the loop stops with NO
+    // further model call and NOTHING billed after the trip — NOT a claude_control mirror event,
+    // NOT a follow-up turn. NO key, NO network. The `#[ignore]`'d live mirror lives in
+    // `tests/routed_claude_parity.rs`.
+
+    /// A cancel-AWARE Claude stub: each metered step surfaces an Anthropic-kind [`BilledUsage`]
+    /// (the bits the live `ClaudeAgentLlmClient` maps from a real chat) plus the next scripted
+    /// step, AND — to make a single-threaded interrupt deterministic — TRIPS the shared
+    /// [`CancelToken`] once it has served `trip_after_calls` steps. So after turn 1 returns, the
+    /// token is set; the loop checks it at the TOP of turn 2 and stops BEFORE calling this stub
+    /// again. `calls` is an externally-observable `Rc<Cell<usize>>` so the test can assert the
+    /// stub was NEVER called for turn 2 (no model call after the trip). This MIRRORS the
+    /// existing `StubClaudeMeteredClient` shape; it does NOT modify it (other tests depend on it).
+    struct CancelOnCallClaudeStub {
+        steps: Vec<AgentStep>,
+        prompt_tokens: i64,
+        completion_tokens: i64,
+        model: String,
+        calls: Rc<Cell<usize>>,
+        cancel: CancelToken,
+        trip_after_calls: usize,
+    }
+    impl crate::AgentLlmClient for CancelOnCallClaudeStub {
+        fn propose_tool_call(&self, _task: &str) -> Result<crate::RawToolCall, crate::AgentError> {
+            unreachable!("routed loop uses next_step_metered")
+        }
+        fn next_step_metered(
+            &self,
+            _task: &str,
+            _history: &[crate::TurnTrace],
+        ) -> Result<crate::MeteredStep, crate::AgentError> {
+            let i = self.calls.get();
+            self.calls.set(i + 1);
+            let step = self.steps.get(i).cloned().unwrap_or(AgentStep::Finish {
+                message: "done".to_string(),
+            });
+            let usage = crate::BilledUsage {
+                provider_kind: friday_core::ProviderKind::Anthropic,
+                model: self.model.clone(),
+                prompt_tokens: self.prompt_tokens,
+                completion_tokens: self.completion_tokens,
+            };
+            // Trip the token AFTER serving the Nth step — so the just-served turn completes and
+            // is billed normally, and the NEXT turn boundary observes the cancel. (`calls` was
+            // just incremented to `i+1`, the count of steps served.)
+            if self.calls.get() == self.trip_after_calls {
+                self.cancel.cancel();
+            }
+            Ok((Ok(step), Some(usage)))
+        }
+    }
+
+    /// Build a Claude-wired runtime around a [`CancelOnCallClaudeStub`] and hand back the SAME
+    /// flips `runtime_with_claude_wired` performs, plus the externally-observable `calls` handle
+    /// and the shared [`CancelToken`]. Mirrors how `runtime_with` returns `post_calls`. Leaves
+    /// `runtime_with_claude_wired` / `StubClaudeMeteredClient` untouched (NO-DEGRADE for the
+    /// existing harness).
+    fn cancellable_claude_runtime(
+        tag: &str,
+        steps: Vec<AgentStep>,
+        trip_after_calls: usize,
+    ) -> (
+        HubRuntime<ScriptTransport>,
+        TempDir,
+        CancelToken,
+        Rc<Cell<usize>>,
+    ) {
+        let ws = TempDir::new(tag);
+        let transport = ScriptTransport::new(&["{\"tool\":\"none\"}"]);
+        let client = DeepSeekClient::with_transport(transport, "k".into());
+        let agent = DeepSeekAgentLlmClient::new(client);
+        let mut rt = HubRuntime::new(
+            HubConfig {
+                db_path: tmp(tag),
+                workspace_root: ws.0.clone(),
+                secret: SECRET.to_vec(),
+                max_turns: 6,
+                principal_id: None,
+                disabled_tools: vec![],
+                read_only: false,
+                operator_vk: None,
+            },
+            agent,
+            Box::new(DenyAllApprovals),
+        )
+        .unwrap();
+        let calls = Rc::new(Cell::new(0usize));
+        let cancel = CancelToken::new();
+        rt = rt.with_claude(Box::new(CancelOnCallClaudeStub {
+            steps,
+            prompt_tokens: 11,
+            completion_tokens: 8,
+            model: friday_anthropic::DEFAULT_MODEL.to_string(),
+            calls: calls.clone(),
+            cancel: cancel.clone(),
+            trip_after_calls,
+        }));
+        rt.mark_route_available("claude");
+        rt.mark_route_validated("claude");
+        (rt, ws, cancel, calls)
+    }
+
+    #[test]
+    fn run_task_pinned_cancellable_interrupts_claude_loop_after_one_billed_turn() {
+        // INTERRUPT / STOP (routed + metered): a claude-pinned run with a MULTI-step script —
+        // turn 1 is a read-only tool that CONTINUES the loop (so a turn 2 is scripted), and the
+        // cancel token trips right after turn 1 returns. At the TOP of turn 2 the loop observes
+        // the cancel and stops with `Interrupted`: it makes NO turn-2 model call and bills
+        // NOTHING after the trip. This is the genuine interrupt — a real metered claude turn,
+        // then a hard cancel — NOT a claude_control mirror, NOT a follow-up turn.
+        //
+        // The workspace has `notes.md` so turn 1's `read_file` is a clean Allowed+Executed
+        // CONTINUE (read-only needs no approval); turn 2's scripted `Finish` must NEVER be
+        // consumed (calls == 1). Step 0 deliberately is NOT a Finish — a Finish would terminate
+        // before the turn-2 cancel check ever ran.
+        let (rt, ws, cancel, calls) = cancellable_claude_runtime(
+            "c2-1-interrupt",
+            vec![
+                // turn 1: read-only tool → Allowed + Executed → loop CONTINUES to turn 2
+                AgentStep::Tool(crate::RawToolCall {
+                    action: "read_file".to_string(),
+                    params: vec![("path".to_string(), "notes.md".to_string())],
+                }),
+                // turn 2: would Finish — but the cancel (tripped after turn 1) stops the loop
+                // at the turn-2 boundary BEFORE this step is ever requested.
+                AgentStep::Finish {
+                    message: "SHOULD NEVER BE REACHED".to_string(),
+                },
+            ],
+            1, // trip the cancel after the stub has served 1 step (i.e. after turn 1)
+        );
+        std::fs::write(ws.join("notes.md"), b"hello").unwrap();
+
+        let (selection, outcome) = rt
+            .run_task_pinned_cancellable(
+                "run-c2-1-int",
+                "do a thing then stop",
+                "claude",
+                &cancel,
+                1_000,
+            )
+            .expect("the cancellable pinned claude run drives the routed loop");
+
+        // The pin really routed to claude (no reroute).
+        assert_eq!(selection.provider_id, "claude", "the pin routed to claude");
+        // Terminal status is the NEW Interrupted variant — stopped at the turn-2 boundary.
+        assert_eq!(
+            outcome.status,
+            LoopStatus::Interrupted,
+            "the tripped cancel stops the loop with Interrupted"
+        );
+        // turns == 1: turn 1's model call happened (counted); turn 2's did NOT (the cancel
+        // check is BEFORE the model call, so it does not count) — the honest turns==model-calls
+        // accounting.
+        assert_eq!(outcome.turns, 1, "exactly one model call was made (turn 1)");
+        assert_eq!(
+            outcome.executed_tools, 1,
+            "turn 1's read_file executed before the cancel"
+        );
+
+        // THE no-model-call-after-trip proof: the stub was called EXACTLY ONCE. Turn 2's
+        // scripted Finish step was NEVER consumed.
+        assert_eq!(
+            calls.get(),
+            1,
+            "no model call after the trip — turn 2's scripted step was never consumed"
+        );
+
+        // THE bill-nothing-after-trip proof: EXACTLY ONE anthropic ledger row — turn 1's billed
+        // claude turn — and nothing after. (provider_kind anthropic, api.anthropic.com,
+        // fallback=false: a real metered claude turn, never mis-attributed as deepseek.)
+        let rows = rt.db().list_run_token_usage("run-c2-1-int").unwrap();
+        assert_eq!(
+            rows.len(),
+            1,
+            "exactly one anthropic row (turn 1); nothing billed after the cancel trip"
+        );
+        let row = &rows[0];
+        assert_eq!(
+            row.provider_kind, "anthropic",
+            "NOT mis-attributed as deepseek"
+        );
+        assert_eq!(row.base_url_host, "api.anthropic.com");
+        assert!(!row.fallback, "the claude route is never a fallback");
+        // Whole-ledger agrees: only the one anthropic row exists (no hidden call).
+        let all = rt.db().list_token_usage().unwrap();
+        assert_eq!(all.len(), 1, "no hidden model call anywhere in the ledger");
+        assert_eq!(all[0].provider_kind, "anthropic");
+    }
+
+    #[test]
+    fn run_task_pinned_cancellable_untripped_token_is_byte_identical_to_run_task_pinned() {
+        // NO-DEGRADE: an un-tripped cancel token reproduces `run_task_pinned` EXACTLY — the run
+        // Finishes, billing one anthropic row. The cancel check at each turn boundary is a pure
+        // no-op when the token is never tripped (and `None`, the default path, skips it
+        // entirely — proven by the unchanged existing `run_task_pinned_*` claude tests).
+        let (rt, _ws, cancel, calls) = cancellable_claude_runtime(
+            "c2-1-untripped",
+            vec![AgentStep::Finish {
+                message: "PONG".to_string(),
+            }],
+            usize::MAX, // never trip
+        );
+        let (selection, outcome) = rt
+            .run_task_pinned_cancellable("run-c2-1-noop", "say pong", "claude", &cancel, 2_000)
+            .expect("an un-tripped cancellable run behaves like run_task_pinned");
+        assert_eq!(selection.provider_id, "claude");
+        assert_eq!(
+            outcome.status,
+            LoopStatus::Finished,
+            "an un-tripped token does not change the terminal status"
+        );
+        assert_eq!(outcome.turns, 1);
+        assert_eq!(calls.get(), 1, "the single Finish turn ran");
+        assert!(!cancel.is_cancelled(), "the token was never tripped");
+        let rows = rt.db().list_run_token_usage("run-c2-1-noop").unwrap();
+        assert_eq!(
+            rows.len(),
+            1,
+            "one anthropic row for the single finished turn"
+        );
+        assert_eq!(rows[0].provider_kind, "anthropic");
     }
 
     // ---- PROOF-MEMORY-001 recall→inject wiring -------------------------------
