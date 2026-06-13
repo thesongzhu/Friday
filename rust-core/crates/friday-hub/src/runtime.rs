@@ -1156,6 +1156,31 @@ impl<T: Transport> HubRuntime<T> {
         crate::run_readback_projection::project_run_file_view(&self.db, caller.principal(), run_id)
     }
 
+    /// (C2-9) OWNER-SCOPED Activity / Needs-Me projection for one PAUSED, claude-pinned run: the
+    /// run's `AskReceipt` activity rows (one per metered turn) PLUS a Needs-Me item surfacing the
+    /// pending operator approval the run Paused on. `Some(snapshot)` ONLY when `caller` is the
+    /// paused run's bound OWNER, else `None` (fail-closed — a non-owner cannot read another's
+    /// activity by guessing the run_id). Scopes on `caller.principal()`, NEVER a client-asserted id.
+    ///
+    /// The owner axis is the paused run's pending-row principal (`resolve_run_owner`), NOT the
+    /// C2-4/C2-5 `get_run_answer_for_principal` gate — a paused run has no `run_result` for that
+    /// gate to key on, so the SAME owner concept is taken from the pending approval row (the SAME
+    /// source the owner-authed `reject`/`cancel` control ops gate on). The Needs-Me item is anchored
+    /// to a REAL `pending_approval_request` via `detect_pause` and the AskReceipts to REAL metered
+    /// turns via `Db::list_activity` — never a synthesized inbox entry. Class-2 read: no model call,
+    /// no ledger row, no write. ADDITIVE, read-only accessor.
+    pub fn activity_needs_me_for_owner(
+        &self,
+        caller: &AuthedPrincipal,
+        run_id: &str,
+    ) -> Result<Option<serde_json::Value>, String> {
+        crate::run_readback_projection::project_activity_needs_me(
+            &self.db,
+            caller.principal(),
+            run_id,
+        )
+    }
+
     /// (A1 run-controls) The composed `FsToolExecutor` (workspace-root-contained, gate-mandatory).
     /// Exposed so the sealed-WS server's RESUME control handler can delegate to the S6
     /// [`crate::resume::resume_with_approval`] spine (which executes the ONE approved mutation
@@ -2201,6 +2226,88 @@ mod tests {
                 ledger_baseline,
                 "the file-view is a Class-2 read: no new ledger row from the view"
             );
+        }
+
+        // ---- C2-9: owner-scoped Activity / Needs-Me projection over a paused metered run -------
+        #[test]
+        fn c2_9_activity_needs_me_surfaces_paused_claude_run_owner_scoped_no_new_ledger_row() {
+            // C2-9 FAITHFUL DARK PROOF. Reuse the C2-3 setup (`paused_owned_claude_run`): a
+            // claude-pinned MUTATING turn that bills EXACTLY ONE anthropic row then Pauses on a real
+            // pending approval. The Activity/Needs-Me projection then surfaces, OWNER-SCOPED:
+            //   - the AskReceipt activity row of the metered turn (`{RUN}:t0:askreceipt`,
+            //     "{n} tokens via {model}" — the real metered turn, never synthesized);
+            //   - a Needs-Me item for the pending approval, anchored to the REAL nonce
+            //     (`detect_pause`) — provider=claude, kind=approval, status=awaiting_approval,
+            //     `ref_id` = the live `pending_approval_request.approval_id`;
+            //   - a DIFFERENT principal's projection is fail-closed `None` (owner-gated);
+            //   - reading the projection writes NO new ledger row (Class-2 read).
+            // NO key, NO network — the claude stub bills the anthropic row; NO ns-7
+            // FRIDAY_ACTIVITY_NEEDS_ME flag is set (the Needs-Me item is COMPUTED from detect_pause
+            // at read time, decoupled from the persisted-activity path).
+            const OWNER: &str = "principal:c2-9-owner";
+            const RUN: &str = "run-c2-9";
+            let (rt, _ws, nonce, ledger_before) = paused_owned_claude_run("c2-9", OWNER, RUN);
+
+            let owner = authed_caller(OWNER);
+            let other = authed_caller("principal:c2-9-intruder");
+
+            // --- the OWNER's projection surfaces the AskReceipt + the Needs-Me item ------------
+            let view = rt
+                .activity_needs_me_for_owner(&owner, RUN)
+                .unwrap()
+                .expect("the owner reads her own paused-run Activity/Needs-Me projection");
+            assert_eq!(view["run_id"], RUN, "the projection is keyed to the run");
+
+            // The AskReceipt of the ONE metered claude turn, keyed by the bill_model_call scheme.
+            assert_eq!(
+                view["ask_receipt_count"], 1,
+                "exactly one metered-turn receipt"
+            );
+            let receipts = view["ask_receipts"].as_array().expect("ask_receipts array");
+            assert_eq!(receipts.len(), 1);
+            assert_eq!(
+                receipts[0]["activity_id"],
+                format!("{RUN}:t0:askreceipt"),
+                "the receipt is the proposing metered turn's real AskReceipt row"
+            );
+            assert_eq!(receipts[0]["kind"], "ask_receipt");
+            assert_eq!(receipts[0]["state"], "done");
+            assert!(
+                receipts[0]["summary"]
+                    .as_str()
+                    .unwrap()
+                    .contains("tokens via"),
+                "the AskReceipt summary is the metered turn's body-free token receipt"
+            );
+
+            // The Needs-Me item, anchored to the REAL pending approval (the detect_pause nonce).
+            let needs_me = &view["needs_me"];
+            assert!(!needs_me.is_null(), "a paused run surfaces a Needs-Me item");
+            assert_eq!(
+                needs_me["ref_id"], nonce,
+                "the Needs-Me item points at the REAL pending_approval_request nonce, not a \
+                 synthesized inbox entry"
+            );
+            assert_eq!(needs_me["provider"], "claude", "the run is claude-pinned");
+            assert_eq!(needs_me["kind"], "approval");
+            assert_eq!(needs_me["priority"], "high");
+            assert_eq!(needs_me["status"], "awaiting_approval");
+            assert_eq!(needs_me["friday_session_id"], RUN);
+
+            // Refs-only: the projection never carries the run task body or any answer.
+            let rendered = serde_json::to_string(&view).unwrap();
+            assert!(!rendered.contains("write a file"), "no run task body");
+
+            // --- a DIFFERENT principal's projection is fail-closed None (owner-gated) ----------
+            assert_eq!(
+                rt.activity_needs_me_for_owner(&other, RUN).unwrap(),
+                None,
+                "a non-owner cannot read another's Activity/Needs-Me (fail-closed, no oracle)"
+            );
+
+            // --- THE ANTI-FAKE: the projection wrote NO new ledger row (projection-only) -------
+            // (read once per principal — a pure compute over existing activity + pending rows).
+            assert_no_new_anthropic_row(&rt, RUN, &ledger_before);
         }
     } // mod c2_control
 
