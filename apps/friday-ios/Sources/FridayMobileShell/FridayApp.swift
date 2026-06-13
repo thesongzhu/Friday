@@ -53,11 +53,13 @@ final class FridaySession: ObservableObject {
     // and touches NO SecureStore — it is the no-key `HonestlyUnavailableReadClient`, which always
     // renders the honest dark-server state. This deliberately does NOT generate a fresh peer key:
     // the live read-projection store enrolls EXACTLY the master-derived peer (count=1), so minting
-    // any other key here would be wrong, and connecting at all is the slice-6 deferred AC. The
-    // master-derived LIVE read path (mirroring the desktop `RealReadClientFactory.makeLive` /
-    // `MasterKeyPeer` derivation) is deferred to slice-6 + the J2 device-pairing problem — a real
-    // phone has no host master key. On the simulator the honest-unavailable default is correct.
-    self.readClient = preview ? PreviewReadClient() : HonestlyUnavailableReadClient()
+    // any other key here would be wrong, and flipping the SHIPPED default to live at all is the
+    // slice-6 operator FREEZE gate. The master-derived LIVE read path is the iOS I4 mirror of the
+    // desktop `RealReadClientFactory.makeLive` / `MasterKeyPeer` derivation; it is now BUILT and
+    // wired here behind an OPT-IN env/arg gate (`FRIDAY_MOBILE_LIVE_READ=1` / `--live-read`,
+    // mirroring the desktop `FRIDAY_CONSOLE_LIVE`). The DEFAULT (gate OFF) stays the honest-
+    // unavailable client — this PR does NOT flip the shipped default (that is the slice-6 gate).
+    self.readClient = preview ? PreviewReadClient() : Self.defaultReadClient()
 
     // The write client (Friday Chat read-WRITE / S6 surface) also has NO live transport wired
     // (slice-6 deferred AC) ⇒ its default factory transport throws ⇒ honest-unavailable. Its
@@ -71,6 +73,31 @@ final class FridaySession: ObservableObject {
       agentRunControlViaRust: runControlEnabled)
     self.writeClient = FridayClientFactory.makeWriteClient(keypair: writeKeypair, endpoint: endpoint)
     self.signer = MockOperatorSigner()
+  }
+
+  /// The DEFAULT (non-preview) Home read client. DEFAULT = the no-key honest-unavailable client;
+  /// LIVE only when explicitly opted in via env `FRIDAY_MOBILE_LIVE_READ=1` or launch arg
+  /// `--live-read` (the iOS mirror of the desktop `FRIDAY_CONSOLE_LIVE`). This PR does NOT flip
+  /// the shipped default — the live path is opt-in, gated, and never on by default (slice-6 gate).
+  ///
+  /// LIVE: derive the enrolled master-derived peer (`MasterKeyPeer`), target 48751 as `admin-001`,
+  /// over the real `SealedWSReadClient` (the iOS `RealReadClientFactory.makeLive`). If the host
+  /// master key is unavailable (e.g. a real phone — the J2 pairing problem), surface the TRUTH
+  /// (honest unavailable) — NEVER fall back to the preview sample, which would fabricate a ready
+  /// view the live seam did not produce.
+  static func defaultReadClient() -> FridayRustReadClient {
+    let args = ProcessInfo.processInfo.arguments
+    let env = ProcessInfo.processInfo.environment
+    let useLive = args.contains("--live-read") || env["FRIDAY_MOBILE_LIVE_READ"] == "1"
+    guard useLive else {
+      // SHIPPED DEFAULT — unchanged: no key, no socket, no SecureStore touch.
+      return HonestlyUnavailableReadClient()
+    }
+    do {
+      return try RealReadClientFactory.makeLive()
+    } catch {
+      return RealReadClientFactory.makeHonestlyUnavailable(reason: "\(error)")
+    }
   }
 
   #if DEBUG
