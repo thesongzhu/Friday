@@ -33,6 +33,7 @@ pub mod schedule;
 mod schema;
 pub mod session_lifecycle;
 pub mod system_intent;
+pub mod trust_grant;
 pub mod workflow;
 pub mod workflow_catalog;
 pub mod workflow_def;
@@ -66,6 +67,10 @@ pub use run_result::{
 };
 pub use schema::{hub_migrations, phone_migrations, HUB_ONLY_TABLES, PHONE_ONLY_TABLES};
 pub use session_lifecycle::{sweep_lifecycle, SweepOutcome};
+pub use trust_grant::{
+    active_grant, authorize_agent_action, grant_trust, latest_grant_any_state, revoke_trust,
+    AgentActionContext,
+};
 
 use friday_core::{
     ActivityState, ActivityType, ContextPassport, DeviceIdentity, FridayConversation,

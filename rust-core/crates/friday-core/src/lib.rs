@@ -35,6 +35,7 @@ mod session;
 mod skill;
 mod skill_catalog;
 mod tool_policy;
+mod trust;
 mod workflow;
 
 pub use activity::{ActivityState, ActivityType};
@@ -90,6 +91,7 @@ pub use tool_policy::{
     contains_blocked_shell_char, contains_sensitive_assignment, contains_sensitive_material,
     is_destructive_request, shell_risk, touches_protected_artifact, Risk, ShellRisk,
 };
+pub use trust::{check_grant, GrantCheck, TrustBoundaries, TrustGrant};
 pub use workflow::{
     aggregate_needs_me, resolve_step_completion, run_is_complete, NeedsMeItem, StepStatus,
     StepView, WorkflowRunState,

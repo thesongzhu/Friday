@@ -136,6 +136,14 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     // the passport is rebuilt-and-re-gated on load, never trusted raw.
     "context_passport",
     "context_passport_item",
+    // Loop closure (v31): the trust-grant baseline — a per-agent, revocable, expiring
+    // capability envelope (north-star doc 55 §4's boundaries). Hub-only: a grant is the
+    // Hub-coordinated authorization an agent acts within, and `authorize_agent_action`
+    // composes it AHEAD of the mutating-action gate (it can only ADD a restriction, never
+    // upgrade RequiresApproval). Holds NO secret/key material — the row is the agent id,
+    // lifecycle timestamps, and a JSON boundaries blob (path prefix / risk ceiling /
+    // allowlists; token/run ceilings are STORED but DEFERRED-not-enforced).
+    "trust_grant",
 ];
 
 /// Tables present only on a phone (never created on the Hub).
@@ -518,6 +526,17 @@ pub fn hub_migrations() -> Vec<Migration> {
             destructive: false,
             up: m0030_context_passport,
         },
+        // Loop closure v31: ONE new Hub-only table `trust_grant` — the per-agent
+        // capability envelope. NEW-TABLE pattern (like m0030 / m0029); touches no
+        // existing table, so every pre-v31 row/query is unaffected. The boundaries are a
+        // JSON TEXT blob; the partial-ish active-lookup index keys on the columns
+        // `active_grant` filters/orders by.
+        Migration {
+            version: 31,
+            name: "trust_grant",
+            destructive: false,
+            up: m0031_trust_grant,
+        },
     ]
 }
 
@@ -747,6 +766,25 @@ CREATE TABLE context_passport_item (
     sensitive   INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (passport_id, seq)
 );";
+
+// --- Loop closure v31: trust-grant baseline (Hub-only) ----------------------
+
+// The per-agent capability envelope. `boundaries` is a JSON blob (path prefix / risk
+// ceiling / token+run ceilings (DEFERRED) / the five allowlists). `revoked` /
+// `revoked_at` / `expires_at` drive the active-grant lifecycle; the index covers the
+// `active_grant(agent_id, now)` lookup (`revoked = 0 AND (expires_at IS NULL OR
+// expires_at > now) ORDER BY granted_at DESC`). Holds NO secret/key material.
+const DDL_TRUST_GRANT: &str = "
+CREATE TABLE trust_grant (
+    grant_id   TEXT PRIMARY KEY,
+    agent_id   TEXT NOT NULL,
+    granted_at INTEGER NOT NULL,
+    expires_at INTEGER,
+    revoked    INTEGER NOT NULL DEFAULT 0,
+    revoked_at INTEGER,
+    boundaries TEXT NOT NULL
+);
+CREATE INDEX idx_trust_grant_agent_active ON trust_grant(agent_id, revoked, expires_at);";
 
 // --- PR-5 agent-loop fragments (Hub-only) -----------------------------------
 
@@ -2195,4 +2233,11 @@ fn m0029_workflow_step_effect_idempotency(tx: &Transaction) -> rusqlite::Result<
 /// ALTER — touches no existing table, so every pre-v30 row and query is unaffected.
 fn m0030_context_passport(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(DDL_CONTEXT_PASSPORT)
+}
+
+/// Loop closure v31: the NEW Hub-only `trust_grant` table (`DDL_TRUST_GRANT`).
+/// NEW-TABLE migration pattern; touches no existing table, so every pre-v31 row and
+/// query is unaffected.
+fn m0031_trust_grant(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_TRUST_GRANT)
 }
