@@ -15,6 +15,12 @@ pub enum ProviderKind {
     /// mis-attributed as DeepSeek; reachable only through the gated, dark Claude
     /// path (the DeepSeek route is unchanged).
     Anthropic,
+    /// (C1) The Codex app-server route. Recorded so a routed Codex model turn is
+    /// NEVER mis-attributed as DeepSeek/Anthropic. The Codex turn runs through the
+    /// LOCAL app-server (`provider_app_server_local`), not a remote API — see
+    /// [`LedgerEntry::codex_route`] for the local host label. Identity only in C1-1
+    /// (no routing wired yet); not produced by any existing path.
+    Codex,
 }
 
 impl ProviderKind {
@@ -22,6 +28,7 @@ impl ProviderKind {
         match self {
             ProviderKind::DeepSeek => "deepseek",
             ProviderKind::Anthropic => "anthropic",
+            ProviderKind::Codex => "codex",
         }
     }
 }
@@ -150,6 +157,45 @@ impl LedgerEntry {
             created_at,
         )
     }
+
+    /// (C1) A Codex app-server route entry, mirroring [`LedgerEntry::anthropic_route`]
+    /// but with [`ProviderKind::Codex`]. The routed Codex turn runs through Friday's
+    /// LOCAL app-server (the `provider_app_server_local` sync mode), so the host label is
+    /// the local-app-server label `"provider_app_server_local"` — NOT `api.openai.com`:
+    /// recording a remote API host that the routed path never calls would be a FAKE.
+    /// `fallback` is hard-wired to `false` (the Codex route is a no-fallback route, like
+    /// DeepSeek/Claude). This is what keeps a Codex model turn from being recorded as
+    /// DeepSeek or Anthropic.
+    #[allow(clippy::too_many_arguments)]
+    pub fn codex_route(
+        ledger_id: impl Into<String>,
+        session_id: impl Into<String>,
+        activity_id: impl Into<String>,
+        model: impl Into<String>,
+        prompt_tokens: i64,
+        completion_tokens: i64,
+        cost_estimate: Option<f64>,
+        result_link: Option<String>,
+        created_at: i64,
+    ) -> Result<LedgerEntry, CoreError> {
+        LedgerEntry::new(
+            ledger_id,
+            session_id,
+            activity_id,
+            ProviderKind::Codex,
+            model,
+            // LOCAL app-server label (`friday_core::SyncMode::ProviderAppServerLocal`
+            // mints this same string); the routed Codex path is the local app-server,
+            // so a remote-API host here would be a fake.
+            "provider_app_server_local",
+            prompt_tokens,
+            completion_tokens,
+            cost_estimate,
+            false, // fallback: never true on the Codex route either
+            result_link,
+            created_at,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -235,6 +281,23 @@ mod tests {
         assert_eq!(e.provider_kind, ProviderKind::Anthropic);
         assert_eq!(e.provider_kind.as_str(), "anthropic");
         assert_eq!(e.base_url_host, "api.anthropic.com");
+        assert!(!e.fallback);
+        assert_eq!(e.total_tokens, 19);
+        assert_eq!(e.cost_estimate, None);
+    }
+
+    #[test]
+    fn codex_route_ledger_entry_shape() {
+        // (C1) The Codex route entry records the Codex provider kind + the LOCAL
+        // app-server host label (NOT a remote API), never fallback, with the total
+        // computed from the parts.
+        let e = LedgerEntry::codex_route("l4", "s1", "a1", "gpt-5-codex", 11, 8, None, None, 4000)
+            .unwrap();
+        assert_eq!(e.provider_kind, ProviderKind::Codex);
+        assert_eq!(e.provider_kind.as_str(), "codex");
+        // LOCAL app-server label, never a remote API the routed path never calls.
+        assert_eq!(e.base_url_host, "provider_app_server_local");
+        assert_ne!(e.base_url_host, "api.openai.com");
         assert!(!e.fallback);
         assert_eq!(e.total_tokens, 19);
         assert_eq!(e.cost_estimate, None);
