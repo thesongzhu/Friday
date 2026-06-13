@@ -39,6 +39,14 @@ impl Risk {
     }
 }
 
+/// The most-restrictive risk is the default: anything unclassified is treated as the
+/// lowest privilege, never escalated by omission (fail-safe for trust boundaries).
+impl Default for Risk {
+    fn default() -> Self {
+        Risk::ReadOnly
+    }
+}
+
 /// Shell-command risk class (TS `safe | guarded | destructive | blocked`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShellRisk {
