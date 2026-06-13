@@ -174,6 +174,14 @@ pub struct HubRuntime<T: Transport> {
     /// field stays `None`, AND the `claude` route is registered `available: false` so
     /// `select_route` never picks it. The DeepSeek path is unchanged.
     claude: Option<Box<dyn AgentLlmClient>>,
+    /// C1-3 — DARK / default-off Codex (app-server) route client. MIRRORS `claude`: `None`
+    /// in every build EXCEPT a `live()` build whose `FRIDAY_CODEX_ROUTE_ENABLED` gate is on.
+    /// A boxed `dyn AgentLlmClient` (the production source is a
+    /// `LocalCodexAppServerTurnSource`-backed [`crate::CodexAgentLlmClient`], NOT generic over
+    /// `T`, the DeepSeek transport). Default-off at two layers: this field stays `None`, AND
+    /// the `codex` route is registered `available: false` (autonomous baseline; CLI auth-gated)
+    /// so `select_route` never picks it. The DeepSeek/Claude paths are unchanged.
+    codex: Option<Box<dyn AgentLlmClient>>,
     executor: FsToolExecutor,
     /// S6d: the operator's PUBLIC verify key (provisioned from an operator-controlled
     /// source). `None` ⇒ fail-closed (protected actions Pause, never Allow). The Hub holds
@@ -209,6 +217,10 @@ impl<T: Transport> HubRuntime<T> {
             // and only when the default-OFF `FRIDAY_CLAUDE_ROUTE_ENABLED` gate is on
             // (via [`Self::with_claude`]). Tests + the prod default leave it `None`.
             claude: None,
+            // C1-3: DARK — no Codex client by default (mirrors `claude`). Only `live()` may
+            // populate this, and only when the default-OFF `FRIDAY_CODEX_ROUTE_ENABLED` gate
+            // is on (via [`Self::with_codex`]). Tests + the prod default leave it `None`.
+            codex: None,
             executor,
             operator_vk: config.operator_vk,
             approval,
@@ -224,6 +236,17 @@ impl<T: Transport> HubRuntime<T> {
     /// Consumes + returns `self` so `live()` can chain it behind the env gate.
     pub fn with_claude(mut self, claude: Box<dyn AgentLlmClient>) -> Self {
         self.claude = Some(claude);
+        self
+    }
+
+    /// C1-3 — attach the DARK Codex route client (builder, default-off). MIRRORS
+    /// [`Self::with_claude`]: the ONLY way the `codex` field becomes `Some`. It does NOT touch
+    /// the DeepSeek/Claude paths, the route registry, or any default; selecting Codex still
+    /// additionally requires a dispatchable `codex` route (the autonomous baseline marks it
+    /// `available: false` — CLI auth-gated). Consumes + returns `self` so `live()` can chain it
+    /// behind the env gate.
+    pub fn with_codex(mut self, codex: Box<dyn AgentLlmClient>) -> Self {
+        self.codex = Some(codex);
         self
     }
 
@@ -291,6 +314,46 @@ impl<T: Transport> HubRuntime<T> {
             self.mark_route_validated("claude");
         }
         outcome
+    }
+
+    /// (C1-3) Validate the wired Codex route ONCE via a CREDS-LIGHT app-server `health_check`
+    /// and, ONLY on success, mark the in-process `codex` route `validation_ok: true`
+    /// (dispatchable).
+    ///
+    /// ## Divergence from [`Self::validate_and_enable_claude`]: NO HTTP key probe
+    /// Codex has NO `KeyProvider` / HTTP key-validation path (see `friday-providers`
+    /// `key_validation`: the key-bearing providers are `{DeepSeek, Anthropic}` only; Codex is a
+    /// CLI login, not an API key). So this does NOT route through `LiveKeyValidationProbe` —
+    /// pretending a key probe exists for Codex would be a dishonesty bug. Instead it spawns a
+    /// fresh local Codex app-server and runs `health_check` =
+    /// `initialize` + `thread/list` — a metadata-only round-trip that drives NO model turn and
+    /// therefore spends ZERO completion quota. (`codex login status` is the equivalent shell
+    /// signal; the app-server `health_check` is the in-process mirror used here.)
+    ///
+    /// Like the Claude probe this is an EXPLICIT, operator/harness-invoked one-shot — NEVER
+    /// called at boot, so a gated `HubRuntime::live` construction spawns no app-server and never
+    /// hangs. With no Codex CLI installed / not logged in, the spawn/handshake surfaces a typed
+    /// [`friday_providers::codex_appserver::CodexAppServerError`] (`Err`) ⇒ `validation_ok` stays
+    /// false ⇒ the route stays non-dispatchable (fail-closed); nothing is written. The raw
+    /// `Result<HealthSummary, _>` is returned (NOT a fabricated `KeyValidationOutcome`) so the
+    /// caller can surface the exact health signal.
+    pub fn validate_and_enable_codex(
+        &mut self,
+    ) -> Result<
+        friday_providers::codex_appserver::HealthSummary,
+        friday_providers::codex_appserver::CodexAppServerError,
+    > {
+        use friday_providers::codex_appserver::LocalCodexAppServer;
+        // Spawn a fresh local app-server (killed on drop at scope exit) and run the creds-light
+        // health probe — initialize + thread/list, NO model turn (spends nothing). Same
+        // `program`/identity the route's `LocalCodexAppServerTurnSource` uses.
+        let mut server = LocalCodexAppServer::spawn(CODEX_APP_SERVER_PROGRAM)?;
+        let summary = server
+            .client()
+            .health_check(CODEX_CLIENT_NAME, CODEX_CLIENT_VERSION)?;
+        // Success ⇒ the route is dispatchable in THIS runtime's in-process registry only.
+        self.mark_route_validated("codex");
+        Ok(summary)
     }
 
     /// Drive ONE task end-to-end through the composed graph: create the run row, select the
@@ -1096,7 +1159,14 @@ impl HubRuntime<UreqTransport> {
         // is UNCHANGED. Even when the gate is on, the `claude` route is still
         // `available: false` in the autonomous baseline, so this only PRE-WIRES the
         // client for a later live proof; it does not by itself make Claude selectable.
-        runtime.maybe_attach_claude_from_env()
+        //
+        // C1-3 — then the DARK Codex route, behind its OWN default-OFF gate
+        // (`FRIDAY_CODEX_ROUTE_ENABLED`). Codex attach is INFALLIBLE (it reads no credential —
+        // the local app-server is spawned lazily, per-turn / at validate), so it chains after
+        // the fallible Claude attach without its own `?`.
+        Ok(runtime
+            .maybe_attach_claude_from_env()?
+            .maybe_attach_codex_from_env())
     }
 
     /// S7 — read the default-OFF gate and, only when it is on, build the live Claude
@@ -1120,6 +1190,42 @@ impl HubRuntime<UreqTransport> {
         me.mark_route_available("claude");
         Ok(me)
     }
+
+    /// C1-3 — read the default-OFF Codex gate and, only when it is on, build the live
+    /// Codex client (a [`crate::CodexAgentLlmClient`] over the production
+    /// [`friday_providers::codex_appserver::LocalCodexAppServerTurnSource`]) and attach it
+    /// (DARK). MIRRORS [`Self::maybe_attach_claude_from_env`], with ONE divergence: this is
+    /// INFALLIBLE (`-> Self`, not `Result`). Codex reads NO credential at attach — the local
+    /// app-server is spawned lazily (per turn, and at [`Self::validate_and_enable_codex`]) — so
+    /// there is no "gate ON + missing credential = hard boot error" analog of the Claude path.
+    /// A missing/empty gate ⇒ OFF ⇒ unchanged. Even when the gate is on, the `codex` route is
+    /// promoted `available: true` in THIS runtime only; `validation_ok` STAYS false until
+    /// `validate_and_enable_codex()` succeeds, so a gated boot is fail-closed (spawns nothing).
+    fn maybe_attach_codex_from_env(self) -> Self {
+        if !codex_route_enabled_from_env() {
+            return self;
+        }
+        // Gate is ON: build the real Codex client over the production per-turn app-server
+        // source (no credential read here — the spawn is lazy). `cwd: None` lets the
+        // app-server default; the model id matches the `codex` route (`gpt-5-codex`).
+        let source = friday_providers::codex_appserver::LocalCodexAppServerTurnSource::new(
+            CODEX_APP_SERVER_PROGRAM,
+            CODEX_CLIENT_NAME,
+            CODEX_CLIENT_VERSION,
+            None,
+            Some(CODEX_ROUTE_MODEL.to_string()),
+        );
+        let agent = crate::CodexAgentLlmClient::new(source, CODEX_ROUTE_MODEL);
+        let mut me = self.with_codex(Box::new(agent));
+        // (C1-3) Promote the codex route to `available: true` in THIS runtime's IN-PROCESS
+        // registry ONLY (the autonomous baseline stays `available: false` — prod default
+        // unchanged). Gated-only: reached solely because the default-OFF
+        // `FRIDAY_CODEX_ROUTE_ENABLED` gate is on. `validation_ok` STAYS false here, so the
+        // route is NOT dispatchable until `validate_and_enable_codex()` runs the creds-light
+        // app-server health_check — a gated boot spawns no app-server.
+        me.mark_route_available("codex");
+        me
+    }
 }
 
 /// S7 — the default-OFF environment gate that governs whether [`HubRuntime::live`]
@@ -1132,14 +1238,40 @@ fn claude_route_enabled_from_env() -> bool {
     matches!(std::env::var(ENV_CLAUDE_ROUTE_ENABLED), Ok(v) if v.trim() == "1")
 }
 
+/// C1-3 — the default-OFF environment gate that governs whether [`HubRuntime::live`] wires
+/// the DARK Codex route. MIRRORS [`ENV_CLAUDE_ROUTE_ENABLED`]: ON only when
+/// `FRIDAY_CODEX_ROUTE_ENABLED` is exactly `"1"` (after trimming). UNSET / empty / `"0"` / any
+/// other value ⇒ OFF (unchanged prod default). Kept narrow + explicit so the dark path cannot
+/// be enabled by accident.
+pub const ENV_CODEX_ROUTE_ENABLED: &str = "FRIDAY_CODEX_ROUTE_ENABLED";
+
+fn codex_route_enabled_from_env() -> bool {
+    matches!(std::env::var(ENV_CODEX_ROUTE_ENABLED), Ok(v) if v.trim() == "1")
+}
+
+/// C1-3 — the local Codex app-server program the route spawns (default CLI binary on PATH).
+/// Shared between the attach (`maybe_attach_codex_from_env`) and the creds-light validate
+/// (`validate_and_enable_codex`) so both probe the SAME app-server.
+const CODEX_APP_SERVER_PROGRAM: &str = "codex";
+/// The client identity Friday presents on the Codex app-server `initialize` handshake. This
+/// is a cosmetic identity string (reached only at a real validate-time spawn, never in tests);
+/// `"0.0.1"` matches the `codex_appserver` health KAT's identity for consistency.
+const CODEX_CLIENT_NAME: &str = "friday";
+const CODEX_CLIENT_VERSION: &str = "0.0.1";
+/// The model id the `codex` route bills against (matches the autonomous-baseline `codex`
+/// route model). The Codex app-server `turn/completed` does not report a model, so the
+/// adapter takes the route model from here.
+const CODEX_ROUTE_MODEL: &str = "gpt-5-codex";
+
 impl<T: Transport> ProviderClientResolver for HubRuntime<T> {
     /// The live `deepseek` provider always has a wired client. The `claude` provider has
     /// one ONLY when the DARK route was enabled (`self.claude` is `Some` — see
     /// [`HubRuntime::with_claude`] / [`HubRuntime::live`]'s `FRIDAY_CLAUDE_ROUTE_ENABLED`
-    /// gate); when disabled (the default) it returns `None`. Any other route returns
-    /// `None` → fail-closed `NoClientForProvider` (a defensive backstop; the route
-    /// registry already prevents selecting unavailable providers — `claude` is
-    /// `available: false` in the baseline — so this never fires on the happy path).
+    /// gate); when disabled (the default) it returns `None`. The `codex` provider mirrors
+    /// `claude` (wired only behind `FRIDAY_CODEX_ROUTE_ENABLED`; `None` by default). Any
+    /// other route returns `None` → fail-closed `NoClientForProvider` (a defensive backstop;
+    /// the route registry already prevents selecting unavailable providers — `claude`/`codex`
+    /// are `available: false` in the baseline — so this never fires on the happy path).
     /// Routing decides WHO answers; classification stays the trusted chokepoint
     /// regardless — this resolver confers no classification authority.
     fn resolve(&self, route: &ProviderRoute) -> Option<&dyn AgentLlmClient> {
@@ -1149,6 +1281,11 @@ impl<T: Transport> ProviderClientResolver for HubRuntime<T> {
             // (the default), so the default-off route fail-closes exactly like any
             // other unwired provider.
             "claude" => self.claude.as_deref(),
+            // C1-3 DARK: mirrors `claude` — `as_deref()` yields `None` whenever the Codex
+            // client was not wired (the default), so the default-off route fail-closes exactly
+            // like any other unwired provider (the autonomous baseline also marks `codex`
+            // `available: false`, so this never fires on the happy path).
+            "codex" => self.codex.as_deref(),
             _ => None,
         }
     }
@@ -1720,6 +1857,430 @@ mod tests {
                 .is_empty(),
             "a route error bills nothing"
         );
+    }
+
+    // ---- C1-3: routed Codex route wiring (DARK, deterministic, no creds) ------
+    //
+    // These tests are the DETERMINISTIC, no-creds proof that the dark Codex route is wired into
+    // the runtime: they drive the REAL public `HubRuntime::run_task_pinned("codex", ..)` entry —
+    // through `with_codex` + the in-process route promotion the gated `live()` path uses — to a
+    // STUB Codex client that surfaces a Codex-kind `BilledUsage` exactly as the live
+    // `CodexAgentLlmClient::next_step_metered` would after a real app-server turn. They MIRROR the
+    // C2 Claude block above. The stub MAY skip real `run_turn` parsing — that is C1-2's job (its
+    // `CodexAgentLlmClient` adapter KATs drive a scripted byte-stream through the REAL `run_turn`
+    // parse); this block does NOT stand in for that real-parse proof. NO codex CLI, NO creds, NO
+    // network/spawn is needed (the route promotion uses the private `mark_route_*` helpers).
+
+    /// A stub Codex client: each metered step surfaces a Codex-kind [`BilledUsage`] (the bits the
+    /// live `CodexAgentLlmClient` maps from a real app-server turn) plus the next scripted step.
+    /// Once the script is exhausted it finishes. `propose_tool_call` is unused by the routed loop
+    /// (it uses `next_step_metered`). MIRRORS `StubClaudeMeteredClient`.
+    struct StubCodexMeteredClient {
+        steps: Vec<AgentStep>,
+        prompt_tokens: i64,
+        completion_tokens: i64,
+        model: String,
+        calls: Cell<usize>,
+    }
+    impl StubCodexMeteredClient {
+        fn new(steps: Vec<AgentStep>, prompt_tokens: i64, completion_tokens: i64) -> Self {
+            Self {
+                steps,
+                prompt_tokens,
+                completion_tokens,
+                model: CODEX_ROUTE_MODEL.to_string(),
+                calls: Cell::new(0),
+            }
+        }
+    }
+    impl crate::AgentLlmClient for StubCodexMeteredClient {
+        fn propose_tool_call(&self, _task: &str) -> Result<crate::RawToolCall, crate::AgentError> {
+            unreachable!("routed loop uses next_step_metered")
+        }
+        fn next_step_metered(
+            &self,
+            _task: &str,
+            _history: &[crate::TurnTrace],
+        ) -> Result<crate::MeteredStep, crate::AgentError> {
+            let i = self.calls.get();
+            self.calls.set(i + 1);
+            let step = self.steps.get(i).cloned().unwrap_or(AgentStep::Finish {
+                message: "done".to_string(),
+            });
+            let usage = crate::BilledUsage {
+                provider_kind: friday_core::ProviderKind::Codex,
+                model: self.model.clone(),
+                prompt_tokens: self.prompt_tokens,
+                completion_tokens: self.completion_tokens,
+            };
+            Ok((Ok(step), Some(usage)))
+        }
+    }
+
+    /// Build a runtime with the DARK Codex client WIRED and its in-process route promoted to
+    /// dispatchable — the SAME two flips the gated `live()` path performs (`with_codex` +
+    /// `mark_route_available` + `mark_route_validated`), but WITHOUT any creds (no
+    /// `validate_and_enable_codex` app-server spawn). Legal in-crate because the test module is a
+    /// child of the impl, so it may call the private route-promotion helpers; it adds NO public
+    /// no-creds route-enable (the dark/default-off invariant is untouched — the autonomous
+    /// baseline still marks `codex` `available:false`). MIRRORS `runtime_with_claude_wired`.
+    fn runtime_with_codex_wired(
+        tag: &str,
+        steps: Vec<AgentStep>,
+        approval: Box<dyn ApprovalPolicy>,
+    ) -> (HubRuntime<ScriptTransport>, TempDir) {
+        let ws = TempDir::new(tag);
+        // The DeepSeek transport is present (required by the runtime type) but never reached:
+        // the codex pin routes to the wired Codex stub, not deepseek.
+        let transport = ScriptTransport::new(&["{\"tool\":\"none\"}"]);
+        let client = DeepSeekClient::with_transport(transport, "k".into());
+        let agent = DeepSeekAgentLlmClient::new(client);
+        let mut rt = HubRuntime::new(
+            HubConfig {
+                db_path: tmp(tag),
+                workspace_root: ws.0.clone(),
+                secret: SECRET.to_vec(),
+                max_turns: 6,
+                principal_id: None,
+                disabled_tools: vec![],
+                read_only: false,
+                operator_vk: None, // fail-closed Pause on a mutating action (no auto-approve)
+            },
+            agent,
+            approval,
+        )
+        .unwrap();
+        rt = rt.with_codex(Box::new(StubCodexMeteredClient::new(steps, 13, 5)));
+        // The gated `live()` path does these two flips behind FRIDAY_CODEX_ROUTE_ENABLED + the
+        // creds-light health_check; we do them directly (no creds) for the deterministic proof.
+        rt.mark_route_available("codex");
+        rt.mark_route_validated("codex");
+        (rt, ws)
+    }
+
+    #[test]
+    fn run_task_pinned_codex_routes_through_runtime_and_writes_codex_row() {
+        // (1) CHAT FLOW: a `run_task_pinned("codex")` through the REAL HubRuntime entry routes to
+        // the wired Codex client, finishes, and records EXACTLY ONE run-scoped token_ledger row
+        // attributed to Codex — provider_kind="codex", the LOCAL app-server host, the gpt-5-codex
+        // model, fallback=false. NO creds, NO spawn, NO network.
+        let (rt, _ws) = runtime_with_codex_wired(
+            "c1-3-pinned-codex-chat",
+            vec![AgentStep::Finish {
+                message: "PONG".to_string(),
+            }],
+            Box::new(DenyAllApprovals),
+        );
+        let (selection, outcome) = rt
+            .run_task_pinned("run-c1-3-chat", "say pong", "codex", 1_000)
+            .expect("pinned codex runs through the runtime");
+        assert_eq!(selection.provider_id, "codex", "the pin routed to codex");
+        assert_eq!(outcome.status, LoopStatus::Finished);
+
+        let rows = rt.db().list_run_token_usage("run-c1-3-chat").unwrap();
+        assert_eq!(rows.len(), 1, "one codex row for the single codex turn");
+        let row = &rows[0];
+        assert_eq!(
+            row.provider_kind, "codex",
+            "NOT mis-attributed as deepseek/anthropic"
+        );
+        assert_eq!(
+            row.base_url_host, "provider_app_server_local",
+            "the LOCAL Codex app-server host label (never a remote API host)"
+        );
+        assert_eq!(row.model, CODEX_ROUTE_MODEL);
+        assert_eq!(row.total_tokens, 18, "13 + 5 (summed by the ledger)");
+        assert!(!row.fallback, "the codex route is never a fallback");
+
+        // The whole-ledger projection agrees (only this codex row exists; no hidden call).
+        let all = rt.db().list_token_usage().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].provider_kind, "codex");
+    }
+
+    #[test]
+    fn codex_mutating_turn_bills_codex_row_then_pauses_for_approval() {
+        // (2) APPROVAL-REQUEST FLOW (routed + metered): a codex-pinned turn that proposes a
+        // MUTATING tool (`write_file`) is BILLED a codex row (the turn that produced the proposal
+        // spent tokens) and THEN the HUB gate withholds it — with no operator key the run Pauses
+        // (RequiresApproval), executes nothing, and persists a pending approval. NO creds.
+        let (rt, ws) = runtime_with_codex_wired(
+            "c1-3-pinned-codex-approval",
+            vec![AgentStep::Tool(crate::RawToolCall {
+                action: "write_file".to_string(),
+                params: vec![
+                    ("path".to_string(), "out.txt".to_string()),
+                    ("content".to_string(), "C1-3".to_string()),
+                ],
+            })],
+            Box::new(DenyAllApprovals),
+        );
+        let (selection, outcome) = rt
+            .run_task_pinned("run-c1-3-appr", "write a file", "codex", 2_000)
+            .expect("pinned codex runs through the runtime");
+        assert_eq!(selection.provider_id, "codex", "the pin routed to codex");
+        assert_eq!(
+            outcome.status,
+            LoopStatus::Paused,
+            "no operator key ⇒ the mutating action Pauses (RequiresApproval), never executes"
+        );
+
+        // The model call that PROPOSED the mutation was billed BEFORE the gate dispatch — one
+        // codex row, correctly attributed.
+        let rows = rt.db().list_run_token_usage("run-c1-3-appr").unwrap();
+        assert_eq!(rows.len(), 1, "the proposing codex turn was billed");
+        assert_eq!(rows[0].provider_kind, "codex");
+        assert_eq!(rows[0].base_url_host, "provider_app_server_local");
+
+        // The gate withheld the write — no file was created (no execute-on-Pause bypass).
+        assert!(
+            !ws.0.join("out.txt").exists(),
+            "the gate withheld the write — no file created"
+        );
+
+        // A pending approval was persisted for the OFFLINE operator to sign (the resume leg).
+        let pending: i64 = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM pending_approval_request WHERE run_id = 'run-c1-3-appr'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(pending, 1, "one pending approval recorded for resume");
+    }
+
+    #[test]
+    fn codex_route_error_fails_run_closed_and_bills_nothing() {
+        // (3) ERROR HANDLING: a codex turn whose app-server turn FAILS (an OUTER AgentError — what
+        // the live CodexAgentLlmClient surfaces on a CodexAppServerError, mapped to
+        // AgentError::Model) fails the run CLOSED (LoopStatus::Errored) with NO reroute to
+        // deepseek and NO ledger row (a call that produced no usage bills nothing). NO creds.
+        struct ErroringCodexClient;
+        impl crate::AgentLlmClient for ErroringCodexClient {
+            fn propose_tool_call(
+                &self,
+                _task: &str,
+            ) -> Result<crate::RawToolCall, crate::AgentError> {
+                unreachable!("routed loop uses next_step_metered")
+            }
+            fn next_step_metered(
+                &self,
+                _task: &str,
+                _history: &[crate::TurnTrace],
+            ) -> Result<crate::MeteredStep, crate::AgentError> {
+                // The live adapter maps a CodexAppServerError into AgentError::Model (a Model
+                // error is TERMINAL — never retried) ⇒ the run fails closed.
+                Err(crate::AgentError::Model("codex route error".to_string()))
+            }
+        }
+
+        let ws = TempDir::new("c1-3-codex-route-error");
+        let transport = ScriptTransport::new(&["{\"tool\":\"none\"}"]);
+        let client = DeepSeekClient::with_transport(transport, "k".into());
+        let agent = DeepSeekAgentLlmClient::new(client);
+        let mut rt = HubRuntime::new(
+            HubConfig {
+                db_path: tmp("c1-3-codex-route-error"),
+                workspace_root: ws.0.clone(),
+                secret: SECRET.to_vec(),
+                max_turns: 6,
+                principal_id: None,
+                disabled_tools: vec![],
+                read_only: false,
+                operator_vk: None,
+            },
+            agent,
+            Box::new(DenyAllApprovals),
+        )
+        .unwrap();
+        rt = rt.with_codex(Box::new(ErroringCodexClient));
+        rt.mark_route_available("codex");
+        rt.mark_route_validated("codex");
+
+        let (selection, outcome) = rt
+            .run_task_pinned("run-c1-3-err", "say pong", "codex", 1_000)
+            .expect("a codex route error is a loop outcome, not a routing error");
+        assert_eq!(
+            selection.provider_id, "codex",
+            "the pin routed to codex (no reroute)"
+        );
+        assert_eq!(
+            outcome.status,
+            LoopStatus::Errored,
+            "a model-call error fails the run closed"
+        );
+        // A failed call produced no usage ⇒ NO ledger row (never a half-billed row).
+        assert!(
+            rt.db()
+                .list_run_token_usage("run-c1-3-err")
+                .unwrap()
+                .is_empty(),
+            "a route error bills nothing"
+        );
+    }
+
+    #[test]
+    fn pin_codex_dark_is_requested_unavailable_and_bills_nothing() {
+        // (4) DARK PIN: a plain runtime (gate OFF ⇒ codex route stays `available:false` in the
+        // baseline, never promoted; the codex CLIENT is `None`). `run_task_pinned(.., "codex", ..)`
+        // FAILS CLOSED with RequestedProviderUnavailable("codex") — refused at select_route, NO
+        // reroute to deepseek, NO model call, bills NOTHING. NO creds, NO spawn. Mirrors the
+        // Claude `pin_claude_dark_is_requested_unavailable`.
+        let (rt, _ws, post_calls) = runtime_with(
+            "c1-3-pin-codex-dark",
+            &["{\"tool\":\"none\"}"],
+            Box::new(DenyAllApprovals),
+        );
+        let err = rt
+            .run_task_pinned("run-c1-3-dark", "ask codex", "codex", 1_000)
+            .expect_err("a dark codex pin must fail closed");
+        assert!(
+            matches!(
+                err,
+                RoutedLoopError::Route(RouteError::RequestedProviderUnavailable(ref p)) if p == "codex"
+            ),
+            "expected RequestedProviderUnavailable(codex), got {err:?}"
+        );
+        // Selection refused at select_route — no model/chat call was ever made (no reroute to
+        // deepseek). (The shared `run_with_request` body creates the run row BEFORE select_route,
+        // so a row may exist; the no-degrade invariant that matters is that NOTHING was billed
+        // and NO provider was dispatched.)
+        assert_eq!(
+            post_calls.get(),
+            0,
+            "no provider call on a refused pin (no reroute to deepseek)"
+        );
+        // Bills NOTHING — the refusal is before any model call, so no ledger row.
+        assert!(
+            rt.db()
+                .list_run_token_usage("run-c1-3-dark")
+                .unwrap()
+                .is_empty(),
+            "a dark codex pin bills nothing"
+        );
+        // No run_result was persisted (the run never Finished — it failed closed at routing).
+        let results: i64 = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM run_result WHERE run_id = 'run-c1-3-dark'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(results, 0, "no run_result persisted for the refused pin");
+    }
+
+    #[test]
+    fn codex_route_gate_is_off_by_default_and_on_only_for_exactly_1() {
+        // The default-off Codex gate is the only thing that lets `live()` wire Codex. Mirror the
+        // exact-`"1"` predicate WITHOUT mutating the process env (drive the matcher directly), and
+        // confirm the real helper reports OFF in the test process (the prod default).
+        let on = |v: &str| v.trim() == "1";
+        assert!(on("1"), "exactly \"1\" enables");
+        assert!(on(" 1 "), "trimmed \"1\" enables");
+        for off in ["", "0", "true", "yes", "01", "1 0", "enabled"] {
+            assert!(!on(off), "{off:?} must NOT enable the dark route");
+        }
+        assert!(
+            !codex_route_enabled_from_env(),
+            "FRIDAY_CODEX_ROUTE_ENABLED must be unset/off in the test env"
+        );
+    }
+
+    #[test]
+    fn resolver_returns_none_for_codex_when_dark_some_when_wired() {
+        // DARK default: no Codex client wired ⇒ resolver yields None (fail-closed). Wiring the
+        // client (what the gated `live()` path does) makes resolve("codex") Some; deepseek/claude
+        // are unchanged. Mirrors `resolver_returns_none_for_claude_when_dark_some_when_wired`.
+        let (rt, _ws, _c) = runtime_with(
+            "codex-dark",
+            &["{\"tool\":\"none\"}"],
+            Box::new(DenyAllApprovals),
+        );
+        let baseline = RouteRegistry::autonomous_baseline();
+        let codex_route = baseline
+            .get("codex")
+            .expect("baseline has a codex route")
+            .clone();
+
+        assert!(
+            rt.resolve(&codex_route).is_none(),
+            "codex must resolve to None by default (dark/off)"
+        );
+        assert!(
+            !codex_route.is_dispatchable(),
+            "codex route stays available:false (CLI auth-gated)"
+        );
+
+        let wired = rt.with_codex(Box::new(crate::MockAgentLlmClient {
+            proposal: crate::RawToolCall {
+                action: "none".to_string(),
+                params: vec![],
+            },
+        }));
+        assert!(
+            wired.resolve(&codex_route).is_some(),
+            "codex resolves to the wired client once attached"
+        );
+    }
+
+    #[test]
+    fn session_pinned_codex_dark_fails_closed_and_bills_nothing() {
+        // NEGATIVE (sessioned): the `codex` route is DISPATCHABLE (available+validated, as the
+        // gated `live()` path promotes it) but the Codex CLIENT is NOT wired (no `with_codex` — the
+        // resolver's documented dark backstop). A sessioned pin to "codex" then FAILS CLOSED at the
+        // resolve() chokepoint with NoClientForProvider — NEVER a silent reroute — and bills
+        // NOTHING (no run row, no ledger row). Mirrors the Claude sessioned dark backstop. NO creds.
+        let (mut rt, _ws, post_calls) = runtime_with(
+            "c1-3-session-dark",
+            &["{\"tool\":\"none\"}"],
+            Box::new(DenyAllApprovals),
+        );
+        // Promote the route to dispatchable WITHOUT wiring the client (codex stays None) — so the
+        // fail-closed is at resolve() (NoClientForProvider), not at select_route.
+        rt.mark_route_available("codex");
+        rt.mark_route_validated("codex");
+        let caller = authed_caller("principal:session-owner");
+        let err = rt
+            .run_session_task_pinned(
+                &caller,
+                "run-c1-3-session-dark",
+                "sess-c1-3-dark-1",
+                "make it shorter",
+                "codex",
+                4_000,
+            )
+            .expect_err("a dark codex pin must fail closed, never reroute");
+        match err {
+            RoutedLoopError::NoClientForProvider(p) => {
+                assert_eq!(
+                    p, "codex",
+                    "fail-closed names the dark provider, no reroute"
+                )
+            }
+            other => panic!("expected NoClientForProvider(codex), got {other:?}"),
+        }
+        assert_eq!(post_calls.get(), 0, "no reroute — deepseek never called");
+        assert!(
+            rt.db()
+                .list_run_token_usage("run-c1-3-session-dark")
+                .unwrap()
+                .is_empty(),
+            "a dark pin bills nothing"
+        );
+        let run_rows: i64 = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM agent_run WHERE run_id = 'run-c1-3-session-dark'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(run_rows, 0, "no agent_run row was created for the dark pin");
     }
 
     // ---- C2 session-control routing: a SESSIONED follow-up/steer turn routes + bills ----------
