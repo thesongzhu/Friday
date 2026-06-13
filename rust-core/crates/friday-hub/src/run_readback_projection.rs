@@ -32,6 +32,9 @@
 //! This fn takes an ALREADY-OPENED [`Db`] (the bin and the server open it `open_hub_readonly`) and
 //! does pure reads + JSON shaping. It never touches a provider credential or the model path.
 
+use friday_providers::unified::{
+    NeedsMeItem, NeedsMeKind, NeedsMePriority, PlatformProvider, SessionStatus,
+};
 use friday_storage::agent_run_read::{db_wide_token_totals, get_run_summary, list_event_kinds};
 use friday_storage::agent_session::{
     link_state_for_owner, LINK_OFFLINE_AFTER_MS, LINK_STALE_AFTER_MS,
@@ -251,6 +254,114 @@ pub fn project_run_file_view(
 
     // Inherit the refs-only guard: a relative path passes; an absolute-path / secret marker that
     // somehow reached a receipt summary fails the projection closed (never leaks).
+    let rendered = serde_json::to_string(&snapshot).map_err(|_| "serialize_failed".to_string())?;
+    reject_forbidden_output(&rendered)?;
+    Ok(Some(snapshot))
+}
+
+/// (C2-9) OWNER-SCOPED Activity / Needs-Me projection for ONE paused, claude-pinned run: the
+/// run's `AskReceipt` activity rows (one per metered turn) PLUS a single Needs-Me item surfacing
+/// the pending operator approval the run Paused on. `Ok(None)` ⇒ the caller is NOT the run's bound
+/// owner (or the run is not paused / owner-less / the caller is empty) — fail-closed, no
+/// existence/state oracle for a non-owner. `Ok(Some(snapshot))` ⇒ the owner's Activity/Needs-Me
+/// view.
+///
+/// ## Owner axis — `resolve_run_owner`, NOT the literal C2-4/C2-5 gate (deliberate, documented)
+/// The C2-4/C2-5 read APIs gate on [`friday_storage::get_run_answer_for_principal`], which keys on
+/// `run_result.owner_principal` — a row that only exists once a run is *Finished*. THIS run is
+/// *Paused* (it has no `run_result` yet), so the literal gate would deny every caller. The SAME
+/// owner concept for a paused run lives on the pending approval row's `principal_id`, which
+/// [`crate::agent_run_control::resolve_run_owner`] returns (the SAME source the owner-authed
+/// `reject`/`cancel` control ops gate on). So the owner axis here is `resolve_run_owner` —
+/// fail-closed identically: an empty caller, an owner-less run, or a mismatch all read back `None`.
+///
+/// ## Built over the EXISTING substrate, refs-only (NOT a synthesized inbox)
+/// * The Needs-Me item is anchored to a REAL pending approval via [`crate::agent_run_control::detect_pause`]
+///   (`ref_id` = the live CSPRNG approval nonce; `kind` = Approval; `status` = AwaitingApproval) —
+///   so it points at a run with a real `pending_approval_request`, never a fabricated entry. A run
+///   that is not paused (no pending row) yields `needs_me: None`.
+/// * The AskReceipt rows are read from [`friday_storage::Db::list_activity`] filtered to THIS run:
+///   `kind == "ask_receipt"` AND `activity_id` carries the run prefix `"{run_id}:"` — matching the
+///   `bill_model_call` scheme (`{run_id}:t{turn_index}:askreceipt`). Each row is the body-free
+///   `"{n} tokens via {model}"` receipt of a real metered turn.
+///
+/// ## Class-2 read: no model call, no new ledger row, no mutation
+/// Pure reads over already-persisted activity + pending rows — it never touches a provider
+/// credential, the model path, or any write, and writes NO `token_ledger` row (it is not a metered
+/// turn). It is INDEPENDENT of the ns-7 `FRIDAY_ACTIVITY_NEEDS_ME` persisted-activity flag: the
+/// Needs-Me item is COMPUTED from `detect_pause` at read time, not read from a persisted row. The
+/// shared [`reject_forbidden_output`] guard runs INSIDE this fn so the snapshot inherits the
+/// refs-only discipline.
+pub fn project_activity_needs_me(
+    db: &Db,
+    caller_principal: &str,
+    run_id: &str,
+) -> Result<Option<Value>, String> {
+    let conn = db.conn();
+
+    // OWNER GATE (fail-closed): the paused run's owner is the pending row's `principal_id`
+    // (`resolve_run_owner`). An empty caller, an owner-less run, or a mismatch all collapse to
+    // `Ok(None)` — a non-owner gets no existence/state oracle for the run's activity.
+    let caller = caller_principal.trim();
+    if caller.is_empty() {
+        return Ok(None);
+    }
+    let owner = crate::agent_run_control::resolve_run_owner(conn, run_id)
+        .map_err(|_| "read_failed".to_string())?;
+    if owner.as_deref() != Some(caller) {
+        return Ok(None);
+    }
+
+    // The run's AskReceipt activity rows: filter the DB-wide activity list to THIS run by the
+    // `bill_model_call` id scheme (`{run_id}:t{turn_index}:askreceipt`). The trailing colon makes
+    // the prefix unambiguous (`run-c2-9:` never matches `run-c2-90:`).
+    let run_prefix = format!("{run_id}:");
+    let ask_receipts: Vec<Value> = db
+        .list_activity()
+        .map_err(|_| "read_failed".to_string())?
+        .into_iter()
+        .filter(|row| row.kind == "ask_receipt" && row.activity_id.starts_with(&run_prefix))
+        .map(|row| {
+            json!({
+                "activity_id": row.activity_id,
+                "kind": row.kind,
+                "state": row.state,
+                // The metered-turn receipt summary ("{n} tokens via {model}") — body-free.
+                "summary": row.summary,
+                "created_at": row.created_at,
+            })
+        })
+        .collect();
+
+    // The Needs-Me item: anchored to the REAL pending approval the run paused on (`detect_pause`).
+    // A run not paused yields `None` (no synthesized inbox entry). The run is claude-pinned, so the
+    // provider is Claude; the sessionless run's `friday_session_id` is the run id.
+    let needs_me = crate::agent_run_control::detect_pause(conn, run_id)
+        .map_err(|_| "read_failed".to_string())?
+        .map(|pause| NeedsMeItem {
+            item_id: format!("needs-me:{run_id}:{}", pause.nonce),
+            provider: PlatformProvider::Claude,
+            friday_session_id: run_id.to_string(),
+            kind: NeedsMeKind::Approval,
+            priority: NeedsMePriority::High,
+            // The live approval nonce — the real `pending_approval_request.approval_id`.
+            ref_id: pause.nonce,
+            status: SessionStatus::AwaitingApproval,
+        });
+
+    let ask_receipt_count = ask_receipts.len();
+    let snapshot = json!({
+        "truth_label": "rust_wired_dev",
+        "proof_only": true,
+        "ok": true,
+        "run_id": run_id,
+        "ask_receipts": ask_receipts,
+        "ask_receipt_count": ask_receipt_count,
+        "needs_me": needs_me,
+    });
+
+    // Inherit the refs-only guard (the AskReceipt summary + the nonce-only Needs-Me item are
+    // body-free, so it passes — but run it so this projection matches the file's discipline).
     let rendered = serde_json::to_string(&snapshot).map_err(|_| "serialize_failed".to_string())?;
     reject_forbidden_output(&rendered)?;
     Ok(Some(snapshot))
