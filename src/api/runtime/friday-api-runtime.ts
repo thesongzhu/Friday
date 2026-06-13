@@ -1102,6 +1102,41 @@ export interface RustRouteQualificationInput {
 }
 
 /**
+ * (A2b Phase 2, mutation-relax — DARK, default-off) The SINGLE source of truth for whether an
+ * agent-run is a VALID GATED MUTATING run. Extracted from {@link qualifiesForRustReadOnlyRoute}'s
+ * clause-2 computation so the qualifier (admission) AND the route's compose call site (the
+ * `constraints.readOnly` it forwards on the wire) consult the EXACT same predicate — they can
+ * never diverge (no guard-divergence hole). Side-effect-free; returns a bool.
+ *
+ * Every conjunct must hold; any uncertainty ⇒ false ⇒ the run is treated as read-only-only (the
+ * compose path forwards `{ readOnly: true }`, byte-identical to today). The FIRST conjunct is
+ * `agentRunControlViaRust === true`, which is default-off, so OFF ⇒ this is always false ⇒
+ * BYTE-IDENTICAL-WHEN-OFF. The compensating tightenings (an explicit positive `mutatingToolGrant`
+ * ⊆ the closed allow-list, an explicit `mutationGate` marker, and a non-empty bound owner
+ * principal) keep the admitted UNGATED-mutation surface EXACTLY ZERO. This admits CANDIDACY only:
+ * the Rust runtime gate remains the real enforcer and PAUSES every mutating tool pending an
+ * operator-signed Ed25519 approval.
+ */
+export function isGatedMutatingRustRouteRun(input: RustRouteQualificationInput): boolean {
+  const mutatingGrant = input.mutatingToolGrant;
+  const mutatingGrantWithinAllowList =
+    Array.isArray(mutatingGrant)
+    && mutatingGrant.length > 0
+    && mutatingGrant.every((tool) =>
+      (RUST_ROUTE_MUTATING_TOOL_ALLOWLIST as readonly string[]).includes(tool),
+    );
+  const hasBoundOwnerPrincipal =
+    typeof input.principalId === "string" && input.principalId.trim().length > 0;
+  return (
+    input.agentRunControlViaRust === true
+    && input.constraints?.readOnly === false
+    && mutatingGrantWithinAllowList
+    && input.mutationGate === RUST_ROUTE_MUTATION_GATE_MARKER
+    && hasBoundOwnerPrincipal
+  );
+}
+
+/**
  * Fail-closed qualifying predicate for the future Rust read-only route (DARK).
  * TOTAL + side-effect-free: returns `true` only when EVERY clause holds; any missing /
  * uncertain field → `false`. Computes a bool; routes nothing.
@@ -1136,21 +1171,10 @@ export function qualifiesForRustReadOnlyRoute(input: RustRouteQualificationInput
   //         mutating run, independent of any session sub-clause below).
   // The Rust runtime gate remains the REAL enforcer: each granted mutating tool still Pauses
   // pending an operator-signed Ed25519 approval. This admits CANDIDACY only, never EXECUTION.
-  const mutatingGrant = input.mutatingToolGrant;
-  const mutatingGrantWithinAllowList =
-    Array.isArray(mutatingGrant)
-    && mutatingGrant.length > 0
-    && mutatingGrant.every((tool) =>
-      (RUST_ROUTE_MUTATING_TOOL_ALLOWLIST as readonly string[]).includes(tool),
-    );
-  const hasBoundOwnerPrincipal =
-    typeof input.principalId === "string" && input.principalId.trim().length > 0;
-  const isGatedMutatingRun =
-    input.agentRunControlViaRust === true
-    && input.constraints?.readOnly === false
-    && mutatingGrantWithinAllowList
-    && input.mutationGate === RUST_ROUTE_MUTATION_GATE_MARKER
-    && hasBoundOwnerPrincipal;
+  // The SINGLE source of truth, shared VERBATIM with the route's compose call site (which forwards
+  // `constraints.readOnly: false` ONLY for this verdict) via {@link isGatedMutatingRustRouteRun} —
+  // so admission (here) and the on-the-wire constraint can NEVER diverge.
+  const isGatedMutatingRun = isGatedMutatingRustRouteRun(input);
 
   // Clause 2 — readOnly (hard-blocks mutating tools in the runtime) OR a VALID gated mutating
   // run (the only way `readOnly:false` is ever admitted; flag-off ⇒ this OR-arm is dead code).
@@ -4708,7 +4732,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             // Unresolvable ⇒ resolvedProvider stays undefined ⇒ clause 3 disqualifies.
           }
         }
-        const qualifies = qualifiesForRustReadOnlyRoute({
+        // The ONE qualification input, built ONCE and reused for BOTH the admission predicate
+        // (`qualifiesForRustReadOnlyRoute`) AND the gated-mutating verdict
+        // (`isGatedMutatingRustRouteRun`, which decides the `constraints.readOnly` we forward on
+        // the wire). Sharing one object guarantees the two predicates see byte-identical inputs —
+        // no field can drift between admission and the on-the-wire constraint.
+        const rustRouteQualificationInput: RustRouteQualificationInput = {
           invokedFromHttpStartRunRoute: true,
           providerId: input.providerId,
           resolvedProvider,
@@ -4731,7 +4760,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           // existing caller (→ the mutating branch never opens). Consulted only behind the flag.
           mutatingToolGrant: input.mutatingToolGrant,
           mutationGate: input.mutationGate,
-        });
+        };
+        const qualifies = qualifiesForRustReadOnlyRoute(rustRouteQualificationInput);
         if (qualifies) {
           // execrun S-F carry-forward (DARK) — apiRequestIdempotencyKey REPLAY precedence.
           // The compose path mints a FRESH runId; without this guard two requests sharing
@@ -4808,15 +4838,26 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             // (A2a Phase 1) forward the session key so a SESSIONED qualifying run dispatches
             // `session_id`; absent/blank ⇒ byte-identical sessionless dispatch (today's behavior).
             sessionKey: input.sessionKey,
-            // (A1 run-controls) Derive the per-run constraints to forward on the wire. A run only
-            // reaches here when it QUALIFIED, which (clause 2) REQUIRES `constraints.readOnly ===
-            // true` — so forward `{ readOnly: true }`, making the read-only guarantee travel on
-            // the wire + be enforced in Rust (defense-in-depth), not only by this TS qualifier.
-            // We forward ONLY the verified-true `readOnly` (the qualifier's own contract); the
-            // disabled-tool / max-turns axes are not asserted by the read-only route today, so
-            // they stay absent (omitted on the wire). The server gates application behind its
-            // default-off run-control flag, so this remains DARK + DEPLOY-GO-gated.
-            constraints: { readOnly: true },
+            // (A1 run-controls + A2b mutation-relax) Derive the per-run `readOnly` constraint to
+            // forward on the wire from the SAME verdict the qualifier validated (one shared
+            // predicate — `isGatedMutatingRustRouteRun` — so admission + the wire constraint can
+            // NEVER diverge):
+            //   • READ-ONLY run (today's behavior, byte-identical): clause 2 REQUIRED
+            //     `constraints.readOnly === true`, so forward `{ readOnly: true }` — the read-only
+            //     guarantee travels on the wire + is enforced in Rust (defense-in-depth), not only
+            //     by this TS qualifier. UNCHANGED — no degrade.
+            //   • GATED MUTATING run (A2b, dark/default-off): forward `{ readOnly: false }` — the
+            //     REAL constraint the qualifier validated. The wire `read_only` is then OMITTED
+            //     (`buildConstraintsWire` never emits `read_only:false`), so the Rust RunPolicy is
+            //     NOT read-only and the granted mutating tool FIRES → the runtime gate evaluates it
+            //     → withholds the (default-absent) approval → PAUSES, surfacing the courier's
+            //     paused outcome. The `mutatingToolGrant` is NOT a wire field (the constraints/wire
+            //     are restriction-only by design); it is the TS-side ADMISSION gate the qualifier
+            //     enforces, and the Rust gate pauses every mutating action regardless.
+            // The disabled-tool / max-turns axes are not asserted by this route, so they stay
+            // absent (omitted on the wire). The server gates application behind its default-off
+            // run-control flag, so this remains DARK + DEPLOY-GO-gated.
+            constraints: { readOnly: !isGatedMutatingRustRouteRun(rustRouteQualificationInput) },
             providerId: input.providerId ?? RUST_ROUTE_DEEPSEEK_PROVIDER_ID,
             model: input.model ?? RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
             wsClient: rustWsClient,

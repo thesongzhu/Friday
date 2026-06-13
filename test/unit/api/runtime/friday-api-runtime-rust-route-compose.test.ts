@@ -824,6 +824,164 @@ describe("FridayApiRuntime — execrun S-F-compose (DARK) Rust-route composition
     expect(countRows(db, "friday_agent_runs", RUN_ID)).toBe(0);
   });
 
+  // ─── (B4 organic mutating dispatch) the readOnly the courier FORWARDS on the wire ───
+  //
+  // THE DEFECT this fixes: a gated-mutating run the qualifier ADMITS used to dispatch the
+  // HARDCODED `constraints: { readOnly: true }` — so the real Rust server blocked the write
+  // tool BEFORE execution → no pause → awaiting_clarification → 503. The fix forwards the REAL
+  // constraint the qualifier validated (`readOnly:false` for a gated-mutating run; unchanged
+  // `readOnly:true` for a read-only run), so a genuinely-organic HTTP mutating chat reaches the
+  // Rust gate and PAUSES. We capture the dispatched `constraints` off the stub to assert this
+  // WITHOUT a real server, and prove the read-only path is unchanged + the qualifier unweakened.
+  //
+  // A gated-mutating body that QUALIFIES: agentRunControlViaRust on (set on the runtime),
+  // readOnly:false, a grant ⊆ the closed mutating allow-list, the operator-signed gate marker,
+  // a bound owner principal (the route's authenticated principal), deepseek-flash, the 4-read grant.
+  const GATED_MUTATING_BODY = {
+    ...QUALIFYING_BODY,
+    constraints: { readOnly: false },
+    mutatingToolGrant: ["write_file"],
+    mutationGate: "operator_signed_ed25519",
+  };
+
+  it("(b4-a) gated-mutating qualifying run → compose dispatches constraints.readOnly:FALSE (the real verdict, not hardcoded true)", async () => {
+    db = createTestDb();
+    // The dispatch PAUSES (a mutating tool hit the gate) — the realistic organic outcome.
+    const ws = makeStubPausedWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      // The SAME default-off flag the qualifier's mutating verdict + the courier's pause both gate on.
+      agentRunControlViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+    });
+
+    const result = (await callStartRoute(runtime, { ...GATED_MUTATING_BODY })) as { status: string };
+
+    // The run was ADMITTED and the courier was dispatched (NOT 503'd at the qualifier).
+    expect(ws.calls).toHaveLength(1);
+    // THE FIX: the courier forwards readOnly:FALSE — the real constraint the qualifier validated.
+    // Before the fix this was the hardcoded { readOnly: true }, which would block the write tool in
+    // Rust before it could pause. (No disabled-tools / max-turns asserted on this route → absent.)
+    expect(ws.calls[0].constraints).toEqual({ readOnly: false });
+    // And the organic outcome is the operator-gated PAUSE (projected as the terminal "cancelled"),
+    // never a 503 — which is the whole point of the B4 fix.
+    expect(result.status).toBe("cancelled");
+  });
+
+  it("(b4-b) read-only qualifying run → compose STILL dispatches constraints.readOnly:TRUE (no degrade)", async () => {
+    db = createTestDb();
+    const ws = makeStubWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      // Flag ON to prove the read-only path is byte-identical even when the mutating branch is live.
+      agentRunControlViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+    });
+
+    const result = (await callStartRoute(runtime, { ...QUALIFYING_BODY })) as { response: string };
+
+    expect(ws.calls).toHaveLength(1);
+    // UNCHANGED: a read-only run forwards exactly { readOnly: true } — the read-only path does not
+    // degrade now that the mutating branch can forward { readOnly: false }.
+    expect(ws.calls[0].constraints).toEqual({ readOnly: true });
+    expect(result.response).toBe(OWNER_BODY);
+  });
+
+  it("(b4-c) mutating run MISSING the gate marker → qualifier REJECTS → byte-identical 503; courier NEVER dispatched (no new hole)", async () => {
+    db = createTestDb();
+    const ws = makeStubPausedWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      agentRunControlViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+    });
+
+    // readOnly:false + a valid grant + a bound principal, but NO operator-signed gate marker →
+    // the qualifier's gated-mutating verdict is false → clause-2 disqualifies → 503. A mutating run
+    // without the full gate can NEVER dispatch.
+    const { mutationGate: _omitted, ...noGateBody } = GATED_MUTATING_BODY;
+    await expect(callStartRoute(runtime, { ...noGateBody })).rejects.toMatchObject({
+      code: "TS_RUNTIME_AGENT_RUNS_RETIRED",
+      httpStatus: 503,
+    });
+    // The "no new hole" check: the courier was NEVER dispatched (the run never even reached compose).
+    expect(ws.calls).toHaveLength(0);
+    expect(readback.calls).toHaveLength(0);
+    expect(countRows(db, "friday_agent_runs", RUN_ID)).toBe(0);
+  });
+
+  it("(b4-d) mutating run with the gate but NO grant → qualifier REJECTS → 503; courier NEVER dispatched", async () => {
+    db = createTestDb();
+    const ws = makeStubPausedWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      agentRunControlViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+    });
+
+    // readOnly:false + the gate marker + a bound principal, but the mutatingToolGrant is OMITTED →
+    // the gated-mutating verdict is false → 503. A mutating run with no positive grant fails closed.
+    const { mutatingToolGrant: _omitted, ...noGrantBody } = GATED_MUTATING_BODY;
+    await expect(callStartRoute(runtime, { ...noGrantBody })).rejects.toMatchObject({
+      code: "TS_RUNTIME_AGENT_RUNS_RETIRED",
+      httpStatus: 503,
+    });
+    expect(ws.calls).toHaveLength(0);
+    expect(readback.calls).toHaveLength(0);
+  });
+
+  it("(b4-f) gated-mutating body but a BLANK owner principal → qualifier REJECTS → 503; courier NEVER dispatched", async () => {
+    db = createTestDb();
+    const ws = makeStubPausedWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      agentRunControlViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+    });
+
+    // readOnly:false + the gate marker + a valid grant, but a BLANK/whitespace owner principal →
+    // the `hasBoundOwnerPrincipal` conjunct fails → the gated-mutating verdict is false → 503. An
+    // ownerless mutating run can never own a gated run (the body readback could not be owner-scoped).
+    await expect(
+      callStartRoute(runtime, { ...GATED_MUTATING_BODY }, { principalId: "   " }),
+    ).rejects.toMatchObject({
+      code: "TS_RUNTIME_AGENT_RUNS_RETIRED",
+      httpStatus: 503,
+    });
+    expect(ws.calls).toHaveLength(0);
+    expect(readback.calls).toHaveLength(0);
+  });
+
+  it("(b4-e) gated-mutating body but the run-control FLAG is OFF → qualifier REJECTS → 503; courier NEVER dispatched (byte-identical-when-off)", async () => {
+    db = createTestDb();
+    const ws = makeStubPausedWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      // agentRunControlViaRust OMITTED → default off. The mutating verdict's FIRST conjunct is this
+      // flag, so off ⇒ a readOnly:false run stays disqualified EXACTLY as today (no behavior change).
+      wsClient: ws.service,
+      readback: readback.service,
+    });
+
+    await expect(callStartRoute(runtime, { ...GATED_MUTATING_BODY })).rejects.toMatchObject({
+      code: "TS_RUNTIME_AGENT_RUNS_RETIRED",
+      httpStatus: 503,
+    });
+    expect(ws.calls).toHaveLength(0);
+    expect(readback.calls).toHaveLength(0);
+  });
+
   // ─── (S6 mutating-chat) routeResumeRun — the runtime resume relay's fail-closed branches ───
   //
   // These exercise the RUNTIME function the resume route delegates to (NOT a mocked deps.resumeRun):
