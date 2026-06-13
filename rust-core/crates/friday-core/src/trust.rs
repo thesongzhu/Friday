@@ -108,9 +108,16 @@ pub fn check_grant(grant: &TrustGrant, check: &GrantCheck) -> (GateDecision, &'s
     // Workspace prefix. A bounded grant confines actions to a path prefix; an action
     // that touches a path outside it (or omits a path when the grant is workspace-
     // scoped) is denied. An unscoped grant (`None`) skips this.
+    //
+    // BOUNDARY-AWARE prefix (NOT a raw `starts_with`): a grant for `/work/friday`
+    // authorizes `/work/friday` itself and any path under `/work/friday/...`, but
+    // MUST NOT authorize a sibling like `/work/friday-secret` (a raw starts_with
+    // would fail OPEN there). The trailing-slash compare enforces a path-component
+    // boundary; `trim_end_matches('/')` normalizes a prefix that already ends in `/`.
     if let Some(prefix) = grant.boundaries.workspace.as_deref() {
+        let prefix_norm = prefix.trim_end_matches('/');
         match check.workspace.as_deref() {
-            Some(path) if path.starts_with(prefix) => {}
+            Some(path) if path == prefix_norm || path.starts_with(&format!("{prefix_norm}/")) => {}
             _ => return deny("trust_grant_workspace_out_of_scope"),
         }
     }
@@ -239,6 +246,36 @@ mod tests {
         let (d, r) = check_grant(&grant(), &c);
         assert_eq!(d, GateDecision::Deny);
         assert_eq!(r, "trust_grant_workspace_out_of_scope");
+    }
+
+    #[test]
+    fn workspace_sibling_prefix_does_not_fail_open() {
+        // grant() is scoped to "/work/friday". A raw starts_with would FAIL OPEN on
+        // the sibling "/work/friday-secret"; the boundary-aware check must DENY it,
+        // while still allowing the exact dir and any path under it.
+        let g = grant();
+
+        let mut sibling = check();
+        sibling.workspace = Some("/work/friday-secret/leak".into());
+        let (d, r) = check_grant(&g, &sibling);
+        assert_eq!(d, GateDecision::Deny, "sibling prefix must NOT fail open");
+        assert_eq!(r, "trust_grant_workspace_out_of_scope");
+
+        let mut exact = check();
+        exact.workspace = Some("/work/friday".into());
+        assert_eq!(
+            check_grant(&g, &exact).0,
+            GateDecision::Allow,
+            "exact dir allowed"
+        );
+
+        let mut child = check();
+        child.workspace = Some("/work/friday/src/main.rs".into());
+        assert_eq!(
+            check_grant(&g, &child).0,
+            GateDecision::Allow,
+            "sub-path allowed"
+        );
     }
 
     #[test]
