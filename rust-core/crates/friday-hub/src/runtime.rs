@@ -939,6 +939,59 @@ impl<T: Transport> HubRuntime<T> {
         max_turns_override: Option<u64>,
         now_ms: i64,
     ) -> Result<MissionBoundLoopOutcome, RoutedLoopError> {
+        // NS-6: read the DARK passport-mint flag ONCE here (the only env read; semantics in
+        // [`passport_mint_from`]) and thread the resulting bool into the private flagged inner
+        // fn — the codebase's "split env-read from pure logic" idiom (mirroring NS-7's
+        // `activity_needs_me_from`), so the behavioral tests inject the bool directly and never
+        // race `std::env`. DEFAULT-OFF: when off the body is BYTE-IDENTICAL to the pre-NS-6
+        // baseline (no passport minted, no new query, normal `Ran`/`Blocked`).
+        let passport_mint = passport_mint_from(std::env::var(ENV_PASSPORT_MINT).ok().as_deref());
+        self.run_agent_loop_for_mission_with_overrides_flagged(
+            mission_lookup,
+            session_id,
+            run_id,
+            task,
+            policy_override,
+            max_turns_override,
+            passport_mint,
+            now_ms,
+        )
+    }
+
+    /// (NS-6) [`Self::run_agent_loop_for_mission_with_overrides`] with the DARK passport-mint
+    /// flag threaded in as a pure bool — the env read lives ONLY in the public wrapper (the
+    /// "split env-read from pure logic" idiom), so the behavioral tests drive this directly with
+    /// `true`/`false` and never touch `std::env`. The public signature is unchanged so every
+    /// live caller compiles untouched.
+    ///
+    /// `passport_mint = false` (the prod default) is BYTE-IDENTICAL to the pre-NS-6 body: the
+    /// mint block is SKIPPED ENTIRELY (no `build_context_passport`, no recall query for items,
+    /// no `ContextPassport` row, no extra mission_link), and the run proceeds exactly as before.
+    ///
+    /// `passport_mint = true` mints a destination-bound [`friday_core::ContextPassport`] for THIS
+    /// handoff AFTER the preflight envelope is Ready and BEFORE the run executes, from a REAL
+    /// item source: the recalled-confirmed-memory items this run carries into its prompt
+    /// (`recall_confirmed → rank_recall`, the SAME chain `recall_preamble` renders), converted to
+    /// `PassportItem`s exactly as [`crate::cognition::gate_and_render_recall`] does. The
+    /// destination is the envelope's RESOLVED lane/target (the route decision), not a literal.
+    /// Because [`crate::mission_preflight::attach_context_passport_ref`] builds through
+    /// [`friday_core::build_context_passport`] (which runs `gate_transfer`), a context that
+    /// carries a secret / raw-token / unapproved-sensitive item makes the build FAIL — the
+    /// passport is NEVER minted/persisted and the handoff FAILS CLOSED (`Blocked`), so the run
+    /// NEVER executes and no model call happens. When the real source yields ZERO items the mint
+    /// is SKIPPED (an empty passport carries nothing) and the run proceeds normally.
+    #[allow(clippy::too_many_arguments)]
+    fn run_agent_loop_for_mission_with_overrides_flagged(
+        &self,
+        mission_lookup: MissionContextLookup,
+        session_id: &str,
+        run_id: &str,
+        task: &str,
+        policy_override: Option<&RunPolicy>,
+        max_turns_override: Option<u64>,
+        passport_mint: bool,
+        now_ms: i64,
+    ) -> Result<MissionBoundLoopOutcome, RoutedLoopError> {
         // PREFLIGHT (fail-closed): validate the Mission/work-item BEFORE any run exists. On
         // Blocked we return without ever calling `run_task`, so no `agent_run` row and no
         // model call happen for an invalid Mission — mirroring the ask path's preflight.
@@ -962,6 +1015,18 @@ impl<T: Transport> HubRuntime<T> {
                 return Ok(MissionBoundLoopOutcome::Blocked { blockers });
             }
         };
+
+        // NS-6 (DARK, default-OFF): mint + persist + link a destination-bound Context Passport
+        // for THIS handoff, BEFORE the run executes. Flag OFF ⇒ this whole block is skipped (the
+        // pre-NS-6 byte-identical path). Flag ON + a secret/raw-token/unapproved-sensitive item
+        // ⇒ `attach_context_passport_ref` returns a `context_passport_blocked:*` outcome and we
+        // FAIL CLOSED here: return `Blocked` BEFORE `run_task`, so the run never executes, no
+        // model call happens, and nothing (no passport row, no link, no secret string) persists.
+        if passport_mint {
+            if let Some(outcome) = self.mint_handoff_passport(&envelope, run_id, now_ms)? {
+                return Ok(outcome);
+            }
+        }
 
         // Run the SAME composed loop as the unbound entry (no divergence), threading the
         // (effective) per-run policy + ceiling so a mission-bound run enforces the IDENTICAL
@@ -997,6 +1062,101 @@ impl<T: Transport> HubRuntime<T> {
             result_link,
             attachment,
         })
+    }
+
+    /// (NS-6) The real handoff item-source → mint. Collects the REAL context items THIS run
+    /// carries into its prompt — the recalled-confirmed-memory items (`recall_confirmed →
+    /// rank_recall`, the SAME chain [`Self::recall_preamble`] renders, keyed on the SAME
+    /// `self.policy.principal_id()`) — converts each to a [`friday_core::PassportItem`] EXACTLY
+    /// as [`crate::cognition::gate_and_render_recall`] does (`kind: MemorySnippet`, `label:
+    /// content`, `included: true`, `sensitive: m.sensitive`), and mints a destination-bound
+    /// passport for the envelope's RESOLVED lane/target via
+    /// [`crate::mission_preflight::attach_context_passport_ref`] (which re-gates through
+    /// `build_context_passport`).
+    ///
+    /// The pre-gate `sensitive`/`included` flags are PRESERVED so the gate re-runs on the
+    /// stored set (a `sensitive` item ⇒ a `context_passport_blocked:*` outcome under v1 deny-all,
+    /// the faithful secret-bearing fail-closed path). The `passport_id` encodes THIS `run_id`
+    /// (`context-passport:agent-loop:{run_id}`), so the persisted `MissionLinkKind::ContextPassport`
+    /// link + the `mission.context_passport_refs` entry both bind the passport to this run — no
+    /// invented field.
+    ///
+    /// Returns:
+    /// - `Ok(None)` ⇒ the run should PROCEED. Either nothing was minted because the real source
+    ///   yielded ZERO items (an empty passport carries nothing), or the passport was minted +
+    ///   persisted + linked successfully.
+    /// - `Ok(Some(Blocked))` ⇒ FAIL CLOSED. The build was blocked by the transfer gate (secret /
+    ///   raw-token / unapproved-sensitive item); nothing persisted (no passport row, no link, no
+    ///   ref) and the caller must return this BEFORE the run executes.
+    fn mint_handoff_passport(
+        &self,
+        envelope: &MissionRuntimeEnvelope,
+        run_id: &str,
+        now_ms: i64,
+    ) -> Result<Option<MissionBoundLoopOutcome>, RoutedLoopError> {
+        // The REAL item source: the confirmed-memory recall this run carries into its prompt.
+        // No owner principal ⇒ no recall ⇒ no items (fail-closed: nothing to transfer).
+        let Some(principal) = self.policy.principal_id() else {
+            return Ok(None);
+        };
+        let rows = friday_storage::memory::recall_confirmed(self.db.conn(), principal)?;
+        let ranked = crate::cognition::rank_recall(
+            &rows,
+            now_ms,
+            crate::cognition::DEFAULT_RECALL_TOP_K,
+            crate::cognition::DEFAULT_HALF_LIFE_MS,
+        );
+        // Convert each recalled memory to a PassportItem EXACTLY as gate_and_render_recall does —
+        // PRE-gate (keep `sensitive`/`included`) so `build_context_passport` re-gates the set.
+        let items: Vec<friday_core::PassportItem> = ranked
+            .iter()
+            .map(|m| friday_core::PassportItem {
+                kind: friday_core::PassportItemKind::MemorySnippet,
+                label: m.content.clone(),
+                included: true,
+                sensitive: m.sensitive,
+            })
+            .collect();
+
+        // Zero real items ⇒ nothing to carry; skip the mint (an empty passport is meaningless).
+        if items.is_empty() {
+            return Ok(None);
+        }
+
+        // Destination = the envelope's RESOLVED route (not a literal): the lane/target the
+        // preflight already validated + upserted as the route decision for this handoff.
+        let destination_lane = envelope.route_decision.selected_lane;
+        let destination_target = envelope
+            .route_decision
+            .selected_provider_or_agent
+            .as_deref();
+
+        // The passport_id encodes the run so the link + ref bind to THIS handoff.
+        let passport_id = format!("context-passport:agent-loop:{run_id}");
+        let attach = crate::mission_preflight::attach_context_passport_ref(
+            &self.db,
+            &envelope.context.mission_id,
+            &passport_id,
+            Some(envelope.context.work_item_id.as_str()),
+            destination_lane,
+            destination_target,
+            items,
+            // v1 deny-all: no sensitive-transfer approval is wired (same as recall_preamble_for),
+            // so a `sensitive` item makes the build fail-closed here.
+            false,
+            now_ms,
+        )?;
+
+        match attach {
+            // Minted + persisted + linked + ref pushed: proceed with the run.
+            MissionAttachmentOutcome::Attached { .. }
+            | MissionAttachmentOutcome::MissionLinked { .. } => Ok(None),
+            // The transfer gate blocked the build (secret / raw-token / unapproved-sensitive) — or
+            // any other attach blocker. FAIL CLOSED: nothing persisted, the run must NOT execute.
+            MissionAttachmentOutcome::Blocked { blockers } => {
+                Ok(Some(MissionBoundLoopOutcome::Blocked { blockers }))
+            }
+        }
     }
 
     /// Build the memory-recall prompt preamble for this run and record its receipt.
@@ -1343,6 +1503,22 @@ pub const ENV_CODEX_ROUTE_ENABLED: &str = "FRIDAY_CODEX_ROUTE_ENABLED";
 
 fn codex_route_enabled_from_env() -> bool {
     matches!(std::env::var(ENV_CODEX_ROUTE_ENABLED), Ok(v) if v.trim() == "1")
+}
+
+/// NS-6 — the default-OFF environment gate that governs whether the mission-bound agent
+/// handoff MINTS + PERSISTS + LINKS a destination-bound Context Passport for the WorkItem's
+/// lane/target. ON only when `FRIDAY_PASSPORT_MINT` is exactly `"1"` (after trimming). UNSET /
+/// empty / `"0"` / any other value ⇒ OFF (unchanged prod default: the handoff is BYTE-IDENTICAL
+/// to the pre-NS-6 baseline — no passport minted, no extra query, no new mission_link). Kept
+/// narrow + explicit so this security-sensitive run-path change cannot be enabled by accident.
+pub const ENV_PASSPORT_MINT: &str = "FRIDAY_PASSPORT_MINT";
+
+/// Pure flag-matcher for [`ENV_PASSPORT_MINT`] (env read split out so it is unit-testable
+/// without `set_var` — the env-race-free idiom this file uses, mirroring NS-7's
+/// `activity_needs_me_from`). DEFAULT-OFF: `None` (unset) ⇒ false; ON only for the exact
+/// opt-in value `"1"` (trimmed); everything else ⇒ false.
+fn passport_mint_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
 }
 
 /// C1-3 — the local Codex app-server program the route spawns (default CLI binary on PATH).
@@ -5037,6 +5213,370 @@ mod tests {
             0,
             "the unbound run_task must not bind to any mission"
         );
+    }
+
+    // ---- NS-6: DARK flag-gated Context-Passport mint at the mission-bound handoff -----
+
+    /// The pure NS-6 flag-matcher: DEFAULT-OFF, ON only for the exact opt-in `"1"` (trimmed),
+    /// everything else OFF. Driven directly (no `set_var`) — the file's env-race-free idiom.
+    #[test]
+    fn passport_mint_flag_is_off_by_default_and_on_only_for_exactly_1() {
+        assert!(!passport_mint_from(None), "unset ⇒ OFF (prod default)");
+        assert!(passport_mint_from(Some("1")), "exactly \"1\" ⇒ ON");
+        assert!(passport_mint_from(Some(" 1 ")), "trimmed \"1\" ⇒ ON");
+        for off in ["", "0", "true", "yes", "01", "1 0", "enabled", "TRUE"] {
+            assert!(
+                !passport_mint_from(Some(off)),
+                "{off:?} must NOT enable the mint"
+            );
+        }
+        // Sanity: the live env var is unset in the test process ⇒ the real read reports OFF.
+        assert!(
+            !passport_mint_from(std::env::var(ENV_PASSPORT_MINT).ok().as_deref()),
+            "FRIDAY_PASSPORT_MINT must be unset/off in the test env (prod default)"
+        );
+    }
+
+    /// A runtime whose run-owner principal is `principal` (so the confirmed-memory recall — the
+    /// NS-6 real item source — is enabled and keyed on it). Mirrors `runtime_with` but sets the
+    /// owner instead of `None`.
+    fn runtime_with_owner(
+        tag: &str,
+        owner: &str,
+        contents: &[&str],
+    ) -> (HubRuntime<ScriptTransport>, TempDir, Rc<Cell<usize>>) {
+        let ws = TempDir::new(tag);
+        let transport = ScriptTransport::new(contents);
+        let post_calls = transport.post_calls.clone();
+        let client = DeepSeekClient::with_transport(transport, "k".into());
+        let agent = DeepSeekAgentLlmClient::new(client);
+        let rt = HubRuntime::new(
+            HubConfig {
+                db_path: tmp(tag),
+                workspace_root: ws.0.clone(),
+                secret: SECRET.to_vec(),
+                max_turns: 6,
+                principal_id: Some(owner.to_string()),
+                disabled_tools: vec![],
+                read_only: false,
+                operator_vk: None,
+            },
+            agent,
+            Box::new(DenyAllApprovals),
+        )
+        .unwrap();
+        (rt, ws, post_calls)
+    }
+
+    /// Seed a CONFIRMED, content-bearing memory row owned by `principal` (so `recall_confirmed`
+    /// returns it). `sensitive` marks it as the secret-bearing test vector — under v1 deny-all
+    /// (no transfer approval) a sensitive item makes `build_context_passport` fail-closed, the
+    /// faithful `context_passport_blocked` path. Returns the row's content (the secret canary).
+    fn seed_confirmed_memory(db: &Db, id: &str, principal: &str, content: &str, sensitive: bool) {
+        friday_storage::memory::record_candidate(
+            db.conn(),
+            &friday_storage::memory::NewMemoryCandidate {
+                memory_id: id,
+                scope: friday_core::MemoryScope::Global,
+                content_ref: None,
+                content: Some(content),
+                principal_id: Some(principal),
+                sensitive,
+                created_at: 900_000_000_000,
+            },
+        )
+        .unwrap();
+        friday_storage::memory::confirm(db.conn(), id, 950_000_000_000).unwrap();
+    }
+
+    fn context_passport_link_count(rt: &HubRuntime<ScriptTransport>, mission_id: &str) -> usize {
+        rt.db()
+            .list_mission_links(mission_id)
+            .unwrap()
+            .iter()
+            .filter(|l| l.link_kind == friday_core::MissionLinkKind::ContextPassport)
+            .count()
+    }
+
+    /// NS-6 (flag ON + BENIGN context): the handoff mints a real destination-bound passport from
+    /// the recalled-memory items, PERSISTS the `ContextPassport` row, creates a ContextPassport
+    /// `MissionLink`, pushes the `passport_id` to `mission.context_passport_refs`, THEN the run
+    /// proceeds normally (`Ran`).
+    #[test]
+    fn passport_mint_on_benign_mints_persists_links_then_runs() {
+        let (rt, root, _post) = runtime_with_owner(
+            "ns6-benign",
+            "owner-1",
+            &[
+                "{\"tool\":\"read_file\",\"parameters\":{\"path\":\"notes.md\"}}",
+                "{\"tool\":\"none\"}",
+            ],
+        );
+        std::fs::write(root.join("notes.md"), b"mission-bound note").unwrap();
+        seed_loop_mission(
+            rt.db(),
+            WorkLane::DeepSeek,
+            Some("deepseek"),
+            WorkItemStatus::ReadyToDispatch,
+        );
+        // A REAL benign confirmed-memory item the run carries into its prompt (the item source).
+        seed_confirmed_memory(
+            rt.db(),
+            "mem-benign",
+            "owner-1",
+            "prefers concise summaries",
+            false,
+        );
+
+        let run_id = "run-ns6-benign";
+        let outcome = rt
+            .run_agent_loop_for_mission_with_overrides_flagged(
+                loop_lookup(),
+                "friday-hub-session",
+                run_id,
+                "read the notes",
+                None,
+                None,
+                /* passport_mint = */ true,
+                1000,
+            )
+            .unwrap();
+
+        // The run proceeded normally.
+        assert!(
+            matches!(outcome, MissionBoundLoopOutcome::Ran { .. }),
+            "benign mint must proceed to a normal run, got {outcome:?}"
+        );
+        assert_eq!(agent_run_count(&rt, run_id), 1, "the loop ran");
+
+        // A ContextPassport ROW was persisted, bound to THIS run + the resolved destination.
+        let passport_id = format!("context-passport:agent-loop:{run_id}");
+        let passport = rt
+            .db()
+            .get_context_passport(&passport_id)
+            .unwrap()
+            .expect("a ContextPassport row must be persisted on the benign mint");
+        assert_eq!(passport.mission_id, "mission-loop");
+        assert_eq!(passport.work_item_id.as_deref(), Some("work-loop"));
+        assert_eq!(passport.destination_lane, WorkLane::DeepSeek);
+        assert_eq!(passport.destination_target.as_deref(), Some("deepseek"));
+        assert!(
+            passport
+                .items
+                .iter()
+                .any(|i| i.label == "prefers concise summaries"),
+            "the passport carries the REAL recalled item, got {:?}",
+            passport.items
+        );
+
+        // A ContextPassport MissionLink exists.
+        assert_eq!(
+            context_passport_link_count(&rt, "mission-loop"),
+            1,
+            "exactly one ContextPassport mission_link must exist"
+        );
+
+        // The passport_id was pushed to mission.context_passport_refs.
+        let mission = rt.db().get_mission("mission-loop").unwrap().unwrap();
+        assert!(
+            mission.context_passport_refs.contains(&passport_id),
+            "mission.context_passport_refs must contain the minted passport_id, got {:?}",
+            mission.context_passport_refs
+        );
+        assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
+    }
+
+    /// NS-6 (flag ON + SECRET context): a `sensitive` (secret-bearing) recalled item makes
+    /// `build_context_passport` fail-closed via `gate_transfer`, so the handoff returns `Blocked`
+    /// with a `context_passport_blocked` reason. The run NEVER executes (no agent_run, no model
+    /// call), NOTHING persists (no passport row, no ContextPassport link, no new ref), and the
+    /// secret string appears in NO persisted row.
+    #[test]
+    fn passport_mint_on_secret_item_fails_closed_no_run_no_persist() {
+        const SECRET_CANARY: &str = "SECRET-CANARY-ns6-must-never-persist-sk-live-abc123";
+        let (rt, root, post) =
+            runtime_with_owner("ns6-secret", "owner-1", &["{\"tool\":\"none\"}"]);
+        std::fs::write(root.join("notes.md"), b"x").unwrap();
+        seed_loop_mission(
+            rt.db(),
+            WorkLane::DeepSeek,
+            Some("deepseek"),
+            WorkItemStatus::ReadyToDispatch,
+        );
+        // A SENSITIVE (secret-bearing) confirmed memory — MemoryRow.sensitive is documented as
+        // the "PII/secret-bearing marker"; under v1 deny-all it cannot clear the transfer gate.
+        seed_confirmed_memory(rt.db(), "mem-secret", "owner-1", SECRET_CANARY, true);
+
+        let run_id = "run-ns6-secret";
+        let outcome = rt
+            .run_agent_loop_for_mission_with_overrides_flagged(
+                loop_lookup(),
+                "friday-hub-session",
+                run_id,
+                "do work",
+                None,
+                None,
+                /* passport_mint = */ true,
+                1000,
+            )
+            .unwrap();
+
+        // FAIL CLOSED: Blocked, carrying the passport-blocked reason.
+        let MissionBoundLoopOutcome::Blocked { blockers } = outcome else {
+            panic!("a secret-bearing context must FAIL CLOSED (Blocked), got {outcome:?}");
+        };
+        assert!(
+            blockers
+                .iter()
+                .any(|b| b.contains("context_passport_blocked")),
+            "the blocker must name the passport-blocked reason, got {blockers:?}"
+        );
+
+        // The run NEVER executed: no agent_run row, no model call.
+        assert_eq!(
+            agent_run_count(&rt, run_id),
+            0,
+            "no run on the blocked handoff"
+        );
+        assert_eq!(post.get(), 0, "no model call on the blocked handoff");
+
+        // NOTHING persisted: no passport row, no ContextPassport mission_link, no new ref.
+        let passport_id = format!("context-passport:agent-loop:{run_id}");
+        assert!(
+            rt.db()
+                .get_context_passport(&passport_id)
+                .unwrap()
+                .is_none(),
+            "no ContextPassport row may persist on the blocked handoff"
+        );
+        assert_eq!(
+            context_passport_link_count(&rt, "mission-loop"),
+            0,
+            "no ContextPassport mission_link may persist on the blocked handoff"
+        );
+        let mission = rt.db().get_mission("mission-loop").unwrap().unwrap();
+        assert!(
+            mission.context_passport_refs.is_empty(),
+            "no passport ref may be pushed on the blocked handoff, got {:?}",
+            mission.context_passport_refs
+        );
+
+        // The secret string appears in NO persisted TRANSFER artifact. The secret legitimately
+        // lives ONLY in `memory_item` (the Hub-held source we seeded — that is where confirmed
+        // memory rightfully rests); the fail-closed proof is that it NEVER escaped into any
+        // transfer-surface row (the passport object/items, the mission_link, the run, the audit).
+        let leaked = secret_string_present_in_db(rt.db(), SECRET_CANARY, &["memory_item"]);
+        assert!(
+            !leaked,
+            "the secret canary must NOT appear in any transfer artifact (it stays Hub-held in memory_item only)"
+        );
+    }
+
+    /// NS-6 (flag OFF — the prod default): BYTE-IDENTICAL to the pre-NS-6 baseline — the run
+    /// proceeds normally (`Ran`) and NO passport is minted (no row, no ContextPassport link, no
+    /// ref), even with a benign recallable item present that WOULD mint under the flag.
+    #[test]
+    fn passport_mint_flag_off_is_byte_identical_no_mint() {
+        let (rt, root, _post) = runtime_with_owner(
+            "ns6-off",
+            "owner-1",
+            &[
+                "{\"tool\":\"read_file\",\"parameters\":{\"path\":\"notes.md\"}}",
+                "{\"tool\":\"none\"}",
+            ],
+        );
+        std::fs::write(root.join("notes.md"), b"mission-bound note").unwrap();
+        seed_loop_mission(
+            rt.db(),
+            WorkLane::DeepSeek,
+            Some("deepseek"),
+            WorkItemStatus::ReadyToDispatch,
+        );
+        seed_confirmed_memory(
+            rt.db(),
+            "mem-off",
+            "owner-1",
+            "prefers concise summaries",
+            false,
+        );
+
+        let run_id = "run-ns6-off";
+        let outcome = rt
+            .run_agent_loop_for_mission_with_overrides_flagged(
+                loop_lookup(),
+                "friday-hub-session",
+                run_id,
+                "read the notes",
+                None,
+                None,
+                /* passport_mint = */ false,
+                1000,
+            )
+            .unwrap();
+
+        // Normal run (the pre-NS-6 outcome), and NO passport machinery touched.
+        assert!(
+            matches!(outcome, MissionBoundLoopOutcome::Ran { .. }),
+            "flag-OFF must be the normal run, got {outcome:?}"
+        );
+        assert_eq!(agent_run_count(&rt, run_id), 1, "the loop ran (unchanged)");
+        let passport_id = format!("context-passport:agent-loop:{run_id}");
+        assert!(
+            rt.db()
+                .get_context_passport(&passport_id)
+                .unwrap()
+                .is_none(),
+            "flag-OFF must mint NO ContextPassport row"
+        );
+        assert_eq!(
+            context_passport_link_count(&rt, "mission-loop"),
+            0,
+            "flag-OFF must create NO ContextPassport mission_link"
+        );
+        let mission = rt.db().get_mission("mission-loop").unwrap().unwrap();
+        assert!(
+            mission.context_passport_refs.is_empty(),
+            "flag-OFF must push NO passport ref"
+        );
+    }
+
+    /// Scan every TEXT column of every table (except `exclude` — the legitimate Hub-held source
+    /// tables) for `needle` — the leak canary the secret-path test uses to prove the secret
+    /// string never lands in a persisted TRANSFER artifact.
+    fn secret_string_present_in_db(db: &Db, needle: &str, exclude: &[&str]) -> bool {
+        let conn = db.conn();
+        let tables: Vec<String> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+                )
+                .unwrap();
+            let collected = stmt
+                .query_map([], |r| r.get::<_, String>(0))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect();
+            collected
+        };
+        for table in tables {
+            if exclude.contains(&table.as_str()) {
+                continue;
+            }
+            let mut stmt = conn.prepare(&format!("SELECT * FROM \"{table}\"")).unwrap();
+            let col_count = stmt.column_count();
+            let mut rows = stmt.query([]).unwrap();
+            while let Some(row) = rows.next().unwrap() {
+                for i in 0..col_count {
+                    // Pull the value as text where possible; non-text columns yield None.
+                    if let Ok(Some(v)) = row.get::<_, Option<String>>(i) {
+                        if v.contains(needle) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
     }
 
     // ---- D1 owner-wiring (run_task persists owner_principal) -----------------
