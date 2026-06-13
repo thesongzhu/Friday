@@ -82,6 +82,19 @@ const WS_X25519_SECRET_PURPOSE: &[u8] = b"friday.rust.agent_run.ws.x25519_secret
 /// 32-byte X25519 public keys (the server parses it with `chunks_exact(32)`).
 pub const PEER_PUBKEY_ALLOWLIST_ID: &str = "friday:execrun:ws:s-f:peer-pubkey-allowlist:v1";
 
+/// (J2) The SecureStore id under which the **READ-SEAM** peer X25519 pubkey allowlist lives —
+/// DISTINCT from [`PEER_PUBKEY_ALLOWLIST_ID`] (the live WRITE server's id, byte-untouched). The
+/// read-projection server (`hub_read_projection_server`) boots on THIS id and admits a NON-EMPTY
+/// multi-peer allowlist (it enforces `enforce_peer_allowlist_nonempty`, NOT `enforce_single_peer`),
+/// so a desktop master-derived peer AND a distinct mobile device key can BOTH be enrolled
+/// concurrently for the READ seam. The write server is unaffected: it still boots on
+/// `PEER_PUBKEY_ALLOWLIST_ID` and still enforces single-peer. The stored value is the SAME on-disk
+/// format — a concatenation of one-or-more raw 32-byte X25519 public keys (parsed with
+/// `chunks_exact(32)`). The two ids live in the SAME store dir (`agent-run-securestore`); a distinct
+/// id keeps the read multi-peer set from contaminating the write single-peer entry.
+pub const READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID: &str =
+    "friday:read-seam:ws:s-r1:peer-pubkey-allowlist:v1";
+
 /// The default FileSecureStore directory RELATIVE to `$HOME` (`~/.friday/agent-run-securestore`).
 /// The enroll bin's `--store-dir` defaults to this; the SERVER slice will reuse the SAME default
 /// (via [`default_store_dir`]) so the CLI and the server agree on where the allowlist lives.
