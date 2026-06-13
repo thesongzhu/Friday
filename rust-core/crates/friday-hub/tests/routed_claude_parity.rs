@@ -1,20 +1,29 @@
 // C2 item 3 — ROUTED Claude parity harness (LIVE, `#[ignore]`'d, key-gated).
 //
-// HONEST NAME: routed Claude parity — 4 chat-expressible flows live-capturable +
-// 1 session-control flow (approval-request) ROUTED+METERED; ~16 session-control flows
-// DEFERRED (substrate not wired through the C2 route-pin/metering path). This is NOT a
-// "24-flow parity" harness; claiming that would be a fake (see the categorization below).
+// HONEST NAME: routed Claude parity over a METERED SUBSET — ~7 of the 23 §3 flows are
+// expressible through the real routed+metered Claude path (chat send / answer / error /
+// auth-failure + the approval-REQUEST session-control flow + the audit/ledger cross-cuts).
+// The send + answer flows are now proven through BOTH metered Claude entrypoints — the
+// sessionless `run_task_pinned` AND the sessioned/history-folding `run_session_task_pinned`.
+// The remaining 16 §3 entries are session-control / session-management flows that are NOT on
+// any metered Claude path and stay DEFERRED (substrate not wired through the C2 route-pin /
+// metering path — enumerated below). This is a metered SUBSET, NOT a "24-flow parity"
+// harness; claiming 24-flow parity — or covering any of the deferred 16 via a chat-only turn
+// or the LOCAL stream-json mirror — would be a FAKE proof (see the categorization below).
 //
 // == What this harness PROVES (when run with a live key) ==
-// It drives the REAL C2 route-pin end-to-end:
+// It drives the REAL C2 route-pin end-to-end through BOTH metered entrypoints:
 //   HubRuntime::live() (gated on FRIDAY_CLAUDE_ROUTE_ENABLED=1, builds the live
 //   ClaudeAgentLlmClient) -> validate_and_enable_claude() (the live key probe that flips
-//   the in-process `claude` route dispatchable) -> run_task_pinned(.., "claude", ..)
+//   the in-process `claude` route dispatchable) -> {run_task_pinned (sessionless) |
+//   run_session_task_pinned (sessioned/history-folding)}(.., "claude", ..)
 //   (UNW-003 no-fallback pin) -> select_route -> resolver -> ClaudeAgentLlmClient (the #695
 //   pin) -> the gate-mandatory loop -> bill_model_call records an `anthropic` ledger row.
 // For each covered flow it asserts selection.provider_id == "claude" AND a run-scoped
 // anthropic / api.anthropic.com ledger row (Db::list_run_token_usage) — the metered
-// Claude turn, never mis-attributed as DeepSeek, never a silent reroute.
+// Claude turn, never mis-attributed as DeepSeek, never a silent reroute. (Through the
+// sessioned entry the C2 assertion is routing+billing — the anthropic row recorded inside
+// run_session_loop — which is orthogonal to owner-gated body delivery.)
 //
 // == Why #[ignore]'d + NO key spent here ==
 // Through the PUBLIC HubRuntime API the `claude` route becomes dispatchable ONLY via
@@ -47,10 +56,16 @@
 // surface. So most §3 flows are NOT expressible through it:
 //
 // CHAT-expressible (4; coverage noted per flow):
-//   - send message    -> run_task_pinned("claude", ..); one metered anthropic turn.
-//                        Covered LIVE here (chat_send_message_routes_to_claude_and_bills_anthropic).
-//   - answer question -> a question is a send-message turn whose answer is the reply.
-//                        Covered LIVE here (chat_answer_question_routes_to_claude_and_bills_anthropic).
+//   - send message    -> a single send -> loop -> answer turn pinned to claude; one metered
+//                        anthropic turn. Covered LIVE here through BOTH metered entrypoints:
+//                        the sessionless run_task_pinned
+//                        (chat_send_message_routes_to_claude_and_bills_anthropic) and the
+//                        sessioned/history-folding run_session_task_pinned
+//                        (sessioned_send_message_routes_to_claude_and_bills_anthropic).
+//   - answer question -> a question is a send-message turn whose answer is the reply. Covered
+//                        LIVE here through BOTH entrypoints: sessionless
+//                        (chat_answer_question_routes_to_claude_and_bills_anthropic) and
+//                        sessioned (sessioned_answer_question_routes_to_claude_and_bills_anthropic).
 //   - error handling  -> a mid-run Claude route/model error fails the run CLOSED (Errored), no
 //                        reroute, NO ledger row. Covered DETERMINISTICALLY no-key in-crate
 //                        (runtime.rs claude_route_error_fails_run_closed_and_bills_nothing) — the
@@ -113,6 +128,8 @@
 // approve/reject/resume completion half + all the list/open/read/steer/stop/fork/archive/
 // attach/diff/offline/activity surfaces are DEFERRED with the per-flow wiring notes above).
 
+use friday_crypto::{seal, DeviceKeypair};
+use friday_hub::hub_server::AuthedPrincipal;
 use friday_hub::runtime::{HubConfig, HubRuntime, ENV_CLAUDE_ROUTE_ENABLED};
 use friday_hub::LoopStatus;
 use friday_providers::KeyValidationOutcome;
@@ -213,6 +230,45 @@ fn assert_anthropic_rows(
     }
 }
 
+/// Build an authenticated caller bound to `principal` over a freshly paired sealed session — the
+/// SAME mechanism the in-crate runtime tests' `authed_caller` uses (ECDH-pair two DeviceKeypairs,
+/// seal the agreed challenge, `AuthedPrincipal::authenticate`). The sessioned entry treats this
+/// `caller` exactly as the WS dispatch arm's authenticated principal; only this owner can read the
+/// run's body (the C2 routing+billing claim is orthogonal to body delivery — see the per-test note).
+fn authed_caller(principal: &str) -> AuthedPrincipal {
+    const AAD: &[u8] = b"routed-claude-parity-session-aad";
+    const CHALLENGE: &[u8] = b"routed-claude-parity-session-challenge";
+    let hub = DeviceKeypair::generate();
+    let phone = DeviceKeypair::generate();
+    let hub_session = hub.agree(&phone.public_bytes());
+    let caller_session = phone.agree(&hub.public_bytes());
+    let sealed = seal(&caller_session, CHALLENGE, AAD).unwrap();
+    AuthedPrincipal::authenticate(&hub_session, &sealed, AAD, CHALLENGE, principal).unwrap()
+}
+
+/// Assert a sessioned run's metered turns were ALL billed to Anthropic (api.anthropic.com,
+/// non-fallback), never mis-attributed as deepseek. Unlike [`assert_anthropic_rows`], the sessioned
+/// entry ([`HubRuntime::run_session_task_pinned`]) returns `(RoutedSelection, AuthedAnswer)` with NO
+/// terminal `LoopStatus`/turn count, so we only require AT LEAST ONE billed claude turn and that
+/// every row is anthropic — the same anti-flake stance the live chat legs take (a tool-use turn can
+/// add rows). The row(s) exist regardless of owner/body projection because billing happens INSIDE
+/// `run_session_loop`.
+fn assert_sessioned_anthropic_rows(rt: &HubRuntime<friday_deepseek::UreqTransport>, run_id: &str) {
+    let rows = rt.db().list_run_token_usage(run_id).unwrap();
+    assert!(
+        !rows.is_empty(),
+        "run {run_id}: at least one claude turn must have been billed through the sessioned entry"
+    );
+    for row in &rows {
+        assert_eq!(
+            row.provider_kind, "anthropic",
+            "NOT mis-attributed as deepseek"
+        );
+        assert_eq!(row.base_url_host, "api.anthropic.com");
+        assert!(!row.fallback, "the claude route is never a fallback");
+    }
+}
+
 // ---- CHAT-expressible flows (LIVE) ----------------------------------------------------------
 
 #[test]
@@ -267,6 +323,66 @@ fn chat_answer_question_routes_to_claude_and_bills_anthropic() {
         "LIVE OK: answer question → claude, {} anthropic turn(s)",
         outcome.turns
     );
+}
+
+// ---- CHAT-expressible flows through the SESSIONED entrypoint (LIVE) -------------------------
+//
+// The SAME two flows (send message / answer question) routed through the SESSIONED/history-folding
+// entrypoint `run_session_task_pinned` instead of the sessionless `run_task_pinned`. These add NO
+// new §3 flow — they prove that send + answer are faithfully metered through BOTH metered Claude
+// entrypoints (a follow-up turn on a bound session bills an anthropic row exactly like a fresh
+// chat). The metered Claude turn is the same; only the entry differs (owner-binding + session fold).
+
+#[test]
+#[ignore = "live: needs FRIDAY_CLAUDE_ROUTE_ENABLED=1 + FRIDAY_DEEPSEEK_API_KEY + FRIDAY_ANTHROPIC_API_KEY; spends Anthropic quota; run with --ignored"]
+fn sessioned_send_message_routes_to_claude_and_bills_anthropic() {
+    // §3 "send message" through the SESSIONED entry: a pinned-claude turn on a bound session routes
+    // through `run_session_task_pinned` and bills an anthropic row. NOTE: the harness binds an
+    // authenticated owner, but the C2 claim asserted here is routing+billing (an anthropic ledger
+    // row), which is orthogonal to body delivery — the row is recorded inside `run_session_loop`
+    // regardless of whether the projected body releases to this caller.
+    let (rt, _ws) = live_claude_runtime("sess-send-message");
+    let caller = authed_caller("principal:routed-claude-session-owner");
+    let (selection, _answer) = rt
+        .run_session_task_pinned(
+            &caller,
+            "live-claude-sess-send",
+            "sess-live-claude-1",
+            "Reply with exactly: PONG",
+            "claude",
+            1_000,
+        )
+        .expect("a live pinned-claude sessioned run completes (no reroute)");
+    assert_eq!(
+        selection.provider_id, "claude",
+        "the sessioned pin routed to claude, no reroute"
+    );
+    assert_sessioned_anthropic_rows(&rt, "live-claude-sess-send");
+    eprintln!("LIVE OK: sessioned send message → claude, anthropic row(s) recorded");
+}
+
+#[test]
+#[ignore = "live: needs FRIDAY_CLAUDE_ROUTE_ENABLED=1 + both provider keys; spends Anthropic quota; run with --ignored"]
+fn sessioned_answer_question_routes_to_claude_and_bills_anthropic() {
+    // §3 "answer question" through the SESSIONED entry: a question is a send-message turn whose
+    // reply is the answer; here it routes through `run_session_task_pinned` (history-folding) and
+    // bills an anthropic row. Same orthogonality note as the sessioned send test (routing+billing,
+    // not body delivery, is the C2 assertion).
+    let (rt, _ws) = live_claude_runtime("sess-answer-question");
+    let caller = authed_caller("principal:routed-claude-session-owner");
+    let (selection, _answer) = rt
+        .run_session_task_pinned(
+            &caller,
+            "live-claude-sess-answer",
+            "sess-live-claude-2",
+            "What is 2 + 2? Reply with just the number.",
+            "claude",
+            1_000,
+        )
+        .expect("a live pinned-claude sessioned question run completes");
+    assert_eq!(selection.provider_id, "claude");
+    assert_sessioned_anthropic_rows(&rt, "live-claude-sess-answer");
+    eprintln!("LIVE OK: sessioned answer question → claude, anthropic row(s) recorded");
 }
 
 // ---- ROUTED + METERED session-control flow: approval request --------------------------------

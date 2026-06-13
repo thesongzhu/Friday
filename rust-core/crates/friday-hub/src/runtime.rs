@@ -591,11 +591,13 @@ impl<T: Transport> HubRuntime<T> {
             .with_counts(outcome.turns, outcome.executed_tools)
     }
 
-    /// (C2) Pin a SPECIFIC provider for a SESSIONED follow-up/steer turn (no-fallback) — the
-    /// SESSIONED parity of [`Self::run_task_pinned`]. A session steer turn (e.g. a follow-up
+    /// (C2) Pin a SPECIFIC provider for a SESSIONED FOLLOW-UP turn (no-fallback) — the
+    /// SESSIONED parity of [`Self::run_task_pinned`]. A session follow-up turn (e.g.
     /// "make it shorter" or an approval-resume continuation on an already-bound session) routes
     /// to + BILLS the pinned provider, instead of the deepseek-hardcoded
-    /// [`Self::run_session_task_with_overrides`].
+    /// [`Self::run_session_task_with_overrides`]. HONEST SCOPE: this is a FOLLOW-UP turn, NOT
+    /// in-flight "steer/interrupt" of a running turn (§3 flow #8 steer/interrupt is DEFERRED —
+    /// there is no mid-turn channel in `run_loop`); do not read this entry as steer coverage.
     ///
     /// ## Routing — the SAME resolve() chokepoint as the sessionless pinned entry
     /// It builds a pinned [`RouteRequest`] (`preferred_provider: Some(provider_id)`), selects the
@@ -1561,11 +1563,17 @@ mod tests {
 
     #[test]
     fn session_followup_turn_routes_to_claude_and_bills_anthropic() {
-        // POSITIVE: a SESSIONED follow-up/steer turn pinned to "claude" routes through the REAL
-        // `run_session_task_pinned` entry to the wired Claude stub, finishes, and records EXACTLY
-        // ONE token_ledger row attributed to Anthropic (host api.anthropic.com, fallback=false) —
-        // NOT mis-attributed as deepseek. NO key, NO network. The sessioned parity of
-        // `run_task_pinned_claude_routes_through_runtime_and_writes_anthropic_row`.
+        // POSITIVE: a SESSIONED FOLLOW-UP turn pinned to "claude" — a NEW pinned turn on an
+        // already-bound session (e.g. "make it shorter"), NOT in-flight steering — routes through
+        // the REAL `run_session_task_pinned` entry to the wired Claude stub, finishes, and records
+        // EXACTLY ONE token_ledger row attributed to Anthropic (host api.anthropic.com,
+        // fallback=false) — NOT mis-attributed as deepseek. NO key, NO network. The sessioned
+        // parity of `run_task_pinned_claude_routes_through_runtime_and_writes_anthropic_row`.
+        //
+        // HONEST SCOPE: this is a follow-up TURN, not a steer/interrupt. §3's "steer running turn"
+        // and "interrupt / stop" remain genuinely DEFERRED — there is no mid-turn channel in
+        // `run_loop` (the loop is single-shot per `run_session_task_pinned` call), so this test
+        // does NOT prove steering; covering steer/interrupt via a follow-up turn would be a fake.
         let (rt, _ws) = runtime_with_claude_wired(
             "c2-session-pinned-claude",
             vec![AgentStep::Finish {
@@ -1579,14 +1587,14 @@ mod tests {
                 &caller,
                 "run-c2-session",
                 "sess-c2-1",
-                "make it shorter", // a session steer turn
+                "make it shorter", // a session FOLLOW-UP turn (NOT in-flight steering)
                 "claude",
                 3_000,
             )
             .expect("a dispatchable claude pin runs through the sessioned entry");
         assert_eq!(
             selection.provider_id, "claude",
-            "the session steer turn resolved to claude"
+            "the session follow-up turn resolved to claude"
         );
         // NOTE on the answer: `runtime_with_claude_wired` configures `principal_id: None`, so
         // `run_session_loop`'s owner-wiring records NO owner ⇒ the body projection releases nothing
