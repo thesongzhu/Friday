@@ -591,6 +591,139 @@ impl<T: Transport> HubRuntime<T> {
             .with_counts(outcome.turns, outcome.executed_tools)
     }
 
+    /// (C2) Pin a SPECIFIC provider for a SESSIONED follow-up/steer turn (no-fallback) — the
+    /// SESSIONED parity of [`Self::run_task_pinned`]. A session steer turn (e.g. a follow-up
+    /// "make it shorter" or an approval-resume continuation on an already-bound session) routes
+    /// to + BILLS the pinned provider, instead of the deepseek-hardcoded
+    /// [`Self::run_session_task_with_overrides`].
+    ///
+    /// ## Routing — the SAME resolve() chokepoint as the sessionless pinned entry
+    /// It builds a pinned [`RouteRequest`] (`preferred_provider: Some(provider_id)`), selects the
+    /// route via [`crate::routing::select_route`], and resolves the live client through the SAME
+    /// [`ProviderClientResolver::resolve`] chokepoint the routed loop uses. A non-dispatchable pin
+    /// (e.g. `claude` while DARK) FAILS CLOSED at `resolve()` with
+    /// [`RoutedLoopError::NoClientForProvider`] — NEVER a silent reroute, and (critically) BEFORE
+    /// any `agent_run` row is created or any token is billed, so a dark pin bills NOTHING. A pin to
+    /// an UNREGISTERED/unavailable provider surfaces [`RoutedLoopError::Route`] from `select_route`,
+    /// also before any write.
+    ///
+    /// ## Everything else is byte-identical to [`Self::run_session_task_with_overrides`]
+    /// Once the client is resolved, this drives the EXISTING [`run_session_loop`] with the RESOLVED
+    /// `&dyn AgentLlmClient` in place of `&self.deepseek` — owner-binding (the authenticated
+    /// `caller`, NEVER the client-asserted `session_id`), the memory-recall preamble, the session
+    /// history fold, the gate-mandatory loop, and the owner-gated body projection are all
+    /// UNCHANGED. The sessionless-overrides body is left byte-untouched (additive).
+    ///
+    /// Returns the [`RoutedSelection`] (so the caller can assert WHO answered — `provider_id`)
+    /// alongside the owner-gated [`AuthedAnswer`]. A storage failure inside the loop is a SAFE
+    /// FAILURE: `Ok((selection, AuthedAnswer::NoAnswer))` — never a panic, never a partial body.
+    ///
+    /// DARK: like the rest of C2, the live Claude leg needs `FRIDAY_CLAUDE_ROUTE_ENABLED` + a live
+    /// Anthropic key (the gated `live()` path); the deterministic in-crate proof wires the route +
+    /// a stub metered client with NO key. NOT v1 GO.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_session_task_pinned(
+        &self,
+        caller: &AuthedPrincipal,
+        run_id: &str,
+        session_id: &str,
+        task: &str,
+        provider_id: &str,
+        now_ms: i64,
+    ) -> Result<(RoutedSelection, AuthedAnswer), RoutedLoopError> {
+        // (1) ROUTE + RESOLVE FIRST — the same chokepoint as the routed loop, BEFORE any write.
+        // A dark/unavailable pin fails closed here (NoClientForProvider / Route), so a dark Claude
+        // pin creates NO run row and bills NOTHING.
+        let request = RouteRequest {
+            preferred_provider: Some(provider_id.to_string()),
+            ..RouteRequest::any()
+        };
+        let route = crate::routing::select_route(&self.routes, &request)?;
+        let selection = RoutedSelection {
+            provider_id: route.provider_id.clone(),
+            model: route.model.clone(),
+            model_size: route.model_size,
+            backend_kind: route.backend_kind,
+        };
+        let client = self
+            .resolve(route)
+            .ok_or_else(|| RoutedLoopError::NoClientForProvider(route.provider_id.clone()))?;
+
+        // (2) From here this is byte-identical to `run_session_task_with_overrides` (the pre-C2
+        // sessioned body) EXCEPT the loop runs on the RESOLVED `client` instead of `&self.deepseek`.
+        // No per-run policy/max-turns override (the boot config applies, like `run_task_pinned`).
+        let policy = &self.policy;
+        let max_turns = self.max_turns;
+
+        // Create the run row FIRST (run_session_loop only ensure_sessions). A create failure is a
+        // SAFE FAILURE (body-free NoAnswer). The route is already resolved, so this only runs for a
+        // dispatchable pin — a dark pin already returned above without creating a row.
+        if agent_run::create_run(self.db.conn(), run_id, task, now_ms).is_err() {
+            return Ok((
+                selection,
+                AuthedAnswer::NoAnswer {
+                    run_id: run_id.to_string(),
+                },
+            ));
+        }
+
+        // Owner-scoping: bind the session owner to the AUTHENTICATED caller (INV-5/INV-7), NEVER
+        // the client-asserted session_id.
+        let owner = SessionOwner {
+            user_id: Some(caller.principal().to_string()),
+            ..SessionOwner::default()
+        };
+
+        // The owner's confirmed-memory recall preamble (same source as the unpinned entry).
+        let recall_preamble = match self.recall_preamble(run_id, now_ms) {
+            Ok(p) => p,
+            Err(_) => {
+                return Ok((
+                    selection,
+                    AuthedAnswer::NoAnswer {
+                        run_id: run_id.to_string(),
+                    },
+                ));
+            }
+        };
+
+        // Drive the EXISTING session loop AS the bound owner on the RESOLVED client (the ONLY
+        // change from the deepseek-hardcoded entry). The billing — a token_ledger row attributed to
+        // the client's own provider_kind/host — happens INSIDE the loop from the client's metered
+        // step, so a Claude client bills an anthropic row with NO extra wiring.
+        let approve = |req: &MutatingActionRequest| self.approval.approve(req);
+        let outcome = match run_session_loop(
+            client,
+            &self.executor,
+            self.db.conn(),
+            run_id,
+            session_id,
+            Some(&owner),
+            task,
+            &recall_preamble,
+            self.operator_vk.as_ref(),
+            &approve,
+            policy,
+            max_turns,
+            now_ms,
+        ) {
+            Ok(outcome) => outcome,
+            Err(_) => {
+                return Ok((
+                    selection,
+                    AuthedAnswer::NoAnswer {
+                        run_id: run_id.to_string(),
+                    },
+                ));
+            }
+        };
+
+        // Release the body ONLY to the authenticated owner, then attach the loop's counts.
+        let answer = project_answer_for_authed(self.db.conn(), run_id, caller)
+            .with_counts(outcome.turns, outcome.executed_tools);
+        Ok((selection, answer))
+    }
+
     /// S1.3 — the Mission-BOUND agent-loop entry (the `executeRun` Mission-context parity,
     /// deferred from S1.2). Mirrors [`crate::mission_runtime::ask_friday_for_mission`]'s
     /// preflight for the loop:
@@ -1406,6 +1539,140 @@ mod tests {
                 .is_empty(),
             "a route error bills nothing"
         );
+    }
+
+    // ---- C2 session-control routing: a SESSIONED follow-up/steer turn routes + bills ----------
+
+    /// Build an authenticated caller bound to `principal` over a freshly paired sealed session —
+    /// the SAME mechanism `hub_server`'s own tests use (ECDH-pair two DeviceKeypairs, seal the
+    /// agreed challenge, `AuthedPrincipal::authenticate`). The runtime treats this `caller` exactly
+    /// as the WS dispatch arm's authenticated principal.
+    fn authed_caller(principal: &str) -> AuthedPrincipal {
+        use friday_crypto::{seal, DeviceKeypair};
+        const AAD: &[u8] = b"c2-session-pinned-test-aad";
+        const CHALLENGE: &[u8] = b"c2-session-pinned-test-challenge";
+        let hub = DeviceKeypair::generate();
+        let phone = DeviceKeypair::generate();
+        let hub_session = hub.agree(&phone.public_bytes());
+        let caller_session = phone.agree(&hub.public_bytes());
+        let sealed = seal(&caller_session, CHALLENGE, AAD).unwrap();
+        AuthedPrincipal::authenticate(&hub_session, &sealed, AAD, CHALLENGE, principal).unwrap()
+    }
+
+    #[test]
+    fn session_followup_turn_routes_to_claude_and_bills_anthropic() {
+        // POSITIVE: a SESSIONED follow-up/steer turn pinned to "claude" routes through the REAL
+        // `run_session_task_pinned` entry to the wired Claude stub, finishes, and records EXACTLY
+        // ONE token_ledger row attributed to Anthropic (host api.anthropic.com, fallback=false) —
+        // NOT mis-attributed as deepseek. NO key, NO network. The sessioned parity of
+        // `run_task_pinned_claude_routes_through_runtime_and_writes_anthropic_row`.
+        let (rt, _ws) = runtime_with_claude_wired(
+            "c2-session-pinned-claude",
+            vec![AgentStep::Finish {
+                message: "PONG (follow-up)".to_string(),
+            }],
+            Box::new(DenyAllApprovals),
+        );
+        let caller = authed_caller("principal:session-owner");
+        let (selection, _answer) = rt
+            .run_session_task_pinned(
+                &caller,
+                "run-c2-session",
+                "sess-c2-1",
+                "make it shorter", // a session steer turn
+                "claude",
+                3_000,
+            )
+            .expect("a dispatchable claude pin runs through the sessioned entry");
+        assert_eq!(
+            selection.provider_id, "claude",
+            "the session steer turn resolved to claude"
+        );
+        // NOTE on the answer: `runtime_with_claude_wired` configures `principal_id: None`, so
+        // `run_session_loop`'s owner-wiring records NO owner ⇒ the body projection releases nothing
+        // (single-owner-v1 fail-closed: a run with no bound owner is unreadable). That is the
+        // CORRECT documented behavior and is ORTHOGONAL to the C2 routing+billing claim, which is
+        // what this KAT asserts: the run reached the wired CLAUDE client and billed an anthropic
+        // row. (Body delivery to a matching owner is covered by the sessionless owner-gating tests.)
+
+        // EXACTLY ONE anthropic row for the single claude turn — billed to anthropic, not deepseek.
+        let rows = rt.db().list_run_token_usage("run-c2-session").unwrap();
+        assert_eq!(
+            rows.len(),
+            1,
+            "one anthropic row for the single claude turn"
+        );
+        let row = &rows[0];
+        assert_eq!(
+            row.provider_kind, "anthropic",
+            "session turn billed to anthropic (NOT mis-attributed as deepseek)"
+        );
+        assert_eq!(row.base_url_host, "api.anthropic.com");
+        assert_eq!(row.model, friday_anthropic::DEFAULT_MODEL);
+        assert!(!row.fallback, "the claude route is never a fallback");
+        // Whole-ledger agrees: only this one anthropic row exists (no hidden deepseek call).
+        let all = rt.db().list_token_usage().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].provider_kind, "anthropic");
+    }
+
+    #[test]
+    fn session_pinned_claude_dark_fails_closed_and_bills_nothing() {
+        // NEGATIVE: the `claude` route is DISPATCHABLE (available+validated, as the gated `live()`
+        // path promotes it) but the Claude CLIENT is NOT wired (no `with_claude` — the resolver's
+        // documented dark backstop). A sessioned pin to "claude" then FAILS CLOSED at the resolve()
+        // chokepoint with NoClientForProvider — NEVER a silent reroute to deepseek — and bills
+        // NOTHING (no run row, no ledger row), because the failure is BEFORE any write. This is the
+        // sessioned mirror of the resolver's dark backstop; NO key, NO network.
+        let (mut rt, _ws, post_calls) = runtime_with(
+            "c2-session-dark",
+            &["{\"tool\":\"none\"}"],
+            Box::new(DenyAllApprovals),
+        );
+        // Promote the route to dispatchable WITHOUT wiring the client (claude stays None) — so the
+        // fail-closed is at resolve() (NoClientForProvider), not at select_route.
+        rt.mark_route_available("claude");
+        rt.mark_route_validated("claude");
+        let caller = authed_caller("principal:session-owner");
+        let err = rt
+            .run_session_task_pinned(
+                &caller,
+                "run-c2-session-dark",
+                "sess-c2-dark-1",
+                "make it shorter",
+                "claude",
+                4_000,
+            )
+            .expect_err("a dark claude pin must fail closed, never reroute");
+        match err {
+            RoutedLoopError::NoClientForProvider(p) => {
+                assert_eq!(
+                    p, "claude",
+                    "fail-closed names the dark provider, no reroute"
+                )
+            }
+            other => panic!("expected NoClientForProvider(claude), got {other:?}"),
+        }
+        // No reroute to deepseek: the deepseek transport was never called.
+        assert_eq!(post_calls.get(), 0, "no reroute — deepseek never called");
+        // Nothing was billed AND no run row was created (the fail-closed happened before any write).
+        assert!(
+            rt.db()
+                .list_run_token_usage("run-c2-session-dark")
+                .unwrap()
+                .is_empty(),
+            "a dark pin bills nothing"
+        );
+        let run_rows: i64 = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM agent_run WHERE run_id = 'run-c2-session-dark'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(run_rows, 0, "no agent_run row was created for the dark pin");
     }
 
     // ---- PROOF-MEMORY-001 recall→inject wiring -------------------------------
