@@ -712,6 +712,7 @@ version = "0.0.1"
 dependencies = [
  "friday-core",
  "friday-crypto",
+ "friday-storage",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

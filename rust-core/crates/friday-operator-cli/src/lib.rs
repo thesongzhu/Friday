@@ -8,11 +8,28 @@
 //! can VERIFY an approval but can NEVER MINT one. This is the cryptographic half of
 //! the operator's hard rule "the agent must never self-approve."
 //!
-//! Scope: this crate adds the keygen + sign tool ONLY. It does NOT wire into the
-//! live gate/resume (that is S6d), does NOT edit `friday-core::gate` or
-//! `friday-storage` (S6b owns them), and does NOT decide key CUSTODY (who generates
-//! / holds the operator key for the S6e proof — a Directive-0d operator gate). It
-//! merely loads a key from a path and signs. No network. PROOF-ONLY; NOT v1 GO.
+//! Scope: the operator-signing half of this crate adds the keygen + sign tool ONLY.
+//! It does NOT wire into the live gate/resume (that is S6d), does NOT edit
+//! `friday-core::gate` or `friday-storage` (S6b owns them), and does NOT decide key
+//! CUSTODY (who generates / holds the operator key for the S6e proof — a Directive-0d
+//! operator gate). It merely loads a key from a path and signs. No network.
+//! PROOF-ONLY; NOT v1 GO.
+//!
+//! ## NS-3: Hub-side trust-grant issuance/revoke (the OTHER half — see [`trust_grant`])
+//!
+//! `friday_storage::grant_trust` / `revoke_trust` had ZERO callers — so an enforced
+//! trust check (NS-2, a separate PR, default-OFF) would deny EVERY mutating action
+//! closed (`trust_no_active_grant`) because no issuance path could ever mint a
+//! `TrustGrant`. NS-3 adds that issuance path as an OPERATOR POLICY action: the
+//! [`trust_grant`] module mints / revokes a `TrustGrant` for an `agent_id` with its
+//! boundaries (risk ceiling, workspace / tool / provider / channel / family scopes,
+//! expiry) by calling `friday_storage::grant_trust` / `revoke_trust` against the Hub DB.
+//!
+//! This half links `friday-storage` (the only reason this crate now touches the Hub's
+//! storage graph; the keygen/sign path above stays storage-free). It is DARK: issuance
+//! is an operator action invoked from the CLI, NOT wired into the live run loop, and it
+//! does NOT enable enforcement (NS-2 owns the enforce flag, default-OFF). It is purely
+//! ADDITIVE — the keygen/sign behavior and output are unchanged.
 //!
 //! ## The crypto contract (why the Hub will accept what this emits)
 //!
@@ -69,6 +86,13 @@ pub enum CliError {
     BadDecision(String),
     #[error("invalid action_digest: expected 64 lowercase hex chars (a SHA-256 digest)")]
     BadActionDigest,
+    // ---- NS-3 trust-grant issuance/revoke ----
+    #[error("invalid trust grant: {0}")]
+    BadGrant(String),
+    #[error("could not open Hub database at {0}")]
+    OpenDb(String),
+    #[error("trust-grant storage error: {0}")]
+    Storage(String),
 }
 
 /// The pending-request the operator signs. Shaped to match what S6b persists when a
@@ -350,6 +374,180 @@ pub fn decode_verifying_key_hex(hex: &str) -> Option<[u8; VERIFYING_KEY_LEN]> {
 /// Decode a 64-byte hex signature emitted in [`SignedApproval::signature`].
 pub fn decode_signature_hex(hex: &str) -> Option<Vec<u8>> {
     from_hex(hex.trim())
+}
+
+/// NS-3 — Hub-side trust-grant issuance/revoke (the operator POLICY action).
+///
+/// This module is the call-site that mints / revokes a `friday_core::TrustGrant`
+/// through `friday_storage::grant_trust` / `revoke_trust` — the storage functions that
+/// otherwise had ZERO callers, so NS-2's enforced trust check could never be satisfied
+/// (it would deny every mutating action closed with `trust_no_active_grant`). It links
+/// `friday-storage` (the only Hub-storage coupling in this crate). It is DARK: invoked
+/// from the operator CLI, NOT from the live run loop, and it does NOT enable enforcement
+/// (NS-2 owns the enforce flag, default-OFF).
+pub mod trust_grant {
+    use super::CliError;
+    use friday_core::{Risk, TrustBoundaries, TrustGrant};
+    use friday_storage::Db;
+
+    /// Operator-supplied parameters for an issuance. Bundled into ONE struct (rather
+    /// than a wide function signature) so the boundary fields stay grouped and the
+    /// issuance call does not trip `clippy::too_many_arguments`. Every `Vec` allowlist
+    /// is fail-closed: EMPTY = DENY-ALL for that dimension (mirrors `check_grant`).
+    #[derive(Debug, Clone, Default)]
+    pub struct TrustGrantSpec {
+        /// Stable id for the grant row (e.g. `g-friday-2026`). Required, non-empty.
+        pub grant_id: String,
+        /// The agent the grant authorizes: `friday` | `codex` | `claude` |
+        /// `workflow:<id>` | `skill:<id>`. Required, non-empty.
+        pub agent_id: String,
+        /// Maximum effective risk an action may carry under this grant.
+        pub risk_ceiling: Risk,
+        /// `None` = no expiry; otherwise epoch-ms after which the grant is dead.
+        pub expires_at: Option<i64>,
+        /// Optional workspace path PREFIX the grant is confined to (`None` = any path).
+        pub workspace: Option<String>,
+        /// DEFERRED in storage (stored, NOT enforced — no live ledger/run counter).
+        pub token_ceiling: Option<i64>,
+        /// DEFERRED in storage (stored, NOT enforced).
+        pub max_runs: Option<i64>,
+        pub allowed_channels: Vec<String>,
+        pub allowed_providers: Vec<String>,
+        pub allowed_tools: Vec<String>,
+        pub allowed_workflow_families: Vec<String>,
+        pub allowed_skill_families: Vec<String>,
+    }
+
+    impl TrustGrantSpec {
+        /// Compose the `TrustGrant` this spec describes, granted at `now_ms`. Pure (no
+        /// I/O) — the persistence is done by [`issue`].
+        fn to_grant(&self, now_ms: i64) -> TrustGrant {
+            TrustGrant {
+                grant_id: self.grant_id.clone(),
+                agent_id: self.agent_id.clone(),
+                granted_at: now_ms,
+                expires_at: self.expires_at,
+                revoked: false,
+                revoked_at: None,
+                boundaries: TrustBoundaries {
+                    workspace: self.workspace.clone(),
+                    risk_ceiling: self.risk_ceiling,
+                    token_ceiling: self.token_ceiling,
+                    max_runs: self.max_runs,
+                    allowed_channels: self.allowed_channels.clone(),
+                    allowed_providers: self.allowed_providers.clone(),
+                    allowed_tools: self.allowed_tools.clone(),
+                    allowed_workflow_families: self.allowed_workflow_families.clone(),
+                    allowed_skill_families: self.allowed_skill_families.clone(),
+                },
+            }
+        }
+    }
+
+    /// Parse an operator-supplied risk string into the gate enum. Fail-closed: only the
+    /// five canonical spellings are accepted (matches `Risk::as_str`).
+    pub fn parse_risk(s: &str) -> Result<Risk, CliError> {
+        match s {
+            "read_only" => Ok(Risk::ReadOnly),
+            "low" => Ok(Risk::Low),
+            "medium" => Ok(Risk::Medium),
+            "high" => Ok(Risk::High),
+            "critical" => Ok(Risk::Critical),
+            other => Err(CliError::BadGrant(format!(
+                "unknown risk_ceiling {other:?}: expected one of \
+                 read_only|low|medium|high|critical"
+            ))),
+        }
+    }
+
+    /// Parse a comma-separated allowlist (e.g. `--tools read_file,write_file`) into a
+    /// `Vec<String>`. `None`/empty input yields an EMPTY vec — which `check_grant`
+    /// treats as DENY-ALL for that dimension (fail-closed). Surrounding whitespace is
+    /// trimmed; empty segments (e.g. a trailing comma) are dropped.
+    pub fn parse_csv(value: Option<&str>) -> Vec<String> {
+        match value {
+            None => Vec::new(),
+            Some(raw) => raw
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect(),
+        }
+    }
+
+    /// Build the issuance spec from already-parsed parts. Validates the two required
+    /// non-empty identifiers (fail-closed) so an empty `grant_id`/`agent_id` is caught
+    /// here rather than as an opaque storage error.
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_spec(
+        grant_id: String,
+        agent_id: String,
+        risk_ceiling: Risk,
+        expires_at: Option<i64>,
+        workspace: Option<String>,
+        token_ceiling: Option<i64>,
+        max_runs: Option<i64>,
+        allowed_channels: Vec<String>,
+        allowed_providers: Vec<String>,
+        allowed_tools: Vec<String>,
+        allowed_workflow_families: Vec<String>,
+        allowed_skill_families: Vec<String>,
+    ) -> Result<TrustGrantSpec, CliError> {
+        if grant_id.trim().is_empty() {
+            return Err(CliError::BadGrant("grant_id must not be empty".to_string()));
+        }
+        if agent_id.trim().is_empty() {
+            return Err(CliError::BadGrant("agent_id must not be empty".to_string()));
+        }
+        Ok(TrustGrantSpec {
+            grant_id,
+            agent_id,
+            risk_ceiling,
+            expires_at,
+            workspace,
+            token_ceiling,
+            max_runs,
+            allowed_channels,
+            allowed_providers,
+            allowed_tools,
+            allowed_workflow_families,
+            allowed_skill_families,
+        })
+    }
+
+    /// Issue (mint) the trust grant `spec` describes against the OPEN Hub `db`, granted
+    /// at `now_ms`. Routes through `friday_storage::grant_trust`, so the grant + its
+    /// hash-chained `trust.grant` audit row commit together. Returns the persisted
+    /// `TrustGrant` (so the caller can echo it / a test can assert the round-trip).
+    ///
+    /// `now_ms` is an argument (not read from a clock here) so a test can pin it; the
+    /// CLI supplies `SystemTime::now`.
+    pub fn issue(db: &Db, spec: &TrustGrantSpec, now_ms: i64) -> Result<TrustGrant, CliError> {
+        let grant = spec.to_grant(now_ms);
+        friday_storage::grant_trust(db.conn(), &grant, now_ms)
+            .map_err(|e| CliError::Storage(e.to_string()))?;
+        Ok(grant)
+    }
+
+    /// Revoke the grant `grant_id` against the OPEN Hub `db` at `now_ms`. Routes through
+    /// `friday_storage::revoke_trust`, so the `revoked=1` update + its `trust.revoke`
+    /// audit row commit together. Revoking a missing grant is a fail-closed error (the
+    /// storage layer returns one — no silent no-op that would look like a revoke).
+    pub fn revoke(db: &Db, grant_id: &str, now_ms: i64) -> Result<(), CliError> {
+        if grant_id.trim().is_empty() {
+            return Err(CliError::BadGrant("grant_id must not be empty".to_string()));
+        }
+        friday_storage::revoke_trust(db.conn(), grant_id, now_ms)
+            .map_err(|e| CliError::Storage(e.to_string()))
+    }
+
+    /// Open the Hub DB at `path` for an issuance/revoke. Wraps `Db::open_hub` so the
+    /// error is a clean `CliError::OpenDb` (the path is not secret; this never echoes
+    /// DB contents).
+    pub fn open_hub(path: &str) -> Result<Db, CliError> {
+        Db::open_hub(path).map_err(|_| CliError::OpenDb(path.to_string()))
+    }
 }
 
 #[cfg(test)]

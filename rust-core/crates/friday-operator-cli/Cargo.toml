@@ -1,6 +1,6 @@
 [package]
 name = "friday-operator-cli"
-description = "Friday Rust Core — OFFLINE operator-signing CLI (slice S6c). Holds the operator's PRIVATE Ed25519 key and emits operator-signed CanonicalApprovals; the Hub holds ONLY the public verify key. Deliberately depends on just friday-core + friday-crypto (NOT the Hub's secret-bearing graph), so the operator tool is decoupled from the Hub at compile time. Not wired to a live resume (S6d). PROOF-ONLY."
+description = "Friday Rust Core — operator CLI. (1) OFFLINE operator-signing (slice S6c): holds the operator's PRIVATE Ed25519 key and emits operator-signed CanonicalApprovals (the Hub holds ONLY the public verify key); this half links just friday-core + friday-crypto. (2) NS-3 Hub-side trust-grant issuance/revoke: mints/revokes a TrustGrant in the Hub DB via friday_storage (the operator POLICY action that makes NS-2's enforce flag satisfiable); this half links friday-storage. Not wired to a live resume (S6d). PROOF-ONLY."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
@@ -14,6 +14,11 @@ friday-core.workspace = true
 # OperatorSigningKey (S6a Ed25519 primitive). This crate is the OPERATOR side that
 # holds the PRIVATE key; the Hub holds only OperatorVerifyingKey.
 friday-crypto.workspace = true
+# NS-3: the Hub-side trust-grant issuance/revoke subcommand calls
+# friday_storage::grant_trust / revoke_trust against the Hub DB. This is the operator
+# POLICY action that mints a TrustGrant; it is what makes NS-2's (separate, default-OFF)
+# enforce flag ever satisfiable. The keygen/sign path stays storage-free.
+friday-storage.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
