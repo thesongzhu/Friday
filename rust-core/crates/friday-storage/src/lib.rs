@@ -23,6 +23,7 @@ mod migrate;
 pub mod mission;
 pub mod offline;
 pub mod pairing;
+pub mod passport;
 pub mod pending_request;
 pub mod process_registry;
 pub mod provider_session;
@@ -48,6 +49,7 @@ pub use error::{Result, StorageError};
 pub use migrate::{
     apply_migrations, current_version, now_ms, Migration, MigrationFn, MigrationReport,
 };
+pub use passport::{get_context_passport, list_for_mission, upsert_context_passport};
 pub use pending_request::{
     get_pending_request, list_pending_requests_for_run, persist_pending_request,
     set_pending_status, PendingApprovalRequest,
@@ -66,10 +68,11 @@ pub use schema::{hub_migrations, phone_migrations, HUB_ONLY_TABLES, PHONE_ONLY_T
 pub use session_lifecycle::{sweep_lifecycle, SweepOutcome};
 
 use friday_core::{
-    ActivityState, ActivityType, DeviceIdentity, FridayConversation, FridayPairPayload,
-    LedgerEntry, Mission, MissionLink, MissionSurfaceProjection, ProviderSessionEvent,
-    ProviderSessionLink, ProviderSessionProjection, RouteDecisionCard, RouteDecisionProjection,
-    SessionState, SurfaceEvent, SurfaceThread, TrustedDeviceProjection, WorkItem,
+    ActivityState, ActivityType, ContextPassport, DeviceIdentity, FridayConversation,
+    FridayPairPayload, LedgerEntry, Mission, MissionLink, MissionSurfaceProjection,
+    ProviderSessionEvent, ProviderSessionLink, ProviderSessionProjection, RouteDecisionCard,
+    RouteDecisionProjection, SessionState, SurfaceEvent, SurfaceThread, TrustedDeviceProjection,
+    WorkItem,
 };
 use friday_core::{ProcessLease, ProcessObservation, WorkspaceClaim};
 use rusqlite::{Connection, ErrorCode, OpenFlags};
@@ -727,6 +730,36 @@ impl Db {
             return Err(StorageError::Unsupported("WorkItems are Hub-only".into()));
         }
         mission::find_duplicate_work_item(&self.conn, candidate)
+    }
+
+    pub fn upsert_context_passport(&self, passport: &ContextPassport) -> Result<()> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Context Passports are Hub-only".into(),
+            ));
+        }
+        passport::upsert_context_passport(&self.conn, passport)
+    }
+
+    pub fn get_context_passport(&self, passport_id: &str) -> Result<Option<ContextPassport>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Context Passports are Hub-only".into(),
+            ));
+        }
+        passport::get_context_passport(&self.conn, passport_id)
+    }
+
+    pub fn list_context_passports_for_mission(
+        &self,
+        mission_id: &str,
+    ) -> Result<Vec<ContextPassport>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Context Passports are Hub-only".into(),
+            ));
+        }
+        passport::list_for_mission(&self.conn, mission_id)
     }
 
     pub fn upsert_surface_thread(&self, surface_thread: &SurfaceThread) -> Result<()> {

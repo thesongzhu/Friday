@@ -123,6 +123,19 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     // step already persisted as evidence; the key is a digest, never raw approval/mint
     // material. Nothing reads/writes it in production (DARK).
     "workflow_step_effect",
+    // Loop closure (v30): the Context Passport OBJECT store — the destination-bound
+    // carrier the Hub preflight checks before a sensitive external transfer (replacing
+    // the hollow ref-presence check). The parent `context_passport` row binds a built
+    // passport to its destination lane/target; `context_passport_item` is the child item
+    // set (one row per included/excluded item) kept in a separate table so the parent
+    // memory-lane `PassportItem` type stays serde-free / untouched. Hub-only: the
+    // passport mediates a transfer OUT of the Hub and is created only where the Hub
+    // preflight runs (never on a phone). Holds NO secret/key material BY CONSTRUCTION —
+    // `build_context_passport` runs `gate_transfer` so a never-transferable secret/token
+    // item can never be persisted; the stored item rows are non-secret labels/flags and
+    // the passport is rebuilt-and-re-gated on load, never trusted raw.
+    "context_passport",
+    "context_passport_item",
 ];
 
 /// Tables present only on a phone (never created on the Hub).
@@ -491,6 +504,20 @@ pub fn hub_migrations() -> Vec<Migration> {
             destructive: false,
             up: m0029_workflow_step_effect_idempotency,
         },
+        // Loop closure v30: TWO new Hub-only tables — `context_passport` (the built,
+        // destination-bound passport object) + its `context_passport_item` child set.
+        // This is the NEW-TABLE migration pattern (like m0026 system_intent / m0005
+        // agent_run), NOT an ALTER — so it touches no existing table and every pre-v30
+        // row/query is unaffected. The passport object is the destination binding the
+        // strengthened Hub preflight checks (replacing the hollow ref-presence gate);
+        // a row that does not rebuild-and-re-gate via `build_context_passport` on load
+        // fails closed (the gate treats it as absent).
+        Migration {
+            version: 30,
+            name: "context_passport",
+            destructive: false,
+            up: m0030_context_passport,
+        },
     ]
 }
 
@@ -687,6 +714,39 @@ CREATE TABLE workflow_step_effect (
     committed_at    INTEGER NOT NULL
 );
 CREATE INDEX idx_workflow_step_effect_run ON workflow_step_effect(run_id, seq);";
+
+// --- Loop closure v30: Context Passport object store (Hub-only) -------------
+
+// The built passport object + its item child set. `mission_id` / `work_item_id` are
+// PLAIN TEXT SOFT-LINKS (no FK, house style like `run_result.audit_ref`) so a passport
+// can be MINTED before its Mission/WorkItem row exists (the preflight gate mints, then
+// stages — the staging write is what the gate guards). `destination_lane` is the
+// `WorkLane::as_str` value; `destination_target` is the optional concrete provider/
+// agent/channel id. Items are stored as non-secret label/kind/flag rows (one per item):
+// `build_context_passport` ran `gate_transfer` BEFORE persist so a never-transferable
+// secret/token item can never reach this table, and the storage reader rebuilds-and-
+// re-gates through `build_context_passport` on load (a directly-INSERTed secret row
+// fails to rebuild => the gate treats the passport as absent => fail-closed).
+const DDL_CONTEXT_PASSPORT: &str = "
+CREATE TABLE context_passport (
+    passport_id        TEXT PRIMARY KEY,
+    mission_id         TEXT NOT NULL,
+    work_item_id       TEXT,
+    destination_lane   TEXT NOT NULL,
+    destination_target TEXT,
+    approved_sensitive INTEGER NOT NULL DEFAULT 0,
+    created_at_ms      INTEGER NOT NULL
+);
+CREATE INDEX idx_context_passport_mission ON context_passport(mission_id, created_at_ms);
+CREATE TABLE context_passport_item (
+    passport_id TEXT NOT NULL,
+    seq         INTEGER NOT NULL,
+    kind        TEXT NOT NULL,
+    label       TEXT NOT NULL,
+    included    INTEGER NOT NULL DEFAULT 1,
+    sensitive   INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (passport_id, seq)
+);";
 
 // --- PR-5 agent-loop fragments (Hub-only) -----------------------------------
 
@@ -2128,4 +2188,11 @@ fn m0028_agent_session_lifecycle(tx: &Transaction) -> rusqlite::Result<()> {
 /// or writes this table (DARK).
 fn m0029_workflow_step_effect_idempotency(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(DDL_WORKFLOW_STEP_EFFECT)
+}
+
+/// Loop closure v30: the two NEW Hub-only Context Passport tables
+/// (`DDL_CONTEXT_PASSPORT`). NEW-TABLE migration pattern (like m0029 / m0026), NOT an
+/// ALTER — touches no existing table, so every pre-v30 row and query is unaffected.
+fn m0030_context_passport(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_CONTEXT_PASSPORT)
 }

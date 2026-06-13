@@ -26,6 +26,7 @@ mod memory;
 mod mission;
 mod offline;
 mod pairing;
+mod passport;
 mod pathsafe;
 mod planning;
 mod process_registry;
@@ -69,6 +70,7 @@ pub use pairing::{
     FridayPairPayload, FridayPairProjection, PairAuthority, PairTransportHint, PairTransportKind,
     PairingSecret, TrustedDeviceProjection, CURRENT_PAIR_PAYLOAD_VERSION,
 };
+pub use passport::{build_context_passport, ContextPassport};
 pub use pathsafe::{contained, PathError};
 pub use planning::{classify_kind, PlanState, PlanningKind};
 pub use process_registry::{
