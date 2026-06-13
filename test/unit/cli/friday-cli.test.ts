@@ -711,7 +711,10 @@ describe("runCliSkillCommand", () => {
   });
 
   it("falls back to an embedded hub when no remote hub env is configured", async () => {
-    const parsed = parseArgs(argv("run", "demo-skill"));
+    // Uses the exempt `ai-inference` skillId so the local-mode skill-run
+    // retirement guard (which fail-closes arbitrary skillIds) does not block the
+    // live BYOK provider path that must keep reaching the embedded executor.
+    const parsed = parseArgs(argv("run", "ai-inference"));
     const logs: string[] = [];
     let startCount = 0;
     let stopCount = 0;
@@ -760,7 +763,9 @@ describe("runCliSkillCommand", () => {
   });
 
   it("sets a nonzero exit code when an embedded skill run reports failed", async () => {
-    const parsed = parseArgs(argv("run", "demo-skill"));
+    // Exempt `ai-inference` skillId — see note above; reaches the executor so the
+    // failed-status exit-code behavior stays under test post-guard.
+    const parsed = parseArgs(argv("run", "ai-inference"));
     const logs: string[] = [];
     let exitCode: number | undefined;
     let stopCount = 0;
@@ -806,6 +811,41 @@ describe("runCliSkillCommand", () => {
     expect(logs.some((line) => line.includes("Run run-local-failed — failed (7ms)"))).toBe(true);
     expect(logs.some((line) => line.includes("local failed"))).toBe(true);
     expect(logs.some((line) => line.includes("ended with status \"failed\""))).toBe(true);
+  });
+
+  it("fails closed with TS_RUNTIME_SKILL_RUNS_RETIRED for a NON-ai-inference local-hub run when the flag is UNSET (no hub booted, executor sink not reached)", async () => {
+    // Local-mode skill-run retirement guard. With no remote-hub env, the prior
+    // behavior booted an in-process hub and reached the arbitrary-code executor
+    // sink (shell/python) directly with a caller-supplied skillId, bypassing the
+    // HTTP route guard. The flag is UNSET (CLI buildConfig leaves
+    // allowTestOnlySkillRunExecution undefined → fail-closed by default), so this
+    // must throw before any hub is created.
+    const parsed = parseArgs(argv("run", "demo-skill"));
+    let createHubCalled = false;
+
+    await expect(
+      runCliSkillCommand(parsed, {
+        env: {},
+        createHub: (async () => {
+          createHubCalled = true;
+          throw new Error("createHub must not be called when the skill-run guard fails closed");
+        }) as FridayCliRunCommandDeps["createHub"],
+        fetchFn: async () => {
+          throw new Error("fetch should not be called for local execution");
+        },
+        logger: { log: () => {}, error: () => {} },
+      }),
+    ).rejects.toMatchObject({
+      code: "TS_RUNTIME_SKILL_RUNS_RETIRED",
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_skill_run_entrypoint_required",
+      },
+    });
+
+    // The guard fires BEFORE hub creation → the executor sink is never reached.
+    expect(createHubCalled).toBe(false);
   });
 
   it("fails fast when only one remote-hub env var is configured", async () => {
