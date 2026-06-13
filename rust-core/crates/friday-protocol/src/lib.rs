@@ -1105,6 +1105,27 @@ pub enum Message {
         /// prerequisite for any mutating run-control.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         constraints: Option<AgentRunConstraintsWire>,
+        /// (NS45-PR1 / M-4) The FIRST-CLASS Mission handle this run participates in, retiring the
+        /// provisional `session_id`-as-surface-thread shim that NS-4 used for mission resolution.
+        /// A real handle `{friday_conversation_id, mission_id, work_item_id}` from the NS-5
+        /// `MissionIntakeResult` lets the dispatch resolve the Mission via
+        /// `MissionContextLookup::by_mission_work_item` and route through the mission-bound run
+        /// path, INSTEAD of conflating a chat-session id with a surface-thread id.
+        ///
+        /// ADDITIVE + OPTIONAL — an absent field deserializes to `None` (`#[serde(default)]`) and
+        /// a `None` value is OMITTED from the wire (`skip_serializing_if`), so a request WITHOUT a
+        /// handle is BYTE-IDENTICAL to the pre-NS45 wire and routes through the UNCHANGED unbound
+        /// dispatch path. Mirrors the `session_id`/`constraints` additive-optional pattern.
+        ///
+        /// **SECURITY (INV-5/INV-7): this is a CLIENT ASSERTION, NOT an authority.** It selects
+        /// WHICH Mission/WorkItem the run binds to — it does NOT grant access. The run's bound
+        /// OWNER is the AUTHENTICATED forwarded principal (the FIX-Q2 `configured_principal` owner
+        /// gate at the mission-bound seam), NEVER this handle. A client-asserted `mission_id` is
+        /// safe under single-owner v1 + that owner gate; enforcing ownership of a client-asserted
+        /// `mission_id` under a multi-owner (`owner_allowlist > 1`) allowlist is a NAMED go-live
+        /// gate, not added here (see the NS45-PR1 scope).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mission_context: Option<MissionWorkItemContextWire>,
     },
     /// hub->trusted-TS-peer: REFS-ONLY terminal receipt for an agent-run.
     /// **WS-transport substrate (S-A).** It carries a coarse loop-status label and
@@ -2221,6 +2242,8 @@ mod tests {
             session_id: None,
             // A1 run-controls: a constraint-free request carries `None`.
             constraints: None,
+            // NS45-PR1: a request with no Mission handle carries `None`.
+            mission_context: None,
         };
         let env = Envelope::new("m1", 1000, msg.clone()).with_correlation("c1");
         let json = env.encode().unwrap();
@@ -2244,6 +2267,7 @@ mod tests {
             auth_proof: vec![0xDE, 0xAD, 0xBE, 0xEF],
             session_id: None,
             constraints: None,
+            mission_context: None,
         };
         let json = Envelope::new("m1", 1000, msg).encode().unwrap();
         assert!(
@@ -2256,6 +2280,13 @@ mod tests {
         assert!(
             !json.contains("constraints"),
             "a constraint-free AgentRunRequest must not carry a constraints key (byte-identical to pre-A1): {json}"
+        );
+        // (NS45-PR1) absent mission_context ⇒ NO `mission_context` key on the wire
+        // (byte-identical to the pre-NS45 AgentRunRequest, so a handle-free request decodes
+        // unchanged and routes through the unbound path).
+        assert!(
+            !json.contains("mission_context"),
+            "a handle-free AgentRunRequest must not carry a mission_context key (byte-identical to pre-NS45): {json}"
         );
     }
 
@@ -2273,6 +2304,7 @@ mod tests {
             auth_proof: vec![0x01, 0x02],
             session_id: Some("sess-abc".into()),
             constraints: None,
+            mission_context: None,
         };
         let env = Envelope::new("m2", 2000, msg.clone());
         let json = env.encode().unwrap();
@@ -2518,6 +2550,7 @@ mod tests {
                 disabled_tools: vec!["run_command".into(), "delete_file".into()],
                 max_turns: Some(3),
             }),
+            mission_context: None,
         };
         let json = Envelope::new("m", 1, constrained.clone()).encode().unwrap();
         assert!(json.contains("\"read_only\":true"));
@@ -2534,6 +2567,7 @@ mod tests {
             auth_proof: vec![],
             session_id: None,
             constraints: Some(AgentRunConstraintsWire::default()),
+            mission_context: None,
         };
         let json = Envelope::new("m", 1, empty.clone()).encode().unwrap();
         assert!(!json.contains("disabled_tools"));
@@ -2678,10 +2712,15 @@ mod tests {
             Message::AgentRunRequest {
                 session_id,
                 constraints,
+                mission_context,
                 ..
             } => {
                 assert_eq!(session_id, None);
                 assert_eq!(constraints, None);
+                // (NS45-PR1) the pre-NS45 wire (no `mission_context` key) decodes to `None`
+                // via `#[serde(default)]` — the additive-optional guarantee that makes
+                // deploying a build with this field safe for the current courier.
+                assert_eq!(mission_context, None);
             }
             other => panic!("expected AgentRunRequest, got {other:?}"),
         }

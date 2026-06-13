@@ -17,7 +17,11 @@ pub struct MissionContextLookup {
 }
 
 impl MissionContextLookup {
-    pub fn by_work_item(
+    /// Build a lookup from a FIRST-CLASS Mission handle `{friday_conversation_id, mission_id,
+    /// work_item_id}` (NS45-PR1 / M-4: the canonical resolution source, replacing the provisional
+    /// surface-thread shim for run mission resolution). The three ids are the SAME shape the
+    /// `MissionWorkItemContextWire` carries on the wire and the `MissionIntakeResult` emits.
+    pub fn by_mission_work_item(
         friday_conversation_id: impl Into<String>,
         mission_id: impl Into<String>,
         work_item_id: impl Into<String>,
@@ -28,6 +32,19 @@ impl MissionContextLookup {
             work_item_id: Some(work_item_id.into()),
             surface_thread_id: None,
         }
+    }
+
+    /// Back-compat alias for [`Self::by_mission_work_item`], retained so the existing in-crate
+    /// call sites (`provider_dispatch` + the runtime/mission_runtime tests) compile UNCHANGED —
+    /// NS45-PR1 only needed to NAME the first-class handle constructor, not churn callers in
+    /// files outside its scope (keeping `runtime.rs` untouched preserves the Wave-2 file
+    /// disjointness with TP-PR2). Delegates verbatim.
+    pub fn by_work_item(
+        friday_conversation_id: impl Into<String>,
+        mission_id: impl Into<String>,
+        work_item_id: impl Into<String>,
+    ) -> Self {
+        Self::by_mission_work_item(friday_conversation_id, mission_id, work_item_id)
     }
 
     pub fn by_surface_thread(surface_thread_id: impl Into<String>) -> Self {

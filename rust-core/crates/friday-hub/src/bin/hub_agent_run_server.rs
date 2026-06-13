@@ -449,10 +449,12 @@ fn agent_run_control_enabled_from(raw: Option<&str>) -> bool {
 /// run takes the EXISTING unbound dispatch (`run_authed_agent_loop_with_policy` /
 /// `run_session_task_with_overrides`), BYTE-IDENTICAL to today, so deploying this binary changes
 /// NO live behavior until the operator flips this SEPARATE flag. Even with the flag ON, a run is
-/// bound only if a `MissionContextLookup` resolves (no prod surface-thread-keyed session exists
-/// yet); otherwise it falls through unbound. SEPARATE from `FRIDAY_ROUTE_AGENT_RUN_VIA_RUST`
-/// (run-START) and `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST` (run-CONTROL); flipping THIS one is an
-/// operator cutover decision gated on organic Mission ingress.
+/// bound only if it carries a FIRST-CLASS `mission_context` handle (NS45-PR1 / M-4) that resolves
+/// to a live Mission/WorkItem via `MissionContextLookup::by_mission_work_item`; a run with no
+/// handle (every live courier today) falls through unbound. SEPARATE from
+/// `FRIDAY_ROUTE_AGENT_RUN_VIA_RUST` (run-START) and `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST`
+/// (run-CONTROL); flipping THIS one is an operator cutover decision gated on organic Mission
+/// ingress (the courier populating `AgentRunRequest.mission_context`).
 const MISSION_BOUND_RUN_ENABLED_ENV: &str = "FRIDAY_MISSION_BOUND_RUN";
 
 /// Pure flag-matcher for [`MISSION_BOUND_RUN_ENABLED_ENV`] (separated from the env read so it is
@@ -682,6 +684,12 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 // result through the per-run policy override the runtime now accepts. ABSENT
                 // (`None`) ⇒ NO override ⇒ the boot policy/ceiling, byte-identical to pre-A1.
                 constraints,
+                // (NS45-PR1 / M-4) The FIRST-CLASS Mission handle this run binds to, retiring the
+                // `session_id`-as-surface-thread shim NS-4 used for mission resolution. ABSENT
+                // (`None`) ⇒ NO handle ⇒ the run is NOT mission-resolvable ⇒ the unbound path,
+                // byte-identical to today. PRESENT ⇒ the mission-bound seam (when the flag is ON)
+                // resolves the Mission via `by_mission_work_item` from this handle.
+                mission_context,
             } => {
                 // The dispatch arm: AUTH BEFORE ANY RUN. The `auth_proof` is the peer-sealed
                 // challenge; reconstruct it as a `Sealed` for the session-key open. A malformed
@@ -766,21 +774,25 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 };
                 let policy_override = effective_policy.as_ref();
 
-                // (NS-4) MISSION-BOUND seam — FLAG-GATED, the FIRST dispatch consulted. When
-                // `FRIDAY_MISSION_BOUND_RUN` is ON **and** this run's `session_id` resolves to a
-                // live DeepSeek-lane Mission surface, the run is dispatched BOUND (minting the
-                // mission-birth + WorkItem bind) and the seam returns `Some(answer)`. Otherwise it
-                // returns `None` and we fall through to the EXISTING unbound dispatch below —
-                // BYTE-IDENTICAL to the pre-NS-4 path. With the flag OFF the `else` arm binds
-                // `None` WITHOUT ever calling the seam, so a flag-off run takes the exact same
-                // `match session_id` it always has.
+                // (NS45-PR1 / M-4) MISSION-BOUND seam — FLAG-GATED, the FIRST dispatch consulted.
+                // When `FRIDAY_MISSION_BOUND_RUN` is ON **and** this run carries a FIRST-CLASS
+                // `mission_context` handle that resolves to a live DeepSeek-lane Mission/WorkItem,
+                // the run is dispatched BOUND (minting the mission-birth + WorkItem bind) and the
+                // seam returns `Some(answer)`. Otherwise it returns `None` and we fall through to
+                // the EXISTING unbound dispatch below — BYTE-IDENTICAL to the pre-NS-4 path.
+                //
+                // The mission handle, NOT the `session_id` shim, is now the resolution source
+                // (M-4: the provisional surface-thread conflation is retired). With the flag OFF
+                // the `else` arm binds `None` WITHOUT ever calling the seam; and with the flag ON
+                // but NO handle the seam returns `None` immediately — in BOTH cases the run takes
+                // the exact same `match session_id` unbound dispatch it always has, byte-identical.
                 let mission_bound = if mission_bound_run_enabled {
                     friday_hub::hub_server::run_authed_agent_loop_mission_bound(
                         runtime,
                         &caller,
                         &run_id,
                         &task,
-                        session_id.as_deref(),
+                        mission_context.as_ref(),
                         policy_override,
                         max_turns_override,
                         now_ms,
@@ -1436,6 +1448,7 @@ mod tests {
                 auth_proof: auth_proof_bytes(client_session, session_nonce, principal, run_id),
                 session_id: None,
                 constraints: None,
+                mission_context: None,
             },
         )
     }
@@ -1461,6 +1474,7 @@ mod tests {
                 auth_proof: auth_proof_bytes(client_session, session_nonce, principal, run_id),
                 session_id: Some(session_id.to_string()),
                 constraints: None,
+                mission_context: None,
             },
         )
     }
@@ -2202,6 +2216,7 @@ mod tests {
                     auth_proof: bad_proof,
                     session_id: None,
                     constraints: None,
+                    mission_context: None,
                 },
             );
             (req, session.clone(), session.clone())
@@ -2573,6 +2588,7 @@ mod tests {
                     auth_proof: proof,
                     session_id: None,
                     constraints: None,
+                    mission_context: None,
                 },
             );
             ws_send_envelope(&mut ws, &sess_c1, &req, SESSION_AAD).unwrap();
@@ -2612,6 +2628,7 @@ mod tests {
                     auth_proof: captured_proof,
                     session_id: None,
                     constraints: None,
+                    mission_context: None,
                 },
             );
             ws_send_envelope(&mut ws, &sess_c2, &req, SESSION_AAD).unwrap();
