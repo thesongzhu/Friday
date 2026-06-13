@@ -94,14 +94,16 @@
 //! path STAYS LIVE (queue/auto parity pending; this flips NO TS-retirement state).
 //! PROOF-ONLY — NOT a v1 GO.
 
-use friday_core::MemoryScope;
+use friday_core::{
+    memory_review_needs_me, ActivityState, ActivityType, MemoryScope, MemoryState, NeedsMeItem,
+};
 use friday_deepseek::{DeepSeekClient, DeepSeekError, Transport};
 use friday_storage::agent_session::{
     load_pending_session_messages, load_session_owner, mark_messages_extracted,
     StoredSessionMessage,
 };
 use friday_storage::memory::{record_candidate, NewMemoryCandidate};
-use friday_storage::StorageError;
+use friday_storage::{ActivityRow, StorageError};
 use serde_json::Value;
 use std::collections::HashSet;
 
@@ -402,8 +404,100 @@ pub fn filter_sensitive(
     (safe, dropped)
 }
 
-/// Run one INLINE manual extraction for a session: derive namespace → read messages →
-/// prompt → provider call (ledgered) → parse → sensitivity-filter → persist candidates.
+/// The `FRIDAY_MEMORY_REVIEW_NEEDS_ME` env var (NS-8 — the memory-confirm loop closure).
+/// When ON, a post-run extraction that records a fresh `Candidate` ALSO surfaces ONE
+/// [`ActivityType::MemoryReview`] activity row per candidate on the operator's Needs-Me /
+/// review surface (so a freshly-recorded pending candidate becomes visible review work, not
+/// just a `memory_item` row). DEFAULT-OFF: unset / empty / `"0"` / any value other than the
+/// exact opt-in `"1"` ⇒ OFF, and the extraction is BYTE-IDENTICAL to the pre-NS-8 baseline
+/// (no [`memory_review_needs_me`] call, NO activity row, no extra query). It is read ONCE in
+/// the public [`extract_inline`] (the chokepoint every production caller — the bin — goes
+/// through) and threaded as a pure bool to [`extract_inline_flagged`] — the "split env-read
+/// from pure logic" idiom (mirroring NS-7's `activity_needs_me_from`), so the behavioral tests
+/// inject the bool directly and never race `std::env`.
+pub const FRIDAY_MEMORY_REVIEW_NEEDS_ME: &str = "FRIDAY_MEMORY_REVIEW_NEEDS_ME";
+
+/// Pure flag-matcher for [`FRIDAY_MEMORY_REVIEW_NEEDS_ME`] (env read split out so it is
+/// unit-testable without `set_var` — the env-race-free idiom this codebase uses). DEFAULT-OFF:
+/// `None` (unset) ⇒ false; ON ONLY for the exact opt-in value `"1"` (after trim); everything
+/// else (empty, `"0"`, `"true"`, any other token) ⇒ false.
+fn memory_review_needs_me_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
+/// Pure projection: turn a freshly-recorded candidate into the ONE [`ActivityRow`] that
+/// surfaces it on the operator's Needs-Me / Memory-Review surface — or `None` when it must
+/// NOT surface. The candidate's [`MemoryState`] is threaded through the proven producer
+/// [`memory_review_needs_me`]: a pending `Candidate` ⇒ `Some(NeedsMeItem)` ⇒ a `Pending`
+/// [`ActivityType::MemoryReview`] row; a terminal `Confirmed`/`Rejected` candidate ⇒ `None`
+/// (the decision is made — it never re-surfaces, the terminal-is-final invariant). The
+/// row carries the producer's content-free `reason` as the `summary` and its
+/// `destination` (`memory/{scope}/{id}`, a refs-only label — never candidate content) in
+/// BOTH the `summary` (so the [`Db::list_activity`] projection, which drops `deep_link`,
+/// surfaces it) and `deep_link`. The `activity_id` is keyed on the candidate's `memory_id`
+/// (`activity_item.activity_id` is the PRIMARY KEY), so re-surfacing the SAME candidate is a
+/// fail-closed duplicate insert (idempotent — no duplicate row; mirrors NS-7's nonce key).
+fn memory_review_activity_row(
+    memory_id: &str,
+    state: MemoryState,
+    scope: MemoryScope,
+    summary: &str,
+    now_ms: i64,
+) -> Option<ActivityRow> {
+    let NeedsMeItem {
+        reason,
+        destination,
+        ..
+    } = memory_review_needs_me(memory_id, state, scope, summary)?;
+    Some(ActivityRow {
+        activity_id: format!("memory-review-needs-me-{memory_id}"),
+        // The candidate's memory id is the binding ref (a safe id, not a body).
+        session_id: None,
+        kind: ActivityType::MemoryReview,
+        state: ActivityState::Pending,
+        // The projection drops `deep_link`, so the destination lives in the summary too.
+        summary: format!("{reason} ({destination})"),
+        created_at: now_ms,
+        updated_at: now_ms,
+        deep_link: Some(destination),
+    })
+}
+
+/// Run one INLINE manual extraction for a session (public entrypoint; signature UNCHANGED
+/// so every existing caller — the `hub_extract_memory` bin and the in-crate tests — is
+/// untouched). Reads the NS-8 [`FRIDAY_MEMORY_REVIEW_NEEDS_ME`] flag ONCE here (the only env
+/// read; semantics in [`memory_review_needs_me_from`]) and delegates to
+/// [`extract_inline_flagged`]. The flag is **default-OFF**: when off the extraction is
+/// BYTE-IDENTICAL to the pre-NS-8 baseline (no `memory_review_needs_me` call, NO activity
+/// row, no extra query).
+#[allow(clippy::too_many_arguments)]
+pub fn extract_inline<T: Transport>(
+    db: &mut friday_storage::Db,
+    session_id: &str,
+    client: &DeepSeekClient<T>,
+    max_items: usize,
+    candidate_id_prefix: &str,
+    ledger_id: &str,
+    now_ms: i64,
+) -> Result<ExtractionOutcome, ExtractionError> {
+    // Read the NS-8 flag ONCE here; the body is pure on the resulting bool.
+    let memory_review =
+        memory_review_needs_me_from(std::env::var(FRIDAY_MEMORY_REVIEW_NEEDS_ME).ok().as_deref());
+    extract_inline_flagged(
+        db,
+        session_id,
+        client,
+        max_items,
+        candidate_id_prefix,
+        ledger_id,
+        now_ms,
+        memory_review,
+    )
+}
+
+/// The flag-parameterized extraction body: derive namespace → read messages → prompt →
+/// provider call (ledgered) → parse → sensitivity-filter → persist candidates → (NS-8,
+/// flag-gated) surface each freshly-recorded candidate on the Needs-Me surface.
 ///
 /// `client` is generic over [`Transport`] so tests inject a mock provider and the
 /// bin passes a live `DeepSeekClient::from_env()`. The call+ledger reuses
@@ -415,6 +509,19 @@ pub fn filter_sensitive(
 /// `"<session>:extract:<now_ms>"`). Slice-2 makes re-runs IDEMPOTENT at the source:
 /// only PENDING messages are read, and a successful run marks the processed messages
 /// `'extracted'`, so a second run reads no pending and creates no duplicate candidates.
+///
+/// ## NS-8 — flag-gated Memory-Review Needs-Me surfacing ([`FRIDAY_MEMORY_REVIEW_NEEDS_ME`])
+/// `memory_review` is supplied by the public [`extract_inline`] (from the env flag) and
+/// injected directly by the NS-8 behavioral tests (so they never mutate `std::env`). When
+/// TRUE, AFTER the candidates commit, each candidate FRESHLY recorded by THIS extraction is
+/// projected through [`memory_review_activity_row`] (the proven [`memory_review_needs_me`]
+/// producer) and persisted as ONE `Pending` [`ActivityType::MemoryReview`] activity row, so a
+/// pending candidate becomes visible review work. ONLY this run's freshly-recorded candidate
+/// ids are surfaced (collected inside the record loop — never a re-query of pending
+/// candidates, which would re-surface earlier runs' items). The write is best-effort
+/// (`let _`): a surfacing/duplicate error can NEVER roll back the committed candidates nor
+/// flip the run outcome. When FALSE the surfacing block is skipped entirely and the path is
+/// byte-identical to the pre-NS-8 baseline.
 ///
 /// ## Slice-3 ownership-binding (the store SCOPE is DERIVED from the SESSION)
 /// There is NO caller-supplied principal: the store scope (`principal_id`) is DERIVED
@@ -428,7 +535,7 @@ pub fn filter_sensitive(
 /// TS `MEMORY_NAMESPACE_UNRESOLVABLE`. The derived namespace is echoed in
 /// [`ExtractionOutcome::derived_namespace`].
 #[allow(clippy::too_many_arguments)]
-pub fn extract_inline<T: Transport>(
+pub fn extract_inline_flagged<T: Transport>(
     db: &mut friday_storage::Db,
     session_id: &str,
     client: &DeepSeekClient<T>,
@@ -436,6 +543,7 @@ pub fn extract_inline<T: Transport>(
     candidate_id_prefix: &str,
     ledger_id: &str,
     now_ms: i64,
+    memory_review: bool,
 ) -> Result<ExtractionOutcome, ExtractionError> {
     if session_id.trim().is_empty() {
         return Err(ExtractionError::BadInput("session_id"));
@@ -528,6 +636,12 @@ pub fn extract_inline<T: Transport>(
         .unchecked_transaction()
         .map_err(StorageError::from)?;
     let mut candidates_created = 0usize;
+    // NS-8: capture EXACTLY the candidate ids this extraction freshly records (the `Some`
+    // set surfaced below). Built INSIDE the record loop — never a re-query of pending
+    // candidates afterward, which could include earlier runs' pending items the task
+    // forbids re-surfacing. Each carries the candidate's `kind` (a fixed VALID_KINDS token,
+    // never content/PII) as the content-free card label. Empty + cheap when the flag is OFF.
+    let mut fresh_candidate_ids: Vec<(String, String)> = Vec::new();
     for (i, item) in safe_items.iter().enumerate() {
         let memory_id = format!("{candidate_id_prefix}:c{i}");
         record_candidate(
@@ -549,9 +663,34 @@ pub fn extract_inline<T: Transport>(
             },
         )?;
         candidates_created += 1;
+        if memory_review {
+            fresh_candidate_ids.push((memory_id, item.kind.clone()));
+        }
     }
     let messages_marked_extracted = mark_messages_extracted(&tx, &message_ids)?;
     tx.commit().map_err(StorageError::from)?;
+
+    // NS-8 (flag-gated, default-OFF): AFTER the candidates are durably committed, surface
+    // each freshly-recorded candidate as ONE Needs-Me / Memory-Review activity row. Each
+    // candidate was just written by `record_candidate` as `state = Candidate` (always — it
+    // has no other state), so it is threaded as `MemoryState::Candidate` through the proven
+    // `memory_review_needs_me` producer (terminal states yield `None`; that branch is
+    // exercised by the unit test, not reachable here by construction). Best-effort
+    // (`let _`): a duplicate insert (same candidate re-surfaced) or any activity-write error
+    // can NEVER roll back the committed candidates nor flip the run outcome — the candidates
+    // already persisted. When `memory_review` is FALSE this loop is empty and skipped, so the
+    // path is byte-identical to the pre-NS-8 baseline.
+    for (memory_id, label) in &fresh_candidate_ids {
+        if let Some(row) = memory_review_activity_row(
+            memory_id,
+            MemoryState::Candidate,
+            MemoryScope::Session,
+            label,
+            now_ms,
+        ) {
+            let _ = db.insert_activity(&row);
+        }
+    }
 
     Ok(ExtractionOutcome {
         messages_read,
@@ -1455,5 +1594,218 @@ mod tests {
             parse_items("{\"no_items_key\":true}", &valid),
             Err(ExtractionError::Parse)
         ));
+    }
+
+    // ── NS-8: surface a Memory-Review Needs-Me item per freshly-recorded candidate ──────
+    // (FRIDAY_MEMORY_REVIEW_NEEDS_ME, default-OFF). The flag bool is INJECTED into
+    // `extract_inline_flagged` directly so the tests never mutate `std::env` (no in-process
+    // race) — the codebase's split-env-read-from-pure-logic idiom (mirrors NS-7).
+
+    /// The `memory_review` activity rows on the surface, via the same `list_activity`
+    /// projection the operator's Needs-Me surface reads (drops `deep_link`/`session_id`).
+    fn memory_review_rows(db: &friday_storage::Db) -> Vec<friday_storage::ActivitySummary> {
+        db.list_activity()
+            .unwrap()
+            .into_iter()
+            .filter(|a| a.kind == ActivityType::MemoryReview.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn ns8_pure_flag_matcher_is_default_off_and_only_exact_one_enables() {
+        assert!(
+            !memory_review_needs_me_from(None),
+            "unset ⇒ OFF (prod default)"
+        );
+        assert!(!memory_review_needs_me_from(Some("")), "empty ⇒ OFF");
+        assert!(!memory_review_needs_me_from(Some("0")), "0 ⇒ OFF");
+        assert!(!memory_review_needs_me_from(Some("off")), "off ⇒ OFF");
+        assert!(
+            !memory_review_needs_me_from(Some("true")),
+            "true ⇒ OFF (exact-1 only)"
+        );
+        assert!(memory_review_needs_me_from(Some("1")), "1 ⇒ ON");
+        assert!(memory_review_needs_me_from(Some("  1  ")), "trimmed 1 ⇒ ON");
+    }
+
+    #[test]
+    fn ns8_pure_row_builder_surfaces_candidate_and_skips_terminal() {
+        // A pending Candidate ⇒ ONE Pending memory_review row whose summary + deep_link carry
+        // the refs-only destination `memory/{scope}/{id}` (the `list_activity` projection
+        // drops `deep_link`, so the destination must also be in the summary).
+        let row = memory_review_activity_row(
+            "s1:ex:100:c0",
+            MemoryState::Candidate,
+            MemoryScope::Session,
+            "preference",
+            100,
+        )
+        .expect("a pending candidate surfaces");
+        assert_eq!(row.activity_id, "memory-review-needs-me-s1:ex:100:c0");
+        assert_eq!(row.kind.as_str(), "memory_review");
+        assert_eq!(row.state.as_str(), "pending");
+        assert_eq!(
+            row.deep_link.as_deref(),
+            Some("memory/session/s1:ex:100:c0")
+        );
+        assert!(
+            row.summary.contains("memory/session/s1:ex:100:c0"),
+            "destination must be in the (projection-surfaced) summary: {}",
+            row.summary
+        );
+        // TERMINAL candidate ⇒ None ⇒ never surfaced (terminal-is-final; producer's branch).
+        assert!(
+            memory_review_activity_row(
+                "s1:ex:100:c0",
+                MemoryState::Confirmed,
+                MemoryScope::Session,
+                "preference",
+                100,
+            )
+            .is_none(),
+            "a confirmed (terminal) candidate must NOT surface"
+        );
+        assert!(memory_review_activity_row(
+            "s1:ex:100:c0",
+            MemoryState::Rejected,
+            MemoryScope::Session,
+            "preference",
+            100,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn ns8_flag_on_surfaces_one_memory_review_row_per_fresh_candidate() {
+        let mut db = friday_storage::Db::open_hub(&tmp("ns8-on")).unwrap();
+        let ids = seed_session(&db, "s1", "alice");
+        let content = json!({
+            "items": [{
+                "kind": "preference",
+                "content": "User's project codename is Falcon.",
+                "sourceMessageIds": [ids[0]],
+                "tags": ["naming"]
+            }]
+        })
+        .to_string();
+        let c = client(content);
+
+        let out = extract_inline_flagged(
+            &mut db,
+            "s1",
+            &c,
+            DEFAULT_MAX_ITEMS,
+            "s1:ex:100",
+            "led-1",
+            100,
+            true, // flag ON
+        )
+        .unwrap();
+        assert_eq!(out.candidates_created, 1);
+
+        // EXACTLY one memory_review row, Pending, tied to THIS candidate via its destination
+        // `memory/{scope}/{id}` (scope = session; id = the freshly-minted candidate id).
+        let rows = memory_review_rows(&db);
+        assert_eq!(rows.len(), 1, "one row per freshly-recorded candidate");
+        assert_eq!(rows[0].activity_id, "memory-review-needs-me-s1:ex:100:c0");
+        assert_eq!(rows[0].state, "pending");
+        assert!(
+            rows[0].summary.contains("memory/session/s1:ex:100:c0"),
+            "row references the candidate's destination: {}",
+            rows[0].summary
+        );
+        // The candidate content must NEVER leak into the surfaced summary (PII-safe label).
+        assert!(
+            !rows[0].summary.contains("Falcon"),
+            "candidate content must not leak into the Needs-Me card: {}",
+            rows[0].summary
+        );
+    }
+
+    #[test]
+    fn ns8_flag_on_terminal_candidate_is_not_surfaced() {
+        // Drive the surfacing projection with a TERMINAL state directly (the proven producer
+        // returns None) — the honest exercise of terminal-is-final. `extract_inline` only ever
+        // freshly records `Candidate`s, so a terminal candidate cannot arise in that loop; the
+        // skip lives in `memory_review_activity_row` and is verified here end-to-end on the DB.
+        let db = friday_storage::Db::open_hub(&tmp("ns8-terminal")).unwrap();
+        for state in [MemoryState::Confirmed, MemoryState::Rejected] {
+            if let Some(row) =
+                memory_review_activity_row("m-terminal", state, MemoryScope::Session, "fact", 10)
+            {
+                db.insert_activity(&row).unwrap();
+            }
+        }
+        assert!(
+            memory_review_rows(&db).is_empty(),
+            "a terminal candidate yields no memory_review row"
+        );
+    }
+
+    #[test]
+    fn ns8_flag_off_is_byte_identical_no_review_row() {
+        let mut db = friday_storage::Db::open_hub(&tmp("ns8-off")).unwrap();
+        let ids = seed_session(&db, "s1", "alice");
+        let content = json!({
+            "items": [{
+                "kind": "preference",
+                "content": "User's project codename is Falcon.",
+                "sourceMessageIds": [ids[0]]
+            }]
+        })
+        .to_string();
+        let c = client(content);
+
+        let before = db.list_activity().unwrap();
+        let out = extract_inline_flagged(
+            &mut db,
+            "s1",
+            &c,
+            DEFAULT_MAX_ITEMS,
+            "s1:ex:100",
+            "led-1",
+            100,
+            false, // flag OFF (default)
+        )
+        .unwrap();
+        // The candidate still records exactly as today — the flag governs ONLY surfacing.
+        assert_eq!(out.candidates_created, 1);
+        assert_eq!(pending_review(db.conn()).unwrap().len(), 1);
+        // No memory_review row, and the activity surface is unchanged (byte-identical).
+        assert!(
+            memory_review_rows(&db).is_empty(),
+            "flag OFF ⇒ no review row"
+        );
+        assert_eq!(
+            db.list_activity().unwrap(),
+            before,
+            "flag OFF ⇒ activity surface byte-identical"
+        );
+    }
+
+    #[test]
+    fn ns8_re_surfacing_same_candidate_is_idempotent_one_row() {
+        // The activity_id is keyed on the candidate's memory_id (the PRIMARY KEY), so a
+        // second insert of the SAME candidate's row is a fail-closed duplicate — swallowed by
+        // the best-effort `let _` in the surfacing step, leaving exactly one row. `extract_inline`
+        // cannot naturally re-surface a candidate (unique `now_ms` prefix + message dedup), so
+        // this drives the insert path directly.
+        let db = friday_storage::Db::open_hub(&tmp("ns8-dedup")).unwrap();
+        let row = memory_review_activity_row(
+            "s1:ex:100:c0",
+            MemoryState::Candidate,
+            MemoryScope::Session,
+            "preference",
+            100,
+        )
+        .unwrap();
+        db.insert_activity(&row).unwrap();
+        // Re-surface the SAME candidate: best-effort swallow of the duplicate-PK error.
+        let _ = db.insert_activity(&row);
+        assert_eq!(
+            memory_review_rows(&db).len(),
+            1,
+            "re-surfacing the same candidate must not duplicate the row"
+        );
     }
 }
