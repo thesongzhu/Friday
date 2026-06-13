@@ -2911,6 +2911,28 @@ pub fn run_loop(
 /// attempt (or the final exhausted failure) is recorded once, OUTSIDE this inner loop.
 const RUN_LOOP_MAX_PROVIDER_ATTEMPTS: u32 = 3;
 
+/// The `FRIDAY_ACTIVITY_NEEDS_ME` env var (NS-7). When ON, a run that Pauses for approval
+/// ALSO writes ONE [`friday_storage::insert_pending_approval_activity`] row so the pending
+/// approval surfaces on the operator's Needs-Me surface. DEFAULT-OFF: unset / empty / `"0"` /
+/// any other value ⇒ OFF, and the Pause arm is BYTE-IDENTICAL to today (the
+/// `pending_approval_request` persists exactly as now, NO activity row). It is read ONCE in
+/// the public [`run_loop_with_policy`] (the common chokepoint for every production caller) and
+/// threaded as a pure bool to the inner [`run_loop_with_policy_flagged`] — the
+/// "split env-read from pure logic" idiom (mirroring `trust_grant_enforce_from`), so the
+/// behavioral tests inject the bool directly and never race `std::env`.
+pub const FRIDAY_ACTIVITY_NEEDS_ME: &str = "FRIDAY_ACTIVITY_NEEDS_ME";
+
+/// Pure flag-matcher for [`FRIDAY_ACTIVITY_NEEDS_ME`] (env read split out so it is unit-
+/// testable without `set_var` — the env-race-free idiom this codebase uses everywhere).
+/// DEFAULT-OFF: `None` (unset) ⇒ false; only the exact opt-in values `"1"`/`"true"`
+/// (case-insensitive, trimmed) ⇒ true; everything else ⇒ false.
+fn activity_needs_me_from(raw: Option<&str>) -> bool {
+    matches!(
+        raw.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("1") | Some("true")
+    )
+}
+
 /// `cancel` (C2-1) is an OPTIONAL cooperative cancellation handle checked at the TOP of
 /// each turn, BEFORE the model call. When `Some` and already tripped at a turn boundary,
 /// the loop stops with [`LoopStatus::Interrupted`]: it makes NO further model call and
@@ -2930,6 +2952,16 @@ const RUN_LOOP_MAX_PROVIDER_ATTEMPTS: u32 = 3;
 /// into exactly one turn (the drain consumes it), and it cannot revive a `Finish`ed loop (there
 /// is no next boundary). It changes the prompt the model sees, never the run row / classification
 /// / billing attribution — the billed row is the ordinary per-turn anthropic/deepseek row.
+///
+/// ## NS-7 — flag-gated Activity/Needs-Me item on Pause ([`FRIDAY_ACTIVITY_NEEDS_ME`])
+/// This public entrypoint reads the [`FRIDAY_ACTIVITY_NEEDS_ME`] flag ONCE here (the only env
+/// read; semantics in [`activity_needs_me_from`]) and delegates to the parameterized
+/// [`run_loop_with_policy_flagged`]. The flag is **default-OFF**: when off the Pause arm is
+/// BYTE-IDENTICAL to the pre-NS-7 baseline (the `pending_approval_request` persists exactly as
+/// now, and NO activity row is written). The signature is unchanged so every existing caller
+/// (`run_loop`, the run-bound wrapper, `routing.rs`, the integration tests) is untouched — the
+/// `activity_needs_me` bool lives only on the private inner fn (the codebase's "split env-read
+/// from pure logic" idiom, mirroring NS-2's `gate_dispatch_with_policy` → `_enforced`).
 #[allow(clippy::too_many_arguments)]
 pub fn run_loop_with_policy(
     client: &dyn AgentLlmClient,
@@ -2945,6 +2977,49 @@ pub fn run_loop_with_policy(
     cancel: Option<&CancelToken>,
     steer: Option<&SteerHandle>,
     now_ms: i64,
+) -> Result<LoopOutcome, StorageError> {
+    // Read the NS-7 flag ONCE here; the loop body is pure on the resulting bool.
+    let activity_needs_me =
+        activity_needs_me_from(std::env::var(FRIDAY_ACTIVITY_NEEDS_ME).ok().as_deref());
+    run_loop_with_policy_flagged(
+        client,
+        executor,
+        conn,
+        run_id,
+        task,
+        recall_preamble,
+        operator_vk,
+        approve,
+        policy,
+        max_turns,
+        cancel,
+        steer,
+        now_ms,
+        activity_needs_me,
+    )
+}
+
+/// The flag-parameterized loop body. `activity_needs_me` is supplied by the public
+/// [`run_loop_with_policy`] (from the env flag) and injected directly by the NS-7 behavioral
+/// test (so it never mutates `std::env`, avoiding the in-process test race). When
+/// `activity_needs_me` is FALSE the Pause arm writes NO activity row and is byte-identical to
+/// the pre-NS-7 baseline.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_loop_with_policy_flagged(
+    client: &dyn AgentLlmClient,
+    executor: &dyn ToolExecutor,
+    conn: &Connection,
+    run_id: &str,
+    task: &str,
+    recall_preamble: &str,
+    operator_vk: Option<&OperatorVerifyingKey>,
+    approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
+    policy: &RunPolicy,
+    max_turns: u64,
+    cancel: Option<&CancelToken>,
+    steer: Option<&SteerHandle>,
+    now_ms: i64,
+    activity_needs_me: bool,
 ) -> Result<LoopOutcome, StorageError> {
     // Plan classification recorded ONCE (it is a property of the task, constant across
     // turns). Uses the CLEAN `task` — the recall preamble below augments only the prompt,
@@ -3267,6 +3342,23 @@ pub fn run_loop_with_policy(
                     format!("tool.paused:requires_approval:{}", raw.action)
                 };
                 agent_run::record_event(conn, &ev("outcome"), run_id, &outcome, now_ms)?;
+                // NS-7 (flag-gated, default-OFF): ALSO surface this pending approval on the
+                // operator's Needs-Me surface as ONE activity row tied to THIS run + the SAME
+                // CSPRNG `nonce`. Gated on `pending_recorded` so a Needs-Me item never points
+                // at a pending approval that failed to persist. Best-effort (`let _`): a
+                // flag-ON activity-write error can NEVER flip this Pause into an `Err` — the
+                // run still Pauses, exactly as the existing "persistence failure still Pauses"
+                // stance. Flag OFF ⇒ this whole block is skipped and the arm is byte-identical
+                // to the pre-NS-7 baseline.
+                if activity_needs_me && pending_recorded {
+                    let _ = friday_storage::insert_pending_approval_activity(
+                        conn,
+                        run_id,
+                        &nonce,
+                        &raw.action,
+                        now_ms,
+                    );
+                }
                 return Ok(LoopOutcome {
                     status: LoopStatus::Paused,
                     turns: turn_index + 1,
@@ -4169,6 +4261,137 @@ mod tests {
         assert_eq!(c_base.1, 0, "a denied write never executes");
         assert!(!c_base.2, "no file written on Deny");
         assert_eq!(c_base, c_ctx, "(c) Deny loop outcome unchanged by context");
+    }
+
+    // ── NS-7: flag-gated Activity/Needs-Me item on Pause (FRIDAY_ACTIVITY_NEEDS_ME) ────
+    // FAITHFUL BEHAVIORAL TEST (real DB + real FsToolExecutor, NO mock). The flag is
+    // injected via `run_loop_with_policy_flagged`'s `activity_needs_me` bool — NOT
+    // `std::env::set_var` — so it never races the byte-identical loop tests in-process.
+    // The pure env-matcher glue is covered separately by `ns7_activity_needs_me_from_*`.
+
+    #[test]
+    fn ns7_activity_needs_me_from_only_opt_in_enables() {
+        // The ONLY env-parse glue (the behavioral test bypasses env). Default-OFF; only the
+        // exact opt-in values `"1"`/`"true"` (case-insensitive, trimmed) enable.
+        assert!(!activity_needs_me_from(None), "unset ⇒ OFF (prod default)");
+        assert!(!activity_needs_me_from(Some("")), "empty ⇒ OFF");
+        assert!(!activity_needs_me_from(Some("0")), "0 ⇒ OFF");
+        assert!(!activity_needs_me_from(Some("off")), "off ⇒ OFF");
+        assert!(activity_needs_me_from(Some("1")), "1 ⇒ ON");
+        assert!(activity_needs_me_from(Some("true")), "true ⇒ ON");
+        assert!(
+            activity_needs_me_from(Some("  TRUE  ")),
+            "whitespace-padded TRUE ⇒ ON (trimmed, case-insensitive)"
+        );
+    }
+
+    /// Drive a REAL run through `run_loop_with_policy_flagged` to a mutating-write Pause
+    /// (unprovisioned operator key ⇒ fail-closed Pause), with `activity_needs_me` injected.
+    /// Returns the loop status, the persisted pending requests for the run, and the activity
+    /// summaries — everything the NS-7 assertions need from one real Pause.
+    fn ns7_pause_scenario(
+        tag: &str,
+        activity_needs_me: bool,
+    ) -> (
+        LoopStatus,
+        Vec<friday_storage::PendingApprovalRequest>,
+        Vec<friday_storage::ActivitySummary>,
+    ) {
+        let root = TempDir::new(tag);
+        let db = Db::open_hub(&temp_path(tag)).unwrap();
+        agent_run::create_run(db.conn(), "r1", "do it", 1).unwrap();
+        let write = raw("write_file", &[("path", "out.txt"), ("content", "X")]);
+        let client = ScriptedAgentLlmClient::new(vec![AgentStep::Tool(write)]);
+        let executor = FsToolExecutor::new(&root.0);
+        let policy = RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), false);
+        let out = run_loop_with_policy_flagged(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "do it",
+            "",
+            None, // unprovisioned ⇒ fail-closed Pause for the mutating write
+            &no_approval(),
+            &policy,
+            5,
+            None,
+            None,
+            1000,
+            activity_needs_me,
+        )
+        .unwrap();
+        let pending = friday_storage::list_pending_requests_for_run(db.conn(), "r1").unwrap();
+        let activity = db.list_activity().unwrap();
+        // No write side effect on a Pause (the executor is never reached).
+        assert!(!root.0.join("out.txt").exists(), "no file written on Pause");
+        (out.status, pending, activity)
+    }
+
+    #[test]
+    fn ns7_flag_on_pause_writes_one_needs_me_activity_tied_to_run_and_nonce() {
+        // Flag ON: the mutating write Pauses AND exactly ONE activity row appears, tied to
+        // THIS run + the SAME approval nonce, in `ActivityState::Pending`.
+        let (status, pending, activity) = ns7_pause_scenario("ns7-on", true);
+        assert_eq!(status, LoopStatus::Paused, "the mutating write Pauses");
+
+        // The pending_approval_request still persists exactly as today (the nonce source).
+        assert_eq!(pending.len(), 1, "exactly one pending approval persisted");
+        let nonce = &pending[0].approval_id;
+        assert_eq!(pending[0].run_id, "r1", "pending bound to the run");
+
+        // Exactly ONE activity row, Pending, of the NS-7 kind, referencing the run + nonce.
+        assert_eq!(activity.len(), 1, "flag ON ⇒ exactly one activity row");
+        let a = &activity[0];
+        assert_eq!(
+            a.state,
+            friday_core::ActivityState::Pending.as_str(),
+            "the Needs-Me item is Pending"
+        );
+        assert_eq!(
+            a.kind,
+            friday_core::ActivityType::ApprovalRequired.as_str(),
+            "the activity is the ApprovalRequired Needs-Me kind"
+        );
+        // The run/nonce binding is in fields `list_activity` actually surfaces: the nonce in
+        // the activity_id, and BOTH run + nonce in the summary.
+        assert!(
+            a.activity_id.contains(nonce.as_str()),
+            "activity_id references the approval nonce: {} vs {nonce}",
+            a.activity_id
+        );
+        assert!(
+            a.summary.contains("r1") && a.summary.contains(nonce.as_str()),
+            "summary references the run AND the nonce: {}",
+            a.summary
+        );
+    }
+
+    #[test]
+    fn ns7_flag_off_pause_is_byte_identical_no_activity_row() {
+        // Flag OFF (the prod default): the mutating write still Pauses, the
+        // pending_approval_request persists IDENTICALLY, and NO activity row is written —
+        // byte-identical to the pre-NS-7 baseline.
+        let (status, pending, activity) = ns7_pause_scenario("ns7-off", false);
+        assert_eq!(
+            status,
+            LoopStatus::Paused,
+            "the mutating write still Pauses"
+        );
+        assert_eq!(
+            pending.len(),
+            1,
+            "flag OFF ⇒ pending_approval_request still persisted identically"
+        );
+        assert_eq!(pending[0].run_id, "r1", "pending still bound to the run");
+        assert_eq!(
+            pending[0].action, "write_file",
+            "pending still records the exact paused action"
+        );
+        assert!(
+            activity.is_empty(),
+            "flag OFF ⇒ ZERO activity rows from the pause (byte-identical baseline)"
+        );
     }
 
     // ── NS-2: flag-gated trust-grant enforcement at the gate-dispatch chokepoint ──────
