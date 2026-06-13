@@ -357,6 +357,127 @@ pub fn session_message_count(conn: &Connection, agent_session_id: &str) -> Resul
     Ok(n)
 }
 
+// --- C2-4 owner-scoped routed-session list/open/read --------------------------
+//
+// An OWNER-SCOPED read view over the FRIDAY routed `agent_session` rows — the ones
+// `friday_hub::HubRuntime::run_session_task_pinned` populates (and which carry REAL
+// `token_ledger` rows attributed to the answering provider, e.g. an `anthropic` row per
+// Claude turn). These read the routed sessions DELIBERATELY, NOT the
+// `provider_session::list_projections` `provider_session_link` claude_control mirror — a
+// `FridayLocalMirror` link is a CRUD projection, has no `user_id` to scope on, and carries
+// no real billing, so surfacing it here would be a fake. This view never touches that
+// table.
+//
+// The scope axis is the `agent_session.user_id` column (m0021), bound to the AUTHENTICATED
+// caller's principal by `run_session_task_pinned` (NEVER a client-asserted id). Scoping is
+// genuinely FAIL-CLOSED (INV-5/INV-7): a DIFFERENT principal's list is EMPTY and an open of
+// another owner's session returns `None` — a guessed `agent_session_id` cannot bypass the
+// owner check, so the WHOLE read API (list AND open/read) is owner-scoped, not best-effort.
+
+/// One row of an owner's routed-session list ([`list_sessions_for_owner`]). Refs-only
+/// metadata — id + timestamps, NEVER any message body (the bodies are read separately and
+/// owner-gated via [`open_session_for_owner`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionListItem {
+    pub agent_session_id: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// List the FRIDAY routed sessions OWNED by `user_id`, most-recently-active first.
+///
+/// Scopes on `agent_session.user_id = ?1` (the column `run_session_task_pinned` binds to the
+/// authenticated caller). A blank/empty `user_id` matches NOTHING (fail-closed: an unbound /
+/// owner-less session — whose `user_id` is NULL — is never listed under any owner, and a
+/// blank query never collapses to "all sessions"). A principal that owns no session gets an
+/// empty Vec (the load-bearing owner-scoping assertion: a DIFFERENT principal sees NOTHING).
+///
+/// Ordering is `updated_at DESC, agent_session_id` — most-recent-first (the same convention
+/// as [`crate::provider_session::list_projections`]) with `agent_session_id` as a
+/// deterministic tiebreaker so two sessions touched at the same `updated_at` have a stable
+/// order. Pure read: no write, no schema change.
+pub fn list_sessions_for_owner(conn: &Connection, user_id: &str) -> Result<Vec<SessionListItem>> {
+    // A blank owner must never match a NULL `user_id` row nor act as a wildcard — return
+    // nothing without even querying (the `= ?1` bind already excludes NULL, but this makes
+    // the fail-closed explicit and skips the round-trip).
+    if user_id.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn.prepare(
+        "SELECT agent_session_id, created_at, updated_at
+         FROM agent_session
+         WHERE user_id = ?1
+         ORDER BY updated_at DESC, agent_session_id",
+    )?;
+    let rows = stmt.query_map([user_id], |r| {
+        Ok(SessionListItem {
+            agent_session_id: r.get(0)?,
+            created_at: r.get(1)?,
+            updated_at: r.get(2)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
+/// OWNER-SCOPED open of one routed session's conversation: returns the folded
+/// user/assistant messages (via the existing [`load_session_messages`]) ONLY when the
+/// session is owned by `user_id`; otherwise `None`.
+///
+/// This is the FAIL-CLOSED open half of the C2-4 read API: a caller cannot read another
+/// principal's session by guessing its `agent_session_id` — the owner is checked FIRST (via
+/// [`load_session_owner`], scoping on the SAME `user_id` axis as [`list_sessions_for_owner`])
+/// and a mismatch (or an absent session, or an owner-less NULL `user_id`) returns `None` with
+/// no message read at all. A blank `user_id` matches nothing. Pure read: no write.
+///
+/// `None` therefore covers three fail-closed cases uniformly — "no such session", "session
+/// has no owner", and "session owned by someone else" — none of which a non-owner may
+/// distinguish from the others (no existence oracle). `Some(vec)` (possibly empty for a
+/// brand-new owned session with no turns yet) is returned ONLY to the matching owner.
+pub fn open_session_for_owner(
+    conn: &Connection,
+    user_id: &str,
+    agent_session_id: &str,
+) -> Result<Option<Vec<StoredSessionMessage>>> {
+    if !owner_matches(conn, user_id, agent_session_id)? {
+        return Ok(None);
+    }
+    Ok(Some(load_session_messages(conn, agent_session_id)?))
+}
+
+/// OWNER-SCOPED message count for one routed session (refs-only — no body): `Some(n)` ONLY
+/// when `user_id` owns the session, else `None`. The owner-gated counterpart of
+/// [`session_message_count`], scoped identically to [`open_session_for_owner`] so a
+/// non-owner gets no count (and thus no existence/size oracle). Pure read.
+pub fn session_message_count_for_owner(
+    conn: &Connection,
+    user_id: &str,
+    agent_session_id: &str,
+) -> Result<Option<i64>> {
+    if !owner_matches(conn, user_id, agent_session_id)? {
+        return Ok(None);
+    }
+    Ok(Some(session_message_count(conn, agent_session_id)?))
+}
+
+/// Whether the session exists AND is owned by exactly `user_id`. The single fail-closed
+/// owner check the owner-scoped open/read functions share: a blank `user_id`, an absent
+/// session, an owner-less (NULL `user_id`) session, or a different owner all return `false`.
+fn owner_matches(conn: &Connection, user_id: &str, agent_session_id: &str) -> Result<bool> {
+    if user_id.is_empty() {
+        return Ok(false);
+    }
+    // `load_session_owner` returns `None` for an absent session and `Some(owner)` with a
+    // `None` `user_id` for an owner-less one — both fail the match closed.
+    match load_session_owner(conn, agent_session_id)? {
+        Some(owner) => Ok(owner.user_id.as_deref() == Some(user_id)),
+        None => Ok(false),
+    }
+}
+
 /// Load only the messages NOT yet consumed by a memory extraction
 /// (`memory_extract_status = 'pending'`), in `seq` order (oldest first). This is the
 /// dedup half of session-memory slice-2: the inline extraction reads PENDING messages
@@ -842,5 +963,146 @@ mod tests {
     fn load_owner_of_absent_session_is_none() {
         let db = Db::open_hub(&tmp("absent")).unwrap();
         assert_eq!(load_session_owner(db.conn(), "ghost").unwrap(), None);
+    }
+
+    // --- C2-4 owner-scoped routed-session list/open/read ---------------------
+
+    #[test]
+    fn list_sessions_for_owner_scopes_to_owner_and_orders_by_updated_at_desc() {
+        // SQL-level proof of the owner-scoping + ordering contract (the friday-hub
+        // `run_session_task_pinned` e2e proof lives in runtime.rs's in-crate tests, where
+        // the claude stub harness is reachable). Two sessions for `alice` at DISTINCT
+        // updated_at, one for `bob`.
+        let db = Db::open_hub(&tmp("c2-4-list")).unwrap();
+        let alice = SessionOwner {
+            user_id: Some("alice".into()),
+            ..Default::default()
+        };
+        let bob = SessionOwner {
+            user_id: Some("bob".into()),
+            ..Default::default()
+        };
+        // alice/s1 created first (older updated_at), alice/s2 second (newer), bob/s3.
+        ensure_session_with_owner(db.conn(), "s1", &alice, 3_000).unwrap();
+        ensure_session_with_owner(db.conn(), "s2", &alice, 4_000).unwrap();
+        ensure_session_with_owner(db.conn(), "s3", &bob, 5_000).unwrap();
+
+        // alice sees exactly her two, most-recently-updated FIRST (s2 @4000 before s1 @3000).
+        let alice_list = list_sessions_for_owner(db.conn(), "alice").unwrap();
+        assert_eq!(
+            alice_list
+                .iter()
+                .map(|s| &s.agent_session_id)
+                .collect::<Vec<_>>(),
+            vec!["s2", "s1"],
+            "owner list is most-recently-updated first"
+        );
+        assert_eq!(alice_list[0].updated_at, 4_000);
+        assert_eq!(alice_list[1].updated_at, 3_000);
+
+        // bob sees only his — owner-scoped, never alice's (the load-bearing assertion).
+        let bob_list = list_sessions_for_owner(db.conn(), "bob").unwrap();
+        assert_eq!(bob_list.len(), 1);
+        assert_eq!(bob_list[0].agent_session_id, "s3");
+
+        // A principal that owns NOTHING gets an EMPTY list (fail-closed, not all-sessions).
+        assert!(list_sessions_for_owner(db.conn(), "carol")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn list_excludes_owner_less_sessions_and_blank_query_matches_nothing() {
+        // An owner-less session (NULL user_id, e.g. created via the no-owner `ensure_session`)
+        // is never listed under any owner, and a blank/empty owner query never collapses to a
+        // wildcard that would surface every session (fail-closed).
+        let db = Db::open_hub(&tmp("c2-4-noowner")).unwrap();
+        ensure_session(db.conn(), "owner-less", 1_000).unwrap();
+        ensure_session_with_owner(
+            db.conn(),
+            "owned",
+            &SessionOwner {
+                user_id: Some("alice".into()),
+                ..Default::default()
+            },
+            2_000,
+        )
+        .unwrap();
+        // Blank query → nothing (must NOT match the NULL-user_id owner-less row nor wildcard).
+        assert!(list_sessions_for_owner(db.conn(), "").unwrap().is_empty());
+        // alice sees only her owned session, never the owner-less one.
+        let alice = list_sessions_for_owner(db.conn(), "alice").unwrap();
+        assert_eq!(alice.len(), 1);
+        assert_eq!(alice[0].agent_session_id, "owned");
+    }
+
+    #[test]
+    fn open_and_count_are_owner_scoped_fail_closed() {
+        // Open/read of a session is gated by the SAME owner axis as the list: a guessed
+        // agent_session_id cannot bypass scoping. A DIFFERENT principal — and an owner-less
+        // session, and an absent id — all read back None (no existence/size oracle).
+        let db = Db::open_hub(&tmp("c2-4-open")).unwrap();
+        ensure_session_with_owner(
+            db.conn(),
+            "s1",
+            &SessionOwner {
+                user_id: Some("alice".into()),
+                ..Default::default()
+            },
+            1_000,
+        )
+        .unwrap();
+        append_session_message(
+            db.conn(),
+            "s1",
+            &SessionMessage::new("user", "remember 47", Some("run-1".into())),
+            1_010,
+        )
+        .unwrap();
+        append_session_message(
+            db.conn(),
+            "s1",
+            &SessionMessage::new("assistant", "noted 47", Some("run-1".into())),
+            1_020,
+        )
+        .unwrap();
+
+        // The OWNER opens + reads the folded transcript.
+        let msgs = open_session_for_owner(db.conn(), "alice", "s1")
+            .unwrap()
+            .expect("the owner can open her own session");
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(
+            (msgs[0].role.as_str(), msgs[1].role.as_str()),
+            ("user", "assistant")
+        );
+        assert_eq!(msgs[0].content, "remember 47");
+        assert_eq!(
+            session_message_count_for_owner(db.conn(), "alice", "s1").unwrap(),
+            Some(2)
+        );
+
+        // A DIFFERENT principal guessing the same id reads NOTHING (fail-closed open).
+        assert_eq!(
+            open_session_for_owner(db.conn(), "bob", "s1").unwrap(),
+            None
+        );
+        assert_eq!(
+            session_message_count_for_owner(db.conn(), "bob", "s1").unwrap(),
+            None
+        );
+        // A blank owner and an absent id are also fail-closed.
+        assert_eq!(open_session_for_owner(db.conn(), "", "s1").unwrap(), None);
+        assert_eq!(
+            open_session_for_owner(db.conn(), "alice", "ghost").unwrap(),
+            None
+        );
+
+        // An owner-less session is not openable by anyone (NULL user_id never matches).
+        ensure_session(db.conn(), "orphan", 1_100).unwrap();
+        assert_eq!(
+            open_session_for_owner(db.conn(), "alice", "orphan").unwrap(),
+            None
+        );
     }
 }

@@ -925,6 +925,36 @@ impl<T: Transport> HubRuntime<T> {
         &self.db
     }
 
+    /// (C2-4) OWNER-SCOPED list of the FRIDAY routed agent_sessions owned by `caller` —
+    /// the sessions [`Self::run_session_task_pinned`] populates (which carry REAL provider
+    /// `token_ledger` rows, e.g. an `anthropic` row per Claude turn). Scopes on the SAME
+    /// authenticated principal the sessioned entry binds the session owner to (NEVER a
+    /// client-asserted id), so a caller sees ONLY their own sessions — a different principal's
+    /// list is EMPTY (INV-5/INV-7 fail-closed). Most-recently-active first.
+    ///
+    /// This reads the routed sessions DELIBERATELY, NOT the `provider_session_link`
+    /// claude_control mirror (`Db::list_provider_session_projections`) — that local mirror
+    /// has no owner axis and no real billing, so surfacing it here would be a fake. ADDITIVE,
+    /// read-only accessor: no write, no live behavior change.
+    pub fn list_sessions_for_owner(
+        &self,
+        caller: &AuthedPrincipal,
+    ) -> Result<Vec<friday_storage::SessionListItem>, StorageError> {
+        friday_storage::list_sessions_for_owner(self.db.conn(), caller.principal())
+    }
+
+    /// (C2-4) OWNER-SCOPED open/read of one routed session's folded user/assistant transcript:
+    /// `Some(messages)` ONLY when `caller` owns `agent_session_id`, else `None`. The
+    /// fail-closed open half — a guessed session id cannot bypass the owner check (a non-owner,
+    /// an owner-less session, and an absent id all read back `None`). ADDITIVE, read-only.
+    pub fn open_session_for_owner(
+        &self,
+        caller: &AuthedPrincipal,
+        agent_session_id: &str,
+    ) -> Result<Option<Vec<friday_storage::StoredSessionMessage>>, StorageError> {
+        friday_storage::open_session_for_owner(self.db.conn(), caller.principal(), agent_session_id)
+    }
+
     /// (A1 run-controls) The composed `FsToolExecutor` (workspace-root-contained, gate-mandatory).
     /// Exposed so the sealed-WS server's RESUME control handler can delegate to the S6
     /// [`crate::resume::resume_with_approval`] spine (which executes the ONE approved mutation
@@ -1704,6 +1734,172 @@ mod tests {
         let all = rt.db().list_token_usage().unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].provider_kind, "anthropic");
+    }
+
+    #[test]
+    fn c2_4_owner_scoped_list_open_read_of_routed_sessions() {
+        // C2-4 FAITHFUL DARK PROOF: run TWO claude-pinned SESSIONED turns through the REAL
+        // `run_session_task_pinned` entry (each billing one anthropic row — ASSERTED), then prove
+        // the owner-scoped read API over the FRIDAY ROUTED `agent_session` rows:
+        //   - `list_sessions_for_owner(owner)` returns BOTH sessions, bound to the authed owner,
+        //     most-recently-active first;
+        //   - open returns the right session's folded user/assistant transcript;
+        //   - a DIFFERENT principal's list is owner-scoped EMPTY and its open is None
+        //     (INV-5/INV-7 fail-closed — the load-bearing security assertion);
+        //   - list/open/read write NO new ledger row (pure read; the count stays at the 2 the runs
+        //     wrote);
+        //   - the NOT-A-MIRROR / two-session trap: each listed session's message `refs` is its
+        //     run_id, and that run_id carries the REAL anthropic ledger rows — never a
+        //     claude_control mirror link.
+        // NO key, NO network — the claude stub bills the anthropic rows.
+        let (rt, _ws) = runtime_with_claude_wired(
+            "c2-4-owner-scoped-read",
+            // Each `run_session_task_pinned` call drives a FRESH single-shot loop on a fresh stub
+            // (the stub's `calls` counter resets per runtime build is not needed — both turns reuse
+            // THIS runtime's single stub, whose script is `[Finish]`, so every call Finishes).
+            vec![AgentStep::Finish {
+                message: "PONG".to_string(),
+            }],
+            Box::new(DenyAllApprovals),
+        );
+        let owner = authed_caller("principal:c2-4-owner");
+        let other = authed_caller("principal:c2-4-intruder");
+
+        // --- two claude-pinned sessioned turns (two DISTINCT sessions, DISTINCT now_ms) ---------
+        let (sel1, _a1) = rt
+            .run_session_task_pinned(
+                &owner,
+                "run-c2-4-a",
+                "sess-c2-4-a",
+                "first turn",
+                "claude",
+                3_000,
+            )
+            .expect("first claude sessioned turn runs");
+        assert_eq!(sel1.provider_id, "claude");
+        let (sel2, _a2) = rt
+            .run_session_task_pinned(
+                &owner,
+                "run-c2-4-b",
+                "sess-c2-4-b",
+                "second turn",
+                "claude",
+                4_000,
+            )
+            .expect("second claude sessioned turn runs");
+        assert_eq!(sel2.provider_id, "claude");
+
+        // ASSERT the REAL anthropic rows: one per run, billed to anthropic / api.anthropic.com.
+        for run_id in ["run-c2-4-a", "run-c2-4-b"] {
+            let rows = rt.db().list_run_token_usage(run_id).unwrap();
+            assert_eq!(
+                rows.len(),
+                1,
+                "{run_id}: one anthropic row for the single claude turn"
+            );
+            assert_eq!(
+                rows[0].provider_kind, "anthropic",
+                "{run_id}: NOT mis-attributed as deepseek"
+            );
+            assert_eq!(rows[0].base_url_host, "api.anthropic.com");
+            assert!(!rows[0].fallback, "the claude route is never a fallback");
+        }
+        // The no-new-ledger BASELINE is 2 (the two runs already billed two anthropic rows).
+        let ledger_baseline = rt.db().list_token_usage().unwrap().len();
+        assert_eq!(
+            ledger_baseline, 2,
+            "two claude turns billed two anthropic rows"
+        );
+
+        // --- list: the owner sees BOTH, most-recently-updated first (sess-b @4000 before -a @3000) ---
+        let listed = rt.list_sessions_for_owner(&owner).unwrap();
+        assert_eq!(
+            listed
+                .iter()
+                .map(|s| s.agent_session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["sess-c2-4-b", "sess-c2-4-a"],
+            "owner list returns both routed sessions, most-recently-active first"
+        );
+
+        // --- the DIFFERENT principal's list is owner-scoped EMPTY (the load-bearing assertion) ---
+        assert!(
+            rt.list_sessions_for_owner(&other).unwrap().is_empty(),
+            "a different principal sees NONE of the owner's sessions (INV-5/INV-7 fail-closed)"
+        );
+
+        // --- open: the owner reads the right session's folded user/assistant transcript ----------
+        let msgs_a = rt
+            .open_session_for_owner(&owner, "sess-c2-4-a")
+            .unwrap()
+            .expect("the owner can open her own session");
+        // run_session_loop folds a "user" turn (the task, refs=run_id) + an "assistant" turn on
+        // Finished (refs=run_id).
+        assert_eq!(
+            msgs_a.len(),
+            2,
+            "user task + assistant answer folded into the session"
+        );
+        assert_eq!(msgs_a[0].role, "user");
+        assert_eq!(msgs_a[0].content, "first turn");
+        assert_eq!(msgs_a[1].role, "assistant");
+
+        // --- the DIFFERENT principal cannot open a guessed session id (fail-closed open) ---------
+        assert_eq!(
+            rt.open_session_for_owner(&other, "sess-c2-4-a").unwrap(),
+            None,
+            "a guessed session id does not bypass owner-scoping"
+        );
+
+        // --- NOT-A-MIRROR / two-session trap: the listed session's message refs IS the run_id ----
+        // that carries the REAL anthropic rows — never a claude_control mirror link. Prove it for
+        // each listed session.
+        for item in &listed {
+            let msgs = rt
+                .open_session_for_owner(&owner, &item.agent_session_id)
+                .unwrap()
+                .expect("owner opens her listed session");
+            let run_id = msgs[0]
+                .refs
+                .as_deref()
+                .expect("the folded turn soft-links its producing run_id");
+            let rows = rt.db().list_run_token_usage(run_id).unwrap();
+            assert_eq!(
+                rows.len(),
+                1,
+                "the listed session's run carries a REAL anthropic row"
+            );
+            assert_eq!(
+                rows[0].provider_kind, "anthropic",
+                "the listed session ties to anthropic billing, never a mirror link"
+            );
+            assert_eq!(rows[0].base_url_host, "api.anthropic.com");
+        }
+        // The two sessions map to the two DISTINCT billed runs (no session points at the wrong run).
+        let run_a = rt
+            .open_session_for_owner(&owner, "sess-c2-4-a")
+            .unwrap()
+            .unwrap()[0]
+            .refs
+            .clone()
+            .unwrap();
+        let run_b = rt
+            .open_session_for_owner(&owner, "sess-c2-4-b")
+            .unwrap()
+            .unwrap()[0]
+            .refs
+            .clone()
+            .unwrap();
+        assert_eq!(run_a, "run-c2-4-a");
+        assert_eq!(run_b, "run-c2-4-b");
+        assert_ne!(run_a, run_b, "the two sessions carry DISTINCT billed runs");
+
+        // --- PURE READ: list/open/read wrote NO new ledger row (count unchanged from baseline) ---
+        assert_eq!(
+            rt.db().list_token_usage().unwrap().len(),
+            ledger_baseline,
+            "list/open/read are pure reads — no new ledger row"
+        );
     }
 
     #[test]
