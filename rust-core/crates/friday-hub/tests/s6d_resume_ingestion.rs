@@ -193,6 +193,7 @@ fn loop_protected_no_approval_pauses_and_persists_csprng_pending() {
         &no_approval(),
         &RunPolicy::default(),
         5,
+        None, // cancel: not exercised by this test
         NOW,
     )
     .unwrap();
@@ -254,6 +255,7 @@ fn loop_valid_ed25519_approval_executes_the_mutation() {
         &approve,
         &RunPolicy::default(),
         5,
+        None, // cancel: not exercised by this test
         NOW,
     )
     .unwrap();
@@ -291,6 +293,7 @@ fn loop_hmac_approval_cannot_execute_even_with_operator_key() {
         &approve,
         &RunPolicy::default(),
         5,
+        None, // cancel: not exercised by this test
         NOW,
     )
     .unwrap();
@@ -335,6 +338,7 @@ fn pause_a_run_with_policy(
         &no_approval(),
         policy,
         5,
+        None, // cancel: not exercised by this test
         NOW,
     )
     .unwrap();

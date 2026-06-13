@@ -2058,6 +2058,39 @@ pub fn run_one_turn_with_executor(
 
 // --- the multi-turn run loop -------------------------------------------------
 
+/// (C2-1) A cooperative cancellation handle for the routed run loop. The loop checks
+/// [`CancelToken::is_cancelled`] at the TOP of each turn (BEFORE the model call), so a
+/// tripped token stops the loop cleanly with [`LoopStatus::Interrupted`] — making NO
+/// further model call and billing NOTHING after the trip. Cooperative (between-turns),
+/// NOT a mid-turn abort: a turn already in flight runs to completion; the cancel takes
+/// effect at the next turn boundary. Clone-cheap (`Arc`); holder and loop share the SAME
+/// flag, so [`CancelToken::cancel`] from any holder is observed by the loop.
+///
+/// DARK: this is the interrupt/stop substrate the routed-claude parity harness's
+/// `interrupt / stop` flow needs (see `tests/routed_claude_parity.rs`'s DEFERRED note —
+/// "there is no cancel handle on run_task_pinned. WIRING NEEDED: a cancellation token
+/// threaded into the routed loop"). The no-key in-crate test is its deterministic proof.
+#[derive(Clone, Debug, Default)]
+pub struct CancelToken(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl CancelToken {
+    /// A fresh, un-tripped token.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Request cancellation. Idempotent — observed by the loop at the next turn boundary
+    /// (no effect on a turn already in flight; that turn completes and is billed normally).
+    pub fn cancel(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Whether cancellation has been requested.
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
 /// How a [`run_loop`] ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoopStatus {
@@ -2072,6 +2105,11 @@ pub enum LoopStatus {
     Bounded,
     /// The model client errored (transport/parse) — fail-closed stop.
     Errored,
+    /// (C2-1) A cooperative [`CancelToken`] was tripped at a turn boundary — the loop
+    /// stopped BEFORE the next model call. Terminal: no further model call is made and
+    /// NOTHING is billed after the trip. Carries no deliverable answer (like `Bounded`),
+    /// so the post-loop owner-wiring tail (which persists only on `Finished`) skips it.
+    Interrupted,
 }
 
 /// The outcome of a whole [`run_loop`]. `executed_tools` is the count of tools that
@@ -2493,6 +2531,7 @@ pub fn run_loop(
         approve,
         &RunPolicy::default(),
         max_turns,
+        None, // cancel: no cancellation handle — pre-C2-1 behavior, byte-identical
         now_ms,
     )
 }
@@ -2546,6 +2585,13 @@ pub fn run_loop(
 /// attempt (or the final exhausted failure) is recorded once, OUTSIDE this inner loop.
 const RUN_LOOP_MAX_PROVIDER_ATTEMPTS: u32 = 3;
 
+/// `cancel` (C2-1) is an OPTIONAL cooperative cancellation handle checked at the TOP of
+/// each turn, BEFORE the model call. When `Some` and already tripped at a turn boundary,
+/// the loop stops with [`LoopStatus::Interrupted`]: it makes NO further model call and
+/// bills NOTHING after the trip. `None` (the default for every existing caller) is the
+/// pre-C2-1 behavior, BYTE-IDENTICAL — no check, no new stop. Cooperative/between-turns:
+/// a turn already in flight completes and is billed normally; the cancel takes effect at
+/// the NEXT turn boundary only.
 #[allow(clippy::too_many_arguments)]
 pub fn run_loop_with_policy(
     client: &dyn AgentLlmClient,
@@ -2558,6 +2604,7 @@ pub fn run_loop_with_policy(
     approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
     policy: &RunPolicy,
     max_turns: u64,
+    cancel: Option<&CancelToken>,
     now_ms: i64,
 ) -> Result<LoopOutcome, StorageError> {
     // Plan classification recorded ONCE (it is a property of the task, constant across
@@ -2603,6 +2650,31 @@ pub fn run_loop_with_policy(
 
     for turn_index in 0..max_turns {
         let ev = |suffix: &str| format!("{run_id}:t{turn_index}:{suffix}");
+
+        // (C2-1) Cooperative cancellation, checked at the TOP of the turn — BEFORE the
+        // model call below — so a tripped token stops the loop with NO further model call
+        // and NOTHING billed after the trip. `turns: turn_index` (NOT `+1`): this turn's
+        // `next_step_metered` has NOT happened, so it must NOT count toward the
+        // turns==model-calls invariant (the previous turn's call is `turn_index`). When
+        // `cancel` is `None` (every pre-C2-1 caller) this is a no-op and the loop is
+        // byte-identical to before. Records a refs-only audit event (no ledger row),
+        // mirroring the `agent.loop_bounded` terminal marker.
+        if cancel.is_some_and(CancelToken::is_cancelled) {
+            agent_run::record_event(
+                conn,
+                &ev("interrupted"),
+                run_id,
+                "agent.interrupted",
+                now_ms,
+            )?;
+            return Ok(LoopOutcome {
+                status: LoopStatus::Interrupted,
+                turns: turn_index,
+                executed_tools,
+                final_message: None,
+                detail: format!("interrupted:turn={turn_index}"),
+            });
+        }
 
         // S1.2 usage-parity: ONE metered model call per turn. An OUTER `Err` is a
         // route/transport/discovery failure — the chat produced no usage, so NOTHING is
@@ -2925,6 +2997,12 @@ pub fn run_loop_with_policy(
 ///
 /// Truth label: parity wiring inside the Rust loop (dev-bridge/test-provable). It does
 /// NOT flip any TS-retirement state and is NOT a v1 GO.
+/// `cancel` (C2-1) is the OPTIONAL cooperative cancellation handle, threaded VERBATIM into
+/// the inner [`run_loop_with_policy`] (checked at each turn boundary). An `Interrupted`
+/// outcome is treated EXACTLY like the other non-`Finished` terminals here: the `user`
+/// turn is still appended (the operator asked it), but no `assistant` answer and no
+/// owner-wired `run_result` (those are gated on `Finished`). `None` (every existing
+/// caller) is byte-identical to the pre-C2-1 sessioned behavior.
 #[allow(clippy::too_many_arguments)]
 pub fn run_session_loop(
     client: &dyn AgentLlmClient,
@@ -2939,6 +3017,7 @@ pub fn run_session_loop(
     approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
     policy: &RunPolicy,
     max_turns: u64,
+    cancel: Option<&CancelToken>,
     now_ms: i64,
 ) -> Result<LoopOutcome, StorageError> {
     // 1. Ensure the session exists and LOAD its prior turns BEFORE persisting the
@@ -2957,7 +3036,7 @@ pub fn run_session_loop(
     let session_preamble = render_session_history(&prior);
     let combined_preamble = format!("{session_preamble}{recall_preamble}");
 
-    // 3. Run the SAME gate-mandatory loop (principal/scope/operator-key aware).
+    // 3. Run the SAME gate-mandatory loop (principal/scope/operator-key/cancel aware).
     let outcome = run_loop_with_policy(
         client,
         executor,
@@ -2969,6 +3048,7 @@ pub fn run_session_loop(
         approve,
         policy,
         max_turns,
+        cancel,
         now_ms,
     )?;
 
@@ -4707,6 +4787,7 @@ mod tests {
             &no_approval(),
             &RunPolicy::default(),
             5,
+            None, // cancel: not exercised by this test
             1000,
         )
         .expect("routed claude loop runs");
@@ -5795,6 +5876,7 @@ mod tests {
                 &no_approval(),
                 &RunPolicy::new(None, Vec::<String>::new(), true), // read-only ⇒ Deny mutations
                 5,
+                None, // cancel: not exercised by this test
                 1000,
             )
             .unwrap();
@@ -6126,6 +6208,7 @@ mod tests {
             &no_approval(),
             &RunPolicy::default(),
             10,
+            None, // cancel: not exercised by this test
             10,
         )
         .unwrap();
@@ -6193,6 +6276,7 @@ mod tests {
             &no_approval(),
             &RunPolicy::default(),
             5,
+            None, // cancel: not exercised by this test
             10,
         )
         .unwrap();
@@ -6218,6 +6302,7 @@ mod tests {
             &no_approval(),
             &RunPolicy::default(),
             5,
+            None, // cancel: not exercised by this test
             20,
         )
         .unwrap();
@@ -6313,6 +6398,7 @@ mod tests {
             &no_approval(),
             &RunPolicy::default(),
             5,
+            None, // cancel: not exercised by this test
             100,
         )
         .unwrap();
@@ -6355,6 +6441,7 @@ mod tests {
             &no_approval(),
             &policy,
             5,
+            None, // cancel: not exercised by this test
             10,
         )
         .unwrap();
@@ -6415,6 +6502,7 @@ mod tests {
             &no_approval(),
             &RunPolicy::default(), // no principal bound
             5,
+            None, // cancel: not exercised by this test
             10,
         )
         .unwrap();
@@ -6461,6 +6549,7 @@ mod tests {
             &no_approval(),
             &policy,
             5,
+            None, // cancel: not exercised by this test
             10,
         )
         .unwrap();
@@ -6512,6 +6601,7 @@ mod tests {
             &no_approval(),
             &RunPolicy::default(),
             5,
+            None, // cancel: not exercised by this test
             10,
         )
         .unwrap();
@@ -6547,6 +6637,7 @@ mod tests {
             &no_approval(),
             &RunPolicy::default(),
             5,
+            None, // cancel: not exercised by this test
             20,
         )
         .unwrap();
@@ -6587,6 +6678,7 @@ mod tests {
             &no_approval(),
             &RunPolicy::default(),
             5,
+            None, // cancel: not exercised by this test
             10,
         )
         .unwrap();

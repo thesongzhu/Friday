@@ -461,6 +461,7 @@ pub fn run_routed_loop(
         approve,
         &crate::RunPolicy::default(),
         max_turns,
+        None, // cancel: no cancellation handle — pre-C2-1 behavior, byte-identical
         now_ms,
     )
 }
@@ -483,6 +484,7 @@ pub fn run_routed_loop_with_policy(
     approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
     policy: &crate::RunPolicy,
     max_turns: u64,
+    cancel: Option<&crate::CancelToken>,
     now_ms: i64,
 ) -> Result<(RoutedSelection, LoopOutcome), RoutedLoopError> {
     let route = select_route(registry, request)?;
@@ -498,6 +500,8 @@ pub fn run_routed_loop_with_policy(
 
     // S6d: thread the operator verify key so the loop authorizes a protected action via the
     // Ed25519 verify-only policy (never the HMAC authorize). `None` ⇒ fail-closed Pause.
+    // C2-1: thread the cooperative cancellation handle VERBATIM (checked at each turn
+    // boundary); `None` ⇒ no cancellation, byte-identical to the pre-C2-1 routed loop.
     let outcome = run_loop_with_policy(
         client,
         executor,
@@ -509,6 +513,7 @@ pub fn run_routed_loop_with_policy(
         approve,
         policy,
         max_turns,
+        cancel,
         now_ms,
     )?;
     Ok((selection, outcome))
