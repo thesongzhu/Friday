@@ -172,6 +172,7 @@ fn pause_owned_run(
         &policy,
         5,
         None, // cancel: not exercised by this test
+        None, // steer: not exercised by this test
         NOW,
     )
     .unwrap();

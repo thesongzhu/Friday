@@ -345,7 +345,8 @@ impl<T: Transport> HubRuntime<T> {
             &RouteRequest::any(),
             policy_override,
             max_turns_override,
-            None,
+            None, // cancel: not cancellable here (C2-1)
+            None, // steer: not steerable here (C2-2)
             now_ms,
         )
     }
@@ -369,7 +370,7 @@ impl<T: Transport> HubRuntime<T> {
             preferred_provider: Some(provider_id.to_string()),
             ..RouteRequest::any()
         };
-        self.run_with_request(run_id, task, &request, None, None, None, now_ms)
+        self.run_with_request(run_id, task, &request, None, None, None, None, now_ms)
     }
 
     /// (C2-1) [`Self::run_task_pinned`] with a cooperative [`CancelToken`] threaded into the
@@ -393,15 +394,60 @@ impl<T: Transport> HubRuntime<T> {
             preferred_provider: Some(provider_id.to_string()),
             ..RouteRequest::any()
         };
-        self.run_with_request(run_id, task, &request, None, None, Some(cancel), now_ms)
+        self.run_with_request(
+            run_id,
+            task,
+            &request,
+            None,
+            None,
+            Some(cancel),
+            None,
+            now_ms,
+        )
+    }
+
+    /// (C2-2) [`Self::run_task_pinned`] with a cooperative [`crate::SteerHandle`] threaded into
+    /// the routed loop — the mid-loop STEER entry the routed-claude parity harness needs. The
+    /// handle is drained at the TOP of each turn (AFTER the cancel check, BEFORE the model call):
+    /// a pending instruction is folded into THAT turn's prompt, so the turn's metered chat carries
+    /// it and produces a REAL billed model call grounded on the steer — an ADDITIONAL metered turn
+    /// when the loop was continuing, NOT a no-op mirror event. The holder keeps a clone of the same
+    /// `steer` to call [`crate::SteerHandle::steer`] from another point (in a single-threaded test
+    /// the steer is injected between scripted turns via a steer-on-call stub; the live test injects
+    /// it from a background thread). Identical to `run_task_pinned` in every other respect; an
+    /// EMPTY handle (nothing ever steered) reproduces `run_task_pinned` exactly. NOT cancellable
+    /// (steer and cancel are independent entries this slice; composing both is a later refinement).
+    pub fn run_task_pinned_steerable(
+        &self,
+        run_id: &str,
+        task: &str,
+        provider_id: &str,
+        steer: &crate::SteerHandle,
+        now_ms: i64,
+    ) -> Result<(RoutedSelection, LoopOutcome), RoutedLoopError> {
+        let request = RouteRequest {
+            preferred_provider: Some(provider_id.to_string()),
+            ..RouteRequest::any()
+        };
+        self.run_with_request(
+            run_id,
+            task,
+            &request,
+            None,
+            None,
+            None,
+            Some(steer),
+            now_ms,
+        )
     }
 
     /// (C2) The SHARED composed-loop body for [`Self::run_task_with_overrides`] (open request)
     /// and [`Self::run_task_pinned`] (provider-pinned request). Factored out so there is ONE
     /// composed loop — the ONLY variable between the two entries is `request` (C2-1 adds the
-    /// optional `cancel` handle, `None` for the default/pinned non-cancellable entries). The
-    /// default path remains byte-identical: `run_task_with_overrides` calls this with
-    /// `&RouteRequest::any()` and `cancel: None`.
+    /// optional `cancel` handle, C2-2 the optional `steer` handle, both `None` for the
+    /// default/pinned non-cancellable/non-steerable entries). The default path remains
+    /// byte-identical: `run_task_with_overrides` calls this with `&RouteRequest::any()`,
+    /// `cancel: None`, and `steer: None`.
     #[allow(clippy::too_many_arguments)]
     fn run_with_request(
         &self,
@@ -411,6 +457,7 @@ impl<T: Transport> HubRuntime<T> {
         policy_override: Option<&RunPolicy>,
         max_turns_override: Option<u64>,
         cancel: Option<&CancelToken>,
+        steer: Option<&crate::SteerHandle>,
         now_ms: i64,
     ) -> Result<(RoutedSelection, LoopOutcome), RoutedLoopError> {
         // The effective per-run policy + ceiling. Absent override ⇒ boot config unchanged.
@@ -449,6 +496,7 @@ impl<T: Transport> HubRuntime<T> {
             policy,
             max_turns,
             cancel,
+            steer,
             now_ms,
         )?;
 
@@ -601,6 +649,7 @@ impl<T: Transport> HubRuntime<T> {
             policy,
             max_turns,
             None, // cancel: the sessioned entry is not cancellable (C2-1 is sessionless)
+            None, // steer: the sessioned entry is not steerable (C2-2 is sessionless)
             now_ms,
         ) {
             Ok(outcome) => outcome,
@@ -739,6 +788,7 @@ impl<T: Transport> HubRuntime<T> {
             policy,
             max_turns,
             None, // cancel: the sessioned entry is not cancellable (C2-1 is sessionless)
+            None, // steer: the sessioned entry is not steerable (C2-2 is sessionless)
             now_ms,
         ) {
             Ok(outcome) => outcome,
@@ -1942,6 +1992,344 @@ mod tests {
             "one anthropic row for the single finished turn"
         );
         assert_eq!(rows[0].provider_kind, "anthropic");
+    }
+
+    // ---- C2-2 steer turn: mid-loop re-prompt as an additional metered turn --------------------
+    //
+    // The §3 "steer / inject mid-loop" flow: an operator instruction folded into the NEXT turn as
+    // a REAL additional metered claude turn (NOT the provider-workspace `SteerTurn=Unsupported`
+    // mirror, which is no metered turn at all). This is the DETERMINISTIC, no-key dark proof — it
+    // drives the REAL public `HubRuntime::run_task_pinned_steerable("claude", ..)` entry to a stub
+    // that (a) CAPTURES the prompt it is handed on every call into an externally-observable handle,
+    // and (b) injects the steer into the shared `SteerHandle` right after turn 1 — the same
+    // single-threaded determinism the C2-1 cancel stub uses. The make-or-break assertion is the
+    // DELTA: turn 1's captured prompt does NOT contain the steer; turn 2's DOES — proving the loop
+    // folded the injected instruction into the next metered turn, not that the string was always
+    // there. Paired with rows 1→2 (an extra billed anthropic row for the steered turn).
+
+    /// A steer-AWARE Claude stub: each metered step surfaces an Anthropic-kind [`BilledUsage`]
+    /// (the bits the live `ClaudeAgentLlmClient` maps from a real chat) plus the next scripted
+    /// step, CAPTURES the `task` (prompt) it is handed into a shared `Rc<RefCell<Vec<String>>>`
+    /// (so the test can assert what the model actually received on each turn), AND — to make a
+    /// single-threaded steer deterministic — INJECTS `steer_instruction` into the shared
+    /// [`crate::SteerHandle`] once it has served `steer_after_calls` steps. So after turn 1
+    /// returns, the handle holds the instruction; the loop drains it at the TOP of turn 2 and
+    /// folds it into turn 2's prompt BEFORE calling this stub again — which then captures the
+    /// steered prompt as `captured[1]`. MIRRORS the `CancelOnCallClaudeStub` shape; it does NOT
+    /// modify the existing stubs (other tests depend on them).
+    struct SteerOnCallClaudeStub {
+        steps: Vec<AgentStep>,
+        prompt_tokens: i64,
+        completion_tokens: i64,
+        model: String,
+        calls: Rc<Cell<usize>>,
+        captured: Rc<std::cell::RefCell<Vec<String>>>,
+        steer: crate::SteerHandle,
+        steer_after_calls: usize,
+        steer_instruction: String,
+    }
+    impl crate::AgentLlmClient for SteerOnCallClaudeStub {
+        fn propose_tool_call(&self, _task: &str) -> Result<crate::RawToolCall, crate::AgentError> {
+            unreachable!("routed loop uses next_step_metered")
+        }
+        fn next_step_metered(
+            &self,
+            task: &str,
+            _history: &[crate::TurnTrace],
+        ) -> Result<crate::MeteredStep, crate::AgentError> {
+            // Capture the EXACT prompt this turn was handed (the load-bearing observation: the
+            // steered turn's prompt must contain the injected instruction, the prior turn's must not).
+            self.captured.borrow_mut().push(task.to_string());
+            let i = self.calls.get();
+            self.calls.set(i + 1);
+            let step = self.steps.get(i).cloned().unwrap_or(AgentStep::Finish {
+                message: "done".to_string(),
+            });
+            let usage = crate::BilledUsage {
+                provider_kind: friday_core::ProviderKind::Anthropic,
+                model: self.model.clone(),
+                prompt_tokens: self.prompt_tokens,
+                completion_tokens: self.completion_tokens,
+            };
+            // Inject the steer AFTER serving the Nth step — so the just-served turn is NOT steered
+            // and the NEXT turn boundary drains + folds it. (`calls` was just incremented to `i+1`,
+            // the count of steps served.)
+            if self.calls.get() == self.steer_after_calls {
+                self.steer.steer(self.steer_instruction.clone());
+            }
+            Ok((Ok(step), Some(usage)))
+        }
+    }
+
+    /// Build a Claude-wired runtime around a [`SteerOnCallClaudeStub`] and hand back the SAME
+    /// flips `runtime_with_claude_wired` performs, plus the externally-observable `calls` and
+    /// `captured` handles and the shared [`crate::SteerHandle`]. Mirrors `cancellable_claude_runtime`.
+    /// Leaves `runtime_with_claude_wired` / the existing stubs untouched (NO-DEGRADE).
+    #[allow(clippy::type_complexity)]
+    fn steerable_claude_runtime(
+        tag: &str,
+        steps: Vec<AgentStep>,
+        steer_after_calls: usize,
+        steer_instruction: &str,
+    ) -> (
+        HubRuntime<ScriptTransport>,
+        TempDir,
+        crate::SteerHandle,
+        Rc<Cell<usize>>,
+        Rc<std::cell::RefCell<Vec<String>>>,
+    ) {
+        let ws = TempDir::new(tag);
+        let transport = ScriptTransport::new(&["{\"tool\":\"none\"}"]);
+        let client = DeepSeekClient::with_transport(transport, "k".into());
+        let agent = DeepSeekAgentLlmClient::new(client);
+        let mut rt = HubRuntime::new(
+            HubConfig {
+                db_path: tmp(tag),
+                workspace_root: ws.0.clone(),
+                secret: SECRET.to_vec(),
+                max_turns: 6,
+                principal_id: None,
+                disabled_tools: vec![],
+                read_only: false,
+                operator_vk: None,
+            },
+            agent,
+            Box::new(DenyAllApprovals),
+        )
+        .unwrap();
+        let calls = Rc::new(Cell::new(0usize));
+        let captured = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let steer = crate::SteerHandle::new();
+        rt = rt.with_claude(Box::new(SteerOnCallClaudeStub {
+            steps,
+            prompt_tokens: 11,
+            completion_tokens: 8,
+            model: friday_anthropic::DEFAULT_MODEL.to_string(),
+            calls: calls.clone(),
+            captured: captured.clone(),
+            steer: steer.clone(),
+            steer_after_calls,
+            steer_instruction: steer_instruction.to_string(),
+        }));
+        rt.mark_route_available("claude");
+        rt.mark_route_validated("claude");
+        (rt, ws, steer, calls, captured)
+    }
+
+    #[test]
+    fn run_task_pinned_steerable_folds_steer_into_an_additional_metered_claude_turn() {
+        // STEER (routed + metered): a claude-pinned run with a MULTI-step script — turn 1 is a
+        // read-only tool that CONTINUES the loop (so a turn 2 is scripted), and the operator steer
+        // is injected right after turn 1 returns. At the TOP of turn 2 the loop DRAINS the steer
+        // and folds it into turn 2's prompt, so turn 2 is a REAL additional metered claude turn
+        // whose chat carries the injected instruction. This is the genuine steer — an extra billed
+        // claude turn grounded on the injection — NOT a `SteerTurn=Unsupported` mirror.
+        //
+        // The workspace has `notes.md` so turn 1's `read_file` is a clean Allowed+Executed CONTINUE
+        // (read-only needs no approval); turn 2's scripted `Finish` ends the run AFTER the steered
+        // metered call. Step 0 deliberately is NOT a Finish — a Finish would terminate before any
+        // turn-2 boundary, so the steer would have no next turn to fold into (an honest property:
+        // steer changes the CONTENT of an already-continuing turn, it does not resurrect a finished
+        // loop).
+        const STEER: &str = "ACTUALLY: also summarize the file in one line";
+        let (rt, ws, steer, calls, captured) = steerable_claude_runtime(
+            "c2-2-steer",
+            vec![
+                // turn 1: read-only tool → Allowed + Executed → loop CONTINUES to turn 2
+                AgentStep::Tool(crate::RawToolCall {
+                    action: "read_file".to_string(),
+                    params: vec![("path".to_string(), "notes.md".to_string())],
+                }),
+                // turn 2: Finish — this is the STEERED metered turn (its prompt carries the steer),
+                // then the loop ends with the answer.
+                AgentStep::Finish {
+                    message: "STEERED DONE".to_string(),
+                },
+            ],
+            1, // inject the steer after the stub has served 1 step (i.e. after turn 1)
+            STEER,
+        );
+        std::fs::write(ws.join("notes.md"), b"hello").unwrap();
+
+        let (selection, outcome) = rt
+            .run_task_pinned_steerable("run-c2-2-steer", "read the file", "claude", &steer, 1_000)
+            .expect("the steerable pinned claude run drives the routed loop");
+
+        // The pin really routed to claude (no reroute).
+        assert_eq!(selection.provider_id, "claude", "the pin routed to claude");
+        // The run ran the FULL two turns (turn 1 tool, turn 2 the steered Finish) — the steer added
+        // a real continuing turn, it did not interrupt.
+        assert_eq!(
+            outcome.status,
+            LoopStatus::Finished,
+            "the steered turn finished the run"
+        );
+        assert_eq!(
+            outcome.turns, 2,
+            "two model calls: turn 1 + the extra steered turn 2"
+        );
+        assert_eq!(
+            calls.get(),
+            2,
+            "the stub was called for BOTH turns — the steered turn is a REAL extra model call"
+        );
+        // The steer was consumed (drained) — it folds into exactly one turn, not silently re-applied.
+        assert!(
+            steer.drain().is_none(),
+            "the steer was consumed by the steered turn (the handle is empty after)"
+        );
+
+        // THE faithfulness proof — the DELTA: turn 1's prompt does NOT carry the steer, turn 2's
+        // DOES. This proves the loop FOLDED the injected instruction into the next metered turn,
+        // not that the string happened to be in the prompt all along. (Captured straight off the
+        // stub's `task` argument on each call — what the model actually received.)
+        let captured = captured.borrow();
+        assert_eq!(captured.len(), 2, "both turns' prompts were captured");
+        assert!(
+            !captured[0].contains(STEER),
+            "turn 1's prompt must NOT contain the steer (it was injected only AFTER turn 1): {:?}",
+            captured[0]
+        );
+        assert!(
+            captured[1].contains(STEER),
+            "turn 2's prompt MUST contain the folded steer — the stub OBSERVED the injection: {:?}",
+            captured[1]
+        );
+
+        // THE extra-billed-turn proof: rows grow 1→2, an ADDITIONAL anthropic row for the steered
+        // turn. BOTH rows are anthropic / api.anthropic.com / non-fallback — the steered turn is a
+        // real metered claude turn, never mis-attributed as deepseek and never a fallback.
+        let rows = rt.db().list_run_token_usage("run-c2-2-steer").unwrap();
+        assert_eq!(
+            rows.len(),
+            2,
+            "two anthropic rows: turn 1 + the EXTRA billed steered turn 2"
+        );
+        for row in &rows {
+            assert_eq!(
+                row.provider_kind, "anthropic",
+                "NOT mis-attributed as deepseek"
+            );
+            assert_eq!(row.base_url_host, "api.anthropic.com");
+            assert!(!row.fallback, "the claude route is never a fallback");
+        }
+        // Whole-ledger agrees: exactly the two anthropic rows exist (no hidden call).
+        let all = rt.db().list_token_usage().unwrap();
+        assert_eq!(all.len(), 2, "no hidden model call anywhere in the ledger");
+        assert!(all.iter().all(|r| r.provider_kind == "anthropic"));
+    }
+
+    #[test]
+    fn run_task_pinned_steerable_empty_handle_is_byte_identical_to_run_task_pinned() {
+        // NO-DEGRADE: an EMPTY steer handle (nothing ever steered) reproduces `run_task_pinned`
+        // EXACTLY — the run Finishes in one turn, billing one anthropic row, and the single
+        // captured prompt is UNchanged (no `[operator steer]` fold). The drain at each turn
+        // boundary is a pure no-op when nothing is pending (and `None`, the default path, skips
+        // it entirely — proven by the unchanged existing `run_task_pinned_*` claude tests).
+        let (rt, _ws, steer, calls, captured) = steerable_claude_runtime(
+            "c2-2-empty",
+            vec![AgentStep::Finish {
+                message: "PONG".to_string(),
+            }],
+            usize::MAX, // never inject a steer
+            "UNREACHED",
+        );
+        let (selection, outcome) = rt
+            .run_task_pinned_steerable("run-c2-2-empty", "say pong", "claude", &steer, 2_000)
+            .expect("an un-steered steerable run behaves like run_task_pinned");
+        assert_eq!(selection.provider_id, "claude");
+        assert_eq!(
+            outcome.status,
+            LoopStatus::Finished,
+            "an empty steer handle does not change the terminal status"
+        );
+        assert_eq!(outcome.turns, 1);
+        assert_eq!(calls.get(), 1, "the single Finish turn ran");
+        // The prompt the model saw is unchanged — no steer was folded in.
+        let captured = captured.borrow();
+        assert_eq!(captured.len(), 1);
+        assert!(
+            !captured[0].contains("[operator steer]"),
+            "no steer fold on the un-steered path: {:?}",
+            captured[0]
+        );
+        let rows = rt.db().list_run_token_usage("run-c2-2-empty").unwrap();
+        assert_eq!(
+            rows.len(),
+            1,
+            "one anthropic row for the single finished turn"
+        );
+        assert_eq!(rows[0].provider_kind, "anthropic");
+    }
+
+    #[test]
+    fn steer_is_folded_once_then_remains_in_context_for_the_rest_of_the_run() {
+        // The PERSISTS-IN-CONTEXT property (the corrected semantics): the steer is DRAINED/folded
+        // exactly ONCE, but having been folded into `prompt_task` it REMAINS in the model's context
+        // for every subsequent turn — BY DESIGN, since `TurnTrace` history has no slot to carry a
+        // free-form operator instruction (dropping it after one turn would make the model forget the
+        // steer mid-task). A 3-step script (tool, tool, Finish) with the steer injected after turn 1
+        // pins this: turn 1's prompt has NO steer; turns 2 AND 3 both carry it; and each carries
+        // EXACTLY ONE copy (not an accumulating re-append) — the drain fired once.
+        const STEER: &str = "ACTUALLY: number each step";
+        let (rt, ws, steer, calls, captured) = steerable_claude_runtime(
+            "c2-2-steer-persist",
+            vec![
+                // turn 1: read-only tool → CONTINUE
+                AgentStep::Tool(crate::RawToolCall {
+                    action: "read_file".to_string(),
+                    params: vec![("path".to_string(), "notes.md".to_string())],
+                }),
+                // turn 2: another read-only tool → CONTINUE (the steered turn)
+                AgentStep::Tool(crate::RawToolCall {
+                    action: "read_file".to_string(),
+                    params: vec![("path".to_string(), "notes.md".to_string())],
+                }),
+                // turn 3: Finish — the steer must STILL be in this turn's prompt.
+                AgentStep::Finish {
+                    message: "DONE".to_string(),
+                },
+            ],
+            1, // inject the steer after turn 1
+            STEER,
+        );
+        std::fs::write(ws.join("notes.md"), b"hello").unwrap();
+
+        let (_selection, outcome) = rt
+            .run_task_pinned_steerable("run-c2-2-persist", "read the file", "claude", &steer, 1_000)
+            .expect("the steerable pinned claude run drives the routed loop");
+        assert_eq!(outcome.status, LoopStatus::Finished);
+        assert_eq!(outcome.turns, 3, "three metered turns");
+        assert_eq!(calls.get(), 3, "the stub was called for all three turns");
+
+        let captured = captured.borrow();
+        assert_eq!(captured.len(), 3, "all three turns' prompts were captured");
+        assert!(
+            !captured[0].contains(STEER),
+            "turn 1 (pre-injection) has no steer"
+        );
+        assert!(
+            captured[1].contains(STEER),
+            "turn 2 (the steered turn) carries the folded steer"
+        );
+        assert!(
+            captured[2].contains(STEER),
+            "turn 3 STILL carries the steer — it remains in context for the rest of the run"
+        );
+        // Folded in exactly ONCE: each post-steer turn carries EXACTLY ONE copy of the instruction,
+        // never an accumulating re-append (which a per-turn re-fold would produce).
+        assert_eq!(
+            captured[1].matches(STEER).count(),
+            1,
+            "turn 2 carries exactly one copy of the steer"
+        );
+        assert_eq!(
+            captured[2].matches(STEER).count(),
+            1,
+            "turn 3 carries exactly one copy — the drain fired once, no re-append per turn"
+        );
+        // The handle is empty after — the steer was consumed (drained) exactly once.
+        assert!(steer.drain().is_none(), "the steer was consumed once");
     }
 
     // ---- PROOF-MEMORY-001 recall→inject wiring -------------------------------

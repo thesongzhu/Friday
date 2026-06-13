@@ -131,7 +131,7 @@
 use friday_crypto::{seal, DeviceKeypair};
 use friday_hub::hub_server::AuthedPrincipal;
 use friday_hub::runtime::{HubConfig, HubRuntime, ENV_CLAUDE_ROUTE_ENABLED};
-use friday_hub::{CancelToken, LoopStatus};
+use friday_hub::{CancelToken, LoopStatus, SteerHandle};
 use friday_providers::KeyValidationOutcome;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -550,6 +550,64 @@ fn interrupt_stop_cancels_live_claude_loop_and_bills_nothing_after_trip() {
     }
     eprintln!(
         "LIVE OK: interrupt/stop → claude, status {:?}, {} billed anthropic turn(s), nothing after trip",
+        outcome.status, outcome.turns
+    );
+}
+
+// ---- C2-2 steer / inject mid-loop: cooperative steer, LIVE -----------------------------------
+//
+// The live mirror of the deterministic, no-key in-crate proof
+// (`runtime.rs::run_task_pinned_steerable_folds_steer_into_an_additional_metered_claude_turn`).
+// The in-crate test is the REAL dark proof (it forces the injection deterministically between two
+// scripted turns AND asserts the stub observed it in the steered turn's prompt). This LIVE test
+// exercises the SAME `run_task_pinned_steerable` entry against a real Anthropic key, injecting the
+// steer from a background thread shortly after the run starts (mirroring the C2-1 live interrupt's
+// background `cancel`). It is `#[ignore]`'d like every live test here — only the operator run
+// spends quota — and timing-dependent (a fast model may finish before the steer lands), so it
+// asserts only the metering invariants that hold regardless of WHEN the steer folds in:
+//   - the run terminates (no hang) routed to claude (no reroute);
+//   - EVERY recorded ledger row is anthropic / api.anthropic.com / non-fallback, and the row count
+//     equals `outcome.turns` for a finished run — each metered turn (incl. the steered one) billed
+//     exactly one anthropic row, the same "steer is an additional METERED turn" property the
+//     in-crate test pins deterministically (and which the `SteerTurn=Unsupported` mirror does NOT
+//     satisfy — a mirror produces NO metered turn).
+// Only the `SteerHandle` clone (Send + Sync via Arc<Mutex<..>>) crosses the thread boundary; the
+// runtime stays on this thread. A model that finished before the steer landed simply bills its
+// turns normally — the metering invariant still holds; the steer FOLD itself is what the
+// deterministic in-crate test proves.
+#[test]
+#[ignore = "live: needs FRIDAY_CLAUDE_ROUTE_ENABLED=1 + both provider keys; spends Anthropic quota; run with --ignored"]
+fn steer_turn_folds_into_live_claude_loop_as_additional_metered_turn() {
+    let (rt, _ws) = live_claude_runtime("steer-turn");
+    let steer = SteerHandle::new();
+    // Inject the steer shortly after the run begins, from a background thread (only the handle
+    // clone — Send + Sync — crosses the boundary; the runtime never leaves this thread).
+    let steerer = steer.clone();
+    let handle = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        steerer.steer("ACTUALLY: also state the current step number on each turn");
+    });
+    let (selection, outcome) = rt
+        .run_task_pinned_steerable(
+            "live-claude-steer",
+            // A deliberately multi-step task so the loop reaches a turn boundary where the
+            // (already-injected) steer folds into a real billed claude turn.
+            "Think step by step and use tools across several turns; do not finish immediately.",
+            "claude",
+            &steer,
+            1_000,
+        )
+        .expect("a steerable live pinned-claude run terminates (no hang, no reroute)");
+    handle.join().unwrap();
+    assert_eq!(
+        selection.provider_id, "claude",
+        "the pin routed to claude, no reroute"
+    );
+    // The steered turn is an ADDITIONAL METERED turn: one anthropic row per counted turn,
+    // all-anthropic (a mirror would bill nothing — this must bill the steered turn).
+    assert_anthropic_rows(&rt, "live-claude-steer", outcome.status, outcome.turns);
+    eprintln!(
+        "LIVE OK: steer/inject → claude, status {:?}, {} billed anthropic turn(s) incl. the steered turn",
         outcome.status, outcome.turns
     );
 }
