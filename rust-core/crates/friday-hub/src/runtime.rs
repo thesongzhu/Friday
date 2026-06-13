@@ -244,6 +244,55 @@ impl<T: Transport> HubRuntime<T> {
         r
     }
 
+    /// (C2) Promote a route to `available: true` in THIS runtime's IN-PROCESS registry only
+    /// (never the autonomous baseline, which stays `available: false`). This is the gated,
+    /// per-runtime half of making the DARK Claude route selectable: it is called ONLY behind
+    /// the default-OFF `FRIDAY_CLAUDE_ROUTE_ENABLED` gate (see
+    /// [`Self::maybe_attach_claude_from_env`]). It leaves `validation_ok` untouched, so the
+    /// route is STILL not dispatchable until [`Self::validate_and_enable_claude`] flips that
+    /// (via the live key probe). A no-op if the route is absent.
+    fn mark_route_available(&mut self, provider_id: &str) {
+        if let Some(r) = self.routes.get(provider_id).cloned() {
+            self.routes.register(ProviderRoute {
+                available: true,
+                ..r
+            });
+        }
+    }
+
+    /// (C2) Mark a route `validation_ok: true` in THIS runtime's IN-PROCESS registry only
+    /// (mirrors [`Self::mark_route_available`]). Set ONLY after the live key probe returns
+    /// `Valid` — see [`Self::validate_and_enable_claude`] — so a gated boot that never runs
+    /// the probe leaves the route fail-closed (non-dispatchable). A no-op if absent.
+    fn mark_route_validated(&mut self, provider_id: &str) {
+        if let Some(r) = self.routes.get(provider_id).cloned() {
+            self.routes.register(ProviderRoute {
+                validation_ok: true,
+                ..r
+            });
+        }
+    }
+
+    /// (C2) Validate the wired Claude key ONCE via the EXISTING R7 live probe and, ONLY on a
+    /// `Valid` result, mark the in-process `claude` route `validation_ok: true` (dispatchable).
+    ///
+    /// This is an EXPLICIT, operator/harness-invoked one-shot — it is NEVER called at boot (so a
+    /// gated `HubRuntime::live` construction spends ZERO Anthropic quota and never hangs on a
+    /// network probe). It spends a tiny quota (one `max_tokens=1` chat) WHEN CALLED. With no key
+    /// the probe returns [`friday_providers::KeyValidationOutcome::CredentialMissing`] ⇒
+    /// `validation_ok` stays false ⇒ the route stays non-dispatchable (fail-closed); nothing is
+    /// written. The outcome is returned so the caller can surface CredentialMissing / Invalid /
+    /// Unavailable. THIS `.validate()` is the single residual that needs the live key.
+    pub fn validate_and_enable_claude(&mut self) -> friday_providers::KeyValidationOutcome {
+        use crate::provider_key_validation::LiveKeyValidationProbe;
+        use friday_providers::{KeyProvider, KeyValidationOutcome, KeyValidationProbe};
+        let outcome = LiveKeyValidationProbe::new().validate(KeyProvider::Anthropic);
+        if matches!(outcome, KeyValidationOutcome::Valid) {
+            self.mark_route_validated("claude");
+        }
+        outcome
+    }
+
     /// Drive ONE task end-to-end through the composed graph: create the run row, select the
     /// provider route (UNW-003), then run the gate-mandatory multi-turn loop (#481/#482).
     /// `run_id` must be unique per task. Returns the routing selection (evidence) + outcome.
@@ -286,6 +335,55 @@ impl<T: Transport> HubRuntime<T> {
         max_turns_override: Option<u64>,
         now_ms: i64,
     ) -> Result<(RoutedSelection, LoopOutcome), RoutedLoopError> {
+        // BYTE-IDENTICAL to the pre-C2 body: a constraint-free `RouteRequest::any()` request
+        // (selects the highest-priority dispatchable route = deepseek-flash). The ONLY thing
+        // (C2) `run_task_pinned` varies is this request; everything else (create-run, recall,
+        // routed loop, owner-wiring persist tail) is the SHARED `run_with_request` body.
+        self.run_with_request(
+            run_id,
+            task,
+            &RouteRequest::any(),
+            policy_override,
+            max_turns_override,
+            now_ms,
+        )
+    }
+
+    /// (C2) Pin a SPECIFIC provider for THIS run (no-fallback). Builds a pinned
+    /// [`RouteRequest`] and drives the SAME composed loop as [`Self::run_task`] via the shared
+    /// [`Self::run_with_request`] body. A non-dispatchable pin (e.g. `claude` while DARK)
+    /// surfaces [`RoutedLoopError::Route`]`(`[`RouteError::RequestedProviderUnavailable`]`)` —
+    /// NEVER a silent reroute. The DEFAULT path ([`Self::run_task`] /
+    /// [`Self::run_task_with_overrides`]) is UNCHANGED (their request is `RouteRequest::any()`).
+    /// This is the harness/operator entry the C2 routed-parity capture uses to drive the Claude
+    /// leg; it takes no per-run policy/max-turns override (the boot config applies).
+    pub fn run_task_pinned(
+        &self,
+        run_id: &str,
+        task: &str,
+        provider_id: &str,
+        now_ms: i64,
+    ) -> Result<(RoutedSelection, LoopOutcome), RoutedLoopError> {
+        let request = RouteRequest {
+            preferred_provider: Some(provider_id.to_string()),
+            ..RouteRequest::any()
+        };
+        self.run_with_request(run_id, task, &request, None, None, now_ms)
+    }
+
+    /// (C2) The SHARED composed-loop body for [`Self::run_task_with_overrides`] (open request)
+    /// and [`Self::run_task_pinned`] (provider-pinned request). Factored out so there is ONE
+    /// composed loop — the ONLY variable between the two entries is `request`. The default path
+    /// remains byte-identical: `run_task_with_overrides` calls this with `&RouteRequest::any()`.
+    fn run_with_request(
+        &self,
+        run_id: &str,
+        task: &str,
+        request: &RouteRequest,
+        policy_override: Option<&RunPolicy>,
+        max_turns_override: Option<u64>,
+        now_ms: i64,
+    ) -> Result<(RoutedSelection, LoopOutcome), RoutedLoopError> {
         // The effective per-run policy + ceiling. Absent override ⇒ boot config unchanged.
         let policy = policy_override.unwrap_or(&self.policy);
         let max_turns = match max_turns_override {
@@ -298,11 +396,10 @@ impl<T: Transport> HubRuntime<T> {
         // clean — the preamble is added only to what the model sees). `None` principal ⇒
         // no recall. Records a hash-chained `memory.recalled` audit receipt.
         let recall_preamble = self.recall_preamble(run_id, now_ms)?;
-        // v1: a constraint-free request (selects the highest-priority dispatchable route =
-        // deepseek-flash, the only live one). Deriving required capabilities / model-size
-        // from the task is a later refinement; with one live provider it cannot mask a wrong
-        // selection here.
-        let request = RouteRequest::any();
+        // The routing request is supplied by the caller: `RouteRequest::any()` for the default
+        // entries (selects the highest-priority dispatchable route = deepseek-flash, the only
+        // live one), or a provider-pin for `run_task_pinned` (C2). Deriving required
+        // capabilities / model-size from the task is a later refinement.
         let approve = |req: &MutatingActionRequest| self.approval.approve(req);
         // S4: thread the (effective) run policy so the bound principal reaches every gate
         // request's Actor (and the action digest) and the disabled/read-only restrictions are
@@ -311,7 +408,7 @@ impl<T: Transport> HubRuntime<T> {
         // HMAC); `None` ⇒ fail-closed Pause.
         let (selection, outcome) = run_routed_loop_with_policy(
             &self.routes,
-            &request,
+            request,
             self,
             &self.executor,
             self.db.conn(),
@@ -699,7 +796,15 @@ impl HubRuntime<UreqTransport> {
         // and pin the route's model id.
         let client = friday_anthropic::ClaudeClient::from_env().map_err(HubInitError::Claude)?;
         let agent = crate::ClaudeAgentLlmClient::new(client, friday_anthropic::DEFAULT_MODEL);
-        Ok(self.with_claude(Box::new(agent)))
+        let mut me = self.with_claude(Box::new(agent));
+        // (C2) Promote the claude route to `available: true` in THIS runtime's IN-PROCESS
+        // registry ONLY (the autonomous baseline stays `available: false` — prod default
+        // unchanged). This is gated-only: reached solely because the default-OFF
+        // `FRIDAY_CLAUDE_ROUTE_ENABLED` gate is on. `validation_ok` STAYS false here, so the
+        // route is still NOT dispatchable until `validate_and_enable_claude()` runs the live
+        // key probe — a gated boot spends no Anthropic quota.
+        me.mark_route_available("claude");
+        Ok(me)
     }
 }
 
@@ -941,6 +1046,97 @@ mod tests {
         assert!(
             wired.resolve(&deepseek_route).is_some(),
             "deepseek still wired"
+        );
+    }
+
+    // ---- C2 item 1: pin + gated validation (no-key) --------------------------
+
+    #[test]
+    fn pin_claude_dark_is_requested_unavailable() {
+        // A plain runtime (gate OFF ⇒ claude route stays `available:false` in the baseline,
+        // never promoted). `run_task_pinned(.., "claude", ..)` must surface
+        // RequestedProviderUnavailable("claude") — the pin is PLUMBED through `run_task_pinned`
+        // and fails closed with NO key, NO network, NO reroute to deepseek.
+        let (rt, _ws, post_calls) = runtime_with(
+            "pin-claude-dark",
+            &["{\"tool\":\"none\"}"],
+            Box::new(DenyAllApprovals),
+        );
+        let err = rt
+            .run_task_pinned("run-pin-dark", "ask claude", "claude", 1_000)
+            .expect_err("a dark claude pin must fail closed");
+        assert!(
+            matches!(
+                err,
+                RoutedLoopError::Route(RouteError::RequestedProviderUnavailable(ref p)) if p == "claude"
+            ),
+            "expected RequestedProviderUnavailable(claude), got {err:?}"
+        );
+        // Selection refused BEFORE dispatch — no model/chat call was ever made.
+        assert_eq!(
+            post_calls.get(),
+            0,
+            "no provider call on a refused pin (no reroute to deepseek)"
+        );
+    }
+
+    #[test]
+    fn run_task_pinned_deepseek_still_routes_to_deepseek() {
+        // The pin entry is general: pinning the LIVE deepseek route routes to deepseek and runs
+        // the SAME composed loop as `run_task` (shared `run_with_request` body). This guards the
+        // refactor — the default path is byte-identical and the pin path is wired end-to-end.
+        let (rt, _ws, _c) = runtime_with(
+            "pin-deepseek",
+            &["{\"tool\":\"none\",\"answer\":\"PONG\"}"],
+            Box::new(DenyAllApprovals),
+        );
+        let (selection, outcome) = rt
+            .run_task_pinned("run-pin-ds", "say pong", "deepseek", 1_000)
+            .expect("pinned deepseek runs");
+        assert_eq!(selection.provider_id, "deepseek");
+        assert_eq!(outcome.status, LoopStatus::Finished);
+    }
+
+    #[test]
+    fn validation_probe_credential_missing_keeps_claude_undispatchable() {
+        // With NO Anthropic key in the env, the explicit one-shot `validate_and_enable_claude()`
+        // runs the R7 live probe, which fails closed to CredentialMissing (NO quota spent, the
+        // route stays non-validated). A subsequent claude pin therefore still fails closed with
+        // RequestedProviderUnavailable. This is the no-key fail-closed proof; it presupposes the
+        // test env has no FRIDAY_ANTHROPIC_API_KEY (CI is DeepSeek-only; asserted below).
+        use friday_providers::KeyValidationOutcome;
+        assert!(
+            std::env::var("FRIDAY_ANTHROPIC_API_KEY")
+                .map(|v| v.trim().is_empty())
+                .unwrap_or(true),
+            "this no-key proof requires FRIDAY_ANTHROPIC_API_KEY to be unset/empty"
+        );
+        let (mut rt, _ws, post_calls) = runtime_with(
+            "validate-no-key",
+            &["{\"tool\":\"none\"}"],
+            Box::new(DenyAllApprovals),
+        );
+        let outcome = rt.validate_and_enable_claude();
+        assert_eq!(
+            outcome,
+            KeyValidationOutcome::CredentialMissing,
+            "no key ⇒ CredentialMissing (fail-closed, not Valid)"
+        );
+        // validation_ok was never flipped ⇒ a claude pin is still undispatchable.
+        let err = rt
+            .run_task_pinned("run-after-novalidate", "ask claude", "claude", 2_000)
+            .expect_err("claude stays undispatchable after a missing-key validation");
+        assert!(
+            matches!(
+                err,
+                RoutedLoopError::Route(RouteError::RequestedProviderUnavailable(ref p)) if p == "claude"
+            ),
+            "expected RequestedProviderUnavailable(claude), got {err:?}"
+        );
+        assert_eq!(
+            post_calls.get(),
+            0,
+            "no provider call: route never dispatched"
         );
     }
 

@@ -435,10 +435,54 @@ pub struct TurnTrace {
 /// `Some`) and THEN fails the run closed. This split is what makes the loop bill like the
 /// ask path (which has no parse step): a chat that spends tokens is billed even when the
 /// reply is unparseable (the S1.1 `parse_error` failure mode would otherwise under-bill).
-pub type MeteredStep = (
-    Result<AgentStep, AgentError>,
-    Option<friday_deepseek::ModelCallOutcome>,
-);
+pub type MeteredStep = (Result<AgentStep, AgentError>, Option<BilledUsage>);
+
+/// (C2) Provider-neutral billed-call usage: the bits the ONE biller
+/// ([`bill_model_call`]) needs to write a CORRECT [`friday_core::LedgerEntry`] row,
+/// independent of which provider produced the call. Carrying the
+/// [`friday_core::ProviderKind`] here (instead of hardwiring `DeepSeek`) is what stops a
+/// Claude call from being mis-attributed as DeepSeek — the biller picks the ledger ctor
+/// (host + provider_kind) off this enum.
+///
+/// `total_tokens` is DELIBERATELY absent: the ledger computes it from the parts
+/// ([`friday_core::LedgerEntry::new`]), so a stored copy could only ever disagree with
+/// the sum. Each provider adapter maps its own outcome into this shape.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BilledUsage {
+    pub provider_kind: friday_core::ProviderKind,
+    /// The model id the response REPORTED (ledger the reported model, not the requested
+    /// one — same discipline both adapters already follow).
+    pub model: String,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+}
+
+impl BilledUsage {
+    /// Map a DeepSeek `ModelCallOutcome` into the neutral billed-usage shape. The
+    /// tokens + reported model are carried VERBATIM, so the DeepSeek ledger row is
+    /// byte-identical to the pre-C2 `outcome.to_ledger_entry(..)` path (the regression
+    /// gate proves this).
+    pub fn from_deepseek(outcome: &friday_deepseek::ModelCallOutcome) -> Self {
+        Self {
+            provider_kind: friday_core::ProviderKind::DeepSeek,
+            model: outcome.model.clone(),
+            prompt_tokens: outcome.prompt_tokens,
+            completion_tokens: outcome.completion_tokens,
+        }
+    }
+
+    /// (C2) Map a Claude/Anthropic `ModelCallOutcome` into the neutral billed-usage
+    /// shape. Anthropic's `input_tokens`/`output_tokens` are the prompt/completion
+    /// equivalents.
+    pub fn from_anthropic(outcome: &friday_anthropic::ModelCallOutcome) -> Self {
+        Self {
+            provider_kind: friday_core::ProviderKind::Anthropic,
+            model: outcome.model.clone(),
+            prompt_tokens: outcome.input_tokens,
+            completion_tokens: outcome.output_tokens,
+        }
+    }
+}
 
 /// The model-client seam (mirrors `friday-deepseek`'s `Transport` DI pattern). The
 /// turn loop dispatches through this so it is unit-testable with a mock; the live impl
@@ -458,10 +502,10 @@ pub trait AgentLlmClient {
         Ok(AgentStep::Tool(self.propose_tool_call(task)?))
     }
 
-    /// Like [`AgentLlmClient::next_step`], but ALSO surfaces the model-call usage
-    /// ([`friday_deepseek::ModelCallOutcome`]: tokens + reported model) so [`run_loop`] can
-    /// LEDGER the call (S1.2 usage-parity). See [`MeteredStep`] for the route-vs-parse
-    /// error split.
+    /// Like [`AgentLlmClient::next_step`], but ALSO surfaces the model-call usage as a
+    /// provider-neutral [`BilledUsage`] (tokens + reported model + provider kind) so
+    /// [`run_loop`] can LEDGER the call with the CORRECT provider (S1.2 usage-parity; C2
+    /// generalization). See [`MeteredStep`] for the route-vs-parse error split.
     ///
     /// The DEFAULT meters NOTHING: it delegates to [`AgentLlmClient::next_step`] and returns
     /// `(result, None)` — a client that does not report usage (mocks / scripted tests) bills
@@ -565,9 +609,10 @@ impl<T: friday_deepseek::Transport> AgentLlmClient for DeepSeekAgentLlmClient<T>
             .chat(&model, &prompt, AGENTLOOP_MAX_TOKENS)
             .map_err(AgentError::Route)?;
         // The chat SUCCEEDED — `outcome` carries real, billable usage even if the content
-        // below fails to parse. Surface it so the loop bills the call regardless of parse.
+        // below fails to parse. Surface it (mapped to the neutral `BilledUsage`, DeepSeek
+        // kind) so the loop bills the call regardless of parse — byte-identical row.
         let step = parse_agent_step(&outcome.content);
-        Ok((step, Some(outcome)))
+        Ok((step, Some(BilledUsage::from_deepseek(&outcome))))
     }
 }
 
@@ -593,12 +638,14 @@ impl<T: friday_deepseek::Transport> AgentLlmClient for DeepSeekAgentLlmClient<T>
 /// `classify_deepseek`). A future non-dark slice that actually selects Claude would add
 /// an `AgentError::ClaudeRoute(ClaudeError)` variant + a classifier arm; out of scope here.
 ///
-/// **Ledger/metering DEFERRED.** This adapter does NOT override `next_step_metered`, so
-/// it uses the trait DEFAULT (no usage ⇒ no ledger row). Reusing DeepSeek's `MeteredStep`
-/// (hardwired to `friday_deepseek::ModelCallOutcome`) or `LedgerEntry::friday_route`
-/// (hardwired to `ProviderKind::DeepSeek`/`api.deepseek.com`) would mis-attribute a Claude
-/// call as DeepSeek — a latent honesty bug. A proper Claude ledger needs
-/// `ProviderKind::Anthropic` + a `MeteredStep` generalization; both out of dark scope.
+/// **Ledger/metering (C2).** This adapter OVERRIDES `next_step_metered` to surface its
+/// chat usage as a provider-neutral [`BilledUsage`] tagged [`friday_core::ProviderKind::Anthropic`]
+/// (mapping Anthropic's `input_tokens`/`output_tokens`), so the ONE biller
+/// ([`bill_model_call`]) records a `provider_kind="anthropic"` row via
+/// [`friday_core::LedgerEntry::anthropic_route`] (host `api.anthropic.com`) — NEVER
+/// mis-attributing a Claude call as DeepSeek. Its `next_step` routes THROUGH
+/// `next_step_metered` so there is exactly ONE chat call site (mirroring the DeepSeek
+/// adapter). The `friday-anthropic` crate is UNCHANGED.
 pub struct ClaudeAgentLlmClient<T: friday_anthropic::Transport> {
     client: friday_anthropic::ClaudeClient<T>,
     /// The model id this adapter dispatches to (from the route; e.g. `claude-opus-4-8`).
@@ -629,16 +676,39 @@ impl<T: friday_anthropic::Transport> AgentLlmClient for ClaudeAgentLlmClient<T> 
 
     /// History-aware multi-turn step, identical contract to the DeepSeek adapter's
     /// `next_step`. `{"tool":"none","answer":"<final>"}` parses to `Finish`.
+    ///
+    /// Routed through [`ClaudeAgentLlmClient::next_step_metered`] so there is exactly ONE
+    /// chat call site (mirroring the DeepSeek adapter); the usage is discarded here,
+    /// surfaced there.
     fn next_step(&self, task: &str, history: &[TurnTrace]) -> Result<AgentStep, AgentError> {
+        self.next_step_metered(task, history)?.0
+    }
+
+    /// (C2) Metered multi-turn step: the SAME `build_loop_prompt → chat → parse_agent_step`
+    /// as [`ClaudeAgentLlmClient::next_step`], but returns the chat usage mapped to a
+    /// neutral [`BilledUsage`] tagged [`friday_core::ProviderKind::Anthropic`] ALONGSIDE
+    /// the parse result, so [`run_loop`] ledgers the call as `provider_kind="anthropic"`.
+    /// A chat failure is an OUTER `Err` (nothing billed). A successful chat whose content
+    /// does not parse is an INNER `Err` with `Some(BilledUsage)` — the chat spent tokens,
+    /// so the loop bills it and then fails the run closed. See [`MeteredStep`].
+    fn next_step_metered(
+        &self,
+        task: &str,
+        history: &[TurnTrace],
+    ) -> Result<MeteredStep, AgentError> {
         let prompt = build_loop_prompt(task, history);
         let outcome = self
             .client
             .chat(&self.model, &prompt, AGENTLOOP_MAX_TOKENS)
+            // ClaudeError → string-bearing AgentError::Model (retry-classification deferred;
+            // see the adapter doc). Coarse, secret-free Display.
             .map_err(|e| AgentError::Model(e.to_string()))?;
-        parse_agent_step(&outcome.content)
+        // The chat SUCCEEDED — `outcome` carries real, billable usage even if the content
+        // below fails to parse. Surface it (neutral `BilledUsage`, Anthropic kind) so the
+        // loop bills the call with the CORRECT provider regardless of parse.
+        let step = parse_agent_step(&outcome.content);
+        Ok((step, Some(BilledUsage::from_anthropic(&outcome))))
     }
-    // `next_step_metered` is intentionally NOT overridden — see the adapter doc
-    // (ledger/metering deferred; the trait default returns `(result, None)`).
 }
 
 /// The process-wide DEFAULT (built-in) tool registry, built once and reused. The free
@@ -2315,9 +2385,10 @@ pub fn render_session_history(messages: &[friday_storage::StoredSessionMessage])
 }
 
 /// Ledger ONE agent-loop model call exactly as the ask path ledgers a single ask
-/// (`record_friday_ask`): build a Friday-route [`friday_core::LedgerEntry`] from the call's
-/// reported usage (`ModelCallOutcome::to_ledger_entry` ledgers the RESPONSE-reported model,
-/// never the requested one — no stale-model claims), an [`ActivityType::AskReceipt`] receipt
+/// (`record_friday_ask`): build the provider-correct [`friday_core::LedgerEntry`] from the
+/// call's neutral [`BilledUsage`] (C2 — the `provider_kind` picks `friday_route`/DeepSeek vs
+/// `anthropic_route`/Claude; the RESPONSE-reported model is ledgered, never the requested
+/// one — no stale-model claims), an [`ActivityType::AskReceipt`] receipt
 /// (the same receipt shape the ask surface emits), and an `agent_loop.model_call` audit
 /// event, then write all three ATOMICALLY with the owning `run_id` via
 /// [`friday_storage::record_run_model_call`]. Per-turn ids are derived from
@@ -2332,22 +2403,43 @@ fn bill_model_call(
     conn: &Connection,
     run_id: &str,
     turn_index: u64,
-    outcome: &friday_deepseek::ModelCallOutcome,
+    outcome: &BilledUsage,
     now_ms: i64,
 ) -> Result<(), StorageError> {
     let ledger_id = format!("{run_id}:t{turn_index}:ledger");
     let activity_id = format!("{run_id}:t{turn_index}:askreceipt");
     let audit_id = format!("{run_id}:t{turn_index}:modelcall");
-    let entry = outcome
-        .to_ledger_entry(
+    // (C2) Pick the ledger ctor — provider_kind + host — off the neutral usage's enum, so
+    // a Claude call records `provider_kind="anthropic"`/`api.anthropic.com` and a DeepSeek
+    // call stays byte-identical (`deepseek`/`api.deepseek.com`). `cost_estimate: None` for
+    // both (the loop biller has no per-provider pricing table — the honest value, as the
+    // ask path passes). The DeepSeek arm is the SAME `friday_route` the pre-C2
+    // `outcome.to_ledger_entry(..)` resolved to.
+    let entry = match outcome.provider_kind {
+        friday_core::ProviderKind::DeepSeek => friday_core::LedgerEntry::friday_route(
             ledger_id.as_str(),
             run_id,
             activity_id.as_str(),
+            &outcome.model,
+            outcome.prompt_tokens,
+            outcome.completion_tokens,
             None,
             None,
             now_ms,
-        )
-        .map_err(|e| StorageError::Unsupported(format!("loop ledger entry: {e:?}")))?;
+        ),
+        friday_core::ProviderKind::Anthropic => friday_core::LedgerEntry::anthropic_route(
+            ledger_id.as_str(),
+            run_id,
+            activity_id.as_str(),
+            &outcome.model,
+            outcome.prompt_tokens,
+            outcome.completion_tokens,
+            None,
+            None,
+            now_ms,
+        ),
+    }
+    .map_err(|e| StorageError::Unsupported(format!("loop ledger entry: {e:?}")))?;
     let activity = ActivityRow {
         activity_id,
         session_id: Some(run_id.to_string()),
@@ -4330,13 +4422,11 @@ mod tests {
             let step = self.steps.get(i).cloned().unwrap_or(Ok(AgentStep::Finish {
                 message: "script exhausted".to_string(),
             }));
-            let outcome = friday_deepseek::ModelCallOutcome {
+            let outcome = BilledUsage {
+                provider_kind: friday_core::ProviderKind::DeepSeek,
                 model: "deepseek-v4-flash".to_string(),
                 prompt_tokens: self.prompt_tokens,
                 completion_tokens: self.completion_tokens,
-                total_tokens: self.prompt_tokens + self.completion_tokens,
-                content: String::new(),
-                finish_reason: "stop".to_string(),
             };
             Ok((step, Some(outcome)))
         }
@@ -4429,6 +4519,226 @@ mod tests {
             )
             .unwrap();
         assert_eq!(model, "deepseek-v4-flash");
+    }
+
+    #[test]
+    fn deepseek_provider_row_is_byte_identical_post_refactor() {
+        // (C2 REGRESSION GATE / no-degrade) The metering generalization (neutral `BilledUsage`
+        // + `bill_model_call` picking the ledger ctor off the provider_kind) MUST NOT change the
+        // PROVEN DeepSeek loop-billing row. A DeepSeek model call still records EXACTLY the row
+        // the pre-C2 `outcome.to_ledger_entry(..)` -> `LedgerEntry::friday_route(..)` produced:
+        // provider_kind="deepseek", base_url_host="api.deepseek.com", fallback=false,
+        // cost_estimate=NULL, the reported model + the part/total tokens. `list_token_usage`
+        // does NOT project `base_url_host`, so the full row (incl. host) is read via direct SQL.
+        let root = TempDir::new("ds-byte-identical");
+        let db = Db::open_hub(&temp_path("ds-byte-identical")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "do it", 1).unwrap();
+        // One finishing DeepSeek-tagged metered turn (MeteringScriptedClient is DeepSeek-kind).
+        let client = MeteringScriptedClient::new(
+            vec![Ok(AgentStep::Finish {
+                message: "done".to_string(),
+            })],
+            11,
+            8,
+        );
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_loop(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "do it",
+            "",
+            SECRET,
+            &no_approval(),
+            5,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(out.status, LoopStatus::Finished);
+        // Read EVERY persisted ledger field for the single row and assert it byte-for-byte.
+        let (provider_kind, model, host, prompt, completion, total, cost, fallback): (
+            String,
+            String,
+            String,
+            i64,
+            i64,
+            i64,
+            Option<f64>,
+            i64,
+        ) = db
+            .conn()
+            .query_row(
+                "SELECT provider_kind, model, base_url_host, prompt_tokens, completion_tokens, \
+                 total_tokens, cost_estimate, fallback FROM token_ledger \
+                 WHERE ledger_id = 'r1:t0:ledger'",
+                [],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                        r.get(7)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            provider_kind, "deepseek",
+            "DeepSeek provider_kind unchanged"
+        );
+        assert_eq!(model, "deepseek-v4-flash", "reported model unchanged");
+        assert_eq!(host, "api.deepseek.com", "DeepSeek host unchanged");
+        assert_eq!(prompt, 11);
+        assert_eq!(completion, 8);
+        assert_eq!(
+            total, 19,
+            "total = prompt + completion (computed by the ledger)"
+        );
+        assert_eq!(
+            cost, None,
+            "loop biller passes no cost estimate (unchanged)"
+        );
+        assert_eq!(fallback, 0, "Friday route is never a fallback (unchanged)");
+    }
+
+    #[test]
+    fn claude_step_writes_anthropic_provider_row() {
+        // (C2 item 2) A Claude-tagged metered step, driven through the ROUTED loop with a
+        // hand-built dispatchable `claude` route + a stub client, records a token_ledger row
+        // with provider_kind="anthropic" / host="api.anthropic.com" / the claude model — NEVER
+        // mis-attributed as DeepSeek. NO key, NO network: the stub returns a synthetic
+        // `BilledUsage{Anthropic,..}` + a `Finish` step, exactly as the live Claude adapter's
+        // `next_step_metered` would after a real chat. Proves the metering generalization wires
+        // the Claude row end-to-end through the SAME biller as DeepSeek.
+        use crate::routing::{
+            run_routed_loop_with_policy, BackendKind, Capability, ModelSize, ProviderApi,
+            ProviderClientResolver, ProviderRoute, RouteRegistry, RouteRequest,
+        };
+        use std::collections::BTreeSet;
+
+        // A stub Claude client: it never proposes a tool, and its metered step surfaces an
+        // Anthropic-kind `BilledUsage` (the bits the live adapter maps from a real chat) plus
+        // a finishing step. This is the in-crate stand-in for `ClaudeAgentLlmClient`.
+        struct StubClaudeMeteredClient {
+            prompt_tokens: i64,
+            completion_tokens: i64,
+            model: String,
+        }
+        impl AgentLlmClient for StubClaudeMeteredClient {
+            fn propose_tool_call(&self, _task: &str) -> Result<RawToolCall, AgentError> {
+                unreachable!("routed loop uses next_step_metered")
+            }
+            fn next_step_metered(
+                &self,
+                _task: &str,
+                _history: &[TurnTrace],
+            ) -> Result<MeteredStep, AgentError> {
+                let usage = BilledUsage {
+                    provider_kind: friday_core::ProviderKind::Anthropic,
+                    model: self.model.clone(),
+                    prompt_tokens: self.prompt_tokens,
+                    completion_tokens: self.completion_tokens,
+                };
+                Ok((
+                    Ok(AgentStep::Finish {
+                        message: "done".to_string(),
+                    }),
+                    Some(usage),
+                ))
+            }
+        }
+
+        // A resolver that always returns the stub for the selected route.
+        struct FixedResolver<'a> {
+            client: &'a dyn AgentLlmClient,
+        }
+        impl<'a> ProviderClientResolver for FixedResolver<'a> {
+            fn resolve(&self, _route: &ProviderRoute) -> Option<&dyn AgentLlmClient> {
+                Some(self.client)
+            }
+        }
+
+        // A hand-built registry with a DISPATCHABLE claude route (available + validated). This
+        // is the in-test analogue of the gated-live promotion; the autonomous baseline keeps
+        // claude `available:false` — this test never touches the baseline.
+        let mut registry = RouteRegistry::new();
+        let caps: BTreeSet<Capability> = [Capability::Text].into_iter().collect();
+        registry.register(ProviderRoute {
+            provider_id: "claude".to_string(),
+            api: ProviderApi::AnthropicMessages,
+            backend_kind: BackendKind::Http,
+            model: "claude-opus-4-8".to_string(),
+            model_size: ModelSize::Large,
+            capabilities: caps,
+            available: true,
+            validation_ok: true,
+            priority: 0,
+        });
+
+        let db = Db::open_hub(&temp_path("claude-anthropic-row")).unwrap();
+        agent_run::create_run(db.conn(), "r1", "ask claude", 1).unwrap();
+        let root = TempDir::new("claude-anthropic-row");
+        let executor = FsToolExecutor::new(&root.0);
+        let client = StubClaudeMeteredClient {
+            prompt_tokens: 11,
+            completion_tokens: 8,
+            model: "claude-opus-4-8".to_string(),
+        };
+        let resolver = FixedResolver { client: &client };
+        let request = RouteRequest {
+            preferred_provider: Some("claude".to_string()),
+            ..RouteRequest::any()
+        };
+        let (selection, outcome) = run_routed_loop_with_policy(
+            &registry,
+            &request,
+            &resolver,
+            &executor,
+            db.conn(),
+            "r1",
+            "ask claude",
+            "",
+            None,
+            &no_approval(),
+            &RunPolicy::default(),
+            5,
+            1000,
+        )
+        .expect("routed claude loop runs");
+        assert_eq!(selection.provider_id, "claude", "pin routed to claude");
+        assert_eq!(outcome.status, LoopStatus::Finished);
+
+        // Exactly one ledger row, correctly attributed to Anthropic (zero mis-attribution).
+        let rows = db.list_token_usage().unwrap();
+        assert_eq!(
+            rows.len(),
+            1,
+            "one anthropic row for the single claude turn"
+        );
+        let row = &rows[0];
+        assert_eq!(
+            row.provider_kind, "anthropic",
+            "NOT mis-attributed as deepseek"
+        );
+        assert_eq!(row.model, "claude-opus-4-8");
+        assert_eq!(row.total_tokens, 19, "11 + 8");
+        assert!(!row.fallback, "the claude route is never a fallback");
+        // The host is not projected by list_token_usage; read it directly to prove the
+        // anthropic_route ctor was used (api.anthropic.com), not the deepseek host.
+        let host: String = db
+            .conn()
+            .query_row(
+                "SELECT base_url_host FROM token_ledger WHERE ledger_id = 'r1:t0:ledger'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(host, "api.anthropic.com");
     }
 
     #[test]
@@ -5137,13 +5447,11 @@ mod tests {
     fn ok_step(step: AgentStep, prompt_tokens: i64, completion_tokens: i64) -> MeteredStep {
         (
             Ok(step),
-            Some(friday_deepseek::ModelCallOutcome {
+            Some(BilledUsage {
+                provider_kind: friday_core::ProviderKind::DeepSeek,
                 model: "deepseek-v4-flash".to_string(),
                 prompt_tokens,
                 completion_tokens,
-                total_tokens: prompt_tokens + completion_tokens,
-                content: String::new(),
-                finish_reason: "stop".to_string(),
             }),
         )
     }
@@ -6389,9 +6697,12 @@ mod ask_coupling_tests {
             "non-tool-call content must fail the contract parse"
         );
         let outcome = usage.expect("a successful chat must surface usage to bill");
+        // C2: usage is now the neutral `BilledUsage` (no stored `total_tokens` — the ledger
+        // computes it from the parts). The DeepSeek adapter tags it DeepSeek.
+        assert_eq!(outcome.provider_kind, friday_core::ProviderKind::DeepSeek);
         assert_eq!(outcome.prompt_tokens, 10);
         assert_eq!(outcome.completion_tokens, 5);
-        assert_eq!(outcome.total_tokens, 15);
+        assert_eq!(outcome.prompt_tokens + outcome.completion_tokens, 15);
         assert_eq!(outcome.model, "deepseek-v4-flash");
     }
 

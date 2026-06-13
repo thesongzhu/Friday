@@ -1033,4 +1033,60 @@ mod tests {
         assert_eq!(client.calls.get(), 0);
         assert_eq!(executor.executed.get(), 0);
     }
+
+    /// (C2 item 1) A `claude` PIN against a DISPATCHABLE claude route (available + validated,
+    /// `AnthropicMessages` api) routes to claude with a STUB client — `selection.provider_id
+    /// == "claude"`. This proves the pin path SELECTS claude (the half a direct-client round
+    /// trip does not cover) without a key or network: the `ScriptedRoutedClient` stands in for
+    /// `ClaudeAgentLlmClient`, and the hand-built registry is the in-test analogue of the gated
+    /// runtime promotion (the autonomous baseline keeps claude `available:false`).
+    #[test]
+    fn pin_routes_to_claude_when_dispatchable_with_stub_client() {
+        let db = db_with_run("pin-claude", "run-claude", "ask claude");
+        // A dispatchable claude route (the gated-promotion analogue), Anthropic api/HTTP.
+        let mut r = RouteRegistry::new();
+        let mut claude = route(
+            "claude",
+            0,
+            ModelSize::Large,
+            &[
+                Capability::Text,
+                Capability::FileRead,
+                Capability::FileWrite,
+            ],
+        );
+        claude.api = ProviderApi::AnthropicMessages;
+        r.register(claude);
+        let client = ScriptedRoutedClient::new(AgentStep::Finish {
+            message: "PONG".to_string(),
+        });
+        let resolver = FixedResolver { client: &client };
+        let executor = SpyExecutor {
+            executed: Cell::new(0),
+        };
+        let req = RouteRequest {
+            preferred_provider: Some("claude".to_string()),
+            ..RouteRequest::any()
+        };
+        let (selection, outcome) = run_routed_loop(
+            &r,
+            &req,
+            &resolver,
+            &executor,
+            db.conn(),
+            "run-claude",
+            "ask claude",
+            "",
+            b"secret-key-0123456789",
+            &|_req| None,
+            4,
+            1_000,
+        )
+        .expect("routed claude loop runs");
+        assert_eq!(
+            selection.provider_id, "claude",
+            "the pin selected the claude route"
+        );
+        assert_eq!(outcome.status, crate::LoopStatus::Finished);
+    }
 }
