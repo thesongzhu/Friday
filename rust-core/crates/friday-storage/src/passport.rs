@@ -46,7 +46,7 @@ fn kind_as_str(kind: PassportItemKind) -> &'static str {
         PassportItemKind::File => "file",
         PassportItemKind::Screenshot => "screenshot",
         PassportItemKind::Attachment => "attachment",
-        PassportItemKind::ProviderSecret => "provider_secret",
+        PassportItemKind::ProviderSecret => "provider_secret", // pragma: allowlist secret
         PassportItemKind::RawToken => "raw_token",
     }
 }
