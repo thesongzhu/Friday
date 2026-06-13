@@ -629,6 +629,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "friday-browser"
+version = "0.0.1"
+
+[[package]]
 name = "friday-core"
 version = "0.0.1"
 dependencies = [
@@ -707,6 +711,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "friday-ocr"
+version = "0.0.1"
+
+[[package]]
 name = "friday-operator-cli"
 version = "0.0.1"
 dependencies = [
@@ -733,6 +741,10 @@ dependencies = [
  "thiserror 1.0.69",
  "zeroize",
 ]
+
+[[package]]
+name = "friday-pdf"
+version = "0.0.1"
 
 [[package]]
 name = "friday-protocol"
@@ -789,6 +801,14 @@ dependencies = [
  "thiserror 1.0.69",
  "tungstenite",
 ]
+
+[[package]]
+name = "friday-tts"
+version = "0.0.1"
+
+[[package]]
+name = "friday-vision"
+version = "0.0.1"
 
 [[package]]
 name = "fs-err"

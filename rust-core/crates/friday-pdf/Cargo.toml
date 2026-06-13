@@ -1,0 +1,8 @@
+[package]
+name = "friday-pdf"
+description = "Friday F11 net-new media capability — pdf_parse crate skeleton. Empty compiling stub, no logic/deps/executors yet (Hub-only, no phone surface → stays OUT of friday-ffi's dependency graph)."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
