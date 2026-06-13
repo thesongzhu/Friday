@@ -610,6 +610,167 @@ pub fn archive_session_for_owner(
     })
 }
 
+// --- C2-7 explicit owner-authed FORK op (a new branch of a metered session) -------
+//
+// An EXPLICIT, owner-authed FORK of one FRIDAY routed `agent_session`: the bound owner says
+// "branch this conversation" — create a NEW owned session seeded with a COPY of the parent's
+// messages, with `forked_from` pointing back at the parent, so a follow-up turn explores an
+// alternate branch WITHOUT mutating the parent's history. This is the metadata half ONLY:
+// the fork itself makes NO model call and writes NO `token_ledger` row (forking is not a
+// turn). A later turn on the FORKED session routes + bills exactly like any other routed
+// session (its OWN new `anthropic` row), so the fork is a real branch of a metered session —
+// NOT a synthesized/mirror clone of a `provider_session_link` claude_control link (that local
+// mirror has no owner axis and no real billing; this op never touches it).
+//
+// Owner-gated EXACTLY like the C2-4 read API and the C2-6 archive op: it reuses
+// [`owner_matches`] on the PARENT (the `agent_session.user_id` axis bound to the authenticated
+// caller by `run_session_task_pinned`), so a DIFFERENT principal — or a blank owner, an
+// owner-less (NULL `user_id`) parent, or an absent parent id — is REFUSED fail-closed with NO
+// child created, NO message copied, and NO audit row. Only the bound owner can fork, and the
+// child is bound to the SAME owner (NEVER a client-asserted id).
+//
+// The child session row + the copied messages + the hash-chained audit receipt are written in
+// ONE `unchecked_transaction` (atomic: a crash can never leave a half-copied child with no
+// receipt, nor a child with a partial transcript). The copies are INSERTed directly into the
+// child (the fork op holds the single tx, so it cannot call `append_session_message`, which
+// would open a nested transaction) preserving each turn's `role`/`content`/`refs` VERBATIM —
+// a fork is a faithful copy of the parent's history, so a copied message legitimately still
+// `refs` the PARENT's run_id (only the NEW follow-up turn on the child gets its own run_id).
+
+/// The body-free outcome of a [`fork_session_for_owner`] attempt. `accepted=false` is the
+/// fail-closed owner-mismatch refusal (no child, no copy, no receipt). Never a body.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ForkOutcome {
+    /// Whether the fork was accepted (`true`) or refused fail-closed (`false`).
+    pub accepted: bool,
+    /// Coarse, body-free outcome label (closed-vocab): `"forked"` (a child was created +
+    /// seeded) or `"not_owner"` (fail-closed refusal — a non-owner, an owner-less parent, a
+    /// blank owner, or an absent parent id).
+    pub status: String,
+    /// The minted child `agent_session_id`, present ONLY on an accepted fork. The caller uses
+    /// it to run the next (branched) turn on the child.
+    pub child_session_id: Option<String>,
+    /// Soft link to the hash-chained audit receipt, written ONLY on an accepted fork.
+    pub audit_ref: Option<String>,
+}
+
+impl ForkOutcome {
+    fn refused() -> Self {
+        ForkOutcome {
+            accepted: false,
+            status: "not_owner".to_string(),
+            child_session_id: None,
+            audit_ref: None,
+        }
+    }
+}
+
+/// Explicitly FORK a routed session as its BOUND owner: create a NEW owned `agent_session`
+/// (fresh id, `forked_from` = the parent id, `user_id` = the authenticated caller, `status`
+/// defaulting to `'active'`) seeded with a COPY of the parent's messages, and write a
+/// hash-chained audit receipt — all in ONE transaction.
+///
+/// Owner-gated fail-closed via [`owner_matches`] on the PARENT (the SAME `agent_session.user_id`
+/// axis as the C2-4 read API and the C2-6 archive op): a non-owner, an owner-less parent, a
+/// blank `user_id`, or an absent `parent_session_id` all return [`ForkOutcome::refused`]
+/// (`accepted=false`, `status="not_owner"`) with NO child, NO copied message, and NO audit row —
+/// a guessed parent id cannot fork another principal's session.
+///
+/// The child is bound to the SAME owner the parent check established (`caller == parent.user_id`),
+/// never a client-asserted id. The copied messages preserve each turn's `role`/`content`/`refs`
+/// verbatim in `seq` order (a copied message legitimately still `refs` the parent's run_id — a
+/// fork is a copy of history; only a NEW turn on the child gets its own run_id). The child's
+/// `seq` restarts at `0` (a fresh session).
+///
+/// Metadata-only: NO model call and NO `token_ledger` row (forking is not a metered turn). A
+/// LATER turn on the forked session routes + bills its OWN row exactly like any routed session,
+/// so the fork is a real branch of a metered session — never a synthesized/mirror clone.
+pub fn fork_session_for_owner(
+    conn: &Connection,
+    user_id: &str,
+    parent_session_id: &str,
+    now_ms: i64,
+) -> Result<ForkOutcome> {
+    // (1) Owner gate FIRST (fail-closed) on the PARENT: a non-owner / owner-less / absent /
+    //     blank-owner attempt is refused with no read leaked, no mint, and no write.
+    if !owner_matches(conn, user_id, parent_session_id)? {
+        return Ok(ForkOutcome::refused());
+    }
+
+    // (2) The owner matched the parent. Read its messages to copy (refs-only metadata is not
+    //     enough — a fork must carry the conversation, so the bodies are copied Hub-side, never
+    //     over the wire). A CSPRNG tag keys both the child id and the audit id so repeated forks
+    //     of the same parent never collide on the `agent_session` PK or the `audit_id` PK.
+    let parent_messages = load_session_messages(conn, parent_session_id)?;
+    let tag = friday_crypto::generate_approval_nonce();
+    let child_session_id = format!("{parent_session_id}:fork:{tag}");
+    let receipt_id = format!("{child_session_id}:fork:receipt");
+
+    // (3) Create the child + copy the messages + write the receipt in ONE transaction (atomic:
+    //     a crash can never leave a half-copied child or a child with no receipt). The child
+    //     names `forked_from` (the parent pointer, m0032) and `user_id` (the SAME owner the gate
+    //     established — never client-asserted); `status` takes its v28 DEFAULT 'active' so the
+    //     child appears in the owner's active list. The copies are INSERTed DIRECTLY (the op
+    //     holds the single tx; calling `append_session_message` would open a nested transaction).
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "INSERT INTO agent_session (agent_session_id, created_at, updated_at, user_id, forked_from)
+         VALUES (?1, ?2, ?2, ?3, ?4)",
+        params![child_session_id, now_ms, user_id, parent_session_id],
+    )?;
+    for (seq, msg) in parent_messages.iter().enumerate() {
+        let seq = seq as i64;
+        let message_id = format!("{child_session_id}:m{seq}");
+        tx.execute(
+            "INSERT INTO agent_session_message
+                (message_id, agent_session_id, seq, role, content, refs, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                message_id,
+                child_session_id,
+                seq,
+                msg.role,
+                msg.content,
+                msg.refs,
+                now_ms,
+            ],
+        )?;
+    }
+    // The actor is the owner principal that authorized the fork (WHO forked); the payload_ref
+    // soft-links the NEW child session (the artifact this op produced).
+    audit::append_audit(
+        &tx,
+        &receipt_id,
+        user_id,
+        "session.forked",
+        Some(&child_session_id),
+        now_ms,
+    )?;
+    tx.commit()?;
+
+    Ok(ForkOutcome {
+        accepted: true,
+        status: "forked".to_string(),
+        child_session_id: Some(child_session_id),
+        audit_ref: Some(receipt_id),
+    })
+}
+
+/// Read a session's `forked_from` parent pointer (C2-7). `Some(parent_id)` for a forked
+/// session, `None` for a root session (or an absent one — both read back the same, no
+/// existence oracle is intended here; the owner-gated read API governs visibility). Pure read.
+pub fn session_forked_from(conn: &Connection, agent_session_id: &str) -> Result<Option<String>> {
+    let parent = conn
+        .query_row(
+            "SELECT forked_from FROM agent_session WHERE agent_session_id = ?1",
+            [agent_session_id],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .optional()?
+        .flatten();
+    Ok(parent)
+}
+
 // --- C2-8 offline/stale link-state (derived from last-activity vs now) --------
 //
 // A connectivity/staleness LABEL for a routed `agent_session`, derived purely from the

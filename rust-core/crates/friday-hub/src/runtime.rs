@@ -1090,6 +1090,33 @@ impl<T: Transport> HubRuntime<T> {
         )
     }
 
+    /// (C2-7) EXPLICIT owner-authed FORK of one routed session: create a NEW owned session
+    /// (fresh id, `forked_from` = the parent id, bound to the AUTHENTICATED `caller` — the SAME
+    /// `agent_session.user_id` axis as [`Self::open_session_for_owner`], NEVER a client-asserted
+    /// id) seeded with a COPY of the parent's messages, and write a hash-chained audit receipt.
+    /// Only the bound owner can fork — a non-owner / owner-less parent / absent parent id is
+    /// REFUSED fail-closed ([`friday_storage::ForkOutcome`] `accepted=false`, `status="not_owner"`)
+    /// with NO child created, NO message copied, and NO audit row.
+    ///
+    /// Metadata-only: the fork makes NO model call and writes NO `token_ledger` row (forking is
+    /// not a metered turn). A LATER turn on the forked session (via [`Self::run_session_task_pinned`])
+    /// routes + bills its OWN row exactly like any routed session, so the fork is a REAL branch of a
+    /// metered session — never a synthesized/mirror clone of a `provider_session_link` claude_control
+    /// link. ADDITIVE accessor.
+    pub fn fork_session_for_owner(
+        &self,
+        caller: &AuthedPrincipal,
+        parent_session_id: &str,
+        now_ms: i64,
+    ) -> Result<friday_storage::ForkOutcome, StorageError> {
+        friday_storage::fork_session_for_owner(
+            self.db.conn(),
+            caller.principal(),
+            parent_session_id,
+            now_ms,
+        )
+    }
+
     /// (C2-8) OWNER-GATED refs-only LINK-STATE projection for one routed session: the
     /// connectivity/staleness label (`fresh`/`stale`/`offline`) DERIVED from the session's
     /// last-activity timestamp (`agent_session.updated_at`, which the metered turn's folded
@@ -3229,6 +3256,275 @@ mod tests {
         assert_eq!(
             updated_after_rearchive, archive_at,
             "the idempotent re-archive does not bump updated_at"
+        );
+    }
+
+    #[test]
+    fn c2_7_owner_authed_fork_is_a_real_branch_of_a_metered_session() {
+        // C2-7 FAITHFUL DARK PROOF: drive ONE claude-pinned SESSIONED turn through the REAL
+        // `run_session_task_pinned` entry (billing one anthropic row — ASSERTED, so the PARENT
+        // is the REAL routed session that carries metered claude billing, never a mirror). Then
+        // FORK that parent as the BOUND owner and prove:
+        //   - a NEW session exists, distinct from the parent, with the parent's messages COPIED
+        //     (role/content/refs preserved verbatim — a copied turn legitimately still refs the
+        //     PARENT's run_id);
+        //   - the child's `forked_from` points back at the parent;
+        //   - the child is bound to the SAME owner (it appears in the owner's C2-4 active list);
+        //   - an audit receipt is written (action='session.forked') and the hash chain verifies;
+        //   - NO new ledger row at fork time (forking is metadata, not a model turn) — the whole
+        //     ledger stays at the 1 the parent turn wrote.
+        // THEN run ONE claude-pinned turn on the FORKED session and prove:
+        //   - it bills a NEW anthropic row on the CHILD run (the fork is a REAL branch of a
+        //     metered session, not a mirror clone) — the whole ledger is now 2;
+        //   - `forked_from` SURVIVES the child turn (the run-entry's ON CONFLICT bump never
+        //     names it).
+        // Owner MISMATCH: a DIFFERENT principal CANNOT fork (fail-closed refusal) — no child,
+        // no copy, no audit row, and the `agent_session` row count is unchanged.
+        // NO key, NO network — the claude stub bills the anthropic rows.
+        let (rt, _ws) = runtime_with_claude_wired(
+            "c2-7-fork-op",
+            vec![AgentStep::Finish {
+                message: "PONG".to_string(),
+            }],
+            Box::new(DenyAllApprovals),
+        );
+        let owner = authed_caller("principal:c2-7-owner");
+        let other = authed_caller("principal:c2-7-intruder");
+
+        // --- one claude-pinned sessioned turn → a REAL routed PARENT with a metered anthropic row ---
+        let parent_run = "run-c2-7-parent";
+        let parent_sess = "sess-c2-7-parent";
+        let (sel, _a) = rt
+            .run_session_task_pinned(
+                &owner,
+                parent_run,
+                parent_sess,
+                "first turn",
+                "claude",
+                5_000,
+            )
+            .expect("the claude-pinned sessioned turn runs");
+        assert_eq!(sel.provider_id, "claude", "the pin routed to claude");
+
+        // ASSERT the REAL anthropic ledger row on the PARENT run.
+        let parent_ledger = rt.db().list_run_token_usage(parent_run).unwrap();
+        assert_eq!(
+            parent_ledger.len(),
+            1,
+            "one anthropic row for the parent turn"
+        );
+        assert_eq!(parent_ledger[0].provider_kind, "anthropic");
+        assert_eq!(parent_ledger[0].base_url_host, "api.anthropic.com");
+        assert!(
+            !parent_ledger[0].fallback,
+            "the claude route is never a fallback"
+        );
+        assert_eq!(
+            rt.db().list_token_usage().unwrap().len(),
+            1,
+            "exactly one anthropic row exists before the fork"
+        );
+
+        // PRECONDITION: the parent has ≥1 message (else "messages COPIED" would prove nothing).
+        let parent_msgs = rt
+            .open_session_for_owner(&owner, parent_sess)
+            .unwrap()
+            .expect("the owner can open its own parent session");
+        assert!(
+            !parent_msgs.is_empty(),
+            "the metered turn folded ≥1 message into the parent (the copy source)"
+        );
+
+        let fork_receipts = |rt: &HubRuntime<ScriptTransport>| -> i64 {
+            rt.db()
+                .conn()
+                .query_row(
+                    "SELECT count(*) FROM audit_ledger WHERE action = 'session.forked'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        let session_count = |rt: &HubRuntime<ScriptTransport>| -> i64 {
+            rt.db()
+                .conn()
+                .query_row("SELECT count(*) FROM agent_session", [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(fork_receipts(&rt), 0, "no fork receipt before the op");
+        let sessions_before_fork = session_count(&rt);
+
+        // --- OWNER-MISMATCH first: a DIFFERENT principal cannot fork (fail-closed refusal) -------
+        let refused = rt
+            .fork_session_for_owner(&other, parent_sess, 6_000)
+            .expect("the fork call itself does not error");
+        assert!(!refused.accepted, "a non-owner fork is refused");
+        assert_eq!(refused.status, "not_owner");
+        assert_eq!(
+            refused.child_session_id, None,
+            "a refused fork mints no child"
+        );
+        assert_eq!(refused.audit_ref, None, "a refused fork writes no receipt");
+        assert_eq!(
+            session_count(&rt),
+            sessions_before_fork,
+            "owner mismatch created NO child (agent_session count unchanged)"
+        );
+        assert_eq!(
+            fork_receipts(&rt),
+            0,
+            "a refused (non-owner) fork writes NO audit row (the real fail-closed proof)"
+        );
+
+        // --- the BOUND OWNER forks the parent ----------------------------------------------------
+        let fork_at = 7_000;
+        let outcome = rt
+            .fork_session_for_owner(&owner, parent_sess, fork_at)
+            .expect("the owner's fork runs");
+        assert!(outcome.accepted, "the bound owner's fork is accepted");
+        assert_eq!(outcome.status, "forked");
+        assert!(
+            outcome.audit_ref.is_some(),
+            "an accepted fork writes a receipt"
+        );
+        let child_sess = outcome
+            .child_session_id
+            .clone()
+            .expect("an accepted fork mints a child id");
+        assert_ne!(
+            child_sess, parent_sess,
+            "the child is a NEW, distinct session"
+        );
+
+        // A new session row exists (parent + child).
+        assert_eq!(
+            session_count(&rt),
+            sessions_before_fork + 1,
+            "the accepted fork created exactly one new session"
+        );
+
+        // The child's `forked_from` points back at the parent.
+        let child_forked_from: Option<String> = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT forked_from FROM agent_session WHERE agent_session_id = ?1",
+                [&child_sess],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            child_forked_from.as_deref(),
+            Some(parent_sess),
+            "the child's forked_from points at the parent"
+        );
+
+        // The child carries a COPY of the parent's messages (role/content/refs verbatim, in order).
+        let child_msgs = rt
+            .open_session_for_owner(&owner, &child_sess)
+            .unwrap()
+            .expect("the owner can open its own forked child session");
+        assert_eq!(
+            child_msgs.len(),
+            parent_msgs.len(),
+            "the child copied EVERY parent message"
+        );
+        for (c, pm) in child_msgs.iter().zip(parent_msgs.iter()) {
+            assert_eq!(c.role, pm.role, "copied role matches");
+            assert_eq!(c.content, pm.content, "copied content matches");
+            assert_eq!(
+                c.refs, pm.refs,
+                "copied refs match VERBATIM (a copied turn still refs the PARENT's run_id)"
+            );
+        }
+
+        // The child is bound to the SAME owner: it appears in the owner's C2-4 active list...
+        assert!(
+            rt.list_sessions_for_owner(&owner)
+                .unwrap()
+                .iter()
+                .any(|s| s.agent_session_id == child_sess),
+            "the forked child is listed under the SAME owner"
+        );
+        // ...and a DIFFERENT principal sees neither (owner-scoped empty for the intruder is the
+        // same fail-closed axis — the child was bound to the real owner, never the caller's claim).
+        assert!(
+            rt.open_session_for_owner(&other, &child_sess)
+                .unwrap()
+                .is_none(),
+            "a non-owner cannot open the forked child (bound to the real owner)"
+        );
+
+        // An audit receipt was written and the hash chain verifies.
+        assert_eq!(
+            fork_receipts(&rt),
+            1,
+            "exactly one session.forked receipt was recorded"
+        );
+        assert!(
+            friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok(),
+            "the fork receipt is on a verified hash chain"
+        );
+
+        // THE ANTI-FAKE (fork is metadata): NO new ledger row at fork time.
+        assert_eq!(
+            rt.db().list_token_usage().unwrap().len(),
+            1,
+            "the fork billed NO new ledger row (forking is not a model turn)"
+        );
+
+        // --- THEN: one claude-pinned turn on the FORKED CHILD bills a NEW anthropic row ----------
+        // The fork is a REAL branch of a metered session — a turn on the child meters its OWN row.
+        let child_run = "run-c2-7-child";
+        let (csel, _ca) = rt
+            .run_session_task_pinned(
+                &owner,
+                child_run,
+                &child_sess,
+                "branch turn",
+                "claude",
+                9_000,
+            )
+            .expect("the claude-pinned turn on the forked child runs");
+        assert_eq!(
+            csel.provider_id, "claude",
+            "the child turn routed to claude"
+        );
+
+        let child_ledger = rt.db().list_run_token_usage(child_run).unwrap();
+        assert_eq!(
+            child_ledger.len(),
+            1,
+            "ONE NEW anthropic row on the CHILD run (the fork is a real metered branch)"
+        );
+        assert_eq!(child_ledger[0].provider_kind, "anthropic");
+        assert_eq!(child_ledger[0].base_url_host, "api.anthropic.com");
+        assert!(
+            !child_ledger[0].fallback,
+            "the child claude route is never a fallback"
+        );
+
+        // The whole ledger is now 2: the parent row + the child's NEW row (no mis-attribution).
+        assert_eq!(
+            rt.db().list_token_usage().unwrap().len(),
+            2,
+            "two anthropic rows total: the parent turn + the child branch turn"
+        );
+
+        // `forked_from` SURVIVES the child turn (the run-entry's ON CONFLICT bump never names it).
+        let child_forked_from_after: Option<String> = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT forked_from FROM agent_session WHERE agent_session_id = ?1",
+                [&child_sess],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            child_forked_from_after.as_deref(),
+            Some(parent_sess),
+            "forked_from survives the child's metered turn (never erased by the run entry)"
         );
     }
 
