@@ -61,17 +61,16 @@ final class FridaySession: ObservableObject {
     // unavailable client — this PR does NOT flip the shipped default (that is the slice-6 gate).
     self.readClient = preview ? PreviewReadClient() : Self.defaultReadClient()
 
-    // The write client (Friday Chat read-WRITE / S6 surface) also has NO live transport wired
-    // (slice-6 deferred AC) ⇒ its default factory transport throws ⇒ honest-unavailable. Its
-    // transport keypair is an ephemeral X25519 SESSION key (transport identity only, NOT a
-    // signing key — INV-1) that NEVER reaches the live store because no socket is opened; it is
-    // confined to honest-unavailable construction. When slice-6 lands, inject a master-derived
-    // keypair + a live `NWConnection` transport here.
-    let writeKeypair = FridayCrypto.DeviceKeypair()
-    let endpoint = FridayClientFactory.Endpoint(
-      forwardedPrincipal: "principal:owner-device",
-      agentRunControlViaRust: runControlEnabled)
-    self.writeClient = FridayClientFactory.makeWriteClient(keypair: writeKeypair, endpoint: endpoint)
+    // The write client (Friday Chat read-WRITE / S6 surface). DEFAULT (gate OFF) = the throwing
+    // `liveTransportNotWired` factory transport ⇒ honest-unavailable, with an ephemeral X25519
+    // SESSION key (transport identity only, NOT a signing key — INV-1) that NEVER reaches the live
+    // store because no socket is opened. The master-derived LIVE write path (the iOS J2 mirror of
+    // the read seam's `RealReadClientFactory.makeLive`) is now BUILT and wired behind an OPT-IN
+    // env/arg gate (`FRIDAY_MOBILE_LIVE_WRITE=1` / `--live-write`, mirroring `FRIDAY_MOBILE_LIVE_READ`).
+    // This PR does NOT flip the shipped default (that, and the S6 control plane, are operator gates).
+    self.writeClient = preview
+      ? Self.honestUnavailableWriteClient()
+      : Self.defaultWriteClient(runControlEnabled: runControlEnabled)
     self.signer = MockOperatorSigner()
   }
 
@@ -98,6 +97,46 @@ final class FridaySession: ObservableObject {
     } catch {
       return RealReadClientFactory.makeHonestlyUnavailable(reason: "\(error)")
     }
+  }
+
+  /// The DEFAULT (non-preview) Friday Chat WRITE client. DEFAULT = the throwing
+  /// `liveTransportNotWired` factory transport (honest-unavailable, no socket, no SecureStore
+  /// touch); LIVE only when explicitly opted in via env `FRIDAY_MOBILE_LIVE_WRITE=1` or launch arg
+  /// `--live-write` (the WRITE-seam mirror of `--live-read`). This PR does NOT flip the shipped
+  /// default — the live write transport is opt-in, gated, and never on by default (slice-6 gate);
+  /// `runControlEnabled` (the S6 pause/approve/resume) is a SEPARATE operator gate, default-off.
+  ///
+  /// LIVE: derive the enrolled master-derived peer (`MasterKeyPeer`), target 48750 as `admin-001`,
+  /// over the real `SealedWSWriteClient` (`RealWriteClientFactory.makeLive`). If the host master key
+  /// is unavailable (e.g. a real phone — the J2 pairing problem), fall back to the throwing default
+  /// (honest unavailable) — NEVER fabricate a ready chat surface the live seam did not produce.
+  static func defaultWriteClient(runControlEnabled: Bool) -> FridayRustWriteClient {
+    let args = ProcessInfo.processInfo.arguments
+    let env = ProcessInfo.processInfo.environment
+    let useLive = args.contains("--live-write") || env["FRIDAY_MOBILE_LIVE_WRITE"] == "1"
+    guard useLive else {
+      // SHIPPED DEFAULT — unchanged: the throwing `liveTransportNotWired` factory transport, no
+      // socket, no SecureStore touch.
+      return honestUnavailableWriteClient(runControlEnabled: runControlEnabled)
+    }
+    do {
+      return try RealWriteClientFactory.makeLive(agentRunControlViaRust: runControlEnabled)
+    } catch {
+      // Master key unavailable (the J2 pairing problem on a real device): surface the truth via the
+      // throwing default transport (honest-unavailable) — never fabricate a ready chat surface.
+      return honestUnavailableWriteClient(runControlEnabled: runControlEnabled)
+    }
+  }
+
+  /// The honest-unavailable WRITE client: the shared `FridayClientFactory.makeWriteClient` with its
+  /// DEFAULT throwing `liveTransportNotWired` transport + an ephemeral session keypair that opens no
+  /// socket. This is the SHIPPED default and the preview/no-master-key fallback.
+  static func honestUnavailableWriteClient(runControlEnabled: Bool = false) -> FridayRustWriteClient {
+    let writeKeypair = FridayCrypto.DeviceKeypair()
+    let endpoint = FridayClientFactory.Endpoint(
+      forwardedPrincipal: "principal:owner-device",
+      agentRunControlViaRust: runControlEnabled)
+    return FridayClientFactory.makeWriteClient(keypair: writeKeypair, endpoint: endpoint)
   }
 
   #if DEBUG
