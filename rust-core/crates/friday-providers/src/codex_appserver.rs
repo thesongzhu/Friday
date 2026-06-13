@@ -934,6 +934,76 @@ impl Drop for LocalCodexAppServer {
     }
 }
 
+/// (C1-2) The seam a hub-side `AgentLlmClient` adapter drives to run ONE Codex model turn
+/// and get back the authoritative [`ModelTurnOutcome`]. Deliberately `&self` (not
+/// `&mut self`): the `AgentLlmClient` trait its caller implements is `&self`, and a
+/// STATELESS source (one that spawns + tears down a fresh app-server per turn) needs no
+/// interior mutation — which keeps an implementor naturally `Sync`, so a future boxed
+/// `dyn AgentLlmClient` adapter holding one does not trip a `Sync` bound. The turn input is
+/// a single text prompt (the FULL conversation history already rides inside it via the
+/// hub's `build_loop_prompt`), so the source need not hold a long-lived thread/process.
+pub trait CodexTurnSource {
+    /// Run one complete text turn for `prompt` and return its authoritative outcome.
+    fn run_text_turn(&self, prompt: &str) -> Result<ModelTurnOutcome, CodexAppServerError>;
+}
+
+/// A STATELESS [`CodexTurnSource`]: every call spawns a FRESH `codex app-server`,
+/// `initialize`s + `initialized`-handshakes, `thread/start`s, drives ONE `run_turn`, and
+/// tears the process down on scope exit (`LocalCodexAppServer`'s kill-on-drop). This is the
+/// faithful mirror of the resend model — the hub's `build_loop_prompt` already carries the
+/// entire prior history into each `prompt`, so there is NO need to keep a thread alive
+/// across turns. Holding the process across turns would force an interior `!Sync`
+/// `RefCell<LocalCodexAppServer>` (the `Child`/`ChildStdin` stream is single-owner) and
+/// collide with a boxed-`dyn`-adapter `Sync` expectation; spawning per turn sidesteps that
+/// entirely. The fields are immutable config only, so the impl is `Sync`.
+///
+/// DARK: spawning requires the Codex CLI installed + logged in; with no creds present the
+/// spawn/handshake surfaces a typed [`CodexAppServerError`] (never faked). The adapter's
+/// genuine `run_turn` parse + outcome mapping is proven creds-free by a KAT driving a
+/// scripted byte-stream through the real `run_turn` (see the `friday-hub` adapter tests).
+pub struct LocalCodexAppServerTurnSource {
+    program: String,
+    client_name: String,
+    client_version: String,
+    cwd: Option<String>,
+    model: Option<String>,
+}
+
+impl LocalCodexAppServerTurnSource {
+    /// Build a source that spawns `<program> app-server` per turn (default `program` =
+    /// `"codex"`), identifying as `client_name`/`client_version` on `initialize`, starting
+    /// each thread in `cwd` with `model` (both optional — `None` lets the app-server
+    /// default).
+    pub fn new(
+        program: impl Into<String>,
+        client_name: impl Into<String>,
+        client_version: impl Into<String>,
+        cwd: Option<String>,
+        model: Option<String>,
+    ) -> Self {
+        Self {
+            program: program.into(),
+            client_name: client_name.into(),
+            client_version: client_version.into(),
+            cwd,
+            model,
+        }
+    }
+}
+
+impl CodexTurnSource for LocalCodexAppServerTurnSource {
+    fn run_text_turn(&self, prompt: &str) -> Result<ModelTurnOutcome, CodexAppServerError> {
+        // Fresh process per turn — `server` is killed on drop at the end of this scope, so
+        // nothing non-`Sync` is held across calls.
+        let mut server = LocalCodexAppServer::spawn(&self.program)?;
+        let client = server.client();
+        client.initialize(&self.client_name, &self.client_version)?;
+        client.initialized()?;
+        let thread = client.start_thread(self.cwd.as_deref(), self.model.as_deref())?;
+        client.run_turn(&thread.thread_id, None, prompt)
+    }
+}
+
 fn required_string(value: &Value, field: &'static str) -> Result<String, CodexAppServerError> {
     value
         .get(field)

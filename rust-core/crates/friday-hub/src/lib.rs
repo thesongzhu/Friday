@@ -737,6 +737,103 @@ impl<T: friday_anthropic::Transport> AgentLlmClient for ClaudeAgentLlmClient<T> 
     }
 }
 
+/// (C1-2) THIN model-client adapter over a [`friday_providers::codex_appserver::CodexTurnSource`]
+/// — the Codex app-server route, mirroring [`DeepSeekAgentLlmClient`]/[`ClaudeAgentLlmClient`]
+/// so a Codex model turn flows through the SAME `AgentLlmClient` path. It builds the SAME
+/// loop / tool-call prompts, runs ONE Codex turn via the injected source, and parses the
+/// authoritative agent-message text STRICTLY back into a [`RawToolCall`]/[`AgentStep`].
+///
+/// **DARK / not wired.** Nothing routes to this adapter yet — C1-3 wires it into the
+/// route registry. It is purely additive: the DeepSeek/Claude clients and the existing
+/// `AgentLlmClient` behavior are untouched, and no creds are required to construct it.
+///
+/// **Thin by construction.** ALL the protocol work (spawn/handshake/`run_turn` parse,
+/// authoritative-text assembly, token-usage projection) lives in `friday-providers`; this
+/// adapter only maps prompt → [`friday_providers::codex_appserver::ModelTurnOutcome`] →
+/// [`AgentStep`] + neutral [`BilledUsage`]. The `CodexTurnSource` seam is `&self` and the
+/// production source spawns a fresh app-server per turn (stateless), so this adapter holds
+/// no interior `!Sync` process across turns — it stays clean for a future boxed
+/// `dyn AgentLlmClient` (today `Box<dyn AgentLlmClient>` has no `Send + Sync` bound, so
+/// this is a forward-clean choice, not a worked-around compile error).
+///
+/// **Error mapping.** [`AgentError::Route`] carries a `friday_deepseek::DeepSeekError`, so
+/// a [`friday_providers::codex_appserver::CodexAppServerError`] cannot go there; the
+/// lowest-blast-radius mapping for this dark path is the string-bearing
+/// [`AgentError::Model`] (never retried), whose `Display` is the providers crate's coarse,
+/// secret-free message. A future non-dark slice would add a structured Codex route variant.
+///
+/// **Ledger/metering (C2).** `next_step_metered` surfaces the turn usage as a neutral
+/// [`BilledUsage`] tagged [`friday_core::ProviderKind::Codex`] (via [`BilledUsage::from_codex`],
+/// model = `self.model`), so the ONE biller records a `provider_kind="codex"` row — never
+/// mis-attributing a Codex turn. `next_step` routes THROUGH `next_step_metered` so there is
+/// exactly ONE turn call site (mirroring DeepSeek/Claude).
+pub struct CodexAgentLlmClient<S: friday_providers::codex_appserver::CodexTurnSource> {
+    source: S,
+    /// The model id this adapter bills against. The Codex app-server `turn/completed` does
+    /// NOT report a model, so [`BilledUsage::from_codex`] takes the route model from here.
+    model: String,
+}
+
+impl<S: friday_providers::codex_appserver::CodexTurnSource> CodexAgentLlmClient<S> {
+    pub fn new(source: S, model: impl Into<String>) -> Self {
+        Self {
+            source,
+            model: model.into(),
+        }
+    }
+}
+
+impl<S: friday_providers::codex_appserver::CodexTurnSource> AgentLlmClient
+    for CodexAgentLlmClient<S>
+{
+    fn propose_tool_call(&self, task: &str) -> Result<RawToolCall, AgentError> {
+        let prompt = build_tool_prompt(task);
+        let outcome = self
+            .source
+            .run_text_turn(&prompt)
+            // CodexAppServerError → string-bearing AgentError::Model (coarse, secret-free
+            // Display; retry-classification deferred for this dark path).
+            .map_err(|e| AgentError::Model(e.to_string()))?;
+        parse_tool_call(&outcome.content)
+    }
+
+    /// History-aware multi-turn step, identical contract to the DeepSeek/Claude adapters.
+    /// Routed THROUGH [`CodexAgentLlmClient::next_step_metered`] so there is exactly ONE
+    /// turn call site; the usage is discarded here, surfaced there.
+    fn next_step(&self, task: &str, history: &[TurnTrace]) -> Result<AgentStep, AgentError> {
+        self.next_step_metered(task, history)?.0
+    }
+
+    /// (C1-2) Metered multi-turn step: the SAME `build_loop_prompt → run_text_turn →
+    /// parse_agent_step` shape as the DeepSeek/Claude adapters, returning the turn usage
+    /// mapped to a neutral [`BilledUsage`] tagged [`friday_core::ProviderKind::Codex`]
+    /// ALONGSIDE the parse result. The [`MeteredStep`] split mirrors them EXACTLY: a turn
+    /// that FAILS to run is an OUTER `Err` (nothing billed); a turn that COMPLETED (even a
+    /// `status:"failed"` turn — no status-inspection branch, the empty/unparseable content
+    /// simply falls through) but whose authoritative content does not parse is an INNER
+    /// `Err` with `Some(BilledUsage)` — the turn ran, so the loop bills it and then fails
+    /// the run closed.
+    fn next_step_metered(
+        &self,
+        task: &str,
+        history: &[TurnTrace],
+    ) -> Result<MeteredStep, AgentError> {
+        let prompt = build_loop_prompt(task, history);
+        let outcome = self
+            .source
+            .run_text_turn(&prompt)
+            // CodexAppServerError → string-bearing AgentError::Model (coarse, secret-free
+            // Display; retry-classification deferred for this dark path).
+            .map_err(|e| AgentError::Model(e.to_string()))?;
+        // The turn RAN — `outcome` carries real, billable usage even if the authoritative
+        // content below fails to parse. Surface it (neutral `BilledUsage`, Codex kind, model
+        // from `self.model`) so the loop bills the turn with the CORRECT provider regardless
+        // of parse.
+        let step = parse_agent_step(&outcome.content);
+        Ok((step, Some(BilledUsage::from_codex(&outcome, &self.model))))
+    }
+}
+
 /// The process-wide DEFAULT (built-in) tool registry, built once and reused. The free
 /// `trusted_classify`/`build_tool_prompt` chokepoints call this on every turn; caching
 /// avoids rebuilding the `BTreeMap` + its ~10 `String`s per call (the UNW-002 reviewer
@@ -4866,6 +4963,210 @@ mod tests {
         assert_eq!(billed.model, "gpt-5-codex");
         assert_eq!(billed.prompt_tokens, 0);
         assert_eq!(billed.completion_tokens, 0);
+    }
+
+    // ---- C1-2 CodexAgentLlmClient adapter KATs ----
+    //
+    // These prove the THIN adapter's mapping over the GENUINE Codex `run_turn` parser — NOT
+    // a hand-built `ModelTurnOutcome`. The injected `CodexTurnSource` replays a scripted
+    // JSON-RPC byte stream through the REAL `JsonLineTransport` + `run_turn` (the SAME
+    // fixture shape `friday-providers`' run_turn KATs use: turn/start response +
+    // item/completed agentMessage + thread/tokenUsage/updated + turn/completed). So the
+    // assertion that `BilledUsage{Codex, tokens-from-fixture, model-from-self.model}` and the
+    // parsed `AgentStep` arrive proves the adapter's prompt → run_turn → parse_agent_step →
+    // BilledUsage::from_codex mapping is faithful — distinct from C1-3's route-wiring stub.
+    //
+    // The agentMessage `text` in each fixture is a VALID AgentStep JSON object (the finish /
+    // tool-call contract `parse_agent_step` enforces), not prose — `outcome.content` is fed
+    // straight into `parse_agent_step`.
+
+    /// A scripted [`friday_providers::codex_appserver::CodexTurnSource`] that drives the REAL
+    /// `run_turn` over a fixed byte stream — mirroring the providers `run_turn_client(..)`
+    /// helper EXACTLY (construct the client, call `run_turn` directly; NO initialize /
+    /// start_thread handshake, since `run_turn`'s `next_id` starts at 1 which is why each
+    /// fixture's first line is `"id":1`). Creds-free.
+    struct ScriptedCodexTurnSource {
+        stream: &'static str,
+    }
+
+    impl friday_providers::codex_appserver::CodexTurnSource for ScriptedCodexTurnSource {
+        fn run_text_turn(
+            &self,
+            _prompt: &str,
+        ) -> Result<
+            friday_providers::codex_appserver::ModelTurnOutcome,
+            friday_providers::codex_appserver::CodexAppServerError,
+        > {
+            use friday_providers::codex_appserver::{CodexAppServerClient, JsonLineTransport};
+            let mut client = CodexAppServerClient::new(JsonLineTransport::new(
+                self.stream.as_bytes(),
+                Vec::<u8>::new(),
+            ));
+            client.run_turn("thread-1", None, _prompt)
+        }
+    }
+
+    #[test]
+    fn codex_adapter_metered_step_maps_real_run_turn_to_step_and_codex_usage() {
+        // The adapter's `next_step_metered` builds the loop prompt, runs the GENUINE
+        // run_turn over a scripted stream (a delta that MUST be ignored for content, the
+        // authoritative item/completed agentMessage carrying a finish object, a
+        // tokenUsage/updated, then turn/completed), and surfaces (a) the parsed Finish step
+        // and (b) Some(BilledUsage{Codex, tokens from the fixture's tokenUsage.last, model
+        // from self.model}). This is the ADAPTER proof over the real parser.
+        let stream = concat!(
+            r#"{"id":1,"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"method":"item/agentMessage/delta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"i","delta":"ignored-stream-delta"}}"#,
+            "\n",
+            r#"{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","completedAtMs":1,"item":{"id":"i","type":"agentMessage","text":"{\"tool\":\"none\",\"answer\":\"codex done\"}"}}}"#,
+            "\n",
+            r#"{"method":"thread/tokenUsage/updated","params":{"threadId":"thread-1","turnId":"turn-1","tokenUsage":{"last":{"cachedInputTokens":0,"inputTokens":11,"outputTokens":8,"reasoningOutputTokens":0,"totalTokens":19},"total":{"cachedInputTokens":0,"inputTokens":11,"outputTokens":8,"reasoningOutputTokens":0,"totalTokens":19}}}}"#,
+            "\n",
+            r#"{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[]}}}"#,
+            "\n",
+        );
+        let client = CodexAgentLlmClient::new(ScriptedCodexTurnSource { stream }, "gpt-5-codex");
+        let (step, usage) = client.next_step_metered("do it", &[]).unwrap();
+
+        // The authoritative item text parsed as the finish step (NOT the ignored delta).
+        assert_eq!(
+            step.unwrap(),
+            AgentStep::Finish {
+                message: "codex done".to_string(),
+            }
+        );
+        // The tokenUsage.last projection feeds the billed usage: Codex kind, the fixture's
+        // tokens, model from self.model (the app-server reports no model).
+        assert_eq!(
+            usage,
+            Some(BilledUsage {
+                provider_kind: friday_core::ProviderKind::Codex,
+                model: "gpt-5-codex".to_string(),
+                prompt_tokens: 11,
+                completion_tokens: 8,
+            })
+        );
+    }
+
+    #[test]
+    fn codex_adapter_metered_step_tool_call_no_usage_notification_bills_zero() {
+        // None-usage variant: the authoritative item text is a TOOL call (proving the Tool
+        // branch through the real parser) and NO tokenUsage/updated arrives. usage MUST be
+        // Some(BilledUsage{Codex, 0/0, self.model}) — absence of the notification bills 0/0,
+        // NOT a `None` option (the turn ran, so the call is always metered).
+        let stream = concat!(
+            r#"{"id":1,"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","completedAtMs":1,"item":{"id":"i","type":"agentMessage","text":"{\"tool\":\"list_dir\",\"parameters\":{\"path\":\".\"}}"}}}"#,
+            "\n",
+            r#"{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[]}}}"#,
+            "\n",
+        );
+        let client = CodexAgentLlmClient::new(ScriptedCodexTurnSource { stream }, "gpt-5-codex");
+        let (step, usage) = client.next_step_metered("list it", &[]).unwrap();
+
+        assert_eq!(
+            step.unwrap(),
+            AgentStep::Tool(RawToolCall {
+                action: "list_dir".to_string(),
+                params: vec![("path".to_string(), ".".to_string())],
+            })
+        );
+        assert_eq!(
+            usage,
+            Some(BilledUsage {
+                provider_kind: friday_core::ProviderKind::Codex,
+                model: "gpt-5-codex".to_string(),
+                prompt_tokens: 0,
+                completion_tokens: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn codex_adapter_completed_turn_unparseable_content_is_inner_err_with_usage() {
+        // The INNER half of the MeteredStep split (mirrors DeepSeek/Claude EXACTLY): a turn
+        // that COMPLETED with real billable usage but whose authoritative content is NOT a
+        // valid tool-call object (here prose) is an INNER `Err` (parse failure) WITH
+        // `Some(usage)` — the turn ran, so the loop bills it and then fails the run closed.
+        let stream = concat!(
+            r#"{"id":1,"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","completedAtMs":1,"item":{"id":"i","type":"agentMessage","text":"sorry, just chatting, no JSON here"}}}"#,
+            "\n",
+            r#"{"method":"thread/tokenUsage/updated","params":{"threadId":"thread-1","turnId":"turn-1","tokenUsage":{"last":{"inputTokens":5,"outputTokens":3,"totalTokens":8}}}}"#,
+            "\n",
+            r#"{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[]}}}"#,
+            "\n",
+        );
+        let client = CodexAgentLlmClient::new(ScriptedCodexTurnSource { stream }, "gpt-5-codex");
+        let (step, usage) = client.next_step_metered("chat", &[]).unwrap();
+
+        assert!(matches!(step, Err(AgentError::Parse(_))));
+        // Billed despite the parse failure — usage is Some with the fixture's tokens.
+        assert_eq!(
+            usage,
+            Some(BilledUsage {
+                provider_kind: friday_core::ProviderKind::Codex,
+                model: "gpt-5-codex".to_string(),
+                prompt_tokens: 5,
+                completion_tokens: 3,
+            })
+        );
+    }
+
+    #[test]
+    fn codex_adapter_failed_turn_to_run_is_outer_err_nothing_billed() {
+        // The OUTER half of the split: a turn that FAILS to run (here the stream EOFs before
+        // turn/completed, a typed transport error from the real run_turn) is an OUTER `Err`
+        // — NOTHING is billed (no usage escapes). Mirrors DeepSeek/Claude's route-failure arm.
+        let stream = concat!(
+            r#"{"id":1,"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","completedAtMs":1,"item":{"id":"i","type":"agentMessage","text":"{\"tool\":\"none\",\"answer\":\"partial\"}"}}}"#,
+            "\n",
+        );
+        let client = CodexAgentLlmClient::new(ScriptedCodexTurnSource { stream }, "gpt-5-codex");
+        let err = client.next_step_metered("do it", &[]).unwrap_err();
+        // OUTER Err — no MeteredStep tuple produced, so nothing could be billed. The
+        // CodexAppServerError maps to the secret-free string-bearing AgentError::Model.
+        assert!(matches!(err, AgentError::Model(_)));
+    }
+
+    #[test]
+    fn codex_adapter_next_step_routes_through_metered() {
+        // `next_step` is the unmetered facade — it must route THROUGH `next_step_metered`
+        // (one turn call site) and yield the SAME parsed step.
+        let stream = concat!(
+            r#"{"id":1,"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","completedAtMs":1,"item":{"id":"i","type":"agentMessage","text":"{\"tool\":\"none\",\"answer\":\"via next_step\"}"}}}"#,
+            "\n",
+            r#"{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[]}}}"#,
+            "\n",
+        );
+        let client = CodexAgentLlmClient::new(ScriptedCodexTurnSource { stream }, "gpt-5-codex");
+        let step = client.next_step("do it", &[]).unwrap();
+        assert_eq!(
+            step,
+            AgentStep::Finish {
+                message: "via next_step".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn codex_adapter_with_local_source_is_sync() {
+        // The PR's headline design property, mechanically locked (not just asserted in
+        // prose): a `CodexAgentLlmClient` over the production `LocalCodexAppServerTurnSource`
+        // is `Sync`. This is what keeps it clean for a future boxed `dyn AgentLlmClient`
+        // (C1-3) — the fresh-thread-per-turn source holds only immutable `String`/`Option`
+        // config (no interior `!Sync` process across turns), so the whole adapter is `Sync`.
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<
+            CodexAgentLlmClient<friday_providers::codex_appserver::LocalCodexAppServerTurnSource>,
+        >();
     }
 
     #[test]
