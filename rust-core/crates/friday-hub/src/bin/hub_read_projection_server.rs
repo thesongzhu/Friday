@@ -302,14 +302,19 @@ fn serve_read_session<S: Read + Write>(
         // across all three arms by construction (the substrate's whole reason for existing).
         let response = match env.message {
             Message::WorkbenchProjectionRequest { request } => {
-                if !authenticate_read_request(
+                // Auth-before-read. The workbench projection has NO per-run owner scope (it gates on
+                // `mission_id`), so we only need the pass/fail — the verified principal is not
+                // re-applied here. `None` ⇒ fail closed, END the session.
+                if authenticate_read_request(
                     session_key,
                     session_nonce,
                     &request.auth_proof,
                     &request.forwarded_principal,
                     &request.request_id,
                     owner_allowlist,
-                ) {
+                )
+                .is_none()
+                {
                     return Ok(processed);
                 }
                 let request_id = request.request_id.clone();
@@ -329,7 +334,10 @@ fn serve_read_session<S: Read + Write>(
                 )?
             }
             Message::RunReadbackRequest { request } => {
-                if !authenticate_read_request(
+                // Auth-before-read. The run-readback projection IS per-run owner-scoped (M-3), so we
+                // bind the VERIFIED `AuthedPrincipal` and scope the read on it — NEVER the raw wire
+                // `forwarded_principal`. `None` ⇒ fail closed, END the session.
+                let caller = match authenticate_read_request(
                     session_key,
                     session_nonce,
                     &request.auth_proof,
@@ -337,15 +345,27 @@ fn serve_read_session<S: Read + Write>(
                     &request.request_id,
                     owner_allowlist,
                 ) {
-                    return Ok(processed);
-                }
+                    Some(caller) => caller,
+                    None => return Ok(processed),
+                };
                 let request_id = request.request_id.clone();
+                // M-3 owner gate: `project_run_readback` returns `Ok(None)` when the verified caller
+                // is NOT the run's bound owner (or the run is absent/owner-less). Map that `Ok(None)`
+                // to the SAME `run_not_found` typed error a non-existent run produced before the
+                // gate, so not-owner is INDISTINGUISHABLE from unknown-run on the wire (no oracle)
+                // and the prior unknown-run frame is byte-identical in OUTCOME.
+                let projection = match project_run_readback(db, caller.principal(), &request.run_id)
+                {
+                    Ok(Some(value)) => Ok(value),
+                    Ok(None) => Err("run_not_found".to_string()),
+                    Err(reason) => Err(reason),
+                };
                 seal_and_frame(
                     session_key,
                     &env.msg_id,
                     &request_id,
                     now_ms,
-                    project_run_readback(db, &request.run_id),
+                    projection,
                     |sealed_hex| Message::RunReadbackSnapshot {
                         snapshot: RunReadbackSnapshotWire {
                             request_id: request_id.clone(),
@@ -356,14 +376,19 @@ fn serve_read_session<S: Read + Write>(
                 )?
             }
             Message::ProvidersDoctorRequest { request } => {
-                if !authenticate_read_request(
+                // Auth-before-read (auth runs BEFORE the provider CLIs are ever probed). The
+                // providers-doctor is NOT a per-run/DB read and has no owner scope, so we only need
+                // the pass/fail. `None` ⇒ fail closed, END the session.
+                if authenticate_read_request(
                     session_key,
                     session_nonce,
                     &request.auth_proof,
                     &request.forwarded_principal,
                     &request.request_id,
                     owner_allowlist,
-                ) {
+                )
+                .is_none()
+                {
                     return Ok(processed);
                 }
                 let request_id = request.request_id.clone();
@@ -409,8 +434,11 @@ fn serve_read_session<S: Read + Write>(
 
 /// Shared AUTH gate for every read arm. Verifies the forwarded principal against the sealed session
 /// (possession-of-session + per-handshake nonce + owner-allowlist), with the proof bound to THIS
-/// request's `request_id` (the read analog of `run_id`) + principal. Returns `true` iff the caller
-/// is the bound AUTHENTICATED owner; `false` (forged / empty / non-allowlisted principal, or an
+/// request's `request_id` (the read analog of `run_id`) + principal. Returns
+/// `Some(AuthedPrincipal)` iff the caller is the bound AUTHENTICATED owner — the VERIFIED principal
+/// minted ONLY from [`AuthedPrincipal::authenticate_forwarded`] (NEVER the raw wire
+/// `forwarded_principal` string). Each arm scopes its read on THIS authenticated principal, never on
+/// the client-asserted wire string. `None` (forged / empty / non-allowlisted principal, or an
 /// un-openable proof) means the caller MUST fail closed and END the session — never a partial
 /// release. Factored so the three arms share ONE auth path that cannot drift.
 fn authenticate_read_request(
@@ -420,7 +448,7 @@ fn authenticate_read_request(
     forwarded_principal: &str,
     request_id: &str,
     owner_allowlist: &[String],
-) -> bool {
+) -> Option<AuthedPrincipal> {
     let caller = decode_sealed_proof(auth_proof).and_then(|proof| {
         AuthedPrincipal::authenticate_forwarded(
             session_key,
@@ -440,7 +468,7 @@ fn authenticate_read_request(
             "hub_read_projection_server_read: request_id={request_id} leg=auth_failed (session ended)"
         );
     }
-    caller.is_some()
+    caller
 }
 
 /// Shared OWNER-SEAL + framing for every read arm (auth already passed). Takes the arm's projection
@@ -729,8 +757,15 @@ mod tests {
     /// Seed a probe hub DB with ONE `agent_run` + an ordered event log (through the WRITE path),
     /// then return its path. The S-R2 run-readback projection reads back this run's
     /// state/loop-status/event-kinds/counts refs-only. The task body is a body that must NEVER leak.
+    ///
+    /// M-3: the run also records a `run_result` whose `owner_principal == OWNER`, so the
+    /// owner-gated [`project_run_readback`] Grants the readback to OWNER (the bound owner the read
+    /// server authenticates as). Without a recorded owner the run is owner-less and the gate would
+    /// fail-close to `run_not_found`; the providers-doctor round-trips never read the run, so the
+    /// owner row is harmless for those callers.
     fn seed_run_db(tag: &str) -> String {
         use friday_storage::agent_run::{create_run, record_event};
+        use friday_storage::{persist_run_result, RunResult};
         let path = temp_db_path(tag);
         let db = Db::open_hub(&path).unwrap();
         let now = 1_780_640_000_000;
@@ -763,6 +798,20 @@ mod tests {
             "run_read_seam_probe",
             "agent.finished",
             now + 3,
+        )
+        .unwrap();
+        // M-3: bind OWNER as the run's owner so the owner-gated readback Grants the read server's
+        // authenticated owner (the run's answer body is owner-only and never rides the readback).
+        persist_run_result(
+            db.conn(),
+            "run_read_seam_probe",
+            &RunResult::new(
+                "finished",
+                "owner-only run answer body that must never leak",
+                None,
+            )
+            .with_owner_principal(OWNER),
+            now + 4,
         )
         .unwrap();
         path
@@ -1182,6 +1231,101 @@ mod tests {
         );
         let processed = server.join().unwrap();
         assert_eq!(processed, 0);
+    }
+
+    /// KAT (M-3) — the NEW per-run owner gate at the WIRE level. A VERIFIED, allowlisted caller
+    /// (authenticated as OWNER, exactly the proven happy path) requests a run that is owned by a
+    /// DIFFERENT principal. Before M-3 this would have read back ANY run by id (the cross-principal
+    /// existence/state oracle); now the owner gate collapses it to `Ok(None)`, which the server maps
+    /// to a `run_not_found` typed Error — INDISTINGUISHABLE from a non-existent run, so the
+    /// authenticated owner learns nothing about a run it does not own (no snapshot, no body, no
+    /// state). This is the ONE genuinely new denial: a verified caller reading another principal's
+    /// run. The session does NOT end (a benign typed Error keeps the link, unlike a failed auth).
+    #[test]
+    fn run_readback_read_server_owner_gate_denies_a_run_owned_by_another_principal() {
+        use friday_storage::agent_run::{create_run, record_event};
+        use friday_storage::{persist_run_result, RunResult};
+        // Seed a finished run OWNED BY A DIFFERENT principal (not OWNER, but the read server
+        // authenticates the caller as OWNER).
+        let db_path = temp_db_path("m3-cross-principal");
+        let db = Db::open_hub(&db_path).unwrap();
+        let now = 1_780_640_000_000;
+        create_run(
+            db.conn(),
+            "run_owned_by_someone_else",
+            "secret task body",
+            now,
+        )
+        .unwrap();
+        record_event(
+            db.conn(),
+            "ev-1",
+            "run_owned_by_someone_else",
+            "agent.finished",
+            now + 1,
+        )
+        .unwrap();
+        persist_run_result(
+            db.conn(),
+            "run_owned_by_someone_else",
+            &RunResult::new("finished", "the other principal's answer", None)
+                .with_owner_principal("principal:a-different-owner"),
+            now + 2,
+        )
+        .unwrap();
+        drop(db);
+
+        let server_kp = DeviceKeypair::generate();
+        let client_kp = DeviceKeypair::from_secret_bytes(CLIENT_SECRET);
+        let peer_allowlist = vec![client_kp.public_bytes()];
+        let owner_allowlist = vec![OWNER.to_string()];
+
+        let listener = ReadWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = thread::spawn(move || {
+            let db = Db::open_hub_readonly(&db_path).unwrap();
+            let probe = null_probe();
+            listener
+                .accept_one(&server_kp, &db, &probe, &owner_allowlist, &peer_allowlist)
+                .unwrap()
+        });
+
+        let (mut ws, session_key, session_nonce) = client_handshake(addr, &client_kp);
+        let request_id = "req-m3-cross-principal-1";
+        // The caller authenticates as OWNER (the proven happy-path principal) — a VALID, allowlisted
+        // forwarded principal that DOES authenticate. Only the M-3 per-run owner gate denies it.
+        let req = Envelope::new(
+            "msg-m3-cross-principal-1",
+            1000,
+            Message::RunReadbackRequest {
+                request: RunReadbackRequestWire {
+                    run_id: "run_owned_by_someone_else".to_string(),
+                    forwarded_principal: OWNER.to_string(),
+                    auth_proof: read_auth_proof(&session_key, &session_nonce, OWNER, request_id),
+                    request_id: request_id.to_string(),
+                },
+            },
+        );
+        ws_send_envelope(&mut ws, &session_key, &req, SESSION_AAD).unwrap();
+
+        // The authenticated caller gets a typed `run_not_found` Error — NEVER a snapshot of a run it
+        // does not own. The link stays open (auth passed; only the per-run gate denied).
+        let resp = ws_recv_envelope(&mut ws, &session_key, SESSION_AAD).unwrap();
+        let Message::Error { code, message } = resp.message else {
+            panic!("expected a typed Error for a non-owned run, got a snapshot/other frame");
+        };
+        assert!(matches!(code, friday_protocol::ErrorCode::HubOffline));
+        assert_eq!(
+            message, "run_not_found",
+            "not-owner must be indistinguishable from unknown-run (no cross-principal oracle)"
+        );
+        drop(ws);
+        let processed = server.join().unwrap();
+        assert_eq!(
+            processed, 1,
+            "the server processed the request, then denied the read"
+        );
     }
 
     /// KAT (S-R3) — the providers-doctor projection round-trips through the read server: handshake →
