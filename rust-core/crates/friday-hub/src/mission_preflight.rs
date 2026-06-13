@@ -87,7 +87,12 @@ pub fn preflight_and_stage_work_item(
     db: &Db,
     request: MissionPreflightRequest,
 ) -> Result<MissionPreflightOutcome, StorageError> {
-    let blockers = validate_preflight_request(&request);
+    let mut blockers = validate_preflight_request(&request);
+    // Db-backed Context Passport gate (destination-binding; appended to the SAME vec so
+    // collect-all-then-block semantics hold — never reordered ahead of the pure checks).
+    if let Some(passport_blocker) = context_passport_blocker(db, &request)? {
+        blockers.push(passport_blocker);
+    }
     if !blockers.is_empty() {
         return Ok(MissionPreflightOutcome::Blocked {
             blockers,
@@ -304,25 +309,61 @@ pub fn attach_memory_decision_ref(
     )
 }
 
+/// Mint + attach a destination-bound Context Passport OBJECT (loop closure commit 2).
+///
+/// Evolved from the old ref-only version: instead of pushing an arbitrary string into
+/// `context_passport_refs` (which the hollow gate trusted), this BUILDS a real
+/// [`ContextPassport`] (`build_context_passport` runs `gate_transfer` — a secret/
+/// raw-token item or an unapproved sensitive item makes the build fail, so the passport
+/// is never minted), PERSISTS the object, links it by `passport_id`, and pushes the
+/// `passport_id` as the ref. The strengthened preflight gate then re-loads + re-gates +
+/// destination-checks THIS object. A build failure returns a `passport_blocked_*`
+/// outcome (the secret never persists).
+#[allow(clippy::too_many_arguments)]
 pub fn attach_context_passport_ref(
     db: &Db,
     mission_id: &str,
-    passport_ref: &str,
+    passport_id: &str,
+    work_item_id: Option<&str>,
+    destination_lane: friday_core::WorkLane,
+    destination_target: Option<&str>,
+    items: Vec<friday_core::PassportItem>,
+    approved_sensitive: bool,
     now_ms: i64,
 ) -> Result<MissionAttachmentOutcome, StorageError> {
-    if passport_ref.trim().is_empty() {
+    if passport_id.trim().is_empty() {
         return Ok(MissionAttachmentOutcome::blocked(
-            "context_passport_ref_required",
+            "context_passport_id_required",
         ));
     }
+
+    // Fail-closed by construction: a passport that would carry a secret / unapproved
+    // sensitive item cannot be built, so it is never persisted or linked.
+    let passport = match friday_core::build_context_passport(
+        passport_id.to_string(),
+        mission_id.to_string(),
+        work_item_id.map(|s| s.to_string()),
+        destination_lane,
+        destination_target.map(|s| s.to_string()),
+        items,
+        approved_sensitive,
+        now_ms,
+    ) {
+        Ok(p) => p,
+        Err(e) => {
+            return Ok(MissionAttachmentOutcome::blocked(format!(
+                "context_passport_blocked:{e}"
+            )));
+        }
+    };
 
     let outcome = attach_mission_link_ref(
         db,
         mission_id,
-        None,
+        work_item_id,
         MissionLinkKind::ContextPassport,
-        passport_ref.to_string(),
-        Some(passport_ref.to_string()),
+        format!("friday://context-passport/{passport_id}"),
+        Some(passport_id.to_string()),
         now_ms,
     )?;
     if matches!(
@@ -332,7 +373,9 @@ pub fn attach_context_passport_ref(
         let Some(mut mission) = db.get_mission(mission_id)? else {
             return Ok(MissionAttachmentOutcome::blocked("unknown_mission"));
         };
-        push_unique(&mut mission.context_passport_refs, passport_ref.to_string());
+        // Persist the gated object, then record its id as the ref the gate resolves.
+        db.upsert_context_passport(&passport)?;
+        push_unique(&mut mission.context_passport_refs, passport_id.to_string());
         mission.updated_at_ms = now_ms;
         db.upsert_mission(&mission)?;
     }
@@ -525,12 +568,45 @@ fn validate_preflight_request(request: &MissionPreflightRequest) -> Vec<String> 
             request.work_item.approval_state.as_str()
         ));
     }
-    if requires_context_passport(request.work_item.lane, request.includes_sensitive_context)
-        && request.mission.context_passport_refs.is_empty()
-    {
-        blockers.push("context_passport_required_before_sensitive_external_transfer".into());
-    }
+    // NOTE: the Context Passport check is NO LONGER a pure ref-presence test (that was
+    // the hollow gate — a non-empty refs list of any string satisfied it). It now LOADS
+    // the referenced passport object(s) and requires one that re-clears the transfer
+    // gate AND authorizes THIS destination, which needs `db` — so it lives in the
+    // db-backed `context_passport_blocker` called from `preflight_and_stage_work_item`,
+    // appended to the SAME blockers vec (collect-all-then-block semantics preserved).
     blockers
+}
+
+/// The strengthened, destination-binding Context Passport gate (replaces the hollow
+/// ref-presence check). When a sensitive external transfer requires a passport, this
+/// LOADS the Mission's referenced passport objects and requires one that BOTH (a)
+/// rebuilds-and-re-gates via `build_context_passport` on load — a tampered/secret row
+/// fails to load, fail-closed — AND (b) `authorizes_transfer(work_item.lane, target)`
+/// for THIS destination. Returns the identical blocker string the hollow check used
+/// (so existing negative assertions are unchanged) when no authorizing passport is
+/// found, else `None`.
+fn context_passport_blocker(
+    db: &Db,
+    request: &MissionPreflightRequest,
+) -> Result<Option<String>, StorageError> {
+    if !requires_context_passport(request.work_item.lane, request.includes_sensitive_context) {
+        return Ok(None);
+    }
+    let lane = request.work_item.lane;
+    let target = request.work_item.target_provider_or_agent.as_deref();
+    for passport_id in &request.mission.context_passport_refs {
+        // A row that does not rebuild-and-re-gate surfaces a load error; treat ANY
+        // non-authorizing / unloadable ref as "not satisfied" and keep scanning. The
+        // gate only passes on a passport that loaded cleanly AND authorizes this hop.
+        if let Ok(Some(passport)) = db.get_context_passport(passport_id) {
+            if passport.authorizes_transfer(lane, target) {
+                return Ok(None);
+            }
+        }
+    }
+    Ok(Some(
+        "context_passport_required_before_sensitive_external_transfer".into(),
+    ))
 }
 
 fn bind_surface_to_existing_mission(
@@ -1067,6 +1143,48 @@ mod tests {
         ));
         assert_eq!(db.count("work_item").unwrap(), 0);
 
+        // A BOGUS ref (a string the gate cannot resolve to a real authorizing passport)
+        // must NOT satisfy the strengthened gate — this is the hollow bug being closed.
+        let still_blocked = preflight_and_stage_work_item(
+            &db,
+            request(
+                "mission-ctx",
+                "work-ctx",
+                "handoff sensitive context",
+                WorkLane::Codex,
+                vec!["ctxp://not-a-real-passport".into()],
+                true,
+                2,
+            ),
+        )
+        .unwrap();
+        assert!(matches!(
+            still_blocked,
+            MissionPreflightOutcome::Blocked { blockers, .. }
+                if blockers.contains(&"context_passport_required_before_sensitive_external_transfer".to_string())
+        ));
+        assert_eq!(db.count("work_item").unwrap(), 0);
+
+        // Mint a REAL passport bound to the destination (Codex/codex), then stage: the
+        // gate loads + re-gates + destination-checks the object and passes.
+        let passport = friday_core::build_context_passport(
+            "passport-ctx",
+            "mission-ctx",
+            Some("work-ctx".to_string()),
+            WorkLane::Codex,
+            Some("codex".to_string()),
+            vec![friday_core::PassportItem {
+                kind: friday_core::PassportItemKind::Summary,
+                label: "handoff summary".into(),
+                included: true,
+                sensitive: true,
+            }],
+            true, // sensitive item explicitly approved
+            2,
+        )
+        .unwrap();
+        db.upsert_context_passport(&passport).unwrap();
+
         let ready = preflight_and_stage_work_item(
             &db,
             request(
@@ -1074,9 +1192,9 @@ mod tests {
                 "work-ctx",
                 "handoff sensitive context",
                 WorkLane::Codex,
-                vec!["ctxp://approved-transfer".into()],
+                vec!["passport-ctx".into()],
                 true,
-                2,
+                3,
             ),
         )
         .unwrap();
@@ -1085,6 +1203,50 @@ mod tests {
             db.get_work_item("work-ctx").unwrap().unwrap().status,
             WorkItemStatus::ReadyToDispatch
         );
+    }
+
+    #[test]
+    fn passport_for_the_wrong_destination_fails_closed() {
+        let db = Db::open_hub(&tmp()).unwrap();
+        // Mint a passport bound to Claude, but request a transfer to Codex.
+        let passport = friday_core::build_context_passport(
+            "passport-claude",
+            "mission-dest",
+            None,
+            WorkLane::Claude,
+            None,
+            vec![friday_core::PassportItem {
+                kind: friday_core::PassportItemKind::Summary,
+                label: "claude-bound summary".into(),
+                included: true,
+                sensitive: false,
+            }],
+            false,
+            1,
+        )
+        .unwrap();
+        db.upsert_context_passport(&passport).unwrap();
+
+        // The Codex transfer cites the Claude passport — destination mismatch must block.
+        let blocked = preflight_and_stage_work_item(
+            &db,
+            request(
+                "mission-dest",
+                "work-dest",
+                "destination-mismatch transfer",
+                WorkLane::Codex,
+                vec!["passport-claude".into()],
+                true,
+                2,
+            ),
+        )
+        .unwrap();
+        assert!(matches!(
+            blocked,
+            MissionPreflightOutcome::Blocked { blockers, .. }
+                if blockers.contains(&"context_passport_required_before_sensitive_external_transfer".to_string())
+        ));
+        assert_eq!(db.count("work_item").unwrap(), 0);
     }
 
     #[test]
@@ -1590,14 +1752,32 @@ mod tests {
         .unwrap()
         .is_ready());
 
-        let passport =
-            attach_context_passport_ref(&db, "mission-proof", "ctxp://approved-share", 2).unwrap();
+        let passport = attach_context_passport_ref(
+            &db,
+            "mission-proof",
+            "passport-share",
+            None,
+            WorkLane::FridayHub,
+            None,
+            vec![friday_core::PassportItem {
+                kind: friday_core::PassportItemKind::Summary,
+                label: "approved share".into(),
+                included: true,
+                sensitive: false,
+            }],
+            false,
+            2,
+        )
+        .unwrap();
         assert!(matches!(
             passport,
             MissionAttachmentOutcome::MissionLinked { .. }
         ));
+        // The ref pushed is now the passport_id (resolving to the persisted object),
+        // and the object itself is retrievable + re-gates on load.
         let mission = db.get_mission("mission-proof").unwrap().unwrap();
-        assert_eq!(mission.context_passport_refs, vec!["ctxp://approved-share"]);
+        assert_eq!(mission.context_passport_refs, vec!["passport-share"]);
+        assert!(db.get_context_passport("passport-share").unwrap().is_some());
 
         let proof = attach_proof_receipt_ref(
             &db,
