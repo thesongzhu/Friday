@@ -481,6 +481,42 @@ pub fn attach_provider_timeline_state(
     db: &Db,
     attachment: ProviderTimelineAttachment,
 ) -> Result<MissionAttachmentOutcome, StorageError> {
+    // Public seam preserved with its exact signature so every external caller compiles
+    // untouched. The guarded variant is the single behavioral knob (default-OFF), threaded
+    // in as a pure bool from the run-loop entrypoint's env read (the codebase's
+    // "split env-read from pure logic" idiom). `false` here = the pre-WI-1 path, byte-identical.
+    attach_provider_timeline_state_guarded(db, attachment, false)
+}
+
+/// (WI-1, M-6) [`attach_provider_timeline_state`] with the DARK WorkItem guarded-transition
+/// flag threaded in as a pure bool — the env read lives ONLY in the run-loop entrypoint
+/// ([`crate::runtime::HubRuntime::run_agent_loop_for_mission_with_overrides`]), so the
+/// behavioral tests drive this directly with `true`/`false` and never touch `std::env`.
+///
+/// `guarded = false` (the prod default) is BYTE-IDENTICAL to the pre-WI-1 body: the inline
+/// status-advance write runs unchanged — it sets `work_item.status`, bumps `updated_at_ms`,
+/// appends the completion proof receipt, and `upsert_work_item`s, writing NO `audit_ledger`
+/// row and making NO call to the guarded primitive.
+///
+/// `guarded = true` routes the SAME legal status advance through
+/// [`friday_storage::Db::transition_work_item_status`], which transitions the WorkItem AND
+/// writes ONE hash-chained `audit_ledger` lifecycle row in a single transaction. The SOLE
+/// behavioral delta vs OFF is that atomic audit row: the resulting status is identical, the
+/// MissionLink is identical, and the mission's `proof_refs`/`updated_at_ms` are updated on
+/// completion exactly as before (the primitive touches only the WorkItem, never the mission).
+///
+/// The legal-hop pre-check (`can_transition_to`) is SHARED and UNGUARDED across both paths and
+/// runs BEFORE the `guarded` fork, so an illegal hop returns the SAME `Ok(Blocked{illegal_...})`
+/// outcome on both paths (NOT an `Err` from the primitive's `try_transition`) — the run is never
+/// errored or blocked by routing through the primitive. Because the pre-check has already proven
+/// the hop legal (and is only entered when `work_item.status != next_status`), the primitive's
+/// `try_transition` can never fail inside the guarded branch. A same-status no-op falls into the
+/// OFF-equivalent else on BOTH paths (no transition ⇒ no audit row), preserving equivalence.
+pub fn attach_provider_timeline_state_guarded(
+    db: &Db,
+    attachment: ProviderTimelineAttachment,
+    guarded: bool,
+) -> Result<MissionAttachmentOutcome, StorageError> {
     let Some(mut mission) = db.get_mission(&attachment.mission_id)? else {
         return Ok(MissionAttachmentOutcome::blocked("unknown_mission"));
     };
@@ -500,6 +536,10 @@ pub fn attach_provider_timeline_state(
             attachment.proof_ref.as_deref(),
         )));
     };
+    // SHARED legal-hop pre-check (runs on BOTH paths, before the `guarded` fork). An illegal
+    // hop returns Ok(Blocked) here on both paths — so the guarded branch is only reached for a
+    // status CHANGE that is already proven legal, which is exactly the contract under which
+    // `transition_work_item_status`'s `try_transition` cannot error.
     if work_item.status != next_status && !work_item.status.can_transition_to(next_status) {
         return Ok(MissionAttachmentOutcome::blocked(format!(
             "illegal_work_item_transition:{}->{}",
@@ -508,17 +548,52 @@ pub fn attach_provider_timeline_state(
         )));
     }
 
-    work_item.status = next_status;
-    work_item.updated_at_ms = attachment.now_ms;
-    if next_status == WorkItemStatus::CompletedWithProof {
-        if let Some(proof_ref) = attachment.proof_ref.as_ref() {
-            push_unique(&mut work_item.proof_receipts, proof_ref.clone());
-            push_unique(&mut mission.proof_refs, proof_ref.clone());
-            mission.updated_at_ms = attachment.now_ms;
+    if guarded && work_item.status != next_status {
+        // ON path: route the (pre-checked legal) advance through the canonical guarded primitive
+        // so the status transition AND a hash-chained audit row commit in one transaction. The
+        // primitive pushes the completion proof receipt and upserts the WorkItem itself (it is the
+        // authoritative WorkItem writer on this path), so we do NOT upsert the WorkItem again and
+        // discard the returned row — the outcome below reports `next_status`. `proof_receipt` is
+        // passed ONLY for the CompletedWithProof hop (the primitive rejects a receipt for any other
+        // target and requires one for completion — matching this seam's contract exactly).
+        let actor_ref = format!("friday://agent-run/{}", attachment.request_id);
+        let reason = format!("provider_timeline:{}", attachment.state.as_str());
+        let proof_receipt = if next_status == WorkItemStatus::CompletedWithProof {
+            attachment.proof_ref.as_deref()
+        } else {
+            None
+        };
+        let (_updated, _previous) = db.transition_work_item_status(
+            &attachment.work_item_id,
+            next_status,
+            &actor_ref,
+            &reason,
+            proof_receipt,
+            attachment.now_ms,
+        )?;
+        // Mission side is NOT touched by the primitive — replicate the OFF path's mission update
+        // (append the completion proof ref + bump updated_at_ms) so the mission row is identical.
+        if next_status == WorkItemStatus::CompletedWithProof {
+            if let Some(proof_ref) = attachment.proof_ref.as_ref() {
+                push_unique(&mut mission.proof_refs, proof_ref.clone());
+                mission.updated_at_ms = attachment.now_ms;
+            }
         }
+        db.upsert_mission(&mission)?;
+    } else {
+        // OFF path (and same-status no-op on both paths): the pre-WI-1 inline write, verbatim.
+        work_item.status = next_status;
+        work_item.updated_at_ms = attachment.now_ms;
+        if next_status == WorkItemStatus::CompletedWithProof {
+            if let Some(proof_ref) = attachment.proof_ref.as_ref() {
+                push_unique(&mut work_item.proof_receipts, proof_ref.clone());
+                push_unique(&mut mission.proof_refs, proof_ref.clone());
+                mission.updated_at_ms = attachment.now_ms;
+            }
+        }
+        db.upsert_work_item(&work_item)?;
+        db.upsert_mission(&mission)?;
     }
-    db.upsert_work_item(&work_item)?;
-    db.upsert_mission(&mission)?;
 
     let target_ref = format!(
         "friday://provider-timeline/{}#{}",
@@ -766,6 +841,7 @@ mod tests {
         ApprovalState, ClaimState, HandoffJudgmentMemory, MemoryScope, MissionStatus, SurfaceKind,
         TruthStatus, VisibilityPolicy, WorkLane, WorkspaceClaim, WorkspaceClaimKind,
     };
+    use friday_storage::audit::verify_audit_chain;
     use friday_storage::{memory, workflow, Db};
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -1814,5 +1890,290 @@ mod tests {
             proof_link.proof_ref.as_deref(),
             Some("proof://human-visible-receipt")
         );
+    }
+
+    // ===================== WI-1 (M-6) guarded WorkItem transition =====================
+
+    /// Count the hash-chained `audit_ledger` lifecycle rows the guarded primitive writes
+    /// (`work_item.lifecycle:from->to:reason`). Filters by the `action` prefix so unrelated
+    /// audit rows (e.g. from a model call) never inflate the count.
+    fn lifecycle_audit_rows(db: &Db) -> i64 {
+        db.conn()
+            .query_row(
+                "SELECT COUNT(*) FROM audit_ledger WHERE action LIKE 'work_item.lifecycle:%'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap()
+    }
+
+    /// Stage a Mission/WorkItem to `ReadyToDispatch`, then drive it (guarded or not) through the
+    /// full provider progression up to `CompletedWithProof`. Returns the final attach outcome.
+    fn drive_to_completion(
+        db: &Db,
+        mission_id: &str,
+        work_item_id: &str,
+        guarded: bool,
+        now: i64,
+    ) -> MissionAttachmentOutcome {
+        let mut last = MissionAttachmentOutcome::blocked("unstarted");
+        for (i, state) in [
+            PendingState::SentToHub,         // ReadyToDispatch -> Dispatched
+            PendingState::AcceptedByHub,     // Dispatched -> HubAccepted
+            PendingState::RoutedToProvider,  // HubAccepted -> ProviderRouted
+            PendingState::WaitingProvider,   // ProviderRouted -> ProviderWaiting
+            PendingState::ProviderCompleted, // ProviderWaiting -> CompletedWithProof
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            last = attach_provider_timeline_state_guarded(
+                db,
+                ProviderTimelineAttachment {
+                    mission_id: mission_id.to_string(),
+                    work_item_id: work_item_id.to_string(),
+                    friday_session_id: "friday-session-wi1".into(),
+                    request_id: "run-wi1".into(),
+                    state,
+                    proof_ref: (state == PendingState::ProviderCompleted)
+                        .then(|| "friday://agent-run/run-wi1".to_string()),
+                    now_ms: now + i as i64,
+                },
+                guarded,
+            )
+            .unwrap();
+            assert!(
+                matches!(last, MissionAttachmentOutcome::Attached { .. }),
+                "hop {state:?} should attach, got {last:?}"
+            );
+        }
+        last
+    }
+
+    #[test]
+    fn wi1_flag_on_advances_status_and_writes_hash_chained_audit_rows() {
+        let db = Db::open_hub(&tmp()).unwrap();
+        assert!(preflight_and_stage_work_item(
+            &db,
+            request(
+                "mission-wi1-on",
+                "work-wi1-on",
+                "guarded transition on",
+                WorkLane::DeepSeek,
+                Vec::new(),
+                false,
+                1,
+            ),
+        )
+        .unwrap()
+        .is_ready());
+
+        // Pre-condition: the staging path uses the inline upsert (no guarded primitive) so there
+        // are NO lifecycle audit rows before we drive the guarded progression.
+        assert_eq!(lifecycle_audit_rows(&db), 0);
+
+        let outcome = drive_to_completion(&db, "mission-wi1-on", "work-wi1-on", true, 10);
+
+        // (a) the status advanced correctly to completion-with-proof.
+        assert!(matches!(
+            outcome,
+            MissionAttachmentOutcome::Attached {
+                work_item_status: WorkItemStatus::CompletedWithProof,
+                ..
+            }
+        ));
+        let item = db.get_work_item("work-wi1-on").unwrap().unwrap();
+        assert_eq!(item.status, WorkItemStatus::CompletedWithProof);
+        assert_eq!(item.proof_receipts, vec!["friday://agent-run/run-wi1"]);
+        // Mission proof_refs updated on completion (the primitive does not touch the mission, so
+        // this seam replicates the OFF path's mission update — parity check).
+        assert!(db
+            .get_mission("mission-wi1-on")
+            .unwrap()
+            .unwrap()
+            .proof_refs
+            .contains(&"friday://agent-run/run-wi1".to_string()));
+
+        // (b) ONE hash-chained audit_ledger lifecycle row per legal hop (5 hops here), and the
+        // whole chain verifies (the guarded primitive's atomic-receipt invariant).
+        assert_eq!(lifecycle_audit_rows(&db), 5);
+        assert_eq!(
+            verify_audit_chain(db.conn()).unwrap(),
+            5,
+            "the WI-1 lifecycle rows are the only audit rows and the chain must verify"
+        );
+        // The MissionLink still binds the run (unchanged from the inline path).
+        let links = db.list_mission_links("mission-wi1-on").unwrap();
+        assert!(links
+            .iter()
+            .any(|link| link.link_kind == MissionLinkKind::ProviderTimeline));
+    }
+
+    #[test]
+    fn wi1_flag_off_is_byte_identical_and_writes_no_audit_row() {
+        let db = Db::open_hub(&tmp()).unwrap();
+        assert!(preflight_and_stage_work_item(
+            &db,
+            request(
+                "mission-wi1-off",
+                "work-wi1-off",
+                "guarded transition off",
+                WorkLane::DeepSeek,
+                Vec::new(),
+                false,
+                1,
+            ),
+        )
+        .unwrap()
+        .is_ready());
+
+        let outcome = drive_to_completion(&db, "mission-wi1-off", "work-wi1-off", false, 10);
+
+        // Same resulting status + proof as the ON path...
+        assert!(matches!(
+            outcome,
+            MissionAttachmentOutcome::Attached {
+                work_item_status: WorkItemStatus::CompletedWithProof,
+                ..
+            }
+        ));
+        let item = db.get_work_item("work-wi1-off").unwrap().unwrap();
+        assert_eq!(item.status, WorkItemStatus::CompletedWithProof);
+        assert_eq!(item.proof_receipts, vec!["friday://agent-run/run-wi1"]);
+        assert!(db
+            .get_mission("mission-wi1-off")
+            .unwrap()
+            .unwrap()
+            .proof_refs
+            .contains(&"friday://agent-run/run-wi1".to_string()));
+
+        // ...but NO lifecycle audit row from the guarded primitive (byte-identical to pre-WI-1).
+        assert_eq!(lifecycle_audit_rows(&db), 0);
+    }
+
+    #[test]
+    fn wi1_illegal_hop_is_rejected_the_same_way_on_both_paths_never_errors() {
+        // The legal-hop pre-check is SHARED and runs before the `guarded` fork: an illegal hop
+        // returns Ok(Blocked{illegal_...}) on BOTH paths (never an Err from the primitive's
+        // try_transition), so routing through the primitive never errors/blocks the run.
+        for guarded in [false, true] {
+            let db = Db::open_hub(&tmp()).unwrap();
+            assert!(preflight_and_stage_work_item(
+                &db,
+                request(
+                    "mission-wi1-illegal",
+                    "work-wi1-illegal",
+                    "illegal hop",
+                    WorkLane::DeepSeek,
+                    Vec::new(),
+                    false,
+                    1,
+                ),
+            )
+            .unwrap()
+            .is_ready());
+            // ReadyToDispatch -> CompletedWithProof is NOT a legal hop (must go through the
+            // provider states first). ProviderCompleted maps to CompletedWithProof.
+            let blocked = attach_provider_timeline_state_guarded(
+                &db,
+                ProviderTimelineAttachment {
+                    mission_id: "mission-wi1-illegal".into(),
+                    work_item_id: "work-wi1-illegal".into(),
+                    friday_session_id: "s".into(),
+                    request_id: "r".into(),
+                    state: PendingState::ProviderCompleted,
+                    proof_ref: Some("friday://agent-run/r".into()),
+                    now_ms: 10,
+                },
+                guarded,
+            )
+            .unwrap();
+            assert!(
+                matches!(
+                    &blocked,
+                    MissionAttachmentOutcome::Blocked { blockers }
+                        if blockers.iter().any(|b| b.starts_with("illegal_work_item_transition:ready_to_dispatch->completed_with_proof"))
+                ),
+                "guarded={guarded} expected illegal-hop block, got {blocked:?}"
+            );
+            // No status change and no audit row written on the rejected hop.
+            assert_eq!(
+                db.get_work_item("work-wi1-illegal")
+                    .unwrap()
+                    .unwrap()
+                    .status,
+                WorkItemStatus::ReadyToDispatch
+            );
+            assert_eq!(lifecycle_audit_rows(&db), 0);
+        }
+    }
+
+    #[test]
+    fn wi1_flag_on_same_status_is_a_noop_with_no_audit_row() {
+        // A re-attach at the SAME status (status == next_status) takes the OFF-equivalent else on
+        // BOTH paths — no guarded primitive call, no audit row, no spurious illegal-hop block.
+        let db = Db::open_hub(&tmp()).unwrap();
+        assert!(preflight_and_stage_work_item(
+            &db,
+            request(
+                "mission-wi1-noop",
+                "work-wi1-noop",
+                "same status noop",
+                WorkLane::DeepSeek,
+                Vec::new(),
+                false,
+                1,
+            ),
+        )
+        .unwrap()
+        .is_ready());
+        // Advance once (guarded) to Dispatched → one audit row.
+        let first = attach_provider_timeline_state_guarded(
+            &db,
+            ProviderTimelineAttachment {
+                mission_id: "mission-wi1-noop".into(),
+                work_item_id: "work-wi1-noop".into(),
+                friday_session_id: "s".into(),
+                request_id: "r".into(),
+                state: PendingState::SentToHub,
+                proof_ref: None,
+                now_ms: 10,
+            },
+            true,
+        )
+        .unwrap();
+        assert!(matches!(
+            first,
+            MissionAttachmentOutcome::Attached {
+                work_item_status: WorkItemStatus::Dispatched,
+                ..
+            }
+        ));
+        assert_eq!(lifecycle_audit_rows(&db), 1);
+
+        // Re-attach the SAME state (Dispatched again) under guarded=true → no-op, no new audit row.
+        let again = attach_provider_timeline_state_guarded(
+            &db,
+            ProviderTimelineAttachment {
+                mission_id: "mission-wi1-noop".into(),
+                work_item_id: "work-wi1-noop".into(),
+                friday_session_id: "s".into(),
+                request_id: "r".into(),
+                state: PendingState::SentToHub,
+                proof_ref: None,
+                now_ms: 11,
+            },
+            true,
+        )
+        .unwrap();
+        assert!(matches!(
+            again,
+            MissionAttachmentOutcome::Attached {
+                work_item_status: WorkItemStatus::Dispatched,
+                ..
+            }
+        ));
+        // Still exactly ONE lifecycle audit row — the same-status re-attach wrote none.
+        assert_eq!(lifecycle_audit_rows(&db), 1);
     }
 }
