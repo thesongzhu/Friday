@@ -53,8 +53,8 @@ pub use migrate::{
 };
 pub use passport::{get_context_passport, list_for_mission, upsert_context_passport};
 pub use pending_request::{
-    get_pending_request, list_pending_requests_for_run, persist_pending_request,
-    set_pending_status, PendingApprovalRequest,
+    get_pending_request, insert_pending_approval_activity, list_pending_requests_for_run,
+    persist_pending_request, set_pending_status, PendingApprovalRequest,
 };
 pub use provider_timeline_store::{
     load_events, load_pending, load_timeline_by_session, load_timeline_state, persist_event,
@@ -1307,7 +1307,7 @@ fn insert_token_ledger_conn(
     Ok(())
 }
 
-fn insert_activity_conn(conn: &Connection, a: &ActivityRow) -> rusqlite::Result<()> {
+pub(crate) fn insert_activity_conn(conn: &Connection, a: &ActivityRow) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO activity_item
             (activity_id, session_id, type, state, summary, created_at, updated_at, deep_link)

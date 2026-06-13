@@ -16,6 +16,12 @@ pub enum ActivityType {
     /// candidate is never auto-confirmed; surfacing it for review is how the
     /// "no silent long-term write" invariant reaches the user.
     MemoryReview,
+    /// A run Paused waiting on the operator's approval for a mutating action
+    /// (NS-7). Surfaced on the operator's Needs-Me surface so a pending approval
+    /// is visible work, not just a persisted `pending_approval_request` row. The
+    /// activity references the paused run + the approval nonce (its `activity_id`
+    /// carries the nonce; its `summary` carries both).
+    ApprovalRequired,
 }
 
 impl ActivityType {
@@ -27,6 +33,7 @@ impl ActivityType {
             ActivityType::OfflineResult => "offline_result",
             ActivityType::ChannelInbound => "channel_inbound",
             ActivityType::MemoryReview => "memory_review",
+            ActivityType::ApprovalRequired => "approval_required",
         }
     }
 }
@@ -90,6 +97,7 @@ mod tests {
         assert_eq!(ActivityType::OfflineResult.as_str(), "offline_result");
         assert_eq!(ActivityType::ChannelInbound.as_str(), "channel_inbound");
         assert_eq!(ActivityType::MemoryReview.as_str(), "memory_review");
+        assert_eq!(ActivityType::ApprovalRequired.as_str(), "approval_required");
     }
 
     #[test]

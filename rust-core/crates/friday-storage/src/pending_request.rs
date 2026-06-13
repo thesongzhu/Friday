@@ -18,7 +18,9 @@
 //! and the `approval_id` PRIMARY KEY makes a duplicate nonce a fail-closed insert error.
 
 use crate::error::Result;
+use crate::{insert_activity_conn, ActivityRow};
 use friday_core::gate::{self, MutatingActionRequest, CANONICAL_GATE_ISSUER};
+use friday_core::{ActivityState, ActivityType};
 use rusqlite::{params, Connection, OptionalExtension};
 
 /// A persisted pending approval request — the offline operator's to-sign work item.
@@ -130,6 +132,37 @@ pub fn persist_pending_request(conn: &Connection, req: &PendingApprovalRequest) 
         ],
     )?;
     Ok(())
+}
+
+/// NS-7: compose + insert ONE Needs-Me activity row for a run that just Paused waiting on
+/// an operator approval, so the pending approval surfaces as visible work (not only a
+/// `pending_approval_request` row). The row is [`ActivityType::ApprovalRequired`] /
+/// [`ActivityState::Pending`]. The caller passes the SAME paused `run_id` + approval `nonce`
+/// it persisted the pending request under; this composes the row HERE (so the hot run-loop
+/// Pause arm stays a thin call). The run/nonce binding is encoded into fields the
+/// [`crate::Db::list_activity`] projection actually surfaces: the `nonce` is the suffix of
+/// the `activity_id` (also making it the idempotent PRIMARY KEY — a re-Pause on the same
+/// nonce is a fail-closed duplicate insert), and BOTH `run_id` and `nonce` are in the
+/// `summary` (the projection drops `session_id`/`deep_link`). `session_id` carries the
+/// `run_id` too (a loop run's session-attribution column), for the indexed read paths.
+pub fn insert_pending_approval_activity(
+    conn: &Connection,
+    run_id: &str,
+    nonce: &str,
+    action: &str,
+    now_ms: i64,
+) -> rusqlite::Result<()> {
+    let row = ActivityRow {
+        activity_id: format!("approval-needs-me-{nonce}"),
+        session_id: Some(run_id.to_string()),
+        kind: ActivityType::ApprovalRequired,
+        state: ActivityState::Pending,
+        summary: format!("approval required for {action} (run={run_id} nonce={nonce})"),
+        created_at: now_ms,
+        updated_at: now_ms,
+        deep_link: None,
+    };
+    insert_activity_conn(conn, &row)
 }
 
 /// Mark a pending request resolved (S6d), e.g. `consumed` after a successful resume or
