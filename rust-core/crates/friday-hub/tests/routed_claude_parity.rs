@@ -85,17 +85,29 @@
 //                         IS the claude turn; the Pause is gate mechanics on top.
 //                         (Deterministically proven no-key in-crate; live here.)
 //
+// CONTROL-OP BINDING (C2-3) — Class-2 control mechanics on a claude-pinned+metered run (NO new
+// anthropic row; the control op is NEVER itself metered). These were the "approve / reject /
+// resume … WIRING NEEDED" DEFERRED entries; C2-3 binds the EXISTING control substrate
+// (`agent_run_control::{reject, cancel, resume}`) to a genuinely claude-pinned+metered run and
+// asserts the "NO new anthropic row" anti-fake after each op:
+//   - reject  -> DETERMINISTIC dark proof, runtime.rs `c2_control` module
+//                (`reject_on_claude_pinned_paused_run_records_receipt_no_new_anthropic_row`): the
+//                owner refuses the pending approval; status='rejected' + a control receipt; the
+//                ledger is byte-for-byte the proposing-turn snapshot (no new row).
+//   - cancel  -> DETERMINISTIC dark proof, runtime.rs `c2_control` module
+//                (`cancel_on_claude_pinned_paused_run_records_receipt_no_new_anthropic_row`):
+//                terminal cancel + receipt; ledger unchanged.
+//   - resume  -> the LIVE leg HERE (`resume_completes_claude_pinned_mutation_no_new_anthropic_row`):
+//                the operator signs an approval over the live paused action's digest; resume
+//                executes the ONE mutation + writes its resume receipt; the ledger is unchanged
+//                (the re-execution is NOT a routed Claude turn). LIVE because a deterministic
+//                resume needs BOTH a test-minted operator Ed25519 (forbidden in src by the
+//                self-mint scan) AND the crate-private route promotion — which cannot coexist in
+//                one file; the resume execute-and-receipt mechanics are also proven deterministically
+//                (off a metered run) by tests/a1_run_control.rs::resume_executes_the_approved_mutation.
+//
 // DEFERRED — session-control flows NOT expressible through the C2 route-pin/metering path
-// (~16 §3 entries; each needs a routed session-control surface the C2 atom does NOT build):
-//   - approve / reject -> the resume leg: an operator-signed approval re-executes the paused
-//                         mutation (s6d tests/s6d_resume_ingestion.rs /
-//                         tests/r4s2_approval_execute.rs substrate). The RE-EXECUTION is NOT
-//                         itself a routed Claude model turn, so it records no NEW anthropic
-//                         ledger row — it is approval/resume mechanics, not a metered Claude
-//                         flow. WIRING NEEDED: bind the resume entry to the run's pinned
-//                         provider + assert the resume's own audit receipt (no new model row).
-//   - resume           -> same s6d resume entry; same note. WIRING NEEDED: a provider-pinned
-//                         resume path + its receipt assertion.
+// (each needs a routed session-control surface the C2 atom does NOT build):
 //   - steer running turn -> mid-turn re-prompt; the loop is single-shot per run_task call with
 //                         no steer channel. WIRING NEEDED: a streaming/steer control method on
 //                         the routed session (a1_run_control.rs is the run-control substrate;
@@ -123,16 +135,22 @@
 //   - token ledger  -> the anthropic row itself — the core assertion of this harness.
 //
 // TALLY: 23 §3 flows = 4 chat-expressible (LIVE) + 1 session-control wired (approval-request)
-// + 2 cross-cutting (audit/ledger, side effects) + ~16 DEFERRED session-control.
-// session_control_wired = PARTIAL (only the approval-REQUEST half is routed+metered; the
-// approve/reject/resume completion half + all the list/open/read/steer/stop/fork/archive/
-// attach/diff/offline/activity surfaces are DEFERRED with the per-flow wiring notes above).
+// + 3 control-op binding (C2-3: reject/cancel deterministic in-crate, resume LIVE here)
+// + 2 cross-cutting (audit/ledger, side effects) + DEFERRED session-control (the
+// list/open/read/steer/stop/fork/archive/attach/diff/offline/activity surfaces). C2-3 closed the
+// approve/reject/resume completion half as Class-2 control-op binding with the "NO new anthropic
+// row" anti-fake (the control ops act on an already-metered claude turn, never themselves metered).
 
-use friday_crypto::{seal, DeviceKeypair};
+use friday_core::gate::{
+    canonical_approval_signature_bytes, ApprovalDecision, CanonicalApproval, CANONICAL_GATE_ISSUER,
+};
+use friday_crypto::{seal, DeviceKeypair, OperatorSigningKey, OperatorVerifyingKey};
+use friday_hub::agent_run_control::resume;
 use friday_hub::hub_server::AuthedPrincipal;
 use friday_hub::runtime::{HubConfig, HubRuntime, ENV_CLAUDE_ROUTE_ENABLED};
 use friday_hub::{CancelToken, LoopStatus, SteerHandle};
 use friday_providers::KeyValidationOutcome;
+use friday_storage::list_pending_requests_for_run;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -609,5 +627,184 @@ fn steer_turn_folds_into_live_claude_loop_as_additional_metered_turn() {
     eprintln!(
         "LIVE OK: steer/inject → claude, status {:?}, {} billed anthropic turn(s) incl. the steered turn",
         outcome.status, outcome.turns
+    );
+}
+
+// ---- C2-3 resume (b): operator-signed resume of a claude-pinned mutation, LIVE ----------------
+//
+// The faithful RESUME binding (the "approve / resume" half of routed_claude_parity.rs's DEFERRED
+// "approve / reject / resume … WIRING NEEDED" note). It proves the EXISTING control substrate
+// (`agent_run_control::resume`, delegating verbatim to the S6 `resume_with_approval` spine) acts on
+// a genuinely CLAUDE-PINNED + METERED run and records its own resume audit_ref while minting NO new
+// model turn (Class-2: the re-execution of the approved mutation is NOT a routed Claude turn — it
+// bills NO new anthropic row).
+//
+// Why this is LIVE and `#[ignore]`'d, not deterministic (HONEST): a deterministic claude-pinned run
+// needs the crate-private `mark_route_*` route promotion (no public no-key route-enable exists —
+// the dark/default-off invariant), while minting a test operator Ed25519 approval needs
+// `OperatorSigningKey`, which `friday-hub/src/**` is FORBIDDEN to name (the self-mint source-scan in
+// `operator_vk.rs`). Those two cannot coexist in one file. So the deterministic dark proof covers
+// reject + cancel (runtime.rs `c2_control` module); resume's faithful binding is proven here, in
+// `tests/` (scan-exempt — the TEST holds the signing key exactly as the offline operator does),
+// against the LIVE routed claude run. The resume EXECUTE-and-receipt mechanics are ALSO proven
+// deterministically (just not on a metered run) by `tests/a1_run_control.rs::
+// resume_executes_the_approved_mutation`.
+//
+// Model-dependence: whether the live model proposes a mutation on a given prompt is model-dependent
+// (same caveat as `approval_request_claude_turn_bills_anthropic_then_pauses`). If it answers in chat
+// instead of pausing, the resume leg is skipped with a clear log — never a fake pass.
+
+fn operator_keypair() -> (OperatorSigningKey, OperatorVerifyingKey) {
+    let sk = OperatorSigningKey::generate();
+    let vk = sk.verifying_key();
+    (sk, vk)
+}
+
+/// A LIVE, claude-enabled runtime built with the operator's VERIFY key provisioned (so a presented
+/// signed approval can be verified at resume) — otherwise identical to [`live_claude_runtime`]. The
+/// run still PAUSES on a mutating action (the verify key is not an approval; the gate withholds
+/// until a signature is presented), persisting the pending approval the operator signs offline.
+fn live_claude_runtime_with_vk(
+    tag: &str,
+    vk: OperatorVerifyingKey,
+) -> (HubRuntime<friday_deepseek::UreqTransport>, TempWs) {
+    assert_eq!(
+        std::env::var(ENV_CLAUDE_ROUTE_ENABLED).ok().as_deref(),
+        Some("1"),
+        "set {ENV_CLAUDE_ROUTE_ENABLED}=1 to run the live routed-claude parity"
+    );
+    let ws = TempWs::new(tag);
+    let config = HubConfig {
+        db_path: ws.db_path(),
+        workspace_root: ws.0.clone(),
+        secret: b"routed-claude-parity-harness-secret-2".to_vec(),
+        max_turns: 6,
+        principal_id: None,
+        disabled_tools: vec![],
+        read_only: false,
+        operator_vk: Some(vk), // resume verifies a presented signature against THIS key
+    };
+    let mut rt = HubRuntime::live(config)
+        .expect("HubRuntime::live must assemble with the gate on + both provider keys present");
+    let outcome = rt.validate_and_enable_claude();
+    assert_eq!(
+        outcome,
+        KeyValidationOutcome::Valid,
+        "the live Anthropic key probe must be Valid to enable the claude route (got {outcome:?})"
+    );
+    (rt, ws)
+}
+
+#[test]
+#[ignore = "live: needs FRIDAY_CLAUDE_ROUTE_ENABLED=1 + both provider keys; spends Anthropic quota; model must propose a mutation; run with --ignored"]
+fn resume_completes_claude_pinned_mutation_no_new_anthropic_row() {
+    // The offline operator's keypair (the TEST holds the signing key; the Hub holds only the vk).
+    let (sk, vk) = operator_keypair();
+    let (rt, ws) = live_claude_runtime_with_vk("resume-complete", vk);
+    let run_id = "live-claude-resume";
+
+    // (1) A claude-pinned MUTATING turn: billed an anthropic row, then Paused on a pending approval.
+    let (selection, outcome) = rt
+        .run_task_pinned(
+            run_id,
+            "Create a file named out.txt containing the text RESUMED using the write_file tool.",
+            "claude",
+            2_000,
+        )
+        .expect("a live pinned-claude run that may propose a mutation completes its turn");
+    assert_eq!(selection.provider_id, "claude", "the pin routed to claude");
+    // The proposing turn(s) are billed regardless of the gate outcome.
+    assert_anthropic_rows(&rt, run_id, outcome.status, outcome.turns);
+
+    if outcome.status != LoopStatus::Paused {
+        eprintln!(
+            "LIVE SKIP(resume): claude turn billed (status {:?}); the model answered in chat \
+             rather than proposing a mutation — the resume leg needs a mutating proposal",
+            outcome.status
+        );
+        return;
+    }
+
+    // (2) Snapshot the metered ledger BEFORE resume — the anti-fake compares against this.
+    let ledger_before = rt.db().list_run_token_usage(run_id).unwrap();
+    assert!(
+        !ledger_before.is_empty(),
+        "the proposing claude turn was billed at least one anthropic row"
+    );
+
+    // (3) The offline operator signs an approval over the EXACT paused action's digest (read from
+    //     the persisted pending row — the same digest the loop authorized). The TEST mints the
+    //     Ed25519 signature; the Hub only ever verifies it.
+    let pending = list_pending_requests_for_run(rt.db().conn(), run_id).unwrap();
+    assert_eq!(pending.len(), 1, "one pending approval to resume");
+    let nonce = pending[0].approval_id.clone();
+    let action_digest = pending[0].action_digest.clone();
+    let mut approval = CanonicalApproval {
+        decision: ApprovalDecision::Approved,
+        approval_id: nonce.clone(),
+        action_digest,
+        expires_at: Some(5_000_000_000_000),
+        issuer: Some(CANONICAL_GATE_ISSUER.to_string()),
+        signature: None,
+    };
+    approval.signature = Some(
+        sk.sign(&canonical_approval_signature_bytes(&approval))
+            .to_hex(),
+    );
+    let signed_blob = serde_json::json!({
+        "decision": "approved",
+        "approval_id": approval.approval_id,
+        "action_digest": approval.action_digest,
+        "expires_at": approval.expires_at.unwrap(),
+        "issuer": approval.issuer,
+        "signature": approval.signature,
+    })
+    .to_string()
+    .into_bytes();
+
+    // (4) Resume through the EXISTING control substrate: verify → consume nonce → execute the ONE
+    //     approved mutation → write a resume audit receipt. NO new model turn. The verify key is the
+    //     one the RUNTIME was provisioned with (`rt.operator_vk()`), mirroring the wire path where
+    //     the server verifies against the Hub-held key — not a fresh key derived in the test.
+    let exec = friday_hub::FsToolExecutor::new(&ws.0);
+    let operator_vk = rt
+        .operator_vk()
+        .expect("the runtime was provisioned with the operator verify key");
+    let out = resume(
+        rt.db().conn(),
+        &exec,
+        operator_vk,
+        run_id,
+        &signed_blob,
+        3_000,
+    )
+    .unwrap();
+    assert!(
+        out.accepted,
+        "the operator-signed resume executed the mutation"
+    );
+    assert_eq!(out.status, "mutation_completed");
+    assert!(
+        out.audit_ref.is_some(),
+        "the resume wrote its own audit receipt"
+    );
+    assert_eq!(
+        std::fs::read_to_string(ws.0.join("out.txt")).unwrap(),
+        "RESUMED",
+        "the approved mutation actually executed"
+    );
+
+    // (5) THE ANTI-FAKE: the re-execution is Class-2 control mechanics, NOT a model turn — the
+    //     ledger is byte-for-byte the proposing-turn snapshot (NO new anthropic row).
+    let ledger_after = rt.db().list_run_token_usage(run_id).unwrap();
+    assert_eq!(
+        ledger_after, ledger_before,
+        "NO new anthropic row: resume re-executes the approved mutation, it is not a metered \
+         claude turn — the ledger must be byte-identical to the proposing-turn snapshot"
+    );
+    eprintln!(
+        "LIVE OK: resume → claude-pinned mutation completed via operator signature, resume \
+         receipt written, NO new anthropic row ({} billed turn(s) unchanged)",
+        ledger_after.len()
     );
 }

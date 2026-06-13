@@ -1788,6 +1788,231 @@ mod tests {
         assert_eq!(pending, 1, "one pending approval recorded for resume");
     }
 
+    // ---- C2-3: control-op binding to a claude-pinned+metered run (DARK, deterministic) -------
+    //
+    // A dedicated child module of `mod tests` so it inherits `super::*` (StubClaudeMeteredClient /
+    // tmp / TempDir / SECRET / DenyAllApprovals / the route-promotion helpers) while keeping the
+    // C2-3 binding tests cleanly grouped and `cargo test c2_control`-selectable.
+    mod c2_control {
+        use super::*;
+
+        // C2-3 closes the routed_claude_parity.rs "approve / reject / resume … WIRING NEEDED"
+        // DEFERRED note for the reject + cancel ops: it proves the EXISTING control substrate
+        // (`agent_run_control::{reject, cancel}`) acts on a genuinely CLAUDE-PINNED + METERED run
+        // (the one `claude_mutating_turn_bills_anthropic_row_then_pauses_for_approval` produces — a
+        // claude turn that bills EXACTLY ONE anthropic row, then Pauses on a pending approval) and
+        // that each control op records its OWN audit receipt while minting NO new model turn.
+        //
+        // THE ANTI-FAKE ("NO new anthropic row"). approve/reject/resume/cancel are Class-2 control
+        // mechanics layered on top of an ALREADY-metered claude turn — they are NEVER themselves
+        // metered. So after each control op these tests assert the run's token ledger is BYTE-FOR-BYTE
+        // (`RunTokenUsageRow` is `PartialEq`) the same single proposing-turn anthropic row it was
+        // BEFORE the op — not merely the same length — AND that the WHOLE ledger still has exactly one
+        // row (no hidden, non-run-scoped call). A control op that silently minted a model turn would
+        // add a row and fail here.
+        //
+        // SCOPE / honesty. reject (a) + cancel (c) are proven DETERMINISTICALLY here (no key, no
+        // network): they carry no operator signature, so they need only the run's bound OWNER. The
+        // RESUME leg (b) needs BOTH a test-minted operator Ed25519 approval (forbidden in `src/**` by
+        // the operator-signing-key self-mint source-scan — see `operator_vk.rs`) AND the crate-private
+        // `mark_route_*` claude route-promotion (no public no-key route-enable exists — the dark
+        // invariant), which cannot coexist in one file. Resume's faithful binding therefore lives as a
+        // LIVE `#[ignore]`'d test in `tests/routed_claude_parity.rs`
+        // (`resume_completes_claude_pinned_mutation_no_new_anthropic_row`), gated on the live model
+        // genuinely Pausing on a mutation. Resume's deterministic execute-and-receipt is already proven
+        // (just not on a metered run) by `tests/a1_run_control.rs::resume_executes_the_approved_mutation`.
+
+        /// Build a claude-wired runtime BOUND to `owner` (`principal_id: Some(owner)`) so the paused
+        /// run carries an owner principal — what the owner-authed control ops (`reject`/`cancel`)
+        /// require. Otherwise identical to [`runtime_with_claude_wired`] (DARK Claude client +
+        /// crate-private route promotion, no key/network). `operator_vk` stays `None` so a mutating
+        /// turn Pauses fail-closed (the metered claude turn + a pending approval — the substrate the
+        /// control op acts on).
+        fn runtime_with_owned_claude_wired(
+            tag: &str,
+            owner: &str,
+            steps: Vec<AgentStep>,
+        ) -> (HubRuntime<ScriptTransport>, TempDir) {
+            let ws = TempDir::new(tag);
+            let transport = ScriptTransport::new(&["{\"tool\":\"none\"}"]);
+            let client = DeepSeekClient::with_transport(transport, "k".into());
+            let agent = DeepSeekAgentLlmClient::new(client);
+            let mut rt = HubRuntime::new(
+                HubConfig {
+                    db_path: tmp(tag),
+                    workspace_root: ws.0.clone(),
+                    secret: SECRET.to_vec(),
+                    max_turns: 6,
+                    principal_id: Some(owner.to_string()),
+                    disabled_tools: vec![],
+                    read_only: false,
+                    operator_vk: None, // fail-closed Pause on a mutating action (no auto-approve)
+                },
+                agent,
+                Box::new(DenyAllApprovals),
+            )
+            .unwrap();
+            rt = rt.with_claude(Box::new(StubClaudeMeteredClient::new(steps, 11, 8)));
+            rt.mark_route_available("claude");
+            rt.mark_route_validated("claude");
+            (rt, ws)
+        }
+
+        /// Drive an OWNED, claude-pinned MUTATING turn to its Pause and assert the metered substrate the
+        /// control op acts on is genuinely there: routed to claude, status `Paused`, EXACTLY ONE
+        /// anthropic row, exactly one pending approval. Returns `(rt, ws, owner, nonce, ledger_before)`
+        /// — `ledger_before` is the proposing-turn row(s) the anti-fake compares against after the op.
+        fn paused_owned_claude_run(
+            tag: &str,
+            owner: &str,
+            run_id: &str,
+        ) -> (
+            HubRuntime<ScriptTransport>,
+            TempDir,
+            String,
+            Vec<friday_storage::RunTokenUsageRow>,
+        ) {
+            let (rt, ws) = runtime_with_owned_claude_wired(
+                tag,
+                owner,
+                vec![AgentStep::Tool(crate::RawToolCall {
+                    action: "write_file".to_string(),
+                    params: vec![
+                        ("path".to_string(), "out.txt".to_string()),
+                        ("content".to_string(), "C2".to_string()),
+                    ],
+                })],
+            );
+            let (selection, outcome) = rt
+                .run_task_pinned(run_id, "write a file", "claude", 2_000)
+                .expect("pinned claude runs through the runtime");
+            assert_eq!(selection.provider_id, "claude", "the pin routed to claude");
+            assert_eq!(
+                outcome.status,
+                LoopStatus::Paused,
+                "no operator key ⇒ the mutating action Pauses (RequiresApproval), never executes"
+            );
+
+            // The metered substrate: EXACTLY ONE anthropic row (the proposing claude turn was billed).
+            let ledger_before = rt.db().list_run_token_usage(run_id).unwrap();
+            assert_eq!(
+                ledger_before.len(),
+                1,
+                "the proposing claude turn was billed exactly one row"
+            );
+            assert_eq!(ledger_before[0].provider_kind, "anthropic");
+            assert_eq!(ledger_before[0].base_url_host, "api.anthropic.com");
+            assert_eq!(ledger_before[0].model, friday_anthropic::DEFAULT_MODEL);
+            assert!(!ledger_before[0].fallback);
+            // Whole-ledger agreement: no hidden, non-run-scoped row exists.
+            assert_eq!(rt.db().list_token_usage().unwrap().len(), 1);
+
+            // Exactly one pending approval (the nonce the control op targets / the run paused on).
+            let pending =
+                friday_storage::list_pending_requests_for_run(rt.db().conn(), run_id).unwrap();
+            assert_eq!(pending.len(), 1, "one pending approval recorded");
+            let nonce = pending[0].approval_id.clone();
+            assert_eq!(pending[0].status, "pending");
+
+            (rt, ws, nonce, ledger_before)
+        }
+
+        /// THE ANTI-FAKE assertion: after a Class-2 control op the run's token ledger is BYTE-FOR-BYTE
+        /// (`RunTokenUsageRow` is `PartialEq`) the `before` snapshot — the SAME single proposing-turn
+        /// anthropic row, NO new row — and the WHOLE ledger still has exactly that one row. A control
+        /// op that silently minted a model turn would add a row and fail here.
+        fn assert_no_new_anthropic_row(
+            rt: &HubRuntime<ScriptTransport>,
+            run_id: &str,
+            before: &[friday_storage::RunTokenUsageRow],
+        ) {
+            let after = rt.db().list_run_token_usage(run_id).unwrap();
+            assert_eq!(
+            after, before,
+            "NO new anthropic row: the control op is Class-2 (never a metered model turn) — the \
+             ledger must be byte-identical to the proposing-turn snapshot"
+        );
+            assert_eq!(
+                rt.db().list_token_usage().unwrap().len(),
+                1,
+                "the whole ledger still has exactly the one proposing-turn row (no hidden call)"
+            );
+        }
+
+        #[test]
+        fn reject_on_claude_pinned_paused_run_records_receipt_no_new_anthropic_row() {
+            // (a) REJECT a claude-pinned+metered paused run. The owner refuses the pending approval:
+            // status flips to 'rejected', a control receipt is written, and — the anti-fake — NO new
+            // anthropic row is billed (reject is Class-2 control mechanics, never a model turn).
+            const OWNER: &str = "owner:c2-3-reject";
+            const RUN: &str = "run-c2-3-reject";
+            let (rt, _ws, nonce, ledger_before) =
+                paused_owned_claude_run("c2-3-reject", OWNER, RUN);
+
+            let r = crate::agent_run_control::reject(rt.db().conn(), RUN, &nonce, OWNER, 3_000)
+                .unwrap();
+            assert!(r.accepted, "the owner's reject is accepted");
+            assert_eq!(r.status, "rejected", "the pending approval is now rejected");
+            assert!(r.audit_ref.is_some(), "an accepted reject writes a receipt");
+
+            // The pending row is genuinely 'rejected' (the substrate op ran, not a stub).
+            assert_eq!(
+                friday_storage::get_pending_request(rt.db().conn(), &nonce)
+                    .unwrap()
+                    .unwrap()
+                    .status,
+                "rejected"
+            );
+            // THE ANTI-FAKE: still EXACTLY the 1 proposing-turn anthropic row, byte-for-byte.
+            assert_no_new_anthropic_row(&rt, RUN, &ledger_before);
+        }
+
+        #[test]
+        fn cancel_on_claude_pinned_paused_run_records_receipt_no_new_anthropic_row() {
+            // (c) CANCEL a claude-pinned+metered paused run. The owner terminally stops the run:
+            // state='cancelled', a control receipt is written, and — the anti-fake — NO new anthropic
+            // row is billed (cancel is Class-2 control mechanics, never a model turn).
+            const OWNER: &str = "owner:c2-3-cancel";
+            const RUN: &str = "run-c2-3-cancel";
+            let (rt, _ws, _nonce, ledger_before) =
+                paused_owned_claude_run("c2-3-cancel", OWNER, RUN);
+
+            let r =
+                crate::agent_run_control::cancel(rt.db().conn(), RUN, OWNER, Some("done"), 3_000)
+                    .unwrap();
+            assert!(r.accepted, "the owner's cancel is accepted");
+            assert_eq!(r.status, "cancelled", "the run is terminally cancelled");
+            assert!(r.audit_ref.is_some(), "an accepted cancel writes a receipt");
+
+            // The run is genuinely cancelled (the substrate op ran, not a stub).
+            assert!(agent_run::is_cancelled(rt.db().conn(), RUN).unwrap());
+            // THE ANTI-FAKE: still EXACTLY the 1 proposing-turn anthropic row, byte-for-byte.
+            assert_no_new_anthropic_row(&rt, RUN, &ledger_before);
+        }
+
+        #[test]
+        fn reject_then_cancel_on_one_claude_pinned_run_never_bills_a_new_anthropic_row() {
+            // The two Class-2 ops applied to the SAME claude-pinned+metered run, in sequence: reject
+            // the pending approval, then cancel the run. After EACH op the ledger is re-asserted
+            // byte-for-byte — neither control op ever mints a model turn. This is the strongest single
+            // statement of the Class-2 invariant: a run accrues exactly the model rows its model turns
+            // produced, and control mechanics layered on top add NONE.
+            const OWNER: &str = "owner:c2-3-seq";
+            const RUN: &str = "run-c2-3-seq";
+            let (rt, _ws, nonce, ledger_before) = paused_owned_claude_run("c2-3-seq", OWNER, RUN);
+
+            let r = crate::agent_run_control::reject(rt.db().conn(), RUN, &nonce, OWNER, 3_000)
+                .unwrap();
+            assert!(r.accepted && r.status == "rejected");
+            assert_no_new_anthropic_row(&rt, RUN, &ledger_before);
+
+            let r =
+                crate::agent_run_control::cancel(rt.db().conn(), RUN, OWNER, None, 4_000).unwrap();
+            assert!(r.accepted && r.status == "cancelled");
+            assert_no_new_anthropic_row(&rt, RUN, &ledger_before);
+        }
+    } // mod c2_control
+
     #[test]
     fn claude_route_error_fails_run_closed_and_bills_nothing() {
         // ERROR HANDLING (§3): a claude turn whose model call FAILS (an OUTER AgentError — what
