@@ -411,7 +411,7 @@ pub fn filter_sensitive(
 /// just a `memory_item` row). DEFAULT-OFF: unset / empty / `"0"` / any value other than the
 /// exact opt-in `"1"` ⇒ OFF, and the extraction is BYTE-IDENTICAL to the pre-NS-8 baseline
 /// (no [`memory_review_needs_me`] call, NO activity row, no extra query). It is read ONCE in
-/// the public [`extract_inline`] (the chokepoint every production caller — the bin — goes
+/// the public [`extract_inline`] (the chokepoint every production extraction caller — the bin — goes
 /// through) and threaded as a pure bool to [`extract_inline_flagged`] — the "split env-read
 /// from pure logic" idiom (mirroring NS-7's `activity_needs_me_from`), so the behavioral tests
 /// inject the bool directly and never race `std::env`.
@@ -522,6 +522,19 @@ pub fn extract_inline<T: Transport>(
 /// (`let _`): a surfacing/duplicate error can NEVER roll back the committed candidates nor
 /// flip the run outcome. When FALSE the surfacing block is skipped entirely and the path is
 /// byte-identical to the pre-NS-8 baseline.
+///
+/// ### Seam boundary (what this surfacing covers — and what it does NOT)
+/// This is the only production EXTRACTION `record_candidate` loop, so NS-8's surfacing is
+/// wired here and here only (the `runtime.rs` `record_candidate` sites are test-only
+/// `seed_confirmed` helpers, not a production extraction path). Two OTHER production-API
+/// candidate-creators exist — [`friday_storage::memory::edit_candidate`] and
+/// [`friday_storage::memory::repropose_from_rejected`] (the memory-confirmation
+/// edit / re-propose actions, `07` §6/§7) — but both are currently DORMANT: their ONLY
+/// callers are tests, they are NOT wired to any runtime handler, and so they are OUTSIDE
+/// NS-8's seam. When either action IS wired into a runtime handler, that wiring MUST ALSO
+/// surface the freshly-created candidate as a [`ActivityType::MemoryReview`] Needs-Me item
+/// (calling [`memory_review_activity_row`] / the same surfacing step), else those candidates
+/// will record but never appear on the operator's review surface.
 ///
 /// ## Slice-3 ownership-binding (the store SCOPE is DERIVED from the SESSION)
 /// There is NO caller-supplied principal: the store scope (`principal_id`) is DERIVED
@@ -1807,5 +1820,90 @@ mod tests {
             1,
             "re-surfacing the same candidate must not duplicate the row"
         );
+    }
+
+    #[test]
+    fn ns8_only_freshly_recorded_candidates_surface_not_prior_run_pending() {
+        // PINS NS-8's core anti-nagging faithfulness: a review item surfaces ONLY for the
+        // candidates THIS extraction freshly recorded — a still-PENDING candidate that already
+        // existed (e.g. recorded by an EARLIER run, with NO surfaced row) is NOT re-surfaced.
+        //
+        // This is the DISCRIMINATING construction (the task's "minimal faithful equivalent"):
+        // a 2nd extraction over the SAME already-extracted session is NOT discriminating —
+        // it early-returns at the empty-pending guard and never reaches the surfacing loop, so
+        // it can't distinguish "surfacing iterates only fresh ids" from a (forbidden) re-query
+        // of `pending_review()`. Instead we (a) pre-seed a PENDING candidate X with NO surfaced
+        // row, then (b) run a flag-ON extraction over FRESH pending messages whose provider
+        // returns ZERO items — so the surfacing loop IS reached (messages non-empty ⇒ no early
+        // return) but `fresh_candidate_ids` is empty (0 candidates recorded this run). The
+        // correct impl (surface only freshly-recorded ids) leaves X UN-surfaced; a `pending_
+        // review()` re-query mutation would WRONGLY surface the pre-existing pending X. So this
+        // assertion kills that mutation.
+        let mut db = friday_storage::Db::open_hub(&tmp("ns8-fresh-only")).unwrap();
+
+        // (a) A still-PENDING candidate from an earlier run — recorded directly via the spine,
+        // with NO accompanying memory_review activity row (it was never surfaced).
+        // `pending_review` is principal-agnostic, so the namespace here is arbitrary.
+        record_candidate(
+            db.conn(),
+            &NewMemoryCandidate {
+                memory_id: "prior-run:c0",
+                scope: MemoryScope::Session,
+                content_ref: None,
+                content: Some("a leftover pending candidate from a prior run"),
+                principal_id: Some("prior-run-principal"),
+                sensitive: false,
+                created_at: 50,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            pending_review(db.conn()).unwrap().len(),
+            1,
+            "the pre-existing candidate is pending"
+        );
+        assert_eq!(
+            memory_review_rows(&db).len(),
+            0,
+            "the pre-existing pending candidate has NO surfaced review row"
+        );
+
+        // (b) A flag-ON extraction over FRESH pending messages whose provider returns ZERO
+        // items: messages are non-empty (no early return ⇒ the surfacing loop RUNS), but the
+        // record loop records 0 candidates ⇒ `fresh_candidate_ids` is empty ⇒ the surfacing
+        // loop is a no-op. Uses the normal mock client (the provider IS called).
+        let _ids = seed_session(&db, "s1", "alice");
+        let c = client(json!({ "items": [] }).to_string());
+        let out = extract_inline_flagged(
+            &mut db,
+            "s1",
+            &c,
+            DEFAULT_MAX_ITEMS,
+            "s1:ex:100",
+            "led-1",
+            100,
+            true, // flag ON
+        )
+        .unwrap();
+        assert!(
+            out.messages_read >= 1,
+            "the surfacing loop is reached (messages non-empty)"
+        );
+        assert_eq!(
+            out.candidates_created, 0,
+            "this extraction freshly records ZERO candidates"
+        );
+
+        // The pre-existing pending candidate X must NOT be surfaced: only THIS run's freshly-
+        // recorded ids surface, and this run recorded none. A `pending_review()` re-query would
+        // wrongly surface X here (count would become 1) — so this pins the freshly-recorded-only
+        // property, not merely "a re-run adds no rows".
+        assert_eq!(
+            memory_review_rows(&db).len(),
+            0,
+            "a pre-existing pending candidate (not freshly recorded this run) is NOT surfaced"
+        );
+        // X is still pending (untouched by the surfacing step).
+        assert_eq!(pending_review(db.conn()).unwrap().len(), 1);
     }
 }
