@@ -537,6 +537,23 @@ pub fn hub_migrations() -> Vec<Migration> {
             destructive: false,
             up: m0031_trust_grant,
         },
+        // C2-7: additive NULLABLE `forked_from` column on the Hub-only `agent_session`
+        // table — a soft link (no FK, the `*_ref` convention) to the PARENT
+        // `agent_session_id` a fork descends from. This is the minimal Rust fork marker
+        // the TS path carries as `forked_from_message_id` / `root_session_key` (which the
+        // earlier Rust port deliberately OMITTED); C2-7 adds only the parent pointer the
+        // fork op needs. `ALTER TABLE ... ADD COLUMN` with no default is additive and
+        // forward-safe: every existing v31 `agent_session` row reads back `forked_from =
+        // NULL` (i.e. "not a fork" — a root session), so no pre-existing row is broken or
+        // mis-labelled and no existing session behavior changes. No CHECK (a NULL-or-id
+        // soft link needs none). Purely additive (ALTER only) — touches no other table, so
+        // v31 rows/queries are unaffected. Hub-only — `agent_session` is a Hub-only table.
+        Migration {
+            version: 32,
+            name: "agent_session_forked_from",
+            destructive: false,
+            up: m0032_agent_session_forked_from,
+        },
     ]
 }
 
@@ -2240,4 +2257,18 @@ fn m0030_context_passport(tx: &Transaction) -> rusqlite::Result<()> {
 /// query is unaffected.
 fn m0031_trust_grant(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(DDL_TRUST_GRANT)
+}
+
+// C2-7: additive NULLABLE `forked_from` soft-link column on the Hub-only `agent_session`
+// table — the PARENT `agent_session_id` a fork descends from (the minimal Rust fork
+// marker; the earlier port OMITTED the TS `forked_from_message_id`/`root_session_key`).
+// `ALTER TABLE ... ADD COLUMN` with no default is additive and FORWARD-SAFE: every existing
+// v31 row reads back `forked_from = NULL` (a root session, never mis-labelled as a fork),
+// no row is broken, and no existing session behavior changes. No CHECK — a NULL-or-id soft
+// link (the `*_ref` convention, no FK) needs none. The `agent_session` CREATE-DDL const
+// stays FROZEN at its pre-v32 shape, so a fresh install runs the base CREATE then this ALTER
+// (no duplicate-column on fresh install) — mirrors how m0021/m0028 added their columns.
+// Purely additive (ALTER only) — touches no other table, so v31 rows/queries are unaffected.
+fn m0032_agent_session_forked_from(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch("ALTER TABLE agent_session ADD COLUMN forked_from TEXT;")
 }

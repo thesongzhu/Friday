@@ -556,6 +556,88 @@ fn forward_migration_v28_to_v29_adds_step_effect_table_and_preserves_v28_rows() 
 }
 
 #[test]
+fn forward_migration_v31_to_v32_adds_forked_from_to_null_and_fresh_has_column() {
+    // C2-7 additive migration v32: agent_session gains nullable `forked_from` (the parent
+    // pointer a fork descends from). This is the ALTER ADD COLUMN pattern (like m0021
+    // owner cols / m0028 lifecycle), NOT a new table. A PRE-EXISTING v31 session row
+    // (seeded before the column existed) must survive the forward ALTER reading back NULL
+    // (i.e. "not a fork" — a root session, never mis-labelled) so no existing session
+    // behavior changes. A FRESH install has the column, and the fork op then round-trips
+    // on the migrated DB (the child carries `forked_from` = the parent).
+    use friday_storage::agent_session::{
+        append_session_message, ensure_session_with_owner, fork_session_for_owner,
+        load_session_messages, session_forked_from, SessionMessage, SessionOwner,
+    };
+
+    let p = temp_db_path("agent-session-forked-from-mig");
+    {
+        let mut migs = hub_migrations();
+        migs.retain(|m| m.version <= 31);
+        let db = Db::open(&p, Profile::Hub, &migs, "v31").unwrap();
+        assert_eq!(db.version().unwrap(), 31);
+        assert!(
+            db.conn()
+                .prepare("SELECT forked_from FROM agent_session")
+                .is_err(),
+            "forked_from column must not exist before v32"
+        );
+        // Seed an OWNED session (v31 has the owner + lifecycle cols) with one message,
+        // using the v31 owner-bind API (which names only ≤v31 columns).
+        let owner = SessionOwner {
+            user_id: Some("user-fork".into()),
+            ..Default::default()
+        };
+        ensure_session_with_owner(db.conn(), "parent-31", &owner, 1).unwrap();
+        append_session_message(
+            db.conn(),
+            "parent-31",
+            &SessionMessage::new("user", "branch me", Some("run-31".to_string())),
+            2,
+        )
+        .unwrap();
+    }
+    // Reopen with the full set -> forward-migrate to v32 (the additive ALTER).
+    let db = Db::open_hub(&p).unwrap();
+    assert_eq!(db.version().unwrap(), hub_max_version());
+    assert_eq!(
+        db.count("agent_session").unwrap(),
+        1,
+        "pre-v32 session row survived the migration"
+    );
+    // The pre-existing row reads back `forked_from = NULL` (a root session, fail-safe).
+    assert_eq!(
+        session_forked_from(db.conn(), "parent-31").unwrap(),
+        None,
+        "pre-v32 row backfills `forked_from` to NULL (not a fork — forward-safe)"
+    );
+
+    // The fork op round-trips on the migrated DB: the bound owner forks the parent and the
+    // child carries `forked_from` = parent + a COPY of the parent's one message.
+    let out = fork_session_for_owner(db.conn(), "user-fork", "parent-31", 3).unwrap();
+    assert!(
+        out.accepted,
+        "the bound owner's fork is accepted on the migrated DB"
+    );
+    let child = out
+        .child_session_id
+        .expect("an accepted fork mints a child id");
+    assert_eq!(
+        session_forked_from(db.conn(), &child).unwrap(),
+        Some("parent-31".to_string()),
+        "the child's forked_from points back at the parent"
+    );
+    let copied = load_session_messages(db.conn(), &child).unwrap();
+    assert_eq!(copied.len(), 1, "the parent's one message was copied");
+    assert_eq!(copied[0].role, "user");
+    assert_eq!(copied[0].content, "branch me");
+    assert_eq!(
+        copied[0].refs.as_deref(),
+        Some("run-31"),
+        "a copied message keeps the parent's run ref verbatim (a fork is a copy of history)"
+    );
+}
+
+#[test]
 fn reopen_is_idempotent_and_preserves_rows() {
     let p = temp_db_path("seeded");
     {
