@@ -29,6 +29,12 @@ members = [
     "crates/friday-operator-cli",
     "crates/friday-operator-signer",
     "crates/friday-arch-tests",
+    # F11 net-new media-capability crates (skeleton stubs; no logic/deps/executors yet).
+    "crates/friday-vision",
+    "crates/friday-ocr",
+    "crates/friday-tts",
+    "crates/friday-pdf",
+    "crates/friday-browser",
 ]
 
 [workspace.package]
@@ -71,6 +77,12 @@ friday-fs = { path = "crates/friday-fs" }
 friday-hub = { path = "crates/friday-hub" }
 friday-ffi = { path = "crates/friday-ffi" }
 friday-operator-cli = { path = "crates/friday-operator-cli" }
+# F11 net-new media-capability crates (skeleton stubs; no logic/deps/executors yet).
+friday-vision = { path = "crates/friday-vision" }
+friday-ocr = { path = "crates/friday-ocr" }
+friday-tts = { path = "crates/friday-tts" }
+friday-pdf = { path = "crates/friday-pdf" }
+friday-browser = { path = "crates/friday-browser" }
 
 [profile.dev]
 # bundled SQLite compiles faster with some opt; keep debug assertions on.

@@ -1,0 +1,8 @@
+[package]
+name = "friday-tts"
+description = "Friday F11 net-new media capability — tts crate skeleton. Empty compiling stub, no logic/deps/executors yet (Hub-only, provider-secret-bearing → stays OUT of friday-ffi's phone dependency graph)."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
