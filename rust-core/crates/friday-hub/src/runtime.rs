@@ -205,10 +205,59 @@ impl<T: Transport> HubRuntime<T> {
         approval: Box<dyn ApprovalPolicy>,
     ) -> Result<Self, StorageError> {
         let db = Db::open_hub(&config.db_path)?;
+        // TP-PR2 (H-1 trust PRODUCER): capture the boot-context dims BEFORE `workspace_root`/
+        // `principal_id` are moved into the executor/policy below. These feed the live
+        // `AgentActionContext` attached to the boot policy so the (default-OFF)
+        // `FRIDAY_TRUST_GRANT_ENFORCE` flag stops being a brick (see the attach block).
+        let boot_principal = config.principal_id.clone();
+        let boot_workspace = config.workspace_root.to_string_lossy().into_owned();
         let executor = FsToolExecutor::new(config.workspace_root);
         let routes = Self::dispatchable_routes();
         // S4: ONE policy carries the run's principal (also the recall owner) + restrictions.
         let policy = RunPolicy::new(config.principal_id, config.disabled_tools, config.read_only);
+        // ── TP-PR2 (H-1): attach the live boot `AgentActionContext` to the run policy ───────
+        // The NS-2 trust chokepoint (`gate_dispatch_with_policy_enforced`, lib.rs) consumes
+        // `policy.action_context()` ONLY inside its `if enforce_trust && request.mutating()`
+        // arm — the single decision-consumer of the accessor (verified by grep). With
+        // `FRIDAY_TRUST_GRANT_ENFORCE` OFF (the default, unchanged here) that arm is skipped,
+        // so attaching this context is BYTE-IDENTICAL to not attaching it (a boot field-set,
+        // no new env read / DB query / side-effect). The producer NEVER adds, flips, or
+        // changes the default of any flag — it only makes the existing flag SATISFIABLE.
+        //
+        // Brick-safety is runtime STATE, not code: under flag-ON the chokepoint's `Some(ctx)`
+        // arm loads the active grant `WHERE agent_id = ?1`; if no grant row exists it Denies
+        // `trust_no_active_grant` (correct fail-closed). This producer adds NO fallback that
+        // would let a mutating action through without a grant when enforce is ON.
+        //
+        // Dims:
+        //   - `agent_id` = the bound owner (`config.principal_id`) — the SAME `--owner`
+        //     allowlist string the operator issues the NS-3 grant for.
+        //   - `workspace` = the boot workspace root, so an operator who scopes a grant to that
+        //     workspace prefix is satisfiable; `check_grant` would otherwise DENY a
+        //     workspace-scoped grant when `ctx.workspace` is None (the `_ => deny
+        //     trust_grant_workspace_out_of_scope` arm in friday_core::check_grant). v1 enforce
+        //     honors agent_id + workspace-prefix + risk_ceiling + expiry + token/run ceilings +
+        //     tool allowlist.
+        //   - `tool` = None: enriched PER-ACTION at the chokepoint from
+        //     `canonical_rust_name(raw.action)` (TP-PR1), so the `allowed_tools` allowlist is
+        //     actually evaluated rather than silently skipped. A boot-level `tool` would be wrong.
+        //   - `provider`/`channel`/`workflow_family`/`skill_family` = None: these are
+        //     per-action/per-ingress, not boot-knowable. Enforcing them is the NAMED follow-up
+        //     (needs the dimension threaded into the chokepoint signature, the way TP-PR1 did
+        //     for `tool`). Left None ⇒ `check_grant` skips them (an unset dimension on the
+        //     ACTION side, not a loophole on a grant boundary).
+        //
+        // If `principal_id` is None ⇒ NO context is attached: no owner ⇒ no authority, and
+        // under flag-ON the chokepoint's `None`-arm correctly Denies every mutating action.
+        let policy = match boot_principal {
+            Some(agent_id) => policy.with_action_context(friday_storage::AgentActionContext {
+                agent_id,
+                workspace: Some(boot_workspace),
+                tool: None,
+                ..Default::default()
+            }),
+            None => policy,
+        };
         Ok(Self {
             db,
             routes,
@@ -1747,6 +1796,413 @@ mod tests {
         )
         .unwrap();
         (rt, ws, post_calls) // TempDir guard keeps the workspace alive; counter for the no-hidden test
+    }
+
+    // ── TP-PR2 (H-1): the live boot AgentActionContext PRODUCER ──────────────────────────
+    //
+    // TP-PR2 attaches a live `AgentActionContext` (agent_id = config.principal_id, workspace =
+    // workspace_root, tool = None) at the boot RunPolicy so the default-OFF
+    // `FRIDAY_TRUST_GRANT_ENFORCE` flag stops being a brick. These tests prove: (a) flag-OFF is
+    // byte-identical whether the ctx is attached or not (the producer ships the ctx but the
+    // chokepoint consumes it ONLY in the flag-gated enforce arm); (b) the produced ctx carries the
+    // configured principal as `agent_id` (and NO ctx when principal is None); (c) the ctx survives
+    // `tightened_by` / `effective_run_policy_over` verbatim; (d) flag-ON the producer makes the
+    // flag satisfiable when a grant exists (and a no-grant flip Denies `trust_no_active_grant`).
+
+    /// Build a runtime whose boot config binds a principal (so the producer attaches a ctx).
+    fn runtime_with_principal(
+        tag: &str,
+        principal: Option<&str>,
+    ) -> (HubRuntime<ScriptTransport>, TempDir) {
+        let ws = TempDir::new(tag);
+        let transport = ScriptTransport::new(&["{\"tool\":\"none\"}"]);
+        let client = DeepSeekClient::with_transport(transport, "k".into());
+        let agent = DeepSeekAgentLlmClient::new(client);
+        let rt = HubRuntime::new(
+            HubConfig {
+                db_path: tmp(tag),
+                workspace_root: ws.0.clone(),
+                secret: SECRET.to_vec(),
+                max_turns: 6,
+                principal_id: principal.map(|p| p.to_string()),
+                disabled_tools: vec![],
+                read_only: false,
+                operator_vk: None,
+            },
+            agent,
+            Box::new(DenyAllApprovals),
+        )
+        .unwrap();
+        (rt, ws)
+    }
+
+    /// A `ToolExecutor` wrapper that counts `execute` calls — the no-hidden-side-effect probe
+    /// (the byte-identical test compares the count with vs without the producer ctx).
+    struct Tp2CountingExecutor<'a> {
+        inner: &'a dyn crate::ToolExecutor,
+        calls: Cell<usize>,
+    }
+    impl crate::ToolExecutor for Tp2CountingExecutor<'_> {
+        fn execute(
+            &self,
+            action: &str,
+            params: &[(String, String)],
+        ) -> Result<crate::ToolReceipt, crate::ExecError> {
+            self.calls.set(self.calls.get() + 1);
+            self.inner.execute(action, params)
+        }
+    }
+
+    /// The owner-approval seam withholding every approval (so a mutating action's existing
+    /// step-(2) decision is RequiresApproval, not Allow — proving the trust producer never
+    /// upgrades it).
+    fn tp2_no_approval() -> impl Fn(&MutatingActionRequest) -> Option<CanonicalApproval> {
+        |_req| None
+    }
+
+    /// A mutating tool call (`write_file`) — the trust chokepoint's enforce arm is mutating-only,
+    /// so this is the action that actually exercises the consumed `action_context()` path.
+    fn tp2_write() -> crate::RawToolCall {
+        crate::RawToolCall {
+            action: "write_file".to_string(),
+            params: vec![
+                ("path".to_string(), "out.txt".to_string()),
+                ("content".to_string(), "X".to_string()),
+            ],
+        }
+    }
+
+    /// An UNSCOPED within-boundaries grant for `principal`: `write_file` allowed, NO workspace
+    /// boundary (so the producer's populated `ctx.workspace` cannot deny on the workspace
+    /// dimension — this test isolates SATISFIABILITY, not the workspace-prefix arm), a Critical
+    /// risk ceiling. The sole authority gate is the grant's existence + tool allowlist.
+    fn tp2_grant_allows_write(principal: &str) -> friday_core::TrustGrant {
+        friday_core::TrustGrant {
+            grant_id: "g-tp2-write".to_string(),
+            agent_id: principal.to_string(),
+            granted_at: 1,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            boundaries: friday_core::TrustBoundaries {
+                workspace: None,
+                risk_ceiling: friday_core::Risk::Critical,
+                token_ceiling: None,
+                max_runs: None,
+                allowed_channels: vec![],
+                allowed_providers: vec![],
+                allowed_tools: vec!["write_file".to_string()],
+                allowed_workflow_families: vec![],
+                allowed_skill_families: vec![],
+            },
+        }
+    }
+
+    #[test]
+    fn tp2_producer_attaches_ctx_with_configured_principal_and_workspace() {
+        // (b) The boot policy's action_context() is Some, agent_id == config.principal_id,
+        // workspace == the boot workspace root, tool == None (enriched per-action by TP-PR1),
+        // and every per-ingress dim is None (the named follow-up).
+        let (rt, ws) = runtime_with_principal("tp2-attach", Some("friday-owner"));
+        let ctx = rt
+            .policy()
+            .action_context()
+            .expect("the producer attaches a ctx when a principal is configured");
+        assert_eq!(
+            ctx.agent_id, "friday-owner",
+            "agent_id must be the configured principal (the bound owner / --owner allowlist entry)"
+        );
+        assert_eq!(
+            ctx.workspace.as_deref(),
+            Some(ws.0.to_string_lossy().as_ref()),
+            "workspace must be the boot workspace root so a workspace-scoped grant is satisfiable"
+        );
+        assert_eq!(
+            ctx.tool, None,
+            "tool is enriched per-action at the chokepoint (TP-PR1), not at boot"
+        );
+        assert_eq!(ctx.provider, None);
+        assert_eq!(ctx.channel, None);
+        assert_eq!(ctx.workflow_family, None);
+        assert_eq!(ctx.skill_family, None);
+    }
+
+    #[test]
+    fn tp2_producer_attaches_no_ctx_when_principal_is_none() {
+        // (b) No owner ⇒ no authority ⇒ NO context. Under flag-ON the chokepoint's None-arm
+        // correctly Denies every mutating action (verified behaviorally in `tp2_flag_*` below).
+        let (rt, _ws) = runtime_with_principal("tp2-noprincipal", None);
+        assert_eq!(
+            rt.policy().action_context(),
+            None,
+            "no configured principal ⇒ no attached context (no owner, no authority)"
+        );
+    }
+
+    #[test]
+    fn tp2_ctx_survives_tightened_by_and_effective_run_policy_over() {
+        // (2) A per-run A1 constraint restricts WHAT a run may do, NEVER its identity/context —
+        // the producer's owner context must survive policy tightening verbatim.
+        let (rt, _ws) = runtime_with_principal("tp2-tighten", Some("friday-owner"));
+        let boot = rt.policy();
+        let attached = boot
+            .action_context()
+            .expect("producer attached the boot ctx")
+            .clone();
+
+        // Direct `tightened_by`.
+        let tightened = boot.tightened_by(true, &["delete_file".to_string()]);
+        assert_eq!(
+            tightened.action_context(),
+            Some(&attached),
+            "tightening must preserve the producer's action context verbatim"
+        );
+        assert!(tightened.is_read_only(), "the tightening added read_only");
+
+        // The live-dispatch composition entry the WS arm uses.
+        let constraints = friday_protocol::AgentRunConstraintsWire {
+            read_only: true,
+            disabled_tools: vec!["delete_file".to_string()],
+            max_turns: None,
+        };
+        let composed =
+            crate::agent_run_control::effective_run_policy_over(boot, Some(&constraints));
+        assert_eq!(
+            composed.action_context(),
+            Some(&attached),
+            "effective_run_policy_over must preserve the producer's action context verbatim"
+        );
+        // And the None-constraints clone path preserves it too.
+        let cloned = crate::agent_run_control::effective_run_policy_over(boot, None);
+        assert_eq!(cloned.action_context(), Some(&attached));
+    }
+
+    #[test]
+    fn tp2_flag_off_is_byte_identical_ctx_attached_vs_absent() {
+        // (1) HARD INVARIANT: with FRIDAY_TRUST_GRANT_ENFORCE OFF, a run whose policy carries the
+        // producer's ctx behaves BYTE-IDENTICALLY to one without it — same gate verdict AND same
+        // side-effects — on a MUTATING action (a read never reaches the trust arm, so the mutating
+        // action is what actually exercises the consumed action_context() path). The trust
+        // chokepoint consumes action_context() ONLY in the `enforce_trust && mutating()` arm, so
+        // flag-OFF skips it entirely.
+        use crate::{AuthzMode, GateDispatch};
+
+        // WITH the producer ctx (principal configured ⇒ ctx attached).
+        let (rt_with, ws_with) = runtime_with_principal("tp2-off-with", Some("friday-owner"));
+        assert!(
+            rt_with.policy().action_context().is_some(),
+            "sanity: the producer attached a ctx"
+        );
+        let fs_with = FsToolExecutor::new(ws_with.0.clone());
+        let exec_with = Tp2CountingExecutor {
+            inner: &fs_with,
+            calls: Cell::new(0),
+        };
+        let approve = tp2_no_approval();
+        let out_with = crate::gate_dispatch_with_policy_enforced(
+            rt_with.db().conn(),
+            &exec_with,
+            &tp2_write(),
+            AuthzMode::DenyAll,
+            &approve,
+            rt_with.policy(),
+            1000,
+            false, // flag OFF
+        )
+        .unwrap();
+
+        // WITHOUT the ctx — same boot config but a policy with NO action context. We build a
+        // matching policy directly (same principal, same restrictions) sans the attach.
+        let (rt_without, ws_without) =
+            runtime_with_principal("tp2-off-without", Some("friday-owner"));
+        let policy_no_ctx = RunPolicy::new(
+            Some("friday-owner".to_string()),
+            Vec::<String>::new(),
+            false,
+        );
+        assert_eq!(
+            policy_no_ctx.action_context(),
+            None,
+            "sanity: the comparison policy carries NO context"
+        );
+        let fs_without = FsToolExecutor::new(ws_without.0.clone());
+        let exec_without = Tp2CountingExecutor {
+            inner: &fs_without,
+            calls: Cell::new(0),
+        };
+        let out_without = crate::gate_dispatch_with_policy_enforced(
+            rt_without.db().conn(),
+            &exec_without,
+            &tp2_write(),
+            AuthzMode::DenyAll,
+            &approve,
+            &policy_no_ctx,
+            1000,
+            false, // flag OFF
+        )
+        .unwrap();
+
+        // Identical gate verdict (both Denied with the SAME reason — DenyAll Pauses the mutating
+        // write the same way regardless of the carried-but-unconsumed ctx).
+        match (&out_with, &out_without) {
+            (GateDispatch::Denied(a), GateDispatch::Denied(b)) => {
+                assert_eq!(
+                    a, b,
+                    "flag-OFF: identical Denied reason with vs without the ctx"
+                )
+            }
+            (GateDispatch::Executed(_), GateDispatch::Executed(_)) => {}
+            (GateDispatch::RequiresApproval, GateDispatch::RequiresApproval) => {}
+            _ => panic!(
+                "flag-OFF must yield the SAME GateDispatch variant with vs without the producer ctx"
+            ),
+        }
+        // Identical side-effects: the executor was reached the same number of times.
+        assert_eq!(
+            exec_with.calls.get(),
+            exec_without.calls.get(),
+            "flag-OFF: identical executor-call count (no extra side-effect from the carried ctx)"
+        );
+    }
+
+    #[test]
+    fn tp2_flag_on_makes_flag_satisfiable_with_grant_and_bricks_without() {
+        // (d) The PRODUCER PURPOSE: with the flag ON, the producer's boot ctx makes the trust
+        // check SATISFIABLE when a grant exists — and a flip WITHOUT a grant Denies
+        // `trust_no_active_grant` (the brick is runtime STATE, by design fail-closed). We drive
+        // the chokepoint with the REAL produced ctx (`rt.policy()`), not a hand-built one.
+        use crate::{AuthzMode, GateDispatch};
+        let approve = tp2_no_approval();
+
+        // -- No grant ⇒ Denied trust_no_active_grant (the fail-closed brick; correct by design).
+        let (rt_brick, ws_brick) = runtime_with_principal("tp2-on-brick", Some("friday-owner"));
+        let fs_brick = FsToolExecutor::new(ws_brick.0.clone());
+        let exec_brick = Tp2CountingExecutor {
+            inner: &fs_brick,
+            calls: Cell::new(0),
+        };
+        let brick = crate::gate_dispatch_with_policy_enforced(
+            rt_brick.db().conn(),
+            &exec_brick,
+            &tp2_write(),
+            AuthzMode::DenyAll,
+            &approve,
+            rt_brick.policy(), // the REAL produced ctx
+            1000,
+            true, // flag ON
+        )
+        .unwrap();
+        match brick {
+            GateDispatch::Denied(reason) => assert_eq!(
+                reason, "trust_no_active_grant",
+                "flag-ON + no grant ⇒ fail-closed Deny (brick is runtime state, by design)"
+            ),
+            _ => panic!("expected the no-grant fail-closed Deny, got a non-Deny dispatch"),
+        }
+        assert_eq!(
+            exec_brick.calls.get(),
+            0,
+            "no executor call on the fail-closed brick"
+        );
+
+        // -- A seeded grant for the SAME principal ⇒ the flag is SATISFIABLE (the trust layer
+        //    raises no objection, so we fall through to the unchanged step (2) — NOT a
+        //    trust_grant Deny). The producer's ctx supplied the agent_id that loaded the grant.
+        let (rt_ok, ws_ok) = runtime_with_principal("tp2-on-ok", Some("friday-owner"));
+        friday_storage::grant_trust(
+            rt_ok.db().conn(),
+            &tp2_grant_allows_write("friday-owner"),
+            1,
+        )
+        .unwrap();
+        let fs_ok = FsToolExecutor::new(ws_ok.0.clone());
+        let exec_ok = Tp2CountingExecutor {
+            inner: &fs_ok,
+            calls: Cell::new(0),
+        };
+        let ok = crate::gate_dispatch_with_policy_enforced(
+            rt_ok.db().conn(),
+            &exec_ok,
+            &tp2_write(),
+            AuthzMode::DenyAll,
+            &approve,
+            rt_ok.policy(), // the REAL produced ctx
+            1000,
+            true, // flag ON
+        )
+        .unwrap();
+        // Satisfiable = the trust layer did NOT brick it. Under DenyAll + no approval the
+        // unchanged step (2) Pauses the mutating write — the key point is it is NOT a
+        // trust_grant Deny (so a grant makes the flag non-brick). It must never be the
+        // trust_no_active_grant / any trust_grant_* Deny.
+        // A RequiresApproval / Executed both mean the trust layer let it through (satisfiable);
+        // only a Deny needs scrutiny — it must NOT be a trust_* Deny.
+        if let GateDispatch::Denied(reason) = ok {
+            assert!(
+                !reason.starts_with("trust_"),
+                "with a matching grant the trust layer must NOT object \
+                 (got a trust Deny: {reason}) — the producer makes the flag satisfiable"
+            );
+        }
+    }
+
+    #[test]
+    fn tp2_workspace_scoped_grant_passes_because_ctx_carries_the_root() {
+        // (d, workspace dimension) The REASON the producer sets `ctx.workspace`: a grant scoped
+        // to the hub's workspace ROOT must PASS the `check_grant` workspace-prefix arm. With
+        // `ctx.workspace == None` this same grant would DENY `trust_grant_workspace_out_of_scope`
+        // (trust.rs: the `_ => deny` arm fires when a workspace-scoped grant meets a None path).
+        // This proves the populated dim is not just present but FUNCTIONAL — and guards against a
+        // trailing-slash / format mismatch between `workspace_root` and the grant prefix that
+        // would otherwise silently brick a workspace-scoped grant.
+        //
+        // Granularity (documented): the dimension confines at RUN-ROOT level — the grant prefix
+        // must CONTAIN the hub's `workspace_root` (root-or-broader). A grant scoped NARROWER than
+        // the root denies fail-closed; per-file-path confinement is `FsToolExecutor`, not this.
+        use crate::{AuthzMode, GateDispatch};
+        let approve = tp2_no_approval();
+
+        let (rt, ws) = runtime_with_principal("tp2-ws-scoped", Some("friday-owner"));
+        let root = ws.0.to_string_lossy().into_owned();
+        // The producer attached exactly this root as `ctx.workspace`.
+        assert_eq!(
+            rt.policy().action_context().unwrap().workspace.as_deref(),
+            Some(root.as_str()),
+            "sanity: the producer attached the workspace root"
+        );
+        // A grant scoped to the SAME root, allowing write_file (so the SOLE gate that could fire
+        // is the workspace-prefix arm).
+        let mut grant = tp2_grant_allows_write("friday-owner");
+        grant.boundaries.workspace = Some(root.clone());
+        friday_storage::grant_trust(rt.db().conn(), &grant, 1).unwrap();
+
+        let fs = FsToolExecutor::new(ws.0.clone());
+        let exec = Tp2CountingExecutor {
+            inner: &fs,
+            calls: Cell::new(0),
+        };
+        let out = crate::gate_dispatch_with_policy_enforced(
+            rt.db().conn(),
+            &exec,
+            &tp2_write(),
+            AuthzMode::DenyAll,
+            &approve,
+            rt.policy(), // the REAL produced ctx — carries the workspace root
+            1000,
+            true, // flag ON
+        )
+        .unwrap();
+        // The workspace dimension PASSED (the produced root matches the grant prefix): the trust
+        // layer raises NO objection, so we fall through to step (2). It must NOT be the
+        // workspace-out-of-scope Deny (nor any other trust_* Deny).
+        if let GateDispatch::Denied(reason) = out {
+            assert!(
+                !reason.starts_with("trust_"),
+                "a grant scoped to the producer's workspace root must NOT deny on the workspace \
+                 dimension (got a trust Deny: {reason}) — the populated ctx.workspace is what makes \
+                 a workspace-scoped grant satisfiable"
+            );
+        }
     }
 
     // ---- S7: DARK Claude route default-off -----------------------------------
