@@ -23,6 +23,7 @@
 //! Truth label: minimal sessions/resume storage substrate + API + tests only.
 //! PROOF-ONLY; NOT a v1 GO.
 
+use crate::audit;
 use crate::error::{Result, StorageError};
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -392,10 +393,18 @@ pub struct SessionListItem {
 /// blank query never collapses to "all sessions"). A principal that owns no session gets an
 /// empty Vec (the load-bearing owner-scoping assertion: a DIFFERENT principal sees NOTHING).
 ///
+/// ## C2-6: archive-aware (the active/owner list hides archived + pruned sessions)
+/// The list excludes sessions whose `status` is `'archived'` or `'pruned'` (`status NOT IN ...`),
+/// so an explicitly-archived session ([`archive_session_for_owner`]) — or one the time-based
+/// `session_lifecycle` sweep advanced to `archived`/`pruned` — no longer appears in the owner's
+/// active list. `'active'` and `'idle'` sessions stay visible (an idle session is still a live,
+/// resumable conversation). The `status` column defaults to `'active'` (migration v28), so a
+/// never-swept session is included exactly as before. Pure read: no write, no schema change.
+///
 /// Ordering is `updated_at DESC, agent_session_id` — most-recent-first (the same convention
 /// as [`crate::provider_session::list_projections`]) with `agent_session_id` as a
 /// deterministic tiebreaker so two sessions touched at the same `updated_at` have a stable
-/// order. Pure read: no write, no schema change.
+/// order.
 pub fn list_sessions_for_owner(conn: &Connection, user_id: &str) -> Result<Vec<SessionListItem>> {
     // A blank owner must never match a NULL `user_id` row nor act as a wildcard — return
     // nothing without even querying (the `= ?1` bind already excludes NULL, but this makes
@@ -407,6 +416,7 @@ pub fn list_sessions_for_owner(conn: &Connection, user_id: &str) -> Result<Vec<S
         "SELECT agent_session_id, created_at, updated_at
          FROM agent_session
          WHERE user_id = ?1
+           AND status NOT IN ('archived', 'pruned')
          ORDER BY updated_at DESC, agent_session_id",
     )?;
     let rows = stmt.query_map([user_id], |r| {
@@ -476,6 +486,128 @@ fn owner_matches(conn: &Connection, user_id: &str, agent_session_id: &str) -> Re
         Some(owner) => Ok(owner.user_id.as_deref() == Some(user_id)),
         None => Ok(false),
     }
+}
+
+// --- C2-6 explicit owner-authed archive op (distinct from the time-based sweep) ---
+//
+// An EXPLICIT, owner-authed ARCHIVE of one FRIDAY routed `agent_session`: the owner says "archive
+// this session NOW" (e.g. a "close conversation" action), as opposed to the time-based
+// `session_lifecycle::sweep_lifecycle` reaper, which advances a session to `archived` only after
+// the 7-day idle timeout. The two are DISTINCT and complementary: this op never runs the sweep and
+// the sweep never runs this op — both simply write the SAME `agent_session` lifecycle columns
+// (`status='archived'` + `archived_at` + `status_changed_at` + `updated_at`), so a session archived
+// either way is read back identically (and continues down the sweep's archived→pruned path off its
+// `archived_at`).
+//
+// Owner-gated EXACTLY like the C2-4 read API: it reuses [`owner_matches`] (the `agent_session.user_id`
+// axis bound to the authenticated caller by `run_session_task_pinned`), so a DIFFERENT principal —
+// or a blank owner, an owner-less (NULL `user_id`) session, or an absent id — is REFUSED fail-closed
+// with NO state change and NO audit row. Only the bound owner can archive.
+//
+// The status transition + the hash-chained audit receipt are written in ONE `unchecked_transaction`
+// (atomic: a crash can never leave an archived session with no receipt, nor a receipt with no
+// transition). Metadata-only — NO model call, NO `token_ledger` row (archiving is not a turn).
+
+/// The body-free outcome of an [`archive_session_for_owner`] attempt. `accepted=false` is the
+/// fail-closed owner-mismatch refusal (no state change, no receipt). Never a body.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArchiveOutcome {
+    /// Whether the archive was accepted (`true`) or refused fail-closed (`false`).
+    pub accepted: bool,
+    /// Coarse, body-free outcome label (closed-vocab): `"archived"` (the transition was written),
+    /// `"already_archived"` (idempotent accepted no-op), or `"not_owner"` (fail-closed refusal —
+    /// a non-owner, an owner-less session, a blank owner, or an absent id).
+    pub status: String,
+    /// Soft link to the hash-chained audit receipt, when one was written (only on a NEW archive
+    /// transition — an idempotent re-archive of an already-archived session writes none).
+    pub audit_ref: Option<String>,
+}
+
+impl ArchiveOutcome {
+    fn refused() -> Self {
+        ArchiveOutcome {
+            accepted: false,
+            status: "not_owner".to_string(),
+            audit_ref: None,
+        }
+    }
+}
+
+/// Explicitly ARCHIVE a routed session as its BOUND owner: set `status='archived'` + `archived_at`
+/// (plus `status_changed_at` + `updated_at`) and write a hash-chained audit receipt, in ONE
+/// transaction.
+///
+/// Owner-gated fail-closed via [`owner_matches`] (the SAME `agent_session.user_id` axis as the C2-4
+/// read API): a non-owner, an owner-less session, a blank `user_id`, or an absent `agent_session_id`
+/// all return [`ArchiveOutcome::refused`] (`accepted=false`, `status="not_owner"`) with NO state
+/// change and NO audit row — a guessed session id cannot archive another principal's session.
+///
+/// Idempotent: if the owner's session is ALREADY `'archived'`, this is an accepted no-op
+/// (`status="already_archived"`, no new receipt, no timestamp bump). An already-`'pruned'` session
+/// is treated the same (it is already past archive). Otherwise the transition fires and the receipt
+/// is written.
+///
+/// Metadata-only: NO model call and NO `token_ledger` row (archiving is not a metered turn). DISTINCT
+/// from [`crate::session_lifecycle::sweep_lifecycle`] — this never invokes the sweep and writes only
+/// the lifecycle columns the sweep also uses, so the two compose without either touching the other.
+pub fn archive_session_for_owner(
+    conn: &Connection,
+    user_id: &str,
+    agent_session_id: &str,
+    now_ms: i64,
+) -> Result<ArchiveOutcome> {
+    // (1) Owner gate FIRST (fail-closed): a non-owner / owner-less / absent / blank-owner attempt is
+    //     refused with no state read leaked and no write.
+    if !owner_matches(conn, user_id, agent_session_id)? {
+        return Ok(ArchiveOutcome::refused());
+    }
+
+    // (2) The owner matched, so the row exists — read its current status to make re-archive an
+    //     idempotent accepted no-op (and avoid stacking receipts on repeated archives).
+    let current_status: String = conn.query_row(
+        "SELECT status FROM agent_session WHERE agent_session_id = ?1",
+        [agent_session_id],
+        |r| r.get(0),
+    )?;
+    if current_status == "archived" || current_status == "pruned" {
+        return Ok(ArchiveOutcome {
+            accepted: true,
+            status: "already_archived".to_string(),
+            audit_ref: None,
+        });
+    }
+
+    // (3) Write the transition + the receipt in ONE transaction (atomic). The columns are EXACTLY
+    //     the ones the sweep's idle→archived step writes (status / archived_at / status_changed_at /
+    //     updated_at) — so an explicitly-archived session is read back identically to a swept one.
+    //     A CSPRNG tag keys the audit id so repeated archives of distinct sessions (or a re-archive
+    //     after a future un-archive) never PK-collide on the audit_id primary key.
+    let tag = friday_crypto::generate_approval_nonce();
+    let receipt_id = format!("{agent_session_id}:archive:{tag}:receipt");
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "UPDATE agent_session
+            SET status = 'archived', archived_at = ?2, status_changed_at = ?2, updated_at = ?2
+          WHERE agent_session_id = ?1",
+        params![agent_session_id, now_ms],
+    )?;
+    // The actor is the owner principal that authorized the archive (WHO archived — more faithful
+    // for an owner-authed op than a fixed component name); the payload_ref soft-links the session.
+    audit::append_audit(
+        &tx,
+        &receipt_id,
+        user_id,
+        "session.archived",
+        Some(agent_session_id),
+        now_ms,
+    )?;
+    tx.commit()?;
+
+    Ok(ArchiveOutcome {
+        accepted: true,
+        status: "archived".to_string(),
+        audit_ref: Some(receipt_id),
+    })
 }
 
 // --- C2-8 offline/stale link-state (derived from last-activity vs now) --------
@@ -1205,6 +1337,220 @@ mod tests {
         assert_eq!(
             open_session_for_owner(db.conn(), "alice", "orphan").unwrap(),
             None
+        );
+    }
+
+    // --- C2-6 explicit owner-authed archive op -------------------------------
+
+    fn status_col(db: &Db, id: &str) -> String {
+        db.conn()
+            .query_row(
+                "SELECT status FROM agent_session WHERE agent_session_id = ?1",
+                [id],
+                |r| r.get::<_, String>(0),
+            )
+            .unwrap()
+    }
+
+    fn archive_receipt_count(db: &Db) -> i64 {
+        db.conn()
+            .query_row(
+                "SELECT count(*) FROM audit_ledger WHERE action = 'session.archived'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn archive_session_for_owner_transitions_status_and_writes_receipt_and_hides_from_list() {
+        // SQL-level proof of the archive op (the friday-hub faithful proof — REAL routed session +
+        // metered anthropic row — lives in runtime.rs's in-crate tests). The BOUND owner archives
+        // her session: status → 'archived' (+ archived_at), an audit receipt is written, the chain
+        // verifies, and the session disappears from the C2-4 active list while a sibling active
+        // session stays listed.
+        let db = Db::open_hub(&tmp("c2-6-archive")).unwrap();
+        let alice = SessionOwner {
+            user_id: Some("alice".into()),
+            ..Default::default()
+        };
+        ensure_session_with_owner(db.conn(), "s1", &alice, 1_000).unwrap();
+        ensure_session_with_owner(db.conn(), "s2", &alice, 2_000).unwrap();
+        // Both start active and listed (most-recent-first).
+        assert_eq!(status_col(&db, "s1"), "active");
+        assert_eq!(
+            list_sessions_for_owner(db.conn(), "alice")
+                .unwrap()
+                .iter()
+                .map(|s| s.agent_session_id.clone())
+                .collect::<Vec<_>>(),
+            vec!["s2", "s1"]
+        );
+
+        // The owner archives s1.
+        let out = archive_session_for_owner(db.conn(), "alice", "s1", 3_000).unwrap();
+        assert!(out.accepted);
+        assert_eq!(out.status, "archived");
+        assert!(out.audit_ref.is_some());
+
+        // status → archived + archived_at = now; status_changed_at + updated_at bumped.
+        let (status, archived_at, sca, upd): (String, Option<i64>, Option<i64>, i64) = db
+            .conn()
+            .query_row(
+                "SELECT status, archived_at, status_changed_at, updated_at
+                 FROM agent_session WHERE agent_session_id = 's1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "archived");
+        assert_eq!(archived_at, Some(3_000));
+        assert_eq!(sca, Some(3_000));
+        assert_eq!(upd, 3_000);
+
+        // s1 is hidden from the active list; s2 (still active) remains.
+        assert_eq!(
+            list_sessions_for_owner(db.conn(), "alice")
+                .unwrap()
+                .iter()
+                .map(|s| s.agent_session_id.clone())
+                .collect::<Vec<_>>(),
+            vec!["s2"],
+            "the archived session is hidden; the active sibling remains listed"
+        );
+
+        // The receipt is written and the hash chain verifies.
+        assert_eq!(archive_receipt_count(&db), 1);
+        assert!(crate::audit::verify_audit_chain(db.conn()).is_ok());
+    }
+
+    #[test]
+    fn archive_owner_mismatch_is_fail_closed_no_state_change_no_receipt() {
+        // The load-bearing security assertion: a DIFFERENT principal (and a blank owner, an
+        // owner-less session, an absent id) CANNOT archive — refused fail-closed with NO state
+        // change and NO audit row. Only the bound owner can archive.
+        let db = Db::open_hub(&tmp("c2-6-mismatch")).unwrap();
+        ensure_session_with_owner(
+            db.conn(),
+            "s1",
+            &SessionOwner {
+                user_id: Some("alice".into()),
+                ..Default::default()
+            },
+            1_000,
+        )
+        .unwrap();
+
+        // A different principal's archive is refused, with no change and no receipt.
+        let bob = archive_session_for_owner(db.conn(), "bob", "s1", 2_000).unwrap();
+        assert_eq!(
+            bob,
+            ArchiveOutcome {
+                accepted: false,
+                status: "not_owner".into(),
+                audit_ref: None,
+            }
+        );
+        assert_eq!(
+            status_col(&db, "s1"),
+            "active",
+            "no state change on mismatch"
+        );
+        assert_eq!(
+            archive_receipt_count(&db),
+            0,
+            "no receipt on a refused archive"
+        );
+        // Still in alice's active list (untouched).
+        assert_eq!(
+            list_sessions_for_owner(db.conn(), "alice").unwrap().len(),
+            1
+        );
+
+        // A blank owner, an absent id, and an owner-less session are all refused too.
+        assert!(
+            !archive_session_for_owner(db.conn(), "", "s1", 2_000)
+                .unwrap()
+                .accepted
+        );
+        assert!(
+            !archive_session_for_owner(db.conn(), "alice", "ghost", 2_000)
+                .unwrap()
+                .accepted
+        );
+        ensure_session(db.conn(), "orphan", 1_500).unwrap();
+        assert!(
+            !archive_session_for_owner(db.conn(), "alice", "orphan", 2_000)
+                .unwrap()
+                .accepted
+        );
+        // None of those wrote a receipt or changed s1.
+        assert_eq!(archive_receipt_count(&db), 0);
+        assert_eq!(status_col(&db, "s1"), "active");
+    }
+
+    #[test]
+    fn re_archive_is_an_idempotent_accepted_noop() {
+        // Re-archiving an already-archived session is an accepted no-op: no new receipt, no
+        // timestamp bump. (A 'pruned' session — already past archive — is treated the same.)
+        let db = Db::open_hub(&tmp("c2-6-idem")).unwrap();
+        ensure_session_with_owner(
+            db.conn(),
+            "s1",
+            &SessionOwner {
+                user_id: Some("alice".into()),
+                ..Default::default()
+            },
+            1_000,
+        )
+        .unwrap();
+        let first = archive_session_for_owner(db.conn(), "alice", "s1", 3_000).unwrap();
+        assert_eq!(first.status, "archived");
+        assert_eq!(archive_receipt_count(&db), 1);
+
+        let again = archive_session_for_owner(db.conn(), "alice", "s1", 4_000).unwrap();
+        assert!(again.accepted);
+        assert_eq!(again.status, "already_archived");
+        assert_eq!(again.audit_ref, None);
+        assert_eq!(archive_receipt_count(&db), 1, "no second receipt");
+        // updated_at NOT bumped by the no-op.
+        let upd: i64 = db
+            .conn()
+            .query_row(
+                "SELECT updated_at FROM agent_session WHERE agent_session_id = 's1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            upd, 3_000,
+            "the idempotent re-archive does not bump updated_at"
+        );
+
+        // A 'pruned' session is likewise an accepted no-op (already past archive).
+        ensure_session_with_owner(
+            db.conn(),
+            "s2",
+            &SessionOwner {
+                user_id: Some("alice".into()),
+                ..Default::default()
+            },
+            1_000,
+        )
+        .unwrap();
+        db.conn()
+            .execute(
+                "UPDATE agent_session SET status = 'pruned' WHERE agent_session_id = 's2'",
+                [],
+            )
+            .unwrap();
+        let pruned = archive_session_for_owner(db.conn(), "alice", "s2", 5_000).unwrap();
+        assert!(pruned.accepted);
+        assert_eq!(pruned.status, "already_archived");
+        assert_eq!(
+            archive_receipt_count(&db),
+            1,
+            "pruned no-op writes no receipt"
         );
     }
 

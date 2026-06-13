@@ -40,10 +40,10 @@ pub mod workflow_def;
 pub mod workflow_read;
 
 pub use agent_session::{
-    append_session_message, ensure_session, ensure_session_with_owner, list_sessions_for_owner,
-    load_session_messages, load_session_owner, open_session_for_owner, session_exists,
-    session_message_count, session_message_count_for_owner, SessionListItem, SessionMessage,
-    SessionOwner, StoredSessionMessage,
+    append_session_message, archive_session_for_owner, ensure_session, ensure_session_with_owner,
+    list_sessions_for_owner, load_session_messages, load_session_owner, open_session_for_owner,
+    session_exists, session_message_count, session_message_count_for_owner, ArchiveOutcome,
+    SessionListItem, SessionMessage, SessionOwner, StoredSessionMessage,
 };
 pub use authorize::authorize_mutating_action;
 pub use authorize_ed25519::{authorize_mutating_action_ed25519, Ed25519VerifyOnlyPolicy};
