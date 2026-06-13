@@ -630,6 +630,98 @@ pub fn transition_mission_status(
     Ok((mission, previous_status, conversation.active_mission_ids))
 }
 
+/// Transition a WorkItem's lifecycle status at the persistence boundary — the
+/// WorkItem parity of [`transition_mission_status`].
+///
+/// Enforces the domain's `try_transition` (an illegal hop is rejected here, not
+/// silently upserted), and REQUIRES a `proof_receipt` when the next status is
+/// `CompletedWithProof` — so "completed" can never be claimed without proof (the
+/// `completion_is_proven` invariant is true at write time, not just at validate
+/// time). The transition is recorded in the hash-chained audit ledger (a WorkItem
+/// has no `decision_path_summary` text field, so the lifecycle entry IS the audit
+/// row), and the loaded WorkItem is upserted — both inside ONE transaction (the
+/// audit-read and the state write are atomic, per the audit-ledger invariant). On
+/// `CompletedWithProof` the new receipt is appended to `proof_receipts` so the
+/// stored row satisfies [`WorkItem::completion_is_proven`].
+#[allow(clippy::too_many_arguments)]
+pub fn transition_work_item_status(
+    conn: &Connection,
+    work_item_id: &str,
+    next_status: WorkItemStatus,
+    actor_ref: &str,
+    reason: &str,
+    proof_receipt: Option<&str>,
+    now_ms: i64,
+) -> Result<(WorkItem, WorkItemStatus)> {
+    require_non_empty(work_item_id, "work_item_lifecycle.work_item_id")?;
+    require_non_empty(actor_ref, "work_item_lifecycle.actor_ref")?;
+    require_non_empty(reason, "work_item_lifecycle.reason")?;
+
+    // Fail-completion: a CompletedWithProof transition MUST carry a proof receipt, so
+    // a fake-ready completion is rejected at the persistence boundary (before any of
+    // the lower validate/upsert checks). A receipt presented for any OTHER target is
+    // rejected too — it would be silently dropped and misrepresent the transition.
+    match (next_status, proof_receipt) {
+        (WorkItemStatus::CompletedWithProof, None) => {
+            return Err(unsupported(
+                "work_item_lifecycle completed_with_proof requires a proof_receipt so completion is not fake-ready",
+            ));
+        }
+        (WorkItemStatus::CompletedWithProof, Some(receipt)) => {
+            require_non_empty(receipt, "work_item_lifecycle.proof_receipt")?;
+        }
+        (_, Some(_)) => {
+            return Err(unsupported(
+                "work_item_lifecycle proof_receipt is only valid for a completed_with_proof transition",
+            ));
+        }
+        (_, None) => {}
+    }
+
+    let mut item = get_work_item(conn, work_item_id)?.ok_or_else(|| {
+        unsupported(format!(
+            "work_item_lifecycle WorkItem '{work_item_id}' not found"
+        ))
+    })?;
+
+    let previous_status = item.status;
+    item.status = previous_status
+        .try_transition(next_status)
+        .map_err(|e| unsupported(e.to_string()))?;
+    item.updated_at_ms = now_ms;
+    if let Some(receipt) = proof_receipt {
+        let receipt = receipt.to_string();
+        if !item.proof_receipts.contains(&receipt) {
+            item.proof_receipts.push(receipt);
+        }
+    }
+
+    // One transaction: the lifecycle audit row (the hash-chain read + insert) and the
+    // upsert commit together, so a recorded transition always has a persisted state.
+    // The audit row IS the WorkItem's lifecycle entry — it carries actor, the
+    // from->to hop, and the reason (a WorkItem has no decision_path_summary column).
+    let tx = conn.unchecked_transaction()?;
+    let audit_id = format!("workitem_lifecycle:{work_item_id}:{now_ms}");
+    let action = format!(
+        "work_item.lifecycle:{}->{}:{}",
+        previous_status.as_str(),
+        item.status.as_str(),
+        reason
+    );
+    crate::audit::append_audit(
+        &tx,
+        &audit_id,
+        actor_ref,
+        &action,
+        Some(work_item_id),
+        now_ms,
+    )?;
+    upsert_work_item(&tx, &item)?;
+    tx.commit()?;
+
+    Ok((item, previous_status))
+}
+
 pub fn list_missions_for_conversation(
     conn: &Connection,
     friday_conversation_id: &str,

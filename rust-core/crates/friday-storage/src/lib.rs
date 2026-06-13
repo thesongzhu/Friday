@@ -684,6 +684,30 @@ impl Db {
         mission::get_work_item(&self.conn, work_item_id)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn transition_work_item_status(
+        &self,
+        work_item_id: &str,
+        next_status: friday_core::WorkItemStatus,
+        actor_ref: &str,
+        reason: &str,
+        proof_receipt: Option<&str>,
+        now_ms: i64,
+    ) -> Result<(WorkItem, friday_core::WorkItemStatus)> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported("WorkItems are Hub-only".into()));
+        }
+        mission::transition_work_item_status(
+            &self.conn,
+            work_item_id,
+            next_status,
+            actor_ref,
+            reason,
+            proof_receipt,
+            now_ms,
+        )
+    }
+
     pub fn list_work_items_for_mission(&self, mission_id: &str) -> Result<Vec<WorkItem>> {
         if self.profile != Profile::Hub {
             return Err(StorageError::Unsupported("WorkItems are Hub-only".into()));
