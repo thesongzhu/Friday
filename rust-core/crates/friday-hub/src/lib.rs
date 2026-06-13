@@ -2924,13 +2924,10 @@ pub const FRIDAY_ACTIVITY_NEEDS_ME: &str = "FRIDAY_ACTIVITY_NEEDS_ME";
 
 /// Pure flag-matcher for [`FRIDAY_ACTIVITY_NEEDS_ME`] (env read split out so it is unit-
 /// testable without `set_var` — the env-race-free idiom this codebase uses everywhere).
-/// DEFAULT-OFF: `None` (unset) ⇒ false; only the exact opt-in values `"1"`/`"true"`
-/// (case-insensitive, trimmed) ⇒ true; everything else ⇒ false.
+/// DEFAULT-OFF: `None` (unset) ⇒ false; ON only for the exact opt-in value `"1"` (trimmed),
+/// matching the program's standard flag idiom; everything else (including `"true"`) ⇒ false.
 fn activity_needs_me_from(raw: Option<&str>) -> bool {
-    matches!(
-        raw.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
-        Some("1") | Some("true")
-    )
+    matches!(raw.map(str::trim), Some("1"))
 }
 
 /// `cancel` (C2-1) is an OPTIONAL cooperative cancellation handle checked at the TOP of
@@ -4271,17 +4268,20 @@ mod tests {
 
     #[test]
     fn ns7_activity_needs_me_from_only_opt_in_enables() {
-        // The ONLY env-parse glue (the behavioral test bypasses env). Default-OFF; only the
-        // exact opt-in values `"1"`/`"true"` (case-insensitive, trimmed) enable.
+        // The ONLY env-parse glue (the behavioral test bypasses env). Default-OFF; ON only for
+        // the exact opt-in value `"1"` (trimmed) — the program's standard flag idiom.
         assert!(!activity_needs_me_from(None), "unset ⇒ OFF (prod default)");
         assert!(!activity_needs_me_from(Some("")), "empty ⇒ OFF");
         assert!(!activity_needs_me_from(Some("0")), "0 ⇒ OFF");
         assert!(!activity_needs_me_from(Some("off")), "off ⇒ OFF");
         assert!(activity_needs_me_from(Some("1")), "1 ⇒ ON");
-        assert!(activity_needs_me_from(Some("true")), "true ⇒ ON");
         assert!(
-            activity_needs_me_from(Some("  TRUE  ")),
-            "whitespace-padded TRUE ⇒ ON (trimmed, case-insensitive)"
+            !activity_needs_me_from(Some("true")),
+            "true ⇒ OFF (only exact 1)"
+        );
+        assert!(
+            !activity_needs_me_from(Some("  TRUE  ")),
+            "padded TRUE ⇒ OFF (only exact 1)"
         );
     }
 

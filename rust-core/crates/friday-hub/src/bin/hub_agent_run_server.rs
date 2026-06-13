@@ -445,7 +445,7 @@ fn agent_run_control_enabled_from(raw: Option<&str>) -> bool {
 /// (NS-4) The env flag that gates the MISSION-BOUND run seam. DEFAULT-OFF: a run is dispatched
 /// through the Mission-bound entry ([`friday_hub::run_authed_agent_loop_mission_bound`] — which
 /// mints the mission-birth + WorkItem bind) ONLY when `FRIDAY_MISSION_BOUND_RUN` is exactly
-/// `"1"`/`"true"` (case-insensitive). Unset — or any other value — leaves the seam DARK: every
+/// `"1"` (after trim). Unset — or any other value — leaves the seam DARK: every
 /// run takes the EXISTING unbound dispatch (`run_authed_agent_loop_with_policy` /
 /// `run_session_task_with_overrides`), BYTE-IDENTICAL to today, so deploying this binary changes
 /// NO live behavior until the operator flips this SEPARATE flag. Even with the flag ON, a run is
@@ -457,21 +457,18 @@ const MISSION_BOUND_RUN_ENABLED_ENV: &str = "FRIDAY_MISSION_BOUND_RUN";
 
 /// Pure flag-matcher for [`MISSION_BOUND_RUN_ENABLED_ENV`] (separated from the env read so it is
 /// testable without mutating the process-global environment). DEFAULT-OFF: `None` (unset) ⇒
-/// false; only the exact opt-in values `"1"`/`"true"` (case-insensitive, trimmed) ⇒ true;
-/// everything else ⇒ false.
+/// false; ON only for the exact opt-in value `"1"` (trimmed), matching the program's standard
+/// flag idiom; everything else (including `"true"`) ⇒ false.
 fn mission_bound_run_enabled_from(raw: Option<&str>) -> bool {
-    matches!(
-        raw.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
-        Some("1") | Some("true")
-    )
+    matches!(raw.map(str::trim), Some("1"))
 }
 
 /// (NS-5) The env flag that gates the MISSION-INTAKE ingress arm. DEFAULT-OFF: an inbound
 /// [`Message::MissionIntakeRequest`] is HANDLED (birthing a Mission + WorkItem(Draft) +
 /// SurfaceThread + route_decision via the existing
 /// [`friday_hub::hub_server::mission_intake_result_for_db`] and replying with a
-/// [`Message::MissionIntakeResult`]) ONLY when `FRIDAY_MISSION_INTAKE` is exactly `"1"`/`"true"`
-/// (case-insensitive, trimmed). Unset — or any other value — leaves the arm DARK: the
+/// [`Message::MissionIntakeResult`]) ONLY when `FRIDAY_MISSION_INTAKE` is exactly `"1"`
+/// (after trim). Unset — or any other value — leaves the arm DARK: the
 /// `MissionIntakeRequest` falls through to the EXISTING catch-all keepalive echo, BYTE-IDENTICAL to
 /// today (the server has never had a MissionIntakeRequest arm, so the live behavior on this message
 /// is the benign echo), so deploying this binary changes NO live behavior until the operator flips
@@ -483,13 +480,10 @@ const MISSION_INTAKE_ENABLED_ENV: &str = "FRIDAY_MISSION_INTAKE";
 
 /// Pure flag-matcher for [`MISSION_INTAKE_ENABLED_ENV`] (separated from the env read so it is
 /// testable without mutating the process-global environment). DEFAULT-OFF: `None` (unset) ⇒
-/// false; only the exact opt-in values `"1"`/`"true"` (case-insensitive, trimmed) ⇒ true;
-/// everything else ⇒ false.
+/// false; ON only for the exact opt-in value `"1"` (trimmed), matching the program's standard
+/// flag idiom; everything else (including `"true"`) ⇒ false.
 fn mission_intake_enabled_from(raw: Option<&str>) -> bool {
-    matches!(
-        raw.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
-        Some("1") | Some("true")
-    )
+    matches!(raw.map(str::trim), Some("1"))
 }
 
 /// Whether the operator has explicitly enabled the session-lifecycle reaper. Fail-closed:
@@ -1919,12 +1913,12 @@ mod tests {
         );
         assert!(mission_bound_run_enabled_from(Some("1")), "1 ⇒ enabled");
         assert!(
-            mission_bound_run_enabled_from(Some("true")),
-            "true ⇒ enabled"
+            !mission_bound_run_enabled_from(Some("true")),
+            "true ⇒ disabled (only exact 1)"
         );
         assert!(
-            mission_bound_run_enabled_from(Some("  TRUE  ")),
-            "padded TRUE ⇒ enabled"
+            !mission_bound_run_enabled_from(Some("  TRUE  ")),
+            "padded TRUE ⇒ disabled (only exact 1)"
         );
     }
 
@@ -1948,10 +1942,13 @@ mod tests {
             "garbage ⇒ disabled"
         );
         assert!(mission_intake_enabled_from(Some("1")), "1 ⇒ enabled");
-        assert!(mission_intake_enabled_from(Some("true")), "true ⇒ enabled");
         assert!(
-            mission_intake_enabled_from(Some("  TRUE  ")),
-            "padded TRUE ⇒ enabled"
+            !mission_intake_enabled_from(Some("true")),
+            "true ⇒ disabled (only exact 1)"
+        );
+        assert!(
+            !mission_intake_enabled_from(Some("  TRUE  ")),
+            "padded TRUE ⇒ disabled (only exact 1)"
         );
     }
 
