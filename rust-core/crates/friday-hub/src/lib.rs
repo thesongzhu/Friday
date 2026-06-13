@@ -482,6 +482,32 @@ impl BilledUsage {
             completion_tokens: outcome.output_tokens,
         }
     }
+
+    /// (C1) Map a Codex app-server `ModelTurnOutcome` into the neutral billed-usage
+    /// shape, tagged [`friday_core::ProviderKind::Codex`] so a routed Codex turn is never
+    /// mis-attributed as DeepSeek/Anthropic.
+    ///
+    /// Unlike the DeepSeek/Anthropic outcomes, [`friday_providers::codex_appserver::ModelTurnOutcome`]
+    /// carries NO model field (the app-server's `turn/completed` does not report it), so the
+    /// `route_model` is supplied SEPARATELY by the caller (the requested route model). Usage is
+    /// `Option`: the `thread/tokenUsage/updated` notification is not guaranteed every turn, so a
+    /// turn with no usage bills 0/0 (honest absence — its `total_tokens` is dropped, the ledger
+    /// recomputes the total from the parts).
+    pub fn from_codex(
+        outcome: &friday_providers::codex_appserver::ModelTurnOutcome,
+        route_model: &str,
+    ) -> Self {
+        let (prompt_tokens, completion_tokens) = match &outcome.usage {
+            Some(u) => (u.input_tokens, u.output_tokens),
+            None => (0, 0),
+        };
+        Self {
+            provider_kind: friday_core::ProviderKind::Codex,
+            model: route_model.to_string(),
+            prompt_tokens,
+            completion_tokens,
+        }
+    }
 }
 
 /// The model-client seam (mirrors `friday-deepseek`'s `Transport` DI pattern). The
@@ -2515,6 +2541,19 @@ fn bill_model_call(
             now_ms,
         ),
         friday_core::ProviderKind::Anthropic => friday_core::LedgerEntry::anthropic_route(
+            ledger_id.as_str(),
+            run_id,
+            activity_id.as_str(),
+            &outcome.model,
+            outcome.prompt_tokens,
+            outcome.completion_tokens,
+            None,
+            None,
+            now_ms,
+        ),
+        // (C1) A Codex turn records `provider_kind="codex"` + the LOCAL app-server host
+        // label via `codex_route`, so it is never mis-attributed as DeepSeek/Anthropic.
+        friday_core::ProviderKind::Codex => friday_core::LedgerEntry::codex_route(
             ledger_id.as_str(),
             run_id,
             activity_id.as_str(),
@@ -4783,6 +4822,50 @@ mod tests {
             "loop biller passes no cost estimate (unchanged)"
         );
         assert_eq!(fallback, 0, "Friday route is never a fallback (unchanged)");
+    }
+
+    #[test]
+    fn billed_usage_from_codex_maps_outcome_and_route_model() {
+        // (C1-1) `BilledUsage::from_codex` maps a Codex app-server `ModelTurnOutcome`
+        // (which has NO model field) plus a SEPARATELY-supplied route model into the
+        // neutral billed-usage shape, tagged ProviderKind::Codex (never DeepSeek/Anthropic).
+        // The `tokenUsage.last` breakdown maps input/output -> prompt/completion; the
+        // outcome's own `total_tokens` is dropped (the ledger recomputes from the parts).
+        let outcome = friday_providers::codex_appserver::ModelTurnOutcome {
+            thread_id: "thr-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            status: "completed".to_string(),
+            content: "hi".to_string(),
+            usage: Some(friday_providers::codex_appserver::CodexTokenUsage {
+                input_tokens: 11,
+                output_tokens: 8,
+                total_tokens: 19,
+            }),
+        };
+        let billed = BilledUsage::from_codex(&outcome, "gpt-5-codex");
+        assert_eq!(billed.provider_kind, friday_core::ProviderKind::Codex);
+        assert_eq!(billed.model, "gpt-5-codex"); // taken from the route, not the outcome
+        assert_eq!(billed.prompt_tokens, 11);
+        assert_eq!(billed.completion_tokens, 8);
+    }
+
+    #[test]
+    fn billed_usage_from_codex_no_usage_bills_zero() {
+        // (C1-1) A turn with no `thread/tokenUsage/updated` notification (usage == None) is
+        // NOT a failure — it bills 0/0 (honest absence), still tagged ProviderKind::Codex with
+        // the supplied route model.
+        let outcome = friday_providers::codex_appserver::ModelTurnOutcome {
+            thread_id: "thr-2".to_string(),
+            turn_id: "turn-2".to_string(),
+            status: "completed".to_string(),
+            content: "ok".to_string(),
+            usage: None,
+        };
+        let billed = BilledUsage::from_codex(&outcome, "gpt-5-codex");
+        assert_eq!(billed.provider_kind, friday_core::ProviderKind::Codex);
+        assert_eq!(billed.model, "gpt-5-codex");
+        assert_eq!(billed.prompt_tokens, 0);
+        assert_eq!(billed.completion_tokens, 0);
     }
 
     #[test]
