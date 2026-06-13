@@ -43,14 +43,61 @@ use friday_storage::audit::verify_audit_chain;
 use friday_storage::Db;
 use serde_json::{json, Value};
 
-/// Project the refs-only run-readback snapshot for `run_id` from an already-opened read-only hub
-/// [`Db`]. Returns the refs-only snapshot `serde_json::Value` on success.
+/// (M-3) OWNER-GATED refs-only run-readback projection for `run_id` from an already-opened
+/// read-only hub [`Db`], scoped to `caller_principal`. `Ok(Some(snapshot))` ⇒ the caller IS the
+/// run's bound owner and gets the refs-only snapshot; `Ok(None)` ⇒ the caller is NOT the run's
+/// bound owner (or the run is owner-less / absent, or the caller is empty) — fail-closed, no
+/// existence/state oracle for a non-owner.
 ///
-/// Fail-closed: a read error, an unknown run, or a forbidden-marker leak all return `Err(String)`
-/// (the SAME coarse error-kind strings the bin surfaced) — never a partial or a raw body. The
-/// forbidden-output guard runs INSIDE this fn so both the bin and the read server inherit it.
-pub fn project_run_readback(db: &Db, run_id: &str) -> Result<Value, String> {
+/// ## M-3 owner gate — `resolve_run_owner` (the C2-9 owner axis)
+/// `project_run_readback` previously took only `run_id` with NO principal, so any authenticated
+/// caller could read back ANY run by guessing the id — a cross-principal existence/state ORACLE.
+/// The gate now resolves the run's bound owner via [`crate::agent_run_control::resolve_run_owner`]
+/// (the SAME owner resolution the owner-authed `reject`/`cancel` control ops and the C2-9
+/// `project_activity_needs_me` projection use). `resolve_run_owner` returns an owner ONLY for a
+/// PAUSED run (its pending-approval row's `principal_id`) or a FINISHED run that recorded a
+/// `run_result.owner_principal`; it returns `None` for every OTHER state — an in-progress / errored
+/// / bounded run with no `run_result` yet, and an owner-less finished run. An empty caller, an
+/// owner-less/no-resolvable-owner run, an unknown run, or a mismatch ALL collapse to `Ok(None)`, so
+/// a non-owner learns nothing (no body, no owner id, no run-existence/state oracle).
+///
+/// **Behavior change (honest scope):** because the gate requires a RESOLVABLE owner, even the legit
+/// owner can no longer read back a run that has not yet produced a `run_result` and is not paused
+/// (an in-progress / errored / bounded-without-result run, or an owner-less finished run) — those
+/// now return `Ok(None)`. This is the intended M-3 tightening (no resolvable owner ⇒ no readback,
+/// fail-closed — never an owner-less fallback, which would re-open the oracle). Pre-M-3 the
+/// projection returned a snapshot for ANY run with an `agent_run` row regardless of state.
+///
+/// `caller_principal` MUST be a principal the server already AUTHENTICATED against the sealed
+/// session (this fn does the OWNER-match on top; it never re-does session auth, and never trusts a
+/// client-asserted wire string — the read-projection server threads the verified
+/// `AuthedPrincipal::principal()` here).
+///
+/// Fail-closed: a read error or a forbidden-marker leak return `Err(String)` (the SAME coarse
+/// error-kind strings the bin surfaced) — never a partial or a raw body. The forbidden-output guard
+/// runs INSIDE this fn so both the bin and the read server inherit it.
+pub fn project_run_readback(
+    db: &Db,
+    caller_principal: &str,
+    run_id: &str,
+) -> Result<Option<Value>, String> {
     let conn = db.conn();
+
+    // OWNER GATE (fail-closed, M-3): the run's owner is resolved by `resolve_run_owner` (the
+    // pending-row principal for a paused run, or `run_result.owner_principal` for a finished one;
+    // `None` for any other state — see the fn docs). An empty caller, a run with no resolvable
+    // owner (absent / in-progress-without-result / owner-less), or a mismatch all collapse to
+    // `Ok(None)` — a non-owner gets no run-existence/state oracle (and never reaches the summary
+    // read below). This MIRRORS the C2-9 `project_activity_needs_me` gate exactly.
+    let caller = caller_principal.trim();
+    if caller.is_empty() {
+        return Ok(None);
+    }
+    let owner = crate::agent_run_control::resolve_run_owner(conn, run_id)
+        .map_err(|_| "read_failed".to_string())?;
+    if owner.as_deref() != Some(caller) {
+        return Ok(None);
+    }
 
     let summary = get_run_summary(conn, run_id)
         .map_err(|_| "read_failed".to_string())?
@@ -97,7 +144,7 @@ pub fn project_run_readback(db: &Db, run_id: &str) -> Result<Value, String> {
     // inherit refs-only. The guard renders to a string and rejects on any forbidden marker.
     let rendered = serde_json::to_string(&snapshot).map_err(|_| "serialize_failed".to_string())?;
     reject_forbidden_output(&rendered)?;
-    Ok(snapshot)
+    Ok(Some(snapshot))
 }
 
 /// Derive a coarse, refs-only loop-status LABEL from the ordered event kinds.
@@ -419,9 +466,12 @@ mod tests {
         .is_ok());
     }
 
+    const OWNER: &str = "principal:r2-proj-owner";
+
     #[test]
     fn project_run_readback_round_trips_a_seeded_run_refs_only() {
         use friday_storage::agent_run::{create_run, record_event};
+        use friday_storage::{persist_run_result, RunResult};
         // Seed a run with events through the WRITE path, then read it back through the projection.
         let path = std::env::temp_dir()
             .join(format!(
@@ -456,10 +506,22 @@ mod tests {
             now + 3,
         )
         .unwrap();
+        // M-3: a finished run records its bound OWNER principal via `run_result.owner_principal`
+        // (the all-state owner axis `resolve_run_owner` reads), so the owner gate Grants the owner.
+        persist_run_result(
+            db.conn(),
+            "run-r2-proj",
+            &RunResult::new("finished", "owner-only answer body", None).with_owner_principal(OWNER),
+            now + 4,
+        )
+        .unwrap();
         drop(db);
 
         let ro = Db::open_hub_readonly(&path).unwrap();
-        let snapshot = project_run_readback(&ro, "run-r2-proj").expect("projects");
+        // The OWNER reads its own run back — the happy path is preserved (a `Some` snapshot).
+        let snapshot = project_run_readback(&ro, OWNER, "run-r2-proj")
+            .expect("projects")
+            .expect("the owner gets a snapshot");
         let v: Value = from_str(&serde_json::to_string(&snapshot).unwrap()).unwrap();
 
         assert_eq!(v["run_id"], "run-r2-proj");
@@ -478,6 +540,8 @@ mod tests {
         let rendered = serde_json::to_string(&snapshot).unwrap();
         assert!(!rendered.contains("raw task body"));
         assert!(!rendered.contains("\"task\""));
+        // Refs-only: the owner-only answer body never rides the readback snapshot either.
+        assert!(!rendered.contains("owner-only answer body"));
     }
 
     #[test]
@@ -489,9 +553,105 @@ mod tests {
         let db = Db::open_hub(&path).unwrap();
         drop(db);
         let ro = Db::open_hub_readonly(&path).unwrap();
+        // M-3: an unknown run is owner-less, so the gate collapses it to `Ok(None)` BEFORE the
+        // summary read — fail-closed and INDISTINGUISHABLE from the not-owner case (the anti-oracle
+        // property). The wire outcome is unchanged: the server maps this `Ok(None)` to the same
+        // `run_not_found` typed error a non-existent run produced before.
         assert_eq!(
-            project_run_readback(&ro, "no-such-run").unwrap_err(),
-            "run_not_found"
+            project_run_readback(&ro, OWNER, "no-such-run").unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn project_run_readback_non_owner_is_fail_closed_no_oracle() {
+        use friday_storage::agent_run::{create_run, record_event};
+        use friday_storage::{persist_run_result, RunResult};
+        // Seed a finished run OWNED by principal A.
+        let path = std::env::temp_dir()
+            .join(format!("friday-r2-nonowner-{}.sqlite", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
+        let db = Db::open_hub(&path).unwrap();
+        let now = 1_780_640_000_000;
+        create_run(db.conn(), "run-r2-owned-by-a", "secret task body", now).unwrap();
+        record_event(
+            db.conn(),
+            "ev-a-1",
+            "run-r2-owned-by-a",
+            "agent.finished",
+            now + 1,
+        )
+        .unwrap();
+        persist_run_result(
+            db.conn(),
+            "run-r2-owned-by-a",
+            &RunResult::new("finished", "A's answer", None)
+                .with_owner_principal("principal:owner-A"),
+            now + 2,
+        )
+        .unwrap();
+        drop(db);
+
+        let ro = Db::open_hub_readonly(&path).unwrap();
+        // The OWNER (A) reads it back — `Some` (control: the run genuinely exists + is readable).
+        assert!(
+            project_run_readback(&ro, "principal:owner-A", "run-r2-owned-by-a")
+                .unwrap()
+                .is_some()
+        );
+        // A DIFFERENT verified caller (B) reading A's run → `Ok(None)` — the M-3 gate. B learns
+        // nothing: no body, no owner id, no existence/state oracle (identical to an unknown run).
+        assert_eq!(
+            project_run_readback(&ro, "principal:owner-B", "run-r2-owned-by-a").unwrap(),
+            None
+        );
+        // An EMPTY caller is never an owner (fail-closed) → `Ok(None)`.
+        assert_eq!(
+            project_run_readback(&ro, "", "run-r2-owned-by-a").unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn project_run_readback_no_resolvable_owner_run_is_fail_closed_even_for_the_owner() {
+        use friday_storage::agent_run::{create_run, record_event};
+        // Seed an IN-PROGRESS run: an `agent_run` row + a non-terminal event, but NO pending
+        // approval row and NO `run_result` — so `resolve_run_owner` returns `None` (M-3 behavior
+        // change). Pre-M-3 this run read back a snapshot for anyone; now it fails closed.
+        let path = std::env::temp_dir()
+            .join(format!(
+                "friday-r2-inprogress-{}.sqlite",
+                std::process::id()
+            ))
+            .to_string_lossy()
+            .into_owned();
+        let db = Db::open_hub(&path).unwrap();
+        let now = 1_780_640_000_000;
+        create_run(db.conn(), "run-r2-in-progress", "task body", now).unwrap();
+        record_event(
+            db.conn(),
+            "ev-ip-1",
+            "run-r2-in-progress",
+            "plan.none",
+            now + 1,
+        )
+        .unwrap();
+        // No pending row, no run_result ⇒ no resolvable owner.
+        assert_eq!(
+            crate::agent_run_control::resolve_run_owner(db.conn(), "run-r2-in-progress").unwrap(),
+            None,
+            "a run with no pending row and no run_result has no resolvable owner"
+        );
+        drop(db);
+
+        let ro = Db::open_hub_readonly(&path).unwrap();
+        // Even a non-empty, plausible owner principal gets `Ok(None)` — the run has no resolvable
+        // owner, so NO caller is its owner (fail-closed; no owner-less fallback). This is the M-3
+        // tightening: a verified owner can no longer read back their own non-terminal run.
+        assert_eq!(
+            project_run_readback(&ro, "principal:some-owner", "run-r2-in-progress").unwrap(),
+            None
         );
     }
 }

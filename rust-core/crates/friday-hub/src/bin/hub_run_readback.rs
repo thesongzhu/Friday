@@ -12,6 +12,16 @@
 //! refs-only boundary: that a Rust run's outcome can be projected to TS without
 //! ever transporting a body/secret/PII.
 //!
+//! ## M-3 OWNER GATE — the readback is now owner-scoped
+//! `project_run_readback` is owner-gated: it reads back a run ONLY for its bound
+//! owner principal (`resolve_run_owner`, the all-state owner axis). This bin
+//! supplies the asserted owner via `--owner <principal>` (the configured owner the
+//! run was bound to). The owner is NEVER resolved from the run's own row (that would
+//! re-open the cross-principal oracle M-3 closes). A missing/blank `--owner` ⇒ an
+//! empty caller ⇒ the gate fails closed; a not-owner / owner-less / unknown run all
+//! collapse to the bin's existing `run_not_found` error kind (indistinguishable, no
+//! existence/state oracle).
+//!
 //! ## Output contract — REFS ONLY (no bodies, no secrets, no PII)
 //! Emits a single JSON object to stdout carrying ONLY safe identifiers/labels:
 //! `truth_label="rust_wired_dev"`, `run_id`, the run `state` label (NOT the run
@@ -91,14 +101,27 @@ fn run() -> Result<String, ReadbackError> {
     }
     let run_id = arg_value(&args, "--run-id").ok_or(ReadbackError::new("bad_args"))?;
 
+    // M-3: the run-readback projection is now OWNER-GATED — it reads back a run ONLY for its bound
+    // owner principal. This operator-local readback supplies the owner principal via `--owner` (the
+    // configured owner the run was bound to). It is NEVER resolved from the run's own row (that would
+    // re-open the cross-principal oracle the M-3 gate closes); a caller asserts WHO it is, and the
+    // gate matches that against the run's bound owner. A missing/blank `--owner` ⇒ an empty caller
+    // ⇒ the gate fails closed (`Ok(None)` ⇒ `run_not_found`), mirroring the read server's
+    // blank-allowlist discipline (a readback with no asserted owner reads nothing).
+    let owner = arg_value(&args, "--owner").unwrap_or_default();
+
     // Read-only open: a readback can NEVER mutate an operator DB just because TS asks.
     let db = Db::open_hub_readonly(&db_path).map_err(|_| ReadbackError::new("open_failed"))?;
 
     // S-R2: the refs-only projection (state/loop-status/event-kinds/counts + DB-WIDE token totals,
     // with the forbidden-output guard run INSIDE) is the SHARED library fn so this bin and the DARK
     // read-projection server cannot drift. Map the projection's coarse error string back to this
-    // bin's exact error-kind vocabulary (so its stderr/exit contract is unchanged).
-    let snapshot = project_run_readback(&db, &run_id).map_err(map_projection_error)?;
+    // bin's exact error-kind vocabulary (so its stderr/exit contract is unchanged). M-3: a
+    // non-owner / owner-less / unknown run all yield `Ok(None)` from the owner gate — surface it as
+    // the bin's existing `run_not_found` so not-owner is indistinguishable from unknown-run.
+    let snapshot = project_run_readback(&db, &owner, &run_id)
+        .map_err(map_projection_error)?
+        .ok_or_else(|| ReadbackError::new("run_not_found"))?;
     serde_json::to_string(&snapshot).map_err(|_| ReadbackError::new("serialize_failed"))
 }
 
@@ -136,9 +159,16 @@ mod tests {
             "--db".to_string(),
             "/tmp/hub.sqlite".to_string(),
             "--run-id=run-xyz".to_string(),
+            "--owner".to_string(),
+            "principal:owner-x".to_string(),
         ];
         assert_eq!(arg_value(&args, "--db").as_deref(), Some("/tmp/hub.sqlite"));
         assert_eq!(arg_value(&args, "--run-id").as_deref(), Some("run-xyz"));
+        // M-3: the owner principal the readback gates on (space-form parse).
+        assert_eq!(
+            arg_value(&args, "--owner").as_deref(),
+            Some("principal:owner-x")
+        );
         assert_eq!(arg_value(&args, "--missing"), None);
     }
 
