@@ -2,11 +2,12 @@
 //! infra, DARK/staged).
 //!
 //! Enrolls a UI peer's X25519 PUBLIC key into the **read-projection** server's
-//! [`friday_hub::key_source::PEER_PUBKEY_ALLOWLIST_ID`] SecureStore allowlist so the
+//! [`friday_hub::key_source::READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID`] SecureStore allowlist so the
 //! [`hub_read_projection_server`] (slice S-R1) will admit that UI client's sealed-WS handshake.
 //! It is the read-seam analog of [`hub_agent_run_enroll`] (the write-server enroll CLI) and shares
-//! the SAME key source, the SAME store layout, and the SAME on-disk allowlist format — so the two
-//! servers cannot drift in how the allowlist is provisioned.
+//! the SAME key source, the SAME store layout, and the SAME on-disk allowlist format — but a
+//! DISTINCT SecureStore id (the read-seam id, NOT the write server's `PEER_PUBKEY_ALLOWLIST_ID`),
+//! so the read multi-peer set never contaminates the write single-peer entry.
 //!
 //! ## DARK / staged — NOT a live flip
 //! Running this CLI only writes the peer allowlist entry into a SecureStore dir; it does NOT install
@@ -14,36 +15,34 @@
 //! (install the read-projection LaunchAgent + flip the prod flag) is the slice-6 OPERATOR gate
 //! (G2, the FREEZE tripwire) — NOT this CLI. Built ≠ flipped.
 //!
-//! ## The two enrollment sources (one peer at a time — single-peer v1)
-//! The read-projection server enforces [`friday_hub::sealed_ws::enforce_single_peer`] at boot, so
-//! the allowlist v1 holds EXACTLY ONE peer pubkey. This CLI therefore enrolls ONE peer, REPLACING
-//! whatever was there (idempotent — never appends a second key). Choose the source:
+//! ## The two enrollment sources (REPLACE one peer, or `--add` to build a multi-peer set)
+//! The read-projection server enforces [`friday_hub::sealed_ws::enforce_peer_allowlist_nonempty`]
+//! at boot, so the read allowlist may hold ONE OR MORE peer pubkeys. Without `--add` this CLI
+//! REPLACES the allowlist with the single resolved peer (idempotent); with `--add` it APPENDS to
+//! build a multi-peer set. Choose the source:
 //!
 //! * **`--from-master` (DEFAULT)** — derive the peer pubkey from THIS host's master key, exactly as
 //!   [`hub_agent_run_enroll`] does (the same [`friday_hub::key_source::derive_client_x25519_pubkey`]
 //!   parity). This is the **desktop UI** path: the SwiftUI console runs as the same OS user with
 //!   `~/.friday/master.key` access, derives the SAME X25519 key, and is therefore already the
-//!   write-peer — so a desktop UI pointed at its own master needs NO separate device key. (If the
-//!   read store IS the shared `~/.friday/agent-run-securestore`, the value written equals the
-//!   already-enrolled write peer; idempotent.)
+//!   write-peer — so a desktop UI pointed at its own master needs NO separate device key.
 //! * **`--pubkey <64-hex>`** — enroll an EXTERNALLY-generated X25519 public key (32 bytes / 64 hex).
 //!   This is the path a **distinct device** (e.g. a paired mobile device that does NOT share the
 //!   host master key) uses: the device generates its own keypair off-box and the operator enrolls
-//!   its PUBLIC key here. Because the server is single-peer, this REPLACES the prior peer — the
-//!   enrolled device becomes the SOLE allowlisted reader.
+//!   its PUBLIC key here. With `--add` it joins the existing reader(s); without `--add` it REPLACES.
 //!
-//! ## Multi-peer (DESKTOP + a distinct mobile device CONCURRENTLY) — DEFERRED, not skipped
+//! ## Multi-peer (DESKTOP + a distinct mobile device CONCURRENTLY) — BUILT (J2)
 //! Admitting MORE THAN ONE peer at once (so a desktop master-derived peer AND a distinct mobile
-//! device key are BOTH allowlisted) is gated by the read server's [`enforce_single_peer`] boot
-//! invariant, which exists precisely because a multi-key allowlist needs the (currently UNBUILT)
-//! tamper-evident pubkey→principal bindings that bind the AUTHENTICATED caller to the MATCHED
-//! pubkey. The on-disk allowlist FORMAT already supports a concatenation of 32-byte keys (the
-//! server parses it with `chunks_exact(32)`), so this CLI CAN write a multi-key value via
-//! `--add` — but the server would refuse to boot on it today. So `--add` is gated behind an
-//! explicit `--allow-multi-peer-unsupported-by-server` acknowledgment flag and prints a loud
-//! warning. This is the EXPLICIT acceptance-criterion deferral the slice-6 runbook (B-2) names:
-//! single-peer works now; concurrent multi-peer is a separate build-first lane (relax
-//! `enforce_single_peer` for the read server + the principal bindings).
+//! device key are BOTH allowlisted) is now SUPPORTED for the read seam: the read-projection server
+//! boots on the DISTINCT read-seam id and enforces `enforce_peer_allowlist_nonempty` (NOT
+//! `enforce_single_peer`), so a non-empty multi-peer allowlist is admitted with NO eviction (the
+//! per-handshake S-F gate checks the presented key against EVERY enrolled key). The on-disk
+//! allowlist FORMAT is a concatenation of 32-byte keys (parsed with `chunks_exact(32)`); `--add`
+//! writes that multi-key value (idempotent-append). HONEST CEILING: per-PRINCIPAL isolation — the
+//! tamper-evident pubkey→principal binding that ties the AUTHENTICATED caller to the MATCHED
+//! pubkey — is still UNBUILT/DEFERRED, so v1 is single-OWNER: multi-peer = "more than one DEVICE
+//! for the one configured owner", NOT multi-tenant. The WRITE server is BYTE-UNTOUCHED (own id +
+//! own single-peer guard).
 //!
 //! ## Usage
 //! ```text
@@ -60,8 +59,9 @@
 //!   device generates its OWN keypair OFF-BOX and hands over only its PUBLIC key — the private key
 //!   never touches this host (and [`friday_crypto::DeviceKeypair`] deliberately never exposes a
 //!   secret, so this CLI cannot and does not mint device secrets — that is the device's job).
-//! * `--add` — APPEND the pubkey to the existing allowlist (multi-peer) instead of REPLACING.
-//!   Requires `--allow-multi-peer-unsupported-by-server` (the read server will refuse a >1 list).
+//! * `--add` — APPEND the pubkey to the existing allowlist (build a multi-peer set) instead of
+//!   REPLACING. SUPPORTED (J2): the read server admits a non-empty multi-peer allowlist. The legacy
+//!   `--allow-multi-peer-unsupported-by-server` ack is a deprecated NO-OP (accepted, ignored).
 //! * `--print-pubkey` — print the resolved pubkey hex and EXIT WITHOUT enrolling (verification).
 //! * `--dry-run` — report what WOULD be enrolled and exit 0 WITHOUT touching the filesystem.
 //!
@@ -76,7 +76,7 @@ use std::process::ExitCode;
 use friday_crypto::FileSecureStore;
 use friday_hub::key_source::{
     default_store_dir, derive_client_x25519_pubkey, derive_file_store_kek, read_master_key,
-    PEER_PUBKEY_ALLOWLIST_ID, X25519_PUBKEY_LEN,
+    READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID, X25519_PUBKEY_LEN,
 };
 
 /// A coarse, non-leaking error category. Its `Display` never carries a key, a secret-bearing path,
@@ -133,7 +133,6 @@ struct Opts {
     store_dir: Option<PathBuf>,
     source: Source,
     add: bool,
-    allow_multi_peer: bool,
     print_pubkey: bool,
     dry_run: bool,
 }
@@ -168,7 +167,6 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Opts, EnrollError> {
     let mut from_master = false;
     let mut pubkey: Option<[u8; X25519_PUBKEY_LEN]> = None;
     let mut add = false;
-    let mut allow_multi_peer = false;
     let mut print_pubkey = false;
     let mut dry_run = false;
     let mut it = args;
@@ -188,7 +186,9 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Opts, EnrollError> {
                 pubkey = Some(decode_pubkey_hex(&v).ok_or(EnrollError::BadPubkey)?);
             }
             "--add" => add = true,
-            "--allow-multi-peer-unsupported-by-server" => allow_multi_peer = true,
+            // (J2) Deprecated NO-OP: the read seam now SUPPORTS a multi-peer allowlist, so this ack
+            // is no longer required. Accepted (not an "unknown argument" error) for back-compat.
+            "--allow-multi-peer-unsupported-by-server" => {}
             "--print-pubkey" => print_pubkey = true,
             "--dry-run" => dry_run = true,
             "-h" | "--help" => {
@@ -216,22 +216,17 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Opts, EnrollError> {
         Source::FromMaster
     };
 
-    // --add (multi-peer) is gated: the read server refuses a >1 allowlist (enforce_single_peer).
-    if add && !allow_multi_peer {
-        return Err(EnrollError::BadArgs(
-            "--add builds a MULTI-PEER allowlist, which the read-projection server REFUSES at boot \
-             (enforce_single_peer). Pass --allow-multi-peer-unsupported-by-server to acknowledge \
-             this is for a future server that relaxes that invariant, or drop --add to REPLACE \
-             (single-peer)."
-                .into(),
-        ));
-    }
+    // (J2) --add (multi-peer) is NO LONGER gated for the read seam: the read-projection server now
+    // boots on the READ-SEAM id and enforces `enforce_peer_allowlist_nonempty` (NOT
+    // `enforce_single_peer`), so a MULTI-peer allowlist is SUPPORTED — a desktop master-derived
+    // peer AND a distinct mobile device can both be enrolled and read concurrently, with no
+    // eviction. The legacy `--allow-multi-peer-unsupported-by-server` ack is accepted as a
+    // deprecated NO-OP (so an existing invocation does not break), but is no longer required.
 
     Ok(Opts {
         store_dir,
         source,
         add,
-        allow_multi_peer,
         print_pubkey,
         dry_run,
     })
@@ -281,7 +276,8 @@ fn run() -> Result<(), EnrollError> {
         let mode = if opts.add { "APPEND" } else { "REPLACE" };
         println!(
             "DRY-RUN: would {mode} peer pubkey {pubkey_hex} (32 bytes) under id \
-             '{PEER_PUBKEY_ALLOWLIST_ID}' in store dir {} — NOT written (store not opened)",
+             '{READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID}' in store dir {} — NOT written \
+             (store not opened)",
             store_dir.display()
         );
         return Ok(());
@@ -300,7 +296,7 @@ fn run() -> Result<(), EnrollError> {
     // only when the new key is not already present (idempotent), and with a LOUD warning.
     let value: Vec<u8> = if opts.add {
         let mut existing = store
-            .try_get(PEER_PUBKEY_ALLOWLIST_ID)
+            .try_get(READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID)
             .map_err(|_| EnrollError::StoreRead)?
             .unwrap_or_default();
         // Idempotent: if the new pubkey is already an aligned 32-byte chunk, do not duplicate it.
@@ -312,10 +308,12 @@ fn run() -> Result<(), EnrollError> {
             existing.extend_from_slice(&pubkey);
         }
         eprintln!(
-            "hub_read_seam_enroll: WARNING — APPEND mode wrote a MULTI-PEER allowlist \
-             ({} peer(s)). The read-projection server enforces single-peer at boot and will \
-             REFUSE to start on this allowlist until enforce_single_peer is relaxed + the \
-             pubkey->principal bindings are built (DEFERRED, see runbook B-2).",
+            "hub_read_seam_enroll: APPEND mode wrote a MULTI-PEER read-seam allowlist \
+             ({} peer(s)). The read-projection server enforces enforce_peer_allowlist_nonempty at \
+             boot, so it ADMITS this multi-peer list (no eviction). HONEST CEILING: per-PRINCIPAL \
+             isolation (binding the authed caller to the matched pubkey) is still the deferred \
+             pubkey->principal binding — v1 is single-OWNER, so multi-peer = multi-DEVICE for the \
+             one owner.",
             existing.len() / X25519_PUBKEY_LEN
         );
         existing
@@ -325,7 +323,7 @@ fn run() -> Result<(), EnrollError> {
 
     // (7) CHECKED enrollment write — the CLI must KNOW it landed.
     store
-        .try_put(PEER_PUBKEY_ALLOWLIST_ID, &value)
+        .try_put(READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID, &value)
         .map_err(|_| EnrollError::EnrollWrite)?;
 
     let mode = if opts.add {
@@ -334,14 +332,14 @@ fn run() -> Result<(), EnrollError> {
         "enrolled (REPLACE)"
     };
     let peers = value.len() / X25519_PUBKEY_LEN;
-    let multi_note = if opts.allow_multi_peer && opts.add {
-        " [SERVER-UNSUPPORTED multi-peer: read server will refuse >1 at boot]"
+    let multi_note = if opts.add && peers > 1 {
+        " [multi-peer SUPPORTED: read server admits a non-empty multi-peer allowlist — no eviction]"
     } else {
         ""
     };
     println!(
-        "OK: {mode} read-seam peer pubkey {pubkey_hex} under id '{PEER_PUBKEY_ALLOWLIST_ID}' \
-         in store dir {} ({peers} peer(s) total){multi_note}",
+        "OK: {mode} read-seam peer pubkey {pubkey_hex} under id \
+         '{READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID}' in store dir {} ({peers} peer(s) total){multi_note}",
         store_dir.display()
     );
     Ok(())
@@ -421,14 +419,13 @@ mod tests {
     }
 
     #[test]
-    fn add_without_ack_is_rejected() {
+    fn add_no_longer_requires_an_ack() {
+        // (J2) The read seam now SUPPORTS multi-peer, so `--add` ALONE parses (no ack gate).
         let hex = "22".repeat(32);
-        assert!(matches!(
-            parse_args(["--pubkey", &hex, "--add"].into_iter().map(String::from)),
-            Err(EnrollError::BadArgs(_))
-        ));
-        // with the ack flag it parses
-        let o = parse_args(
+        let o = parse_args(["--pubkey", &hex, "--add"].into_iter().map(String::from)).unwrap();
+        assert!(o.add, "--add parses with no ack flag now");
+        // The legacy ack flag is still accepted (deprecated NO-OP), not an "unknown argument".
+        let o2 = parse_args(
             [
                 "--pubkey",
                 &hex,
@@ -439,7 +436,7 @@ mod tests {
             .map(String::from),
         )
         .unwrap();
-        assert!(o.add && o.allow_multi_peer);
+        assert!(o2.add, "the deprecated ack flag is accepted as a no-op");
     }
 
     #[test]
@@ -450,7 +447,7 @@ mod tests {
         ));
     }
 
-    // ── enroll round-trip (REPLACE, single-peer): the external pubkey is the sole 32-byte chunk ─
+    // ── enroll round-trip (REPLACE): the external pubkey is the sole 32-byte chunk ───────────────
     #[test]
     fn external_pubkey_replace_round_trips_single_peer() {
         let master = [0x42u8; 32];
@@ -461,24 +458,30 @@ mod tests {
         // Mirror run()'s REPLACE path: open store under master KEK, try_put exactly the 32 bytes.
         let kek = derive_file_store_kek(&master);
         let mut store = FileSecureStore::open(&dir, kek).unwrap();
-        store.try_put(PEER_PUBKEY_ALLOWLIST_ID, &external).unwrap();
+        store
+            .try_put(READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID, &external)
+            .unwrap();
 
         let store2 = FileSecureStore::open(&dir, derive_file_store_kek(&master)).unwrap();
-        let stored = store2.try_get(PEER_PUBKEY_ALLOWLIST_ID).unwrap().unwrap();
+        let stored = store2
+            .try_get(READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID)
+            .unwrap()
+            .unwrap();
         assert_eq!(stored.len(), X25519_PUBKEY_LEN, "single-peer = 32 bytes");
         assert_eq!(&stored[..], &external[..]);
-        // The read server's load_peer_allowlist + enforce_single_peer would accept this (len==1).
+        // The read server's load_peer_allowlist + enforce_peer_allowlist_nonempty accepts this.
         let allowlist =
-            friday_hub::sealed_ws::load_peer_allowlist(&store2, PEER_PUBKEY_ALLOWLIST_ID).unwrap();
-        assert!(friday_hub::sealed_ws::enforce_single_peer(&allowlist).is_ok());
+            friday_hub::sealed_ws::load_peer_allowlist(&store2, READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID)
+                .unwrap();
+        assert!(friday_hub::sealed_ws::enforce_peer_allowlist_nonempty(&allowlist).is_ok());
         assert!(friday_hub::sealed_ws::peer_is_allowlisted(
             &allowlist, &external
         ));
     }
 
-    // ── --add APPEND idempotency + multi-peer is REFUSED by the server invariant ──────────────
+    // ── (J2 KAT) --add A then B → stored len == 2*32, idempotent, and the read server ADMITS it ──
     #[test]
-    fn add_appends_then_idempotent_and_server_refuses_multi() {
+    fn add_appends_two_peers_idempotent_and_read_server_admits_multi() {
         let master = [0x07u8; 32];
         let td = TempDir::new("add-multi");
         let dir = td.child("store");
@@ -488,11 +491,14 @@ mod tests {
         let kek = derive_file_store_kek(&master);
         let mut store = FileSecureStore::open(&dir, kek).unwrap();
         // enroll A (replace), then append B, then append B again (idempotent).
-        store.try_put(PEER_PUBKEY_ALLOWLIST_ID, &pk_a).unwrap();
+        store
+            .try_put(READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID, &pk_a)
+            .unwrap();
 
+        // Mirror run()'s --add APPEND path exactly (idempotent on an already-present aligned chunk).
         let append = |store: &mut FileSecureStore, pk: &[u8; 32]| {
             let mut existing = store
-                .try_get(PEER_PUBKEY_ALLOWLIST_ID)
+                .try_get(READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID)
                 .unwrap()
                 .unwrap_or_default();
             let already = existing.len() % X25519_PUBKEY_LEN == 0
@@ -500,23 +506,36 @@ mod tests {
             if !already {
                 existing.extend_from_slice(pk);
             }
-            store.try_put(PEER_PUBKEY_ALLOWLIST_ID, &existing).unwrap();
+            store
+                .try_put(READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID, &existing)
+                .unwrap();
         };
         append(&mut store, &pk_b);
         append(&mut store, &pk_b); // idempotent: still 2 peers, not 3
 
         let store2 = FileSecureStore::open(&dir, derive_file_store_kek(&master)).unwrap();
-        let stored = store2.try_get(PEER_PUBKEY_ALLOWLIST_ID).unwrap().unwrap();
+        let stored = store2
+            .try_get(READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID)
+            .unwrap()
+            .unwrap();
         assert_eq!(stored.len(), 2 * X25519_PUBKEY_LEN, "two peers, idempotent");
 
-        // The server parses 2 keys but enforce_single_peer REFUSES it (the deferred lane).
+        // (J2) The read server parses 2 keys and ADMITS them (enforce_peer_allowlist_nonempty Ok) —
+        // the single-peer eviction trap is GONE. Both peers are allowlisted (no eviction).
         let allowlist =
-            friday_hub::sealed_ws::load_peer_allowlist(&store2, PEER_PUBKEY_ALLOWLIST_ID).unwrap();
+            friday_hub::sealed_ws::load_peer_allowlist(&store2, READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID)
+                .unwrap();
         assert_eq!(allowlist.len(), 2);
         assert!(
-            friday_hub::sealed_ws::enforce_single_peer(&allowlist).is_err(),
-            "multi-peer is REFUSED by the read server boot invariant (deferred lane)"
+            friday_hub::sealed_ws::enforce_peer_allowlist_nonempty(&allowlist).is_ok(),
+            "the read server ADMITS a 2-peer allowlist (J2 multi-peer, no eviction)"
         );
+        assert!(friday_hub::sealed_ws::peer_is_allowlisted(
+            &allowlist, &pk_a
+        ));
+        assert!(friday_hub::sealed_ws::peer_is_allowlisted(
+            &allowlist, &pk_b
+        ));
     }
 
     // ── --from-master derives the SAME pubkey the write enroll CLI + the handshake use ─────────

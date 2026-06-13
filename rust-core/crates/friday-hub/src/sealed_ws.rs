@@ -191,6 +191,36 @@ pub fn enforce_single_peer(
     Ok(())
 }
 
+/// (J2) Fail closed unless the allowlist holds AT LEAST ONE peer pubkey — the MULTI-PEER sibling of
+/// [`enforce_single_peer`], for the READ seam ONLY.
+///
+/// The read-projection server removes the single-peer eviction trap: a desktop master-derived peer
+/// AND a distinct mobile device key can BOTH be enrolled concurrently, so the read server admits a
+/// non-empty multi-peer allowlist. The per-handshake S-F PEER gate ([`peer_is_allowlisted`]) already
+/// checks the presented pubkey against EVERY enrolled key (`contains`), so a 2-key allowlist admits
+/// either real peer with no eviction — that is the whole point of this guard.
+///
+/// [`load_peer_allowlist`] already rejects a MISSING (`Missing`) or non-32-multiple/empty
+/// (`Invalid`) value, so by the time this guard runs the only residual fail-closed case is
+/// `len() == 0` (defensive — `load_peer_allowlist` cannot return it, but assert it rather than trust
+/// it). `len() >= 1` ⇒ `Ok`. This guard does NOT, and must not, touch the WRITE server: the live
+/// write bin still calls [`enforce_single_peer`] on `PEER_PUBKEY_ALLOWLIST_ID` and still refuses a
+/// >1 list — the two guards + two ids keep the seams independent.
+///
+/// HONEST CEILING (the same as the write path's): per-PRINCIPAL isolation — binding the
+/// AUTHENTICATED caller to the MATCHED pubkey so peer A cannot read peer B's owner-scoped data via a
+/// valid session — is the (still UNBUILT) tamper-evident pubkey→principal binding, DEFERRED. v1
+/// remains single-configured-owner: every enrolled read peer authenticates as the SAME owner, so
+/// multi-peer here means "more than one DEVICE for the one owner", not multi-tenant.
+pub fn enforce_peer_allowlist_nonempty(
+    allowlist: &[[u8; X25519_PUBKEY_LEN]],
+) -> Result<(), PeerAllowlistError> {
+    if allowlist.is_empty() {
+        return Err(PeerAllowlistError::Invalid);
+    }
+    Ok(())
+}
+
 /// On-wire form for a `Sealed`: `[nonce_len: u8][nonce][ciphertext]`. Mirrors the transport's
 /// internal `encode_sealed` (kept here — the transport does not expose it). Carries no key. Shared
 /// so the read server's owner-sealed body and the write server's auth_proof / owner-sealed body use
@@ -330,6 +360,36 @@ mod tests {
     #[test]
     fn enforce_single_peer_refuses_two_keys() {
         let two = vec![[1u8; X25519_PUBKEY_LEN], [2u8; X25519_PUBKEY_LEN]];
+        assert_eq!(
+            enforce_single_peer(&two),
+            Err(PeerAllowlistError::MultiPeer)
+        );
+    }
+
+    /// (J2 KAT) The READ-seam nonempty guard accepts ONE or TWO peers (Ok) and refuses only an
+    /// EMPTY list (Err::Invalid) — removing the single-peer eviction trap for the read seam.
+    #[test]
+    fn enforce_peer_allowlist_nonempty_accepts_one_and_two_refuses_zero() {
+        let one = vec![[1u8; X25519_PUBKEY_LEN]];
+        let two = vec![[1u8; X25519_PUBKEY_LEN], [2u8; X25519_PUBKEY_LEN]];
+        let none: Vec<[u8; X25519_PUBKEY_LEN]> = vec![];
+        assert!(enforce_peer_allowlist_nonempty(&one).is_ok());
+        assert!(enforce_peer_allowlist_nonempty(&two).is_ok());
+        assert_eq!(
+            enforce_peer_allowlist_nonempty(&none),
+            Err(PeerAllowlistError::Invalid)
+        );
+    }
+
+    /// (J2 KAT — anti-regression) The WRITE-seam guard [`enforce_single_peer`] is BYTE-UNCHANGED: it
+    /// MUST still reject a 2-key list. The read seam relaxing single-peer must NOT relax the write
+    /// seam — proven side-by-side on the SAME two-key list the read guard now accepts.
+    #[test]
+    fn enforce_single_peer_still_refuses_two_keys_after_read_seam_relax() {
+        let two = vec![[3u8; X25519_PUBKEY_LEN], [4u8; X25519_PUBKEY_LEN]];
+        // The read seam admits this list…
+        assert!(enforce_peer_allowlist_nonempty(&two).is_ok());
+        // …but the WRITE seam still refuses it, unchanged.
         assert_eq!(
             enforce_single_peer(&two),
             Err(PeerAllowlistError::MultiPeer)

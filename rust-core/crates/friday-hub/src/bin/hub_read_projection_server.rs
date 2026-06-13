@@ -40,11 +40,23 @@
 //! the slice-6 operator gate (G2, the FREEZE tripwire) — NOT this slice. Built ≠ flipped; this moves
 //! NO UI needle. NOT v1 GO.
 //!
-//! ## Single-owner v1 (DEFERRED cross-owner isolation — see PR body acceptance criteria)
-//! The owner-allowlist ceiling is the SAME single-configured-owner model the write path uses today.
-//! Per-conversation owner-principal matching (so peer A cannot read peer B's mission even with a
-//! valid session) is tied to the write path's own unbuilt FIX-Q2/FIX-Q3b multi-principal bindings
-//! and is DEFERRED as an explicit acceptance criterion — NOT silently skipped.
+//! ## Multi-peer read seam (J2) — single-OWNER v1, multi-DEVICE
+//! (J2) The read seam admits a NON-EMPTY MULTI-peer pubkey allowlist (boots on the DISTINCT
+//! [`friday_hub::key_source::READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID`], enforcing
+//! [`friday_hub::sealed_ws::enforce_peer_allowlist_nonempty`], NOT `enforce_single_peer`). This
+//! REMOVES the single-peer eviction trap for the READ seam: a desktop master-derived peer AND a
+//! distinct mobile device key can BOTH be enrolled and read CONCURRENTLY, with no fresh-key
+//! eviction — the per-handshake S-F gate (`peer_is_allowlisted`) checks the presented key against
+//! EVERY enrolled key. The live WRITE server is BYTE-UNTOUCHED: it still boots on
+//! `PEER_PUBKEY_ALLOWLIST_ID` and still enforces single-peer.
+//!
+//! ## Single-OWNER v1 (DEFERRED per-PRINCIPAL isolation — see PR body acceptance criteria)
+//! Multi-DEVICE is NOT multi-tenant. The owner-allowlist ceiling is the SAME single-configured-owner
+//! model the write path uses today: every enrolled read peer/device authenticates as the SAME
+//! owner. Per-conversation owner-principal matching (so peer A cannot read peer B's mission even with
+//! a valid session) is tied to the write path's own unbuilt FIX-Q2/FIX-Q3b multi-principal bindings
+//! (the tamper-evident pubkey→principal binding) and is DEFERRED as an explicit acceptance criterion
+//! — NOT silently skipped. Multi-peer here = "more than one DEVICE for the one owner".
 
 use std::env;
 use std::io::{Read, Write};
@@ -54,11 +66,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use friday_crypto::{seal, DataKey, DeviceKeypair, FileSecureStore};
 use friday_hub::hub_server::{AuthedPrincipal, ForwardedAuth};
-use friday_hub::key_source::{PEER_PUBKEY_ALLOWLIST_ID, X25519_PUBKEY_LEN};
+use friday_hub::key_source::{READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID, X25519_PUBKEY_LEN};
 use friday_hub::providers_doctor_projection::{parse_provider_selection, project_providers_doctor};
 use friday_hub::run_readback_projection::project_run_readback;
 use friday_hub::sealed_ws::{
-    decode_sealed_proof, enforce_single_peer, establish_session, load_peer_allowlist,
+    decode_sealed_proof, enforce_peer_allowlist_nonempty, establish_session, load_peer_allowlist,
 };
 use friday_hub::workbench_projection::project_workbench;
 use friday_protocol::{
@@ -95,11 +107,10 @@ enum ServerError {
     /// The read-only hub DB could not be opened ⇒ the server refuses to start (no projection
     /// surface). The category only — never the db path.
     DbUnavailable,
-    /// The SecureStore peer-pubkey allowlist is MISSING or INVALID ⇒ FAIL CLOSED.
+    /// The SecureStore peer-pubkey allowlist is MISSING, INVALID, or EMPTY ⇒ FAIL CLOSED. (J2: the
+    /// read seam admits a NON-EMPTY MULTI-peer list, so there is no longer a multi-peer refusal —
+    /// only the missing/empty/corrupt fail-closed remains.)
     PeerAllowlist,
-    /// More than one enrolled peer pubkey ⇒ refused (single-peer is a code invariant until the
-    /// multi-principal bindings land). The count is NOT surfaced.
-    MultiPeerUnsupported,
     /// The master key is absent/unreadable ⇒ the server REFUSES TO BOOT (never auto-generated).
     MasterKeyUnavailable,
     /// The persistent FileSecureStore cannot be resolved/opened ⇒ FAIL CLOSED. Never the path.
@@ -113,7 +124,6 @@ fn main() {
             ServerError::Bind => "bind_failed",
             ServerError::DbUnavailable => "db_unavailable",
             ServerError::PeerAllowlist => "peer_allowlist_unavailable",
-            ServerError::MultiPeerUnsupported => "peer_allowlist_multi_peer_unsupported",
             ServerError::MasterKeyUnavailable => "master_key_unavailable",
             ServerError::StoreUnavailable => "secure_store_unavailable",
         };
@@ -157,9 +167,15 @@ fn run() -> Result<(), ServerError> {
     };
     let secure_store =
         FileSecureStore::open(&store_dir, kek).map_err(|_| ServerError::StoreUnavailable)?;
-    let peer_allowlist = load_peer_allowlist(&secure_store, PEER_PUBKEY_ALLOWLIST_ID)
+    // (J2) MULTI-PEER read seam: load from the READ-SEAM id (DISTINCT from the live write server's
+    // `PEER_PUBKEY_ALLOWLIST_ID`, which is byte-untouched) and enforce only that the allowlist is
+    // NON-EMPTY — NOT single-peer. This removes the single-peer eviction trap for the READ seam: a
+    // desktop master-derived peer AND a distinct mobile device key can BOTH be enrolled and BOTH
+    // read, with no fresh-key eviction (the per-handshake S-F gate checks the presented key against
+    // EVERY enrolled key). The write server is unaffected (own id + own single-peer guard).
+    let peer_allowlist = load_peer_allowlist(&secure_store, READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID)
         .map_err(|_| ServerError::PeerAllowlist)?;
-    enforce_single_peer(&peer_allowlist).map_err(|_| ServerError::MultiPeerUnsupported)?;
+    enforce_peer_allowlist_nonempty(&peer_allowlist).map_err(|_| ServerError::PeerAllowlist)?;
     eprintln!(
         "hub_read_projection_server: peer-pubkey allowlist loaded from SecureStore (count={})",
         peer_allowlist.len()
@@ -846,6 +862,140 @@ mod tests {
         drop(ws);
         let processed = server.join().unwrap();
         assert_eq!(processed, 1);
+    }
+
+    /// A SECOND fixed non-secret test client secret scalar, DISTINCT from [`CLIENT_SECRET`] (so it
+    /// derives a different X25519 pubkey). Used by the J2 multi-peer KAT to enroll a second peer.
+    /// TEST FIXTURE, not real key material.
+    const CLIENT_SECRET_B: [u8; 32] = [
+        // pragma: allowlist secret
+        151, 157, 163, 167, 173, 179, 181, 191, 193, 197, 199, 211, 223, 227, 229, 233, 239, 241,
+        251, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27,
+    ];
+
+    /// Drive ONE full sealed read round-trip (workbench projection) for the peer built from
+    /// `client_secret` against the listener: handshake → owner auth → owner-sealed refs-only
+    /// snapshot. The server accepts inline (using a FIXED `server_secret` so each accept derives a
+    /// stable key); the client runs in a spawned thread (`DeviceKeypair` is neither Clone nor Send,
+    /// so the secret bytes — which ARE Copy — cross the thread boundary and the keypair is rebuilt
+    /// inside). Asserts the canonical mission id is in the owner-opened body and exactly ONE
+    /// envelope was served. Reused by the J2 multi-peer KAT so each peer's round-trip is identical.
+    #[allow(clippy::too_many_arguments)]
+    fn one_read_round_trip(
+        listener: &ReadWsListener,
+        addr: SocketAddr,
+        server_secret: [u8; 32],
+        client_secret: [u8; 32],
+        owner_allowlist: &[String],
+        peer_allowlist: &[[u8; X25519_PUBKEY_LEN]],
+        db_path: &str,
+        request_id: &str,
+    ) {
+        let req_id = request_id.to_string();
+        let client = thread::spawn(move || {
+            let client_kp = DeviceKeypair::from_secret_bytes(client_secret);
+            let (mut ws, session_key, session_nonce) = client_handshake(addr, &client_kp);
+            let req = Envelope::new(
+                format!("msg-{req_id}"),
+                1000,
+                Message::WorkbenchProjectionRequest {
+                    request: WorkbenchProjectionRequestWire {
+                        mission_id: None,
+                        forwarded_principal: OWNER.to_string(),
+                        auth_proof: read_auth_proof(&session_key, &session_nonce, OWNER, &req_id),
+                        request_id: req_id.clone(),
+                    },
+                },
+            );
+            ws_send_envelope(&mut ws, &session_key, &req, SESSION_AAD).unwrap();
+            let resp = ws_recv_envelope(&mut ws, &session_key, SESSION_AAD).unwrap();
+            let Message::WorkbenchProjectionSnapshot { snapshot } = resp.message else {
+                panic!("expected a WorkbenchProjectionSnapshot");
+            };
+            assert_eq!(snapshot.request_id, req_id);
+            let sealed_bytes = hex_decode(&snapshot.projection_json);
+            let opened =
+                crypto_open(&session_key, &decode_sealed(&sealed_bytes), SESSION_AAD).unwrap();
+            let json = String::from_utf8(opened).unwrap();
+            assert!(
+                json.contains("mission_read_seam_probe_20260611"),
+                "the owner-opened snapshot carries the canonical mission id"
+            );
+            drop(ws);
+        });
+        let server_kp = DeviceKeypair::from_secret_bytes(server_secret);
+        let db = Db::open_hub_readonly(db_path).unwrap();
+        let probe = null_probe();
+        let processed = listener
+            .accept_one(&server_kp, &db, &probe, owner_allowlist, peer_allowlist)
+            .unwrap();
+        assert_eq!(processed, 1, "the server served exactly one read envelope");
+        client.join().unwrap();
+    }
+
+    /// (J2 KAT) MULTI-PEER read seam, NO eviction. TWO distinct real `DeviceKeypair`s are enrolled
+    /// under the read-seam allowlist; the server runs `accept_one` THREE times. Peer A completes a
+    /// full sealed read round-trip, THEN peer B completes one, THEN peer A AGAIN — proving B did NOT
+    /// evict A (the single-peer trap is gone for the read seam). The server uses a FIXED keypair
+    /// across the three accepts so each peer derives a stable session key.
+    #[test]
+    fn read_server_admits_two_distinct_peers_with_no_eviction() {
+        let db_path = seed_probe_db("j2-multipeer");
+        const SERVER_SECRET: [u8; 32] = [
+            // pragma: allowlist secret
+            2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83,
+            89, 97, 101, 103, 107, 109, 113, 127, 131,
+        ];
+        let kp_a = DeviceKeypair::from_secret_bytes(CLIENT_SECRET);
+        let kp_b = DeviceKeypair::from_secret_bytes(CLIENT_SECRET_B);
+        // The two peers are genuinely DISTINCT (different pubkeys) — a real multi-device allowlist.
+        assert_ne!(kp_a.public_bytes(), kp_b.public_bytes());
+        let peer_allowlist = vec![kp_a.public_bytes(), kp_b.public_bytes()];
+        // The read seam admits this 2-key list (nonempty), where the write seam would refuse it.
+        assert!(
+            friday_hub::sealed_ws::enforce_peer_allowlist_nonempty(&peer_allowlist).is_ok(),
+            "read seam admits a 2-peer allowlist"
+        );
+        assert!(
+            friday_hub::sealed_ws::enforce_single_peer(&peer_allowlist).is_err(),
+            "the write seam guard still refuses the SAME 2-peer list (untouched)"
+        );
+        let owner_allowlist = vec![OWNER.to_string()];
+
+        let listener = ReadWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        // Peer A → Peer B → Peer A again. All three succeed: B did NOT evict A.
+        one_read_round_trip(
+            &listener,
+            addr,
+            SERVER_SECRET,
+            CLIENT_SECRET,
+            &owner_allowlist,
+            &peer_allowlist,
+            &db_path,
+            "j2-A-1",
+        );
+        one_read_round_trip(
+            &listener,
+            addr,
+            SERVER_SECRET,
+            CLIENT_SECRET_B,
+            &owner_allowlist,
+            &peer_allowlist,
+            &db_path,
+            "j2-B-1",
+        );
+        one_read_round_trip(
+            &listener,
+            addr,
+            SERVER_SECRET,
+            CLIENT_SECRET,
+            &owner_allowlist,
+            &peer_allowlist,
+            &db_path,
+            "j2-A-2-after-B",
+        );
     }
 
     /// KAT — owner-scoping: a MISMATCHED forwarded principal (well-formed, but NOT in the owner
