@@ -375,6 +375,23 @@ fn run() -> Result<(), ServerError> {
         );
     }
 
+    // (NS-5) Read the MISSION-INTAKE ingress flag ONCE at boot (default-off). When false the
+    // dispatch arm NEVER handles a `MissionIntakeRequest` — it falls through to the EXISTING
+    // catch-all keepalive echo (byte-identical to today, since the server has never had a
+    // MissionIntakeRequest arm), so deploying this binary changes NO live behavior until the
+    // operator flips this flag.
+    let mission_intake_enabled =
+        mission_intake_enabled_from(env::var(MISSION_INTAKE_ENABLED_ENV).ok().as_deref());
+    if mission_intake_enabled {
+        eprintln!(
+            "hub_agent_run_server: MISSION-INTAKE ingress ENABLED (FRIDAY_MISSION_INTAKE) — an inbound MissionIntakeRequest births a Mission (no model call)"
+        );
+    } else {
+        eprintln!(
+            "hub_agent_run_server: MISSION-INTAKE ingress DISABLED (set FRIDAY_MISSION_INTAKE=1 to enable) — a MissionIntakeRequest is a benign keepalive echo"
+        );
+    }
+
     // (3) Long-lived accept loop. Each accepted connection: set the read timeout, read the peer
     // pubkey preamble, REJECT a non-allowlisted peer pubkey (S-F, the FIRST gate), reject low-order
     // points, run the WS handshake, derive the sealed session key, and serve sealed envelopes
@@ -387,6 +404,7 @@ fn run() -> Result<(), ServerError> {
             &peer_allowlist,
             run_control_enabled,
             mission_bound_run_enabled,
+            mission_intake_enabled,
         ) {
             Ok(_served) => {}
             // A connection-level error ends THAT connection only; the server keeps listening.
@@ -442,6 +460,32 @@ const MISSION_BOUND_RUN_ENABLED_ENV: &str = "FRIDAY_MISSION_BOUND_RUN";
 /// false; only the exact opt-in values `"1"`/`"true"` (case-insensitive, trimmed) ⇒ true;
 /// everything else ⇒ false.
 fn mission_bound_run_enabled_from(raw: Option<&str>) -> bool {
+    matches!(
+        raw.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("1") | Some("true")
+    )
+}
+
+/// (NS-5) The env flag that gates the MISSION-INTAKE ingress arm. DEFAULT-OFF: an inbound
+/// [`Message::MissionIntakeRequest`] is HANDLED (birthing a Mission + WorkItem(Draft) +
+/// SurfaceThread + route_decision via the existing
+/// [`friday_hub::hub_server::mission_intake_result_for_db`] and replying with a
+/// [`Message::MissionIntakeResult`]) ONLY when `FRIDAY_MISSION_INTAKE` is exactly `"1"`/`"true"`
+/// (case-insensitive, trimmed). Unset — or any other value — leaves the arm DARK: the
+/// `MissionIntakeRequest` falls through to the EXISTING catch-all keepalive echo, BYTE-IDENTICAL to
+/// today (the server has never had a MissionIntakeRequest arm, so the live behavior on this message
+/// is the benign echo), so deploying this binary changes NO live behavior until the operator flips
+/// this SEPARATE flag. No model call is made in intake (it is a pure `&Db` mutation ⇒ ZERO
+/// `token_ledger` rows). SEPARATE from `FRIDAY_ROUTE_AGENT_RUN_VIA_RUST` (run-START),
+/// `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST` (run-CONTROL), and `FRIDAY_MISSION_BOUND_RUN` (the bound-run
+/// seam); flipping THIS one is an operator cutover decision gated on organic intake ingress.
+const MISSION_INTAKE_ENABLED_ENV: &str = "FRIDAY_MISSION_INTAKE";
+
+/// Pure flag-matcher for [`MISSION_INTAKE_ENABLED_ENV`] (separated from the env read so it is
+/// testable without mutating the process-global environment). DEFAULT-OFF: `None` (unset) ⇒
+/// false; only the exact opt-in values `"1"`/`"true"` (case-insensitive, trimmed) ⇒ true;
+/// everything else ⇒ false.
+fn mission_intake_enabled_from(raw: Option<&str>) -> bool {
     matches!(
         raw.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
         Some("1") | Some("true")
@@ -542,6 +586,9 @@ impl AgentRunWsListener {
     /// session (peer pubkey from the wire; S-F: a NON-ALLOWLISTED peer pubkey is rejected FIRST;
     /// then low-order points rejected), and serve it fail-closed — dispatching authed agent-runs.
     /// Returns the count of envelopes processed on that session.
+    // (NS-5) Boot flags are threaded as booleans, mirroring NS-4/A1; bundling them into a struct is
+    // deferred until a future flag warrants it (a DARK byte-identical slice avoids the churn).
+    #[allow(clippy::too_many_arguments)]
     fn accept_one<T: Transport>(
         &self,
         server_kp: &DeviceKeypair,
@@ -550,6 +597,7 @@ impl AgentRunWsListener {
         peer_allowlist: &[[u8; X25519_PUBKEY_LEN]],
         run_control_enabled: bool,
         mission_bound_run_enabled: bool,
+        mission_intake_enabled: bool,
     ) -> Result<usize, TransportError> {
         let (stream, _peer) = self.listener.accept()?;
         // HARDENING: a per-connection read timeout BEFORE any read, so a stalled peer cannot
@@ -565,6 +613,7 @@ impl AgentRunWsListener {
             owner_allowlist,
             run_control_enabled,
             mission_bound_run_enabled,
+            mission_intake_enabled,
         )
     }
 }
@@ -595,6 +644,9 @@ impl AgentRunWsListener {
 ///
 /// Returns the number of envelopes processed before the session ended — `0` means the first
 /// envelope failed to open OR failed auth (the fail-closed path: no echo, no dispatch).
+// (NS-5) Boot flags are threaded as booleans, mirroring NS-4/A1; bundling them into a struct is
+// deferred until a future flag warrants it (a DARK byte-identical slice avoids the churn).
+#[allow(clippy::too_many_arguments)]
 fn serve_sealed_session<S: Read + Write, T: Transport>(
     ws: &mut WireWebSocket<S>,
     session_key: &DataKey,
@@ -603,6 +655,7 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
     owner_allowlist: &[String],
     run_control_enabled: bool,
     mission_bound_run_enabled: bool,
+    mission_intake_enabled: bool,
 ) -> Result<usize, TransportError> {
     let mut processed = 0usize;
     // S-E: per-session msg_id dedup. A reconnect mints a FRESH tracker (so it is not a
@@ -1019,10 +1072,47 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 send_control_result(ws, session_key, &env.msg_id, run_id, &outcome, now_ms)?;
                 processed += 1;
             }
+            // (NS-5) MISSION-INTAKE ingress — FLAG-GATED. When `FRIDAY_MISSION_INTAKE` is ON, an
+            // inbound `MissionIntakeRequest` BIRTHS a Mission (Mission + WorkItem(Draft) +
+            // SurfaceThread + route_decision) via the EXISTING
+            // `friday_hub::hub_server::mission_intake_result_for_db` — the SAME Mission-birth path
+            // the `HubServer::dispatch` arm uses — and replies with a `MissionIntakeResult` (or an
+            // `Error` envelope on a validation/preflight failure), sealed back over the SAME
+            // session and correlated to the request. The intake is a PURE `&Db` mutation: NO
+            // provider/model call, so it writes ZERO `token_ledger` rows. The session is the
+            // channel auth (the sealed session opened ⇒ the peer holds the session key); intake
+            // carries no per-run `auth_proof`, mirroring `HubServer::dispatch`'s session-authed
+            // intake. When the flag is OFF this guard FAILS and a `MissionIntakeRequest` falls
+            // through to the catch-all keepalive echo below — BYTE-IDENTICAL to today (the server
+            // has never had a MissionIntakeRequest arm), the deploy-safety invariant.
+            Message::MissionIntakeRequest { request } if mission_intake_enabled => {
+                let now_ms = now_ms();
+                let result = friday_hub::hub_server::mission_intake_result_for_db(
+                    runtime.db(),
+                    &env.msg_id,
+                    request,
+                    now_ms,
+                );
+                eprintln!(
+                    "hub_agent_run_server_dispatch: msg_id={} leg=mission_intake (mission-intake enabled)",
+                    env.msg_id
+                );
+                // Correlate the reply to the inbound request (consistent with every other bin
+                // reply + the `mission_intake_result` dispatch caller's `.with_correlation`).
+                ws_send_envelope(
+                    ws,
+                    session_key,
+                    &result.with_correlation(env.msg_id.clone()),
+                    SESSION_AAD,
+                )?;
+                processed += 1;
+            }
             // Benign keepalive (S-B behaviour): echo the opened envelope back, sealed under the
             // SAME session key, correlated to the request. NO dispatch. This is ALSO where a
             // control message lands when the run-control flag is OFF (the guards above are not
             // met), so a v13 control message on a DARK server is a harmless echo — no handling.
+            // (NS-5) A `MissionIntakeRequest` with the mission-intake flag OFF ALSO lands here, so
+            // a DARK server treats it as a harmless echo — byte-identical to today.
             _ => {
                 let reply = Envelope::new(env.msg_id.clone(), env.sent_at, env.message)
                     .with_correlation(env.msg_id.clone());
@@ -1493,7 +1583,15 @@ mod tests {
 
         // SERVER on the main thread (holds the non-Send runtime).
         let processed = listener
-            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false, false)
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false,
+                false,
+                false,
+            )
             .unwrap();
         assert_eq!(processed, 1, "one authed dispatch processed");
 
@@ -1604,6 +1702,7 @@ mod tests {
                 &peer_allowlist,
                 run_control_enabled,
                 false, // (NS-4) mission-bound seam OFF for the run-control flag tests
+                false, // (NS-5) mission-intake ingress OFF for the run-control flag tests
             )
             .unwrap();
         assert_eq!(processed, 1, "[{tag}] the paused dispatch is processed");
@@ -1680,7 +1779,15 @@ mod tests {
             (req, session.clone(), session.clone())
         });
         let processed = listener
-            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false, false)
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false,
+                false,
+                false,
+            )
             .unwrap();
         assert_eq!(
             processed, 1,
@@ -1714,7 +1821,15 @@ mod tests {
         });
 
         let processed = listener
-            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false, false)
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false,
+                false,
+                false,
+            )
             .unwrap();
         assert_eq!(processed, 0, "[{tag}] rejected dispatch processes ZERO");
 
@@ -1814,6 +1929,235 @@ mod tests {
     }
 
     #[test]
+    fn mission_intake_flag_is_default_off_and_fail_closed() {
+        // (NS-5) The mission-intake ingress arm is DEFAULT-OFF: unset ⇒ disabled (deploy-safe, the
+        // dispatch arm never handles a MissionIntakeRequest — it falls through to the keepalive
+        // echo). Only the exact opt-in values enable it; everything else is OFF.
+        assert!(
+            !mission_intake_enabled_from(None),
+            "unset ⇒ disabled (default-off, deploy-safe)"
+        );
+        assert!(!mission_intake_enabled_from(Some("")), "empty ⇒ disabled");
+        assert!(!mission_intake_enabled_from(Some("0")), "0 ⇒ disabled");
+        assert!(
+            !mission_intake_enabled_from(Some("false")),
+            "false ⇒ disabled"
+        );
+        assert!(
+            !mission_intake_enabled_from(Some("on")),
+            "garbage ⇒ disabled"
+        );
+        assert!(mission_intake_enabled_from(Some("1")), "1 ⇒ enabled");
+        assert!(mission_intake_enabled_from(Some("true")), "true ⇒ enabled");
+        assert!(
+            mission_intake_enabled_from(Some("  TRUE  ")),
+            "padded TRUE ⇒ enabled"
+        );
+    }
+
+    /// (NS-5) Build a `MissionIntakeRequest` envelope for an organic surface intake — the SAME
+    /// wire shape an inbound intake message carries. No `auth_proof`: the sealed session IS the
+    /// channel auth (mirroring `HubServer::dispatch`'s session-authed intake).
+    fn mission_intake_request(msg_id: &str) -> Envelope {
+        Envelope::new(
+            msg_id,
+            1000,
+            Message::MissionIntakeRequest {
+                request: friday_protocol::MissionIntakeRequestWire {
+                    friday_conversation_id: "fconv_ns5_intake".into(),
+                    owner_principal: OWNER.into(),
+                    surface_thread_id: "surface-ns5-intake".into(),
+                    surface_kind: "mobile".into(),
+                    delivery_route: "mobile://local/thread/ns5".into(),
+                    visibility_policy: "compact".into(),
+                    mission_id: "mission-ns5".into(),
+                    work_item_id: "work-ns5".into(),
+                    title: "NS-5 organic intake".into(),
+                    intent: "resolve the organic surface intake into a Mission".into(),
+                    lane: "deepseek".into(),
+                    target_provider_or_agent: Some("deepseek".into()),
+                    capability_id: Some("ask_friday.deepseek".into()),
+                    body_ref: Some("friday://body/mobile/ns5-intake".into()),
+                    includes_sensitive_context: false,
+                },
+            },
+        )
+    }
+
+    /// (NS-5) FLAG-ON: an inbound MissionIntakeRequest driven through the REAL dispatch path
+    /// (`accept_one` → `serve_sealed_session`, NOT a direct `mission_intake_result_for_db` call)
+    /// BIRTHS a Mission: it persists a Mission row + a WorkItem(Draft) + a SurfaceThread +
+    /// a route_decision, returns a `MissionIntakeResult{status:"ready"}`, and writes ZERO
+    /// `token_ledger` rows (no model call). This proves the WIRING, not the inner helper.
+    #[test]
+    fn flag_on_mission_intake_births_a_mission_through_dispatch_and_writes_no_ledger() {
+        let (rt, _ws) = mock_runtime("intake-on", OWNER);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        let client_kp = DeviceKeypair::generate();
+        // S-F: allowlist the client pubkey so the handshake clears the peer gate and the test
+        // exercises the NS-5 intake arm (the sealed session is the intake's channel auth).
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let client = spawn_client(addr, client_kp, |session, _nonce| {
+            let req = mission_intake_request("req-intake-on");
+            (req, session.clone(), session.clone())
+        });
+
+        // SERVER on the main thread (holds the non-Send runtime). Flag ON (last arg).
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false, // run-control OFF
+                false, // mission-bound seam OFF
+                true,  // (NS-5) mission-intake ingress ON
+            )
+            .unwrap();
+        assert_eq!(processed, 1, "one mission-intake request processed");
+
+        // The client got a MissionIntakeResult (ready) — the intake wired through dispatch.
+        let obs = client.join().unwrap();
+        let Some(Message::MissionIntakeResult { result }) = obs.result.clone() else {
+            panic!(
+                "flag ON must reply with MissionIntakeResult, got {:?}",
+                obs.result
+            );
+        };
+        assert_eq!(result.mission_id, "mission-ns5");
+        assert_eq!(result.work_item_id.as_deref(), Some("work-ns5"));
+        assert_eq!(result.surface_thread_id, "surface-ns5-intake");
+        assert_eq!(result.status, "ready", "intake births a ready Mission");
+        assert!(result.created_or_ready, "the WorkItem was created");
+        assert!(result.blockers.is_empty());
+
+        // MISSION-BIRTH: the canonical rows are persisted in the runtime's REAL DB.
+        let db = rt.db();
+        let mission = db
+            .get_mission("mission-ns5")
+            .unwrap()
+            .expect("Mission row persisted");
+        assert_eq!(
+            mission.intent,
+            "resolve the organic surface intake into a Mission"
+        );
+
+        let work_item = db
+            .get_work_item("work-ns5")
+            .unwrap()
+            .expect("WorkItem row persisted");
+        assert_eq!(work_item.mission_id, "mission-ns5");
+        // The intake CONSTRUCTS the WorkItem as Draft (see `mission_intake_result_for_db`), and
+        // `preflight_and_stage_work_item` STAGES it to ReadyToDispatch on a clean preflight (the
+        // existing, proven post-preflight state — `mission_preflight.rs:148`). So the BORN row is
+        // ReadyToDispatch; that is the WorkItem-birth the wiring produces.
+        assert_eq!(
+            work_item.status,
+            friday_core::WorkItemStatus::ReadyToDispatch,
+            "the WorkItem is born (Draft) and staged to ReadyToDispatch by preflight"
+        );
+
+        let surface = db
+            .get_surface_thread("surface-ns5-intake")
+            .unwrap()
+            .expect("SurfaceThread row persisted");
+        assert_eq!(surface.mission_id.as_deref(), Some("mission-ns5"));
+
+        let route_decisions = db.list_route_decisions_for_mission("mission-ns5").unwrap();
+        assert_eq!(
+            route_decisions.len(),
+            1,
+            "exactly one route_decision is persisted for the birthed Mission"
+        );
+        assert_eq!(route_decisions[0].work_item_id, "work-ns5");
+
+        // ZERO model call: intake is a pure &Db mutation, so the token_ledger has NO rows. COUNT
+        // (not a SUM) is the faithful "no model call" assertion — a zero-token row is still a row.
+        let ledger_rows: i64 = db
+            .conn()
+            .query_row("SELECT COUNT(*) FROM token_ledger", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            ledger_rows, 0,
+            "mission intake makes NO model call ⇒ ZERO token_ledger rows"
+        );
+    }
+
+    /// (NS-5) DEPLOY-SAFETY (the load-bearing test): with the mission-intake flag OFF, an inbound
+    /// MissionIntakeRequest is treated as a benign keepalive ECHO — BYTE-IDENTICAL to today (the
+    /// server has never had a MissionIntakeRequest arm, so the live behavior on this message is the
+    /// catch-all echo). It births NO Mission and writes NO rows. This is the same dark-when-off
+    /// shape as `control_message_is_keepalive_echo_when_flag_off`.
+    #[test]
+    fn flag_off_mission_intake_is_keepalive_echo_and_births_nothing() {
+        let (rt, _ws) = mock_runtime("intake-off", OWNER);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        let client_kp = DeviceKeypair::generate();
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let client = spawn_client(addr, client_kp, |session, _nonce| {
+            let req = mission_intake_request("req-intake-off");
+            (req, session.clone(), session.clone())
+        });
+
+        // Flag OFF (last arg) ⇒ the MissionIntakeRequest falls through to the keepalive echo.
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false, // run-control OFF
+                false, // mission-bound seam OFF
+                false, // (NS-5) mission-intake ingress OFF — byte-identical to today
+            )
+            .unwrap();
+        assert_eq!(
+            processed, 1,
+            "the intake message is processed as a keepalive"
+        );
+
+        // The flag is OFF ⇒ the request is ECHOED verbatim (keepalive), NOT a MissionIntakeResult.
+        match client.join().unwrap().result.expect("an echo reply") {
+            Message::MissionIntakeRequest { request } => {
+                assert_eq!(
+                    request.mission_id, "mission-ns5",
+                    "the request is echoed verbatim"
+                );
+            }
+            other => panic!("flag OFF must echo the MissionIntakeRequest, got {other:?}"),
+        }
+
+        // BYTE-IDENTICAL deploy safety: NO Mission was birthed — none of the canonical rows exist.
+        let db = rt.db();
+        assert!(
+            db.get_mission("mission-ns5").unwrap().is_none(),
+            "flag OFF births NO Mission"
+        );
+        assert!(
+            db.get_work_item("work-ns5").unwrap().is_none(),
+            "flag OFF births NO WorkItem"
+        );
+        assert!(
+            db.get_surface_thread("surface-ns5-intake")
+                .unwrap()
+                .is_none(),
+            "flag OFF births NO SurfaceThread"
+        );
+        assert!(
+            db.list_route_decisions_for_mission("mission-ns5")
+                .unwrap()
+                .is_empty(),
+            "flag OFF writes NO route_decision"
+        );
+    }
+
+    #[test]
     fn non_allowlisted_principal_is_rejected_no_run_no_body() {
         reject_case("rej-forged", "principal:attacker-not-allowlisted");
     }
@@ -1867,7 +2211,15 @@ mod tests {
         });
 
         let processed = listener
-            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false, false)
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false,
+                false,
+                false,
+            )
             .unwrap();
         assert_eq!(
             processed, 0,
@@ -1902,7 +2254,15 @@ mod tests {
         });
 
         let processed = listener
-            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false, false)
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false,
+                false,
+                false,
+            )
             .unwrap();
         assert_eq!(
             processed, 0,
@@ -1937,8 +2297,15 @@ mod tests {
             drop(stream);
         });
         // accept_one runs the REAL production path; a low-order key must make it return Err.
-        let outcome =
-            listener.accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false, false);
+        let outcome = listener.accept_one(
+            &server_kp,
+            &rt,
+            &allowlist,
+            &peer_allowlist,
+            false,
+            false,
+            false,
+        );
         client.join().unwrap();
         assert!(
             outcome.is_err(),
@@ -2216,7 +2583,15 @@ mod tests {
             let _ = ws_recv_envelope(&mut ws, &sess_c1, SESSION_AAD);
         });
         let processed1 = listener
-            .accept_one(&server_kp, &rt1, &allowlist, &peer_allowlist, false, false)
+            .accept_one(
+                &server_kp,
+                &rt1,
+                &allowlist,
+                &peer_allowlist,
+                false,
+                false,
+                false,
+            )
             .unwrap();
         assert_eq!(processed1, 1, "connection-1 is a VALID dispatch");
         let captured_proof = rx.recv().unwrap();
@@ -2249,7 +2624,15 @@ mod tests {
                 .map(|e| e.message)
         });
         let processed2 = listener
-            .accept_one(&server_kp, &rt2, &allowlist, &peer_allowlist, false, false)
+            .accept_one(
+                &server_kp,
+                &rt2,
+                &allowlist,
+                &peer_allowlist,
+                false,
+                false,
+                false,
+            )
             .unwrap();
         assert_eq!(
             processed2, 0,
@@ -2300,7 +2683,15 @@ mod tests {
         });
 
         let processed = listener
-            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false, false)
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false,
+                false,
+                false,
+            )
             .unwrap();
         // The first keepalive was processed (echoed); the replayed msg_id ended the session.
         assert_eq!(
@@ -2375,6 +2766,7 @@ mod tests {
             &peer_allowlist,
             false,
             false,
+            false,
         );
         let obs = client.join().unwrap();
 
@@ -2429,6 +2821,7 @@ mod tests {
                 &rt,
                 &owner_allowlist,
                 &peer_allowlist,
+                false,
                 false,
                 false,
             )
@@ -2839,6 +3232,7 @@ mod tests {
                 &peer_allowlist,
                 false,
                 false,
+                false,
             )
             .expect("server serves the interop session");
         assert_eq!(processed, 1, "one authed dispatch processed");
@@ -2893,6 +3287,7 @@ mod tests {
             &peer_allowlist,
             false,
             false,
+            false,
         );
         assert!(
             served.is_err(),
@@ -2940,6 +3335,7 @@ mod tests {
                 &rt,
                 &owner_allowlist,
                 &peer_allowlist,
+                false,
                 false,
                 false,
             )
@@ -3049,6 +3445,7 @@ mod tests {
                 &peer_allowlist,
                 false,
                 false,
+                false,
             )
             .expect("server serves the compose-adapter session");
         assert_eq!(processed, 1, "one authed dispatch processed");
@@ -3101,6 +3498,7 @@ mod tests {
             &rt,
             &owner_allowlist,
             &peer_allowlist,
+            false,
             false,
             false,
         );
@@ -3156,7 +3554,15 @@ mod tests {
         });
 
         let processed = listener
-            .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false, false)
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false,
+                false,
+                false,
+            )
             .unwrap();
         assert_eq!(processed, 1, "one sessioned dispatch processed");
 
@@ -3257,7 +3663,7 @@ mod tests {
         });
         assert_eq!(
             listener
-                .accept_one(&server_kp, &rt, &allowlist, &peer1, false, false)
+                .accept_one(&server_kp, &rt, &allowlist, &peer1, false, false, false)
                 .unwrap(),
             1
         );
@@ -3274,7 +3680,7 @@ mod tests {
         });
         assert_eq!(
             listener
-                .accept_one(&server_kp, &rt, &allowlist, &peer2, false, false)
+                .accept_one(&server_kp, &rt, &allowlist, &peer2, false, false, false)
                 .unwrap(),
             1
         );
@@ -3319,7 +3725,15 @@ mod tests {
         });
         assert_eq!(
             listener
-                .accept_one(&server_kp, &rt, &allowlist, &peer_allowlist, false, false)
+                .accept_one(
+                    &server_kp,
+                    &rt,
+                    &allowlist,
+                    &peer_allowlist,
+                    false,
+                    false,
+                    false
+                )
                 .unwrap(),
             1
         );
