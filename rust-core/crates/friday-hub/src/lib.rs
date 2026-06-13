@@ -2446,6 +2446,15 @@ pub(crate) fn gate_dispatch(
 /// self-approve) — decided BEFORE any signature is examined, in every mode.
 ///
 /// Everything else is identical to the pre-S4 path: authorize → execute ONLY on `Allow`.
+///
+/// ## NS-2 — flag-gated trust-grant enforcement ([`FRIDAY_TRUST_GRANT_ENFORCE`])
+/// This public entrypoint reads the [`FRIDAY_TRUST_GRANT_ENFORCE`] flag ONCE (the only env
+/// read; semantics in [`trust_grant_enforce_from`]) and delegates to the parameterized
+/// [`gate_dispatch_with_policy_enforced`]. The flag is **default-OFF**: when off, the trust
+/// branch is skipped entirely and every gate decision is BYTE-IDENTICAL to the NS-1 baseline.
+/// The signature is unchanged so the two existing callers ([`gate_dispatch`], the run loop)
+/// are untouched — the `enforce_trust` bool lives only on the private inner fn (the codebase's
+/// "split env-read from pure logic" idiom, mirroring `mission_intake_enabled_from`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn gate_dispatch_with_policy(
     conn: &Connection,
@@ -2456,11 +2465,53 @@ pub(crate) fn gate_dispatch_with_policy(
     policy: &RunPolicy,
     now_ms: i64,
 ) -> Result<GateDispatch, StorageError> {
-    // (NS-1) The run's action context is now carried HERE on `policy`
-    // (`policy.action_context()`), constructible into a `friday_storage::AgentActionContext`
-    // for the NS-2 trust check. NS-1 is PURE PLUMBING: nothing below reads it, so every gate
-    // decision is byte-identical to the pre-NS-1 path whether a context is attached or not.
-    // NS-2 will add the `authorize_agent_action` call that consumes it — NOT here, NOT now.
+    // Read the flag ONCE here; the chokepoint logic is pure on the resulting bool.
+    let enforce_trust = trust_grant_enforce_from(std::env::var(FRIDAY_TRUST_GRANT_ENFORCE).ok());
+    gate_dispatch_with_policy_enforced(
+        conn,
+        executor,
+        raw,
+        authz,
+        approve,
+        policy,
+        now_ms,
+        enforce_trust,
+    )
+}
+
+/// The `FRIDAY_TRUST_GRANT_ENFORCE` env var. When exactly `"1"` (after trimming), the NS-2
+/// trust-grant check runs AHEAD of the existing authorization for a mutating action. UNSET /
+/// empty / `"0"` / any other value ⇒ OFF (the prod default — kept narrow + explicit so the
+/// security gate can never be enabled by accident). It MUST stay OFF in prod until grants are
+/// issuable (NS-3) — flag-ON + no grant fails EVERY mutating action closed (by design).
+pub const FRIDAY_TRUST_GRANT_ENFORCE: &str = "FRIDAY_TRUST_GRANT_ENFORCE";
+
+/// Pure flag-matcher for [`FRIDAY_TRUST_GRANT_ENFORCE`] (env read split out so it is unit-
+/// testable without `set_var` — the env-race-free idiom this codebase uses everywhere). ONLY
+/// the literal `"1"` (trimmed) enables; everything else (including `"true"`) is OFF.
+fn trust_grant_enforce_from(raw: Option<String>) -> bool {
+    matches!(raw, Some(v) if v.trim() == "1")
+}
+
+/// The flag-parameterized chokepoint. `enforce_trust` is supplied by the public
+/// [`gate_dispatch_with_policy`] (from the env flag) and injected directly by the NS-2
+/// behavioral tests (so they never mutate `std::env`, avoiding the in-process test race).
+/// When `enforce_trust` is FALSE the NS-2 branch is skipped and behavior is byte-identical
+/// to the NS-1 baseline.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn gate_dispatch_with_policy_enforced(
+    conn: &Connection,
+    executor: &dyn ToolExecutor,
+    raw: &RawToolCall,
+    authz: AuthzMode<'_>,
+    approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
+    policy: &RunPolicy,
+    now_ms: i64,
+    enforce_trust: bool,
+) -> Result<GateDispatch, StorageError> {
+    // (NS-1) The run's action context is carried HERE on `policy` (`policy.action_context()`),
+    // already shaped as a `friday_storage::AgentActionContext` — the NS-2 trust check (below)
+    // consumes it directly via the accessor; no re-derivation of `agent_id` anywhere else.
     //
     // (0) disabledToolNames — fail-closed, BEFORE classify/authorize/execute. A tool not
     //     available to this run must never run; refusing here (it never reaches the gate)
@@ -2483,6 +2534,41 @@ pub(crate) fn gate_dispatch_with_policy(
             "run_is_read_only:{}",
             raw.action
         )));
+    }
+    // (1b) NS-2 trust-grant enforcement — flag-gated, RESTRICTION-ONLY, between the read-only
+    //      check (1) and the existing AuthzMode dispatch (2). It runs ONLY when the flag is ON
+    //      AND the action is mutating (a read-only action is base-Allow and never reaches here,
+    //      so reads stay byte-identical). The trust check can ONLY ADD a Deny — when it does
+    //      NOT object, we DISCARD its result and fall through to the UNCHANGED step (2), so a
+    //      grant `Allow` can never upgrade a `RequiresApproval` to `Allow` (restrictive-only).
+    //      Flag-OFF ⇒ this whole branch is skipped ⇒ byte-identical to the NS-1 baseline.
+    if enforce_trust && request.mutating() {
+        match policy.action_context() {
+            Some(ctx) => {
+                // `approval`/`secret` are passed as None/`&[]`: ONLY the trust-gate Deny
+                // (`authorize_agent_action` steps 1–3 — load grant / revoked-expired / boundary
+                // check) is consumed, and those steps read NEITHER. Its step (4) re-runs the
+                // existing mutating-action compose, but we DISCARD that result here (the existing
+                // step (2) below is authoritative), and step (4) never emits
+                // `denied_by="trust_grant"`, so the discriminator below can never misfire.
+                let trust =
+                    friday_storage::authorize_agent_action(conn, &request, ctx, None, &[], now_ms)?;
+                // Short-circuit ONLY on the trust layer's OWN Deny (it alone sets
+                // `denied_by="trust_grant"`). Any other outcome (Allow / RequiresApproval / a
+                // base-gate Deny) falls through to the unchanged existing decision.
+                if trust.denied_by.as_deref() == Some("trust_grant") {
+                    return Ok(GateDispatch::Denied(trust.reason));
+                }
+            }
+            // No action context ⇒ no agent identity ⇒ no grant can apply. Fail CLOSED with the
+            // documented `trust_no_active_grant` reason (NEVER skip the check — that would be
+            // fail-open). Under flag-ON the `gate_dispatch`/`workflow_exec` default-policy path
+            // (which carries no context) thus Denies every mutating action; that is the intended
+            // posture and is harmless because the flag stays OFF until grants are issuable (NS-3).
+            None => {
+                return Ok(GateDispatch::Denied("trust_no_active_grant".to_string()));
+            }
+        }
     }
     // (2) S6d protected-path authorization (explicit per `authz`):
     let record = match authz {
@@ -4083,6 +4169,355 @@ mod tests {
         assert_eq!(c_base.1, 0, "a denied write never executes");
         assert!(!c_base.2, "no file written on Deny");
         assert_eq!(c_base, c_ctx, "(c) Deny loop outcome unchanged by context");
+    }
+
+    // ── NS-2: flag-gated trust-grant enforcement at the gate-dispatch chokepoint ──────
+    // FAITHFUL BEHAVIORAL TESTS (real DB + real FsToolExecutor, NO mock). The flag is
+    // injected via `gate_dispatch_with_policy_enforced`'s `enforce_trust` bool — NOT
+    // `std::env::set_var` — so these never race the NS-1 byte-identical tests in-process.
+    // The pure env-matcher glue is covered separately by `ns2_trust_grant_enforce_from_*`.
+
+    /// A mutating write proposal targeting the NS-2 ctx's `agent_id`/`tool`.
+    fn ns2_write() -> RawToolCall {
+        raw("write_file", &[("path", "out.txt"), ("content", "X")])
+    }
+
+    /// The action context the gate carries for NS-2 (agent `friday`, tool `write_file`).
+    /// Matches the grant in test (ii) so that grant is unambiguously WITHIN boundaries.
+    fn ns2_ctx() -> friday_storage::AgentActionContext {
+        friday_storage::AgentActionContext {
+            agent_id: "friday".to_string(),
+            workspace: None,
+            tool: Some("write_file".to_string()),
+            provider: None,
+            channel: None,
+            workflow_family: None,
+            skill_family: None,
+        }
+    }
+
+    /// A within-boundaries grant for agent `friday`: `write_file` allowed, unscoped
+    /// workspace, a `Critical` risk ceiling (≥ any write_file risk) → the trust check has
+    /// NO objection (steps 1–3 produce no `trust_grant` Deny). It must still NOT upgrade the
+    /// existing gate decision (test ii).
+    fn ns2_within_boundaries_grant() -> friday_core::TrustGrant {
+        friday_core::TrustGrant {
+            grant_id: "g-friday-ns2".to_string(),
+            agent_id: "friday".to_string(),
+            granted_at: 1,
+            expires_at: None,
+            revoked: false,
+            revoked_at: None,
+            boundaries: friday_core::TrustBoundaries {
+                workspace: None,
+                risk_ceiling: friday_core::Risk::Critical,
+                token_ceiling: None,
+                max_runs: None,
+                allowed_channels: vec![],
+                allowed_providers: vec![],
+                allowed_tools: vec!["write_file".to_string()],
+                allowed_workflow_families: vec![],
+                allowed_skill_families: vec![],
+            },
+        }
+    }
+
+    #[test]
+    fn ns2_trust_grant_enforce_from_only_literal_one_enables() {
+        // The ONLY env-parse glue (behavioral tests bypass env): exactly `"1"` (trimmed) is ON.
+        assert!(
+            !trust_grant_enforce_from(None),
+            "unset ⇒ OFF (prod default)"
+        );
+        assert!(
+            !trust_grant_enforce_from(Some(String::new())),
+            "empty ⇒ OFF"
+        );
+        assert!(!trust_grant_enforce_from(Some("0".to_string())), "0 ⇒ OFF");
+        assert!(
+            !trust_grant_enforce_from(Some("true".to_string())),
+            "`true` ⇒ OFF (only `1` enables — narrow + explicit)"
+        );
+        assert!(
+            !trust_grant_enforce_from(Some("on".to_string())),
+            "`on` ⇒ OFF"
+        );
+        assert!(trust_grant_enforce_from(Some("1".to_string())), "`1` ⇒ ON");
+        assert!(
+            trust_grant_enforce_from(Some("  1  ".to_string())),
+            "whitespace-padded `1` ⇒ ON (trimmed)"
+        );
+    }
+
+    #[test]
+    fn ns2_flag_on_no_grant_fails_closed_and_executor_never_reached() {
+        // (i) flag ON + NO grant row → a mutating action is Denied `trust_no_active_grant`
+        // with `denied_by==Some("trust_grant")`, AND the executor is NEVER reached (no file
+        // is written). The action context carries the agent identity; the DB has no grant.
+        let db = Db::open_hub(&temp_path("ns2-failclosed")).unwrap();
+        let ws = temp_ws("ns2-failclosed");
+        let fs = FsToolExecutor::new(ws.clone());
+        let exec = CountingExecutor {
+            inner: &fs,
+            calls: std::cell::Cell::new(0),
+        };
+        let approve = no_approval();
+        let policy = RunPolicy::new(Some("friday".to_string()), Vec::<String>::new(), false)
+            .with_action_context(ns2_ctx());
+
+        let out = gate_dispatch_with_policy_enforced(
+            db.conn(),
+            &exec,
+            &ns2_write(),
+            AuthzMode::DenyAll,
+            &approve,
+            &policy,
+            1000,
+            true, // flag ON
+        )
+        .unwrap();
+
+        match out {
+            GateDispatch::Denied(reason) => assert_eq!(
+                reason, "trust_no_active_grant",
+                "flag-ON + no grant must fail closed with the documented reason"
+            ),
+            _ => panic!("expected a trust Deny (Denied), got a non-Deny dispatch outcome"),
+        }
+        assert_eq!(
+            exec.calls.get(),
+            0,
+            "the executor must NEVER be reached when the trust gate Denies"
+        );
+        assert!(
+            !ws.join("out.txt").exists(),
+            "no tool side-effect: nothing is written when the trust gate fails closed"
+        );
+
+        // The trust layer's OWN Deny is what fired (`denied_by="trust_grant"`) — assert that
+        // directly through `authorize_agent_action` so the chokepoint short-circuit reason is
+        // pinned to the trust layer, not a coincidental base-gate Deny.
+        let rec = friday_storage::authorize_agent_action(
+            db.conn(),
+            &build_request_with_policy(&ns2_write(), &policy).unwrap(),
+            &ns2_ctx(),
+            None,
+            &[],
+            1000,
+        )
+        .unwrap();
+        assert_eq!(rec.decision, GateDecision::Deny);
+        assert_eq!(rec.denied_by.as_deref(), Some("trust_grant"));
+        assert_eq!(rec.reason, "trust_no_active_grant");
+    }
+
+    #[test]
+    fn ns2_flag_on_within_boundaries_grant_does_not_upgrade_existing_decision() {
+        // (ii) flag ON + an ACTIVE grant WITHIN boundaries → the EXISTING gate decision STANDS
+        // UNCHANGED. A grant `Allow` must NEVER upgrade a `RequiresApproval`→`Allow`: under
+        // DenyAll (no operator key, no approval) the mutating write still PAUSES, exactly as
+        // the NS-1 baseline. The trust layer raised no objection, so we fall through to the
+        // unchanged step (2), which Pauses — the executor is never reached.
+        let db = Db::open_hub(&temp_path("ns2-noupgrade")).unwrap();
+        let ws = temp_ws("ns2-noupgrade");
+        let fs = FsToolExecutor::new(ws.clone());
+        let exec = CountingExecutor {
+            inner: &fs,
+            calls: std::cell::Cell::new(0),
+        };
+        let approve = no_approval();
+        // Issue a within-boundaries grant for `friday` (so the trust check has no objection).
+        friday_storage::grant_trust(db.conn(), &ns2_within_boundaries_grant(), 1).unwrap();
+        // Sanity: the trust layer alone returns the EXISTING compose's RequiresApproval (NOT an
+        // Allow) and does NOT attribute a Deny to itself — i.e. it has no objection here.
+        let policy = RunPolicy::new(Some("friday".to_string()), Vec::<String>::new(), false)
+            .with_action_context(ns2_ctx());
+        let trust_only = friday_storage::authorize_agent_action(
+            db.conn(),
+            &build_request_with_policy(&ns2_write(), &policy).unwrap(),
+            &ns2_ctx(),
+            None,
+            &[],
+            1000,
+        )
+        .unwrap();
+        assert_eq!(
+            trust_only.decision,
+            GateDecision::RequiresApproval,
+            "a within-boundaries grant + no approval ⇒ the existing compose still Pauses (grant is not an upgrade)"
+        );
+        assert_ne!(
+            trust_only.denied_by.as_deref(),
+            Some("trust_grant"),
+            "no trust objection on a within-boundaries grant"
+        );
+
+        // Through the chokepoint (flag ON): the decision is RequiresApproval — IDENTICAL to the
+        // flag-OFF / NS-1 baseline. The grant did NOT upgrade it to Allow; the executor is never
+        // reached and no file is written.
+        let out = gate_dispatch_with_policy_enforced(
+            db.conn(),
+            &exec,
+            &ns2_write(),
+            AuthzMode::DenyAll,
+            &approve,
+            &policy,
+            1000,
+            true, // flag ON
+        )
+        .unwrap();
+        assert!(
+            matches!(out, GateDispatch::RequiresApproval),
+            "the within-boundaries grant must NOT upgrade the existing Pause to Allow"
+        );
+        assert_eq!(
+            exec.calls.get(),
+            0,
+            "a paused mutating action never executes"
+        );
+        assert!(
+            !ws.join("out.txt").exists(),
+            "no file written: the grant does not turn the Pause into an execution"
+        );
+    }
+
+    #[test]
+    fn ns2_flag_off_byte_identical_to_ns1_baseline() {
+        // (iii) flag OFF → gate decisions are BYTE-IDENTICAL to the NS-1 baseline for the three
+        // canonical scenarios (read→Allow, mutating→Pause, reserved/read-only→Deny), regardless
+        // of whether a grant exists or an action context is attached. The trust check is NOT
+        // consulted when off.
+        let db = Db::open_hub(&temp_path("ns2-off")).unwrap();
+        let ws = temp_ws("ns2-off");
+        std::fs::write(ws.join("notes.md"), b"hello").unwrap();
+        let fs = FsToolExecutor::new(ws.clone());
+        let approve = no_approval();
+
+        let label = |d: &GateDispatch| -> String {
+            match d {
+                GateDispatch::Executed(_) => "executed".to_string(),
+                GateDispatch::RequiresApproval => "requires_approval".to_string(),
+                GateDispatch::Denied(r) => format!("denied:{r}"),
+                GateDispatch::Unregistered(a) => format!("unregistered:{a}"),
+                GateDispatch::ExecError(_) => "exec_error".to_string(),
+            }
+        };
+        // A fresh counting executor per dispatch (so an "executed" never double-mutates the ws).
+        let dispatch = |policy: &RunPolicy, raw: &RawToolCall, enforce: bool| -> String {
+            let exec = CountingExecutor {
+                inner: &fs,
+                calls: std::cell::Cell::new(0),
+            };
+            let out = gate_dispatch_with_policy_enforced(
+                db.conn(),
+                &exec,
+                raw,
+                AuthzMode::DenyAll,
+                &approve,
+                policy,
+                1000,
+                enforce,
+            )
+            .unwrap();
+            label(&out)
+        };
+
+        let read = read_only_proposal();
+        let write = ns2_write();
+        // A context-bearing policy WITH a within-boundaries grant in the DB — proves the trust
+        // path is truly inert when the flag is OFF (it is never consulted).
+        friday_storage::grant_trust(db.conn(), &ns2_within_boundaries_grant(), 1).unwrap();
+        let open = RunPolicy::new(Some("friday".to_string()), Vec::<String>::new(), false)
+            .with_action_context(ns2_ctx());
+        let ro = RunPolicy::new(Some("friday".to_string()), Vec::<String>::new(), true)
+            .with_action_context(ns2_ctx());
+
+        // (a) read → Allow; (b) mutating → Pause; (c) read-only run → hard Deny. Flag OFF.
+        assert_eq!(dispatch(&open, &read, false), "executed", "(a) read→Allow");
+        assert_eq!(
+            dispatch(&open, &write, false),
+            "requires_approval",
+            "(b) mutating→Pause"
+        );
+        assert_eq!(
+            dispatch(&ro, &write, false),
+            "denied:run_is_read_only:write_file",
+            "(c) read-only→Deny"
+        );
+
+        // The flag-OFF outcomes must EXACTLY match the flag-OFF baseline run again (the trust
+        // path adds nothing when off — byte-identical).
+        assert_eq!(dispatch(&open, &read, false), "executed");
+        assert_eq!(dispatch(&open, &write, false), "requires_approval");
+        assert_eq!(
+            dispatch(&ro, &write, false),
+            "denied:run_is_read_only:write_file"
+        );
+    }
+
+    #[test]
+    fn ns2_flag_on_no_context_fails_closed() {
+        // FAIL-CLOSED on a missing action context: under flag-ON, a mutating action whose policy
+        // carries NO `AgentActionContext` (no agent identity ⇒ no grant can apply) must Deny
+        // `trust_no_active_grant` — never silently fall through (that would be fail-open). This
+        // is the documented posture for the default-policy `gate_dispatch`/`workflow_exec` path
+        // under flag-ON, and is why the flag stays OFF in prod until NS-3.
+        let db = Db::open_hub(&temp_path("ns2-noctx")).unwrap();
+        let ws = temp_ws("ns2-noctx");
+        let fs = FsToolExecutor::new(ws.clone());
+        let exec = CountingExecutor {
+            inner: &fs,
+            calls: std::cell::Cell::new(0),
+        };
+        let approve = no_approval();
+        // Default policy: principal set but NO action context attached.
+        let policy = RunPolicy::new(Some("friday".to_string()), Vec::<String>::new(), false);
+        assert_eq!(policy.action_context(), None, "no context attached");
+
+        let out = gate_dispatch_with_policy_enforced(
+            db.conn(),
+            &exec,
+            &ns2_write(),
+            AuthzMode::DenyAll,
+            &approve,
+            &policy,
+            1000,
+            true, // flag ON
+        )
+        .unwrap();
+        match out {
+            GateDispatch::Denied(reason) => assert_eq!(reason, "trust_no_active_grant"),
+            _ => panic!("flag-ON + no context must fail closed (Denied)"),
+        }
+        assert_eq!(
+            exec.calls.get(),
+            0,
+            "no executor call on a fail-closed Deny"
+        );
+
+        // CONTROL: a read-only action (non-mutating) is NOT subject to the trust branch even
+        // under flag-ON + no context — it stays base-Allow (byte-identical to baseline).
+        std::fs::write(ws.join("notes.md"), b"hi").unwrap();
+        let exec2 = CountingExecutor {
+            inner: &fs,
+            calls: std::cell::Cell::new(0),
+        };
+        let read_out = gate_dispatch_with_policy_enforced(
+            db.conn(),
+            &exec2,
+            &read_only_proposal(),
+            AuthzMode::DenyAll,
+            &approve,
+            &policy,
+            1000,
+            true,
+        )
+        .unwrap();
+        assert!(
+            matches!(read_out, GateDispatch::Executed(_)),
+            "a read-only action is base-Allow even flag-ON (the trust branch is mutating-only)"
+        );
+        assert_eq!(exec2.calls.get(), 1, "the read executed exactly once");
     }
 
     // --- §5-PR2: prompt + strict parse (offline) ---
