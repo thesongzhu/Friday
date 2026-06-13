@@ -1085,6 +1085,22 @@ impl<T: Transport> HubRuntime<T> {
         )
     }
 
+    /// (C2-5) OWNER-GATED refs-only FILE-VIEW for one run: the workspace file refs the run's
+    /// `read_file` tool receipts recorded, keyed to `run_id`. `Some(snapshot)` ONLY when `caller`
+    /// is the run's bound OWNER, else `None` (fail-closed — a non-owner cannot read another's
+    /// file-view by guessing the run_id; the SAME owner axis as [`Self::open_session_for_owner`]
+    /// and the D1-Q1 answer-body projection). The file refs are anchored to the REAL
+    /// `read_file` receipt of a metered turn (a claude turn proposing `read_file` bills an
+    /// `anthropic` row AND co-commits the receipt event) — never a synthesized/mirror file event.
+    /// Class-2 read: no model call, no ledger row, no write. ADDITIVE, read-only accessor.
+    pub fn file_view_for_owner(
+        &self,
+        caller: &AuthedPrincipal,
+        run_id: &str,
+    ) -> Result<Option<serde_json::Value>, String> {
+        crate::run_readback_projection::project_run_file_view(&self.db, caller.principal(), run_id)
+    }
+
     /// (A1 run-controls) The composed `FsToolExecutor` (workspace-root-contained, gate-mandatory).
     /// Exposed so the sealed-WS server's RESUME control handler can delegate to the S6
     /// [`crate::resume::resume_with_approval`] spine (which executes the ONE approved mutation
@@ -2010,6 +2026,126 @@ mod tests {
                 crate::agent_run_control::cancel(rt.db().conn(), RUN, OWNER, None, 4_000).unwrap();
             assert!(r.accepted && r.status == "cancelled");
             assert_no_new_anthropic_row(&rt, RUN, &ledger_before);
+        }
+
+        // ---- C2-5: owner-gated file-view bound to a claude run's read_file receipt ------------
+        #[test]
+        fn c2_5_file_view_bound_to_a_claude_read_file_receipt_owner_gated() {
+            // C2-5 FAITHFUL DARK PROOF. A claude-pinned SESSIONED run whose stub script proposes
+            // `read_file` (a read-type tool the gate Allows directly inside the loop) → finish.
+            //   - the read_file turn bills a REAL anthropic row (provider_kind=anthropic,
+            //     api.anthropic.com, fallback=false) AND co-commits a `tool.executed:read_file`
+            //     audit receipt + its run-keyed `tool.executed:read N bytes from <ref>` event;
+            //   - the owner's file-view returns that file ref KEYED to the run;
+            //   - reading the view writes NO new ledger row (it reads existing receipts);
+            //   - a DIFFERENT principal's view is fail-closed `None` (owner-gated).
+            // The file-view is anchored to the REAL receipt of the metered turn, NOT a mirror.
+            // NO key, NO network — the claude stub bills the anthropic rows.
+            const OWNER: &str = "principal:c2-5-owner";
+            const RUN: &str = "run-c2-5";
+            const SESS: &str = "sess-c2-5";
+
+            // Build with HubConfig.principal_id = OWNER so the run's `run_result.owner_principal`
+            // (set from `policy.principal_id()`) equals OWNER — the file-view's owner axis. The
+            // authed caller below uses the SAME principal, so every owner axis agrees.
+            let (rt, ws) = runtime_with_owned_claude_wired(
+                "c2-5-file-view",
+                OWNER,
+                vec![
+                    AgentStep::Tool(crate::RawToolCall {
+                        action: "read_file".to_string(),
+                        params: vec![("path".to_string(), "notes.md".to_string())],
+                    }),
+                    AgentStep::Finish {
+                        message: "PONG".to_string(),
+                    },
+                ],
+            );
+            // Seed the workspace file so the gate-Allowed read_file EXECUTES (a missing path would
+            // record `tool.exec_error`, not a receipt — see the storage parse contract).
+            std::fs::write(ws.0.join("notes.md"), b"composed e2e note").unwrap();
+
+            let owner = authed_caller(OWNER);
+            let other = authed_caller("principal:c2-5-intruder");
+
+            let (selection, _answer) = rt
+                .run_session_task_pinned(&owner, RUN, SESS, "read the notes", "claude", 5_000)
+                .expect("the claude-pinned sessioned read_file run executes");
+            assert_eq!(selection.provider_id, "claude", "the pin routed to claude");
+
+            // --- the read_file turn billed a REAL anthropic row -------------------------------
+            // `[read_file, Finish]` is TWO metered claude turns (the read_file proposal bills +
+            // executes, then Finish bills) ⇒ exactly two anthropic rows.
+            let rows = rt.db().list_run_token_usage(RUN).unwrap();
+            assert_eq!(
+                rows.len(),
+                2,
+                "two metered claude turns: read_file then finish"
+            );
+            for row in &rows {
+                assert_eq!(row.provider_kind, "anthropic", "NOT mis-attributed");
+                assert_eq!(row.base_url_host, "api.anthropic.com");
+                assert_eq!(row.model, friday_anthropic::DEFAULT_MODEL);
+                assert!(!row.fallback, "the claude route is never a fallback");
+            }
+            // The no-new-ledger BASELINE is the two rows the metered turns billed.
+            let ledger_baseline = rt.db().list_token_usage().unwrap().len();
+            assert_eq!(ledger_baseline, 2);
+
+            // --- the run recorded a REAL read_file receipt (the anchor, not a mirror) ----------
+            // The Allowed+executed read_file co-commits a hash-chained audit receipt
+            // (action='tool.executed:read_file') in the SAME tx as its run-keyed event. Assert the
+            // receipt exists and the chain verifies — proving it's the genuine metered turn's
+            // receipt the file-view anchors to.
+            let receipt_rows: i64 = rt
+                .db()
+                .conn()
+                .query_row(
+                    "SELECT count(*) FROM audit_ledger WHERE action = 'tool.executed:read_file'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                receipt_rows, 1,
+                "exactly one read_file receipt was recorded"
+            );
+            assert!(
+                friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok(),
+                "the read_file receipt is on a verified hash chain"
+            );
+
+            // --- the OWNER's file-view returns that file ref, keyed to the run -----------------
+            let view = rt
+                .file_view_for_owner(&owner, RUN)
+                .unwrap()
+                .expect("the owner reads her own file-view");
+            assert_eq!(view["run_id"], RUN, "the view is keyed to the run");
+            assert_eq!(
+                view["file_refs"],
+                serde_json::json!(["notes.md"]),
+                "the file-view surfaces the read_file receipt's file ref"
+            );
+            assert_eq!(view["file_view_count"], 1);
+            // Refs-only: the view never carries the run task body or the answer.
+            let rendered = serde_json::to_string(&view).unwrap();
+            assert!(!rendered.contains("read the notes"), "no run task body");
+            assert!(!rendered.contains("PONG"), "no answer body");
+
+            // --- a DIFFERENT principal's view is fail-closed None (owner-gated) ----------------
+            assert_eq!(
+                rt.file_view_for_owner(&other, RUN).unwrap(),
+                None,
+                "a non-owner cannot read another's file-view (fail-closed, no oracle)"
+            );
+
+            // --- THE ANTI-FAKE: reading the file-view wrote NO new ledger row ------------------
+            // (twice — once per principal — it is a pure read over existing receipts).
+            assert_eq!(
+                rt.db().list_token_usage().unwrap().len(),
+                ledger_baseline,
+                "the file-view is a Class-2 read: no new ledger row from the view"
+            );
         }
     } // mod c2_control
 

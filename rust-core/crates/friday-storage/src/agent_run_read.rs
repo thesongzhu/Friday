@@ -78,6 +78,51 @@ pub fn list_event_kinds(conn: &Connection, run_id: &str) -> Result<Vec<String>> 
     Ok(out)
 }
 
+/// (C2-5) The ordered (by `seq` ascending) list of the FILE REFS a run's `read_file`
+/// executions actually read, parsed out of the run's `tool.executed:read … bytes from <ref>`
+/// event kinds.
+///
+/// ## Anchored to the REAL receipt, never a mirror
+/// A `read_file` is a read-type tool the gate Allows directly inside the run loop, so an
+/// Allowed+executed `read_file` records ONE `tool.executed:read {n} bytes from {path}` event
+/// (`crate::agent_run::record_event`) in the SAME transaction as the hash-chained
+/// `tool.executed:read_file` audit receipt. This fn reads THOSE run-keyed events — it is the
+/// co-committed witness of the genuine receipt, not a synthesized/mirror file event. A
+/// `read_file` that FAILED records `tool.exec_error:*` (not `tool.executed:`) and so is correctly
+/// absent here (no receipt ⇒ no file ref).
+///
+/// ## Parsing
+/// The receipt summary is `read {n} bytes from {path}`, so the file ref is the substring AFTER
+/// the FIRST ` bytes from ` separator (split on that exact marker, not a bare ` from `, so a path
+/// that itself contains ` from ` survives intact). Only `read_file`'s `read …` summary matches;
+/// other read-type executions (`listed …`, `stat …`, `search matched …`) do NOT, so they never
+/// leak in.
+///
+/// ## Refs-only
+/// The returned strings are the RELATIVE workspace paths the model proposed (the loop's executor
+/// never embeds an absolute path in the summary). The caller is still expected to run them through
+/// an output guard before emitting them off-process — same discipline as [`list_event_kinds`].
+pub fn list_read_file_refs(conn: &Connection, run_id: &str) -> Result<Vec<String>> {
+    const READ_PREFIX: &str = "tool.executed:read ";
+    const FROM_SEP: &str = " bytes from ";
+    let mut out = Vec::new();
+    for kind in list_event_kinds(conn, run_id)? {
+        // Only `read_file`'s `read {n} bytes from {path}` receipt summary qualifies. A
+        // `tool.executed:` event whose summary is NOT a `read …` line (a write/list/stat/etc.)
+        // is skipped; an exec_error event never carries the `tool.executed:` prefix at all.
+        if let Some(tail) = kind.strip_prefix(READ_PREFIX) {
+            // `tail` = `{n} bytes from {path}`. Split on the FIRST ` bytes from ` only, so a
+            // path containing the separator text survives in the ref.
+            if let Some((_count, path)) = tail.split_once(FROM_SEP) {
+                if !path.is_empty() {
+                    out.push(path.to_string());
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// DB-wide token totals over `token_ledger` (see [`DbWideTokenTotals`] for the
 /// honest-scope caveat). `COALESCE(..., 0)` so an empty ledger reads `0`, not NULL.
 pub fn db_wide_token_totals(conn: &Connection) -> Result<DbWideTokenTotals> {
@@ -194,6 +239,81 @@ mod tests {
         let db = Db::open_hub(&tmp("noevents")).unwrap();
         create_run(db.conn(), "run-3", "task", 1).unwrap();
         assert!(list_event_kinds(db.conn(), "run-3").unwrap().is_empty());
+    }
+
+    #[test]
+    fn list_read_file_refs_parses_only_read_file_receipts_run_scoped() {
+        let db = Db::open_hub(&tmp("readrefs")).unwrap();
+        create_run(db.conn(), "run-rf", "task", 1).unwrap();
+        // A read_file receipt (qualifies) + a path that itself contains " from " (must survive).
+        record_event(
+            db.conn(),
+            "run-rf:e0",
+            "run-rf",
+            "tool.executed:read 15 bytes from notes.md",
+            2,
+        )
+        .unwrap();
+        record_event(
+            db.conn(),
+            "run-rf:e1",
+            "run-rf",
+            "tool.executed:read 7 bytes from a from b.md",
+            3,
+        )
+        .unwrap();
+        // Non-read tool.executed events must NOT be parsed as file refs.
+        record_event(
+            db.conn(),
+            "run-rf:e2",
+            "run-rf",
+            "tool.executed:wrote 4 bytes to out.txt",
+            4,
+        )
+        .unwrap();
+        record_event(
+            db.conn(),
+            "run-rf:e3",
+            "run-rf",
+            "tool.executed:listed 3 entries in .",
+            5,
+        )
+        .unwrap();
+        // A FAILED read records exec_error (no `tool.executed:` prefix) ⇒ no ref.
+        record_event(
+            db.conn(),
+            "run-rf:e4",
+            "run-rf",
+            "tool.exec_error:not found: missing.md",
+            6,
+        )
+        .unwrap();
+        // A different run's read_file must never leak into this run's refs (run-scoped).
+        create_run(db.conn(), "run-other", "task", 1).unwrap();
+        record_event(
+            db.conn(),
+            "run-other:e0",
+            "run-other",
+            "tool.executed:read 9 bytes from other.md",
+            7,
+        )
+        .unwrap();
+
+        let refs = list_read_file_refs(db.conn(), "run-rf").unwrap();
+        assert_eq!(
+            refs,
+            vec!["notes.md".to_string(), "a from b.md".to_string()],
+            "only read_file receipts of THIS run, parsed on the FIRST ` bytes from ` separator"
+        );
+    }
+
+    #[test]
+    fn list_read_file_refs_is_empty_for_run_with_no_reads() {
+        let db = Db::open_hub(&tmp("noreadrefs")).unwrap();
+        create_run(db.conn(), "run-nr", "task", 1).unwrap();
+        record_event(db.conn(), "run-nr:e0", "run-nr", "plan.none", 2).unwrap();
+        record_event(db.conn(), "run-nr:e1", "run-nr", "agent.finished", 3).unwrap();
+        assert!(list_read_file_refs(db.conn(), "run-nr").unwrap().is_empty());
     }
 
     #[test]

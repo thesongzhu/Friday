@@ -186,6 +186,76 @@ pub fn project_session_link_state(
     Ok(Some(snapshot))
 }
 
+/// (C2-5) OWNER-GATED refs-only FILE-VIEW of the workspace files a run actually READ — the
+/// file refs of the run's `read_file` tool receipts, keyed to `run_id`. `Ok(None)` ⇒ the caller
+/// is NOT the run's bound owner (or the run has no stored result / no real owner) — fail-closed,
+/// no existence/state oracle for a non-owner (the SAME owner axis as the C2-4 read API and the
+/// in-file [`project_session_link_state`]). `Ok(Some(snapshot))` ⇒ the owner's file-view.
+///
+/// ## Anchored to the REAL read_file receipt of a metered turn (NOT a mirror)
+/// `read_file` is a read-type tool the gate Allows directly inside the run loop, so a claude turn
+/// that proposes it bills a REAL `anthropic` token-ledger row AND records a
+/// `tool.executed:read {n} bytes from {path}` event in the SAME transaction as the hash-chained
+/// `tool.executed:read_file` audit receipt. [`friday_storage::agent_run_read::list_read_file_refs`]
+/// reads THOSE run-keyed receipt events, so the file-view is the co-committed witness of the
+/// genuine metered turn's receipt — never a synthesized / mirror file event.
+///
+/// ## Owner gate — reuses the C2-4 / D1-Q1 axis, body-free
+/// The gate is [`friday_storage::get_run_answer_for_principal`] (the proven fail-closed
+/// `Granted` / `Denied` / `NotFound` ownership match on the run's bound `owner_principal` — the
+/// SAME principal `run_session_loop` records). On a `Granted` the answer BODY is discarded (bound
+/// to `_`); this projection NEVER carries the answer — only the file refs + run id. Every denying
+/// outcome collapses to `Ok(None)` so a non-owner learns nothing (no body, no owner id, no
+/// existence oracle). HONEST scope: the file-view is a readback of a COMPLETED run (the owner axis
+/// is only recorded once the run persists its `run_result`, on `Finished`).
+///
+/// ## Class-2 read: no model call, no new ledger row, no mutation
+/// Pure reads + JSON shaping over already-persisted events — it never touches a provider
+/// credential, the model path, or any write. The shared [`reject_forbidden_output`] guard runs
+/// INSIDE this fn so the file refs (relative workspace paths) inherit the refs-only discipline
+/// (an absolute-path / secret marker would fail it closed).
+pub fn project_run_file_view(
+    db: &Db,
+    caller_principal: &str,
+    run_id: &str,
+) -> Result<Option<Value>, String> {
+    let conn = db.conn();
+
+    // OWNER GATE (fail-closed): reuse the D1-Q1 / C2-4 ownership match. Any non-Granted outcome
+    // (NotFound / NoOwnerPrincipal / AnonymousCaller / PrincipalMismatch) collapses to `Ok(None)`
+    // — a non-owner gets no body, no owner id, and no existence/state oracle for the file-view.
+    // The answer body in `Granted` is DISCARDED here (`_`); this projection never carries it.
+    match friday_storage::get_run_answer_for_principal(conn, run_id, caller_principal)
+        .map_err(|_| "read_failed".to_string())?
+    {
+        friday_storage::RunAnswerAccess::Granted(_) => {}
+        friday_storage::RunAnswerAccess::Denied(_) | friday_storage::RunAnswerAccess::NotFound => {
+            return Ok(None)
+        }
+    }
+
+    // The owner is entitled: read the run's `read_file` receipt refs (run-keyed; the co-committed
+    // witness of the real metered turn's receipt). This is a pure read — no new ledger row.
+    let file_refs = friday_storage::agent_run_read::list_read_file_refs(conn, run_id)
+        .map_err(|_| "read_failed".to_string())?;
+
+    let snapshot = json!({
+        "truth_label": "rust_wired_dev",
+        "proof_only": true,
+        "ok": true,
+        "run_id": run_id,
+        // The relative workspace paths the run's `read_file` receipts recorded, in receipt order.
+        "file_refs": file_refs,
+        "file_view_count": file_refs.len(),
+    });
+
+    // Inherit the refs-only guard: a relative path passes; an absolute-path / secret marker that
+    // somehow reached a receipt summary fails the projection closed (never leaks).
+    let rendered = serde_json::to_string(&snapshot).map_err(|_| "serialize_failed".to_string())?;
+    reject_forbidden_output(&rendered)?;
+    Ok(Some(snapshot))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
