@@ -478,6 +478,108 @@ fn owner_matches(conn: &Connection, user_id: &str, agent_session_id: &str) -> Re
     }
 }
 
+// --- C2-8 offline/stale link-state (derived from last-activity vs now) --------
+//
+// A connectivity/staleness LABEL for a routed `agent_session`, derived purely from the
+// session's last-activity timestamp (`agent_session.updated_at`) vs an injected `now_ms`.
+// This is the SAME column `run_session_task_pinned`'s folded metered turn bumps (the
+// `append_session_message` after a real provider-billed turn advances `updated_at`), so the
+// staleness keys off the REAL routed session's activity — NOT a synthesized
+// `provider_session_link` claude_control mirror heartbeat (that local mirror has no owner
+// axis and no real billing, so reading it here would be a fake; this never touches it).
+//
+// DARK / pure compute: the state is DERIVED on read from `updated_at + now_ms`. Nothing is
+// persisted — there is no `link_state` column, no migration, no write, and no model call.
+// It is deterministically testable by injecting `now_ms` (never a wall clock).
+//
+// HONESTY SEAM (documented, not papered over): `updated_at` is the session's LAST-ACTIVITY
+// timestamp. A metered turn bumps it (via the folded `append_session_message`), and the
+// owner-less `ensure_session` at run-START also bumps it — so it is "last session activity",
+// a SUPERSET of "last metered turn", not strictly the last billed turn. The faithful hub
+// test drives the REAL `run_session_task_pinned` path so the metered turn IS what sets the
+// timestamp the state keys off, and ASSERTS the anthropic ledger row to prove the session is
+// genuinely metered (not a synthesized row).
+
+/// Idle threshold (ms): a link with NO activity for AT LEAST this long is no longer
+/// [`LinkState::Fresh`] — it becomes [`LinkState::Stale`]. 60s.
+pub const LINK_STALE_AFTER_MS: i64 = 60_000;
+
+/// Offline bound (ms): a link whose last activity is AT LEAST this old is
+/// [`LinkState::Offline`] (the longer bound — the last metered turn is well past stale). 5m.
+pub const LINK_OFFLINE_AFTER_MS: i64 = 300_000;
+
+/// The connectivity/staleness state of a routed session link, derived from last-activity vs
+/// now. A CLOSED vocabulary (like [`crate::run_readback_projection`]'s loop-status label) —
+/// the only values are these three, so no session-embedded text can leak through it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinkState {
+    /// Active within the idle threshold (`elapsed < LINK_STALE_AFTER_MS`).
+    Fresh,
+    /// Idle for at least the stale threshold but less than the offline bound.
+    Stale,
+    /// Last activity is at least the offline bound old (`elapsed >= LINK_OFFLINE_AFTER_MS`).
+    Offline,
+}
+
+impl LinkState {
+    /// The stable, refs-only label — a fixed `&'static str` from the closed vocabulary
+    /// (never any session text), suitable for an off-process projection.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LinkState::Fresh => "fresh",
+            LinkState::Stale => "stale",
+            LinkState::Offline => "offline",
+        }
+    }
+}
+
+/// Derive the [`LinkState`] from a session's `last_activity_ms` and an injected `now_ms`.
+///
+/// Pure clock-driven transition on `elapsed = now_ms - last_activity_ms`:
+/// `elapsed < LINK_STALE_AFTER_MS` ⇒ `Fresh`; `>= LINK_STALE_AFTER_MS` and
+/// `< LINK_OFFLINE_AFTER_MS` ⇒ `Stale`; `>= LINK_OFFLINE_AFTER_MS` ⇒ `Offline`. A `now_ms`
+/// BEFORE `last_activity_ms` (clock skew / a future timestamp) clamps elapsed to 0 ⇒ `Fresh`
+/// (never an underflow). No wall clock — `now_ms` is injected so the transitions are
+/// deterministically testable.
+pub fn derive_link_state(last_activity_ms: i64, now_ms: i64) -> LinkState {
+    let elapsed = now_ms.saturating_sub(last_activity_ms).max(0);
+    if elapsed >= LINK_OFFLINE_AFTER_MS {
+        LinkState::Offline
+    } else if elapsed >= LINK_STALE_AFTER_MS {
+        LinkState::Stale
+    } else {
+        LinkState::Fresh
+    }
+}
+
+/// OWNER-SCOPED link-state of one routed session: `Some(state)` derived from the session's
+/// `updated_at` (its last-activity timestamp) vs `now_ms`, ONLY when `user_id` owns the
+/// session; otherwise `None`.
+///
+/// Fail-closed exactly like [`open_session_for_owner`] / [`session_message_count_for_owner`]:
+/// a blank `user_id`, an absent session, an owner-less (NULL `user_id`) session, or a
+/// DIFFERENT owner all return `None` — a non-owner cannot read another principal's link-state
+/// by guessing its `agent_session_id` (no existence/state oracle). Pure read + compute: no
+/// write, no schema change, no model call. The timestamp is the REAL routed session's
+/// activity (`updated_at`), not a mirror heartbeat.
+pub fn link_state_for_owner(
+    conn: &Connection,
+    user_id: &str,
+    agent_session_id: &str,
+    now_ms: i64,
+) -> Result<Option<LinkState>> {
+    if !owner_matches(conn, user_id, agent_session_id)? {
+        return Ok(None);
+    }
+    // The owner check passed, so the row exists — read its last-activity timestamp.
+    let last_activity_ms: i64 = conn.query_row(
+        "SELECT updated_at FROM agent_session WHERE agent_session_id = ?1",
+        [agent_session_id],
+        |r| r.get(0),
+    )?;
+    Ok(Some(derive_link_state(last_activity_ms, now_ms)))
+}
+
 /// Load only the messages NOT yet consumed by a memory extraction
 /// (`memory_extract_status = 'pending'`), in `seq` order (oldest first). This is the
 /// dedup half of session-memory slice-2: the inline extraction reads PENDING messages
@@ -1102,6 +1204,153 @@ mod tests {
         ensure_session(db.conn(), "orphan", 1_100).unwrap();
         assert_eq!(
             open_session_for_owner(db.conn(), "alice", "orphan").unwrap(),
+            None
+        );
+    }
+
+    // --- C2-8 offline/stale link-state ---------------------------------------
+
+    #[test]
+    fn derive_link_state_transitions_fresh_stale_offline_on_the_injected_clock() {
+        // Pure clock-driven transitions on elapsed = now - last_activity. The boundaries are
+        // inclusive at the threshold (>=), so a now exactly AT a threshold is the harsher state.
+        let t = 1_000_000;
+        // Just after the turn → fresh.
+        assert_eq!(derive_link_state(t, t + 1), LinkState::Fresh);
+        assert_eq!(
+            derive_link_state(t, t + LINK_STALE_AFTER_MS - 1),
+            LinkState::Fresh,
+            "one ms before the stale threshold is still fresh"
+        );
+        // At / past the stale threshold (but before offline) → stale.
+        assert_eq!(
+            derive_link_state(t, t + LINK_STALE_AFTER_MS),
+            LinkState::Stale,
+            "exactly at the stale threshold is stale (inclusive boundary)"
+        );
+        assert_eq!(
+            derive_link_state(t, t + LINK_OFFLINE_AFTER_MS - 1),
+            LinkState::Stale,
+            "one ms before the offline bound is still stale"
+        );
+        // At / past the offline bound → offline.
+        assert_eq!(
+            derive_link_state(t, t + LINK_OFFLINE_AFTER_MS),
+            LinkState::Offline,
+            "exactly at the offline bound is offline (inclusive boundary)"
+        );
+        assert_eq!(
+            derive_link_state(t, t + LINK_OFFLINE_AFTER_MS * 10),
+            LinkState::Offline
+        );
+        // The label vocabulary is closed/stable.
+        assert_eq!(LinkState::Fresh.as_str(), "fresh");
+        assert_eq!(LinkState::Stale.as_str(), "stale");
+        assert_eq!(LinkState::Offline.as_str(), "offline");
+    }
+
+    #[test]
+    fn derive_link_state_clamps_clock_skew_to_fresh_not_underflow() {
+        // A now BEFORE last_activity (clock skew / a future timestamp) clamps elapsed to 0 →
+        // fresh, never an underflow/offline. Also robust at i64 extremes (saturating_sub).
+        assert_eq!(derive_link_state(5_000, 1_000), LinkState::Fresh);
+        assert_eq!(derive_link_state(i64::MAX, i64::MIN), LinkState::Fresh);
+    }
+
+    #[test]
+    fn link_state_for_owner_keys_off_updated_at_and_advances_with_the_clock() {
+        // SQL-level proof of the owner-gated read over the REAL agent_session.updated_at (the
+        // claude-stub/anthropic-ledger faithful proof lives in friday-hub runtime.rs, where the
+        // harness is reachable). Here updated_at stands in for the last-activity timestamp.
+        let db = Db::open_hub(&tmp("c2-8-state")).unwrap();
+        let last_turn = 2_000_000;
+        ensure_session_with_owner(
+            db.conn(),
+            "s1",
+            &SessionOwner {
+                user_id: Some("alice".into()),
+                ..Default::default()
+            },
+            last_turn,
+        )
+        .unwrap();
+
+        // now just after the turn → fresh; past the stale threshold → stale; past offline → offline.
+        assert_eq!(
+            link_state_for_owner(db.conn(), "alice", "s1", last_turn + 1).unwrap(),
+            Some(LinkState::Fresh)
+        );
+        assert_eq!(
+            link_state_for_owner(db.conn(), "alice", "s1", last_turn + LINK_STALE_AFTER_MS)
+                .unwrap(),
+            Some(LinkState::Stale)
+        );
+        assert_eq!(
+            link_state_for_owner(db.conn(), "alice", "s1", last_turn + LINK_OFFLINE_AFTER_MS)
+                .unwrap(),
+            Some(LinkState::Offline)
+        );
+
+        // A later metered turn bumps updated_at, so the link goes fresh again at the same `now`
+        // (proving the state keys off the LIVE last-activity timestamp, not a fixed creation time).
+        let stale_now = last_turn + LINK_STALE_AFTER_MS;
+        assert_eq!(
+            link_state_for_owner(db.conn(), "alice", "s1", stale_now).unwrap(),
+            Some(LinkState::Stale)
+        );
+        append_session_message(
+            db.conn(),
+            "s1",
+            &SessionMessage::new("assistant", "noted", Some("run-1".into())),
+            stale_now,
+        )
+        .unwrap();
+        assert_eq!(
+            link_state_for_owner(db.conn(), "alice", "s1", stale_now + 1).unwrap(),
+            Some(LinkState::Fresh),
+            "a fresh metered turn (bumping updated_at) returns the link to fresh"
+        );
+    }
+
+    #[test]
+    fn link_state_for_owner_is_owner_scoped_fail_closed() {
+        // The link-state read is gated by the SAME owner axis as open/count: a different
+        // principal, an owner-less session, a blank owner, and an absent id all read back None
+        // (no existence/state oracle — a non-owner cannot read another's link-state).
+        let db = Db::open_hub(&tmp("c2-8-owner")).unwrap();
+        ensure_session_with_owner(
+            db.conn(),
+            "s1",
+            &SessionOwner {
+                user_id: Some("alice".into()),
+                ..Default::default()
+            },
+            10_000,
+        )
+        .unwrap();
+        // The owner reads her own link-state.
+        assert_eq!(
+            link_state_for_owner(db.conn(), "alice", "s1", 10_000).unwrap(),
+            Some(LinkState::Fresh)
+        );
+        // A DIFFERENT principal guessing the id reads NOTHING (fail-closed — the load-bearing one).
+        assert_eq!(
+            link_state_for_owner(db.conn(), "bob", "s1", 10_000).unwrap(),
+            None
+        );
+        // A blank owner and an absent id are also fail-closed.
+        assert_eq!(
+            link_state_for_owner(db.conn(), "", "s1", 10_000).unwrap(),
+            None
+        );
+        assert_eq!(
+            link_state_for_owner(db.conn(), "alice", "ghost", 10_000).unwrap(),
+            None
+        );
+        // An owner-less session (NULL user_id) is not readable by anyone.
+        ensure_session(db.conn(), "orphan", 10_000).unwrap();
+        assert_eq!(
+            link_state_for_owner(db.conn(), "alice", "orphan", 10_000).unwrap(),
             None
         );
     }
