@@ -1225,6 +1225,18 @@ pub struct RunPolicy {
     principal_id: Option<String>,
     disabled_tools: std::collections::BTreeSet<String>,
     read_only: bool,
+    /// (NS-1) The run's action-context dimensions
+    /// (`agent_id`/`workspace`/`tool`/`provider`/`channel`/`workflow_family`/`skill_family`),
+    /// carried verbatim so the gate-dispatch chokepoint can later construct a
+    /// [`friday_storage::AgentActionContext`] for the NS-2 trust check. PURE PLUMBING:
+    /// this field is CARRIED to the chokepoint ([`gate_dispatch_with_policy`] already
+    /// receives `&RunPolicy`) but is NOT consulted by ANY gate logic in this PR — no gate
+    /// decision (Allow/RequiresApproval/Deny) reads it, so a populated context is
+    /// byte-identical to `None` at the gate. `None` (the default everywhere it is not
+    /// supplied) is exactly the pre-NS-1 behavior. Distinct from `principal_id` (WHO the
+    /// run is for): NS-1 carries the context unchanged; whether/how `agent_id` converges
+    /// with `principal_id` is an NS-2 design decision, NOT plumbing.
+    action_context: Option<friday_storage::AgentActionContext>,
 }
 
 /// The fail-closed outcome of resolving a tool action against a run's disabled-set, AFTER
@@ -1269,6 +1281,10 @@ impl RunPolicy {
             principal_id,
             disabled_tools,
             read_only,
+            // (NS-1) No action context by default — every existing `new`/`default` caller is
+            // unchanged (and behaves identically: the field is carried, never consulted by
+            // the gate). A context is attached via `with_action_context`.
+            action_context: None,
         }
     }
 
@@ -1276,6 +1292,33 @@ impl RunPolicy {
     /// gate Actor's `principal_id` stays `None` (the pre-S4 default).
     pub fn principal_id(&self) -> Option<&str> {
         self.principal_id.as_deref()
+    }
+
+    /// (NS-1) Attach the run's action-context dimensions, returning the policy with the
+    /// context carried. Additive builder (consumes + returns `self`) so existing
+    /// `new`/`default` callers are untouched — they keep a `None` context. The context is
+    /// stored VERBATIM (already shaped as a [`friday_storage::AgentActionContext`]:
+    /// `agent_id`/`workspace`/`tool`/`provider`/`channel`/`workflow_family`/`skill_family`).
+    ///
+    /// PURE PLUMBING (NS-1): attaching a context does NOT change any gate decision — the
+    /// field is carried to the gate-dispatch chokepoint but never consulted by gate logic
+    /// in this PR. The NS-2 trust check ([`friday_storage::authorize_agent_action`]) will
+    /// read it back via [`RunPolicy::action_context`]; NS-1 only delivers it there.
+    pub fn with_action_context(mut self, ctx: friday_storage::AgentActionContext) -> Self {
+        self.action_context = Some(ctx);
+        self
+    }
+
+    /// (NS-1) The run's action context, as carried to the gate-dispatch chokepoint —
+    /// the thin accessor NS-2 reads to build the [`friday_storage::AgentActionContext`]
+    /// for the trust check. `None` ⇒ no context attached (every pre-NS-1 caller).
+    ///
+    /// This is the READ-BACK seam this PR adds: NS-1 plumbs the context HERE; it does NOT
+    /// call [`friday_storage::authorize_agent_action`] (that is NS-2). No gate logic reads
+    /// this accessor in this PR, so the gate decision is byte-identical whether a context
+    /// is attached or not.
+    pub fn action_context(&self) -> Option<&friday_storage::AgentActionContext> {
+        self.action_context.as_ref()
     }
 
     /// True if `action` is disabled for this run (compared trim-insensitively against the
@@ -1319,6 +1362,11 @@ impl RunPolicy {
             disabled_tools: merged,
             // OR: a constraint can only ADD read-only, never remove a boot-configured one.
             read_only: self.read_only || read_only,
+            // (NS-1) Carried VERBATIM from `self`: a tightening constraint restricts WHAT a
+            // run may do, NEVER its identity/context — the same rule already applied to
+            // `principal_id` above. The action context is a property of the run, not a
+            // restriction, so it is preserved unchanged through any tightening.
+            action_context: self.action_context.clone(),
         }
     }
 
@@ -2408,6 +2456,12 @@ pub(crate) fn gate_dispatch_with_policy(
     policy: &RunPolicy,
     now_ms: i64,
 ) -> Result<GateDispatch, StorageError> {
+    // (NS-1) The run's action context is now carried HERE on `policy`
+    // (`policy.action_context()`), constructible into a `friday_storage::AgentActionContext`
+    // for the NS-2 trust check. NS-1 is PURE PLUMBING: nothing below reads it, so every gate
+    // decision is byte-identical to the pre-NS-1 path whether a context is attached or not.
+    // NS-2 will add the `authorize_agent_action` call that consumes it — NOT here, NOT now.
+    //
     // (0) disabledToolNames — fail-closed, BEFORE classify/authorize/execute. A tool not
     //     available to this run must never run; refusing here (it never reaches the gate)
     //     is strictly stricter than any gate decision.
@@ -3820,6 +3874,215 @@ mod tests {
             0,
             "a paused mutating action never executes"
         );
+    }
+
+    // ── NS-1: AgentActionContext plumbed to the gate-dispatch chokepoint ──────
+    // PURE PLUMBING. These prove (1) attaching a context changes NO gate decision at the
+    // chokepoint (byte-identical to the same policy without a context) AND through a REAL
+    // run loop (real FsToolExecutor) for Allow / Pause / Deny, and (2) the context
+    // round-trips through the thin accessor + survives `tightened_by`. NO trust call (NS-2).
+
+    /// A fully-populated context to attach — every `AgentActionContext` dimension set, so a
+    /// regression that drops/garbles any field is caught by the round-trip assert.
+    fn ns1_full_ctx() -> friday_storage::AgentActionContext {
+        friday_storage::AgentActionContext {
+            agent_id: "agent-ns1".to_string(),
+            workspace: Some("ws-ns1".to_string()),
+            tool: Some("read_file".to_string()),
+            provider: Some("deepseek".to_string()),
+            channel: Some("telegram".to_string()),
+            workflow_family: Some("triage".to_string()),
+            skill_family: Some("research".to_string()),
+        }
+    }
+
+    #[test]
+    fn ns1_context_round_trips_through_accessor_and_tightening() {
+        // (2) The accessor reads back EXACTLY what was attached.
+        let ctx = ns1_full_ctx();
+        let policy = RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), false)
+            .with_action_context(ctx.clone());
+        assert_eq!(
+            policy.action_context(),
+            Some(&ctx),
+            "the accessor must return the attached context verbatim"
+        );
+        // The plumbing does not disturb the existing identity/restriction fields.
+        assert_eq!(policy.principal_id(), Some("alice"));
+        assert!(!policy.is_read_only());
+
+        // Default / `new` carry NO context (every pre-NS-1 caller is unchanged).
+        assert_eq!(RunPolicy::default().action_context(), None);
+        assert_eq!(
+            RunPolicy::new(None, Vec::<String>::new(), false).action_context(),
+            None
+        );
+
+        // A tightening constraint restricts WHAT, never the context (carried verbatim, same
+        // rule as `principal_id`), and never widens read-only/disabled.
+        let tightened = policy.tightened_by(true, &["delete_file".to_string()]);
+        assert_eq!(
+            tightened.action_context(),
+            Some(&ctx),
+            "tightening must preserve the action context verbatim"
+        );
+        assert_eq!(tightened.principal_id(), Some("alice"));
+        assert!(tightened.is_read_only(), "tightening added read_only");
+        assert!(tightened.is_tool_disabled("delete_file"));
+    }
+
+    #[test]
+    fn ns1_chokepoint_gate_decisions_byte_identical_with_or_without_context() {
+        // (1) At the SHARED chokepoint `gate_dispatch_with_policy`, run the THREE canonical
+        // scenarios (read→Allow, mutating→Pause, read-only→Deny) TWICE — once with a baseline
+        // policy, once with the SAME policy + a populated action context — and assert the
+        // outcomes are IDENTICAL. This directly shows the carried context is inert at the gate.
+        let db = Db::open_hub(&temp_path("ns1-choke")).unwrap();
+        let ws = temp_ws("ns1-choke");
+        std::fs::write(ws.join("notes.md"), b"hello").unwrap();
+        let fs = FsToolExecutor::new(ws.clone());
+        let approve = no_approval();
+
+        // Compare a gate-dispatch outcome to a label, so the two policies' results compare cheaply.
+        let label = |d: &GateDispatch| -> String {
+            match d {
+                GateDispatch::Executed(_) => "executed".to_string(),
+                GateDispatch::RequiresApproval => "requires_approval".to_string(),
+                GateDispatch::Denied(r) => format!("denied:{r}"),
+                GateDispatch::Unregistered(a) => format!("unregistered:{a}"),
+                GateDispatch::ExecError(_) => "exec_error".to_string(),
+            }
+        };
+
+        // The baseline (no context) and the context-populated variant of the SAME policy.
+        let dispatch = |policy: &RunPolicy, raw: &RawToolCall| -> String {
+            // Fresh counting executor per call so an "executed" never double-mutates the ws.
+            let exec = CountingExecutor {
+                inner: &fs,
+                calls: std::cell::Cell::new(0),
+            };
+            let out = gate_dispatch_with_policy(
+                db.conn(),
+                &exec,
+                raw,
+                AuthzMode::DenyAll,
+                &approve,
+                policy,
+                1000,
+            )
+            .unwrap();
+            label(&out)
+        };
+
+        // (a) read tool → Allow (default policy, no read-only). (b) mutating tool under the
+        // SAME (non-read-only) policy → RequiresApproval/Pause. (c) the SAME mutating tool
+        // under a read-only policy → hard Deny.
+        let read = read_only_proposal();
+        let write = raw("write_file", &[("path", "out.txt"), ("content", "X")]);
+
+        let base_open = RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), false);
+        let ctx_open = base_open.clone().with_action_context(ns1_full_ctx());
+        let base_ro = RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), true);
+        let ctx_ro = base_ro.clone().with_action_context(ns1_full_ctx());
+
+        // (a) Allow
+        assert_eq!(dispatch(&base_open, &read), "executed");
+        assert_eq!(
+            dispatch(&base_open, &read),
+            dispatch(&ctx_open, &read),
+            "(a) read→Allow must be byte-identical with/without context"
+        );
+        // (b) RequiresApproval / Pause
+        assert_eq!(dispatch(&base_open, &write), "requires_approval");
+        assert_eq!(
+            dispatch(&base_open, &write),
+            dispatch(&ctx_open, &write),
+            "(b) mutating→Pause must be byte-identical with/without context"
+        );
+        // (c) Deny
+        assert_eq!(
+            dispatch(&base_ro, &write),
+            "denied:run_is_read_only:write_file"
+        );
+        assert_eq!(
+            dispatch(&base_ro, &write),
+            dispatch(&ctx_ro, &write),
+            "(c) read-only→Deny must be byte-identical with/without context"
+        );
+    }
+
+    #[test]
+    fn ns1_run_loop_decisions_byte_identical_with_or_without_context() {
+        // (1, loop) Drive a REAL run through `run_loop_with_policy` with the REAL
+        // FsToolExecutor for each of Allow / Pause / Deny, comparing the default policy to
+        // the SAME policy + a populated action context. The loop OUTCOME (status + executed
+        // count + the file-system side effect) must be identical — the carried context never
+        // touches the gate.
+        let scenario =
+            |tag: &str, raw_step: RawToolCall, policy: &RunPolicy| -> (LoopStatus, u64, bool) {
+                let root = TempDir::new(tag);
+                std::fs::write(root.0.join("notes.md"), b"answer is 47").unwrap();
+                let db = Db::open_hub(&temp_path(tag)).unwrap();
+                agent_run::create_run(db.conn(), "r1", "do it", 1).unwrap();
+                let client = ScriptedAgentLlmClient::new(vec![AgentStep::Tool(raw_step)]);
+                let executor = FsToolExecutor::new(&root.0);
+                let out = run_loop_with_policy(
+                    &client,
+                    &executor,
+                    db.conn(),
+                    "r1",
+                    "do it",
+                    "",
+                    None, // unprovisioned ⇒ fail-closed Pause for mutating actions
+                    &no_approval(),
+                    policy,
+                    5,
+                    None,
+                    None,
+                    1000,
+                )
+                .unwrap();
+                // The write side effect (created or not) is part of the observable outcome.
+                let wrote = root.0.join("out.txt").exists();
+                (out.status, out.executed_tools, wrote)
+            };
+
+        let read = read_only_proposal();
+        let write = raw("write_file", &[("path", "out.txt"), ("content", "X")]);
+
+        // (a) read → Allow (open policy). (b) mutating → Pause (open policy, no operator key).
+        // (c) mutating under read-only policy → Deny/Blocked.
+        let open = RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), false);
+        let open_ctx = open.clone().with_action_context(ns1_full_ctx());
+        let ro = RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), true);
+        let ro_ctx = ro.clone().with_action_context(ns1_full_ctx());
+
+        // (a) Allow: the read executes; identical with/without context.
+        let a_base = scenario("ns1-loop-a-base", read.clone(), &open);
+        let a_ctx = scenario("ns1-loop-a-ctx", read.clone(), &open_ctx);
+        assert_eq!(a_base.0, LoopStatus::Finished, "read loop finishes");
+        assert_eq!(a_base.1, 1, "the read tool executed once");
+        assert_eq!(a_base, a_ctx, "(a) Allow loop outcome unchanged by context");
+
+        // (b) Pause: the mutating write Pauses, never executes; identical with/without context.
+        let b_base = scenario("ns1-loop-b-base", write.clone(), &open);
+        let b_ctx = scenario("ns1-loop-b-ctx", write.clone(), &open_ctx);
+        assert_eq!(b_base.0, LoopStatus::Paused, "mutating write Pauses");
+        assert_eq!(b_base.1, 0, "a paused write never executes");
+        assert!(!b_base.2, "no file written on Pause");
+        assert_eq!(b_base, b_ctx, "(b) Pause loop outcome unchanged by context");
+
+        // (c) Deny: read-only run Blocks the write before execution; identical with/without context.
+        let c_base = scenario("ns1-loop-c-base", write.clone(), &ro);
+        let c_ctx = scenario("ns1-loop-c-ctx", write.clone(), &ro_ctx);
+        assert_eq!(
+            c_base.0,
+            LoopStatus::Blocked,
+            "read-only run Blocks the write"
+        );
+        assert_eq!(c_base.1, 0, "a denied write never executes");
+        assert!(!c_base.2, "no file written on Deny");
+        assert_eq!(c_base, c_ctx, "(c) Deny loop outcome unchanged by context");
     }
 
     // --- §5-PR2: prompt + strict parse (offline) ---
