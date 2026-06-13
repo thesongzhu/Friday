@@ -1062,6 +1062,34 @@ impl<T: Transport> HubRuntime<T> {
         friday_storage::open_session_for_owner(self.db.conn(), caller.principal(), agent_session_id)
     }
 
+    /// (C2-6) EXPLICIT owner-authed ARCHIVE of one routed session: set `status='archived'` +
+    /// `archived_at` and write a hash-chained audit receipt, scoped to the AUTHENTICATED `caller`
+    /// (the SAME `agent_session.user_id` axis as [`Self::open_session_for_owner`], NEVER a
+    /// client-asserted id). Only the bound owner can archive — a non-owner / owner-less session /
+    /// absent id is REFUSED fail-closed ([`friday_storage::ArchiveOutcome`] `accepted=false`,
+    /// `status="not_owner"`) with NO state change and NO audit row. Idempotent: re-archiving an
+    /// already-archived session is an accepted no-op.
+    ///
+    /// This is the EXPLICIT counterpart to the time-based `session_lifecycle` sweep (which archives
+    /// only after the idle timeout) — it never invokes the sweep, and writes only the lifecycle
+    /// columns the sweep also uses, so an explicitly-archived session reads back identically to a
+    /// swept one. Metadata-only: NO model call and NO `token_ledger` row (archiving is not a metered
+    /// turn). After a successful archive the session no longer appears in
+    /// [`Self::list_sessions_for_owner`] (the active/owner list is archive-aware). ADDITIVE accessor.
+    pub fn archive_session_for_owner(
+        &self,
+        caller: &AuthedPrincipal,
+        agent_session_id: &str,
+        now_ms: i64,
+    ) -> Result<friday_storage::ArchiveOutcome, StorageError> {
+        friday_storage::archive_session_for_owner(
+            self.db.conn(),
+            caller.principal(),
+            agent_session_id,
+            now_ms,
+        )
+    }
+
     /// (C2-8) OWNER-GATED refs-only LINK-STATE projection for one routed session: the
     /// connectivity/staleness label (`fresh`/`stale`/`offline`) DERIVED from the session's
     /// last-activity timestamp (`agent_session.updated_at`, which the metered turn's folded
@@ -2994,6 +3022,213 @@ mod tests {
             rt.db().list_token_usage().unwrap().len(),
             ledger_baseline,
             "link-state reads are pure compute — no new ledger row across fresh/stale/offline"
+        );
+    }
+
+    #[test]
+    fn c2_6_owner_authed_archive_op_distinct_from_the_sweep() {
+        // C2-6 FAITHFUL DARK PROOF: drive ONE claude-pinned SESSIONED turn through the REAL
+        // `run_session_task_pinned` entry (billing one anthropic row — ASSERTED, so the archived
+        // session is the REAL routed session that carries metered claude rows, never a mirror).
+        // Then EXPLICITLY archive that session as the BOUND owner and prove:
+        //   - status transitions to 'archived' (+ archived_at set), distinct from the time-based
+        //     `session_lifecycle` sweep (which only archives after the 7d idle timeout);
+        //   - the session no longer appears in the C2-4 active/owner list (it was there before);
+        //   - an audit receipt is written and the hash chain verifies (action='session.archived');
+        //   - `list_run_token_usage` is UNCHANGED — archive is metadata, not a model turn;
+        //   - a DIFFERENT principal CANNOT archive it (owner mismatch → fail-closed refusal): no
+        //     state change, the session STILL listed, and NO new audit row.
+        // NO key, NO network — the claude stub bills the anthropic row.
+        let (rt, _ws) = runtime_with_claude_wired(
+            "c2-6-archive-op",
+            vec![AgentStep::Finish {
+                message: "PONG".to_string(),
+            }],
+            Box::new(DenyAllApprovals),
+        );
+        let owner = authed_caller("principal:c2-6-owner");
+        let other = authed_caller("principal:c2-6-intruder");
+
+        // --- one claude-pinned sessioned turn → a REAL routed session with a metered anthropic row ---
+        let run_id = "run-c2-6";
+        let sess = "sess-c2-6";
+        let (sel, _a) = rt
+            .run_session_task_pinned(&owner, run_id, sess, "first turn", "claude", 5_000)
+            .expect("the claude-pinned sessioned turn runs");
+        assert_eq!(sel.provider_id, "claude", "the pin routed to claude");
+
+        // ASSERT the REAL anthropic ledger row (the archived session carries metered claude billing).
+        let ledger_before = rt.db().list_run_token_usage(run_id).unwrap();
+        assert_eq!(
+            ledger_before.len(),
+            1,
+            "one anthropic row for the single claude turn"
+        );
+        assert_eq!(ledger_before[0].provider_kind, "anthropic");
+        assert_eq!(ledger_before[0].base_url_host, "api.anthropic.com");
+        assert!(
+            !ledger_before[0].fallback,
+            "the claude route is never a fallback"
+        );
+        let ledger_baseline = rt.db().list_token_usage().unwrap().len();
+        assert_eq!(
+            ledger_baseline, 1,
+            "one claude turn billed one anthropic row"
+        );
+
+        // No archive receipt exists yet (it is written only by the archive op).
+        let archive_receipts = |rt: &HubRuntime<ScriptTransport>| -> i64 {
+            rt.db()
+                .conn()
+                .query_row(
+                    "SELECT count(*) FROM audit_ledger WHERE action = 'session.archived'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(archive_receipts(&rt), 0, "no archive receipt before the op");
+
+        // --- BEFORE archive: the session IS in the owner's active list, status is 'active' --------
+        assert_eq!(
+            rt.list_sessions_for_owner(&owner)
+                .unwrap()
+                .iter()
+                .map(|s| s.agent_session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![sess],
+            "the active session is listed before archiving"
+        );
+        let status_of = |rt: &HubRuntime<ScriptTransport>| -> String {
+            rt.db()
+                .conn()
+                .query_row(
+                    "SELECT status FROM agent_session WHERE agent_session_id = ?1",
+                    [sess],
+                    |r| r.get::<_, String>(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(status_of(&rt), "active", "freshly-routed session is active");
+
+        // --- OWNER-MISMATCH first: a DIFFERENT principal cannot archive (fail-closed refusal) -----
+        let refused = rt
+            .archive_session_for_owner(&other, sess, 6_000)
+            .expect("the archive call itself does not error");
+        assert!(!refused.accepted, "a non-owner archive is refused");
+        assert_eq!(refused.status, "not_owner");
+        assert_eq!(
+            refused.audit_ref, None,
+            "a refused archive writes no receipt"
+        );
+        // The refusal changed NOTHING: still active, still listed, no audit row written.
+        assert_eq!(
+            status_of(&rt),
+            "active",
+            "owner mismatch left the status unchanged"
+        );
+        assert_eq!(
+            rt.list_sessions_for_owner(&owner).unwrap().len(),
+            1,
+            "owner mismatch left the session in the active list"
+        );
+        assert_eq!(
+            archive_receipts(&rt),
+            0,
+            "a refused (non-owner) archive writes NO audit row (the real fail-closed proof)"
+        );
+
+        // --- the BOUND OWNER archives the session -------------------------------------------------
+        let archive_at = 7_000;
+        let outcome = rt
+            .archive_session_for_owner(&owner, sess, archive_at)
+            .expect("the owner's archive runs");
+        assert!(outcome.accepted, "the bound owner's archive is accepted");
+        assert_eq!(outcome.status, "archived");
+        assert!(
+            outcome.audit_ref.is_some(),
+            "an accepted archive writes a receipt"
+        );
+
+        // status → 'archived' (+ archived_at = now); status_changed_at + updated_at bumped to now.
+        let (status, archived_at_col, status_changed_at, updated_at): (
+            String,
+            Option<i64>,
+            Option<i64>,
+            i64,
+        ) = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT status, archived_at, status_changed_at, updated_at
+                 FROM agent_session WHERE agent_session_id = ?1",
+                [sess],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "archived", "status transitions to archived");
+        assert_eq!(
+            archived_at_col,
+            Some(archive_at),
+            "archived_at is stamped at now"
+        );
+        assert_eq!(status_changed_at, Some(archive_at));
+        assert_eq!(updated_at, archive_at);
+
+        // --- the session no longer appears in the C2-4 active/owner list --------------------------
+        assert!(
+            rt.list_sessions_for_owner(&owner).unwrap().is_empty(),
+            "an archived session is hidden from the active/owner list"
+        );
+
+        // --- an audit receipt was written and the hash chain verifies -----------------------------
+        assert_eq!(
+            archive_receipts(&rt),
+            1,
+            "exactly one session.archived receipt was recorded"
+        );
+        assert!(
+            friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok(),
+            "the archive receipt is on a verified hash chain"
+        );
+
+        // --- THE ANTI-FAKE: archive billed NO new ledger row (metadata, not a model turn) ---------
+        assert_eq!(
+            rt.db().list_run_token_usage(run_id).unwrap(),
+            ledger_before,
+            "archive is metadata: the run's token ledger is byte-identical (no new anthropic row)"
+        );
+        assert_eq!(
+            rt.db().list_token_usage().unwrap().len(),
+            ledger_baseline,
+            "archive wrote no new token_ledger row (no model call)"
+        );
+
+        // --- idempotent: re-archiving the owner's already-archived session is an accepted no-op ----
+        let again = rt
+            .archive_session_for_owner(&owner, sess, 8_000)
+            .expect("re-archive runs");
+        assert!(again.accepted, "re-archive is an accepted no-op");
+        assert_eq!(again.status, "already_archived");
+        assert_eq!(again.audit_ref, None, "re-archive writes no new receipt");
+        assert_eq!(
+            archive_receipts(&rt),
+            1,
+            "re-archive did not stack a second receipt"
+        );
+        // updated_at was NOT bumped by the no-op re-archive (it stays at the real archive time).
+        let updated_after_rearchive: i64 = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT updated_at FROM agent_session WHERE agent_session_id = ?1",
+                [sess],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            updated_after_rearchive, archive_at,
+            "the idempotent re-archive does not bump updated_at"
         );
     }
 
