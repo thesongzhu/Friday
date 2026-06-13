@@ -980,6 +980,10 @@ impl<T: Transport> HubRuntime<T> {
     /// passport is NEVER minted/persisted and the handoff FAILS CLOSED (`Blocked`), so the run
     /// NEVER executes and no model call happens. When the real source yields ZERO items the mint
     /// is SKIPPED (an empty passport carries nothing) and the run proceeds normally.
+    ///
+    /// The passport is gated as ONE transfer unit (all-or-nothing): ANY sensitive item in the
+    /// recalled set blocks the WHOLE handoff (nothing partially carried) — DELIBERATELY tighter
+    /// than the per-item recall path. See [`Self::mint_handoff_passport`] for the full semantics.
     #[allow(clippy::too_many_arguments)]
     fn run_agent_loop_for_mission_with_overrides_flagged(
         &self,
@@ -1080,6 +1084,24 @@ impl<T: Transport> HubRuntime<T> {
     /// (`context-passport:agent-loop:{run_id}`), so the persisted `MissionLinkKind::ContextPassport`
     /// link + the `mission.context_passport_refs` entry both bind the passport to this run — no
     /// invented field.
+    ///
+    /// AGGREGATE (whole-unit) GATING — read this before assuming this mirrors the recall path.
+    /// The per-ITEM `PassportItem` field conversion (`kind`/`label`/`included`/`sensitive`)
+    /// matches `gate_and_render_recall`, BUT the resulting set is gated DIFFERENTLY: every item is
+    /// handed to `build_context_passport` with `included: true` and the passport is gated as a
+    /// SINGLE TRANSFER UNIT (all-or-nothing). If ANY recalled item is sensitive-and-unapproved
+    /// under v1 deny-all, the ENTIRE passport build fails and the whole handoff fails closed
+    /// (`Blocked`) — NOTHING persists, so a benign item sharing the set with a sensitive one is
+    /// NOT partially carried. This is DELIBERATELY MORE RESTRICTIVE than the prompt path
+    /// (`gate_and_render_recall`), which drops sensitive items PER-ITEM and injects the rest.
+    /// Rationale: a Context Passport is ONE transfer artifact, so a fail-closed whole-unit block
+    /// is the correct boundary (never a leak — strictly tighter than the per-item drop).
+    ///
+    /// CALLER CAVEAT: the returned `Blocked { blockers }` reason embeds the offending item's
+    /// PII-redacted label (it originates from `gate_transfer`'s message). It is NOT persisted
+    /// (the canary-scan test confirms no transfer artifact carries the secret), but callers MUST
+    /// NOT log `blockers` verbatim — it is the same exposure class as recall content reaching the
+    /// prompt.
     ///
     /// Returns:
     /// - `Ok(None)` ⇒ the run should PROCEED. Either nothing was minted because the real source
@@ -5470,6 +5492,108 @@ mod tests {
             !leaked,
             "the secret canary must NOT appear in any transfer artifact (it stays Hub-held in memory_item only)"
         );
+    }
+
+    /// NS-6 (flag ON + MIXED context — 1 benign + 1 sensitive recalled item): PINS the
+    /// all-or-nothing whole-unit semantics. `mint_handoff_passport` hands the WHOLE recalled set
+    /// (every item `included: true`) to `build_context_passport`, which gates the set as ONE
+    /// transfer artifact: the lone sensitive item makes the ENTIRE build fail-closed under v1
+    /// deny-all, so the whole handoff is `Blocked` and the benign item is NOT carried (no partial
+    /// passport persists). This is DELIBERATELY MORE RESTRICTIVE than the per-item recall path
+    /// (`gate_and_render_recall`), which would drop only the sensitive item and inject the benign
+    /// one — here a context CONTAINING a secret item blocks the whole transfer unit, never leaks.
+    /// The run NEVER executes (no agent_run, no model call), NOTHING persists (no passport row, no
+    /// ContextPassport link, no new ref), and the secret string lands in no transfer artifact.
+    #[test]
+    fn passport_mint_mixed_set_one_sensitive_blocks_whole_handoff_fail_closed() {
+        const SECRET_CANARY: &str = "SECRET-CANARY-ns6-mixed-must-never-persist-sk-live-xyz789";
+        let (rt, root, post) = runtime_with_owner("ns6-mixed", "owner-1", &["{\"tool\":\"none\"}"]);
+        std::fs::write(root.join("notes.md"), b"x").unwrap();
+        seed_loop_mission(
+            rt.db(),
+            WorkLane::DeepSeek,
+            Some("deepseek"),
+            WorkItemStatus::ReadyToDispatch,
+        );
+        // A MIXED recall set for the SAME principal: one benign + one sensitive confirmed memory,
+        // both content-bearing so both survive `recall_confirmed → rank_recall` (top_k = 8) and
+        // both land in the single `PassportItem` set handed to `build_context_passport`.
+        seed_confirmed_memory(
+            rt.db(),
+            "mem-mixed-benign",
+            "owner-1",
+            "prefers concise summaries",
+            false,
+        );
+        seed_confirmed_memory(rt.db(), "mem-mixed-secret", "owner-1", SECRET_CANARY, true);
+
+        let run_id = "run-ns6-mixed";
+        let outcome = rt
+            .run_agent_loop_for_mission_with_overrides_flagged(
+                loop_lookup(),
+                "friday-hub-session",
+                run_id,
+                "do work",
+                None,
+                None,
+                /* passport_mint = */ true,
+                1000,
+            )
+            .unwrap();
+
+        // WHOLE-UNIT FAIL CLOSED: a single sensitive item blocks the ENTIRE passport build.
+        let MissionBoundLoopOutcome::Blocked { blockers } = outcome else {
+            panic!(
+                "a mixed set with ANY sensitive item must FAIL CLOSED (Blocked), got {outcome:?}"
+            );
+        };
+        assert!(
+            blockers
+                .iter()
+                .any(|b| b.contains("context_passport_blocked")),
+            "the blocker must name the passport-blocked reason, got {blockers:?}"
+        );
+
+        // The run NEVER executed: no agent_run row, no model call.
+        assert_eq!(
+            agent_run_count(&rt, run_id),
+            0,
+            "no run on the blocked mixed-set handoff"
+        );
+        assert_eq!(
+            post.get(),
+            0,
+            "no model call on the blocked mixed-set handoff"
+        );
+
+        // NOTHING persisted — the benign item is NOT carried because the WHOLE unit is blocked.
+        let passport_id = format!("context-passport:agent-loop:{run_id}");
+        assert!(
+            rt.db()
+                .get_context_passport(&passport_id)
+                .unwrap()
+                .is_none(),
+            "no ContextPassport row may persist — the benign item is NOT partially carried"
+        );
+        assert_eq!(
+            context_passport_link_count(&rt, "mission-loop"),
+            0,
+            "no ContextPassport mission_link may persist on the blocked mixed-set handoff"
+        );
+        let mission = rt.db().get_mission("mission-loop").unwrap().unwrap();
+        assert!(
+            mission.context_passport_refs.is_empty(),
+            "no passport ref may be pushed on the blocked mixed-set handoff, got {:?}",
+            mission.context_passport_refs
+        );
+
+        // The secret string lands in NO transfer artifact (it stays Hub-held in `memory_item`).
+        let leaked = secret_string_present_in_db(rt.db(), SECRET_CANARY, &["memory_item"]);
+        assert!(
+            !leaked,
+            "the secret canary must NOT appear in any transfer artifact (it stays Hub-held in memory_item only)"
+        );
+        assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
     }
 
     /// NS-6 (flag OFF — the prod default): BYTE-IDENTICAL to the pre-NS-6 baseline — the run
