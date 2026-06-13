@@ -199,245 +199,283 @@ impl<T: Transport> HubServer<T> {
         request: MissionIntakeRequestWire,
         now_ms: i64,
     ) -> Envelope {
-        if let Err(err) =
-            friday_core::validate_friday_conversation_id(&request.friday_conversation_id)
-        {
-            return Self::error(msg_id, now_ms, ErrorCode::Internal, &err.to_string());
-        }
-        if request.owner_principal.trim().is_empty()
-            || request.surface_thread_id.trim().is_empty()
-            || request.delivery_route.trim().is_empty()
-            || request.mission_id.trim().is_empty()
-            || request.work_item_id.trim().is_empty()
-            || request.intent.trim().is_empty()
-        {
-            return Self::error(
+        // (NS-5) The intake body is a pure `&Db` mutation (no `deepseek`/`next_ask`), so it is
+        // extracted to the free `mission_intake_result_for_db` — letting the LIVE agent-run server
+        // bin (which holds a `HubRuntime`, not a `HubServer`) REUSE the exact same Mission-birth
+        // path through its flag-gated dispatch arm WITHOUT reimplementing it. This dispatch and the
+        // bin's arm therefore birth a Mission identically (same rows, same wire result).
+        mission_intake_result_for_db(&self.db, msg_id, request, now_ms)
+    }
+}
+
+/// (NS-5) The Mission-intake/preflight mutation, parameterized over `&Db` so BOTH the
+/// [`HubServer::dispatch`] path AND the live agent-run server bin's flag-gated dispatch arm reuse
+/// the EXACT same Mission-birth (Mission + WorkItem(Draft) + SurfaceThread + route_decision) and
+/// the same [`MissionIntakeResultWire`] reply. It touches ONLY the DB (validation + preflight +
+/// route-decision write) and makes NO provider/model call — so it writes ZERO `token_ledger` rows.
+///
+/// Returns either a [`Message::MissionIntakeResult`] envelope (ready/blocked) or a
+/// [`Message::Error`] envelope on a validation/preflight failure, correlated to `msg_id`.
+pub fn mission_intake_result_for_db(
+    db: &Db,
+    msg_id: &str,
+    request: MissionIntakeRequestWire,
+    now_ms: i64,
+) -> Envelope {
+    if let Err(err) = friday_core::validate_friday_conversation_id(&request.friday_conversation_id)
+    {
+        return mission_intake_error(msg_id, now_ms, ErrorCode::Internal, &err.to_string());
+    }
+    if request.owner_principal.trim().is_empty()
+        || request.surface_thread_id.trim().is_empty()
+        || request.delivery_route.trim().is_empty()
+        || request.mission_id.trim().is_empty()
+        || request.work_item_id.trim().is_empty()
+        || request.intent.trim().is_empty()
+    {
+        return mission_intake_error(
+            msg_id,
+            now_ms,
+            ErrorCode::Internal,
+            "mission intake required field missing",
+        );
+    }
+    let surface_kind = match surface_kind_from_wire(&request.surface_kind) {
+        Ok(kind) => kind,
+        Err(message) => return mission_intake_error(msg_id, now_ms, ErrorCode::Internal, message),
+    };
+    let visibility_policy = match visibility_policy_from_wire(&request.visibility_policy) {
+        Ok(policy) => policy,
+        Err(message) => return mission_intake_error(msg_id, now_ms, ErrorCode::Internal, message),
+    };
+    let lane = match work_lane_from_wire(&request.lane) {
+        Ok(lane) => lane,
+        Err(message) => return mission_intake_error(msg_id, now_ms, ErrorCode::Internal, message),
+    };
+    if let Some(body_ref) = request.body_ref.as_deref() {
+        if !is_safe_body_ref(body_ref) {
+            return mission_intake_error(
                 msg_id,
                 now_ms,
                 ErrorCode::Internal,
-                "mission intake required field missing",
+                "mission intake body_ref must be a Friday-owned body/blob ref",
             );
         }
-        let surface_kind = match surface_kind_from_wire(&request.surface_kind) {
-            Ok(kind) => kind,
-            Err(message) => return Self::error(msg_id, now_ms, ErrorCode::Internal, message),
-        };
-        let visibility_policy = match visibility_policy_from_wire(&request.visibility_policy) {
-            Ok(policy) => policy,
-            Err(message) => return Self::error(msg_id, now_ms, ErrorCode::Internal, message),
-        };
-        let lane = match work_lane_from_wire(&request.lane) {
-            Ok(lane) => lane,
-            Err(message) => return Self::error(msg_id, now_ms, ErrorCode::Internal, message),
-        };
-        if let Some(body_ref) = request.body_ref.as_deref() {
-            if !is_safe_body_ref(body_ref) {
-                return Self::error(
-                    msg_id,
-                    now_ms,
-                    ErrorCode::Internal,
-                    "mission intake body_ref must be a Friday-owned body/blob ref",
-                );
-            }
+    }
+
+    let target = request
+        .target_provider_or_agent
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| Some(lane.as_str().to_string()));
+    let capability_id = request
+        .capability_id
+        .clone()
+        .filter(|value| !value.trim().is_empty());
+    let title = if request.title.trim().is_empty() {
+        "Friday Mission".to_string()
+    } else {
+        request.title.clone()
+    };
+    let input_ref = request.body_ref.clone().unwrap_or_else(|| {
+        format!(
+            "friday://body/mission-intake/{}",
+            projection_ref_part(&request.work_item_id)
+        )
+    });
+
+    let conversation = friday_core::FridayConversation {
+        friday_conversation_id: request.friday_conversation_id.clone(),
+        owner_principal: request.owner_principal.clone(),
+        title: title.clone(),
+        current_focus_summary: request.intent.clone(),
+        active_mission_ids: Vec::new(),
+        surface_thread_ids: Vec::new(),
+        memory_scope_ref: None,
+        truth_status: friday_core::TruthStatus::WiredRegistry,
+        proof_refs: vec![format!(
+            "proof://mission-intake/{}",
+            projection_ref_part(&request.mission_id)
+        )],
+        created_at_ms: now_ms,
+        updated_at_ms: now_ms,
+    };
+    let mission = friday_core::Mission {
+        mission_id: request.mission_id.clone(),
+        friday_conversation_id: request.friday_conversation_id.clone(),
+        title,
+        intent: request.intent.clone(),
+        status: friday_core::MissionStatus::Active,
+        why_now: "Surface input requested Friday coordination.".into(),
+        decision_path_summary: "Mission intake resolved the surface input through Hub preflight."
+            .into(),
+        considered_options: vec!["detached surface chat".into(), "Mission Spine".into()],
+        deferred_options: vec!["native UI rendering".into()],
+        known_pitfalls: vec!["duplicate input can create task debt".into()],
+        handoff_inheritance: vec!["carry canonical Mission id across surfaces".into()],
+        work_item_ids: Vec::new(),
+        memory_candidate_refs: Vec::new(),
+        context_passport_refs: Vec::new(),
+        proof_refs: Vec::new(),
+        created_at_ms: now_ms,
+        updated_at_ms: now_ms,
+    };
+    let surface_thread = friday_core::SurfaceThread {
+        surface_thread_id: request.surface_thread_id.clone(),
+        friday_conversation_id: request.friday_conversation_id.clone(),
+        mission_id: Some(request.mission_id.clone()),
+        surface_kind,
+        channel_binding_id: None,
+        delivery_route: request.delivery_route.clone(),
+        visibility_policy,
+        allowed_actions: vec!["open_mission".into(), "ask_friday".into()],
+        last_seen_at_ms: Some(now_ms),
+        last_delivered_event_seq: None,
+        created_at_ms: now_ms,
+        updated_at_ms: now_ms,
+    };
+    let work_item = friday_core::WorkItem {
+        work_item_id: request.work_item_id.clone(),
+        mission_id: request.mission_id.clone(),
+        lane,
+        target_provider_or_agent: target,
+        status: friday_core::WorkItemStatus::Draft,
+        owner_claim_ids: Vec::new(),
+        workspace_refs: Vec::new(),
+        capability_id,
+        risk_level: friday_core::Risk::Low,
+        approval_state: friday_core::ApprovalState::NotRequired,
+        blocking_reason: None,
+        input_refs: vec![input_ref],
+        output_refs: Vec::new(),
+        proof_requirements: vec!["Mission-bound provider proof receipt".into()],
+        proof_receipts: Vec::new(),
+        judgment_memory: friday_core::HandoffJudgmentMemory {
+            task: request.intent.clone(),
+            current_blocker: None,
+            target_lane_thread_agent_provider: request.lane.clone(),
+            read_first_files: Vec::new(),
+            required_output: "Mission-bound result with proof receipt".into(),
+            done_criteria: vec!["WorkItem completes only after proof".into()],
+            red_lines: vec!["do not create detached provider state".into()],
+            why_this_route: "Surface input must resolve to a canonical Mission.".into(),
+            considered_options: vec!["surface-local chat".into(), "Mission Spine".into()],
+            deferred_options: vec!["native UI implementation".into()],
+            previous_pitfalls: vec!["provider ack looked like done".into()],
+            inheritable_context: vec!["same Mission renders across surfaces".into()],
+            proof_requirements: vec!["ledger/activity/audit proof".into()],
+            ownership_claim_ids: Vec::new(),
+        },
+        created_at_ms: now_ms,
+        updated_at_ms: now_ms,
+    };
+    let route_decision = friday_core::RouteDecisionCard::from_work_item(
+        format!(
+            "route-intake-{}-{}",
+            projection_ref_part(&request.mission_id),
+            projection_ref_part(&request.work_item_id)
+        ),
+        &work_item,
+        vec![format!(
+            "friday://surface-thread/{}",
+            projection_ref_part(&request.surface_thread_id)
+        )],
+        now_ms,
+        None,
+    );
+
+    let outcome = match preflight_and_stage_work_item(
+        db,
+        MissionPreflightRequest {
+            conversation,
+            mission,
+            surface_thread: Some(surface_thread),
+            work_item,
+            includes_sensitive_context: request.includes_sensitive_context,
+        },
+    ) {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            return mission_intake_error(
+                msg_id,
+                now_ms,
+                ErrorCode::Internal,
+                &format!("mission intake blocked: {err}"),
+            );
         }
+    };
 
-        let target = request
-            .target_provider_or_agent
-            .clone()
-            .filter(|value| !value.trim().is_empty())
-            .or_else(|| Some(lane.as_str().to_string()));
-        let capability_id = request
-            .capability_id
-            .clone()
-            .filter(|value| !value.trim().is_empty());
-        let title = if request.title.trim().is_empty() {
-            "Friday Mission".to_string()
-        } else {
-            request.title.clone()
-        };
-        let input_ref = request.body_ref.clone().unwrap_or_else(|| {
-            format!(
-                "friday://body/mission-intake/{}",
-                projection_ref_part(&request.work_item_id)
-            )
-        });
-
-        let conversation = friday_core::FridayConversation {
-            friday_conversation_id: request.friday_conversation_id.clone(),
-            owner_principal: request.owner_principal.clone(),
-            title: title.clone(),
-            current_focus_summary: request.intent.clone(),
-            active_mission_ids: Vec::new(),
-            surface_thread_ids: Vec::new(),
-            memory_scope_ref: None,
-            truth_status: friday_core::TruthStatus::WiredRegistry,
-            proof_refs: vec![format!(
-                "proof://mission-intake/{}",
-                projection_ref_part(&request.mission_id)
-            )],
-            created_at_ms: now_ms,
-            updated_at_ms: now_ms,
-        };
-        let mission = friday_core::Mission {
-            mission_id: request.mission_id.clone(),
-            friday_conversation_id: request.friday_conversation_id.clone(),
-            title,
-            intent: request.intent.clone(),
-            status: friday_core::MissionStatus::Active,
-            why_now: "Surface input requested Friday coordination.".into(),
-            decision_path_summary:
-                "Mission intake resolved the surface input through Hub preflight.".into(),
-            considered_options: vec!["detached surface chat".into(), "Mission Spine".into()],
-            deferred_options: vec!["native UI rendering".into()],
-            known_pitfalls: vec!["duplicate input can create task debt".into()],
-            handoff_inheritance: vec!["carry canonical Mission id across surfaces".into()],
-            work_item_ids: Vec::new(),
-            memory_candidate_refs: Vec::new(),
-            context_passport_refs: Vec::new(),
-            proof_refs: Vec::new(),
-            created_at_ms: now_ms,
-            updated_at_ms: now_ms,
-        };
-        let surface_thread = friday_core::SurfaceThread {
-            surface_thread_id: request.surface_thread_id.clone(),
-            friday_conversation_id: request.friday_conversation_id.clone(),
-            mission_id: Some(request.mission_id.clone()),
-            surface_kind,
-            channel_binding_id: None,
-            delivery_route: request.delivery_route.clone(),
-            visibility_policy,
-            allowed_actions: vec!["open_mission".into(), "ask_friday".into()],
-            last_seen_at_ms: Some(now_ms),
-            last_delivered_event_seq: None,
-            created_at_ms: now_ms,
-            updated_at_ms: now_ms,
-        };
-        let work_item = friday_core::WorkItem {
-            work_item_id: request.work_item_id.clone(),
-            mission_id: request.mission_id.clone(),
-            lane,
-            target_provider_or_agent: target,
-            status: friday_core::WorkItemStatus::Draft,
-            owner_claim_ids: Vec::new(),
-            workspace_refs: Vec::new(),
-            capability_id,
-            risk_level: friday_core::Risk::Low,
-            approval_state: friday_core::ApprovalState::NotRequired,
-            blocking_reason: None,
-            input_refs: vec![input_ref],
-            output_refs: Vec::new(),
-            proof_requirements: vec!["Mission-bound provider proof receipt".into()],
-            proof_receipts: Vec::new(),
-            judgment_memory: friday_core::HandoffJudgmentMemory {
-                task: request.intent.clone(),
-                current_blocker: None,
-                target_lane_thread_agent_provider: request.lane.clone(),
-                read_first_files: Vec::new(),
-                required_output: "Mission-bound result with proof receipt".into(),
-                done_criteria: vec!["WorkItem completes only after proof".into()],
-                red_lines: vec!["do not create detached provider state".into()],
-                why_this_route: "Surface input must resolve to a canonical Mission.".into(),
-                considered_options: vec!["surface-local chat".into(), "Mission Spine".into()],
-                deferred_options: vec!["native UI implementation".into()],
-                previous_pitfalls: vec!["provider ack looked like done".into()],
-                inheritable_context: vec!["same Mission renders across surfaces".into()],
-                proof_requirements: vec!["ledger/activity/audit proof".into()],
-                ownership_claim_ids: Vec::new(),
-            },
-            created_at_ms: now_ms,
-            updated_at_ms: now_ms,
-        };
-        let route_decision = friday_core::RouteDecisionCard::from_work_item(
-            format!(
-                "route-intake-{}-{}",
-                projection_ref_part(&request.mission_id),
-                projection_ref_part(&request.work_item_id)
-            ),
-            &work_item,
-            vec![format!(
-                "friday://surface-thread/{}",
-                projection_ref_part(&request.surface_thread_id)
-            )],
-            now_ms,
-            None,
-        );
-
-        let outcome = match preflight_and_stage_work_item(
-            &self.db,
-            MissionPreflightRequest {
-                conversation,
-                mission,
-                surface_thread: Some(surface_thread),
-                work_item,
-                includes_sensitive_context: request.includes_sensitive_context,
-            },
-        ) {
-            Ok(outcome) => outcome,
-            Err(err) => {
-                return Self::error(
-                    msg_id,
-                    now_ms,
-                    ErrorCode::Internal,
-                    &format!("mission intake blocked: {err}"),
-                );
-            }
-        };
-
-        if outcome.is_ready() {
-            if let Err(err) = self.db.upsert_route_decision(&route_decision) {
-                return Self::error(
-                    msg_id,
-                    now_ms,
-                    ErrorCode::Internal,
-                    &format!("mission intake route decision write failed: {err}"),
-                );
-            }
+    if outcome.is_ready() {
+        if let Err(err) = db.upsert_route_decision(&route_decision) {
+            return mission_intake_error(
+                msg_id,
+                now_ms,
+                ErrorCode::Internal,
+                &format!("mission intake route decision write failed: {err}"),
+            );
         }
+    }
 
-        let result = match outcome {
-            MissionPreflightOutcome::Ready {
-                mission_id,
-                work_item_id,
-            } => MissionIntakeResultWire {
+    let result = match outcome {
+        MissionPreflightOutcome::Ready {
+            mission_id,
+            work_item_id,
+        } => MissionIntakeResultWire {
+            friday_conversation_id: request.friday_conversation_id,
+            mission_id,
+            work_item_id: Some(work_item_id),
+            surface_thread_id: request.surface_thread_id,
+            status: "ready".into(),
+            blockers: Vec::new(),
+            duplicate_mission_id: None,
+            duplicate_work_item_id: None,
+            created_or_ready: true,
+        },
+        MissionPreflightOutcome::Blocked {
+            blockers,
+            duplicate_mission_id,
+            duplicate_work_item_id,
+        } => {
+            let mission_id = duplicate_mission_id
+                .clone()
+                .unwrap_or_else(|| request.mission_id.clone());
+            let work_item_id = duplicate_work_item_id.clone();
+            MissionIntakeResultWire {
                 friday_conversation_id: request.friday_conversation_id,
                 mission_id,
-                work_item_id: Some(work_item_id),
+                work_item_id,
                 surface_thread_id: request.surface_thread_id,
-                status: "ready".into(),
-                blockers: Vec::new(),
-                duplicate_mission_id: None,
-                duplicate_work_item_id: None,
-                created_or_ready: true,
-            },
-            MissionPreflightOutcome::Blocked {
+                status: "blocked".into(),
                 blockers,
                 duplicate_mission_id,
                 duplicate_work_item_id,
-            } => {
-                let mission_id = duplicate_mission_id
-                    .clone()
-                    .unwrap_or_else(|| request.mission_id.clone());
-                let work_item_id = duplicate_work_item_id.clone();
-                MissionIntakeResultWire {
-                    friday_conversation_id: request.friday_conversation_id,
-                    mission_id,
-                    work_item_id,
-                    surface_thread_id: request.surface_thread_id,
-                    status: "blocked".into(),
-                    blockers,
-                    duplicate_mission_id,
-                    duplicate_work_item_id,
-                    created_or_ready: false,
-                }
+                created_or_ready: false,
             }
-        };
-        Envelope::new(
-            format!("{msg_id}-mission-intake"),
-            now_ms,
-            Message::MissionIntakeResult { result },
-        )
-    }
+        }
+    };
+    Envelope::new(
+        format!("{msg_id}-mission-intake"),
+        now_ms,
+        Message::MissionIntakeResult { result },
+    )
+}
 
+/// (NS-5) Free-function form of [`HubServer::error`] for [`mission_intake_result_for_db`] (which is
+/// not a method, so it cannot call `Self::error`). Same shape: a correlated [`Message::Error`]
+/// envelope.
+fn mission_intake_error(msg_id: &str, now_ms: i64, code: ErrorCode, message: &str) -> Envelope {
+    Envelope::new(
+        format!("{msg_id}-error"),
+        now_ms,
+        Message::Error {
+            code,
+            message: message.to_string(),
+        },
+    )
+    .with_correlation(msg_id.to_string())
+}
+
+impl<T: Transport> HubServer<T> {
     fn ask(
         &mut self,
         msg_id: &str,
