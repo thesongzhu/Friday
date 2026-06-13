@@ -21,8 +21,9 @@ use crate::mission_context::{
     MissionContextResolution, ResolvedMissionContext,
 };
 use crate::mission_preflight::{
-    attach_channel_inbound_receipt, attach_provider_timeline_state, attach_workflow_run_ref,
-    MissionAttachmentOutcome, ProviderTimelineAttachment,
+    attach_channel_inbound_receipt, attach_provider_timeline_state,
+    attach_provider_timeline_state_guarded, attach_workflow_run_ref, MissionAttachmentOutcome,
+    ProviderTimelineAttachment,
 };
 use crate::planner::WorkflowDefinition;
 use crate::provider_timeline::PendingState;
@@ -512,6 +513,24 @@ fn attach_completed_provider_state_for_ask(
 ///   That is TRUE for every `Ok` loop outcome (the route was selected and the client was
 ///   called), and it deliberately does NOT claim `ProviderWaiting`/`CompletedWithProof` for
 ///   a paused or dead run. The binding link still exists, tied to the run.
+///
+/// (WI-1, M-6) `guarded` is the DARK WorkItem guarded-transition flag, threaded in as a pure
+/// bool from the run-loop entrypoint's single env read (see
+/// [`crate::runtime::HubRuntime::run_agent_loop_for_mission_with_overrides`]). It is forwarded
+/// verbatim to every per-state [`attach_provider_timeline_state_guarded`] call. `false` (the prod
+/// default): each legal status hop advances via the pre-WI-1 inline write — BYTE-IDENTICAL to
+/// before (no audit row, no primitive call). `true`: each legal hop advances through
+/// [`friday_storage::Db::transition_work_item_status`], writing one hash-chained `audit_ledger`
+/// lifecycle row per transition in its own transaction. A completed loop drives 5 legal hops
+/// (ReadyToDispatch → … → CompletedWithProof) ⇒ 5 lifecycle audit rows. The resulting WorkItem
+/// status and the MissionLink (its `created_at_ms` is preserved from the first hop = base
+/// `now_ms`) are unchanged either way. The ON path has TWO deltas vs OFF: (a) those hash-chained
+/// audit rows, and (b) an ON-only `updated_at_ms` +offset (≤ +4ms, one per hop index) on the
+/// WorkItem and, on completion, the Mission row — a direct consequence of the per-hop `now_ms`
+/// below. NOTE: ON-path only, each hop is given a distinct `now_ms` (a per-hop monotonic offset)
+/// so the per-hop audit_ids — derived from `(work_item_id, now_ms)`, the `audit_ledger` PRIMARY
+/// KEY — are unique across the multi-hop drive and the run never errors on a PK collision. OFF
+/// keeps the single caller-side `now_ms` (byte-identical to pre-WI-1).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn attach_agent_loop_provider_state(
     db: &Db,
@@ -521,6 +540,7 @@ pub(crate) fn attach_agent_loop_provider_state(
     run_id: &str,
     completed: bool,
     proof_ref: &str,
+    guarded: bool,
     now_ms: i64,
 ) -> Result<MissionAttachmentOutcome, StorageError> {
     let mut states = vec![
@@ -535,8 +555,18 @@ pub(crate) fn attach_agent_loop_provider_state(
     let mut last = MissionAttachmentOutcome::Blocked {
         blockers: vec!["provider_state_not_attached".into()],
     };
-    for state in states {
-        last = attach_provider_timeline_state(
+    for (idx, state) in states.into_iter().enumerate() {
+        // WI-1 (M-6) audit_id uniqueness: the guarded primitive derives each lifecycle row's
+        // audit_id from `(work_item_id, now_ms)`, and that id is the `audit_ledger` PRIMARY KEY.
+        // This loop drives MULTIPLE hops for the SAME work_item, so reusing the single caller-side
+        // `now_ms` across hops would collide on the 2nd row's id and the primitive would return Err
+        // — erroring the run. ONLY on the guarded path we give each hop a distinct `now_ms` (the
+        // per-hop monotonic offset), so the audit_ids are unique and the chain extends cleanly.
+        // The OFF path is UNCHANGED — it keeps the single `now_ms`, so it stays BYTE-IDENTICAL to
+        // the pre-WI-1 inline write (which is PK-idempotent on `upsert_work_item` and never wrote
+        // an audit row, so it never had this constraint).
+        let hop_now_ms = if guarded { now_ms + idx as i64 } else { now_ms };
+        last = attach_provider_timeline_state_guarded(
             db,
             ProviderTimelineAttachment {
                 mission_id: mission_id.to_string(),
@@ -546,8 +576,9 @@ pub(crate) fn attach_agent_loop_provider_state(
                 state,
                 proof_ref: (state == PendingState::ProviderCompleted)
                     .then(|| proof_ref.to_string()),
-                now_ms,
+                now_ms: hop_now_ms,
             },
+            guarded,
         )?;
         if matches!(last, MissionAttachmentOutcome::Blocked { .. }) {
             return Ok(last);
@@ -566,6 +597,7 @@ mod tests {
         SurfaceKind, TruthStatus, VisibilityPolicy, WorkItem, WorkItemStatus,
     };
     use friday_crypto::InMemorySecureStore;
+    use friday_storage::audit::verify_audit_chain;
     use friday_storage::channel::ChannelKind;
     use friday_storage::{workflow, Db};
     use std::cell::Cell;
@@ -1350,5 +1382,125 @@ mod tests {
                 && link.target_ref == "friday://provider-timeline/friday-hub-session#ledger-ask-1"
                 && link.proof_ref.as_deref() == Some("friday://activity/activity-ask-1")
         }));
+    }
+
+    // ===================== WI-1 (M-6) guarded transition — PRODUCTION caller shape =============
+
+    /// Count the hash-chained `audit_ledger` lifecycle rows the guarded primitive writes.
+    fn lifecycle_audit_rows(db: &Db) -> i64 {
+        db.conn()
+            .query_row(
+                "SELECT COUNT(*) FROM audit_ledger WHERE action LIKE 'work_item.lifecycle:%'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap()
+    }
+
+    /// The PRODUCTION caller shape: [`attach_agent_loop_provider_state`] drives ALL hops with a
+    /// SINGLE `now_ms` (the one threaded from `runtime.rs`'s agent-loop seam). Under `guarded=true`
+    /// this must NOT error/collide on the per-hop audit row — the run completes with proof AND the
+    /// expected number of hash-chained audit rows, and the chain verifies. (A regression here would
+    /// surface as an `Err` propagating out of the run, which is exactly what WI-1 must NOT do.)
+    #[test]
+    fn wi1_agent_loop_single_now_ms_completes_and_writes_chained_audit_rows() {
+        let db = Db::open_hub(&tmp("wi1-loop-on")).unwrap();
+        seed_work_item(
+            &db,
+            WorkLane::DeepSeek,
+            Some("deepseek"),
+            WorkItemStatus::ReadyToDispatch,
+        );
+        let now = 1_700_000_111_000;
+
+        let outcome = attach_agent_loop_provider_state(
+            &db,
+            "mission-runtime",
+            "work-runtime",
+            "friday-session-loop",
+            "run-loop-1",
+            /* completed = */ true,
+            "friday://agent-run/run-loop-1",
+            /* guarded = */ true,
+            now,
+        )
+        .unwrap();
+
+        assert!(
+            matches!(
+                outcome,
+                MissionAttachmentOutcome::Attached {
+                    work_item_status: WorkItemStatus::CompletedWithProof,
+                    ..
+                }
+            ),
+            "guarded agent-loop run must complete with proof, got {outcome:?}"
+        );
+        let item = db.get_work_item("work-runtime").unwrap().unwrap();
+        assert_eq!(item.status, WorkItemStatus::CompletedWithProof);
+        assert!(item
+            .proof_receipts
+            .contains(&"friday://agent-run/run-loop-1".to_string()));
+
+        // WI-1 honesty pin: the ON-only `updated_at_ms` +offset is EXACTLY the documented value,
+        // not an arbitrary drift. 5 status-changing hops are driven (idx 0..=4); each enters the
+        // guarded branch and the primitive sets `updated_at_ms = base_now_ms + idx` (mission.rs).
+        // The final hop is the CompletedWithProof transition at idx=4, so the persisted WorkItem
+        // `updated_at_ms` MUST equal base_now_ms + 4. A future change can't silently widen it.
+        let final_hop_idx = 4;
+        assert_eq!(
+            item.updated_at_ms,
+            now + final_hop_idx,
+            "ON-path WorkItem updated_at_ms must be the base now_ms + final hop index, not a wider drift"
+        );
+
+        // 5 legal hops (ReadyToDispatch → … → CompletedWithProof) ⇒ 5 lifecycle audit rows,
+        // each with a DISTINCT audit_id despite the single caller-side now_ms, and the chain verifies.
+        assert_eq!(lifecycle_audit_rows(&db), 5);
+        assert_eq!(
+            verify_audit_chain(db.conn()).unwrap(),
+            5,
+            "the WI-1 lifecycle rows are the only audit rows and the chain must verify"
+        );
+    }
+
+    /// Same production shape, flag OFF: byte-identical to pre-WI-1 — completes with proof and
+    /// writes NO lifecycle audit row from the guarded primitive.
+    #[test]
+    fn wi1_agent_loop_single_now_ms_flag_off_writes_no_audit_row() {
+        let db = Db::open_hub(&tmp("wi1-loop-off")).unwrap();
+        seed_work_item(
+            &db,
+            WorkLane::DeepSeek,
+            Some("deepseek"),
+            WorkItemStatus::ReadyToDispatch,
+        );
+        let now = 1_700_000_222_000;
+
+        let outcome = attach_agent_loop_provider_state(
+            &db,
+            "mission-runtime",
+            "work-runtime",
+            "friday-session-loop",
+            "run-loop-2",
+            /* completed = */ true,
+            "friday://agent-run/run-loop-2",
+            /* guarded = */ false,
+            now,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            outcome,
+            MissionAttachmentOutcome::Attached {
+                work_item_status: WorkItemStatus::CompletedWithProof,
+                ..
+            }
+        ));
+        assert_eq!(
+            db.get_work_item("work-runtime").unwrap().unwrap().status,
+            WorkItemStatus::CompletedWithProof
+        );
+        assert_eq!(lifecycle_audit_rows(&db), 0);
     }
 }

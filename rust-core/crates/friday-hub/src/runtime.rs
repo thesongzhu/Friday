@@ -946,6 +946,15 @@ impl<T: Transport> HubRuntime<T> {
         // race `std::env`. DEFAULT-OFF: when off the body is BYTE-IDENTICAL to the pre-NS-6
         // baseline (no passport minted, no new query, normal `Ran`/`Blocked`).
         let passport_mint = passport_mint_from(std::env::var(ENV_PASSPORT_MINT).ok().as_deref());
+        // WI-1 (M-6): read the DARK WorkItem guarded-transition flag ONCE here (the only env read;
+        // semantics in [`workitem_guarded_transition_from`]) and thread the resulting bool into the
+        // private flagged inner fn — the same split-env-read idiom as `passport_mint`. DEFAULT-OFF:
+        // when off the WorkItem status advance is BYTE-IDENTICAL to the pre-WI-1 inline write.
+        let workitem_guarded = workitem_guarded_transition_from(
+            std::env::var(ENV_WORKITEM_GUARDED_TRANSITION)
+                .ok()
+                .as_deref(),
+        );
         self.run_agent_loop_for_mission_with_overrides_flagged(
             mission_lookup,
             session_id,
@@ -954,6 +963,7 @@ impl<T: Transport> HubRuntime<T> {
             policy_override,
             max_turns_override,
             passport_mint,
+            workitem_guarded,
             now_ms,
         )
     }
@@ -994,6 +1004,7 @@ impl<T: Transport> HubRuntime<T> {
         policy_override: Option<&RunPolicy>,
         max_turns_override: Option<u64>,
         passport_mint: bool,
+        workitem_guarded: bool,
         now_ms: i64,
     ) -> Result<MissionBoundLoopOutcome, RoutedLoopError> {
         // PREFLIGHT (fail-closed): validate the Mission/work-item BEFORE any run exists. On
@@ -1056,6 +1067,10 @@ impl<T: Transport> HubRuntime<T> {
             run_id,
             completed,
             &result_link,
+            // WI-1 (M-6): DARK-flag bool threaded from the entrypoint env read. OFF ⇒ the inline
+            // status-advance write (byte-identical); ON ⇒ each hop goes through the guarded
+            // `transition_work_item_status` primitive, adding the atomic hash-chained audit row.
+            workitem_guarded,
             now_ms,
         )?;
 
@@ -1540,6 +1555,21 @@ pub const ENV_PASSPORT_MINT: &str = "FRIDAY_PASSPORT_MINT";
 /// `activity_needs_me_from`). DEFAULT-OFF: `None` (unset) ⇒ false; ON only for the exact
 /// opt-in value `"1"` (trimmed); everything else ⇒ false.
 fn passport_mint_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
+/// (WI-1, M-6) Env var for the DARK WorkItem guarded-transition flag. Default-OFF. When ON, a
+/// mission-bound run's WorkItem status advance is routed through the canonical guarded primitive
+/// `friday_storage::Db::transition_work_item_status` so each transition also writes a
+/// hash-chained `audit_ledger` lifecycle row atomically. Flag-OFF is byte-identical to the
+/// pre-WI-1 inline status-advance write (no primitive call, no audit row).
+pub const ENV_WORKITEM_GUARDED_TRANSITION: &str = "FRIDAY_WORKITEM_GUARDED_TRANSITION";
+
+/// Pure flag-matcher for [`ENV_WORKITEM_GUARDED_TRANSITION`] (env read split out so it is
+/// unit-testable without `set_var` — the program-standard env-race-free idiom this file uses).
+/// DEFAULT-OFF: `None` (unset) ⇒ false; ON only for the exact opt-in value `"1"` (trimmed);
+/// everything else ⇒ false.
+fn workitem_guarded_transition_from(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1"))
 }
 
@@ -5259,6 +5289,40 @@ mod tests {
         );
     }
 
+    /// (WI-1, M-6) The pure WorkItem-guarded-transition flag-matcher: DEFAULT-OFF, ON only for the
+    /// exact opt-in `"1"` (trimmed), everything else OFF. Driven directly (no `set_var`) — the
+    /// program-standard env-race-free idiom.
+    #[test]
+    fn workitem_guarded_transition_flag_is_off_by_default_and_on_only_for_exactly_1() {
+        assert!(
+            !workitem_guarded_transition_from(None),
+            "unset ⇒ OFF (prod default)"
+        );
+        assert!(
+            workitem_guarded_transition_from(Some("1")),
+            "exactly \"1\" ⇒ ON"
+        );
+        assert!(
+            workitem_guarded_transition_from(Some(" 1 ")),
+            "trimmed \"1\" ⇒ ON"
+        );
+        for off in ["", "0", "true", "yes", "01", "1 0", "enabled", "TRUE"] {
+            assert!(
+                !workitem_guarded_transition_from(Some(off)),
+                "{off:?} must NOT enable the guarded transition"
+            );
+        }
+        // Sanity: the live env var is unset in the test process ⇒ the real read reports OFF.
+        assert!(
+            !workitem_guarded_transition_from(
+                std::env::var(ENV_WORKITEM_GUARDED_TRANSITION)
+                    .ok()
+                    .as_deref()
+            ),
+            "FRIDAY_WORKITEM_GUARDED_TRANSITION must be unset/off in the test env (prod default)"
+        );
+    }
+
     /// A runtime whose run-owner principal is `principal` (so the confirmed-memory recall — the
     /// NS-6 real item source — is enabled and keyed on it). Mirrors `runtime_with` but sets the
     /// owner instead of `None`.
@@ -5360,6 +5424,7 @@ mod tests {
                 None,
                 None,
                 /* passport_mint = */ true,
+                /* workitem_guarded = */ false,
                 1000,
             )
             .unwrap();
@@ -5439,6 +5504,7 @@ mod tests {
                 None,
                 None,
                 /* passport_mint = */ true,
+                /* workitem_guarded = */ false,
                 1000,
             )
             .unwrap();
@@ -5537,6 +5603,7 @@ mod tests {
                 None,
                 None,
                 /* passport_mint = */ true,
+                /* workitem_guarded = */ false,
                 1000,
             )
             .unwrap();
@@ -5634,6 +5701,7 @@ mod tests {
                 None,
                 None,
                 /* passport_mint = */ false,
+                /* workitem_guarded = */ false,
                 1000,
             )
             .unwrap();
