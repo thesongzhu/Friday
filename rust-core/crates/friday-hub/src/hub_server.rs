@@ -621,12 +621,21 @@ pub fn work_item_status_result_for_db(
 /// mutating-tool action, so it does NOT route through the approval/trust gate. But it
 /// IS owner/namespace-scoped and **fail-closed on mismatch**, enforced BEFORE the
 /// decide so a blocked request leaves the candidate UNCHANGED:
-/// - `owner_principal` must be non-empty (after trim) — else blocked.
+/// - the scope source is the **`authenticated_owner`** (the Rust-derived principal at
+///   the dispatch arm — `runtime.policy().principal_id()`), NOT the raw
+///   `request.owner_principal` body field. An empty/absent `authenticated_owner` ⇒ no
+///   candidate matches ⇒ blocked.
 /// - the candidate must exist — else blocked (`state="unknown"`).
-/// - the candidate's `principal_id` must equal `owner_principal` EXACTLY — the SAME
-///   key [`friday_storage::memory::recall_confirmed`] enforces. A candidate owned by a
-///   different principal, OR an UNOWNED (`None`-principal) candidate, is decidable by
-///   NO ONE (no wildcard, mirroring recall's blank→fail-closed rule).
+/// - the candidate's `principal_id` must be a MEMBER of the SAME owner-derived dual-read
+///   namespace candidate list [`crate::session_namespace::resolve_session_memory_namespace_candidates`]
+///   that the SESSIONED recall consults (`(None, None, authenticated_owner)`). The live
+///   extraction keys a candidate's `principal_id` on this COMPOSITE namespace (never the
+///   raw principal), so scoping on the raw body field would NEVER match — the defect this
+///   fix closes (mirrors #759's recall alignment). A candidate owned by a different
+///   principal's namespace, OR an UNOWNED (`None`-principal) candidate, is decidable by NO
+///   ONE (no wildcard; an empty owner yields an EMPTY candidate list ⇒ fail-closed). The
+///   per-principal SQL stays exact-match, so a member-check over alice's candidate list can
+///   never contain bob's namespace — no cross-owner confirm.
 ///
 /// Only after the scope check passes does it call
 /// [`friday_storage::memory::confirm`] / [`reject`]. A `confirm` makes the candidate
@@ -643,12 +652,18 @@ pub fn memory_decision_result_for_db(
     db: &Db,
     msg_id: &str,
     request: MemoryDecisionRequestWire,
+    authenticated_owner: Option<&str>,
     now_ms: i64,
 ) -> Envelope {
     use friday_storage::memory;
 
-    let owner = request.owner_principal.trim();
     let decision = request.decision.trim().to_ascii_lowercase();
+
+    // The SCOPE source is the AUTHENTICATED owner (the Rust-derived principal threaded from
+    // the dispatch arm), NEVER the raw `request.owner_principal` body field. An empty/absent
+    // owner trims to the empty string, which yields an EMPTY candidate list below — so it
+    // matches NO candidate (fail-closed, preserving the old owner_principal_required block).
+    let owner = authenticated_owner.unwrap_or("").trim();
 
     // Validate the decision token fail-closed (the `*_from_wire` idiom): anything other
     // than the two explicit decisions is a block, never a default.
@@ -666,7 +681,9 @@ pub fn memory_decision_result_for_db(
         }
     };
 
-    // An owner-less request can match no candidate (recall's blank→fail-closed rule).
+    // An owner-less request (no AUTHENTICATED principal) can match no candidate (recall's
+    // blank→fail-closed rule; the candidate list below would be empty anyway, but we block
+    // early with the SAME `owner_principal_required` reason for a clear refs surface).
     if owner.is_empty() {
         return memory_decision_blocked(
             msg_id,
@@ -676,6 +693,22 @@ pub fn memory_decision_result_for_db(
             "owner_principal_required",
         );
     }
+
+    // The owner-derived dual-read namespace candidate list — the SAME `[hardened, legacy]`
+    // list the SESSIONED recall consults (account/channel unset, direct userId == the
+    // authenticated owner). The live extraction keys a candidate's `principal_id` on this
+    // COMPOSITE namespace, so this is the correct scope source (NOT the raw owner string).
+    // A non-empty owner always resolves (no fail-closed `UnresolvableNoUserId` here), but we
+    // `unwrap_or_default()` to an EMPTY list defensively so any unforeseen unresolvable owner
+    // fails closed (matches no candidate) rather than panicking. NO-WIDEN: this list for
+    // owner alice can NEVER contain bob's namespace, and the per-principal SQL stays
+    // exact-match, so a member-check can never confirm a cross-owner candidate.
+    let scope_candidates = crate::session_namespace::resolve_session_memory_namespace_candidates(
+        None,
+        None,
+        Some(owner),
+    )
+    .unwrap_or_default();
 
     // Resolve the candidate. An unknown id is a block (no decide call, no panic).
     let row = match memory::get(db.conn(), &request.memory_id) {
@@ -700,10 +733,17 @@ pub fn memory_decision_result_for_db(
         }
     };
 
-    // Owner/namespace scope: EXACT-match the candidate's owning principal. An unowned
-    // (`None`) candidate, or one owned by a different principal, is decidable by no one —
-    // fail-closed, candidate left UNCHANGED (this check runs BEFORE any decide).
-    if row.principal_id.as_deref() != Some(owner) {
+    // Owner/namespace scope: DUAL-READ MEMBERSHIP of the candidate's owning principal in the
+    // owner-derived namespace candidate list (the SAME list recall uses). An unowned (`None`)
+    // candidate, or one keyed on a DIFFERENT owner's namespace, is a MEMBER of no one's list —
+    // decidable by no one, fail-closed, candidate left UNCHANGED (this check runs BEFORE any
+    // decide). An empty `scope_candidates` (only when owner is unresolvable, defended above)
+    // matches nothing.
+    let scope_ok = row
+        .principal_id
+        .as_deref()
+        .is_some_and(|p| scope_candidates.iter().any(|c| c.as_str() == p));
+    if !scope_ok {
         return memory_decision_blocked(
             msg_id,
             now_ms,
@@ -728,12 +768,15 @@ pub fn memory_decision_result_for_db(
         }
     };
 
-    // Recallability is the loop's payoff: a confirmed, content-bearing, owner-owned
-    // candidate is now returned by `recall_confirmed`. Derive `recallable` from the
-    // SAME query the answer path uses (not just the state) so the surface never claims
-    // recallability a recall would not honor — e.g. a content-less confirmed row.
+    // Recallability is the loop's payoff: a confirmed, content-bearing candidate keyed on the
+    // owner's composite namespace is now returned by the SESSIONED recall. Derive `recallable`
+    // from the SAME dual-read query that recall uses (`recall_confirmed_multi` over the SAME
+    // namespace candidate list) — NOT the raw owner — so the surface never claims
+    // recallability a recall would not honor (e.g. a content-less confirmed row, OR — the bug
+    // this fix closes — a composite-namespace row a raw-owner query would miss).
+    let candidate_refs: Vec<&str> = scope_candidates.iter().map(String::as_str).collect();
     let recallable = matches!(new_state, friday_core::MemoryState::Confirmed)
-        && memory::recall_confirmed(db.conn(), owner)
+        && memory::recall_confirmed_multi(db.conn(), &candidate_refs)
             .map(|rows| rows.iter().any(|r| r.memory_id == request.memory_id))
             .unwrap_or(false);
 
@@ -5893,9 +5936,21 @@ mod tests {
 
     // --- Memory-confirm arm (the live caller that CLOSES the Memory-confirmation loop) ---------
 
-    /// Seed ONE pending memory candidate owned by `owner`, with content (so a confirm makes it
-    /// recallable — `recall_confirmed` requires non-NULL/non-empty content).
+    /// The COMPOSITE namespace a session owned by `owner` resolves to (account/channel unset →
+    /// "default"/"unknown", direct userId == owner) — EXACTLY what the live extraction keys a
+    /// candidate's `principal_id` on for an agent-run session bound to `owner`, and the SAME
+    /// scope source the confirm handler now derives from `authenticated_owner`.
+    fn composite_ns(owner: &str) -> String {
+        crate::session_namespace::resolve_session_memory_namespace(None, None, Some(owner)).unwrap()
+    }
+
+    /// Seed ONE pending memory candidate keyed on `owner`'s COMPOSITE namespace (what live
+    /// extraction stores) — or UNOWNED when `owner` is `None` — with content (so a confirm makes
+    /// it recallable; `recall_confirmed` requires non-NULL/non-empty content). The decision
+    /// handler is driven with `authenticated_owner = owner`, so a matching owner resolves the
+    /// SAME composite namespace and the membership scope check passes.
     fn seed_memory_candidate(db: &Db, memory_id: &str, owner: Option<&str>, now: i64) {
+        let ns = owner.map(composite_ns);
         memory::record_candidate(
             db.conn(),
             &memory::NewMemoryCandidate {
@@ -5904,7 +5959,7 @@ mod tests {
                 content_ref: None,
                 // Content-bearing: a confirm must yield a recallable row.
                 content: Some("prefers rust"),
-                principal_id: owner,
+                principal_id: ns.as_deref(),
                 sensitive: false,
                 created_at: now,
             },
@@ -5926,19 +5981,21 @@ mod tests {
         let db = Db::open_hub(&tmp_db()).unwrap();
         let now = 1_700_000_000_000;
         seed_memory_candidate(&db, "mem-confirm", Some("owner-1"), now);
-        // Pre-confirm: NOT recallable.
-        assert!(memory::recall_confirmed(db.conn(), "owner-1")
-            .unwrap()
-            .is_empty());
+        let ns = composite_ns("owner-1");
+        // Pre-confirm: NOT recallable (under the COMPOSITE namespace the candidate is keyed on).
+        assert!(memory::recall_confirmed(db.conn(), &ns).unwrap().is_empty());
 
         let env = memory_decision_result_for_db(
             &db,
             "msg-confirm",
             MemoryDecisionRequestWire {
+                // The raw body field is IRRELEVANT to scope now (the authenticated owner is) —
+                // pass an arbitrary value to prove it is no longer the scope source.
                 memory_id: "mem-confirm".into(),
-                owner_principal: "owner-1".into(),
+                owner_principal: "ignored-body-field".into(),
                 decision: "confirm".into(),
             },
+            Some("owner-1"),
             now + 1,
         );
         let result = decode_memory_decision(&env);
@@ -5950,7 +6007,8 @@ mod tests {
         );
         assert!(result.blocker.is_none());
 
-        // Storage truth: the row is Confirmed AND `recall_confirmed` now returns it.
+        // Storage truth: the row is Confirmed AND recall (keyed on the composite namespace, as
+        // the live sessioned recall is) now returns it.
         assert_eq!(
             memory::get(db.conn(), "mem-confirm")
                 .unwrap()
@@ -5958,7 +6016,7 @@ mod tests {
                 .state,
             friday_core::MemoryState::Confirmed
         );
-        let recalled = memory::recall_confirmed(db.conn(), "owner-1").unwrap();
+        let recalled = memory::recall_confirmed(db.conn(), &ns).unwrap();
         assert_eq!(recalled.len(), 1);
         assert_eq!(recalled[0].memory_id, "mem-confirm");
     }
@@ -5974,9 +6032,10 @@ mod tests {
             "msg-reject",
             MemoryDecisionRequestWire {
                 memory_id: "mem-reject".into(),
-                owner_principal: "owner-1".into(),
+                owner_principal: "ignored-body-field".into(),
                 decision: "reject".into(),
             },
+            Some("owner-1"),
             now + 1,
         );
         let result = decode_memory_decision(&env);
@@ -5991,9 +6050,11 @@ mod tests {
             memory::get(db.conn(), "mem-reject").unwrap().unwrap().state,
             friday_core::MemoryState::Rejected
         );
-        assert!(memory::recall_confirmed(db.conn(), "owner-1")
-            .unwrap()
-            .is_empty());
+        assert!(
+            memory::recall_confirmed(db.conn(), &composite_ns("owner-1"))
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -6002,15 +6063,18 @@ mod tests {
         let now = 1_700_000_000_000;
         seed_memory_candidate(&db, "mem-scope", Some("owner-1"), now);
 
-        // A DIFFERENT principal tries to confirm owner-1's candidate.
+        // A DIFFERENT AUTHENTICATED principal tries to confirm owner-1's candidate. The
+        // intruder's namespace candidate list can NEVER contain owner-1's composite namespace —
+        // the no-cross-owner-confirm guard.
         let env = memory_decision_result_for_db(
             &db,
             "msg-scope",
             MemoryDecisionRequestWire {
                 memory_id: "mem-scope".into(),
-                owner_principal: "intruder".into(),
+                owner_principal: "owner-1".into(), // even spoofing the body field can't help
                 decision: "confirm".into(),
             },
+            Some("intruder"),
             now + 1,
         );
         let result = decode_memory_decision(&env);
@@ -6023,12 +6087,16 @@ mod tests {
             memory::get(db.conn(), "mem-scope").unwrap().unwrap().state,
             friday_core::MemoryState::Candidate
         );
-        assert!(memory::recall_confirmed(db.conn(), "owner-1")
-            .unwrap()
-            .is_empty());
-        assert!(memory::recall_confirmed(db.conn(), "intruder")
-            .unwrap()
-            .is_empty());
+        assert!(
+            memory::recall_confirmed(db.conn(), &composite_ns("owner-1"))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            memory::recall_confirmed(db.conn(), &composite_ns("intruder"))
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -6047,6 +6115,7 @@ mod tests {
                 owner_principal: "owner-1".into(),
                 decision: "confirm".into(),
             },
+            Some("owner-1"),
             now + 1,
         );
         let result = decode_memory_decision(&env);
@@ -6072,6 +6141,7 @@ mod tests {
                 owner_principal: "owner-1".into(),
                 decision: "confirm".into(),
             },
+            Some("owner-1"),
             1_700_000_000_000,
         );
         let result = decode_memory_decision(&env);
@@ -6094,6 +6164,7 @@ mod tests {
                 owner_principal: "owner-1".into(),
                 decision: "maybe".into(),
             },
+            Some("owner-1"),
             now + 1,
         );
         let result = decode_memory_decision(&env);
@@ -6126,6 +6197,7 @@ mod tests {
                 owner_principal: "owner-1".into(),
                 decision: "reject".into(),
             },
+            Some("owner-1"),
             now + 2,
         );
         let result = decode_memory_decision(&env);
@@ -6140,7 +6212,7 @@ mod tests {
             friday_core::MemoryState::Confirmed
         );
         assert_eq!(
-            memory::recall_confirmed(db.conn(), "owner-1")
+            memory::recall_confirmed(db.conn(), &composite_ns("owner-1"))
                 .unwrap()
                 .len(),
             1

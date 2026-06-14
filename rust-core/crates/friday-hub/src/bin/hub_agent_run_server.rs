@@ -129,7 +129,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use friday_crypto::{seal, DataKey, DeviceKeypair, FileSecureStore};
 use friday_deepseek::Transport;
-use friday_hub::hub_server::{run_authed_agent_loop_with_policy, AuthedPrincipal, ForwardedAuth};
+use friday_hub::hub_server::{AuthedPrincipal, ForwardedAuth};
 use friday_hub::key_source::{PEER_PUBKEY_ALLOWLIST_ID, X25519_PUBKEY_LEN};
 use friday_hub::runtime::{HubConfig, HubRuntime};
 // S-R0: the handshake + peer-allowlist + low-order check + sealed-proof codec now come from the
@@ -503,8 +503,9 @@ fn agent_run_control_enabled_from(raw: Option<&str>) -> bool {
 /// through the Mission-bound entry ([`friday_hub::run_authed_agent_loop_mission_bound`] — which
 /// mints the mission-birth + WorkItem bind) ONLY when `FRIDAY_MISSION_BOUND_RUN` is exactly
 /// `"1"` (after trim). Unset — or any other value — leaves the seam DARK: every
-/// run takes the EXISTING unbound dispatch (`run_authed_agent_loop_with_policy` /
-/// `run_session_task_with_overrides`), BYTE-IDENTICAL to today, so deploying this binary changes
+/// run takes the EXISTING unbound dispatch (`HubRuntime::run_session_task_with_overrides`, which
+/// BOTH the sessioned and the ephemeral-per-run-session arms now use), so deploying this binary
+/// changes
 /// NO live behavior until the operator flips this SEPARATE flag. Even with the flag ON, a run is
 /// bound only if it carries a FIRST-CLASS `mission_context` handle (NS45-PR1 / M-4) that resolves
 /// to a live Mission/WorkItem via `MissionContextLookup::by_mission_work_item`; a run with no
@@ -905,17 +906,21 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 // AUTHENTICATED: run the Rust loop AS the bound owner. A route/provider failure
                 // is a SAFE FAILURE (body-free NoAnswer) — never a panic, never a partial body.
                 //
-                // (A2a Phase 1) CONDITIONAL dispatch swap on the client-asserted `session_id`:
-                //   * PRESENT (non-empty) ⇒ the SESSIONED entry [`HubRuntime::run_session_task`]
-                //     (the EXISTING `run_session_loop` — reloads history, appends this turn), with
-                //     the session OWNER = the AUTHENTICATED `caller` (NEVER `session_id`).
-                //   * ABSENT (or blank) ⇒ the UNCHANGED sessionless [`run_authed_agent_loop`].
-                // The swap is CONDITIONAL by design: `run_session_loop` runs ensure_session/
-                // load_session_messages, so routing today's sessionless live path through it would
-                // NOT be byte-identical. A blank/whitespace `session_id` is treated as ABSENT so a
-                // degenerate value can never silently divert the sessionless path. Both arms then
-                // share the IDENTICAL refs + owner-sealed-body emit below (the body is owner-gated
-                // by `project_answer_for_authed` in BOTH), so the only difference is which loop ran.
+                // (A2a Phase 1 / memory-loop) Dispatch on the client-asserted `session_id`, but
+                // BOTH arms now run the SESSIONED entry [`HubRuntime::run_session_task_with_overrides`]
+                // (the EXISTING `run_session_loop`), with the session OWNER = the AUTHENTICATED
+                // `caller` (NEVER the client-asserted `session_id`):
+                //   * PRESENT (non-empty) ⇒ the caller's STABLE session id — reloads its history,
+                //     appends this turn (a real multi-turn conversation).
+                //   * ABSENT (or blank) ⇒ an EPHEMERAL per-run session id == the `run_id`. It loads
+                //     EMPTY history (behaviorally one-shot, like the prior sessionless arm) but now
+                //     fires the flag-gated post-run memory extraction + writes session/message rows,
+                //     CLOSING the extract→confirm→recall loop on the common live path (extraction
+                //     structurally needs a session; recall is owner-namespace-keyed, not
+                //     session-keyed, so the per-run session still recalls across runs as the owner).
+                // A blank/whitespace `session_id` is treated as ABSENT. Both arms share the IDENTICAL
+                // refs + owner-sealed-body emit below (the body is owner-gated by
+                // `project_answer_for_authed` in BOTH), so the only difference is which session id ran.
                 let now_ms = now_ms();
 
                 // (A1 run-controls — APPLICATION) Compute the per-run policy + max-turns OVERRIDE
@@ -1000,10 +1005,30 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                             max_turns_override,
                             now_ms,
                         ),
-                        None => run_authed_agent_loop_with_policy(
-                            runtime,
+                        // (memory-loop) The no-`session_id` arm now routes through the SAME
+                        // SESSIONED entry with an EPHEMERAL per-run session_id == the run_id. This
+                        // CLOSES the previously-inert extract→confirm→recall loop on the common
+                        // live path: extraction structurally needs a session (it reads the
+                        // session's pending messages + derives the owner-composite namespace), and
+                        // recall is NAMESPACE-keyed (owner-derived), NOT session-keyed — so a
+                        // per-run ephemeral session writes a candidate under owner O's composite
+                        // namespace that a LATER run as O recalls across runs. A per-run id loads
+                        // EMPTY history, so the turn is behaviorally one-shot (equivalent to the
+                        // old sessionless arm) while now also writing session/message rows + firing
+                        // the flag-gated, Finished-only, failure-isolated post-run extraction.
+                        //
+                        // NO-DEGRADE caveat (deliberate, see the PR body): this arm is NO LONGER
+                        // byte-identical — closing an inert loop requires it. With
+                        // FRIDAY_RUN_LOOP_MEMORY_EXTRACTION ON (a memory feature flag, default-OFF)
+                        // every Finished run makes ONE extra extraction model call ⇒ one
+                        // token_ledger row (the intended memory behavior). Extraction is
+                        // failure-isolated (`let _` in the runtime) and can NEVER flip the run's
+                        // answer/status. The owner binding stays the AUTHENTICATED `caller` (never
+                        // the client-asserted session_id), so there is no cross-owner leak.
+                        None => runtime.run_session_task_with_overrides(
                             &caller,
                             &run_id,
+                            /* session_id = */ &run_id,
                             &task,
                             policy_override,
                             max_turns_override,
@@ -1395,7 +1420,8 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
             // MEMORY-CONFIRM dispatch — FLAG-GATED. When `FRIDAY_MEMORY_CONFIRM` is ON, an inbound
             // `MemoryDecisionRequest` applies the OWNER's explicit confirm/reject to ONE pending
             // memory candidate via the existing `friday_hub::hub_server::memory_decision_result_for_db`
-            // — owner/namespace-scoped (fail-closed on mismatch / unowned / unknown / terminal) — and
+            // — scoped by the Rust-derived AUTHENTICATED owner's COMPOSITE namespace candidate list
+            // (the SAME list recall uses), fail-closed on mismatch / unowned / unknown / terminal — and
             // replies with a `MemoryDecisionResult` (confirmed / rejected / blocked). A `confirm` makes
             // the candidate durable AND recallable; this is the live caller that CLOSES the
             // Memory-confirmation loop's terminal arm. PURE `&Db` mutation: NO provider/model call,
@@ -1407,10 +1433,16 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
             // (the server has never had this arm), births/changes nothing.
             Message::MemoryDecisionRequest { request } if memory_confirm_enabled => {
                 let now_ms = now_ms();
+                // The SCOPE source is the Rust-derived AUTHENTICATED owner
+                // (`runtime.policy().principal_id()`), NOT the raw `request.owner_principal` body
+                // field — the candidate's `principal_id` is the owner-COMPOSITE namespace (what
+                // the live extraction keys it on), which the raw body field never equals. This is
+                // the confirm-side half of the memory-loop fix (mirrors #759's recall alignment).
                 let result = friday_hub::hub_server::memory_decision_result_for_db(
                     runtime.db(),
                     &env.msg_id,
                     request,
+                    runtime.policy().principal_id(),
                     now_ms,
                 );
                 eprintln!(
@@ -2815,9 +2847,20 @@ mod tests {
     }
 
     /// Seed ONE pending, owner-owned, content-bearing memory candidate directly into the runtime's
-    /// REAL DB (a pure `&Db` write — no session needed). Content is non-empty so a confirm makes it
-    /// recallable (`recall_confirmed` requires non-NULL/non-empty content).
+    /// The COMPOSITE namespace OWNER's agent-run session resolves to — what the live extraction
+    /// keys a candidate's `principal_id` on, and the SAME scope source the confirm dispatch arm
+    /// now derives from `runtime.policy().principal_id()`. Account/channel unset, direct userId.
+    fn owner_composite_ns() -> String {
+        friday_hub::session_namespace::resolve_session_memory_namespace(None, None, Some(OWNER))
+            .unwrap()
+    }
+
+    /// REAL DB (a pure `&Db` write — no session needed). The candidate is keyed on OWNER's
+    /// COMPOSITE namespace (what live extraction stores), so the confirm dispatch arm — scoped by
+    /// the authenticated owner's composite namespace candidate list — matches it. Content is
+    /// non-empty so a confirm makes it recallable (`recall_confirmed` requires non-NULL content).
     fn seed_memory_candidate<T: Transport>(rt: &HubRuntime<T>, memory_id: &str) {
+        let ns = owner_composite_ns();
         friday_storage::memory::record_candidate(
             rt.db().conn(),
             &friday_storage::memory::NewMemoryCandidate {
@@ -2825,7 +2868,7 @@ mod tests {
                 scope: friday_core::MemoryScope::Global,
                 content_ref: None,
                 content: Some("prefers rust"),
-                principal_id: Some(OWNER),
+                principal_id: Some(ns.as_str()),
                 sensitive: false,
                 created_at: 1_000,
             },
@@ -2858,9 +2901,10 @@ mod tests {
     fn flag_on_memory_decision_confirms_and_makes_recallable_through_dispatch() {
         let (rt, _ws) = mock_runtime("memory-confirm-on", OWNER);
         seed_memory_candidate(&rt, "mem-wired");
-        // Pre-confirm: NOT recallable.
+        let ns = owner_composite_ns();
+        // Pre-confirm: NOT recallable (under the COMPOSITE namespace the candidate is keyed on).
         assert!(
-            friday_storage::memory::recall_confirmed(rt.db().conn(), OWNER)
+            friday_storage::memory::recall_confirmed(rt.db().conn(), &ns)
                 .unwrap()
                 .is_empty()
         );
@@ -2916,7 +2960,7 @@ mod tests {
                 .unwrap(),
             "confirmed"
         );
-        let recalled = friday_storage::memory::recall_confirmed(db.conn(), OWNER).unwrap();
+        let recalled = friday_storage::memory::recall_confirmed(db.conn(), &ns).unwrap();
         assert_eq!(recalled.len(), 1);
         assert_eq!(recalled[0].memory_id, "mem-wired");
 
@@ -2998,7 +3042,7 @@ mod tests {
             "flag OFF leaves the candidate pending (births/changes nothing)"
         );
         assert!(
-            friday_storage::memory::recall_confirmed(db.conn(), OWNER)
+            friday_storage::memory::recall_confirmed(db.conn(), &owner_composite_ns())
                 .unwrap()
                 .is_empty(),
             "flag OFF ⇒ nothing recallable"
@@ -5046,12 +5090,16 @@ mod tests {
         );
     }
 
-    // BYTE-IDENTICAL SESSIONLESS: a request with NO `session_id` (the pre-A2a shape) still
-    // routes through the UNCHANGED `run_authed_agent_loop` and creates NO session row — the
-    // sessioned path is not silently entered. This is the regression fence for the one
-    // currently-live, operator-fed sessionless path.
+    // (memory-loop) SESSIONLESS now routes through the SESSIONED entry with an EPHEMERAL per-run
+    // session_id == the run_id. A request with NO `session_id` still DELIVERS a result (the live
+    // dispatch is unbroken), AND it now creates EXACTLY ONE session row keyed on the run id (so
+    // post-run memory extraction can fire) — owned by the AUTHENTICATED caller. The turn loads
+    // EMPTY history (behaviorally one-shot, as the prior sessionless arm was). This is the
+    // regression fence for the deliberate NO-LONGER-byte-identical change that closes the
+    // extract→confirm→recall loop on the common live path. (Extraction itself stays flag-gated +
+    // default-OFF, so this run with the flag unset makes NO extra model call.)
     #[test]
-    fn sessionless_dispatch_uses_unchanged_path_and_creates_no_session_row() {
+    fn sessionless_dispatch_routes_through_ephemeral_per_run_session_owned_by_caller() {
         let (rt, _ws) = mock_runtime("sess-none", OWNER);
         let server_kp = DeviceKeypair::generate();
         let listener = AgentRunWsListener::bind_loopback(0).unwrap();
@@ -5061,7 +5109,7 @@ mod tests {
         let client_kp = DeviceKeypair::generate();
         let peer_allowlist = allowlist_of(client_kp.public_bytes());
         let client = spawn_client(addr, client_kp, |session, nonce| {
-            // The EXACT sessionless helper today's live path uses (session_id: None).
+            // The sessionless shape today's live path uses (session_id: None).
             let req = agent_run_request("req-none", "run-none", OWNER, session, nonce);
             (req, session.clone(), session.clone())
         });
@@ -5083,28 +5131,30 @@ mod tests {
             1
         );
         let obs = client.join().unwrap();
-        // The result is delivered (the unchanged sessionless path still works).
+        // The result is delivered (the live sessionless dispatch still works).
         assert!(
             matches!(obs.result, Some(Message::AgentRunResult { .. })),
             "sessionless dispatch still returns a refs result"
         );
-        // CRITICAL: NO session row was created for the sessionless run — `run_session_loop`
-        // (which ensure_session's) was NEVER entered. The run's own id is never a session id.
-        assert!(
-            friday_storage::load_session_owner(rt.db().conn(), "run-none")
-                .unwrap()
-                .is_none(),
-            "the sessionless path must NOT create a session row (byte-identical to today)"
+        // A session row keyed on the RUN ID now exists, OWNED by the authenticated caller — the
+        // ephemeral per-run session that lets post-run extraction fire + recall cross runs.
+        let owner = friday_storage::load_session_owner(rt.db().conn(), "run-none")
+            .unwrap()
+            .expect("the ephemeral per-run session row exists, keyed on the run id");
+        assert_eq!(
+            owner.user_id.as_deref(),
+            Some(OWNER),
+            "the ephemeral session is owned by the AUTHENTICATED caller (never a client id)"
         );
-        // And the agent_session table has NO rows at all from this run.
+        // EXACTLY ONE session row from this run (no extra/leaked sessions).
         let n: i64 = rt
             .db()
             .conn()
             .query_row("SELECT count(*) FROM agent_session", [], |r| r.get(0))
             .unwrap();
         assert_eq!(
-            n, 0,
-            "the sessionless dispatch created ZERO session rows (the session loop was never reached)"
+            n, 1,
+            "the sessionless dispatch creates exactly ONE ephemeral per-run session row"
         );
     }
 }
