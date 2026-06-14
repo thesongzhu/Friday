@@ -1547,21 +1547,35 @@ pub fn run_authed_agent_loop_with_policy<T: Transport>(
 /// owner) returns a body-free `NoAnswer` and the loop NEVER runs (no row, no recall, no spend,
 /// no mission bind). The Mission-bound path must not be a way around the owner gate.
 ///
-/// ## Provisional ingress (DARK; the deferred live-reachability)
-/// The wire `AgentRunRequest` carries NO Mission handle yet, so the ONLY run-scoped key
-/// available is the client-asserted `session_id`, mapped to a surface thread via
-/// [`MissionContextLookup::by_surface_thread`]. This conflates a chat-session id with a
-/// surface-thread id, which is SAFE only because resolution fails CLOSED (`Blocked` ⇒ `None` ⇒
-/// unbound). A first-class Mission handle on the wire (organic ingress) + the operator cutover
-/// plane are the DEFERRED prerequisites for this seam to move the live needle. Until then the
-/// flag is OFF and this returns `None` for every live request (no surface-thread-keyed session
-/// exists in prod), so the live run path is unchanged.
+/// ## First-class Mission-handle ingress (NS45-PR1 / M-4)
+/// Resolution now keys off the FIRST-CLASS `mission_context` handle the wire `AgentRunRequest`
+/// carries — `{friday_conversation_id, mission_id, work_item_id}` — mapped via
+/// [`MissionContextLookup::by_mission_work_item`]. This RETIRES the provisional NS-4 shim that
+/// conflated the client-asserted `session_id` with a surface-thread id for mission resolution
+/// (the `session_id` field stays on the wire for the sessioned-chat unbound path, but it is NO
+/// LONGER the mission-resolution key). A run with NO handle (`None`) is NOT mission-resolvable ⇒
+/// `None` ⇒ the caller falls through to the unbound path, BYTE-IDENTICAL to today. The handle is
+/// a CLIENT ASSERTION that selects WHICH Mission to bind to; it is never an authority — the
+/// FIX-Q2 owner gate below is the authority.
+///
+/// The handle is populated by organic ingress (the native client / courier from the NS-5
+/// `MissionIntakeResult`) + the operator flips the flag; until both exist the flag is OFF and
+/// this returns `None` for every live request, so the live run path is unchanged.
+///
+/// ## Go-live caveat (DEFERRED — a named gate, NOT added here)
+/// A client-asserted `mission_id` under an `owner_allowlist > 1` is a cross-principal resolution
+/// surface (the same deferred class as M-3/M-5). It is SAFE under single-owner v1 + the FIX-Q2
+/// owner gate (the single configured owner is the only principal that can dispatch a bound run).
+/// Enforcing that a multi-owner caller actually OWNS the asserted `mission_id` is a NAMED go-live
+/// gate — this PR resolves the handle but does NOT add that multi-owner ownership check.
 ///
 /// ## Semantics worth stating
-/// The bound path is SESSIONLESS (`run_task_with_overrides`, no history fold): a `session_id`
-/// that resolves to a Mission surface dispatches a bound WORK-run, not a sessioned chat — prior
-/// turns are not folded. The override threading matches the unbound arm so a peer-asserted
-/// tightening constraint is enforced identically (read-only / disabled-tools / max-turns).
+/// The bound path is SESSIONLESS (`run_task_with_overrides`, no history fold): a handle dispatches
+/// a bound WORK-run, not a sessioned chat — prior turns are not folded. The provider-timeline
+/// session label for the Mission bind is derived from the handle's `friday_conversation_id` (the
+/// canonical conversation the run belongs to), NOT the `session_id` shim. The override threading
+/// matches the unbound arm so a peer-asserted tightening constraint is enforced identically
+/// (read-only / disabled-tools / max-turns).
 ///
 /// The bound path is pinned to `WorkLane::DeepSeek` (the single live provider) by
 /// `run_agent_loop_for_mission_with_overrides` — expected, not a defect.
@@ -1571,18 +1585,22 @@ pub fn run_authed_agent_loop_mission_bound<T: Transport>(
     caller: &AuthedPrincipal,
     run_id: &str,
     task: &str,
-    session_id: Option<&str>,
+    mission_context: Option<&MissionWorkItemContextWire>,
     policy_override: Option<&crate::RunPolicy>,
     max_turns_override: Option<u64>,
     now_ms: i64,
 ) -> Option<AuthedAnswer> {
-    // Derive a MissionContextLookup from the only run-scoped key on the wire: the client-asserted
-    // `session_id` (treated as a surface-thread id). A sessionless run (or a blank session id) is
-    // NOT mission-resolvable ⇒ `None` ⇒ the caller falls through to the unbound path unchanged.
-    let lookup = session_id
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(MissionContextLookup::by_surface_thread)?;
+    // (NS45-PR1 / M-4) Derive the MissionContextLookup from the FIRST-CLASS handle on the wire —
+    // NOT the `session_id` surface-thread shim. A run with NO handle (`None`) is NOT
+    // mission-resolvable ⇒ `None` ⇒ the caller falls through to the unbound path unchanged. This
+    // is the retirement point of the provisional shim: a flag-ON run with no handle takes the
+    // exact same unbound dispatch as a flag-OFF run.
+    let handle = mission_context?;
+    let lookup = MissionContextLookup::by_mission_work_item(
+        handle.friday_conversation_id.clone(),
+        handle.mission_id.clone(),
+        handle.work_item_id.clone(),
+    );
 
     // (FIX-Q2) caller == configured-owner, asserted BEFORE any dispatch — the SAME fail-closed
     // guard the unbound entry enforces. A mismatch (or an unconfigured `None` owner) ⇒ a
@@ -1597,9 +1615,12 @@ pub fn run_authed_agent_loop_mission_bound<T: Transport>(
         }
     }
 
-    // The session id doubles as the provider-timeline session for the Mission bind. A non-empty
-    // value is guaranteed by the `filter`/`map` above.
-    let session = session_id.map(str::trim).filter(|s| !s.is_empty())?;
+    // The provider-timeline session label for the Mission bind (the `friday_session_id` baked into
+    // the MissionLink `target_ref`). NS45-PR1 derives it from the handle's `friday_conversation_id`
+    // — the canonical conversation this run belongs to — instead of the retired surface-thread
+    // shim. It is a label; the preflight has already resolved+validated the handle, so this id
+    // matches the Mission's conversation by the time the bind runs.
+    let session = handle.friday_conversation_id.as_str();
 
     match runtime.run_agent_loop_for_mission_with_overrides(
         lookup,
@@ -6650,14 +6671,17 @@ mod authed_route_tests {
         );
     }
 
-    // --- NS-4: the flag-gated MISSION-BOUND run seam --------------------------
+    // --- NS-4 / NS45-PR1: the flag-gated MISSION-BOUND run seam ---------------
     //
     // `run_authed_agent_loop_mission_bound` is the live-reachable counterpart of the unbound
-    // entry: when (in the bin) `FRIDAY_MISSION_BOUND_RUN` is ON and a `session_id` resolves to a
-    // live DeepSeek-lane Mission surface, a run is dispatched BOUND (minting the mission-birth +
-    // WorkItem bind). These tests drive the SEAM directly (the bin's flag plumbing is exercised by
-    // its own `*_enabled_from` matcher tests). The flag-on test proves REAL mission binding
-    // (MissionLink + WorkItem transition + route_decision); the flag-off/no-mission tests prove
+    // entry: when (in the bin) `FRIDAY_MISSION_BOUND_RUN` is ON and the run carries a FIRST-CLASS
+    // `mission_context` handle that resolves to a live DeepSeek-lane Mission/WorkItem, a run is
+    // dispatched BOUND (minting the mission-birth + WorkItem bind). NS45-PR1 (M-4) retired the
+    // `session_id`-as-surface-thread shim: resolution now keys off the handle
+    // `{friday_conversation_id, mission_id, work_item_id}` via `by_mission_work_item`. These tests
+    // drive the SEAM directly (the bin's flag plumbing is exercised by its own `*_enabled_from`
+    // matcher tests). The flag-on test proves REAL mission binding (MissionLink + WorkItem
+    // transition + route_decision); the flag-off / no-handle / unresolvable tests prove
     // byte-identical fall-through.
 
     use friday_core::{
@@ -6669,10 +6693,22 @@ mod authed_route_tests {
         WorkItemStatus as NsWorkItemStatus, WorkLane as NsWorkLane,
     };
 
-    /// Stage a `FridayConversation -> Mission -> WorkItem` graph the seam's preflight resolves,
-    /// with the SurfaceThread keyed by `surface_thread_id` — the SAME id the seam derives the
-    /// `MissionContextLookup` from (the run's `session_id`). A DeepSeek-lane / `deepseek`-target
-    /// active WorkItem makes the bound dispatch RESOLVABLE.
+    /// The FIRST-CLASS Mission handle (NS45-PR1) that resolves against the graph
+    /// [`ns4_seed_mission`] stages — the three ids match the seeded
+    /// `FridayConversation`/`Mission`/`WorkItem` rows, so `by_mission_work_item` resolves Ready.
+    fn ns4_handle() -> MissionWorkItemContextWire {
+        MissionWorkItemContextWire {
+            friday_conversation_id: "fconv_ns4".into(),
+            mission_id: "mission-ns4".into(),
+            work_item_id: "work-ns4".into(),
+        }
+    }
+
+    /// Stage a `FridayConversation -> Mission -> WorkItem` graph the seam's preflight resolves via
+    /// the FIRST-CLASS handle (`{fconv_ns4, mission-ns4, work-ns4}` — see [`ns4_handle`]). The
+    /// `surface_thread_id` arg is seeded for graph realism but is NO LONGER the resolution key
+    /// (NS45-PR1 retired the surface-thread shim). A DeepSeek-lane / `deepseek`-target active
+    /// WorkItem makes the bound dispatch RESOLVABLE.
     fn ns4_seed_mission<T: Transport>(rt: &HubRuntime<T>, surface_thread_id: &str) {
         let now = 1_700_000_000_000;
         let db = rt.db();
@@ -6802,13 +6838,15 @@ mod authed_route_tests {
         ns4_seed_mission(&rt, surface);
         let caller = authed("principal:owner");
 
-        // The seam is consulted (as the bin does when the flag is ON) with the run's session_id.
+        // The seam is consulted (as the bin does when the flag is ON) with the run's FIRST-CLASS
+        // mission_context handle (NS45-PR1) — NOT the session_id surface-thread shim.
+        let handle = ns4_handle();
         let out = run_authed_agent_loop_mission_bound(
             &rt,
             &caller,
             "run-ns4-bound",
             "do the mission work",
-            Some(surface),
+            Some(&handle),
             None,
             None,
             1000,
@@ -6830,11 +6868,16 @@ mod authed_route_tests {
         );
         assert!(!proof.contains("authed-route-test-secret"));
 
-        // REAL mission binding #1 — a MissionLink ties THIS run to the Mission/WorkItem.
+        // REAL mission binding #1 — a MissionLink ties THIS run to the Mission/WorkItem. NS45-PR1:
+        // the provider-timeline session label is derived from the handle's friday_conversation_id
+        // (the retired surface-thread shim is no longer the label source).
         let links = rt.db().list_mission_links("mission-ns4").unwrap();
         assert!(
             links.iter().any(|link| link.target_ref
-                == format!("friday://provider-timeline/{surface}#run-ns4-bound")
+                == format!(
+                    "friday://provider-timeline/{}#run-ns4-bound",
+                    handle.friday_conversation_id
+                )
                 && link.work_item_id.as_deref() == Some("work-ns4")),
             "a mission_link must bind THIS run to the mission: {links:?}"
         );
@@ -6863,11 +6906,13 @@ mod authed_route_tests {
         assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
     }
 
-    /// FLAG-OFF byte-identical: when the flag is OFF, the bin NEVER calls the seam — every run
-    /// takes the EXACT unbound `run_authed_agent_loop_with_policy` path. This test pins that
-    /// unbound result, with the SAME Mission staged, produces ZERO mission binding (no
-    /// MissionLink, no WorkItem transition, no route_decision) and delivers the IDENTICAL body —
-    /// i.e. the run is byte-identical to today even though a resolvable Mission exists.
+    /// FLAG-OFF byte-identical: when the flag is OFF, the bin NEVER calls the seam (the
+    /// `if mission_bound_run_enabled { seam } else { None }` else-arm) — every run takes the EXACT
+    /// unbound `run_authed_agent_loop_with_policy` path, even one carrying a resolvable
+    /// `mission_context` handle. This test pins that unbound result, with the SAME Mission staged,
+    /// produces ZERO mission binding (no MissionLink, no WorkItem transition, no route_decision)
+    /// and delivers the IDENTICAL body — i.e. the run is byte-identical to today even though a
+    /// resolvable Mission exists.
     #[test]
     fn mission_bound_flag_off_is_byte_identical_unbound_run_no_binding() {
         let (rt, _ws) = runtime_with(
@@ -6927,11 +6972,12 @@ mod authed_route_tests {
         );
     }
 
-    /// FLAG-ON but NO resolvable Mission: a `session_id` that is an ordinary chat session (no
-    /// surface-thread row / no bound mission) makes the seam fail CLOSED to `None` — the caller
-    /// falls through to the unbound path, byte-identical to today. The preflight wrote NOTHING.
+    /// FLAG-ON but UNRESOLVABLE handle: a `mission_context` handle pointing at a Mission/WorkItem
+    /// that does NOT exist (no graph staged) makes the seam fail CLOSED to `None` — the caller
+    /// falls through to the unbound path, byte-identical to today, with NO crash. The preflight
+    /// blocked BEFORE `create_run`, so it wrote NOTHING.
     #[test]
-    fn mission_bound_seam_on_unresolvable_falls_through_none_no_binding() {
+    fn mission_bound_seam_on_unresolvable_handle_falls_through_none_no_binding() {
         let (rt, _ws) = runtime_with(
             "ns4-fallthrough",
             FinishTransport {
@@ -6939,24 +6985,29 @@ mod authed_route_tests {
             },
             "principal:owner",
         );
-        // NO mission staged — the session_id does not resolve to a surface-thread-bound mission.
+        // NO mission staged — the handle's ids do not resolve to a real Mission/WorkItem.
         let caller = authed("principal:owner");
+        let unresolvable = MissionWorkItemContextWire {
+            friday_conversation_id: "fconv_does_not_exist".into(),
+            mission_id: "mission_does_not_exist".into(),
+            work_item_id: "work_does_not_exist".into(),
+        };
 
         let out = run_authed_agent_loop_mission_bound(
             &rt,
             &caller,
             "run-ns4-ft",
             "do work",
-            Some("ordinary-chat-session"),
+            Some(&unresolvable),
             None,
             None,
             1000,
         );
 
-        // The seam returned None ⇒ the caller falls through to the unbound dispatch.
+        // The seam returned None ⇒ the caller falls through to the unbound dispatch (no crash).
         assert!(
             out.is_none(),
-            "an unresolvable mission must fall through (None), not bind"
+            "an unresolvable handle must fall through (None), not bind / not crash"
         );
         // The fail-closed preflight wrote nothing: no run, no route_decision, no mission_link.
         assert_eq!(
@@ -6968,12 +7019,14 @@ mod authed_route_tests {
         assert_eq!(table_count(&rt, "mission_link"), 0);
     }
 
-    /// FLAG-ON sessionless: a run with NO `session_id` is NOT mission-resolvable ⇒ the seam
-    /// returns `None` immediately (before any DB touch) and the caller falls through unbound.
+    /// FLAG-ON no-handle: a run with NO `mission_context` handle is NOT mission-resolvable ⇒ the
+    /// seam returns `None` immediately (before any DB touch / owner-gate) and the caller falls
+    /// through unbound — the retirement point of the surface-thread shim (a `session_id` alone no
+    /// longer makes a run mission-bound).
     #[test]
-    fn mission_bound_seam_on_sessionless_returns_none() {
+    fn mission_bound_seam_on_no_handle_returns_none() {
         let (rt, _ws) = runtime_with(
-            "ns4-sessionless",
+            "ns4-no-handle",
             FinishTransport {
                 answer: BODY.to_string(),
             },
@@ -6987,12 +7040,12 @@ mod authed_route_tests {
             &caller,
             "run-ns4-none",
             "do work",
-            None, // sessionless — no key to resolve a mission
+            None, // no handle — no key to resolve a mission
             None,
             None,
             1000,
         );
-        assert!(out.is_none(), "a sessionless run is not mission-bound");
+        assert!(out.is_none(), "a run with no handle is not mission-bound");
         // No run was created by the seam (it returned None before any dispatch).
         assert_eq!(agent_run_count(&rt, "run-ns4-none"), 0);
         assert_eq!(table_count(&rt, "mission_link"), 0);
@@ -7014,13 +7067,14 @@ mod authed_route_tests {
         let surface = "surface-ns4-session";
         ns4_seed_mission(&rt, surface);
         let intruder = authed("principal:intruder");
+        let handle = ns4_handle();
 
         let out = run_authed_agent_loop_mission_bound(
             &rt,
             &intruder,
             "run-ns4-q2",
             "do work",
-            Some(surface),
+            Some(&handle),
             None,
             None,
             1000,

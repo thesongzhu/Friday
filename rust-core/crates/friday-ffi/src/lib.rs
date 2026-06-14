@@ -3409,6 +3409,7 @@ mod tests {
                 auth_proof: vec![],
                 session_id: None,
                 constraints: None,
+                mission_context: None,
             },
         );
         match parse_hub_response(request.encode().unwrap()) {
