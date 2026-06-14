@@ -859,6 +859,12 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
         "cloud.workers.dns.validate",
         "cloud.workers.package.generate",
         "cloud.workers.teardown.receipt",
+        // Lane B: organic mission-spine mutations driven over the sealed-WS dispatch arms.
+        // Each handler refuses the synthetic public principal via
+        // assertBoundPrincipalForOperation before any dispatch (and is flag-OFF/503 by default).
+        "mission.spine.intake.create",
+        "mission.spine.lifecycle.transition",
+        "mission.spine.workitem.status.transition",
       ]);
       // rate_limited_pending
       const RATE_LIMITED_PENDING: ReadonlySet<string> = new Set([

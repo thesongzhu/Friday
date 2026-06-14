@@ -341,6 +341,35 @@ export interface FridayRustHubAgentRunSealedClient {
   resumeWithApproval(
     request: FridayRustHubAgentRunResumeRequest,
   ): Promise<FridayRustHubAgentRunResumeResult>;
+  /**
+   * (Lane B) Resolve/create a Mission from one surface input over a sealed session —
+   * `Message::MissionIntakeRequest`. PURE Hub mutation (no model/provider call). Opens a fresh
+   * sealed session (the channel auth), sends the intake envelope, and awaits the FIRST
+   * `MissionIntakeResult`. Fails closed (503) on any non-clean settle or any other inbound
+   * (including the server's `Error` envelope), never a partial.
+   */
+  intakeMission(
+    request: FridayRustHubMissionIntakeRequest,
+  ): Promise<FridayRustHubMissionIntakeResult>;
+  /**
+   * (Lane B) Advance ONE Mission's lifecycle over a sealed session —
+   * `Message::MissionLifecycleRequest`. PURE Hub mutation. Awaits the FIRST
+   * `MissionLifecycleResult`; fails closed on any other inbound. A `status` here is a Mission-
+   * management fact, NOT provider completion unless `proofRef` says so.
+   */
+  transitionMission(
+    request: FridayRustHubMissionLifecycleRequest,
+  ): Promise<FridayRustHubMissionLifecycleResult>;
+  /**
+   * (Lane B) Advance ONE WorkItem's status over a sealed session —
+   * `Message::WorkItemStatusRequest`. PURE Hub mutation. Awaits the FIRST `WorkItemStatusResult`;
+   * fails closed on any other inbound. **Proof-on-completion is enforced SERVER-side:** a
+   * `completed_with_proof` target with an empty/absent `proofReceipt` is rejected as a typed
+   * `Error` ⇒ this fails closed (never a fake-ready result).
+   */
+  transitionWorkItem(
+    request: FridayRustHubWorkItemStatusRequest,
+  ): Promise<FridayRustHubWorkItemStatusResult>;
 }
 
 /** (A3 courier) A resume relay: the run to resume + the operator's OPAQUE signed approval blob. */
@@ -352,6 +381,106 @@ export interface FridayRustHubAgentRunResumeRequest {
    * courier — relayed VERBATIM as the wire `signed_blob`; TS inspects/derives/authors NOTHING.
    */
   readonly opaqueSignedBlob: Uint8Array;
+}
+
+// ─── (Lane B) Mission-spine organic mutation requests/results ───────────────
+//
+// The keystone (#741) wired three Hub-owned, PURE-`&Db` mutations into the live
+// `hub_agent_run_server` behind a SERVER flag (`FRIDAY_MISSION_INTAKE` for intake,
+// `FRIDAY_MISSION_SPINE_DISPATCH` for lifecycle/work-item), each replying with the
+// matching `*Result` (or a typed `Error` on an illegal hop / missing entity /
+// proofless completion). These wire shapes carry NO per-request `auth_proof`/
+// `forwarded_principal` — the sealed session IS the channel auth (single-peer/
+// single-owner SERVER invariant), mirroring the merged mission-intake arm. These
+// methods build the EXACT `friday-protocol` wire shapes and settle on the FIRST
+// matching Result; ANY other inbound (including the server's `Error` envelope) is
+// a typed fail-closed (503), never a partial.
+
+/** (Lane B) A Mission intake/preflight request — `MissionIntakeRequestWire`. */
+export interface FridayRustHubMissionIntakeRequest {
+  readonly fridayConversationId: string;
+  readonly ownerPrincipal: string;
+  readonly surfaceThreadId: string;
+  readonly surfaceKind: string;
+  readonly deliveryRoute: string;
+  readonly visibilityPolicy: string;
+  readonly missionId: string;
+  readonly workItemId: string;
+  readonly title: string;
+  readonly intent: string;
+  readonly lane: string;
+  readonly targetProviderOrAgent?: string;
+  readonly capabilityId?: string;
+  readonly bodyRef?: string;
+  readonly includesSensitiveContext?: boolean;
+}
+
+/** (Lane B) Refs-only Mission intake result — `MissionIntakeResultWire`. */
+export interface FridayRustHubMissionIntakeResult {
+  readonly truthLabel: "rust_wired";
+  readonly fridayConversationId: string;
+  readonly missionId: string;
+  readonly workItemId?: string;
+  readonly surfaceThreadId: string;
+  readonly status: string;
+  readonly blockers: readonly string[];
+  readonly duplicateMissionId?: string;
+  readonly duplicateWorkItemId?: string;
+  readonly createdOrReady: boolean;
+}
+
+/** (Lane B) A Mission lifecycle transition request — `MissionLifecycleRequestWire`. */
+export interface FridayRustHubMissionLifecycleRequest {
+  readonly fridayConversationId: string;
+  readonly missionId: string;
+  readonly targetStatus: string;
+  readonly actorRef: string;
+  readonly reason: string;
+  readonly proofRef?: string;
+  readonly mergedIntoMissionId?: string;
+}
+
+/** (Lane B) Refs-only Mission lifecycle result — `MissionLifecycleResultWire`. */
+export interface FridayRustHubMissionLifecycleResult {
+  readonly truthLabel: "rust_wired";
+  readonly fridayConversationId: string;
+  readonly missionId: string;
+  readonly previousStatus: string;
+  readonly status: string;
+  readonly actorRef: string;
+  readonly reason: string;
+  readonly proofRef?: string;
+  readonly mergedIntoMissionId?: string;
+  readonly activeMissionIds: readonly string[];
+  readonly updatedAtMs: number;
+}
+
+/** (Lane B) A WorkItem status transition request — `WorkItemStatusRequestWire`. */
+export interface FridayRustHubWorkItemStatusRequest {
+  readonly workItemId: string;
+  readonly targetStatus: string;
+  readonly actorRef: string;
+  readonly reason: string;
+  /**
+   * REQUIRED (non-empty) when `targetStatus === "completed_with_proof"`; the Rust persistence
+   * boundary REJECTS a proofless completion as a typed `Error` (the proof-on-completion invariant).
+   * Absent ⇒ no receipt is appended (the key is OMITTED from the wire, byte-clean).
+   */
+  readonly proofReceipt?: string;
+}
+
+/** (Lane B) Refs-only WorkItem status result — `WorkItemStatusResultWire`. */
+export interface FridayRustHubWorkItemStatusResult {
+  readonly truthLabel: "rust_wired";
+  readonly workItemId: string;
+  readonly missionId: string;
+  readonly previousStatus: string;
+  readonly status: string;
+  readonly actorRef: string;
+  readonly reason: string;
+  /** COUNT of persisted proof receipts (never the raw receipt refs themselves). */
+  readonly proofReceiptCount: number;
+  readonly updatedAtMs: number;
 }
 
 function unavailable(message: string): FridayDomainError {
@@ -609,6 +738,273 @@ export function buildResumeEnvelope(
   };
 }
 
+/**
+ * (Lane B) Wrap a built inner message in the standard Envelope shape (mirrors the dispatch +
+ * resume envelopes). `msgId`/`correlationId` are derived from a stable per-entity key so the
+ * server's `with_correlation(msg_id)` round-trips deterministically.
+ *
+ * **msg_id collision is a NON-ISSUE here (verified):** each mission call (`runMissionRoundTrip`)
+ * opens a FRESH sealed session and sends EXACTLY ONE envelope. The server's `IdempotencyTracker`
+ * is constructed FRESH per connection (`serve_sealed_session` stack-local, `hub_agent_run_server`),
+ * so it only dedupes WITHIN a session — it never sees a second envelope on the same session. A
+ * stable per-entity key therefore cannot be misread as a within-session replay even when the same
+ * mission/work-item transitions repeatedly (each transition is its own connection). No per-call
+ * suffix is needed; cross-handshake replay is defeated by the per-handshake `session_nonce`.
+ */
+function buildMissionEnvelope(key: string, message: Record<string, unknown>): Record<string, unknown> {
+  return {
+    schema_version: SCHEMA_VERSION,
+    msg_id: key,
+    correlation_id: key,
+    sent_at: Date.now(),
+    message,
+  };
+}
+
+/**
+ * (Lane B) Build the `MissionIntakeRequest` inner message — the EXACT `MissionIntakeRequestWire`
+ * shape. Required string fields ride verbatim; the four Option fields use the same conditional-
+ * spread discipline as {@link buildConstraintsWire} (absent ⇒ key OMITTED, byte-clean). The bool
+ * `includes_sensitive_context` has `#[serde(default)]` Rust-side, so we emit it ONLY when the
+ * caller asserts `true` (an absent/false value deserializes to `false`). EXPORTED + pure so the
+ * precise wire shape is unit-testable without a socket.
+ */
+export function buildMissionIntakeEnvelope(
+  request: FridayRustHubMissionIntakeRequest,
+): Record<string, unknown> {
+  // WIRE NESTING (HOLE-1 fix): `Message::MissionIntakeRequest { request: MissionIntakeRequestWire }`
+  // is a SINGLE-FIELD wrapper, and `Message` is `#[serde(tag = "kind")]` (internally tagged). serde
+  // therefore emits the inner wire fields NESTED under a `request` key, NOT flat under `message`:
+  //   {"kind":"MissionIntakeRequest","request":{ …fields… }}
+  // The pre-fix flat shape failed `Envelope::decode` server-side (missing `request` key) ⇒ 503. The
+  // byte-exact nesting is pinned by the Rust-emitted golden cross-check in the wire test.
+  const inner: Record<string, unknown> = {
+    friday_conversation_id: request.fridayConversationId,
+    owner_principal: request.ownerPrincipal,
+    surface_thread_id: request.surfaceThreadId,
+    surface_kind: request.surfaceKind,
+    delivery_route: request.deliveryRoute,
+    visibility_policy: request.visibilityPolicy,
+    mission_id: request.missionId,
+    work_item_id: request.workItemId,
+    title: request.title,
+    intent: request.intent,
+    lane: request.lane,
+    ...(request.targetProviderOrAgent !== undefined
+      ? { target_provider_or_agent: request.targetProviderOrAgent }
+      : {}),
+    ...(request.capabilityId !== undefined ? { capability_id: request.capabilityId } : {}),
+    ...(request.bodyRef !== undefined ? { body_ref: request.bodyRef } : {}),
+    // `includes_sensitive_context` is `#[serde(default)]` WITHOUT `skip_serializing_if` Rust-side,
+    // so an absent key deserializes to `false` (interop-safe). We OMIT it when false to keep the
+    // outbound minimal; serde's `default` accepts the omission. We only EMIT it when true.
+    ...(request.includesSensitiveContext === true ? { includes_sensitive_context: true } : {}),
+  };
+  return buildMissionEnvelope(`mission-intake-${request.missionId}`, {
+    kind: "MissionIntakeRequest",
+    request: inner,
+  });
+}
+
+/**
+ * (Lane B) Build the `MissionLifecycleRequest` inner message — the EXACT
+ * `MissionLifecycleRequestWire` shape. `proof_ref`/`merged_into_mission_id` use conditional-spread
+ * (absent ⇒ key OMITTED). EXPORTED + pure for socket-free wire testing.
+ */
+export function buildMissionLifecycleEnvelope(
+  request: FridayRustHubMissionLifecycleRequest,
+): Record<string, unknown> {
+  // WIRE NESTING (HOLE-1 fix): inner fields nest under `request` (single-field wrapper +
+  // internally-tagged `Message`); see {@link buildMissionIntakeEnvelope}.
+  const inner: Record<string, unknown> = {
+    friday_conversation_id: request.fridayConversationId,
+    mission_id: request.missionId,
+    target_status: request.targetStatus,
+    actor_ref: request.actorRef,
+    reason: request.reason,
+    ...(request.proofRef !== undefined ? { proof_ref: request.proofRef } : {}),
+    ...(request.mergedIntoMissionId !== undefined
+      ? { merged_into_mission_id: request.mergedIntoMissionId }
+      : {}),
+  };
+  return buildMissionEnvelope(`mission-lifecycle-${request.missionId}`, {
+    kind: "MissionLifecycleRequest",
+    request: inner,
+  });
+}
+
+/**
+ * (Lane B) Build the `WorkItemStatusRequest` inner message — the EXACT `WorkItemStatusRequestWire`
+ * shape. `proof_receipt` uses conditional-spread (absent ⇒ key OMITTED). The proof-on-completion
+ * invariant is enforced SERVER-side (a proofless `completed_with_proof` is a typed `Error`); this
+ * builder never fabricates a receipt. EXPORTED + pure for socket-free wire testing.
+ */
+export function buildWorkItemStatusEnvelope(
+  request: FridayRustHubWorkItemStatusRequest,
+): Record<string, unknown> {
+  // WIRE NESTING (HOLE-1 fix): inner fields nest under `request` (single-field wrapper +
+  // internally-tagged `Message`); see {@link buildMissionIntakeEnvelope}.
+  const inner: Record<string, unknown> = {
+    work_item_id: request.workItemId,
+    target_status: request.targetStatus,
+    actor_ref: request.actorRef,
+    reason: request.reason,
+    ...(request.proofReceipt !== undefined ? { proof_receipt: request.proofReceipt } : {}),
+  };
+  return buildMissionEnvelope(`work-item-status-${request.workItemId}`, {
+    kind: "WorkItemStatusRequest",
+    request: inner,
+  });
+}
+
+/**
+ * (Lane B) Parse a `MissionIntakeResult` inbound into the refs-only TS result. Returns `undefined`
+ * (caller fails closed) when a REQUIRED ref is missing/ill-typed. The optional refs are surfaced
+ * only when present (absent ⇒ omitted, never fabricated). EXPORTED + pure for socket-free testing.
+ */
+export function parseMissionIntakeResult(
+  fields: Record<string, unknown>,
+): FridayRustHubMissionIntakeResult | undefined {
+  // HOLE-1 fix: the refs live NESTED under `result` (single-field wrapper); unwrap fail-closed.
+  const r = unwrapResult(fields);
+  if (r === undefined) {
+    return undefined;
+  }
+  const fridayConversationId = asString(r.friday_conversation_id);
+  const missionId = asString(r.mission_id);
+  const surfaceThreadId = asString(r.surface_thread_id);
+  const status = asString(r.status);
+  const blockers = r.blockers;
+  const createdOrReady = r.created_or_ready;
+  if (
+    !fridayConversationId ||
+    !missionId ||
+    !surfaceThreadId ||
+    !status ||
+    !Array.isArray(blockers) ||
+    !blockers.every((b): b is string => typeof b === "string") ||
+    typeof createdOrReady !== "boolean"
+  ) {
+    return undefined;
+  }
+  const workItemId = asString(r.work_item_id);
+  const duplicateMissionId = asString(r.duplicate_mission_id);
+  const duplicateWorkItemId = asString(r.duplicate_work_item_id);
+  return {
+    // `MissionIntakeResultWire` carries NO `truth_label` field (verified in friday-protocol), so the
+    // server cannot send one — this `rust_wired` label is the TS-side ceiling for a Rust-served refs
+    // result, asserted by construction (not read from the wire). It confers no v1 GO.
+    truthLabel: "rust_wired",
+    fridayConversationId,
+    missionId,
+    surfaceThreadId,
+    status,
+    blockers,
+    createdOrReady,
+    ...(workItemId !== undefined ? { workItemId } : {}),
+    ...(duplicateMissionId !== undefined ? { duplicateMissionId } : {}),
+    ...(duplicateWorkItemId !== undefined ? { duplicateWorkItemId } : {}),
+  };
+}
+
+/**
+ * (Lane B) Parse a `MissionLifecycleResult` inbound into the refs-only TS result. Returns
+ * `undefined` when a REQUIRED ref is missing/ill-typed. EXPORTED + pure for socket-free testing.
+ */
+export function parseMissionLifecycleResult(
+  fields: Record<string, unknown>,
+): FridayRustHubMissionLifecycleResult | undefined {
+  // HOLE-1 fix: the refs live NESTED under `result` (single-field wrapper); unwrap fail-closed.
+  const r = unwrapResult(fields);
+  if (r === undefined) {
+    return undefined;
+  }
+  const fridayConversationId = asString(r.friday_conversation_id);
+  const missionId = asString(r.mission_id);
+  const previousStatus = asString(r.previous_status);
+  const status = asString(r.status);
+  const actorRef = asString(r.actor_ref);
+  const reason = asString(r.reason);
+  const activeMissionIds = r.active_mission_ids;
+  const updatedAtMs = asNumber(r.updated_at_ms);
+  if (
+    !fridayConversationId ||
+    !missionId ||
+    !previousStatus ||
+    !status ||
+    !actorRef ||
+    !reason ||
+    !Array.isArray(activeMissionIds) ||
+    !activeMissionIds.every((m): m is string => typeof m === "string") ||
+    updatedAtMs === undefined
+  ) {
+    return undefined;
+  }
+  const proofRef = asString(r.proof_ref);
+  const mergedIntoMissionId = asString(r.merged_into_mission_id);
+  return {
+    // No `truth_label` on `MissionLifecycleResultWire`; TS-side ceiling label (see intake parser).
+    truthLabel: "rust_wired",
+    fridayConversationId,
+    missionId,
+    previousStatus,
+    status,
+    actorRef,
+    reason,
+    activeMissionIds,
+    updatedAtMs,
+    ...(proofRef !== undefined ? { proofRef } : {}),
+    ...(mergedIntoMissionId !== undefined ? { mergedIntoMissionId } : {}),
+  };
+}
+
+/**
+ * (Lane B) Parse a `WorkItemStatusResult` inbound into the refs-only TS result. Returns `undefined`
+ * when a REQUIRED ref is missing/ill-typed. `proof_receipt_count` is a COUNT (never raw refs).
+ * EXPORTED + pure for socket-free testing.
+ */
+export function parseWorkItemStatusResult(
+  fields: Record<string, unknown>,
+): FridayRustHubWorkItemStatusResult | undefined {
+  // HOLE-1 fix: the refs live NESTED under `result` (single-field wrapper); unwrap fail-closed.
+  const r = unwrapResult(fields);
+  if (r === undefined) {
+    return undefined;
+  }
+  const workItemId = asString(r.work_item_id);
+  const missionId = asString(r.mission_id);
+  const previousStatus = asString(r.previous_status);
+  const status = asString(r.status);
+  const actorRef = asString(r.actor_ref);
+  const reason = asString(r.reason);
+  const proofReceiptCount = asNumber(r.proof_receipt_count);
+  const updatedAtMs = asNumber(r.updated_at_ms);
+  if (
+    !workItemId ||
+    !missionId ||
+    !previousStatus ||
+    !status ||
+    !actorRef ||
+    !reason ||
+    proofReceiptCount === undefined ||
+    updatedAtMs === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    // No `truth_label` on `WorkItemStatusResultWire`; TS-side ceiling label (see intake parser).
+    truthLabel: "rust_wired",
+    workItemId,
+    missionId,
+    previousStatus,
+    status,
+    actorRef,
+    reason,
+    proofReceiptCount,
+    updatedAtMs,
+  };
+}
+
 /** Open + decode one inbound sealed WS Binary payload into its inner message. */
 function openInbound(sessionKey: Uint8Array, payload: Buffer): InboundEnvelope {
   const sealed = decodeSealed(new Uint8Array(payload));
@@ -628,6 +1024,23 @@ function asString(value: unknown): string | undefined {
 }
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * (Lane B, HOLE-1 fix) Unwrap the NESTED `result` sub-object from a mission `*Result` inbound's
+ * fields. `Message::Mission*Result { result: …Wire }` is a SINGLE-FIELD wrapper on an internally-
+ * tagged (`#[serde(tag = "kind")]`) enum, so the wire nests the result fields under a `result` key:
+ *   {"kind":"Mission*Result","result":{ …refs… }}
+ * The `inbound.fields` handed to a parser is the whole `message` object (`{kind, result:{…}}`), NOT
+ * the inner refs. Returns `undefined` (caller fails closed 503) when `result` is missing/ill-typed —
+ * this MUST not throw, because `parse()` runs OUTSIDE the inbound try/catch in `runMissionRoundTrip`.
+ */
+function unwrapResult(fields: Record<string, unknown>): Record<string, unknown> | undefined {
+  const result = fields.result;
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    return undefined;
+  }
+  return result as Record<string, unknown>;
 }
 
 /** The refs accumulated from the FIRST inbound envelope (the refs-only `AgentRunResult`). */
@@ -856,6 +1269,182 @@ export function handleServerClose(ctx: InboundContext): void {
     return;
   }
   finishFromRefs(ctx);
+}
+
+/**
+ * (Lane B) Parameters for the generic sealed mission round-trip — the connect/preamble/derive-key/
+ * upgrade machinery, factored from {@link FridayRustHubAgentRunResumeRequest}'s handshake.
+ */
+interface MissionRoundTripParams<TResult> {
+  readonly host: string;
+  readonly port: number;
+  readonly timeoutMs: number;
+  readonly keypair: { readonly publicKey: Uint8Array; readonly secret: Uint8Array };
+  /** The pre-built Envelope to seal + send (one of the `build*Envelope` outputs). */
+  readonly envelope: Record<string, unknown>;
+  /** The ONLY inbound message kind accepted; any other kind fails closed. */
+  readonly expectedKind: string;
+  /** Parse the accepted inbound's fields into the refs-only result, or `undefined` ⇒ fail closed. */
+  readonly parse: (fields: Record<string, unknown>) => TResult | undefined;
+  /** A short label for the fail-closed messages (e.g. "mission-intake"). */
+  readonly leg: string;
+}
+
+/**
+ * (Lane B) Run ONE sealed request→response round-trip for a mission-spine mutation. Mirrors the
+ * `resumeWithApproval` handshake EXACTLY (connect → length-prefixed preamble → X25519+HKDF session
+ * key → RFC6455 upgrade → seal+send → await the FIRST matching Result → settle), reusing the SAME
+ * module-level helpers. FAIL-CLOSED (503) contract:
+ *   - any non-clean settle (connect error / socket close before a result / timeout / wrong-width
+ *     preamble / un-openable envelope) → fail closed;
+ *   - ANY inbound whose kind != `expectedKind` — INCLUDING the server's `Error` envelope (illegal
+ *     hop / missing entity / proofless completion) — → fail closed, never a partial;
+ *   - a matching kind that fails to parse (missing required ref) → fail closed.
+ * Never logs/returns secrets or raw bodies; the result is refs-only by construction.
+ */
+function runMissionRoundTrip<TResult>(params: MissionRoundTripParams<TResult>): Promise<TResult> {
+  const { host, port, timeoutMs, keypair, envelope, expectedKind, parse, leg } = params;
+  return new Promise<TResult>((resolve, reject) => {
+    let settled = false;
+    let socket: Socket | null = null;
+    let receiver: WsReceiver | null = null;
+    let sessionKey: Uint8Array = new Uint8Array(0);
+
+    const timer = setTimeout(() => {
+      fail(unavailable(`Sealed mission-spine client (${leg}) timed out awaiting a result.`));
+    }, timeoutMs);
+    if (typeof timer.unref === "function") timer.unref();
+
+    function teardown(): void {
+      clearTimeout(timer);
+      if (receiver) {
+        receiver.removeAllListeners();
+      }
+      if (socket) {
+        socket.removeAllListeners();
+        socket.on("error", () => {});
+        try {
+          socket.destroy();
+        } catch {
+          // best-effort; the result is already decided.
+        }
+      }
+    }
+    function succeed(result: TResult): void {
+      if (settled) return;
+      settled = true;
+      teardown();
+      resolve(result);
+    }
+    function fail(error: FridayDomainError): void {
+      if (settled) return;
+      settled = true;
+      teardown();
+      reject(error);
+    }
+    // The server ending the session BEFORE a result is the fail-closed path (forged peer / the
+    // server ran nothing). A result already settled ⇒ this is a guarded no-op.
+    function onClose(): void {
+      fail(unavailable(`Sealed mission-spine client (${leg}) connection closed before a result.`));
+    }
+    function onInbound(payload: Buffer): void {
+      let inbound: InboundEnvelope;
+      try {
+        inbound = openInbound(sessionKey, payload);
+      } catch {
+        fail(unavailable(`Sealed mission-spine client (${leg}) could not open an inbound envelope.`));
+        return;
+      }
+      // STRICT: only the matching Result kind is accepted. A server `Error` envelope (or any other
+      // kind) is a typed fail-closed — never coerced to a result, never a partial.
+      if (inbound.kind !== expectedKind) {
+        fail(unavailable(`Sealed mission-spine client (${leg}) received an unknown message shape.`));
+        return;
+      }
+      const parsed = parse(inbound.fields);
+      if (parsed === undefined) {
+        fail(unavailable(`Sealed mission-spine client (${leg}) result is missing a required ref.`));
+        return;
+      }
+      succeed(parsed);
+    }
+
+    void (async () => {
+      // (1) RAW TCP connect (NOT new WebSocket(url)) — preamble first, like dispatch/resume.
+      let connected: Socket;
+      try {
+        connected = await new Promise<Socket>((res, rej) => {
+          const s = connect({ host, port }, () => res(s));
+          socket = s;
+          s.once("error", rej);
+        });
+      } catch {
+        fail(unavailable(`Sealed mission-spine client (${leg}) could not open a connection.`));
+        return;
+      }
+      socket = connected;
+      socket.setNoDelay(true);
+
+      const reader = createPreambleReader(socket);
+      try {
+        // (2) preamble: write client pubkey → read server pubkey (32B) → read nonce (64B).
+        socket.write(frameBytes(keypair.publicKey));
+        const serverPub = await reader.readFrame();
+        if (serverPub.length !== X25519_PUBKEY_LEN) {
+          throw new Error("server pubkey wrong width");
+        }
+        const sessionNonce = await reader.readFrame();
+        if (sessionNonce.length !== SESSION_NONCE_LEN) {
+          throw new Error("session nonce wrong width");
+        }
+
+        // (3) derive the session key (X25519 + HKDF) over the agreed peer pubkey. The mission wire
+        // shapes carry NO per-request `auth_proof` — the sealed session IS the channel auth (the
+        // server enforces single-peer/single-owner), so this leg builds no possession proof.
+        const derived = agree(keypair.secret, serverPub);
+        sessionKey = derived;
+
+        // (4) hand off to the WS layer over the SAME socket: manual RFC6455 upgrade, then
+        // Sender/Receiver. (`sessionNonce` is consumed only to validate preamble width here.)
+        void sessionNonce;
+        const { socket: sock, leftover: preambleLeftover } = reader.takeover();
+        if (preambleLeftover.length > 0) {
+          throw new Error("unexpected buffered bytes before ws upgrade");
+        }
+        const leftover = await wsClientUpgrade(sock, host, port);
+
+        const sender = new wsRuntime.Sender(sock, undefined, () => randomBytes(4));
+        const recv = new wsRuntime.Receiver({ isServer: false, binaryType: "nodebuffer", skipUTF8Validation: true });
+        receiver = recv;
+
+        recv.on("message", (data: Buffer, isBinary: boolean) => {
+          if (!isBinary) {
+            fail(unavailable(`Sealed mission-spine client (${leg}) received a non-binary frame.`));
+            return;
+          }
+          onInbound(data);
+        });
+        recv.on("conclude", onClose);
+        recv.on("error", () => {
+          fail(unavailable(`Sealed mission-spine client (${leg}) received a malformed WS frame.`));
+        });
+
+        sock.on("data", (chunk: Buffer) => recv.write(chunk));
+        sock.on("error", () => {
+          fail(unavailable(`Sealed mission-spine client (${leg}) connection error.`));
+        });
+        sock.on("close", onClose);
+        if (leftover.length > 0) {
+          recv.write(leftover);
+        }
+
+        // (5) seal + send the pre-built mission envelope.
+        sealAndSend(sender, derived, envelope);
+      } catch {
+        fail(unavailable(`Sealed mission-spine client (${leg}) handshake failed.`));
+      }
+    })();
+  });
 }
 
 export function createFridayRustHubAgentRunSealedClient(
@@ -1231,6 +1820,66 @@ export function createFridayRustHubAgentRunSealedClient(
             fail(unavailable("Sealed agent-run client resume handshake failed."));
           }
         })();
+      });
+    },
+
+    intakeMission(
+      request: FridayRustHubMissionIntakeRequest,
+    ): Promise<FridayRustHubMissionIntakeResult> {
+      if (!request.missionId || !request.fridayConversationId) {
+        return Promise.reject(
+          unavailable("Sealed mission-spine client intake requires a mission id and conversation id."),
+        );
+      }
+      return runMissionRoundTrip<FridayRustHubMissionIntakeResult>({
+        host,
+        port,
+        timeoutMs,
+        keypair,
+        envelope: buildMissionIntakeEnvelope(request),
+        expectedKind: "MissionIntakeResult",
+        parse: parseMissionIntakeResult,
+        leg: "mission-intake",
+      });
+    },
+
+    transitionMission(
+      request: FridayRustHubMissionLifecycleRequest,
+    ): Promise<FridayRustHubMissionLifecycleResult> {
+      if (!request.missionId || !request.targetStatus) {
+        return Promise.reject(
+          unavailable("Sealed mission-spine client lifecycle requires a mission id and target status."),
+        );
+      }
+      return runMissionRoundTrip<FridayRustHubMissionLifecycleResult>({
+        host,
+        port,
+        timeoutMs,
+        keypair,
+        envelope: buildMissionLifecycleEnvelope(request),
+        expectedKind: "MissionLifecycleResult",
+        parse: parseMissionLifecycleResult,
+        leg: "mission-lifecycle",
+      });
+    },
+
+    transitionWorkItem(
+      request: FridayRustHubWorkItemStatusRequest,
+    ): Promise<FridayRustHubWorkItemStatusResult> {
+      if (!request.workItemId || !request.targetStatus) {
+        return Promise.reject(
+          unavailable("Sealed mission-spine client work-item requires a work-item id and target status."),
+        );
+      }
+      return runMissionRoundTrip<FridayRustHubWorkItemStatusResult>({
+        host,
+        port,
+        timeoutMs,
+        keypair,
+        envelope: buildWorkItemStatusEnvelope(request),
+        expectedKind: "WorkItemStatusResult",
+        parse: parseWorkItemStatusResult,
+        leg: "work-item-status",
       });
     },
   };

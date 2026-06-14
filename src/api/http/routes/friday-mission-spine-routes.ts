@@ -1,10 +1,19 @@
 import { FridayDomainError } from "#errors";
+import { assertBoundPrincipalForOperation } from "../../../security/friday-owner-session-channel-capability.js";
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type {
   FridayMissionSpineLifecycleState,
   FridayMissionSpineWorkbenchResponse,
   FridayMissionSpineWorkbenchSnapshot,
 } from "../../model/friday-api-mission-spine.types.js";
+import type {
+  FridayRustHubMissionIntakeRequest,
+  FridayRustHubMissionIntakeResult,
+  FridayRustHubMissionLifecycleRequest,
+  FridayRustHubMissionLifecycleResult,
+  FridayRustHubWorkItemStatusRequest,
+  FridayRustHubWorkItemStatusResult,
+} from "../../mission-spine/friday-rust-hub-agent-run-ws-sealed-client.js";
 
 export interface FridayMissionSpineWorkbenchProjectionInput {
   missionId?: string;
@@ -17,9 +26,48 @@ export interface FridayMissionSpineWorkbenchProjectionService {
   getSnapshot(input: FridayMissionSpineWorkbenchProjectionInput): Promise<FridayMissionSpineWorkbenchSnapshot>;
 }
 
+/**
+ * (Lane B) The ORGANIC mutation seam: a thin service that drives the (flag-gated) Rust sealed-WS
+ * dispatch arms for the three Hub-owned mission-spine mutations. The route handlers validate the
+ * body, then hand a typed request to this service, which seals + sends over the sealed-WS client
+ * and returns the refs-only result. When this service is `null` (the DEFAULT — the route flag is
+ * off / no client wired), the POST routes return honest-unavailable (503), byte-identical to the
+ * read route's unavailable path. PROVIDING it is what makes the routes LIVE — and live closure
+ * ALSO needs the SERVER flags (`FRIDAY_MISSION_INTAKE` for intake, `FRIDAY_MISSION_SPINE_DISPATCH`
+ * for lifecycle/work-item), which are a separate operator-gated flip.
+ */
+export interface FridayMissionSpineDispatchService {
+  intakeMission(request: FridayRustHubMissionIntakeRequest): Promise<FridayRustHubMissionIntakeResult>;
+  transitionMission(
+    request: FridayRustHubMissionLifecycleRequest,
+  ): Promise<FridayRustHubMissionLifecycleResult>;
+  transitionWorkItem(
+    request: FridayRustHubWorkItemStatusRequest,
+  ): Promise<FridayRustHubWorkItemStatusResult>;
+}
+
 export interface FridayMissionSpineRoutesDeps {
   readonly workbench: FridayMissionSpineWorkbenchProjectionService | null;
+  /**
+   * (Lane B) The organic mutation dispatcher, DEFAULT-OFF (`null`). `null` ⇒ the three POST routes
+   * are honest-unavailable (503); a real adapter ⇒ they seal + dispatch over the sealed-WS client.
+   * Adding the routes with this `null` is byte-identical to today for existing traffic.
+   */
+  readonly dispatch?: FridayMissionSpineDispatchService | null;
+  /** (Lane B) Optional reason for the dispatch-unavailable 503; falls back to a default message. */
+  readonly dispatchDisabledReason?: string | null;
   readonly disabledReason: string | null;
+}
+
+/** (Lane B) Response envelope for each organic mutation route — refs-only result passthrough. */
+export interface FridayMissionSpineIntakeResponse {
+  readonly result: FridayRustHubMissionIntakeResult;
+}
+export interface FridayMissionSpineLifecycleResponse {
+  readonly result: FridayRustHubMissionLifecycleResult;
+}
+export interface FridayMissionSpineWorkItemStatusResponse {
+  readonly result: FridayRustHubWorkItemStatusResult;
 }
 
 const DEFAULT_DISABLED_MESSAGE =
@@ -85,6 +133,200 @@ function readMissionId(query: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+// ─── (Lane B) Organic mutation body validation ──────────────────────────────
+
+const DEFAULT_DISPATCH_DISABLED_MESSAGE =
+  "Mission Spine organic mutation dispatch is unavailable in this runtime; the Rust Hub sealed-WS dispatch seam has not been wired.";
+
+/** Throw a typed 400 for an invalid organic-mutation body. Never echoes the raw body. */
+function throwInvalidBody(surface: string, failures: readonly string[]): never {
+  throw new FridayDomainError(
+    "MISSION_SPINE_DISPATCH_REQUEST_INVALID",
+    "Mission Spine organic mutation request body did not satisfy the dispatch contract.",
+    {
+      httpStatus: 400,
+      details: { surface, failures },
+    },
+  );
+}
+
+function asBody(body: unknown): Record<string, unknown> {
+  return body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
+}
+
+/** A required, trimmed, non-empty string field — or `undefined` (pushes a failure code). */
+function readRequiredString(
+  body: Record<string, unknown>,
+  field: string,
+  failures: string[],
+): string | undefined {
+  const value = body[field];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    failures.push(`${field}_missing_or_empty`);
+    return undefined;
+  }
+  return value.trim();
+}
+
+/** An optional, trimmed, non-empty string field — or `undefined` (a present-but-non-string is a failure). */
+function readOptionalString(
+  body: Record<string, unknown>,
+  field: string,
+  failures: string[],
+): string | undefined {
+  const value = body[field];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string" || value.trim().length === 0) {
+    failures.push(`${field}_invalid`);
+    return undefined;
+  }
+  return value.trim();
+}
+
+function readOptionalBoolean(
+  body: Record<string, unknown>,
+  field: string,
+  failures: string[],
+): boolean | undefined {
+  const value = body[field];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "boolean") {
+    failures.push(`${field}_invalid`);
+    return undefined;
+  }
+  return value;
+}
+
+const WORK_ITEM_COMPLETED_WITH_PROOF = "completed_with_proof";
+
+/** Validate a Mission intake body into the typed request (or throw a typed 400). */
+function validateIntakeBody(body: unknown): FridayRustHubMissionIntakeRequest {
+  const surface = "api:/v1/mission-spine/intake";
+  const b = asBody(body);
+  const failures: string[] = [];
+  const fridayConversationId = readRequiredString(b, "fridayConversationId", failures);
+  const ownerPrincipal = readRequiredString(b, "ownerPrincipal", failures);
+  const surfaceThreadId = readRequiredString(b, "surfaceThreadId", failures);
+  const surfaceKind = readRequiredString(b, "surfaceKind", failures);
+  const deliveryRoute = readRequiredString(b, "deliveryRoute", failures);
+  const visibilityPolicy = readRequiredString(b, "visibilityPolicy", failures);
+  const missionId = readRequiredString(b, "missionId", failures);
+  const workItemId = readRequiredString(b, "workItemId", failures);
+  const title = readRequiredString(b, "title", failures);
+  const intent = readRequiredString(b, "intent", failures);
+  const lane = readRequiredString(b, "lane", failures);
+  const targetProviderOrAgent = readOptionalString(b, "targetProviderOrAgent", failures);
+  const capabilityId = readOptionalString(b, "capabilityId", failures);
+  const bodyRef = readOptionalString(b, "bodyRef", failures);
+  const includesSensitiveContext = readOptionalBoolean(b, "includesSensitiveContext", failures);
+  if (
+    failures.length > 0 ||
+    fridayConversationId === undefined ||
+    ownerPrincipal === undefined ||
+    surfaceThreadId === undefined ||
+    surfaceKind === undefined ||
+    deliveryRoute === undefined ||
+    visibilityPolicy === undefined ||
+    missionId === undefined ||
+    workItemId === undefined ||
+    title === undefined ||
+    intent === undefined ||
+    lane === undefined
+  ) {
+    throwInvalidBody(surface, failures);
+  }
+  return {
+    fridayConversationId,
+    ownerPrincipal,
+    surfaceThreadId,
+    surfaceKind,
+    deliveryRoute,
+    visibilityPolicy,
+    missionId,
+    workItemId,
+    title,
+    intent,
+    lane,
+    ...(targetProviderOrAgent !== undefined ? { targetProviderOrAgent } : {}),
+    ...(capabilityId !== undefined ? { capabilityId } : {}),
+    ...(bodyRef !== undefined ? { bodyRef } : {}),
+    ...(includesSensitiveContext !== undefined ? { includesSensitiveContext } : {}),
+  };
+}
+
+/** Validate a Mission lifecycle body + path missionId into the typed request (or throw a typed 400). */
+function validateLifecycleBody(missionId: string, body: unknown): FridayRustHubMissionLifecycleRequest {
+  const surface = "api:/v1/mission-spine/:missionId/lifecycle";
+  const b = asBody(body);
+  const failures: string[] = [];
+  const trimmedMissionId = typeof missionId === "string" ? missionId.trim() : "";
+  if (trimmedMissionId.length === 0) failures.push("missionId_missing_or_empty");
+  const fridayConversationId = readRequiredString(b, "fridayConversationId", failures);
+  const targetStatus = readRequiredString(b, "targetStatus", failures);
+  const actorRef = readRequiredString(b, "actorRef", failures);
+  const reason = readRequiredString(b, "reason", failures);
+  const proofRef = readOptionalString(b, "proofRef", failures);
+  const mergedIntoMissionId = readOptionalString(b, "mergedIntoMissionId", failures);
+  if (
+    failures.length > 0 ||
+    fridayConversationId === undefined ||
+    targetStatus === undefined ||
+    actorRef === undefined ||
+    reason === undefined
+  ) {
+    throwInvalidBody(surface, failures);
+  }
+  return {
+    fridayConversationId,
+    missionId: trimmedMissionId,
+    targetStatus,
+    actorRef,
+    reason,
+    ...(proofRef !== undefined ? { proofRef } : {}),
+    ...(mergedIntoMissionId !== undefined ? { mergedIntoMissionId } : {}),
+  };
+}
+
+/** Validate a WorkItem status body + path workItemId into the typed request (or throw a typed 400). */
+function validateWorkItemStatusBody(workItemId: string, body: unknown): FridayRustHubWorkItemStatusRequest {
+  const surface = "api:/v1/mission-spine/work-items/:workItemId/status";
+  const b = asBody(body);
+  const failures: string[] = [];
+  const trimmedWorkItemId = typeof workItemId === "string" ? workItemId.trim() : "";
+  if (trimmedWorkItemId.length === 0) failures.push("workItemId_missing_or_empty");
+  const targetStatus = readRequiredString(b, "targetStatus", failures);
+  const actorRef = readRequiredString(b, "actorRef", failures);
+  const reason = readRequiredString(b, "reason", failures);
+  const proofReceipt = readOptionalString(b, "proofReceipt", failures);
+  // Mirror the SERVER proof-on-completion invariant at the edge so a proofless completion is a
+  // typed 400 here (the Rust persistence boundary ALSO rejects it as the load-bearing guard; this
+  // is a fail-fast convenience, NOT a replacement for the server enforcement).
+  if (targetStatus === WORK_ITEM_COMPLETED_WITH_PROOF && proofReceipt === undefined) {
+    failures.push("proof_receipt_required_for_completion");
+  }
+  if (
+    failures.length > 0 ||
+    targetStatus === undefined ||
+    actorRef === undefined ||
+    reason === undefined
+  ) {
+    throwInvalidBody(surface, failures);
+  }
+  return {
+    workItemId: trimmedWorkItemId,
+    targetStatus,
+    actorRef,
+    reason,
+    ...(proofReceipt !== undefined ? { proofReceipt } : {}),
+  };
+}
+
+function readPathParam(params: unknown, key: string): string {
+  if (!params || typeof params !== "object") return "";
+  const value = (params as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : "";
 }
 
 function hasText(value: string | undefined): boolean {
@@ -361,6 +603,28 @@ export function createFridayMissionSpineRoutes(
     );
   }
 
+  // (Lane B) DEFAULT-OFF: `deps.dispatch` is null/undefined unless an adapter is wired, so each
+  // POST route is honest-unavailable (503) by default — byte-identical to today for existing
+  // traffic (a new route that's flag-OFF never alters any existing route's behavior).
+  const dispatch = deps.dispatch ?? null;
+
+  function dispatchDisabledMessage(): string {
+    return deps.dispatchDisabledReason && deps.dispatchDisabledReason.trim().length > 0
+      ? deps.dispatchDisabledReason
+      : DEFAULT_DISPATCH_DISABLED_MESSAGE;
+  }
+
+  function throwDispatchDisabled(surface: string): never {
+    throw new FridayDomainError(
+      "MISSION_SPINE_DISPATCH_UNAVAILABLE",
+      dispatchDisabledMessage(),
+      {
+        httpStatus: 503,
+        details: { surface, dispatch: "rust_hub_unavailable", proofReady: false },
+      },
+    );
+  }
+
   return [
     {
       operationId: "mission.spine.workbench.get",
@@ -383,6 +647,63 @@ export function createFridayMissionSpineRoutes(
           throwInvalidSnapshot(failures);
         }
         return { snapshot };
+      },
+    },
+    // (Lane B) ORGANIC MISSION INTAKE — POST. Order of guards: (1) dispatch-disabled (flag-OFF)
+    // → 503 FIRST regardless of caller, so a flag-OFF route is a uniform honest-unavailable;
+    // (2) bound-principal (refuse the synthetic public principal) → 401; (3) body validation
+    // → 400; (4) seal + dispatch over the sealed-WS client. Refs-only result passthrough.
+    {
+      operationId: "mission.spine.intake.create",
+      method: "POST",
+      path: "/v1/mission-spine/intake",
+      auth: { public: true },
+      async handler(ctx): Promise<FridayMissionSpineIntakeResponse> {
+        if (!dispatch) {
+          throwDispatchDisabled("api:/v1/mission-spine/intake");
+        }
+        assertBoundPrincipalForOperation(ctx.principal ?? null, "mission.spine.intake", "api");
+        const request = validateIntakeBody(ctx.body);
+        const result = await dispatch.intakeMission(request);
+        return { result };
+      },
+    },
+    // (Lane B) ORGANIC MISSION LIFECYCLE — POST. Same guard order; the canonical missionId rides
+    // the path. A `status` in the result is a Mission-management fact, not provider completion.
+    {
+      operationId: "mission.spine.lifecycle.transition",
+      method: "POST",
+      path: "/v1/mission-spine/:missionId/lifecycle",
+      auth: { public: true },
+      async handler(ctx): Promise<FridayMissionSpineLifecycleResponse> {
+        if (!dispatch) {
+          throwDispatchDisabled("api:/v1/mission-spine/:missionId/lifecycle");
+        }
+        assertBoundPrincipalForOperation(ctx.principal ?? null, "mission.spine.lifecycle", "api");
+        const missionId = readPathParam(ctx.params, "missionId");
+        const request = validateLifecycleBody(missionId, ctx.body);
+        const result = await dispatch.transitionMission(request);
+        return { result };
+      },
+    },
+    // (Lane B) ORGANIC WORK-ITEM STATUS — POST. Same guard order; the workItemId rides the path
+    // and the optional `proofReceipt` is a passthrough. Proof-on-completion is ENFORCED SERVER-
+    // side (a proofless `completed_with_proof` is a typed `Error` ⇒ the client fails closed); the
+    // edge validation rejects it as a 400 as a fail-fast convenience, never the load-bearing guard.
+    {
+      operationId: "mission.spine.workitem.status.transition",
+      method: "POST",
+      path: "/v1/mission-spine/work-items/:workItemId/status",
+      auth: { public: true },
+      async handler(ctx): Promise<FridayMissionSpineWorkItemStatusResponse> {
+        if (!dispatch) {
+          throwDispatchDisabled("api:/v1/mission-spine/work-items/:workItemId/status");
+        }
+        assertBoundPrincipalForOperation(ctx.principal ?? null, "mission.spine.workitem.status", "api");
+        const workItemId = readPathParam(ctx.params, "workItemId");
+        const request = validateWorkItemStatusBody(workItemId, ctx.body);
+        const result = await dispatch.transitionWorkItem(request);
+        return { result };
       },
     },
   ];

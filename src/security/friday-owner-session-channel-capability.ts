@@ -85,7 +85,14 @@ export type FridayPublicMutationOperation =
   // Phase 17A — user-owned cloud worker setup UX bound-principal ops.
   | "cloud.worker.dns.validate"
   | "cloud.worker.package.generate"
-  | "cloud.worker.teardown.receipt";
+  | "cloud.worker.teardown.receipt"
+  // Lane B — organic mission-spine mutations driven over the sealed-WS dispatch
+  // arms (Mission intake / Mission lifecycle / WorkItem status). Public mutating
+  // routes: refuse the synthetic public principal; only a bound owner drives a
+  // Mission/WorkItem transition.
+  | "mission.spine.intake"
+  | "mission.spine.lifecycle"
+  | "mission.spine.workitem.status";
 
 export type FridayBoundPrincipalSource = "api" | "session" | "channel" | "satellite";
 
