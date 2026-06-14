@@ -463,16 +463,24 @@ fn memory_review_activity_row(
     })
 }
 
-/// Run one INLINE manual extraction for a session (public entrypoint; signature UNCHANGED
-/// so every existing caller — the `hub_extract_memory` bin and the in-crate tests — is
-/// untouched). Reads the NS-8 [`FRIDAY_MEMORY_REVIEW_NEEDS_ME`] flag ONCE here (the only env
-/// read; semantics in [`memory_review_needs_me_from`]) and delegates to
-/// [`extract_inline_flagged`]. The flag is **default-OFF**: when off the extraction is
-/// BYTE-IDENTICAL to the pre-NS-8 baseline (no `memory_review_needs_me` call, NO activity
-/// row, no extra query).
+/// Run one INLINE manual extraction for a session (public entrypoint). Reads the NS-8
+/// [`FRIDAY_MEMORY_REVIEW_NEEDS_ME`] flag ONCE here (the only env read; semantics in
+/// [`memory_review_needs_me_from`]) and delegates to [`extract_inline_flagged`]. The flag is
+/// **default-OFF**: when off the extraction is BYTE-IDENTICAL to the pre-NS-8 baseline (no
+/// `memory_review_needs_me` call, NO activity row, no extra query).
+///
+/// ## `db: &Db` (NS8-WIRE-1 — relaxed from `&mut Db`, behavior unchanged)
+/// The `db` handle is a SHARED `&Db`. This entire extraction path uses ONLY `&self` storage
+/// operations — `db.conn()` (a `&Connection`), the `&Connection`-based
+/// `unchecked_transaction`, and `db.insert_token_ledger` / `db.insert_activity` (both `&self`)
+/// — so the previous `&mut Db` receiver was gratuitous. It is relaxed to `&Db` so the live
+/// sessioned run loop's `&self` runtime caller can fire this post-run (NS8-WIRE-1) WITHOUT a
+/// `&mut self` rewrite. Pre-existing `&mut db` call sites (the `hub_extract_memory` bin + the
+/// in-crate tests) reborrow `&mut Db → &Db` at the call automatically, so they are untouched
+/// and behavior is byte-identical.
 #[allow(clippy::too_many_arguments)]
 pub fn extract_inline<T: Transport>(
-    db: &mut friday_storage::Db,
+    db: &friday_storage::Db,
     session_id: &str,
     client: &DeepSeekClient<T>,
     max_items: usize,
@@ -549,7 +557,7 @@ pub fn extract_inline<T: Transport>(
 /// [`ExtractionOutcome::derived_namespace`].
 #[allow(clippy::too_many_arguments)]
 pub fn extract_inline_flagged<T: Transport>(
-    db: &mut friday_storage::Db,
+    db: &friday_storage::Db,
     session_id: &str,
     client: &DeepSeekClient<T>,
     max_items: usize,
@@ -832,7 +840,7 @@ mod tests {
 
     #[test]
     fn extract_persists_candidates_and_recall_reads_them_back_after_confirm() {
-        let mut db = friday_storage::Db::open_hub(&tmp("consistency")).unwrap();
+        let db = friday_storage::Db::open_hub(&tmp("consistency")).unwrap();
         let ids = seed_session(&db, "s1", "alice");
         // Slice-3: the store scope is the SESSION-DERIVED namespace, not a caller principal.
         let ns = ns_for("alice");
@@ -848,16 +856,8 @@ mod tests {
         .to_string();
         let c = client(content);
 
-        let out = extract_inline(
-            &mut db,
-            "s1",
-            &c,
-            DEFAULT_MAX_ITEMS,
-            "s1:ex:100",
-            "led-1",
-            100,
-        )
-        .unwrap();
+        let out =
+            extract_inline(&db, "s1", &c, DEFAULT_MAX_ITEMS, "s1:ex:100", "led-1", 100).unwrap();
         assert_eq!(out.messages_read, 2);
         assert_eq!(out.items_parsed, 1);
         assert_eq!(out.sensitive_dropped, 0);
@@ -899,7 +899,7 @@ mod tests {
 
     #[test]
     fn sensitive_item_is_dropped_not_stored() {
-        let mut db = friday_storage::Db::open_hub(&tmp("sensitive")).unwrap();
+        let db = friday_storage::Db::open_hub(&tmp("sensitive")).unwrap();
         let ids = seed_session(&db, "s2", "bob");
         // Two items: one benign, one whose content carries a sensitive KEYWORD.
         let content = json!({
@@ -911,16 +911,8 @@ mod tests {
         .to_string();
         let c = client(content);
 
-        let out = extract_inline(
-            &mut db,
-            "s2",
-            &c,
-            DEFAULT_MAX_ITEMS,
-            "s2:ex:100",
-            "led-2",
-            100,
-        )
-        .unwrap();
+        let out =
+            extract_inline(&db, "s2", &c, DEFAULT_MAX_ITEMS, "s2:ex:100", "led-2", 100).unwrap();
         assert_eq!(out.items_parsed, 2);
         assert_eq!(out.sensitive_dropped, 1, "the API-key item must be dropped");
         assert_eq!(out.candidates_created, 1);
@@ -947,7 +939,7 @@ mod tests {
         // it IS stored raw (parity with the TS) — and the EXISTING recall path redacts
         // it via cognition::rank_recall. This proves the store→confirm→recall→redact
         // loop is consistent end-to-end with no new store-time redaction.
-        let mut db = friday_storage::Db::open_hub(&tmp("pii")).unwrap();
+        let db = friday_storage::Db::open_hub(&tmp("pii")).unwrap();
         let ids = seed_session(&db, "s3", "carol");
         let ns = ns_for("carol");
         let content = json!({
@@ -960,16 +952,8 @@ mod tests {
         .to_string();
         let c = client(content);
 
-        let out = extract_inline(
-            &mut db,
-            "s3",
-            &c,
-            DEFAULT_MAX_ITEMS,
-            "s3:ex:100",
-            "led-3",
-            100,
-        )
-        .unwrap();
+        let out =
+            extract_inline(&db, "s3", &c, DEFAULT_MAX_ITEMS, "s3:ex:100", "led-3", 100).unwrap();
         assert_eq!(out.candidates_created, 1);
         // The email keyword guard does NOT match a bare email, so it is stored.
         assert_eq!(out.sensitive_dropped, 0);
@@ -990,7 +974,7 @@ mod tests {
 
     #[test]
     fn empty_session_extracts_nothing_without_calling_provider() {
-        let mut db = friday_storage::Db::open_hub(&tmp("empty")).unwrap();
+        let db = friday_storage::Db::open_hub(&tmp("empty")).unwrap();
         // Slice-3: the session must have a RESOLVABLE owner (else it fails closed BEFORE
         // the empty-message early-return). Bind an owner, then leave the session message-less.
         ensure_session_with_owner(
@@ -1017,16 +1001,8 @@ mod tests {
             }
         }
         let c = DeepSeekClient::with_transport(PanicTransport, "test-key-not-real".into());
-        let out = extract_inline(
-            &mut db,
-            "s4",
-            &c,
-            DEFAULT_MAX_ITEMS,
-            "s4:ex:100",
-            "led-4",
-            100,
-        )
-        .unwrap();
+        let out =
+            extract_inline(&db, "s4", &c, DEFAULT_MAX_ITEMS, "s4:ex:100", "led-4", 100).unwrap();
         assert_eq!(out.messages_read, 0);
         assert_eq!(out.candidates_created, 0);
         assert_eq!(out.messages_marked_extracted, 0);
@@ -1040,7 +1016,7 @@ mod tests {
         // Slice-3 PARITY: a session with NO owner user_id has an UNRESOLVABLE memory
         // namespace, so extraction FAILS CLOSED (mirrors the TS MEMORY_NAMESPACE_UNRESOLVABLE
         // throw) BEFORE the provider is ever contacted — even though the session has messages.
-        let mut db = friday_storage::Db::open_hub(&tmp("nouser")).unwrap();
+        let db = friday_storage::Db::open_hub(&tmp("nouser")).unwrap();
         // Owner-less session (account/channel set but user_id absent) WITH a message.
         ensure_session_with_owner(
             db.conn(),
@@ -1072,16 +1048,8 @@ mod tests {
             }
         }
         let c = DeepSeekClient::with_transport(PanicTransport, "test-key-not-real".into());
-        let err = extract_inline(
-            &mut db,
-            "s1",
-            &c,
-            DEFAULT_MAX_ITEMS,
-            "s1:ex:100",
-            "led-1",
-            100,
-        )
-        .unwrap_err();
+        let err = extract_inline(&db, "s1", &c, DEFAULT_MAX_ITEMS, "s1:ex:100", "led-1", 100)
+            .unwrap_err();
         assert!(
             matches!(
                 err,
@@ -1103,7 +1071,7 @@ mod tests {
         // DM fallback e2e: a `chat_kind == "dm"` conversation with NO user_id stores its
         // candidates under the chat-id-derived namespace (TS: parts.chatId), end-to-end
         // through the real extraction path.
-        let mut db = friday_storage::Db::open_hub(&tmp("dm-fallback")).unwrap();
+        let db = friday_storage::Db::open_hub(&tmp("dm-fallback")).unwrap();
         ensure_session_with_owner(
             db.conn(),
             "dm-s",
@@ -1138,7 +1106,7 @@ mod tests {
         .to_string();
         let c = client(content);
         let out = extract_inline(
-            &mut db,
+            &db,
             "dm-s",
             &c,
             DEFAULT_MAX_ITEMS,
@@ -1165,7 +1133,7 @@ mod tests {
         // Subagent fallback e2e: a child session with NO user_id walks `parent_session_id`
         // to the parent's user — and the namespace keeps the CHILD's own account/channel
         // (only the userId comes from the parent, faithful to the TS resolver).
-        let mut db = friday_storage::Db::open_hub(&tmp("subagent-fallback")).unwrap();
+        let db = friday_storage::Db::open_hub(&tmp("subagent-fallback")).unwrap();
         // The parent session (a normal owned conversation).
         ensure_session_with_owner(
             db.conn(),
@@ -1214,7 +1182,7 @@ mod tests {
         .to_string();
         let c = client(content);
         let out = extract_inline(
-            &mut db,
+            &db,
             "child-s",
             &c,
             DEFAULT_MAX_ITEMS,
@@ -1247,7 +1215,7 @@ mod tests {
             }
         }
 
-        let mut db = friday_storage::Db::open_hub(&tmp("underivable")).unwrap();
+        let db = friday_storage::Db::open_hub(&tmp("underivable")).unwrap();
         // (a) A GROUP chat: multi-user — attributing it to the chat id would merge users.
         ensure_session_with_owner(
             db.conn(),
@@ -1300,7 +1268,7 @@ mod tests {
         for sid in ["group-s", "orphan-s"] {
             let c = DeepSeekClient::with_transport(PanicTransport, "test-key-not-real".into());
             let err = extract_inline(
-                &mut db,
+                &db,
                 sid,
                 &c,
                 DEFAULT_MAX_ITEMS,
@@ -1342,7 +1310,7 @@ mod tests {
         // After run 1 BOTH must be marked extracted (so run 2 sees zero pending and never
         // calls the provider). seed_session gives a referenced + an unreferenced message,
         // so the unchanged-ledger assertion catches "marked only the referenced id".
-        let mut db = friday_storage::Db::open_hub(&tmp("dedup")).unwrap();
+        let db = friday_storage::Db::open_hub(&tmp("dedup")).unwrap();
         let ids = seed_session(&db, "s1", "alice");
         let content = json!({
             "items": [{
@@ -1356,16 +1324,8 @@ mod tests {
         let c = client(content);
 
         // Run 1: reads both pending, creates 1 candidate, marks BOTH messages extracted.
-        let out1 = extract_inline(
-            &mut db,
-            "s1",
-            &c,
-            DEFAULT_MAX_ITEMS,
-            "s1:ex:100",
-            "led-1",
-            100,
-        )
-        .unwrap();
+        let out1 =
+            extract_inline(&db, "s1", &c, DEFAULT_MAX_ITEMS, "s1:ex:100", "led-1", 100).unwrap();
         assert_eq!(out1.messages_read, 2);
         assert_eq!(out1.candidates_created, 1);
         assert_eq!(out1.messages_marked_extracted, 2, "both messages consumed");
@@ -1390,16 +1350,8 @@ mod tests {
             }
         }
         let c2 = DeepSeekClient::with_transport(PanicTransport, "test-key-not-real".into());
-        let out2 = extract_inline(
-            &mut db,
-            "s1",
-            &c2,
-            DEFAULT_MAX_ITEMS,
-            "s1:ex:200",
-            "led-2",
-            200,
-        )
-        .unwrap();
+        let out2 =
+            extract_inline(&db, "s1", &c2, DEFAULT_MAX_ITEMS, "s1:ex:200", "led-2", 200).unwrap();
         assert_eq!(out2.messages_read, 0, "no pending messages on re-run");
         assert_eq!(out2.candidates_created, 0, "no duplicate candidates");
         assert_eq!(out2.messages_marked_extracted, 0);
@@ -1423,7 +1375,7 @@ mod tests {
         // then `:c1`. We pre-insert a memory_item at `:c1` so the c1 INSERT collides on
         // the PRIMARY KEY mid-loop → the whole tx drops → BOTH the c0 candidate AND the
         // extracted-marks roll back (all-or-nothing). No test seam in `extract_inline`.
-        let mut db = friday_storage::Db::open_hub(&tmp("rollback")).unwrap();
+        let db = friday_storage::Db::open_hub(&tmp("rollback")).unwrap();
         let ids = seed_session(&db, "s1", "alice");
         let content = json!({
             "items": [
@@ -1450,16 +1402,8 @@ mod tests {
         )
         .unwrap();
 
-        let err = extract_inline(
-            &mut db,
-            "s1",
-            &c,
-            DEFAULT_MAX_ITEMS,
-            "s1:ex:100",
-            "led-1",
-            100,
-        )
-        .unwrap_err();
+        let err = extract_inline(&db, "s1", &c, DEFAULT_MAX_ITEMS, "s1:ex:100", "led-1", 100)
+            .unwrap_err();
         assert!(
             matches!(err, ExtractionError::Storage(_)),
             "PK collision is a storage error"
@@ -1498,7 +1442,7 @@ mod tests {
         // A session whose ONLY extracted item is sensitivity-DROPPED still consumes its
         // source messages: they are marked extracted so a re-run does not re-extract them
         // (matches the TS — a dropped item still leaves the pending set).
-        let mut db = friday_storage::Db::open_hub(&tmp("dropped")).unwrap();
+        let db = friday_storage::Db::open_hub(&tmp("dropped")).unwrap();
         let ids = seed_session(&db, "s1", "bob");
         let content = json!({
             "items": [
@@ -1508,16 +1452,8 @@ mod tests {
         .to_string();
         let c = client(content);
 
-        let out = extract_inline(
-            &mut db,
-            "s1",
-            &c,
-            DEFAULT_MAX_ITEMS,
-            "s1:ex:100",
-            "led-1",
-            100,
-        )
-        .unwrap();
+        let out =
+            extract_inline(&db, "s1", &c, DEFAULT_MAX_ITEMS, "s1:ex:100", "led-1", 100).unwrap();
         assert_eq!(out.items_parsed, 1);
         assert_eq!(out.sensitive_dropped, 1, "the API-key item is dropped");
         assert_eq!(out.candidates_created, 0, "nothing safe to persist");
@@ -1542,16 +1478,8 @@ mod tests {
             }
         }
         let c2 = DeepSeekClient::with_transport(PanicTransport, "test-key-not-real".into());
-        let out2 = extract_inline(
-            &mut db,
-            "s1",
-            &c2,
-            DEFAULT_MAX_ITEMS,
-            "s1:ex:200",
-            "led-2",
-            200,
-        )
-        .unwrap();
+        let out2 =
+            extract_inline(&db, "s1", &c2, DEFAULT_MAX_ITEMS, "s1:ex:200", "led-2", 200).unwrap();
         assert_eq!(out2.messages_read, 0, "dropped source is not re-extracted");
     }
 
@@ -1559,10 +1487,10 @@ mod tests {
     fn blank_session_is_bad_input() {
         // Slice-3 removed the caller `principal_id` arg (the store scope is now session-
         // derived), so only the blank-session-id bad-input remains.
-        let mut db = friday_storage::Db::open_hub(&tmp("blank")).unwrap();
+        let db = friday_storage::Db::open_hub(&tmp("blank")).unwrap();
         let c = client(r#"{"items":[]}"#);
         assert!(matches!(
-            extract_inline(&mut db, "  ", &c, DEFAULT_MAX_ITEMS, "p", "l", 1),
+            extract_inline(&db, "  ", &c, DEFAULT_MAX_ITEMS, "p", "l", 1),
             Err(ExtractionError::BadInput("session_id"))
         ));
     }
@@ -1690,7 +1618,7 @@ mod tests {
 
     #[test]
     fn ns8_flag_on_surfaces_one_memory_review_row_per_fresh_candidate() {
-        let mut db = friday_storage::Db::open_hub(&tmp("ns8-on")).unwrap();
+        let db = friday_storage::Db::open_hub(&tmp("ns8-on")).unwrap();
         let ids = seed_session(&db, "s1", "alice");
         let content = json!({
             "items": [{
@@ -1704,7 +1632,7 @@ mod tests {
         let c = client(content);
 
         let out = extract_inline_flagged(
-            &mut db,
+            &db,
             "s1",
             &c,
             DEFAULT_MAX_ITEMS,
@@ -1757,7 +1685,7 @@ mod tests {
 
     #[test]
     fn ns8_flag_off_is_byte_identical_no_review_row() {
-        let mut db = friday_storage::Db::open_hub(&tmp("ns8-off")).unwrap();
+        let db = friday_storage::Db::open_hub(&tmp("ns8-off")).unwrap();
         let ids = seed_session(&db, "s1", "alice");
         let content = json!({
             "items": [{
@@ -1771,7 +1699,7 @@ mod tests {
 
         let before = db.list_activity().unwrap();
         let out = extract_inline_flagged(
-            &mut db,
+            &db,
             "s1",
             &c,
             DEFAULT_MAX_ITEMS,
@@ -1839,7 +1767,7 @@ mod tests {
         // correct impl (surface only freshly-recorded ids) leaves X UN-surfaced; a `pending_
         // review()` re-query mutation would WRONGLY surface the pre-existing pending X. So this
         // assertion kills that mutation.
-        let mut db = friday_storage::Db::open_hub(&tmp("ns8-fresh-only")).unwrap();
+        let db = friday_storage::Db::open_hub(&tmp("ns8-fresh-only")).unwrap();
 
         // (a) A still-PENDING candidate from an earlier run — recorded directly via the spine,
         // with NO accompanying memory_review activity row (it was never surfaced).
@@ -1875,7 +1803,7 @@ mod tests {
         let _ids = seed_session(&db, "s1", "alice");
         let c = client(json!({ "items": [] }).to_string());
         let out = extract_inline_flagged(
-            &mut db,
+            &db,
             "s1",
             &c,
             DEFAULT_MAX_ITEMS,

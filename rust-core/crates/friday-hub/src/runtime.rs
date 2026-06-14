@@ -1001,8 +1001,13 @@ impl<T: Transport> HubRuntime<T> {
         // (a no-op on Denied/NoAnswer). This is byte-shared with `run_authed_agent_loop`'s
         // tail, so the only difference between the two dispatch arms is which loop ran. Token
         // counts stay `None` (DEFERRED — billed to the Rust token_ledger, not on LoopOutcome).
-        project_answer_for_authed(self.db.conn(), run_id, caller)
-            .with_counts(outcome.turns, outcome.executed_tools)
+        let answer = project_answer_for_authed(self.db.conn(), run_id, caller)
+            .with_counts(outcome.turns, outcome.executed_tools);
+        // (NS8-WIRE-1, Loop5) Fire post-run memory extraction (flag-gated, default-OFF; only on
+        // Finished; result discarded; failure-isolated) AFTER the owner-gated answer is bound +
+        // projected. See `maybe_extract_memory_post_run`.
+        self.maybe_extract_memory_post_run(session_id, run_id, &outcome, now_ms);
+        answer
     }
 
     /// (C2) Pin a SPECIFIC provider for a SESSIONED FOLLOW-UP turn (no-fallback) — the
@@ -1139,7 +1144,100 @@ impl<T: Transport> HubRuntime<T> {
         // Release the body ONLY to the authenticated owner, then attach the loop's counts.
         let answer = project_answer_for_authed(self.db.conn(), run_id, caller)
             .with_counts(outcome.turns, outcome.executed_tools);
+        // (NS8-WIRE-1, Loop5) Fire post-run memory extraction (flag-gated, default-OFF; only on
+        // Finished; result discarded; failure-isolated) AFTER the owner-gated answer is bound +
+        // projected. See `maybe_extract_memory_post_run`.
+        self.maybe_extract_memory_post_run(session_id, run_id, &outcome, now_ms);
         Ok((selection, answer))
+    }
+
+    /// (NS8-WIRE-1, Loop5) Fire POST-RUN session-memory extraction from the LIVE sessioned run
+    /// loop — the missing TRIGGER that closes the Memory loop. This is the CALLER for the already
+    /// merged producer [`crate::memory_extraction::extract_inline`] (#726); it does NOT reimplement
+    /// extraction.
+    ///
+    /// ## When it fires (and when it does NOT)
+    /// - **Flag-gated, default-OFF.** Reads [`ENV_RUN_LOOP_MEMORY_EXTRACTION`] ONCE here. OFF (the
+    ///   prod default — unset / empty / `"0"` / anything but the exact `"1"`) ⇒ this returns
+    ///   IMMEDIATELY before any work: NO extraction call, NO query, NO provider call. The run is
+    ///   BYTE-IDENTICAL to today.
+    /// - **Only on `Finished`.** A `Paused` / `Errored` / `Bounded` / `Blocked` / `Interrupted`
+    ///   outcome returns without firing (those carry no deliverable answer; `Paused` belongs to the
+    ///   resume completion leg). This mirrors the owner-wiring `persist_run_result` gate.
+    ///
+    /// ## Why it can NEVER change the run's outcome/status/answer
+    /// - **Sequenced AFTER the answer is bound + projected.** Both call sites invoke this only after
+    ///   `persist_run_result` (the owner-gated answer bind, inside `run_session_loop`) AND
+    ///   `project_answer_for_authed` have materialized the [`AuthedAnswer`]. The answer the caller
+    ///   returns is already in hand; this runs purely for its candidate side effect.
+    /// - **Result DISCARDED via `let _`.** The [`crate::memory_extraction::ExtractionOutcome`] (and
+    ///   any [`crate::memory_extraction::ExtractionError`]) is dropped. It is never inspected, never
+    ///   propagated, and never folded into the answer — so it CANNOT flip Delivered→NoAnswer.
+    /// - **Failure-isolated.** Extraction writes ONLY `token_ledger` / `memory_item` (candidate) /
+    ///   (NS-8-flag-gated) `activity` rows — NEVER the `run_result` row the answer projection reads.
+    ///   An extraction ERROR (provider failure, unresolvable namespace, parse, storage) is swallowed
+    ///   by the `let _`: the run already succeeded and stays `Finished`; the answer/status/ledger of
+    ///   the RUN are unchanged. The candidates it records are NON-DURABLE `Candidate` rows, gated on
+    ///   a separate operator confirm (Needs-Me) surface — NOT this trigger.
+    ///
+    /// `&self` is sufficient: the producer takes a SHARED `&Db` (NS8-WIRE-1 relaxed it from
+    /// `&mut Db`; the whole path uses only `&self`/`&Connection` storage ops), and the raw
+    /// structured-inference client comes from `self.deepseek.inner()`. The id-prefix / ledger-id
+    /// mirror the `hub_extract_memory` bin.
+    ///
+    /// Reads [`ENV_RUN_LOOP_MEMORY_EXTRACTION`] ONCE here and threads the resulting bool into the
+    /// pure-on-the-bool inner [`Self::maybe_extract_memory_post_run_flagged`] — the program-standard
+    /// "split env-read from pure logic" idiom (mirroring `passport_mint` / `workitem_guarded`), so
+    /// behavioral tests inject the bool directly and never race `std::env`.
+    fn maybe_extract_memory_post_run(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        outcome: &LoopOutcome,
+        now_ms: i64,
+    ) {
+        let enabled = run_loop_memory_extraction_from(
+            std::env::var(ENV_RUN_LOOP_MEMORY_EXTRACTION)
+                .ok()
+                .as_deref(),
+        );
+        self.maybe_extract_memory_post_run_flagged(session_id, run_id, outcome, now_ms, enabled);
+    }
+
+    /// The flag-parameterized inner (pure on `enabled`, env-race-free for tests). DEFAULT-OFF:
+    /// `enabled == false` ⇒ return before ANY work, byte-identical to the pre-NS8-WIRE-1 baseline
+    /// (no extraction call, no query, no provider call). Only fires on
+    /// [`LoopStatus::Finished`]. The result is DISCARDED + the call is failure-isolated via `let _`
+    /// (see the parent doc): it can NEVER flip the run's answer/status or break the run.
+    fn maybe_extract_memory_post_run_flagged(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        outcome: &LoopOutcome,
+        now_ms: i64,
+        enabled: bool,
+    ) {
+        // Flag-gated, default-OFF: OFF ⇒ return before ANY work (byte-identical to today).
+        if !enabled {
+            return;
+        }
+        // Only on Finished (NOT Paused / Errored / Bounded / Blocked / Interrupted).
+        if outcome.status != LoopStatus::Finished {
+            return;
+        }
+        let id_prefix = format!("{session_id}:extract:{now_ms}");
+        let ledger_id = format!("led:{run_id}:{now_ms}");
+        // Result DISCARDED + failure-isolated: `let _` drops the Ok(outcome) AND swallows any
+        // Err — extraction can NEVER flip the run's answer/status or break the run.
+        let _ = crate::memory_extraction::extract_inline(
+            &self.db,
+            session_id,
+            self.deepseek.inner(),
+            crate::memory_extraction::DEFAULT_MAX_ITEMS,
+            &id_prefix,
+            &ledger_id,
+            now_ms,
+        );
     }
 
     /// S1.3 — the Mission-BOUND agent-loop entry (the `executeRun` Mission-context parity,
@@ -1843,6 +1941,25 @@ pub const ENV_WORKITEM_GUARDED_TRANSITION: &str = "FRIDAY_WORKITEM_GUARDED_TRANS
 /// DEFAULT-OFF: `None` (unset) ⇒ false; ON only for the exact opt-in value `"1"` (trimmed);
 /// everything else ⇒ false.
 fn workitem_guarded_transition_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
+/// (NS8-WIRE-1, Loop5) The default-OFF env gate that fires POST-RUN session-memory extraction
+/// from the LIVE sessioned run loop — the missing TRIGGER for the Memory closed loop. When ON,
+/// a `Finished` sessioned run, AFTER its owner-gated answer is bound + projected, fires the
+/// existing producer [`crate::memory_extraction::extract_inline`] for the session (the result is
+/// DISCARDED — see [`HubRuntime::maybe_extract_memory_post_run`]). ON only when
+/// `FRIDAY_RUN_LOOP_MEMORY_EXTRACTION` is exactly `"1"` (after trimming). UNSET / empty / `"0"` /
+/// any other value ⇒ OFF (unchanged prod default: the run is BYTE-IDENTICAL to today — no
+/// extraction call, no extra query, no provider call). Kept narrow + explicit so this run-path
+/// change cannot be enabled by accident.
+pub const ENV_RUN_LOOP_MEMORY_EXTRACTION: &str = "FRIDAY_RUN_LOOP_MEMORY_EXTRACTION";
+
+/// Pure flag-matcher for [`ENV_RUN_LOOP_MEMORY_EXTRACTION`] (env read split out so it is
+/// unit-testable without `set_var` — the program-standard env-race-free idiom this file uses).
+/// DEFAULT-OFF: `None` (unset) ⇒ false; ON only for the exact opt-in value `"1"` (trimmed);
+/// everything else ⇒ false.
+fn run_loop_memory_extraction_from(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1"))
 }
 
@@ -5999,6 +6116,381 @@ mod tests {
             ),
             "FRIDAY_WORKITEM_GUARDED_TRANSITION must be unset/off in the test env (prod default)"
         );
+    }
+
+    // ── NS8-WIRE-1 (Loop5): post-run memory-extraction TRIGGER from the live sessioned loop ──
+
+    #[test]
+    fn run_loop_memory_extraction_flag_matcher_is_exact_one_default_off() {
+        // The DEFAULT-OFF exact-"1" matcher idiom (mirrors the claude/passport/workitem gates).
+        assert!(
+            !run_loop_memory_extraction_from(None),
+            "unset ⇒ OFF (prod default)"
+        );
+        assert!(
+            run_loop_memory_extraction_from(Some("1")),
+            "exactly \"1\" ⇒ ON"
+        );
+        assert!(
+            run_loop_memory_extraction_from(Some(" 1 ")),
+            "trimmed \"1\" ⇒ ON"
+        );
+        for off in ["", "0", "true", "yes", "01", "1 0", "enabled", "TRUE"] {
+            assert!(
+                !run_loop_memory_extraction_from(Some(off)),
+                "{off:?} must NOT enable post-run extraction"
+            );
+        }
+        // Sanity: the live env var is unset in the test process ⇒ the real read reports OFF.
+        assert!(
+            !run_loop_memory_extraction_from(
+                std::env::var(ENV_RUN_LOOP_MEMORY_EXTRACTION)
+                    .ok()
+                    .as_deref()
+            ),
+            "FRIDAY_RUN_LOOP_MEMORY_EXTRACTION must be unset/off in the test env (prod default)"
+        );
+    }
+
+    /// The extraction JSON the producer's `run_friday_ask` chat returns (one valid candidate
+    /// referencing the session's user turn id `<run>:m0`). A safe (non-sensitive) item.
+    fn extraction_items_json(source_msg_id: &str) -> String {
+        serde_json::json!({
+            "items": [{
+                "kind": "preference",
+                "content": "User wants concise answers.",
+                "sourceMessageIds": [source_msg_id],
+            }]
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn post_run_extraction_flag_on_finished_fires_and_never_changes_the_run() {
+        // KAT (flag-ON + Finished): the post-run extraction TRIGGER fires the existing producer,
+        // its result is DISCARDED, and the RUN's answer/status/run_result row are UNCHANGED.
+        //
+        // Sequence on ONE up-front-scripted transport: post[0] = the agent loop's Finish; post[1]
+        // = the extraction `run_friday_ask` chat (the candidate JSON, referencing the session's
+        // user turn `sess-ns8wire:m0` — `append_session_message` mints `<session>:m<seq>`). The
+        // session owner is the authenticated caller (user_id set ⇒ a resolvable memory namespace),
+        // so extraction does NOT fail closed on namespace.
+        let owner = "owner-ns8wire";
+        let items = extraction_items_json("sess-ns8wire:m0");
+        let (rt, _ws, _c) = runtime_with_owner(
+            "ns8wire-on",
+            owner,
+            &["{\"tool\":\"none\",\"answer\":\"PONG\"}", &items],
+        );
+        // The first run drives the loop to Finish (post[0]); the test process env is OFF, so the
+        // run's OWN internal `maybe_extract_memory_post_run` is a no-op (verified: zero extraction).
+        let caller = authed_caller(owner);
+        let answer = rt.run_session_task(&caller, "run-ns8wire", "sess-ns8wire", "say pong", 5_000);
+        // The run Delivered an owned answer.
+        let delivered_body = match &answer {
+            AuthedAnswer::Delivered { answer, status, .. } => {
+                assert_eq!(status, "finished", "the run finished");
+                answer.clone()
+            }
+            other => panic!("expected a Delivered answer, got {other:?}"),
+        };
+        // Snapshot the run_result row + DB counts BEFORE the (flag-ON) extraction step.
+        let before = friday_storage::get_run_result(rt.db().conn(), "run-ns8wire")
+            .unwrap()
+            .expect("a finished run has a run_result row");
+        assert_eq!(before.status, "finished");
+        let ledger_before = rt.db().count("token_ledger").unwrap();
+        let mem_before = rt.db().count("memory_item").unwrap();
+        assert_eq!(
+            mem_before, 0,
+            "flag-OFF internal call created NO candidate (byte-identical baseline)"
+        );
+
+        // Fire the flagged inner directly with a Finished outcome (the env-race-free idiom — no
+        // set_var). The extraction is the NEXT chat POST → the transport serves post[1] (items).
+        let outcome = LoopOutcome {
+            status: LoopStatus::Finished,
+            turns: 1,
+            executed_tools: 0,
+            final_message: Some(delivered_body.clone()),
+            detail: String::new(),
+        };
+        rt.maybe_extract_memory_post_run_flagged(
+            "sess-ns8wire",
+            "run-ns8wire",
+            &outcome,
+            6_000,
+            true, // flag ON
+        );
+
+        // PROOF extraction FIRED: it billed a token_ledger row AND recorded a Candidate.
+        assert_eq!(
+            rt.db().count("token_ledger").unwrap(),
+            ledger_before + 1,
+            "the extraction call was ledgered (it fired)"
+        );
+        assert_eq!(
+            rt.db().count("memory_item").unwrap(),
+            mem_before + 1,
+            "the extraction recorded a Candidate (it fired)"
+        );
+        // PROOF the RUN is UNCHANGED: the run_result row (status + answer body) is byte-identical;
+        // extraction writes token_ledger/memory_item only, NEVER run_result, so it cannot flip
+        // Delivered→NoAnswer.
+        let after = friday_storage::get_run_result(rt.db().conn(), "run-ns8wire")
+            .unwrap()
+            .expect("the run_result row still exists");
+        assert_eq!(
+            after.status, before.status,
+            "status unchanged (still finished)"
+        );
+        assert_eq!(after.answer, before.answer, "answer body unchanged");
+        assert_eq!(
+            after.answer, delivered_body,
+            "the delivered answer is exactly the persisted answer (unaffected by extraction)"
+        );
+    }
+
+    #[test]
+    fn post_run_extraction_not_fired_on_non_finished_outcomes() {
+        // KAT (flag-ON + Paused/Errored/etc.): extraction is gated on Finished ONLY. A non-Finished
+        // outcome fires NOTHING — no provider call, no ledger row, no candidate.
+        let owner = "owner-ns8wire-np";
+        let (rt, _ws, _c) =
+            runtime_with_owner("ns8wire-nonfinished", owner, &["{\"tool\":\"none\"}"]);
+        // Seed an owned session WITH a pending message so extraction COULD fire if it were not
+        // gated — proving the gate (not an empty session) is what blocks it.
+        friday_storage::ensure_session_with_owner(
+            rt.db().conn(),
+            "sess-np",
+            &SessionOwner {
+                user_id: Some(owner.to_string()),
+                ..SessionOwner::default()
+            },
+            1,
+        )
+        .unwrap();
+        friday_storage::append_session_message(
+            rt.db().conn(),
+            "sess-np",
+            &friday_storage::SessionMessage::new("user", "remember this", None),
+            2,
+        )
+        .unwrap();
+        let ledger_before = rt.db().count("token_ledger").unwrap();
+        let mem_before = rt.db().count("memory_item").unwrap();
+
+        for status in [
+            LoopStatus::Paused,
+            LoopStatus::Errored,
+            LoopStatus::Bounded,
+            LoopStatus::Blocked,
+            LoopStatus::Interrupted,
+        ] {
+            let outcome = LoopOutcome {
+                status,
+                turns: 1,
+                executed_tools: 0,
+                final_message: None,
+                detail: String::new(),
+            };
+            rt.maybe_extract_memory_post_run_flagged("sess-np", "run-np", &outcome, 3_000, true);
+        }
+        assert_eq!(
+            rt.db().count("token_ledger").unwrap(),
+            ledger_before,
+            "no non-Finished outcome may fire extraction (no ledger row)"
+        );
+        assert_eq!(
+            rt.db().count("memory_item").unwrap(),
+            mem_before,
+            "no non-Finished outcome may record a candidate"
+        );
+    }
+
+    #[test]
+    fn post_run_extraction_flag_off_is_byte_identical_even_on_finished() {
+        // KAT (flag-OFF): the DEFAULT. Even on a Finished outcome with a pending-message,
+        // owned (namespace-resolvable) session — i.e. extraction WOULD fire were the flag on —
+        // the OFF path returns before ANY work: no provider call, no token_ledger row, no
+        // candidate. Byte-identical to the pre-NS8-WIRE-1 baseline. A PanicTransport proves zero
+        // provider contact.
+        struct PanicTransport;
+        impl Transport for PanicTransport {
+            fn get_json(&self, _u: &str, _b: &str) -> Result<Value, DeepSeekError> {
+                panic!("flag-OFF must make NO provider call (discover)");
+            }
+            fn post_json(&self, _u: &str, _b: &str, _body: &Value) -> Result<Value, DeepSeekError> {
+                panic!("flag-OFF must make NO provider call (chat)");
+            }
+        }
+        let owner = "owner-ns8wire-off";
+        let tag = "ns8wire-off";
+        let ws = TempDir::new(tag);
+        let client = DeepSeekClient::with_transport(PanicTransport, "k".into());
+        let agent = DeepSeekAgentLlmClient::new(client);
+        let rt = HubRuntime::new(
+            HubConfig {
+                db_path: tmp(tag),
+                workspace_root: ws.0.clone(),
+                secret: SECRET.to_vec(),
+                max_turns: 6,
+                principal_id: Some(owner.to_string()),
+                disabled_tools: vec![],
+                read_only: false,
+                operator_vk: None,
+            },
+            agent,
+            Box::new(DenyAllApprovals),
+        )
+        .unwrap();
+        // An owned session WITH a pending message (extraction would fire if the flag were on).
+        friday_storage::ensure_session_with_owner(
+            rt.db().conn(),
+            "sess-off",
+            &SessionOwner {
+                user_id: Some(owner.to_string()),
+                ..SessionOwner::default()
+            },
+            1,
+        )
+        .unwrap();
+        friday_storage::append_session_message(
+            rt.db().conn(),
+            "sess-off",
+            &friday_storage::SessionMessage::new("user", "remember this", None),
+            2,
+        )
+        .unwrap();
+        let ledger_before = rt.db().count("token_ledger").unwrap();
+        let mem_before = rt.db().count("memory_item").unwrap();
+
+        let outcome = LoopOutcome {
+            status: LoopStatus::Finished,
+            turns: 1,
+            executed_tools: 0,
+            final_message: Some("PONG".to_string()),
+            detail: String::new(),
+        };
+        // enabled = false ⇒ the OFF path. The PanicTransport guarantees it never touches the
+        // provider; the counts prove it never touched storage either.
+        rt.maybe_extract_memory_post_run_flagged("sess-off", "run-off", &outcome, 3_000, false);
+
+        assert_eq!(
+            rt.db().count("token_ledger").unwrap(),
+            ledger_before,
+            "flag-OFF fires NO extraction (no ledger row) — byte-identical baseline"
+        );
+        assert_eq!(
+            rt.db().count("memory_item").unwrap(),
+            mem_before,
+            "flag-OFF records NO candidate — byte-identical baseline"
+        );
+    }
+
+    /// A transport that serves a Finish on the FIRST chat POST (the agent loop) but FAILS every
+    /// later chat POST (the extraction `run_friday_ask` call) with a transient provider error —
+    /// the failure-isolation probe. `/models` (GET) always succeeds (discovery is not the failure).
+    struct FailExtractionTransport {
+        post_calls: Rc<Cell<usize>>,
+    }
+    impl FailExtractionTransport {
+        fn new() -> Self {
+            Self {
+                post_calls: Rc::new(Cell::new(0)),
+            }
+        }
+    }
+    impl Transport for FailExtractionTransport {
+        fn get_json(&self, _url: &str, _bearer: &str) -> Result<Value, DeepSeekError> {
+            Ok(serde_json::json!({"data":[{"id":"deepseek-v4-flash"}]}))
+        }
+        fn post_json(
+            &self,
+            _url: &str,
+            _bearer: &str,
+            _body: &Value,
+        ) -> Result<Value, DeepSeekError> {
+            let n = self.post_calls.get();
+            self.post_calls.set(n + 1);
+            if n == 0 {
+                // The agent loop's turn: Finish with an answer.
+                Ok(serde_json::json!({
+                    "model":"deepseek-v4-flash",
+                    "choices":[{"message":{"content":"{\"tool\":\"none\",\"answer\":\"PONG\"}"},"finish_reason":"stop"}],
+                    "usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}
+                }))
+            } else {
+                // The extraction call FAILS — a transient provider-unavailable error.
+                Err(DeepSeekError::ProviderUnavailable("extraction down".into()))
+            }
+        }
+    }
+
+    #[test]
+    fn post_run_extraction_failure_is_isolated_run_stays_finished() {
+        // KAT (failure-isolation): the extraction call ERRORS (provider unavailable on the
+        // extraction POST). The `let _` swallows it — the RUN already Finished and its run_result
+        // row is UNCHANGED; no candidate is recorded. An extraction error can NEVER break the run.
+        let owner = "owner-ns8wire-fail";
+        let tag = "ns8wire-fail";
+        let ws = TempDir::new(tag);
+        let transport = FailExtractionTransport::new();
+        let client = DeepSeekClient::with_transport(transport, "k".into());
+        let agent = DeepSeekAgentLlmClient::new(client);
+        let rt = HubRuntime::new(
+            HubConfig {
+                db_path: tmp(tag),
+                workspace_root: ws.0.clone(),
+                secret: SECRET.to_vec(),
+                max_turns: 6,
+                principal_id: Some(owner.to_string()),
+                disabled_tools: vec![],
+                read_only: false,
+                operator_vk: None,
+            },
+            agent,
+            Box::new(DenyAllApprovals),
+        )
+        .unwrap();
+
+        let caller = authed_caller(owner);
+        let answer = rt.run_session_task(&caller, "run-fail", "sess-fail", "say pong", 5_000);
+        let delivered_body = match &answer {
+            AuthedAnswer::Delivered { answer, status, .. } => {
+                assert_eq!(status, "finished");
+                answer.clone()
+            }
+            other => panic!("expected Delivered, got {other:?}"),
+        };
+        let before = friday_storage::get_run_result(rt.db().conn(), "run-fail")
+            .unwrap()
+            .expect("finished run has a result");
+        let mem_before = rt.db().count("memory_item").unwrap();
+
+        let outcome = LoopOutcome {
+            status: LoopStatus::Finished,
+            turns: 1,
+            executed_tools: 0,
+            final_message: Some(delivered_body.clone()),
+            detail: String::new(),
+        };
+        // The extraction call (post[1]) returns Err — this MUST NOT panic / propagate / break.
+        // The `let _` in `maybe_extract_memory_post_run_flagged` isolates the failure.
+        rt.maybe_extract_memory_post_run_flagged("sess-fail", "run-fail", &outcome, 6_000, true);
+
+        // The extraction failed BEFORE recording any candidate (no partial state).
+        assert_eq!(
+            rt.db().count("memory_item").unwrap(),
+            mem_before,
+            "a failed extraction records NO candidate"
+        );
+        // The RUN is UNCHANGED: still finished, same answer body. Failure isolated.
+        let after = friday_storage::get_run_result(rt.db().conn(), "run-fail")
+            .unwrap()
+            .expect("the run_result row survives a failed extraction");
+        assert_eq!(after.status, "finished", "the run stays Finished");
+        assert_eq!(after.answer, before.answer, "the answer body is unchanged");
     }
 
     /// A runtime whose run-owner principal is `principal` (so the confirmed-memory recall — the

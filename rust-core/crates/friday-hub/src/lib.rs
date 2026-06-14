@@ -584,6 +584,14 @@ impl<T: friday_deepseek::Transport> DeepSeekAgentLlmClient<T> {
     pub fn discover_models(&self) -> Result<Vec<String>, friday_deepseek::DeepSeekError> {
         self.client.discover_models()
     }
+    /// (NS8-WIRE-1) Borrow the underlying structured-inference [`friday_deepseek::DeepSeekClient`].
+    /// The agent-loop adapter wraps the raw client; the post-run memory-extraction trigger
+    /// ([`crate::memory_extraction::extract_inline`]) needs the raw client (it issues ONE
+    /// structured `run_friday_ask` call, not the agent-loop step API). This is a read-only
+    /// borrow — it grants no new capability the adapter did not already wrap.
+    pub(crate) fn inner(&self) -> &friday_deepseek::DeepSeekClient<T> {
+        &self.client
+    }
 }
 
 /// Completion-token budget for the agent-loop reasoning calls (`propose_tool_call` and
