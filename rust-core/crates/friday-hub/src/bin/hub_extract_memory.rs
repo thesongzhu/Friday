@@ -105,14 +105,16 @@ fn run() -> Result<String, ExtractError> {
     let client = DeepSeekClient::from_env().map_err(|_| ExtractError::new("credential_missing"))?;
 
     // A write bin: open the hub DB read-write (it records candidates + a ledger row).
-    let mut db = Db::open_hub(&db_path).map_err(|_| ExtractError::new("open_failed"))?;
+    // `extract_inline` takes a SHARED `&Db` (it uses only `&self`/`&Connection` storage ops),
+    // so no `mut` binding is needed.
+    let db = Db::open_hub(&db_path).map_err(|_| ExtractError::new("open_failed"))?;
 
     let now_ms = now_ms();
     let id_prefix = format!("{session_id}:extract:{now_ms}");
     let ledger_id = format!("led:{session_id}:{now_ms}");
 
     let outcome = extract_inline(
-        &mut db,
+        &db,
         &session_id,
         &client,
         DEFAULT_MAX_ITEMS,
