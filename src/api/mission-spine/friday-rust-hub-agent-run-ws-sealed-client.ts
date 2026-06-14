@@ -401,6 +401,17 @@ export interface FridayRustHubAgentRunSealedClient {
   transitionWorkItem(
     request: FridayRustHubWorkItemStatusRequest,
   ): Promise<FridayRustHubWorkItemStatusResult>;
+  /**
+   * (Lane M) Apply the OWNER's explicit confirm/reject to ONE pending memory candidate over a
+   * sealed session — `Message::MemoryDecisionRequest`. PURE Hub `&Db` mutation (NO model/provider
+   * call). Awaits the FIRST `MemoryDecisionResult`; fails closed on any other inbound (including the
+   * server's `Error` envelope). The `status`/`recallable` here are the Hub's honest outcome — a
+   * `status:"blocked"` (scope mismatch / unknown / terminal / invalid decision) is a SUCCESSFUL
+   * round-trip of a refusal, NOT a transport failure, and surfaces as a parsed result.
+   */
+  decideMemory(
+    request: FridayRustHubMemoryDecisionRequest,
+  ): Promise<FridayRustHubMemoryDecisionResult>;
 }
 
 /** (A3 courier) A resume relay: the run to resume + the operator's OPAQUE signed approval blob. */
@@ -512,6 +523,45 @@ export interface FridayRustHubWorkItemStatusResult {
   /** COUNT of persisted proof receipts (never the raw receipt refs themselves). */
   readonly proofReceiptCount: number;
   readonly updatedAtMs: number;
+}
+
+// ─── (Lane M) Memory-confirmation loop terminal mutation request/result ──────
+//
+// The merged Rust arm (#753) wired an OWNER-authed memory decision into the live
+// `hub_agent_run_server` behind a SERVER flag (`FRIDAY_MEMORY_CONFIRM`, DEFAULT-OFF):
+// an inbound `Message::MemoryDecisionRequest { request: MemoryDecisionRequestWire }`
+// applies the OWNER's explicit confirm/reject to ONE pending memory candidate (a
+// confirm makes it durable/recallable; a reject is terminal) and replies with a
+// `Message::MemoryDecisionResult { result: MemoryDecisionResultWire }`. This is a PURE
+// `&Db` mutation — NO provider/model call, ZERO token_ledger rows. Like the
+// mission-spine arms, the wire carries NO per-request `auth_proof`/`forwarded_principal`
+// — the sealed session IS the channel auth (single-peer/single-owner SERVER invariant).
+// The decision is owner/namespace-scoped: it applies ONLY when `owner_principal` matches
+// the candidate's owning principal (the server fails closed — `status:"blocked"` — on a
+// scope mismatch / unknown / terminal / invalid decision).
+
+/** (Lane M) An OWNER memory confirm/reject decision — `MemoryDecisionRequestWire`. */
+export interface FridayRustHubMemoryDecisionRequest {
+  /** The candidate `memory_item` to decide on. */
+  readonly memoryId: string;
+  /** The owner principal asserting the decision (MUST match the candidate's owning principal). */
+  readonly ownerPrincipal: string;
+  /** The explicit decision — `"confirm"` (→ durable/recallable) or `"reject"` (→ terminal). */
+  readonly decision: "confirm" | "reject";
+}
+
+/** (Lane M) Refs-only memory decision result — `MemoryDecisionResultWire`. */
+export interface FridayRustHubMemoryDecisionResult {
+  readonly truthLabel: "rust_wired";
+  readonly memoryId: string;
+  /** Resulting lifecycle state token (`"candidate"` / `"confirmed"` / `"rejected"` / `"unknown"`). */
+  readonly state: string;
+  /** Coarse outcome — `"confirmed"` / `"rejected"` / `"blocked"`. */
+  readonly status: string;
+  /** Coarse block reason — present ONLY when `status === "blocked"` (never echoes candidate content). */
+  readonly blocker?: string;
+  /** Whether the candidate is now recallable (durable `Confirmed`). */
+  readonly recallable: boolean;
 }
 
 function unavailable(message: string): FridayDomainError {
@@ -914,6 +964,32 @@ export function buildWorkItemStatusEnvelope(
 }
 
 /**
+ * (Lane M) Build the `MemoryDecisionRequest` inner message — the EXACT `MemoryDecisionRequestWire`
+ * shape. CRITICAL: `Message::MemoryDecisionRequest { request: MemoryDecisionRequestWire }` is a
+ * SINGLE-FIELD wrapper on an internally-tagged (`#[serde(tag = "kind")]`) `Message`, so serde
+ * NESTS the inner wire fields under a `request` key:
+ *   {"kind":"MemoryDecisionRequest","request":{ memory_id, owner_principal, decision }}
+ * A prior surface shipped a FLAT shape that failed `Envelope::decode` server-side (missing the
+ * `request` key) ⇒ 503 every call — the byte-exact `{kind,request}` nesting (cross-checked against
+ * the Rust round-trip test at friday-protocol lib.rs:2158-2172) is the regression guard. All three
+ * fields are REQUIRED (no Option / conditional-spread); the server parses `decision` fail-closed.
+ * EXPORTED + pure so the precise wire shape is unit-testable without a socket.
+ */
+export function buildMemoryDecisionEnvelope(
+  request: FridayRustHubMemoryDecisionRequest,
+): Record<string, unknown> {
+  const inner: Record<string, unknown> = {
+    memory_id: request.memoryId,
+    owner_principal: request.ownerPrincipal,
+    decision: request.decision,
+  };
+  return buildMissionEnvelope(`memory-decision-${request.memoryId}`, {
+    kind: "MemoryDecisionRequest",
+    request: inner,
+  });
+}
+
+/**
  * (Lane B) Parse a `MissionIntakeResult` inbound into the refs-only TS result. Returns `undefined`
  * (caller fails closed) when a REQUIRED ref is missing/ill-typed. The optional refs are surfaced
  * only when present (absent ⇒ omitted, never fabricated). EXPORTED + pure for socket-free testing.
@@ -1058,6 +1134,41 @@ export function parseWorkItemStatusResult(
     reason,
     proofReceiptCount,
     updatedAtMs,
+  };
+}
+
+/**
+ * (Lane M) Parse a `MemoryDecisionResult` inbound into the refs-only TS result. Returns `undefined`
+ * (caller fails closed 503) when a REQUIRED ref is missing/ill-typed. `recallable` is a REQUIRED
+ * boolean and `false` is a VALID value (a rejected/blocked candidate) — checked with an explicit
+ * `typeof === "boolean"`, NEVER a truthy test (mirrors `created_or_ready`). `blocker` is
+ * `skip_serializing_if Option::is_none` Rust-side ⇒ OMITTED from the wire when absent; surfaced
+ * only when present, never fabricated. EXPORTED + pure for socket-free testing.
+ */
+export function parseMemoryDecisionResult(
+  fields: Record<string, unknown>,
+): FridayRustHubMemoryDecisionResult | undefined {
+  // The refs live NESTED under `result` (single-field wrapper); unwrap fail-closed.
+  const r = unwrapResult(fields);
+  if (r === undefined) {
+    return undefined;
+  }
+  const memoryId = asString(r.memory_id);
+  const state = asString(r.state);
+  const status = asString(r.status);
+  const recallable = r.recallable;
+  if (!memoryId || !state || !status || typeof recallable !== "boolean") {
+    return undefined;
+  }
+  const blocker = asString(r.blocker);
+  return {
+    // No `truth_label` on `MemoryDecisionResultWire`; TS-side ceiling label (see intake parser).
+    truthLabel: "rust_wired",
+    memoryId,
+    state,
+    status,
+    recallable,
+    ...(blocker !== undefined ? { blocker } : {}),
   };
 }
 
@@ -1944,6 +2055,31 @@ export function createFridayRustHubAgentRunSealedClient(
         expectedKind: "WorkItemStatusResult",
         parse: parseWorkItemStatusResult,
         leg: "work-item-status",
+      });
+    },
+
+    decideMemory(
+      request: FridayRustHubMemoryDecisionRequest,
+    ): Promise<FridayRustHubMemoryDecisionResult> {
+      if (!request.memoryId || !request.ownerPrincipal) {
+        return Promise.reject(
+          unavailable("Sealed memory-spine client decision requires a memory id and owner principal."),
+        );
+      }
+      if (request.decision !== "confirm" && request.decision !== "reject") {
+        return Promise.reject(
+          unavailable("Sealed memory-spine client decision must be 'confirm' or 'reject'."),
+        );
+      }
+      return runMissionRoundTrip<FridayRustHubMemoryDecisionResult>({
+        host,
+        port,
+        timeoutMs,
+        keypair,
+        envelope: buildMemoryDecisionEnvelope(request),
+        expectedKind: "MemoryDecisionResult",
+        parse: parseMemoryDecisionResult,
+        leg: "memory-decision",
       });
     },
   };

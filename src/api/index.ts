@@ -241,6 +241,11 @@ export { createFridayUixRoutes } from "./http/routes/friday-uix-routes.js";
 export type { FridayUixRoutesDeps } from "./http/routes/friday-uix-routes.js";
 export { createFridayMissionSpineRoutes } from "./http/routes/friday-mission-spine-routes.js";
 export type { FridayMissionSpineRoutesDeps } from "./http/routes/friday-mission-spine-routes.js";
+export { createFridayMemorySpineRoutes } from "./http/routes/friday-memory-spine-routes.js";
+export type {
+  FridayMemorySpineRoutesDeps,
+  FridayMemorySpineDispatchService,
+} from "./http/routes/friday-memory-spine-routes.js";
 export { createFridayReflexRoutes } from "./http/routes/friday-reflex-routes.js";
 export type { FridayReflexRoutesDeps } from "./http/routes/friday-reflex-routes.js";
 export { createFridayCrossBorderPackRoutes } from "./http/routes/friday-cross-border-pack-routes.js";

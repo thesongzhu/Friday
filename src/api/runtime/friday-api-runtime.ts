@@ -122,6 +122,10 @@ import {
   createFridayMissionSpineRoutes,
   type FridayMissionSpineRoutesDeps,
 } from "../http/routes/friday-mission-spine-routes.js";
+import {
+  createFridayMemorySpineRoutes,
+  type FridayMemorySpineRoutesDeps,
+} from "../http/routes/friday-memory-spine-routes.js";
 import { createFridayCrossBorderPackRoutes } from "../http/routes/friday-cross-border-pack-routes.js";
 import { createFridayAssetInventoryRoutes } from "../http/routes/friday-asset-inventory-routes.js";
 import { createFridayStudioRoutes } from "../http/routes/friday-studio-routes.js";
@@ -4008,6 +4012,18 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     routes.register(route);
   }
 
+  // (Lane M) Memory-confirmation loop terminal route. ALWAYS registered (byte-additive); DEFAULT-OFF
+  // (dispatch null) ⇒ POST /v1/memory-spine/decide is honest-unavailable (503) until an operator
+  // wires the adapter AND flips the Rust `FRIDAY_MEMORY_CONFIRM` flag. Mirrors mission-spine above.
+  const memorySpineDeps: FridayMemorySpineRoutesDeps =
+    deps.memorySpine ?? {
+      dispatch: null,
+      dispatchDisabledReason: "memory spine confirmation dispatch deps not provided",
+    };
+  for (const route of createFridayMemorySpineRoutes(memorySpineDeps)) {
+    routes.register(route);
+  }
+
   // Register realtime routes
   for (const route of createFridayRealtimeRoutes({
     subscriptionService: subscriptions,
@@ -5304,6 +5320,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     agentLoop: deps.agentLoop,
     uix: deps.uix,
     missionSpine: deps.missionSpine,
+    memorySpine: deps.memorySpine,
     system: deps.system,
     guideLens: deps.guideLens,
   };
