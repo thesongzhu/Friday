@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createFridayApiRuntime } from "#api";
+import { FridayDomainError } from "#errors";
 import {
   createFridayAgentEventEmitter,
   type FridayAgentRuntime,
@@ -1507,5 +1508,137 @@ describe("FridayApiRuntime — NS45-PR2 mission-bound run driver (DARK, additive
 
     expect(ws.calls).toHaveLength(1);
     expect(ws.calls[0].missionContext).toBeUndefined();
+  });
+
+  // ── RESPONSE-SURFACING contract (bound run-start, diagnostic regression) ──────────────────
+  //
+  // CONTEXT (the diagnosed prod symptom): a mission-bound run via `POST /v1/agent/runs` was
+  // observed returning `http_code=503, run_id=none` to the caller even though the Rust run
+  // FINISHED — the WorkItem walked to `completed_with_proof`, a real answer was produced, and
+  // the proof receipt was written. The hypothesis under investigation was that the TS route
+  // mapped a SUCCESSFUL bound dispatch (the bound-run answer/refs reply envelope) into a 503 /
+  // no-run_id, treating it differently than an unbound read-only run.
+  //
+  // DIAGNOSIS RESULT (these tests are the proof): a successful bound run's wire reply is
+  // BYTE-IDENTICAL to an unbound one in every dimension the response path consumes — the Rust
+  // bound path persists `run_result{status:"finished", owner=policy.principal_id()}` via the
+  // SAME shared `run_with_request`/`run_task_with_overrides` the unbound path uses, projects the
+  // owner-gated body via the SAME `project_answer_for_authed`, and `attach_agent_loop_provider_state`
+  // never touches `run_result`. So a `delivered` readback + a `finished` wire status yields a 200
+  // success response (run_id + completed status + the owner-released body), exactly as for an
+  // unbound run. There is NO TS mapping that turns a successful bound run into a 503 — the prod
+  // 503 originates DOWNSTREAM at the owner-gated DB readback step (a #655-class readback/DB
+  // failure or a stale prod binary), NOT at the response-surfacing layer.
+  //
+  // These tests LOCK that contract so a future change cannot silently regress bound run-start
+  // response surfacing, and prove the unbound path is unchanged + a genuine failure still 503s.
+
+  it("BOUND SUCCESS: a valid mission-bound run that FINISHES (delivered readback) → 200 success response (run_id + completed + body), NOT a 503", async () => {
+    db = createTestDb();
+    // The stub WS settles `status:"finished"` + answer refs — the EXACT reply a successful bound
+    // run emits (the bound path's `run_result` status is "finished", same as unbound). The
+    // delivered readback releases the owner-gated body to the bound owner.
+    const ws = makeStubWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+    });
+
+    const result = (await callStartRoute(runtime, {
+      ...QUALIFYING_BODY,
+      missionContext: { ...VALID_MISSION_CONTEXT },
+    })) as {
+      runId: string;
+      status: string;
+      response: string;
+      finalResponse?: string;
+      eventStreamAvailable?: boolean;
+    };
+
+    // The diagnosed bug would be: a 503 / `run_id=none`. The contract: a real 200 success body.
+    expect(result.runId).toBe(RUN_ID);
+    expect(result.status).toBe("completed");
+    expect(result.response).toBe(OWNER_BODY);
+    expect(result.finalResponse).toBe(OWNER_BODY);
+    expect(result.eventStreamAvailable).toBe(true);
+    // The bound run dispatched (with the handle threaded + the bound owner), and the body came
+    // back through the owner-gated readback to the SAME authenticated principal.
+    expect(ws.calls).toHaveLength(1);
+    expect(ws.calls[0].missionContext).toEqual(VALID_MISSION_CONTEXT);
+    expect(ws.calls[0].forwardedPrincipal).toBe(OWNER_PRINCIPAL);
+    expect(readback.calls).toHaveLength(1);
+    expect(readback.calls[0].callerPrincipal).toBe(OWNER_PRINCIPAL);
+    // ONE continuity row (no double-count), keyed on the run id.
+    expect(countRows(db, "friday_agent_runs", RUN_ID)).toBe(1);
+  });
+
+  it("UNBOUND PARITY (regression): the SAME finished+delivered reply WITHOUT missionContext returns the IDENTICAL 200 success body — the read-only path is UNCHANGED", async () => {
+    db = createTestDb();
+    const ws = makeStubWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+    });
+
+    // NO missionContext → the dispatch carries no handle (byte-identical unbound wire).
+    const result = (await callStartRoute(runtime, { ...QUALIFYING_BODY })) as {
+      runId: string;
+      status: string;
+      response: string;
+      finalResponse?: string;
+      eventStreamAvailable?: boolean;
+    };
+
+    // IDENTICAL success surface to the bound case above — proving the fix-target (bound surfacing)
+    // matches the working unbound path and the unbound path was not perturbed.
+    expect(result.runId).toBe(RUN_ID);
+    expect(result.status).toBe("completed");
+    expect(result.response).toBe(OWNER_BODY);
+    expect(result.finalResponse).toBe(OWNER_BODY);
+    expect(result.eventStreamAvailable).toBe(true);
+    expect(ws.calls).toHaveLength(1);
+    expect("missionContext" in ws.calls[0]).toBe(false);
+    expect(ws.calls[0].missionContext).toBeUndefined();
+  });
+
+  it("BOUND FAILURE not masked: a bound run whose dispatch genuinely FAILS still returns the 503 error (a real failure is NOT surfaced as success)", async () => {
+    db = createTestDb();
+    // A genuine transport/dispatch failure — the sealed WS dispatch throws. This is the
+    // no-false-success guard: a real failure on a bound run MUST still fail closed (503), never
+    // be masked into a fake 200 by any bound-run surfacing change.
+    const failingWs: FridayRustHubAgentRunSealedClientService = {
+      dispatchRun: vi.fn(async () => {
+        throw new FridayDomainError(
+          "MISSION_SPINE_RUST_AGENT_RUN_SEALED_WS_CLIENT_UNAVAILABLE",
+          "Sealed agent-run client dispatch failed.",
+          { httpStatus: 503 },
+        );
+      }),
+      resumeWithApproval: vi.fn(async () => {
+        throw new Error("resumeWithApproval not used by this dispatch-failure test");
+      }),
+    };
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: failingWs,
+      readback: readback.service,
+    });
+
+    await expect(
+      callStartRoute(runtime, {
+        ...QUALIFYING_BODY,
+        missionContext: { ...VALID_MISSION_CONTEXT },
+      }),
+    ).rejects.toMatchObject({ httpStatus: 503 });
+    // The dispatch was attempted; the readback was NEVER reached (fail-closed before the body),
+    // and NO continuity row was projected — a real failure stays a failure.
+    expect(failingWs.dispatchRun).toHaveBeenCalledTimes(1);
+    expect(readback.calls).toHaveLength(0);
+    expect(countRows(db, "friday_agent_runs", RUN_ID)).toBe(0);
   });
 });
