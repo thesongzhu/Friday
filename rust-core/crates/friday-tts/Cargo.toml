@@ -1,8 +1,26 @@
 [package]
 name = "friday-tts"
-description = "Friday F11 net-new media capability — tts crate skeleton. Empty compiling stub, no logic/deps/executors yet (Hub-only, provider-secret-bearing → stays OUT of friday-ffi's phone dependency graph)."
+description = "Friday Rust Core — F11 text-to-speech Friday-provider route (Hub-only, provider-secret-bearing). TtsTransport DI seam + UnavailableTransport dark default + pure request/validation/error-map; the live /v1/audio/speech BYOK call is operator-gated."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 publish = false
 rust-version.workspace = true
+
+[features]
+# Exposes the deterministic StubTransport to the hub executor's tests (TTS-5)
+# WITHOUT pulling it into the default production build. DEFAULT-OFF: a failed live
+# route is a TtsError, never a silent stub substitute.
+test-stub = []
+
+# Hub-only, provider-secret-bearing crate. It carries the BYOK key
+# (FRIDAY_TTS_API_KEY, set on the Hub only) into the Authorization header at the
+# live leg and must stay OUT of friday-ffi's dependency graph (same boundary as
+# friday-deepseek / friday-anthropic; asserted by friday-arch-tests).
+[dependencies]
+thiserror.workspace = true
+serde_json = "1"
+# Blocking HTTP client (rustls/webpki-roots; no async runtime, no system certs).
+# Mirrors the friday-deepseek / friday-anthropic transport exactly; no NEW crate
+# (the TS oracle ships no audio library — it POSTs JSON and reads raw bytes).
+ureq = { version = "2", features = ["json"] }
