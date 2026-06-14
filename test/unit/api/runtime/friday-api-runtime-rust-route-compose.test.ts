@@ -158,6 +158,53 @@ function makeStubPausedWsClient() {
   return { service, calls };
 }
 
+/**
+ * (honest-non-finished) A scripted-stub sealed WS client that settles every dispatch with a
+ * caller-chosen loop `status` and NO answer refs (the refs-only result a NON-deliverable terminal
+ * carries). Used to drive the readback-not_found compose branch with a specific wire status.
+ */
+function makeStubStatusWsClient(status: string) {
+  const calls: FridayRustHubAgentRunSealedClientServiceRequest[] = [];
+  const service: FridayRustHubAgentRunSealedClientService = {
+    dispatchRun: vi.fn(async (request: FridayRustHubAgentRunSealedClientServiceRequest) => {
+      calls.push(request);
+      return {
+        truthLabel: "rust_wired" as const,
+        runId: request.runId,
+        status,
+        // A non-deliverable terminal carries NO answer refs (no sha / no len).
+      };
+    }),
+    resumeWithApproval: vi.fn(async () => {
+      throw new Error("resumeWithApproval not used by this status-dispatch test");
+    }),
+  };
+  return { service, calls };
+}
+
+/**
+ * (honest-non-finished) A stub readback that always returns the body-free `not_found` outcome —
+ * the LEGITIMATE outcome for a run whose Rust loop terminated NON-Finished (it skipped the persist
+ * guard, so no `run_result` row exists). Records each call so the path can be asserted.
+ */
+function makeNotFoundReadback() {
+  const calls: FridayRustHubRunAnswerReadbackInput[] = [];
+  const service: FridayRustHubRunAnswerReadbackService = {
+    readAnswer: vi.fn(
+      async (input: FridayRustHubRunAnswerReadbackInput): Promise<FridayRustHubRunAnswerReadbackReceipt> => {
+        calls.push(input);
+        return {
+          truthLabel: "rust_wired_dev",
+          proofOnly: true,
+          outcome: "not_found",
+          runId: input.runId,
+        };
+      },
+    ),
+  };
+  return { service, calls };
+}
+
 /** A stub readback that returns the owner-gated body to the matching owner principal. */
 function makeStubReadback(owner: string) {
   const calls: FridayRustHubRunAnswerReadbackInput[] = [];
@@ -388,6 +435,184 @@ describe("FridayApiRuntime — execrun S-F-compose (DARK) Rust-route composition
     );
     const parsedMetadata = JSON.parse(rowMetadata) as { apiRequest?: { principalId?: string } };
     expect(parsedMetadata.apiRequest?.principalId).toBe(OWNER_PRINCIPAL);
+  });
+
+  // ── (honest-non-finished) the readback_not_found 503 defect fix ──
+  //
+  // THE DEFECT: a run whose Rust loop terminated NON-Finished (Blocked/Errored/Bounded → the
+  // no-answer terminal) DELIBERATELY skips the Rust-side persist guard, so NO `run_result` row is
+  // written and the owner-gated body readback LEGITIMATELY returns `not_found`. Compose used to throw
+  // the `readback_not_found` 503 for that case — MISREPORTING an honest terminal settle as a
+  // transport failure (the hourly self-probe + S6 saw exactly this). THE FIX: a strict allowlist
+  // (not_found AND a non-Finished terminal wire status) projects an HONEST "failed" continuity row
+  // instead of the 503 — while EVERY other not-delivered case (denied, finished-but-missing-row, any
+  // error status) keeps today's 503 EXACTLY (no gate-weakening).
+
+  /** Read the projected continuity-row's stored loop-status label off `metadata_json`. */
+  function readProjectedLoopStatus(database: FridaySqliteLayer, runId: string): string | undefined {
+    const meta = database.withReadConnection((d) =>
+      (d.prepare("SELECT metadata_json FROM friday_agent_runs WHERE id = ?").get(runId) as
+        | { metadata_json: string | null }
+        | undefined)?.metadata_json ?? "{}",
+    );
+    return (JSON.parse(meta) as { rustContinuity?: { loopStatus?: string } }).rustContinuity?.loopStatus;
+  }
+
+  it("(nf-a) non-Finished wire status (no_answer_safe_failure) + readback not_found → NO 503; honest failed row, NO body", async () => {
+    db = createTestDb();
+    // The PRODUCTION wire value: a NON-deliverable terminal collapses to AuthedAnswer::NoAnswer →
+    // compose sees the `no_answer_safe_failure` status (the value the live server actually emits).
+    const ws = makeStubStatusWsClient("no_answer_safe_failure");
+    const readback = makeNotFoundReadback();
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+    });
+
+    const result = (await callStartRoute(runtime, { ...QUALIFYING_BODY })) as {
+      runId: string;
+      response: string;
+      finalResponse?: string;
+      status: string;
+      toolCallCount: number;
+    };
+
+    // The dispatch ran AND the readback ran (not_found is a real read, not a skip).
+    expect(ws.calls).toHaveLength(1);
+    expect(readback.calls).toHaveLength(1);
+
+    // NO 503: the honest non-Finished terminal is surfaced as the projector's "failed" status —
+    // NEVER "completed", NEVER "cancelled" (cancelled is the resumable Paused mapping; this is not).
+    expect(result.status).toBe("failed");
+    // NO fabricated body — the response is empty and the route omits the empty finalResponse.
+    expect(result.response).toBe("");
+    expect(result.finalResponse).toBeUndefined();
+    expect(result.toolCallCount).toBe(0);
+
+    // Exactly ONE continuity row, mapped to the failed status with the Errored loop-status label.
+    expect(countRows(db, "friday_agent_runs", RUN_ID)).toBe(1);
+    const rowStatus = db.withReadConnection((d) =>
+      (d.prepare("SELECT status FROM friday_agent_runs WHERE id = ?").get(RUN_ID) as { status: string }).status,
+    );
+    expect(rowStatus).toBe("failed");
+    expect(readProjectedLoopStatus(db, RUN_ID)).toBe("Errored");
+
+    // REFS-ONLY: the row stores an empty-body ref (len 0) — NEVER the owner body.
+    const rowResponse = db.withReadConnection((d) =>
+      (d.prepare("SELECT response_text FROM friday_agent_runs WHERE id = ?").get(RUN_ID) as
+        | { response_text: string | null }
+        | undefined)?.response_text ?? "",
+    );
+    expect(rowResponse).toContain("rust-run-body-ref:");
+    expect(rowResponse).toContain("len=0");
+    expect(rowResponse).not.toBe(OWNER_BODY);
+
+    // The owner is stamped so the row is owner-scoped for the read routes (a ref, never a body).
+    const rowMetadata = db.withReadConnection((d) =>
+      (d.prepare("SELECT metadata_json FROM friday_agent_runs WHERE id = ?").get(RUN_ID) as
+        | { metadata_json: string | null }
+        | undefined)?.metadata_json ?? "{}",
+    );
+    expect((JSON.parse(rowMetadata) as { apiRequest?: { principalId?: string } }).apiRequest?.principalId).toBe(
+      OWNER_PRINCIPAL,
+    );
+  });
+
+  it("(nf-b) the task's case — wire status \"blocked\" + readback not_found → NO 503; honest failed row", async () => {
+    db = createTestDb();
+    // A raw loop-status token a server MIGHT surface directly (the allowlist admits it too).
+    const ws = makeStubStatusWsClient("blocked");
+    const readback = makeNotFoundReadback();
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+    });
+
+    const result = (await callStartRoute(runtime, { ...QUALIFYING_BODY })) as { status: string; response: string };
+
+    expect(ws.calls).toHaveLength(1);
+    expect(readback.calls).toHaveLength(1);
+    expect(result.status).toBe("failed");
+    expect(result.response).toBe("");
+    expect(countRows(db, "friday_agent_runs", RUN_ID)).toBe(1);
+    // A RAW loop-status token keeps its FAITHFUL capitalized label in metadata — but the
+    // product-visible status is STILL "failed" (mapLoopStatusToTsStatus maps Blocked → failed).
+    expect(readProjectedLoopStatus(db, RUN_ID)).toBe("Blocked");
+  });
+
+  it("(nf-c) Case A — wire status \"finished\" + readback not_found → STILL 503 (a finished run's missing row is a REAL failure; gate preserved)", async () => {
+    db = createTestDb();
+    // status "finished" ⇒ a body SHOULD exist; a missing row is a genuine readback failure → 503.
+    const ws = makeStubStatusWsClient("finished");
+    const readback = makeNotFoundReadback();
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+    });
+
+    await expect(callStartRoute(runtime, { ...QUALIFYING_BODY })).rejects.toMatchObject({
+      code: "TS_RUNTIME_AGENT_RUNS_RETIRED",
+      httpStatus: 503,
+    });
+    // The dispatch + readback both ran, and NO honest row was projected — the 503 is preserved.
+    expect(ws.calls).toHaveLength(1);
+    expect(readback.calls).toHaveLength(1);
+    expect(countRows(db, "friday_agent_runs", RUN_ID)).toBe(0);
+  });
+
+  it("(nf-d) no-weakening guard — an ERROR wire status (storage_failed) + not_found → STILL 503 (not an honest terminal)", async () => {
+    db = createTestDb();
+    // An ERROR status is NOT in the non-Finished-terminal allowlist → it must fall through to the
+    // unchanged 503. This is the strongest no-gate-weakening proof: a real storage failure (which
+    // could otherwise leak through a naive binary as a "failed" row) still fails closed.
+    const ws = makeStubStatusWsClient("storage_failed");
+    const readback = makeNotFoundReadback();
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+    });
+
+    await expect(callStartRoute(runtime, { ...QUALIFYING_BODY })).rejects.toMatchObject({
+      code: "TS_RUNTIME_AGENT_RUNS_RETIRED",
+      httpStatus: 503,
+    });
+    expect(ws.calls).toHaveLength(1);
+    expect(readback.calls).toHaveLength(1);
+    expect(countRows(db, "friday_agent_runs", RUN_ID)).toBe(0);
+  });
+
+  it("(nf-e) no-weakening guard — a DENIED ownership refusal (even with a non-Finished status) → STILL 503", async () => {
+    db = createTestDb();
+    // `denied` is an OWNERSHIP-GATE refusal — it MUST stay 503 even if the loop status is a
+    // non-Finished terminal. Only `not_found` (a genuinely missing row) is the honest-terminal signal.
+    const ws = makeStubStatusWsClient("no_answer_safe_failure");
+    const deniedReadback: FridayRustHubRunAnswerReadbackService = {
+      readAnswer: vi.fn(
+        async (input: FridayRustHubRunAnswerReadbackInput): Promise<FridayRustHubRunAnswerReadbackReceipt> => ({
+          truthLabel: "rust_wired_dev",
+          proofOnly: true,
+          outcome: "denied",
+          runId: input.runId,
+          denyReason: "principal_mismatch",
+        }),
+      ),
+    };
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: deniedReadback,
+    });
+
+    await expect(callStartRoute(runtime, { ...QUALIFYING_BODY })).rejects.toMatchObject({
+      code: "TS_RUNTIME_AGENT_RUNS_RETIRED",
+      httpStatus: 503,
+    });
+    expect(ws.calls).toHaveLength(1);
+    expect(countRows(db, "friday_agent_runs", RUN_ID)).toBe(0);
   });
 
   it("(b) flag OFF (default) → byte-identical 503; the WS path is NEVER touched", async () => {
