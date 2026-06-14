@@ -8,12 +8,13 @@
 //! masquerade as Friday work.
 
 use friday_core::gate::{CanonicalApproval, MutatingActionRequest};
-use friday_core::{Risk, RouteDecisionCard, WorkLane};
-use friday_crypto::SecureStore;
+use friday_core::{MissionLinkKind, Risk, RouteDecisionCard, WorkLane};
+use friday_crypto::{OperatorVerifyingKey, SecureStore};
 use friday_deepseek::{DeepSeekClient, Transport};
 use friday_storage::channel::get_channel;
 use friday_storage::{Db, StorageError};
 
+use crate::agent_run_control::{resume as agent_run_control_resume, ControlOutcome};
 use crate::channel_event::{channel_event_id, ingest_channel_inbound, ChannelInboundReceipt};
 use crate::channels::{redact_inbound, resolve_and_verify, InboundRejection, RedactedInbound};
 use crate::mission_context::{
@@ -585,6 +586,156 @@ pub(crate) fn attach_agent_loop_provider_state(
         }
     }
     Ok(last)
+}
+
+/// RESUME a paused, mutating, MISSION-BOUND agent-loop run AND — only on a proven execution —
+/// advance its bound WorkItem `ProviderRouted → CompletedWithProof`. This closes the ONE gap left
+/// by the dark mission-bound run path: after the operator's Ed25519-signed approval executes the
+/// one paused mutation, NOTHING previously advanced the WorkItem off `ProviderRouted` (the
+/// pause-time bind state — see `attach_agent_loop_provider_state` with `completed=false`).
+///
+/// ## THE LOOPHOLE GATE (a false proof is a security defect)
+/// The WorkItem is advanced ONLY when the ONE approved mutation actually ran — gate `Allow` AND
+/// executor `Ok`. This is delegated VERBATIM to [`crate::agent_run_control::resume`] (which itself
+/// delegates to the S6 [`crate::resume::resume_with_approval`] spine): its returned
+/// [`ControlOutcome::accepted`] field is set to `outcome.executed` (agent_run_control.rs:472), and
+/// EVERY non-execution path — gate `Deny` (replayed/consumed nonce, expired/bad-signature/HMAC
+/// approval), `mutation_exec_failed` (gate Allow but executor `Err`), every `ResumeError`, and the
+/// fail-closed pre-checks (`malformed_blob`/`run_mismatch`/`run_cancelled`/`approval_rejected`) —
+/// returns `accepted: false`. So `accepted == true` ⟺ `executed == true` ⟺ the mutation ran. We
+/// gate the advance STRICTLY on `outcome.accepted`. If it is false we return the spine's outcome
+/// UNMODIFIED and the WorkItem is left UNCHANGED (stays `ProviderRouted`): no proof, no
+/// audit-completion row, no false proof.
+///
+/// ## Cross-mission proof-injection defense
+/// We NEVER trust a wire-supplied work_item_id. The WorkItem is resolved ONLY via the run's OWN
+/// pause-time `provider_timeline` MissionLink — the link whose `target_ref` encodes EXACTLY this
+/// `run_id` as its trailing `#`-segment (`friday://provider-timeline/{session}#{run_id}`,
+/// resolved by [`friday_storage::Db::find_provider_timeline_link_by_run_id`], which matches the
+/// last `#`-segment EXACTLY and fail-closes on zero or ambiguous matches). That link carries the
+/// bound `mission_id` + `work_item_id` directly; an attacker cannot steer the completion to a
+/// foreign WorkItem. If no own-link resolves (a non-mission run, or a foreign nonce), we DO NOT
+/// advance — we return the spine's outcome unchanged (so a flag-on non-mission resume is
+/// byte-identical to a bare `agent_run_control::resume`).
+///
+/// ## The partial advance (no backward / duplicate transition)
+/// The bound WorkItem is already at `ProviderRouted`, so we drive ONLY the remaining legal hops
+/// `RoutedToProvider → WaitingProvider → ProviderCompleted` via
+/// [`attach_provider_timeline_state_guarded`] with `proof_ref = friday://agent-run/{run_id}`,
+/// reusing the SAME `friday_session_id` (parsed from the matched link's `target_ref`) and
+/// `request_id = run_id` so the completion UPSERTS the same MissionLink rather than minting a
+/// second (which would later make the run_id resolution ambiguous). We do NOT re-drive
+/// `SentToHub`/`AcceptedByHub` (the item is past them — re-running would be an illegal backward
+/// transition). `guarded = false` (the pre-WI-1 inline write) is used here so the advance writes
+/// no extra audit row and never risks an `audit_ledger` PK collision; the completion proof_ref is
+/// always supplied, and `transition_work_item_status` / `work_item_status_for_provider_state`
+/// reject a proof-less `CompletedWithProof` as the final backstop.
+///
+/// A non-advancing attachment outcome (e.g. the idempotent already-`CompletedWithProof` case →
+/// `Blocked{illegal_work_item_transition:...}`) is NON-FATAL: we still return the spine's
+/// `accepted` outcome (the mutation DID run). The advance is a pure side-effect; it never alters
+/// the returned [`ControlOutcome`].
+///
+/// **Known boundary (dark PR):** the spine's mutation (its own transaction) and this WorkItem
+/// advance (separate transactions) are not atomic. A crash between them leaves
+/// `run_result=mutation_completed` with the WorkItem still at `ProviderRouted`/`ProviderWaiting` —
+/// an UNDER-claim, never a false proof; the next resume is `executed==false` (nonce consumed) so it
+/// cannot re-advance. Acceptable for this dark, default-off seam.
+///
+/// Returns `Result<ControlOutcome, StorageError>` — a drop-in for the bare
+/// `agent_run_control::resume` at the wire seam (same `send_control_result` / `storage_failed`
+/// fallback shape).
+pub fn resume_agent_loop_for_mission(
+    db: &Db,
+    executor: &dyn ToolExecutor,
+    operator_vk: &OperatorVerifyingKey,
+    run_id: &str,
+    signed_blob: &[u8],
+    now_ms: i64,
+) -> Result<ControlOutcome, StorageError> {
+    // (a) Delegate to the EXISTING resume spine UNCHANGED. This verifies the Ed25519 signature,
+    //     enforces single-use (nonce consume), runs the reject/cancel + wire-run-binding
+    //     pre-checks, and executes the ONE approved mutation. We add no verification/execution.
+    let outcome = agent_run_control_resume(
+        db.conn(),
+        executor,
+        operator_vk,
+        run_id,
+        signed_blob,
+        now_ms,
+    )?;
+
+    // (b) THE LOOPHOLE GATE. `outcome.accepted == outcome.executed` (agent_run_control.rs:472):
+    //     true IFF gate Allow AND executor Ok. Any refusal / exec-failure is `accepted:false` ⇒
+    //     return the spine outcome UNMODIFIED, WorkItem untouched (stays ProviderRouted). No proof.
+    if !outcome.accepted {
+        return Ok(outcome);
+    }
+
+    // (c) Resolve the bound WorkItem from the run's OWN pause-time provider_timeline link ONLY
+    //     (never a wire-supplied id). No own-link (non-mission run / foreign nonce) ⇒ no advance:
+    //     return the spine outcome unchanged (byte-identical to a bare resume on a non-mission run).
+    let Some(link) = db.find_provider_timeline_link_by_run_id(run_id)? else {
+        return Ok(outcome);
+    };
+    if link.link_kind != MissionLinkKind::ProviderTimeline {
+        // Defense-in-depth: the storage query already filters to provider_timeline.
+        return Ok(outcome);
+    }
+    let Some(work_item_id) = link.work_item_id.clone() else {
+        // A provider_timeline link with no bound WorkItem cannot be completed — leave it.
+        return Ok(outcome);
+    };
+    // The pause-time link's target_ref is `friday://provider-timeline/{session}#{run_id}`. Parse the
+    // session BACK out so the completion reuses the SAME link_id (mission_id+work_item+session+run)
+    // and UPSERTS the existing link instead of minting a second one (which would make a future
+    // run_id resolution ambiguous → fail-closed). The run_id segment was matched EXACTLY by the
+    // resolver, so the session is everything between the `provider-timeline/` prefix and the `#`.
+    let session_id = provider_timeline_session_from_target(&link.target_ref).unwrap_or_default();
+
+    // (d) Drive ONLY the remaining legal hops RoutedToProvider → WaitingProvider →
+    //     ProviderCompleted with the run as proof. `guarded=false` = the inline write (no extra
+    //     audit row, no PK risk); the proof_ref is always supplied so the completion is well-formed.
+    let proof_ref = format!("friday://agent-run/{run_id}");
+    for state in [
+        PendingState::WaitingProvider,
+        PendingState::ProviderCompleted,
+    ] {
+        let attachment = attach_provider_timeline_state_guarded(
+            db,
+            ProviderTimelineAttachment {
+                mission_id: link.mission_id.clone(),
+                work_item_id: work_item_id.clone(),
+                friday_session_id: session_id.clone(),
+                request_id: run_id.to_string(),
+                state,
+                proof_ref: (state == PendingState::ProviderCompleted).then(|| proof_ref.clone()),
+                now_ms,
+            },
+            /* guarded = */ false,
+        )?;
+        // A non-advancing outcome (e.g. an already-completed run ⇒ illegal/duplicate transition) is
+        // NON-FATAL: the mutation DID run (the spine returned accepted), so we still report it. The
+        // advance is a best-effort side-effect that never changes the returned ControlOutcome.
+        if matches!(attachment, MissionAttachmentOutcome::Blocked { .. }) {
+            break;
+        }
+    }
+
+    Ok(outcome)
+}
+
+/// Parse the `{session}` out of a provider-timeline `target_ref`
+/// (`friday://provider-timeline/{session}#{run_id}`): everything between the `provider-timeline/`
+/// prefix and the LAST `#`. Returns `None` if the ref is not in that shape.
+fn provider_timeline_session_from_target(target_ref: &str) -> Option<String> {
+    const PREFIX: &str = "friday://provider-timeline/";
+    let rest = target_ref.strip_prefix(PREFIX)?;
+    let (session, _run) = rest.rsplit_once('#')?;
+    if session.is_empty() {
+        return None;
+    }
+    Some(session.to_string())
 }
 
 #[cfg(test)]
@@ -1502,5 +1653,93 @@ mod tests {
             WorkItemStatus::CompletedWithProof
         );
         assert_eq!(lifecycle_audit_rows(&db), 0);
+    }
+
+    // ===================== resume → WorkItem-completion: pure (no-signing) seams ===============
+
+    #[test]
+    fn provider_timeline_session_parser_extracts_session_or_none() {
+        // The canonical pause-time shape: session is between the prefix and the LAST '#'.
+        assert_eq!(
+            provider_timeline_session_from_target(
+                "friday://provider-timeline/friday-hub-session#run-1"
+            )
+            .as_deref(),
+            Some("friday-hub-session")
+        );
+        // A session is allowed to contain '#'? No — we split on the LAST '#', so a session with an
+        // embedded '#' keeps the left part; the run_id is always the final segment (run ids have
+        // no '#'). This documents the rsplit behavior.
+        assert_eq!(
+            provider_timeline_session_from_target("friday://provider-timeline/a#b#run-1")
+                .as_deref(),
+            Some("a#b")
+        );
+        // Not the provider-timeline shape ⇒ None (the wrong prefix / no '#').
+        assert_eq!(
+            provider_timeline_session_from_target("friday://agent-run/run-1"),
+            None
+        );
+        assert_eq!(
+            provider_timeline_session_from_target("friday://provider-timeline/run-1"),
+            None,
+            "no '#' ⇒ not the bound shape"
+        );
+        assert_eq!(
+            provider_timeline_session_from_target("friday://provider-timeline/#run-1"),
+            None,
+            "empty session ⇒ None"
+        );
+    }
+
+    /// The run-id resolver matches the EXACT trailing '#'-segment and fail-closes on zero / ambiguous
+    /// matches — the cross-mission injection defense, exercised WITHOUT any signing (a pure storage
+    /// property). Seeds two provider_timeline links sharing a run_id SUFFIX and asserts exact match.
+    #[test]
+    fn resolve_provider_timeline_link_by_run_id_is_exact_and_fail_closed() {
+        let db = Db::open_hub(&tmp("resolve-runid")).unwrap();
+        // Reuse the existing seed helper (mission-runtime / work-runtime) for the first link...
+        seed_work_item(
+            &db,
+            WorkLane::DeepSeek,
+            Some("deepseek"),
+            WorkItemStatus::ReadyToDispatch,
+        );
+        // Drive RoutedToProvider for run "run-z" (writes the pause-time link target_ref).
+        attach_agent_loop_provider_state(
+            &db,
+            "mission-runtime",
+            "work-runtime",
+            "sess-z",
+            "run-z",
+            /* completed = */ false,
+            "friday://agent-run/run-z",
+            /* guarded = */ false,
+            10,
+        )
+        .unwrap();
+
+        // EXACT match: "run-z" resolves to the bound work-runtime link.
+        let link = db
+            .find_provider_timeline_link_by_run_id("run-z")
+            .unwrap()
+            .expect("run-z must resolve its own link");
+        assert_eq!(link.work_item_id.as_deref(), Some("work-runtime"));
+        assert_eq!(link.target_ref, "friday://provider-timeline/sess-z#run-z");
+
+        // SUPERSTRING must NOT match (exact trailing-segment): a search for "z" or "n-z" finds nothing.
+        assert!(db
+            .find_provider_timeline_link_by_run_id("z")
+            .unwrap()
+            .is_none());
+        assert!(db
+            .find_provider_timeline_link_by_run_id("n-z")
+            .unwrap()
+            .is_none());
+        // An unrelated run resolves to nothing.
+        assert!(db
+            .find_provider_timeline_link_by_run_id("run-absent")
+            .unwrap()
+            .is_none());
     }
 }
