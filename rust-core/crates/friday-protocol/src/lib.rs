@@ -207,6 +207,40 @@ pub struct MissionLifecycleResultWire {
     pub updated_at_ms: i64,
 }
 
+/// Client request to advance ONE WorkItem's lifecycle through the Hub state
+/// machine. This is a Hub-owned mutation, not a provider/model call. A
+/// `target_status` of `completed_with_proof` MUST carry a non-empty
+/// `proof_receipt` — the persistence layer rejects a proofless completion so
+/// "done" can never be claimed without proof (the proof-on-completion invariant).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkItemStatusRequestWire {
+    pub work_item_id: String,
+    pub target_status: String,
+    pub actor_ref: String,
+    pub reason: String,
+    /// REQUIRED when `target_status == "completed_with_proof"` (non-empty), and
+    /// REJECTED for any other target. Absent ⇒ no receipt is appended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_receipt: Option<String>,
+}
+
+/// Hub response after a WorkItem lifecycle command. It returns the changed
+/// WorkItem's previous/current status and the redacted proof-receipt count; a
+/// status of `completed_with_proof` here is only honest because the persistence
+/// layer enforced a non-empty receipt before writing it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkItemStatusResultWire {
+    pub work_item_id: String,
+    pub mission_id: String,
+    pub previous_status: String,
+    pub status: String,
+    pub actor_ref: String,
+    pub reason: String,
+    /// COUNT of persisted proof receipts (never the raw receipt refs themselves).
+    pub proof_receipt_count: u64,
+    pub updated_at_ms: i64,
+}
+
 /// Client request to resolve/create a Mission from one mobile/desktop/channel
 /// surface input. This is a Hub-owned preflight mutation, not a provider/model
 /// call. Duplicate/conflict outcomes must be surfaced instead of silently
@@ -1197,6 +1231,15 @@ pub enum Message {
     /// hub->client: lifecycle mutation receipt. Status changes here are Mission
     /// management facts, not provider completion unless proof_ref says so.
     MissionLifecycleResult { result: MissionLifecycleResultWire },
+    /// client->hub: advance ONE WorkItem's lifecycle through the Hub state
+    /// machine. Never a provider/model call. A `completed_with_proof` target
+    /// MUST carry a non-empty `proof_receipt` (the persistence layer rejects a
+    /// proofless completion).
+    WorkItemStatusRequest { request: WorkItemStatusRequestWire },
+    /// hub->client: WorkItem lifecycle mutation receipt. A `completed_with_proof`
+    /// status here is honest precisely because the proof-on-completion invariant
+    /// was enforced before the write.
+    WorkItemStatusResult { result: WorkItemStatusResultWire },
     /// **S-R1** — UI→DARK read-server: request the Mission Workbench read projection over the
     /// sealed-WS READ seam. PURE READ — no model/provider call. Owner-scoped: the read server
     /// authenticates `forwarded_principal`/`auth_proof` against the sealed session (the SAME chain a
@@ -2002,6 +2045,27 @@ mod tests {
                 },
             },
             mission_lifecycle_result(),
+            Message::WorkItemStatusRequest {
+                request: WorkItemStatusRequestWire {
+                    work_item_id: "work-1".into(),
+                    target_status: "completed_with_proof".into(),
+                    actor_ref: "operator:jarvis".into(),
+                    reason: "provider returned a verified result".into(),
+                    proof_receipt: Some("proof://work-item/1".into()),
+                },
+            },
+            Message::WorkItemStatusResult {
+                result: WorkItemStatusResultWire {
+                    work_item_id: "work-1".into(),
+                    mission_id: "mission-1".into(),
+                    previous_status: "provider_waiting".into(),
+                    status: "completed_with_proof".into(),
+                    actor_ref: "operator:jarvis".into(),
+                    reason: "provider returned a verified result".into(),
+                    proof_receipt_count: 1,
+                    updated_at_ms: 1_700_000_000_007,
+                },
+            },
         ];
         for msg in cases {
             let env = Envelope::new("m1", 1000, msg).with_correlation("c1");
@@ -2218,6 +2282,33 @@ mod tests {
                 "mission lifecycle wire leaked {forbidden}: {json}"
             );
         }
+        assert_eq!(Envelope::decode(&json).unwrap(), env);
+    }
+
+    #[test]
+    fn work_item_status_request_omits_proof_receipt_when_absent_and_round_trips() {
+        // A non-completion transition carries NO proof_receipt — the key must be ABSENT on the
+        // wire (additive-optional), so an older peer's decode is unaffected and the shape stays
+        // honest (a receipt is only valid for a completed_with_proof transition).
+        let env = Envelope::new(
+            "work-item-status-1",
+            1000,
+            Message::WorkItemStatusRequest {
+                request: WorkItemStatusRequestWire {
+                    work_item_id: "work-1".into(),
+                    target_status: "ready_to_dispatch".into(),
+                    actor_ref: "operator:jarvis".into(),
+                    reason: "preflight cleared".into(),
+                    proof_receipt: None,
+                },
+            },
+        );
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"WorkItemStatusRequest\""));
+        assert!(
+            !json.contains("proof_receipt"),
+            "a receipt-free WorkItemStatusRequest must not carry a proof_receipt key: {json}"
+        );
         assert_eq!(Envelope::decode(&json).unwrap(), env);
     }
 

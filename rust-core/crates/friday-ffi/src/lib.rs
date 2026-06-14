@@ -1925,6 +1925,8 @@ fn message_kind_name(m: &friday_protocol::Message) -> &'static str {
         M::MissionTimelineSnapshot { .. } => "MissionTimelineSnapshot",
         M::MissionLifecycleRequest { .. } => "MissionLifecycleRequest",
         M::MissionLifecycleResult { .. } => "MissionLifecycleResult",
+        M::WorkItemStatusRequest { .. } => "WorkItemStatusRequest",
+        M::WorkItemStatusResult { .. } => "WorkItemStatusResult",
         // S-R1 — the DARK sealed-WS READ-seam projection kinds. NAMED here so the exhaustive match
         // holds and the truth label carries the real kind; nothing on the FFI surface constructs or
         // dispatches them (the UI reads them directly over the sealed-WS read server, not via FFI).

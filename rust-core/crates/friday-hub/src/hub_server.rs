@@ -27,7 +27,8 @@ use friday_protocol::{
     MissionTimelineLinkWire, MissionTimelineMissionWire, MissionTimelineRequestWire,
     MissionTimelineSnapshotWire, MissionTimelineSurfaceEventWire, MissionTimelineWorkItemWire,
     MissionWorkItemContextWire, ProviderWorkspaceActionRequestWire,
-    ProviderWorkspaceActionResultWire, RouteDecisionProjectionWire, SUPPORTED,
+    ProviderWorkspaceActionResultWire, RouteDecisionProjectionWire, WorkItemStatusRequestWire,
+    WorkItemStatusResultWire, SUPPORTED,
 };
 use friday_providers::unified::{FallbackStatus, PlatformProvider, ProviderSession, SessionStatus};
 use friday_storage::{
@@ -475,6 +476,138 @@ fn mission_intake_error(msg_id: &str, now_ms: i64, code: ErrorCode, message: &st
     .with_correlation(msg_id.to_string())
 }
 
+/// The Mission lifecycle-transition mutation, parameterized over `&Db` so BOTH the
+/// [`HubServer::dispatch`] path AND the live agent-run server bin's flag-gated dispatch arm reuse
+/// the EXACT same Hub state-machine transition and the same [`MissionLifecycleResultWire`] reply.
+/// It touches ONLY the DB (status-transition validation + audit + write) and makes NO
+/// provider/model call — so it writes ZERO `token_ledger` rows.
+///
+/// Returns a [`Message::MissionLifecycleResult`] envelope on success, or a [`Message::Error`]
+/// envelope on an unknown target status / invalid transition / missing Mission, correlated to
+/// `msg_id`. A status change here is a Mission-management fact, NOT provider completion unless the
+/// command carried and persisted valid proof.
+pub fn mission_lifecycle_result_for_db(
+    db: &Db,
+    msg_id: &str,
+    request: MissionLifecycleRequestWire,
+    now_ms: i64,
+) -> Envelope {
+    let next_status = match mission_status_from_wire(&request.target_status) {
+        Ok(status) => status,
+        Err(message) => {
+            return mission_intake_error(msg_id, now_ms, ErrorCode::Internal, message);
+        }
+    };
+
+    match db.transition_mission_status(
+        &request.friday_conversation_id,
+        &request.mission_id,
+        next_status,
+        &request.actor_ref,
+        &request.reason,
+        request.proof_ref.as_deref(),
+        request.merged_into_mission_id.as_deref(),
+        now_ms,
+    ) {
+        Ok((mission, previous_status, active_mission_ids)) => Envelope::new(
+            format!("{msg_id}-mission-lifecycle"),
+            now_ms,
+            Message::MissionLifecycleResult {
+                result: MissionLifecycleResultWire {
+                    friday_conversation_id: mission.friday_conversation_id,
+                    mission_id: mission.mission_id,
+                    previous_status: previous_status.as_str().to_string(),
+                    status: mission.status.as_str().to_string(),
+                    actor_ref: request.actor_ref,
+                    reason: request.reason,
+                    proof_ref: request.proof_ref,
+                    merged_into_mission_id: request.merged_into_mission_id,
+                    active_mission_ids,
+                    updated_at_ms: mission.updated_at_ms,
+                },
+            },
+        ),
+        // FAIL-CLOSED: any transition error (unknown Mission, illegal hop, conflicting merge) is a
+        // typed Error envelope — never a partial write (the storage transition is one transaction).
+        Err(err) => mission_intake_error(
+            msg_id,
+            now_ms,
+            ErrorCode::Internal,
+            &format!("mission lifecycle blocked: {err}"),
+        ),
+    }
+}
+
+/// The WorkItem lifecycle-transition mutation, parameterized over `&Db` so the live agent-run
+/// server bin's flag-gated dispatch arm can advance a WorkItem through the Hub state machine
+/// WITHOUT a `HubServer`. It touches ONLY the DB (status-transition validation + the
+/// proof-on-completion invariant + audit + write) and makes NO provider/model call — so it writes
+/// ZERO `token_ledger` rows.
+///
+/// **Proof-on-completion is ENFORCED, not advisory:** the underlying
+/// [`Db::transition_work_item_status`] REJECTS a `completed_with_proof` target that carries no
+/// `proof_receipt` (or an empty one), so "done" can never be claimed without proof. This function
+/// surfaces that rejection as a typed [`Message::Error`] — it never fakes a completion. Returns a
+/// [`Message::WorkItemStatusResult`] on success, correlated to `msg_id`.
+pub fn work_item_status_result_for_db(
+    db: &Db,
+    msg_id: &str,
+    request: WorkItemStatusRequestWire,
+    now_ms: i64,
+) -> Envelope {
+    let next_status = match work_item_status_from_wire(&request.target_status) {
+        Ok(status) => status,
+        Err(message) => {
+            return mission_intake_error(msg_id, now_ms, ErrorCode::Internal, message);
+        }
+    };
+
+    // A blank proof_receipt is normalized to `None` BEFORE the call so the storage layer's
+    // (CompletedWithProof, None) rejection fires for an all-whitespace receipt too — a
+    // whitespace-only "proof" must never satisfy the proof-on-completion invariant.
+    let proof_receipt = request
+        .proof_receipt
+        .as_deref()
+        .map(str::trim)
+        .filter(|receipt| !receipt.is_empty());
+
+    match db.transition_work_item_status(
+        &request.work_item_id,
+        next_status,
+        &request.actor_ref,
+        &request.reason,
+        proof_receipt,
+        now_ms,
+    ) {
+        Ok((work_item, previous_status)) => Envelope::new(
+            format!("{msg_id}-work-item-status"),
+            now_ms,
+            Message::WorkItemStatusResult {
+                result: WorkItemStatusResultWire {
+                    work_item_id: work_item.work_item_id,
+                    mission_id: work_item.mission_id,
+                    previous_status: previous_status.as_str().to_string(),
+                    status: work_item.status.as_str().to_string(),
+                    actor_ref: request.actor_ref,
+                    reason: request.reason,
+                    // COUNT only — never the raw receipt refs (they can carry provider/channel ids).
+                    proof_receipt_count: work_item.proof_receipts.len() as u64,
+                    updated_at_ms: work_item.updated_at_ms,
+                },
+            },
+        ),
+        // FAIL-CLOSED: a proofless `completed_with_proof`, an illegal hop, an unknown WorkItem, or a
+        // receipt on a non-completion target is a typed Error — never a partial / fake-ready write
+        // (the storage transition is one transaction: audit row + upsert commit together).
+        Err(err) => mission_intake_error(
+            msg_id,
+            now_ms,
+            ErrorCode::Internal,
+            &format!("work item lifecycle blocked: {err}"),
+        ),
+    }
+}
+
 impl<T: Transport> HubServer<T> {
     fn ask(
         &mut self,
@@ -850,48 +983,11 @@ impl<T: Transport> HubServer<T> {
         request: MissionLifecycleRequestWire,
         now_ms: i64,
     ) -> Envelope {
-        let next_status = match mission_status_from_wire(&request.target_status) {
-            Ok(status) => status,
-            Err(message) => {
-                return Self::error(msg_id, now_ms, ErrorCode::Internal, message);
-            }
-        };
-
-        match self.db.transition_mission_status(
-            &request.friday_conversation_id,
-            &request.mission_id,
-            next_status,
-            &request.actor_ref,
-            &request.reason,
-            request.proof_ref.as_deref(),
-            request.merged_into_mission_id.as_deref(),
-            now_ms,
-        ) {
-            Ok((mission, previous_status, active_mission_ids)) => Envelope::new(
-                format!("{msg_id}-mission-lifecycle"),
-                now_ms,
-                Message::MissionLifecycleResult {
-                    result: MissionLifecycleResultWire {
-                        friday_conversation_id: mission.friday_conversation_id,
-                        mission_id: mission.mission_id,
-                        previous_status: previous_status.as_str().to_string(),
-                        status: mission.status.as_str().to_string(),
-                        actor_ref: request.actor_ref,
-                        reason: request.reason,
-                        proof_ref: request.proof_ref,
-                        merged_into_mission_id: request.merged_into_mission_id,
-                        active_mission_ids,
-                        updated_at_ms: mission.updated_at_ms,
-                    },
-                },
-            ),
-            Err(err) => Self::error(
-                msg_id,
-                now_ms,
-                ErrorCode::Internal,
-                &format!("mission lifecycle blocked: {err}"),
-            ),
-        }
+        // The lifecycle body is a pure `&Db` mutation (no `deepseek`/`next_ask`), so it is
+        // extracted to the free `mission_lifecycle_result_for_db` — letting the LIVE agent-run
+        // server bin (which holds a `HubRuntime`, not a `HubServer`) REUSE the exact same Hub
+        // state-machine transition through its flag-gated dispatch arm WITHOUT reimplementing it.
+        mission_lifecycle_result_for_db(&self.db, msg_id, request, now_ms)
     }
 
     fn error(msg_id: &str, now_ms: i64, code: ErrorCode, message: &str) -> Envelope {
@@ -1926,6 +2022,30 @@ fn mission_status_from_wire(value: &str) -> Result<friday_core::MissionStatus, &
         "archived" => Ok(friday_core::MissionStatus::Archived),
         "merged" => Ok(friday_core::MissionStatus::Merged),
         _ => Err("mission lifecycle target_status is unknown"),
+    }
+}
+
+/// Map a WorkItem `target_status` wire string to the canonical [`friday_core::WorkItemStatus`].
+/// Mirrors the (private) storage-side `parse_work_item_status` vocabulary so the bin's flag-gated
+/// dispatch arm validates the target BEFORE the transition; an unknown value is a typed error,
+/// never a silent default.
+fn work_item_status_from_wire(value: &str) -> Result<friday_core::WorkItemStatus, &'static str> {
+    match value {
+        "draft" => Ok(friday_core::WorkItemStatus::Draft),
+        "preflight_blocked" => Ok(friday_core::WorkItemStatus::PreflightBlocked),
+        "waiting_for_user" => Ok(friday_core::WorkItemStatus::WaitingForUser),
+        "ready_to_dispatch" => Ok(friday_core::WorkItemStatus::ReadyToDispatch),
+        "dispatched" => Ok(friday_core::WorkItemStatus::Dispatched),
+        "hub_accepted" => Ok(friday_core::WorkItemStatus::HubAccepted),
+        "provider_routed" => Ok(friday_core::WorkItemStatus::ProviderRouted),
+        "provider_waiting" => Ok(friday_core::WorkItemStatus::ProviderWaiting),
+        "completed_with_proof" => Ok(friday_core::WorkItemStatus::CompletedWithProof),
+        "failed_retryable" => Ok(friday_core::WorkItemStatus::FailedRetryable),
+        "failed_terminal" => Ok(friday_core::WorkItemStatus::FailedTerminal),
+        "cancelled" => Ok(friday_core::WorkItemStatus::Cancelled),
+        "merged" => Ok(friday_core::WorkItemStatus::Merged),
+        "archived" => Ok(friday_core::WorkItemStatus::Archived),
+        _ => Err("work item lifecycle target_status is unknown"),
     }
 }
 
