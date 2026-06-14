@@ -1,8 +1,35 @@
 [package]
 name = "friday-pdf"
-description = "Friday F11 net-new media capability — pdf_parse crate skeleton. Empty compiling stub, no logic/deps/executors yet (Hub-only, no phone surface → stays OUT of friday-ffi's dependency graph)."
+description = "Friday F11 net-new media capability — pdf_parse domain crate. PdfTextExtractor DI trait + a deterministic StubPdfExtractor + the clamp/page-window/truncate logic ported verbatim from the TS oracle. Pure domain logic (no I/O, no network). Hub-only (no phone surface) → stays OUT of friday-ffi's dependency graph."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 publish = false
 rust-version.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+# The PdfParseResult mirrors the TS oracle's JSON shape ({filePath, pageCount,
+# parsedPages, truncated, text, pages}); Serialize/Deserialize is how the hub
+# executor (PDF-EXEC) will project the receipt. Pure data; no I/O.
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Real embedded-text PDF extraction crate (getTextContent equivalent; embedded
+# text layer only — NO OCR, NO rasterization, NO network). It is OPTIONAL and is
+# pulled in ONLY by the DEFAULT-OFF `pdf-extract-live` cargo feature below. The
+# DEFAULT build (no feature) links ONLY `StubPdfExtractor` and never compiles
+# this dependency into the artifact. The real `RealPdfExtractor` impl behind the
+# feature is built by PDF-2 (this PR ships ONLY the feature/optional-dep plumbing
+# so PDF-2 is file-disjoint within its wave).
+lopdf = { version = "0.34.0", default-features = false, features = ["nom_parser"], optional = true }
+
+[features]
+# DEFAULT-OFF. With the feature OFF (the default), the crate links only the
+# deterministic StubPdfExtractor — no real PDF parsing, no extra dependency. With
+# `--features pdf-extract-live` the optional `lopdf` dependency is activated so
+# PDF-2's `RealPdfExtractor` (src/real.rs, a later PR) can compile. Mirrors the
+# os-actuation-deploy-go feature-gate precedent: the real backend is reachable
+# only via a deliberate recompile, never the default dark build.
+default = []
+pdf-extract-live = ["dep:lopdf"]
