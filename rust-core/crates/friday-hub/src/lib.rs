@@ -37,6 +37,14 @@ pub mod operator_vk;
 
 pub mod resume;
 
+/// C1 PR-A — the authorize-only CORE of a gated Codex turn: routes each Codex
+/// pre-execution approval request through Friday's EXISTING trust/approval stack
+/// ([`friday_storage::authorize_agent_action`] + the pending-approval persist path), deriving
+/// mutating-ness from the TRUSTED registry (never the model). DARK: governed by the Codex
+/// transport flag [`friday_providers::codex_appserver::FRIDAY_CODEX_MUTATING_GATE`]. PR-B
+/// rewires `runtime.rs` to CALL [`codex_gated_turn::run_codex_gated_turn`].
+pub mod codex_gated_turn;
+
 /// A1 — the Rust agent-run RUN-CONTROL plane (pause-surfacing / resume / cancel / reject). DARK +
 /// DEPLOY-GO-gated: the sealed-WS server emits/handles these ONLY behind the default-off
 /// `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST` flag.
