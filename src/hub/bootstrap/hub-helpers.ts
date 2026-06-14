@@ -1989,6 +1989,18 @@ export interface FridayHubConfig {
    * config wins; otherwise the `FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST` env knob).
    */
   routeMissionSpineViaRust?: boolean;
+  /**
+   * (Lane M) ORGANIC memory-confirmation POST route bridge (DARK): "wire a real dispatch adapter into
+   * `memorySpine.dispatch` so `/v1/memory-spine/decide` becomes CALLABLE" flag. DEFAULT-FALSE —
+   * production hub creation must leave this unset so `memorySpine.dispatch` stays unset (null) and the
+   * POST route returns today's fail-closed 503 (`MEMORY_SPINE_DISPATCH_UNAVAILABLE`) → byte-identical.
+   * When true, bootstrap builds the sealed-WS dispatch adapter (mirroring the mission-spine sealed-WS
+   * config) and injects it. End-to-end memory-confirmation closure ALSO needs the SERVER flags
+   * (`FRIDAY_MEMORY_CONFIRM`, `FRIDAY_RUN_LOOP_MEMORY_EXTRACTION`) + a deploy (operator-gated). This
+   * client-side knob only makes the TS route CALLABLE. Resolution: `resolveRouteMemorySpineViaRust`
+   * (explicit config wins; otherwise the `FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST` env knob).
+   */
+  routeMemorySpineViaRust?: boolean;
 }
 
 // ─── Resolved Hub Config ───
