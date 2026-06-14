@@ -546,3 +546,295 @@ describe("createFridayMissionSpineRoutes", () => {
     expect(JSON.stringify(error.details)).toContain("transcript_event_truth_label_invalid");
   });
 });
+
+// ─── (Lane B) Organic mutation POST routes ──────────────────────────────────
+
+import type { FridayMissionSpineDispatchService } from "../../../../src/api/http/routes/friday-mission-spine-routes.js";
+
+function makeDispatch(overrides: Partial<FridayMissionSpineDispatchService> = {}): {
+  dispatch: FridayMissionSpineDispatchService;
+  intake: ReturnType<typeof vi.fn>;
+  lifecycle: ReturnType<typeof vi.fn>;
+  workItem: ReturnType<typeof vi.fn>;
+} {
+  const intake = vi.fn(async () => ({
+    truthLabel: "rust_wired" as const,
+    fridayConversationId: "conversation_lane_b",
+    missionId: "mission_lane_b",
+    workItemId: "work_lane_b",
+    surfaceThreadId: "surface_lane_b",
+    status: "ready",
+    blockers: [] as string[],
+    createdOrReady: true,
+  }));
+  const lifecycle = vi.fn(async () => ({
+    truthLabel: "rust_wired" as const,
+    fridayConversationId: "conversation_lane_b",
+    missionId: "mission_lane_b",
+    previousStatus: "ready",
+    status: "queued",
+    actorRef: "actor_lane_b",
+    reason: "advance",
+    activeMissionIds: ["mission_lane_b"],
+    updatedAtMs: 1_700_000_000_000,
+  }));
+  const workItem = vi.fn(async () => ({
+    truthLabel: "rust_wired" as const,
+    workItemId: "work_lane_b",
+    missionId: "mission_lane_b",
+    previousStatus: "ready_to_dispatch",
+    status: "completed_with_proof",
+    actorRef: "actor_lane_b",
+    reason: "done",
+    proofReceiptCount: 1,
+    updatedAtMs: 1_700_000_000_000,
+  }));
+  return {
+    dispatch: {
+      intakeMission: intake,
+      transitionMission: lifecycle,
+      transitionWorkItem: workItem,
+      ...overrides,
+    } as FridayMissionSpineDispatchService,
+    intake,
+    lifecycle,
+    workItem,
+  };
+}
+
+function findPost(routes: ReturnType<typeof createFridayMissionSpineRoutes>, operationId: string) {
+  const route = routes.find((candidate) => candidate.operationId === operationId);
+  if (!route) throw new Error(`${operationId} route missing`);
+  return route;
+}
+
+const BOUND_PRINCIPAL = {
+  principalId: "principal-1",
+  userId: "user-1",
+  principalType: "user",
+  role: "admin",
+  scopes: ["hub.admin"],
+};
+
+const VALID_INTAKE_BODY = {
+  fridayConversationId: "conversation_lane_b",
+  ownerPrincipal: "owner_lane_b",
+  surfaceThreadId: "surface_lane_b",
+  surfaceKind: "mobile",
+  deliveryRoute: "in_app",
+  visibilityPolicy: "owner_only",
+  missionId: "mission_lane_b",
+  workItemId: "work_lane_b",
+  title: "Lane B organic intake",
+  intent: "create mission",
+  lane: "deepseek",
+};
+
+const VALID_LIFECYCLE_BODY = {
+  fridayConversationId: "conversation_lane_b",
+  targetStatus: "queued",
+  actorRef: "actor_lane_b",
+  reason: "advance",
+};
+
+const VALID_WORK_ITEM_BODY = {
+  targetStatus: "ready_to_dispatch",
+  actorRef: "actor_lane_b",
+  reason: "stage",
+};
+
+describe("createFridayMissionSpineRoutes — Lane B organic mutation routes", () => {
+  it("registers the three POST routes as public, byte-additive to the GET route", () => {
+    const { dispatch } = makeDispatch();
+    const routes = createFridayMissionSpineRoutes({ workbench: null, disabledReason: null, dispatch });
+    const intake = findPost(routes, "mission.spine.intake.create");
+    const lifecycle = findPost(routes, "mission.spine.lifecycle.transition");
+    const workItem = findPost(routes, "mission.spine.workitem.status.transition");
+    expect(intake.method).toBe("POST");
+    expect(intake.path).toBe("/v1/mission-spine/intake");
+    expect(intake.auth).toEqual({ public: true });
+    expect(lifecycle.path).toBe("/v1/mission-spine/:missionId/lifecycle");
+    expect(workItem.path).toBe("/v1/mission-spine/work-items/:workItemId/status");
+    // The GET route is unchanged and still present.
+    expect(findRoute(routes).method).toBe("GET");
+  });
+
+  describe("flag-OFF (no dispatch service) → honest-unavailable", () => {
+    it("intake returns 503 without invoking any client", async () => {
+      const { intake } = makeDispatch();
+      const routes = createFridayMissionSpineRoutes({ workbench: null, disabledReason: null });
+      const route = findPost(routes, "mission.spine.intake.create");
+      let thrown: unknown = null;
+      try {
+        await route.handler(makeCtx({ body: VALID_INTAKE_BODY }) as never);
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(FridayDomainError);
+      const error = thrown as FridayDomainError;
+      expect(error.code).toBe("MISSION_SPINE_DISPATCH_UNAVAILABLE");
+      expect(error.httpStatus).toBe(503);
+      expect(intake).not.toHaveBeenCalled();
+    });
+
+    it("lifecycle and work-item also 503 when dispatch is null", async () => {
+      const routes = createFridayMissionSpineRoutes({ workbench: null, disabledReason: null, dispatch: null });
+      const lifecycle = findPost(routes, "mission.spine.lifecycle.transition");
+      const workItem = findPost(routes, "mission.spine.workitem.status.transition");
+      for (const [route, params, body] of [
+        [lifecycle, { missionId: "mission_lane_b" }, VALID_LIFECYCLE_BODY],
+        [workItem, { workItemId: "work_lane_b" }, VALID_WORK_ITEM_BODY],
+      ] as const) {
+        let thrown: unknown = null;
+        try {
+          await route.handler(makeCtx({ params, body }) as never);
+        } catch (err) {
+          thrown = err;
+        }
+        expect((thrown as FridayDomainError).code).toBe("MISSION_SPINE_DISPATCH_UNAVAILABLE");
+        expect((thrown as FridayDomainError).httpStatus).toBe(503);
+      }
+    });
+
+    it("503-unavailable fires FIRST — even for a null (unauthenticated) principal", async () => {
+      const routes = createFridayMissionSpineRoutes({ workbench: null, disabledReason: null });
+      const route = findPost(routes, "mission.spine.intake.create");
+      let thrown: unknown = null;
+      try {
+        await route.handler(makeCtx({ principal: null, body: VALID_INTAKE_BODY }) as never);
+      } catch (err) {
+        thrown = err;
+      }
+      // Flag-OFF is a uniform honest-unavailable, NOT a principal refusal.
+      expect((thrown as FridayDomainError).code).toBe("MISSION_SPINE_DISPATCH_UNAVAILABLE");
+    });
+  });
+
+  describe("flag-ON: bound-principal gate", () => {
+    it("refuses the synthetic public (null) principal with a bound-principal 401, no dispatch", async () => {
+      const { dispatch, intake } = makeDispatch();
+      const routes = createFridayMissionSpineRoutes({ workbench: null, disabledReason: null, dispatch });
+      const route = findPost(routes, "mission.spine.intake.create");
+      let thrown: unknown = null;
+      try {
+        await route.handler(makeCtx({ principal: null, body: VALID_INTAKE_BODY }) as never);
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(FridayDomainError);
+      expect((thrown as FridayDomainError).httpStatus).toBe(401);
+      expect(intake).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("flag-ON: builds the correct wire + returns the refs-only result", () => {
+    it("intake maps the body to the typed request and passes through the result", async () => {
+      const { dispatch, intake } = makeDispatch();
+      const routes = createFridayMissionSpineRoutes({ workbench: null, disabledReason: null, dispatch });
+      const route = findPost(routes, "mission.spine.intake.create");
+      const response = await route.handler(
+        makeCtx({ principal: BOUND_PRINCIPAL, body: { ...VALID_INTAKE_BODY, includesSensitiveContext: true } }) as never,
+      );
+      expect(intake).toHaveBeenCalledTimes(1);
+      expect(intake).toHaveBeenCalledWith({
+        ...VALID_INTAKE_BODY,
+        includesSensitiveContext: true,
+      });
+      expect((response as { result: { status: string } }).result.status).toBe("ready");
+    });
+
+    it("lifecycle takes the missionId from the path, omitting absent optionals", async () => {
+      const { dispatch, lifecycle } = makeDispatch();
+      const routes = createFridayMissionSpineRoutes({ workbench: null, disabledReason: null, dispatch });
+      const route = findPost(routes, "mission.spine.lifecycle.transition");
+      await route.handler(
+        makeCtx({ principal: BOUND_PRINCIPAL, params: { missionId: "mission_from_path" }, body: VALID_LIFECYCLE_BODY }) as never,
+      );
+      expect(lifecycle).toHaveBeenCalledWith({
+        fridayConversationId: "conversation_lane_b",
+        missionId: "mission_from_path",
+        targetStatus: "queued",
+        actorRef: "actor_lane_b",
+        reason: "advance",
+      });
+    });
+
+    it("work-item takes the workItemId from the path and passes proofReceipt through", async () => {
+      const { dispatch, workItem } = makeDispatch();
+      const routes = createFridayMissionSpineRoutes({ workbench: null, disabledReason: null, dispatch });
+      const route = findPost(routes, "mission.spine.workitem.status.transition");
+      const response = await route.handler(
+        makeCtx({
+          principal: BOUND_PRINCIPAL,
+          params: { workItemId: "work_from_path" },
+          body: { targetStatus: "completed_with_proof", actorRef: "actor_lane_b", reason: "done", proofReceipt: "proof://receipt/ref" },
+        }) as never,
+      );
+      expect(workItem).toHaveBeenCalledWith({
+        workItemId: "work_from_path",
+        targetStatus: "completed_with_proof",
+        actorRef: "actor_lane_b",
+        reason: "done",
+        proofReceipt: "proof://receipt/ref",
+      });
+      expect((response as { result: { proofReceiptCount: number } }).result.proofReceiptCount).toBe(1);
+    });
+  });
+
+  describe("flag-ON: invalid body → typed 400, fail-closed (no dispatch)", () => {
+    it("intake rejects a missing required field", async () => {
+      const { dispatch, intake } = makeDispatch();
+      const routes = createFridayMissionSpineRoutes({ workbench: null, disabledReason: null, dispatch });
+      const route = findPost(routes, "mission.spine.intake.create");
+      const { missionId: _omit, ...withoutMission } = VALID_INTAKE_BODY;
+      let thrown: unknown = null;
+      try {
+        await route.handler(makeCtx({ principal: BOUND_PRINCIPAL, body: withoutMission }) as never);
+      } catch (err) {
+        thrown = err;
+      }
+      expect((thrown as FridayDomainError).code).toBe("MISSION_SPINE_DISPATCH_REQUEST_INVALID");
+      expect((thrown as FridayDomainError).httpStatus).toBe(400);
+      expect(JSON.stringify((thrown as FridayDomainError).details)).toContain("missionId_missing_or_empty");
+      expect(intake).not.toHaveBeenCalled();
+    });
+
+    it("lifecycle rejects a missing path missionId", async () => {
+      const { dispatch, lifecycle } = makeDispatch();
+      const routes = createFridayMissionSpineRoutes({ workbench: null, disabledReason: null, dispatch });
+      const route = findPost(routes, "mission.spine.lifecycle.transition");
+      let thrown: unknown = null;
+      try {
+        await route.handler(makeCtx({ principal: BOUND_PRINCIPAL, params: {}, body: VALID_LIFECYCLE_BODY }) as never);
+      } catch (err) {
+        thrown = err;
+      }
+      expect((thrown as FridayDomainError).httpStatus).toBe(400);
+      expect(JSON.stringify((thrown as FridayDomainError).details)).toContain("missionId_missing_or_empty");
+      expect(lifecycle).not.toHaveBeenCalled();
+    });
+
+    it("work-item rejects a proofless completed_with_proof at the edge (mirrors server invariant)", async () => {
+      const { dispatch, workItem } = makeDispatch();
+      const routes = createFridayMissionSpineRoutes({ workbench: null, disabledReason: null, dispatch });
+      const route = findPost(routes, "mission.spine.workitem.status.transition");
+      let thrown: unknown = null;
+      try {
+        await route.handler(
+          makeCtx({
+            principal: BOUND_PRINCIPAL,
+            params: { workItemId: "work_from_path" },
+            body: { targetStatus: "completed_with_proof", actorRef: "a", reason: "r" },
+          }) as never,
+        );
+      } catch (err) {
+        thrown = err;
+      }
+      expect((thrown as FridayDomainError).httpStatus).toBe(400);
+      expect(JSON.stringify((thrown as FridayDomainError).details)).toContain(
+        "proof_receipt_required_for_completion",
+      );
+      expect(workItem).not.toHaveBeenCalled();
+    });
+  });
+});
