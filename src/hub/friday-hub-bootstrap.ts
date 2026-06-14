@@ -120,6 +120,11 @@ import {
 import { createFridaySocialImportService } from "#skills/social-import";
 import { parseFridaySecretInput, resolveFridaySecretInput } from "../security/friday-secret-ref.js";
 import { createFridayRustHubWorkbenchProjectionService } from "../api/mission-spine/friday-rust-hub-workbench-projection-service.js";
+import {
+  createFridayMissionSpineDispatchAdapter,
+  readMissionSpineRustWsPort,
+} from "../api/mission-spine/friday-mission-spine-dispatch-adapter.js";
+import { resolveRustAgentRunWsClientX25519Secret } from "../api/mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
 import type { FridayChannelPersonaConfig, FridayGuideLensRoutesDeps, FridaySystemRoutesDeps } from "#api";
 import type { FridayPackagingRoutesDeps } from "../api/http/routes/friday-packaging-routes.js";
 import {
@@ -1015,6 +1020,38 @@ export function resolveRouteWorkflowsViaRust(
     return configValue;
   }
   const raw = (env.FRIDAY_ROUTE_WORKFLOWS_VIA_RUST ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true";
+}
+
+/**
+ * (Lane B-2) ORGANIC mission-spine POST routes bridge (DARK): single source of truth resolving the
+ * `routeMissionSpineViaRust` flag from (1) an EXPLICIT {@link FridayHubConfig.routeMissionSpineViaRust}
+ * and, only as a fallback, (2) the `FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST` env var — the operator knob
+ * that flips the three organic POST routes (`/v1/mission-spine/intake|lifecycle|work-item-status`)
+ * from PERMANENTLY fail-closed (503 `MISSION_SPINE_DISPATCH_UNAVAILABLE`, because `missionSpine.dispatch`
+ * is never injected) to LIVE — by wiring a real dispatch adapter over the sealed-WS client.
+ *
+ * PRECEDENCE + PARSE mirror {@link resolveRouteAgentRunViaRust} exactly: an explicit config boolean
+ * (true OR false) ALWAYS wins; the env is consulted ONLY when config does not specify. Case-insensitive,
+ * trimmed `"1"` or `"true"` ⇒ true; ABSENT / `""` / `"0"` / `"false"` / ANY other value ⇒ false.
+ * DEFAULT (both unset) ⇒ false, so `missionSpine.dispatch` stays unset (null) and the POST routes are
+ * byte-identical to today's fail-closed 503.
+ *
+ * NOTE: the env var name deliberately deviates from the `FRIDAY_ROUTE_*_VIA_RUST` sibling convention
+ * (it is `FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST`) to read clearly as "the mission-spine ROUTES knob".
+ * End-to-end Loop1 closure ALSO needs the SERVER flags (`FRIDAY_MISSION_INTAKE` for intake,
+ * `FRIDAY_MISSION_SPINE_DISPATCH` for lifecycle/work-item) + a deploy + a real mission (operator-gated);
+ * this client-side knob only makes the TS routes CALLABLE.
+ */
+export function resolveRouteMissionSpineViaRust(
+  configValue: boolean | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  // Config explicit (true OR false) wins — env is the fallback for the unset gap only.
+  if (typeof configValue === "boolean") {
+    return configValue;
+  }
+  const raw = (env.FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST ?? "").trim().toLowerCase();
   return raw === "1" || raw === "true";
 }
 
@@ -6976,6 +7013,29 @@ export async function createFridayHub(
     stateDir: stateRuntime.stateDir,
   });
 
+  // (Lane B-2) ORGANIC mission-spine POST routes (DARK): construct the dispatch adapter that makes
+  // `/v1/mission-spine/intake|lifecycle|work-item-status` CALLABLE — but ONLY when the operator flag is
+  // on. SINGLE SOURCE OF TRUTH = `resolveRouteMissionSpineViaRust` (explicit config wins; else the
+  // `FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST` env knob, case-insensitive "1"/"true" → true; anything else,
+  // incl. unset → false). With nothing set (the default) this is `false`, so the adapter is NOT built,
+  // `missionSpine.dispatch` stays unset (the conditional spread below omits the key entirely), and each
+  // POST route returns today's fail-closed 503 (`MISSION_SPINE_DISPATCH_UNAVAILABLE`) → byte-identical.
+  //
+  // SIDE-EFFECT-FREE construction: the adapter factory captures host/port/timeout + the SecureStore
+  // X25519 secret resolver only — it resolves NO secret and opens NO socket here. The secret is resolved
+  // + the sealed client built LAZILY, per route call, so a flag-ON-but-unprovisioned host FAILS CLOSED
+  // (503) per call rather than crashing boot. Config (endpoint + ECDH secret resolver) MIRRORS the
+  // agent-run sealed-WS path (friday-api-runtime.ts ~:4816); the DB path is intentionally NOT carried
+  // (the mission round-trips are refs-only WS, no DB readback).
+  const routeMissionSpineViaRust = resolveRouteMissionSpineViaRust(config.routeMissionSpineViaRust);
+  const missionSpineDispatch = routeMissionSpineViaRust
+    ? createFridayMissionSpineDispatchAdapter({
+      host: process.env.FRIDAY_HUB_AGENT_RUN_WS_HOST ?? "127.0.0.1",
+      port: readMissionSpineRustWsPort(process.env.FRIDAY_HUB_AGENT_RUN_WS_PORT),
+      secretResolver: resolveRustAgentRunWsClientX25519Secret,
+    })
+    : null;
+
   const runtimeSupportedChannelKinds = FRIDAY_SUPPORTED_CHANNEL_KINDS.filter(isFridayChannelKindSupported);
 
   const apiRuntime = createFridayApiRuntime({
@@ -7056,6 +7116,10 @@ export async function createFridayHub(
     canonicalMutatingActionGate: canonicalMutatingActionGateEnabled,
     missionSpine: {
       workbench: missionSpineWorkbenchProjectionService,
+      // (Lane B-2) DARK: `dispatch` is spread in ONLY when the route flag is on (above). With the flag
+      // off the key is OMITTED entirely → the `missionSpine` deps object is structurally IDENTICAL to
+      // today, the routes see `deps.dispatch === undefined`, and each POST route is fail-closed 503.
+      ...(missionSpineDispatch ? { dispatch: missionSpineDispatch } : {}),
       disabledReason: null,
     },
     uix: {

@@ -5,6 +5,7 @@ import {
   resolveFridayCanonicalMutatingActionGate,
   resolveFridayHubConfig,
   resolveRouteAgentRunViaRust,
+  resolveRouteMissionSpineViaRust,
   resolveRouteProvidersViaRust,
   resolveRouteWorkflowsViaRust,
 } from "#hub";
@@ -496,5 +497,38 @@ describe("resolveRouteWorkflowsViaRust", () => {
     expect(resolveRouteWorkflowsViaRust(true, emptyEnv())).toBe(true);
     expect(resolveRouteWorkflowsViaRust(false, { FRIDAY_ROUTE_WORKFLOWS_VIA_RUST: "1" })).toBe(false);
     expect(resolveRouteWorkflowsViaRust(false, { FRIDAY_ROUTE_WORKFLOWS_VIA_RUST: "true" })).toBe(false);
+  });
+});
+
+describe("resolveRouteMissionSpineViaRust (Lane B-2 organic POST routes flag)", () => {
+  // DEFAULT-OFF: nothing set → false → missionSpine.dispatch stays null → byte-identical 503.
+  it("defaults to false when neither config nor env is set", () => {
+    expect(resolveRouteMissionSpineViaRust(undefined, emptyEnv())).toBe(false);
+  });
+
+  it("parses FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST 1/true (case-insensitive, trimmed) as true", () => {
+    expect(resolveRouteMissionSpineViaRust(undefined, { FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST: "1" })).toBe(true);
+    expect(resolveRouteMissionSpineViaRust(undefined, { FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST: "true" })).toBe(true);
+    expect(resolveRouteMissionSpineViaRust(undefined, { FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST: "TRUE" })).toBe(true);
+    expect(resolveRouteMissionSpineViaRust(undefined, { FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST: "  1  " })).toBe(true);
+    expect(resolveRouteMissionSpineViaRust(undefined, { FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST: " true " })).toBe(true);
+  });
+
+  // Fail-safe OFF: everything that is not exactly "1"/"true" → false.
+  it("treats 0, false, empty, and garbage env values as false (fail-safe off)", () => {
+    expect(resolveRouteMissionSpineViaRust(undefined, { FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST: "0" })).toBe(false);
+    expect(resolveRouteMissionSpineViaRust(undefined, { FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST: "false" })).toBe(false);
+    expect(resolveRouteMissionSpineViaRust(undefined, { FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST: "" })).toBe(false);
+    expect(resolveRouteMissionSpineViaRust(undefined, { FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST: "yes" })).toBe(false);
+    expect(resolveRouteMissionSpineViaRust(undefined, { FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST: "on" })).toBe(false);
+    expect(resolveRouteMissionSpineViaRust(undefined, { FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST: "2" })).toBe(false);
+  });
+
+  // PRECEDENCE: explicit config wins over env (true wins, AND the discriminating false-beats-env-true).
+  it("uses explicit config over the env (true wins; false beats env true)", () => {
+    expect(resolveRouteMissionSpineViaRust(true, { FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST: "0" })).toBe(true);
+    expect(resolveRouteMissionSpineViaRust(true, emptyEnv())).toBe(true);
+    expect(resolveRouteMissionSpineViaRust(false, { FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST: "1" })).toBe(false);
+    expect(resolveRouteMissionSpineViaRust(false, { FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST: "true" })).toBe(false);
   });
 });
