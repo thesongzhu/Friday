@@ -919,6 +919,177 @@ pub struct ProvidersDoctorSnapshotWire {
     pub generated_at_ms: i64,
 }
 
+// ----------------------------------------------------------------------------------------------
+// **C2I-PR2** — the 5 OWNER-GATED C2 READ-PLANE request/snapshot wire shapes for the DARK read
+// server. Every one is the EXACT sibling of [`RunReadbackRequestWire`] / [`RunReadbackSnapshotWire`]:
+// a PURE READ (never a model/provider call) that runs the SAME owner-auth chain —
+// `forwarded_principal` + `auth_proof` are VERIFIED against the sealed session
+// (possession-of-session + per-handshake nonce + owner-allowlist), the proof bound to `request_id`
+// (the read analog of `run_id`). Each snapshot is released ONLY to the bound AUTHENTICATED principal
+// and the body rides `projection_json` OWNER-SEALED by the transport. DARK / additive: `Message` is
+// NOT `deny_unknown_fields`, so these new variants are byte-identical to current prod when nothing
+// constructs them. Nothing in production constructs or dispatches any of these yet (the C2 lane is
+// gated behind `FRIDAY_CLAUDE_ROUTE_ENABLED` + the slice-6 operator cutover).
+// ----------------------------------------------------------------------------------------------
+
+/// **C2I-PR2 (C2-4)** — client→read-server request for the OWNER-SCOPED routed-session LIST. No
+/// resource key (it lists every session the AUTHENTICATED owner owns; a different principal's list
+/// is naturally empty). Sibling of [`RunReadbackRequestWire`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionListRequestWire {
+    /// The device-resolved principal conveyed by the peer. VERIFIED against the sealed session
+    /// before release — never trusted as an authority on its own.
+    pub forwarded_principal: String,
+    /// The sealed possession-of-session proof, bound to `request_id` + `forwarded_principal` in its
+    /// AAD (the read analog of the write `auth_proof`). Opaque bytes here.
+    pub auth_proof: Vec<u8>,
+    /// The opaque per-request id the `auth_proof` is bound to (the read analog of `run_id`).
+    pub request_id: String,
+}
+
+/// **C2I-PR2 (C2-4)** — read-server→client refs-only routed-session LIST snapshot. The session list
+/// (id + timestamps, NEVER a message body) rides `projection_json` OWNER-SEALED.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionListSnapshotWire {
+    /// Echoes the request id this snapshot answers (correlation).
+    pub request_id: String,
+    /// The refs-only session-list JSON, OWNER-SEALED (the owner's `SessionListItem`s: id +
+    /// timestamps only — never a body). A non-owner reads back an empty list, never an oracle.
+    pub projection_json: String,
+    /// Hub epoch-millis at which the snapshot was generated (lets the UI flag a stale snapshot).
+    pub generated_at_ms: i64,
+}
+
+/// **C2I-PR2 (C2-4 / M-2)** — client→read-server request to OPEN one routed session's full
+/// conversation transcript. `agent_session_id` is the resource key; the read is OWNER-GATED
+/// (`owner_matches`) — a non-owner / owner-less / absent session is INDISTINGUISHABLE
+/// (`session_not_found`). Sibling of [`RunReadbackRequestWire`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionOpenRequestWire {
+    /// The routed session id to open. REQUIRED — open has no "first active" default.
+    pub agent_session_id: String,
+    /// The device-resolved principal conveyed by the peer. VERIFIED against the sealed session
+    /// before release — never trusted as an authority on its own.
+    pub forwarded_principal: String,
+    /// The sealed possession-of-session proof, bound to `request_id` + `forwarded_principal` in its
+    /// AAD (the read analog of the write `auth_proof`). Opaque bytes here.
+    pub auth_proof: Vec<u8>,
+    /// The opaque per-request id the `auth_proof` is bound to (the read analog of `run_id`).
+    pub request_id: String,
+}
+
+/// **C2I-PR2 (C2-4 / M-2)** — read-server→client routed-session transcript snapshot. THE ONE
+/// DELIBERATE BODY-DELIVERY CARVE-OUT on the read seam: unlike the refs-only reads, this carries the
+/// session's FULL conversation messages. They are protected by the SAME two mechanisms every read
+/// uses — (1) the owner gate (`owner_matches` on the VERIFIED principal; a non-owner gets
+/// `session_not_found`, never bytes) and (2) OWNER-SEALING (`projection_json` is sealed under the
+/// owner-authed session key, so the body never leaves the process unsealed). The read server does
+/// NOT run `reject_forbidden_output` on this body — that guard would false-reject legitimate
+/// transcript text; the owner gate + sealing ARE the protection (documented carve-out, M-2).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionOpenSnapshotWire {
+    /// Echoes the request id this snapshot answers (correlation).
+    pub request_id: String,
+    /// The session's folded conversation messages JSON, OWNER-SEALED. The M-2 carve-out: this DOES
+    /// carry message bodies (owner-only, sealed) — never released to a non-owner, never unsealed.
+    pub projection_json: String,
+    /// Hub epoch-millis at which the snapshot was generated.
+    pub generated_at_ms: i64,
+}
+
+/// **C2I-PR2 (C2-8)** — client→read-server request for one routed session's refs-only LINK-STATE
+/// (`fresh`/`stale`/`offline`). `agent_session_id` is the resource key; OWNER-GATED. The staleness
+/// is derived against the SERVER's clock (never a client-supplied timestamp), so a caller cannot
+/// paint their own session fresh. Sibling of [`RunReadbackRequestWire`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionLinkStateRequestWire {
+    /// The routed session id whose link-state to project. REQUIRED.
+    pub agent_session_id: String,
+    /// The device-resolved principal conveyed by the peer. VERIFIED against the sealed session
+    /// before release — never trusted as an authority on its own.
+    pub forwarded_principal: String,
+    /// The sealed possession-of-session proof, bound to `request_id` + `forwarded_principal` in its
+    /// AAD (the read analog of the write `auth_proof`). Opaque bytes here.
+    pub auth_proof: Vec<u8>,
+    /// The opaque per-request id the `auth_proof` is bound to (the read analog of `run_id`).
+    pub request_id: String,
+}
+
+/// **C2I-PR2 (C2-8)** — read-server→client refs-only LINK-STATE snapshot. Carries the
+/// closed-vocabulary connectivity label + the static thresholds it was derived against, OWNER-SEALED
+/// — never any session text (the shared `project_session_link_state` guard ran before sealing).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionLinkStateSnapshotWire {
+    /// Echoes the request id this snapshot answers (correlation).
+    pub request_id: String,
+    /// The refs-only link-state JSON, OWNER-SEALED (state label + thresholds only — never a body).
+    pub projection_json: String,
+    /// Hub epoch-millis at which the snapshot was generated.
+    pub generated_at_ms: i64,
+}
+
+/// **C2I-PR2 (C2-5)** — client→read-server request for one run's refs-only FILE-VIEW (the workspace
+/// file refs the run's `read_file` receipts recorded). `run_id` is the resource key; OWNER-GATED on
+/// the run's bound owner (a non-owner gets `run_not_found`). Sibling of [`RunReadbackRequestWire`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunFileViewRequestWire {
+    /// The run id whose file-view to read back. REQUIRED.
+    pub run_id: String,
+    /// The device-resolved principal conveyed by the peer. VERIFIED against the sealed session
+    /// before release — never trusted as an authority on its own.
+    pub forwarded_principal: String,
+    /// The sealed possession-of-session proof, bound to `request_id` + `forwarded_principal` in its
+    /// AAD (the read analog of the write `auth_proof`). Opaque bytes here.
+    pub auth_proof: Vec<u8>,
+    /// The opaque per-request id the `auth_proof` is bound to (the read analog of `run_id`).
+    pub request_id: String,
+}
+
+/// **C2I-PR2 (C2-5)** — read-server→client refs-only FILE-VIEW snapshot. Carries the relative
+/// workspace path refs (in receipt order) + the count, OWNER-SEALED — never a file body, never the
+/// run `task` (the shared `project_run_file_view` guard ran before sealing).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunFileViewSnapshotWire {
+    /// Echoes the request id this snapshot answers (correlation).
+    pub request_id: String,
+    /// The refs-only file-view JSON, OWNER-SEALED (relative path refs + count only — never a body).
+    pub projection_json: String,
+    /// Hub epoch-millis at which the snapshot was generated.
+    pub generated_at_ms: i64,
+}
+
+/// **C2I-PR2 (C2-9)** — client→read-server request for one PAUSED run's Activity / Needs-Me
+/// projection (the metered-turn AskReceipt rows + the pending-approval Needs-Me item). `run_id` is
+/// the resource key; OWNER-GATED on the paused run's pending-row owner (`resolve_run_owner`; a
+/// non-owner gets `run_not_found`). Sibling of [`RunReadbackRequestWire`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActivityNeedsMeRequestWire {
+    /// The run id whose Activity / Needs-Me to project. REQUIRED.
+    pub run_id: String,
+    /// The device-resolved principal conveyed by the peer. VERIFIED against the sealed session
+    /// before release — never trusted as an authority on its own.
+    pub forwarded_principal: String,
+    /// The sealed possession-of-session proof, bound to `request_id` + `forwarded_principal` in its
+    /// AAD (the read analog of the write `auth_proof`). Opaque bytes here.
+    pub auth_proof: Vec<u8>,
+    /// The opaque per-request id the `auth_proof` is bound to (the read analog of `run_id`).
+    pub request_id: String,
+}
+
+/// **C2I-PR2 (C2-9)** — read-server→client refs-only Activity / Needs-Me snapshot. Carries the
+/// body-free AskReceipt rows ("{n} tokens via {model}") + the Needs-Me item anchored to the REAL
+/// pending-approval nonce, OWNER-SEALED — never the run `task` (the shared `project_activity_needs_me`
+/// guard ran before sealing).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActivityNeedsMeSnapshotWire {
+    /// Echoes the request id this snapshot answers (correlation).
+    pub request_id: String,
+    /// The refs-only Activity / Needs-Me JSON, OWNER-SEALED (receipt summaries + Needs-Me ref only).
+    pub projection_json: String,
+    /// Hub epoch-millis at which the snapshot was generated.
+    pub generated_at_ms: i64,
+}
+
 /// First-slice message kinds (gate §4.2). Tagged by `kind`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
@@ -1057,6 +1228,47 @@ pub enum Message {
     /// `linked_only` — never upgraded, never raw account info). Guard ran before sealing.
     ProvidersDoctorSnapshot {
         snapshot: ProvidersDoctorSnapshotWire,
+    },
+    /// **C2I-PR2 (C2-4)** — UI→DARK read-server: request the OWNER-SCOPED routed-session LIST over
+    /// the sealed-WS READ seam. PURE READ — no model/provider call. Owner-scoped (the SAME chain a
+    /// write uses, proof bound to `request_id`); a non-owner's list is naturally empty. DARK.
+    SessionListRequest { request: SessionListRequestWire },
+    /// **C2I-PR2 (C2-4)** — DARK read-server→UI: owner-sealed refs-only routed-session LIST
+    /// (id + timestamps only, never a body). DARK.
+    SessionListSnapshot { snapshot: SessionListSnapshotWire },
+    /// **C2I-PR2 (C2-4 / M-2)** — UI→DARK read-server: OPEN one routed session's full conversation
+    /// transcript. PURE READ — no model/provider call. Owner-GATED (`owner_matches` on the VERIFIED
+    /// principal); a non-owner gets `session_not_found` (no body, no oracle). DARK.
+    SessionOpenRequest { request: SessionOpenRequestWire },
+    /// **C2I-PR2 (C2-4 / M-2)** — DARK read-server→UI: the routed-session transcript snapshot. THE
+    /// deliberate body-delivery carve-out: it DOES carry message bodies, OWNER-SEALED + owner-gated
+    /// (never `reject_forbidden_output`, which would false-reject legit transcript text). DARK.
+    SessionOpenSnapshot { snapshot: SessionOpenSnapshotWire },
+    /// **C2I-PR2 (C2-8)** — UI→DARK read-server: request one routed session's refs-only LINK-STATE.
+    /// PURE READ. Owner-GATED; staleness derived against the SERVER clock (never a client field). DARK.
+    SessionLinkStateRequest {
+        request: SessionLinkStateRequestWire,
+    },
+    /// **C2I-PR2 (C2-8)** — DARK read-server→UI: owner-sealed refs-only LINK-STATE snapshot
+    /// (closed-vocab state label + thresholds, never any session text). DARK.
+    SessionLinkStateSnapshot {
+        snapshot: SessionLinkStateSnapshotWire,
+    },
+    /// **C2I-PR2 (C2-5)** — UI→DARK read-server: request one run's refs-only FILE-VIEW (the
+    /// `read_file` receipt path refs). PURE READ. Owner-GATED on the run's bound owner; a non-owner
+    /// gets `run_not_found`. DARK.
+    RunFileViewRequest { request: RunFileViewRequestWire },
+    /// **C2I-PR2 (C2-5)** — DARK read-server→UI: owner-sealed refs-only FILE-VIEW snapshot
+    /// (relative path refs + count, never a file body, never the run `task`). DARK.
+    RunFileViewSnapshot { snapshot: RunFileViewSnapshotWire },
+    /// **C2I-PR2 (C2-9)** — UI→DARK read-server: request one PAUSED run's Activity / Needs-Me
+    /// projection. PURE READ. Owner-GATED on the paused run's pending-row owner; a non-owner gets
+    /// `run_not_found`. DARK.
+    ActivityNeedsMeRequest { request: ActivityNeedsMeRequestWire },
+    /// **C2I-PR2 (C2-9)** — DARK read-server→UI: owner-sealed refs-only Activity / Needs-Me snapshot
+    /// (body-free AskReceipt summaries + the Needs-Me item anchored to the real approval nonce). DARK.
+    ActivityNeedsMeSnapshot {
+        snapshot: ActivityNeedsMeSnapshotWire,
     },
     /// trusted-TS-peer->hub: dispatch one production agent-run to the Rust loop
     /// over the long-lived sealed WS session. **WS-transport substrate (S-A) for
@@ -2723,6 +2935,135 @@ mod tests {
                 assert_eq!(mission_context, None);
             }
             other => panic!("expected AgentRunRequest, got {other:?}"),
+        }
+    }
+
+    /// **C2I-PR2** — the 5 owner-gated C2 read-plane request + snapshot wire shapes round-trip
+    /// over the envelope codec (the read-server arms the bin dispatches them to). Mirrors the
+    /// `agent_run_request_round_trips_over_envelope` style: encode → assert the `kind` tag →
+    /// decode → byte-equal. Pure codec/shape — nothing here constructs a server or auth path.
+    #[test]
+    fn c2i_pr2_read_plane_wire_shapes_round_trip_over_envelope() {
+        let cases: Vec<(Message, &str)> = vec![
+            (
+                Message::SessionListRequest {
+                    request: SessionListRequestWire {
+                        forwarded_principal: "owner-1".into(),
+                        auth_proof: vec![1, 2, 3],
+                        request_id: "req-list".into(),
+                    },
+                },
+                "SessionListRequest",
+            ),
+            (
+                Message::SessionListSnapshot {
+                    snapshot: SessionListSnapshotWire {
+                        request_id: "req-list".into(),
+                        projection_json: "deadbeef".into(),
+                        generated_at_ms: 1000,
+                    },
+                },
+                "SessionListSnapshot",
+            ),
+            (
+                Message::SessionOpenRequest {
+                    request: SessionOpenRequestWire {
+                        agent_session_id: "sess-1".into(),
+                        forwarded_principal: "owner-1".into(),
+                        auth_proof: vec![4, 5],
+                        request_id: "req-open".into(),
+                    },
+                },
+                "SessionOpenRequest",
+            ),
+            (
+                Message::SessionOpenSnapshot {
+                    snapshot: SessionOpenSnapshotWire {
+                        request_id: "req-open".into(),
+                        projection_json: "cafe".into(),
+                        generated_at_ms: 1001,
+                    },
+                },
+                "SessionOpenSnapshot",
+            ),
+            (
+                Message::SessionLinkStateRequest {
+                    request: SessionLinkStateRequestWire {
+                        agent_session_id: "sess-1".into(),
+                        forwarded_principal: "owner-1".into(),
+                        auth_proof: vec![6],
+                        request_id: "req-link".into(),
+                    },
+                },
+                "SessionLinkStateRequest",
+            ),
+            (
+                Message::SessionLinkStateSnapshot {
+                    snapshot: SessionLinkStateSnapshotWire {
+                        request_id: "req-link".into(),
+                        projection_json: "01".into(),
+                        generated_at_ms: 1002,
+                    },
+                },
+                "SessionLinkStateSnapshot",
+            ),
+            (
+                Message::RunFileViewRequest {
+                    request: RunFileViewRequestWire {
+                        run_id: "run-1".into(),
+                        forwarded_principal: "owner-1".into(),
+                        auth_proof: vec![7, 8],
+                        request_id: "req-fv".into(),
+                    },
+                },
+                "RunFileViewRequest",
+            ),
+            (
+                Message::RunFileViewSnapshot {
+                    snapshot: RunFileViewSnapshotWire {
+                        request_id: "req-fv".into(),
+                        projection_json: "02".into(),
+                        generated_at_ms: 1003,
+                    },
+                },
+                "RunFileViewSnapshot",
+            ),
+            (
+                Message::ActivityNeedsMeRequest {
+                    request: ActivityNeedsMeRequestWire {
+                        run_id: "run-1".into(),
+                        forwarded_principal: "owner-1".into(),
+                        auth_proof: vec![9],
+                        request_id: "req-anm".into(),
+                    },
+                },
+                "ActivityNeedsMeRequest",
+            ),
+            (
+                Message::ActivityNeedsMeSnapshot {
+                    snapshot: ActivityNeedsMeSnapshotWire {
+                        request_id: "req-anm".into(),
+                        projection_json: "03".into(),
+                        generated_at_ms: 1004,
+                    },
+                },
+                "ActivityNeedsMeSnapshot",
+            ),
+        ];
+        for (msg, kind) in cases {
+            let env = Envelope::new("m1", 1000, msg.clone()).with_correlation("c1");
+            let json = env.encode().unwrap();
+            assert!(
+                json.contains(&format!("\"schema_version\":{CURRENT_SCHEMA_VERSION}")),
+                "carries the current schema version: {json}"
+            );
+            assert!(
+                json.contains(&format!("\"kind\":\"{kind}\"")),
+                "carries the {kind} tag: {json}"
+            );
+            let back = Envelope::decode(&json).unwrap();
+            assert_eq!(back, env, "{kind} round-trips byte-equal");
+            assert_eq!(back.message, msg);
         }
     }
 }

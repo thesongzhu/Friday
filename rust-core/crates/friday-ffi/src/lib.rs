@@ -1938,6 +1938,20 @@ fn message_kind_name(m: &friday_protocol::Message) -> &'static str {
         M::RunReadbackSnapshot { .. } => "RunReadbackSnapshot",
         M::ProvidersDoctorRequest { .. } => "ProvidersDoctorRequest",
         M::ProvidersDoctorSnapshot { .. } => "ProvidersDoctorSnapshot",
+        // C2I-PR2 — the 5 DARK sealed-WS READ-seam owner-gated C2 read-plane kinds. NAMED here for
+        // the same reason as S-R1/S-R2/S-R3: nothing on the FFI surface constructs/dispatches them
+        // (the UI reads them directly over the sealed-WS read server), but naming them keeps this
+        // match exhaustive and carries the real kind in the truth label.
+        M::SessionListRequest { .. } => "SessionListRequest",
+        M::SessionListSnapshot { .. } => "SessionListSnapshot",
+        M::SessionOpenRequest { .. } => "SessionOpenRequest",
+        M::SessionOpenSnapshot { .. } => "SessionOpenSnapshot",
+        M::SessionLinkStateRequest { .. } => "SessionLinkStateRequest",
+        M::SessionLinkStateSnapshot { .. } => "SessionLinkStateSnapshot",
+        M::RunFileViewRequest { .. } => "RunFileViewRequest",
+        M::RunFileViewSnapshot { .. } => "RunFileViewSnapshot",
+        M::ActivityNeedsMeRequest { .. } => "ActivityNeedsMeRequest",
+        M::ActivityNeedsMeSnapshot { .. } => "ActivityNeedsMeSnapshot",
         // WS-transport substrate (S-A..S-F) message kinds. Still DARK on the FFI
         // surface (nothing here constructs or dispatches them), but they are
         // NAMED so the truth label carries the real kind — and so this match

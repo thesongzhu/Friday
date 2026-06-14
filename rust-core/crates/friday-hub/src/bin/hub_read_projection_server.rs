@@ -68,14 +68,19 @@ use friday_crypto::{seal, DataKey, DeviceKeypair, FileSecureStore};
 use friday_hub::hub_server::{AuthedPrincipal, ForwardedAuth};
 use friday_hub::key_source::{READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID, X25519_PUBKEY_LEN};
 use friday_hub::providers_doctor_projection::{parse_provider_selection, project_providers_doctor};
-use friday_hub::run_readback_projection::project_run_readback;
+use friday_hub::run_readback_projection::{
+    project_activity_needs_me, project_run_file_view, project_run_readback,
+    project_session_link_state,
+};
 use friday_hub::sealed_ws::{
     decode_sealed_proof, enforce_peer_allowlist_nonempty, establish_session, load_peer_allowlist,
 };
 use friday_hub::workbench_projection::project_workbench;
 use friday_protocol::{
-    Envelope, IdempotencyTracker, Message, ProvidersDoctorSnapshotWire, RunReadbackSnapshotWire,
-    Seen, WorkbenchProjectionSnapshotWire,
+    ActivityNeedsMeSnapshotWire, Envelope, IdempotencyTracker, Message,
+    ProvidersDoctorSnapshotWire, RunFileViewSnapshotWire, RunReadbackSnapshotWire, Seen,
+    SessionLinkStateSnapshotWire, SessionListSnapshotWire, SessionOpenSnapshotWire,
+    WorkbenchProjectionSnapshotWire,
 };
 use friday_providers::{CliProbe, ProviderProbe};
 use friday_storage::Db;
@@ -258,10 +263,13 @@ impl ReadWsListener {
 /// Serve sealed read-projection envelopes over ONE established session until the peer disconnects,
 /// sends an envelope that fails to open, OR fails auth.
 ///
-/// **S-R1/S-R2/S-R3 read arms.** A sealed envelope that opens to one of the three read requests
-/// ([`Message::WorkbenchProjectionRequest`], [`Message::RunReadbackRequest`],
-/// [`Message::ProvidersDoctorRequest`]) takes the IDENTICAL read path, factored into two shared
-/// helpers so the three arms cannot drift:
+/// **Read arms (S-R1/S-R2/S-R3 + C2I-PR2).** A sealed envelope that opens to one of the read
+/// requests — the original three ([`Message::WorkbenchProjectionRequest`],
+/// [`Message::RunReadbackRequest`], [`Message::ProvidersDoctorRequest`]) PLUS the five C2I-PR2
+/// owner-gated C2 read-plane ops ([`Message::SessionListRequest`], [`Message::SessionOpenRequest`]
+/// (the M-2 sealed-body carve-out), [`Message::SessionLinkStateRequest`],
+/// [`Message::RunFileViewRequest`], [`Message::ActivityNeedsMeRequest`]) — takes the IDENTICAL read
+/// path, factored into two shared helpers so the arms cannot drift:
 /// 1. [`authenticate_read_request`] — [`AuthedPrincipal::authenticate_forwarded`] verifies the
 ///    forwarded principal against the session (possession-of-session + per-handshake nonce +
 ///    owner-allowlist), with the proof bound to the request's `request_id` (the read analog of
@@ -412,6 +420,258 @@ fn serve_read_session<S: Read + Write>(
                     },
                 )?
             }
+            // ===== C2I-PR2: the 5 OWNER-GATED C2 read-plane arms ==========================
+            // Each rides the IDENTICAL auth-before-read path the RunReadbackRequest arm proved
+            // (C2I-PR1): authenticate via the shared helper (a `None` ENDS the session, fail-
+            // closed), call the EXISTING owner-scoped accessor with the VERIFIED principal
+            // (`caller.principal()`, NEVER the raw wire `forwarded_principal`), then `seal_and_frame`
+            // the result. For the 4 resource-keyed ops a per-resource owner denial collapses to the
+            // SAME typed `*_not_found` Error a non-existent resource produced — INDISTINGUISHABLE on
+            // the wire (no cross-principal existence/state oracle), exactly the M-3 discipline.
+            //
+            // **C2-4 SessionList** — the OWNER-SCOPED routed-session list. No resource key: a
+            // different principal's list is naturally EMPTY, so there is no per-resource gate (the
+            // `user_id = ?1` scope IS the gate). An owned-but-empty list is a real `Ok([])` snapshot,
+            // not an error. The `SessionListItem`s are refs-only (id + timestamps, never a body).
+            Message::SessionListRequest { request } => {
+                let caller = match authenticate_read_request(
+                    session_key,
+                    session_nonce,
+                    &request.auth_proof,
+                    &request.forwarded_principal,
+                    &request.request_id,
+                    owner_allowlist,
+                ) {
+                    Some(caller) => caller,
+                    None => return Ok(processed),
+                };
+                let request_id = request.request_id.clone();
+                // Owner-scoped list (the SAME `friday_storage::list_sessions_for_owner` the
+                // HubRuntime accessor wraps). A blank/non-owner principal matches NOTHING.
+                let projection =
+                    friday_storage::list_sessions_for_owner(db.conn(), caller.principal())
+                        .map(|items| {
+                            serde_json::json!({
+                                "truth_label": "rust_wired_dev",
+                                "proof_only": true,
+                                "ok": true,
+                                "session_count": items.len(),
+                                "sessions": items
+                                    .iter()
+                                    .map(|item| serde_json::json!({
+                                        "agent_session_id": item.agent_session_id,
+                                        "created_at": item.created_at,
+                                        "updated_at": item.updated_at,
+                                    }))
+                                    .collect::<Vec<_>>(),
+                            })
+                        })
+                        .map_err(|_| "read_failed".to_string());
+                seal_and_frame(
+                    session_key,
+                    &env.msg_id,
+                    &request_id,
+                    now_ms,
+                    projection,
+                    |sealed_hex| Message::SessionListSnapshot {
+                        snapshot: SessionListSnapshotWire {
+                            request_id: request_id.clone(),
+                            projection_json: sealed_hex,
+                            generated_at_ms: now_ms,
+                        },
+                    },
+                )?
+            }
+            // **C2-4 / M-2 SessionOpen** — the ONE DELIBERATE BODY-DELIVERY CARVE-OUT. The owner gate
+            // is `owner_matches(caller.principal())` (INSIDE `open_session_for_owner` — a non-owner /
+            // owner-less / absent session all read back `None`, never a client-asserted user_id). The
+            // full transcript bodies are delivered ONLY when the gate passes, and ONLY OWNER-SEALED
+            // via `seal_and_frame` (so the body never leaves the process unsealed). We DO NOT run
+            // `reject_forbidden_output` on this body — that guard would false-reject legitimate
+            // transcript text; the owner gate + the owner-sealing ARE the protection (M-2). A `None`
+            // (non-owner / absent / owner-less) collapses to `session_not_found` — INDISTINGUISHABLE,
+            // so the verified caller learns nothing about a session it does not own (no body, no
+            // existence oracle). An owned-but-empty session is a real `Some(vec![])` snapshot.
+            Message::SessionOpenRequest { request } => {
+                let caller = match authenticate_read_request(
+                    session_key,
+                    session_nonce,
+                    &request.auth_proof,
+                    &request.forwarded_principal,
+                    &request.request_id,
+                    owner_allowlist,
+                ) {
+                    Some(caller) => caller,
+                    None => return Ok(processed),
+                };
+                let request_id = request.request_id.clone();
+                let projection = match friday_storage::open_session_for_owner(
+                    db.conn(),
+                    caller.principal(),
+                    &request.agent_session_id,
+                ) {
+                    // M-2 carve-out: the owner is entitled to the FULL bodies. Serialize the folded
+                    // transcript (role/content/refs/seq) — this DOES carry message text, delivered
+                    // ONLY here, ONLY to the gated owner, and ONLY sealed by `seal_and_frame`. NO
+                    // `reject_forbidden_output` (it would false-reject legit transcript text).
+                    Ok(Some(messages)) => Ok(serde_json::json!({
+                        "truth_label": "rust_wired_dev",
+                        "proof_only": true,
+                        "ok": true,
+                        "agent_session_id": request.agent_session_id,
+                        "message_count": messages.len(),
+                        // The DELIBERATE body carve-out: the owner's own transcript bodies.
+                        "messages": messages
+                            .iter()
+                            .map(|m| serde_json::json!({
+                                "message_id": m.message_id,
+                                "seq": m.seq,
+                                "role": m.role,
+                                "content": m.content,
+                                "refs": m.refs,
+                                "created_at": m.created_at,
+                            }))
+                            .collect::<Vec<_>>(),
+                    })),
+                    // Fail-closed: a non-owner / owner-less / absent session is INDISTINGUISHABLE.
+                    Ok(None) => Err("session_not_found".to_string()),
+                    Err(_) => Err("read_failed".to_string()),
+                };
+                seal_and_frame(
+                    session_key,
+                    &env.msg_id,
+                    &request_id,
+                    now_ms,
+                    projection,
+                    |sealed_hex| Message::SessionOpenSnapshot {
+                        snapshot: SessionOpenSnapshotWire {
+                            request_id: request_id.clone(),
+                            projection_json: sealed_hex,
+                            generated_at_ms: now_ms,
+                        },
+                    },
+                )?
+            }
+            // **C2-8 SessionLinkState** — the refs-only connectivity/staleness label. OWNER-GATED
+            // inside `project_session_link_state` (`Ok(None)` for a non-owner / absent / owner-less
+            // session). The staleness is derived against the SERVER's own clock (`now_ms`, NOT a
+            // client-supplied field — a caller cannot paint their own session fresh). A non-owner
+            // `Ok(None)` collapses to `session_not_found` (INDISTINGUISHABLE).
+            Message::SessionLinkStateRequest { request } => {
+                let caller = match authenticate_read_request(
+                    session_key,
+                    session_nonce,
+                    &request.auth_proof,
+                    &request.forwarded_principal,
+                    &request.request_id,
+                    owner_allowlist,
+                ) {
+                    Some(caller) => caller,
+                    None => return Ok(processed),
+                };
+                let request_id = request.request_id.clone();
+                let projection = match project_session_link_state(
+                    db,
+                    caller.principal(),
+                    &request.agent_session_id,
+                    now_ms,
+                ) {
+                    Ok(Some(value)) => Ok(value),
+                    Ok(None) => Err("session_not_found".to_string()),
+                    Err(reason) => Err(reason),
+                };
+                seal_and_frame(
+                    session_key,
+                    &env.msg_id,
+                    &request_id,
+                    now_ms,
+                    projection,
+                    |sealed_hex| Message::SessionLinkStateSnapshot {
+                        snapshot: SessionLinkStateSnapshotWire {
+                            request_id: request_id.clone(),
+                            projection_json: sealed_hex,
+                            generated_at_ms: now_ms,
+                        },
+                    },
+                )?
+            }
+            // **C2-5 RunFileView** — the refs-only workspace file refs the run's `read_file` receipts
+            // recorded. OWNER-GATED inside `project_run_file_view` (the C2-4/D1-Q1
+            // `get_run_answer_for_principal` axis; `Ok(None)` for a non-owner / owner-less / absent
+            // run). A non-owner `Ok(None)` collapses to `run_not_found` (INDISTINGUISHABLE — the SAME
+            // shape the RunReadback arm uses).
+            Message::RunFileViewRequest { request } => {
+                let caller = match authenticate_read_request(
+                    session_key,
+                    session_nonce,
+                    &request.auth_proof,
+                    &request.forwarded_principal,
+                    &request.request_id,
+                    owner_allowlist,
+                ) {
+                    Some(caller) => caller,
+                    None => return Ok(processed),
+                };
+                let request_id = request.request_id.clone();
+                let projection =
+                    match project_run_file_view(db, caller.principal(), &request.run_id) {
+                        Ok(Some(value)) => Ok(value),
+                        Ok(None) => Err("run_not_found".to_string()),
+                        Err(reason) => Err(reason),
+                    };
+                seal_and_frame(
+                    session_key,
+                    &env.msg_id,
+                    &request_id,
+                    now_ms,
+                    projection,
+                    |sealed_hex| Message::RunFileViewSnapshot {
+                        snapshot: RunFileViewSnapshotWire {
+                            request_id: request_id.clone(),
+                            projection_json: sealed_hex,
+                            generated_at_ms: now_ms,
+                        },
+                    },
+                )?
+            }
+            // **C2-9 ActivityNeedsMe** — the refs-only Activity / Needs-Me projection for a PAUSED
+            // run. OWNER-GATED inside `project_activity_needs_me` (the paused run's pending-row owner
+            // via `resolve_run_owner`; `Ok(None)` for a non-owner / not-paused / owner-less run). A
+            // non-owner `Ok(None)` collapses to `run_not_found` (INDISTINGUISHABLE).
+            Message::ActivityNeedsMeRequest { request } => {
+                let caller = match authenticate_read_request(
+                    session_key,
+                    session_nonce,
+                    &request.auth_proof,
+                    &request.forwarded_principal,
+                    &request.request_id,
+                    owner_allowlist,
+                ) {
+                    Some(caller) => caller,
+                    None => return Ok(processed),
+                };
+                let request_id = request.request_id.clone();
+                let projection =
+                    match project_activity_needs_me(db, caller.principal(), &request.run_id) {
+                        Ok(Some(value)) => Ok(value),
+                        Ok(None) => Err("run_not_found".to_string()),
+                        Err(reason) => Err(reason),
+                    };
+                seal_and_frame(
+                    session_key,
+                    &env.msg_id,
+                    &request_id,
+                    now_ms,
+                    projection,
+                    |sealed_hex| Message::ActivityNeedsMeSnapshot {
+                        snapshot: ActivityNeedsMeSnapshotWire {
+                            request_id: request_id.clone(),
+                            projection_json: sealed_hex,
+                            generated_at_ms: now_ms,
+                        },
+                    },
+                )?
+            }
             // Any other opened envelope is NOT a read projection. The read server has no write/
             // control surface — refuse it with a typed Error (never an echo of an unknown message,
             // never a dispatch). The session continues so a benign keepalive does not drop the link.
@@ -421,7 +681,9 @@ fn serve_read_session<S: Read + Write>(
                 Message::Error {
                     code: friday_protocol::ErrorCode::SchemaVersionUnsupported,
                     message: "read server accepts only WorkbenchProjectionRequest, \
-                              RunReadbackRequest, or ProvidersDoctorRequest"
+                              RunReadbackRequest, ProvidersDoctorRequest, SessionListRequest, \
+                              SessionOpenRequest, SessionLinkStateRequest, RunFileViewRequest, \
+                              or ActivityNeedsMeRequest"
                         .into(),
                 },
             )
@@ -815,6 +1077,159 @@ mod tests {
         )
         .unwrap();
         path
+    }
+
+    // ===== C2I-PR2 seeders (real DB, no network) =====================================
+    // Each seeds the EXACT rows the corresponding owner-scoped accessor reads — bound to
+    // `owner` so a verified caller authenticating AS that principal Grants, and any other
+    // principal is fail-closed. The bodies (session transcript text, run answer) are seeded
+    // verbatim so the round-trip can assert they (a) reach the gated owner sealed and (b)
+    // NEVER appear for a non-owner.
+
+    /// Seed an owned `agent_session` + two folded transcript messages (`user` then
+    /// `assistant`), bound to `owner` via `user_id`. The contents are bodies that must reach
+    /// ONLY the gated owner, ONLY sealed (the M-2 carve-out). Returns the session id.
+    fn seed_owned_session(path: &str, owner: &str, session_id: &str) {
+        use friday_storage::agent_session::{
+            append_session_message, ensure_session_with_owner, SessionMessage, SessionOwner,
+        };
+        let db = Db::open_hub(path).unwrap();
+        let now = 1_780_640_000_000;
+        ensure_session_with_owner(
+            db.conn(),
+            session_id,
+            &SessionOwner {
+                user_id: Some(owner.to_string()),
+                ..SessionOwner::default()
+            },
+            now,
+        )
+        .unwrap();
+        append_session_message(
+            db.conn(),
+            session_id,
+            &SessionMessage::new("user", "TRANSCRIPT-BODY-user-says-hello", None),
+            now + 1,
+        )
+        .unwrap();
+        append_session_message(
+            db.conn(),
+            session_id,
+            &SessionMessage::new("assistant", "TRANSCRIPT-BODY-assistant-replies", None),
+            now + 2,
+        )
+        .unwrap();
+    }
+
+    /// Seed an owned `agent_session` with NO messages (the owned-but-empty edge): a real owned
+    /// session that opens to `Some(vec![])`, NOT `session_not_found`.
+    fn seed_owned_empty_session(path: &str, owner: &str, session_id: &str) {
+        use friday_storage::agent_session::{ensure_session_with_owner, SessionOwner};
+        let db = Db::open_hub(path).unwrap();
+        ensure_session_with_owner(
+            db.conn(),
+            session_id,
+            &SessionOwner {
+                user_id: Some(owner.to_string()),
+                ..SessionOwner::default()
+            },
+            1_780_640_000_000,
+        )
+        .unwrap();
+    }
+
+    /// Seed a session bound to `owner` whose `updated_at` is far in the past, so its link-state
+    /// derives to `offline` against any plausible wall clock (the band transitions themselves are
+    /// unit-tested in runtime.rs c2_8; this wire KAT only needs round-trip + owner-gating).
+    fn seed_owned_stale_session(path: &str, owner: &str, session_id: &str) {
+        use friday_storage::agent_session::{ensure_session_with_owner, SessionOwner};
+        let db = Db::open_hub(path).unwrap();
+        ensure_session_with_owner(
+            db.conn(),
+            session_id,
+            &SessionOwner {
+                user_id: Some(owner.to_string()),
+                ..SessionOwner::default()
+            },
+            // A fixed epoch-millis in 2020 — far enough past that `now - updated_at` exceeds the
+            // offline threshold under any real wall clock the test runs at.
+            1_577_836_800_000,
+        )
+        .unwrap();
+    }
+
+    /// Seed a FINISHED run owned by `owner` (via `run_result.owner_principal`) plus a `read_file`
+    /// receipt event (the exact `tool.executed:read {n} bytes from {path}` shape
+    /// `list_read_file_refs` parses). The file-view of this run reads back `["notes.md"]` for the
+    /// gated owner, `run_not_found` for anyone else.
+    fn seed_owned_filed_run(path: &str, owner: &str, run_id: &str) {
+        use friday_storage::agent_run::{create_run, record_event};
+        use friday_storage::{persist_run_result, RunResult};
+        let db = Db::open_hub(path).unwrap();
+        let now = 1_780_640_000_000;
+        create_run(db.conn(), run_id, "RUN-TASK-BODY-must-never-leak", now).unwrap();
+        record_event(
+            db.conn(),
+            &format!("{run_id}-ev-read"),
+            run_id,
+            "tool.executed:read 15 bytes from notes.md",
+            now + 1,
+        )
+        .unwrap();
+        record_event(
+            db.conn(),
+            &format!("{run_id}-ev-fin"),
+            run_id,
+            "agent.finished",
+            now + 2,
+        )
+        .unwrap();
+        persist_run_result(
+            db.conn(),
+            run_id,
+            &RunResult::new("finished", "RUN-ANSWER-BODY-must-never-leak", None)
+                .with_owner_principal(owner),
+            now + 3,
+        )
+        .unwrap();
+    }
+
+    /// Seed a PAUSED run owned by `owner` (the pending approval row's `principal_id`), so
+    /// `resolve_run_owner` (the C2-9 owner axis) Grants the gated owner. Returns the approval
+    /// nonce the Needs-Me item anchors to.
+    fn seed_owned_paused_run(path: &str, owner: &str, run_id: &str) -> String {
+        use friday_storage::agent_run::create_run;
+        use friday_storage::pending_request::{persist_pending_request, PendingApprovalRequest};
+        let db = Db::open_hub(path).unwrap();
+        let now = 1_780_640_000_000;
+        create_run(
+            db.conn(),
+            run_id,
+            "PAUSED-RUN-TASK-BODY-must-never-leak",
+            now,
+        )
+        .unwrap();
+        let nonce = format!("approval-nonce-{run_id}");
+        persist_pending_request(
+            db.conn(),
+            &PendingApprovalRequest {
+                approval_id: nonce.clone(),
+                run_id: run_id.to_string(),
+                action: "write_file".to_string(),
+                action_digest: "0".repeat(64),
+                principal_id: Some(owner.to_string()),
+                surface: "test".to_string(),
+                resource_type: None,
+                resource_id: None,
+                expires_at: now + 1_000_000,
+                issuer: friday_core::gate::CANONICAL_GATE_ISSUER.to_string(),
+                status: "pending".to_string(),
+                created_at: now + 1,
+                tool_params: None,
+            },
+        )
+        .unwrap();
+        nonce
     }
 
     /// Drive the client half of the handshake (mirrors the write-bin test client + the TS reference
@@ -1451,6 +1866,603 @@ mod tests {
         );
         let processed = server.join().unwrap();
         assert_eq!(processed, 0);
+    }
+
+    // ===== C2I-PR2 KATs — the 5 owner-gated C2 read-plane ops over the read server ============
+    //
+    // Two distinct fail-closed layers are covered (per op):
+    //   (A) AUTH layer — an unverified / non-allowlisted forwarded principal ⇒
+    //       `authenticate_read_request` returns None ⇒ the session ENDS, `processed == 0`, NO frame.
+    //   (B) OWNER-GATE layer (the 4 resource-keyed ops) — a VERIFIED caller (authenticates fine AS
+    //       OWNER) requests a resource owned by a DIFFERENT principal ⇒ a typed `*_not_found` Error,
+    //       the link STAYS OPEN (`processed == 1`), NO body.
+    // SessionList has no per-resource gate (its scope-to-empty IS the gate), so it has only an
+    // (A) test + a happy-path round-trip. The M-2 crux is SessionOpen's (B) test: a verified
+    // non-owner gets `session_not_found` and NO transcript byte appears in ANY frame.
+
+    /// The single peer secret every C2I-PR2 KAT enrolls (reusing the proven [`CLIENT_SECRET`]).
+    /// Drive ONE C2I-PR2 read request over a fresh sealed session against `db_path`. The closure
+    /// builds the request `Message` from the freshly-sealed `auth_proof` (bound to
+    /// `forwarded_principal` + `request_id`). Returns `(opened_response, processed)` where
+    /// `opened_response` is `None` iff the session ended fail-closed before any frame arrived (the
+    /// AUTH-layer denial), else `Some(envelope)` (a snapshot OR a typed Error — the OWNER-GATE
+    /// layer / happy path). The OWNER allowlist is fixed to `[OWNER]`.
+    fn c2_read_request(
+        db_path: &str,
+        forwarded_principal: &str,
+        request_id: &str,
+        build: impl FnOnce(Vec<u8>) -> Message + Send + 'static,
+    ) -> (Option<Envelope>, usize) {
+        let server_kp = DeviceKeypair::generate();
+        let client_kp = DeviceKeypair::from_secret_bytes(CLIENT_SECRET);
+        let peer_allowlist = vec![client_kp.public_bytes()];
+        let owner_allowlist = vec![OWNER.to_string()];
+        let db_path = db_path.to_string();
+
+        let listener = ReadWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = thread::spawn(move || {
+            let db = Db::open_hub_readonly(&db_path).unwrap();
+            let probe = null_probe();
+            listener
+                .accept_one(&server_kp, &db, &probe, &owner_allowlist, &peer_allowlist)
+                .unwrap()
+        });
+
+        let (mut ws, session_key, session_nonce) = client_handshake(addr, &client_kp);
+        let auth_proof = read_auth_proof(
+            &session_key,
+            &session_nonce,
+            forwarded_principal,
+            request_id,
+        );
+        let req = Envelope::new(format!("msg-{request_id}"), 1000, build(auth_proof));
+        ws_send_envelope(&mut ws, &session_key, &req, SESSION_AAD).unwrap();
+        // A snapshot/typed-Error arrives (processed==1) OR the session ends fail-closed (the recv
+        // errors with EOF and processed==0 — the AUTH-layer denial).
+        let opened = ws_recv_envelope(&mut ws, &session_key, SESSION_AAD).ok();
+        drop(ws);
+        let processed = server.join().unwrap();
+        (opened, processed)
+    }
+
+    /// Open a snapshot's OWNER-SEALED `projection_json` (hex of `[nonce_len][nonce][ciphertext]`)
+    /// under the session key — only the bound owner can — and return the JSON string. Re-derives
+    /// the client session key from the FIXED test secrets (the helper above used a fresh server
+    /// keypair, so a snapshot test instead asserts on the wire shape + that the body is sealed;
+    /// see each test). This thin opener is used by the happy-path tests that retain the key.
+    fn open_sealed_projection(session_key: &DataKey, projection_json: &str) -> String {
+        let sealed_bytes = hex_decode(projection_json);
+        let opened =
+            friday_crypto::open(session_key, &decode_sealed(&sealed_bytes), SESSION_AAD).unwrap();
+        String::from_utf8(opened).unwrap()
+    }
+
+    /// (A-layer, ALL 5) An unverified / non-allowlisted forwarded principal is refused fail-closed
+    /// for EVERY one of the 5 ops: NO frame, the session ends, `processed == 0`. This is the auth
+    /// gate the 5 arms inherit verbatim from C2I-PR1 — table-driven so a new arm cannot skip it.
+    #[test]
+    fn c2i_pr2_all_five_ops_reject_an_unverified_principal_fail_closed() {
+        let attacker = "principal:not-the-owner";
+        // Each op, built against a DB seeded so the resource EXISTS for OWNER — proving the denial
+        // is the AUTH gate (attacker not allowlisted), not a missing resource.
+        // 1. SessionList
+        {
+            let db = seed_run_db("a-list");
+            let rid = "req-a-list";
+            let (resp, processed) = c2_read_request(&db, attacker, rid, |auth_proof| {
+                Message::SessionListRequest {
+                    request: friday_protocol::SessionListRequestWire {
+                        forwarded_principal: attacker.to_string(),
+                        auth_proof,
+                        request_id: rid.to_string(),
+                    },
+                }
+            });
+            assert!(
+                resp.is_none() && processed == 0,
+                "SessionList: auth-fail ends the session"
+            );
+        }
+        // 2. SessionOpen (M-2)
+        {
+            let db = seed_run_db("a-open");
+            seed_owned_session(&db, OWNER, "sess-a");
+            let rid = "req-a-open";
+            let (resp, processed) = c2_read_request(&db, attacker, rid, |auth_proof| {
+                Message::SessionOpenRequest {
+                    request: friday_protocol::SessionOpenRequestWire {
+                        agent_session_id: "sess-a".to_string(),
+                        forwarded_principal: attacker.to_string(),
+                        auth_proof,
+                        request_id: rid.to_string(),
+                    },
+                }
+            });
+            assert!(
+                resp.is_none() && processed == 0,
+                "SessionOpen: auth-fail ends the session"
+            );
+        }
+        // 3. SessionLinkState
+        {
+            let db = seed_run_db("a-link");
+            seed_owned_session(&db, OWNER, "sess-a");
+            let rid = "req-a-link";
+            let (resp, processed) = c2_read_request(&db, attacker, rid, |auth_proof| {
+                Message::SessionLinkStateRequest {
+                    request: friday_protocol::SessionLinkStateRequestWire {
+                        agent_session_id: "sess-a".to_string(),
+                        forwarded_principal: attacker.to_string(),
+                        auth_proof,
+                        request_id: rid.to_string(),
+                    },
+                }
+            });
+            assert!(
+                resp.is_none() && processed == 0,
+                "SessionLinkState: auth-fail ends the session"
+            );
+        }
+        // 4. RunFileView
+        {
+            let db = seed_run_db("a-fv");
+            seed_owned_filed_run(&db, OWNER, "run-a");
+            let rid = "req-a-fv";
+            let (resp, processed) = c2_read_request(&db, attacker, rid, |auth_proof| {
+                Message::RunFileViewRequest {
+                    request: friday_protocol::RunFileViewRequestWire {
+                        run_id: "run-a".to_string(),
+                        forwarded_principal: attacker.to_string(),
+                        auth_proof,
+                        request_id: rid.to_string(),
+                    },
+                }
+            });
+            assert!(
+                resp.is_none() && processed == 0,
+                "RunFileView: auth-fail ends the session"
+            );
+        }
+        // 5. ActivityNeedsMe
+        {
+            let db = seed_run_db("a-anm");
+            seed_owned_paused_run(&db, OWNER, "run-a");
+            let rid = "req-a-anm";
+            let (resp, processed) = c2_read_request(&db, attacker, rid, |auth_proof| {
+                Message::ActivityNeedsMeRequest {
+                    request: friday_protocol::ActivityNeedsMeRequestWire {
+                        run_id: "run-a".to_string(),
+                        forwarded_principal: attacker.to_string(),
+                        auth_proof,
+                        request_id: rid.to_string(),
+                    },
+                }
+            });
+            assert!(
+                resp.is_none() && processed == 0,
+                "ActivityNeedsMe: auth-fail ends the session"
+            );
+        }
+    }
+
+    /// (C2-4) SessionList happy path: the gated OWNER reads back their own sessions, OWNER-SEALED
+    /// refs-only (id + timestamps, never a body). The full sealed round-trip retains the client key
+    /// so the opened body can be asserted.
+    #[test]
+    fn c2i_pr2_session_list_owner_reads_own_sessions_sealed_refs_only() {
+        let db_path = seed_run_db("list-ok");
+        seed_owned_session(&db_path, OWNER, "sess-list-1");
+        let server_kp = DeviceKeypair::generate();
+        let client_kp = DeviceKeypair::from_secret_bytes(CLIENT_SECRET);
+        let peer_allowlist = vec![client_kp.public_bytes()];
+        let owner_allowlist = vec![OWNER.to_string()];
+        let listener = ReadWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let db = Db::open_hub_readonly(&db_path).unwrap();
+            let probe = null_probe();
+            listener
+                .accept_one(&server_kp, &db, &probe, &owner_allowlist, &peer_allowlist)
+                .unwrap()
+        });
+        let (mut ws, session_key, session_nonce) = client_handshake(addr, &client_kp);
+        let rid = "req-list-ok";
+        let req = Envelope::new(
+            "msg-list-ok",
+            1000,
+            Message::SessionListRequest {
+                request: friday_protocol::SessionListRequestWire {
+                    forwarded_principal: OWNER.to_string(),
+                    auth_proof: read_auth_proof(&session_key, &session_nonce, OWNER, rid),
+                    request_id: rid.to_string(),
+                },
+            },
+        );
+        ws_send_envelope(&mut ws, &session_key, &req, SESSION_AAD).unwrap();
+        let resp = ws_recv_envelope(&mut ws, &session_key, SESSION_AAD).unwrap();
+        let Message::SessionListSnapshot { snapshot } = resp.message else {
+            panic!("expected a SessionListSnapshot");
+        };
+        assert_eq!(snapshot.request_id, rid);
+        let json = open_sealed_projection(&session_key, &snapshot.projection_json);
+        assert!(
+            json.contains("sess-list-1"),
+            "the owner sees her own session id"
+        );
+        assert!(json.contains("\"session_count\":1"));
+        // Refs-only: no transcript body in the LIST (bodies ride SessionOpen only).
+        assert!(
+            !json.contains("TRANSCRIPT-BODY"),
+            "list is refs-only — no body"
+        );
+        drop(ws);
+        assert_eq!(server.join().unwrap(), 1);
+    }
+
+    /// (C2-4 / M-2) SessionOpen happy path — THE CARVE-OUT: the gated OWNER reads back the FULL
+    /// transcript bodies, but ONLY OWNER-SEALED. The body is delivered (the deliberate carve-out)
+    /// AND it is sealed (open it under the session key to read it).
+    #[test]
+    fn c2i_pr2_session_open_owner_reads_full_transcript_only_sealed_m2() {
+        let db_path = seed_run_db("open-ok");
+        seed_owned_session(&db_path, OWNER, "sess-open-1");
+        let server_kp = DeviceKeypair::generate();
+        let client_kp = DeviceKeypair::from_secret_bytes(CLIENT_SECRET);
+        let peer_allowlist = vec![client_kp.public_bytes()];
+        let owner_allowlist = vec![OWNER.to_string()];
+        let listener = ReadWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let db = Db::open_hub_readonly(&db_path).unwrap();
+            let probe = null_probe();
+            listener
+                .accept_one(&server_kp, &db, &probe, &owner_allowlist, &peer_allowlist)
+                .unwrap()
+        });
+        let (mut ws, session_key, session_nonce) = client_handshake(addr, &client_kp);
+        let rid = "req-open-ok";
+        let req = Envelope::new(
+            "msg-open-ok",
+            1000,
+            Message::SessionOpenRequest {
+                request: friday_protocol::SessionOpenRequestWire {
+                    agent_session_id: "sess-open-1".to_string(),
+                    forwarded_principal: OWNER.to_string(),
+                    auth_proof: read_auth_proof(&session_key, &session_nonce, OWNER, rid),
+                    request_id: rid.to_string(),
+                },
+            },
+        );
+        ws_send_envelope(&mut ws, &session_key, &req, SESSION_AAD).unwrap();
+        let resp = ws_recv_envelope(&mut ws, &session_key, SESSION_AAD).unwrap();
+        let Message::SessionOpenSnapshot { snapshot } = resp.message else {
+            panic!("expected a SessionOpenSnapshot");
+        };
+        assert_eq!(snapshot.request_id, rid);
+        // M-2: the body NEVER appears unsealed on the wire — the sealed hex must NOT contain the
+        // plaintext transcript marker.
+        assert!(
+            !snapshot.projection_json.contains("TRANSCRIPT-BODY"),
+            "the transcript body is SEALED — never plaintext on the wire"
+        );
+        // The gated OWNER opens it under the session key and DOES get the full bodies (the carve-out).
+        let json = open_sealed_projection(&session_key, &snapshot.projection_json);
+        assert!(
+            json.contains("TRANSCRIPT-BODY-user-says-hello"),
+            "owner gets the user body"
+        );
+        assert!(
+            json.contains("TRANSCRIPT-BODY-assistant-replies"),
+            "owner gets the assistant body"
+        );
+        assert!(json.contains("\"message_count\":2"));
+        drop(ws);
+        assert_eq!(server.join().unwrap(), 1);
+    }
+
+    /// (C2-4 / M-2 CRUX) SessionOpen owner-gate: a VERIFIED caller (authenticates AS OWNER) opens a
+    /// session owned by a DIFFERENT principal. The owner gate (`owner_matches`) collapses it to
+    /// `session_not_found` — INDISTINGUISHABLE from an absent session — and NO transcript byte
+    /// appears in ANY frame. The link stays open (auth passed; only the per-resource gate denied).
+    #[test]
+    fn c2i_pr2_session_open_owner_gate_denies_a_session_owned_by_another_principal_m2() {
+        let db_path = seed_run_db("open-cross");
+        // The session is owned by SOMEONE ELSE; the caller authenticates as OWNER.
+        seed_owned_session(&db_path, "principal:a-different-owner", "sess-other");
+        let rid = "req-open-cross";
+        let (resp, processed) = c2_read_request(&db_path, OWNER, rid, |auth_proof| {
+            Message::SessionOpenRequest {
+                request: friday_protocol::SessionOpenRequestWire {
+                    agent_session_id: "sess-other".to_string(),
+                    forwarded_principal: OWNER.to_string(),
+                    auth_proof,
+                    request_id: rid.to_string(),
+                },
+            }
+        });
+        assert_eq!(
+            processed, 1,
+            "auth passed; the per-resource gate denied (link stays open)"
+        );
+        let resp = resp.expect("a typed Error frame (not a session-end)");
+        // Belt + suspenders: serialize the WHOLE frame FIRST — no transcript byte rides it at all.
+        let rendered = serde_json::to_string(&resp).unwrap();
+        assert!(
+            !rendered.contains("TRANSCRIPT-BODY"),
+            "M-2: a non-owner gets NO body byte in any frame"
+        );
+        let Message::Error { code, message } = resp.message else {
+            panic!("a verified non-owner must get a typed Error, never a SessionOpenSnapshot");
+        };
+        assert!(matches!(code, friday_protocol::ErrorCode::HubOffline));
+        assert_eq!(
+            message, "session_not_found",
+            "not-owner is INDISTINGUISHABLE from unknown-session (no oracle)"
+        );
+    }
+
+    /// (C2-4) SessionOpen owned-but-EMPTY edge: an owned session with no turns opens to a real
+    /// (sealed) snapshot with `message_count == 0`, NOT `session_not_found`. Proves the `Some(vec![])`
+    /// vs `None` split treats empty as a real owned read.
+    #[test]
+    fn c2i_pr2_session_open_owned_empty_session_is_a_real_snapshot_not_not_found() {
+        let db_path = seed_run_db("open-empty");
+        seed_owned_empty_session(&db_path, OWNER, "sess-empty");
+        let rid = "req-open-empty";
+        let (resp, processed) = c2_read_request(&db_path, OWNER, rid, |auth_proof| {
+            Message::SessionOpenRequest {
+                request: friday_protocol::SessionOpenRequestWire {
+                    agent_session_id: "sess-empty".to_string(),
+                    forwarded_principal: OWNER.to_string(),
+                    auth_proof,
+                    request_id: rid.to_string(),
+                },
+            }
+        });
+        assert_eq!(processed, 1);
+        let resp = resp.expect("a snapshot frame");
+        let Message::SessionOpenSnapshot { snapshot } = resp.message else {
+            panic!("an owned-but-empty session must be a real snapshot, never session_not_found");
+        };
+        assert_eq!(snapshot.request_id, rid);
+        // The sealed body is a real (empty-transcript) snapshot — assert on the wire shape (the
+        // fresh-server helper does not retain the key, so we cannot open it here; the open-ok test
+        // proves the opening). The presence of the snapshot variant (not an Error) is the assertion.
+    }
+
+    /// (C2-8) SessionLinkState owner-gate: a VERIFIED caller opens a link-state for a session owned
+    /// by a DIFFERENT principal ⇒ `session_not_found` (INDISTINGUISHABLE), link stays open, no text.
+    #[test]
+    fn c2i_pr2_link_state_owner_gate_denies_a_session_owned_by_another_principal() {
+        let db_path = seed_run_db("link-cross");
+        seed_owned_stale_session(&db_path, "principal:a-different-owner", "sess-other");
+        let rid = "req-link-cross";
+        let (resp, processed) = c2_read_request(&db_path, OWNER, rid, |auth_proof| {
+            Message::SessionLinkStateRequest {
+                request: friday_protocol::SessionLinkStateRequestWire {
+                    agent_session_id: "sess-other".to_string(),
+                    forwarded_principal: OWNER.to_string(),
+                    auth_proof,
+                    request_id: rid.to_string(),
+                },
+            }
+        });
+        assert_eq!(processed, 1);
+        let resp = resp.expect("a typed Error frame");
+        let Message::Error { message, .. } = resp.message else {
+            panic!("a verified non-owner must get a typed Error");
+        };
+        assert_eq!(
+            message, "session_not_found",
+            "no cross-principal link-state oracle"
+        );
+    }
+
+    /// (C2-8) SessionLinkState happy path: the gated OWNER reads back the (sealed) link-state label
+    /// for her own session. The far-past `updated_at` derives to `offline`.
+    #[test]
+    fn c2i_pr2_link_state_owner_reads_own_session_sealed() {
+        let db_path = seed_run_db("link-ok");
+        seed_owned_stale_session(&db_path, OWNER, "sess-link");
+        let server_kp = DeviceKeypair::generate();
+        let client_kp = DeviceKeypair::from_secret_bytes(CLIENT_SECRET);
+        let peer_allowlist = vec![client_kp.public_bytes()];
+        let owner_allowlist = vec![OWNER.to_string()];
+        let listener = ReadWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let db = Db::open_hub_readonly(&db_path).unwrap();
+            let probe = null_probe();
+            listener
+                .accept_one(&server_kp, &db, &probe, &owner_allowlist, &peer_allowlist)
+                .unwrap()
+        });
+        let (mut ws, session_key, session_nonce) = client_handshake(addr, &client_kp);
+        let rid = "req-link-ok";
+        let req = Envelope::new(
+            "msg-link-ok",
+            1000,
+            Message::SessionLinkStateRequest {
+                request: friday_protocol::SessionLinkStateRequestWire {
+                    agent_session_id: "sess-link".to_string(),
+                    forwarded_principal: OWNER.to_string(),
+                    auth_proof: read_auth_proof(&session_key, &session_nonce, OWNER, rid),
+                    request_id: rid.to_string(),
+                },
+            },
+        );
+        ws_send_envelope(&mut ws, &session_key, &req, SESSION_AAD).unwrap();
+        let resp = ws_recv_envelope(&mut ws, &session_key, SESSION_AAD).unwrap();
+        let Message::SessionLinkStateSnapshot { snapshot } = resp.message else {
+            panic!("expected a SessionLinkStateSnapshot");
+        };
+        let json = open_sealed_projection(&session_key, &snapshot.projection_json);
+        assert!(
+            json.contains("\"link_state\":\"offline\""),
+            "far-past session derives offline"
+        );
+        assert!(json.contains("sess-link"));
+        drop(ws);
+        assert_eq!(server.join().unwrap(), 1);
+    }
+
+    /// (C2-5) RunFileView owner-gate: a VERIFIED caller reads a file-view for a run owned by a
+    /// DIFFERENT principal ⇒ `run_not_found` (INDISTINGUISHABLE), link stays open, no body.
+    #[test]
+    fn c2i_pr2_file_view_owner_gate_denies_a_run_owned_by_another_principal() {
+        let db_path = seed_run_db("fv-cross");
+        seed_owned_filed_run(&db_path, "principal:a-different-owner", "run-other");
+        let rid = "req-fv-cross";
+        let (resp, processed) = c2_read_request(&db_path, OWNER, rid, |auth_proof| {
+            Message::RunFileViewRequest {
+                request: friday_protocol::RunFileViewRequestWire {
+                    run_id: "run-other".to_string(),
+                    forwarded_principal: OWNER.to_string(),
+                    auth_proof,
+                    request_id: rid.to_string(),
+                },
+            }
+        });
+        assert_eq!(processed, 1);
+        let resp = resp.expect("a typed Error frame");
+        let Message::Error { message, .. } = resp.message else {
+            panic!("a verified non-owner must get a typed Error");
+        };
+        assert_eq!(
+            message, "run_not_found",
+            "no cross-principal file-view oracle"
+        );
+    }
+
+    /// (C2-5) RunFileView happy path: the gated OWNER reads back the (sealed) refs-only file-view of
+    /// her own run — the `read_file` receipt path ref, never the run task/answer body.
+    #[test]
+    fn c2i_pr2_file_view_owner_reads_own_run_sealed_refs_only() {
+        let db_path = seed_run_db("fv-ok");
+        seed_owned_filed_run(&db_path, OWNER, "run-fv");
+        let server_kp = DeviceKeypair::generate();
+        let client_kp = DeviceKeypair::from_secret_bytes(CLIENT_SECRET);
+        let peer_allowlist = vec![client_kp.public_bytes()];
+        let owner_allowlist = vec![OWNER.to_string()];
+        let listener = ReadWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let db = Db::open_hub_readonly(&db_path).unwrap();
+            let probe = null_probe();
+            listener
+                .accept_one(&server_kp, &db, &probe, &owner_allowlist, &peer_allowlist)
+                .unwrap()
+        });
+        let (mut ws, session_key, session_nonce) = client_handshake(addr, &client_kp);
+        let rid = "req-fv-ok";
+        let req = Envelope::new(
+            "msg-fv-ok",
+            1000,
+            Message::RunFileViewRequest {
+                request: friday_protocol::RunFileViewRequestWire {
+                    run_id: "run-fv".to_string(),
+                    forwarded_principal: OWNER.to_string(),
+                    auth_proof: read_auth_proof(&session_key, &session_nonce, OWNER, rid),
+                    request_id: rid.to_string(),
+                },
+            },
+        );
+        ws_send_envelope(&mut ws, &session_key, &req, SESSION_AAD).unwrap();
+        let resp = ws_recv_envelope(&mut ws, &session_key, SESSION_AAD).unwrap();
+        let Message::RunFileViewSnapshot { snapshot } = resp.message else {
+            panic!("expected a RunFileViewSnapshot");
+        };
+        let json = open_sealed_projection(&session_key, &snapshot.projection_json);
+        assert!(
+            json.contains("notes.md"),
+            "the file-view surfaces the read_file receipt ref"
+        );
+        assert!(json.contains("\"file_view_count\":1"));
+        // Refs-only: the run task / answer body never appears.
+        assert!(!json.contains("RUN-TASK-BODY"), "no run task body");
+        assert!(!json.contains("RUN-ANSWER-BODY"), "no run answer body");
+        drop(ws);
+        assert_eq!(server.join().unwrap(), 1);
+    }
+
+    /// (C2-9) ActivityNeedsMe owner-gate: a VERIFIED caller reads Activity/Needs-Me for a paused run
+    /// owned by a DIFFERENT principal ⇒ `run_not_found` (INDISTINGUISHABLE), link stays open.
+    #[test]
+    fn c2i_pr2_activity_needs_me_owner_gate_denies_a_run_owned_by_another_principal() {
+        let db_path = seed_run_db("anm-cross");
+        seed_owned_paused_run(&db_path, "principal:a-different-owner", "run-other");
+        let rid = "req-anm-cross";
+        let (resp, processed) = c2_read_request(&db_path, OWNER, rid, |auth_proof| {
+            Message::ActivityNeedsMeRequest {
+                request: friday_protocol::ActivityNeedsMeRequestWire {
+                    run_id: "run-other".to_string(),
+                    forwarded_principal: OWNER.to_string(),
+                    auth_proof,
+                    request_id: rid.to_string(),
+                },
+            }
+        });
+        assert_eq!(processed, 1);
+        let resp = resp.expect("a typed Error frame");
+        let Message::Error { message, .. } = resp.message else {
+            panic!("a verified non-owner must get a typed Error");
+        };
+        assert_eq!(
+            message, "run_not_found",
+            "no cross-principal activity oracle"
+        );
+    }
+
+    /// (C2-9) ActivityNeedsMe happy path: the gated OWNER reads back the (sealed) Needs-Me item
+    /// anchored to the REAL pending-approval nonce of her own paused run.
+    #[test]
+    fn c2i_pr2_activity_needs_me_owner_reads_own_paused_run_sealed() {
+        let db_path = seed_run_db("anm-ok");
+        let nonce = seed_owned_paused_run(&db_path, OWNER, "run-anm");
+        let server_kp = DeviceKeypair::generate();
+        let client_kp = DeviceKeypair::from_secret_bytes(CLIENT_SECRET);
+        let peer_allowlist = vec![client_kp.public_bytes()];
+        let owner_allowlist = vec![OWNER.to_string()];
+        let listener = ReadWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let db = Db::open_hub_readonly(&db_path).unwrap();
+            let probe = null_probe();
+            listener
+                .accept_one(&server_kp, &db, &probe, &owner_allowlist, &peer_allowlist)
+                .unwrap()
+        });
+        let (mut ws, session_key, session_nonce) = client_handshake(addr, &client_kp);
+        let rid = "req-anm-ok";
+        let req = Envelope::new(
+            "msg-anm-ok",
+            1000,
+            Message::ActivityNeedsMeRequest {
+                request: friday_protocol::ActivityNeedsMeRequestWire {
+                    run_id: "run-anm".to_string(),
+                    forwarded_principal: OWNER.to_string(),
+                    auth_proof: read_auth_proof(&session_key, &session_nonce, OWNER, rid),
+                    request_id: rid.to_string(),
+                },
+            },
+        );
+        ws_send_envelope(&mut ws, &session_key, &req, SESSION_AAD).unwrap();
+        let resp = ws_recv_envelope(&mut ws, &session_key, SESSION_AAD).unwrap();
+        let Message::ActivityNeedsMeSnapshot { snapshot } = resp.message else {
+            panic!("expected an ActivityNeedsMeSnapshot");
+        };
+        let json = open_sealed_projection(&session_key, &snapshot.projection_json);
+        assert!(json.contains("run-anm"), "keyed to the run");
+        assert!(
+            json.contains(&nonce),
+            "the Needs-Me item points at the REAL approval nonce"
+        );
+        // Refs-only: the paused run task body never appears.
+        assert!(!json.contains("PAUSED-RUN-TASK-BODY"), "no run task body");
+        drop(ws);
+        assert_eq!(server.join().unwrap(), 1);
     }
 
     /// Lowercase-hex decode helper for the test (mirror of the bin's `hex_encode`).
