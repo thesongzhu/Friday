@@ -1153,6 +1153,33 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
             } if run_control_enabled => {
                 let now_ms = now_ms();
                 let outcome = match runtime.operator_vk() {
+                    // MISSION-BOUND seam (FRIDAY_MISSION_BOUND_RUN, default-OFF): when ON, route
+                    // resume through the mission-bound wrapper, which (1) delegates VERBATIM to the
+                    // SAME `agent_run_control::resume` spine and then (2) — ONLY on a proven
+                    // execution (`accepted == executed == true`) AND a run that resolves to its OWN
+                    // pause-time bound WorkItem — advances that WorkItem ProviderRouted →
+                    // CompletedWithProof. A run with no resolvable bound WorkItem (every non-mission
+                    // resume) returns the bare-resume `ControlOutcome` UNMODIFIED after only reads,
+                    // so a flag-ON non-mission resume is BYTE-IDENTICAL to the bare path. Flag OFF ⇒
+                    // the bare spine, byte-identical to today.
+                    Some(vk) if mission_bound_run_enabled => {
+                        friday_hub::mission_runtime::resume_agent_loop_for_mission(
+                            runtime.db(),
+                            runtime.executor(),
+                            vk,
+                            run_id,
+                            signed_blob,
+                            now_ms,
+                        )
+                        .unwrap_or_else(|_| {
+                            friday_hub::agent_run_control::ControlOutcome {
+                                op: "resume",
+                                accepted: false,
+                                status: "storage_failed".to_string(),
+                                audit_ref: None,
+                            }
+                        })
+                    }
                     Some(vk) => friday_hub::agent_run_control::resume(
                         runtime.db().conn(),
                         runtime.executor(),

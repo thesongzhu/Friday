@@ -835,6 +835,23 @@ impl Db {
         mission::list_mission_links(&self.conn, mission_id)
     }
 
+    /// Resolve the SINGLE `provider_timeline` [`MissionLink`] whose `target_ref` encodes EXACTLY
+    /// this `run_id` as its trailing `#`-segment (the agent-loop pause-time binding). The run's OWN
+    /// binding — carries the bound `mission_id` + `work_item_id` directly — so a resume-completion
+    /// leg never trusts a wire-supplied work_item_id. Fail-closed (`Ok(None)`) on zero or ambiguous
+    /// (>1) matches. See [`mission::find_provider_timeline_link_by_run_id`].
+    pub fn find_provider_timeline_link_by_run_id(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<MissionLink>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Mission links are Hub-only".into(),
+            ));
+        }
+        mission::find_provider_timeline_link_by_run_id(&self.conn, run_id)
+    }
+
     pub fn upsert_route_decision(&self, card: &RouteDecisionCard) -> Result<()> {
         if self.profile != Profile::Hub {
             return Err(StorageError::Unsupported(

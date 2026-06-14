@@ -1415,6 +1415,67 @@ pub fn list_mission_links(conn: &Connection, mission_id: &str) -> Result<Vec<Mis
     Ok(out)
 }
 
+/// Resolve the SINGLE `provider_timeline` [`MissionLink`] whose `target_ref` encodes EXACTLY this
+/// `run_id` as its trailing `#`-segment (the pause-time binding an agent-loop run writes —
+/// `friday://provider-timeline/{session}#{run_id}`, see
+/// `friday_hub::mission_preflight::attach_provider_timeline_state_guarded`'s `target_ref`).
+///
+/// This is the run's OWN binding: it carries the bound `mission_id` + `work_item_id` directly, so a
+/// resume-completion leg can resolve the WorkItem to advance WITHOUT trusting any wire-supplied
+/// work_item_id (the cross-mission proof-injection defense). The match is EXACT on the segment after
+/// the LAST `#` (`rsplit_once('#')`), never a substring/`ends_with` — `run-x` must not resolve a
+/// link bound to `prefix-run-x`. Fail-closed on ambiguity: returns `Ok(None)` if ZERO links match
+/// OR if MORE THAN ONE matches (an ambiguous binding is never advanced). `run_id` is matched in Rust
+/// (not via a SQL `LIKE`), so a `run_id` containing SQL wildcards cannot widen the match.
+pub fn find_provider_timeline_link_by_run_id(
+    conn: &Connection,
+    run_id: &str,
+) -> Result<Option<MissionLink>> {
+    let mut stmt = conn.prepare(
+        "SELECT link_id, mission_id, work_item_id, link_kind, target_ref, proof_ref, created_at_ms
+         FROM mission_link
+         WHERE link_kind = 'provider_timeline'
+         ORDER BY created_at_ms, link_id",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, Option<String>>(2)?,
+            r.get::<_, String>(3)?,
+            r.get::<_, String>(4)?,
+            r.get::<_, Option<String>>(5)?,
+            r.get::<_, i64>(6)?,
+        ))
+    })?;
+    let mut matched: Option<MissionLink> = None;
+    for row in rows {
+        let (link_id, mission_id, work_item_id, link_kind, target_ref, proof_ref, created_at_ms) =
+            row?;
+        // EXACT match on the segment after the LAST '#'. A target_ref with no '#' never matches.
+        let is_match = target_ref
+            .rsplit_once('#')
+            .is_some_and(|(_, tail)| tail == run_id);
+        if !is_match {
+            continue;
+        }
+        if matched.is_some() {
+            // Ambiguous: more than one provider_timeline link encodes this run_id ⇒ fail-closed.
+            return Ok(None);
+        }
+        matched = Some(MissionLink {
+            link_id,
+            mission_id,
+            work_item_id,
+            link_kind: parse_mission_link_kind(link_kind)?,
+            target_ref,
+            proof_ref,
+            created_at_ms,
+        });
+    }
+    Ok(matched)
+}
+
 pub fn upsert_route_decision(conn: &Connection, card: &RouteDecisionCard) -> Result<()> {
     card.validate().map_err(|e| unsupported(e.to_string()))?;
     let work_item_mission_id: Option<String> = conn
