@@ -1488,10 +1488,46 @@ impl RunPolicy {
         self.action_context.as_ref()
     }
 
-    /// True if `action` is disabled for this run (compared trim-insensitively against the
-    /// normalized set). A disabled tool is REJECTED before classification/execution.
+    /// True if `action` is disabled for this run. A disabled tool is REJECTED before
+    /// classification/execution (this is the check the LIVE gate chokepoint
+    /// [`gate_dispatch_with_policy_enforced`] consults).
+    ///
+    /// **Canonicalized on BOTH sides — closes the TS↔Rust alias fail-open.** The disabled-set
+    /// (`disabledToolNames`) may carry a TS-shaped name (`exec`) while the loop dispatches the
+    /// canonical Rust action (`run_command`); the reverse is equally possible. A trim-only
+    /// exact-match would MISS that, leaving an operator-disabled tool ENABLED (fail-open). So
+    /// the check is the UNION of two memberships, both strictly TIGHTENING:
+    ///   1. **Raw exact-match (raw first)** — the original trim-insensitive membership. Every
+    ///      name that matched before STILL matches, so no previously-disabled tool is loosened
+    ///      (including an operator-disabled name that has NO alias, e.g. a Rust-only action or
+    ///      an unmapped TS name — those keep matching by the raw branch).
+    ///   2. **Canonical-match** — if `action` canonicalizes to a Rust action
+    ///      ([`tool_name_map::canonical_rust_name`]), it is disabled when ANY disabled-set entry
+    ///      canonicalizes to the SAME canonical name. So disabling `exec` blocks a dispatched
+    ///      `run_command` (and vice-versa); disabling any alias of a tool disables ALL its
+    ///      aliases.
+    ///
+    /// An `action` that canonicalizes to nothing (foreign / unmapped) is decided by the raw
+    /// branch ALONE — it returns `false` here unless its exact raw form is in the set. This
+    /// method does NOT fail-closed on the unknown (returning `true` for any unmapped name would
+    /// be a NEW deny that the existing dispatch — `Unregistered` for an unknown tool — does not
+    /// emit, i.e. a behavior change beyond this fix); fail-closing the unknown is the distinct
+    /// job of the typed [`RunPolicy::resolve_tool`] ([`ToolGate::UnknownFailClosed`]).
     pub fn is_tool_disabled(&self, action: &str) -> bool {
-        self.disabled_tools.contains(action.trim())
+        let action = action.trim();
+        // (1) Raw exact-match first — strictly preserves every pre-fix disabled name.
+        if self.disabled_tools.contains(action) {
+            return true;
+        }
+        // (2) Canonical-match — a TS alias in the set disables the dispatched Rust action (and
+        //     vice-versa). Only reachable when `action` maps to a canonical Rust name.
+        match tool_name_map::canonical_rust_name(action) {
+            Some(canon) => self
+                .disabled_tools
+                .iter()
+                .any(|entry| tool_name_map::canonical_rust_name(entry) == Some(canon)),
+            None => false,
+        }
     }
 
     /// True if this run is constrained read-only (a mutating tool is blocked before
@@ -1540,10 +1576,12 @@ impl RunPolicy {
     /// Fail-closed, name-reconciled resolution of a tool action against this run's
     /// disabled-set (executeRun-replacement slice 1 — security pre-req).
     ///
-    /// Unlike the EXACT-string [`RunPolicy::is_tool_disabled`] (which the live S4 path
-    /// still uses, unchanged), this canonicalizes BOTH `action` and every disabled-set
-    /// entry through [`tool_name_map::canonical_rust_name`] FIRST, then compares on the
-    /// canonical Rust name. Two consequences, both strictly TIGHTENING:
+    /// [`RunPolicy::is_tool_disabled`] (the boolean the live S4 path uses) now ALSO
+    /// canonicalizes both sides, so it closes the SAME alias fail-open as this method; the
+    /// difference that remains is the UNKNOWN-name posture. This method canonicalizes BOTH
+    /// `action` and every disabled-set entry through [`tool_name_map::canonical_rust_name`]
+    /// FIRST, then compares on the canonical Rust name, and ADDITIONALLY fails CLOSED on a
+    /// name that canonicalizes to nothing. Two consequences, both strictly TIGHTENING:
     ///   - **Translation closes the fail-open hazard.** A TS-shaped disabled entry (`exec`)
     ///     canonicalizes to `run_command`, so resolving the dispatched `run_command`
     ///     returns [`ToolGate::DisabledByPolicy`]. With the raw exact-match, `exec` would
@@ -4186,6 +4224,72 @@ mod tests {
             exec.calls.get(),
             1,
             "the disabled tool must not reach the executor"
+        );
+    }
+
+    #[test]
+    fn gate_dispatch_blocks_a_ts_aliased_disabled_tool_at_the_live_chokepoint() {
+        // THE LIVE FAIL-OPEN, end-to-end through the gate chokepoint: the operator disables
+        // the TS-shaped name `read`; the loop dispatches the canonical Rust action `read_file`.
+        // Pre-fix the raw exact-match `is_tool_disabled("read_file")` was FALSE, so the
+        // operator-disabled tool would EXECUTE (fail-open). Post-fix the disabled entry `read`
+        // canonicalizes to `read_file`, so the gate Denies BEFORE the executor is reached.
+        let db = Db::open_hub(&temp_path("s4-disabled-tsalias")).unwrap();
+        let ws = temp_ws("s4-disabled-tsalias");
+        std::fs::write(ws.join("notes.md"), b"do-not-read").unwrap();
+        let fs = FsToolExecutor::new(ws.clone());
+        let exec = CountingExecutor {
+            inner: &fs,
+            calls: std::cell::Cell::new(0),
+        };
+        let approve = no_approval();
+        let raw = read_only_proposal(); // dispatches the Rust action `read_file`
+
+        // Disabled by the TS alias `read` (NOT the Rust name) — the cross-form case.
+        let policy = RunPolicy::new(None, ["read".to_string()], false);
+        let blocked = gate_dispatch_with_policy(
+            db.conn(),
+            &exec,
+            &raw,
+            AuthzMode::DenyAll,
+            &approve,
+            &policy,
+            1,
+        )
+        .unwrap();
+        if let GateDispatch::Denied(reason) = blocked {
+            // The reason carries the dispatched `raw.action` (`read_file`), matching the
+            // existing `tool_disabled_for_run:<action>` shape.
+            assert_eq!(reason, "tool_disabled_for_run:read_file");
+        } else {
+            panic!("a TS-aliased disabled tool must be Denied at the live gate (was fail-open)");
+        }
+        assert_eq!(
+            exec.calls.get(),
+            0,
+            "the TS-aliased disabled tool must NOT reach the executor"
+        );
+
+        // Vice-versa cross-form: disable the Rust name `read_file`, the same dispatch is blocked
+        // (this also held pre-fix, but proves the fix does not loosen the exact-name case).
+        let by_rust = RunPolicy::new(None, ["read_file".to_string()], false);
+        let blocked2 = gate_dispatch_with_policy(
+            db.conn(),
+            &exec,
+            &raw,
+            AuthzMode::DenyAll,
+            &approve,
+            &by_rust,
+            1,
+        )
+        .unwrap();
+        assert!(
+            matches!(blocked2, GateDispatch::Denied(r) if r == "tool_disabled_for_run:read_file")
+        );
+        assert_eq!(
+            exec.calls.get(),
+            0,
+            "exact-name disabled tool still blocked"
         );
     }
 
@@ -9144,21 +9248,22 @@ mod tool_registry_tests {
 
     #[test]
     fn resolve_tool_closes_the_ts_alias_fail_open_hazard() {
-        // THE HAZARD: an operator disables `exec` (TS name). The Rust loop dispatches
-        // `run_command`. The raw exact-match `is_tool_disabled("run_command")` is FALSE
-        // (fail-OPEN — the disabled tool would run). `resolve_tool` canonicalizes the
-        // disabled entry `exec`→`run_command`, so the dispatched `run_command` is correctly
-        // reported DisabledByPolicy.
+        // THE HAZARD (now CLOSED): an operator disables `exec` (TS name). The Rust loop
+        // dispatches `run_command`. A trim-only exact-match would report `run_command` as NOT
+        // disabled (fail-OPEN — the disabled tool would run). Both `resolve_tool` AND the live
+        // boolean `is_tool_disabled` now canonicalize the disabled entry `exec`→`run_command`,
+        // so the dispatched `run_command` is correctly reported disabled.
         let policy = RunPolicy::new(None, ["exec".to_string()], false);
         assert_eq!(
             policy.resolve_tool("run_command"),
             ToolGate::DisabledByPolicy,
             "a TS-shaped disabled entry `exec` MUST disable the dispatched `run_command`"
         );
-        // Proof the raw exact-match is the fail-open this slice closes (regression anchor):
+        // Regression anchor: the LIVE boolean the gate consults now ALSO catches the TS alias
+        // (this assertion encoded the OLD fail-open behavior; it now asserts the fix).
         assert!(
-            !policy.is_tool_disabled("run_command"),
-            "raw exact-match does NOT catch the TS alias — that is the hazard resolve_tool fixes"
+            policy.is_tool_disabled("run_command"),
+            "is_tool_disabled MUST now canonicalize: disabled `exec` blocks dispatched `run_command`"
         );
         // Every TS alias closes its hazard the same way.
         for (ts, rust) in [
@@ -9228,5 +9333,97 @@ mod tool_registry_tests {
             policy.resolve_tool("run_command"),
             ToolGate::DisabledByPolicy
         );
+    }
+
+    #[test]
+    fn is_tool_disabled_canonicalizes_both_sides_for_every_alias_pair() {
+        // The FIX, exhaustively over the alias map: disabling EITHER form of a tool disables
+        // ALL its forms when consulted via the LIVE boolean `is_tool_disabled` (the check the
+        // gate chokepoint runs). This is the now-CLOSED fail-open scenario + its vice-versa.
+        for pair in tool_name_map::TS_RUST_PAIRS {
+            // (a) Disable the TS alias → the dispatched Rust action is blocked.
+            let by_ts = RunPolicy::new(None, [pair.ts.to_string()], false);
+            assert!(
+                by_ts.is_tool_disabled(pair.rust),
+                "disabling TS `{}` must block dispatched Rust `{}`",
+                pair.ts,
+                pair.rust
+            );
+            // …and the TS form itself stays blocked (raw branch).
+            assert!(by_ts.is_tool_disabled(pair.ts));
+
+            // (b) Vice-versa: disable the Rust name → a query in the TS form is blocked.
+            let by_rust = RunPolicy::new(None, [pair.rust.to_string()], false);
+            assert!(
+                by_rust.is_tool_disabled(pair.ts),
+                "disabling Rust `{}` must block TS-form query `{}`",
+                pair.rust,
+                pair.ts
+            );
+            assert!(by_rust.is_tool_disabled(pair.rust));
+        }
+    }
+
+    #[test]
+    fn is_tool_disabled_regressions_non_disabled_allowed_exact_blocked_foreign_unmatched() {
+        // Regression: a non-disabled tool is NOT reported disabled; an exactly-named disabled
+        // tool is still blocked; a foreign name (canonicalizes to nothing, not in the set) is
+        // NOT blocked (is_tool_disabled does not fail-closed on the unknown — that is
+        // resolve_tool's job; this method only ever TIGHTENS the exact-match it had before).
+        let policy = RunPolicy::new(None, ["run_command".to_string()], false);
+        assert!(
+            policy.is_tool_disabled("run_command"),
+            "exact name still blocked"
+        );
+        assert!(
+            policy.is_tool_disabled("exec"),
+            "its alias is now blocked too"
+        );
+        assert!(
+            !policy.is_tool_disabled("read_file"),
+            "a different tool stays allowed"
+        );
+        assert!(
+            !policy.is_tool_disabled("read"),
+            "an unrelated alias stays allowed"
+        );
+        assert!(
+            !policy.is_tool_disabled("frobnicate"),
+            "a foreign name is not blocked"
+        );
+        // Empty policy disables nothing (pre-fix behavior preserved exactly).
+        let none = RunPolicy::default();
+        for (action, _d) in ToolRegistry::default().advertised() {
+            assert!(
+                !none.is_tool_disabled(action),
+                "empty set disables nothing: {action}"
+            );
+        }
+    }
+
+    #[test]
+    fn is_tool_disabled_rust_only_action_with_no_alias_still_matches_by_raw_branch() {
+        // No-degrade for the alias-less case: a Rust-only action (no TS alias) disabled by its
+        // exact name STILL blocks (the raw branch), and disabling it does not spuriously block
+        // any unrelated tool.
+        for action in tool_name_map::RUST_ONLY_ACTIONS {
+            let p = RunPolicy::new(None, [action.to_string()], false);
+            assert!(
+                p.is_tool_disabled(action),
+                "Rust-only `{action}` still blocked by raw match"
+            );
+            assert!(
+                !p.is_tool_disabled("run_command"),
+                "no spurious block of run_command"
+            );
+        }
+        // An UNMAPPED TS name (no Rust executor) disabled by its exact name still raw-matches,
+        // proving the raw branch covers names `canonical_rust_name` returns None for.
+        let p = RunPolicy::new(None, ["web_search".to_string()], false);
+        assert!(
+            p.is_tool_disabled("web_search"),
+            "unmapped TS name still blocked by raw match"
+        );
+        assert!(!p.is_tool_disabled("read_file"));
     }
 }

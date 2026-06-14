@@ -15,20 +15,22 @@
 //! | `edit`  | `edit_file`          | fs first-occurrence replace |
 //! | `exec`  | `run_command`        | shell |
 //!
-//! The dev bridge does NO translation. So today a TS-shaped name in `disabledToolNames`
-//! (e.g. `exec`) would NOT match the Rust action the loop actually dispatches
-//! (`run_command`) — [`crate::RunPolicy::is_tool_disabled`] is an exact-string check
-//! against the raw Rust action, so a disabled-set entry `exec` silently FAILS to disable
-//! `run_command`. That is a fail-OPEN: a tool the operator meant to disable stays enabled.
-//! This module + [`crate::RunPolicy::resolve_tool`] close that hazard BEFORE any routing
-//! slice consumes it.
+//! The dev bridge does NO translation. So a TS-shaped name in `disabledToolNames`
+//! (e.g. `exec`) does NOT, by itself, match the Rust action the loop actually dispatches
+//! (`run_command`). A trim-only exact-string check against the raw Rust action would let a
+//! disabled-set entry `exec` silently FAIL to disable `run_command` — a fail-OPEN: a tool
+//! the operator meant to disable stays enabled. [`crate::RunPolicy::is_tool_disabled`] (the
+//! check the LIVE gate chokepoint consults) now canonicalizes BOTH sides through this map to
+//! close that hazard; [`crate::RunPolicy::resolve_tool`] does the same and additionally fails
+//! CLOSED on an unknown name for the future routing slice.
 //!
 //! ## The two roles of this map
 //! 1. **Translation (the load-bearing one).** [`canonical_rust_name`] maps a TS alias OR a
-//!    Rust name to its canonical Rust action. The resolver canonicalizes BOTH the queried
-//!    action and every disabled-set entry, so a disabled-set `exec` correctly disables a
-//!    dispatched `run_command`. Without this the map would be mere documentation and the
-//!    hazard would stay open.
+//!    Rust name to its canonical Rust action. Both [`crate::RunPolicy::is_tool_disabled`] and
+//!    [`crate::RunPolicy::resolve_tool`] canonicalize BOTH the queried action and every
+//!    disabled-set entry, so a disabled-set `exec` correctly disables a dispatched
+//!    `run_command`. Without this the map would be mere documentation and the hazard would
+//!    stay open.
 //! 2. **Fail-closed on the unknown.** A name that is neither a known Rust action nor a
 //!    known TS alias returns `None` ⇒ the resolver yields [`crate::ToolGate::UnknownFailClosed`],
 //!    NEVER "allowed". A foreign / mistyped name can therefore never weaken the disabled
