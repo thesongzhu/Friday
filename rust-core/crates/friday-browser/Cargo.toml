@@ -1,8 +1,23 @@
 [package]
 name = "friday-browser"
-description = "Friday F11 net-new media capability — browser crate skeleton. Empty compiling stub, no logic/deps/executors yet (Hub-only, heavy-binary → stays OUT of friday-ffi's phone dependency graph)."
+description = "Friday F11 net-new media capability — browser engine crate. Ships the BrowserBackend DI trait + the only-default-constructible StubBrowserBackend + the action/param schema + the SSRF/allowed-origins URL guard + the targetId resolver + the snapshot element-id cache + dom-lite types + the artifact-path helper. The real CDP backend lives behind the DEFAULT-OFF `browser-live-deploy-go` cargo feature (B4-LIVE). Hub-only, heavy-binary → stays OUT of friday-ffi's phone dependency graph. The `impl ToolExecutor` wrapper is a friday-hub module, not part of this crate (no hub dep → no cycle)."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 publish = false
 rust-version.workspace = true
+
+[features]
+# DEFAULT-OFF live-CDP deploy-go spine (mirrors friday-hub's `os-actuation-deploy-go`
+# precedent). With the feature OFF (the default, dark posture) the ONLY constructible
+# backend is `StubBrowserBackend` — no network, no Chromium, nothing real can be linked.
+# With the feature ON the real chromiumoxide CDP backend is an explicit UNBUILT seam
+# (`compile_error!` in lib.rs) until B4-LIVE supplies it via a deliberate, reviewable
+# RECOMPILED DEPLOY-GO cutover. So the default binary can never link a real browser
+# actuator by accident. NO dependency is pulled in by this empty feature here.
+browser-live-deploy-go = []
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
