@@ -1342,6 +1342,125 @@ pub fn run_command_in_root_with_timeout(
     })
 }
 
+/// Recursively create a contained directory and any missing intermediate directories
+/// (`mkdir -p`), root-contained and symlink-escape-safe. **Idempotent**: an already-existing
+/// contained directory is `Ok(())`.
+///
+/// # Why this exists
+/// friday-fs has no `mkdir`: [`open_write_within_root`] / [`write_file_within_root`] both
+/// require the parent directory to already exist and explicitly do NOT create intermediates
+/// ("we do not `mkdir` intermediate directories"). A nested artifact path such as
+/// `.friday/artifacts/tts/tts-<ts>.<fmt>` therefore cannot be written by the existing
+/// primitives until its directory chain is created. This primitive creates that chain while
+/// preserving the SAME containment guarantees as every other primitive in this crate.
+///
+/// # Containment (reuses the shared [`resolve_within_root`] gate, top-down per component)
+/// We do NOT hand the full nested path to `std::fs::create_dir_all`: that lets the **kernel**
+/// resolve the parent portion, which would FOLLOW a pre-existing ancestor symlink and create
+/// directories *outside* the root (the exact escape this primitive must refuse). Instead we
+/// walk the candidate's components **top-down**, and for each prefix `a`, `a/b`, `a/b/c`, …:
+///   1. run it through the shared [`resolve_within_root`] (lexical gate + canonicalized-root +
+///      realpath-ancestor parent check) — so `..` / absolute / lexical-escape are rejected as
+///      [`FsError::Lexical`] exactly like every other primitive, and every parent component is
+///      realpath-contained under the real root;
+///   2. `std::fs::create_dir` (creating EXACTLY one new component beyond ancestors already
+///      proven to be real, contained directories);
+///   3. on `AlreadyExists`, a no-follow `lstat` ([`std::fs::symlink_metadata`]) classifies the
+///      existing inode — a **symlink** is refused ([`FsError::Symlink`]; we never descend
+///      *through* a symlink, even one pointing inside the root — same don't-follow posture as
+///      delete/move/write), a non-directory (regular file / FIFO / …) is refused
+///      ([`FsError::NotADirectory`]: "path is not a directory where one was required"), and an
+///      existing **real directory** is the idempotent case (continue).
+///
+/// Because the walk is top-down, by the time we resolve+create level N every ancestor already
+/// exists as a verified real directory, so [`resolve_within_root`]'s realpath-ancestor check
+/// FIRES for every component (the `parent_must_exist=false` ENOENT extension-point arm is only
+/// reached for the leaf's own not-yet-existing self, never to skip an ancestor check) and the
+/// kernel's resolution of each `create_dir`'s parent traverses only inodes we have already
+/// proven are real, contained directories — never a symlink. This is strictly stronger than the
+/// single-level primitives and refuses the ancestor-symlink-escape that the naive
+/// `create_dir_all` shortcut would silently follow.
+///
+/// # Errors
+/// - [`FsError::Lexical`] — absolute candidate, a `..` traversal segment, a `.` segment, an
+///   empty candidate, or a lexical escape (rejected by the shared lexical gate, identical to
+///   the other primitives — naming the root itself is refused).
+/// - [`FsError::Symlink`] — a component along the path already exists as a symlink (refused,
+///   not followed — even an in-root-pointing one, matching the crate's don't-clobber posture).
+/// - [`FsError::NotADirectory`] — a component already exists as a regular file / FIFO / device,
+///   i.e. a file-at-path where a directory is required.
+/// - [`FsError::Escape`] — a component's realpath-resolved parent lies outside the real root
+///   (ancestor-directory symlink escape), surfaced by the shared [`resolve_within_root`].
+/// - [`FsError::Io`] — any other underlying `create_dir`/`lstat` failure (e.g. `EACCES`).
+///
+/// # Residual (identical posture to the rest of the crate)
+/// The ancestor-component TOCTOU window documented on [`open_read_within_root`] applies equally:
+/// an *ancestor* directory swapped for an outside-pointing symlink in the
+/// realpath-check→`create_dir` window is the same path-based race the other primitives carry;
+/// closing it needs per-component `mkdirat`/dir-fd-relative ops. The **final** component of each
+/// level is created with a single `create_dir` (no follow of a final symlink — `create_dir`
+/// fails `EEXIST` on an existing name, and we then `lstat`-refuse a symlink). Documented, not
+/// claimed defended, exactly as for the read/write/list paths.
+pub fn create_dir_all_within_root(root: &Path, candidate: &str) -> Result<(), FsError> {
+    // Lexical gate up front (so `""`, `.`/`..` segments, absolute, lexical-escape reject as
+    // FsError::Lexical exactly like the other primitives, before any syscall side effect — a
+    // lexically-bad candidate must NOT create its leading components). This is the EXACT step-1
+    // mirror of resolve_within_root, kept lexical-ONLY here: we deliberately do NOT run the full
+    // resolve on the whole nested candidate, because its parent legitimately does not exist yet
+    // (that is the point of mkdir -p) — and a not-yet-existing OR file-at-ancestor parent would
+    // otherwise surface as a misleading NotFound from the realpath-ancestor check. The per-prefix
+    // loop below runs the FULL resolve (incl. realpath-ancestor containment) for each level once
+    // its parent really exists, so containment is still enforced component-by-component.
+    let root_str = root.to_str().ok_or(FsError::NonUtf8Root)?;
+    if candidate.is_empty() || candidate.split(['/', '\\']).any(|seg| seg == ".") {
+        return Err(FsError::Lexical(PathError::Traversal));
+    }
+    contained(root_str, candidate).map_err(FsError::Lexical)?;
+
+    // Walk the candidate's components top-down, building each prefix and creating exactly one
+    // new directory level at a time. Splitting on both separators mirrors resolve_within_root's
+    // lexical gate (the candidate is already proven `..`-free / non-absolute above), and we skip
+    // empty segments so a trailing/duplicate separator (`a//b`, `a/b/`) is harmless.
+    let mut prefix = String::new();
+    for segment in candidate.split(['/', '\\']) {
+        if segment.is_empty() {
+            continue;
+        }
+        if prefix.is_empty() {
+            prefix.push_str(segment);
+        } else {
+            prefix.push('/');
+            prefix.push_str(segment);
+        }
+
+        // Re-resolve THIS prefix: its parent now exists (we created/verified it on the prior
+        // iteration, or it is the real root for the first level), so the realpath-ancestor
+        // containment check fires for every component — no ancestor symlink can be traversed.
+        let resolved = resolve_within_root(root, &prefix, /* parent_must_exist */ false)?;
+
+        match std::fs::create_dir(&resolved.full) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Idempotent ONLY for a real, contained directory. A no-follow lstat classifies
+                // the existing inode so we never descend THROUGH a symlink or clobber a file.
+                let meta = std::fs::symlink_metadata(&resolved.full).map_err(classify_open_err)?;
+                let ft = meta.file_type();
+                if ft.is_symlink() {
+                    return Err(FsError::Symlink);
+                }
+                if !ft.is_dir() {
+                    // A regular file / FIFO / device sitting where a directory is required.
+                    return Err(FsError::NotADirectory);
+                }
+                // Existing real directory → idempotent, descend into the next level.
+            }
+            Err(e) => return Err(classify_open_err(e)),
+        }
+    }
+
+    Ok(())
+}
+
 /// Truncate `s` to at most `max` bytes, backing up to the nearest UTF-8 char boundary so the
 /// result is always valid UTF-8 (never splits a multibyte char).
 fn truncate_to_char_boundary(s: &str, max: usize) -> String {
@@ -1952,6 +2071,152 @@ mod tests {
                 .unwrap_or(0)
         ));
         let err = run_command_in_root(&missing, "echo hi").unwrap_err();
+        assert!(matches!(err, FsError::NotFound), "got {err:?}");
+    }
+
+    // ── create_dir_all_within_root: root-contained mkdir -p (TTS-1) ──────────────────────────
+
+    /// Happy path: creates a NESTED chain whose every level was absent (mirrors the TTS
+    /// `.friday/artifacts/tts` artifact directory), and each level is a real directory.
+    #[test]
+    fn create_dir_all_creates_nested_chain() {
+        let root = TempDir::new();
+        create_dir_all_within_root(root.path(), ".friday/artifacts/tts").unwrap();
+        assert!(root.path().join(".friday").is_dir());
+        assert!(root.path().join(".friday/artifacts").is_dir());
+        assert!(root.path().join(".friday/artifacts/tts").is_dir());
+        // The whole chain stayed UNDER the root (no escape): the deepest real path is the
+        // canonical root joined with the candidate.
+        let deepest = std::fs::canonicalize(root.path().join(".friday/artifacts/tts")).unwrap();
+        assert!(deepest.starts_with(std::fs::canonicalize(root.path()).unwrap()));
+    }
+
+    /// Idempotent: re-creating an already-existing contained directory is `Ok(())`, and a call
+    /// where only the leading components exist creates just the missing tail.
+    #[test]
+    fn create_dir_all_is_idempotent_and_fills_missing_tail() {
+        let root = TempDir::new();
+        // First call creates a/b.
+        create_dir_all_within_root(root.path(), "a/b").unwrap();
+        // Re-call the SAME path — idempotent, no error.
+        create_dir_all_within_root(root.path(), "a/b").unwrap();
+        assert!(root.path().join("a/b").is_dir());
+        // Partial-existing: `a` (and now a/b) exist; create a/b/c/d — only c/d are new.
+        create_dir_all_within_root(root.path(), "a/b/c/d").unwrap();
+        assert!(root.path().join("a/b/c/d").is_dir());
+    }
+
+    /// Lexical rejection: an absolute candidate, a `..` traversal segment, a `.` segment, and an
+    /// empty candidate all fail closed as `FsError::Lexical` BEFORE any directory is created —
+    /// identical to every other primitive in this crate (no `mkdir` outside the root).
+    #[test]
+    fn create_dir_all_refuses_lexical_escapes() {
+        let root = TempDir::new();
+        assert!(matches!(
+            create_dir_all_within_root(root.path(), "/etc/evil").unwrap_err(),
+            FsError::Lexical(_)
+        ));
+        assert!(matches!(
+            create_dir_all_within_root(root.path(), "../escape").unwrap_err(),
+            FsError::Lexical(_)
+        ));
+        assert!(matches!(
+            create_dir_all_within_root(root.path(), "a/../../escape").unwrap_err(),
+            FsError::Lexical(_)
+        ));
+        assert!(matches!(
+            create_dir_all_within_root(root.path(), "").unwrap_err(),
+            FsError::Lexical(_)
+        ));
+        // A `..` traversal must NOT have created the leading component as a side effect.
+        assert!(!root.path().join("a").exists());
+    }
+
+    /// A regular FILE sitting at an intermediate component is refused (`NotADirectory`) and the
+    /// file is left intact — we never clobber a file with a directory.
+    #[test]
+    fn create_dir_all_refuses_file_at_intermediate() {
+        let root = TempDir::new();
+        write_file(&root.path().join("a"), "I AM A FILE");
+        let err = create_dir_all_within_root(root.path(), "a/b/c").unwrap_err();
+        assert!(
+            matches!(err, FsError::NotADirectory),
+            "a file at an intermediate component must be refused, got {err:?}"
+        );
+        // The file is untouched (not turned into / clobbered by a directory).
+        assert!(root.path().join("a").is_file());
+        let mut s = String::new();
+        File::open(root.path().join("a"))
+            .unwrap()
+            .read_to_string(&mut s)
+            .unwrap();
+        assert_eq!(s, "I AM A FILE");
+        assert!(!root.path().join("a/b").exists());
+    }
+
+    /// THE load-bearing escape test (the one the naive `std::fs::create_dir_all` shortcut FAILS):
+    /// a pre-existing ANCESTOR symlink that points OUTSIDE the root must be refused, and the
+    /// outside target must gain NO new directories. Proves the symlink-escape is actually closed
+    /// (a real on-disk symlink + a negative assertion on the outside dir), mirroring the crate's
+    /// "the escaped target is never written" discipline.
+    #[test]
+    fn create_dir_all_refuses_ancestor_symlink_escape() {
+        let root = TempDir::new();
+        let outside = TempDir::new();
+        // root/a is a REAL symlink to a directory OUTSIDE the root.
+        symlink(outside.path(), root.path().join("a")).expect("create ancestor symlink");
+        assert!(std::fs::symlink_metadata(root.path().join("a"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+
+        let err = create_dir_all_within_root(root.path(), "a/b/c").unwrap_err();
+        assert!(
+            matches!(err, FsError::Symlink),
+            "an ancestor symlink must be refused (never followed), got {err:?}"
+        );
+        // The escape is REALLY closed: the outside directory gained no b/c — we did NOT
+        // create directories through the symlink (the create_dir_all shortcut would have).
+        assert!(
+            !outside.path().join("b").exists(),
+            "no directory may be created through the ancestor symlink (escape!)"
+        );
+        assert!(!outside.path().join("b/c").exists());
+    }
+
+    /// A final-component symlink (even one pointing INSIDE the root) at the target name is
+    /// refused, not followed — same don't-clobber posture as delete/move/write.
+    #[test]
+    fn create_dir_all_refuses_final_component_symlink() {
+        let root = TempDir::new();
+        // A real in-root directory, and a symlink `link` -> that directory.
+        std::fs::create_dir(root.path().join("realdir")).unwrap();
+        symlink(root.path().join("realdir"), root.path().join("link")).unwrap();
+        let err = create_dir_all_within_root(root.path(), "link").unwrap_err();
+        assert!(
+            matches!(err, FsError::Symlink),
+            "a symlink at the target name must be refused, got {err:?}"
+        );
+        // The symlink is untouched and still a symlink (never replaced/followed).
+        assert!(std::fs::symlink_metadata(root.path().join("link"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+
+    /// A non-existent root surfaces as `NotFound` (canonicalize in the shared gate), not a
+    /// silent create — parity with the other primitives.
+    #[test]
+    fn create_dir_all_missing_root_is_not_found() {
+        let missing = std::env::temp_dir().join(format!(
+            "friday-fs-mkdir-no-root-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let err = create_dir_all_within_root(&missing, "a/b").unwrap_err();
         assert!(matches!(err, FsError::NotFound), "got {err:?}");
     }
 }
