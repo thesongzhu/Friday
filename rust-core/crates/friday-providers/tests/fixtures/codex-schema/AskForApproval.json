@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AskForApproval",
+  "comment": "Extracted from v2/TurnStartParams.json definitions for self-contained future-stability. String variants only are used by Friday.",
+  "definition": {
+    "oneOf": [
+      {
+        "type": "string",
+        "enum": [
+          "untrusted",
+          "on-failure",
+          "on-request",
+          "never"
+        ]
+      },
+      {
+        "type": "object",
+        "required": [
+          "granular"
+        ],
+        "properties": {
+          "granular": {
+            "type": "object",
+            "required": [
+              "mcp_elicitations",
+              "rules",
+              "sandbox_approval"
+            ],
+            "properties": {
+              "mcp_elicitations": {
+                "type": "boolean"
+              },
+              "request_permissions": {
+                "default": false,
+                "type": "boolean"
+              },
+              "rules": {
+                "type": "boolean"
+              },
+              "sandbox_approval": {
+                "type": "boolean"
+              },
+              "skill_approval": {
+                "default": false,
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "additionalProperties": false,
+        "title": "GranularAskForApproval"
+      }
+    ]
+  }
+}
