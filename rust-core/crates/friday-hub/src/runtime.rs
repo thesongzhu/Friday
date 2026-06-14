@@ -952,10 +952,28 @@ impl<T: Transport> HubRuntime<T> {
             user_id: Some(caller.principal().to_string()),
             ..SessionOwner::default()
         };
+        // Bind the owner BEFORE recall so recall's session-derived namespace matches the
+        // namespace post-run extraction will store under — even on the FIRST run (recall here
+        // precedes `run_session_loop`'s own `ensure_session`). Idempotent + COALESCE: a
+        // bound owner is never clobbered. A bind storage error is a SAFE FAILURE (NoAnswer).
+        if friday_storage::agent_session::ensure_session_with_owner(
+            self.db.conn(),
+            session_id,
+            &owner,
+            now_ms,
+        )
+        .is_err()
+        {
+            return AuthedAnswer::NoAnswer {
+                run_id: run_id.to_string(),
+            };
+        }
 
-        // The owner's confirmed-memory recall preamble (same source as `run_task`). A recall
-        // failure is a SAFE FAILURE (body-free NoAnswer) — never a panic.
-        let recall_preamble = match self.recall_preamble(run_id, now_ms) {
+        // The owner's confirmed-memory recall preamble — keyed on the SESSION-DERIVED
+        // composite namespace (ALIGNED with how post-run extraction STORES candidates), NOT
+        // the raw `--owner`. A recall failure is a SAFE FAILURE (body-free NoAnswer); an
+        // unresolvable namespace recalls NOTHING (empty preamble, never an error).
+        let recall_preamble = match self.recall_preamble_for_session(session_id, run_id, now_ms) {
             Ok(p) => p,
             Err(_) => {
                 return AuthedAnswer::NoAnswer {
@@ -1094,9 +1112,29 @@ impl<T: Transport> HubRuntime<T> {
             user_id: Some(caller.principal().to_string()),
             ..SessionOwner::default()
         };
+        // Bind the owner BEFORE recall so recall's session-derived namespace matches the
+        // namespace post-run extraction stores under, even on the first run (idempotent +
+        // COALESCE; a bound owner is never clobbered). A bind error is a SAFE FAILURE.
+        if friday_storage::agent_session::ensure_session_with_owner(
+            self.db.conn(),
+            session_id,
+            &owner,
+            now_ms,
+        )
+        .is_err()
+        {
+            return Ok((
+                selection,
+                AuthedAnswer::NoAnswer {
+                    run_id: run_id.to_string(),
+                },
+            ));
+        }
 
-        // The owner's confirmed-memory recall preamble (same source as the unpinned entry).
-        let recall_preamble = match self.recall_preamble(run_id, now_ms) {
+        // The owner's confirmed-memory recall preamble — keyed on the SESSION-DERIVED
+        // composite namespace (ALIGNED with how post-run extraction STORES candidates), same
+        // source as the unpinned sessioned entry. Unresolvable namespace ⇒ empty recall.
+        let recall_preamble = match self.recall_preamble_for_session(session_id, run_id, now_ms) {
             Ok(p) => p,
             Err(_) => {
                 return Ok((
@@ -1587,6 +1625,85 @@ impl<T: Transport> HubRuntime<T> {
         let preamble = crate::recall_preamble_for(
             &self.db,
             self.policy.principal_id(),
+            &format!("{run_id}:memory-recall"),
+            now_ms,
+        )?;
+        Ok(preamble)
+    }
+
+    /// SESSION-SCOPED memory-recall preamble — the recall axis ALIGNED with how the
+    /// sessioned loop's post-run extraction STORES candidates. Closes the storage↔recall
+    /// key MISALIGNMENT: [`crate::memory_extraction::extract_inline`] keys a candidate's
+    /// `principal_id` on the COMPOSITE memory namespace
+    /// (`tenant.<account>.channel.<channel>.user.<user>.shared`) DERIVED from the session
+    /// OWNER, so recall must read under that SAME composite namespace — NOT the raw
+    /// `--owner` string [`Self::recall_preamble`] uses. Before this, a sessioned run stored
+    /// under the composite namespace but recalled under the raw owner ⇒ a confirmed
+    /// candidate was NEVER recalled.
+    ///
+    /// It derives the namespace from the EXACT same inputs extraction uses, so the two keys
+    /// are byte-aligned for every session shape (direct userId, DM-chatId fallback, subagent
+    /// parent-walk, non-default account/channel):
+    ///   1. [`friday_storage::agent_session::load_session_owner`] — the session's owner axes.
+    ///   2. [`crate::session_namespace::resolve_effective_user_id`] — the TS
+    ///      `resolveEffectiveUserId` port (direct → DM-chatId → subagent parent-walk).
+    ///   3. [`crate::session_namespace::resolve_session_memory_namespace_candidates`] — the
+    ///      ORDERED dual-read namespace list (`[hardened, legacy]` under F5.5, or a single
+    ///      legacy namespace by default) → [`crate::recall_preamble_for_principals`] →
+    ///      [`friday_storage::memory::recall_confirmed_multi`].
+    ///
+    /// NO CROSS-OWNER LEAK (the binding constraint): every candidate namespace encodes the
+    /// session's OWN user/principal segment and the per-principal SQL stays exact-match, so a
+    /// different owner's session can never recall this owner's rows. The list is the SAME
+    /// session's dual-read candidates, NEVER a cross-owner set, and there is NO fallback to
+    /// the raw `--owner` principal (composite-or-nothing — a raw fallback would be the leak).
+    ///
+    /// FAIL-CLOSED, ASYMMETRIC WITH EXTRACTION: an UNRESOLVABLE namespace (no derivable
+    /// userId) or an ABSENT session owner ⇒ EMPTY preamble (recall NOTHING), NOT an error.
+    /// This is deliberately asymmetric with extraction (which Errs fail-closed — storing
+    /// under a wrong scope is dangerous): reading nothing is the safe fail-closed shape, and
+    /// the sessioned caller maps a recall `Err` to `NoAnswer`, so erroring here would KILL
+    /// runs that currently proceed (a regression). A real storage error (locked/corrupt DB)
+    /// from `load_session_owner` / `recall_confirmed_multi` still PROPAGATES (never swallowed
+    /// as "no owner").
+    fn recall_preamble_for_session(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        now_ms: i64,
+    ) -> Result<String, RoutedLoopError> {
+        // Load the session's owner axes (same source extraction uses). An absent session row
+        // ⇒ no owner ⇒ unresolvable ⇒ empty recall. A real storage error PROPAGATES.
+        let owner =
+            match friday_storage::agent_session::load_session_owner(self.db.conn(), session_id)? {
+                Some(owner) => owner,
+                // No session row yet ⇒ nothing stored under any namespace ⇒ recall nothing.
+                None => return Ok(String::new()),
+            };
+        // Resolve the EFFECTIVE userId (direct → DM-chatId → subagent parent-walk) exactly as
+        // extraction does. A `lookup` storage error PROPAGATES; an underivable userId yields
+        // `None`, which the candidates resolver below turns into the unresolvable (empty) case.
+        let effective_user_id =
+            crate::session_namespace::resolve_effective_user_id(&owner, &mut |key: &str| {
+                friday_storage::agent_session::load_session_owner(self.db.conn(), key)
+            })?;
+        // The ORDERED dual-read candidate namespaces (the SAME resolver inputs extraction's
+        // write keyed on). An UNRESOLVABLE namespace (no userId) ⇒ EMPTY preamble, NOT an Err
+        // — recall reads nothing, never the raw owner, never a broad match (fail-closed).
+        let candidates = match crate::session_namespace::resolve_session_memory_namespace_candidates(
+            owner.account_id.as_deref(),
+            owner.channel.as_deref(),
+            effective_user_id.as_deref(),
+        ) {
+            Ok(c) => c,
+            Err(crate::session_namespace::NamespaceError::UnresolvableNoUserId) => {
+                return Ok(String::new())
+            }
+        };
+        let principal_refs: Vec<&str> = candidates.iter().map(String::as_str).collect();
+        let preamble = crate::recall_preamble_for_principals(
+            &self.db,
+            &principal_refs,
             &format!("{run_id}:memory-recall"),
             now_ms,
         )?;
@@ -5449,6 +5566,195 @@ mod tests {
             .unwrap();
         assert!(action.contains("recalled=2") && action.contains("injected=1"));
         assert!(action.contains("gated_sensitive=1"));
+    }
+
+    // ---- session-scoped recall ↔ extraction namespace ALIGNMENT (the fix) ----
+    //
+    // The defect: the sessioned loop STORES a candidate under the SESSION-DERIVED composite
+    // namespace (`tenant.<account>.channel.<channel>.user.<user>.shared`) but the old
+    // `recall_preamble` read under the RAW `--owner` string — so a confirmed candidate was
+    // NEVER recalled. `recall_preamble_for_session` derives the SAME composite namespace from
+    // the session owner, so storage and recall keys are byte-aligned. These tests exercise
+    // that private method directly (the runtime half of the storage-layer round-trip already
+    // proven in `memory_extraction::extract_persists_candidates_and_recall_reads_them_back…`).
+
+    /// The composite namespace a session owned by `user` (with the sessioned loop's bound
+    /// axes: account/channel UNSET → "default"/"unknown") resolves to. This is EXACTLY what
+    /// `extract_inline` keys `principal_id` on for such a session — so seeding a candidate
+    /// here byte-matches what the live extraction would store.
+    fn sessioned_ns(user: &str) -> String {
+        crate::session_namespace::resolve_session_memory_namespace(None, None, Some(user)).unwrap()
+    }
+
+    /// Bind a session to owner `user` (the sessioned loop's `SessionOwner { user_id: .. }`
+    /// shape: account/channel unset), exactly as `run_session_task_*` does before recall.
+    fn bind_session_owner(rt: &HubRuntime<CaptureTransport>, session_id: &str, user: &str) {
+        friday_storage::agent_session::ensure_session_with_owner(
+            rt.db().conn(),
+            session_id,
+            &SessionOwner {
+                user_id: Some(user.to_string()),
+                ..SessionOwner::default()
+            },
+            1,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn session_recall_round_trips_a_confirmed_candidate_under_the_composite_namespace() {
+        // ROUND-TRIP: a candidate stored under owner O's SESSION-DERIVED composite namespace
+        // (as extraction stores it) → confirmed → `recall_preamble_for_session` for O's
+        // session surfaces it. Before the fix, recall keyed on the raw "alice" and this
+        // composite-namespace row was never matched (empty preamble).
+        let (rt, _ws, _bodies) = recall_runtime("session-recall-rt", Some("alice"));
+        bind_session_owner(&rt, "sess-rt", "alice");
+        // Seed a CONFIRMED candidate under the composite namespace (NOT the raw "alice").
+        let ns = sessioned_ns("alice");
+        assert_eq!(ns, "tenant.default.channel.unknown.user.alice.shared");
+        seed_confirmed(&rt, "m-rt", "MEMMARKER-alice-composite", &ns, false);
+
+        let preamble = rt
+            .recall_preamble_for_session("sess-rt", "run-rt", 100)
+            .expect("session recall composes");
+        assert!(
+            preamble.contains("MEMMARKER-alice-composite"),
+            "the confirmed candidate stored under the composite namespace must be recalled \
+             by the session-scoped recall, got preamble: {preamble:?}"
+        );
+
+        // CONTROL: the OLD raw-keyed recall would NOT have found it (proves the row is keyed
+        // on the composite namespace, not the raw owner — the misalignment the fix closes).
+        let raw_preamble = rt
+            .recall_preamble("run-rt-raw", 100)
+            .expect("raw recall composes");
+        assert!(
+            !raw_preamble.contains("MEMMARKER-alice-composite"),
+            "the raw-owner recall must NOT match a composite-namespace row (the defect)"
+        );
+    }
+
+    #[test]
+    fn session_recall_is_owner_isolated_no_cross_owner_leak() {
+        // NO-LEAK (the CRITICAL guard): a confirmed candidate under owner O's composite
+        // namespace is NEVER recalled for a DIFFERENT owner O2's session. The composite
+        // namespace encodes O's user segment, and the per-principal SQL stays exact-match, so
+        // O2's session-derived namespace can never match O's rows.
+        let (rt, _ws, _bodies) = recall_runtime("session-recall-noleak", Some("alice"));
+        // O = alice, O2 = mallory — distinct principals/users.
+        bind_session_owner(&rt, "sess-O", "alice");
+        bind_session_owner(&rt, "sess-O2", "mallory");
+        let ns_o = sessioned_ns("alice");
+        let ns_o2 = sessioned_ns("mallory");
+        assert_ne!(ns_o, ns_o2, "distinct owners derive distinct namespaces");
+        // Store + confirm a candidate ONLY under O's namespace.
+        seed_confirmed(&rt, "m-O", "MEMMARKER-alice-private-O", &ns_o, false);
+
+        // O recalls it (positive control, so the negative below is non-vacuous)...
+        let preamble_o = rt
+            .recall_preamble_for_session("sess-O", "run-O", 100)
+            .expect("O's session recall composes");
+        assert!(
+            preamble_o.contains("MEMMARKER-alice-private-O"),
+            "O must recall its own confirmed candidate"
+        );
+
+        // ...but O2's session recalls NOTHING (the load-bearing assertion: NO cross-owner leak).
+        let preamble_o2 = rt
+            .recall_preamble_for_session("sess-O2", "run-O2", 100)
+            .expect("O2's session recall composes");
+        assert!(
+            preamble_o2.is_empty(),
+            "CROSS-OWNER LEAK: O2's session recalled O's confirmed memory: {preamble_o2:?}"
+        );
+        assert!(
+            !preamble_o2.contains("MEMMARKER-alice-private-O"),
+            "CROSS-OWNER LEAK: O's private marker reached O2's preamble"
+        );
+    }
+
+    #[test]
+    fn session_recall_fails_closed_on_unresolvable_namespace_returns_empty_not_err() {
+        // FAIL-CLOSED: a session whose owner has NO derivable userId (unresolvable namespace)
+        // recalls NOTHING — an EMPTY preamble, NEVER an Err and NEVER a broad/raw match. (An
+        // Err here would map to NoAnswer in the sessioned caller, killing runs that should
+        // proceed — the asymmetry-with-extraction the fix deliberately preserves.)
+        let (rt, _ws, _bodies) = recall_runtime("session-recall-failclosed", Some("alice"));
+        // Bind a session with account/channel but NO user_id (and no DM/subagent fallback) →
+        // the namespace is unresolvable.
+        friday_storage::agent_session::ensure_session_with_owner(
+            rt.db().conn(),
+            "sess-nouser",
+            &SessionOwner {
+                account_id: Some("default".into()),
+                channel: Some("discord".into()),
+                user_id: None,
+                ..SessionOwner::default()
+            },
+            1,
+        )
+        .unwrap();
+        // Even if a row happens to exist under SOME composite namespace, an unresolvable
+        // session must not match it.
+        seed_confirmed(
+            &rt,
+            "m-x",
+            "MEMMARKER-should-not-leak",
+            &sessioned_ns("alice"),
+            false,
+        );
+        let preamble = rt
+            .recall_preamble_for_session("sess-nouser", "run-nouser", 100)
+            .expect("unresolvable namespace recalls empty, never errors");
+        assert!(
+            preamble.is_empty(),
+            "an unresolvable-namespace session must recall NOTHING (fail-closed): {preamble:?}"
+        );
+
+        // An ABSENT session row (no owner at all) is likewise empty, not an error.
+        let absent = rt
+            .recall_preamble_for_session("no-such-session", "run-absent", 100)
+            .expect("absent session recalls empty, never errors");
+        assert!(absent.is_empty(), "an absent session recalls nothing");
+    }
+
+    #[test]
+    fn session_recall_derives_namespace_via_dm_chat_id_fallback() {
+        // The recall namespace tracks extraction's DM-chatId fallback: a `chat_kind == "dm"`
+        // conversation with NO user_id keys on the CHAT-ID-derived namespace (TS parts.chatId)
+        // — so a candidate stored under that namespace is recalled, proving recall uses the
+        // SAME `resolve_effective_user_id` path extraction uses (not a raw-principal shortcut).
+        let (rt, _ws, _bodies) = recall_runtime("session-recall-dm", Some("ignored-owner"));
+        friday_storage::agent_session::ensure_session_with_owner(
+            rt.db().conn(),
+            "dm-sess",
+            &SessionOwner {
+                account_id: Some("default".into()),
+                channel: Some("telegram".into()),
+                user_id: None,
+                chat_kind: Some("dm".into()),
+                chat_id: Some("dm-user-7".into()),
+                session_kind: Some("conversation".into()),
+                ..SessionOwner::default()
+            },
+            1,
+        )
+        .unwrap();
+        // The namespace extraction would store under (chat-id as the user segment).
+        let ns = crate::session_namespace::resolve_session_memory_namespace(
+            Some("default"),
+            Some("telegram"),
+            Some("dm-user-7"),
+        )
+        .unwrap();
+        seed_confirmed(&rt, "m-dm", "MEMMARKER-dm-derived", &ns, false);
+        let preamble = rt
+            .recall_preamble_for_session("dm-sess", "run-dm", 100)
+            .expect("dm session recall composes");
+        assert!(
+            preamble.contains("MEMMARKER-dm-derived"),
+            "recall must derive the DM-chatId namespace (same as extraction), got: {preamble:?}"
+        );
     }
 
     // ---- routing honesty (dispatchable_routes) ------------------------------

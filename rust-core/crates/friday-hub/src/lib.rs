@@ -1743,16 +1743,55 @@ pub fn record_friday_ask<T: friday_deepseek::Transport>(
 /// `friday_ask` surface apply the SAME gate (no bypass). When anything was recalled, a
 /// `memory.recalled` audit event (`receipt_audit_id`) records the recalled/injected/gated
 /// counts + injected ids. `None` principal ⇒ empty preamble, no recall.
+///
+/// This is the SINGLE-principal entrypoint (the sessionless `run_task` / `friday_ask`
+/// surfaces, whose recall axis is the configured `--owner` principal). It delegates to the
+/// principal-LIST variant [`recall_preamble_for_principals`] with the one principal — the
+/// composition is shared, and a single-element list is byte-identical to the prior body
+/// (the dedup-union is a no-op on one principal).
 pub fn recall_preamble_for(
     db: &Db,
     principal: Option<&str>,
     receipt_audit_id: &str,
     now_ms: i64,
 ) -> Result<String, StorageError> {
-    let Some(principal) = principal else {
+    match principal {
+        Some(p) => recall_preamble_for_principals(db, &[p], receipt_audit_id, now_ms),
+        None => Ok(String::new()),
+    }
+}
+
+/// Build the memory-recall prompt preamble for an ORDERED list of principals — the recall
+/// composition keyed on the SESSION-DERIVED composite memory namespace(s) (the
+/// `session_namespace::resolve_session_memory_namespace_candidates` output: `[hardened,
+/// legacy]` under the F5.5 dual-read, or a single legacy namespace by default). This closes
+/// the storage↔recall key MISALIGNMENT for the sessioned loop: extraction
+/// (`memory_extraction::extract_inline`) stores a candidate's `principal_id` as the composite
+/// namespace derived from the session OWNER, so recall MUST read under the SAME composite
+/// namespace — not the raw `--owner` string — or a confirmed candidate is never recalled.
+///
+/// OWNER-SCOPING (the binding constraint — NO CROSS-OWNER LEAK): the union is built by
+/// [`friday_storage::memory::recall_confirmed_multi`], whose per-principal SQL stays
+/// `principal_id = ? ` EXACT-MATCH; the composite namespace each entry encodes includes the
+/// `user`/`principal` segment, so it can NEVER widen to another owner's rows. The list is the
+/// per-session dual-read candidates (same user/account/channel), NOT a cross-owner set.
+///
+/// The receipt actor is the FIRST principal in the list (the canonical/hardened write target).
+/// An EMPTY list ⇒ empty preamble, no recall — the fail-closed shape the sessioned caller maps
+/// an unresolvable namespace to (recall reads NOTHING rather than erroring or matching broadly).
+pub fn recall_preamble_for_principals(
+    db: &Db,
+    principals: &[&str],
+    receipt_audit_id: &str,
+    now_ms: i64,
+) -> Result<String, StorageError> {
+    let Some(receipt_actor) = principals.first() else {
         return Ok(String::new());
     };
-    let rows = friday_storage::memory::recall_confirmed(db.conn(), principal)?;
+    // DUAL-READ union over the per-session candidate namespaces. Each `recall_confirmed`
+    // inside stays single-principal exact-match (no widening); the union + dedup happen in
+    // memory, so this can never read another owner's rows.
+    let rows = friday_storage::memory::recall_confirmed_multi(db.conn(), principals)?;
     let ranked = cognition::rank_recall(
         &rows,
         now_ms,
@@ -1769,7 +1808,7 @@ pub fn recall_preamble_for(
         friday_storage::audit::append_audit(
             &tx,
             receipt_audit_id,
-            principal,
+            receipt_actor,
             &format!(
                 "memory.recalled:recalled={} injected={} gated_sensitive={}",
                 receipt.recalled, receipt.injected, receipt.gated_sensitive
