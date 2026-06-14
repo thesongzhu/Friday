@@ -148,6 +148,37 @@ export interface FridayRustHubAgentRunSealedRequest {
    * `sessionKey` additive-optional discipline.
    */
   readonly constraints?: FridayRustHubAgentRunConstraints;
+  /**
+   * (NS45-PR1 / M-4) The FIRST-CLASS Mission handle this run participates in. A real handle
+   * `{fridayConversationId, missionId, workItemId}` (from the NS-5 `MissionIntakeResult`) is
+   * emitted on the wire as the snake_case `mission_context` block, which lets the Rust dispatch
+   * resolve the Mission via `MissionContextLookup::by_mission_work_item` and route through the
+   * mission-bound run path (`run_authed_agent_loop_mission_bound`). ABSENT (`undefined`) ⇒ the
+   * `mission_context` field is OMITTED from the wire entirely, so the envelope is BYTE-IDENTICAL
+   * to the pre-NS45 request and routes through the UNCHANGED unbound dispatch path. DARK + gated:
+   * the server walks the bound path only behind its default-off `FRIDAY_MISSION_BOUND_RUN` flag,
+   * so emitting the handle changes no live behavior until that flag is on. **SECURITY: this only
+   * SELECTS which Mission/WorkItem the run binds to; it confers NO authority — the run's bound
+   * owner is the authenticated `forwardedPrincipal`, gated server-side, never this handle.**
+   * Mirrors the `sessionKey`/`constraints` additive-optional discipline.
+   */
+  readonly missionContext?: FridayRustHubAgentRunMissionContext;
+}
+
+/**
+ * (NS45-PR1 / M-4) The TS-side first-class Mission handle (camelCase; mapped to the snake_case
+ * `MissionWorkItemContextWire` the Rust server decodes). All three fields are REQUIRED on the wire
+ * struct (`friday_protocol::MissionWorkItemContextWire` — `friday_conversation_id` / `mission_id` /
+ * `work_item_id`, none `Option`), so this TS shape REQUIRES all three too (no collapse-to-absent on
+ * an individual field). Presence of the whole object is what is optional, mirroring `sessionKey`.
+ */
+export interface FridayRustHubAgentRunMissionContext {
+  /** The canonical Friday conversation this run belongs to (Rust `friday_conversation_id`). */
+  readonly fridayConversationId: string;
+  /** The Mission this run binds to (Rust `mission_id`). */
+  readonly missionId: string;
+  /** The WorkItem this run advances (Rust `work_item_id`). */
+  readonly workItemId: string;
 }
 
 /**
@@ -710,6 +741,31 @@ export function buildConstraintsWire(
     wire.max_turns = constraints.maxTurns;
   }
   return Object.keys(wire).length > 0 ? wire : undefined;
+}
+
+/**
+ * (NS45-PR1 / M-4) Map the TS-side first-class Mission handle onto the snake_case
+ * `MissionWorkItemContextWire` shape the Rust server decodes — or `undefined` when NO handle is
+ * given, so the caller OMITS the whole `mission_context` key (byte-identity with the pre-NS45
+ * request). Unlike `buildConstraintsWire` there is NO tightening/collapse logic: the Rust struct's
+ * three fields are ALL required (`friday_conversation_id` / `mission_id` / `work_item_id`, none
+ * `Option`), so a defined handle ALWAYS emits the full three-field object. This is presence-based
+ * (mirrors `session_id`), NOT value-collapsing. The handle is a client ASSERTION of which Mission
+ * the run binds to — it confers no authority; the bound owner is the authenticated principal,
+ * gated server-side. EXPORTED + pure so the precise wire shape is unit-testable without a socket
+ * (mirrors {@link buildConstraintsWire}).
+ */
+export function buildMissionContextWire(
+  missionContext: FridayRustHubAgentRunMissionContext | undefined,
+): Record<string, unknown> | undefined {
+  if (missionContext === undefined) {
+    return undefined;
+  }
+  return {
+    friday_conversation_id: missionContext.fridayConversationId,
+    mission_id: missionContext.missionId,
+    work_item_id: missionContext.workItemId,
+  };
 }
 
 /**
@@ -1621,6 +1677,12 @@ export function createFridayRustHubAgentRunSealedClient(
             // BYTE-IDENTICAL to the pre-A1 request and the server applies no override. This
             // mirrors the `session_id` conditional-spread discipline.
             const constraintsWire = buildConstraintsWire(request.constraints);
+            // (NS45-PR1 / M-4) Derive the snake_case `mission_context` wire block from the request's
+            // first-class Mission handle, emitting it ONLY when a handle is present. When NO handle is
+            // given the whole `mission_context` key is OMITTED, so the serialized envelope is
+            // BYTE-IDENTICAL to the pre-NS45 request and the server routes through the unchanged
+            // unbound dispatch path. This mirrors the `session_id` conditional-spread discipline.
+            const missionContextWire = buildMissionContextWire(request.missionContext);
             const envelope = {
               schema_version: SCHEMA_VERSION,
               msg_id: `agent-run-${request.runId}`,
@@ -1637,6 +1699,8 @@ export function createFridayRustHubAgentRunSealedClient(
                 ...(sessionId !== undefined ? { session_id: sessionId } : {}),
                 // Conditional spread: present ⇒ `constraints` rides the wire; absent ⇒ no key.
                 ...(constraintsWire !== undefined ? { constraints: constraintsWire } : {}),
+                // Conditional spread: present ⇒ `mission_context` rides the wire; absent ⇒ no key.
+                ...(missionContextWire !== undefined ? { mission_context: missionContextWire } : {}),
               },
             };
             sealAndSend(sender, sessionKey, envelope);
