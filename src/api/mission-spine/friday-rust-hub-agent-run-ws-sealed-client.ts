@@ -740,8 +740,16 @@ export function buildResumeEnvelope(
 
 /**
  * (Lane B) Wrap a built inner message in the standard Envelope shape (mirrors the dispatch +
- * resume envelopes). `msgId`/`correlationId` are derived from a stable per-request key so the
+ * resume envelopes). `msgId`/`correlationId` are derived from a stable per-entity key so the
  * server's `with_correlation(msg_id)` round-trips deterministically.
+ *
+ * **msg_id collision is a NON-ISSUE here (verified):** each mission call (`runMissionRoundTrip`)
+ * opens a FRESH sealed session and sends EXACTLY ONE envelope. The server's `IdempotencyTracker`
+ * is constructed FRESH per connection (`serve_sealed_session` stack-local, `hub_agent_run_server`),
+ * so it only dedupes WITHIN a session — it never sees a second envelope on the same session. A
+ * stable per-entity key therefore cannot be misread as a within-session replay even when the same
+ * mission/work-item transitions repeatedly (each transition is its own connection). No per-call
+ * suffix is needed; cross-handshake replay is defeated by the per-handshake `session_nonce`.
  */
 function buildMissionEnvelope(key: string, message: Record<string, unknown>): Record<string, unknown> {
   return {
@@ -764,8 +772,13 @@ function buildMissionEnvelope(key: string, message: Record<string, unknown>): Re
 export function buildMissionIntakeEnvelope(
   request: FridayRustHubMissionIntakeRequest,
 ): Record<string, unknown> {
-  const message: Record<string, unknown> = {
-    kind: "MissionIntakeRequest",
+  // WIRE NESTING (HOLE-1 fix): `Message::MissionIntakeRequest { request: MissionIntakeRequestWire }`
+  // is a SINGLE-FIELD wrapper, and `Message` is `#[serde(tag = "kind")]` (internally tagged). serde
+  // therefore emits the inner wire fields NESTED under a `request` key, NOT flat under `message`:
+  //   {"kind":"MissionIntakeRequest","request":{ …fields… }}
+  // The pre-fix flat shape failed `Envelope::decode` server-side (missing `request` key) ⇒ 503. The
+  // byte-exact nesting is pinned by the Rust-emitted golden cross-check in the wire test.
+  const inner: Record<string, unknown> = {
     friday_conversation_id: request.fridayConversationId,
     owner_principal: request.ownerPrincipal,
     surface_thread_id: request.surfaceThreadId,
@@ -782,9 +795,15 @@ export function buildMissionIntakeEnvelope(
       : {}),
     ...(request.capabilityId !== undefined ? { capability_id: request.capabilityId } : {}),
     ...(request.bodyRef !== undefined ? { body_ref: request.bodyRef } : {}),
+    // `includes_sensitive_context` is `#[serde(default)]` WITHOUT `skip_serializing_if` Rust-side,
+    // so an absent key deserializes to `false` (interop-safe). We OMIT it when false to keep the
+    // outbound minimal; serde's `default` accepts the omission. We only EMIT it when true.
     ...(request.includesSensitiveContext === true ? { includes_sensitive_context: true } : {}),
   };
-  return buildMissionEnvelope(`mission-intake-${request.missionId}`, message);
+  return buildMissionEnvelope(`mission-intake-${request.missionId}`, {
+    kind: "MissionIntakeRequest",
+    request: inner,
+  });
 }
 
 /**
@@ -795,8 +814,9 @@ export function buildMissionIntakeEnvelope(
 export function buildMissionLifecycleEnvelope(
   request: FridayRustHubMissionLifecycleRequest,
 ): Record<string, unknown> {
-  const message: Record<string, unknown> = {
-    kind: "MissionLifecycleRequest",
+  // WIRE NESTING (HOLE-1 fix): inner fields nest under `request` (single-field wrapper +
+  // internally-tagged `Message`); see {@link buildMissionIntakeEnvelope}.
+  const inner: Record<string, unknown> = {
     friday_conversation_id: request.fridayConversationId,
     mission_id: request.missionId,
     target_status: request.targetStatus,
@@ -807,7 +827,10 @@ export function buildMissionLifecycleEnvelope(
       ? { merged_into_mission_id: request.mergedIntoMissionId }
       : {}),
   };
-  return buildMissionEnvelope(`mission-lifecycle-${request.missionId}`, message);
+  return buildMissionEnvelope(`mission-lifecycle-${request.missionId}`, {
+    kind: "MissionLifecycleRequest",
+    request: inner,
+  });
 }
 
 /**
@@ -819,15 +842,19 @@ export function buildMissionLifecycleEnvelope(
 export function buildWorkItemStatusEnvelope(
   request: FridayRustHubWorkItemStatusRequest,
 ): Record<string, unknown> {
-  const message: Record<string, unknown> = {
-    kind: "WorkItemStatusRequest",
+  // WIRE NESTING (HOLE-1 fix): inner fields nest under `request` (single-field wrapper +
+  // internally-tagged `Message`); see {@link buildMissionIntakeEnvelope}.
+  const inner: Record<string, unknown> = {
     work_item_id: request.workItemId,
     target_status: request.targetStatus,
     actor_ref: request.actorRef,
     reason: request.reason,
     ...(request.proofReceipt !== undefined ? { proof_receipt: request.proofReceipt } : {}),
   };
-  return buildMissionEnvelope(`work-item-status-${request.workItemId}`, message);
+  return buildMissionEnvelope(`work-item-status-${request.workItemId}`, {
+    kind: "WorkItemStatusRequest",
+    request: inner,
+  });
 }
 
 /**
@@ -838,12 +865,17 @@ export function buildWorkItemStatusEnvelope(
 export function parseMissionIntakeResult(
   fields: Record<string, unknown>,
 ): FridayRustHubMissionIntakeResult | undefined {
-  const fridayConversationId = asString(fields.friday_conversation_id);
-  const missionId = asString(fields.mission_id);
-  const surfaceThreadId = asString(fields.surface_thread_id);
-  const status = asString(fields.status);
-  const blockers = fields.blockers;
-  const createdOrReady = fields.created_or_ready;
+  // HOLE-1 fix: the refs live NESTED under `result` (single-field wrapper); unwrap fail-closed.
+  const r = unwrapResult(fields);
+  if (r === undefined) {
+    return undefined;
+  }
+  const fridayConversationId = asString(r.friday_conversation_id);
+  const missionId = asString(r.mission_id);
+  const surfaceThreadId = asString(r.surface_thread_id);
+  const status = asString(r.status);
+  const blockers = r.blockers;
+  const createdOrReady = r.created_or_ready;
   if (
     !fridayConversationId ||
     !missionId ||
@@ -855,10 +887,13 @@ export function parseMissionIntakeResult(
   ) {
     return undefined;
   }
-  const workItemId = asString(fields.work_item_id);
-  const duplicateMissionId = asString(fields.duplicate_mission_id);
-  const duplicateWorkItemId = asString(fields.duplicate_work_item_id);
+  const workItemId = asString(r.work_item_id);
+  const duplicateMissionId = asString(r.duplicate_mission_id);
+  const duplicateWorkItemId = asString(r.duplicate_work_item_id);
   return {
+    // `MissionIntakeResultWire` carries NO `truth_label` field (verified in friday-protocol), so the
+    // server cannot send one — this `rust_wired` label is the TS-side ceiling for a Rust-served refs
+    // result, asserted by construction (not read from the wire). It confers no v1 GO.
     truthLabel: "rust_wired",
     fridayConversationId,
     missionId,
@@ -879,14 +914,19 @@ export function parseMissionIntakeResult(
 export function parseMissionLifecycleResult(
   fields: Record<string, unknown>,
 ): FridayRustHubMissionLifecycleResult | undefined {
-  const fridayConversationId = asString(fields.friday_conversation_id);
-  const missionId = asString(fields.mission_id);
-  const previousStatus = asString(fields.previous_status);
-  const status = asString(fields.status);
-  const actorRef = asString(fields.actor_ref);
-  const reason = asString(fields.reason);
-  const activeMissionIds = fields.active_mission_ids;
-  const updatedAtMs = asNumber(fields.updated_at_ms);
+  // HOLE-1 fix: the refs live NESTED under `result` (single-field wrapper); unwrap fail-closed.
+  const r = unwrapResult(fields);
+  if (r === undefined) {
+    return undefined;
+  }
+  const fridayConversationId = asString(r.friday_conversation_id);
+  const missionId = asString(r.mission_id);
+  const previousStatus = asString(r.previous_status);
+  const status = asString(r.status);
+  const actorRef = asString(r.actor_ref);
+  const reason = asString(r.reason);
+  const activeMissionIds = r.active_mission_ids;
+  const updatedAtMs = asNumber(r.updated_at_ms);
   if (
     !fridayConversationId ||
     !missionId ||
@@ -900,9 +940,10 @@ export function parseMissionLifecycleResult(
   ) {
     return undefined;
   }
-  const proofRef = asString(fields.proof_ref);
-  const mergedIntoMissionId = asString(fields.merged_into_mission_id);
+  const proofRef = asString(r.proof_ref);
+  const mergedIntoMissionId = asString(r.merged_into_mission_id);
   return {
+    // No `truth_label` on `MissionLifecycleResultWire`; TS-side ceiling label (see intake parser).
     truthLabel: "rust_wired",
     fridayConversationId,
     missionId,
@@ -925,14 +966,19 @@ export function parseMissionLifecycleResult(
 export function parseWorkItemStatusResult(
   fields: Record<string, unknown>,
 ): FridayRustHubWorkItemStatusResult | undefined {
-  const workItemId = asString(fields.work_item_id);
-  const missionId = asString(fields.mission_id);
-  const previousStatus = asString(fields.previous_status);
-  const status = asString(fields.status);
-  const actorRef = asString(fields.actor_ref);
-  const reason = asString(fields.reason);
-  const proofReceiptCount = asNumber(fields.proof_receipt_count);
-  const updatedAtMs = asNumber(fields.updated_at_ms);
+  // HOLE-1 fix: the refs live NESTED under `result` (single-field wrapper); unwrap fail-closed.
+  const r = unwrapResult(fields);
+  if (r === undefined) {
+    return undefined;
+  }
+  const workItemId = asString(r.work_item_id);
+  const missionId = asString(r.mission_id);
+  const previousStatus = asString(r.previous_status);
+  const status = asString(r.status);
+  const actorRef = asString(r.actor_ref);
+  const reason = asString(r.reason);
+  const proofReceiptCount = asNumber(r.proof_receipt_count);
+  const updatedAtMs = asNumber(r.updated_at_ms);
   if (
     !workItemId ||
     !missionId ||
@@ -946,6 +992,7 @@ export function parseWorkItemStatusResult(
     return undefined;
   }
   return {
+    // No `truth_label` on `WorkItemStatusResultWire`; TS-side ceiling label (see intake parser).
     truthLabel: "rust_wired",
     workItemId,
     missionId,
@@ -977,6 +1024,23 @@ function asString(value: unknown): string | undefined {
 }
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * (Lane B, HOLE-1 fix) Unwrap the NESTED `result` sub-object from a mission `*Result` inbound's
+ * fields. `Message::Mission*Result { result: …Wire }` is a SINGLE-FIELD wrapper on an internally-
+ * tagged (`#[serde(tag = "kind")]`) enum, so the wire nests the result fields under a `result` key:
+ *   {"kind":"Mission*Result","result":{ …refs… }}
+ * The `inbound.fields` handed to a parser is the whole `message` object (`{kind, result:{…}}`), NOT
+ * the inner refs. Returns `undefined` (caller fails closed 503) when `result` is missing/ill-typed —
+ * this MUST not throw, because `parse()` runs OUTSIDE the inbound try/catch in `runMissionRoundTrip`.
+ */
+function unwrapResult(fields: Record<string, unknown>): Record<string, unknown> | undefined {
+  const result = fields.result;
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    return undefined;
+  }
+  return result as Record<string, unknown>;
 }
 
 /** The refs accumulated from the FIRST inbound envelope (the refs-only `AgentRunResult`). */
