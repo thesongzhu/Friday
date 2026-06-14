@@ -1393,3 +1393,119 @@ describe("FridayApiRuntime — execrun S-F-compose (DARK) Rust-route composition
     expect(ws.resumeCalls).toHaveLength(0);
   });
 });
+
+// (NS45-PR2 mission-bound driver — DARK) The route now threads an optional first-class Mission
+// handle (`{fridayConversationId, missionId, workItemId}`) from `POST /v1/agent/runs` down the
+// route→routeStartRun→compose→dispatch chain to the sealed-WS client (#750), which emits the
+// snake_case `mission_context` wire block ONLY when the handle is present. These tests assert the
+// THREADING (the handle reaches `dispatchRun` unchanged when present, is ABSENT on the dispatch
+// when omitted, and a PARTIAL body is treated as absent — never forwarded, never a crash). The
+// camelCase→snake_case wire conversion + the bound run path are #750's / Rust's tested job and are
+// NOT re-asserted here.
+describe("FridayApiRuntime — NS45-PR2 mission-bound run driver (DARK, additive-optional)", () => {
+  let db: FridaySqliteLayer;
+
+  afterEach(() => {
+    db?.close();
+  });
+
+  const VALID_MISSION_CONTEXT = {
+    fridayConversationId: "conv-abc-123",
+    missionId: "mission-def-456",
+    workItemId: "workitem-ghi-789",
+  };
+
+  it("ABSENT: a qualifying run WITHOUT missionContext → the dispatch carries NO missionContext key (byte-identical)", async () => {
+    db = createTestDb();
+    const ws = makeStubWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+    });
+
+    await callStartRoute(runtime, { ...QUALIFYING_BODY });
+
+    expect(ws.calls).toHaveLength(1);
+    // The OMITTED-key guarantee: not merely `undefined`, but the KEY is absent on the dispatch
+    // request — so the sealed client's `request.missionContext !== undefined` check fails and the
+    // `mission_context` wire block is never emitted (byte-identical to the pre-NS45 unbound wire).
+    expect("missionContext" in ws.calls[0]).toBe(false);
+    expect(ws.calls[0].missionContext).toBeUndefined();
+  });
+
+  it("PRESENT: a valid 3-field missionContext → threaded UNCHANGED (camelCase) to dispatchRun", async () => {
+    db = createTestDb();
+    const ws = makeStubWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+    });
+
+    await callStartRoute(runtime, {
+      ...QUALIFYING_BODY,
+      missionContext: { ...VALID_MISSION_CONTEXT },
+    });
+
+    expect(ws.calls).toHaveLength(1);
+    // Threaded UNCHANGED, camelCase preserved — the sealed client converts to snake_case (#750).
+    expect(ws.calls[0].missionContext).toEqual(VALID_MISSION_CONTEXT);
+    // Auth UNCHANGED: the bound owner is the authenticated forwarded principal, NEVER the handle.
+    expect(ws.calls[0].forwardedPrincipal).toBe(OWNER_PRINCIPAL);
+    // Qualification UNCHANGED: a missionContext-bearing run still qualifies via the SAME read-only
+    // clauses (it routed to the sealed dispatch + the read-only constraint is forwarded as before).
+    expect(ws.calls[0].constraints).toEqual({ readOnly: true });
+  });
+
+  it("PARTIAL: a missionContext missing workItemId → treated as UNDEFINED (NOT forwarded, no crash)", async () => {
+    db = createTestDb();
+    const ws = makeStubWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+    });
+
+    // No throw (the run still completes) AND the partial handle is dropped at the route.
+    const result = (await callStartRoute(runtime, {
+      ...QUALIFYING_BODY,
+      missionContext: {
+        fridayConversationId: "conv-abc-123",
+        missionId: "mission-def-456",
+        // workItemId intentionally OMITTED → the whole handle collapses to undefined.
+      },
+    })) as { status: string };
+
+    expect(result.status).toBe("completed");
+    expect(ws.calls).toHaveLength(1);
+    expect("missionContext" in ws.calls[0]).toBe(false);
+    expect(ws.calls[0].missionContext).toBeUndefined();
+  });
+
+  it("PARTIAL: a missionContext with a BLANK field → treated as UNDEFINED (not fabricated, not forwarded)", async () => {
+    db = createTestDb();
+    const ws = makeStubWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+    });
+
+    await callStartRoute(runtime, {
+      ...QUALIFYING_BODY,
+      missionContext: {
+        fridayConversationId: "conv-abc-123",
+        missionId: "   ", // blank/whitespace → not a valid handle field
+        workItemId: "workitem-ghi-789",
+      },
+    });
+
+    expect(ws.calls).toHaveLength(1);
+    expect(ws.calls[0].missionContext).toBeUndefined();
+  });
+});
