@@ -40,6 +40,7 @@ export {
   resolveAgentRunControlViaRust,
   resolveRouteAgentRunViaRust,
   resolveRouteMissionSpineViaRust,
+  resolveRouteMemorySpineViaRust,
   resolveRouteProvidersViaRust,
   resolveRouteWorkflowsViaRust,
   sanitizeFridayChannelVisibleReply,

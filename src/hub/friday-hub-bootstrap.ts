@@ -124,6 +124,10 @@ import {
   createFridayMissionSpineDispatchAdapter,
   readMissionSpineRustWsPort,
 } from "../api/mission-spine/friday-mission-spine-dispatch-adapter.js";
+import {
+  createFridayMemorySpineDispatchAdapter,
+  readMemorySpineRustWsPort,
+} from "../api/mission-spine/friday-memory-spine-dispatch-adapter.js";
 import { resolveRustAgentRunWsClientX25519Secret } from "../api/mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
 import type { FridayChannelPersonaConfig, FridayGuideLensRoutesDeps, FridaySystemRoutesDeps } from "#api";
 import type { FridayPackagingRoutesDeps } from "../api/http/routes/friday-packaging-routes.js";
@@ -1052,6 +1056,38 @@ export function resolveRouteMissionSpineViaRust(
     return configValue;
   }
   const raw = (env.FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true";
+}
+
+/**
+ * (Lane M) ORGANIC memory-confirmation POST route bridge (DARK): single source of truth resolving the
+ * `routeMemorySpineViaRust` flag from (1) an EXPLICIT {@link FridayHubConfig.routeMemorySpineViaRust}
+ * and, only as a fallback, (2) the `FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST` env var — the operator knob
+ * that flips the organic POST route (`/v1/memory-spine/decide`) from PERMANENTLY fail-closed (503
+ * `MEMORY_SPINE_DISPATCH_UNAVAILABLE`, because `memorySpine.dispatch` is never injected) to LIVE — by
+ * wiring a real dispatch adapter over the sealed-WS client.
+ *
+ * PRECEDENCE + PARSE mirror {@link resolveRouteMissionSpineViaRust} exactly: an explicit config boolean
+ * (true OR false) ALWAYS wins; the env is consulted ONLY when config does not specify. Case-insensitive,
+ * trimmed `"1"` or `"true"` ⇒ true; ABSENT / `""` / `"0"` / `"false"` / ANY other value ⇒ false.
+ * DEFAULT (both unset) ⇒ false, so `memorySpine.dispatch` stays unset (null) and the POST route is
+ * byte-identical to today's fail-closed 503.
+ *
+ * NOTE: the env var name deliberately mirrors the mission-spine `FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST`
+ * sibling (it is `FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST`) to read clearly as "the memory-spine ROUTES
+ * knob". End-to-end memory-confirmation closure ALSO needs the SERVER flags (`FRIDAY_MEMORY_CONFIRM`,
+ * `FRIDAY_RUN_LOOP_MEMORY_EXTRACTION`) + a deploy (operator-gated); this client-side knob only makes
+ * the TS route CALLABLE.
+ */
+export function resolveRouteMemorySpineViaRust(
+  configValue: boolean | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  // Config explicit (true OR false) wins — env is the fallback for the unset gap only.
+  if (typeof configValue === "boolean") {
+    return configValue;
+  }
+  const raw = (env.FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST ?? "").trim().toLowerCase();
   return raw === "1" || raw === "true";
 }
 
@@ -7036,6 +7072,28 @@ export async function createFridayHub(
     })
     : null;
 
+  // (Lane M) ORGANIC memory-confirmation POST route (DARK): construct the dispatch adapter that makes
+  // `/v1/memory-spine/decide` CALLABLE — but ONLY when the operator flag is on. SINGLE SOURCE OF TRUTH =
+  // `resolveRouteMemorySpineViaRust` (explicit config wins; else the `FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST`
+  // env knob, case-insensitive "1"/"true" → true; anything else, incl. unset → false). With nothing set
+  // (the default) this is `false`, so the adapter is NOT built, the `memorySpine` deps object is omitted
+  // entirely (undefined below) → the route resolves its own default (`dispatch: null`) and returns today's
+  // fail-closed 503 (`MEMORY_SPINE_DISPATCH_UNAVAILABLE`) → byte-identical.
+  //
+  // SIDE-EFFECT-FREE construction: the adapter factory captures host/port + the SecureStore X25519 secret
+  // resolver only — it resolves NO secret and opens NO socket here. The secret is resolved + the sealed
+  // client built LAZILY, per route call, so a flag-ON-but-unprovisioned host FAILS CLOSED (503) per call
+  // rather than crashing boot. Config (endpoint + ECDH secret resolver) MIRRORS the mission-spine sealed-WS
+  // path above; memory decisions are refs-only WS round-trips (no DB readback), same as mission.
+  const routeMemorySpineViaRust = resolveRouteMemorySpineViaRust(config.routeMemorySpineViaRust);
+  const memorySpineDispatch = routeMemorySpineViaRust
+    ? createFridayMemorySpineDispatchAdapter({
+      host: process.env.FRIDAY_HUB_AGENT_RUN_WS_HOST ?? "127.0.0.1",
+      port: readMemorySpineRustWsPort(process.env.FRIDAY_HUB_AGENT_RUN_WS_PORT),
+      secretResolver: resolveRustAgentRunWsClientX25519Secret,
+    })
+    : null;
+
   const runtimeSupportedChannelKinds = FRIDAY_SUPPORTED_CHANNEL_KINDS.filter(isFridayChannelKindSupported);
 
   const apiRuntime = createFridayApiRuntime({
@@ -7122,6 +7180,11 @@ export async function createFridayHub(
       ...(missionSpineDispatch ? { dispatch: missionSpineDispatch } : {}),
       disabledReason: null,
     },
+    // (Lane M) DARK: the `memorySpine` deps object is provided ONLY when the route flag is on (above).
+    // With the flag off `memorySpineDispatch` is null → this is `undefined`, the runtime falls back to
+    // the route's own default (`dispatch: null`), and `POST /v1/memory-spine/decide` is fail-closed 503
+    // (`MEMORY_SPINE_DISPATCH_UNAVAILABLE`) → byte-identical to today.
+    memorySpine: memorySpineDispatch ? { dispatch: memorySpineDispatch } : undefined,
     uix: {
       service: uixService,
       readSetupCompletedAt,

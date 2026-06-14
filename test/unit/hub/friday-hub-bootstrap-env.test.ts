@@ -6,6 +6,7 @@ import {
   resolveFridayHubConfig,
   resolveRouteAgentRunViaRust,
   resolveRouteMissionSpineViaRust,
+  resolveRouteMemorySpineViaRust,
   resolveRouteProvidersViaRust,
   resolveRouteWorkflowsViaRust,
 } from "#hub";
@@ -530,5 +531,38 @@ describe("resolveRouteMissionSpineViaRust (Lane B-2 organic POST routes flag)", 
     expect(resolveRouteMissionSpineViaRust(true, emptyEnv())).toBe(true);
     expect(resolveRouteMissionSpineViaRust(false, { FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST: "1" })).toBe(false);
     expect(resolveRouteMissionSpineViaRust(false, { FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST: "true" })).toBe(false);
+  });
+});
+
+describe("resolveRouteMemorySpineViaRust (Lane M organic memory-confirmation POST route flag)", () => {
+  // DEFAULT-OFF: nothing set → false → memorySpine.dispatch stays null → byte-identical 503.
+  it("defaults to false when neither config nor env is set", () => {
+    expect(resolveRouteMemorySpineViaRust(undefined, emptyEnv())).toBe(false);
+  });
+
+  it("parses FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST 1/true (case-insensitive, trimmed) as true", () => {
+    expect(resolveRouteMemorySpineViaRust(undefined, { FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST: "1" })).toBe(true);
+    expect(resolveRouteMemorySpineViaRust(undefined, { FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST: "true" })).toBe(true);
+    expect(resolveRouteMemorySpineViaRust(undefined, { FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST: "TRUE" })).toBe(true);
+    expect(resolveRouteMemorySpineViaRust(undefined, { FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST: "  1  " })).toBe(true);
+    expect(resolveRouteMemorySpineViaRust(undefined, { FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST: " true " })).toBe(true);
+  });
+
+  // Fail-safe OFF: everything that is not exactly "1"/"true" → false.
+  it("treats 0, false, empty, and garbage env values as false (fail-safe off)", () => {
+    expect(resolveRouteMemorySpineViaRust(undefined, { FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST: "0" })).toBe(false);
+    expect(resolveRouteMemorySpineViaRust(undefined, { FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST: "false" })).toBe(false);
+    expect(resolveRouteMemorySpineViaRust(undefined, { FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST: "" })).toBe(false);
+    expect(resolveRouteMemorySpineViaRust(undefined, { FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST: "yes" })).toBe(false);
+    expect(resolveRouteMemorySpineViaRust(undefined, { FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST: "on" })).toBe(false);
+    expect(resolveRouteMemorySpineViaRust(undefined, { FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST: "2" })).toBe(false);
+  });
+
+  // PRECEDENCE: explicit config wins over env (true wins, AND the discriminating false-beats-env-true).
+  it("uses explicit config over the env (true wins; false beats env true)", () => {
+    expect(resolveRouteMemorySpineViaRust(true, { FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST: "0" })).toBe(true);
+    expect(resolveRouteMemorySpineViaRust(true, emptyEnv())).toBe(true);
+    expect(resolveRouteMemorySpineViaRust(false, { FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST: "1" })).toBe(false);
+    expect(resolveRouteMemorySpineViaRust(false, { FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST: "true" })).toBe(false);
   });
 });
