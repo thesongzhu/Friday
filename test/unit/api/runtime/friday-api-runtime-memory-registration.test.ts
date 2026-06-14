@@ -100,7 +100,13 @@ describe("FridayApiRuntime — Memory Registration", () => {
     });
 
     const allRoutes = runtime.routes.getRoutes();
-    const memoryRoutes = allRoutes.filter((r) => r.operationId.startsWith("memory."));
+    // `memory.spine.*` is the always-registered memory-confirmation spine route (503-dark until the
+    // dispatch adapter is wired + FRIDAY_MEMORY_CONFIRM flipped), mirroring the mission-spine pattern.
+    // It is orthogonal to the memoryService-gated routes (memory.store/search/get/list/delete/prune)
+    // this test guards, so it is excluded here.
+    const memoryRoutes = allRoutes.filter(
+      (r) => r.operationId.startsWith("memory.") && !r.operationId.startsWith("memory.spine."),
+    );
 
     expect(memoryRoutes).toHaveLength(0);
   });
