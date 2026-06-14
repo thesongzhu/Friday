@@ -1,8 +1,27 @@
 [package]
 name = "friday-vision"
-description = "Friday F11 net-new media capability — vision (image_analysis) crate skeleton. Empty compiling stub, no logic/deps/executors yet (Hub-only, provider-secret-bearing → stays OUT of friday-ffi's phone dependency graph)."
+description = "Friday F11 net-new media capability — vision (image_analysis) crate: the VisionModelClient DI trait + a real ureq multimodal HTTP transport + a deterministic test stub. Hub-only, provider-secret-bearing (BYOK vision LLM) → stays OUT of friday-ffi's phone dependency graph."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 publish = false
 rust-version.workspace = true
+
+# Hub-only, provider-secret-bearing crate. The live leg reads a BYOK vision-LLM
+# key (operator-gated, supplied at the hub only) and must stay OUT of
+# friday-ffi's dependency graph (same trust boundary as friday-deepseek /
+# friday-anthropic; asserted by friday-arch-tests). DARK by default: the runtime
+# flag FRIDAY_VISION_TOOL_ENABLED is a default-OFF const here; the gate is
+# enforced later at the hub, not in this crate.
+[dependencies]
+serde_json = "1"
+thiserror.workspace = true
+# Blocking HTTP client (rustls/webpki-roots; no async runtime, no system certs).
+# ALREADY a workspace dep (friday-deepseek / friday-anthropic / friday-hub); NOT a
+# new external crate. The live multimodal POST reuses it; the dark path uses the
+# deterministic stub and makes no call.
+ureq = { version = "2", features = ["json"] }
+# base64-encode local image bytes into the multimodal data-URI part. ALREADY in
+# the workspace lock (0.22.1, transitive); promoting to a direct dep does not add
+# a new external crate or change Cargo.lock.
+base64 = "0.22"

@@ -809,6 +809,12 @@ version = "0.0.1"
 [[package]]
 name = "friday-vision"
 version = "0.0.1"
+dependencies = [
+ "base64 0.22.1",
+ "serde_json",
+ "thiserror 1.0.69",
+ "ureq",
+]
 
 [[package]]
 name = "fs-err"
