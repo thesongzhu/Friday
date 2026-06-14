@@ -355,6 +355,17 @@
       "next_action": "Keep TypeScript as a redacted HTTP adapter over Rust Mission Spine projections."
     },
     {
+      "id": "memory_spine_rust_delegated",
+      "match": {
+        "sourceFile": "src/api/http/routes/friday-memory-spine-routes.ts"
+      },
+      "classification": "rust_delegated",
+      "user_triggerable": true,
+      "rust_entrypoint": "rust-core/crates/friday-hub/src/hub_server.rs",
+      "proof": "POST /v1/memory-spine/decide is a redacted HTTP adapter forwarding MemoryDecisionRequest over the sealed-WS to the Rust memory-confirm arm (memory_decision_result_for_db, gated by FRIDAY_MEMORY_CONFIRM); dark default-OFF (503) until the operator wires the dispatch adapter and flips the flag",
+      "next_action": "Keep TypeScript as a redacted HTTP adapter over the Rust memory-confirmation arm."
+    },
+    {
       "id": "agent_runtime_blockers",
       "match": {
         "sourceFile": "src/api/http/routes/friday-agent-routes.ts"
