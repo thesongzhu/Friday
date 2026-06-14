@@ -78,6 +78,7 @@ import type { FridaySystemRoutesDeps } from "../http/routes/friday-system-routes
 import type { FridayGuideLensRoutesDeps } from "../http/routes/friday-guide-lens-routes.js";
 import type { FridayUixRoutesDeps } from "../http/routes/friday-uix-routes.js";
 import type { FridayMissionSpineRoutesDeps } from "../http/routes/friday-mission-spine-routes.js";
+import type { FridayMemorySpineRoutesDeps } from "../http/routes/friday-memory-spine-routes.js";
 import type { FridayCrossBorderPackRoutesDeps } from "../http/routes/friday-cross-border-pack-routes.js";
 import type { FridayPackagingRoutesDeps } from "../http/routes/friday-packaging-routes.js";
 import type {
@@ -124,6 +125,8 @@ export interface FridayApiRuntime {
   agentLoop?: FridayAgentLoopRoutesDeps;
   uix?: FridayUixRoutesDeps;
   missionSpine?: FridayMissionSpineRoutesDeps;
+  /** (Lane M) Memory-confirmation loop terminal route surface. Always registered; DEFAULT-OFF (503). */
+  memorySpine?: FridayMemorySpineRoutesDeps;
   crossBorderPack?: FridayCrossBorderPackRoutesDeps;
   system?: FridaySystemRoutesDeps;
   guideLens?: FridayGuideLensRoutesDeps;
@@ -603,6 +606,13 @@ export interface CreateFridayApiRuntimeDeps {
    * snapshot as live proof.
    */
   missionSpine?: FridayMissionSpineRoutesDeps;
+  /**
+   * (Lane M) Memory-confirmation loop terminal route surface. The route is ALWAYS registered. When
+   * omitted (the DEFAULT), POST `/v1/memory-spine/decide` fails closed with
+   * `503 MEMORY_SPINE_DISPATCH_UNAVAILABLE` instead of driving a confirm/reject — the live path
+   * needs an operator to wire the adapter AND flip the Rust `FRIDAY_MEMORY_CONFIRM` flag.
+   */
+  memorySpine?: FridayMemorySpineRoutesDeps;
   /** Optional: cross-border operating pack route surface. */
   crossBorderPack?: FridayCrossBorderPackRoutesDeps;
   /**
