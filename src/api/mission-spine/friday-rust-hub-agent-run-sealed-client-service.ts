@@ -4,6 +4,7 @@ import {
   createFridayRustHubAgentRunSealedClient,
   type CreateFridayRustHubAgentRunSealedClientOptions,
   type FridayRustHubAgentRunConstraints,
+  type FridayRustHubAgentRunMissionContext,
   type FridayRustHubAgentRunPausedOutcome,
   type FridayRustHubAgentRunResumeResult,
   type FridayRustHubAgentRunSealedClient,
@@ -87,6 +88,14 @@ export interface FridayRustHubAgentRunSealedClientServiceRequest {
    * / disabled-tools / max-turns), tightening only, behind its default-off run-control flag.
    */
   readonly constraints?: FridayRustHubAgentRunConstraints;
+  /**
+   * (NS45-PR1 / M-4) The first-class Mission handle forwarded UNCHANGED to the underlying sealed
+   * client, which emits the snake_case `mission_context` wire block ONLY when a handle is present
+   * (absent ⇒ OMITTED ⇒ byte-identical pre-NS45 wire). The Rust server resolves the handle and
+   * walks the mission-bound run path behind its default-off `FRIDAY_MISSION_BOUND_RUN` flag; the
+   * bound owner is the authenticated `forwardedPrincipal`, gated server-side, never this handle.
+   */
+  readonly missionContext?: FridayRustHubAgentRunMissionContext;
 }
 
 /**
@@ -277,6 +286,9 @@ export function createFridayRustHubAgentRunSealedClientService(
           // (A1 run-controls) forward the per-run constraints; the inner client emits the
           // `constraints` wire block only when something tightens (absent ⇒ byte-identical wire).
           ...(request.constraints !== undefined ? { constraints: request.constraints } : {}),
+          // (NS45-PR1 / M-4) forward the first-class Mission handle; the inner client emits the
+          // `mission_context` wire block only when a handle is present (absent ⇒ byte-identical wire).
+          ...(request.missionContext !== undefined ? { missionContext: request.missionContext } : {}),
         });
       } catch (error) {
         throw error instanceof FridayDomainError
