@@ -857,9 +857,11 @@ impl<S: friday_providers::codex_appserver::CodexTurnSource> AgentLlmClient
 ///
 /// ## Why this is a separate seam from `AgentLlmClient`
 /// Codex is a coordinated AGENT in its own runtime: each pre-execution side effect it proposes
-/// must be routed through Friday's gate, which needs the `conn` (for `authorize_agent_action`
-/// and the pending-approval persist), the run `policy` (the trust-grant scope), the HMAC
-/// `secret`, and the operator `approve_fn`. The generic conn-less
+/// must be routed through Friday's gate, which needs the `conn` (for the trust check + the
+/// pending-approval persist), the run `policy` (the trust-grant scope), and the operator
+/// `approve_fn`. (The `secret` param is legacy — the live executor's `run_codex_gated_turn` is
+/// now Ed25519 verify-only and ignores it; see [`LocalCodexGatedTurnExecutor::run_gated_turn`].)
+/// The generic conn-less
 /// `AgentLlmClient::next_step_metered(&self, task, history)` carries NONE of those — which is
 /// exactly why the brain adapter was wrong (it treated Codex as a model-call and Friday-side
 /// re-executed). This seam takes them explicitly and returns a turn-level
@@ -930,7 +932,12 @@ impl CodexTurnExecutor for LocalCodexGatedTurnExecutor {
         &self,
         conn: &Connection,
         policy: &RunPolicy,
-        secret: &[u8],
+        // The HMAC `secret` is no longer consulted: `run_codex_gated_turn` is now Ed25519
+        // verify-only. The `CodexTurnExecutor` trait still carries it (deepseek/claude share
+        // the seam) — threading a provisioned `operator_vk` through the trait is a follow-up
+        // (see the `None` below). Until then this executor authorizes protected actions under
+        // DenyAll (the triple-dark default), so a mutating Codex turn always Pauses.
+        _secret: &[u8],
         approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
         task: &str,
         run_id: &str,
@@ -962,7 +969,11 @@ impl CodexTurnExecutor for LocalCodexGatedTurnExecutor {
             conn,
             client,
             policy,
-            secret,
+            // TODO(follow-up): thread a provisioned `operator_vk` through `CodexTurnExecutor`
+            // so the live route can verify operator-signed approvals. Until then DenyAll: a
+            // protected (mutating) Codex action is never upgraded — it Pauses. This is the
+            // triple-dark default and keeps the route un-flippable without the key + flags.
+            None,
             &approve,
             &thread.thread_id,
             None,

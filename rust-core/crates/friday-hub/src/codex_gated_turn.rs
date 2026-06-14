@@ -12,10 +12,12 @@
 //!        │                                              │     Friday MutatingActionRequest,
 //!        │                                              │     deriving mutating/risk from the
 //!        │                                              │     TRUSTED registry — never the model
-//!        │                                              │ (2) GATE via the EXISTING stack:
-//!        │                                              │     friday_storage::authorize_agent_action
-//!        │                                              │     (trust-grant allowed_tools / risk
-//!        │                                              │      ceiling AND the mutating-action gate)
+//!        │                                              │ (2) GATE in two steps via the EXISTING
+//!        │                                              │     stack: friday_storage::authorize_agent_action
+//!        │                                              │     for the trust-grant check (allowed_tools /
+//!        │                                              │     risk ceiling) THEN the verify-only
+//!        │                                              │     friday_storage::authorize_mutating_action_ed25519
+//!        │                                              │     for the protected (mutating) gate
 //!        │  ◀── accept / cancel(deny) ──────────────────│ (3) MAP GateDecision → Codex decision
 //!        ▼                                                    Allow→accept, Deny/RequiresApproval→cancel
 //!  continues / aborts the turn                               and, on RequiresApproval, persist a
@@ -31,8 +33,10 @@
 //!   both need the connection, and threading it through the trait would force a borrow that
 //!   does not compose.
 //! - It REUSES, never reimplements: the trusted classifier ([`crate::trusted_classify`] via
-//!   [`crate::build_request_with_policy`]), the gate compose
-//!   ([`friday_storage::authorize_agent_action`]), the pending-approval persistence
+//!   [`crate::build_request_with_policy`]), the trust-grant check
+//!   ([`friday_storage::authorize_agent_action`]), the verify-only Ed25519 mutating-action gate
+//!   ([`friday_storage::authorize_mutating_action_ed25519`] — the IDENTICAL fn the
+//!   deepseek/claude routed loop uses), the pending-approval persistence
 //!   ([`friday_storage::PendingApprovalRequest`] / [`friday_storage::persist_pending_request`]),
 //!   the CSPRNG nonce ([`friday_crypto::generate_approval_nonce`]), and the billing map
 //!   ([`crate::BilledUsage::from_codex`]). It adds NO parallel gate, ledger, or pause
@@ -42,8 +46,21 @@
 //!   [`friday_providers::codex_appserver::CodexAppServerClient::run_turn_with_handler`]: with
 //!   the flag OFF, that surface fails closed on any mid-turn approval request WITHOUT
 //!   consulting our handler (byte-identical to the historical `interactive-approval-unsupported`),
-//!   so this path is effectively unused until the operator flips the flag. PR-B rewires
-//!   `runtime.rs` to CALL this and removes the in-process "brain"; this PR only builds the core.
+//!   so this path is effectively unused until the operator flips the flag. The runtime executor
+//!   seam ([`crate::CodexTurnExecutor`] / [`crate::LocalCodexGatedTurnExecutor`]) already CALLS
+//!   this fn, but passes `operator_vk = None` (DenyAll) until a follow-up threads a provisioned
+//!   operator verify key through the trait; the route flip is separately operator-gated.
+//!
+//! ## The HMAC → Ed25519 security upgrade (S6b/S6d parity)
+//! The protected (mutating-action) authorization is now **Ed25519 verify-only**: the Hub
+//! holds ONLY the operator's PUBLIC verify key ([`OperatorVerifyingKey`]) and can VERIFY an
+//! operator-signed approval but has NO path to MINT one. This brings the Codex gated turn to
+//! PARITY with the deepseek/claude routed loop (both call the same
+//! [`friday_storage::authorize_mutating_action_ed25519`]) and closes the latent self-Allow the
+//! old Hub-held HMAC secret left open (an HMAC-signed approval over the SAME canonical bytes is
+//! REJECTED — an HMAC hex is not a valid Ed25519 signature). With `operator_vk = None` (the
+//! triple-dark default) a protected action can NEVER be upgraded — it stays `RequiresApproval`
+//! and Pauses (DenyAll-equivalent).
 //!
 //! ## No-bypass / no-degrade invariants (the point of this PR)
 //! - **Mutating-ness is registry-derived, never the model's word.** Every Codex approval
@@ -67,11 +84,12 @@
 use std::cell::RefCell;
 
 use friday_core::gate::{CanonicalApproval, GateDecision, MutatingActionRequest};
+use friday_crypto::OperatorVerifyingKey;
 use friday_providers::codex_appserver::{
     CodexAppServerClient, CodexAppServerTransport, CodexApprovalDecision, CodexServerRequest,
     ModelTurnOutcome,
 };
-use friday_storage::AgentActionContext;
+use friday_storage::{authorize_mutating_action_ed25519, AgentActionContext};
 use rusqlite::Connection;
 
 use crate::{build_request_with_policy, BilledUsage, RawToolCall, RunPolicy, ToolError};
@@ -158,7 +176,7 @@ enum CapturedGate {
 /// Run ONE gated Codex model turn through the EXISTING Friday trust/approval stack and map
 /// the result onto a [`CodexTurnOutcome`].
 ///
-/// `codex_client` must already be on a started thread (the caller — PR-B — does
+/// `codex_client` must already be on a started thread (the caller does
 /// `initialize`/`thread/start`); this function drives exactly one turn via
 /// [`CodexAppServerClient::run_turn_with_handler`]. The Codex-transport gate flag
 /// ([`friday_providers::codex_appserver::FRIDAY_CODEX_MUTATING_GATE`]) governs whether the
@@ -174,22 +192,33 @@ enum CapturedGate {
 ///    [`crate::build_request_with_policy`] — so `mutating`/`risk`/`resource` are derived by
 ///    the trusted [`crate::trusted_classify`], NEVER from the model. An untranslatable
 ///    request (e.g. a command-execution with no command) fails closed.
-/// 2. **Gates** it via [`friday_storage::authorize_agent_action`] (the trust-grant
-///    `allowed_tools`/risk-ceiling AND-gate composed with the mutating-action gate) — reused
-///    verbatim. `approve_fn` supplies the (optional) [`CanonicalApproval`].
+/// 2. **Gates** it in TWO steps (NOT one composed call — preserving the trust check while
+///    swapping the protected authorize to Ed25519, mirroring the deepseek/claude loop's
+///    `gate_dispatch_with_policy_enforced`). Step 2a is the trust-grant check via
+///    [`friday_storage::authorize_agent_action`] with NO approval and NO secret — only a
+///    `denied_by == Some("trust_grant")` Deny (chat-only grant / risk-ceiling / no-active-grant)
+///    is consumed here, surfacing the grant's own reason. Step 2b is the protected (mutating)
+///    gate via [`friday_storage::authorize_mutating_action_ed25519`] — the IDENTICAL verify-only
+///    fn the routed loop uses — under the operator's PUBLIC `operator_vk`. With
+///    `operator_vk = None` (the triple-dark default) the base [`friday_core::gate::evaluate`]
+///    decision stands (DenyAll-equivalent): a protected action's `RequiresApproval` is never
+///    upgraded → it Pauses. `approve_fn` supplies the (optional) operator-signed
+///    [`CanonicalApproval`].
 /// 3. **Maps** the [`GateDecision`]: `Allow` → [`CodexApprovalDecision::Allow`]; `Deny` →
 ///    [`CodexApprovalDecision::Deny`] (captured as a hard deny); `RequiresApproval` →
 ///    [`CodexApprovalDecision::Deny`] (captured so the outer fn persists a pending request).
 ///
-/// `now_ms` timestamps the pending-approval row + its expiry. The `policy`'s
-/// `action_context` (the agent identity/workspace the trust grant is scoped to) is read back
-/// for the gate; if it carries none, the gate fails closed (`trust_no_active_grant`).
+/// `operator_vk` is the operator's PUBLIC Ed25519 verify key (the only half the Hub holds).
+/// `None` = unprovisioned = fail-closed DenyAll for protected actions. `now_ms` timestamps the
+/// pending-approval row + its expiry. The `policy`'s `action_context` (the agent
+/// identity/workspace the trust grant is scoped to) is read back for the trust check; if it
+/// carries none, the trust check fails closed (`trust_no_active_grant`).
 #[allow(clippy::too_many_arguments)]
 pub fn run_codex_gated_turn<T, F>(
     conn: &Connection,
     codex_client: &mut CodexAppServerClient<T>,
     policy: &RunPolicy,
-    secret: &[u8],
+    operator_vk: Option<&OperatorVerifyingKey>,
     approve_fn: &F,
     thread_id: &str,
     user_message_id: Option<&str>,
@@ -240,23 +269,61 @@ where
             }
         };
 
-        // (2) GATE via the EXISTING stack. Enrich the context's `.tool` dimension with the
-        // dispatched (registry) action so the trust grant's `allowed_tools` allowlist is
-        // actually checked (the same enrich the run-loop's TP-PR1 path does; without it the
-        // tool dimension is silently skipped = fail-open). This is restriction-only.
+        // (2) GATE in TWO steps (NOT one composed call). The pre-Ed25519 path called the
+        // composed `authorize_agent_action(.., approval, secret, ..)`, which ran the trust check
+        // THEN the inner HMAC mutating-action authorize. We SPLIT that so the protected gate is
+        // the verify-only Ed25519 fn (parity with the deepseek/claude loop) while the trust
+        // check is PRESERVED verbatim — dropping it would be a no-degrade trap (the Ed25519 fn
+        // has NO trust logic; it would never enforce a chat-only grant or the risk ceiling).
+        //
+        // (2a) TRUST-GRANT CHECK ONLY. Run `authorize_agent_action` with NO approval and NO
+        // secret so it cannot upgrade anything; we consume ONLY a `trust_grant` Deny (chat-only
+        // grant / risk-ceiling / no-active-grant), surfacing the grant's own reason. Any other
+        // outcome (Allow / a non-trust Deny / RequiresApproval) means trust did not object, so
+        // we fall through to the protected authorize in (2b). Enrich the context's `.tool`
+        // dimension with the dispatched (registry) action so the grant's `allowed_tools`
+        // allowlist is actually checked (the same enrich the run-loop's TP-PR1 path does;
+        // without it the tool dimension is silently skipped = fail-open). Restriction-only.
         let mut ctx = base_ctx.clone();
         ctx.tool = Some(raw.action.clone());
-        let record = match friday_storage::authorize_agent_action(
-            conn,
-            &request,
-            &ctx,
-            approve_fn(&request).as_ref(),
-            secret,
-            now_ms,
-        ) {
+        match friday_storage::authorize_agent_action(conn, &request, &ctx, None, &[], now_ms) {
+            // The trust grant objected — capture its own reason (Errored). The protected
+            // authorize is never reached (trust denies short-circuit).
+            Ok(r) if r.denied_by.as_deref() == Some("trust_grant") => {
+                *captured.borrow_mut() = Some(CapturedGate::Denied { reason: r.reason });
+                return Ok(CodexApprovalDecision::Deny);
+            }
+            // No trust objection — fall through to the protected (Ed25519) authorize below.
+            Ok(_) => {}
+            // A storage error during the trust check fails CLOSED.
+            Err(_) => {
+                *captured.borrow_mut() = Some(CapturedGate::Denied {
+                    reason: "codex_authorize_unavailable".to_string(),
+                });
+                return Ok(CodexApprovalDecision::Deny);
+            }
+        }
+
+        // (2b) PROTECTED MUTATING-ACTION GATE — verify-only Ed25519, the IDENTICAL fn the
+        // deepseek/claude routed loop uses. With `operator_vk = None` (triple-dark default) the
+        // pure base decision stands (DenyAll-equivalent): a `RequiresApproval` is never upgraded
+        // → Pause. With `Some(vk)`, only an operator-Ed25519-signed approval bound to THIS exact
+        // action can upgrade it; an HMAC-signed approval over the same bytes is rejected.
+        let record = match operator_vk {
+            Some(vk) => authorize_mutating_action_ed25519(
+                conn,
+                &request,
+                approve_fn(&request).as_ref(),
+                vk,
+                now_ms,
+            ),
+            None => Ok(friday_core::gate::evaluate(&request)),
+        };
+        let record = match record {
             Ok(r) => r,
-            // A storage error during authorize fails CLOSED: deny + capture so the turn
-            // aborts and the caller sees a typed reason (never auto-approve on a DB hiccup).
+            // A storage error during the protected authorize (e.g. the consumed_approval INSERT)
+            // fails CLOSED: deny + capture so the turn aborts and the caller sees a typed reason
+            // (never auto-approve on a DB hiccup).
             Err(_) => {
                 *captured.borrow_mut() = Some(CapturedGate::Denied {
                     reason: "codex_authorize_unavailable".to_string(),
@@ -565,17 +632,24 @@ mod tests {
         None
     }
 
+    /// Drive the gated turn with the offline-operator default (`no_approval`) and the given
+    /// `operator_vk`. NOTE: the `src` test module CANNOT name an operator *signing* key (the
+    /// `hub_crate_never_references_a_signing_key` structural guard scans this `src` tree for that
+    /// type), so the tests here only use `operator_vk = None` (the unprovisioned DenyAll path).
+    /// The provisioned positive-parity + HMAC-downgrade-defense KATs (which must MINT/SIGN
+    /// approvals with a real operator key) live in `tests/codex_gated_turn_ed25519.rs`.
     fn run<T: CodexAppServerTransport>(
         db: &Db,
         client: &mut CodexAppServerClient<T>,
         policy: &RunPolicy,
+        operator_vk: Option<&OperatorVerifyingKey>,
         text: &str,
     ) -> Result<CodexTurnOutcome, CodexGatedTurnError> {
         run_codex_gated_turn(
             db.conn(),
             client,
             policy,
-            b"test-secret",
+            operator_vk,
             &no_approval,
             "thread-1",
             None,
@@ -586,67 +660,19 @@ mod tests {
         )
     }
 
-    // ---- KAT (a): grant allows the tool → Allow → turn continues + Finishes ----
+    // ---- KAT (a) — RELOCATED to the integration tier ----
     //
-    // A grant whose `allowed_tools` includes `run_command` AND whose risk ceiling admits a
-    // High command: the gate composes trust-OK with the mutating gate. With no approval the
-    // mutating gate still RequiresApproval (a mutating action never auto-allows), so KAT (a)
-    // uses a READ-equivalent? No — every Codex approval request is a mutating action. The
-    // "turn continues + Finishes" Allow path is exercised by a grant that admits the tool AND
-    // an approval supplied by `approve_fn`. We prove the Allow→continue wire with an approval.
-    #[test]
-    fn kat_a_allowed_tool_with_approval_continues_and_finishes() {
-        let _gate = GateOn::on();
-        let db = Db::open_hub(&temp_path("kat-a")).unwrap();
-        let policy = policy_for("agent-1");
-        insert_grant(&db, "agent-1", &["run_command"], Risk::High);
-
-        // approve_fn mints a valid approval bound to the EXACT request → the mutating gate
-        // upgrades RequiresApproval to Allow → Codex `accept` → turn continues to completion.
-        let approve = |req: &MutatingActionRequest| -> Option<CanonicalApproval> {
-            Some(crate::mint_approval(
-                req,
-                "ap-allowed",
-                b"test-secret",
-                10_000,
-            ))
-        };
-        let mut client = client_over(Box::leak(
-            command_turn("cargo build", true).into_boxed_str(),
-        ));
-        let out = run_codex_gated_turn(
-            db.conn(),
-            &mut client,
-            &policy,
-            b"test-secret",
-            &approve,
-            "thread-1",
-            None,
-            "build it",
-            "gpt-5-codex",
-            "run-1",
-            1_000,
-        )
-        .unwrap();
-        match out {
-            CodexTurnOutcome::Finished { answer, usage } => {
-                assert_eq!(answer, "done");
-                assert_eq!(usage.provider_kind, friday_core::ProviderKind::Codex);
-                assert_eq!(usage.model, "gpt-5-codex");
-            }
-            other => panic!("expected Finished, got {other:?}"),
-        }
-        // The wire carries the `accept` decision (Allow), and the force-approval policy.
-        let written = String::from_utf8(client.into_transport().into_parts().1).unwrap();
-        assert!(
-            written.lines().any(|l| {
-                let v: serde_json::Value = serde_json::from_str(l).unwrap();
-                v.get("result").and_then(|r| r.get("decision"))
-                    == Some(&serde_json::json!("accept"))
-            }),
-            "expected an accept decision on the wire: {written}"
-        );
-    }
+    // The old HMAC KAT (a) is REPLACED by two tests that REQUIRE a real operator key (signing an
+    // Ed25519 approval for the positive-parity accept, and minting an HMAC approval to prove the
+    // downgrade defense rejects it). Both name an operator *signing* key, which the
+    // `operator_vk::tests::hub_crate_never_references_a_signing_key` structural guard FORBIDS
+    // anywhere under `friday-hub/src/` (a Hub that can name a signing key could self-mint). They
+    // therefore live in `tests/codex_gated_turn_ed25519.rs` (the integration tier is NOT scanned
+    // by that guard, mirroring `friday-storage/tests/authorize_ed25519.rs`):
+    //   - `ed25519_signed_approval_continues_and_finishes` (positive parity: accept → Finished)
+    //   - `hmac_signed_approval_is_rejected_downgrade_defense` (the anti-mock-green canary:
+    //     an HMAC-signed approval over the SAME bytes is REJECTED, not Allowed)
+    //   - `provisioned_but_unsigned_mutating_action_pauses` (Some(&vk) + no approval → Pause)
 
     // ---- KAT (b): chat-only grant (empty allowed_tools) → Deny → turn aborts ----
     #[test]
@@ -660,7 +686,9 @@ mod tests {
         let mut client = client_over(Box::leak(
             command_turn("cargo build", false).into_boxed_str(),
         ));
-        let out = run(&db, &mut client, &policy, "build it").unwrap();
+        // The trust check (step 2a) Denies a chat-only grant BEFORE the protected gate, so the
+        // `operator_vk` is irrelevant here — `None` proves the trust check survives the split.
+        let out = run(&db, &mut client, &policy, None, "build it").unwrap();
         match out {
             CodexTurnOutcome::Errored { reason } => {
                 assert!(
@@ -685,6 +713,7 @@ mod tests {
             &db,
             &mut client_over(Box::leak(command_turn("rm -rf /", false).into_boxed_str())),
             &policy,
+            None,
             "x",
         )
         .unwrap()
@@ -697,6 +726,12 @@ mod tests {
     }
 
     // ---- KAT (c): gate RequiresApproval → Deny + pending_approval_request persisted + Paused ----
+    //
+    // UNPROVISIONED (operator_vk = None — the triple-dark default / DenyAll): the protected gate's
+    // base `RequiresApproval` is NEVER upgraded (no approval can satisfy a None key), so a mutating
+    // Codex action Pauses + persists a pending row. (The provisioned-but-unsigned Pause variant —
+    // `Some(&vk)` + no approval → also Pause — lives in `tests/codex_gated_turn_ed25519.rs`, since
+    // naming an operator signing key / minting a key is forbidden under `friday-hub/src/`.)
     #[test]
     fn kat_c_requires_approval_persists_pending_and_pauses() {
         let _gate = GateOn::on();
@@ -709,7 +744,7 @@ mod tests {
         let mut client = client_over(Box::leak(
             command_turn("cargo build", false).into_boxed_str(),
         ));
-        let out = run(&db, &mut client, &policy, "build it").unwrap();
+        let out = run(&db, &mut client, &policy, None, "build it").unwrap();
         let nonce = match out {
             CodexTurnOutcome::Paused {
                 action,
@@ -758,7 +793,8 @@ mod tests {
         let mut client = client_over(Box::leak(
             command_turn("rm -rf /work/data", false).into_boxed_str(),
         ));
-        let out = run(&db, &mut client, &policy, "clean up").unwrap();
+        // Risk-ceiling deny is a trust-grant deny (step 2a), before the protected gate → vk N/A.
+        let out = run(&db, &mut client, &policy, None, "clean up").unwrap();
         match out {
             CodexTurnOutcome::Errored { reason } => {
                 assert!(
@@ -791,7 +827,8 @@ mod tests {
         let mut client = client_over(Box::leak(
             command_turn("cargo build", false).into_boxed_str(),
         ));
-        let out = run(&db, &mut client, &policy, "build it").unwrap();
+        // Flag OFF ⇒ the handler is never consulted, so the gate (and `operator_vk`) never runs.
+        let out = run(&db, &mut client, &policy, None, "build it").unwrap();
         match out {
             CodexTurnOutcome::Errored { reason } => {
                 assert_eq!(reason, "codex_protocol:interactive-approval-unsupported");
@@ -816,7 +853,7 @@ mod tests {
         let db = Db::open_hub(&temp_path("flag-off-text")).unwrap();
         let policy = policy_for("agent-1");
         let mut client = client_over(Box::leak(text_turn("hello").into_boxed_str()));
-        let out = run(&db, &mut client, &policy, "say hi").unwrap();
+        let out = run(&db, &mut client, &policy, None, "say hi").unwrap();
         match out {
             CodexTurnOutcome::Finished { answer, .. } => assert_eq!(answer, "hello"),
             other => panic!("text-only turn must Finish, got {other:?}"),
@@ -891,7 +928,11 @@ mod tests {
         let mut client = client_over(Box::leak(
             command_turn("cargo build", false).into_boxed_str(),
         ));
-        let out = run(&db, &mut client, &policy, "build it").unwrap();
+        // The trust check (step 2a) fails closed on a missing agent identity BEFORE the protected
+        // gate (step 2b), so `operator_vk` is irrelevant — `None` proves the trust check survives
+        // the split. The reason is the trust check's own `trust_no_active_grant`. (The
+        // ordering-with-a-key-provisioned nuance is asserted in `tests/codex_gated_turn_ed25519.rs`.)
+        let out = run(&db, &mut client, &policy, None, "build it").unwrap();
         match out {
             CodexTurnOutcome::Errored { reason } => {
                 assert!(reason.contains("trust_no_active_grant"), "got {reason}");
