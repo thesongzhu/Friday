@@ -410,6 +410,26 @@ fn run() -> Result<(), ServerError> {
         );
     }
 
+    // (Loop4 wire-fields) Read the per-run TOKEN-SURFACE flag ONCE at boot (default-off). When false
+    // the terminal `AgentRunResult` emits `prompt_tokens: None` / `completion_tokens: None` —
+    // byte-identical to today (the agent-run path is LIVE in prod). When true the emit path sums the
+    // run's `token_ledger` rows into the surface; a read error fails SAFE to `None`. So deploying
+    // this binary changes NO live behavior until the operator flips this SEPARATE flag.
+    let token_surface_enabled = agent_run_token_surface_enabled_from(
+        env::var(AGENT_RUN_TOKEN_SURFACE_ENABLED_ENV)
+            .ok()
+            .as_deref(),
+    );
+    if token_surface_enabled {
+        eprintln!(
+            "hub_agent_run_server: per-run TOKEN SURFACE ENABLED (FRIDAY_AGENT_RUN_TOKEN_SURFACE) — AgentRunResult carries the summed token_ledger counts for the run"
+        );
+    } else {
+        eprintln!(
+            "hub_agent_run_server: per-run TOKEN SURFACE DISABLED (set FRIDAY_AGENT_RUN_TOKEN_SURFACE=1 to enable) — AgentRunResult emits prompt_tokens/completion_tokens=None"
+        );
+    }
+
     // (3) Long-lived accept loop. Each accepted connection: set the read timeout, read the peer
     // pubkey preamble, REJECT a non-allowlisted peer pubkey (S-F, the FIRST gate), reject low-order
     // points, run the WS handshake, derive the sealed session key, and serve sealed envelopes
@@ -424,6 +444,7 @@ fn run() -> Result<(), ServerError> {
             mission_bound_run_enabled,
             mission_intake_enabled,
             mission_spine_dispatch_enabled,
+            token_surface_enabled,
         ) {
             Ok(_served) => {}
             // A connection-level error ends THAT connection only; the server keeps listening.
@@ -536,6 +557,64 @@ fn mission_spine_dispatch_enabled_from(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1"))
 }
 
+/// (Loop4 wire-fields) The env flag that gates the SERVER→CLIENT per-run TOKEN SURFACE on the
+/// terminal [`Message::AgentRunResult`]. DEFAULT-OFF: when unset (or any value other than the exact
+/// `"1"` after trim) the refs result emits `prompt_tokens: None` / `completion_tokens: None` —
+/// BYTE-IDENTICAL to today (an absent `Option` is omitted via `skip_serializing_if`). The agent-run
+/// dispatch path is LIVE in prod (the self-probe), so the surface stays DARK until the operator
+/// flips THIS separate flag. When ON, the emit path computes the run's `prompt_tokens` /
+/// `completion_tokens` by SUMMING the run-attributable `token_ledger` rows (keyed by `run_id`) via
+/// [`friday_storage::agent_run_read::run_token_totals`] — a single COALESCE'd aggregate SELECT. A
+/// ledger read error (or a count that does not fit `u64`) FAILS SAFE to `None` (today's behavior):
+/// the surface is never allowed to break or block the answer. SEPARATE from
+/// `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST` (run-CONTROL), `FRIDAY_MISSION_BOUND_RUN` (the bound-run
+/// seam), `FRIDAY_MISSION_INTAKE` (Mission birth), and `FRIDAY_MISSION_SPINE_DISPATCH`; flipping
+/// THIS one is an operator cutover decision.
+const AGENT_RUN_TOKEN_SURFACE_ENABLED_ENV: &str = "FRIDAY_AGENT_RUN_TOKEN_SURFACE";
+
+/// Pure flag-matcher for [`AGENT_RUN_TOKEN_SURFACE_ENABLED_ENV`] (separated from the env read so it
+/// is testable without mutating the process-global environment). DEFAULT-OFF: `None` (unset) ⇒
+/// false; ON only for the exact opt-in value `"1"` (trimmed), matching the program's standard flag
+/// idiom; everything else (including `"true"`) ⇒ false.
+fn agent_run_token_surface_enabled_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
+/// (Loop4 wire-fields) The run's per-run token surface for the terminal [`Message::AgentRunResult`],
+/// as `(prompt_tokens, completion_tokens)`.
+///
+/// FAIL-SAFE by construction — returns `(None, None)`, today's exact emission, in EVERY case other
+/// than "flag ON and the ledger read succeeded and the counts fit `u64`":
+///   * `enabled == false` (flag OFF / default) ⇒ `(None, None)` WITHOUT touching the DB, so the
+///     emission is byte-identical to the pre-Loop4 wire (a single early return, no read).
+///   * a ledger read error (e.g. a transient lock / a corrupt DB) ⇒ `(None, None)` — the surface
+///     NEVER breaks the result emission and NEVER panics (no `unwrap`/`expect`).
+///   * a summed count that cannot be represented as `u64` (a SUM is `i64`; a negative is
+///     impossible for token counts but is handled defensively) ⇒ that field is `None`.
+///
+/// When ON and the read succeeds, the values are the run-attributable totals from `run_token_totals`
+/// (`WHERE run_id = ?1`, ask-path NULL-`run_id` rows excluded). A zero-billed run yields `Some(0)`
+/// (COALESCE), which is the true sum, not absence.
+fn run_token_surface(
+    enabled: bool,
+    conn: &rusqlite::Connection,
+    run_id: &str,
+) -> (Option<u64>, Option<u64>) {
+    if !enabled {
+        // Flag OFF (default): NO DB read, emit exactly today's `None`/`None`.
+        return (None, None);
+    }
+    match friday_storage::agent_run_read::run_token_totals(conn, run_id) {
+        Ok(totals) => (
+            u64::try_from(totals.prompt).ok(),
+            u64::try_from(totals.completion).ok(),
+        ),
+        // A ledger read failure is non-fatal: fall back to today's `None`/`None`. The answer is
+        // already safely persisted; the token surface must never block or break its delivery.
+        Err(_e) => (None, None),
+    }
+}
+
 /// Whether the operator has explicitly enabled the session-lifecycle reaper. Fail-closed:
 /// only the exact opt-in values enable it; everything else (including unset) is OFF.
 fn reaper_enabled() -> bool {
@@ -643,6 +722,7 @@ impl AgentRunWsListener {
         mission_bound_run_enabled: bool,
         mission_intake_enabled: bool,
         mission_spine_dispatch_enabled: bool,
+        token_surface_enabled: bool,
     ) -> Result<usize, TransportError> {
         let (stream, _peer) = self.listener.accept()?;
         // HARDENING: a per-connection read timeout BEFORE any read, so a stalled peer cannot
@@ -660,6 +740,7 @@ impl AgentRunWsListener {
             mission_bound_run_enabled,
             mission_intake_enabled,
             mission_spine_dispatch_enabled,
+            token_surface_enabled,
         )
     }
 }
@@ -703,6 +784,7 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
     mission_bound_run_enabled: bool,
     mission_intake_enabled: bool,
     mission_spine_dispatch_enabled: bool,
+    token_surface_enabled: bool,
 ) -> Result<usize, TransportError> {
     let mut processed = 0usize;
     // S-E: per-session msg_id dedup. A reconnect mints a FRESH tracker (so it is not a
@@ -935,6 +1017,16 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 } else {
                     None
                 };
+                // (Loop4 wire-fields) Compute the run's per-run TOKEN SURFACE for the refs result.
+                // FLAG-GATED + FAIL-SAFE: with `token_surface_enabled` OFF (default) this returns
+                // `(None, None)` WITHOUT a DB read, so the `AgentRunResult` below is byte-identical
+                // to the pre-Loop4 wire; with it ON, the surface is the SUM of this run's
+                // `token_ledger` rows (a ledger read error falls back to `None`, never panics, never
+                // blocks the already-persisted answer). This is computed ONCE before the
+                // `unwrap_or_else` (the `AgentRunPaused` branch above has NO token fields and is
+                // unaffected; the closure that consumes the surface only runs for the refs result).
+                let (prompt_tokens, completion_tokens) =
+                    run_token_surface(token_surface_enabled, runtime.db().conn(), &run_id);
                 let result = result
                     .unwrap_or_else(|| {
                         Envelope::new(
@@ -947,8 +1039,8 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                                 answer_len: refs.answer_len,
                                 turns: refs.turns,
                                 executed_tools: refs.executed_tools,
-                                prompt_tokens: None,
-                                completion_tokens: None,
+                                prompt_tokens,
+                                completion_tokens,
                             },
                         )
                     })
@@ -1711,6 +1803,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 1, "one authed dispatch processed");
@@ -1824,6 +1917,7 @@ mod tests {
                 false, // (NS-4) mission-bound seam OFF for the run-control flag tests
                 false, // (NS-5) mission-intake ingress OFF for the run-control flag tests
                 false, // (KEYSTONE) mission-spine dispatch OFF for the run-control flag tests
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 1, "[{tag}] the paused dispatch is processed");
@@ -1873,6 +1967,249 @@ mod tests {
         }
     }
 
+    // === (Loop4 wire-fields) per-run TOKEN-SURFACE flag + helper + dispatch wiring ===========
+
+    /// Seed ONE run-attributable `token_ledger` row (`run_id = <run_id>`) directly on `conn`, a
+    /// TEST FIXTURE for the token-surface KATs. Mirrors the raw-INSERT seeding the storage
+    /// migration/atomic suites use — the public `Db::insert_token_ledger` always writes a NULL
+    /// `run_id` (ask-path), and `record_run_model_call` needs a full ledger/activity/audit triple,
+    /// so a direct INSERT is the focused way to bill a known `(prompt, completion)` to a run.
+    fn seed_run_ledger_row(
+        conn: &rusqlite::Connection,
+        ledger_id: &str,
+        run_id: &str,
+        prompt: i64,
+        completion: i64,
+    ) {
+        conn.execute(
+            "INSERT INTO token_ledger
+                (ledger_id, session_id, activity_id, provider_kind, model, base_url_host,
+                 prompt_tokens, completion_tokens, total_tokens, cost_estimate, fallback,
+                 result_link, created_at, run_id)
+             VALUES (?1, NULL, NULL, 'deepseek', 'deepseek-v4-flash', 'api.deepseek.com',
+                     ?3, ?4, ?5, NULL, 0, NULL, 100, ?2)",
+            rusqlite::params![ledger_id, run_id, prompt, completion, prompt + completion],
+        )
+        .unwrap();
+    }
+
+    /// KAT (the standard exact-`"1"` flag idiom): the token-surface flag matcher is DEFAULT-OFF,
+    /// ON only for the trimmed exact `"1"` — mirroring run-control / mission-* (NOT the reaper's
+    /// looser `"true"` form), so a future env typo can never silently light up a LIVE-path surface.
+    #[test]
+    fn token_surface_flag_matcher_is_default_off_and_exact_one() {
+        assert!(
+            !agent_run_token_surface_enabled_from(None),
+            "unset ⇒ disabled (DARK by default)"
+        );
+        assert!(
+            !agent_run_token_surface_enabled_from(Some("")),
+            "empty ⇒ disabled"
+        );
+        assert!(
+            !agent_run_token_surface_enabled_from(Some("0")),
+            "0 ⇒ disabled"
+        );
+        assert!(
+            !agent_run_token_surface_enabled_from(Some("false")),
+            "false ⇒ disabled"
+        );
+        assert!(
+            !agent_run_token_surface_enabled_from(Some("on")),
+            "on ⇒ disabled"
+        );
+        assert!(
+            agent_run_token_surface_enabled_from(Some("1")),
+            "1 ⇒ enabled"
+        );
+        assert!(
+            !agent_run_token_surface_enabled_from(Some("true")),
+            "true is NOT the opt-in value (exact-1 idiom; differs from the reaper flag)"
+        );
+        assert!(
+            agent_run_token_surface_enabled_from(Some("  1  ")),
+            "1 with surrounding whitespace ⇒ enabled (trimmed)"
+        );
+        // The const name is the operator-facing contract — pin it so a rename is a conscious change.
+        assert_eq!(
+            AGENT_RUN_TOKEN_SURFACE_ENABLED_ENV,
+            "FRIDAY_AGENT_RUN_TOKEN_SURFACE"
+        );
+    }
+
+    /// KAT (helper, flag ON ⇒ summed): with the flag ON the helper returns the run-attributable
+    /// SUM of `token_ledger` (`Some(prompt)`, `Some(completion)`), and a DIFFERENT run's rows never
+    /// leak in (run-scoped `WHERE run_id = ?1`).
+    #[test]
+    fn run_token_surface_sums_run_ledger_when_enabled() {
+        let db = friday_storage::Db::open_hub(
+            &std::env::temp_dir()
+                .join(format!(
+                    "friday-token-surface-on-{}-{}.sqlite",
+                    std::process::id(),
+                    C.fetch_add(1, Ordering::Relaxed)
+                ))
+                .to_string_lossy(),
+        )
+        .unwrap();
+        // Two rows for the run (must sum) + a row for a DIFFERENT run (must be excluded).
+        seed_run_ledger_row(db.conn(), "l1", "run-tok", 11, 8);
+        seed_run_ledger_row(db.conn(), "l2", "run-tok", 4, 2);
+        seed_run_ledger_row(db.conn(), "l-other", "run-other", 999, 999);
+
+        let (prompt, completion) = run_token_surface(true, db.conn(), "run-tok");
+        assert_eq!(prompt, Some(15), "11 + 4, run-scoped (other run excluded)");
+        assert_eq!(completion, Some(10), "8 + 2, run-scoped");
+
+        // A run with NO billed rows yields Some(0) (the true COALESCE'd sum), not None.
+        let (zp, zc) = run_token_surface(true, db.conn(), "run-with-no-rows");
+        assert_eq!((zp, zc), (Some(0), Some(0)), "zero-billed run ⇒ Some(0)");
+    }
+
+    /// KAT (helper, flag OFF ⇒ None — byte-identical): with the flag OFF the helper returns
+    /// `(None, None)` EVEN WHEN ledger rows exist for the run — proving the OFF emission is
+    /// byte-identical to today regardless of DB state (an absent `Option` is omitted on the wire).
+    #[test]
+    fn run_token_surface_is_none_when_disabled_even_with_rows() {
+        let db = friday_storage::Db::open_hub(
+            &std::env::temp_dir()
+                .join(format!(
+                    "friday-token-surface-off-{}-{}.sqlite",
+                    std::process::id(),
+                    C.fetch_add(1, Ordering::Relaxed)
+                ))
+                .to_string_lossy(),
+        )
+        .unwrap();
+        seed_run_ledger_row(db.conn(), "l1", "run-tok", 11, 8);
+        let (prompt, completion) = run_token_surface(false, db.conn(), "run-tok");
+        assert_eq!(
+            (prompt, completion),
+            (None, None),
+            "flag OFF ⇒ (None, None) even with ledger rows present (deploy-safe, byte-identical)"
+        );
+    }
+
+    /// KAT (helper, ledger read error ⇒ None — fail-safe): a ledger read failure (here: the
+    /// `token_ledger` table is gone) must NOT panic and must fall back to `(None, None)` — the
+    /// surface can never break the result emission.
+    #[test]
+    fn run_token_surface_is_none_on_ledger_read_error() {
+        let db = friday_storage::Db::open_hub(
+            &std::env::temp_dir()
+                .join(format!(
+                    "friday-token-surface-err-{}-{}.sqlite",
+                    std::process::id(),
+                    C.fetch_add(1, Ordering::Relaxed)
+                ))
+                .to_string_lossy(),
+        )
+        .unwrap();
+        // Force the aggregate SELECT to error: drop the table the helper reads.
+        db.conn().execute("DROP TABLE token_ledger", []).unwrap();
+        let (prompt, completion) = run_token_surface(true, db.conn(), "run-tok");
+        assert_eq!(
+            (prompt, completion),
+            (None, None),
+            "a ledger read error fails SAFE to None (never panics, never blocks the answer)"
+        );
+    }
+
+    /// WIRING KAT (end-to-end dispatch): with the token-surface flag ON, the emitted
+    /// `AgentRunResult` actually CARRIES the summed token counts (proving the threaded bool reaches
+    /// the construction and the helper is keyed on the dispatch's `run_id`); with it OFF the SAME
+    /// run — ledger rows and all — emits `None`/`None` (byte-identical). The emitted value is tied
+    /// to the post-dispatch ledger SUM (not a constant), so the loop's own billing is absorbed.
+    #[test]
+    fn dispatch_emits_summed_tokens_when_flag_on_and_none_when_off() {
+        // Drive the SAME accept_one dispatch as `authorized_peer_runs_and_body_is_sealed_*`,
+        // toggling ONLY the trailing token-surface flag, and seeding a known run-attributable row.
+        fn dispatch_with_token_flag(
+            tag: &str,
+            token_surface_enabled: bool,
+        ) -> (Message, (i64, i64)) {
+            let (rt, _ws) = mock_runtime(tag, OWNER);
+            // Seed a known row for the dispatch's run_id BEFORE the run, so the post-dispatch SUM
+            // is guaranteed > 0 (the assertion is meaningful, not a Some(0)==Some(0) tautology).
+            seed_run_ledger_row(rt.db().conn(), "seed-l1", "run-tok-wire", 100, 50);
+            let server_kp = DeviceKeypair::generate();
+            let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+            let addr = listener.local_addr().unwrap();
+            let allowlist = vec![OWNER.to_string()];
+            let client_kp = DeviceKeypair::generate();
+            let peer_allowlist = allowlist_of(client_kp.public_bytes());
+            let client = spawn_client(addr, client_kp, |session, nonce| {
+                let req = agent_run_request("req-tok", "run-tok-wire", OWNER, session, nonce);
+                (req, session.clone(), session.clone())
+            });
+            let processed = listener
+                .accept_one(
+                    &server_kp,
+                    &rt,
+                    &allowlist,
+                    &peer_allowlist,
+                    false, // run-control OFF
+                    false, // mission-bound seam OFF
+                    false, // mission-intake ingress OFF
+                    false, // mission-spine dispatch OFF
+                    token_surface_enabled,
+                )
+                .unwrap();
+            assert_eq!(processed, 1, "[{tag}] the authed dispatch is processed");
+            let reply = client.join().unwrap().result.expect("a reply is sent");
+            // Read the run's ledger SUM AFTER the dispatch — the run is complete, so this equals the
+            // helper's emission-time read (the loop's own billing, if any, is included here too).
+            let totals =
+                friday_storage::agent_run_read::run_token_totals(rt.db().conn(), "run-tok-wire")
+                    .unwrap();
+            (reply, (totals.prompt, totals.completion))
+        }
+
+        // FLAG ON ⇒ the refs result carries the summed tokens, tied to the post-dispatch ledger SUM.
+        let (on_reply, (sum_prompt, sum_completion)) =
+            dispatch_with_token_flag("tok-wire-on", true);
+        let Message::AgentRunResult {
+            run_id,
+            prompt_tokens,
+            completion_tokens,
+            ..
+        } = on_reply
+        else {
+            panic!("flag ON must emit AgentRunResult, got {on_reply:?}");
+        };
+        assert_eq!(run_id, "run-tok-wire");
+        assert!(
+            sum_prompt >= 100 && sum_completion >= 50,
+            "the seeded row (100/50) is billed to the run ⇒ a meaningful non-zero SUM"
+        );
+        assert_eq!(
+            prompt_tokens,
+            Some(sum_prompt as u64),
+            "flag ON: emitted prompt_tokens == the run's token_ledger SUM"
+        );
+        assert_eq!(
+            completion_tokens,
+            Some(sum_completion as u64),
+            "flag ON: emitted completion_tokens == the run's token_ledger SUM"
+        );
+
+        // FLAG OFF ⇒ the SAME run (ledger rows present) emits None/None — byte-identical to today.
+        let (off_reply, _) = dispatch_with_token_flag("tok-wire-off", false);
+        let Message::AgentRunResult {
+            prompt_tokens,
+            completion_tokens,
+            ..
+        } = off_reply
+        else {
+            panic!("flag OFF must emit AgentRunResult, got {off_reply:?}");
+        };
+        assert_eq!(
+            (prompt_tokens, completion_tokens),
+            (None, None),
+            "flag OFF: AgentRunResult emits None/None even with ledger rows (DARK, byte-identical)"
+        );
+    }
+
     /// DARK-when-OFF for control MESSAGES: a control message (e.g. AgentRunCancel) arriving with
     /// the run-control flag OFF is treated as a benign keepalive (echoed back), NOT handled — so a
     /// v13 control message on a dark server effects no state change. (Flag-ON handling is covered
@@ -1909,6 +2246,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(
@@ -1952,6 +2290,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 0, "[{tag}] rejected dispatch processes ZERO");
@@ -2142,6 +2481,7 @@ mod tests {
                 false, // mission-bound seam OFF
                 true,  // (NS-5) mission-intake ingress ON
                 false, // (KEYSTONE) mission-spine dispatch OFF for the mission-intake test
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 1, "one mission-intake request processed");
@@ -2243,6 +2583,7 @@ mod tests {
                 false, // mission-bound seam OFF
                 false, // (NS-5) mission-intake ingress OFF — byte-identical to today
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(
@@ -2419,6 +2760,7 @@ mod tests {
                 false, // mission-bound seam OFF
                 false, // mission-intake ingress OFF
                 true,  // (KEYSTONE) mission-spine dispatch ON
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 1, "one mission-lifecycle request processed");
@@ -2504,7 +2846,8 @@ mod tests {
                 false,
                 false,
                 false,
-                true, // (KEYSTONE) mission-spine dispatch ON
+                true,  // (KEYSTONE) mission-spine dispatch ON
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 1, "one work-item-status request processed");
@@ -2583,7 +2926,8 @@ mod tests {
                 false,
                 false,
                 false,
-                true, // (KEYSTONE) mission-spine dispatch ON
+                true,  // (KEYSTONE) mission-spine dispatch ON
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 1, "the request is processed (then rejected)");
@@ -2649,7 +2993,8 @@ mod tests {
                 false,
                 false,
                 false,
-                true, // (KEYSTONE) mission-spine dispatch ON
+                true,  // (KEYSTONE) mission-spine dispatch ON
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 1, "the request is processed (then denied)");
@@ -2698,6 +3043,7 @@ mod tests {
                     false,
                     false,
                     false, // (KEYSTONE) mission-spine dispatch OFF
+                    false, // (Loop4) per-run token surface OFF — byte-identical to today
                 )
                 .unwrap();
             assert_eq!(
@@ -2740,6 +3086,7 @@ mod tests {
                     false,
                     false,
                     false, // (KEYSTONE) mission-spine dispatch OFF
+                    false, // (Loop4) per-run token surface OFF — byte-identical to today
                 )
                 .unwrap();
             assert_eq!(
@@ -2824,6 +3171,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(
@@ -2868,6 +3216,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(
@@ -2912,6 +3261,7 @@ mod tests {
             false,
             false,
             false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+            false, // (Loop4) per-run token surface OFF — byte-identical to today
         );
         client.join().unwrap();
         assert!(
@@ -3200,6 +3550,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed1, 1, "connection-1 is a VALID dispatch");
@@ -3243,6 +3594,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(
@@ -3303,6 +3655,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
         // The first keepalive was processed (echoed); the replayed msg_id ended the session.
@@ -3380,6 +3733,7 @@ mod tests {
             false,
             false,
             false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+            false, // (Loop4) per-run token surface OFF — byte-identical to today
         );
         let obs = client.join().unwrap();
 
@@ -3438,6 +3792,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(
@@ -3848,6 +4203,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .expect("server serves the interop session");
         assert_eq!(processed, 1, "one authed dispatch processed");
@@ -3904,6 +4260,7 @@ mod tests {
             false,
             false,
             false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+            false, // (Loop4) per-run token surface OFF — byte-identical to today
         );
         assert!(
             served.is_err(),
@@ -3955,6 +4312,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .expect("server serves the session but runs nothing");
         assert_eq!(
@@ -4064,6 +4422,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .expect("server serves the compose-adapter session");
         assert_eq!(processed, 1, "one authed dispatch processed");
@@ -4120,6 +4479,7 @@ mod tests {
             false,
             false,
             false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+            false, // (Loop4) per-run token surface OFF — byte-identical to today
         );
         assert!(
             served.is_err(),
@@ -4182,6 +4542,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 1, "one sessioned dispatch processed");
@@ -4283,7 +4644,7 @@ mod tests {
         });
         assert_eq!(
             listener
-                .accept_one(&server_kp, &rt, &allowlist, &peer1, false, false, false, false)
+                .accept_one(&server_kp, &rt, &allowlist, &peer1, false, false, false, false, false)
                 .unwrap(),
             1
         );
@@ -4300,7 +4661,7 @@ mod tests {
         });
         assert_eq!(
             listener
-                .accept_one(&server_kp, &rt, &allowlist, &peer2, false, false, false, false)
+                .accept_one(&server_kp, &rt, &allowlist, &peer2, false, false, false, false, false)
                 .unwrap(),
             1
         );
@@ -4354,6 +4715,7 @@ mod tests {
                     false,
                     false,
                     false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                    false, // (Loop4) per-run token surface OFF — byte-identical to today
                 )
                 .unwrap(),
             1
