@@ -392,6 +392,24 @@ fn run() -> Result<(), ServerError> {
         );
     }
 
+    // (KEYSTONE) Read the MISSION-SPINE DISPATCH flag ONCE at boot (default-off). When false the
+    // dispatch arms NEVER handle a `MissionLifecycleRequest` / `WorkItemStatusRequest` — each falls
+    // through to the EXISTING catch-all keepalive echo (byte-identical to today, since the server
+    // has never had these arms), so deploying this binary changes NO live behavior until the
+    // operator flips this flag.
+    let mission_spine_dispatch_enabled = mission_spine_dispatch_enabled_from(
+        env::var(MISSION_SPINE_DISPATCH_ENABLED_ENV).ok().as_deref(),
+    );
+    if mission_spine_dispatch_enabled {
+        eprintln!(
+            "hub_agent_run_server: MISSION-SPINE dispatch ENABLED (FRIDAY_MISSION_SPINE_DISPATCH) — Mission/WorkItem lifecycle requests transition the Hub state machine (no model call)"
+        );
+    } else {
+        eprintln!(
+            "hub_agent_run_server: MISSION-SPINE dispatch DISABLED (set FRIDAY_MISSION_SPINE_DISPATCH=1 to enable) — Mission/WorkItem lifecycle requests are benign keepalive echoes"
+        );
+    }
+
     // (3) Long-lived accept loop. Each accepted connection: set the read timeout, read the peer
     // pubkey preamble, REJECT a non-allowlisted peer pubkey (S-F, the FIRST gate), reject low-order
     // points, run the WS handshake, derive the sealed session key, and serve sealed envelopes
@@ -405,6 +423,7 @@ fn run() -> Result<(), ServerError> {
             run_control_enabled,
             mission_bound_run_enabled,
             mission_intake_enabled,
+            mission_spine_dispatch_enabled,
         ) {
             Ok(_served) => {}
             // A connection-level error ends THAT connection only; the server keeps listening.
@@ -485,6 +504,35 @@ const MISSION_INTAKE_ENABLED_ENV: &str = "FRIDAY_MISSION_INTAKE";
 /// false; ON only for the exact opt-in value `"1"` (trimmed), matching the program's standard
 /// flag idiom; everything else (including `"true"`) ⇒ false.
 fn mission_intake_enabled_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
+/// The env flag that gates the MISSION-SPINE DISPATCH arms (the keystone that makes the
+/// operating-layer mission-spine REACHABLE). DEFAULT-OFF: a [`Message::MissionLifecycleRequest`]
+/// (advance one canonical Mission's lifecycle through the Hub state machine) and a
+/// [`Message::WorkItemStatusRequest`] (advance one WorkItem's lifecycle, with the
+/// proof-on-completion invariant enforced at the persistence boundary) are HANDLED — birthing the
+/// status transition + audit row via the existing
+/// [`friday_hub::hub_server::mission_lifecycle_result_for_db`] /
+/// [`friday_hub::hub_server::work_item_status_result_for_db`] and replying with the matching
+/// `*Result` — ONLY when `FRIDAY_MISSION_SPINE_DISPATCH` is exactly `"1"` (after trim). Unset — or
+/// any other value — leaves the arms DARK: each request falls through to the EXISTING catch-all
+/// keepalive echo, BYTE-IDENTICAL to today (the server has never had these arms), so deploying this
+/// binary changes NO live behavior until the operator flips this SEPARATE flag. No model call is
+/// made (a pure `&Db` mutation ⇒ ZERO `token_ledger` rows). SEPARATE from
+/// `FRIDAY_ROUTE_AGENT_RUN_VIA_RUST` (run-START), `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST` (run-CONTROL),
+/// `FRIDAY_MISSION_BOUND_RUN` (the bound-run seam), and `FRIDAY_MISSION_INTAKE` (Mission birth);
+/// flipping THIS one is an operator cutover decision. The sealed session IS the channel auth (the
+/// single-peer/single-owner SERVER invariant `enforce_single_peer` upholds at boot — a non-owner
+/// peer can never open a session), mirroring the merged `FRIDAY_MISSION_INTAKE` arm; these wire
+/// shapes carry no per-request `auth_proof`.
+const MISSION_SPINE_DISPATCH_ENABLED_ENV: &str = "FRIDAY_MISSION_SPINE_DISPATCH";
+
+/// Pure flag-matcher for [`MISSION_SPINE_DISPATCH_ENABLED_ENV`] (separated from the env read so it
+/// is testable without mutating the process-global environment). DEFAULT-OFF: `None` (unset) ⇒
+/// false; ON only for the exact opt-in value `"1"` (trimmed), matching the program's standard flag
+/// idiom; everything else (including `"true"`) ⇒ false.
+fn mission_spine_dispatch_enabled_from(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1"))
 }
 
@@ -594,6 +642,7 @@ impl AgentRunWsListener {
         run_control_enabled: bool,
         mission_bound_run_enabled: bool,
         mission_intake_enabled: bool,
+        mission_spine_dispatch_enabled: bool,
     ) -> Result<usize, TransportError> {
         let (stream, _peer) = self.listener.accept()?;
         // HARDENING: a per-connection read timeout BEFORE any read, so a stalled peer cannot
@@ -610,6 +659,7 @@ impl AgentRunWsListener {
             run_control_enabled,
             mission_bound_run_enabled,
             mission_intake_enabled,
+            mission_spine_dispatch_enabled,
         )
     }
 }
@@ -652,6 +702,7 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
     run_control_enabled: bool,
     mission_bound_run_enabled: bool,
     mission_intake_enabled: bool,
+    mission_spine_dispatch_enabled: bool,
 ) -> Result<usize, TransportError> {
     let mut processed = 0usize;
     // S-E: per-session msg_id dedup. A reconnect mints a FRESH tracker (so it is not a
@@ -1105,6 +1156,66 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 );
                 // Correlate the reply to the inbound request (consistent with every other bin
                 // reply + the `mission_intake_result` dispatch caller's `.with_correlation`).
+                ws_send_envelope(
+                    ws,
+                    session_key,
+                    &result.with_correlation(env.msg_id.clone()),
+                    SESSION_AAD,
+                )?;
+                processed += 1;
+            }
+            // (KEYSTONE) MISSION-LIFECYCLE dispatch — FLAG-GATED. When `FRIDAY_MISSION_SPINE_DISPATCH`
+            // is ON, an inbound `MissionLifecycleRequest` advances ONE canonical Mission through the
+            // Hub state machine via the EXISTING `friday_hub::hub_server::mission_lifecycle_result_for_db`
+            // — the SAME transition the `HubServer::dispatch` arm uses — and replies with a
+            // `MissionLifecycleResult` (or an `Error` on an unknown status / illegal hop / missing
+            // Mission). PURE `&Db` mutation: NO provider/model call, ZERO `token_ledger` rows. The
+            // sealed session IS the channel auth (single-peer/single-owner SERVER invariant; this wire
+            // shape carries no per-request `auth_proof`), mirroring the merged mission-intake arm. When
+            // the flag is OFF this guard FAILS and the request falls through to the catch-all keepalive
+            // echo below — BYTE-IDENTICAL to today (the server has never had this arm).
+            Message::MissionLifecycleRequest { request } if mission_spine_dispatch_enabled => {
+                let now_ms = now_ms();
+                let result = friday_hub::hub_server::mission_lifecycle_result_for_db(
+                    runtime.db(),
+                    &env.msg_id,
+                    request,
+                    now_ms,
+                );
+                eprintln!(
+                    "hub_agent_run_server_dispatch: msg_id={} leg=mission_lifecycle (mission-spine enabled)",
+                    env.msg_id
+                );
+                ws_send_envelope(
+                    ws,
+                    session_key,
+                    &result.with_correlation(env.msg_id.clone()),
+                    SESSION_AAD,
+                )?;
+                processed += 1;
+            }
+            // (KEYSTONE) WORK-ITEM-STATUS dispatch — FLAG-GATED. When `FRIDAY_MISSION_SPINE_DISPATCH`
+            // is ON, an inbound `WorkItemStatusRequest` advances ONE WorkItem through the Hub state
+            // machine via the EXISTING `friday_hub::hub_server::work_item_status_result_for_db` and
+            // replies with a `WorkItemStatusResult` (or an `Error`). **Proof-on-completion is
+            // ENFORCED at the persistence boundary:** a `completed_with_proof` target with no
+            // (or empty/whitespace) `proof_receipt` is REJECTED as a typed `Error` — "done" can
+            // never be claimed without proof. PURE `&Db` mutation: NO provider/model call, ZERO
+            // `token_ledger` rows; the sealed session is the channel auth. When the flag is OFF this
+            // guard FAILS and the request falls through to the catch-all keepalive echo below —
+            // BYTE-IDENTICAL to today.
+            Message::WorkItemStatusRequest { request } if mission_spine_dispatch_enabled => {
+                let now_ms = now_ms();
+                let result = friday_hub::hub_server::work_item_status_result_for_db(
+                    runtime.db(),
+                    &env.msg_id,
+                    request,
+                    now_ms,
+                );
+                eprintln!(
+                    "hub_agent_run_server_dispatch: msg_id={} leg=work_item_status (mission-spine enabled)",
+                    env.msg_id
+                );
                 ws_send_envelope(
                     ws,
                     session_key,
@@ -1599,6 +1710,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 1, "one authed dispatch processed");
@@ -1711,6 +1823,7 @@ mod tests {
                 run_control_enabled,
                 false, // (NS-4) mission-bound seam OFF for the run-control flag tests
                 false, // (NS-5) mission-intake ingress OFF for the run-control flag tests
+                false, // (KEYSTONE) mission-spine dispatch OFF for the run-control flag tests
             )
             .unwrap();
         assert_eq!(processed, 1, "[{tag}] the paused dispatch is processed");
@@ -1795,6 +1908,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(
@@ -1837,6 +1951,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 0, "[{tag}] rejected dispatch processes ZERO");
@@ -2026,6 +2141,7 @@ mod tests {
                 false, // run-control OFF
                 false, // mission-bound seam OFF
                 true,  // (NS-5) mission-intake ingress ON
+                false, // (KEYSTONE) mission-spine dispatch OFF for the mission-intake test
             )
             .unwrap();
         assert_eq!(processed, 1, "one mission-intake request processed");
@@ -2126,6 +2242,7 @@ mod tests {
                 false, // run-control OFF
                 false, // mission-bound seam OFF
                 false, // (NS-5) mission-intake ingress OFF — byte-identical to today
+                false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(
@@ -2166,6 +2283,481 @@ mod tests {
                 .is_empty(),
             "flag OFF writes NO route_decision"
         );
+    }
+
+    // =======================================================================
+    // (KEYSTONE) FRIDAY_MISSION_SPINE_DISPATCH — Mission/WorkItem lifecycle arms
+    // =======================================================================
+
+    #[test]
+    fn mission_spine_dispatch_flag_is_default_off_and_fail_closed() {
+        // The mission-spine dispatch arms are DEFAULT-OFF: unset ⇒ disabled (deploy-safe, each
+        // arm falls through to the keepalive echo). Only the exact opt-in value enables it.
+        assert!(
+            !mission_spine_dispatch_enabled_from(None),
+            "unset ⇒ disabled (default-off, deploy-safe)"
+        );
+        assert!(
+            !mission_spine_dispatch_enabled_from(Some("")),
+            "empty ⇒ disabled"
+        );
+        assert!(
+            !mission_spine_dispatch_enabled_from(Some("0")),
+            "0 ⇒ disabled"
+        );
+        assert!(
+            !mission_spine_dispatch_enabled_from(Some("false")),
+            "false ⇒ disabled"
+        );
+        assert!(
+            !mission_spine_dispatch_enabled_from(Some("on")),
+            "garbage ⇒ disabled"
+        );
+        assert!(
+            mission_spine_dispatch_enabled_from(Some("1")),
+            "1 ⇒ enabled"
+        );
+        assert!(
+            !mission_spine_dispatch_enabled_from(Some("true")),
+            "true ⇒ disabled (only exact 1)"
+        );
+        assert!(
+            !mission_spine_dispatch_enabled_from(Some("  TRUE  ")),
+            "padded TRUE ⇒ disabled (only exact 1)"
+        );
+    }
+
+    /// (KEYSTONE) Seed a real Mission + WorkItem(ReadyToDispatch) into the runtime's DB by driving
+    /// the PROVEN intake free-fn directly (no session needed — it is a pure `&Db` mutation). Returns
+    /// the canonical ids so the lifecycle/status KATs have a real target. Uses the SAME shape the
+    /// `mission_intake_request` builder produces.
+    fn seed_mission_and_work_item<T: Transport>(rt: &HubRuntime<T>) {
+        let req = match mission_intake_request("seed").message {
+            Message::MissionIntakeRequest { request } => request,
+            _ => unreachable!("the seed builder produces a MissionIntakeRequest"),
+        };
+        let env = friday_hub::hub_server::mission_intake_result_for_db(rt.db(), "seed", req, 1_000);
+        match env.message {
+            Message::MissionIntakeResult { result } => {
+                assert_eq!(
+                    result.status, "ready",
+                    "seed births a ready Mission/WorkItem"
+                );
+            }
+            other => panic!("seed intake must succeed, got {other:?}"),
+        }
+    }
+
+    /// (KEYSTONE) A `MissionLifecycleRequest` envelope. No `auth_proof`: the sealed session IS the
+    /// channel auth (mirroring the merged mission-intake arm).
+    fn mission_lifecycle_request(msg_id: &str, target_status: &str) -> Envelope {
+        Envelope::new(
+            msg_id,
+            1000,
+            Message::MissionLifecycleRequest {
+                request: friday_protocol::MissionLifecycleRequestWire {
+                    friday_conversation_id: "fconv_ns5_intake".into(),
+                    mission_id: "mission-ns5".into(),
+                    target_status: target_status.into(),
+                    actor_ref: OWNER.into(),
+                    reason: "operator advances the Mission".into(),
+                    proof_ref: None,
+                    merged_into_mission_id: None,
+                },
+            },
+        )
+    }
+
+    /// (KEYSTONE) A `WorkItemStatusRequest` envelope for `work_item_id` → `target_status`, carrying
+    /// `proof_receipt`. No `auth_proof`: the sealed session is the channel auth.
+    fn work_item_status_request(
+        msg_id: &str,
+        work_item_id: &str,
+        target_status: &str,
+        proof_receipt: Option<&str>,
+    ) -> Envelope {
+        Envelope::new(
+            msg_id,
+            1000,
+            Message::WorkItemStatusRequest {
+                request: friday_protocol::WorkItemStatusRequestWire {
+                    work_item_id: work_item_id.into(),
+                    target_status: target_status.into(),
+                    actor_ref: OWNER.into(),
+                    reason: "operator advances the WorkItem".into(),
+                    proof_receipt: proof_receipt.map(str::to_string),
+                },
+            },
+        )
+    }
+
+    /// (KEYSTONE / KAT a) FLAG-ON: a `MissionLifecycleRequest` driven through the REAL dispatch path
+    /// (`accept_one` → `serve_sealed_session`) advances the canonical Mission's status through the
+    /// Hub state machine, returns a `MissionLifecycleResult`, and writes ZERO `token_ledger` rows.
+    #[test]
+    fn flag_on_mission_lifecycle_transitions_through_dispatch() {
+        let (rt, _ws) = mock_runtime("spine-lifecycle-on", OWNER);
+        seed_mission_and_work_item(&rt);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        let client_kp = DeviceKeypair::generate();
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let client = spawn_client(addr, client_kp, |session, _nonce| {
+            let req = mission_lifecycle_request("req-lifecycle-on", "paused");
+            (req, session.clone(), session.clone())
+        });
+
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false, // run-control OFF
+                false, // mission-bound seam OFF
+                false, // mission-intake ingress OFF
+                true,  // (KEYSTONE) mission-spine dispatch ON
+            )
+            .unwrap();
+        assert_eq!(processed, 1, "one mission-lifecycle request processed");
+
+        let obs = client.join().unwrap();
+        let Some(Message::MissionLifecycleResult { result }) = obs.result.clone() else {
+            panic!(
+                "flag ON must reply with MissionLifecycleResult, got {:?}",
+                obs.result
+            );
+        };
+        assert_eq!(result.mission_id, "mission-ns5");
+        assert_eq!(result.previous_status, "active");
+        assert_eq!(result.status, "paused", "the Mission was transitioned");
+
+        // The DB row reflects the transition.
+        let mission = rt
+            .db()
+            .get_mission("mission-ns5")
+            .unwrap()
+            .expect("Mission row persisted");
+        assert_eq!(mission.status, friday_core::MissionStatus::Paused);
+
+        // ZERO model call: a lifecycle transition is a pure &Db mutation.
+        let ledger_rows: i64 = rt
+            .db()
+            .conn()
+            .query_row("SELECT COUNT(*) FROM token_ledger", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            ledger_rows, 0,
+            "lifecycle makes NO model call ⇒ ZERO ledger rows"
+        );
+    }
+
+    /// (KEYSTONE / KAT a) FLAG-ON: a `WorkItemStatusRequest` with a VALID proof_receipt completes
+    /// the WorkItem with proof through the REAL dispatch path, returning a `WorkItemStatusResult`
+    /// whose status is `completed_with_proof` and whose receipt COUNT is 1.
+    #[test]
+    fn flag_on_work_item_status_completes_with_proof_through_dispatch() {
+        let (rt, _ws) = mock_runtime("spine-workitem-on", OWNER);
+        seed_mission_and_work_item(&rt);
+        // The seeded WorkItem is ReadyToDispatch; walk it to ProviderWaiting (the only legal
+        // pre-completion state) so the completion hop is valid — exercising the state machine.
+        for (i, next) in [
+            friday_core::WorkItemStatus::Dispatched,
+            friday_core::WorkItemStatus::HubAccepted,
+            friday_core::WorkItemStatus::ProviderRouted,
+            friday_core::WorkItemStatus::ProviderWaiting,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            // DISTINCT now_ms per hop: the audit_id is `workitem_lifecycle:{id}:{now_ms}`, so a
+            // shared timestamp would collide on the audit_ledger UNIQUE key.
+            let now = 2_000 + i as i64;
+            rt.db()
+                .transition_work_item_status("work-ns5", next, OWNER, "advance", None, now)
+                .unwrap();
+        }
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        let client_kp = DeviceKeypair::generate();
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let client = spawn_client(addr, client_kp, |session, _nonce| {
+            let req = work_item_status_request(
+                "req-workitem-on",
+                "work-ns5",
+                "completed_with_proof",
+                Some("proof://work-ns5/verified-result"),
+            );
+            (req, session.clone(), session.clone())
+        });
+
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false,
+                false,
+                false,
+                true, // (KEYSTONE) mission-spine dispatch ON
+            )
+            .unwrap();
+        assert_eq!(processed, 1, "one work-item-status request processed");
+
+        let obs = client.join().unwrap();
+        let Some(Message::WorkItemStatusResult { result }) = obs.result.clone() else {
+            panic!(
+                "flag ON must reply with WorkItemStatusResult, got {:?}",
+                obs.result
+            );
+        };
+        assert_eq!(result.work_item_id, "work-ns5");
+        assert_eq!(result.mission_id, "mission-ns5");
+        assert_eq!(result.previous_status, "provider_waiting");
+        assert_eq!(result.status, "completed_with_proof");
+        assert_eq!(
+            result.proof_receipt_count, 1,
+            "exactly one receipt persisted"
+        );
+
+        let work = rt
+            .db()
+            .get_work_item("work-ns5")
+            .unwrap()
+            .expect("WorkItem row persisted");
+        assert_eq!(work.status, friday_core::WorkItemStatus::CompletedWithProof);
+        assert_eq!(work.proof_receipts.len(), 1);
+    }
+
+    /// (KEYSTONE / KAT b) PROOF-ON-COMPLETION: a `completed_with_proof` WorkItemStatusRequest with an
+    /// EMPTY proof_receipt is REJECTED — the dispatch arm returns a typed `Error`, NOT a fake-ready
+    /// completion, and the WorkItem is NOT advanced. This is the load-bearing safety invariant.
+    #[test]
+    fn flag_on_work_item_completion_with_empty_proof_is_rejected() {
+        let (rt, _ws) = mock_runtime("spine-workitem-emptyproof", OWNER);
+        seed_mission_and_work_item(&rt);
+        for (i, next) in [
+            friday_core::WorkItemStatus::Dispatched,
+            friday_core::WorkItemStatus::HubAccepted,
+            friday_core::WorkItemStatus::ProviderRouted,
+            friday_core::WorkItemStatus::ProviderWaiting,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            // DISTINCT now_ms per hop: the audit_id is `workitem_lifecycle:{id}:{now_ms}`, so a
+            // shared timestamp would collide on the audit_ledger UNIQUE key.
+            let now = 2_000 + i as i64;
+            rt.db()
+                .transition_work_item_status("work-ns5", next, OWNER, "advance", None, now)
+                .unwrap();
+        }
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        let client_kp = DeviceKeypair::generate();
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let client = spawn_client(addr, client_kp, |session, _nonce| {
+            // EMPTY (whitespace-only) receipt — must be treated as NO receipt and rejected.
+            let req = work_item_status_request(
+                "req-workitem-emptyproof",
+                "work-ns5",
+                "completed_with_proof",
+                Some("   "),
+            );
+            (req, session.clone(), session.clone())
+        });
+
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false,
+                false,
+                false,
+                true, // (KEYSTONE) mission-spine dispatch ON
+            )
+            .unwrap();
+        assert_eq!(processed, 1, "the request is processed (then rejected)");
+
+        // FAIL-CLOSED: a typed Error, never a WorkItemStatusResult.
+        match client.join().unwrap().result.expect("a reply is sent") {
+            Message::Error { message, .. } => {
+                assert!(
+                    message.contains("work item lifecycle blocked"),
+                    "the proofless completion is a typed error: {message}"
+                );
+            }
+            other => panic!("empty-proof completion must be REJECTED, got {other:?}"),
+        }
+
+        // The WorkItem was NOT completed — it stays at ProviderWaiting, no fake-ready write.
+        let work = rt
+            .db()
+            .get_work_item("work-ns5")
+            .unwrap()
+            .expect("WorkItem row persisted");
+        assert_eq!(
+            work.status,
+            friday_core::WorkItemStatus::ProviderWaiting,
+            "a proofless completion never advances the WorkItem"
+        );
+        assert!(
+            work.proof_receipts.is_empty(),
+            "no receipt was appended for the rejected completion"
+        );
+    }
+
+    /// (KEYSTONE / KAT c) CROSS-OWNER / NOT-FOUND: a WorkItemStatusRequest for a work_item_id that
+    /// does NOT exist in this owner's DB is denied (typed `not found` Error). Under the single-peer/
+    /// single-owner session-auth model, an unknown id IS the cross-owner denial (a non-owner could
+    /// never open this session, and an id outside this DB is not found). No partial write.
+    #[test]
+    fn flag_on_work_item_status_unknown_id_is_denied_not_found() {
+        let (rt, _ws) = mock_runtime("spine-workitem-notfound", OWNER);
+        seed_mission_and_work_item(&rt);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        let client_kp = DeviceKeypair::generate();
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let client = spawn_client(addr, client_kp, |session, _nonce| {
+            let req = work_item_status_request(
+                "req-workitem-notfound",
+                "work-belonging-to-another-owner",
+                "ready_to_dispatch",
+                None,
+            );
+            (req, session.clone(), session.clone())
+        });
+
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false,
+                false,
+                false,
+                true, // (KEYSTONE) mission-spine dispatch ON
+            )
+            .unwrap();
+        assert_eq!(processed, 1, "the request is processed (then denied)");
+
+        match client.join().unwrap().result.expect("a reply is sent") {
+            Message::Error { message, .. } => {
+                assert!(
+                    message.contains("not found"),
+                    "an unknown WorkItem is a not-found denial: {message}"
+                );
+            }
+            other => panic!("unknown WorkItem must be denied, got {other:?}"),
+        }
+        // The seeded (owner's own) WorkItem is untouched — no cross-bleed write.
+        let work = rt.db().get_work_item("work-ns5").unwrap().unwrap();
+        assert_eq!(work.status, friday_core::WorkItemStatus::ReadyToDispatch);
+    }
+
+    /// (KEYSTONE / KAT d) DEPLOY-SAFETY: with the flag OFF, BOTH a MissionLifecycleRequest and a
+    /// WorkItemStatusRequest are treated as benign keepalive ECHOES — BYTE-IDENTICAL to today (the
+    /// server has never had these arms). No transition, no write.
+    #[test]
+    fn flag_off_mission_spine_requests_are_keepalive_echoes_and_change_nothing() {
+        let (rt, _ws) = mock_runtime("spine-off", OWNER);
+        seed_mission_and_work_item(&rt);
+
+        // (1) MissionLifecycleRequest with the flag OFF ⇒ echoed verbatim, Mission NOT transitioned.
+        {
+            let server_kp = DeviceKeypair::generate();
+            let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+            let addr = listener.local_addr().unwrap();
+            let allowlist = vec![OWNER.to_string()];
+            let client_kp = DeviceKeypair::generate();
+            let peer_allowlist = allowlist_of(client_kp.public_bytes());
+            let client = spawn_client(addr, client_kp, |session, _nonce| {
+                let req = mission_lifecycle_request("req-lifecycle-off", "paused");
+                (req, session.clone(), session.clone())
+            });
+            let processed = listener
+                .accept_one(
+                    &server_kp,
+                    &rt,
+                    &allowlist,
+                    &peer_allowlist,
+                    false,
+                    false,
+                    false,
+                    false, // (KEYSTONE) mission-spine dispatch OFF
+                )
+                .unwrap();
+            assert_eq!(
+                processed, 1,
+                "the lifecycle request is processed as a keepalive"
+            );
+            match client.join().unwrap().result.expect("an echo reply") {
+                Message::MissionLifecycleRequest { request } => {
+                    assert_eq!(request.target_status, "paused", "echoed verbatim");
+                }
+                other => panic!("flag OFF must echo the MissionLifecycleRequest, got {other:?}"),
+            }
+            assert_eq!(
+                rt.db().get_mission("mission-ns5").unwrap().unwrap().status,
+                friday_core::MissionStatus::Active,
+                "flag OFF transitions NOTHING (the seeded Mission stays Active)"
+            );
+        }
+
+        // (2) WorkItemStatusRequest with the flag OFF ⇒ echoed verbatim, WorkItem NOT transitioned.
+        {
+            let server_kp = DeviceKeypair::generate();
+            let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+            let addr = listener.local_addr().unwrap();
+            let allowlist = vec![OWNER.to_string()];
+            let client_kp = DeviceKeypair::generate();
+            let peer_allowlist = allowlist_of(client_kp.public_bytes());
+            let client = spawn_client(addr, client_kp, |session, _nonce| {
+                let req =
+                    work_item_status_request("req-workitem-off", "work-ns5", "dispatched", None);
+                (req, session.clone(), session.clone())
+            });
+            let processed = listener
+                .accept_one(
+                    &server_kp,
+                    &rt,
+                    &allowlist,
+                    &peer_allowlist,
+                    false,
+                    false,
+                    false,
+                    false, // (KEYSTONE) mission-spine dispatch OFF
+                )
+                .unwrap();
+            assert_eq!(
+                processed, 1,
+                "the work-item-status request is processed as a keepalive"
+            );
+            match client.join().unwrap().result.expect("an echo reply") {
+                Message::WorkItemStatusRequest { request } => {
+                    assert_eq!(request.work_item_id, "work-ns5", "echoed verbatim");
+                }
+                other => panic!("flag OFF must echo the WorkItemStatusRequest, got {other:?}"),
+            }
+            assert_eq!(
+                rt.db().get_work_item("work-ns5").unwrap().unwrap().status,
+                friday_core::WorkItemStatus::ReadyToDispatch,
+                "flag OFF transitions NOTHING (the seeded WorkItem stays ReadyToDispatch)"
+            );
+        }
     }
 
     #[test]
@@ -2231,6 +2823,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(
@@ -2274,6 +2867,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(
@@ -2317,6 +2911,7 @@ mod tests {
             false,
             false,
             false,
+            false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
         );
         client.join().unwrap();
         assert!(
@@ -2604,6 +3199,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed1, 1, "connection-1 is a VALID dispatch");
@@ -2646,6 +3242,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(
@@ -2705,6 +3302,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             )
             .unwrap();
         // The first keepalive was processed (echoed); the replayed msg_id ended the session.
@@ -2781,6 +3379,7 @@ mod tests {
             false,
             false,
             false,
+            false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
         );
         let obs = client.join().unwrap();
 
@@ -2838,6 +3437,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(
@@ -3247,6 +3847,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             )
             .expect("server serves the interop session");
         assert_eq!(processed, 1, "one authed dispatch processed");
@@ -3302,6 +3903,7 @@ mod tests {
             false,
             false,
             false,
+            false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
         );
         assert!(
             served.is_err(),
@@ -3352,6 +3954,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             )
             .expect("server serves the session but runs nothing");
         assert_eq!(
@@ -3460,6 +4063,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             )
             .expect("server serves the compose-adapter session");
         assert_eq!(processed, 1, "one authed dispatch processed");
@@ -3515,6 +4119,7 @@ mod tests {
             false,
             false,
             false,
+            false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
         );
         assert!(
             served.is_err(),
@@ -3576,6 +4181,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 1, "one sessioned dispatch processed");
@@ -3677,7 +4283,7 @@ mod tests {
         });
         assert_eq!(
             listener
-                .accept_one(&server_kp, &rt, &allowlist, &peer1, false, false, false)
+                .accept_one(&server_kp, &rt, &allowlist, &peer1, false, false, false, false)
                 .unwrap(),
             1
         );
@@ -3694,7 +4300,7 @@ mod tests {
         });
         assert_eq!(
             listener
-                .accept_one(&server_kp, &rt, &allowlist, &peer2, false, false, false)
+                .accept_one(&server_kp, &rt, &allowlist, &peer2, false, false, false, false)
                 .unwrap(),
             1
         );
@@ -3746,7 +4352,8 @@ mod tests {
                     &peer_allowlist,
                     false,
                     false,
-                    false
+                    false,
+                    false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 )
                 .unwrap(),
             1

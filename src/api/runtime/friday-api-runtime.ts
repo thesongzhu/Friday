@@ -993,6 +993,42 @@ export const RUST_ROUTE_READ_TOOL_ALLOWLIST = ["read_file", "list_dir", "stat_fi
 const RUST_ROUTE_DEEPSEEK_PROVIDER_ID = "deepseek";
 const RUST_ROUTE_DEEPSEEK_FLASH_MODEL = "deepseek-v4-flash";
 
+// (honest-non-finished) The well-known SHA-256 of the EMPTY byte string. A non-Finished terminal
+// run produced NO answer body, but the continuity-projector receipt requires a `finalMessageSha256`
+// string — we stamp this empty-body sentinel (with `finalMessageLen: 0`) so the body REF is
+// truthfully "zero bytes", NEVER an answer fingerprint. Refs-only — this is not a body.
+const EMPTY_BODY_SHA256 =
+  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"; // pragma: allowlist secret
+
+// (honest-non-finished) The CLOSED allow-list of dispatch loop-status labels that mark a
+// NON-deliverable terminal run (the run ended without an answer to persist). The wire COLLAPSES
+// Blocked/Errored/Bounded/no-answer into ONE label: `AuthedAnswer::NoAnswer`'s refs carry no
+// `status` key, so the agent-run server falls back to the `outcome` → compose actually sees
+// `"no_answer_safe_failure"` for ALL non-Finished/no-body terminals (the raw loop-status tokens are
+// admitted too, for a server that surfaces them directly). EVERY OTHER status — notably `"finished"`
+// (a finished run SHOULD have a row) and any error status (`storage_failed`/`auth_failed`/
+// `operator_vk_unprovisioned`) — is NOT here, so it keeps today's fail-closed 503 (no gate-weakening).
+const RUST_ROUTE_NON_FINISHED_TERMINAL_STATUSES = new Set<string>([
+  "no_answer_safe_failure",
+  "no_answer",
+  "blocked",
+  "bounded",
+  "errored",
+]);
+
+// (honest-non-finished) Map a NON-Finished terminal wire status to the projector's `loopStatus`
+// token. The opaque collapsed labels (`no_answer_safe_failure`/`no_answer` — the only values the
+// LIVE wire emits, since `AuthedAnswer::NoAnswer` carries no status key) cannot recover which
+// non-Finished kind they were, so they map to "Errored". A raw loop-status token a server MIGHT
+// surface directly keeps its FAITHFUL capitalized form. ALL of these map to the SAME terminal
+// "failed" run status downstream (mapLoopStatusToTsStatus) — the distinction is metadata fidelity
+// only, never a different product-visible outcome, and is NEVER the resumable "Paused"/"cancelled".
+const RUST_ROUTE_NON_FINISHED_LOOP_STATUS: Record<string, string> = {
+  blocked: "Blocked",
+  bounded: "Bounded",
+  errored: "Errored",
+};
+
 // (A2b Phase 2, mutation-relax — DARK, default-off) The CLOSED, NAMED allow-list of mutating
 // Rust tools a gated chat run may carry. Clause 4's admitted tool set is the read set
 // (RUST_ROUTE_READ_TOOL_ALLOWLIST) UNION an EXPLICITLY-GRANTED subset of THIS list — only
@@ -1335,6 +1371,78 @@ function readRustAgentRunWsPort(raw: string | undefined): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 }
 
+/**
+ * (honest-non-finished) Project + return an HONEST non-Finished terminal result for a run whose
+ * Rust loop terminated WITHOUT an answer (the persist guard skipped ⇒ the owner-gated readback
+ * legitimately `not_found`). Mirrors the Paused-branch projection pattern (write-transaction + the
+ * real projector) but maps to `loopStatus:"Errored"` (→ the projector's terminal "failed" status):
+ * the wire collapses Blocked/Errored/Bounded into one no-answer label and all three map to "failed"
+ * anyway, so "Errored" is the faithful coarse non-resumable terminal — NEVER "Paused" (resumable
+ * "cancelled", which a no-answer terminal is not). REFS-ONLY: empty body ref (len 0), empty
+ * response — we NEVER fabricate an answer body. We DELIBERATELY do NOT stamp the apiRequest
+ * idempotency descriptor (a failed/no-answer run must NOT replay on a retry).
+ */
+function projectHonestNonFinishedTerminal(input: {
+  readonly db: FridaySqliteLayer;
+  readonly projector: FridayRustHubRunContinuityProjectorService;
+  readonly runId: string;
+  readonly providerId: string;
+  readonly model: string;
+  readonly ownerPrincipal: string;
+  readonly wsStatus: string;
+  readonly turns: number;
+  readonly executedTools: number;
+  readonly completedAtIso: string;
+}): FridayAgentRuntimeResult {
+  const projection = input.db.withWriteTransaction((db) =>
+    input.projector.project(db, {
+      truthLabel: "rust_wired_dev",
+      proofOnly: true,
+      ok: true,
+      runId: input.runId,
+      routeId: `${input.providerId}:${input.model}`,
+      providerId: input.providerId,
+      model: input.model,
+      // The faithful non-Finished loop status (→ the projector's terminal "failed" run status —
+      // NEVER a fabricated "completed"/"finished", NEVER the resumable "Paused"/"cancelled"). The
+      // opaque collapsed labels fall back to "Errored". `errorCategory` is a bounded body-free label.
+      loopStatus: RUST_ROUTE_NON_FINISHED_LOOP_STATUS[input.wsStatus] ?? "Errored",
+      errorCategory: "rust_loop_non_finished",
+      // Carried run COUNTS when present (0 when omitted — old server / no-answer terminal).
+      turns: input.turns,
+      executedTools: input.executedTools,
+      // No body exists → an EMPTY body REF: the empty-string sha sentinel + len 0; NEVER an answer
+      // sha (the receipt type requires a sha string).
+      finalMessageSha256: EMPTY_BODY_SHA256,
+      finalMessageLen: 0,
+      auditChainVerified: false,
+      usagePromptTokens: 0,
+      usageCompletionTokens: 0,
+      usageTotalTokens: 0,
+      completedAtIso: input.completedAtIso,
+      // Stamp the BOUND OWNER (the authenticated caller, non-empty by the preflight) so the row is
+      // owner-scoped for the read routes — the same shape the delivered/paused branches use. A ref.
+      ...(input.ownerPrincipal ? { ownerPrincipalId: input.ownerPrincipal } : {}),
+    }),
+  );
+  // A non-Finished terminal settle is NOT a fail-closed 503 — it returns an HONEST terminal row.
+  // Logged body-free on its OWN line, never confused with a 503.
+  console.warn(
+    `[friday][rust-agent-run] non-finished-terminal run_id=${input.runId} leg=readback_not_found ws_status=${input.wsStatus} status=${projection.status}`,
+  );
+  return {
+    runId: input.runId,
+    // The HONEST terminal mapping ("failed") — NOT Finished. No body → empty response (INV-5).
+    status: projection.status as FridayAgentRuntimeResult["status"],
+    response: "",
+    toolCallCount: input.executedTools,
+    durationMs: 0,
+    usageInput: 0,
+    usageOutput: 0,
+    finalResponse: "",
+  };
+}
+
 async function composeRustReadOnlyAgentRun(args: {
   readonly runId: string;
   readonly task: string;
@@ -1541,6 +1649,37 @@ async function composeRustReadOnlyAgentRun(args: {
   }
   if (readbackReceipt.outcome !== "delivered") {
     // leg C: the readback succeeded but returned a non-delivered outcome (denied / not_found).
+    //
+    // (honest-non-finished) A run that terminated NON-Finished (the Rust loop ended Blocked /
+    // Errored / Bounded, or fail-closed-to-no-answer) DELIBERATELY skips the Rust-side persist guard
+    // (`if outcome.status == Finished { persist_run_result }`), so NO `run_result` row is written and
+    // the owner-gated body readback LEGITIMATELY returns `not_found` — there was never an answer to
+    // store. Throwing the `readback_not_found` 503 for that case MISREPORTS an honest terminal settle
+    // as a transport/storage failure (the hourly self-probe + S6 saw exactly this). We carve out ONLY
+    // that one honest case — `not_found` (NOT `denied`: an ownership-gate refusal MUST still 503; a
+    // missing-row read is the only honest-terminal signal) AND a non-deliverable terminal wire status
+    // (RUST_ROUTE_NON_FINISHED_TERMINAL_STATUSES) — and keep TODAY's 503 for everything else.
+    if (
+      readbackReceipt.outcome === "not_found" &&
+      RUST_ROUTE_NON_FINISHED_TERMINAL_STATUSES.has(wsResult.status)
+    ) {
+      // HONEST non-Finished terminal: project a refs-only "failed" continuity row + return it instead
+      // of throwing (see {@link projectHonestNonFinishedTerminal} for the full no-body rationale).
+      return projectHonestNonFinishedTerminal({
+        db: args.db,
+        projector: args.projector,
+        runId: args.runId,
+        providerId: args.providerId,
+        model: args.model,
+        ownerPrincipal: callerPrincipal,
+        wsStatus: wsResult.status,
+        turns: wsResult.turns ?? 0,
+        executedTools: wsResult.executedTools ?? 0,
+        completedAtIso: args.nowIso(),
+      });
+    }
+    // Every OTHER non-delivered case (denied, finished-but-missing-row, any error status) keeps
+    // TODAY's fail-closed 503 EXACTLY — body-free observability then the unchanged 503.
     logFailClosed(`readback_${readbackReceipt.outcome}`);
     throw failClosed();
   }
