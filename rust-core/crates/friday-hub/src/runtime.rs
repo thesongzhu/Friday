@@ -44,8 +44,8 @@ use crate::routing::{
     RouteRequest, RoutedLoopError, RoutedSelection,
 };
 use crate::{
-    run_session_loop, AgentLlmClient, CancelToken, DeepSeekAgentLlmClient, FsToolExecutor,
-    LoopOutcome, LoopStatus, RunPolicy,
+    run_session_loop, AgentLlmClient, CancelToken, CodexTurnExecutor, DeepSeekAgentLlmClient,
+    FsToolExecutor, LoopOutcome, LoopStatus, RunPolicy,
 };
 
 /// S1.3 — the outcome of [`HubRuntime::run_agent_loop_for_mission`], mirroring
@@ -174,14 +174,18 @@ pub struct HubRuntime<T: Transport> {
     /// field stays `None`, AND the `claude` route is registered `available: false` so
     /// `select_route` never picks it. The DeepSeek path is unchanged.
     claude: Option<Box<dyn AgentLlmClient>>,
-    /// C1-3 — DARK / default-off Codex (app-server) route client. MIRRORS `claude`: `None`
-    /// in every build EXCEPT a `live()` build whose `FRIDAY_CODEX_ROUTE_ENABLED` gate is on.
-    /// A boxed `dyn AgentLlmClient` (the production source is a
-    /// `LocalCodexAppServerTurnSource`-backed [`crate::CodexAgentLlmClient`], NOT generic over
-    /// `T`, the DeepSeek transport). Default-off at two layers: this field stays `None`, AND
-    /// the `codex` route is registered `available: false` (autonomous baseline; CLI auth-gated)
-    /// so `select_route` never picks it. The DeepSeek/Claude paths are unchanged.
-    codex: Option<Box<dyn AgentLlmClient>>,
+    /// C1 PR-B — DARK / default-off Codex (app-server) route executor. MIRRORS `claude`'s
+    /// dark-by-default discipline: `None` in every build EXCEPT a `live()` build whose
+    /// `FRIDAY_CODEX_ROUTE_ENABLED` gate is on. UNLIKE `claude` (a `dyn AgentLlmClient`), this is
+    /// a [`crate::CodexTurnExecutor`] (the production impl is a
+    /// [`crate::LocalCodexGatedTurnExecutor`]) — the CORRECT Codex seam that drives
+    /// [`crate::codex_gated_turn::run_codex_gated_turn`] (NOT the conn-less `next_step_metered`
+    /// the retired brain used). The codex route is therefore SPECIAL-CASED in `run_with_request`
+    /// (it never flows through the generic `run_routed_loop_with_policy`/`resolve()` path).
+    /// Default-off at two layers: this field stays `None`, AND the `codex` route is registered
+    /// `available: false` (autonomous baseline; CLI auth-gated) so `select_route` never picks it.
+    /// The DeepSeek/Claude paths are unchanged.
+    codex: Option<Box<dyn CodexTurnExecutor>>,
     executor: FsToolExecutor,
     /// S6d: the operator's PUBLIC verify key (provisioned from an operator-controlled
     /// source). `None` ⇒ fail-closed (protected actions Pause, never Allow). The Hub holds
@@ -193,6 +197,15 @@ pub struct HubRuntime<T: Transport> {
     /// S4 per-run policy: the bound principal (also the memory-recall owner — ONE source,
     /// see [`HubConfig::principal_id`]) + the run's disabled-tool / read-only restrictions.
     policy: RunPolicy,
+    /// C1 PR-B — the Hub gate-approval HMAC secret (from [`HubConfig::secret`]). RETAINED on the
+    /// runtime ONLY for the special-cased Codex gated-turn branch, which calls
+    /// [`crate::codex_gated_turn::run_codex_gated_turn`] → `friday_storage::authorize_agent_action`
+    /// (the HMAC authorize the gated turn was built on; see the PR-B note on the Ed25519/HMAC
+    /// divergence). The DeepSeek/Claude routed loop authorizes via the operator Ed25519 verify
+    /// key (`operator_vk`), NEVER this secret — so storing it here changes NOTHING for those
+    /// paths, and under the dark default (`approve_fn → None`) a mutating Codex action Pauses
+    /// (RequiresApproval) regardless, exactly as the #745 security review vetted.
+    secret: Vec<u8>,
 }
 
 impl<T: Transport> HubRuntime<T> {
@@ -211,6 +224,10 @@ impl<T: Transport> HubRuntime<T> {
         // `FRIDAY_TRUST_GRANT_ENFORCE` flag stops being a brick (see the attach block).
         let boot_principal = config.principal_id.clone();
         let boot_workspace = config.workspace_root.to_string_lossy().into_owned();
+        // C1 PR-B: retain the gate-approval HMAC secret for the special-cased Codex gated-turn
+        // branch (the ONLY consumer; see the `secret` field doc). Captured before the moves
+        // below; the DeepSeek/Claude paths never read it.
+        let secret = config.secret.clone();
         let executor = FsToolExecutor::new(config.workspace_root);
         let routes = Self::dispatchable_routes();
         // S4: ONE policy carries the run's principal (also the recall owner) + restrictions.
@@ -275,6 +292,7 @@ impl<T: Transport> HubRuntime<T> {
             approval,
             max_turns: config.max_turns,
             policy,
+            secret,
         })
     }
 
@@ -288,13 +306,14 @@ impl<T: Transport> HubRuntime<T> {
         self
     }
 
-    /// C1-3 — attach the DARK Codex route client (builder, default-off). MIRRORS
-    /// [`Self::with_claude`]: the ONLY way the `codex` field becomes `Some`. It does NOT touch
-    /// the DeepSeek/Claude paths, the route registry, or any default; selecting Codex still
-    /// additionally requires a dispatchable `codex` route (the autonomous baseline marks it
-    /// `available: false` — CLI auth-gated). Consumes + returns `self` so `live()` can chain it
-    /// behind the env gate.
-    pub fn with_codex(mut self, codex: Box<dyn AgentLlmClient>) -> Self {
+    /// C1 PR-B — attach the DARK Codex route EXECUTOR (builder, default-off). MIRRORS
+    /// [`Self::with_claude`]'s dark discipline: the ONLY way the `codex` field becomes `Some`. It
+    /// does NOT touch the DeepSeek/Claude paths, the route registry, or any default; selecting
+    /// Codex still additionally requires a dispatchable `codex` route (the autonomous baseline
+    /// marks it `available: false` — CLI auth-gated). UNLIKE `with_claude`, this takes a
+    /// [`crate::CodexTurnExecutor`] (driving `run_codex_gated_turn`), not a `dyn AgentLlmClient`.
+    /// Consumes + returns `self` so `live()` can chain it behind the env gate.
+    pub fn with_codex(mut self, codex: Box<dyn CodexTurnExecutor>) -> Self {
         self.codex = Some(codex);
         self
     }
@@ -589,6 +608,62 @@ impl<T: Transport> HubRuntime<T> {
         // live one), or a provider-pin for `run_task_pinned` (C2). Deriving required
         // capabilities / model-size from the task is a later refinement.
         let approve = |req: &MutatingActionRequest| self.approval.approve(req);
+
+        // ── C1 PR-B: the SPECIAL-CASED Codex execution path ────────────────────────────────
+        // A codex route does NOT flow through the generic `run_routed_loop_with_policy`/
+        // `resolve()` path (which drives the conn-less `next_step_metered` — the retired brain
+        // model). It is intercepted HERE, where `conn`/`policy`/`secret`/`approve` are in scope,
+        // and driven through `run_codex_gated_turn` (the ONLY codex execution path). We select
+        // the route FIRST (deterministic + pure — re-selecting below for the non-codex delegate
+        // is byte-identical) so we can branch on `provider_id` BEFORE `resolve()`:
+        //   - codex selected + executor wired ⇒ drive the gated turn here.
+        //   - codex selected + executor NOT wired (the dark default) ⇒ fail-closed
+        //     `NoClientForProvider("codex")` (NEVER a reroute), mirroring the resolver backstop.
+        //   - codex pinned but the route is not dispatchable (the autonomous-baseline default:
+        //     `available:false`) ⇒ `select_route` errors `RequestedProviderUnavailable("codex")`
+        //     before this, BEFORE any model call — unchanged.
+        //   - any other selection (deepseek/claude, incl. the default `RouteRequest::any()`) ⇒
+        //     fall through to the EXISTING `run_routed_loop_with_policy` UNCHANGED.
+        // NO-DEGRADE: the default `RouteRequest::any()` selects deepseek, so this branch is
+        // skipped and the path below is byte-identical to before.
+        let selected = crate::routing::select_route(&self.routes, request)?;
+        if selected.provider_id == "codex" {
+            let codex = self
+                .codex
+                .as_deref()
+                .ok_or_else(|| RoutedLoopError::NoClientForProvider("codex".to_string()))?;
+            let selection = RoutedSelection {
+                provider_id: selected.provider_id.clone(),
+                model: selected.model.clone(),
+                model_size: selected.model_size,
+                backend_kind: selected.backend_kind,
+            };
+            let outcome = self.run_codex_route_turn(
+                codex,
+                policy,
+                run_id,
+                &recall_preamble,
+                task,
+                &approve,
+                now_ms,
+            )?;
+            // D1 OWNER-WIRING parity: persist a Finished answer Hub-side keyed by `run_id` with
+            // the run's bound owner, EXACTLY as the routed-loop tail below (same `Finished`-only
+            // discipline). Reuses `persist_run_result`; no parallel persistence path.
+            if outcome.status == LoopStatus::Finished {
+                let mut result = RunResult::new(
+                    "finished",
+                    outcome.final_message.clone().unwrap_or_default(),
+                    None,
+                );
+                if let Some(principal) = policy.principal_id() {
+                    result = result.with_owner_principal(principal);
+                }
+                persist_run_result(self.db.conn(), run_id, &result, now_ms)?;
+            }
+            return Ok((selection, outcome));
+        }
+
         // S4: thread the (effective) run policy so the bound principal reaches every gate
         // request's Actor (and the action digest) and the disabled/read-only restrictions are
         // enforced before any tool executes. S6d: thread the provisioned operator verify
@@ -638,6 +713,153 @@ impl<T: Transport> HubRuntime<T> {
         }
 
         Ok((selection, outcome))
+    }
+
+    /// (C1 PR-B) Drive ONE gated Codex turn and map its [`crate::codex_gated_turn::CodexTurnOutcome`]
+    /// onto a [`LoopOutcome`] in the SAME vocabulary the routed loop uses (Finished/Paused/Errored),
+    /// recording the SAME run-attributed event markers and billing through the SAME single biller
+    /// ([`crate::bill_model_call`]). It owns NO gate/pending/ledger mechanism of its own —
+    /// `run_codex_gated_turn` already does the gate + the pending-approval persist; this only maps
+    /// the result + records the loop-vocabulary outcome event + bills a Finished turn's usage.
+    ///
+    /// The prompt is the SAME recall-preamble + clean-task composition the loop builds (the run's
+    /// `task` stays clean — the preamble augments only what the model sees). `turns: 1` (one model
+    /// turn), `executed_tools: 0` (Codex runs its side effects in its OWN runtime; Friday's
+    /// executor is never invoked on a codex turn — the gate routes Codex's pre-execution approval
+    /// requests, it does not execute them).
+    #[allow(clippy::too_many_arguments)]
+    fn run_codex_route_turn(
+        &self,
+        codex: &dyn CodexTurnExecutor,
+        policy: &RunPolicy,
+        run_id: &str,
+        recall_preamble: &str,
+        task: &str,
+        approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
+        now_ms: i64,
+    ) -> Result<LoopOutcome, RoutedLoopError> {
+        // Plan classification + the SAME recall-preamble prompt the loop records/builds, so a
+        // codex run's event log + prompt are consistent with a deepseek/claude run.
+        let plan_kind = friday_core::classify_kind(task).map(|k| k.as_str());
+        agent_run::record_event(
+            self.db.conn(),
+            &format!("{run_id}:plan"),
+            run_id,
+            &format!("plan.{}", plan_kind.unwrap_or("none")),
+            now_ms,
+        )?;
+        let prompt = if recall_preamble.is_empty() {
+            task.to_string()
+        } else {
+            format!("{recall_preamble}{task}")
+        };
+
+        // The ONLY codex execution path: the gated turn (gate + pending-persist live inside it).
+        // `Err` is a Friday-side fault (the pending-persist for a RequiresApproval failed) — fail
+        // CLOSED to `Errored` (the pause is not durably recoverable; never a phantom success).
+        let codex_outcome = match codex.run_gated_turn(
+            self.db.conn(),
+            policy,
+            &self.secret,
+            approve,
+            &prompt,
+            run_id,
+            now_ms,
+        ) {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                let reason = format!("codex_gated_turn_error:{e}");
+                agent_run::record_event(
+                    self.db.conn(),
+                    &format!("{run_id}:t0:outcome"),
+                    run_id,
+                    &format!("agent.error:{reason}"),
+                    now_ms,
+                )?;
+                return Ok(LoopOutcome {
+                    status: LoopStatus::Errored,
+                    turns: 1,
+                    executed_tools: 0,
+                    final_message: None,
+                    detail: reason,
+                });
+            }
+        };
+
+        let ev = |suffix: &str| format!("{run_id}:t0:{suffix}");
+        match codex_outcome {
+            // Finished: BILL the turn's usage through the single biller (one codex row), record
+            // the SAME `agent.finished` marker the loop's Finish arm records, surface the answer.
+            crate::codex_gated_turn::CodexTurnOutcome::Finished { answer, usage } => {
+                crate::bill_model_call(self.db.conn(), run_id, 0, &usage, now_ms)?;
+                agent_run::record_event(
+                    self.db.conn(),
+                    &ev("finish"),
+                    run_id,
+                    "agent.finished",
+                    now_ms,
+                )?;
+                Ok(LoopOutcome {
+                    status: LoopStatus::Finished,
+                    turns: 1,
+                    executed_tools: 0,
+                    final_message: Some(answer),
+                    detail: "finished".to_string(),
+                })
+            }
+            // Paused: the gated turn ALREADY persisted the pending_approval_request (under
+            // `approval_nonce`) and DENIED the action to Codex (its turn aborted) — we only record
+            // the loop-vocabulary pause marker (mirroring the loop's `tool.paused:requires_approval`
+            // event, incl. the nonce) and surface `Paused`. NOTE: no usage is billed on a pause —
+            // a Deny aborts the Codex turn, so `run_codex_gated_turn` returns NO `BilledUsage`
+            // (UNLIKE the retired brain, which billed the proposing turn). NS-7 GAP (acceptable,
+            // default-OFF): the loop's RequiresApproval arm ALSO writes a Needs-Me activity row
+            // (`insert_pending_approval_activity`) when `FRIDAY_ACTIVITY_NEEDS_ME` is on; the gated
+            // turn does its own persist WITHOUT that, so a codex pause does not surface a Needs-Me
+            // item. Left as a named follow-up (NS-7 is default-off, so this is byte-identical to
+            // today for prod) rather than reaching into the gated turn's persist.
+            crate::codex_gated_turn::CodexTurnOutcome::Paused {
+                action,
+                approval_nonce,
+            } => {
+                agent_run::record_event(
+                    self.db.conn(),
+                    &ev("outcome"),
+                    run_id,
+                    &format!("tool.paused:requires_approval:{action}:{approval_nonce}"),
+                    now_ms,
+                )?;
+                Ok(LoopOutcome {
+                    status: LoopStatus::Paused,
+                    turns: 1,
+                    executed_tools: 0,
+                    final_message: None,
+                    detail: format!("requires_approval:{action}"),
+                })
+            }
+            // Errored: a hard gate Deny (trust-revoked / chat-only grant / risk-ceiling), an
+            // unmappable approval request, an authorize-unavailable, or a transport/protocol
+            // failure (incl. the flag-OFF `interactive-approval-unsupported`). The `reason` is
+            // code-only + secret-free (never the raw command/path). Fail the run closed, mirroring
+            // the loop's `agent.error` marker. A Deny that ABORTED the turn yields NO usage, so
+            // nothing is billed (never a half-billed row).
+            crate::codex_gated_turn::CodexTurnOutcome::Errored { reason } => {
+                agent_run::record_event(
+                    self.db.conn(),
+                    &ev("outcome"),
+                    run_id,
+                    &format!("agent.error:{reason}"),
+                    now_ms,
+                )?;
+                Ok(LoopOutcome {
+                    status: LoopStatus::Errored,
+                    turns: 1,
+                    executed_tools: 0,
+                    final_message: None,
+                    detail: format!("codex_errored:{reason}"),
+                })
+            }
+        }
     }
 
     /// (A2a Phase 1) The SESSIONED authenticated agent-loop entry — the read-only chat
@@ -1533,10 +1755,13 @@ impl HubRuntime<UreqTransport> {
         Ok(me)
     }
 
-    /// C1-3 — read the default-OFF Codex gate and, only when it is on, build the live
-    /// Codex client (a [`crate::CodexAgentLlmClient`] over the production
-    /// [`friday_providers::codex_appserver::LocalCodexAppServerTurnSource`]) and attach it
-    /// (DARK). MIRRORS [`Self::maybe_attach_claude_from_env`], with ONE divergence: this is
+    /// C1 PR-B — read the default-OFF Codex gate and, only when it is on, build the live Codex
+    /// EXECUTOR (a [`crate::LocalCodexGatedTurnExecutor`]) and attach it (DARK). This is the
+    /// REWIRE: the retired "brain" [`crate::CodexAgentLlmClient`] (which drove the conn-less
+    /// `run_text_turn` and Friday-side re-executed) is NO LONGER wired into the live route —
+    /// the executor drives [`crate::codex_gated_turn::run_codex_gated_turn`] instead, the
+    /// CORRECT model (the brain type is kept only for its deterministic in-crate tests). MIRRORS
+    /// [`Self::maybe_attach_claude_from_env`]'s dark discipline, with ONE divergence: this is
     /// INFALLIBLE (`-> Self`, not `Result`). Codex reads NO credential at attach — the local
     /// app-server is spawned lazily (per turn, and at [`Self::validate_and_enable_codex`]) — so
     /// there is no "gate ON + missing credential = hard boot error" analog of the Claude path.
@@ -1547,18 +1772,17 @@ impl HubRuntime<UreqTransport> {
         if !codex_route_enabled_from_env() {
             return self;
         }
-        // Gate is ON: build the real Codex client over the production per-turn app-server
-        // source (no credential read here — the spawn is lazy). `cwd: None` lets the
-        // app-server default; the model id matches the `codex` route (`gpt-5-codex`).
-        let source = friday_providers::codex_appserver::LocalCodexAppServerTurnSource::new(
+        // Gate is ON: build the real Codex executor over the production per-turn app-server
+        // (no credential read here — the spawn is lazy). `cwd: None` lets the app-server
+        // default; the model id matches the `codex` route (`gpt-5-codex`).
+        let executor = crate::LocalCodexGatedTurnExecutor::new(
             CODEX_APP_SERVER_PROGRAM,
             CODEX_CLIENT_NAME,
             CODEX_CLIENT_VERSION,
             None,
-            Some(CODEX_ROUTE_MODEL.to_string()),
+            CODEX_ROUTE_MODEL,
         );
-        let agent = crate::CodexAgentLlmClient::new(source, CODEX_ROUTE_MODEL);
-        let mut me = self.with_codex(Box::new(agent));
+        let mut me = self.with_codex(Box::new(executor));
         // (C1-3) Promote the codex route to `available: true` in THIS runtime's IN-PROCESS
         // registry ONLY (the autonomous baseline stays `available: false` — prod default
         // unchanged). Gated-only: reached solely because the default-OFF
@@ -1640,13 +1864,18 @@ impl<T: Transport> ProviderClientResolver for HubRuntime<T> {
     /// The live `deepseek` provider always has a wired client. The `claude` provider has
     /// one ONLY when the DARK route was enabled (`self.claude` is `Some` — see
     /// [`HubRuntime::with_claude`] / [`HubRuntime::live`]'s `FRIDAY_CLAUDE_ROUTE_ENABLED`
-    /// gate); when disabled (the default) it returns `None`. The `codex` provider mirrors
-    /// `claude` (wired only behind `FRIDAY_CODEX_ROUTE_ENABLED`; `None` by default). Any
-    /// other route returns `None` → fail-closed `NoClientForProvider` (a defensive backstop;
-    /// the route registry already prevents selecting unavailable providers — `claude`/`codex`
-    /// are `available: false` in the baseline — so this never fires on the happy path).
+    /// gate); when disabled (the default) it returns `None`. Any other route returns
+    /// `None` → fail-closed `NoClientForProvider` (a defensive backstop; the route registry
+    /// already prevents selecting unavailable providers — `claude`/`codex` are
+    /// `available: false` in the baseline — so this never fires on the happy path).
     /// Routing decides WHO answers; classification stays the trusted chokepoint
     /// regardless — this resolver confers no classification authority.
+    ///
+    /// C1 PR-B: `codex` is DELIBERATELY ABSENT here — it is NOT a `dyn AgentLlmClient`. A codex
+    /// route is SPECIAL-CASED in `run_with_request` (which drives the gated turn) BEFORE
+    /// `resolve()` is reached, so this resolver never sees `"codex"`; if a future caller ever
+    /// resolved a codex route here it correctly fail-closes via the `_ => None` arm
+    /// (NoClientForProvider) rather than driving the WRONG conn-less path.
     fn resolve(&self, route: &ProviderRoute) -> Option<&dyn AgentLlmClient> {
         match route.provider_id.as_str() {
             "deepseek" => Some(&self.deepseek),
@@ -1654,11 +1883,6 @@ impl<T: Transport> ProviderClientResolver for HubRuntime<T> {
             // (the default), so the default-off route fail-closes exactly like any
             // other unwired provider.
             "claude" => self.claude.as_deref(),
-            // C1-3 DARK: mirrors `claude` — `as_deref()` yields `None` whenever the Codex
-            // client was not wired (the default), so the default-off route fail-closes exactly
-            // like any other unwired provider (the autonomous baseline also marks `codex`
-            // `available: false`, so this never fires on the happy path).
-            "codex" => self.codex.as_deref(),
             _ => None,
         }
     }
@@ -3066,65 +3290,76 @@ mod tests {
         );
     }
 
-    // ---- C1-3: routed Codex route wiring (DARK, deterministic, no creds) ------
+    // ---- C1 PR-B: routed Codex route wiring (DARK, deterministic, no creds) ------
     //
     // These tests are the DETERMINISTIC, no-creds proof that the dark Codex route is wired into
-    // the runtime: they drive the REAL public `HubRuntime::run_task_pinned("codex", ..)` entry —
-    // through `with_codex` + the in-process route promotion the gated `live()` path uses — to a
-    // STUB Codex client that surfaces a Codex-kind `BilledUsage` exactly as the live
-    // `CodexAgentLlmClient::next_step_metered` would after a real app-server turn. They MIRROR the
-    // C2 Claude block above. The stub MAY skip real `run_turn` parsing — that is C1-2's job (its
-    // `CodexAgentLlmClient` adapter KATs drive a scripted byte-stream through the REAL `run_turn`
-    // parse); this block does NOT stand in for that real-parse proof. NO codex CLI, NO creds, NO
-    // network/spawn is needed (the route promotion uses the private `mark_route_*` helpers).
+    // the runtime through the REWIRED gated path: they drive the REAL public
+    // `HubRuntime::run_task_pinned("codex", ..)` entry — through `with_codex` + the in-process
+    // route promotion the gated `live()` path uses — to a STUB
+    // [`crate::CodexTurnExecutor`] that returns a scripted [`crate::codex_gated_turn::CodexTurnOutcome`]
+    // EXACTLY as the live `LocalCodexGatedTurnExecutor` would after a real `run_codex_gated_turn`.
+    // They prove the runtime's `CodexTurnOutcome → LoopOutcome` MAPPING + the single-biller
+    // billing — NOT the gate itself (that is `codex_gated_turn.rs`'s KATs, driven over recorded
+    // byte-streams). NO codex CLI, NO creds, NO network/spawn is needed (the route promotion uses
+    // the private `mark_route_*` helpers).
 
-    /// A stub Codex client: each metered step surfaces a Codex-kind [`BilledUsage`] (the bits the
-    /// live `CodexAgentLlmClient` maps from a real app-server turn) plus the next scripted step.
-    /// Once the script is exhausted it finishes. `propose_tool_call` is unused by the routed loop
-    /// (it uses `next_step_metered`). MIRRORS `StubClaudeMeteredClient`.
-    struct StubCodexMeteredClient {
-        steps: Vec<AgentStep>,
-        prompt_tokens: i64,
-        completion_tokens: i64,
-        model: String,
+    /// A stub Codex executor: each `run_gated_turn` returns the next scripted
+    /// [`crate::codex_gated_turn::CodexTurnOutcome`] (Finished/Paused/Errored) EXACTLY as the live
+    /// `LocalCodexGatedTurnExecutor` maps from a real gated app-server turn. A Finished outcome
+    /// carries a Codex-kind [`crate::BilledUsage`] (the bits the runtime bills through the single
+    /// biller). Once the script is exhausted it Finishes. The stub does NOT touch the gate/DB — it
+    /// stands in for the WHOLE gated turn (the gate's own behavior is proven in `codex_gated_turn.rs`).
+    struct StubCodexGatedExecutor {
+        outcomes: Vec<crate::codex_gated_turn::CodexTurnOutcome>,
         calls: Cell<usize>,
     }
-    impl StubCodexMeteredClient {
-        fn new(steps: Vec<AgentStep>, prompt_tokens: i64, completion_tokens: i64) -> Self {
+    impl StubCodexGatedExecutor {
+        /// A Finished-with-usage outcome carrying the C1-row token counts (13 prompt + 5 completion).
+        fn finished(answer: &str) -> crate::codex_gated_turn::CodexTurnOutcome {
+            crate::codex_gated_turn::CodexTurnOutcome::Finished {
+                answer: answer.to_string(),
+                usage: crate::BilledUsage {
+                    provider_kind: friday_core::ProviderKind::Codex,
+                    model: CODEX_ROUTE_MODEL.to_string(),
+                    prompt_tokens: 13,
+                    completion_tokens: 5,
+                },
+            }
+        }
+        fn new(outcomes: Vec<crate::codex_gated_turn::CodexTurnOutcome>) -> Self {
             Self {
-                steps,
-                prompt_tokens,
-                completion_tokens,
-                model: CODEX_ROUTE_MODEL.to_string(),
+                outcomes,
                 calls: Cell::new(0),
             }
         }
     }
-    impl crate::AgentLlmClient for StubCodexMeteredClient {
-        fn propose_tool_call(&self, _task: &str) -> Result<crate::RawToolCall, crate::AgentError> {
-            unreachable!("routed loop uses next_step_metered")
-        }
-        fn next_step_metered(
+    impl crate::CodexTurnExecutor for StubCodexGatedExecutor {
+        fn run_gated_turn(
             &self,
+            _conn: &rusqlite::Connection,
+            _policy: &RunPolicy,
+            _secret: &[u8],
+            _approve: &dyn Fn(
+                &friday_core::gate::MutatingActionRequest,
+            ) -> Option<friday_core::gate::CanonicalApproval>,
             _task: &str,
-            _history: &[crate::TurnTrace],
-        ) -> Result<crate::MeteredStep, crate::AgentError> {
+            _run_id: &str,
+            _now_ms: i64,
+        ) -> Result<
+            crate::codex_gated_turn::CodexTurnOutcome,
+            crate::codex_gated_turn::CodexGatedTurnError,
+        > {
             let i = self.calls.get();
             self.calls.set(i + 1);
-            let step = self.steps.get(i).cloned().unwrap_or(AgentStep::Finish {
-                message: "done".to_string(),
-            });
-            let usage = crate::BilledUsage {
-                provider_kind: friday_core::ProviderKind::Codex,
-                model: self.model.clone(),
-                prompt_tokens: self.prompt_tokens,
-                completion_tokens: self.completion_tokens,
-            };
-            Ok((Ok(step), Some(usage)))
+            Ok(self
+                .outcomes
+                .get(i)
+                .cloned()
+                .unwrap_or_else(|| Self::finished("done")))
         }
     }
 
-    /// Build a runtime with the DARK Codex client WIRED and its in-process route promoted to
+    /// Build a runtime with the DARK Codex executor WIRED and its in-process route promoted to
     /// dispatchable — the SAME two flips the gated `live()` path performs (`with_codex` +
     /// `mark_route_available` + `mark_route_validated`), but WITHOUT any creds (no
     /// `validate_and_enable_codex` app-server spawn). Legal in-crate because the test module is a
@@ -3133,12 +3368,12 @@ mod tests {
     /// baseline still marks `codex` `available:false`). MIRRORS `runtime_with_claude_wired`.
     fn runtime_with_codex_wired(
         tag: &str,
-        steps: Vec<AgentStep>,
+        outcomes: Vec<crate::codex_gated_turn::CodexTurnOutcome>,
         approval: Box<dyn ApprovalPolicy>,
     ) -> (HubRuntime<ScriptTransport>, TempDir) {
         let ws = TempDir::new(tag);
         // The DeepSeek transport is present (required by the runtime type) but never reached:
-        // the codex pin routes to the wired Codex stub, not deepseek.
+        // the codex pin routes to the wired Codex executor, not deepseek.
         let transport = ScriptTransport::new(&["{\"tool\":\"none\"}"]);
         let client = DeepSeekClient::with_transport(transport, "k".into());
         let agent = DeepSeekAgentLlmClient::new(client);
@@ -3157,7 +3392,7 @@ mod tests {
             approval,
         )
         .unwrap();
-        rt = rt.with_codex(Box::new(StubCodexMeteredClient::new(steps, 13, 5)));
+        rt = rt.with_codex(Box::new(StubCodexGatedExecutor::new(outcomes)));
         // The gated `live()` path does these two flips behind FRIDAY_CODEX_ROUTE_ENABLED + the
         // creds-light health_check; we do them directly (no creds) for the deterministic proof.
         rt.mark_route_available("codex");
@@ -3173,9 +3408,7 @@ mod tests {
         // model, fallback=false. NO creds, NO spawn, NO network.
         let (rt, _ws) = runtime_with_codex_wired(
             "c1-3-pinned-codex-chat",
-            vec![AgentStep::Finish {
-                message: "PONG".to_string(),
-            }],
+            vec![StubCodexGatedExecutor::finished("PONG")],
             Box::new(DenyAllApprovals),
         );
         let (selection, outcome) = rt
@@ -3206,105 +3439,84 @@ mod tests {
     }
 
     #[test]
-    fn codex_mutating_turn_bills_codex_row_then_pauses_for_approval() {
-        // (2) APPROVAL-REQUEST FLOW (routed + metered): a codex-pinned turn that proposes a
-        // MUTATING tool (`write_file`) is BILLED a codex row (the turn that produced the proposal
-        // spent tokens) and THEN the HUB gate withholds it — with no operator key the run Pauses
-        // (RequiresApproval), executes nothing, and persists a pending approval. NO creds.
-        let (rt, ws) = runtime_with_codex_wired(
-            "c1-3-pinned-codex-approval",
-            vec![AgentStep::Tool(crate::RawToolCall {
+    fn codex_mutating_turn_pauses_for_approval_and_bills_nothing() {
+        // (2) APPROVAL-REQUEST FLOW (gated turn): a codex-pinned turn whose gated turn resolves to
+        // `Paused` (the HUB gate RequiresApproval — `run_codex_gated_turn` DENIED the action to
+        // Codex, aborting its turn, AND persisted the pending row) maps to `LoopStatus::Paused`.
+        //
+        // MIGRATED from the pre-rewire `..._bills_codex_row_then_pauses` (brain) semantics: the
+        // retired brain billed the proposing turn THEN paused; the GATED turn's Deny ABORTS the
+        // Codex turn, so it carries NO `BilledUsage` on a Paused outcome ⇒ the rewired path bills
+        // NOTHING on a pause. (The pending_approval_request persistence + the gate decision itself
+        // are proven over recorded byte-streams in `codex_gated_turn.rs` KAT (c); this test proves
+        // the runtime's `Paused → LoopStatus::Paused` MAPPING + no-bill, with a stub gated turn.)
+        let (rt, _ws) = runtime_with_codex_wired(
+            "c1-prb-pinned-codex-approval",
+            vec![crate::codex_gated_turn::CodexTurnOutcome::Paused {
                 action: "write_file".to_string(),
-                params: vec![
-                    ("path".to_string(), "out.txt".to_string()),
-                    ("content".to_string(), "C1-3".to_string()),
-                ],
-            })],
+                approval_nonce: "nonce-prb".to_string(),
+            }],
             Box::new(DenyAllApprovals),
         );
         let (selection, outcome) = rt
-            .run_task_pinned("run-c1-3-appr", "write a file", "codex", 2_000)
+            .run_task_pinned("run-c1-prb-appr", "write a file", "codex", 2_000)
             .expect("pinned codex runs through the runtime");
         assert_eq!(selection.provider_id, "codex", "the pin routed to codex");
         assert_eq!(
             outcome.status,
             LoopStatus::Paused,
-            "no operator key ⇒ the mutating action Pauses (RequiresApproval), never executes"
+            "a gate RequiresApproval ⇒ the run Pauses (resumable once the operator signs)"
         );
 
-        // The model call that PROPOSED the mutation was billed BEFORE the gate dispatch — one
-        // codex row, correctly attributed.
-        let rows = rt.db().list_run_token_usage("run-c1-3-appr").unwrap();
-        assert_eq!(rows.len(), 1, "the proposing codex turn was billed");
-        assert_eq!(rows[0].provider_kind, "codex");
-        assert_eq!(rows[0].base_url_host, "provider_app_server_local");
-
-        // The gate withheld the write — no file was created (no execute-on-Pause bypass).
+        // NO bill on a pause: the Deny aborted the Codex turn, so the gated turn returned no usage.
         assert!(
-            !ws.0.join("out.txt").exists(),
-            "the gate withheld the write — no file created"
+            rt.db()
+                .list_run_token_usage("run-c1-prb-appr")
+                .unwrap()
+                .is_empty(),
+            "a paused (denied-to-codex) turn bills nothing — no half-billed row"
         );
 
-        // A pending approval was persisted for the OFFLINE operator to sign (the resume leg).
-        let pending: i64 = rt
+        // The pause was recorded in the loop's vocabulary, carrying the gated turn's nonce, so the
+        // run is recoverable (the resume leg reads the pending row the gated turn persisted).
+        let paused_event: i64 = rt
             .db()
             .conn()
             .query_row(
-                "SELECT count(*) FROM pending_approval_request WHERE run_id = 'run-c1-3-appr'",
+                "SELECT count(*) FROM agent_run_event WHERE run_id = 'run-c1-prb-appr' \
+                 AND kind = 'tool.paused:requires_approval:write_file:nonce-prb'",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(pending, 1, "one pending approval recorded for resume");
+        assert_eq!(paused_event, 1, "the pause outcome event was recorded");
+
+        // No run_result persisted on a Pause (the resume completion leg owns that slot).
+        let results: i64 = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM run_result WHERE run_id = 'run-c1-prb-appr'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(results, 0, "no run_result on a Pause");
     }
 
     #[test]
     fn codex_route_error_fails_run_closed_and_bills_nothing() {
-        // (3) ERROR HANDLING: a codex turn whose app-server turn FAILS (an OUTER AgentError — what
-        // the live CodexAgentLlmClient surfaces on a CodexAppServerError, mapped to
-        // AgentError::Model) fails the run CLOSED (LoopStatus::Errored) with NO reroute to
-        // deepseek and NO ledger row (a call that produced no usage bills nothing). NO creds.
-        struct ErroringCodexClient;
-        impl crate::AgentLlmClient for ErroringCodexClient {
-            fn propose_tool_call(
-                &self,
-                _task: &str,
-            ) -> Result<crate::RawToolCall, crate::AgentError> {
-                unreachable!("routed loop uses next_step_metered")
-            }
-            fn next_step_metered(
-                &self,
-                _task: &str,
-                _history: &[crate::TurnTrace],
-            ) -> Result<crate::MeteredStep, crate::AgentError> {
-                // The live adapter maps a CodexAppServerError into AgentError::Model (a Model
-                // error is TERMINAL — never retried) ⇒ the run fails closed.
-                Err(crate::AgentError::Model("codex route error".to_string()))
-            }
-        }
-
-        let ws = TempDir::new("c1-3-codex-route-error");
-        let transport = ScriptTransport::new(&["{\"tool\":\"none\"}"]);
-        let client = DeepSeekClient::with_transport(transport, "k".into());
-        let agent = DeepSeekAgentLlmClient::new(client);
-        let mut rt = HubRuntime::new(
-            HubConfig {
-                db_path: tmp("c1-3-codex-route-error"),
-                workspace_root: ws.0.clone(),
-                secret: SECRET.to_vec(),
-                max_turns: 6,
-                principal_id: None,
-                disabled_tools: vec![],
-                read_only: false,
-                operator_vk: None,
-            },
-            agent,
+        // (3) ERROR HANDLING: a codex gated turn that resolves to `Errored` (e.g. a transport
+        // failure, an unmappable approval request, a hard gate Deny, or the flag-OFF
+        // `interactive-approval-unsupported`) fails the run CLOSED (`LoopStatus::Errored`) with NO
+        // reroute to deepseek and NO ledger row (an aborted turn produced no usage). NO creds.
+        let (rt, _ws) = runtime_with_codex_wired(
+            "c1-prb-codex-route-error",
+            vec![crate::codex_gated_turn::CodexTurnOutcome::Errored {
+                reason: "codex_transport:app-server-spawn".to_string(),
+            }],
             Box::new(DenyAllApprovals),
-        )
-        .unwrap();
-        rt = rt.with_codex(Box::new(ErroringCodexClient));
-        rt.mark_route_available("codex");
-        rt.mark_route_validated("codex");
+        );
 
         let (selection, outcome) = rt
             .run_task_pinned("run-c1-3-err", "say pong", "codex", 1_000)
@@ -3398,10 +3610,15 @@ mod tests {
     }
 
     #[test]
-    fn resolver_returns_none_for_codex_when_dark_some_when_wired() {
-        // DARK default: no Codex client wired ⇒ resolver yields None (fail-closed). Wiring the
-        // client (what the gated `live()` path does) makes resolve("codex") Some; deepseek/claude
-        // are unchanged. Mirrors `resolver_returns_none_for_claude_when_dark_some_when_wired`.
+    fn codex_executor_is_none_when_dark_some_when_wired_and_never_an_agentllm_route() {
+        // C1 PR-B: codex is NOT an `AgentLlmClient` route anymore — it is SPECIAL-CASED through
+        // the gated executor. Two invariants:
+        //   (a) `resolve("codex")` is ALWAYS `None` (codex is deliberately absent from the
+        //       `ProviderClientResolver` match) — so even a wired codex never drives the WRONG
+        //       conn-less `next_step_metered` path; the special-case branch intercepts it first.
+        //   (b) the `codex` EXECUTOR field is `None` by default (dark) and flips to `Some` ONLY via
+        //       `with_codex` (what the gated `live()` path does). MIRRORS the Claude dark backstop,
+        //       but on the executor field rather than the resolver.
         let (rt, _ws, _c) = runtime_with(
             "codex-dark",
             &["{\"tool\":\"none\"}"],
@@ -3413,24 +3630,29 @@ mod tests {
             .expect("baseline has a codex route")
             .clone();
 
+        // (a) codex is never resolvable as an AgentLlmClient — by default AND once wired.
         assert!(
             rt.resolve(&codex_route).is_none(),
-            "codex must resolve to None by default (dark/off)"
+            "codex must never resolve as an AgentLlmClient (special-cased, not resolved)"
         );
         assert!(
             !codex_route.is_dispatchable(),
             "codex route stays available:false (CLI auth-gated)"
         );
 
-        let wired = rt.with_codex(Box::new(crate::MockAgentLlmClient {
-            proposal: crate::RawToolCall {
-                action: "none".to_string(),
-                params: vec![],
-            },
-        }));
+        // (b) the executor field: None by default (dark), Some once wired.
         assert!(
-            wired.resolve(&codex_route).is_some(),
-            "codex resolves to the wired client once attached"
+            rt.codex.is_none(),
+            "codex executor must be None by default (dark/off)"
+        );
+        let wired = rt.with_codex(Box::new(StubCodexGatedExecutor::new(vec![])));
+        assert!(
+            wired.codex.is_some(),
+            "codex executor is Some once attached via with_codex"
+        );
+        assert!(
+            wired.resolve(&codex_route).is_none(),
+            "even a WIRED codex never resolves as an AgentLlmClient (special-cased)"
         );
     }
 

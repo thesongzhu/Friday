@@ -20,14 +20,15 @@
 // C1-4 spec lists steer + interrupt INSIDE the deferred ~16, so they are NOT covered here.
 //
 // == What this harness PROVES (when run with Codex logged in) ==
-// It drives the REAL C1 route-pin end-to-end:
+// It drives the REAL C1 PR-B route-pin end-to-end (the GATED-turn rewire, NOT the retired brain):
 //   HubRuntime::live() (gated on FRIDAY_CODEX_ROUTE_ENABLED=1, builds the live
-//   CodexAgentLlmClient over the production per-turn LocalCodexAppServerTurnSource) ->
+//   LocalCodexGatedTurnExecutor over the production per-turn local Codex app-server) ->
 //   validate_and_enable_codex() (the creds-light app-server health_check — initialize +
 //   thread/list, NO model turn — that flips the in-process `codex` route dispatchable) ->
-//   run_task_pinned(.., "codex", ..) (no-fallback pin) -> select_route -> resolver ->
-//   CodexAgentLlmClient (the C1-3 pin) -> the gate-mandatory loop -> bill_model_call records a
-//   `codex` ledger row.
+//   run_task_pinned(.., "codex", ..) (no-fallback pin) -> select_route -> the SPECIAL-CASED codex
+//   branch in run_with_request -> run_codex_gated_turn (spawn + initialize/thread-start + ONE
+//   gated turn, routing each Codex approval request through Friday's EXISTING gate) ->
+//   on Finished, bill_model_call records ONE `codex` ledger row.
 // For each covered flow it asserts selection.provider_id == "codex" AND a run-scoped
 // codex / provider_app_server_local ledger row (Db::list_run_token_usage) — the metered Codex
 // turn, never mis-attributed as DeepSeek/Anthropic, never a silent reroute, never a remote API
@@ -41,12 +42,13 @@
 // route stays undispatchable. There is deliberately NO public no-login route-enable (that would
 // breach the dark/default-off invariant). So this harness CANNOT route Codex without an OAuth
 // login and is correctly #[ignore]'d — only the OPERATOR RUN drives real Codex turns. The
-// deterministic, no-creds proof of the SAME routing+metering wiring lives in-crate
+// deterministic, no-creds proof of the SAME routing+mapping+metering wiring lives in-crate
 // (friday-hub/src/runtime.rs tests:
 // `run_task_pinned_codex_routes_through_runtime_and_writes_codex_row`,
-// `codex_mutating_turn_bills_codex_row_then_pauses_for_approval`, and
+// `codex_mutating_turn_pauses_for_approval_and_bills_nothing`, and
 // `codex_route_error_fails_run_closed_and_bills_nothing`), where the test module may use
-// with_codex + the private mark_route_* helpers a real health_check would otherwise flip.
+// with_codex (a stub CodexTurnExecutor returning scripted CodexTurnOutcomes) + the private
+// mark_route_* helpers a real health_check would otherwise flip.
 //
 // == Credentials required to run (operator) ==
 // HubRuntime::live builds the live DeepSeek client first (DeepSeekClient::from_env), so the
@@ -238,15 +240,17 @@ fn live_codex_runtime(tag: &str) -> (HubRuntime<friday_deepseek::UreqTransport>,
 /// Assert a run's metered turns were ALL billed to Codex (provider_kind == "codex",
 /// base_url_host == "provider_app_server_local", non-fallback) — never mis-attributed as
 /// DeepSeek/Anthropic, never a remote API host. The COUNT relationship to `turns` depends on the
-/// terminal status:
-///   - `Finished` / `Paused` — every counted turn produced a billable chat (the live adapter's
-///     `next_step_metered` ALWAYS returns `Some(BilledUsage)` for a completed turn, even when the
-///     turn emitted no `thread/tokenUsage/updated` notification — that row carries 0/0 tokens),
-///     so exactly `turns` codex rows.
-///   - any other status (`Errored` / `Bounded` / `Blocked`) — a turn can fail AFTER counting but
-///     BEFORE billing (a route error bills nothing), so the row count can be `< turns`; we only
-///     require at least one billed codex turn and that all rows are codex. This keeps the
-///     operator's live run from flaking on a transient app-server error.
+/// terminal status (C1 PR-B — the GATED-turn semantics, NOT the retired brain's):
+///   - `Finished` — the gated turn COMPLETED and returned its `BilledUsage`, so exactly `turns`
+///     codex rows (a single gated turn ⇒ `turns == 1` ⇒ one row, even a 0/0-token row).
+///   - `Paused` — the gate RequiresApproval, so `run_codex_gated_turn` DENIED the action to Codex
+///     (its turn aborted) and returned NO `BilledUsage` ⇒ the run bills NOTHING on a pause. (This
+///     is the deliberate change from the retired brain, which billed the proposing turn then
+///     paused.) The pause's recoverability is proven by the persisted pending row, asserted at the
+///     call site — not by a phantom ledger row.
+///   - any other status (`Errored` / `Bounded` / `Blocked`) — a turn can fail/abort with no usage,
+///     so the row count can be `<= turns`; we only require that ALL rows present are codex (an
+///     errored gated turn legitimately bills nothing, so we do NOT require a row here).
 ///
 /// FLAKINESS NOTE (Option-usage): this tolerates a 0/0 codex row — it proves provider ATTRIBUTION
 /// (the row exists + is codex + local-app-server host + non-fallback), NOT a nonzero token count.
@@ -258,17 +262,22 @@ fn assert_codex_rows(
 ) {
     let rows = rt.db().list_run_token_usage(run_id).unwrap();
     match status {
-        LoopStatus::Finished | LoopStatus::Paused => assert_eq!(
+        LoopStatus::Finished => assert_eq!(
             rows.len(),
             turns as usize,
-            "run {run_id}: a finished/paused run bills one codex row per turn (turns={turns}, \
+            "run {run_id}: a finished gated codex turn bills one codex row per turn (turns={turns}, \
              rows={})",
             rows.len()
         ),
-        _ => assert!(
-            !rows.is_empty(),
-            "run {run_id}: at least one codex turn must have been billed (status {status:?})"
+        // C1 PR-B: a Paused gated turn was DENIED to Codex (its turn aborted) ⇒ NO usage ⇒ NO row.
+        LoopStatus::Paused => assert!(
+            rows.is_empty(),
+            "run {run_id}: a paused (denied-to-codex) gated turn bills nothing, got {} row(s)",
+            rows.len()
         ),
+        // An errored/bounded gated turn can legitimately bill nothing (an aborted turn yields no
+        // usage); we only require that whatever rows DO exist are correctly attributed below.
+        _ => {}
     }
     for row in &rows {
         assert_eq!(
@@ -346,14 +355,16 @@ fn chat_answer_question_routes_to_codex_and_bills_codex() {
 
 #[test]
 #[ignore = "live: needs FRIDAY_CODEX_ROUTE_ENABLED=1 + FRIDAY_DEEPSEEK_API_KEY + a logged-in Codex CLI; spends Codex quota; run with --ignored"]
-fn approval_request_codex_turn_bills_codex_then_pauses() {
-    // §3 "approval request": a codex turn that proposes a MUTATING tool is BILLED a codex row (the
-    // proposing chat spent the turn) and THEN the gate Pauses (no operator key ⇒ fail-closed
-    // RequiresApproval). This is the one session-control flow that is genuinely routed+metered
-    // through the C1 pin. NOTE: whether the live model proposes a mutation on a given prompt is
-    // model-dependent; if it answers in chat instead, the run Finishes with the codex row still
-    // recorded (the metering assertion holds either way). The PAUSE is the additional,
-    // model-cooperation-dependent leg.
+fn approval_request_codex_turn_pauses_and_bills_nothing() {
+    // §3 "approval request" (C1 PR-B gated semantics): a codex gated turn that proposes a MUTATING
+    // pre-execution action routes that approval request through Friday's gate; with no operator key
+    // the gate RequiresApproval ⇒ `run_codex_gated_turn` DENIES the action to Codex (its turn
+    // aborts) and persists a pending_approval_request ⇒ the run Pauses. UNLIKE the retired brain
+    // (which billed a proposing turn then paused), a Paused gated turn bills NOTHING (the Deny
+    // aborted the turn before any usage). NOTE: whether the live model proposes a mutation is
+    // model-dependent; if it answers in chat instead, the run Finishes with one codex row (the
+    // metering assertion holds either way). The PAUSE is the additional, model-cooperation-dependent
+    // leg — and on that leg the pending row (not a ledger row) is the recoverability evidence.
     let (rt, _ws) = live_codex_runtime("approval-request");
     let (selection, outcome) = rt
         .run_task_pinned(
@@ -364,7 +375,7 @@ fn approval_request_codex_turn_bills_codex_then_pauses() {
         )
         .expect("a live pinned-codex run that may propose a mutation completes its turn");
     assert_eq!(selection.provider_id, "codex");
-    // The model-call(s) that produced the turn(s) are billed regardless of the gate outcome.
+    // Attribution + the gated count relationship (Finished ⇒ one codex row; Paused ⇒ none).
     assert_codex_rows(&rt, "live-codex-approval", outcome.status, outcome.turns);
     if outcome.status == LoopStatus::Paused {
         let pending: i64 = rt

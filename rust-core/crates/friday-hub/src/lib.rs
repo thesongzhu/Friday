@@ -842,6 +842,146 @@ impl<S: friday_providers::codex_appserver::CodexTurnSource> AgentLlmClient
     }
 }
 
+/// (C1 PR-B) The CORRECT Codex execution seam: drive ONE Codex app-server turn through the
+/// EXISTING Friday trust/approval gate via [`codex_gated_turn::run_codex_gated_turn`], NOT
+/// through the conn-less [`AgentLlmClient::next_step_metered`] (the "brain" model — retired
+/// from the live route in this PR).
+///
+/// ## Why this is a separate seam from `AgentLlmClient`
+/// Codex is a coordinated AGENT in its own runtime: each pre-execution side effect it proposes
+/// must be routed through Friday's gate, which needs the `conn` (for `authorize_agent_action`
+/// and the pending-approval persist), the run `policy` (the trust-grant scope), the HMAC
+/// `secret`, and the operator `approve_fn`. The generic conn-less
+/// `AgentLlmClient::next_step_metered(&self, task, history)` carries NONE of those — which is
+/// exactly why the brain adapter was wrong (it treated Codex as a model-call and Friday-side
+/// re-executed). This seam takes them explicitly and returns a turn-level
+/// [`codex_gated_turn::CodexTurnOutcome`], so the gated turn is the ONLY Codex execution path.
+///
+/// Object-safe: every method parameter is concrete or a `&dyn` (the live impl's per-turn
+/// transport `T` is hidden INSIDE the implementor), so it boxes as `Box<dyn CodexTurnExecutor>`.
+pub trait CodexTurnExecutor {
+    /// Run ONE gated Codex turn for `task` and map it onto a [`codex_gated_turn::CodexTurnOutcome`].
+    /// `conn`/`policy`/`secret`/`approve` come from the RUN context; `run_id`/`now_ms` time the
+    /// pending-approval row on a `RequiresApproval`. Errors are Friday-side faults the caller
+    /// fail-closes on (e.g. a pending-persist failure) — never a silent default or auto-approve.
+    #[allow(clippy::too_many_arguments)]
+    fn run_gated_turn(
+        &self,
+        conn: &Connection,
+        policy: &RunPolicy,
+        secret: &[u8],
+        approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
+        task: &str,
+        run_id: &str,
+        now_ms: i64,
+    ) -> Result<codex_gated_turn::CodexTurnOutcome, codex_gated_turn::CodexGatedTurnError>;
+}
+
+/// (C1 PR-B) The LIVE Codex executor: per turn it spawns a fresh `codex app-server`
+/// ([`friday_providers::codex_appserver::LocalCodexAppServer`]), runs the
+/// `initialize`/`initialized`/`thread/start` handshake, then drives EXACTLY ONE gated turn via
+/// [`codex_gated_turn::run_codex_gated_turn`] (which owns the gate + pending-approval persist).
+/// MIRRORS [`friday_providers::codex_appserver::LocalCodexAppServerTurnSource`]'s stateless
+/// per-turn spawn (the process is killed on scope exit), but drives the GATED turn rather than
+/// the conn-less `run_text_turn` of the retired brain.
+///
+/// DARK: the live route only becomes selectable behind `FRIDAY_CODEX_ROUTE_ENABLED` (the route
+/// promotion) AND `FRIDAY_CODEX_MUTATING_GATE` (the transport gate `run_codex_gated_turn`
+/// consults). With both flags OFF this type is never constructed/reached — see `runtime.rs`.
+pub struct LocalCodexGatedTurnExecutor {
+    program: String,
+    client_name: String,
+    client_version: String,
+    cwd: Option<String>,
+    model: String,
+}
+
+impl LocalCodexGatedTurnExecutor {
+    /// Build a live executor that spawns `<program> app-server` per turn, identifying as
+    /// `client_name`/`client_version` on `initialize`, starting each thread in `cwd` with
+    /// `model` (the route model, also billed against). `cwd: None` lets the app-server default.
+    pub fn new(
+        program: impl Into<String>,
+        client_name: impl Into<String>,
+        client_version: impl Into<String>,
+        cwd: Option<String>,
+        model: impl Into<String>,
+    ) -> Self {
+        Self {
+            program: program.into(),
+            client_name: client_name.into(),
+            client_version: client_version.into(),
+            cwd,
+            model: model.into(),
+        }
+    }
+}
+
+impl CodexTurnExecutor for LocalCodexGatedTurnExecutor {
+    fn run_gated_turn(
+        &self,
+        conn: &Connection,
+        policy: &RunPolicy,
+        secret: &[u8],
+        approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
+        task: &str,
+        run_id: &str,
+        now_ms: i64,
+    ) -> Result<codex_gated_turn::CodexTurnOutcome, codex_gated_turn::CodexGatedTurnError> {
+        // Fresh process per turn — `server` is killed on drop at the end of this scope (the
+        // SAME stateless model as `LocalCodexAppServerTurnSource`), so nothing non-`Sync` is
+        // held across calls. A spawn/handshake/transport failure surfaces as a typed
+        // `CodexTurnOutcome::Errored` (NEVER a panic, never a faked success): `run_turn_with_handler`
+        // inside `run_codex_gated_turn` maps a transport error to `Errored`, and the pre-turn
+        // spawn/handshake errors below map there too via `errored_outcome`.
+        let mut server =
+            match friday_providers::codex_appserver::LocalCodexAppServer::spawn(&self.program) {
+                Ok(server) => server,
+                Err(e) => return Ok(errored_outcome(&e)),
+            };
+        let client = server.client();
+        if let Err(e) = client.initialize(&self.client_name, &self.client_version) {
+            return Ok(errored_outcome(&e));
+        }
+        if let Err(e) = client.initialized() {
+            return Ok(errored_outcome(&e));
+        }
+        let thread = match client.start_thread(self.cwd.as_deref(), Some(self.model.as_str())) {
+            Ok(thread) => thread,
+            Err(e) => return Ok(errored_outcome(&e)),
+        };
+        codex_gated_turn::run_codex_gated_turn(
+            conn,
+            client,
+            policy,
+            secret,
+            &approve,
+            &thread.thread_id,
+            None,
+            task,
+            &self.model,
+            run_id,
+            now_ms,
+        )
+    }
+}
+
+/// Map a pre-turn Codex app-server fault (spawn / handshake / thread-start) to a code-only,
+/// secret-free [`codex_gated_turn::CodexTurnOutcome::Errored`] — the SAME terminal shape
+/// `run_codex_gated_turn` produces for an in-turn transport error, so the caller has one
+/// fail-closed arm. Never carries a raw command/path (the provider error type is code-only).
+fn errored_outcome(
+    e: &friday_providers::codex_appserver::CodexAppServerError,
+) -> codex_gated_turn::CodexTurnOutcome {
+    use friday_providers::codex_appserver::CodexAppServerError;
+    let reason = match e {
+        CodexAppServerError::Transport { code } => format!("codex_transport:{code}"),
+        CodexAppServerError::Protocol { code } => format!("codex_protocol:{code}"),
+        CodexAppServerError::SchemaDrift => "codex_schema_drift".to_string(),
+    };
+    codex_gated_turn::CodexTurnOutcome::Errored { reason }
+}
+
 /// The process-wide DEFAULT (built-in) tool registry, built once and reused. The free
 /// `trusted_classify`/`build_tool_prompt` chokepoints call this on every turn; caching
 /// avoids rebuilding the `BTreeMap` + its ~10 `String`s per call (the UNW-002 reviewer
@@ -2787,7 +2927,11 @@ pub fn render_session_history(messages: &[friday_storage::StoredSessionMessage])
 /// left unestimated (`None`), matching the ask path. A construction failure (only possible
 /// on negative/overflowing usage — a hostile/buggy provider response) maps to a
 /// [`StorageError`] and fails the run closed; it never persists a malformed bill.
-fn bill_model_call(
+///
+/// `pub(crate)` so the C1 PR-B Codex branch in `runtime.rs` bills a `Finished` gated-turn's
+/// usage through the SAME single biller (one `provider_kind="codex"` row) — never a parallel
+/// ledger path.
+pub(crate) fn bill_model_call(
     conn: &Connection,
     run_id: &str,
     turn_index: u64,
