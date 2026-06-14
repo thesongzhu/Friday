@@ -437,7 +437,11 @@ fn memory_review_needs_me_from(raw: Option<&str>) -> bool {
 /// surfaces it) and `deep_link`. The `activity_id` is keyed on the candidate's `memory_id`
 /// (`activity_item.activity_id` is the PRIMARY KEY), so re-surfacing the SAME candidate is a
 /// fail-closed duplicate insert (idempotent — no duplicate row; mirrors NS-7's nonce key).
-fn memory_review_activity_row(
+// `pub(crate)`: the NS-7/NS-8 Needs-Me consumer's E2E test
+// (`run_readback_projection::tests`) composes a memory_review activity row through THIS
+// producer so the producer↔consumer `activity_id` scheme is bound by the test (a future
+// drift fails it) instead of agreeing only by a hand-typed literal.
+pub(crate) fn memory_review_activity_row(
     memory_id: &str,
     state: MemoryState,
     scope: MemoryScope,
