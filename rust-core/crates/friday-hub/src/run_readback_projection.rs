@@ -332,11 +332,22 @@ pub fn project_run_file_view(
 ///   `bill_model_call` scheme (`{run_id}:t{turn_index}:askreceipt`). Each row is the body-free
 ///   `"{n} tokens via {model}"` receipt of a real metered turn.
 ///
+/// ## Actionable Needs-Me — the NS-7 / NS-8 producer rows the consumer used to ORPHAN (additive)
+/// The producers write `approval_required` (NS-7, `insert_pending_approval_activity`) and
+/// `memory_review` (NS-8, `memory_review_activity_row`) activity rows, but this consumer previously
+/// read ONLY `ask_receipt` rows + the `detect_pause`-computed `needs_me` item — so those producer
+/// rows had NO reader (the actionable Needs-Me surface was always empty). [`collect_actionable_needs_me`]
+/// now ALSO surfaces them in the `actionable_needs_me` array (in addition to — never replacing —
+/// `ask_receipts` + `needs_me`, the no-degrade guarantee). It stays STRICTLY OWNER-GATED:
+/// `approval_required` rows are scoped to THIS run's still-pending approval nonces (inheriting the
+/// run owner gate), and `memory_review` rows are owner-scoped by joining the parsed `memory_id`
+/// back to `memory_item.principal_id == owner` (a missing / unowned / other-owner row is skipped).
+///
 /// ## Class-2 read: no model call, no new ledger row, no mutation
-/// Pure reads over already-persisted activity + pending rows — it never touches a provider
+/// Pure reads over already-persisted activity + pending + memory rows — it never touches a provider
 /// credential, the model path, or any write, and writes NO `token_ledger` row (it is not a metered
 /// turn). It is INDEPENDENT of the ns-7 `FRIDAY_ACTIVITY_NEEDS_ME` persisted-activity flag: the
-/// Needs-Me item is COMPUTED from `detect_pause` at read time, not read from a persisted row. The
+/// `needs_me` item is COMPUTED from `detect_pause` at read time, not read from a persisted row. The
 /// shared [`reject_forbidden_output`] guard runs INSIDE this fn so the snapshot inherits the
 /// refs-only discipline.
 pub fn project_activity_needs_me(
@@ -396,7 +407,19 @@ pub fn project_activity_needs_me(
             status: SessionStatus::AwaitingApproval,
         });
 
+    // ADDITIVE (no-degrade): the actionable activity rows the producers write but the
+    // pre-existing consumer never read — `approval_required` (NS-7) and `memory_review` (NS-8).
+    // These rows were written to a sink with NO reader (the producers' `FRIDAY_ACTIVITY_NEEDS_ME`
+    // / `FRIDAY_MEMORY_REVIEW_NEEDS_ME` rows), so the actionable Needs-Me surface was always empty.
+    // They are surfaced here as a SEPARATE array — `ask_receipts` + `needs_me` above stay
+    // byte-identical (the no-degrade guarantee). Each is an owner-scoped, refs-only `json!` item
+    // (`{kind, title, deep_link, ref_id, state, activity_id}`) a surface can render + act on.
+    let actionable_needs_me =
+        collect_actionable_needs_me(db, conn, run_id, owner.as_deref().unwrap_or(caller))
+            .map_err(|_| "read_failed".to_string())?;
+
     let ask_receipt_count = ask_receipts.len();
+    let actionable_count = actionable_needs_me.len();
     let snapshot = json!({
         "truth_label": "rust_wired_dev",
         "proof_only": true,
@@ -405,6 +428,8 @@ pub fn project_activity_needs_me(
         "ask_receipts": ask_receipts,
         "ask_receipt_count": ask_receipt_count,
         "needs_me": needs_me,
+        "actionable_needs_me": actionable_needs_me,
+        "actionable_needs_me_count": actionable_count,
     });
 
     // Inherit the refs-only guard (the AskReceipt summary + the nonce-only Needs-Me item are
@@ -412,6 +437,110 @@ pub fn project_activity_needs_me(
     let rendered = serde_json::to_string(&snapshot).map_err(|_| "serialize_failed".to_string())?;
     reject_forbidden_output(&rendered)?;
     Ok(Some(snapshot))
+}
+
+/// The `activity_id` prefix the NS-7 approval producer keys its row under
+/// (`approval-needs-me-{nonce}`) — see [`friday_storage::insert_pending_approval_activity`].
+const APPROVAL_ACTIVITY_PREFIX: &str = "approval-needs-me-";
+/// The `activity_id` prefix the NS-8 memory-review producer keys its row under
+/// (`memory-review-needs-me-{memory_id}`) — see `memory_extraction::memory_review_activity_row`.
+const MEMORY_REVIEW_ACTIVITY_PREFIX: &str = "memory-review-needs-me-";
+
+/// (NS-7 / NS-8 closure) Read the ACTIONABLE activity rows the producers write but the
+/// pre-existing `ask_receipt`/`detect_pause` consumer never read, and project each into an
+/// owner-scoped, refs-only Needs-Me item. STRICTLY OWNER-GATED — the caller has already been
+/// confirmed to be `run_id`'s bound owner (== `owner_principal` here), so:
+///
+/// * **`approval_required`** rows are run-linked (`session_id = run_id`, keyed under the run's
+///   approval nonces). They are scoped to THIS run by `list_pending_requests_for_run`: a row is
+///   surfaced ONLY if its `activity_id == "approval-needs-me-{nonce}"` for a STILL-`pending` nonce
+///   of this run. Owner-scoping is inherited from the run owner gate (no other owner's nonces are
+///   ever in this run's pending list). `ActivitySummary` does not carry `session_id`, so the
+///   pending-nonce join is the run-scoping mechanism — no storage-layer change.
+/// * **`memory_review`** rows are NOT run-linked (`session_id = None`, keyed on `memory_id`; the
+///   owner lives on `memory_item.principal_id`). They are inherently OWNER-scoped: the `memory_id`
+///   is parsed from the `activity_id`, the row is looked up via [`friday_storage::memory::get`],
+///   and it is surfaced ONLY if `memory_item.principal_id == owner_principal`. A missing
+///   `memory_item`, an unowned (`None`) row, or any other owner ⇒ SKIPPED (fail-closed — never
+///   surface another owner's, or an unowned, review item).
+///
+/// The title/deep-link are refs-only (the producer's already-body-free `summary`, and
+/// `memory/{scope}/{id}` for a review) — never candidate content / approval params. The shared
+/// [`reject_forbidden_output`] guard still runs over the whole snapshot in the caller as a backstop.
+fn collect_actionable_needs_me(
+    db: &Db,
+    conn: &rusqlite::Connection,
+    run_id: &str,
+    owner_principal: &str,
+) -> Result<Vec<Value>, String> {
+    // This run's STILL-pending approval nonces (oldest-first). The owner gate already ran, so
+    // these are this owner's nonces — `approval-needs-me-{nonce}` is the producer's id scheme.
+    let pending_approval_ids: std::collections::HashSet<String> =
+        friday_storage::list_pending_requests_for_run(conn, run_id)
+            .map_err(|_| "read_failed".to_string())?
+            .into_iter()
+            .filter(|p| p.status == "pending")
+            .map(|p| format!("{APPROVAL_ACTIVITY_PREFIX}{}", p.approval_id))
+            .collect();
+
+    let mut out: Vec<Value> = Vec::new();
+    for row in db.list_activity().map_err(|_| "read_failed".to_string())? {
+        match row.kind.as_str() {
+            // approval_required: surface ONLY if it is one of THIS run's live pending nonces.
+            "approval_required" if pending_approval_ids.contains(&row.activity_id) => {
+                let nonce = row
+                    .activity_id
+                    .strip_prefix(APPROVAL_ACTIVITY_PREFIX)
+                    .unwrap_or(&row.activity_id);
+                out.push(json!({
+                    "kind": "approval_required",
+                    // The producer's body-free summary ("approval required for {action} ...").
+                    "title": row.summary,
+                    // Where a surface acts on it: the owner-authed approve/reject control for the
+                    // run + nonce (a ref, not a body).
+                    "deep_link": format!("run/{run_id}/approval/{nonce}"),
+                    "ref_id": nonce,
+                    "state": row.state,
+                    "activity_id": row.activity_id,
+                }));
+            }
+            // memory_review: owner-scope by joining the parsed memory_id back to its
+            // `memory_item.principal_id`. Skip a missing / unowned / other-owner row (fail-closed).
+            "memory_review" => {
+                let Some(memory_id) = row.activity_id.strip_prefix(MEMORY_REVIEW_ACTIVITY_PREFIX)
+                else {
+                    continue;
+                };
+                // Owner-scope by the candidate's owning principal. `list_activity` drops
+                // `deep_link`, so the review destination is reconstructed from the memory row's
+                // own scope (`memory/{scope}/{id}`, a refs-only label — never candidate content).
+                let Some(mem) = friday_storage::memory::get(conn, memory_id)
+                    .map_err(|_| "read_failed".to_string())?
+                else {
+                    continue;
+                };
+                let owned_by_caller = mem
+                    .principal_id
+                    .as_deref()
+                    .is_some_and(|pid| pid == owner_principal);
+                if !owned_by_caller {
+                    continue;
+                }
+                out.push(json!({
+                    "kind": "memory_review",
+                    // The producer's body-free summary ("{reason} ({destination})").
+                    "title": row.summary,
+                    // Where the user reviews it: the memory item's review entry (refs-only).
+                    "deep_link": format!("memory/{}/{}", mem.scope.as_str(), memory_id),
+                    "ref_id": memory_id,
+                    "state": row.state,
+                    "activity_id": row.activity_id,
+                }));
+            }
+            _ => {}
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -652,6 +781,350 @@ mod tests {
         assert_eq!(
             project_run_readback(&ro, "principal:some-owner", "run-r2-in-progress").unwrap(),
             None
+        );
+    }
+
+    // ===== NS-7 / NS-8 closure: the consumer now READS the actionable producer rows =====
+
+    use friday_core::{MemoryScope, MemoryState};
+    use friday_storage::memory::{record_candidate, NewMemoryCandidate};
+    use friday_storage::{
+        insert_pending_approval_activity, persist_pending_request, PendingApprovalRequest,
+    };
+
+    /// Seed a PAUSED run owned by `owner`: ONE still-`pending` approval row (so `resolve_run_owner`
+    /// binds the owner and `detect_pause` reports a pause) bound to `nonce`. Returns nothing — the
+    /// caller drives the activity producers on top. Mirrors the live Pause arm's persistence.
+    fn seed_paused_run(
+        conn: &rusqlite::Connection,
+        run_id: &str,
+        owner: &str,
+        nonce: &str,
+        now: i64,
+    ) {
+        let pending = PendingApprovalRequest {
+            approval_id: nonce.to_string(),
+            run_id: run_id.to_string(),
+            action: "write_file".to_string(),
+            action_digest: format!("digest-{nonce}"),
+            principal_id: Some(owner.to_string()),
+            surface: "agent".to_string(),
+            resource_type: None,
+            resource_id: None,
+            expires_at: now + 60_000,
+            issuer: "friday_canonical_gate".to_string(),
+            status: "pending".to_string(),
+            created_at: now,
+            tool_params: None,
+        };
+        persist_pending_request(conn, &pending).unwrap();
+    }
+
+    /// E2E gate — seed an owner's `memory_review` candidate via the REAL producer path
+    /// (`record_candidate`, which sets `principal_id`) + the producer's exact activity id scheme,
+    /// then assert the consumer surfaces it in `actionable_needs_me`. ALSO covers the
+    /// `approval_required` row via its real producer (`insert_pending_approval_activity`), and that
+    /// the pre-existing `needs_me` (detect_pause) item still surfaces unchanged (no-degrade).
+    #[test]
+    fn actionable_needs_me_surfaces_memory_review_and_approval_required_for_the_owner() {
+        let owner = "principal:ns-owner";
+        let run_id = "run-ns-actionable";
+        let nonce = "nonceAAAA1111";
+        let memory_id = "mem-ns-1";
+        let now = 1_780_650_000_000;
+
+        let path = std::env::temp_dir()
+            .join(format!(
+                "friday-ns-actionable-{}.sqlite",
+                std::process::id()
+            ))
+            .to_string_lossy()
+            .into_owned();
+        let db = Db::open_hub(&path).unwrap();
+
+        // (1) PAUSED + owned run (pending approval row). This is the owner gate + detect_pause anchor.
+        seed_paused_run(db.conn(), run_id, owner, nonce, now);
+
+        // (2) approval_required activity row — via the REAL NS-7 producer for this run + nonce.
+        insert_pending_approval_activity(db.conn(), run_id, nonce, "write_file", now).unwrap();
+
+        // (3) memory_review: a REAL pending candidate OWNED by `owner` (sets memory_item.principal_id),
+        //     plus the NS-8 producer's exact activity row (id = "memory-review-needs-me-{memory_id}").
+        record_candidate(
+            db.conn(),
+            &NewMemoryCandidate {
+                memory_id,
+                scope: MemoryScope::Session,
+                content_ref: None,
+                content: Some("a candidate fact"),
+                principal_id: Some(owner),
+                sensitive: false,
+                created_at: now,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            friday_storage::memory::get(db.conn(), memory_id)
+                .unwrap()
+                .unwrap()
+                .state,
+            MemoryState::Candidate
+        );
+        // Compose the activity row through the REAL NS-8 producer so the producer↔consumer
+        // `activity_id` scheme is bound by THIS test (a producer-side drift fails it) — not
+        // agreed only by a hand-typed literal.
+        let review_row = crate::memory_extraction::memory_review_activity_row(
+            memory_id,
+            MemoryState::Candidate,
+            MemoryScope::Session,
+            "a candidate fact",
+            now,
+        )
+        .expect("a pending candidate yields a memory_review activity row");
+        db.insert_activity(&review_row).unwrap();
+        drop(db);
+
+        let ro = Db::open_hub_readonly(&path).unwrap();
+        let snapshot = project_activity_needs_me(&ro, owner, run_id)
+            .expect("projects")
+            .expect("the owner gets a snapshot");
+        let v: Value = from_str(&serde_json::to_string(&snapshot).unwrap()).unwrap();
+
+        // No-degrade: the pre-existing detect_pause needs_me item still surfaces unchanged.
+        assert!(
+            !v["needs_me"].is_null(),
+            "the pre-existing detect_pause Needs-Me item must still surface"
+        );
+        assert_eq!(v["needs_me"]["kind"], "approval");
+        assert_eq!(v["needs_me"]["ref_id"], nonce);
+
+        // The NEW actionable array surfaces BOTH the memory_review and the approval_required rows.
+        let actionable = v["actionable_needs_me"].as_array().expect("array");
+        assert_eq!(
+            v["actionable_needs_me_count"].as_u64(),
+            Some(actionable.len() as u64)
+        );
+        let kinds: Vec<&str> = actionable
+            .iter()
+            .map(|i| i["kind"].as_str().unwrap())
+            .collect();
+        assert!(
+            kinds.contains(&"memory_review"),
+            "memory_review must appear in actionable_needs_me, got {kinds:?}"
+        );
+        assert!(
+            kinds.contains(&"approval_required"),
+            "approval_required must appear in actionable_needs_me, got {kinds:?}"
+        );
+
+        // memory_review item: refs-only shape (ref_id = memory_id, deep_link = memory/{scope}/{id}).
+        let mr = actionable
+            .iter()
+            .find(|i| i["kind"] == "memory_review")
+            .unwrap();
+        assert_eq!(mr["ref_id"], memory_id);
+        assert_eq!(mr["deep_link"], "memory/session/mem-ns-1");
+        assert_eq!(mr["state"], "pending");
+
+        // approval_required item: ref_id = the run's live nonce, deep_link = run/{run}/approval/{nonce}.
+        let ar = actionable
+            .iter()
+            .find(|i| i["kind"] == "approval_required")
+            .unwrap();
+        assert_eq!(ar["ref_id"], nonce);
+        assert_eq!(ar["deep_link"], format!("run/{run_id}/approval/{nonce}"));
+    }
+
+    /// no-degrade regression: the pre-existing ask_receipt + detect_pause Needs-Me items still
+    /// surface unchanged on a run that has NO actionable producer rows (the actionable array is
+    /// simply empty — the existing surface is byte-equivalent to before).
+    #[test]
+    fn actionable_needs_me_preserves_ask_receipt_and_detect_pause_unchanged() {
+        use friday_storage::ActivityRow;
+        let owner = "principal:ns-nodegrade";
+        let run_id = "run-ns-nodegrade";
+        let nonce = "nonceBBBB2222";
+        let now = 1_780_651_000_000;
+
+        let path = std::env::temp_dir()
+            .join(format!("friday-ns-nodegrade-{}.sqlite", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
+        let db = Db::open_hub(&path).unwrap();
+        seed_paused_run(db.conn(), run_id, owner, nonce, now);
+        // An ask_receipt row for THIS run (the `{run_id}:t{n}:askreceipt` id scheme).
+        db.insert_activity(&ActivityRow {
+            activity_id: format!("{run_id}:t0:askreceipt"),
+            session_id: Some(run_id.to_string()),
+            kind: friday_core::ActivityType::AskReceipt,
+            state: friday_core::ActivityState::Done,
+            summary: "42 tokens via claude".to_string(),
+            created_at: now,
+            updated_at: now,
+            deep_link: None,
+        })
+        .unwrap();
+        drop(db);
+
+        let ro = Db::open_hub_readonly(&path).unwrap();
+        let snapshot = project_activity_needs_me(&ro, owner, run_id)
+            .unwrap()
+            .unwrap();
+        let v: Value = from_str(&serde_json::to_string(&snapshot).unwrap()).unwrap();
+
+        // ask_receipt surface unchanged.
+        assert_eq!(v["ask_receipt_count"], 1);
+        assert_eq!(v["ask_receipts"][0]["summary"], "42 tokens via claude");
+        // detect_pause needs_me unchanged.
+        assert_eq!(v["needs_me"]["ref_id"], nonce);
+        assert_eq!(v["needs_me"]["status"], "awaiting_approval");
+        // No actionable producer rows ⇒ the new array is empty (additive, not destructive).
+        assert_eq!(v["actionable_needs_me"].as_array().unwrap().len(), 0);
+        assert_eq!(v["actionable_needs_me_count"], 0);
+    }
+
+    /// owner-isolation: O2 (who owns their OWN paused run) must NOT see O's memory_review or
+    /// approval_required actionable items. Critically O2 OWNS a run, so the projection returns
+    /// `Some` (the gate Grants O2) — making the EXCLUSION assertion load-bearing, not vacuous.
+    #[test]
+    fn actionable_needs_me_owner_isolation_o2_does_not_see_o_items() {
+        let o = "principal:iso-O";
+        let o2 = "principal:iso-O2";
+        let o_run = "run-iso-O";
+        let o2_run = "run-iso-O2";
+        let o_nonce = "nonceO00011112";
+        let o2_nonce = "nonceO2_222233";
+        let o_mem = "mem-iso-O";
+        let now = 1_780_652_000_000;
+
+        let path = std::env::temp_dir()
+            .join(format!("friday-ns-iso-{}.sqlite", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
+        let db = Db::open_hub(&path).unwrap();
+
+        // O's paused run + O's actionable rows.
+        seed_paused_run(db.conn(), o_run, o, o_nonce, now);
+        insert_pending_approval_activity(db.conn(), o_run, o_nonce, "write_file", now).unwrap();
+        record_candidate(
+            db.conn(),
+            &NewMemoryCandidate {
+                memory_id: o_mem,
+                scope: MemoryScope::Session,
+                content_ref: None,
+                content: Some("O's candidate"),
+                principal_id: Some(o),
+                sensitive: false,
+                created_at: now,
+            },
+        )
+        .unwrap();
+        db.insert_activity(
+            &crate::memory_extraction::memory_review_activity_row(
+                o_mem,
+                MemoryState::Candidate,
+                MemoryScope::Session,
+                "O's candidate",
+                now,
+            )
+            .expect("a pending candidate yields a memory_review activity row"),
+        )
+        .unwrap();
+
+        // O2 ALSO owns a paused run (so the gate Grants O2 a Some snapshot — non-vacuous test).
+        seed_paused_run(db.conn(), o2_run, o2, o2_nonce, now);
+        drop(db);
+
+        let ro = Db::open_hub_readonly(&path).unwrap();
+
+        // O2 reads back O2's OWN run: gate Grants (Some), but it carries NONE of O's items.
+        let o2_snap = project_activity_needs_me(&ro, o2, o2_run)
+            .unwrap()
+            .expect("O2 owns o2_run so the gate grants a snapshot");
+        let v2: Value = from_str(&serde_json::to_string(&o2_snap).unwrap()).unwrap();
+        let o2_actionable = v2["actionable_needs_me"].as_array().unwrap();
+        let rendered2 = serde_json::to_string(&o2_snap).unwrap();
+        assert!(
+            !rendered2.contains(o_mem) && !rendered2.contains(o_nonce),
+            "O2's snapshot must not surface O's memory_id or approval nonce"
+        );
+        assert!(
+            o2_actionable.is_empty(),
+            "O2 owns no actionable producer rows, got {o2_actionable:?}"
+        );
+
+        // O2 reading O's run is a non-owner ⇒ `Ok(None)` (the M-3 anti-oracle gate, unchanged).
+        assert_eq!(project_activity_needs_me(&ro, o2, o_run).unwrap(), None);
+
+        // Sanity: O DOES see O's items (proves the rows exist and the filter is owner-keyed, not empty).
+        let o_snap = project_activity_needs_me(&ro, o, o_run).unwrap().unwrap();
+        let vo: Value = from_str(&serde_json::to_string(&o_snap).unwrap()).unwrap();
+        let o_kinds: Vec<&str> = vo["actionable_needs_me"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["kind"].as_str().unwrap())
+            .collect();
+        assert!(o_kinds.contains(&"memory_review") && o_kinds.contains(&"approval_required"));
+    }
+
+    /// fail-closed: a `memory_review` activity row whose `memory_item` is UNOWNED (`principal_id =
+    /// None`) is SKIPPED — never surfaced to the run owner (no unowned leak).
+    #[test]
+    fn actionable_needs_me_skips_unowned_memory_review() {
+        let owner = "principal:unowned-test";
+        let run_id = "run-unowned";
+        let nonce = "nonceUUUU3333";
+        let mem = "mem-unowned";
+        let now = 1_780_653_000_000;
+
+        let path = std::env::temp_dir()
+            .join(format!("friday-ns-unowned-{}.sqlite", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
+        let db = Db::open_hub(&path).unwrap();
+        seed_paused_run(db.conn(), run_id, owner, nonce, now);
+        // An UNOWNED candidate (principal_id = None).
+        record_candidate(
+            db.conn(),
+            &NewMemoryCandidate {
+                memory_id: mem,
+                scope: MemoryScope::Session,
+                content_ref: None,
+                content: Some("unowned"),
+                principal_id: None,
+                sensitive: false,
+                created_at: now,
+            },
+        )
+        .unwrap();
+        db.insert_activity(
+            &crate::memory_extraction::memory_review_activity_row(
+                mem,
+                MemoryState::Candidate,
+                MemoryScope::Session,
+                "unowned",
+                now,
+            )
+            .expect("a pending candidate yields a memory_review activity row"),
+        )
+        .unwrap();
+        drop(db);
+
+        let ro = Db::open_hub_readonly(&path).unwrap();
+        let snap = project_activity_needs_me(&ro, owner, run_id)
+            .unwrap()
+            .unwrap();
+        let v: Value = from_str(&serde_json::to_string(&snap).unwrap()).unwrap();
+        let kinds: Vec<&str> = v["actionable_needs_me"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["kind"].as_str().unwrap())
+            .collect();
+        assert!(
+            !kinds.contains(&"memory_review"),
+            "an UNOWNED memory_review row must never surface, got {kinds:?}"
         );
     }
 }
