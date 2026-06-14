@@ -21,8 +21,54 @@ pub const CODEX_APP_SERVER_CLI_VERSION: &str = "codex-cli 0.136.0";
 /// Approval policy pinned for a [`CodexAppServerClient::run_turn`] model turn. `"never"`
 /// (a value of `v2/AskForApproval`) keeps a non-interactive completion from triggering an
 /// approval ask in this dark, no-operator-in-the-loop slice. Interactive approval routing
-/// is explicitly out of scope here (a mid-turn approval REQUEST fails closed).
+/// is explicitly out of scope for the flag-OFF default path (a mid-turn approval REQUEST
+/// fails closed). When the [`FRIDAY_CODEX_MUTATING_GATE`] flag is ON, the gated turn pins
+/// [`MODEL_TURN_GATE_APPROVAL_POLICY`] instead so approvals are FORCED and routed.
 pub const MODEL_TURN_APPROVAL_POLICY: &str = "never";
+
+/// Approval policy a GATED ([`FRIDAY_CODEX_MUTATING_GATE`]-ON) model turn pins on
+/// `turn/start.approvalPolicy` (a string value of `v2/AskForApproval`; see the captured
+/// `tests/fixtures/codex-schema/AskForApproval.json`).
+///
+/// `"untrusted"` is the value that forces an approval REQUEST for the broadest set of
+/// actions — every command Codex does not classify as a built-in trusted read AND every
+/// file-change / apply-patch. It is the correct choice for a *mutating* gate, and is chosen
+/// over the three alternatives deliberately:
+///   - `"never"` suppresses approvals entirely (the dark default; the gate would be a no-op
+///     because Codex would never ask).
+///   - `"on-request"` lets the MODEL decide when to ask. Forbidden by this gate's charter
+///     ("never trust the model's classification") — a mutating action the model silently
+///     self-approves would bypass the gate.
+///   - `"on-failure"` only escalates AFTER a sandboxed command fails; a mutating action that
+///     "succeeds" in-sandbox is never surfaced.
+///
+/// Honest scope note: under `"untrusted"`, trusted read-only commands still auto-run without
+/// an approval request — which is exactly what a MUTATING gate wants (reads are not gated).
+/// This constant only pins what we ASK Codex to do; whether Codex actually prompts for every
+/// action is runtime behavior proven by PR2's live wiring, not by this PR's recorded-stream
+/// KATs (which prove the marshaling + the response shape only).
+pub const MODEL_TURN_GATE_APPROVAL_POLICY: &str = "untrusted";
+
+/// Env flag that arms Codex pre-execution approval ROUTING in [`CodexAppServerClient`]'s
+/// model turn. DEFAULT-OFF: unset / empty / `"0"` / any value other than the literal `"1"`
+/// (after trimming) ⇒ OFF, byte-identical to the pre-flag behavior (a mid-turn approval
+/// REQUEST fails closed with `interactive-approval-unsupported`, `approvalPolicy` stays
+/// [`MODEL_TURN_APPROVAL_POLICY`]). Kept narrow + explicit so the gate can never be enabled
+/// by accident (mirrors the `FRIDAY_TRUST_GRANT_ENFORCE` idiom in `friday-hub`).
+///
+/// When ON, the turn pins [`MODEL_TURN_GATE_APPROVAL_POLICY`] and routes each interleaved
+/// `item/*/requestApproval` server-request through a Friday-supplied handler. The handler is
+/// a pluggable callback; the DEFAULT handler (none supplied) is DENY-ALL. The actual
+/// authorize decision is PR2's job — this surface only marshals the request + the response.
+pub const FRIDAY_CODEX_MUTATING_GATE: &str = "FRIDAY_CODEX_MUTATING_GATE";
+
+/// Pure flag-matcher for [`FRIDAY_CODEX_MUTATING_GATE`] (env read split out so the gate is
+/// unit-testable without `set_var` — the env-race-free idiom this codebase uses everywhere;
+/// see `friday-hub`'s `trust_grant_enforce_from`). ONLY the literal `"1"` (trimmed) enables;
+/// everything else (including `"true"`) is OFF.
+fn codex_mutating_gate_from(raw: Option<String>) -> bool {
+    matches!(raw, Some(v) if v.trim() == "1")
+}
 
 /// Hard upper bound on JSON-RPC messages [`CodexAppServerClient::run_turn`] will read
 /// before giving up with a typed `turn-no-completion` error. Guarantees a malformed or
@@ -347,6 +393,173 @@ pub fn classify_inbound(value: Value) -> Result<CodexInboundMessage, CodexAppSer
             .map_err(|_| CodexAppServerError::Protocol {
                 code: "response-json",
             }),
+    }
+}
+
+/// A Codex app-server pre-execution APPROVAL request, parsed from an interleaved
+/// `CodexInboundMessage::ServerRequest` into a typed shape a Friday approval handler can
+/// inspect. Every variant carries ONLY the fields present in the captured app-server schema
+/// for that method (see `tests/fixtures/codex-schema/`) — nothing is invented.
+///
+/// The four variants correspond to the four approval `method`s the app-server can issue:
+///   - [`CodexServerRequest::CommandExecution`] ⇐ `item/commandExecution/requestApproval`
+///     (`CommandExecutionRequestApprovalParams.json`)
+///   - [`CodexServerRequest::FileChange`]       ⇐ `item/fileChange/requestApproval`
+///     (`FileChangeRequestApprovalParams.json`)
+///   - [`CodexServerRequest::ExecCommand`]      ⇐ `execCommandApproval`
+///     (`ExecCommandApprovalParams.json`, legacy v1 surface)
+///   - [`CodexServerRequest::ApplyPatch`]       ⇐ `applyPatchApproval`
+///     (`ApplyPatchApprovalParams.json`, legacy v1 surface)
+///
+/// IMPORTANT: the two `item/*/requestApproval` methods take an `accept`/`decline`/`cancel`
+/// decision family (`CommandExecutionApprovalDecision` / `FileChangeApprovalDecision`),
+/// while the legacy `execCommandApproval` / `applyPatchApproval` take a `ReviewDecision`
+/// (`approved`/`denied`/`abort`). The per-variant `decision_*` helpers below encode that
+/// split, so the response written to the transport always matches the method's schema. The
+/// raw command/path text is carried for the handler but NEVER inlined into a
+/// [`CodexAppServerError`] (which stays code-only) or surfaced in Debug-sensitive paths.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CodexServerRequest {
+    /// `item/commandExecution/requestApproval` — a v2 command-execution approval ask.
+    CommandExecution {
+        thread_id: String,
+        turn_id: String,
+        item_id: String,
+        /// Distinct opaque callback id (UUID) for zsh-exec-bridge subcommand approvals;
+        /// `null` for regular shell/unified_exec approvals (per the schema).
+        approval_id: Option<String>,
+        /// The command to be executed (optional per the schema).
+        command: Option<String>,
+        /// The command's working directory (`AbsolutePathBuf`, optional).
+        cwd: Option<String>,
+    },
+    /// `item/fileChange/requestApproval` — a v2 file-change approval ask. NOTE: this params
+    /// shape carries NO path/diff (only ids + optional `grantRoot`/`reason`); the
+    /// path-bearing change set lives on [`CodexServerRequest::ApplyPatch`].
+    FileChange {
+        thread_id: String,
+        turn_id: String,
+        item_id: String,
+        /// `[UNSTABLE]` root the agent asks to grant writes under for the session.
+        grant_root: Option<String>,
+    },
+    /// `execCommandApproval` — legacy v1 exec-command approval ask (uses `ReviewDecision`).
+    ExecCommand {
+        conversation_id: String,
+        call_id: String,
+        approval_id: Option<String>,
+        cwd: String,
+        /// The argv vector of the command to be executed.
+        command: Vec<String>,
+    },
+    /// `applyPatchApproval` — legacy v1 apply-patch approval ask (uses `ReviewDecision`).
+    ApplyPatch {
+        conversation_id: String,
+        call_id: String,
+        grant_root: Option<String>,
+        /// The set of changed file paths (keys of the `fileChanges` map). The diff/content
+        /// bodies are intentionally NOT carried here (this surface marshals the request;
+        /// the authorize decision + any body inspection is PR2's job).
+        changed_paths: Vec<String>,
+    },
+}
+
+impl CodexServerRequest {
+    /// The JSON-RPC `method` this request was parsed from (for response routing + audit).
+    pub fn method(&self) -> &'static str {
+        match self {
+            CodexServerRequest::CommandExecution { .. } => "item/commandExecution/requestApproval",
+            CodexServerRequest::FileChange { .. } => "item/fileChange/requestApproval",
+            CodexServerRequest::ExecCommand { .. } => "execCommandApproval",
+            CodexServerRequest::ApplyPatch { .. } => "applyPatchApproval",
+        }
+    }
+
+    /// Build the JSON-RPC `result` body to write back for `decision`, in the EXACT response
+    /// shape the originating method's schema requires. The two `item/*` methods take the
+    /// `accept`/`decline`/`cancel` family; the legacy methods take `ReviewDecision`
+    /// (`approved`/`denied`/`abort`). Single-shot decisions ONLY — never the session-caching
+    /// or policy-amendment variants (those would defeat the gate on subsequent actions).
+    fn response_result(&self, decision: CodexApprovalDecision) -> Value {
+        match self {
+            // v2 `accept`/`decline`/`cancel` family (CommandExecution/FileChange decision).
+            CodexServerRequest::CommandExecution { .. } | CodexServerRequest::FileChange { .. } => {
+                let d = match decision {
+                    CodexApprovalDecision::Allow => "accept",
+                    // `cancel` (not `decline`) so a denied mutating action ALSO interrupts the
+                    // turn — fail-closed parity with the legacy `abort` below.
+                    CodexApprovalDecision::Deny => "cancel",
+                };
+                json!({ "decision": d })
+            }
+            // legacy v1 `ReviewDecision` family (ExecCommand/ApplyPatch).
+            CodexServerRequest::ExecCommand { .. } | CodexServerRequest::ApplyPatch { .. } => {
+                let d = match decision {
+                    CodexApprovalDecision::Allow => "approved",
+                    CodexApprovalDecision::Deny => "abort",
+                };
+                json!({ "decision": d })
+            }
+        }
+    }
+}
+
+/// A Friday approval decision for a [`CodexServerRequest`]. Deliberately MINIMAL — only a
+/// single-shot Allow or Deny. The session-caching (`acceptForSession` / `approved_for_session`)
+/// and policy-amendment (`acceptWithExecpolicyAmendment` / network-amendment) variants the
+/// Codex schema also defines are intentionally NOT representable here: they would cache an
+/// approval and silently auto-approve later actions, defeating a per-action mutating gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexApprovalDecision {
+    /// Approve this single action; the turn continues.
+    Allow,
+    /// Deny this single action AND interrupt the turn (fail-closed).
+    Deny,
+}
+
+/// Parse a server-initiated approval REQUEST (`method` + `params`) into a typed
+/// [`CodexServerRequest`]. Field extraction is manual (mirroring this module's
+/// `required_string` / `extract_optional_string` idiom) so a malformed/partial params object
+/// yields a typed [`CodexAppServerError::Protocol`] — never a panic/unwrap. An unrecognized
+/// `method` (e.g. `item/permissions/requestApproval`, `item/tool/requestUserInput`,
+/// `mcpServer/elicitation/request`) is NOT an approval this surface routes: it returns a
+/// typed `unroutable-server-request` error so the gated loop fails CLOSED rather than
+/// guessing a response shape.
+pub fn parse_server_request(
+    method: &str,
+    params: &Value,
+) -> Result<CodexServerRequest, CodexAppServerError> {
+    match method {
+        "item/commandExecution/requestApproval" => Ok(CodexServerRequest::CommandExecution {
+            thread_id: required_string(params, "threadId")?,
+            turn_id: required_string(params, "turnId")?,
+            item_id: required_string(params, "itemId")?,
+            approval_id: optional_string(params, "approvalId"),
+            command: optional_string(params, "command"),
+            cwd: optional_string(params, "cwd"),
+        }),
+        "item/fileChange/requestApproval" => Ok(CodexServerRequest::FileChange {
+            thread_id: required_string(params, "threadId")?,
+            turn_id: required_string(params, "turnId")?,
+            item_id: required_string(params, "itemId")?,
+            grant_root: optional_string(params, "grantRoot"),
+        }),
+        "execCommandApproval" => Ok(CodexServerRequest::ExecCommand {
+            conversation_id: required_string(params, "conversationId")?,
+            call_id: required_string(params, "callId")?,
+            approval_id: optional_string(params, "approvalId"),
+            cwd: required_string(params, "cwd")?,
+            command: required_string_array(params, "command")?,
+        }),
+        "applyPatchApproval" => Ok(CodexServerRequest::ApplyPatch {
+            conversation_id: required_string(params, "conversationId")?,
+            call_id: required_string(params, "callId")?,
+            grant_root: optional_string(params, "grantRoot"),
+            changed_paths: object_keys(params, "fileChanges")?,
+        }),
+        _ => Err(CodexAppServerError::Protocol {
+            code: "unroutable-server-request",
+        }),
     }
 }
 
@@ -771,12 +984,86 @@ impl<T: CodexAppServerTransport> CodexAppServerClient<T> {
         client_user_message_id: Option<&str>,
         text: &str,
     ) -> Result<ModelTurnOutcome, CodexAppServerError> {
+        // Delegate through `run_turn_with_handler` with a DENY-ALL handler — NOT a hardcoded
+        // `gate_on=false`. This makes the gate flag the SINGLE source of truth for both
+        // entrypoints, closing a fail-OPEN footgun: a hardcoded-off `run_turn` would, with
+        // the flag flipped ON in prod, still pin `approvalPolicy="never"` and let Codex
+        // auto-approve+execute mutating actions (gate bypassed via the wrong entrypoint —
+        // the route-only-guard defect this codebase has been bitten by).
+        //
+        // With this delegation: flag OFF (the default) → byte-identical to the historical
+        // `run_turn` (the deny-all handler is never consulted, `approvalPolicy="never"`,
+        // mid-turn server request fails closed with `interactive-approval-unsupported`).
+        // Flag ON → `approvalPolicy="untrusted"` + deny-all → any mutating action fails
+        // CLOSED (a text-only turn, which triggers no approval, still completes). PR2 wires
+        // the hub to `run_turn_with_handler` with a real authorizer; an un-migrated caller on
+        // `run_turn` degrades safely (deny) rather than bypassing the gate.
+        self.run_turn_with_handler(thread_id, client_user_message_id, text, |_req| {
+            Ok(CodexApprovalDecision::Deny)
+        })
+    }
+
+    /// Run a complete Codex model turn, ROUTING any interleaved pre-execution approval
+    /// request through `handler`. This is the C1-PR1 seam: a hub-side authorizer (PR2)
+    /// supplies the `handler`; this surface only marshals the typed [`CodexServerRequest`]
+    /// to it and writes the schema-correct response back.
+    ///
+    /// Behavior is gated by [`FRIDAY_CODEX_MUTATING_GATE`] (read ONCE here, then threaded as
+    /// an explicit bool into the shared core — no env read inside the loop, so parallel
+    /// tests never race the process-global env):
+    ///   - flag OFF (default): IGNORES `handler`, pins `approvalPolicy =`
+    ///     [`MODEL_TURN_APPROVAL_POLICY`] (`"never"`), and fails closed on any mid-turn
+    ///     server request — byte-identical to [`CodexAppServerClient::run_turn`].
+    ///   - flag ON: pins `approvalPolicy =` [`MODEL_TURN_GATE_APPROVAL_POLICY`]
+    ///     (`"untrusted"`, forcing approval for all mutating actions) and, on each
+    ///     `item/*/requestApproval` / legacy approval request, parses it, calls `handler`,
+    ///     and `respond`s with the schema-correct decision; a `Deny` aborts the turn (typed
+    ///     `approval-denied`), an `Allow` continues. A handler error, a parse failure, or an
+    ///     unroutable method all fail CLOSED (typed error) — never hang, never auto-approve.
+    ///
+    /// The DEFAULT [`CodexAppServerClient::run_turn`] supplies a deny-all handler, so even if
+    /// a future caller flipped the flag without supplying a handler the fail-closed posture
+    /// holds. The actual authorize decision is PR2's responsibility; the model's own
+    /// classification is never trusted here.
+    pub fn run_turn_with_handler<F>(
+        &mut self,
+        thread_id: &str,
+        client_user_message_id: Option<&str>,
+        text: &str,
+        handler: F,
+    ) -> Result<ModelTurnOutcome, CodexAppServerError>
+    where
+        F: Fn(&CodexServerRequest) -> Result<CodexApprovalDecision, CodexAppServerError>,
+    {
+        let gate_on = codex_mutating_gate_from(std::env::var(FRIDAY_CODEX_MUTATING_GATE).ok());
+        self.run_turn_core(thread_id, client_user_message_id, text, gate_on, &handler)
+    }
+
+    /// The flag-parameterized turn core. `gate_on` is supplied by the public entrypoints
+    /// (from the env flag) and injected directly by the gate KATs (so they never mutate
+    /// `std::env`, avoiding the in-process test race). When `gate_on` is FALSE the turn is
+    /// byte-identical to the historical `run_turn`: `approvalPolicy` serializes as
+    /// [`MODEL_TURN_APPROVAL_POLICY`] and a mid-turn server request fails closed WITHOUT
+    /// consulting `handler` or writing to the transport.
+    fn run_turn_core(
+        &mut self,
+        thread_id: &str,
+        client_user_message_id: Option<&str>,
+        text: &str,
+        gate_on: bool,
+        handler: &dyn Fn(&CodexServerRequest) -> Result<CodexApprovalDecision, CodexAppServerError>,
+    ) -> Result<ModelTurnOutcome, CodexAppServerError> {
+        let approval_policy = if gate_on {
+            MODEL_TURN_GATE_APPROVAL_POLICY
+        } else {
+            MODEL_TURN_APPROVAL_POLICY
+        };
         let start = self.call(
             "turn/start",
             json!({
                 "threadId": thread_id,
                 "clientUserMessageId": client_user_message_id,
-                "approvalPolicy": MODEL_TURN_APPROVAL_POLICY,
+                "approvalPolicy": approval_policy,
                 "input": [
                     {
                         "type": "text",
@@ -835,13 +1122,32 @@ impl<T: CodexAppServerTransport> CodexAppServerClient<T> {
                         }
                     }
                 }
-                // A server→client REQUEST mid-turn (approval/elicitation). Not routed in
-                // this dark slice — fail closed with a typed blocker so the turn can never
-                // hang waiting for a response we will not send.
-                CodexInboundMessage::ServerRequest { .. } => {
-                    return Err(CodexAppServerError::Protocol {
-                        code: "interactive-approval-unsupported",
-                    });
+                // A server→client REQUEST mid-turn (approval/elicitation).
+                CodexInboundMessage::ServerRequest { id, method, params } => {
+                    if !gate_on {
+                        // Flag OFF (default): not routed — fail closed with the historical
+                        // typed blocker so the turn can never hang waiting for a response we
+                        // will not send. Byte-identical to the pre-flag behavior (no
+                        // transport write, same error code).
+                        return Err(CodexAppServerError::Protocol {
+                            code: "interactive-approval-unsupported",
+                        });
+                    }
+                    // Flag ON: parse → ask the handler → respond with the schema-correct
+                    // decision. A parse failure / unroutable method / handler error all
+                    // propagate as a typed error (fail closed); a Deny aborts the turn.
+                    let request = parse_server_request(&method, &params)?;
+                    let decision = handler(&request)?;
+                    self.transport
+                        .respond(&id, request.response_result(decision))?;
+                    if matches!(decision, CodexApprovalDecision::Deny) {
+                        // The denied action's response already told Codex to cancel/abort the
+                        // turn; surface a typed, text-free blocker to the caller too.
+                        return Err(CodexAppServerError::Protocol {
+                            code: "approval-denied",
+                        });
+                    }
+                    // Allow: keep draining the stream until turn/completed.
                 }
                 // A stray response (no in-flight client request during the loop) is a
                 // protocol violation — fail closed rather than loop on it.
@@ -1017,6 +1323,37 @@ fn optional_string(value: &Value, field: &str) -> Option<String> {
         .get(field)
         .and_then(Value::as_str)
         .map(ToString::to_string)
+}
+
+/// Extract a required array-of-string field (e.g. `execCommandApproval.command` argv). A
+/// missing field, a non-array, or any non-string element yields a typed `Protocol` error —
+/// never a panic.
+fn required_string_array(
+    value: &Value,
+    field: &'static str,
+) -> Result<Vec<String>, CodexAppServerError> {
+    let arr = value
+        .get(field)
+        .and_then(Value::as_array)
+        .ok_or(CodexAppServerError::Protocol { code: field })?;
+    arr.iter()
+        .map(|v| {
+            v.as_str()
+                .map(ToString::to_string)
+                .ok_or(CodexAppServerError::Protocol { code: field })
+        })
+        .collect()
+}
+
+/// Extract the KEYS of a required object field (e.g. `applyPatchApproval.fileChanges`, a map
+/// of path → FileChange). The values (diff/content bodies) are intentionally NOT read here.
+/// A missing field or a non-object yields a typed `Protocol` error.
+fn object_keys(value: &Value, field: &'static str) -> Result<Vec<String>, CodexAppServerError> {
+    let obj = value
+        .get(field)
+        .and_then(Value::as_object)
+        .ok_or(CodexAppServerError::Protocol { code: field })?;
+    Ok(obj.keys().cloned().collect())
 }
 
 fn status_string(value: &Value) -> Option<String> {
@@ -1830,5 +2167,349 @@ mod tests {
             classify_inbound(json!({"id":null,"method":"turn/started","params":{}})).unwrap(),
             CodexInboundMessage::Notification { .. }
         ));
+    }
+
+    // ---- C1-PR1 approval-routing (FRIDAY_CODEX_MUTATING_GATE) KATs ----
+    //
+    // These drive the REAL `JsonLineTransport` over a recorded `&[u8]` byte stream through
+    // `run_turn_core` with an EXPLICIT `gate_on` bool (NOT the process-global env var) so the
+    // tests are deterministic + parallel-safe (no `set_var` race). Every fixture line is
+    // shaped per the captured app-server schema (the same files copied into
+    // `tests/fixtures/codex-schema/`); the source schema file is named in each comment so
+    // "not guessed" is auditable. They prove the MARSHALING + response shape only — not that
+    // Codex actually prompts at runtime (that is PR2's live wiring).
+
+    /// Parse the JSON-RPC RESPONSE the client wrote back to the transport (the line carrying
+    /// an `id` + a `result`, distinct from the `turn/start` request which carries a `method`).
+    fn written_response(written: &str) -> Value {
+        for line in written.lines() {
+            let v: Value = serde_json::from_str(line).unwrap();
+            if v.get("id").is_some() && v.get("result").is_some() {
+                return v;
+            }
+        }
+        panic!("no JSON-RPC response written to transport; wrote: {written}");
+    }
+
+    #[test]
+    fn gate_on_commandexecution_approval_allowed_continues_and_completes() {
+        // (KAT a) item/commandExecution/requestApproval (CommandExecutionRequestApprovalParams
+        // .json) interleaved mid-turn; the handler returns Allow, so the turn continues to the
+        // authoritative agentMessage item and turn/completed. The response written back is a
+        // well-formed JSON-RPC response carrying the inbound request id (77) and the
+        // CommandExecutionApprovalDecision "accept" (NOT a ReviewDecision "approved").
+        let stream = concat!(
+            r#"{"id":1,"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"id":77,"method":"item/commandExecution/requestApproval","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"i-1","approvalId":"ap-1","command":"cargo build","cwd":"/work","startedAtMs":123}}"#,
+            "\n",
+            r#"{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","completedAtMs":2,"item":{"id":"a-1","type":"agentMessage","text":"built"}}}"#,
+            "\n",
+            r#"{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[]}}}"#,
+            "\n",
+        );
+        let mut client = run_turn_client(stream);
+        let seen = std::cell::RefCell::new(Vec::<String>::new());
+        let out = client
+            .run_turn_core("thread-1", None, "build it", true, &|req| {
+                seen.borrow_mut().push(req.method().to_string());
+                // The parsed request carries the real command for the handler to inspect.
+                assert!(matches!(
+                    req,
+                    CodexServerRequest::CommandExecution { command: Some(c), cwd: Some(w), .. }
+                        if c == "cargo build" && w == "/work"
+                ));
+                Ok(CodexApprovalDecision::Allow)
+            })
+            .unwrap();
+        assert_eq!(out.status, "completed");
+        assert_eq!(out.content, "built");
+        assert_eq!(
+            seen.borrow().as_slice(),
+            ["item/commandExecution/requestApproval"]
+        );
+
+        // (KAT e) The response on the wire is valid JSON-RPC with the correct decision enum
+        // + the inbound request id, AND pins the force-approval policy on turn/start.
+        let (_r, written) = client.into_transport().into_parts();
+        let written = String::from_utf8(written).unwrap();
+        let resp = written_response(&written);
+        assert_eq!(resp["jsonrpc"], "2.0");
+        assert_eq!(resp["id"], json!(77));
+        assert_eq!(resp["result"], json!({ "decision": "accept" }));
+        let req: Value = serde_json::from_str(written.lines().next().unwrap()).unwrap();
+        assert_eq!(req["method"], "turn/start");
+        assert_eq!(
+            req["params"]["approvalPolicy"],
+            MODEL_TURN_GATE_APPROVAL_POLICY
+        );
+        assert_eq!(req["params"]["approvalPolicy"], "untrusted");
+    }
+
+    #[test]
+    fn gate_on_filechange_approval_denied_aborts_turn() {
+        // (KAT b) item/fileChange/requestApproval (FileChangeRequestApprovalParams.json — note
+        // it carries NO path/diff, only ids + grantRoot); the handler returns Deny, so the
+        // turn aborts with the typed `approval-denied` blocker AND the response written back is
+        // FileChangeApprovalDecision "cancel" (the turn-interrupting deny), carrying id 88.
+        let stream = concat!(
+            r#"{"id":1,"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"id":88,"method":"item/fileChange/requestApproval","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"i-2","grantRoot":"/work","reason":"edit","startedAtMs":456}}"#,
+            "\n",
+        );
+        let mut client = run_turn_client(stream);
+        let err = client
+            .run_turn_core("thread-1", None, "edit it", true, &|req| {
+                assert!(matches!(
+                    req,
+                    CodexServerRequest::FileChange { grant_root: Some(g), .. } if g == "/work"
+                ));
+                Ok(CodexApprovalDecision::Deny)
+            })
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            CodexAppServerError::Protocol {
+                code: "approval-denied"
+            }
+        ));
+        let (_r, written) = client.into_transport().into_parts();
+        let written = String::from_utf8(written).unwrap();
+        let resp = written_response(&written);
+        assert_eq!(resp["id"], json!(88));
+        assert_eq!(resp["result"], json!({ "decision": "cancel" }));
+    }
+
+    #[test]
+    fn gate_on_legacy_execcommand_and_applypatch_use_review_decision() {
+        // The legacy v1 execCommandApproval (ExecCommandApprovalParams.json) + applyPatchApproval
+        // (ApplyPatchApprovalParams.json) take a ReviewDecision ("approved"/"abort"), NOT the
+        // accept/decline family. Allowed execCommand → "approved"; the parsed argv + applyPatch
+        // changed paths are surfaced to the handler.
+        let exec_stream = concat!(
+            r#"{"id":1,"result":{"turn":{"id":"t","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"id":5,"method":"execCommandApproval","params":{"conversationId":"conv-1","callId":"call-1","cwd":"/work","command":["ls","-la"]}}"#,
+            "\n",
+            r#"{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"t","status":"completed","items":[]}}}"#,
+            "\n",
+        );
+        let mut client = run_turn_client(exec_stream);
+        client
+            .run_turn_core("thread-1", None, "x", true, &|req| {
+                assert!(matches!(
+                    req,
+                    CodexServerRequest::ExecCommand { command, .. } if command == &["ls".to_string(), "-la".to_string()]
+                ));
+                Ok(CodexApprovalDecision::Allow)
+            })
+            .unwrap();
+        let (_r, written) = client.into_transport().into_parts();
+        let resp = written_response(&String::from_utf8(written).unwrap());
+        assert_eq!(resp["id"], json!(5));
+        assert_eq!(resp["result"], json!({ "decision": "approved" }));
+
+        // applyPatchApproval denied → ReviewDecision "abort"; fileChanges KEYS are the paths.
+        let patch_stream = concat!(
+            r#"{"id":1,"result":{"turn":{"id":"t","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"id":9,"method":"applyPatchApproval","params":{"conversationId":"conv-1","callId":"call-2","fileChanges":{"/work/a.rs":{"type":"add","content":"x"}}}}"#,
+            "\n",
+        );
+        let mut client = run_turn_client(patch_stream);
+        let err = client
+            .run_turn_core("thread-1", None, "x", true, &|req| {
+                assert!(matches!(
+                    req,
+                    CodexServerRequest::ApplyPatch { changed_paths, .. } if changed_paths == &["/work/a.rs".to_string()]
+                ));
+                Ok(CodexApprovalDecision::Deny)
+            })
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            CodexAppServerError::Protocol {
+                code: "approval-denied"
+            }
+        ));
+        let (_r, written) = client.into_transport().into_parts();
+        let resp = written_response(&String::from_utf8(written).unwrap());
+        assert_eq!(resp["id"], json!(9));
+        assert_eq!(resp["result"], json!({ "decision": "abort" }));
+    }
+
+    #[test]
+    fn gate_on_malformed_server_request_is_typed_error_not_panic() {
+        // (KAT c) A commandExecution requestApproval MISSING the required `turnId` must yield a
+        // typed Protocol error from parse_server_request — never a panic/unwrap.
+        let stream = concat!(
+            r#"{"id":1,"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"id":11,"method":"item/commandExecution/requestApproval","params":{"threadId":"thread-1","itemId":"i","command":"x"}}"#,
+            "\n",
+        );
+        let err = run_turn_client(stream)
+            .run_turn_core("thread-1", None, "x", true, &|_req| {
+                panic!("handler must NOT be called for a malformed request");
+            })
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            CodexAppServerError::Protocol { code: "turnId" }
+        ));
+
+        // An approval method this surface does not route (e.g. permissions) fails CLOSED with
+        // a typed `unroutable-server-request`, not a guessed response.
+        assert!(matches!(
+            parse_server_request("item/permissions/requestApproval", &json!({})),
+            Err(CodexAppServerError::Protocol {
+                code: "unroutable-server-request"
+            })
+        ));
+    }
+
+    #[test]
+    fn gate_off_is_byte_identical_to_legacy_run_turn() {
+        // (KAT d) With gate OFF the handler is NEVER consulted, a mid-turn server request
+        // fails closed with the historical `interactive-approval-unsupported` (NOT
+        // `approval-denied`), and NOTHING is written to the transport beyond the original
+        // turn/start (which still pins approvalPolicy "never"). This is the byte-identity
+        // guarantee for flag-OFF callers.
+        let stream = concat!(
+            r#"{"id":1,"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"id":42,"method":"item/commandExecution/requestApproval","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"i","approvalId":"ap-1","command":"rm -rf /private/project","startedAtMs":1}}"#,
+            "\n",
+        );
+        let mut client = run_turn_client(stream);
+        let err = client
+            .run_turn_core("thread-1", None, "hi", false, &|_req| {
+                panic!("handler must NOT be consulted when the gate is OFF");
+            })
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            CodexAppServerError::Protocol {
+                code: "interactive-approval-unsupported"
+            }
+        ));
+        // No approval response was written (fail closed without responding), and the raw
+        // command text never leaked into the error.
+        let (_r, written) = client.into_transport().into_parts();
+        let written = String::from_utf8(written).unwrap();
+        assert!(
+            !written.lines().any(|l| {
+                let v: Value = serde_json::from_str(l).unwrap();
+                v.get("result").and_then(|r| r.get("decision")).is_some()
+            }),
+            "flag-OFF must not write any approval response: {written}"
+        );
+        let turn_start: Value = serde_json::from_str(written.lines().next().unwrap()).unwrap();
+        assert_eq!(
+            turn_start["params"]["approvalPolicy"],
+            MODEL_TURN_APPROVAL_POLICY
+        );
+        assert_eq!(turn_start["params"]["approvalPolicy"], "never");
+        let rendered = format!("{err:?} {err}");
+        assert!(
+            !rendered.contains("rm -rf"),
+            "blocker must not surface raw command: {rendered}"
+        );
+    }
+
+    #[test]
+    fn gate_on_handler_error_fails_closed_without_continuing() {
+        // A handler that returns an error (e.g. PR2 authorize lookup failed) must propagate as
+        // a typed error and abort the turn — never silently continue or auto-approve.
+        let stream = concat!(
+            r#"{"id":1,"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"id":13,"method":"item/commandExecution/requestApproval","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"i","command":"x","startedAtMs":1}}"#,
+            "\n",
+        );
+        let err = run_turn_client(stream)
+            .run_turn_core("thread-1", None, "x", true, &|_req| {
+                Err(CodexAppServerError::Protocol {
+                    code: "authorize-unavailable",
+                })
+            })
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            CodexAppServerError::Protocol {
+                code: "authorize-unavailable"
+            }
+        ));
+    }
+
+    #[test]
+    fn codex_mutating_gate_flag_matcher_only_literal_one_enables() {
+        // The flag is ON only for the trimmed literal "1"; everything else is OFF (narrow +
+        // explicit, mirroring FRIDAY_TRUST_GRANT_ENFORCE) so the gate can never be enabled by
+        // accident.
+        assert!(codex_mutating_gate_from(Some("1".to_string())));
+        assert!(codex_mutating_gate_from(Some(" 1 ".to_string())));
+        assert!(!codex_mutating_gate_from(Some("0".to_string())));
+        assert!(!codex_mutating_gate_from(Some("true".to_string())));
+        assert!(!codex_mutating_gate_from(Some(String::new())));
+        assert!(!codex_mutating_gate_from(None));
+    }
+
+    #[test]
+    fn run_turn_delegates_through_handler_path_and_stays_gate_off_in_test_env() {
+        // The public `run_turn` now delegates through `run_turn_with_handler` with a deny-all
+        // default handler (NOT a hardcoded gate-off), so the flag is the single source of
+        // truth for both entrypoints. The test env never sets FRIDAY_CODEX_MUTATING_GATE, so
+        // this resolves gate-OFF: a plain text turn completes exactly as before, proving the
+        // delegation preserves the historical behavior.
+        let stream = concat!(
+            r#"{"id":1,"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","completedAtMs":1,"item":{"id":"a","type":"agentMessage","text":"ok"}}}"#,
+            "\n",
+            r#"{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[]}}}"#,
+            "\n",
+        );
+        let out = run_turn_client(stream)
+            .run_turn("thread-1", None, "hi")
+            .unwrap();
+        assert_eq!(out.content, "ok");
+        assert_eq!(out.status, "completed");
+    }
+
+    #[test]
+    fn default_deny_all_handler_fails_a_mutating_turn_closed_when_gate_on() {
+        // The fail-OPEN footgun guard: the deny-all default handler `run_turn` supplies, when
+        // the gate is ON, ABORTS a mutating turn (responds "cancel" → typed `approval-denied`)
+        // rather than bypassing the gate. Driven via `run_turn_core(gate_on=true)` with the
+        // exact deny-all closure `run_turn` uses, so the wrong-entrypoint degradation is
+        // proven deterministically without touching the env.
+        let stream = concat!(
+            r#"{"id":1,"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"id":21,"method":"item/commandExecution/requestApproval","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"i","command":"rm -rf /private/project","startedAtMs":1}}"#,
+            "\n",
+        );
+        let mut client = run_turn_client(stream);
+        let err = client
+            .run_turn_core("thread-1", None, "x", true, &|_req| {
+                Ok(CodexApprovalDecision::Deny)
+            })
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            CodexAppServerError::Protocol {
+                code: "approval-denied"
+            }
+        ));
+        let (_r, written) = client.into_transport().into_parts();
+        let written = String::from_utf8(written).unwrap();
+        let resp = written_response(&written);
+        assert_eq!(resp["result"], json!({ "decision": "cancel" }));
+        assert!(
+            !written.contains("rm -rf"),
+            "deny path must not surface raw command text: {written}"
+        );
     }
 }
