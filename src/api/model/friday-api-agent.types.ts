@@ -47,6 +47,25 @@ export interface FridayStartAgentRunRequest {
    */
   mutatingToolGrant?: string[];
   mutationGate?: string;
+  /**
+   * (NS45-PR2 / mission-bound driver — DARK, additive-optional) the FIRST-CLASS Mission handle this
+   * run is BOUND to. A real handle `{fridayConversationId, missionId, workItemId}` (all three
+   * REQUIRED, non-empty — matching the Rust `MissionWorkItemContextWire`) is threaded UNCHANGED down
+   * the route→compose→dispatch chain to the sealed client (#750), which emits the snake_case
+   * `mission_context` wire block ONLY when present. ABSENT (or any field missing/blank ⇒ treated as
+   * absent at the route) ⇒ the field is OMITTED end-to-end and the dispatch is BYTE-IDENTICAL to
+   * today's unbound run. The Rust server walks the mission-bound run path behind its default-off
+   * `FRIDAY_MISSION_BOUND_RUN` flag, so carrying the handle changes no live behavior until that flag
+   * is on. **SECURITY: this only SELECTS which Mission/WorkItem the run binds to; it confers NO
+   * authority — the bound owner is the authenticated `forwarded_principal`, gated server-side, never
+   * this handle.** Does NOT change Rust-route QUALIFICATION (it rides ALONGSIDE the qualifying
+   * fields). Mirrors the `allowedRustRouteTools`/`mutatingToolGrant` additive-optional discipline.
+   */
+  missionContext?: {
+    fridayConversationId: string;
+    missionId: string;
+    workItemId: string;
+  };
 }
 
 export interface FridayAgentRunExecutionResponse {

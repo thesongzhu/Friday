@@ -923,6 +923,16 @@ export interface FridayAgentRoutesDeps {
     // 503). NEVER infers mutation-permission from `readOnly` flipping — both are explicit gates.
     mutatingToolGrant?: string[];
     mutationGate?: string;
+    // (NS45-PR2 mission-bound driver — DARK) the first-class Mission handle this run binds to.
+    // Additive + optional; forwarded straight to the route-bound startRun wrapper, which threads
+    // it (UNCHANGED, camelCase) onto the sealed-WS dispatch ONLY when present. Absent for every
+    // existing caller (→ omitted on the wire → byte-identical unbound run). Does NOT change
+    // Rust-route qualification; the bound owner stays the authenticated principal, never this handle.
+    missionContext?: {
+      fridayConversationId: string;
+      missionId: string;
+      workItemId: string;
+    };
   }) => Promise<FridayAgentRuntimeResult>;
   getRun: (runId: string) => FridayAgentRunRecord | null;
   listRuns: (query: {
@@ -1501,6 +1511,42 @@ export function createFridayAgentRoutes(
             ? body.mutationGate
             : undefined;
 
+        // (NS45-PR2 mission-bound driver — DARK) parse the optional first-class Mission handle.
+        // ALL-OR-NOTHING (mirrors the executionContext/taskProfile structured-body discipline):
+        // accepted ONLY as an object carrying all THREE required, non-empty string fields
+        // (fridayConversationId/missionId/workItemId — the exact 3 the Rust `MissionWorkItemContextWire`
+        // requires). Any other shape — absence, non-object, or a MISSING/blank field — ⇒ undefined ⇒
+        // the conditional spread below OMITS the key ⇒ a byte-identical unbound dispatch (today's
+        // behavior). PRESENCE-ONLY: never fabricate a field, never crash on a partial body. This
+        // handle ONLY SELECTS the Mission/WorkItem to bind; the run's owner stays the authenticated
+        // principal (forwarded below via `principalInput`), never this handle.
+        let missionContext:
+          | { fridayConversationId: string; missionId: string; workItemId: string }
+          | undefined;
+        if (
+          body.missionContext !== undefined
+          && typeof body.missionContext === "object"
+          && body.missionContext !== null
+          && !Array.isArray(body.missionContext)
+        ) {
+          const mc = body.missionContext as Record<string, unknown>;
+          const fridayConversationId =
+            typeof mc.fridayConversationId === "string" && mc.fridayConversationId.trim().length > 0
+              ? mc.fridayConversationId.trim()
+              : undefined;
+          const missionId =
+            typeof mc.missionId === "string" && mc.missionId.trim().length > 0
+              ? mc.missionId.trim()
+              : undefined;
+          const workItemId =
+            typeof mc.workItemId === "string" && mc.workItemId.trim().length > 0
+              ? mc.workItemId.trim()
+              : undefined;
+          if (fridayConversationId && missionId && workItemId) {
+            missionContext = { fridayConversationId, missionId, workItemId };
+          }
+        }
+
         const result = await deps.startRun({
           task: body.task,
           taskPrompt,
@@ -1521,6 +1567,9 @@ export function createFridayAgentRoutes(
             : {}),
           ...(mutatingToolGrant ? { mutatingToolGrant } : {}),
           ...(mutationGate ? { mutationGate } : {}),
+          // (NS45-PR2 mission-bound driver — DARK) forward the validated Mission handle UNCHANGED
+          // (camelCase). Absent ⇒ key OMITTED ⇒ byte-identical unbound run.
+          ...(missionContext ? { missionContext } : {}),
           ...(apiIdempotencyKey
             ? {
               apiIdempotencyKey,

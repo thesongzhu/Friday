@@ -149,6 +149,7 @@ import type {
 } from "../mission-spine/friday-rust-hub-agent-run-sealed-client-service.js";
 import type {
   FridayRustHubAgentRunConstraints,
+  FridayRustHubAgentRunMissionContext,
   FridayRustHubAgentRunResumeResult,
 } from "../mission-spine/friday-rust-hub-agent-run-ws-sealed-client.js";
 import type { FridayResumeAgentRunResponse } from "../model/friday-api-agent.types.js";
@@ -1465,6 +1466,15 @@ async function composeRustReadOnlyAgentRun(args: {
    * (gated additionally by the server's default-off run-control flag).
    */
   readonly constraints: FridayRustHubAgentRunConstraints | undefined;
+  /**
+   * (NS45-PR2 mission-bound driver — DARK) The first-class Mission handle to forward on the sealed-WS
+   * dispatch so the Rust server resolves the Mission/WorkItem and (behind its default-off
+   * `FRIDAY_MISSION_BOUND_RUN` flag) walks the bound run path. The WS client emits the snake_case
+   * `mission_context` block ONLY when this is present; ABSENT (`undefined`) ⇒ no `mission_context` on
+   * the wire, byte-identical to the pre-NS45 unbound dispatch. SECURITY: the bound owner is the
+   * authenticated `principalId` (forwarded as `forwardedPrincipal`), never this handle.
+   */
+  readonly missionContext?: FridayRustHubAgentRunMissionContext;
   readonly providerId: string;
   readonly model: string;
   readonly wsClient: FridayRustHubAgentRunSealedClientService;
@@ -1544,6 +1554,11 @@ async function composeRustReadOnlyAgentRun(args: {
       // when something tightens (here `{ readOnly: true }`), else OMITS the field (byte-identical
       // pre-A1 wire). The server composes them onto the run policy behind its default-off flag.
       ...(args.constraints !== undefined ? { constraints: args.constraints } : {}),
+      // (NS45-PR2 mission-bound driver — DARK) forward the Mission handle; the WS client emits the
+      // `mission_context` wire block ONLY when present (absent ⇒ OMITTED ⇒ byte-identical unbound
+      // wire). The server walks the bound run path behind its default-off `FRIDAY_MISSION_BOUND_RUN`
+      // flag; the bound owner is `forwardedPrincipal`, never this handle.
+      ...(args.missionContext !== undefined ? { missionContext: args.missionContext } : {}),
     });
   } catch (err) {
     logFailClosed(
@@ -4688,6 +4703,12 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       // Consulted by the qualifier ONLY behind the default-off `agentRunControlViaRust` flag.
       mutatingToolGrant?: string[];
       mutationGate?: string;
+      // (NS45-PR2 mission-bound driver — DARK) the first-class Mission handle this run binds to.
+      // Purely additive + optional — every existing caller omits it. The HTTP route forwards the
+      // validated `body.missionContext`. Carried in this shared type so `routeStartRun` (typeof
+      // startRun) can thread it onto the sealed-WS dispatch; the BARE fail-closed `startRun` below
+      // never reaches the wire, so it only carries the field. NEVER overrides principal/owner.
+      missionContext?: FridayRustHubAgentRunMissionContext;
     }) => {
       if (deps.allowTestOnlyAgentRunStartExecution !== true) {
         void input;
@@ -5006,6 +5027,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             hubDbPath: rustHubDbPath,
             db: deps.db,
             nowIso: deps.nowIso,
+            // (NS45-PR2 mission-bound driver — DARK) forward the Mission handle so the sealed-WS
+            // dispatch emits the `mission_context` wire block when present (absent ⇒ omitted ⇒
+            // byte-identical unbound dispatch). This rides ALONGSIDE the qualifying fields — it is
+            // deliberately NOT part of `rustRouteQualificationInput` above, so it does NOT change
+            // Rust-route QUALIFICATION. SECURITY: it does not touch `principalId` — the bound owner
+            // stays the authenticated `normalizedPrincipal`; this handle only SELECTS the binding.
+            ...(input.missionContext !== undefined ? { missionContext: input.missionContext } : {}),
             // Stamp the apiRequest idempotency descriptor onto the projected row so a
             // SUBSEQUENT request sharing this key REPLAYS this run (the lookup above) rather
             // than minting a second runId. Mirrors the EXACT shape the bare startRun persists
