@@ -1977,6 +1977,18 @@ export interface FridayHubConfig {
    * `FRIDAY_ROUTE_WORKFLOWS_VIA_RUST` env knob).
    */
   routeWorkflowsViaRust?: boolean;
+  /**
+   * (Lane B-2) ORGANIC mission-spine POST routes bridge (DARK): "wire a real dispatch adapter into
+   * `missionSpine.dispatch` so `/v1/mission-spine/intake|lifecycle|work-item-status` become CALLABLE"
+   * flag. DEFAULT-FALSE — production hub creation must leave this unset so `missionSpine.dispatch`
+   * stays unset (null) and each POST route returns today's fail-closed 503
+   * (`MISSION_SPINE_DISPATCH_UNAVAILABLE`) → byte-identical. When true, bootstrap builds the sealed-WS
+   * dispatch adapter (mirroring the agent-run sealed-WS config) and injects it. End-to-end Loop1
+   * closure ALSO needs the SERVER flags (`FRIDAY_MISSION_INTAKE`, `FRIDAY_MISSION_SPINE_DISPATCH`) + a
+   * deploy + a real mission (operator-gated). Resolution: `resolveRouteMissionSpineViaRust` (explicit
+   * config wins; otherwise the `FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST` env knob).
+   */
+  routeMissionSpineViaRust?: boolean;
 }
 
 // ─── Resolved Hub Config ───
