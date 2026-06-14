@@ -1969,6 +1969,12 @@ fn message_kind_name(m: &friday_protocol::Message) -> &'static str {
         M::AgentRunCancel { .. } => "AgentRunCancel",
         M::AgentRunReject { .. } => "AgentRunReject",
         M::AgentRunControlResult { .. } => "AgentRunControlResult",
+        // Memory-confirmation loop terminal arm. DARK on the FFI surface (nothing here constructs or
+        // dispatches them — the owner-authed decision rides the sealed-WS agent-run server arm gated
+        // by FRIDAY_MEMORY_CONFIRM); NAMED so the truth label carries the real kind and this match
+        // stays exhaustive.
+        M::MemoryDecisionRequest { .. } => "MemoryDecisionRequest",
+        M::MemoryDecisionResult { .. } => "MemoryDecisionResult",
         M::Error { .. } => "Error",
     }
 }

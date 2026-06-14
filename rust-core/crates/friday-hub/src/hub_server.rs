@@ -22,13 +22,13 @@
 use friday_crypto::{open, DataKey, Sealed};
 use friday_deepseek::{DeepSeekClient, Transport};
 use friday_protocol::{
-    Envelope, ErrorCode, Message, MissionIntakeRequestWire, MissionIntakeResultWire,
-    MissionLifecycleRequestWire, MissionLifecycleResultWire, MissionProjectionSnapshotWire,
-    MissionTimelineLinkWire, MissionTimelineMissionWire, MissionTimelineRequestWire,
-    MissionTimelineSnapshotWire, MissionTimelineSurfaceEventWire, MissionTimelineWorkItemWire,
-    MissionWorkItemContextWire, ProviderWorkspaceActionRequestWire,
-    ProviderWorkspaceActionResultWire, RouteDecisionProjectionWire, WorkItemStatusRequestWire,
-    WorkItemStatusResultWire, SUPPORTED,
+    Envelope, ErrorCode, MemoryDecisionRequestWire, MemoryDecisionResultWire, Message,
+    MissionIntakeRequestWire, MissionIntakeResultWire, MissionLifecycleRequestWire,
+    MissionLifecycleResultWire, MissionProjectionSnapshotWire, MissionTimelineLinkWire,
+    MissionTimelineMissionWire, MissionTimelineRequestWire, MissionTimelineSnapshotWire,
+    MissionTimelineSurfaceEventWire, MissionTimelineWorkItemWire, MissionWorkItemContextWire,
+    ProviderWorkspaceActionRequestWire, ProviderWorkspaceActionResultWire,
+    RouteDecisionProjectionWire, WorkItemStatusRequestWire, WorkItemStatusResultWire, SUPPORTED,
 };
 use friday_providers::unified::{FallbackStatus, PlatformProvider, ProviderSession, SessionStatus};
 use friday_storage::{
@@ -606,6 +606,184 @@ pub fn work_item_status_result_for_db(
             &format!("work item lifecycle blocked: {err}"),
         ),
     }
+}
+
+/// Apply the OWNER's explicit confirm/reject decision to ONE pending memory
+/// candidate — the live caller that CLOSES the Memory-confirmation loop's terminal
+/// arm (`07` §6/§7). Parameterized over `&Db` so the live agent-run server bin's
+/// flag-gated dispatch arm reuses the EXACT same mutation WITHOUT a `HubServer`,
+/// mirroring [`mission_intake_result_for_db`] / [`work_item_status_result_for_db`].
+/// It touches ONLY the DB and makes NO provider/model call — so it writes ZERO
+/// `token_ledger` rows.
+///
+/// **The decision is the OWNER's own action.** The sealed single-peer session IS the
+/// channel auth (the same invariant the mission arms rely on); this is NOT an agent
+/// mutating-tool action, so it does NOT route through the approval/trust gate. But it
+/// IS owner/namespace-scoped and **fail-closed on mismatch**, enforced BEFORE the
+/// decide so a blocked request leaves the candidate UNCHANGED:
+/// - `owner_principal` must be non-empty (after trim) — else blocked.
+/// - the candidate must exist — else blocked (`state="unknown"`).
+/// - the candidate's `principal_id` must equal `owner_principal` EXACTLY — the SAME
+///   key [`friday_storage::memory::recall_confirmed`] enforces. A candidate owned by a
+///   different principal, OR an UNOWNED (`None`-principal) candidate, is decidable by
+///   NO ONE (no wildcard, mirroring recall's blank→fail-closed rule).
+///
+/// Only after the scope check passes does it call
+/// [`friday_storage::memory::confirm`] / [`reject`]. A `confirm` makes the candidate
+/// durable AND recallable (the whole point of the loop): the SAME `principal_id`
+/// threads `record_candidate` → confirm → `recall_confirmed`. A `reject` makes it a
+/// terminal `Rejected` row (never recallable). A terminal candidate (already
+/// confirmed/rejected) is refused by the storage layer ("refusing to re-decide") and
+/// surfaced as a blocked result — never a panic. The reply is REFS-ONLY: the candidate
+/// id + resulting state + a coarse status/blocker — NEVER the candidate's content.
+///
+/// Returns a [`Message::MemoryDecisionResult`] envelope (confirmed / rejected /
+/// blocked) correlated to `msg_id`.
+pub fn memory_decision_result_for_db(
+    db: &Db,
+    msg_id: &str,
+    request: MemoryDecisionRequestWire,
+    now_ms: i64,
+) -> Envelope {
+    use friday_storage::memory;
+
+    let owner = request.owner_principal.trim();
+    let decision = request.decision.trim().to_ascii_lowercase();
+
+    // Validate the decision token fail-closed (the `*_from_wire` idiom): anything other
+    // than the two explicit decisions is a block, never a default.
+    let confirmed = match decision.as_str() {
+        "confirm" => true,
+        "reject" => false,
+        _ => {
+            return memory_decision_blocked(
+                msg_id,
+                now_ms,
+                &request.memory_id,
+                "unknown",
+                "invalid_decision",
+            );
+        }
+    };
+
+    // An owner-less request can match no candidate (recall's blank→fail-closed rule).
+    if owner.is_empty() {
+        return memory_decision_blocked(
+            msg_id,
+            now_ms,
+            &request.memory_id,
+            "unknown",
+            "owner_principal_required",
+        );
+    }
+
+    // Resolve the candidate. An unknown id is a block (no decide call, no panic).
+    let row = match memory::get(db.conn(), &request.memory_id) {
+        Ok(Some(row)) => row,
+        Ok(None) => {
+            return memory_decision_blocked(
+                msg_id,
+                now_ms,
+                &request.memory_id,
+                "unknown",
+                "unknown_candidate",
+            );
+        }
+        Err(_) => {
+            return memory_decision_blocked(
+                msg_id,
+                now_ms,
+                &request.memory_id,
+                "unknown",
+                "candidate_read_failed",
+            );
+        }
+    };
+
+    // Owner/namespace scope: EXACT-match the candidate's owning principal. An unowned
+    // (`None`) candidate, or one owned by a different principal, is decidable by no one —
+    // fail-closed, candidate left UNCHANGED (this check runs BEFORE any decide).
+    if row.principal_id.as_deref() != Some(owner) {
+        return memory_decision_blocked(
+            msg_id,
+            now_ms,
+            &request.memory_id,
+            row.state.as_str(),
+            "owner_scope_mismatch",
+        );
+    }
+
+    // Scope cleared: apply the explicit decision. A terminal candidate is refused by
+    // the storage layer (no re-decide / no downgrade) — surface it as a block.
+    let new_state = match memory::decide(db.conn(), &request.memory_id, confirmed, now_ms) {
+        Ok(state) => state,
+        Err(_) => {
+            return memory_decision_blocked(
+                msg_id,
+                now_ms,
+                &request.memory_id,
+                row.state.as_str(),
+                "not_decidable",
+            );
+        }
+    };
+
+    // Recallability is the loop's payoff: a confirmed, content-bearing, owner-owned
+    // candidate is now returned by `recall_confirmed`. Derive `recallable` from the
+    // SAME query the answer path uses (not just the state) so the surface never claims
+    // recallability a recall would not honor — e.g. a content-less confirmed row.
+    let recallable = matches!(new_state, friday_core::MemoryState::Confirmed)
+        && memory::recall_confirmed(db.conn(), owner)
+            .map(|rows| rows.iter().any(|r| r.memory_id == request.memory_id))
+            .unwrap_or(false);
+
+    let status = match new_state {
+        friday_core::MemoryState::Confirmed => "confirmed",
+        friday_core::MemoryState::Rejected => "rejected",
+        // `decide` over a pending candidate only ever returns Confirmed/Rejected;
+        // a still-Candidate result is impossible here (Some(true|false) was passed).
+        friday_core::MemoryState::Candidate => "blocked",
+    };
+
+    Envelope::new(
+        format!("{msg_id}-memory-decision"),
+        now_ms,
+        Message::MemoryDecisionResult {
+            result: MemoryDecisionResultWire {
+                memory_id: request.memory_id,
+                state: new_state.as_str().to_string(),
+                status: status.to_string(),
+                blocker: None,
+                recallable,
+            },
+        },
+    )
+    .with_correlation(msg_id.to_string())
+}
+
+/// A blocked [`Message::MemoryDecisionResult`] — the candidate is UNCHANGED. Refs-only:
+/// carries the id + the (unchanged) state + the coarse blocker reason; never content.
+fn memory_decision_blocked(
+    msg_id: &str,
+    now_ms: i64,
+    memory_id: &str,
+    state: &str,
+    blocker: &str,
+) -> Envelope {
+    Envelope::new(
+        format!("{msg_id}-memory-decision"),
+        now_ms,
+        Message::MemoryDecisionResult {
+            result: MemoryDecisionResultWire {
+                memory_id: memory_id.to_string(),
+                state: state.to_string(),
+                status: "blocked".to_string(),
+                blocker: Some(blocker.to_string()),
+                recallable: false,
+            },
+        },
+    )
+    .with_correlation(msg_id.to_string())
 }
 
 impl<T: Transport> HubServer<T> {
@@ -5711,6 +5889,262 @@ mod tests {
         }
         assert!(pages > 1);
         assert_eq!(provider_link_count, ask_count);
+    }
+
+    // --- Memory-confirm arm (the live caller that CLOSES the Memory-confirmation loop) ---------
+
+    /// Seed ONE pending memory candidate owned by `owner`, with content (so a confirm makes it
+    /// recallable — `recall_confirmed` requires non-NULL/non-empty content).
+    fn seed_memory_candidate(db: &Db, memory_id: &str, owner: Option<&str>, now: i64) {
+        memory::record_candidate(
+            db.conn(),
+            &memory::NewMemoryCandidate {
+                memory_id,
+                scope: MemoryScope::Global,
+                content_ref: None,
+                // Content-bearing: a confirm must yield a recallable row.
+                content: Some("prefers rust"),
+                principal_id: owner,
+                sensitive: false,
+                created_at: now,
+            },
+        )
+        .unwrap();
+    }
+
+    fn decode_memory_decision(env: &Envelope) -> &MemoryDecisionResultWire {
+        match &env.message {
+            Message::MemoryDecisionResult { result } => result,
+            other => panic!("expected MemoryDecisionResult, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn memory_decision_confirm_makes_candidate_recallable() {
+        // The whole point of the loop: a confirmed, owner-owned, content-bearing candidate becomes
+        // recallable (the answer path's `recall_confirmed` returns it).
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        let now = 1_700_000_000_000;
+        seed_memory_candidate(&db, "mem-confirm", Some("owner-1"), now);
+        // Pre-confirm: NOT recallable.
+        assert!(memory::recall_confirmed(db.conn(), "owner-1")
+            .unwrap()
+            .is_empty());
+
+        let env = memory_decision_result_for_db(
+            &db,
+            "msg-confirm",
+            MemoryDecisionRequestWire {
+                memory_id: "mem-confirm".into(),
+                owner_principal: "owner-1".into(),
+                decision: "confirm".into(),
+            },
+            now + 1,
+        );
+        let result = decode_memory_decision(&env);
+        assert_eq!(result.status, "confirmed");
+        assert_eq!(result.state, "confirmed");
+        assert!(
+            result.recallable,
+            "a confirmed candidate must be recallable"
+        );
+        assert!(result.blocker.is_none());
+
+        // Storage truth: the row is Confirmed AND `recall_confirmed` now returns it.
+        assert_eq!(
+            memory::get(db.conn(), "mem-confirm")
+                .unwrap()
+                .unwrap()
+                .state,
+            friday_core::MemoryState::Confirmed
+        );
+        let recalled = memory::recall_confirmed(db.conn(), "owner-1").unwrap();
+        assert_eq!(recalled.len(), 1);
+        assert_eq!(recalled[0].memory_id, "mem-confirm");
+    }
+
+    #[test]
+    fn memory_decision_reject_is_terminal_and_not_recallable() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        let now = 1_700_000_000_000;
+        seed_memory_candidate(&db, "mem-reject", Some("owner-1"), now);
+
+        let env = memory_decision_result_for_db(
+            &db,
+            "msg-reject",
+            MemoryDecisionRequestWire {
+                memory_id: "mem-reject".into(),
+                owner_principal: "owner-1".into(),
+                decision: "reject".into(),
+            },
+            now + 1,
+        );
+        let result = decode_memory_decision(&env);
+        assert_eq!(result.status, "rejected");
+        assert_eq!(result.state, "rejected");
+        assert!(
+            !result.recallable,
+            "a rejected candidate is never recallable"
+        );
+
+        assert_eq!(
+            memory::get(db.conn(), "mem-reject").unwrap().unwrap().state,
+            friday_core::MemoryState::Rejected
+        );
+        assert!(memory::recall_confirmed(db.conn(), "owner-1")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn memory_decision_owner_mismatch_is_blocked_and_leaves_candidate_unchanged() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        let now = 1_700_000_000_000;
+        seed_memory_candidate(&db, "mem-scope", Some("owner-1"), now);
+
+        // A DIFFERENT principal tries to confirm owner-1's candidate.
+        let env = memory_decision_result_for_db(
+            &db,
+            "msg-scope",
+            MemoryDecisionRequestWire {
+                memory_id: "mem-scope".into(),
+                owner_principal: "intruder".into(),
+                decision: "confirm".into(),
+            },
+            now + 1,
+        );
+        let result = decode_memory_decision(&env);
+        assert_eq!(result.status, "blocked");
+        assert_eq!(result.blocker.as_deref(), Some("owner_scope_mismatch"));
+        assert!(!result.recallable);
+
+        // UNCHANGED: still a pending Candidate; recallable by no one.
+        assert_eq!(
+            memory::get(db.conn(), "mem-scope").unwrap().unwrap().state,
+            friday_core::MemoryState::Candidate
+        );
+        assert!(memory::recall_confirmed(db.conn(), "owner-1")
+            .unwrap()
+            .is_empty());
+        assert!(memory::recall_confirmed(db.conn(), "intruder")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn memory_decision_unowned_candidate_is_decidable_by_no_one() {
+        // An UNOWNED (`None`-principal) candidate must be decidable by no one — fail-closed, no
+        // wildcard (mirrors `recall_confirmed`'s blank→fail-closed rule).
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        let now = 1_700_000_000_000;
+        seed_memory_candidate(&db, "mem-unowned", None, now);
+
+        let env = memory_decision_result_for_db(
+            &db,
+            "msg-unowned",
+            MemoryDecisionRequestWire {
+                memory_id: "mem-unowned".into(),
+                owner_principal: "owner-1".into(),
+                decision: "confirm".into(),
+            },
+            now + 1,
+        );
+        let result = decode_memory_decision(&env);
+        assert_eq!(result.status, "blocked");
+        assert_eq!(result.blocker.as_deref(), Some("owner_scope_mismatch"));
+        assert_eq!(
+            memory::get(db.conn(), "mem-unowned")
+                .unwrap()
+                .unwrap()
+                .state,
+            friday_core::MemoryState::Candidate
+        );
+    }
+
+    #[test]
+    fn memory_decision_unknown_candidate_is_blocked_no_panic() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        let env = memory_decision_result_for_db(
+            &db,
+            "msg-unknown",
+            MemoryDecisionRequestWire {
+                memory_id: "does-not-exist".into(),
+                owner_principal: "owner-1".into(),
+                decision: "confirm".into(),
+            },
+            1_700_000_000_000,
+        );
+        let result = decode_memory_decision(&env);
+        assert_eq!(result.status, "blocked");
+        assert_eq!(result.state, "unknown");
+        assert_eq!(result.blocker.as_deref(), Some("unknown_candidate"));
+        assert!(!result.recallable);
+    }
+
+    #[test]
+    fn memory_decision_invalid_decision_token_is_blocked() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        let now = 1_700_000_000_000;
+        seed_memory_candidate(&db, "mem-bad-token", Some("owner-1"), now);
+        let env = memory_decision_result_for_db(
+            &db,
+            "msg-bad-token",
+            MemoryDecisionRequestWire {
+                memory_id: "mem-bad-token".into(),
+                owner_principal: "owner-1".into(),
+                decision: "maybe".into(),
+            },
+            now + 1,
+        );
+        let result = decode_memory_decision(&env);
+        assert_eq!(result.status, "blocked");
+        assert_eq!(result.blocker.as_deref(), Some("invalid_decision"));
+        // The candidate is untouched (no decide call).
+        assert_eq!(
+            memory::get(db.conn(), "mem-bad-token")
+                .unwrap()
+                .unwrap()
+                .state,
+            friday_core::MemoryState::Candidate
+        );
+    }
+
+    #[test]
+    fn memory_decision_terminal_candidate_is_refused() {
+        // Re-deciding a terminal (already-confirmed) candidate is refused by the storage layer —
+        // surfaced as a block, never a panic; the confirmed row stays confirmed.
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        let now = 1_700_000_000_000;
+        seed_memory_candidate(&db, "mem-terminal", Some("owner-1"), now);
+        memory::confirm(db.conn(), "mem-terminal", now + 1).unwrap();
+
+        let env = memory_decision_result_for_db(
+            &db,
+            "msg-terminal",
+            MemoryDecisionRequestWire {
+                memory_id: "mem-terminal".into(),
+                owner_principal: "owner-1".into(),
+                decision: "reject".into(),
+            },
+            now + 2,
+        );
+        let result = decode_memory_decision(&env);
+        assert_eq!(result.status, "blocked");
+        assert_eq!(result.blocker.as_deref(), Some("not_decidable"));
+        // Still Confirmed (no downgrade) and still recallable.
+        assert_eq!(
+            memory::get(db.conn(), "mem-terminal")
+                .unwrap()
+                .unwrap()
+                .state,
+            friday_core::MemoryState::Confirmed
+        );
+        assert_eq!(
+            memory::recall_confirmed(db.conn(), "owner-1")
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }
 
