@@ -713,6 +713,11 @@ dependencies = [
 [[package]]
 name = "friday-ocr"
 version = "0.0.1"
+dependencies = [
+ "serde_json",
+ "thiserror 1.0.69",
+ "ureq",
+]
 
 [[package]]
 name = "friday-operator-cli"

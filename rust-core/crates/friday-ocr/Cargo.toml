@@ -1,8 +1,19 @@
 [package]
 name = "friday-ocr"
-description = "Friday F11 net-new media capability — ocr crate skeleton. Empty compiling stub, no logic/deps/executors yet (Hub-only, provider-secret-bearing → stays OUT of friday-ffi's phone dependency graph)."
+description = "Friday F11 net-new media capability — ocr crate. An OcrProvider DI seam + a live vision-LLM ureq transport + a deterministic stub (Hub-only, provider-secret-bearing → stays OUT of friday-ffi's phone dependency graph). HONEST ORACLE MIRROR: the Friday TS oracle has NO native OCR engine; its only image-text mechanism is the vision LLM, so the faithful Rust ocr sends the image to a vision-capable BYOK LLM with an extract-text prompt — NO tesseract/VNRecognizeText/paddleocr."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 publish = false
 rust-version.workspace = true
+
+# Hub-only, provider-secret-bearing crate. The live leg reads a BYOK key from the
+# environment (FRIDAY_OCR_API_KEY, set on the Hub only) and must stay OUT of
+# friday-ffi's dependency graph (same trust boundary as friday-deepseek/anthropic,
+# asserted by friday-arch-tests — OCR-5).
+[dependencies]
+serde_json = "1"
+thiserror.workspace = true
+# Blocking HTTP client (rustls/webpki-roots; no async runtime, no system certs).
+# ALREADY a workspace dep (friday-deepseek/anthropic/hub); NOT a new external crate.
+ureq = { version = "2", features = ["json"] }
