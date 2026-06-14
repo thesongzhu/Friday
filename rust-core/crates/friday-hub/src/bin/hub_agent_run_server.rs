@@ -410,6 +410,22 @@ fn run() -> Result<(), ServerError> {
         );
     }
 
+    // Read the MEMORY-CONFIRM ingress flag ONCE at boot (default-off). When false the dispatch arm
+    // NEVER handles a `MemoryDecisionRequest` — it falls through to the EXISTING catch-all keepalive
+    // echo (byte-identical to today, since the server has never had this arm), so deploying this
+    // binary changes NO live behavior until the operator flips this flag.
+    let memory_confirm_enabled =
+        memory_confirm_enabled_from(env::var(MEMORY_CONFIRM_ENABLED_ENV).ok().as_deref());
+    if memory_confirm_enabled {
+        eprintln!(
+            "hub_agent_run_server: MEMORY-CONFIRM ingress ENABLED (FRIDAY_MEMORY_CONFIRM) — an inbound owner-authed MemoryDecisionRequest confirms/rejects a memory candidate (a confirm makes it recallable; no model call)"
+        );
+    } else {
+        eprintln!(
+            "hub_agent_run_server: MEMORY-CONFIRM ingress DISABLED (set FRIDAY_MEMORY_CONFIRM=1 to enable) — a MemoryDecisionRequest is a benign keepalive echo"
+        );
+    }
+
     // (Loop4 wire-fields) Read the per-run TOKEN-SURFACE flag ONCE at boot (default-off). When false
     // the terminal `AgentRunResult` emits `prompt_tokens: None` / `completion_tokens: None` —
     // byte-identical to today (the agent-run path is LIVE in prod). When true the emit path sums the
@@ -444,6 +460,7 @@ fn run() -> Result<(), ServerError> {
             mission_bound_run_enabled,
             mission_intake_enabled,
             mission_spine_dispatch_enabled,
+            memory_confirm_enabled,
             token_surface_enabled,
         ) {
             Ok(_served) => {}
@@ -554,6 +571,35 @@ const MISSION_SPINE_DISPATCH_ENABLED_ENV: &str = "FRIDAY_MISSION_SPINE_DISPATCH"
 /// false; ON only for the exact opt-in value `"1"` (trimmed), matching the program's standard flag
 /// idiom; everything else (including `"true"`) ⇒ false.
 fn mission_spine_dispatch_enabled_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
+/// The env flag that gates the MEMORY-CONFIRM dispatch arm — the live caller that CLOSES the
+/// Memory-confirmation loop's terminal arm (the confirm/reject surface had NO live caller before
+/// this; only `#[test]` callers reached `friday_storage::memory::decide`). DEFAULT-OFF: an inbound
+/// [`Message::MemoryDecisionRequest`] is HANDLED — the OWNER's explicit confirm/reject is applied to
+/// ONE pending memory candidate via the existing
+/// [`friday_hub::hub_server::memory_decision_result_for_db`] (owner/namespace-scoped, fail-closed on
+/// mismatch; a `confirm` makes the candidate durable AND recallable), replying with a
+/// [`Message::MemoryDecisionResult`] — ONLY when `FRIDAY_MEMORY_CONFIRM` is exactly `"1"` (after
+/// trim). Unset — or any other value — leaves the arm DARK: the `MemoryDecisionRequest` falls
+/// through to the EXISTING catch-all keepalive echo, BYTE-IDENTICAL to today (the server has never
+/// had this arm, so the live behavior on this message is the benign echo — births/changes nothing),
+/// so deploying this binary changes NO live behavior until the operator flips this SEPARATE flag.
+/// No model call is made (a pure `&Db` mutation ⇒ ZERO `token_ledger` rows). The decision is the
+/// OWNER's OWN action — the sealed single-peer session IS the channel auth (the SAME invariant the
+/// merged `FRIDAY_MISSION_INTAKE` / `FRIDAY_MISSION_SPINE_DISPATCH` arms rely on); it is NOT an
+/// agent mutating-tool action, so it does NOT route through the approval/trust gate; this wire shape
+/// carries no per-request `auth_proof`. SEPARATE from every other dark flag; flipping THIS one is an
+/// operator cutover decision (and the TS driver route that constructs this request is a separate
+/// operator-gated follow-up, like the mission-dispatch driver was).
+const MEMORY_CONFIRM_ENABLED_ENV: &str = "FRIDAY_MEMORY_CONFIRM";
+
+/// Pure flag-matcher for [`MEMORY_CONFIRM_ENABLED_ENV`] (separated from the env read so it is
+/// testable without mutating the process-global environment). DEFAULT-OFF: `None` (unset) ⇒ false;
+/// ON only for the exact opt-in value `"1"` (trimmed), matching the program's standard flag idiom;
+/// everything else (including `"true"`) ⇒ false.
+fn memory_confirm_enabled_from(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1"))
 }
 
@@ -722,6 +768,7 @@ impl AgentRunWsListener {
         mission_bound_run_enabled: bool,
         mission_intake_enabled: bool,
         mission_spine_dispatch_enabled: bool,
+        memory_confirm_enabled: bool,
         token_surface_enabled: bool,
     ) -> Result<usize, TransportError> {
         let (stream, _peer) = self.listener.accept()?;
@@ -740,6 +787,7 @@ impl AgentRunWsListener {
             mission_bound_run_enabled,
             mission_intake_enabled,
             mission_spine_dispatch_enabled,
+            memory_confirm_enabled,
             token_surface_enabled,
         )
     }
@@ -784,6 +832,7 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
     mission_bound_run_enabled: bool,
     mission_intake_enabled: bool,
     mission_spine_dispatch_enabled: bool,
+    memory_confirm_enabled: bool,
     token_surface_enabled: bool,
 ) -> Result<usize, TransportError> {
     let mut processed = 0usize;
@@ -1316,12 +1365,42 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 )?;
                 processed += 1;
             }
+            // MEMORY-CONFIRM dispatch — FLAG-GATED. When `FRIDAY_MEMORY_CONFIRM` is ON, an inbound
+            // `MemoryDecisionRequest` applies the OWNER's explicit confirm/reject to ONE pending
+            // memory candidate via the existing `friday_hub::hub_server::memory_decision_result_for_db`
+            // — owner/namespace-scoped (fail-closed on mismatch / unowned / unknown / terminal) — and
+            // replies with a `MemoryDecisionResult` (confirmed / rejected / blocked). A `confirm` makes
+            // the candidate durable AND recallable; this is the live caller that CLOSES the
+            // Memory-confirmation loop's terminal arm. PURE `&Db` mutation: NO provider/model call,
+            // ZERO `token_ledger` rows. The decision is the owner's OWN action — the sealed session IS
+            // the channel auth (single-peer/single-owner SERVER invariant; this wire shape carries no
+            // per-request `auth_proof`), mirroring the merged mission-intake/spine arms; it does NOT
+            // route through the approval/trust gate. When the flag is OFF this guard FAILS and the
+            // request falls through to the catch-all keepalive echo below — BYTE-IDENTICAL to today
+            // (the server has never had this arm), births/changes nothing.
+            Message::MemoryDecisionRequest { request } if memory_confirm_enabled => {
+                let now_ms = now_ms();
+                let result = friday_hub::hub_server::memory_decision_result_for_db(
+                    runtime.db(),
+                    &env.msg_id,
+                    request,
+                    now_ms,
+                );
+                eprintln!(
+                    "hub_agent_run_server_dispatch: msg_id={} leg=memory_decision (memory-confirm enabled)",
+                    env.msg_id
+                );
+                // The handler already correlates the reply to `msg_id`; send it sealed.
+                ws_send_envelope(ws, session_key, &result, SESSION_AAD)?;
+                processed += 1;
+            }
             // Benign keepalive (S-B behaviour): echo the opened envelope back, sealed under the
             // SAME session key, correlated to the request. NO dispatch. This is ALSO where a
             // control message lands when the run-control flag is OFF (the guards above are not
             // met), so a v13 control message on a DARK server is a harmless echo — no handling.
             // (NS-5) A `MissionIntakeRequest` with the mission-intake flag OFF ALSO lands here, so
-            // a DARK server treats it as a harmless echo — byte-identical to today.
+            // a DARK server treats it as a harmless echo — byte-identical to today. A
+            // `MemoryDecisionRequest` with `FRIDAY_MEMORY_CONFIRM` OFF lands here too.
             _ => {
                 let reply = Envelope::new(env.msg_id.clone(), env.sent_at, env.message)
                     .with_correlation(env.msg_id.clone());
@@ -1803,6 +1882,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
@@ -1917,6 +1997,7 @@ mod tests {
                 false, // (NS-4) mission-bound seam OFF for the run-control flag tests
                 false, // (NS-5) mission-intake ingress OFF for the run-control flag tests
                 false, // (KEYSTONE) mission-spine dispatch OFF for the run-control flag tests
+                false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
@@ -2152,6 +2233,7 @@ mod tests {
                     false, // mission-bound seam OFF
                     false, // mission-intake ingress OFF
                     false, // mission-spine dispatch OFF
+                    false, // memory-confirm ingress OFF
                     token_surface_enabled,
                 )
                 .unwrap();
@@ -2246,6 +2328,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
@@ -2290,6 +2373,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
@@ -2481,6 +2565,7 @@ mod tests {
                 false, // mission-bound seam OFF
                 true,  // (NS-5) mission-intake ingress ON
                 false, // (KEYSTONE) mission-spine dispatch OFF for the mission-intake test
+                false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
@@ -2583,6 +2668,7 @@ mod tests {
                 false, // mission-bound seam OFF
                 false, // (NS-5) mission-intake ingress OFF — byte-identical to today
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
@@ -2665,6 +2751,228 @@ mod tests {
         assert!(
             !mission_spine_dispatch_enabled_from(Some("  TRUE  ")),
             "padded TRUE ⇒ disabled (only exact 1)"
+        );
+    }
+
+    #[test]
+    fn memory_confirm_flag_is_default_off_and_fail_closed() {
+        // The memory-confirm dispatch arm is DEFAULT-OFF: unset ⇒ disabled (deploy-safe — the arm
+        // falls through to the keepalive echo). Only the exact opt-in value `"1"` enables it.
+        assert!(
+            !memory_confirm_enabled_from(None),
+            "unset ⇒ disabled (default-off, deploy-safe)"
+        );
+        assert!(!memory_confirm_enabled_from(Some("")), "empty ⇒ disabled");
+        assert!(!memory_confirm_enabled_from(Some("0")), "0 ⇒ disabled");
+        assert!(
+            !memory_confirm_enabled_from(Some("false")),
+            "false ⇒ disabled"
+        );
+        assert!(
+            !memory_confirm_enabled_from(Some("on")),
+            "garbage ⇒ disabled"
+        );
+        assert!(memory_confirm_enabled_from(Some("1")), "1 ⇒ enabled");
+        assert!(
+            memory_confirm_enabled_from(Some(" 1 ")),
+            "padded 1 ⇒ enabled (trimmed)"
+        );
+        assert!(
+            !memory_confirm_enabled_from(Some("true")),
+            "true ⇒ disabled (only exact 1)"
+        );
+        assert!(
+            !memory_confirm_enabled_from(Some("  TRUE  ")),
+            "padded TRUE ⇒ disabled (only exact 1)"
+        );
+    }
+
+    /// Seed ONE pending, owner-owned, content-bearing memory candidate directly into the runtime's
+    /// REAL DB (a pure `&Db` write — no session needed). Content is non-empty so a confirm makes it
+    /// recallable (`recall_confirmed` requires non-NULL/non-empty content).
+    fn seed_memory_candidate<T: Transport>(rt: &HubRuntime<T>, memory_id: &str) {
+        friday_storage::memory::record_candidate(
+            rt.db().conn(),
+            &friday_storage::memory::NewMemoryCandidate {
+                memory_id,
+                scope: friday_core::MemoryScope::Global,
+                content_ref: None,
+                content: Some("prefers rust"),
+                principal_id: Some(OWNER),
+                sensitive: false,
+                created_at: 1_000,
+            },
+        )
+        .unwrap();
+    }
+
+    /// A `MemoryDecisionRequest` envelope. No `auth_proof`: the sealed session IS the channel auth
+    /// (mirroring the merged mission-intake / mission-spine arms).
+    fn memory_decision_request(msg_id: &str, memory_id: &str, decision: &str) -> Envelope {
+        Envelope::new(
+            msg_id,
+            1000,
+            Message::MemoryDecisionRequest {
+                request: friday_protocol::MemoryDecisionRequestWire {
+                    memory_id: memory_id.into(),
+                    owner_principal: OWNER.into(),
+                    decision: decision.into(),
+                },
+            },
+        )
+    }
+
+    /// FLAG-ON: a `MemoryDecisionRequest{confirm}` driven through the REAL dispatch path
+    /// (`accept_one` → `serve_sealed_session`, NOT a direct `memory_decision_result_for_db` call)
+    /// CONFIRMS the candidate: the row becomes Confirmed, `recall_confirmed` now returns it (the
+    /// loop's payoff), the reply is a `MemoryDecisionResult{recallable:true}`, and ZERO
+    /// `token_ledger` rows are written (no model call). This proves the WIRING, not the inner helper.
+    #[test]
+    fn flag_on_memory_decision_confirms_and_makes_recallable_through_dispatch() {
+        let (rt, _ws) = mock_runtime("memory-confirm-on", OWNER);
+        seed_memory_candidate(&rt, "mem-wired");
+        // Pre-confirm: NOT recallable.
+        assert!(friday_storage::memory::recall_confirmed(rt.db().conn(), OWNER)
+            .unwrap()
+            .is_empty());
+
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        let client_kp = DeviceKeypair::generate();
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let client = spawn_client(addr, client_kp, |session, _nonce| {
+            let req = memory_decision_request("req-mem-on", "mem-wired", "confirm");
+            (req, session.clone(), session.clone())
+        });
+
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false, // run-control OFF
+                false, // mission-bound seam OFF
+                false, // mission-intake ingress OFF
+                false, // mission-spine dispatch OFF
+                true,  // memory-confirm ingress ON
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
+            )
+            .unwrap();
+        assert_eq!(processed, 1, "one memory-decision request processed");
+
+        let obs = client.join().unwrap();
+        let Some(Message::MemoryDecisionResult { result }) = obs.result.clone() else {
+            panic!(
+                "flag ON must reply with MemoryDecisionResult, got {:?}",
+                obs.result
+            );
+        };
+        assert_eq!(result.memory_id, "mem-wired");
+        assert_eq!(result.status, "confirmed");
+        assert_eq!(result.state, "confirmed");
+        assert!(result.recallable, "a confirmed candidate is recallable");
+
+        // STORAGE TRUTH: the row is Confirmed AND `recall_confirmed` now returns it.
+        let db = rt.db();
+        assert_eq!(
+            db.conn()
+                .query_row(
+                    "SELECT state FROM memory_item WHERE memory_id = 'mem-wired'",
+                    [],
+                    |r| r.get::<_, String>(0)
+                )
+                .unwrap(),
+            "confirmed"
+        );
+        let recalled = friday_storage::memory::recall_confirmed(db.conn(), OWNER).unwrap();
+        assert_eq!(recalled.len(), 1);
+        assert_eq!(recalled[0].memory_id, "mem-wired");
+
+        // ZERO model call: the decision is a pure &Db mutation ⇒ NO token_ledger rows.
+        let ledger_rows: i64 = db
+            .conn()
+            .query_row("SELECT COUNT(*) FROM token_ledger", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            ledger_rows, 0,
+            "memory decision makes NO model call ⇒ ZERO token_ledger rows"
+        );
+    }
+
+    /// DEPLOY-SAFETY (the load-bearing test): with the memory-confirm flag OFF, an inbound
+    /// `MemoryDecisionRequest` is treated as a benign keepalive ECHO — BYTE-IDENTICAL to today (the
+    /// server has never had this arm). It changes NOTHING: the candidate stays a pending Candidate
+    /// and is NOT recallable. Same dark-when-off shape as the mission-intake/control keepalive tests.
+    #[test]
+    fn flag_off_memory_decision_is_keepalive_echo_and_changes_nothing() {
+        let (rt, _ws) = mock_runtime("memory-confirm-off", OWNER);
+        seed_memory_candidate(&rt, "mem-dark");
+
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        let client_kp = DeviceKeypair::generate();
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let client = spawn_client(addr, client_kp, |session, _nonce| {
+            let req = memory_decision_request("req-mem-off", "mem-dark", "confirm");
+            (req, session.clone(), session.clone())
+        });
+
+        // Flag OFF ⇒ the MemoryDecisionRequest falls through to the keepalive echo.
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false, // run-control OFF
+                false, // mission-bound seam OFF
+                false, // mission-intake ingress OFF
+                false, // mission-spine dispatch OFF
+                false, // memory-confirm ingress OFF — byte-identical to today
+                false, // (Loop4) per-run token surface OFF — byte-identical to today
+            )
+            .unwrap();
+        assert_eq!(
+            processed, 1,
+            "the memory-decision message is processed as a keepalive"
+        );
+
+        // The flag is OFF ⇒ the request is ECHOED verbatim, NOT a MemoryDecisionResult.
+        match client.join().unwrap().result.expect("an echo reply") {
+            Message::MemoryDecisionRequest { request } => {
+                assert_eq!(
+                    request.memory_id, "mem-dark",
+                    "the request is echoed verbatim"
+                );
+                assert_eq!(request.decision, "confirm");
+            }
+            other => panic!("flag OFF must echo the MemoryDecisionRequest, got {other:?}"),
+        }
+
+        // BYTE-IDENTICAL deploy safety: NOTHING changed — the candidate is still a pending
+        // Candidate and is NOT recallable (the confirm was never applied).
+        let db = rt.db();
+        assert_eq!(
+            db.conn()
+                .query_row(
+                    "SELECT state FROM memory_item WHERE memory_id = 'mem-dark'",
+                    [],
+                    |r| r.get::<_, String>(0)
+                )
+                .unwrap(),
+            "candidate",
+            "flag OFF leaves the candidate pending (births/changes nothing)"
+        );
+        assert!(
+            friday_storage::memory::recall_confirmed(db.conn(), OWNER)
+                .unwrap()
+                .is_empty(),
+            "flag OFF ⇒ nothing recallable"
         );
     }
 
@@ -2760,6 +3068,7 @@ mod tests {
                 false, // mission-bound seam OFF
                 false, // mission-intake ingress OFF
                 true,  // (KEYSTONE) mission-spine dispatch ON
+                false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
@@ -2847,6 +3156,7 @@ mod tests {
                 false,
                 false,
                 true,  // (KEYSTONE) mission-spine dispatch ON
+                false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
@@ -2927,6 +3237,7 @@ mod tests {
                 false,
                 false,
                 true,  // (KEYSTONE) mission-spine dispatch ON
+                false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
@@ -2994,6 +3305,7 @@ mod tests {
                 false,
                 false,
                 true,  // (KEYSTONE) mission-spine dispatch ON
+                false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
@@ -3043,6 +3355,7 @@ mod tests {
                     false,
                     false,
                     false, // (KEYSTONE) mission-spine dispatch OFF
+                    false, // memory-confirm ingress OFF — byte-identical to today
                     false, // (Loop4) per-run token surface OFF — byte-identical to today
                 )
                 .unwrap();
@@ -3086,6 +3399,7 @@ mod tests {
                     false,
                     false,
                     false, // (KEYSTONE) mission-spine dispatch OFF
+                    false, // memory-confirm ingress OFF — byte-identical to today
                     false, // (Loop4) per-run token surface OFF — byte-identical to today
                 )
                 .unwrap();
@@ -3171,6 +3485,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
@@ -3216,6 +3531,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
@@ -3261,6 +3577,7 @@ mod tests {
             false,
             false,
             false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+            false, // memory-confirm ingress OFF — byte-identical to today
             false, // (Loop4) per-run token surface OFF — byte-identical to today
         );
         client.join().unwrap();
@@ -3550,6 +3867,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
@@ -3594,6 +3912,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
@@ -3655,6 +3974,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
@@ -3733,6 +4053,7 @@ mod tests {
             false,
             false,
             false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+            false, // memory-confirm ingress OFF — byte-identical to today
             false, // (Loop4) per-run token surface OFF — byte-identical to today
         );
         let obs = client.join().unwrap();
@@ -3792,6 +4113,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
@@ -4203,6 +4525,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .expect("server serves the interop session");
@@ -4260,6 +4583,7 @@ mod tests {
             false,
             false,
             false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+            false, // memory-confirm ingress OFF — byte-identical to today
             false, // (Loop4) per-run token surface OFF — byte-identical to today
         );
         assert!(
@@ -4312,6 +4636,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .expect("server serves the session but runs nothing");
@@ -4422,6 +4747,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .expect("server serves the compose-adapter session");
@@ -4479,6 +4805,7 @@ mod tests {
             false,
             false,
             false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+            false, // memory-confirm ingress OFF — byte-identical to today
             false, // (Loop4) per-run token surface OFF — byte-identical to today
         );
         assert!(
@@ -4542,6 +4869,7 @@ mod tests {
                 false,
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
             )
             .unwrap();
@@ -4644,7 +4972,7 @@ mod tests {
         });
         assert_eq!(
             listener
-                .accept_one(&server_kp, &rt, &allowlist, &peer1, false, false, false, false, false)
+                .accept_one(&server_kp, &rt, &allowlist, &peer1, false, false, false, false, false, false)
                 .unwrap(),
             1
         );
@@ -4661,7 +4989,7 @@ mod tests {
         });
         assert_eq!(
             listener
-                .accept_one(&server_kp, &rt, &allowlist, &peer2, false, false, false, false, false)
+                .accept_one(&server_kp, &rt, &allowlist, &peer2, false, false, false, false, false, false)
                 .unwrap(),
             1
         );
@@ -4715,6 +5043,7 @@ mod tests {
                     false,
                     false,
                     false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
+                    false, // memory-confirm ingress OFF — byte-identical to today
                     false, // (Loop4) per-run token surface OFF — byte-identical to today
                 )
                 .unwrap(),

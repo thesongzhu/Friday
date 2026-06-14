@@ -287,6 +287,52 @@ pub struct MissionIntakeResultWire {
     pub created_or_ready: bool,
 }
 
+/// Client request to apply the OWNER's explicit confirm/reject decision to ONE
+/// pending memory candidate (the Memory-confirmation loop's terminal action,
+/// `07` §6/§7). This is the owner's OWN action over the sealed single-peer session
+/// (the session IS the channel auth) — NOT an agent mutating-tool action, so it
+/// does NOT route through the approval/trust gate. It is a pure Hub `&Db` mutation
+/// (NO provider/model call). The decision is owner/namespace-scoped: it applies
+/// ONLY when `owner_principal` matches the candidate's owning principal, fail-closed
+/// on any mismatch (an unowned candidate is decidable by no one). A candidate becomes
+/// durable (`Confirmed`, recallable) ONLY through this explicit confirm — there is no
+/// auto-confirm path.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryDecisionRequestWire {
+    /// The candidate `memory_item` to decide on.
+    pub memory_id: String,
+    /// The owner principal asserting the decision. MUST equal the candidate's owning
+    /// `principal_id` (the same key `recall_confirmed` enforces) — else fail-closed.
+    pub owner_principal: String,
+    /// The explicit decision: `"confirm"` (→ durable/recallable) or `"reject"`
+    /// (→ terminal, never recallable). Parsed fail-closed: any other token is an Error.
+    pub decision: String,
+}
+
+/// Hub response for a memory decision. Refs-only: it carries the candidate's id +
+/// the resulting lifecycle state + a coarse status/reason — NEVER the candidate's
+/// content (the content stays Hub-side; only the owner recalls it). `status` is
+/// `"confirmed"` / `"rejected"` (the decision applied) or `"blocked"` (scope
+/// mismatch / unknown candidate / terminal / invalid decision); `blocker` carries
+/// the coarse reason when blocked.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryDecisionResultWire {
+    pub memory_id: String,
+    /// The resulting lifecycle state token (`"candidate"` / `"confirmed"` /
+    /// `"rejected"`) — the candidate's CURRENT state after the decision. On a block
+    /// this reflects no change (or `"unknown"` when the candidate does not exist).
+    pub state: String,
+    /// Coarse outcome: `"confirmed"` / `"rejected"` / `"blocked"`.
+    pub status: String,
+    /// Set ONLY when `status == "blocked"`: the coarse reason (scope mismatch /
+    /// unknown / terminal / invalid decision). Never echoes candidate content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<String>,
+    /// Whether the candidate is now recallable (durable `Confirmed`). Mirrors
+    /// `created_or_ready` on the intake result — a single honest yes/no.
+    pub recallable: bool,
+}
+
 /// Canonical Mission/WorkItem context for a user-facing request. This is not a
 /// provider thread id or frontend-local chat id; Hub resolves it against Mission
 /// Spine storage before the request can become product work.
@@ -1240,6 +1286,17 @@ pub enum Message {
     /// status here is honest precisely because the proof-on-completion invariant
     /// was enforced before the write.
     WorkItemStatusResult { result: WorkItemStatusResultWire },
+    /// client->hub: apply the OWNER's explicit confirm/reject decision to ONE
+    /// pending memory candidate (the Memory-confirmation loop's terminal action).
+    /// Never a provider/model call. Owner/namespace-scoped: applies ONLY when
+    /// `owner_principal` matches the candidate's owning principal (fail-closed on
+    /// mismatch / unowned / unknown / terminal). A candidate becomes durable
+    /// (recallable) ONLY through an explicit `confirm` here — no auto-confirm path.
+    MemoryDecisionRequest { request: MemoryDecisionRequestWire },
+    /// hub->client: memory decision receipt. Refs-only — carries the candidate id,
+    /// the resulting lifecycle state, a coarse status, and whether it is now
+    /// recallable. NEVER the candidate's content (the content stays Hub-side).
+    MemoryDecisionResult { result: MemoryDecisionResultWire },
     /// **S-R1** — UI→DARK read-server: request the Mission Workbench read projection over the
     /// sealed-WS READ seam. PURE READ — no model/provider call. Owner-scoped: the read server
     /// authenticates `forwarded_principal`/`auth_proof` against the sealed session (the SAME chain a
@@ -2066,6 +2123,22 @@ mod tests {
                     updated_at_ms: 1_700_000_000_007,
                 },
             },
+            Message::MemoryDecisionRequest {
+                request: MemoryDecisionRequestWire {
+                    memory_id: "mem-1".into(),
+                    owner_principal: "owner-1".into(),
+                    decision: "confirm".into(),
+                },
+            },
+            Message::MemoryDecisionResult {
+                result: MemoryDecisionResultWire {
+                    memory_id: "mem-1".into(),
+                    state: "confirmed".into(),
+                    status: "confirmed".into(),
+                    blocker: None,
+                    recallable: true,
+                },
+            },
         ];
         for msg in cases {
             let env = Envelope::new("m1", 1000, msg).with_correlation("c1");
@@ -2074,6 +2147,47 @@ mod tests {
             let back = Envelope::decode(&json).unwrap();
             assert_eq!(back, env);
         }
+    }
+
+    #[test]
+    fn memory_decision_wire_round_trips_and_uses_the_request_result_wrapper() {
+        // The decision request rides the SAME internally-tagged `{ request }` / `{ result }`
+        // wrapper as MissionIntake (enum `tag="kind"` + a single named field). A prior surface
+        // shipped a FLAT shape that 503'd every call — this asserts the wrapper is present so a
+        // regression to the flat shape is caught at the protocol layer.
+        let request = Message::MemoryDecisionRequest {
+            request: MemoryDecisionRequestWire {
+                memory_id: "mem-decision-1".into(),
+                owner_principal: "owner-1".into(),
+                decision: "confirm".into(),
+            },
+        };
+        let env = Envelope::new("mem-dec-req", 1000, request.clone()).with_correlation("c1");
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"MemoryDecisionRequest\""));
+        // The load-bearing wrapper: the payload sits under `"request":{...}`, NOT flattened
+        // alongside `kind` (the flat-shape regression guard).
+        assert!(json.contains("\"request\":{"));
+        assert!(json.contains("\"memory_id\":\"mem-decision-1\""));
+        assert!(json.contains("\"decision\":\"confirm\""));
+        assert_eq!(Envelope::decode(&json).unwrap(), env);
+
+        let result = Message::MemoryDecisionResult {
+            result: MemoryDecisionResultWire {
+                memory_id: "mem-decision-1".into(),
+                state: "rejected".into(),
+                status: "blocked".into(),
+                blocker: Some("owner_scope_mismatch".into()),
+                recallable: false,
+            },
+        };
+        let env = Envelope::new("mem-dec-res", 1001, result).with_correlation("c1");
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"MemoryDecisionResult\""));
+        assert!(json.contains("\"result\":{"));
+        assert!(json.contains("\"recallable\":false"));
+        assert!(json.contains("\"blocker\":\"owner_scope_mismatch\""));
+        assert_eq!(Envelope::decode(&json).unwrap(), env);
     }
 
     #[test]
