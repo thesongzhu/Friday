@@ -23,13 +23,12 @@ use friday_crypto::{open, DataKey, Sealed};
 use friday_deepseek::{DeepSeekClient, Transport};
 use friday_protocol::{
     Envelope, ErrorCode, MemoryDecisionRequestWire, MemoryDecisionResultWire, Message,
-    MissionIntakeRequestWire, MissionIntakeResultWire,
-    MissionLifecycleRequestWire, MissionLifecycleResultWire, MissionProjectionSnapshotWire,
-    MissionTimelineLinkWire, MissionTimelineMissionWire, MissionTimelineRequestWire,
-    MissionTimelineSnapshotWire, MissionTimelineSurfaceEventWire, MissionTimelineWorkItemWire,
-    MissionWorkItemContextWire, ProviderWorkspaceActionRequestWire,
-    ProviderWorkspaceActionResultWire, RouteDecisionProjectionWire, WorkItemStatusRequestWire,
-    WorkItemStatusResultWire, SUPPORTED,
+    MissionIntakeRequestWire, MissionIntakeResultWire, MissionLifecycleRequestWire,
+    MissionLifecycleResultWire, MissionProjectionSnapshotWire, MissionTimelineLinkWire,
+    MissionTimelineMissionWire, MissionTimelineRequestWire, MissionTimelineSnapshotWire,
+    MissionTimelineSurfaceEventWire, MissionTimelineWorkItemWire, MissionWorkItemContextWire,
+    ProviderWorkspaceActionRequestWire, ProviderWorkspaceActionResultWire,
+    RouteDecisionProjectionWire, WorkItemStatusRequestWire, WorkItemStatusResultWire, SUPPORTED,
 };
 use friday_providers::unified::{FallbackStatus, PlatformProvider, ProviderSession, SessionStatus};
 use friday_storage::{
@@ -5928,7 +5927,9 @@ mod tests {
         let now = 1_700_000_000_000;
         seed_memory_candidate(&db, "mem-confirm", Some("owner-1"), now);
         // Pre-confirm: NOT recallable.
-        assert!(memory::recall_confirmed(db.conn(), "owner-1").unwrap().is_empty());
+        assert!(memory::recall_confirmed(db.conn(), "owner-1")
+            .unwrap()
+            .is_empty());
 
         let env = memory_decision_result_for_db(
             &db,
@@ -5943,12 +5944,18 @@ mod tests {
         let result = decode_memory_decision(&env);
         assert_eq!(result.status, "confirmed");
         assert_eq!(result.state, "confirmed");
-        assert!(result.recallable, "a confirmed candidate must be recallable");
+        assert!(
+            result.recallable,
+            "a confirmed candidate must be recallable"
+        );
         assert!(result.blocker.is_none());
 
         // Storage truth: the row is Confirmed AND `recall_confirmed` now returns it.
         assert_eq!(
-            memory::get(db.conn(), "mem-confirm").unwrap().unwrap().state,
+            memory::get(db.conn(), "mem-confirm")
+                .unwrap()
+                .unwrap()
+                .state,
             friday_core::MemoryState::Confirmed
         );
         let recalled = memory::recall_confirmed(db.conn(), "owner-1").unwrap();
@@ -5975,13 +5982,18 @@ mod tests {
         let result = decode_memory_decision(&env);
         assert_eq!(result.status, "rejected");
         assert_eq!(result.state, "rejected");
-        assert!(!result.recallable, "a rejected candidate is never recallable");
+        assert!(
+            !result.recallable,
+            "a rejected candidate is never recallable"
+        );
 
         assert_eq!(
             memory::get(db.conn(), "mem-reject").unwrap().unwrap().state,
             friday_core::MemoryState::Rejected
         );
-        assert!(memory::recall_confirmed(db.conn(), "owner-1").unwrap().is_empty());
+        assert!(memory::recall_confirmed(db.conn(), "owner-1")
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -6011,8 +6023,12 @@ mod tests {
             memory::get(db.conn(), "mem-scope").unwrap().unwrap().state,
             friday_core::MemoryState::Candidate
         );
-        assert!(memory::recall_confirmed(db.conn(), "owner-1").unwrap().is_empty());
-        assert!(memory::recall_confirmed(db.conn(), "intruder").unwrap().is_empty());
+        assert!(memory::recall_confirmed(db.conn(), "owner-1")
+            .unwrap()
+            .is_empty());
+        assert!(memory::recall_confirmed(db.conn(), "intruder")
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -6037,7 +6053,10 @@ mod tests {
         assert_eq!(result.status, "blocked");
         assert_eq!(result.blocker.as_deref(), Some("owner_scope_mismatch"));
         assert_eq!(
-            memory::get(db.conn(), "mem-unowned").unwrap().unwrap().state,
+            memory::get(db.conn(), "mem-unowned")
+                .unwrap()
+                .unwrap()
+                .state,
             friday_core::MemoryState::Candidate
         );
     }
@@ -6082,7 +6101,10 @@ mod tests {
         assert_eq!(result.blocker.as_deref(), Some("invalid_decision"));
         // The candidate is untouched (no decide call).
         assert_eq!(
-            memory::get(db.conn(), "mem-bad-token").unwrap().unwrap().state,
+            memory::get(db.conn(), "mem-bad-token")
+                .unwrap()
+                .unwrap()
+                .state,
             friday_core::MemoryState::Candidate
         );
     }
@@ -6111,10 +6133,18 @@ mod tests {
         assert_eq!(result.blocker.as_deref(), Some("not_decidable"));
         // Still Confirmed (no downgrade) and still recallable.
         assert_eq!(
-            memory::get(db.conn(), "mem-terminal").unwrap().unwrap().state,
+            memory::get(db.conn(), "mem-terminal")
+                .unwrap()
+                .unwrap()
+                .state,
             friday_core::MemoryState::Confirmed
         );
-        assert_eq!(memory::recall_confirmed(db.conn(), "owner-1").unwrap().len(), 1);
+        assert_eq!(
+            memory::recall_confirmed(db.conn(), "owner-1")
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }
 

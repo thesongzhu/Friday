@@ -2832,9 +2832,11 @@ mod tests {
         let (rt, _ws) = mock_runtime("memory-confirm-on", OWNER);
         seed_memory_candidate(&rt, "mem-wired");
         // Pre-confirm: NOT recallable.
-        assert!(friday_storage::memory::recall_confirmed(rt.db().conn(), OWNER)
-            .unwrap()
-            .is_empty());
+        assert!(
+            friday_storage::memory::recall_confirmed(rt.db().conn(), OWNER)
+                .unwrap()
+                .is_empty()
+        );
 
         let server_kp = DeviceKeypair::generate();
         let listener = AgentRunWsListener::bind_loopback(0).unwrap();
@@ -4972,7 +4974,9 @@ mod tests {
         });
         assert_eq!(
             listener
-                .accept_one(&server_kp, &rt, &allowlist, &peer1, false, false, false, false, false, false)
+                .accept_one(
+                    &server_kp, &rt, &allowlist, &peer1, false, false, false, false, false, false
+                )
                 .unwrap(),
             1
         );
@@ -4989,7 +4993,9 @@ mod tests {
         });
         assert_eq!(
             listener
-                .accept_one(&server_kp, &rt, &allowlist, &peer2, false, false, false, false, false, false)
+                .accept_one(
+                    &server_kp, &rt, &allowlist, &peer2, false, false, false, false, false, false
+                )
                 .unwrap(),
             1
         );
