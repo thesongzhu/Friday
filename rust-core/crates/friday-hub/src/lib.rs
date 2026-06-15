@@ -256,6 +256,14 @@ pub mod provider_timeline;
 /// attaches provider/channel evidence as trace refs, not independent product state.
 pub mod mission_preflight;
 
+/// Boot-time crash-recovery for orphaned in-flight WorkItems (registry gap #24, DARK,
+/// default-OFF `FRIDAY_CRASH_RECOVERY`). After a mid-turn server crash the new process owns no
+/// in-flight run; genuinely-orphaned hub-internal rows (`Dispatched`/`HubAccepted`) are advanced
+/// to a terminal `FailedTerminal` via the legal state machine, while every legitimately-waiting
+/// row (paused/awaiting/provider-waiting) is left untouched. Best-effort + fail-safe (never
+/// blocks boot).
+pub mod crash_recovery;
+
 /// Skill / Capability Catalog / Advisor Bridge. Reads managed skill manifests as
 /// truth-labeled catalog entries and advisor inputs; it does not execute skills
 /// or grant control.
