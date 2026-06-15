@@ -206,10 +206,55 @@ pub fn is_private_ipv4(ip: &Ipv4Addr) -> bool {
     false
 }
 
+/// Extract the IPv4 address that an IPv6 *transition-mechanism* prefix embeds/encodes, if `ip`
+/// belongs to one of the well-known transition prefixes whose tail (or encoding) carries a v4
+/// address that Rust's [`Ipv6Addr::to_ipv4`] does NOT recognize:
+///   - **NAT64** (`64:ff9b::/96`, RFC 6052 well-known prefix): the embedded v4 is the LAST 32 bits.
+///     (Network-specific NAT64 prefixes are operator-chosen and not detectable from the address
+///     alone, so only the well-known prefix is covered — an honest, documented gap.)
+///   - **6to4** (`2002::/16`, RFC 3056): the embedded v4 is segments `[1]` (high 16 bits) and
+///     `[2]` (low 16 bits), i.e. `2002:AABB:CCDD::` ⇒ `AA.BB.CC.DD`.
+///   - **Teredo** (`2001:0000::/32`, RFC 4380): the embedded (client) v4 is the LAST 32 bits XORed
+///     with `0xffff_ffff` (obfuscated). Teredo is `2001:0000::/32` — segment `[0]==0x2001` AND
+///     `[1]==0x0000`; gating on `[0]` alone would wrongly catch global `2001:db8::`/`2001:4860::`
+///     production IPv6.
+///
+/// Returns `None` when `ip` is not in any of these prefixes (the caller then falls through to the
+/// scope-bit checks). This MIRRORS the existing `to_ipv4()` reclassification — it only ADDS
+/// detection of v4 embedded in prefixes `to_ipv4()` returns `None` for; it never unblocks anything.
+fn embedded_transition_ipv4(ip: &Ipv6Addr) -> Option<Ipv4Addr> {
+    let s = ip.segments();
+    // NAT64 well-known prefix 64:ff9b::/96 ⇒ embedded v4 = last 32 bits (segments [6],[7]).
+    if s[0] == 0x0064 && s[1] == 0xff9b && s[2] == 0 && s[3] == 0 && s[4] == 0 && s[5] == 0 {
+        return Some(Ipv4Addr::new(
+            (s[6] >> 8) as u8,
+            (s[6] & 0xff) as u8,
+            (s[7] >> 8) as u8,
+            (s[7] & 0xff) as u8,
+        ));
+    }
+    // 6to4 2002::/16 ⇒ embedded v4 = segments [1] (AA.BB) + [2] (CC.DD).
+    if s[0] == 0x2002 {
+        return Some(Ipv4Addr::new(
+            (s[1] >> 8) as u8,
+            (s[1] & 0xff) as u8,
+            (s[2] >> 8) as u8,
+            (s[2] & 0xff) as u8,
+        ));
+    }
+    // Teredo 2001:0000::/32 ⇒ embedded (client) v4 = last 32 bits XOR 0xffff_ffff.
+    if s[0] == 0x2001 && s[1] == 0x0000 {
+        let obfuscated = ((s[6] as u32) << 16) | (s[7] as u32);
+        return Some(Ipv4Addr::from(obfuscated ^ 0xffff_ffff));
+    }
+    None
+}
+
 /// True if an IPv6 address is private / reserved / internal.
 /// Covers `::` (unspecified), `::1` (loopback), IPv4-mapped/embedded (`::ffff:a.b.c.d`,
-/// reclassified through the v4 table), `fe80::/10` (link-local), `fec0::/10` (deprecated
-/// site-local), and `fc00::/7` (unique-local).
+/// reclassified through the v4 table), the transition-mechanism embedded-v4 prefixes (NAT64
+/// `64:ff9b::/96`, 6to4 `2002::/16`, Teredo `2001:0000::/32` — see [`embedded_transition_ipv4`]),
+/// `fe80::/10` (link-local), `fec0::/10` (deprecated site-local), and `fc00::/7` (unique-local).
 pub fn is_private_ipv6(ip: &Ipv6Addr) -> bool {
     // Unspecified (all zeros).
     if ip.is_unspecified() {
@@ -225,6 +270,15 @@ pub fn is_private_ipv6(ip: &Ipv6Addr) -> bool {
     if let Some(v4) = ip.to_ipv4() {
         // Exclude the genuinely-global tiny tail (only ::/96 and ::ffff:/96 embed v4; any
         // other prefix is NOT an embedded-v4 address). `to_ipv4()` already restricts to those.
+        return is_private_ipv4(&v4);
+    }
+    // IPv6 transition mechanisms (NAT64 / 6to4 / Teredo) ENCODE an IPv4 address that `to_ipv4()`
+    // does NOT recognize. On an IPv6-only / NAT64-DNS64 egress (carrier-grade / IPv6 VPC) a host
+    // like `http://[64:ff9b::a00:1]/` (embeds 10.0.0.1) would otherwise classify PUBLIC and get
+    // pinned — an SSRF bypass. Extract the embedded v4 and run it through the v4 private table.
+    // This runs AFTER `to_ipv4()` (those prefixes return `None` from it, so there is no overlap)
+    // and only ADDS blocks: a transition prefix wrapping a PUBLIC v4 still classifies public.
+    if let Some(v4) = embedded_transition_ipv4(ip) {
         return is_private_ipv4(&v4);
     }
     let first = ip.segments()[0];
@@ -407,13 +461,25 @@ mod tests {
             "::ffff:127.0.0.1",       // IPv4-mapped loopback
             "::ffff:10.0.0.1",        // IPv4-mapped RFC1918
             "::ffff:169.254.169.254", // IPv4-mapped metadata
+            // ── IPv6 transition mechanisms embedding/encoding a PRIVATE v4 (the BUG-5 fix) ──
+            "64:ff9b::a00:1",           // NAT64 well-known prefix ⇒ 10.0.0.1
+            "64:ff9b::a9fe:a9fe",       // NAT64 ⇒ 169.254.169.254 (metadata)
+            "2002:0a00:0001::",         // 6to4 ⇒ 10.0.0.1
+            "2002:a9fe:a9fe::",         // 6to4 ⇒ 169.254.169.254 (metadata)
+            "2001:0:0:0:0:0:f5ff:fffe", // Teredo (2001:0000::/32) ⇒ last32 XOR ffffffff = 10.0.0.1
         ];
         for ip in blocked {
             let v6: Ipv6Addr = ip.parse().unwrap();
             assert!(is_private_ipv6(&v6), "{ip} must be classified private");
         }
-        // Public IPv6 (e.g. a Google DNS) is NOT blocked.
-        for ip in ["2001:4860:4860::8888", "2606:4700:4700::1111"] {
+        // Public IPv6 (e.g. a Google DNS) is NOT blocked. CRITICAL regression guard for Teredo:
+        // 2001:4860:4860::8888 has segment[0]==0x2001 but segment[1]!=0x0000, so it is NOT Teredo
+        // and must stay PUBLIC — gating Teredo on segment[0] alone would wrongly block it.
+        for ip in [
+            "2001:4860:4860::8888", // Google public DNS (2001:: but NOT Teredo)
+            "2606:4700:4700::1111", // Cloudflare public DNS
+            "2002:5db8:d822::",     // 6to4 wrapping a PUBLIC v4 (93.184.216.34) ⇒ still public
+        ] {
             let v6: Ipv6Addr = ip.parse().unwrap();
             assert!(!is_private_ipv6(&v6), "{ip} must be classified public");
         }
@@ -450,6 +516,12 @@ mod tests {
             "http://service.internal/",
             "http://app.localhost/",
             "http://100.64.1.1/", // CGNAT
+            // ── BUG-5: IPv6 transition mechanisms encoding a PRIVATE v4, reachable on an
+            //    IPv6-only / NAT64-DNS64 egress. Each embeds 10.0.0.1 or the metadata IP. ──
+            "http://[64:ff9b::a00:1]/",     // NAT64 well-known ⇒ 10.0.0.1
+            "http://[64:ff9b::a9fe:a9fe]/", // NAT64 ⇒ 169.254.169.254 metadata
+            "http://[2002:0a00:0001::]/",   // 6to4 ⇒ 10.0.0.1
+            "http://[2001:0:0:0:0:0:f5ff:fffe]/", // Teredo ⇒ 10.0.0.1
         ];
         for u in cases {
             let err = validate_url(u, &deny()).unwrap_err();
@@ -460,6 +532,35 @@ mod tests {
                 ),
                 "{u} must be SSRF-blocked, got {err:?}"
             );
+        }
+    }
+
+    // ── BUG-5 regression: octal/hex/decimal IPv4 literals. The task asks to assert these are
+    //    "handled today" — i.e. the `url` crate's host parser normalizes the encoded form to a
+    //    canonical IPv4 (e.g. `2130706433` ⇒ 127.0.0.1, `0x7f000001` ⇒ 127.0.0.1) so our literal-IP
+    //    classifier still blocks them. This pins that behavior so a future `url` upgrade that
+    //    stopped normalizing (re-opening the bypass) goes RED. We assert the OBSERVED contract:
+    //    forms the parser canonicalizes to a private IP are BlockedPrivateIp; forms it rejects
+    //    outright are an error (also fail-closed) — either way NEVER an Ok(public).
+    #[test]
+    fn validate_url_blocks_encoded_ipv4_literals_or_fails_closed() {
+        for u in [
+            "http://2130706433/",   // decimal 127.0.0.1
+            "http://0x7f000001/",   // hex 0x7f000001 = 127.0.0.1
+            "http://0x7f.0.0.1/",   // dotted-hex 127.0.0.1
+            "http://017700000001/", // octal 127.0.0.1
+            "http://0xa000001/",    // hex 10.0.0.1
+        ] {
+            // Must NOT be an Ok(public) — either blocked as a private IP, or rejected as
+            // unparseable/blocked. Fail-closed in every branch.
+            match validate_url(u, &deny()) {
+                Ok(host) => panic!("{u} normalized to a passable host {host:?} — SSRF bypass!"),
+                Err(SsrfError::BlockedPrivateIp(_))
+                | Err(SsrfError::BlockedHostname(_))
+                | Err(SsrfError::InvalidUrl(_))
+                | Err(SsrfError::EmptyHost) => {} // all fail-closed
+                Err(other) => panic!("{u} unexpected error {other:?}"),
+            }
         }
     }
 
