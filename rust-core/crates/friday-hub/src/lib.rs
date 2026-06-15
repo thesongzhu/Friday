@@ -2574,6 +2574,14 @@ pub enum LoopStatus {
     /// NOTHING is billed after the trip. Carries no deliverable answer (like `Bounded`),
     /// so the post-loop owner-wiring tail (which persists only on `Finished`) skips it.
     Interrupted,
+    /// The flag-gated clarification gate ([`FRIDAY_CLARIFICATION_GATE`]) stopped an
+    /// under-specified, CLASSIFIED planning task BEFORE the first model call: it makes NO
+    /// model call (bills NOTHING) and returns the specific clarifying questions in
+    /// `final_message`. A NON-`Finished` terminal — unlike `Interrupted`/`Bounded` it
+    /// CARRIES a deliverable (`final_message` = the questions), so the persist tails wire
+    /// it to the owner as a `run_result` with status `"awaiting_clarification"` (the
+    /// questions reach the user); "is the run successful?" branches treat it as not-Finished.
+    AwaitingClarification,
 }
 
 /// The outcome of a whole [`run_loop`]. `executed_tools` is the count of tools that
@@ -3208,6 +3216,26 @@ fn activity_needs_me_from(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1"))
 }
 
+/// The `FRIDAY_CLARIFICATION_GATE` env var. When ON, the loop asks intelligent clarifying
+/// questions on the LIVE path for an UNDER-SPECIFIED, CLASSIFIED planning task instead of
+/// guessing (restoring the clarification half of the TS oracle's planning gate that the Rust
+/// live loop had dropped). DEFAULT-OFF: unset / empty / `"0"` / any non-`"1"` value ⇒ OFF, and
+/// the loop is BYTE-IDENTICAL to today — no gate, no prompt steering, the model is prompted to
+/// pick a tool / finish exactly as now. It is read ONCE in the public [`run_loop_with_policy`]
+/// (the common chokepoint for every production caller, incl. the routed/session paths) and
+/// threaded as a pure bool to the inner [`run_loop_with_policy_flagged`] — the same
+/// "split env-read from pure logic" idiom as [`FRIDAY_ACTIVITY_NEEDS_ME`], so the behavioral
+/// tests inject the bool directly and never race `std::env`.
+pub const FRIDAY_CLARIFICATION_GATE: &str = "FRIDAY_CLARIFICATION_GATE";
+
+/// Pure flag-matcher for [`FRIDAY_CLARIFICATION_GATE`] (env read split out so it is unit-
+/// testable without `set_var`). DEFAULT-OFF: `None` (unset) ⇒ false; ON only for the exact
+/// opt-in value `"1"` (trimmed); everything else (including `"true"`) ⇒ false — the program's
+/// standard flag idiom, mirroring [`activity_needs_me_from`].
+fn clarification_gate_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
 /// `cancel` (C2-1) is an OPTIONAL cooperative cancellation handle checked at the TOP of
 /// each turn, BEFORE the model call. When `Some` and already tripped at a turn boundary,
 /// the loop stops with [`LoopStatus::Interrupted`]: it makes NO further model call and
@@ -3256,6 +3284,10 @@ pub fn run_loop_with_policy(
     // Read the NS-7 flag ONCE here; the loop body is pure on the resulting bool.
     let activity_needs_me =
         activity_needs_me_from(std::env::var(FRIDAY_ACTIVITY_NEEDS_ME).ok().as_deref());
+    // Read the clarification-gate flag ONCE here (same default-OFF, read-once idiom). When OFF
+    // the loop is byte-identical (no gate, no prompt steering).
+    let clarification_enabled =
+        clarification_gate_from(std::env::var(FRIDAY_CLARIFICATION_GATE).ok().as_deref());
     run_loop_with_policy_flagged(
         client,
         executor,
@@ -3271,6 +3303,7 @@ pub fn run_loop_with_policy(
         steer,
         now_ms,
         activity_needs_me,
+        clarification_enabled,
     )
 }
 
@@ -3295,11 +3328,15 @@ pub(crate) fn run_loop_with_policy_flagged(
     steer: Option<&SteerHandle>,
     now_ms: i64,
     activity_needs_me: bool,
+    clarification_enabled: bool,
 ) -> Result<LoopOutcome, StorageError> {
     // Plan classification recorded ONCE (it is a property of the task, constant across
     // turns). Uses the CLEAN `task` — the recall preamble below augments only the prompt,
-    // never the run row / classification / events.
-    let plan_kind = friday_core::classify_kind(task).map(|k| k.as_str());
+    // never the run row / classification / events. The `PlanningKind` is retained (not just
+    // its `&str`) so the clarification gate below can feed it to `is_task_detailed_enough`
+    // / `questions_for_kind` WITHOUT re-classifying.
+    let plan_kind_enum = friday_core::classify_kind(task);
+    let plan_kind = plan_kind_enum.map(|k| k.as_str());
     agent_run::record_event(
         conn,
         &format!("{run_id}:plan"),
@@ -3307,6 +3344,41 @@ pub(crate) fn run_loop_with_policy_flagged(
         &format!("plan.{}", plan_kind.unwrap_or("none")),
         now_ms,
     )?;
+
+    // ── The flag-gated CLARIFICATION GATE (FRIDAY_CLARIFICATION_GATE) ────────────────────
+    // When the flag is ON and the CLEAN task is a CLASSIFIED planning task that is NOT yet
+    // specified enough to plan from, stop here BEFORE the first model call: record a
+    // refs-only marker and return the specific clarifying questions as the deliverable.
+    // This makes NO model call (turns: 0, bills NOTHING) and asks the SMALLEST decisive set
+    // of questions instead of guessing missing scope/inputs/destinations/constraints.
+    //
+    // NO over-asking: `classify_kind` already returns `None` for ordinary Q&A / summaries /
+    // explanations (they bypass the gate), and `is_task_detailed_enough` lets a detailed
+    // planning task through — so only an UNDER-SPECIFIED, CLASSIFIED planning task stops here.
+    // A destructive/high-risk task is `is_task_detailed_enough == true` (the shortcut), so it
+    // is NOT clarified here — it continues into the loop where the existing approval Pause
+    // handles it. When the flag is OFF this whole block is SKIPPED ⇒ byte-identical to today.
+    if clarification_enabled {
+        if let Some(kind) = plan_kind_enum {
+            if !friday_core::is_task_detailed_enough(task, kind) {
+                let questions = friday_core::questions_for_kind(kind);
+                agent_run::record_event(
+                    conn,
+                    &format!("{run_id}:awaiting_clarification"),
+                    run_id,
+                    &format!("agent.awaiting_clarification:{}", kind.as_str()),
+                    now_ms,
+                )?;
+                return Ok(LoopOutcome {
+                    status: LoopStatus::AwaitingClarification,
+                    turns: 0, // NO model call was made — bills nothing.
+                    executed_tools: 0,
+                    final_message: Some(friday_core::build_clarification(kind, &questions)),
+                    detail: format!("awaiting_clarification:{}", kind.as_str()),
+                });
+            }
+        }
+    }
 
     // The prompt the model sees = recall preamble (PROOF-MEMORY-001; already
     // Passport-gated + PII-redacted by the caller) + the clean task. Built once
@@ -3328,6 +3400,29 @@ pub(crate) fn run_loop_with_policy_flagged(
     } else {
         format!("{recall_preamble}{task}")
     };
+
+    // (FRIDAY_CLARIFICATION_GATE) Prompt steering — GATED so flag-OFF is byte-identical. The
+    // hard gate above already short-circuits the under-specified+CLASSIFIED case with ZERO
+    // model calls; this steering only ever reaches the model on turns that DO call it: a
+    // detailed-but-still-ambiguous planning task and ordinary Q&A. It instructs the model to
+    // ask the smallest decisive set of specific clarifying questions BEFORE acting on an
+    // under-specified/ambiguous planning/build/automation request (never guess missing
+    // scope/inputs/destinations/constraints), AND — the over-asking guard — that ordinary
+    // questions/summaries/explanations are NOT planning tasks: answer them directly, do not
+    // interrogate. We realize the steering by prepending to `prompt_task` (the SAME channel the
+    // recall preamble rides into the prompt, reaching all three providers' `build_loop_prompt`),
+    // rather than threading a flag through the pure `build_tool_prompt_with` (which existing
+    // tests assert byte-for-byte). When the flag is OFF this is skipped ⇒ `prompt_task` is
+    // exactly what it was before.
+    if clarification_enabled {
+        let steer_lines = "Before acting on an under-specified or ambiguous \
+             planning/build/automation request, ask the SMALLEST decisive set of SPECIFIC \
+             clarifying questions and wait for the answer — NEVER guess missing scope, inputs, \
+             destinations, or constraints.\n\
+             Ordinary questions, summaries, and explanations are NOT planning tasks: answer them \
+             directly and do not interrogate the user.\n\n";
+        prompt_task = format!("{steer_lines}{prompt_task}");
+    }
 
     let mut history: Vec<TurnTrace> = Vec::new();
     let mut executed_tools: u64 = 0;
@@ -3826,6 +3921,27 @@ pub fn run_session_loop(
     if outcome.status == LoopStatus::Finished {
         let mut result = friday_storage::RunResult::new(
             "finished",
+            outcome.final_message.clone().unwrap_or_default(),
+            None,
+        );
+        if let Some(principal) = policy.principal_id() {
+            result = result.with_owner_principal(principal);
+        }
+        friday_storage::persist_run_result(conn, run_id, &result, now_ms)?;
+    }
+
+    // 5b. CLARIFICATION-GATE persist arm (load-bearing — WITHOUT it the questions never reach
+    //    the user). An `AwaitingClarification` outcome carries the specific clarifying questions
+    //    in `final_message`; persist them Hub-side keyed by `run_id` with status
+    //    `"awaiting_clarification"`, owner-wired to `policy.principal_id()` (the SAME owner-gated
+    //    discipline as the Finished arm) so `project_answer_for_authed` delivers
+    //    `AuthedAnswer::Delivered{ status: "awaiting_clarification", answer: <questions> }` to the
+    //    owner — zero new transport. No bound principal ⇒ no owner recorded ⇒ the body stays
+    //    unreadable (fail-closed). A fresh `run_id` cannot already hold a result, so a conflict
+    //    here signals a real bug and is propagated.
+    if outcome.status == LoopStatus::AwaitingClarification {
+        let mut result = friday_storage::RunResult::new(
+            "awaiting_clarification",
             outcome.final_message.clone().unwrap_or_default(),
             None,
         );
@@ -4663,6 +4779,7 @@ mod tests {
             None,
             1000,
             activity_needs_me,
+            false, // clarification gate OFF — the NS-7 scenario's task ("do it") classifies None anyway
         )
         .unwrap();
         let pending = friday_storage::list_pending_requests_for_run(db.conn(), "r1").unwrap();
@@ -4736,6 +4853,171 @@ mod tests {
             activity.is_empty(),
             "flag OFF ⇒ ZERO activity rows from the pause (byte-identical baseline)"
         );
+    }
+
+    // ── FRIDAY_CLARIFICATION_GATE: the clarification gate (loop-level, bool-injected) ──────
+    // FAITHFUL BEHAVIORAL TESTS (real DB + real FsToolExecutor + a Scripted client, NO mock of
+    // the loop). The flag is injected via `run_loop_with_policy_flagged`'s `clarification_enabled`
+    // bool — NOT `std::env::set_var` — so these never race the byte-identical loop tests
+    // in-process. The pure env-matcher glue is covered by `clarification_gate_from_*`. The
+    // persist+owner-projection (live authed path) proof lives in `tests/clarification_gate.rs`.
+
+    #[test]
+    fn clarification_gate_from_only_opt_in_enables() {
+        // Default-OFF; ON only for the exact opt-in value "1" (trimmed). Mirrors NS-7's matcher.
+        assert!(!clarification_gate_from(None), "unset ⇒ OFF (prod default)");
+        assert!(!clarification_gate_from(Some("")), "empty ⇒ OFF");
+        assert!(!clarification_gate_from(Some("0")), "0 ⇒ OFF");
+        assert!(!clarification_gate_from(Some("off")), "off ⇒ OFF");
+        assert!(clarification_gate_from(Some("1")), "1 ⇒ ON");
+        assert!(
+            clarification_gate_from(Some("  1  ")),
+            "padded 1 ⇒ ON (trimmed)"
+        );
+        assert!(
+            !clarification_gate_from(Some("true")),
+            "true ⇒ OFF (only exact 1)"
+        );
+    }
+
+    /// Drive a REAL run through `run_loop_with_policy_flagged` with `clarification_enabled`
+    /// injected, returning (outcome, model-call count). A `FinishOnly` script means a turn that
+    /// reaches the model immediately Finishes — so the model-call count distinguishes "the gate
+    /// stopped before any model call" (0) from "the loop ran" (≥1).
+    fn clarification_scenario(
+        tag: &str,
+        task: &str,
+        clarification_enabled: bool,
+    ) -> (LoopOutcome, usize) {
+        let root = TempDir::new(tag);
+        let db = Db::open_hub(&temp_path(tag)).unwrap();
+        agent_run::create_run(db.conn(), "r1", task, 1).unwrap();
+        // A client that immediately Finishes if it is ever called — proves the loop ran.
+        let client = ScriptedAgentLlmClient::new(vec![AgentStep::Finish {
+            message: "ran".to_string(),
+        }]);
+        let executor = FsToolExecutor::new(&root.0);
+        let policy = RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), false);
+        let out = run_loop_with_policy_flagged(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            task,
+            "",
+            None,
+            &no_approval(),
+            &policy,
+            5,
+            None,
+            None,
+            1000,
+            false, // activity_needs_me: irrelevant here
+            clarification_enabled,
+        )
+        .unwrap();
+        // `client.calls` counts `next_step` calls (the loop's metered call delegates to it);
+        // read it AFTER the loop while the client is still alive. 0 ⇒ the gate stopped before
+        // any model call; ≥1 ⇒ the loop ran.
+        (out, client.calls.get())
+    }
+
+    #[test]
+    fn clarification_gate_on_vague_workflow_returns_questions_with_no_model_call() {
+        // Flag ON + a vague, CLASSIFIED workflow task → AwaitingClarification, turns==0, NO model
+        // call, and final_message carries BOTH specific workflow questions (NOT a generic confirm).
+        let (out, model_calls) = clarification_scenario(
+            "clar-vague",
+            "create a workflow that posts a daily summary",
+            true,
+        );
+        assert_eq!(out.status, LoopStatus::AwaitingClarification);
+        assert_eq!(out.turns, 0, "no model call ⇒ turns 0 (bills nothing)");
+        assert_eq!(out.executed_tools, 0);
+        assert_eq!(
+            model_calls, 0,
+            "the gate stopped BEFORE the first model call"
+        );
+        let msg = out
+            .final_message
+            .expect("clarification carries the questions");
+        let qs = friday_core::questions_for_kind(friday_core::PlanningKind::GenerateWorkflow);
+        assert!(
+            msg.contains(qs[0]),
+            "first specific workflow question present: {msg}"
+        );
+        assert!(
+            msg.contains(qs[1]),
+            "second specific workflow question present: {msg}"
+        );
+        assert!(
+            msg.contains("Question 1/2") && msg.contains("Question 2/2"),
+            "numbered questions, not a generic confirm: {msg}"
+        );
+    }
+
+    #[test]
+    fn clarification_gate_off_vague_workflow_is_byte_identical_runs_the_loop() {
+        // Flag OFF (prod default) + the SAME vague task → the loop runs normally (the model is
+        // reached and Finishes); NOT AwaitingClarification. Byte-identical to today.
+        let (out, model_calls) = clarification_scenario(
+            "clar-off",
+            "create a workflow that posts a daily summary",
+            false,
+        );
+        assert_eq!(out.status, LoopStatus::Finished, "flag OFF ⇒ the loop runs");
+        assert_ne!(out.status, LoopStatus::AwaitingClarification);
+        assert_eq!(model_calls, 1, "the model WAS called (the loop ran)");
+    }
+
+    #[test]
+    fn clarification_gate_on_detailed_workflow_runs_the_loop_no_clarification() {
+        // Flag ON + a DETAILED (≥110 chars + DETAIL hints) workflow task → is_task_detailed_enough
+        // is true → the gate does NOT fire → the loop runs to Finished.
+        let task = "create a workflow that triggers every morning at 9am, reads my calendar, \
+                    and posts a daily summary to the team Slack channel as its output destination";
+        let (out, model_calls) = clarification_scenario("clar-detailed", task, true);
+        assert_eq!(
+            out.status,
+            LoopStatus::Finished,
+            "a detailed task is not clarified"
+        );
+        assert_ne!(out.status, LoopStatus::AwaitingClarification);
+        assert_eq!(model_calls, 1, "the model was reached (the loop ran)");
+    }
+
+    #[test]
+    fn clarification_gate_on_ordinary_qa_passes_through_no_interrogation() {
+        // Flag ON + an ordinary Q&A request (classifies None) → NO clarification (no over-asking):
+        // the loop runs normally and reaches the model.
+        let (out, model_calls) =
+            clarification_scenario("clar-qa", "summarize this thread for me", true);
+        assert_eq!(
+            out.status,
+            LoopStatus::Finished,
+            "Q&A is not a planning task"
+        );
+        assert_ne!(out.status, LoopStatus::AwaitingClarification);
+        assert_eq!(model_calls, 1, "Q&A reaches the model (no interrogation)");
+    }
+
+    #[test]
+    fn clarification_gate_on_destructive_underspecified_is_not_clarified_runs_loop() {
+        // A destructive/high-risk request is is_task_detailed_enough==true (the shortcut), so it
+        // is NOT clarified here — it continues into the loop (where the existing approval Pause
+        // would handle a real mutating action). With a Finish-only script here, it Finishes; the
+        // point is it is NOT short-circuited into AwaitingClarification.
+        let (out, model_calls) = clarification_scenario(
+            "clar-destruct",
+            "delete all the files in my workspace",
+            true,
+        );
+        assert_ne!(
+            out.status,
+            LoopStatus::AwaitingClarification,
+            "destructive requests are handled by the Pause, not clarified"
+        );
+        assert_eq!(model_calls, 1, "the destructive task reaches the loop");
     }
 
     // ── NS-2: flag-gated trust-grant enforcement at the gate-dispatch chokepoint ──────

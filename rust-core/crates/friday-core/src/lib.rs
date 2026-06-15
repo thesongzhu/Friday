@@ -73,7 +73,10 @@ pub use pairing::{
 };
 pub use passport::{build_context_passport, ContextPassport};
 pub use pathsafe::{contained, PathError};
-pub use planning::{classify_kind, PlanState, PlanningKind};
+pub use planning::{
+    build_clarification, classify_kind, is_task_detailed_enough, questions_for_kind, PlanState,
+    PlanningKind,
+};
 pub use process_registry::{
     ClaimState, LeaseState, OwnershipStatus, ProcessKind, ProcessLease, ProcessObservation,
     WorkspaceClaim, WorkspaceClaimKind,

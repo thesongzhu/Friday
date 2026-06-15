@@ -528,6 +528,150 @@ fn matches_major_decision(lower: &str) -> bool {
     HINTS.iter().any(|h| contains_word(lower, h))
 }
 
+// --- the clarification gate (faithful port of the oracle's gate half) --------
+//
+// The oracle's planning gate has TWO halves: classification (ported above as
+// [`classify_kind`]) and CLARIFICATION — deciding whether a CLASSIFIED task is
+// specified enough to plan from, and if not, generating the smallest decisive
+// set of specific questions. The Rust live loop dropped the clarification half;
+// these three pure functions restore it, faithful to the oracle's
+// `isTaskDetailedEnough` (TS :214-223), `questionsForKind` (TS :225-253), and
+// `buildClarificationPrompt` (TS :259-274).
+
+/// `DETAIL_HINTS` whole-word terms (oracle :94): the presence of any one signals
+/// the task carries concrete scope (a trigger, an output, a destination, …).
+const DETAIL_HINTS: &[&str] = &[
+    "trigger",
+    "input",
+    "output",
+    "destination",
+    "runtime",
+    "workspace",
+    "browser",
+    "provider",
+    "channel",
+    "timeline",
+    "success",
+    "goal",
+    "constraint",
+    "notify",
+    "deploy",
+    "export",
+];
+
+/// `CONSTRAINT_HINTS` whole-word terms (oracle :93): the presence of any one
+/// signals the task states a constraint/permission/safety boundary — required
+/// (in addition to detail) before a `MajorDecision` is treated as detailed.
+const CONSTRAINT_HINTS: &[&str] = &[
+    "must",
+    "should",
+    "avoid",
+    "without",
+    "constraint",
+    "permission",
+    "runtime",
+    "read-only",
+    "readonly",
+    "safe",
+    "safely",
+    "don't",
+    "do not",
+    "cannot",
+];
+
+/// Is a CLASSIFIED `task` already specified enough to plan from (so the gate can
+/// skip clarification)? Faithful to the oracle's `isTaskDetailedEnough`
+/// (`friday-agent-planning-gate.ts` :214-223):
+///
+/// 1. A destructive / high-risk `MajorDecision` is treated as "detailed" — it
+///    SKIPS clarification (the destructive path is handled by the existing
+///    approval Pause, not by interrogation). Detected via the shared multilingual
+///    [`is_destructive_request`] (the same detector [`classify_kind`] escalates on),
+///    matching `classify_kind`'s destructive divergence note above.
+/// 2. Otherwise: long enough AND carries a DETAIL hint AND (for `MajorDecision`)
+///    also a CONSTRAINT hint. The length threshold is `140` for `MajorDecision`,
+///    `110` for every other kind — measured in CHARS (`chars().count()`, NOT byte
+///    `len()`) so a CJK task (multi-byte per character) is not spuriously counted
+///    as "long" by its byte length.
+///
+/// Whitespace is normalized (trim + collapse runs) first, matching the oracle's
+/// `normalizeText`.
+pub fn is_task_detailed_enough(task: &str, kind: PlanningKind) -> bool {
+    let normalized = normalize_text(task);
+    // 1. Destructive/high-risk MajorDecision is "detailed" → skips clarification
+    //    (handled by the approval Pause instead). Same detector classify_kind uses.
+    if kind == PlanningKind::MajorDecision && is_destructive_request(&normalized) {
+        return true;
+    }
+    // CHARS not bytes (CJK safety): the oracle's `normalized.length` is a UTF-16
+    // code-unit count, but the load-bearing intent is "enough actual characters",
+    // and counting Rust bytes would wildly over-count CJK. `chars().count()` is the
+    // faithful, panic-free choice here.
+    let threshold = if kind == PlanningKind::MajorDecision {
+        140
+    } else {
+        110
+    };
+    let long_enough = normalized.chars().count() >= threshold;
+    // Whole-word matching via the existing `contains_word` helper (the oracle's
+    // `\b`-bounded hints) over the LOWERCASED normalized text.
+    let lower = normalized.to_ascii_lowercase();
+    let has_details = DETAIL_HINTS.iter().any(|h| contains_word(&lower, h));
+    let has_constraints = CONSTRAINT_HINTS.iter().any(|h| contains_word(&lower, h));
+    long_enough && has_details && (kind != PlanningKind::MajorDecision || has_constraints)
+}
+
+/// The two SPECIFIC clarifying questions for an under-specified task of `kind` —
+/// a verbatim port of the oracle's `questionsForKind`
+/// (`friday-agent-planning-gate.ts` :225-253). These are the smallest decisive
+/// set: enough to lock direction without interrogating.
+pub fn questions_for_kind(kind: PlanningKind) -> [&'static str; 2] {
+    match kind {
+        PlanningKind::GenerateSkill => [
+            "What exact outcome should this skill deliver for the user?",
+            "What inputs, tools, or systems should it use or avoid?",
+        ],
+        PlanningKind::GenerateWorkflow => [
+            "What should trigger this workflow, and what output should it produce?",
+            "Where should it run and what constraints or integrations matter?",
+        ],
+        PlanningKind::DeployWorkflow => [
+            "Which workflow or outcome are you trying to deploy, and to which environment?",
+            "Should Friday run it immediately after deploy, or only publish it?",
+        ],
+        PlanningKind::ExportBundle => [
+            "Which workflow outcome are you packaging, and what should be included in the export bundle?",
+            "What evidence or environment-specific settings need to be preserved in the bundle?",
+        ],
+        PlanningKind::MajorDecision => [
+            "What outcome matters most for this decision?",
+            "What constraints, risks, or non-goals must the plan respect?",
+        ],
+    }
+}
+
+/// Build the user-facing clarification message: a header naming the planning kind,
+/// then each question numbered `Question {i}/{n}`. Faithful to the oracle's
+/// `buildClarificationPrompt` (`friday-agent-planning-gate.ts` :259-274) for the
+/// INITIAL turn (`answeredCount == 0`, all questions shown at once).
+///
+/// The header uses the SPEC-mandated verbatim wording (intentionally dropping the
+/// oracle's `one detail`/`these details` pluralization nuance). The kind label is
+/// the snake_case [`PlanningKind::as_str`] with `_` rendered as spaces (the
+/// oracle's `kind.replaceAll("_", " ")`). Lines are joined with `\n`.
+pub fn build_clarification(kind: PlanningKind, questions: &[&str]) -> String {
+    let label = kind.as_str().replace('_', " ");
+    let n = questions.len();
+    let mut lines = Vec::with_capacity(n + 1);
+    lines.push(format!(
+        "Before I execute this {label}, I need more detail to make sure the direction is correct."
+    ));
+    for (i, q) in questions.iter().enumerate() {
+        lines.push(format!("Question {}/{}: {}", i + 1, n, q));
+    }
+    lines.join("\n")
+}
+
 /// The plan lifecycle the oracle drives through `planReview.gate.state`
 /// (`awaiting_clarification` → `awaiting_plan_approval` → `approved` /
 /// `rejected`). Encoded with the SAME state-machine idiom as
@@ -816,5 +960,147 @@ mod tests {
                 to: "approved",
             }
         );
+    }
+
+    // ── clarification gate (is_task_detailed_enough / questions_for_kind / build_clarification) ──
+
+    #[test]
+    fn vague_workflow_task_is_not_detailed_enough() {
+        // The mandated live-path vague task: classifies GenerateWorkflow, < 110 chars,
+        // no DETAIL hint ⇒ NOT detailed ⇒ the gate clarifies.
+        let task = "create a workflow that posts a daily summary";
+        assert_eq!(classify_kind(task), Some(PlanningKind::GenerateWorkflow));
+        assert!(!is_task_detailed_enough(
+            task,
+            PlanningKind::GenerateWorkflow
+        ));
+    }
+
+    #[test]
+    fn detailed_workflow_task_is_detailed_enough() {
+        // A long (≥110 chars) workflow task that carries DETAIL hints ("trigger",
+        // "output", "destination") ⇒ detailed ⇒ the gate SKIPS clarification.
+        let task = "create a workflow that triggers every morning at 9am, reads my \
+                    calendar, and posts a daily summary to the team Slack channel as \
+                    its output destination";
+        assert!(
+            task.chars().count() >= 110,
+            "fixture must clear the 110 threshold"
+        );
+        assert_eq!(classify_kind(task), Some(PlanningKind::GenerateWorkflow));
+        assert!(is_task_detailed_enough(
+            task,
+            PlanningKind::GenerateWorkflow
+        ));
+    }
+
+    #[test]
+    fn detail_threshold_is_counted_in_chars_not_bytes_cjk_safe() {
+        // 60 CJK chars = 180 bytes. With a DETAIL hint present it must still be UNDER
+        // the 110-CHAR threshold (NOT counted "long" by its 180-byte length) ⇒ NOT
+        // detailed. This is the CJK-safety property the byte-len bug would break.
+        let cjk = "工作流".repeat(20); // 60 chars, 180 bytes
+        assert_eq!(cjk.chars().count(), 60);
+        assert!(cjk.len() > 110, "byte length exceeds the char threshold");
+        let task = format!("{cjk} trigger"); // add an English DETAIL hint so only length decides
+        assert!(
+            !is_task_detailed_enough(&task, PlanningKind::GenerateWorkflow),
+            "60 chars must be under the 110-char threshold even at 180 bytes"
+        );
+    }
+
+    #[test]
+    fn major_decision_requires_a_constraint_in_addition_to_detail() {
+        // A long MajorDecision task with a DETAIL hint but NO CONSTRAINT hint is NOT
+        // detailed (the oracle's extra `hasConstraints` requirement for major_decision).
+        let detail_only = "we need to decide on the overall migration approach and the \
+                           rollout timeline and the deploy destination for the whole \
+                           platform across every team in the company this quarter";
+        assert!(detail_only.chars().count() >= 140);
+        assert!(!is_task_detailed_enough(
+            detail_only,
+            PlanningKind::MajorDecision
+        ));
+        // Same task plus a CONSTRAINT hint ("must") ⇒ detailed.
+        let with_constraint = format!("{detail_only} and it must stay read-only");
+        assert!(is_task_detailed_enough(
+            &with_constraint,
+            PlanningKind::MajorDecision
+        ));
+    }
+
+    #[test]
+    fn destructive_major_decision_is_detailed_and_skips_clarification() {
+        // A destructive/high-risk request is "detailed" by the shortcut ⇒ the gate does
+        // NOT clarify (the existing approval Pause handles it), even though it is short.
+        let task = "delete all the files in my workspace";
+        assert_eq!(classify_kind(task), Some(PlanningKind::MajorDecision));
+        assert!(is_task_detailed_enough(task, PlanningKind::MajorDecision));
+    }
+
+    #[test]
+    fn questions_per_kind_match_the_oracle_verbatim() {
+        assert_eq!(
+            questions_for_kind(PlanningKind::GenerateSkill),
+            [
+                "What exact outcome should this skill deliver for the user?",
+                "What inputs, tools, or systems should it use or avoid?",
+            ]
+        );
+        assert_eq!(
+            questions_for_kind(PlanningKind::GenerateWorkflow),
+            [
+                "What should trigger this workflow, and what output should it produce?",
+                "Where should it run and what constraints or integrations matter?",
+            ]
+        );
+        assert_eq!(
+            questions_for_kind(PlanningKind::DeployWorkflow),
+            [
+                "Which workflow or outcome are you trying to deploy, and to which environment?",
+                "Should Friday run it immediately after deploy, or only publish it?",
+            ]
+        );
+        assert_eq!(
+            questions_for_kind(PlanningKind::ExportBundle),
+            [
+                "Which workflow outcome are you packaging, and what should be included in the export bundle?",
+                "What evidence or environment-specific settings need to be preserved in the bundle?",
+            ]
+        );
+        assert_eq!(
+            questions_for_kind(PlanningKind::MajorDecision),
+            [
+                "What outcome matters most for this decision?",
+                "What constraints, risks, or non-goals must the plan respect?",
+            ]
+        );
+        // Every kind yields exactly two questions.
+        for kind in [
+            PlanningKind::GenerateSkill,
+            PlanningKind::GenerateWorkflow,
+            PlanningKind::DeployWorkflow,
+            PlanningKind::ExportBundle,
+            PlanningKind::MajorDecision,
+        ] {
+            assert_eq!(questions_for_kind(kind).len(), 2);
+        }
+    }
+
+    #[test]
+    fn build_clarification_formats_header_and_numbered_questions() {
+        let qs = questions_for_kind(PlanningKind::GenerateWorkflow);
+        let prompt = build_clarification(PlanningKind::GenerateWorkflow, &qs);
+        let expected = "Before I execute this generate workflow, I need more detail to make \
+                        sure the direction is correct.\n\
+                        Question 1/2: What should trigger this workflow, and what output should it produce?\n\
+                        Question 2/2: Where should it run and what constraints or integrations matter?";
+        assert_eq!(prompt, expected);
+        // The kind label renders `_` as a space (major_decision → "major decision").
+        let md = build_clarification(
+            PlanningKind::MajorDecision,
+            &questions_for_kind(PlanningKind::MajorDecision),
+        );
+        assert!(md.starts_with("Before I execute this major decision, I need more detail"));
     }
 }
