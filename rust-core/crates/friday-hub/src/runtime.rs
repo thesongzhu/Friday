@@ -661,6 +661,22 @@ impl<T: Transport> HubRuntime<T> {
                 }
                 persist_run_result(self.db.conn(), run_id, &result, now_ms)?;
             }
+            // CLARIFICATION-GATE persist parity: an `AwaitingClarification` outcome carries the
+            // clarifying questions in `final_message`; persist them owner-wired with status
+            // "awaiting_clarification" so they reach the owner (same arm as the routed-loop tail
+            // below and `run_session_loop` step-5b). The codex gated-turn path does not itself
+            // produce this status today, but the parity arm keeps the persist discipline uniform.
+            if outcome.status == LoopStatus::AwaitingClarification {
+                let mut result = RunResult::new(
+                    "awaiting_clarification",
+                    outcome.final_message.clone().unwrap_or_default(),
+                    None,
+                );
+                if let Some(principal) = policy.principal_id() {
+                    result = result.with_owner_principal(principal);
+                }
+                persist_run_result(self.db.conn(), run_id, &result, now_ms)?;
+            }
             return Ok((selection, outcome));
         }
 
@@ -703,6 +719,26 @@ impl<T: Transport> HubRuntime<T> {
         if outcome.status == LoopStatus::Finished {
             let mut result = RunResult::new(
                 "finished",
+                outcome.final_message.clone().unwrap_or_default(),
+                None,
+            );
+            if let Some(principal) = policy.principal_id() {
+                result = result.with_owner_principal(principal);
+            }
+            persist_run_result(self.db.conn(), run_id, &result, now_ms)?;
+        }
+
+        // CLARIFICATION-GATE persist arm (the routed/sessionless parity of `run_session_loop`
+        // step-5b): the flag-gated clarification gate inside `run_loop_with_policy_flagged` can
+        // stop an under-specified planning task with `AwaitingClarification`, carrying the
+        // clarifying questions in `final_message`. Persist them owner-wired with status
+        // "awaiting_clarification" (same owner-gated discipline as the Finished arm) so
+        // `project_answer_for_authed` delivers the questions to the owner — the questions reach
+        // the user via the run_result, zero new transport. No bound principal ⇒ no owner ⇒
+        // body stays unreadable (fail-closed).
+        if outcome.status == LoopStatus::AwaitingClarification {
+            let mut result = RunResult::new(
+                "awaiting_clarification",
                 outcome.final_message.clone().unwrap_or_default(),
                 None,
             );
