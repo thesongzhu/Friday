@@ -50,7 +50,7 @@ use std::env;
 use std::path::Path;
 
 use friday_hub::run_readback_projection::project_run_readback;
-use friday_storage::Db;
+use friday_storage::{Db, StorageError};
 use serde_json::json;
 
 /// A fail-closed error: `kind` is a coarse, safe category (the only thing
@@ -111,7 +111,19 @@ fn run() -> Result<String, ReadbackError> {
     let owner = arg_value(&args, "--owner").unwrap_or_default();
 
     // Read-only open: a readback can NEVER mutate an operator DB just because TS asks.
-    let db = Db::open_hub_readonly(&db_path).map_err(|_| ReadbackError::new("open_failed"))?;
+    // FAIL CLOSED + NAME the skew if the on-disk schema is strictly NEWER than this (stale)
+    // binary understands — the always-on `Db::open_hub_readonly` guard surfaced distinctly so a
+    // stale-bin-vs-forward-migrated-DB incident is diagnosable, not an opaque `open_failed`.
+    let db = Db::open_hub_readonly(&db_path).map_err(|e| match e {
+        StorageError::SchemaTooNew { disk, code } => {
+            eprintln!(
+                "hub_run_readback: leg=open error_kind=schema_too_new disk_version={disk} \
+                 code_version={code} (stale binary: rebuild from the deploying commit)"
+            );
+            ReadbackError::new("schema_too_new")
+        }
+        _ => ReadbackError::new("open_failed"),
+    })?;
 
     // S-R2: the refs-only projection (state/loop-status/event-kinds/counts + DB-WIDE token totals,
     // with the forbidden-output guard run INSIDE) is the SHARED library fn so this bin and the DARK

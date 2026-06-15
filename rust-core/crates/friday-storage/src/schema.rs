@@ -557,6 +557,22 @@ pub fn hub_migrations() -> Vec<Migration> {
     ]
 }
 
+/// The MAXIMUM Hub schema version this build understands — the SAME `code_max`
+/// the writer's [`crate::apply_migrations`] guard (`disk > code_max ⇒ SchemaTooNew`)
+/// and the read-only opener ([`crate::Db::open_hub_readonly`]) compute from
+/// [`hub_migrations`]. It is derived (not a hand-kept constant) so the writer's
+/// guard, the read bins' fail-closed guard, and any test that seeds a "too-new"
+/// DB all read ONE source of truth and can never drift: a stale binary built from
+/// an older commit has a strictly LOWER `hub_code_max()`, so a forward-migrated
+/// on-disk version is `disk > code` and fails closed.
+pub fn hub_code_max() -> i64 {
+    hub_migrations()
+        .iter()
+        .map(|m| m.version)
+        .max()
+        .unwrap_or(0)
+}
+
 pub fn phone_migrations() -> Vec<Migration> {
     vec![
         Migration {

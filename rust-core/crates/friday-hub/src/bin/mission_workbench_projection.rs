@@ -7,7 +7,7 @@
 //! `--mission-id`, opens the hub DB READ-ONLY, calls the library fn, and pretty-prints the
 //! refs-only snapshot to stdout. The forbidden-output guard runs INSIDE the library fn.
 
-use friday_storage::Db;
+use friday_storage::{Db, StorageError};
 use std::env;
 use std::path::Path;
 
@@ -25,7 +25,18 @@ fn run() -> Result<(), String> {
         return Err("rust hub db not found".to_string());
     }
     let requested_mission_id = arg_value(&args, "--mission-id");
-    let db = Db::open_hub_readonly(&db_path).map_err(|err| err.to_string())?;
+    // Read-only open. FAIL CLOSED + NAME the skew if the on-disk schema is strictly NEWER than
+    // this (stale) binary understands — the always-on `Db::open_hub_readonly` guard surfaced
+    // with an explicit `schema_too_new` marker (this bin already propagated the StorageError
+    // Display, which names disk-vs-code; the marker just makes the skew greppable like the
+    // other read bins). Every other open error keeps its existing message, unchanged.
+    let db = Db::open_hub_readonly(&db_path).map_err(|err| match err {
+        StorageError::SchemaTooNew { disk, code } => format!(
+            "schema_too_new: on-disk schema v{disk} is newer than this build v{code} \
+             (stale binary: rebuild from the deploying commit)"
+        ),
+        other => other.to_string(),
+    })?;
     let snapshot =
         friday_hub::workbench_projection::project_workbench(&db, requested_mission_id.as_deref())?;
     let rendered = serde_json::to_string_pretty(&snapshot).map_err(|err| err.to_string())?;

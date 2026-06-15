@@ -67,7 +67,9 @@ pub use run_result::{
     AnswerDenyReason, PersistRunResultOutcome, RunAnswerAccess, RunResult, RunResultRef,
     StoredRunResult,
 };
-pub use schema::{hub_migrations, phone_migrations, HUB_ONLY_TABLES, PHONE_ONLY_TABLES};
+pub use schema::{
+    hub_code_max, hub_migrations, phone_migrations, HUB_ONLY_TABLES, PHONE_ONLY_TABLES,
+};
 pub use session_lifecycle::{sweep_lifecycle, SweepOutcome};
 pub use trust_grant::{
     active_grant, authorize_agent_action, grant_trust, latest_grant_any_state, revoke_trust,
@@ -1475,6 +1477,78 @@ mod busy_retry_tests {
         };
         assert!(matches!(err, StorageError::SchemaTooNew { .. }));
         assert_eq!(calls.get(), 1, "a non-busy error must NOT be retried");
+    }
+}
+
+/// The read-only opener ([`Db::open_hub_readonly`]) carries the SAME fail-closed
+/// schema-version guard as the writer's [`migrate::apply_migrations`]: a binary whose
+/// compiled `hub_code_max()` is STRICTLY OLDER than the on-disk schema version refuses
+/// to open (rather than silently misreading a forward-migrated DB — the 13:40-vs-19:04
+/// stale-bin incident). These tests pin that always-on behavior at the storage layer so
+/// every read bin that routes through it inherits the guard.
+#[cfg(test)]
+mod read_only_schema_guard_tests {
+    use super::{hub_code_max, Db, StorageError};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static C: AtomicU64 = AtomicU64::new(0);
+    fn tmp(tag: &str) -> String {
+        std::env::temp_dir()
+            .join(format!(
+                "friday-ro-schema-guard-{}-{}-{}.sqlite",
+                std::process::id(),
+                tag,
+                C.fetch_add(1, Ordering::Relaxed)
+            ))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// EQUAL on-disk version (the normal same-commit deploy): the read-only opener
+    /// succeeds and reports the current version — BYTE-IDENTICAL to before the guard.
+    #[test]
+    fn equal_version_opens_read_only() {
+        let path = tmp("equal");
+        // `open_hub` migrates the file to `hub_code_max()`.
+        drop(Db::open_hub(&path).unwrap());
+        let db = Db::open_hub_readonly(&path).expect("equal version must open read-only");
+        assert_eq!(db.version().unwrap(), hub_code_max());
+    }
+
+    /// A STALE binary (lower `hub_code_max()`) faced with a forward-migrated DB sees
+    /// `disk = code_max + 1 > code` and FAILS CLOSED with `SchemaTooNew` naming the skew —
+    /// it does NOT open and cannot misread the newer schema.
+    #[test]
+    fn newer_on_disk_version_fails_closed() {
+        let path = tmp("too-new");
+        {
+            // Migrate to current, then forge a strictly-newer on-disk version to
+            // simulate a DB written by a NEWER deploy than this (stale) binary.
+            let writer = Db::open_hub(&path).unwrap();
+            writer
+                .conn()
+                .execute(
+                    "UPDATE schema_version SET version = ?1 WHERE id = 1",
+                    [hub_code_max() + 1],
+                )
+                .unwrap();
+            drop(writer);
+        }
+        let err = match Db::open_hub_readonly(&path) {
+            Ok(_) => panic!("a strictly-newer on-disk schema must fail closed"),
+            Err(e) => e,
+        };
+        match err {
+            StorageError::SchemaTooNew { disk, code } => {
+                assert_eq!(
+                    disk,
+                    hub_code_max() + 1,
+                    "the skew names the on-disk version"
+                );
+                assert_eq!(code, hub_code_max(), "the skew names the binary's code_max");
+            }
+            other => panic!("expected SchemaTooNew naming the skew, got {other:?}"),
+        }
     }
 }
 
