@@ -2913,7 +2913,8 @@ mod tests {
             false, // flag OFF
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
-            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test),
+            false,
         )
         .unwrap();
 
@@ -2947,7 +2948,8 @@ mod tests {
             false, // flag OFF
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
-            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test),
+            false,
         )
         .unwrap();
 
@@ -3001,7 +3003,8 @@ mod tests {
             true,  // flag ON
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
-            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test),
+            false,
         )
         .unwrap();
         match brick {
@@ -3043,7 +3046,8 @@ mod tests {
             true,  // flag ON
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
-            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test),
+            false,
         )
         .unwrap();
         // Satisfiable = the trust layer did NOT brick it. Under DenyAll + no approval the
@@ -3107,7 +3111,8 @@ mod tests {
             true,  // flag ON
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
-            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test),
+            false,
         )
         .unwrap();
         // The workspace dimension PASSED (the produced root matches the grant prefix): the trust

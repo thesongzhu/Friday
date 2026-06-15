@@ -128,6 +128,18 @@ pub const TS_RUST_PAIRS: &[ToolNamePair] = &[
         ts: "image_analysis",
         rust: "image_analysis",
     },
+    // L2 subagent: the Rust registry action is `subagent`; this identity row lets the
+    // FRIDAY_SUBAGENT_TOOL_ENABLED chokepoint flag-gate canonicalize an alias of it through this
+    // map (mirroring the web_fetch/web_search/image_analysis identity rows), AND keeps a
+    // `disabledToolNames` entry of `subagent` disabling the dispatched Rust `subagent` — which is
+    // load-bearing for the depth cap (a child run's disabled-set entry `subagent` must canonicalize
+    // to the dispatched `subagent` so a sub-agent's spawn is refused `tool_disabled_for_run`). The
+    // TS spawn tool is named `spawn_subagent` (distinct, no Rust executor) and stays in
+    // TS_ONLY_UNMAPPED — this row aliases only the Rust action's own name.
+    ToolNamePair {
+        ts: "subagent",
+        rust: "subagent",
+    },
 ];
 
 /// Rust [`crate::ToolRegistry`] actions that have NO TS disable-alias today, recorded
@@ -286,6 +298,18 @@ pub const PARAM_SCHEMA_DIFFS: &[ParamSchemaDiff] = &[
                validation the TS tool documents: workspace-root scoping for local paths, SSRF on \
                URL images, data-uri base64 + media-type (image/*) + decoded-size caps, and \
                image-count/total-size bounds.",
+    },
+    ParamSchemaDiff {
+        ts: "subagent",
+        rust: "subagent",
+        note: "params: `task` (required, the sub-task) / `tools` (optional comma-list subset to \
+               grant the child; default = the read-only subset of the parent's) / `max_turns` \
+               (optional, clamped). There is deliberately NO `owner`/`principal` param — the \
+               sub-agent inherits the parent's authenticated principal (a model-supplied owner is \
+               impossible to assert and so cannot escalate). Unlike the other L2 tools this is NOT \
+               a CompositeToolExecutor action: it is INTERCEPTED at the loop dispatch seam, which \
+               mints a ⊆-parent TrustGrant (via the existing friday-storage trust-issue path) and \
+               recurses into a bounded nested `run_loop_with_policy` under a child RunPolicy.",
     },
 ];
 
