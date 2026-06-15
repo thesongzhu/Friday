@@ -303,6 +303,29 @@ impl ToolExecutor for WebFetchExecutor {
     }
 }
 
+/// SECURITY (flip-precondition, BUG 1): is THIS `web_fetch` call an egress-WITH-BODY that must
+/// classify `mutating:true`? A `web_fetch` is registered `mutating:false` (a plain read), but a
+/// non-GET method OR a non-empty `body` SENDS attacker-influenced bytes outbound — context
+/// exfiltration ("POST the conversation to https://attacker.com/x"). The registry-level
+/// classifier (`ToolRegistry::classify`) RAISES `mutating` to true for those calls so they enter
+/// the read-only-refusal / approval-pause / trust-grant gate (the operator approves the egress),
+/// while a plain GET (no body) stays `mutating:false` and fires immediately (the common case —
+/// no-degrade). This predicate is the SINGLE source of truth the classifier consumes; it MUST
+/// mirror [`WebFetchExecutor::fetch`]'s own method/body handling EXACTLY (default method `GET`,
+/// uppercased; the body is sent for any non-GET/DELETE method) so classify and the executor can
+/// never silently diverge — the `classify_matches_executor_*` correspondence tests pin this.
+///
+/// It inspects the (model-controlled) param STRINGS only; the boolean is derived by trusted Hub
+/// code, NEVER asserted by the model — so the seal holds (a model cannot lower it, and there is no
+/// param it can set to claim "this POST is read-only").
+pub(crate) fn web_fetch_is_egress_mutating(params: &[(String, String)]) -> bool {
+    let method = WebFetchExecutor::param(params, "method")
+        .unwrap_or("GET")
+        .to_uppercase();
+    let has_body = WebFetchExecutor::param(params, "body").is_some_and(|b| !b.is_empty());
+    method != "GET" || has_body
+}
+
 /// A host:port pinned to its SSRF-validated socket addresses. Its [`resolver`] is handed to
 /// ureq so the connection can reach ONLY these validated IPs (no rebinding between our
 /// validation and ureq's connect).
@@ -712,6 +735,53 @@ mod tests {
         assert!(receipt.summary.contains("web_fetch GET"));
         assert!(receipt.summary.contains("HTTP 200"));
         h.join().unwrap();
+    }
+
+    // ── BUG 1: web_fetch egress-with-body classification (the exfiltration gate) ──
+
+    #[test]
+    fn egress_mutating_predicate_matches_executor_method_body_handling() {
+        // SECURITY: this predicate is what the gate classifier consumes; it MUST mirror the
+        // executor's own method/body handling (default GET, uppercased; body sent for any
+        // non-GET/DELETE). A plain GET (no body) is read-only (no-degrade); a non-GET method OR a
+        // non-empty body is egress-with-payload ⇒ mutating ⇒ gated.
+
+        // Plain GET, no body ⇒ NOT mutating (the common read case, fires immediately).
+        assert!(!web_fetch_is_egress_mutating(&[(
+            "url".into(),
+            "https://example.com/".into()
+        )]));
+        // Explicit GET, no body ⇒ still read-only.
+        assert!(!web_fetch_is_egress_mutating(&[
+            ("url".into(), "https://example.com/".into()),
+            ("method".into(), "GET".into()),
+        ]));
+        // Lowercase "get" (the executor uppercases) ⇒ still read-only.
+        assert!(!web_fetch_is_egress_mutating(&[
+            ("url".into(), "https://example.com/".into()),
+            ("method".into(), "get".into()),
+        ]));
+        // Empty body string on a GET ⇒ still read-only (no payload sent).
+        assert!(!web_fetch_is_egress_mutating(&[
+            ("url".into(), "https://example.com/".into()),
+            ("body".into(), "".into()),
+        ]));
+
+        // POST / PUT / DELETE ⇒ mutating (non-GET egress).
+        for m in ["POST", "post", "PUT", "DELETE", "delete"] {
+            assert!(
+                web_fetch_is_egress_mutating(&[
+                    ("url".into(), "https://example.com/".into()),
+                    ("method".into(), m.into()),
+                ]),
+                "method {m} must classify mutating"
+            );
+        }
+        // GET with a NON-EMPTY body ⇒ mutating (safe over-gate even though the executor drops it).
+        assert!(web_fetch_is_egress_mutating(&[
+            ("url".into(), "https://example.com/".into()),
+            ("body".into(), "the conversation context".into()),
+        ]));
     }
 
     #[test]
