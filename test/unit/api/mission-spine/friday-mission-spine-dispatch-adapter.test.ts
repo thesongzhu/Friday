@@ -5,6 +5,10 @@ import {
   createFridayMissionSpineDispatchAdapter,
   readMissionSpineRustWsPort,
 } from "../../../../src/api/mission-spine/friday-mission-spine-dispatch-adapter.js";
+import {
+  createFridayMissionAutoDispatchDriver,
+  type MissionAutoDispatchStartRun,
+} from "../../../../src/api/mission-spine/friday-mission-auto-dispatch-driver.js";
 import type {
   CreateFridayRustHubAgentRunSealedClientOptions,
   FridayRustHubAgentRunSealedClient,
@@ -231,6 +235,132 @@ describe("createFridayMissionSpineDispatchAdapter (Lane B-2, dark, adapter)", ()
       expect(error).toBeInstanceOf(FridayDomainError);
       expect((error as FridayDomainError).code).toBe("MISSION_SPINE_DISPATCH_RUST_UNAVAILABLE");
       expect((error as FridayDomainError).httpStatus).toBe(503);
+    });
+  });
+
+  describe("auto-dispatch driver hook (organic mission→run binding PRODUCER, dark)", () => {
+    it("WITH the driver injected, a Ready intake invokes onIntakeReady(request, result) AFTER dispatch", async () => {
+      const fake = makeFakeClient({ intake: INTAKE_RESULT });
+      const onIntakeReady = vi.fn();
+      const adapter = createFridayMissionSpineDispatchAdapter({
+        port: 48750,
+        secretResolver: () => SECRET,
+        createClient: fake.createClient,
+        autoDispatchDriver: { onIntakeReady },
+      });
+
+      const result = await adapter.intakeMission(INTAKE_REQ);
+
+      // Result returned verbatim AND the hook saw the SAME request + result objects.
+      expect(result).toBe(INTAKE_RESULT);
+      expect(onIntakeReady).toHaveBeenCalledTimes(1);
+      expect(onIntakeReady).toHaveBeenCalledWith(INTAKE_REQ, INTAKE_RESULT);
+    });
+
+    it("WITHOUT the driver (the default) intakeMission is byte-identical — no hook is invoked", async () => {
+      const fake = makeFakeClient({ intake: INTAKE_RESULT });
+      const adapter = createFridayMissionSpineDispatchAdapter({
+        port: 48750,
+        secretResolver: () => SECRET,
+        createClient: fake.createClient,
+        // autoDispatchDriver omitted ⇒ default ⇒ no hook.
+      });
+
+      const result = await adapter.intakeMission(INTAKE_REQ);
+
+      expect(result).toBe(INTAKE_RESULT);
+      // transitionMission / transitionWorkItem never call the hook either (they have no driver path).
+      expect(fake.intakeCalls).toEqual([INTAKE_REQ]);
+    });
+
+    it("the hook is NOT invoked when the dispatch itself fails (the result never existed)", async () => {
+      const fake = makeFakeClient({ reject: new Error("socket ECONNREFUSED") });
+      const onIntakeReady = vi.fn();
+      const adapter = createFridayMissionSpineDispatchAdapter({
+        port: 48750,
+        secretResolver: () => SECRET,
+        createClient: fake.createClient,
+        autoDispatchDriver: { onIntakeReady },
+      });
+
+      await expect(adapter.intakeMission(INTAKE_REQ)).rejects.toBeInstanceOf(FridayDomainError);
+      expect(onIntakeReady).not.toHaveBeenCalled();
+    });
+  });
+
+  // End-to-end seam: the REAL driver injected into the REAL adapter (no spy across the seam). This
+  // is the only non-operator-gated proof that an organic intake actually PRODUCES a bound run. Note
+  // the trigger requires a `workItemId` on the RESULT — a ready result WITHOUT one (the shared
+  // INTAKE_RESULT above) would NOT fire, so this uses a COMPLETE ready result.
+  describe("real driver THROUGH real adapter (composed, organic mission→run binding PRODUCER)", () => {
+    const READY_WITH_WORK_ITEM: FridayRustHubMissionIntakeResult = {
+      truthLabel: "rust_wired",
+      fridayConversationId: "conv-from-SERVER",
+      missionId: "mission-from-SERVER",
+      workItemId: "wi-from-SERVER",
+      surfaceThreadId: "thread-1",
+      status: "ready",
+      blockers: [],
+      createdOrReady: true,
+    };
+    const BLOCKED: FridayRustHubMissionIntakeResult = {
+      ...READY_WITH_WORK_ITEM,
+      status: "blocked",
+      blockers: ["duplicate_open_mission"],
+      createdOrReady: false,
+    };
+
+    function composeAdapter(result: FridayRustHubMissionIntakeResult) {
+      const fake = makeFakeClient({ intake: result });
+      const startRun = vi.fn(async () => ({ runId: "run-1" })) as unknown as MissionAutoDispatchStartRun;
+      const driver = createFridayMissionAutoDispatchDriver({
+        startRun: () => startRun,
+        deepseekProviderId: "deepseek",
+        deepseekFlashModel: "deepseek-v4-flash",
+      });
+      const adapter = createFridayMissionSpineDispatchAdapter({
+        port: 48750,
+        secretResolver: () => SECRET,
+        createClient: fake.createClient,
+        autoDispatchDriver: driver,
+      });
+      return { adapter, startRun };
+    }
+
+    it("a complete Ready intake PRODUCES a bound read-only run with the RESULT-derived handle", async () => {
+      const { adapter, startRun } = composeAdapter(READY_WITH_WORK_ITEM);
+
+      const returned = await adapter.intakeMission(INTAKE_REQ);
+      // Intake result returned verbatim, immediately.
+      expect(returned).toBe(READY_WITH_WORK_ITEM);
+      // The fire-and-forget run is initiated synchronously inside the hook; flush a microtask.
+      await Promise.resolve();
+
+      expect(startRun).toHaveBeenCalledTimes(1);
+      const arg = (startRun as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(arg).toMatchObject({
+        providerId: "deepseek",
+        model: "deepseek-v4-flash",
+        constraints: { readOnly: true },
+        allowedRustRouteTools: ["read_file", "list_dir", "stat_file", "search"],
+      });
+      // Handle is the SERVER RESULT ids — never the request body.
+      expect(arg.missionContext).toEqual({
+        fridayConversationId: "conv-from-SERVER",
+        missionId: "mission-from-SERVER",
+        workItemId: "wi-from-SERVER",
+      });
+      expect(arg.missionContext.missionId).not.toBe(INTAKE_REQ.missionId);
+    });
+
+    it("a blocked/duplicate intake PRODUCES NO run (no re-spend) and still returns the result", async () => {
+      const { adapter, startRun } = composeAdapter(BLOCKED);
+
+      const returned = await adapter.intakeMission(INTAKE_REQ);
+      await Promise.resolve();
+
+      expect(returned).toBe(BLOCKED);
+      expect(startRun).not.toHaveBeenCalled();
     });
   });
 

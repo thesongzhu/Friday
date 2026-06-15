@@ -2001,6 +2001,19 @@ export interface FridayHubConfig {
    * (explicit config wins; otherwise the `FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST` env knob).
    */
   routeMemorySpineViaRust?: boolean;
+  /**
+   * (Organic mission→run binding PRODUCER — DARK): "after a fresh-Ready `/v1/mission-spine/intake`,
+   * immediately fire a READ-ONLY bound agent-run carrying the server-produced mission handle" flag.
+   * DEFAULT-FALSE — production hub creation must leave this unset so the auto-dispatch driver is
+   * NEVER constructed, the dispatch adapter's `autoDispatchDriver` option is omitted, `intakeMission`
+   * is byte-identical, and no organic run is ever produced. When true (AND `routeMissionSpineViaRust`
+   * is also true), bootstrap constructs the driver and wires it into the dispatch adapter. End-to-end
+   * joined proof ALSO needs `FRIDAY_ROUTE_AGENT_RUN_VIA_RUST` (the Rust read-only route), the SERVER
+   * `FRIDAY_MISSION_INTAKE`/`FRIDAY_MISSION_SPINE_DISPATCH` flags, a deploy, and the SecureStore +
+   * launchd provisioning (operator-gated). Resolution: `resolveMissionAutoDispatch` (explicit config
+   * wins; otherwise the `FRIDAY_MISSION_AUTO_DISPATCH` env knob).
+   */
+  missionAutoDispatch?: boolean;
 }
 
 // ─── Resolved Hub Config ───

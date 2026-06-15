@@ -7,6 +7,7 @@ import {
   resolveRouteAgentRunViaRust,
   resolveRouteMissionSpineViaRust,
   resolveRouteMemorySpineViaRust,
+  resolveMissionAutoDispatch,
   resolveRouteProvidersViaRust,
   resolveRouteWorkflowsViaRust,
 } from "#hub";
@@ -564,5 +565,35 @@ describe("resolveRouteMemorySpineViaRust (Lane M organic memory-confirmation POS
     expect(resolveRouteMemorySpineViaRust(true, emptyEnv())).toBe(true);
     expect(resolveRouteMemorySpineViaRust(false, { FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST: "1" })).toBe(false);
     expect(resolveRouteMemorySpineViaRust(false, { FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST: "true" })).toBe(false);
+  });
+});
+
+describe("resolveMissionAutoDispatch (organic mission→run binding PRODUCER flag)", () => {
+  it("defaults OFF when neither config nor env is set", () => {
+    expect(resolveMissionAutoDispatch(undefined, emptyEnv())).toBe(false);
+  });
+
+  it("env exact opt-in (case-insensitive, trimmed) → true", () => {
+    expect(resolveMissionAutoDispatch(undefined, { FRIDAY_MISSION_AUTO_DISPATCH: "1" })).toBe(true);
+    expect(resolveMissionAutoDispatch(undefined, { FRIDAY_MISSION_AUTO_DISPATCH: "true" })).toBe(true);
+    expect(resolveMissionAutoDispatch(undefined, { FRIDAY_MISSION_AUTO_DISPATCH: "TRUE" })).toBe(true);
+    expect(resolveMissionAutoDispatch(undefined, { FRIDAY_MISSION_AUTO_DISPATCH: "  1  " })).toBe(true);
+    expect(resolveMissionAutoDispatch(undefined, { FRIDAY_MISSION_AUTO_DISPATCH: " true " })).toBe(true);
+  });
+
+  it("any non-exact env value (incl. 0/false/empty/yes/on/2) → false", () => {
+    expect(resolveMissionAutoDispatch(undefined, { FRIDAY_MISSION_AUTO_DISPATCH: "0" })).toBe(false);
+    expect(resolveMissionAutoDispatch(undefined, { FRIDAY_MISSION_AUTO_DISPATCH: "false" })).toBe(false);
+    expect(resolveMissionAutoDispatch(undefined, { FRIDAY_MISSION_AUTO_DISPATCH: "" })).toBe(false);
+    expect(resolveMissionAutoDispatch(undefined, { FRIDAY_MISSION_AUTO_DISPATCH: "yes" })).toBe(false);
+    expect(resolveMissionAutoDispatch(undefined, { FRIDAY_MISSION_AUTO_DISPATCH: "on" })).toBe(false);
+    expect(resolveMissionAutoDispatch(undefined, { FRIDAY_MISSION_AUTO_DISPATCH: "2" })).toBe(false);
+  });
+
+  it("uses explicit config over the env (true wins; false beats env true)", () => {
+    expect(resolveMissionAutoDispatch(true, { FRIDAY_MISSION_AUTO_DISPATCH: "0" })).toBe(true);
+    expect(resolveMissionAutoDispatch(true, emptyEnv())).toBe(true);
+    expect(resolveMissionAutoDispatch(false, { FRIDAY_MISSION_AUTO_DISPATCH: "1" })).toBe(false);
+    expect(resolveMissionAutoDispatch(false, { FRIDAY_MISSION_AUTO_DISPATCH: "true" })).toBe(false);
   });
 });

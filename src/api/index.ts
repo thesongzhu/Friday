@@ -284,6 +284,27 @@ export type { FridayCloudWorkerSetupRoutesDeps } from "./http/routes/friday-clou
 
 // Runtime
 export { createFridayApiRuntime } from "./runtime/friday-api-runtime.js";
-export type { FridayApiRuntime, CreateFridayApiRuntimeDeps } from "./runtime/friday-api-runtime.types.js";
+// (Organic mission→run binding PRODUCER — DARK) The DeepSeek-flash provider id / model the Rust
+// read-only route qualifier requires (clause 3). Re-exported so bootstrap can hand the mission
+// auto-dispatch driver the EXACT qualifying shape without retyping literals.
+export {
+  RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
+  RUST_ROUTE_DEEPSEEK_PROVIDER_ID,
+} from "./runtime/friday-api-runtime.js";
+export type {
+  FridayApiRuntime,
+  CreateFridayApiRuntimeDeps,
+  FridayAgentRouteStartRun,
+} from "./runtime/friday-api-runtime.types.js";
+// (Organic mission→run binding PRODUCER — DARK) The intake-triggered auto-dispatch driver factory +
+// types — the missing producer that originates a `mission_context` handle on a live read-only run.
+export {
+  createFridayMissionAutoDispatchDriver,
+} from "./mission-spine/friday-mission-auto-dispatch-driver.js";
+export type {
+  CreateFridayMissionAutoDispatchDriverOptions,
+  FridayMissionAutoDispatchDriver,
+  MissionAutoDispatchStartRun,
+} from "./mission-spine/friday-mission-auto-dispatch-driver.js";
 export { createFridayDeterministicPipelineRuntime } from "./runtime/friday-deterministic-pipeline-runtime.js";
 export type { CreateFridayDeterministicPipelineRuntimeDeps } from "./runtime/friday-deterministic-pipeline-runtime.js";
