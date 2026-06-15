@@ -485,7 +485,9 @@ pub fn attach_provider_timeline_state(
     // untouched. The guarded variant is the single behavioral knob (default-OFF), threaded
     // in as a pure bool from the run-loop entrypoint's env read (the codebase's
     // "split env-read from pure logic" idiom). `false` here = the pre-WI-1 path, byte-identical.
-    attach_provider_timeline_state_guarded(db, attachment, false)
+    attach_provider_timeline_state_guarded(
+        db, attachment, false, /* clear_executing = */ false,
+    )
 }
 
 /// (WI-1, M-6) [`attach_provider_timeline_state`] with the DARK WorkItem guarded-transition
@@ -519,6 +521,15 @@ pub fn attach_provider_timeline_state_guarded(
     db: &Db,
     attachment: ProviderTimelineAttachment,
     guarded: bool,
+    // (#24b degrade-3 fix) When `true`, the durable `executing` marker is cleared (`executing = 0`)
+    // ATOMICALLY in the SAME write as this hop's status change — on BOTH the guarded path (the
+    // clearing transition primitive) and the OFF path (the inline `upsert_work_item`'s tx). The
+    // agent-loop binding passes `true` ONLY for its FINAL resting-state hop, so a run that reaches
+    // its rest state (`ProviderRouted` on pause/await/error, `CompletedWithProof` on completion)
+    // ALWAYS has `executing == 0` written atomically with the status — a swallowed best-effort tail
+    // clear can therefore never strand `executing == 1` on a live paused run. Every other caller
+    // (the resume completion legs, the tests) passes `false` (byte-identical to pre-#24b).
+    clear_executing: bool,
 ) -> Result<MissionAttachmentOutcome, StorageError> {
     let Some(mut mission) = db.get_mission(&attachment.mission_id)? else {
         return Ok(MissionAttachmentOutcome::blocked("unknown_mission"));
@@ -566,14 +577,27 @@ pub fn attach_provider_timeline_state_guarded(
         } else {
             None
         };
-        let (_updated, _previous) = db.transition_work_item_status(
-            &attachment.work_item_id,
-            next_status,
-            &actor_ref,
-            &reason,
-            proof_receipt,
-            attachment.now_ms,
-        )?;
+        // (#24b degrade-3) The clearing variant lands `executing = 0` in the SAME tx as the status
+        // hop when this is the binding's final resting-state hop; otherwise the plain primitive.
+        let (_updated, _previous) = if clear_executing {
+            db.transition_work_item_status_clearing_executing(
+                &attachment.work_item_id,
+                next_status,
+                &actor_ref,
+                &reason,
+                proof_receipt,
+                attachment.now_ms,
+            )?
+        } else {
+            db.transition_work_item_status(
+                &attachment.work_item_id,
+                next_status,
+                &actor_ref,
+                &reason,
+                proof_receipt,
+                attachment.now_ms,
+            )?
+        };
         // Mission side is NOT touched by the primitive — replicate the OFF path's mission update
         // (append the completion proof ref + bump updated_at_ms) so the mission row is identical.
         if next_status == WorkItemStatus::CompletedWithProof {
@@ -594,7 +618,13 @@ pub fn attach_provider_timeline_state_guarded(
                 mission.updated_at_ms = attachment.now_ms;
             }
         }
-        db.upsert_work_item(&work_item)?;
+        // (#24b degrade-3) On the binding's final resting-state hop, clear `executing = 0` in the
+        // SAME tx as this status upsert; otherwise the plain upsert (byte-identical to pre-#24b).
+        if clear_executing {
+            db.upsert_work_item_clearing_executing(&work_item)?;
+        } else {
+            db.upsert_work_item(&work_item)?;
+        }
         db.upsert_mission(&mission)?;
     }
 
@@ -1943,6 +1973,7 @@ mod tests {
                     now_ms: now + i as i64,
                 },
                 guarded,
+                /* clear_executing = */ false,
             )
             .unwrap();
             assert!(
@@ -2089,6 +2120,7 @@ mod tests {
                     now_ms: 10,
                 },
                 guarded,
+                /* clear_executing = */ false,
             )
             .unwrap();
             assert!(
@@ -2143,6 +2175,7 @@ mod tests {
                 now_ms: 10,
             },
             true,
+            /* clear_executing = */ false,
         )
         .unwrap();
         assert!(matches!(
@@ -2167,6 +2200,7 @@ mod tests {
                 now_ms: 11,
             },
             true,
+            /* clear_executing = */ false,
         )
         .unwrap();
         assert!(matches!(

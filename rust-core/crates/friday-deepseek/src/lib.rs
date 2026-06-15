@@ -77,14 +77,41 @@ pub trait Transport {
     fn post_json(&self, url: &str, bearer: &str, body: &Value) -> Result<Value, DeepSeekError>;
 }
 
+/// (#24b degrade-4) The wall-clock ceiling on a SINGLE model HTTP call (overall request: DNS +
+/// connect + send + read body). Bare `ureq::post().send_json()` had NO timeout, so one hung call
+/// could exceed the crash-recovery staleness threshold (`EXECUTION_STATE_STALE_THRESHOLD_MS` = 5
+/// min) and let a concurrent boot reconcile abort a still-LIVE run. 60s is chosen WELL UNDER that
+/// threshold: the agent loop re-sets the durable heartbeat before EACH of its ≤3 attempts, so the
+/// longest gap a model-call group introduces is one attempt ≈ 60s (a ~5x margin vs 300s). It is
+/// also generous for a real DeepSeek/Claude completion (seconds to low tens-of-seconds). A timed-out
+/// call surfaces as a `ureq::Error::Transport` ⇒ [`DeepSeekError::ProviderUnavailable`] (transient),
+/// so the loop's bounded transient-route retry handles it exactly like any other transient failure
+/// — the run is never silently wedged.
+pub const DEEPSEEK_REQUEST_TIMEOUT_MS: u64 = 60_000;
+
 /// Real blocking HTTP transport (ureq + rustls). Maps errors to controlled
 /// [`DeepSeekError`] messages — it never formats the request (which carries the
-/// `Authorization` header) into an error string.
-pub struct UreqTransport;
+/// `Authorization` header) into an error string. Built on a shared [`ureq::Agent`] carrying the
+/// [`DEEPSEEK_REQUEST_TIMEOUT_MS`] overall-request timeout (#24b degrade-4) so no single model call
+/// can hang past the crash-recovery staleness threshold.
+pub struct UreqTransport {
+    agent: ureq::Agent,
+}
 
 impl UreqTransport {
     pub fn new() -> Self {
-        UreqTransport
+        Self::with_timeout_ms(DEEPSEEK_REQUEST_TIMEOUT_MS)
+    }
+
+    /// (#24b degrade-4) Build the transport with an explicit overall-request timeout (ms). Used by
+    /// [`Self::new`] with the production [`DEEPSEEK_REQUEST_TIMEOUT_MS`] ceiling, and by tests with
+    /// a short timeout to prove a hung server is bounded rather than wedging the run forever.
+    pub fn with_timeout_ms(timeout_ms: u64) -> Self {
+        UreqTransport {
+            agent: ureq::AgentBuilder::new()
+                .timeout(std::time::Duration::from_millis(timeout_ms))
+                .build(),
+        }
     }
 }
 
@@ -121,7 +148,10 @@ fn map_ureq_err(e: ureq::Error) -> DeepSeekError {
 
 impl Transport for UreqTransport {
     fn get_json(&self, url: &str, bearer: &str) -> Result<Value, DeepSeekError> {
-        let resp = ureq::get(url)
+        // (#24b degrade-4) Route through the timeout-bounded shared agent (see UreqTransport).
+        let resp = self
+            .agent
+            .get(url)
             .set("Authorization", &format!("Bearer {bearer}"))
             .set("Accept", "application/json")
             .call()
@@ -131,7 +161,10 @@ impl Transport for UreqTransport {
     }
 
     fn post_json(&self, url: &str, bearer: &str, body: &Value) -> Result<Value, DeepSeekError> {
-        let resp = ureq::post(url)
+        // (#24b degrade-4) Route through the timeout-bounded shared agent (see UreqTransport).
+        let resp = self
+            .agent
+            .post(url)
             .set("Authorization", &format!("Bearer {bearer}"))
             .set("Accept", "application/json")
             .send_json(body.clone())
@@ -650,6 +683,52 @@ mod tests {
             assert!(rendered.contains("429"), "status code missing: {rendered}");
         }
     }
+
+    #[test]
+    fn real_transport_bounds_a_hung_request_with_a_wall_clock_timeout() {
+        // (#24b degrade-4) A server that ACCEPTS the connection but never replies must NOT wedge the
+        // call forever — the overall-request timeout fires and surfaces a TRANSIENT
+        // ProviderUnavailable (so the loop's bounded transient retry handles it; the run is never
+        // silently hung past the crash-recovery staleness threshold). We use a SHORT (250ms) timeout
+        // to keep the test fast; production uses DEEPSEEK_REQUEST_TIMEOUT_MS.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            // Accept then HANG: read the request but never write a response, holding the socket open
+            // until the client times out and drops it.
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut req = [0u8; 2048];
+                let _ = stream.read(&mut req);
+                std::thread::sleep(std::time::Duration::from_millis(2_000));
+            }
+        });
+        let c = DeepSeekClient::with_transport_and_base_url(
+            UreqTransport::with_timeout_ms(250),
+            "test-key-not-real".to_string(),
+            format!("http://{addr}"),
+        );
+        let start = std::time::Instant::now();
+        let err = c.discover_models().unwrap_err();
+        let elapsed = start.elapsed();
+        let _ = handle.join();
+        // It returned (did not hang) well within a second, classified as transient.
+        assert!(
+            elapsed < std::time::Duration::from_millis(1_500),
+            "the timeout must bound the call; took {elapsed:?}"
+        );
+        assert!(
+            matches!(err, DeepSeekError::ProviderUnavailable(_)),
+            "a timed-out call is a transient ProviderUnavailable, got {err:?}"
+        );
+    }
+
+    // The production per-call ceiling MUST be well under the crash-recovery staleness threshold
+    // (300_000ms / 5 min), so a slow-but-live model call can never be mistaken for a crash. A
+    // compile-time assert (clippy rejects a runtime assert on a constant).
+    const _: () = assert!(
+        DEEPSEEK_REQUEST_TIMEOUT_MS < 300_000,
+        "the per-call timeout must be under the 5-min crash-recovery staleness threshold"
+    );
 
     #[test]
     fn map_ureq_status_partitions_transient_5xx_408_vs_terminal_4xx() {

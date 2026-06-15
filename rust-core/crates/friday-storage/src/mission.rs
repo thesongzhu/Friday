@@ -653,6 +653,60 @@ pub fn transition_work_item_status(
     proof_receipt: Option<&str>,
     now_ms: i64,
 ) -> Result<(WorkItem, WorkItemStatus)> {
+    transition_work_item_status_inner(
+        conn,
+        work_item_id,
+        next_status,
+        actor_ref,
+        reason,
+        proof_receipt,
+        now_ms,
+        /* clear_executing = */ false,
+    )
+}
+
+/// (#24b degrade-3 fix) Like [`transition_work_item_status`], but ALSO clears the durable
+/// `executing` marker (`executing = 0`) in the SAME transaction as the status hop. The agent-loop
+/// binding routes its FINAL resting-state hop (`ProviderRouted` on a pause/await/error, or
+/// `CompletedWithProof` on completion) through this so a run that reaches a binding rest state
+/// ALWAYS has `executing == 0` written ATOMICALLY with the status — a swallowed best-effort tail
+/// clear can therefore NEVER strand `executing == 1` on a live paused/awaiting run (which boot
+/// crash-recovery PASS-2 would then falsely reconcile after a long human approval latency). The
+/// clear is status-preserving on the execution columns only (`last_heartbeat_ms` is left as-is —
+/// PASS-2 only acts on `executing == 1` rows, so a cleared row's timestamp is never consulted).
+#[allow(clippy::too_many_arguments)]
+pub fn transition_work_item_status_clearing_executing(
+    conn: &Connection,
+    work_item_id: &str,
+    next_status: WorkItemStatus,
+    actor_ref: &str,
+    reason: &str,
+    proof_receipt: Option<&str>,
+    now_ms: i64,
+) -> Result<(WorkItem, WorkItemStatus)> {
+    transition_work_item_status_inner(
+        conn,
+        work_item_id,
+        next_status,
+        actor_ref,
+        reason,
+        proof_receipt,
+        now_ms,
+        /* clear_executing = */ true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn transition_work_item_status_inner(
+    conn: &Connection,
+    work_item_id: &str,
+    next_status: WorkItemStatus,
+    actor_ref: &str,
+    reason: &str,
+    proof_receipt: Option<&str>,
+    now_ms: i64,
+    clear_executing: bool,
+) -> Result<(WorkItem, WorkItemStatus)> {
     require_non_empty(work_item_id, "work_item_lifecycle.work_item_id")?;
     require_non_empty(actor_ref, "work_item_lifecycle.actor_ref")?;
     require_non_empty(reason, "work_item_lifecycle.reason")?;
@@ -717,6 +771,19 @@ pub fn transition_work_item_status(
         now_ms,
     )?;
     upsert_work_item(&tx, &item)?;
+    // (#24b degrade-3) ATOMIC executing-clear: when the caller routes a binding rest-state hop
+    // through `transition_work_item_status_clearing_executing`, clear the durable `executing`
+    // marker in the SAME transaction as the status write. `upsert_work_item` does NOT touch the
+    // execution columns (they are managed only by `set_work_item_executing`), so this targeted
+    // `UPDATE` is required to land `executing = 0` atomically with the status. `last_heartbeat_ms`
+    // is left as-is — PASS-2 only acts on `executing == 1` rows, so a cleared row's timestamp is
+    // never consulted by the reconcile.
+    if clear_executing {
+        tx.execute(
+            "UPDATE work_item SET executing = 0 WHERE work_item_id = ?1",
+            params![work_item_id],
+        )?;
+    }
     tx.commit()?;
 
     Ok((item, previous_status))
@@ -943,6 +1010,23 @@ pub fn upsert_work_item(conn: &Connection, item: &WorkItem) -> Result<()> {
     Ok(())
 }
 
+/// (#24b degrade-3 fix) `upsert_work_item` followed by clearing the durable `executing` marker
+/// (`executing = 0`) in the SAME transaction — the OFF-path (un-guarded, no-audit-row) parity of
+/// [`transition_work_item_status_clearing_executing`]. The agent-loop binding routes its FINAL
+/// resting-state hop through this on the OFF path so a run that reaches its rest state ALWAYS has
+/// `executing == 0` written atomically with the status. `last_heartbeat_ms` is left as-is (PASS-2
+/// only acts on `executing == 1` rows).
+pub fn upsert_work_item_clearing_executing(conn: &Connection, item: &WorkItem) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    upsert_work_item(&tx, item)?;
+    tx.execute(
+        "UPDATE work_item SET executing = 0 WHERE work_item_id = ?1",
+        params![item.work_item_id],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
 pub fn get_work_item(conn: &Connection, work_item_id: &str) -> Result<Option<WorkItem>> {
     work_items_by_clause(conn, "WHERE work_item_id = ?1", [work_item_id]).map(|mut rows| rows.pop())
 }
@@ -962,6 +1046,65 @@ pub fn list_active_work_items(conn: &Connection) -> Result<Vec<WorkItem>> {
          ORDER BY updated_at_ms DESC, work_item_id",
         [],
     )
+}
+
+/// The durable EXECUTION STATE of a WorkItem (#24b) — the `executing` 0/1 marker the agent loop
+/// SETs just before each model call and CLEARs at every loop exit, plus the epoch-ms of the last
+/// SET. Boot crash-recovery PASS-2 reads this to tell a CRASHED-while-executing
+/// `ProviderRouted`/`ProviderWaiting` row (`executing == true` + a STALE `last_heartbeat_ms`) apart
+/// from a legitimately-paused/awaiting one (`executing == false`). These columns are managed ONLY
+/// by [`set_work_item_executing`] — they are NOT part of the [`WorkItem`] struct, the
+/// `upsert_work_item` write set, or the `work_items_by_clause` read set, so a status-preserving
+/// re-upsert (e.g. the crash-recovery `blocking_reason` marker write) can NEVER clobber them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WorkItemExecutionState {
+    pub executing: bool,
+    pub last_heartbeat_ms: Option<i64>,
+}
+
+/// SET/CLEAR a WorkItem's durable execution marker (#24b). A STATUS-PRESERVING targeted `UPDATE` of
+/// ONLY the `executing` + `last_heartbeat_ms` columns — it never touches status, blocking_reason,
+/// or any other column (so it cannot race the lifecycle state machine), and it never inserts a row
+/// (a missing/sessionless work_item is a 0-row no-op `Ok`, never an error). The caller (the agent
+/// loop) treats every write as BEST-EFFORT / FAIL-SAFE: a heartbeat write error is logged + swallowed
+/// and never changes the turn outcome or billing. `heartbeat_ms` is recorded on BOTH the SET
+/// (`executing = true`, marking the model call in flight) and the CLEAR (`executing = false`, leaving
+/// the last-seen timestamp for observability — PASS-2 only acts on `executing == 1` rows, so a
+/// cleared row's timestamp is never used to reconcile).
+pub fn set_work_item_executing(
+    conn: &Connection,
+    work_item_id: &str,
+    executing: bool,
+    heartbeat_ms: i64,
+) -> Result<()> {
+    require_non_empty(work_item_id, "work_item.execution_state.work_item_id")?;
+    conn.execute(
+        "UPDATE work_item SET executing = ?2, last_heartbeat_ms = ?3 WHERE work_item_id = ?1",
+        params![work_item_id, executing as i64, heartbeat_ms],
+    )?;
+    Ok(())
+}
+
+/// Read a WorkItem's durable execution state (#24b). `Ok(None)` when the row does not exist;
+/// otherwise the `(executing, last_heartbeat_ms)` pair. A pre-v33 row (migrated, never touched by
+/// [`set_work_item_executing`]) reads back `executing = false, last_heartbeat_ms = None` — the
+/// fail-closed at-rest value (NOT executing ⇒ PASS-2 never reconciles it).
+pub fn get_work_item_execution_state(
+    conn: &Connection,
+    work_item_id: &str,
+) -> Result<Option<WorkItemExecutionState>> {
+    conn.query_row(
+        "SELECT executing, last_heartbeat_ms FROM work_item WHERE work_item_id = ?1",
+        [work_item_id],
+        |r| {
+            Ok(WorkItemExecutionState {
+                executing: r.get::<_, i64>(0)? != 0,
+                last_heartbeat_ms: r.get::<_, Option<i64>>(1)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(StorageError::from)
 }
 
 fn work_items_by_clause<const N: usize>(

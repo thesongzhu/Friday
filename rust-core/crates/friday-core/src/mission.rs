@@ -254,6 +254,16 @@ impl WorkItemStatus {
                 | (WaitingForUser, Cancelled)
                 | (ReadyToDispatch, Dispatched)
                 | (ReadyToDispatch, Cancelled)
+                // (#24b crash-recovery) A mission-bound run executes the agent loop while its
+                // WorkItem rests at `ReadyToDispatch` (the binding to `ProviderRouted` happens
+                // AFTER the loop returns). A process that DIES mid-model-call therefore leaves the
+                // row at `ReadyToDispatch` with a stale durable `executing` marker; boot
+                // crash-recovery PASS-2 reconciles exactly that crash to `FailedTerminal`. This is
+                // an ADDITIVE terminal edge for the crash case ONLY — the happy path
+                // (`ReadyToDispatch -> Dispatched`) is unchanged, and a NON-crashed
+                // `ReadyToDispatch` row (no `executing` marker) is never reconciled, so dispatch's
+                // ownership of the normal path is untouched.
+                | (ReadyToDispatch, FailedTerminal)
                 | (Dispatched, HubAccepted)
                 | (Dispatched, FailedRetryable)
                 | (Dispatched, FailedTerminal)
