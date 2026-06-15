@@ -254,7 +254,8 @@ where
         if outcome.fired >= bounds.max_fires_per_tick {
             break;
         }
-        let report = tick_one_schedule(conn, &sched, now_slot, bounds, &mut outcome, &mut dispatch)?;
+        let report =
+            tick_one_schedule(conn, &sched, now_slot, bounds, &mut outcome, &mut dispatch)?;
         if report != ScheduleTickReport::default() {
             outcome.reports.push(report);
         }
@@ -549,7 +550,15 @@ fn consider(
     detail_token: Option<&str>,
     now: i64,
 ) -> Result<bool, friday_storage::StorageError> {
-    match record_fire(conn, schedule_id, slot_ts, outcome_token, run_id, detail_token, now)? {
+    match record_fire(
+        conn,
+        schedule_id,
+        slot_ts,
+        outcome_token,
+        run_id,
+        detail_token,
+        now,
+    )? {
         RecordFireOutcome::Recorded => {
             outcome.considered += 1;
             Ok(true)
@@ -598,36 +607,41 @@ pub fn run_one_tick_live(
         &friday_core::gate::MutatingActionRequest,
     ) -> Option<friday_core::gate::CanonicalApproval>,
 ) -> Result<TickOutcome, friday_storage::StorageError> {
-    run_one_tick(db.conn(), bounds, now_ms, |workflow_id, run_id, now_slot| {
-        match crate::workflow_run::run_stored_published_workflow(
-            db.conn(),
-            executor,
-            workflow_id,
-            run_id,
-            secret,
-            approve,
-            now_slot,
-        ) {
-            Ok(_run) => DispatchOutcome::Fired,
-            Err(crate::workflow_def::WorkflowDefError::NotFound(_)) => {
-                // No published version (or no such workflow) — a benign skip.
-                DispatchOutcome::NoPublishedVersion
+    run_one_tick(
+        db.conn(),
+        bounds,
+        now_ms,
+        |workflow_id, run_id, now_slot| {
+            match crate::workflow_run::run_stored_published_workflow(
+                db.conn(),
+                executor,
+                workflow_id,
+                run_id,
+                secret,
+                approve,
+                now_slot,
+            ) {
+                Ok(_run) => DispatchOutcome::Fired,
+                Err(crate::workflow_def::WorkflowDefError::NotFound(_)) => {
+                    // No published version (or no such workflow) — a benign skip.
+                    DispatchOutcome::NoPublishedVersion
+                }
+                // Any other failure (incl. a dup-PK Storage error if a racing daemon /
+                // crash-replay beat us to `create_run`) is a non-fatal dispatch error.
+                // The recovery-window-A pre-check already caught the common crash case;
+                // this catches a genuine race and records `error` without crashing.
+                Err(_) => DispatchOutcome::Error,
             }
-            // Any other failure (incl. a dup-PK Storage error if a racing daemon /
-            // crash-replay beat us to `create_run`) is a non-fatal dispatch error.
-            // The recovery-window-A pre-check already caught the common crash case;
-            // this catches a genuine race and records `error` without crashing.
-            Err(_) => DispatchOutcome::Error,
-        }
-    })
+        },
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use friday_core::WorkflowRunState;
     use friday_storage::schedule::{insert_schedule, set_enabled, set_paused, NewSchedule};
     use friday_storage::workflow::{create_run, set_run_state};
-    use friday_core::WorkflowRunState;
     use friday_storage::Db;
     use std::cell::RefCell;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -683,7 +697,9 @@ mod tests {
         }
         fn dispatch(&self) -> impl FnMut(&str, &str, i64) -> DispatchOutcome + '_ {
             move |wf: &str, run_id: &str, now: i64| {
-                self.fired.borrow_mut().push((wf.to_string(), run_id.to_string()));
+                self.fired
+                    .borrow_mut()
+                    .push((wf.to_string(), run_id.to_string()));
                 if self.outcome == DispatchOutcome::Fired {
                     // Emulate the engine creating the run row under the deterministic
                     // id (the at-most-once anchor). A duplicate would fail closed at
@@ -713,8 +729,13 @@ mod tests {
         let rec = Recorder::new(&db, DispatchOutcome::Fired);
 
         // First tick at slot 10: the most-recent due slot (10) fires exactly once.
-        let out = run_one_tick(db.conn(), &default_bounds(), slot(10) + 30_000, rec.dispatch())
-            .unwrap();
+        let out = run_one_tick(
+            db.conn(),
+            &default_bounds(),
+            slot(10) + 30_000,
+            rec.dispatch(),
+        )
+        .unwrap();
         assert_eq!(out.fired, 1, "exactly one fire");
         assert_eq!(out.reports.len(), 1);
         assert_eq!(out.reports[0].fired_slot, Some(slot(10)));
@@ -726,7 +747,9 @@ mod tests {
         assert_eq!(r.outcome, "fired");
         assert_eq!(r.run_id.as_deref(), Some("sched:s1:600000"));
         // watermark advanced to the now slot (10)
-        let row = friday_storage::schedule::get_schedule(db.conn(), "s1").unwrap().unwrap();
+        let row = friday_storage::schedule::get_schedule(db.conn(), "s1")
+            .unwrap()
+            .unwrap();
         assert_eq!(row.last_slot_ts, Some(slot(10)));
     }
 
@@ -774,14 +797,19 @@ mod tests {
         assert_eq!(out.fired, 0);
         assert!(rec.fired.borrow().is_empty(), "paused: nothing dispatched");
         // watermark untouched (NULL) — a clean drain resumes where it left off
-        let row = friday_storage::schedule::get_schedule(db.conn(), "s1").unwrap().unwrap();
+        let row = friday_storage::schedule::get_schedule(db.conn(), "s1")
+            .unwrap()
+            .unwrap();
         assert_eq!(row.last_slot_ts, None);
 
         // Unpause → the next tick resumes and the storm guard collapses the gap to
         // the single most-recent slot (no backlog fire).
         set_paused(db.conn(), false, None, slot(20)).unwrap();
         let out = run_one_tick(db.conn(), &default_bounds(), slot(20), rec.dispatch()).unwrap();
-        assert_eq!(out.fired, 1, "exactly one (most-recent) slot fires on resume");
+        assert_eq!(
+            out.fired, 1,
+            "exactly one (most-recent) slot fires on resume"
+        );
         assert_eq!(out.reports[0].fired_slot, Some(slot(20)));
     }
 
@@ -799,7 +827,10 @@ mod tests {
         // Simulate the orphaned run: the deterministic id exists, NO receipt.
         let run_id = scheduled_run_id("s1", slot(10));
         create_run(db.conn(), &run_id, "wf1", slot(10)).unwrap();
-        assert!(get_fire(db.conn(), "s1", slot(10)).unwrap().is_none(), "no receipt yet");
+        assert!(
+            get_fire(db.conn(), "s1", slot(10)).unwrap().is_none(),
+            "no receipt yet"
+        );
 
         // A dispatch stub that counts calls — proving we never re-dispatch.
         let dispatched = RefCell::new(0usize);
@@ -808,7 +839,11 @@ mod tests {
             DispatchOutcome::Fired
         })
         .unwrap();
-        assert_eq!(*dispatched.borrow(), 0, "an orphaned run is NEVER re-dispatched");
+        assert_eq!(
+            *dispatched.borrow(),
+            0,
+            "an orphaned run is NEVER re-dispatched"
+        );
         assert_eq!(out.fired, 1, "healed-forward counts as the (single) fire");
         // exactly one receipt, pointing at the existing run
         let r = get_fire(db.conn(), "s1", slot(10)).unwrap().unwrap();
@@ -841,18 +876,30 @@ mod tests {
         // closes. The orphan's run row is still `Pending` (the crashed tick left it
         // mid-flight; boot crash-recovery reconciles the run state separately).
         let s10 = get_fire(db.conn(), "s1", slot(10)).unwrap().unwrap();
-        assert_eq!(s10.outcome, "fired", "the cross-minute orphan is healed forward, not mislabeled");
+        assert_eq!(
+            s10.outcome, "fired",
+            "the cross-minute orphan is healed forward, not mislabeled"
+        );
         assert_eq!(s10.run_id.as_deref(), Some(orphan.as_str()));
         assert_eq!(s10.detail_token.as_deref(), Some(detail::RECOVERED_ORPHAN));
-        assert_eq!(out.reports[0].skipped_missed, 0, "the orphan is NOT a skipped_missed");
+        assert_eq!(
+            out.reports[0].skipped_missed, 0,
+            "the orphan is NOT a skipped_missed"
+        );
 
         // Slot 11 (the fire candidate) correctly DEFERS: the just-healed slot-10 fire
         // is still non-terminal (Pending), so the serialization guard refuses to
         // stampede a NEW fire onto the live prior run. NO re-dispatch of the orphan,
         // NO fresh dispatch of slot 11.
         let s11 = get_fire(db.conn(), "s1", slot(11)).unwrap().unwrap();
-        assert_eq!(s11.outcome, "skipped_previous_awaiting", "busy spine: slot 11 defers to the live slot-10 run");
-        assert!(rec.fired.borrow().is_empty(), "the orphan was never re-dispatched and slot 11 deferred");
+        assert_eq!(
+            s11.outcome, "skipped_previous_awaiting",
+            "busy spine: slot 11 defers to the live slot-10 run"
+        );
+        assert!(
+            rec.fired.borrow().is_empty(),
+            "the orphan was never re-dispatched and slot 11 deferred"
+        );
         // exactly one fire COUNTED this tick — the healed orphan (a distinct due-time
         // that genuinely fired once); at-most-once-per-due-time holds.
         assert_eq!(out.fired, 1);
@@ -908,13 +955,18 @@ mod tests {
         let out = run_one_tick(db.conn(), &default_bounds(), slot(100), rec.dispatch()).unwrap();
         assert_eq!(out.fired, 1, "exactly ONE fire despite 100 missed slots");
         assert_eq!(out.reports[0].fired_slot, Some(slot(100)));
-        assert_eq!(out.reports[0].skipped_missed, 99, "slots 1..=99 are skipped_missed");
+        assert_eq!(
+            out.reports[0].skipped_missed, 99,
+            "slots 1..=99 are skipped_missed"
+        );
         assert_eq!(rec.fired.borrow().len(), 1, "exactly one real dispatch");
         // a sampled backlog slot is recorded skipped_missed, NOT fired
         let mid = get_fire(db.conn(), "s1", slot(50)).unwrap().unwrap();
         assert_eq!(mid.outcome, "skipped_missed");
         // watermark jumped to now → a follow-up tick at the same now is a quiet no-op
-        let row = friday_storage::schedule::get_schedule(db.conn(), "s1").unwrap().unwrap();
+        let row = friday_storage::schedule::get_schedule(db.conn(), "s1")
+            .unwrap()
+            .unwrap();
         assert_eq!(row.last_slot_ts, Some(slot(100)));
         let out2 = run_one_tick(db.conn(), &default_bounds(), slot(100), rec.dispatch()).unwrap();
         assert!(out2.is_empty(), "backlog is never rescanned");
@@ -941,7 +993,9 @@ mod tests {
             out.considered
         );
         // watermark still jumped to now (no rescanned backlog)
-        let row = friday_storage::schedule::get_schedule(db.conn(), "s1").unwrap().unwrap();
+        let row = friday_storage::schedule::get_schedule(db.conn(), "s1")
+            .unwrap()
+            .unwrap();
         assert_eq!(row.last_slot_ts, Some(slot(1000)));
     }
 

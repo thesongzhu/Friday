@@ -960,7 +960,9 @@ fn spawn_scheduler_tick(db_path: String, workspace_root: String) {
                     continue;
                 }
                 Err(_e) => {
-                    eprintln!("hub_agent_run_server: scheduler lease acquire failed (skipping tick)");
+                    eprintln!(
+                        "hub_agent_run_server: scheduler lease acquire failed (skipping tick)"
+                    );
                     continue;
                 }
             }
@@ -2881,7 +2883,10 @@ mod tests {
         );
         assert!(!scheduler_tick_enabled_from(Some("")), "empty ⇒ disabled");
         assert!(!scheduler_tick_enabled_from(Some("0")), "0 ⇒ disabled");
-        assert!(!scheduler_tick_enabled_from(Some("false")), "false ⇒ disabled");
+        assert!(
+            !scheduler_tick_enabled_from(Some("false")),
+            "false ⇒ disabled"
+        );
         assert!(
             !scheduler_tick_enabled_from(Some("true")),
             "true is NOT the opt-in value (exact-1 idiom)"
