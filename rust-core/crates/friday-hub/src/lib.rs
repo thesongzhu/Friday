@@ -141,6 +141,15 @@ pub mod cognition;
 /// No silent fallback (a retry is the SAME route, never a reroute); bounded.
 pub mod retry;
 
+/// Registry gap #26 — provider FAILOVER on the live agent loop (deepseek → claude). A
+/// thin [`AgentLlmClient`] wrapper that retries a FAILOVER-WORTHY primary route failure
+/// ONCE on the fallback provider. Default-OFF (`FRIDAY_PROVIDER_FAILOVER`), explicit
+/// substitution (UNW-003), billing-truthful across failover (the fallback bills as
+/// Anthropic; the failed primary attempt bills nothing). Its OWN classifier — NOT
+/// [`retry::RetryDisposition`] — because failover treats 402/429 as worth a DIFFERENT
+/// provider where the same-route retry treats them Terminal.
+pub mod provider_failover;
+
 /// Step-5 (workflow/skills substrate) — the workflow PLANNER + minimal definition
 /// type. Decides per-step auto-advance vs checkpoint, ANCHORED to the trusted
 /// classifier (mutating/high-risk ⇒ checkpoint, the gate floor; template may only
@@ -566,6 +575,28 @@ pub trait AgentLlmClient {
         history: &[TurnTrace],
     ) -> Result<MeteredStep, AgentError> {
         Ok((self.next_step(task, history), None))
+    }
+}
+
+/// (#26) Blanket forward so a `Box<dyn AgentLlmClient>` is itself an [`AgentLlmClient`].
+/// This lets a boxed client be used as a GENERIC `AgentLlmClient` type parameter — e.g.
+/// the `F` (fallback) leg of [`crate::provider_failover::ProviderFailoverWrapper`], which
+/// in production is the boxed Claude client. Pure delegation to the inner `dyn` — adds no
+/// behavior, confers no classification authority, and is transparent to every existing
+/// `&dyn AgentLlmClient` caller (which is unaffected).
+impl AgentLlmClient for Box<dyn AgentLlmClient> {
+    fn propose_tool_call(&self, task: &str) -> Result<RawToolCall, AgentError> {
+        (**self).propose_tool_call(task)
+    }
+    fn next_step(&self, task: &str, history: &[TurnTrace]) -> Result<AgentStep, AgentError> {
+        (**self).next_step(task, history)
+    }
+    fn next_step_metered(
+        &self,
+        task: &str,
+        history: &[TurnTrace],
+    ) -> Result<MeteredStep, AgentError> {
+        (**self).next_step_metered(task, history)
     }
 }
 

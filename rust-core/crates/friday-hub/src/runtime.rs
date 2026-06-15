@@ -141,6 +141,12 @@ pub enum HubInitError {
     /// to "no key" (which would be a different, fail-closed-Pause state). An UNSET source
     /// is NOT an error (it is `operator_vk = None` ⇒ fail-closed Pause).
     OperatorVk(crate::operator_vk::OperatorVkError),
+    /// #26 — `FRIDAY_PROVIDER_FAILOVER` was ON but no Claude fallback client was wired
+    /// (`FRIDAY_CLAUDE_ROUTE_ENABLED` was OFF, or its key was absent). A failover wrapper
+    /// with no fallback is meaningless, so this is a HARD boot error, NEVER a silent no-op:
+    /// enabling failover without a fallback is an operator misconfiguration that must be
+    /// surfaced (carries no secret — a fixed message).
+    FailoverMisconfigured,
 }
 
 impl std::fmt::Display for HubInitError {
@@ -155,6 +161,12 @@ impl std::fmt::Display for HubInitError {
             HubInitError::OperatorVk(e) => {
                 write!(f, "operator verify key provisioning failed: {e:?}")
             }
+            HubInitError::FailoverMisconfigured => write!(
+                f,
+                "provider failover ({}) is ON but no Claude fallback is wired \
+                 (enable {} with a valid Anthropic key)",
+                ENV_PROVIDER_FAILOVER, ENV_CLAUDE_ROUTE_ENABLED
+            ),
         }
     }
 }
@@ -174,6 +186,19 @@ pub struct HubRuntime<T: Transport> {
     /// field stays `None`, AND the `claude` route is registered `available: false` so
     /// `select_route` never picks it. The DeepSeek path is unchanged.
     claude: Option<Box<dyn AgentLlmClient>>,
+    /// Registry gap #26 — DARK / default-off provider FAILOVER wrapper (deepseek→claude).
+    /// `None` in every build EXCEPT a `live()` build whose `FRIDAY_PROVIDER_FAILOVER` gate
+    /// is on AND a Claude client is present. When `Some`, it is a boxed
+    /// [`crate::provider_failover::ProviderFailoverWrapper`] whose primary is the DeepSeek
+    /// agent client and whose fallback is the Claude client — and it BECOMES the resolved
+    /// `&dyn AgentLlmClient` the deepseek route dispatches (see [`Self::loop_client`] /
+    /// `resolve`), so the live loop transparently fails over. It is an EXECUTION-layer
+    /// resilience wrapper, NOT a route-selection change: selection still honestly reports
+    /// `provider_id="deepseek"` (UNW-003 routing-truth). Default-off: this field stays
+    /// `None` (the wrapper is never constructed) ⇒ the bare `deepseek` client dispatches ⇒
+    /// byte-identical to today. `self.deepseek` (and its `.inner()` used by post-run memory
+    /// extraction — which must NOT failover) is retained UNTOUCHED alongside this.
+    failover: Option<Box<dyn AgentLlmClient>>,
     /// C1 PR-B — DARK / default-off Codex (app-server) route executor. MIRRORS `claude`'s
     /// dark-by-default discipline: `None` in every build EXCEPT a `live()` build whose
     /// `FRIDAY_CODEX_ROUTE_ENABLED` gate is on. UNLIKE `claude` (a `dyn AgentLlmClient`), this is
@@ -283,6 +308,11 @@ impl<T: Transport> HubRuntime<T> {
             // and only when the default-OFF `FRIDAY_CLAUDE_ROUTE_ENABLED` gate is on
             // (via [`Self::with_claude`]). Tests + the prod default leave it `None`.
             claude: None,
+            // #26: DARK — no failover wrapper by default. Only `maybe_wrap_for_failover`
+            // (reached from `live()` behind the default-OFF `FRIDAY_PROVIDER_FAILOVER` gate)
+            // may populate this. Tests + the prod default leave it `None` ⇒ the bare
+            // `deepseek` client dispatches ⇒ byte-identical to today.
+            failover: None,
             // C1-3: DARK — no Codex client by default (mirrors `claude`). Only `live()` may
             // populate this, and only when the default-OFF `FRIDAY_CODEX_ROUTE_ENABLED` gate
             // is on (via [`Self::with_codex`]). Tests + the prod default leave it `None`.
@@ -304,6 +334,96 @@ impl<T: Transport> HubRuntime<T> {
     pub fn with_claude(mut self, claude: Box<dyn AgentLlmClient>) -> Self {
         self.claude = Some(claude);
         self
+    }
+
+    /// Registry gap #26 — attach the DARK provider-failover wrapper (builder, default-off).
+    /// The ONLY way the `failover` field becomes `Some`. The boxed wrapper IS a
+    /// [`crate::provider_failover::ProviderFailoverWrapper`] (deepseek primary + claude
+    /// fallback); once attached it BECOMES the resolved `&dyn AgentLlmClient` the deepseek
+    /// route dispatches (see [`Self::loop_client`] / `resolve`). It does NOT touch the
+    /// route registry or any default — selection still reports `provider_id="deepseek"`.
+    /// Consumes + returns `self` so `maybe_wrap_for_failover` can chain it behind the env
+    /// gate. Tests inject a mock-leg wrapper through here directly.
+    pub fn with_failover(mut self, failover: Box<dyn AgentLlmClient>) -> Self {
+        self.failover = Some(failover);
+        self
+    }
+
+    /// Registry gap #26 — the client the LIVE agent loop drives for a `deepseek`-routed run.
+    /// When the failover wrapper is attached (the gated `live()` path with
+    /// `FRIDAY_PROVIDER_FAILOVER=1` + Claude present) it returns the WRAPPER (deepseek→claude
+    /// failover); otherwise the bare DeepSeek client — byte-identical to today. This is the
+    /// SINGLE accessor every deepseek-routed loop entry resolves through (the direct
+    /// `&self.deepseek` callers + the `resolve()` chokepoint), so failover applies uniformly
+    /// without each call-site re-deciding. It NEVER affects `self.deepseek.inner()` (the
+    /// structured-inference client used by post-run memory extraction — which must stay on
+    /// DeepSeek, never failover).
+    fn loop_client(&self) -> &dyn AgentLlmClient {
+        match self.failover.as_deref() {
+            Some(wrapper) => wrapper,
+            None => &self.deepseek,
+        }
+    }
+
+    /// #26 — read the default-OFF `FRIDAY_PROVIDER_FAILOVER` gate and, only when it is on,
+    /// wrap the deepseek route in the deepseek→claude failover wrapper (DARK). The env read
+    /// is split from the logic so the decision is unit-testable WITHOUT `set_var` (the
+    /// program-standard env-race-free idiom): the real work is in
+    /// [`Self::wrap_for_failover_flagged`]. Generic over `T` (it boxes the wrapper to
+    /// `dyn AgentLlmClient`, erasing the concrete leg types) so the test runtime drives it.
+    fn maybe_wrap_for_failover(self) -> Result<Self, HubInitError> {
+        let enabled = provider_failover_from(std::env::var(ENV_PROVIDER_FAILOVER).ok().as_deref());
+        self.wrap_for_failover_flagged(enabled)
+    }
+
+    /// #26 — the testable inner of [`Self::maybe_wrap_for_failover`].
+    ///
+    /// - `enabled == false` ⇒ `Ok(self)` UNCHANGED: the `failover` field stays `None`, the
+    ///   deepseek route dispatches the bare client — BYTE-IDENTICAL to today. No client is
+    ///   built, no env is read. This is the prod default.
+    /// - `enabled == true` but NO Claude fallback is wired (`self.claude.is_none()`) ⇒
+    ///   `Err(HubInitError::FailoverMisconfigured)`: a HARD boot error, never a silent
+    ///   no-op (a failover wrapper with no fallback is meaningless). Checked BEFORE any
+    ///   client construction, so a misconfigured boot fails fast + spends nothing.
+    /// - `enabled == true` AND Claude present ⇒ build the wrapper and attach it via
+    ///   [`Self::with_failover`]. The wrapper's PRIMARY is a FRESH DeepSeek agent client
+    ///   (from the SAME env key the boot `self.deepseek` used) and its FALLBACK a FRESH
+    ///   Claude agent client (from the SAME env key `maybe_attach_claude_from_env` used) —
+    ///   so `self.deepseek` (and its `.inner()` for memory extraction, which must NOT
+    ///   failover) AND the independent `self.claude` route both stay INTACT and untouched.
+    ///   The fresh primary is a `DeepSeekClient<UreqTransport>` regardless of `T` (boxed to
+    ///   `dyn`, so the method stays generic); reading the env keys spends no network/quota —
+    ///   and the only path that reaches this build branch is the gated `live()` (where the
+    ///   keys are present). A missing key here is a hard error, never a silent degrade.
+    ///
+    /// HONEST scope: the `enabled && claude present` build branch is reached only from
+    /// `live()` (it builds real env-keyed clients). The deterministic, no-key proofs are:
+    /// the wrapper's own behavior (src/provider_failover.rs tests + tests/provider_failover.rs
+    /// driving the wrapper through the real loop) and the two DECISION branches above
+    /// (`flag-off byte-identical` + `flag-on-Claude-absent hard error`) which this method
+    /// exposes for direct test without env or a real key.
+    fn wrap_for_failover_flagged(self, enabled: bool) -> Result<Self, HubInitError> {
+        if !enabled {
+            // OFF ⇒ wrapper not constructed ⇒ byte-identical to today.
+            return Ok(self);
+        }
+        // ON: a fallback is MANDATORY — fail closed (hard error) if Claude was not wired.
+        if self.claude.is_none() {
+            return Err(HubInitError::FailoverMisconfigured);
+        }
+        // ON + Claude present: build FRESH primary + fallback from env (the `live()` path),
+        // leaving `self.deepseek` and `self.claude` untouched.
+        let primary_client = DeepSeekClient::from_env().map_err(HubInitError::DeepSeek)?;
+        let primary = DeepSeekAgentLlmClient::new(primary_client);
+        let fallback_client =
+            friday_anthropic::ClaudeClient::from_env().map_err(HubInitError::Claude)?;
+        let fallback =
+            crate::ClaudeAgentLlmClient::new(fallback_client, friday_anthropic::DEFAULT_MODEL);
+        let wrapper = crate::provider_failover::ProviderFailoverWrapper::new(
+            primary,
+            Box::new(fallback) as Box<dyn AgentLlmClient>,
+        );
+        Ok(self.with_failover(Box::new(wrapper)))
     }
 
     /// C1 PR-B — attach the DARK Codex route EXECUTOR (builder, default-off). MIRRORS
@@ -1023,8 +1143,12 @@ impl<T: Transport> HubRuntime<T> {
         // gate-enforced; a mutating tool would Pause — Phase 1 admits none), appends this
         // turn, and owner-wires a Finished answer's `run_result`. NO new loop code.
         let approve = |req: &MutatingActionRequest| self.approval.approve(req);
+        // #26: this DeepSeek-routed sessioned entry drives `loop_client()` (the failover
+        // wrapper when the DARK gate is on; the bare DeepSeek client otherwise) so failover
+        // applies on the SAME deepseek route the resolver chokepoint serves. Default-off ⇒
+        // `&self.deepseek` ⇒ byte-identical to today.
         let outcome = match run_session_loop(
-            &self.deepseek,
+            self.loop_client(),
             &self.executor,
             self.db.conn(),
             run_id,
@@ -2076,9 +2200,15 @@ impl HubRuntime<UreqTransport> {
         // (`FRIDAY_CODEX_ROUTE_ENABLED`). Codex attach is INFALLIBLE (it reads no credential —
         // the local app-server is spawned lazily, per-turn / at validate), so it chains after
         // the fallible Claude attach without its own `?`.
-        Ok(runtime
+        //
+        // #26 — FINALLY, behind its OWN default-OFF gate (`FRIDAY_PROVIDER_FAILOVER`), wrap
+        // the deepseek route in the deepseek→claude failover wrapper. ORDERED AFTER
+        // `maybe_attach_claude_from_env` so it can see whether Claude was wired: flag ON but
+        // Claude absent is a HARD boot error (never a silent no-op). It is fallible.
+        runtime
             .maybe_attach_claude_from_env()?
-            .maybe_attach_codex_from_env())
+            .maybe_attach_codex_from_env()
+            .maybe_wrap_for_failover()
     }
 
     /// S7 — read the default-OFF gate and, only when it is on, build the live Claude
@@ -2163,6 +2293,23 @@ fn codex_route_enabled_from_env() -> bool {
     matches!(std::env::var(ENV_CODEX_ROUTE_ENABLED), Ok(v) if v.trim() == "1")
 }
 
+/// #26 — the default-OFF environment gate that governs whether [`HubRuntime::live`] wraps
+/// the deepseek route in the deepseek→claude FAILOVER wrapper. MIRRORS the route gates'
+/// narrow discipline: ON only when `FRIDAY_PROVIDER_FAILOVER` is exactly `"1"` (after
+/// trimming). UNSET / empty / `"0"` / any other value ⇒ OFF (unchanged prod default: the
+/// wrapper is never constructed, the bare deepseek client dispatches — BYTE-IDENTICAL to
+/// today). Kept narrow + explicit so this provider-substitution path cannot be enabled by
+/// accident.
+pub const ENV_PROVIDER_FAILOVER: &str = "FRIDAY_PROVIDER_FAILOVER";
+
+/// Pure flag-matcher for [`ENV_PROVIDER_FAILOVER`] (env read split out so it is
+/// unit-testable without `set_var` — the program-standard env-race-free idiom this file
+/// uses). DEFAULT-OFF: `None` (unset) ⇒ false; ON only for the exact opt-in value `"1"`
+/// (trimmed); everything else ⇒ false.
+fn provider_failover_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
 /// NS-6 — the default-OFF environment gate that governs whether the mission-bound agent
 /// handoff MINTS + PERSISTS + LINKS a destination-bound Context Passport for the WorkItem's
 /// lane/target. ON only when `FRIDAY_PASSPORT_MINT` is exactly `"1"` (after trimming). UNSET /
@@ -2245,7 +2392,12 @@ impl<T: Transport> ProviderClientResolver for HubRuntime<T> {
     /// (NoClientForProvider) rather than driving the WRONG conn-less path.
     fn resolve(&self, route: &ProviderRoute) -> Option<&dyn AgentLlmClient> {
         match route.provider_id.as_str() {
-            "deepseek" => Some(&self.deepseek),
+            // #26: when the DARK failover wrapper is attached (gated `live()` +
+            // `FRIDAY_PROVIDER_FAILOVER=1` + Claude present) the deepseek route dispatches
+            // the WRAPPER (deepseek→claude failover); otherwise the bare client. Selection
+            // still reports `provider_id="deepseek"` — failover is execution-layer, NOT a
+            // reroute (UNW-003 routing-truth). Default-off ⇒ `loop_client()` is `&self.deepseek`.
+            "deepseek" => Some(self.loop_client()),
             // DARK: `as_deref()` yields `None` whenever the Claude client was not wired
             // (the default), so the default-off route fail-closes exactly like any
             // other unwired provider.
@@ -2387,6 +2539,88 @@ mod tests {
         )
         .unwrap();
         (rt, ws, post_calls) // TempDir guard keeps the workspace alive; counter for the no-hidden test
+    }
+
+    // ── #26: provider-failover wiring DECISION (flag-off byte-identical / flag-on-no-fallback) ──
+    //
+    // These two tests cover the `wrap_for_failover_flagged` DECISION branches WITHOUT a real key
+    // (the `enabled && claude present` build branch reads env keys and is reached only from
+    // `live()`; the wrapper's BEHAVIOR is proven deterministically in src/provider_failover.rs +
+    // tests/provider_failover.rs). The flag-matcher truth table is pinned separately.
+
+    /// #26 — the pure flag matcher: ON only for exact trimmed `"1"`; everything else OFF
+    /// (the default). Mirrors the route gates' narrow discipline.
+    #[test]
+    fn provider_failover_flag_matcher_is_exact_one_default_off() {
+        assert!(provider_failover_from(Some("1")));
+        assert!(provider_failover_from(Some(" 1 ")), "trimmed");
+        for off in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("true"),
+            Some("yes"),
+            Some("11"),
+            Some("1x"),
+        ] {
+            assert!(
+                !provider_failover_from(off),
+                "{off:?} must be OFF (default)"
+            );
+        }
+    }
+
+    /// #26 — flag-OFF ⇒ the wrapper is NOT constructed: the `failover` field stays `None`, so
+    /// the deepseek route dispatches the bare client (byte-identical to today). Proven even
+    /// WITH a Claude client wired — flag-off short-circuits before any wrap.
+    #[test]
+    fn failover_flag_off_does_not_construct_wrapper_byte_identical() {
+        let (mut rt, _ws, _c) = runtime_with(
+            "failover-off",
+            &["{\"tool\":\"none\"}"],
+            Box::new(DenyAllApprovals),
+        );
+        rt = rt.with_claude(Box::new(StubClaudeMeteredClient::new(vec![], 11, 8)));
+        assert!(rt.failover.is_none(), "precondition: no wrapper yet");
+        let rt = rt
+            .wrap_for_failover_flagged(false)
+            .expect("flag-off is infallible");
+        assert!(
+            rt.failover.is_none(),
+            "flag-OFF must NOT construct the failover wrapper — the bare deepseek client dispatches"
+        );
+        // The deepseek route still resolves to a client (the bare one) — selectable, unchanged.
+        let deepseek_route = ProviderRoute {
+            provider_id: "deepseek".into(),
+            ..RouteRegistry::autonomous_baseline()
+                .get("deepseek")
+                .unwrap()
+                .clone()
+        };
+        assert!(
+            rt.resolve(&deepseek_route).is_some(),
+            "the deepseek route still dispatches the bare client"
+        );
+    }
+
+    /// #26 — flag-ON but NO Claude fallback wired ⇒ a HARD boot error
+    /// (`FailoverMisconfigured`), NEVER a silent no-op. Checked BEFORE any client build, so a
+    /// misconfigured boot fails fast.
+    #[test]
+    fn failover_flag_on_without_claude_is_hard_boot_error() {
+        let (rt, _ws, _c) = runtime_with(
+            "failover-no-claude",
+            &["{\"tool\":\"none\"}"],
+            Box::new(DenyAllApprovals),
+        );
+        assert!(rt.claude.is_none(), "precondition: no Claude fallback");
+        // `HubRuntime` is not `Debug`, so match on the result directly rather than
+        // `expect_err` (which would need the Ok type to be Debug).
+        match rt.wrap_for_failover_flagged(true) {
+            Err(HubInitError::FailoverMisconfigured) => {}
+            Err(other) => panic!("expected FailoverMisconfigured, got {other:?}"),
+            Ok(_) => panic!("flag-ON with no fallback must be a hard error (no silent no-op)"),
+        }
     }
 
     // ── TP-PR2 (H-1): the live boot AgentActionContext PRODUCER ──────────────────────────
