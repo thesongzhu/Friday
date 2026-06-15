@@ -128,7 +128,7 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use friday_crypto::{seal, DataKey, DeviceKeypair, FileSecureStore};
-use friday_deepseek::Transport;
+use friday_deepseek::{Transport, UreqTransport};
 use friday_hub::hub_server::{AuthedPrincipal, ForwardedAuth};
 use friday_hub::key_source::{PEER_PUBKEY_ALLOWLIST_ID, X25519_PUBKEY_LEN};
 use friday_hub::runtime::{HubConfig, HubRuntime};
@@ -301,7 +301,7 @@ fn run() -> Result<(), ServerError> {
     // allowlist admits, so owner-wiring records `owner == caller` and the body is releasable to
     // them. `HubRuntime::live` only CONSTRUCTS the provider client (no network call); an actual
     // run needs the env key — the separate operator live-proof.
-    let runtime = HubRuntime::live(HubConfig {
+    let mut runtime = HubRuntime::live(HubConfig {
         // Clone here so the `db_path` binding stays alive for the session-reaper tick below,
         // which opens its OWN connection to the SAME path (the accept-loop's runtime
         // connection is never shared across threads).
@@ -315,6 +315,19 @@ fn run() -> Result<(), ServerError> {
         operator_vk: None,
     })
     .map_err(|_| ServerError::Init)?;
+
+    // (1b) BUG-6 — OPERATOR-TRIGGERED route validation. `HubRuntime::live` attaches a gated
+    // secondary route (claude / codex) `available:true, validation_ok:false`; the route is NOT
+    // dispatchable until validated, and `validate_and_enable_*` had NO production caller. When the
+    // operator passes `--validate-claude` / `--validate-codex`, run the probe NOW on the held
+    // serving runtime (so the in-process `validation_ok` flip lives in the long-lived process that
+    // serves requests — a separate one-shot would persist nothing). DEFAULT (no flag) ⇒ skipped ⇒
+    // ZERO quota, so a normal boot never spends an Anthropic token (the "never auto-run at boot"
+    // requirement). Fail-soft: a failed secondary-route probe leaves it closed; DeepSeek serves on.
+    let validate = ValidateRequest::from_args(&args);
+    if validate.any() {
+        run_boot_validation(&mut runtime, validate);
+    }
 
     // (2) The server's OWN long-lived keypair (the ONLY `generate()` in non-test code). In
     // production this comes from SecureStore; the peer's public key arrives FROM THE PEER over
@@ -1747,6 +1760,90 @@ fn arg_value(args: &[String], name: &str) -> Option<String> {
             args.iter()
                 .find_map(|arg| arg.strip_prefix(&prefix).map(str::to_string))
         })
+}
+
+/// True iff the bare flag `name` appears as its OWN argument (no value form). Used for the
+/// operator-triggered validate flags below.
+fn has_flag(args: &[String], name: &str) -> bool {
+    args.iter().any(|a| a == name)
+}
+
+/// (BUG-6) The operator CLI flag that triggers a ONE-SHOT live Claude key probe at boot, BEFORE
+/// the serve loop, marking the in-process `claude` route `validation_ok: true` on success so a
+/// claude-PINNED / claude-SIZE-ROUTED request becomes SELECTABLE in the long-lived serving runtime.
+/// DEFAULT-ABSENT: a normal boot passes this flag NOT AT ALL ⇒ no probe ⇒ ZERO Anthropic quota
+/// spent (the `validate_and_enable_claude` probe spends ~1-2 tokens, so it MUST NOT auto-run — this
+/// explicit, operator-supplied flag is the trigger). Only meaningful with
+/// `FRIDAY_CLAUDE_ROUTE_ENABLED=1` (else the `claude` route is not attached and the mark is a no-op).
+pub const VALIDATE_CLAUDE_FLAG: &str = "--validate-claude";
+
+/// (BUG-6) The operator CLI flag that triggers a ONE-SHOT creds-light Codex app-server health probe
+/// at boot, BEFORE the serve loop, marking the in-process `codex` route `validation_ok: true` on a
+/// healthy probe (spawns a local app-server; NO model turn ⇒ ZERO completion quota). DEFAULT-ABSENT
+/// (mirrors [`VALIDATE_CLAUDE_FLAG`]). Only meaningful with `FRIDAY_CODEX_ROUTE_ENABLED=1`.
+pub const VALIDATE_CODEX_FLAG: &str = "--validate-codex";
+
+/// Which routes the operator asked to validate at boot (pure parse of the CLI args — no env, no
+/// network — so it is unit-testable). The serve `run()` consults this AFTER building the runtime
+/// and BEFORE the serve loop. Absent flags ⇒ all `false` ⇒ no probe, no quota (the prod default).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ValidateRequest {
+    pub claude: bool,
+    pub codex: bool,
+}
+
+impl ValidateRequest {
+    pub fn from_args(args: &[String]) -> Self {
+        ValidateRequest {
+            claude: has_flag(args, VALIDATE_CLAUDE_FLAG),
+            codex: has_flag(args, VALIDATE_CODEX_FLAG),
+        }
+    }
+
+    fn any(&self) -> bool {
+        self.claude || self.codex
+    }
+}
+
+/// (BUG-6) Run the operator-requested route validation against the HELD serving runtime, in place,
+/// BEFORE the serve loop. This is the SINGLE production caller of
+/// [`HubRuntime::validate_and_enable_claude`] / [`HubRuntime::validate_and_enable_codex`] — without
+/// it those methods had ZERO bin callers, so `FRIDAY_CLAUDE_ROUTE_ENABLED=1` attached the route
+/// `available:true, validation_ok:false` and a claude-pinned/size-routed request fail-closed
+/// `NoEligibleRoute` forever (the silent route-selection no-op BUG-6 names).
+///
+/// FAIL-SOFT, not fail-boot: a CredentialMissing / Invalid / Unavailable / unhealthy outcome is
+/// LOGGED (coarse, secret-free label) and leaves that route NON-validated (claude/codex requests
+/// `NoEligibleRoute`; the DeepSeek primary is UNAFFECTED). Aborting the whole boot over a
+/// SECONDARY-route validation failure would needlessly take down a healthy DeepSeek hub — the
+/// safe posture is "DeepSeek serves; the unvalidated secondary route stays closed". The mutation is
+/// in-process only (mirrors `validate_and_enable_*`), which is exactly why it must run on the
+/// long-lived serving runtime here, not in a separate one-shot process that would exit and persist
+/// nothing.
+fn run_boot_validation(runtime: &mut HubRuntime<UreqTransport>, req: ValidateRequest) {
+    if req.claude {
+        eprintln!("hub_agent_run_server: --validate-claude — running live Claude key probe (spends ~1-2 Anthropic tokens)");
+        let outcome = runtime.validate_and_enable_claude();
+        if outcome.is_confirmed_valid() {
+            eprintln!("hub_agent_run_server: claude route VALIDATED — claude-pinned/size-routed requests now selectable");
+        } else {
+            eprintln!(
+                "hub_agent_run_server: claude validation NOT confirmed ({}) — claude route stays closed (DeepSeek unaffected)",
+                outcome.label()
+            );
+        }
+    }
+    if req.codex {
+        eprintln!("hub_agent_run_server: --validate-codex — running creds-light Codex app-server health probe (no model turn)");
+        match runtime.validate_and_enable_codex() {
+            Ok(_summary) => eprintln!(
+                "hub_agent_run_server: codex route VALIDATED — codex-pinned/size-routed requests now selectable"
+            ),
+            Err(_e) => eprintln!(
+                "hub_agent_run_server: codex validation NOT confirmed (app-server health probe failed) — codex route stays closed (DeepSeek unaffected)"
+            ),
+        }
+    }
 }
 
 /// Ephemeral, non-secret bytes for the boot-time runtime config (dormant under deny-all).
@@ -4315,6 +4412,39 @@ mod tests {
         assert_eq!(arg_value(&args, "--port").as_deref(), Some("7777"));
         assert_eq!(arg_value(&args, "--owner").as_deref(), Some("principal:o"));
         assert_eq!(arg_value(&args, "--missing"), None);
+    }
+
+    #[test]
+    fn validate_request_parses_the_operator_flags_default_off() {
+        // BUG-6: a normal boot (no flag) ⇒ NO validation ⇒ zero quota. The flags are bare
+        // (presence = true), independent, and accept the `=`-free OWN-argument form.
+        let base = vec![
+            "bin".to_string(),
+            "--workspace".to_string(),
+            "/tmp".to_string(),
+        ];
+        let none = ValidateRequest::from_args(&base);
+        assert_eq!(none, ValidateRequest::default());
+        assert!(
+            !none.any(),
+            "no flag ⇒ no probe (the prod default, zero quota)"
+        );
+
+        let mut claude = base.clone();
+        claude.push(VALIDATE_CLAUDE_FLAG.to_string());
+        let r = ValidateRequest::from_args(&claude);
+        assert!(r.claude && !r.codex && r.any());
+
+        let mut both = base.clone();
+        both.push(VALIDATE_CLAUDE_FLAG.to_string());
+        both.push(VALIDATE_CODEX_FLAG.to_string());
+        let r = ValidateRequest::from_args(&both);
+        assert!(r.claude && r.codex);
+
+        // A value-form `--validate-claude=1` is NOT the bare flag — only the OWN-argument form
+        // triggers (avoids an accidental enable from a stray `=`-suffixed arg).
+        let valueish = vec!["bin".to_string(), "--validate-claude=1".to_string()];
+        assert!(!ValidateRequest::from_args(&valueish).claude);
     }
 
     #[test]
