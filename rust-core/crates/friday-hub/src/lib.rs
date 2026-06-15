@@ -341,6 +341,17 @@ pub mod http_tools;
 /// operator-provisioned Serper/Tavily keys (operator-gated).
 pub mod web_search;
 
+/// L2-3 `image_analysis` (vision) capability tool — sends validated image(s) + a prompt to a
+/// vision model and returns the analysis. Registered in [`ToolRegistry::default`] but REFUSED by
+/// the gate-dispatch chokepoint unless `FRIDAY_VISION_ENABLED` is `"1"` (default-OFF → DARK →
+/// flag-OFF byte-identical) and HIDDEN from the model menu while off. The
+/// [`vision_tools::VisionExecutor`] VALIDATES every image fail-closed BEFORE any model call —
+/// workspace paths via friday-fs `open_read_within_root`, http(s) URLs via [`ssrf_guard`] +
+/// [`http_tools`] (resolve+pin), data-URIs by media-type + decoded-size cap — then delegates to
+/// an injected [`friday_vision::VisionModelClient`] (the Claude vision impl in prod, a stub in
+/// tests). Flipping the flag live is operator-gated (vision provider + token cost).
+pub mod vision_tools;
+
 /// execrun-enablement slice 2 (production key-sourcing pre-req): the SHARED, fail-closed
 /// master-key reader + the two domain-separated derivations both the `hub_agent_run_server`
 /// bin (the FileSecureStore KEK) and the `hub_agent_run_enroll` bin (the client X25519
@@ -1102,18 +1113,26 @@ pub fn build_tool_prompt(task: &str) -> String {
 pub fn build_tool_prompt_with(task: &str, registry: &ToolRegistry) -> String {
     let web_fetch_enabled = web_fetch_enabled_from(std::env::var(FRIDAY_WEB_FETCH_ENABLED).ok());
     let web_search_enabled = web_search_enabled_from(std::env::var(FRIDAY_WEB_SEARCH_ENABLED).ok());
-    build_tool_prompt_with_flagged(task, registry, web_fetch_enabled, web_search_enabled)
+    let vision_enabled = vision_enabled_from(std::env::var(FRIDAY_VISION_ENABLED).ok());
+    build_tool_prompt_with_flagged(
+        task,
+        registry,
+        web_fetch_enabled,
+        web_search_enabled,
+        vision_enabled,
+    )
 }
 
 /// Flag-parameterized menu builder (the pure inner of [`build_tool_prompt_with`]). When a
-/// capability flag is false, its tool (`web_fetch` / `web_search`) is filtered OUT of the
-/// advertised menu so the model is never offered it (byte-identical to the pre-L2 prompt).
-/// Injected directly by the L2 prompt tests so they never mutate `std::env`.
+/// capability flag is false, its tool (`web_fetch` / `web_search` / `image_analysis`) is filtered
+/// OUT of the advertised menu so the model is never offered it (byte-identical to the pre-L2
+/// prompt). Injected directly by the L2 prompt tests so they never mutate `std::env`.
 pub(crate) fn build_tool_prompt_with_flagged(
     task: &str,
     registry: &ToolRegistry,
     web_fetch_enabled: bool,
     web_search_enabled: bool,
+    vision_enabled: bool,
 ) -> String {
     let mut s = String::from(
         "You are Friday's tool-using agent. Pick exactly ONE tool to make progress.\n\
@@ -1125,6 +1144,9 @@ pub(crate) fn build_tool_prompt_with_flagged(
             continue;
         }
         if name == "web_search" && !web_search_enabled {
+            continue;
+        }
+        if name == "image_analysis" && !vision_enabled {
             continue;
         }
         s.push_str(&format!("- {name}: {desc}\n"));
@@ -1412,6 +1434,24 @@ impl Default for ToolRegistry {
             Risk::ReadOnly,
             "search the web for information (params: query, numResults 1-20, freshness \
              day/week/month); returns titled results with URLs and snippets",
+        );
+        // L2-3 image_analysis — the third L2 capability tool. READ-ONLY (mutating:false,
+        // Risk::ReadOnly): it sends image(s) + a prompt to a vision model and returns the
+        // analysis text — never mutating local state — so it base-Allows at the gate (no approval
+        // pause). The analysis IS external/model content (prompt-injection-inward), but the
+        // UNW-001 gate still evaluates every SUBSEQUENT tool call (backstop), and the egress side
+        // is closed by the executor's fail-closed image validation (workspace-scope for local
+        // paths, SSRF for URL images, data-uri caps). ALWAYS registered, but the gate-dispatch
+        // chokepoint refuses it unless FRIDAY_VISION_ENABLED is "1" (default-OFF → DARK), so
+        // registering it changes nothing until the flag is flipped (operator-gated — vision is
+        // token-expensive and needs a provisioned vision provider key).
+        r.register(
+            "image_analysis",
+            false,
+            Risk::ReadOnly,
+            "analyze image(s) with a vision model (params: prompt, images [workspace path / \
+             http(s) URL / data: URI], model, detail low/high/auto, maxTokens); returns the \
+             model's analysis text",
         );
         r
     }
@@ -2193,6 +2233,12 @@ pub enum ExecError {
     /// is a normal `ToolReceipt` carrying the fail-closed warning (so the model sees it). This
     /// variant is a hard provider/egress failure.
     WebSearch(crate::web_search::WebSearchError),
+    /// An `image_analysis` (vision) failure — an image validation/acquisition refusal (bad
+    /// data-uri, oversize, unsupported media type, SSRF refusal of a URL image, …) or a hard
+    /// provider failure. A MISSING vision-provider key is NOT this — it is a normal `ToolReceipt`
+    /// carrying the fail-closed warning (so the model sees it). A workspace-path containment
+    /// refusal surfaces as `ExecError::Fs` (the hardened safe-open), not this variant.
+    Vision(crate::vision_tools::VisionToolError),
 }
 
 impl std::fmt::Display for ExecError {
@@ -2204,6 +2250,7 @@ impl std::fmt::Display for ExecError {
             ExecError::Io(e) => write!(f, "io_error:{e}"),
             ExecError::WebFetch(e) => write!(f, "web_fetch_error:{e}"),
             ExecError::WebSearch(e) => write!(f, "web_search_error:{e}"),
+            ExecError::Vision(e) => write!(f, "image_analysis_error:{e}"),
         }
     }
 }
@@ -2254,6 +2301,12 @@ pub struct FsToolExecutor {
 impl FsToolExecutor {
     pub fn new(root: impl Into<std::path::PathBuf>) -> Self {
         Self { root: root.into() }
+    }
+    /// The workspace root this executor is contained to. Exposed so the L2-3
+    /// [`vision_tools::VisionExecutor`] can scope local-path image reads to the SAME root the fs
+    /// tools use (it constructs `open_read_within_root` against this path).
+    pub fn root(&self) -> &std::path::Path {
+        &self.root
     }
     fn param<'a>(params: &'a [(String, String)], key: &str) -> Result<&'a str, ExecError> {
         params
@@ -2876,6 +2929,7 @@ pub(crate) fn gate_dispatch_with_policy(
     let enforce_trust = trust_grant_enforce_from(std::env::var(FRIDAY_TRUST_GRANT_ENFORCE).ok());
     let web_fetch_enabled = web_fetch_enabled_from(std::env::var(FRIDAY_WEB_FETCH_ENABLED).ok());
     let web_search_enabled = web_search_enabled_from(std::env::var(FRIDAY_WEB_SEARCH_ENABLED).ok());
+    let vision_enabled = vision_enabled_from(std::env::var(FRIDAY_VISION_ENABLED).ok());
     gate_dispatch_with_policy_enforced(
         conn,
         executor,
@@ -2887,6 +2941,7 @@ pub(crate) fn gate_dispatch_with_policy(
         enforce_trust,
         web_fetch_enabled,
         web_search_enabled,
+        vision_enabled,
     )
 }
 
@@ -2933,13 +2988,28 @@ pub(crate) fn web_search_enabled_from(raw: Option<String>) -> bool {
     matches!(raw, Some(v) if v.trim() == "1")
 }
 
+/// The `FRIDAY_VISION_ENABLED` env var (L2-3). When exactly `"1"` (trimmed), the `image_analysis`
+/// (vision) capability tool is DISPATCHABLE; otherwise the gate-dispatch chokepoint REFUSES it
+/// fail-closed (`vision_disabled_flag_off:image_analysis`) BEFORE classify/execute, so the tool —
+/// though always REGISTERED — is unavailable. DEFAULT-OFF (DARK): flipping it live enables a
+/// token-EXPENSIVE vision provider call (and needs an operator-provisioned vision provider key,
+/// `FRIDAY_ANTHROPIC_API_KEY`) and is OPERATOR-GATED. Kept narrow + explicit (literal `"1"` only)
+/// so the capability can never be enabled by accident.
+pub const FRIDAY_VISION_ENABLED: &str = "FRIDAY_VISION_ENABLED";
+
+/// Pure flag-matcher for [`FRIDAY_VISION_ENABLED`] (env read split out for race-free unit tests).
+/// ONLY the literal `"1"` (trimmed) enables; everything else (incl. `"true"`) is OFF.
+pub(crate) fn vision_enabled_from(raw: Option<String>) -> bool {
+    matches!(raw, Some(v) if v.trim() == "1")
+}
+
 /// The flag-parameterized chokepoint. `enforce_trust` is supplied by the public
 /// [`gate_dispatch_with_policy`] (from the env flag) and injected directly by the NS-2
 /// behavioral tests (so they never mutate `std::env`, avoiding the in-process test race).
 /// When `enforce_trust` is FALSE the NS-2 branch is skipped and behavior is byte-identical
-/// to the NS-1 baseline. `web_fetch_enabled` / `web_search_enabled` are the L2 capability
-/// flags (same split-env idiom): false ⇒ the corresponding capability tool is refused here
-/// before classify/execute (byte-identical to the pre-L2 baseline for every other action).
+/// to the NS-1 baseline. `web_fetch_enabled` / `web_search_enabled` / `vision_enabled` are the L2
+/// capability flags (same split-env idiom): false ⇒ the corresponding capability tool is refused
+/// here before classify/execute (byte-identical to the pre-L2 baseline for every other action).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn gate_dispatch_with_policy_enforced(
     conn: &Connection,
@@ -2952,6 +3022,7 @@ pub(crate) fn gate_dispatch_with_policy_enforced(
     enforce_trust: bool,
     web_fetch_enabled: bool,
     web_search_enabled: bool,
+    vision_enabled: bool,
 ) -> Result<GateDispatch, StorageError> {
     // (NS-1) The run's action context is carried HERE on `policy` (`policy.action_context()`),
     // already shaped as a `friday_storage::AgentActionContext` — the NS-2 trust check (below)
@@ -2980,6 +3051,19 @@ pub(crate) fn gate_dispatch_with_policy_enforced(
     {
         return Ok(GateDispatch::Denied(format!(
             "web_search_disabled_flag_off:{}",
+            raw.action
+        )));
+    }
+    // (L2-3) FRIDAY_VISION_ENABLED flag-gate — identical posture to the web_fetch/web_search gates
+    //     above, for the `image_analysis` (vision) capability tool. Fires ONLY for
+    //     `image_analysis` (canonicalized through the same map), so a flag-OFF dispatch of any
+    //     other action stays byte-identical. Vision is token-EXPENSIVE; flipping the flag live is
+    //     operator-gated (provider + cost). When ON the executor (a CompositeToolExecutor's
+    //     VisionExecutor) validates every image fail-closed before any model call.
+    if !vision_enabled && tool_name_map::canonical_rust_name(&raw.action) == Some("image_analysis")
+    {
+        return Ok(GateDispatch::Denied(format!(
+            "vision_disabled_flag_off:{}",
             raw.action
         )));
     }
@@ -5602,8 +5686,8 @@ mod tests {
         // chokepoint/classification need it), but HIDDEN from the menu when off.
         let reg = ToolRegistry::default();
         // Hold the web_search flag OFF in BOTH arms so this isolates the web_fetch flag.
-        let off = build_tool_prompt_with_flagged("t", &reg, false, false);
-        let on = build_tool_prompt_with_flagged("t", &reg, true, false);
+        let off = build_tool_prompt_with_flagged("t", &reg, false, false, false);
+        let on = build_tool_prompt_with_flagged("t", &reg, true, false, false);
         assert!(
             !off.contains("web_fetch"),
             "flag-OFF menu must NOT advertise web_fetch:\n{off}"
@@ -5652,7 +5736,7 @@ mod tests {
     fn web_composite(
         ws: std::path::PathBuf,
     ) -> crate::http_tools::CompositeToolExecutor<FsToolExecutor> {
-        let fs = FsToolExecutor::new(ws);
+        let fs = FsToolExecutor::new(ws.clone());
         let web = crate::http_tools::WebFetchExecutor::with_policy(crate::ssrf_guard::SsrfPolicy {
             allow_private_network: true,
             ..Default::default()
@@ -5660,7 +5744,13 @@ mod tests {
         // The web_search arm is irrelevant to these web_fetch tests (no web_search is
         // dispatched here) — a default-config executor satisfies the composite signature.
         let search = crate::web_search::WebSearchExecutor::with_config(Default::default());
-        crate::http_tools::CompositeToolExecutor::new(fs, web, search)
+        // The vision arm is likewise irrelevant here (no image_analysis dispatched) — a
+        // stub-backed executor satisfies the composite signature.
+        let vision = crate::vision_tools::VisionExecutor::new(
+            ws,
+            Box::new(friday_vision::StubVisionClient::default()),
+        );
+        crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision)
     }
 
     #[test]
@@ -5693,6 +5783,7 @@ mod tests {
             false, // enforce_trust OFF
             false, // web_fetch flag OFF — the tool is unavailable
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
         )
         .unwrap();
 
@@ -5738,6 +5829,7 @@ mod tests {
                 false,
                 flag,
                 false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
+                false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
             )
             .unwrap();
             (matches!(out, GateDispatch::Executed(_)), exec.calls.get())
@@ -5776,6 +5868,7 @@ mod tests {
             false, // enforce_trust OFF
             true,  // web_fetch flag ON
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
         )
         .unwrap();
 
@@ -5805,11 +5898,15 @@ mod tests {
         // flag-ON window where an unguarded fetch can reach a private address.
         let db = Db::open_hub(&temp_path("wf-ssrf")).unwrap();
         let ws = temp_ws("wf-ssrf");
-        let fs = FsToolExecutor::new(ws);
+        let fs = FsToolExecutor::new(ws.clone());
         // PRODUCTION SSRF policy (deny-private) — NOT allow-private.
         let web = crate::http_tools::WebFetchExecutor::new();
         let search = crate::web_search::WebSearchExecutor::with_config(Default::default());
-        let composite = crate::http_tools::CompositeToolExecutor::new(fs, web, search);
+        let vision = crate::vision_tools::VisionExecutor::new(
+            ws,
+            Box::new(friday_vision::StubVisionClient::default()),
+        );
+        let composite = crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision);
         let approve = no_approval();
         let policy = RunPolicy::default();
         let call = raw(
@@ -5828,6 +5925,7 @@ mod tests {
             false,
             true,  // web_fetch flag ON
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
         )
         .unwrap();
 
@@ -5873,8 +5971,8 @@ mod tests {
         // Hold the web_fetch flag OFF in both arms so this isolates the web_search flag. The
         // flag-OFF prompt must equal the flag-ON prompt minus only the web_search line.
         let reg = ToolRegistry::default();
-        let off = build_tool_prompt_with_flagged("t", &reg, false, false);
-        let on = build_tool_prompt_with_flagged("t", &reg, false, true);
+        let off = build_tool_prompt_with_flagged("t", &reg, false, false, false);
+        let on = build_tool_prompt_with_flagged("t", &reg, false, true, false);
         assert!(
             !off.contains("web_search"),
             "flag-OFF menu must NOT advertise web_search:\n{off}"
@@ -5957,7 +6055,7 @@ mod tests {
         provider: crate::web_search::ConfiguredProvider,
         serper_key: Option<&str>,
     ) -> crate::http_tools::CompositeToolExecutor<FsToolExecutor> {
-        let fs = FsToolExecutor::new(ws);
+        let fs = FsToolExecutor::new(ws.clone());
         let web = crate::http_tools::WebFetchExecutor::new();
         let search =
             crate::web_search::WebSearchExecutor::with_config(crate::web_search::WebSearchConfig {
@@ -5975,7 +6073,13 @@ mod tests {
                     google_news_rss: base.to_string(),
                 },
             });
-        crate::http_tools::CompositeToolExecutor::new(fs, web, search)
+        // The vision arm is irrelevant to the web_search tests (no image_analysis dispatched) —
+        // a stub-backed executor satisfies the composite signature.
+        let vision = crate::vision_tools::VisionExecutor::new(
+            ws,
+            Box::new(friday_vision::StubVisionClient::default()),
+        );
+        crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision)
     }
 
     #[test]
@@ -6012,6 +6116,7 @@ mod tests {
             false, // enforce_trust OFF
             false, // web_fetch flag OFF
             false, // web_search flag OFF — the tool is unavailable
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
         )
         .unwrap();
 
@@ -6061,6 +6166,7 @@ mod tests {
             false, // enforce_trust OFF
             false, // web_fetch flag OFF
             true,  // web_search flag ON
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
         )
         .unwrap();
 
@@ -6110,6 +6216,7 @@ mod tests {
             false, // enforce_trust OFF
             false, // web_fetch flag OFF
             true,  // web_search flag ON
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
         )
         .unwrap();
 
@@ -6126,6 +6233,294 @@ mod tests {
                 );
             }
             other => panic!("missing-key serper must Execute a warning result, got {other:?}"),
+        }
+    }
+
+    // ── L2-3: FRIDAY_VISION_ENABLED gate-dispatch flag-gate (image_analysis availability) ──────
+    // Same FAITHFUL pattern as the L2-1/L2-2 tests above: a real DB + a real CompositeToolExecutor
+    // wrapping a VisionExecutor whose injected VisionModelClient is the deterministic offline
+    // StubVisionClient (NO real model/provider, NO real network) + the FsToolExecutor. The flag is
+    // injected via the `vision_enabled` bool, never std::env::set_var, so these never race other
+    // in-process tests. The image VALIDATION (workspace-scope / SSRF / data-uri caps) is exercised
+    // unit-side in src/vision_tools.rs; here we prove the LOOP-CLOSING contract: flag-OFF ⇒
+    // image_analysis UNAVAILABLE (refused before the executor, byte-identical) and menu-hidden;
+    // flag-ON ⇒ dispatchable AND it Executes through the (mock) vision client.
+
+    /// A tiny valid PNG signature + filler — passes the magic-byte sniff (the model client is a
+    /// stub, so the bytes need not render). Returned base64-encoded as a data: URI image spec.
+    fn stub_png_data_uri() -> String {
+        use base64::Engine as _;
+        let mut v = vec![0x89u8, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n'];
+        v.extend_from_slice(b"fake-png-payload");
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&v);
+        format!("data:image/png;base64,{b64}")
+    }
+
+    /// A composite (fs + web_fetch + web_search + a VISION executor backed by the offline
+    /// StubVisionClient) for the loopback vision tests. The vision SSRF policy is allow-private so
+    /// a future URL-image loopback case could reach 127.0.0.1; the BLOCKING posture is proven by
+    /// the prod-policy vision_tools test + the ssrf_guard table tests — never weakened here.
+    fn vision_composite(
+        ws: std::path::PathBuf,
+    ) -> crate::http_tools::CompositeToolExecutor<FsToolExecutor> {
+        let fs = FsToolExecutor::new(ws.clone());
+        let web = crate::http_tools::WebFetchExecutor::with_policy(crate::ssrf_guard::SsrfPolicy {
+            allow_private_network: true,
+            ..Default::default()
+        });
+        let search = crate::web_search::WebSearchExecutor::with_config(Default::default());
+        let vision = crate::vision_tools::VisionExecutor::with_policy(
+            ws,
+            crate::ssrf_guard::SsrfPolicy {
+                allow_private_network: true,
+                ..Default::default()
+            },
+            Box::new(friday_vision::StubVisionClient::default()),
+        );
+        crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision)
+    }
+
+    /// Pure env-matcher glue: exactly `"1"` (trimmed) enables; everything else is OFF.
+    #[test]
+    fn vision_enabled_from_only_literal_one_enables() {
+        assert!(
+            !vision_enabled_from(None),
+            "unset ⇒ OFF (prod default, DARK)"
+        );
+        assert!(!vision_enabled_from(Some(String::new())), "empty ⇒ OFF");
+        assert!(!vision_enabled_from(Some("0".to_string())), "0 ⇒ OFF");
+        assert!(
+            !vision_enabled_from(Some("true".to_string())),
+            "`true` ⇒ OFF (only `1` enables — narrow + explicit for a token-expensive capability)"
+        );
+        assert!(vision_enabled_from(Some("1".to_string())), "`1` ⇒ ON");
+        assert!(
+            vision_enabled_from(Some("  1  ".to_string())),
+            "whitespace-padded `1` ⇒ ON (trimmed)"
+        );
+    }
+
+    #[test]
+    fn vision_flag_off_prompt_menu_is_byte_identical_no_image_analysis() {
+        // The model-facing menu MUST NOT list `image_analysis` while its flag is OFF (else the
+        // model could pick it and eat a `vision_disabled_flag_off` refusal = a changed trajectory).
+        // Hold the web_fetch + web_search flags OFF in both arms so this isolates the vision flag.
+        // The flag-OFF prompt must equal the flag-ON prompt minus only the image_analysis line.
+        let reg = ToolRegistry::default();
+        let off = build_tool_prompt_with_flagged("t", &reg, false, false, false);
+        let on = build_tool_prompt_with_flagged("t", &reg, false, false, true);
+        assert!(
+            !off.contains("image_analysis"),
+            "flag-OFF menu must NOT advertise image_analysis:\n{off}"
+        );
+        assert!(
+            on.contains("image_analysis"),
+            "flag-ON menu MUST advertise image_analysis:\n{on}"
+        );
+        let on_without_vision: String = on
+            .split_inclusive('\n')
+            .filter(|l| !l.contains("image_analysis"))
+            .collect();
+        assert_eq!(
+            off, on_without_vision,
+            "flag-OFF prompt must equal the flag-ON prompt minus only the image_analysis line"
+        );
+    }
+
+    #[test]
+    fn vision_flag_off_refuses_tool_unavailable_executor_never_reached() {
+        // LOOP CLOSURE (flag-OFF arm): with FRIDAY_VISION_ENABLED OFF, a dispatched
+        // `image_analysis` is REFUSED at the chokepoint (`vision_disabled_flag_off`) BEFORE the
+        // executor — the tool is UNAVAILABLE, exactly as today. We assert the refusal AND that the
+        // executor is NEVER reached (no image validated/fetched, no model call).
+        let db = Db::open_hub(&temp_path("vis-off")).unwrap();
+        let ws = temp_ws("vis-off");
+        let composite = vision_composite(ws);
+        let exec = CountingExecutor {
+            inner: &composite,
+            calls: std::cell::Cell::new(0),
+        };
+        let approve = no_approval();
+        let policy = RunPolicy::default();
+        let call = raw(
+            "image_analysis",
+            &[("prompt", "describe"), ("images", "pic.png")],
+        );
+
+        let out = gate_dispatch_with_policy_enforced(
+            db.conn(),
+            &exec,
+            &call,
+            AuthzMode::DenyAll,
+            &approve,
+            &policy,
+            1000,
+            false, // enforce_trust OFF
+            false, // web_fetch flag OFF
+            false, // web_search flag OFF
+            false, // vision flag OFF — the tool is unavailable
+        )
+        .unwrap();
+
+        match out {
+            GateDispatch::Denied(reason) => assert_eq!(
+                reason, "vision_disabled_flag_off:image_analysis",
+                "flag-OFF must refuse image_analysis with the documented reason"
+            ),
+            other => panic!("flag-OFF must Deny image_analysis, got {other:?}"),
+        }
+        assert_eq!(
+            exec.calls.get(),
+            0,
+            "flag-OFF: the executor is NEVER reached (tool unavailable = no validation/model call)"
+        );
+    }
+
+    #[test]
+    fn vision_flag_off_is_byte_identical_for_other_tools() {
+        // The flag-gate fires ONLY for image_analysis: a NON-image_analysis dispatch (read_file)
+        // is BYTE-IDENTICAL whether the vision flag is ON or OFF — same verdict, same executor
+        // reach. This is the "flag-OFF byte-identical" guarantee for every existing tool.
+        let make = |flag: bool| {
+            let db = Db::open_hub(&temp_path("vis-bi")).unwrap();
+            let ws = temp_ws("vis-bi");
+            std::fs::write(ws.join("notes.md"), b"hello").unwrap();
+            let fs = FsToolExecutor::new(ws);
+            let exec = CountingExecutor {
+                inner: &fs,
+                calls: std::cell::Cell::new(0),
+            };
+            let approve = no_approval();
+            let policy = RunPolicy::default();
+            let out = gate_dispatch_with_policy_enforced(
+                db.conn(),
+                &exec,
+                &read_only_proposal(),
+                AuthzMode::DenyAll,
+                &approve,
+                &policy,
+                1000,
+                false,
+                false,
+                false,
+                flag, // vision flag toggled
+            )
+            .unwrap();
+            (matches!(out, GateDispatch::Executed(_)), exec.calls.get())
+        };
+        let off = make(false);
+        let on = make(true);
+        assert_eq!(
+            off, on,
+            "a non-image_analysis tool is identical with the vision flag on vs off"
+        );
+        assert!(off.0, "read_file should Execute (sanity)");
+    }
+
+    #[test]
+    fn vision_flag_on_dispatches_and_executes_through_mock_vision_client() {
+        // LOOP CLOSURE (flag-ON arm) — the FRIDAY_VISION_ENABLED manifest-mapped test. With the
+        // flag ON, image_analysis is dispatchable; the chokepoint Allows it (read-only, no approval
+        // pause) and the CompositeToolExecutor's VisionExecutor VALIDATES the image (a data: URI
+        // here — media-type image/* + base64 decode + size cap, NO network) then delegates to the
+        // injected mock VisionModelClient (the offline StubVisionClient), returning the analysis in
+        // the ToolReceipt. NO real model/provider, NO real network.
+        let db = Db::open_hub(&temp_path("vis-on")).unwrap();
+        let ws = temp_ws("vis-on");
+        let composite = vision_composite(ws);
+        let approve = no_approval();
+        let policy = RunPolicy::default();
+        let call = raw(
+            "image_analysis",
+            &[
+                ("prompt", "what is this?"),
+                ("images", &stub_png_data_uri()),
+            ],
+        );
+
+        let out = gate_dispatch_with_policy_enforced(
+            db.conn(),
+            &composite,
+            &call,
+            AuthzMode::DenyAll,
+            &approve,
+            &policy,
+            1000,
+            false, // enforce_trust OFF
+            false, // web_fetch flag OFF
+            false, // web_search flag OFF
+            true,  // vision flag ON
+        )
+        .unwrap();
+
+        match out {
+            GateDispatch::Executed(receipt) => {
+                assert_eq!(receipt.action, "image_analysis");
+                let content = receipt.content.expect("image_analysis returns content");
+                assert!(content.contains("STUB-VISION"), "content: {content}");
+                assert!(content.contains("images=1"), "content: {content}");
+                assert!(
+                    receipt.summary.contains("image_analysis"),
+                    "summary: {}",
+                    receipt.summary
+                );
+            }
+            other => panic!("flag-ON must dispatch+Execute image_analysis, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn vision_flag_on_ssrf_blocks_private_image_url_at_executor() {
+        // Even with the flag ON, the URL-image path runs the SSRF guard fail-closed BEFORE any
+        // socket: an image URL pointing at a private/metadata target under the PRODUCTION policy
+        // (deny-private) is refused by the executor — surfaced as GateDispatch::ExecError (the gate
+        // Allowed the read-only tool, but the executor's image-fetch SSRF guard refused the
+        // egress). Proves no flag-ON window where an unguarded image fetch reaches a private addr.
+        let db = Db::open_hub(&temp_path("vis-ssrf")).unwrap();
+        let ws = temp_ws("vis-ssrf");
+        let fs = FsToolExecutor::new(ws.clone());
+        let web = crate::http_tools::WebFetchExecutor::new();
+        let search = crate::web_search::WebSearchExecutor::with_config(Default::default());
+        // PRODUCTION SSRF policy (deny-private) on the vision executor — NOT allow-private.
+        let vision = crate::vision_tools::VisionExecutor::new(
+            ws,
+            Box::new(friday_vision::StubVisionClient::default()),
+        );
+        let composite = crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision);
+        let approve = no_approval();
+        let policy = RunPolicy::default();
+        let call = raw(
+            "image_analysis",
+            &[
+                ("prompt", "x"),
+                ("images", "http://169.254.169.254/latest/meta-data/img.png"),
+            ],
+        );
+
+        let out = gate_dispatch_with_policy_enforced(
+            db.conn(),
+            &composite,
+            &call,
+            AuthzMode::DenyAll,
+            &approve,
+            &policy,
+            1000,
+            false,
+            false,
+            false,
+            true, // vision flag ON
+        )
+        .unwrap();
+
+        match out {
+            GateDispatch::ExecError(ExecError::Vision(
+                crate::vision_tools::VisionToolError::ImageFetch(
+                    crate::http_tools::ImageFetchError::Ssrf(_),
+                ),
+            )) => {}
+            other => panic!(
+                "flag-ON + private image URL must be SSRF-blocked at the executor, got {other:?}"
+            ),
         }
     }
 
@@ -6156,6 +6551,7 @@ mod tests {
             true,  // flag ON
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
         )
         .unwrap();
 
@@ -6248,6 +6644,7 @@ mod tests {
             true,  // flag ON
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
         )
         .unwrap();
         assert!(
@@ -6303,6 +6700,7 @@ mod tests {
                 enforce,
                 false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
                 false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
+                false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
             )
             .unwrap();
             label(&out)
@@ -6371,6 +6769,7 @@ mod tests {
             true,  // flag ON
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
         )
         .unwrap();
         match out {
@@ -6401,6 +6800,7 @@ mod tests {
             true,
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
         )
         .unwrap();
         assert!(
@@ -6490,6 +6890,7 @@ mod tests {
             true,  // flag ON
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
         )
         .unwrap();
 
@@ -6544,6 +6945,7 @@ mod tests {
             true,  // flag ON
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
         )
         .unwrap();
 
@@ -6645,6 +7047,7 @@ mod tests {
                 enforce,
                 false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
                 false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
+                false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
             )
             .unwrap();
             label(&out)
@@ -6714,6 +7117,7 @@ mod tests {
                 false, // flag OFF
                 false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
                 false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
+                false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
             )
             .unwrap();
             label(&out)

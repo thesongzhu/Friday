@@ -330,6 +330,106 @@ impl PinnedTarget {
     }
 }
 
+/// SSRF-guarded, size-bounded BINARY GET of a URL — the shared egress primitive the vision
+/// tool (L2-3) uses to fetch a remote image. SECURITY (no-degrade): this runs the SAME
+/// fail-closed guard sequence web_fetch's terminal-hop fetch runs — `validate_url`
+/// (protocol/literal-IP/blocked-name/allowlist) THEN resolve-the-host-ourselves +
+/// `validate_resolved_addrs` (every resolved IP, anti-rebinding) + PIN exactly those validated
+/// addresses into the ureq connection (no TOCTOU window between validation and connect). So
+/// there is NO code path from this helper to a socket that skips the guard.
+///
+/// Unlike web_fetch this disables redirects entirely (`redirects(0)`): the caller is an image
+/// fetch, not a page fetch, so a 3xx is surfaced as a transport error rather than followed —
+/// the conservative posture (a CDN that 302s an image won't resolve, but no redirect-to-private
+/// hop can ever be reached). Returns the bounded body bytes (read as raw `Vec<u8>`, NEVER
+/// lossy-UTF-8 — image bytes must not be corrupted) + the response Content-Type (lowercased,
+/// param-stripped) so the caller can derive/verify the media type. A non-2xx HTTP status is a
+/// `SsrfError`-free transport error (the image simply isn't there).
+pub(crate) fn ssrf_guarded_get_bytes(
+    url: &str,
+    policy: &SsrfPolicy,
+    max_bytes: usize,
+    timeout: Duration,
+) -> Result<(Vec<u8>, String), ImageFetchError> {
+    // (1) SYNC SSRF check (protocol / literal-IP / blocked-name / allowlist).
+    ssrf_guard::validate_url(url, policy).map_err(ImageFetchError::Ssrf)?;
+    // (2) RESOLVE the host ourselves + validate EVERY resolved IP (anti-rebinding), then PIN.
+    let parsed = url::Url::parse(url)
+        .map_err(|_| ImageFetchError::Ssrf(SsrfError::InvalidUrl(url.into())))?;
+    let host = parsed
+        .host_str()
+        .ok_or(ImageFetchError::Ssrf(SsrfError::EmptyHost))?
+        .to_string();
+    let port = parsed
+        .port_or_known_default()
+        .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
+    let host_for_resolve = host.trim_start_matches('[').trim_end_matches(']');
+    let netloc = format!("{host}:{port}");
+    let socket_addrs: Vec<SocketAddr> = (host_for_resolve, port)
+        .to_socket_addrs()
+        .map(|it| it.collect())
+        .unwrap_or_default();
+    let ips: Vec<std::net::IpAddr> = socket_addrs.iter().map(|sa| sa.ip()).collect();
+    ssrf_guard::validate_resolved_addrs(&host, &ips, policy).map_err(ImageFetchError::Ssrf)?;
+    let pinned = PinnedTarget {
+        netloc,
+        addrs: socket_addrs,
+    };
+
+    let agent = ureq::AgentBuilder::new()
+        .redirects(0) // image fetch: never follow redirects (no redirect-to-private hop reachable)
+        .timeout(timeout)
+        .resolver(pinned.resolver())
+        .build();
+    let resp = agent
+        .get(url)
+        .set("User-Agent", BROWSER_UA)
+        .set("Accept", "image/*,*/*;q=0.8")
+        .call()
+        .map_err(|e| match e {
+            // A 3xx (we disabled auto-follow) or 4xx/5xx is a transport-style failure for an
+            // image fetch — there is no useful image body. Keep the kind only (never a secret).
+            ureq::Error::Status(code, _resp) => ImageFetchError::Transport(format!("http_{code}")),
+            ureq::Error::Transport(t) => ImageFetchError::Transport(format!("{:?}", t.kind())),
+        })?;
+    let content_type = resp
+        .content_type()
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    // BINARY bounded read — `take(max)` so a hostile server cannot stream unbounded bytes, and
+    // a raw `Vec<u8>` (NOT lossy-UTF-8) so the image bytes are preserved exactly.
+    let mut buf: Vec<u8> = Vec::new();
+    resp.into_reader()
+        .take(max_bytes as u64)
+        .read_to_end(&mut buf)
+        .map_err(|e| ImageFetchError::Transport(format!("read:{}", e.kind())))?;
+    Ok((buf, content_type))
+}
+
+/// Why an SSRF-guarded image GET ([`ssrf_guarded_get_bytes`]) failed: either the SSRF guard
+/// refused the URL / a resolved IP (fail-closed egress block), or a transport/non-2xx failure
+/// (kind only — never a secret, never a body). Surfaced by the L2-3 vision tool (it appears in
+/// the `pub` `vision_tools::VisionToolError::ImageFetch` variant, so it is `pub` too).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImageFetchError {
+    /// The SSRF guard refused the image URL / a resolved IP (fail-closed egress block).
+    Ssrf(SsrfError),
+    /// A connect/TLS/timeout/non-2xx transport failure (kind only — never a secret/body).
+    Transport(String),
+}
+
+impl std::fmt::Display for ImageFetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ImageFetchError::Ssrf(e) => write!(f, "{e}"),
+            ImageFetchError::Transport(k) => write!(f, "image_fetch_transport:{k}"),
+        }
+    }
+}
+
 /// Why a `web_fetch` failed (distinct from a normal HTTP error response, which is RETURNED as
 /// a `ToolReceipt`, not an error). An SSRF block, a transport failure, or a redirect anomaly.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -359,21 +459,34 @@ impl std::fmt::Display for WebFetchError {
 }
 
 /// A tool executor that routes `web_fetch` to a [`WebFetchExecutor`], `web_search` to a
-/// [`crate::web_search::WebSearchExecutor`], and EVERY other action to an inner fs executor
+/// [`crate::web_search::WebSearchExecutor`], `image_analysis` to a
+/// [`crate::vision_tools::VisionExecutor`], and EVERY other action to an inner fs executor
 /// (typically [`crate::FsToolExecutor`]). The composition keeps the fs/shell executor
 /// untouched — the L2 capability tools are purely additive. The gate chokepoint still runs
 /// before EVERY dispatch (the executor is reached only on `Allow`), and the per-capability
-/// flag-gates (`FRIDAY_WEB_FETCH_ENABLED` / `FRIDAY_WEB_SEARCH_ENABLED`) refuse the respective
-/// tool when off, so this composite is behavior-neutral until a flag is flipped.
+/// flag-gates (`FRIDAY_WEB_FETCH_ENABLED` / `FRIDAY_WEB_SEARCH_ENABLED` / `FRIDAY_VISION_ENABLED`)
+/// refuse the respective tool when off, so this composite is behavior-neutral until a flag is
+/// flipped.
 pub struct CompositeToolExecutor<F: ToolExecutor> {
     fs: F,
     web: WebFetchExecutor,
     search: crate::web_search::WebSearchExecutor,
+    vision: crate::vision_tools::VisionExecutor,
 }
 
 impl<F: ToolExecutor> CompositeToolExecutor<F> {
-    pub fn new(fs: F, web: WebFetchExecutor, search: crate::web_search::WebSearchExecutor) -> Self {
-        Self { fs, web, search }
+    pub fn new(
+        fs: F,
+        web: WebFetchExecutor,
+        search: crate::web_search::WebSearchExecutor,
+        vision: crate::vision_tools::VisionExecutor,
+    ) -> Self {
+        Self {
+            fs,
+            web,
+            search,
+            vision,
+        }
     }
 }
 
@@ -382,6 +495,7 @@ impl<F: ToolExecutor> ToolExecutor for CompositeToolExecutor<F> {
         match action {
             "web_fetch" => self.web.execute(action, params),
             "web_search" => self.search.execute(action, params),
+            "image_analysis" => self.vision.execute(action, params),
             _ => self.fs.execute(action, params),
         }
     }

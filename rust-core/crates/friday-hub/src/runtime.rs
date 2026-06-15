@@ -821,6 +821,10 @@ impl<T: Transport> HubRuntime<T> {
             &self.executor,
             crate::http_tools::WebFetchExecutor::new(),
             crate::web_search::WebSearchExecutor::new(),
+            // L2-3: the vision (image_analysis) executor, scoped to the SAME workspace root the fs
+            // tools use, with the runtime Claude-from-env vision client. Byte-identical when dark
+            // (FRIDAY_VISION_ENABLED off ⇒ the chokepoint refuses image_analysis before here).
+            crate::vision_tools::VisionExecutor::for_runtime(self.executor.root().to_path_buf()),
         );
         let (selection, outcome) = run_routed_loop_with_policy(
             &self.routes,
@@ -1172,6 +1176,10 @@ impl<T: Transport> HubRuntime<T> {
             &self.executor,
             crate::http_tools::WebFetchExecutor::new(),
             crate::web_search::WebSearchExecutor::new(),
+            // L2-3: the vision (image_analysis) executor, scoped to the SAME workspace root the fs
+            // tools use, with the runtime Claude-from-env vision client. Byte-identical when dark
+            // (FRIDAY_VISION_ENABLED off ⇒ the chokepoint refuses image_analysis before here).
+            crate::vision_tools::VisionExecutor::for_runtime(self.executor.root().to_path_buf()),
         );
         let outcome = match run_session_loop(
             self.loop_client(),
@@ -1345,6 +1353,10 @@ impl<T: Transport> HubRuntime<T> {
             &self.executor,
             crate::http_tools::WebFetchExecutor::new(),
             crate::web_search::WebSearchExecutor::new(),
+            // L2-3: the vision (image_analysis) executor, scoped to the SAME workspace root the fs
+            // tools use, with the runtime Claude-from-env vision client. Byte-identical when dark
+            // (FRIDAY_VISION_ENABLED off ⇒ the chokepoint refuses image_analysis before here).
+            crate::vision_tools::VisionExecutor::for_runtime(self.executor.root().to_path_buf()),
         );
         let outcome = match run_session_loop(
             client,
@@ -2901,6 +2913,7 @@ mod tests {
             false, // flag OFF
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
         )
         .unwrap();
 
@@ -2934,6 +2947,7 @@ mod tests {
             false, // flag OFF
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
         )
         .unwrap();
 
@@ -2987,6 +3001,7 @@ mod tests {
             true,  // flag ON
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
         )
         .unwrap();
         match brick {
@@ -3028,6 +3043,7 @@ mod tests {
             true,  // flag ON
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
         )
         .unwrap();
         // Satisfiable = the trust layer did NOT brick it. Under DenyAll + no approval the
@@ -3091,6 +3107,7 @@ mod tests {
             true,  // flag ON
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
+            false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
         )
         .unwrap();
         // The workspace dimension PASSED (the produced root matches the grant prefix): the trust
