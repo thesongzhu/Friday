@@ -470,9 +470,13 @@ fn concurrent_billing_survives_a_reaper_sweeping_on_a_short_cadence() {
         let reaper_errs = reaper_table_errors.clone();
         std::thread::spawn(move || {
             // Prod-faithful: the reaper opens via `Db::open_hub` (→ HUB_BUSY_TIMEOUT_MS), so its
-            // batched DELETE WAITS for the (microsecond) billing write lock and acquires it. With
-            // BUSY absorbed by the timeout, the ONLY thing that can set `table_errors` is a real FK
-            // violation — which is exactly the no-degrade "no FK errors" check below.
+            // batched DELETE WAITS for the (microsecond) billing write lock and acquires it. Most
+            // contention is absorbed by that timeout; the residual `SQLITE_BUSY`/`BUSY_SNAPSHOT`
+            // that the timeout does NOT auto-retry (e.g. the extra `memory_fts` write the v34
+            // `memory_fts_ad` AFTER-DELETE trigger adds inside the `memory_item` delete txn) is
+            // absorbed by the sweep's per-table busy-retry (`delete_bounded` → `with_busy_retry`).
+            // So the ONLY thing left that can set `table_errors` is a real FK violation — which is
+            // exactly the no-degrade "no FK errors" check below.
             let conn = raw_writer(&path, friday_storage::HUB_BUSY_TIMEOUT_MS);
             while !stop.load(Ordering::SeqCst) {
                 // sweep_lifecycle is best-effort (logged-and-swallowed in prod); ignore its
