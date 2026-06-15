@@ -281,11 +281,35 @@ jobs:
       - name: Assert TS-runtime method-guard coverage + no manifest shrinkage
         run: node scripts/quality/assert-ts-runtime-method-guards.mjs
 
+  # ── MECHANISM-8: Prod-Flag Loop-Test Gate (registry gap #27) ──
+  # Enforces "every prod-ON (and dark) loop flag names an existing loop-closing
+  # e2e test" against docs/ops/prod-flags-manifest.json. This is the single
+  # recurrence-prevention gate behind the L0 silently-inert-loop disaster: a flag
+  # may never go prod-ON with no committed loop test. Pure Node + fs (no compiler,
+  # no test execution) — fast + deterministic. It validates the mapping EXISTS and
+  # resolves; the tests themselves are RUN by rust-core.yml + the `test` job.
+  prod-flag-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify every prod-ON flag maps to a loop e2e test
+        run: node scripts/ci/verify-prod-flag-tests.mjs
+
   # ── Terminal CI Aggregator — single required check for branch protection ──
   quality-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [build, test, migrations, security, contracts, ssd-lint, alignment-guard, agent-parity, secrets, ts-runtime-retirement]
+    needs: [build, test, migrations, security, contracts, ssd-lint, alignment-guard, agent-parity, secrets, ts-runtime-retirement, prod-flag-tests]
     if: ${{ always() }}
 
     steps:
@@ -301,6 +325,7 @@ jobs:
           echo "Agent Parity:       ${{ needs.agent-parity.result }}"
           echo "Secrets:            ${{ needs.secrets.result }}"
           echo "TS Runtime Retire:  ${{ needs.ts-runtime-retirement.result }}"
+          echo "Prod-Flag Tests:    ${{ needs.prod-flag-tests.result }}"
           echo ""
 
           FAILED=0
@@ -315,6 +340,7 @@ jobs:
             "${{ needs.agent-parity.result }}" \
             "${{ needs.secrets.result }}" \
             "${{ needs.ts-runtime-retirement.result }}" \
+            "${{ needs.prod-flag-tests.result }}" \
           ; do
             if [ "$result" != "success" ]; then
               FAILED=1
