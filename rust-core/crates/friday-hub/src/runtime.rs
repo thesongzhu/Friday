@@ -805,11 +805,19 @@ impl<T: Transport> HubRuntime<T> {
         // enforced before any tool executes. S6d: thread the provisioned operator verify
         // key so a protected action authorizes via the Ed25519 verify-only policy (never
         // HMAC); `None` ⇒ fail-closed Pause.
+        // L2-1: wrap the owned fs executor in the web_fetch composite (by reference — the
+        // runtime field + resume/control path keep the same owned `FsToolExecutor`). The
+        // composite delegates everything except `web_fetch` to fs, and the chokepoint refuses
+        // `web_fetch` while FRIDAY_WEB_FETCH_ENABLED is OFF, so this is byte-identical when off.
+        let loop_exec = crate::http_tools::CompositeToolExecutor::new(
+            &self.executor,
+            crate::http_tools::WebFetchExecutor::new(),
+        );
         let (selection, outcome) = run_routed_loop_with_policy(
             &self.routes,
             request,
             self,
-            &self.executor,
+            &loop_exec,
             self.db.conn(),
             run_id,
             task,
@@ -1147,9 +1155,15 @@ impl<T: Transport> HubRuntime<T> {
         // wrapper when the DARK gate is on; the bare DeepSeek client otherwise) so failover
         // applies on the SAME deepseek route the resolver chokepoint serves. Default-off ⇒
         // `&self.deepseek` ⇒ byte-identical to today.
+        // L2-1: wrap the owned fs executor in the web_fetch composite by reference (see the
+        // routed-loop site). Byte-identical with the flag off (chokepoint refuses web_fetch).
+        let loop_exec = crate::http_tools::CompositeToolExecutor::new(
+            &self.executor,
+            crate::http_tools::WebFetchExecutor::new(),
+        );
         let outcome = match run_session_loop(
             self.loop_client(),
-            &self.executor,
+            &loop_exec,
             self.db.conn(),
             run_id,
             session_id,
@@ -1311,9 +1325,15 @@ impl<T: Transport> HubRuntime<T> {
         // the client's own provider_kind/host — happens INSIDE the loop from the client's metered
         // step, so a Claude client bills an anthropic row with NO extra wiring.
         let approve = |req: &MutatingActionRequest| self.approval.approve(req);
+        // L2-1: wrap the owned fs executor in the web_fetch composite by reference (see the
+        // routed-loop site). Byte-identical with the flag off (chokepoint refuses web_fetch).
+        let loop_exec = crate::http_tools::CompositeToolExecutor::new(
+            &self.executor,
+            crate::http_tools::WebFetchExecutor::new(),
+        );
         let outcome = match run_session_loop(
             client,
-            &self.executor,
+            &loop_exec,
             self.db.conn(),
             run_id,
             session_id,
@@ -2833,6 +2853,7 @@ mod tests {
             rt_with.policy(),
             1000,
             false, // flag OFF
+            false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
         )
         .unwrap();
 
@@ -2864,6 +2885,7 @@ mod tests {
             &policy_no_ctx,
             1000,
             false, // flag OFF
+            false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
         )
         .unwrap();
 
@@ -2914,7 +2936,8 @@ mod tests {
             &approve,
             rt_brick.policy(), // the REAL produced ctx
             1000,
-            true, // flag ON
+            true,  // flag ON
+            false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
         )
         .unwrap();
         match brick {
@@ -2953,7 +2976,8 @@ mod tests {
             &approve,
             rt_ok.policy(), // the REAL produced ctx
             1000,
-            true, // flag ON
+            true,  // flag ON
+            false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
         )
         .unwrap();
         // Satisfiable = the trust layer did NOT brick it. Under DenyAll + no approval the
@@ -3014,7 +3038,8 @@ mod tests {
             &approve,
             rt.policy(), // the REAL produced ctx — carries the workspace root
             1000,
-            true, // flag ON
+            true,  // flag ON
+            false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
         )
         .unwrap();
         // The workspace dimension PASSED (the produced root matches the grant prefix): the trust
