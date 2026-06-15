@@ -262,11 +262,31 @@ pub fn sweep_retention(
 /// table is all-or-nothing for THIS sweep (commit on success; the txn drops → rolls back on any
 /// error), and the error is returned to the caller so it can be ISOLATED to this table without
 /// affecting the others.
+///
+/// The body is wrapped in the crate's ONE bounded busy-retry idiom ([`crate::with_busy_retry`]) —
+/// the SAME wrapper the writable-Hub open and the run-billing write txn use, never a second
+/// policy. This is required because the reaper sweeps on a SEPARATE connection while N billers
+/// commit concurrently: a deferred write txn can hit `SQLITE_BUSY` (notably `SQLITE_BUSY_SNAPSHOT`,
+/// which `busy_timeout` does NOT auto-retry — only an app-level retry recovers it), and any of the
+/// five per-table deletes can surface it under WAL contention. After #786 the `memory_fts_ad`
+/// AFTER-DELETE trigger added an extra `memory_fts` write inside the `memory_item` delete txn,
+/// which made that path the most likely to hit it — but the wrap is at the SHARED helper so every
+/// table is uniformly resilient, not just the one the trigger made probable.
+///
+/// On a BUSY the failed txn has ALREADY rolled back (NOTHING committed), so each retry re-opens a
+/// fresh `unchecked_transaction` and re-runs the bounded DELETE cleanly — no half-delete, no
+/// double-count. NO-DEGRADE: the retry fires ONLY on [`crate::is_storage_busy`] (transient
+/// lock/snapshot contention); a GENUINE FK/constraint violation is NOT busy-classed, so it
+/// propagates on the FIRST attempt with zero delay and is still surfaced to the caller (counted in
+/// [`RetentionOutcome::table_errors`]). With no contention the closure runs EXACTLY ONCE and the
+/// result is byte-identical to the pre-wrap single-txn path.
 fn delete_bounded(conn: &Connection, sql: &str, cutoff: i64, limit: i64) -> Result<usize> {
-    let tx = conn.unchecked_transaction()?;
-    let n = tx.execute(sql, params![cutoff, limit])?;
-    tx.commit()?;
-    Ok(n)
+    crate::with_busy_retry(|| {
+        let tx = conn.unchecked_transaction()?;
+        let n = tx.execute(sql, params![cutoff, limit])?;
+        tx.commit()?;
+        Ok(n)
+    })
 }
 
 #[cfg(test)]

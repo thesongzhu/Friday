@@ -253,10 +253,12 @@ fn is_storage_busy(e: &StorageError) -> bool {
 /// the final attempt the last busy error is returned so the caller still fails closed.
 ///
 /// This is the ONE bounded busy-retry idiom in the crate — the writable-Hub open
-/// ([`open_hub_with_busy_retry`]) and the run-billing write txn
-/// ([`record_run_model_call`]) BOTH go through it, so they share identical retry budget,
-/// backoff, and the [`is_storage_busy`] error class (never an ad-hoc second policy).
-fn with_busy_retry<T>(mut op: impl FnMut() -> Result<T>) -> Result<T> {
+/// ([`open_hub_with_busy_retry`]), the run-billing write txn ([`record_run_model_call`]),
+/// and the retention sweep's per-table delete ([`crate::retention::sweep_retention`]) ALL go
+/// through it, so they share identical retry budget, backoff, and the [`is_storage_busy`]
+/// error class (never an ad-hoc second policy). Exposed `pub(crate)` so the sibling
+/// `retention` module reuses this exact idiom rather than reinventing a second policy.
+pub(crate) fn with_busy_retry<T>(mut op: impl FnMut() -> Result<T>) -> Result<T> {
     let mut attempt: u32 = 0;
     loop {
         match op() {
