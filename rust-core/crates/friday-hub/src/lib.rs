@@ -3236,6 +3236,28 @@ fn clarification_gate_from(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1"))
 }
 
+/// The `FRIDAY_MISSION_INTAKE_CLARIFY` env var. When ON, the Mission-intake producer
+/// ([`hub_server::mission_intake_result_for_db`]) asks clarifying questions for an
+/// UNDER-SPECIFIED, CLASSIFIED intent BEFORE birthing any row — instead of silently
+/// minting an Active Mission from a vague intent. DEFAULT-OFF: unset / empty / `"0"` /
+/// any non-`"1"` value ⇒ OFF, and the producer is BYTE-IDENTICAL to today (no detail
+/// check, the Mission/WorkItem/SurfaceThread/route_decision rows are written exactly as
+/// now). The env is read ONCE inside the public producer and threaded as a pure bool to
+/// the inner [`hub_server::mission_intake_result_for_db_flagged`] — the same "split
+/// env-read from pure logic" idiom as [`FRIDAY_CLARIFICATION_GATE`], so the behavioral
+/// tests inject the bool directly and never race `std::env`.
+pub const FRIDAY_MISSION_INTAKE_CLARIFY: &str = "FRIDAY_MISSION_INTAKE_CLARIFY";
+
+/// Pure flag-matcher for [`FRIDAY_MISSION_INTAKE_CLARIFY`] (env read split out so it is
+/// unit-testable without `set_var`). DEFAULT-OFF: `None` (unset) ⇒ false; ON only for the
+/// exact opt-in value `"1"` (trimmed); everything else (including `"true"`) ⇒ false — the
+/// program's standard flag idiom, mirroring [`clarification_gate_from`]. Private (in-crate
+/// only): the producer wrapper calls it via `crate::`, and the in-crate unit test reaches it
+/// — parity with the private `clarification_gate_from`.
+fn mission_intake_clarify_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
 /// `cancel` (C2-1) is an OPTIONAL cooperative cancellation handle checked at the TOP of
 /// each turn, BEFORE the model call. When `Some` and already tripped at a turn boundary,
 /// the loop stops with [`LoopStatus::Interrupted`]: it makes NO further model call and
@@ -4876,6 +4898,30 @@ mod tests {
         );
         assert!(
             !clarification_gate_from(Some("true")),
+            "true ⇒ OFF (only exact 1)"
+        );
+    }
+
+    #[test]
+    fn mission_intake_clarify_from_only_opt_in_enables() {
+        // FRIDAY_MISSION_INTAKE_CLARIFY: default-OFF; ON only for the exact opt-in value "1"
+        // (trimmed). This is the race-free env-string semantics proof for the mission-intake
+        // clarification arm (the ON/OFF behavioral arms inject the bool in
+        // tests/mission_intake_clarification.rs). Mirrors clarification_gate_from's matcher.
+        assert!(
+            !mission_intake_clarify_from(None),
+            "unset ⇒ OFF (prod default)"
+        );
+        assert!(!mission_intake_clarify_from(Some("")), "empty ⇒ OFF");
+        assert!(!mission_intake_clarify_from(Some("0")), "0 ⇒ OFF");
+        assert!(!mission_intake_clarify_from(Some("off")), "off ⇒ OFF");
+        assert!(mission_intake_clarify_from(Some("1")), "1 ⇒ ON");
+        assert!(
+            mission_intake_clarify_from(Some("  1  ")),
+            "padded 1 ⇒ ON (trimmed)"
+        );
+        assert!(
+            !mission_intake_clarify_from(Some("true")),
             "true ⇒ OFF (only exact 1)"
         );
     }

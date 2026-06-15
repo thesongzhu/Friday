@@ -270,7 +270,10 @@ pub struct MissionIntakeRequestWire {
 
 /// Hub response for Mission intake/preflight. `status=blocked` means no new
 /// WorkItem was written; duplicate ids tell the client which existing Mission or
-/// WorkItem to show.
+/// WorkItem to show. `status=needs_clarification` (the flag-gated mission-intake
+/// clarification arm) means the intent was UNDER-SPECIFIED so NO rows were written
+/// at all — `clarification_questions` carries the specific questions to ask, and
+/// `created_or_ready` is `false` so the auto-dispatch producer never fires for it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MissionIntakeResultWire {
     pub friday_conversation_id: String,
@@ -285,6 +288,13 @@ pub struct MissionIntakeResultWire {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duplicate_work_item_id: Option<String>,
     pub created_or_ready: bool,
+    /// (Mission-intake clarification — DARK, default-OFF) The specific clarifying
+    /// questions for an UNDER-SPECIFIED intent. NON-EMPTY only when
+    /// `status == "needs_clarification"`; every existing ready/blocked path leaves
+    /// it empty. Additive + optional on the wire (`#[serde(default)]` + skipped when
+    /// empty) so existing serialized payloads round-trip BYTE-IDENTICALLY.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clarification_questions: Vec<String>,
 }
 
 /// Client request to apply the OWNER's explicit confirm/reject decision to ONE
@@ -2078,6 +2088,7 @@ mod tests {
                     duplicate_mission_id: None,
                     duplicate_work_item_id: None,
                     created_or_ready: true,
+                    clarification_questions: Vec::new(),
                 },
             },
             mission_projection_snapshot(),

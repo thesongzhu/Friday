@@ -469,6 +469,13 @@ export interface FridayRustHubMissionIntakeResult {
   readonly duplicateMissionId?: string;
   readonly duplicateWorkItemId?: string;
   readonly createdOrReady: boolean;
+  /**
+   * (Mission-intake clarification — DARK, default-OFF) The specific clarifying questions for an
+   * UNDER-SPECIFIED intent. NON-EMPTY only when `status === "needs_clarification"` (the Rust
+   * producer's flag-gated clarification arm); every existing ready/blocked path omits it.
+   * Surfaced only when present (the Rust wire skips the field when empty), never fabricated.
+   */
+  readonly clarificationQuestions?: readonly string[];
 }
 
 /** (Lane B) A Mission lifecycle transition request — `MissionLifecycleRequestWire`. */
@@ -1022,6 +1029,15 @@ export function parseMissionIntakeResult(
   const workItemId = asString(r.work_item_id);
   const duplicateMissionId = asString(r.duplicate_mission_id);
   const duplicateWorkItemId = asString(r.duplicate_work_item_id);
+  // (Mission-intake clarification — DARK) Optional, ADDITIVE: surfaced only when the server sends a
+  // non-empty `clarification_questions` (the flag-gated needs_clarification arm). Absent / empty /
+  // non-array / non-string entries ⇒ the field is OMITTED (never fabricated, never a parse failure
+  // — backward-compatible with every existing ready/blocked payload that omits it).
+  const rawQuestions = r.clarification_questions;
+  const clarificationQuestions =
+    Array.isArray(rawQuestions) && rawQuestions.every((q): q is string => typeof q === "string")
+      ? rawQuestions
+      : undefined;
   return {
     // `MissionIntakeResultWire` carries NO `truth_label` field (verified in friday-protocol), so the
     // server cannot send one — this `rust_wired` label is the TS-side ceiling for a Rust-served refs
@@ -1036,6 +1052,9 @@ export function parseMissionIntakeResult(
     ...(workItemId !== undefined ? { workItemId } : {}),
     ...(duplicateMissionId !== undefined ? { duplicateMissionId } : {}),
     ...(duplicateWorkItemId !== undefined ? { duplicateWorkItemId } : {}),
+    ...(clarificationQuestions !== undefined && clarificationQuestions.length > 0
+      ? { clarificationQuestions }
+      : {}),
   };
 }
 

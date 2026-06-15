@@ -217,11 +217,51 @@ impl<T: Transport> HubServer<T> {
 ///
 /// Returns either a [`Message::MissionIntakeResult`] envelope (ready/blocked) or a
 /// [`Message::Error`] envelope on a validation/preflight failure, correlated to `msg_id`.
+///
+/// ## Mission-intake clarification ([`crate::FRIDAY_MISSION_INTAKE_CLARIFY`], DARK)
+/// The [`crate::FRIDAY_MISSION_INTAKE_CLARIFY`] env flag is read ONCE here (the only env
+/// read; semantics in [`crate::mission_intake_clarify_from`]) and threaded as a pure bool
+/// to the parameterized [`mission_intake_result_for_db_flagged`]. **Default-OFF:** when
+/// off the producer is BYTE-IDENTICAL to the pre-clarification baseline — no detail check,
+/// every intent births a Mission exactly as now. The signature is unchanged so both callers
+/// (the [`HubServer::dispatch`] method + the live bin's flag-gated arm) are untouched.
 pub fn mission_intake_result_for_db(
     db: &Db,
     msg_id: &str,
     request: MissionIntakeRequestWire,
     now_ms: i64,
+) -> Envelope {
+    let clarify_enabled = crate::mission_intake_clarify_from(
+        std::env::var(crate::FRIDAY_MISSION_INTAKE_CLARIFY)
+            .ok()
+            .as_deref(),
+    );
+    mission_intake_result_for_db_flagged(db, msg_id, request, now_ms, clarify_enabled)
+}
+
+/// The parameterized Mission-intake producer body — see [`mission_intake_result_for_db`]
+/// for the public env-reading entrypoint. `clarify_enabled` is the resolved
+/// [`crate::FRIDAY_MISSION_INTAKE_CLARIFY`] bool, injected directly so the behavioral
+/// arms (clarify-ON, clarify-OFF) are testable WITHOUT racing `std::env` in a shared test
+/// binary (the codebase's "split env-read from pure logic" idiom).
+///
+/// **`clarify_enabled == false` ⇒ this is BYTE-IDENTICAL to the pre-clarification baseline:**
+/// the whole detail-check block is skipped and the Mission/WorkItem/SurfaceThread/route_decision
+/// rows are written exactly as before.
+///
+/// **`clarify_enabled == true` ⇒** BEFORE constructing or persisting ANY row, the intent is
+/// classified ([`friday_core::classify_kind`]); if it classifies to a planning kind that is
+/// NOT detailed enough ([`friday_core::is_task_detailed_enough`]), the producer returns a
+/// `needs_clarification` [`MissionIntakeResultWire`] carrying the specific
+/// [`friday_core::questions_for_kind`] — writing ZERO rows (no Conversation/Mission/
+/// SurfaceThread/WorkItem/route_decision) and making NO model call. `created_or_ready` is
+/// `false` so the auto-dispatch producer NEVER fires for an under-specified intent.
+pub fn mission_intake_result_for_db_flagged(
+    db: &Db,
+    msg_id: &str,
+    request: MissionIntakeRequestWire,
+    now_ms: i64,
+    clarify_enabled: bool,
 ) -> Envelope {
     if let Err(err) = friday_core::validate_friday_conversation_id(&request.friday_conversation_id)
     {
@@ -261,6 +301,46 @@ pub fn mission_intake_result_for_db(
                 ErrorCode::Internal,
                 "mission intake body_ref must be a Friday-owned body/blob ref",
             );
+        }
+    }
+
+    // (FRIDAY_MISSION_INTAKE_CLARIFY, DARK) Ask-first detail check — GATED so flag-OFF is
+    // BYTE-IDENTICAL (the whole block is skipped). BEFORE constructing or persisting ANY row:
+    // if the intent classifies to a planning kind that is NOT detailed enough, return a
+    // `needs_clarification` result carrying the specific questions and write ZERO rows
+    // (no Conversation/Mission/SurfaceThread/WorkItem/route_decision). `created_or_ready` is
+    // `false`, so the auto-dispatch producer never fires for an under-specified intent — we
+    // ask first instead of silently minting an Active Mission. Validation errors above still
+    // take precedence identically (this runs only on an already-validated request).
+    if clarify_enabled {
+        if let Some(kind) = friday_core::classify_kind(&request.intent) {
+            if !friday_core::is_task_detailed_enough(&request.intent, kind) {
+                let questions: Vec<String> = friday_core::questions_for_kind(kind)
+                    .iter()
+                    .map(|q| (*q).to_string())
+                    .collect();
+                // Echo the request's mission_id / surface_thread_id (NO row was written for
+                // either — these are the client's proposed ids, surfaced so the TS result
+                // parser's required-ref check passes and the clarification is delivered, not
+                // buried under a fail-closed 503). work_item_id is None; blockers is empty.
+                let result = MissionIntakeResultWire {
+                    friday_conversation_id: request.friday_conversation_id.clone(),
+                    mission_id: request.mission_id.clone(),
+                    work_item_id: None,
+                    surface_thread_id: request.surface_thread_id.clone(),
+                    status: "needs_clarification".into(),
+                    blockers: Vec::new(),
+                    duplicate_mission_id: None,
+                    duplicate_work_item_id: None,
+                    created_or_ready: false,
+                    clarification_questions: questions,
+                };
+                return Envelope::new(
+                    format!("{msg_id}-mission-intake"),
+                    now_ms,
+                    Message::MissionIntakeResult { result },
+                );
+            }
         }
     }
 
@@ -431,6 +511,7 @@ pub fn mission_intake_result_for_db(
             duplicate_mission_id: None,
             duplicate_work_item_id: None,
             created_or_ready: true,
+            clarification_questions: Vec::new(),
         },
         MissionPreflightOutcome::Blocked {
             blockers,
@@ -451,6 +532,7 @@ pub fn mission_intake_result_for_db(
                 duplicate_mission_id,
                 duplicate_work_item_id,
                 created_or_ready: false,
+                clarification_questions: Vec::new(),
             }
         }
     };

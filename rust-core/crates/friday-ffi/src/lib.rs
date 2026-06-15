@@ -2984,6 +2984,7 @@ mod tests {
                     duplicate_mission_id: Some("mission-1".into()),
                     duplicate_work_item_id: None,
                     created_or_ready: false,
+                    clarification_questions: Vec::new(),
                 },
             },
         );

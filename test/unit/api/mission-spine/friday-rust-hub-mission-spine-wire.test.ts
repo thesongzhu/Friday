@@ -204,6 +204,52 @@ describe("parseMissionIntakeResult (fail-closed refs-only, NESTED result)", () =
     expect(withOptionals?.duplicateWorkItemId).toBe("work_dup");
   });
 
+  it("does NOT surface clarificationQuestions when the field is absent (existing ready/blocked payloads)", () => {
+    // Backward-compat: a payload with no clarification_questions parses fine and omits the field.
+    expect(parseMissionIntakeResult(valid)).not.toHaveProperty("clarificationQuestions");
+    // An empty array is treated as absent (the Rust wire skips it when empty) — still omitted.
+    expect(
+      parseMissionIntakeResult({ result: { ...valid.result, clarification_questions: [] } }),
+    ).not.toHaveProperty("clarificationQuestions");
+  });
+
+  it("surfaces clarificationQuestions for a needs_clarification result (the DARK clarification arm)", () => {
+    const clarified = parseMissionIntakeResult({
+      result: {
+        ...valid.result,
+        status: "needs_clarification",
+        work_item_id: undefined,
+        created_or_ready: false,
+        clarification_questions: [
+          "What exact outcome should this skill deliver for the user?",
+          "What inputs, tools, or systems should it use or avoid?",
+        ],
+      },
+    });
+    expect(clarified?.status).toBe("needs_clarification");
+    expect(clarified?.createdOrReady).toBe(false);
+    expect(clarified?.workItemId).toBeUndefined();
+    expect(clarified?.clarificationQuestions).toEqual([
+      "What exact outcome should this skill deliver for the user?",
+      "What inputs, tools, or systems should it use or avoid?",
+    ]);
+  });
+
+  it("ignores an ill-typed clarification_questions (non-array / non-string entries) without failing the parse", () => {
+    // NO-DEGRADE: a malformed clarification_questions must NOT bury the whole result under a 503 —
+    // the field is simply omitted (never fabricated), the rest of the refs still parse.
+    const nonArray = parseMissionIntakeResult({
+      result: { ...valid.result, clarification_questions: "oops" },
+    });
+    expect(nonArray).toBeDefined();
+    expect(nonArray).not.toHaveProperty("clarificationQuestions");
+    const nonString = parseMissionIntakeResult({
+      result: { ...valid.result, clarification_questions: ["ok", 7] },
+    });
+    expect(nonString).toBeDefined();
+    expect(nonString).not.toHaveProperty("clarificationQuestions");
+  });
+
   it("fails closed (undefined) on a missing required ref or ill-typed fields", () => {
     expect(parseMissionIntakeResult({ result: { ...valid.result, mission_id: "" } })).toBeUndefined();
     expect(parseMissionIntakeResult({ result: { ...valid.result, created_or_ready: "yes" } })).toBeUndefined();
