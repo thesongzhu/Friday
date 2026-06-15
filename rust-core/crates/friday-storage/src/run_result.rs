@@ -310,6 +310,15 @@ pub fn persist_run_result(
             PersistRunResultOutcome::Persisted
         }
     };
+    // Lifecycle-state coherence (stuck-`awaiting_clarification` fix): in the SAME
+    // transaction, move the `agent_run.state` column off its `create_run` entry value
+    // to this terminal status, so a finished run's persisted run-state matches its
+    // result instead of staying stuck at `awaiting_clarification`. This is a NO-OP for
+    // a genuine clarification HOLD (`status == "awaiting_clarification"`), never
+    // clobbers a `cancelled` run, and is harmless when no `agent_run` row exists or on
+    // an idempotent re-persist (re-writes the same terminal value). See
+    // [`crate::agent_run::mark_run_terminal_state`] for the full no-degrade contract.
+    crate::agent_run::mark_run_terminal_state(&tx, run_id, &result.status, now_ms)?;
     tx.commit()?;
     Ok(outcome)
 }
@@ -687,6 +696,159 @@ mod tests {
         assert_eq!(
             get_run_answer_for_principal(db.conn(), "nope", Q1_OWNER).unwrap(),
             RunAnswerAccess::NotFound
+        );
+    }
+
+    // --- stuck-`awaiting_clarification` lifecycle fix -----------------------------
+    //
+    // `create_run` seeds `agent_run.state = "awaiting_clarification"`. Before the fix,
+    // persisting a TERMINAL `run_result` left that column stuck (the 120 finished-but-
+    // stuck rows + 1 mutation_completed-but-stuck row the live DB surfaced). These lock
+    // that `persist_run_result` now transitions the column atomically with the result,
+    // WITHOUT weakening the clarification gate (the genuine-hold case stays put) and
+    // WITHOUT clobbering a cancelled run.
+    use crate::agent_run::{cancel_run, create_run, run_state_string, STATE_CANCELLED};
+
+    #[test]
+    fn persisting_a_finished_result_transitions_agent_run_off_awaiting_clarification() {
+        // REPRODUCES the live defect: a run created at `awaiting_clarification` whose
+        // FINISHED result is persisted must end with `agent_run.state == "finished"`,
+        // not stuck at `awaiting_clarification`. (Pre-fix this assertion fails — the
+        // column stayed `awaiting_clarification`.)
+        let db = Db::open_hub(&tmp("stuck-finished")).unwrap();
+        create_run(db.conn(), "run-f", "do a read-only self-probe", 100).unwrap();
+        assert_eq!(
+            run_state_string(db.conn(), "run-f").unwrap().as_deref(),
+            Some("awaiting_clarification"),
+            "create_run must seed the gate entry state"
+        );
+
+        persist_run_result(
+            db.conn(),
+            "run-f",
+            &RunResult::new("finished", "the answer", None),
+            200,
+        )
+        .unwrap();
+
+        assert_eq!(
+            run_state_string(db.conn(), "run-f").unwrap().as_deref(),
+            Some("finished"),
+            "a finished run's agent_run.state must move to the terminal status, \
+             not stay stuck at awaiting_clarification"
+        );
+    }
+
+    #[test]
+    fn persisting_a_mutation_completed_result_transitions_agent_run_state() {
+        // Covers the resume.rs path (the 1 stuck `mutation_completed` row in the live
+        // DB): a resumed mutation's terminal result also moves the column.
+        let db = Db::open_hub(&tmp("stuck-mut")).unwrap();
+        create_run(db.conn(), "run-m", "apply the approved mutation", 100).unwrap();
+        persist_run_result(
+            db.conn(),
+            "run-m",
+            &RunResult::new("mutation_completed", "mutation applied", None),
+            200,
+        )
+        .unwrap();
+        assert_eq!(
+            run_state_string(db.conn(), "run-m").unwrap().as_deref(),
+            Some("mutation_completed"),
+        );
+    }
+
+    #[test]
+    fn persisting_an_awaiting_clarification_result_is_a_noop_on_state_gate_preserved() {
+        // NO-DEGRADE: a genuine clarification HOLD persists status
+        // `awaiting_clarification` (the gate stopped an under-specified task with ZERO
+        // model calls and stored the questions). The column must STAY
+        // `awaiting_clarification` — the fix must never move a genuine hold to a
+        // terminal state, or it would weaken the gate.
+        let db = Db::open_hub(&tmp("genuine-hold")).unwrap();
+        create_run(db.conn(), "run-c", "create a workflow", 100).unwrap();
+        persist_run_result(
+            db.conn(),
+            "run-c",
+            &RunResult::new(
+                "awaiting_clarification",
+                "Before I execute this generate workflow, I need more detail...",
+                None,
+            ),
+            200,
+        )
+        .unwrap();
+        assert_eq!(
+            run_state_string(db.conn(), "run-c").unwrap().as_deref(),
+            Some("awaiting_clarification"),
+            "a genuine clarification hold must remain awaiting_clarification (gate preserved)"
+        );
+    }
+
+    #[test]
+    fn persisting_a_result_never_clobbers_a_cancelled_run() {
+        // A run cancelled out-of-band keeps its terminal `cancelled` flag even if a
+        // late terminal result is persisted — the two terminal writers do not fight.
+        let db = Db::open_hub(&tmp("cancelled-then-result")).unwrap();
+        create_run(db.conn(), "run-x", "do something", 100).unwrap();
+        cancel_run(db.conn(), "run-x", 150).unwrap();
+        assert_eq!(
+            run_state_string(db.conn(), "run-x").unwrap().as_deref(),
+            Some(STATE_CANCELLED)
+        );
+        // A late finished result still persists its run_result row...
+        persist_run_result(
+            db.conn(),
+            "run-x",
+            &RunResult::new("finished", "late answer", None),
+            200,
+        )
+        .unwrap();
+        assert_eq!(
+            get_run_result(db.conn(), "run-x").unwrap().unwrap().status,
+            "finished"
+        );
+        // ...but the agent_run.state stays cancelled (never clobbered).
+        assert_eq!(
+            run_state_string(db.conn(), "run-x").unwrap().as_deref(),
+            Some(STATE_CANCELLED),
+            "a cancelled run's state must not be clobbered by a late result persist"
+        );
+    }
+
+    #[test]
+    fn errored_and_bounded_statuses_also_transition_the_state_column() {
+        // Any non-`awaiting_clarification` terminal status moves the column (so the
+        // single chokepoint covers every persisted-result outcome coherently).
+        for status in ["errored", "bounded"] {
+            let db = Db::open_hub(&tmp("term")).unwrap();
+            create_run(db.conn(), "r", "t", 100).unwrap();
+            persist_run_result(db.conn(), "r", &RunResult::new(status, "", None), 200).unwrap();
+            assert_eq!(
+                run_state_string(db.conn(), "r").unwrap().as_deref(),
+                Some(status),
+            );
+        }
+    }
+
+    #[test]
+    fn idempotent_re_persist_keeps_the_terminal_state() {
+        // A benign identical re-persist (DuplicateIdentical) leaves the column at the
+        // terminal value (idempotent re-write of the same string).
+        let db = Db::open_hub(&tmp("idem-state")).unwrap();
+        create_run(db.conn(), "r", "t", 100).unwrap();
+        let r = RunResult::new("finished", "same", None);
+        assert_eq!(
+            persist_run_result(db.conn(), "r", &r, 200).unwrap(),
+            PersistRunResultOutcome::Persisted
+        );
+        assert_eq!(
+            persist_run_result(db.conn(), "r", &r, 300).unwrap(),
+            PersistRunResultOutcome::DuplicateIdentical
+        );
+        assert_eq!(
+            run_state_string(db.conn(), "r").unwrap().as_deref(),
+            Some("finished"),
         );
     }
 
