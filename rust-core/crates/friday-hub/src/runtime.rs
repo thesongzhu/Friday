@@ -825,6 +825,17 @@ impl<T: Transport> HubRuntime<T> {
             // tools use, with the runtime Claude-from-env vision client. Byte-identical when dark
             // (FRIDAY_VISION_ENABLED off ⇒ the chokepoint refuses image_analysis before here).
             crate::vision_tools::VisionExecutor::for_runtime(self.executor.root().to_path_buf()),
+            // L2-4: the memory-as-tool executor, keyed on the run's AUTHENTICATED principal
+            // (`policy.principal_id()` — the SAME owner-scope the sessionless `recall_preamble`
+            // recalls under, so explicit recall reads exactly what auto-recall would). Byte-
+            // identical when dark (FRIDAY_MEMORY_TOOL_ENABLED off ⇒ the chokepoint refuses
+            // memory_recall/memory_store before here).
+            crate::memory_tools::MemoryToolExecutor::new(
+                self.db.conn(),
+                policy.principal_id(),
+                now_ms,
+                format!("{run_id}:memtool"),
+            ),
         );
         let (selection, outcome) = run_routed_loop_with_policy(
             &self.routes,
@@ -1160,6 +1171,22 @@ impl<T: Transport> HubRuntime<T> {
             }
         };
 
+        // L2-4: the SESSION-DERIVED dual-read composite memory namespaces — the EXACT scope list
+        // auto-extraction STORES under (primary) and auto-recall READS the union over, so the
+        // explicit memory tools INTEROPERATE with the existing memory system (a tool-stored
+        // candidate is auto-recalled next session; a tool-recall returns the SAME set auto-recall
+        // does) rather than living in a sidecar `policy.principal_id()` scope. Empty ⇒ the tool's
+        // fail-closed recall-nothing / store-refuse. A storage error is a SAFE FAILURE (NoAnswer),
+        // matching the recall-preamble handling above.
+        let memory_namespaces = match self.session_memory_namespace_candidates(session_id) {
+            Ok(ns) => ns,
+            Err(_) => {
+                return AuthedAnswer::NoAnswer {
+                    run_id: run_id.to_string(),
+                };
+            }
+        };
+
         // Drive the EXISTING session loop AS the bound owner: it ensures the OWNED session,
         // loads + folds prior history, runs the SAME gate-mandatory loop (read-only stays
         // gate-enforced; a mutating tool would Pause — Phase 1 admits none), appends this
@@ -1180,6 +1207,17 @@ impl<T: Transport> HubRuntime<T> {
             // tools use, with the runtime Claude-from-env vision client. Byte-identical when dark
             // (FRIDAY_VISION_ENABLED off ⇒ the chokepoint refuses image_analysis before here).
             crate::vision_tools::VisionExecutor::for_runtime(self.executor.root().to_path_buf()),
+            // L2-4: the memory-as-tool executor, keyed on the SESSION-DERIVED dual-read composite
+            // namespaces (the SAME scope auto-extraction/auto-recall use). Recalls the UNION over
+            // them; stores under the PRIMARY. Each encodes the owner's user segment under
+            // exact-match → NO cross-owner read/write. Byte-identical when dark
+            // (FRIDAY_MEMORY_TOOL_ENABLED off ⇒ the chokepoint refuses the tools before here).
+            crate::memory_tools::MemoryToolExecutor::with_recall_principals(
+                self.db.conn(),
+                memory_namespaces.clone(),
+                now_ms,
+                format!("{run_id}:memtool"),
+            ),
         );
         let outcome = match run_session_loop(
             self.loop_client(),
@@ -1341,6 +1379,22 @@ impl<T: Transport> HubRuntime<T> {
             }
         };
 
+        // L2-4: the SESSION-DERIVED dual-read composite memory namespaces (the SAME scope
+        // auto-extraction/auto-recall use), so the explicit memory tools interoperate with the
+        // existing memory system. Empty ⇒ recall-nothing / store-refuse. A storage error is a SAFE
+        // FAILURE (NoAnswer), matching the recall-preamble handling above.
+        let memory_namespaces = match self.session_memory_namespace_candidates(session_id) {
+            Ok(ns) => ns,
+            Err(_) => {
+                return Ok((
+                    selection,
+                    AuthedAnswer::NoAnswer {
+                        run_id: run_id.to_string(),
+                    },
+                ));
+            }
+        };
+
         // Drive the EXISTING session loop AS the bound owner on the RESOLVED client (the ONLY
         // change from the deepseek-hardcoded entry). The billing — a token_ledger row attributed to
         // the client's own provider_kind/host — happens INSIDE the loop from the client's metered
@@ -1357,6 +1411,17 @@ impl<T: Transport> HubRuntime<T> {
             // tools use, with the runtime Claude-from-env vision client. Byte-identical when dark
             // (FRIDAY_VISION_ENABLED off ⇒ the chokepoint refuses image_analysis before here).
             crate::vision_tools::VisionExecutor::for_runtime(self.executor.root().to_path_buf()),
+            // L2-4: the memory-as-tool executor, keyed on the SESSION-DERIVED dual-read composite
+            // namespaces (the SAME scope auto-extraction/auto-recall use). Recalls the UNION;
+            // stores under the PRIMARY. Each encodes the owner's user segment under exact-match →
+            // NO cross-owner read/write. Byte-identical when dark (FRIDAY_MEMORY_TOOL_ENABLED off ⇒
+            // chokepoint refuses first).
+            crate::memory_tools::MemoryToolExecutor::with_recall_principals(
+                self.db.conn(),
+                memory_namespaces.clone(),
+                now_ms,
+                format!("{run_id}:memtool"),
+            ),
         );
         let outcome = match run_session_loop(
             client,
@@ -2043,6 +2108,64 @@ impl<T: Transport> HubRuntime<T> {
             now_ms,
         )?;
         Ok(preamble)
+    }
+
+    /// (L2-4) The ORDERED dual-read session-derived composite memory namespaces for `session_id` —
+    /// the EXACT scope list the sessioned loop's auto-extraction
+    /// ([`crate::memory_extraction::extract_inline`]) STORES candidates under (its FIRST entry) AND
+    /// auto-recall ([`Self::recall_preamble_for_session`]) READS the UNION over
+    /// (`tenant.<account>.channel.<channel>.user.<user>.shared`, plus the legacy namespace under
+    /// F5.5). The explicit memory tools ([`crate::memory_tools::MemoryToolExecutor`]) in the
+    /// SESSIONED entries key on THIS list (not the raw `policy.principal_id()`), so a tool-stored
+    /// candidate is auto-recalled next session and a tool-recall returns the SAME set auto-recall
+    /// does — even after the F5.5 hardening flag is flipped (legacy rows still recalled). The tools
+    /// INTEROPERATE with the existing memory system rather than living in a sidecar scope.
+    ///
+    /// Derived from the EXACT same inputs `recall_preamble_for_session` uses:
+    /// [`friday_storage::agent_session::load_session_owner`] →
+    /// [`crate::session_namespace::resolve_effective_user_id`] (direct → DM-chatId → subagent
+    /// parent-walk) → [`crate::session_namespace::resolve_session_memory_namespace_candidates`]. An
+    /// EMPTY list ⇒ the namespace is unresolvable (no derivable userId / absent session owner) — the
+    /// fail-closed shape the tool maps to recall-nothing / store-refuse (NEVER a fallback to the raw
+    /// owner, which would be the cross-scope leak). A real storage error PROPAGATES (never swallowed
+    /// as "no owner"). NO CROSS-OWNER LEAK: each composite namespace encodes the session's OWN user
+    /// segment and the per-principal SQL stays exact-match.
+    fn session_memory_namespace_candidates(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<String>, StorageError> {
+        let owner =
+            match friday_storage::agent_session::load_session_owner(self.db.conn(), session_id)? {
+                Some(owner) => owner,
+                None => return Ok(Vec::new()),
+            };
+        let effective_user_id =
+            crate::session_namespace::resolve_effective_user_id(&owner, &mut |key: &str| {
+                friday_storage::agent_session::load_session_owner(self.db.conn(), key)
+            })?;
+        match crate::session_namespace::resolve_session_memory_namespace_candidates(
+            owner.account_id.as_deref(),
+            owner.channel.as_deref(),
+            effective_user_id.as_deref(),
+        ) {
+            // The ORDERED dual-read list (`[hardened, legacy]` under F5.5, or a single legacy
+            // namespace by default) — the SAME list `recall_preamble_for_session` reads over.
+            Ok(candidates) => Ok(candidates),
+            Err(crate::session_namespace::NamespaceError::UnresolvableNoUserId) => Ok(Vec::new()),
+        }
+    }
+
+    /// The PRIMARY (hardened-when-on, legacy-when-off) session-derived composite memory namespace —
+    /// the FIRST [`Self::session_memory_namespace_candidates`] entry, the SAME target
+    /// auto-extraction STORES under. `None` ⇒ unresolvable (the fail-closed store-refuse shape). A
+    /// focused accessor for the interop test (the live sessioned sites use the full candidate list
+    /// for dual-read recall), so it is `#[cfg(test)]`-only.
+    #[cfg(test)]
+    fn session_memory_namespace(&self, session_id: &str) -> Result<Option<String>, StorageError> {
+        Ok(self
+            .session_memory_namespace_candidates(session_id)?
+            .into_iter()
+            .next())
     }
 
     /// Read access to the composed DB (for evidence/inspection: agent_run events, audit chain).
@@ -2914,6 +3037,7 @@ mod tests {
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
             false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
 
@@ -2948,6 +3072,7 @@ mod tests {
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
             false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
 
@@ -3002,6 +3127,7 @@ mod tests {
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
             false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
         match brick {
@@ -3044,6 +3170,7 @@ mod tests {
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
             false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
         // Satisfiable = the trust layer did NOT brick it. Under DenyAll + no approval the
@@ -3108,6 +3235,7 @@ mod tests {
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
             false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
         // The workspace dimension PASSED (the produced root matches the grant prefix): the trust
@@ -6176,6 +6304,72 @@ mod tests {
             .recall_preamble_for_session("no-such-session", "run-absent", 100)
             .expect("absent session recalls empty, never errors");
         assert!(absent.is_empty(), "an absent session recalls nothing");
+    }
+
+    // ---- L2-4 memory-as-tool ↔ session namespace INTEROP (the sessioned-site fix) ----
+
+    #[test]
+    fn session_memory_namespace_matches_extraction_and_recall_key() {
+        // The sessioned memory-tool sites key the MemoryToolExecutor on
+        // `session_memory_namespace(session_id)`, NOT the raw `policy.principal_id()`. This proves
+        // that helper returns the EXACT composite namespace extraction stores under and
+        // `recall_preamble_for_session` reads under — so a tool-stored candidate INTEROPERATES with
+        // the existing memory system (auto-recall surfaces it) rather than landing in a sidecar
+        // raw-owner scope (the divergence this fix closes).
+        let (rt, _ws, _bodies) = recall_runtime("session-memtool-ns", Some("alice"));
+        bind_session_owner(&rt, "sess-mt", "alice");
+        let ns = rt
+            .session_memory_namespace("sess-mt")
+            .expect("namespace resolves")
+            .expect("a userId-owned session has a resolvable namespace");
+        // It is the SAME composite namespace extraction keys `principal_id` on (NOT raw "alice").
+        assert_eq!(ns, sessioned_ns("alice"));
+        assert_ne!(
+            ns, "alice",
+            "the tool must NOT key on the raw owner (the sidecar bug)"
+        );
+
+        // STORE via the memory tool keyed on that namespace; CONFIRM; then auto-recall
+        // (`recall_preamble_for_session`) must surface it — the end-to-end interop the fix buys.
+        {
+            let exec = crate::memory_tools::MemoryToolExecutor::new(
+                rt.db().conn(),
+                Some(ns.as_str()),
+                100,
+                "run-mt:memtool",
+            );
+            let receipt = crate::ToolExecutor::execute(
+                &exec,
+                "memory_store",
+                &[(
+                    "content".to_string(),
+                    "MEMMARKER-tool-stored-interop".to_string(),
+                )],
+            )
+            .unwrap();
+            assert!(receipt.summary.contains("candidate"), "{}", receipt.summary);
+        }
+        // The candidate is keyed on the composite namespace (proving the store scope), pending.
+        let pending = friday_storage::memory::pending_review(rt.db().conn()).unwrap();
+        let row = pending
+            .iter()
+            .find(|r| r.memory_id == "run-mt:memtool:c0")
+            .expect("the tool-stored candidate exists");
+        assert_eq!(
+            row.principal_id.as_deref(),
+            Some(ns.as_str()),
+            "the tool MUST store under the session composite namespace (extraction's key)"
+        );
+
+        // Confirm via the existing path, then AUTO-recall must surface it — interop proven.
+        friday_storage::memory::confirm(rt.db().conn(), "run-mt:memtool:c0", 200).unwrap();
+        let preamble = rt
+            .recall_preamble_for_session("sess-mt", "run-mt-recall", 300)
+            .expect("session recall composes");
+        assert!(
+            preamble.contains("MEMMARKER-tool-stored-interop"),
+            "a tool-stored+confirmed candidate MUST be surfaced by auto-recall (interop): {preamble:?}"
+        );
     }
 
     #[test]

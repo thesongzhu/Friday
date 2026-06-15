@@ -352,6 +352,20 @@ pub mod web_search;
 /// tests). Flipping the flag live is operator-gated (vision provider + token cost).
 pub mod vision_tools;
 
+/// L2-4 memory-as-tool — exposes the already-built memory spine (extract→confirm→recall) as two
+/// explicit agent tools: `memory_recall` (read the owner's CONFIRMED memory) + `memory_store`
+/// (propose an owner-scoped memory CANDIDATE). Both registered in [`ToolRegistry::default`] but
+/// REFUSED by the gate-dispatch chokepoint unless `FRIDAY_MEMORY_TOOL_ENABLED` is `"1"`
+/// (default-OFF → DARK → flag-OFF byte-identical) and HIDDEN from the model menu while off. The
+/// [`memory_tools::MemoryToolExecutor`] DELEGATES to the existing primitives
+/// ([`friday_storage::memory::recall_confirmed`] → [`cognition::rank_recall`] →
+/// [`cognition::gate_and_render_recall`] for recall; [`friday_storage::memory::record_candidate`]
+/// for store) — NO reimplementation of the namespace / redaction / Passport-gate logic. Owner-
+/// scoping is load-bearing: both actions key on the run's AUTHENTICATED principal (no cross-owner
+/// read/write). The auto-extraction + auto-recall paths are UNCHANGED — this only ADDS explicit
+/// agent control. DARK; flipping the flag is operator-gated.
+pub mod memory_tools;
+
 /// execrun-enablement slice 2 (production key-sourcing pre-req): the SHARED, fail-closed
 /// master-key reader + the two domain-separated derivations both the `hub_agent_run_server`
 /// bin (the FileSecureStore KEK) and the `hub_agent_run_enroll` bin (the client X25519
@@ -1114,12 +1128,15 @@ pub fn build_tool_prompt_with(task: &str, registry: &ToolRegistry) -> String {
     let web_fetch_enabled = web_fetch_enabled_from(std::env::var(FRIDAY_WEB_FETCH_ENABLED).ok());
     let web_search_enabled = web_search_enabled_from(std::env::var(FRIDAY_WEB_SEARCH_ENABLED).ok());
     let vision_enabled = vision_enabled_from(std::env::var(FRIDAY_VISION_ENABLED).ok());
+    let memory_tool_enabled =
+        memory_tool_enabled_from(std::env::var(FRIDAY_MEMORY_TOOL_ENABLED).ok());
     build_tool_prompt_with_flagged(
         task,
         registry,
         web_fetch_enabled,
         web_search_enabled,
         vision_enabled,
+        memory_tool_enabled,
     )
 }
 
@@ -1133,6 +1150,7 @@ pub(crate) fn build_tool_prompt_with_flagged(
     web_fetch_enabled: bool,
     web_search_enabled: bool,
     vision_enabled: bool,
+    memory_tool_enabled: bool,
 ) -> String {
     let mut s = String::from(
         "You are Friday's tool-using agent. Pick exactly ONE tool to make progress.\n\
@@ -1147,6 +1165,10 @@ pub(crate) fn build_tool_prompt_with_flagged(
             continue;
         }
         if name == "image_analysis" && !vision_enabled {
+            continue;
+        }
+        // L2-4: both memory tools share ONE flag — hidden together when off.
+        if (name == "memory_recall" || name == "memory_store") && !memory_tool_enabled {
             continue;
         }
         s.push_str(&format!("- {name}: {desc}\n"));
@@ -1452,6 +1474,40 @@ impl Default for ToolRegistry {
             "analyze image(s) with a vision model (params: prompt, images [workspace path / \
              http(s) URL / data: URI], model, detail low/high/auto, maxTokens); returns the \
              model's analysis text",
+        );
+        // L2-4 memory_recall — the FOURTH L2 capability tool family (memory-as-tool). READ-ONLY
+        // (mutating:false, Risk::ReadOnly): it queries the owner's CONFIRMED memory and returns it
+        // PII-redacted + Passport-gated — never mutating local state — so it base-Allows at the
+        // gate. The recalled content IS owner memory (prompt-injection-inward, but it is
+        // user-CONFIRMED, not raw channel text), and the UNW-001 gate still evaluates every
+        // SUBSEQUENT tool call (backstop). ALWAYS registered, but the gate-dispatch chokepoint
+        // refuses it unless FRIDAY_MEMORY_TOOL_ENABLED is "1" (default-OFF → DARK), so registering
+        // it changes nothing until the flag is flipped.
+        r.register(
+            "memory_recall",
+            false,
+            Risk::ReadOnly,
+            "recall the owner's confirmed memory (params: query, limit 1-10); returns confirmed \
+             memory items relevant to this owner (PII-redacted)",
+        );
+        // L2-4 memory_store — propose a memory CANDIDATE owned by the run's AUTHENTICATED
+        // principal. READ-ONLY (mutating:false, Risk::ReadOnly) BY DESIGN: a candidate is NOT a
+        // live/durable mutation — it is non-durable (state=Candidate), invisible to recall until
+        // the OWNER explicitly confirms it (the owner-confirm step IS the gate), and surfaced on
+        // the Needs-Me / Memory-Review loop. This is EXACTLY how the spine treats candidate-
+        // creation: memory_extraction::extract_inline records candidates with NO approval gate.
+        // Classifying it mutating:true would route it to the Ed25519 approval-PAUSE gate (the
+        // wrong control — it would block the agent from proposing memory under deny-all when the
+        // candidate already has its own downstream owner-confirm gate). The tool is owner-scoped +
+        // sensitivity-guarded + flag-gated OFF by default, so a candidate can never be a covert
+        // durable / cross-owner write. ALWAYS registered, but refused at the chokepoint unless
+        // FRIDAY_MEMORY_TOOL_ENABLED is "1" (default-OFF → DARK).
+        r.register(
+            "memory_store",
+            false,
+            Risk::ReadOnly,
+            "propose a memory candidate for the owner (params: content, tags); the candidate is \
+             pending and becomes recallable only after the owner confirms it",
         );
         r
     }
@@ -2258,6 +2314,11 @@ pub enum ExecError {
     /// carrying the fail-closed warning (so the model sees it). A workspace-path containment
     /// refusal surfaces as `ExecError::Fs` (the hardened safe-open), not this variant.
     Vision(crate::vision_tools::VisionToolError),
+    /// A `memory_recall`/`memory_store` (L2-4 memory-as-tool) STORAGE failure (a locked/corrupt
+    /// DB on the candidate insert or the recall query). A no-bound-owner / sensitive-content /
+    /// no-confirmed-memory case is NOT this — those are normal `ToolReceipt`s carrying the
+    /// fail-closed message (so the model sees them); this variant is a hard storage failure.
+    Memory(StorageError),
 }
 
 impl std::fmt::Display for ExecError {
@@ -2270,6 +2331,7 @@ impl std::fmt::Display for ExecError {
             ExecError::WebFetch(e) => write!(f, "web_fetch_error:{e}"),
             ExecError::WebSearch(e) => write!(f, "web_search_error:{e}"),
             ExecError::Vision(e) => write!(f, "image_analysis_error:{e}"),
+            ExecError::Memory(e) => write!(f, "memory_tool_error:{e}"),
         }
     }
 }
@@ -2949,6 +3011,8 @@ pub(crate) fn gate_dispatch_with_policy(
     let web_fetch_enabled = web_fetch_enabled_from(std::env::var(FRIDAY_WEB_FETCH_ENABLED).ok());
     let web_search_enabled = web_search_enabled_from(std::env::var(FRIDAY_WEB_SEARCH_ENABLED).ok());
     let vision_enabled = vision_enabled_from(std::env::var(FRIDAY_VISION_ENABLED).ok());
+    let memory_tool_enabled =
+        memory_tool_enabled_from(std::env::var(FRIDAY_MEMORY_TOOL_ENABLED).ok());
     gate_dispatch_with_policy_enforced(
         conn,
         executor,
@@ -2961,6 +3025,7 @@ pub(crate) fn gate_dispatch_with_policy(
         web_fetch_enabled,
         web_search_enabled,
         vision_enabled,
+        memory_tool_enabled,
     )
 }
 
@@ -3022,6 +3087,24 @@ pub(crate) fn vision_enabled_from(raw: Option<String>) -> bool {
     matches!(raw, Some(v) if v.trim() == "1")
 }
 
+/// The `FRIDAY_MEMORY_TOOL_ENABLED` env var (L2-4 memory-as-tool). When exactly `"1"` (trimmed),
+/// the `memory_recall` + `memory_store` capability tools are DISPATCHABLE; otherwise the
+/// gate-dispatch chokepoint REFUSES each fail-closed
+/// (`memory_tool_disabled_flag_off:<memory_recall|memory_store>`) BEFORE classify/execute, so the
+/// tools — though always REGISTERED — are unavailable AND hidden from the model menu. DEFAULT-OFF
+/// (DARK): flipping it live exposes the owner's confirmed memory to the agent on demand (recall)
+/// and lets the agent propose owner-scoped memory candidates (store), and is OPERATOR-GATED. The
+/// auto-extraction + auto-recall paths are UNCHANGED by this flag (this only ADDS explicit agent
+/// control). Kept narrow + explicit (literal `"1"` only) so the capability can never be enabled by
+/// accident.
+pub const FRIDAY_MEMORY_TOOL_ENABLED: &str = "FRIDAY_MEMORY_TOOL_ENABLED";
+
+/// Pure flag-matcher for [`FRIDAY_MEMORY_TOOL_ENABLED`] (env read split out for race-free unit
+/// tests). ONLY the literal `"1"` (trimmed) enables; everything else (incl. `"true"`) is OFF.
+pub(crate) fn memory_tool_enabled_from(raw: Option<String>) -> bool {
+    matches!(raw, Some(v) if v.trim() == "1")
+}
+
 /// The flag-parameterized chokepoint. `enforce_trust` is supplied by the public
 /// [`gate_dispatch_with_policy`] (from the env flag) and injected directly by the NS-2
 /// behavioral tests (so they never mutate `std::env`, avoiding the in-process test race).
@@ -3042,6 +3125,7 @@ pub(crate) fn gate_dispatch_with_policy_enforced(
     web_fetch_enabled: bool,
     web_search_enabled: bool,
     vision_enabled: bool,
+    memory_tool_enabled: bool,
 ) -> Result<GateDispatch, StorageError> {
     // (NS-1) The run's action context is carried HERE on `policy` (`policy.action_context()`),
     // already shaped as a `friday_storage::AgentActionContext` — the NS-2 trust check (below)
@@ -3083,6 +3167,25 @@ pub(crate) fn gate_dispatch_with_policy_enforced(
     {
         return Ok(GateDispatch::Denied(format!(
             "vision_disabled_flag_off:{}",
+            raw.action
+        )));
+    }
+    // (L2-4) FRIDAY_MEMORY_TOOL_ENABLED flag-gate — identical posture to the web_fetch/web_search/
+    //     vision gates above, for BOTH memory-as-tool actions (`memory_recall` + `memory_store`).
+    //     Fires ONLY for those two (canonicalized through the same map), so a flag-OFF dispatch of
+    //     any other action stays byte-identical. The auto-extraction + auto-recall paths do NOT go
+    //     through this chokepoint at all, so they are UNCHANGED by this flag. When ON the executor
+    //     (a CompositeToolExecutor's MemoryToolExecutor) keys recall/store on the run's
+    //     authenticated principal (no cross-owner read/write) and runs the sensitivity guard before
+    //     storing a candidate.
+    if !memory_tool_enabled
+        && matches!(
+            tool_name_map::canonical_rust_name(&raw.action),
+            Some("memory_recall" | "memory_store")
+        )
+    {
+        return Ok(GateDispatch::Denied(format!(
+            "memory_tool_disabled_flag_off:{}",
             raw.action
         )));
     }
@@ -5705,8 +5808,8 @@ mod tests {
         // chokepoint/classification need it), but HIDDEN from the menu when off.
         let reg = ToolRegistry::default();
         // Hold the web_search flag OFF in BOTH arms so this isolates the web_fetch flag.
-        let off = build_tool_prompt_with_flagged("t", &reg, false, false, false);
-        let on = build_tool_prompt_with_flagged("t", &reg, true, false, false);
+        let off = build_tool_prompt_with_flagged("t", &reg, false, false, false, false);
+        let on = build_tool_prompt_with_flagged("t", &reg, true, false, false, false);
         assert!(
             !off.contains("web_fetch"),
             "flag-OFF menu must NOT advertise web_fetch:\n{off}"
@@ -5753,8 +5856,9 @@ mod tests {
     /// allow-private SSRF policy so the e2e CAN reach 127.0.0.1 (the BLOCKING posture is proven
     /// by the prod-policy SSRF tests + the ssrf_guard table tests — never weakened here).
     fn web_composite(
+        conn: &Connection,
         ws: std::path::PathBuf,
-    ) -> crate::http_tools::CompositeToolExecutor<FsToolExecutor> {
+    ) -> crate::http_tools::CompositeToolExecutor<'_, FsToolExecutor> {
         let fs = FsToolExecutor::new(ws.clone());
         let web = crate::http_tools::WebFetchExecutor::with_policy(crate::ssrf_guard::SsrfPolicy {
             allow_private_network: true,
@@ -5769,7 +5873,10 @@ mod tests {
             ws,
             Box::new(friday_vision::StubVisionClient::default()),
         );
-        crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision)
+        // The memory arm is irrelevant here (no memory tool dispatched) — a no-owner executor
+        // satisfies the composite signature (it would refuse anyway).
+        let memory = crate::memory_tools::MemoryToolExecutor::new(conn, None, 1000, "test:memtool");
+        crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision, memory)
     }
 
     #[test]
@@ -5782,7 +5889,7 @@ mod tests {
         // call count would be 1.
         let db = Db::open_hub(&temp_path("wf-off")).unwrap();
         let ws = temp_ws("wf-off");
-        let composite = web_composite(ws);
+        let composite = web_composite(db.conn(), ws);
         let exec = CountingExecutor {
             inner: &composite,
             calls: std::cell::Cell::new(0),
@@ -5803,6 +5910,7 @@ mod tests {
             false, // web_fetch flag OFF — the tool is unavailable
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
             false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
 
@@ -5849,6 +5957,7 @@ mod tests {
                 flag,
                 false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
                 false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+                false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
             )
             .unwrap();
             (matches!(out, GateDispatch::Executed(_)), exec.calls.get())
@@ -5871,7 +5980,7 @@ mod tests {
         let (url, h) = spawn_web_mock(200, "FETCHED-OK");
         let db = Db::open_hub(&temp_path("wf-on")).unwrap();
         let ws = temp_ws("wf-on");
-        let composite = web_composite(ws);
+        let composite = web_composite(db.conn(), ws);
         let approve = no_approval();
         let policy = RunPolicy::default();
         let call = raw("web_fetch", &[("url", &url), ("parseHtml", "false")]);
@@ -5888,6 +5997,7 @@ mod tests {
             true,  // web_fetch flag ON
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
             false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
 
@@ -5920,7 +6030,7 @@ mod tests {
         // read-only check would NOT fire — the POST body would be sent ungated + unledgered.)
         let db = Db::open_hub(&temp_path("wf-post-gate")).unwrap();
         let ws = temp_ws("wf-post-gate");
-        let composite = web_composite(ws);
+        let composite = web_composite(db.conn(), ws);
         let exec = CountingExecutor {
             inner: &composite,
             calls: std::cell::Cell::new(0),
@@ -5951,6 +6061,7 @@ mod tests {
             true,  // web_fetch flag ON — exercise the CLASSIFICATION gate, not the flag-gate
             false,
             false,
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
 
@@ -5985,6 +6096,7 @@ mod tests {
             true,
             false,
             false,
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
         match get_out {
@@ -6010,7 +6122,7 @@ mod tests {
         // cannot silently POST context outbound; it must surface for operator approval first.
         let db = Db::open_hub(&temp_path("wf-post-pause")).unwrap();
         let ws = temp_ws("wf-post-pause");
-        let composite = web_composite(ws);
+        let composite = web_composite(db.conn(), ws);
         let exec = CountingExecutor {
             inner: &composite,
             calls: std::cell::Cell::new(0),
@@ -6038,6 +6150,7 @@ mod tests {
             true,  // web_fetch flag ON
             false,
             false,
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
 
@@ -6069,7 +6182,10 @@ mod tests {
             ws,
             Box::new(friday_vision::StubVisionClient::default()),
         );
-        let composite = crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision);
+        let memory =
+            crate::memory_tools::MemoryToolExecutor::new(db.conn(), None, 1000, "test:memtool");
+        let composite =
+            crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision, memory);
         let approve = no_approval();
         let policy = RunPolicy::default();
         let call = raw(
@@ -6089,6 +6205,7 @@ mod tests {
             true,  // web_fetch flag ON
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
             false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
 
@@ -6134,8 +6251,8 @@ mod tests {
         // Hold the web_fetch flag OFF in both arms so this isolates the web_search flag. The
         // flag-OFF prompt must equal the flag-ON prompt minus only the web_search line.
         let reg = ToolRegistry::default();
-        let off = build_tool_prompt_with_flagged("t", &reg, false, false, false);
-        let on = build_tool_prompt_with_flagged("t", &reg, false, true, false);
+        let off = build_tool_prompt_with_flagged("t", &reg, false, false, false, false);
+        let on = build_tool_prompt_with_flagged("t", &reg, false, true, false, false);
         assert!(
             !off.contains("web_search"),
             "flag-OFF menu must NOT advertise web_search:\n{off}"
@@ -6212,12 +6329,13 @@ mod tests {
     /// A composite (fs + web_fetch + a web_search whose endpoints all point at `base`) for the
     /// loopback tests. Uses the allow-private SSRF policy so the e2e CAN reach 127.0.0.1; the
     /// BLOCKING posture is proven by the ssrf_guard table tests — never weakened here.
-    fn web_search_composite(
+    fn web_search_composite<'c>(
+        conn: &'c Connection,
         ws: std::path::PathBuf,
         base: &str,
         provider: crate::web_search::ConfiguredProvider,
         serper_key: Option<&str>,
-    ) -> crate::http_tools::CompositeToolExecutor<FsToolExecutor> {
+    ) -> crate::http_tools::CompositeToolExecutor<'c, FsToolExecutor> {
         let fs = FsToolExecutor::new(ws.clone());
         let web = crate::http_tools::WebFetchExecutor::new();
         let search =
@@ -6242,7 +6360,9 @@ mod tests {
             ws,
             Box::new(friday_vision::StubVisionClient::default()),
         );
-        crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision)
+        // The memory arm is irrelevant here (no memory tool dispatched) — a no-owner executor.
+        let memory = crate::memory_tools::MemoryToolExecutor::new(conn, None, 1000, "test:memtool");
+        crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision, memory)
     }
 
     #[test]
@@ -6255,6 +6375,7 @@ mod tests {
         let ws = temp_ws("ws-off");
         // base URL is irrelevant — the executor must never be reached.
         let composite = web_search_composite(
+            db.conn(),
             ws,
             "http://127.0.0.1:9/",
             crate::web_search::ConfiguredProvider::Auto,
@@ -6280,6 +6401,7 @@ mod tests {
             false, // web_fetch flag OFF
             false, // web_search flag OFF — the tool is unavailable
             false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
 
@@ -6309,6 +6431,7 @@ mod tests {
         let db = Db::open_hub(&temp_path("ws-on")).unwrap();
         let ws = temp_ws("ws-on");
         let composite = web_search_composite(
+            db.conn(),
             ws,
             &base,
             crate::web_search::ConfiguredProvider::Serper,
@@ -6330,6 +6453,7 @@ mod tests {
             false, // web_fetch flag OFF
             true,  // web_search flag ON
             false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
 
@@ -6359,6 +6483,7 @@ mod tests {
         let db = Db::open_hub(&temp_path("ws-nokey")).unwrap();
         let ws = temp_ws("ws-nokey");
         let composite = web_search_composite(
+            db.conn(),
             ws,
             "http://127.0.0.1:9/",
             crate::web_search::ConfiguredProvider::Serper,
@@ -6380,6 +6505,7 @@ mod tests {
             false, // web_fetch flag OFF
             true,  // web_search flag ON
             false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
 
@@ -6424,8 +6550,9 @@ mod tests {
     /// a future URL-image loopback case could reach 127.0.0.1; the BLOCKING posture is proven by
     /// the prod-policy vision_tools test + the ssrf_guard table tests — never weakened here.
     fn vision_composite(
+        conn: &Connection,
         ws: std::path::PathBuf,
-    ) -> crate::http_tools::CompositeToolExecutor<FsToolExecutor> {
+    ) -> crate::http_tools::CompositeToolExecutor<'_, FsToolExecutor> {
         let fs = FsToolExecutor::new(ws.clone());
         let web = crate::http_tools::WebFetchExecutor::with_policy(crate::ssrf_guard::SsrfPolicy {
             allow_private_network: true,
@@ -6440,7 +6567,9 @@ mod tests {
             },
             Box::new(friday_vision::StubVisionClient::default()),
         );
-        crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision)
+        // The memory arm is irrelevant here (no memory tool dispatched) — a no-owner executor.
+        let memory = crate::memory_tools::MemoryToolExecutor::new(conn, None, 1000, "test:memtool");
+        crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision, memory)
     }
 
     /// Pure env-matcher glue: exactly `"1"` (trimmed) enables; everything else is OFF.
@@ -6470,8 +6599,8 @@ mod tests {
         // Hold the web_fetch + web_search flags OFF in both arms so this isolates the vision flag.
         // The flag-OFF prompt must equal the flag-ON prompt minus only the image_analysis line.
         let reg = ToolRegistry::default();
-        let off = build_tool_prompt_with_flagged("t", &reg, false, false, false);
-        let on = build_tool_prompt_with_flagged("t", &reg, false, false, true);
+        let off = build_tool_prompt_with_flagged("t", &reg, false, false, false, false);
+        let on = build_tool_prompt_with_flagged("t", &reg, false, false, true, false);
         assert!(
             !off.contains("image_analysis"),
             "flag-OFF menu must NOT advertise image_analysis:\n{off}"
@@ -6498,7 +6627,7 @@ mod tests {
         // executor is NEVER reached (no image validated/fetched, no model call).
         let db = Db::open_hub(&temp_path("vis-off")).unwrap();
         let ws = temp_ws("vis-off");
-        let composite = vision_composite(ws);
+        let composite = vision_composite(db.conn(), ws);
         let exec = CountingExecutor {
             inner: &composite,
             calls: std::cell::Cell::new(0),
@@ -6522,6 +6651,7 @@ mod tests {
             false, // web_fetch flag OFF
             false, // web_search flag OFF
             false, // vision flag OFF — the tool is unavailable
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
 
@@ -6566,7 +6696,8 @@ mod tests {
                 false,
                 false,
                 false,
-                flag, // vision flag toggled
+                flag,  // vision flag toggled
+                false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
             )
             .unwrap();
             (matches!(out, GateDispatch::Executed(_)), exec.calls.get())
@@ -6590,7 +6721,7 @@ mod tests {
         // the ToolReceipt. NO real model/provider, NO real network.
         let db = Db::open_hub(&temp_path("vis-on")).unwrap();
         let ws = temp_ws("vis-on");
-        let composite = vision_composite(ws);
+        let composite = vision_composite(db.conn(), ws);
         let approve = no_approval();
         let policy = RunPolicy::default();
         let call = raw(
@@ -6613,6 +6744,7 @@ mod tests {
             false, // web_fetch flag OFF
             false, // web_search flag OFF
             true,  // vision flag ON
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
 
@@ -6645,7 +6777,7 @@ mod tests {
         // URL would be fetched ungated, leaking the query before the image even validated.)
         let db = Db::open_hub(&temp_path("vis-url-gate")).unwrap();
         let ws = temp_ws("vis-url-gate");
-        let composite = vision_composite(ws);
+        let composite = vision_composite(db.conn(), ws);
         let exec = CountingExecutor {
             inner: &composite,
             calls: std::cell::Cell::new(0),
@@ -6671,7 +6803,8 @@ mod tests {
             false, // enforce_trust OFF
             false,
             false,
-            true, // vision flag ON — exercise the CLASSIFICATION gate, not the flag-gate
+            true,  // vision flag ON — exercise the CLASSIFICATION gate, not the flag-gate
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
 
@@ -6708,6 +6841,7 @@ mod tests {
             false,
             false,
             true,
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
         match local_out {
@@ -6747,7 +6881,10 @@ mod tests {
             ws,
             Box::new(friday_vision::StubVisionClient::default()),
         );
-        let composite = crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision);
+        let memory =
+            crate::memory_tools::MemoryToolExecutor::new(db.conn(), None, 1000, "test:memtool");
+        let composite =
+            crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision, memory);
         // Mint an approval for the (now-mutating) URL-image call so the gate Allows it and the
         // executor's SSRF guard is reached. The HMAC authorize path is the legacy symmetric seam.
         let approve = mint_for_each();
@@ -6771,7 +6908,8 @@ mod tests {
             false,
             false,
             false,
-            true, // vision flag ON
+            true,  // vision flag ON
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
 
@@ -6784,6 +6922,290 @@ mod tests {
             other => panic!(
                 "flag-ON + approved private image URL must be SSRF-blocked at the executor, got {other:?}"
             ),
+        }
+    }
+
+    // ─── L2-4 memory-as-tool (FRIDAY_MEMORY_TOOL_ENABLED) ───
+
+    /// A composite (fs + web_fetch + web_search + vision + a MEMORY executor owned by `principal`)
+    /// for the memory-tool loop tests. The memory executor keys recall/store on `principal` (the
+    /// owner-scope) against the SAME `conn` the test asserts on.
+    fn memory_composite<'c>(
+        conn: &'c Connection,
+        ws: std::path::PathBuf,
+        principal: Option<&str>,
+        now_ms: i64,
+    ) -> crate::http_tools::CompositeToolExecutor<'c, FsToolExecutor> {
+        let fs = FsToolExecutor::new(ws.clone());
+        let web = crate::http_tools::WebFetchExecutor::new();
+        let search = crate::web_search::WebSearchExecutor::with_config(Default::default());
+        let vision = crate::vision_tools::VisionExecutor::new(
+            ws,
+            Box::new(friday_vision::StubVisionClient::default()),
+        );
+        let memory =
+            crate::memory_tools::MemoryToolExecutor::new(conn, principal, now_ms, "run1:memtool");
+        crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision, memory)
+    }
+
+    /// Pure env-matcher glue: exactly `"1"` (trimmed) enables; everything else is OFF.
+    #[test]
+    fn memory_tool_enabled_from_only_literal_one_enables() {
+        assert!(
+            !memory_tool_enabled_from(None),
+            "unset ⇒ OFF (prod default, DARK)"
+        );
+        assert!(
+            !memory_tool_enabled_from(Some(String::new())),
+            "empty ⇒ OFF"
+        );
+        assert!(!memory_tool_enabled_from(Some("0".to_string())), "0 ⇒ OFF");
+        assert!(
+            !memory_tool_enabled_from(Some("true".to_string())),
+            "`true` ⇒ OFF (only `1` enables — narrow + explicit)"
+        );
+        assert!(memory_tool_enabled_from(Some("1".to_string())), "`1` ⇒ ON");
+        assert!(
+            memory_tool_enabled_from(Some("  1  ".to_string())),
+            "whitespace-padded `1` ⇒ ON (trimmed)"
+        );
+    }
+
+    #[test]
+    fn memory_tool_flag_off_prompt_menu_is_byte_identical_no_memory_tools() {
+        // The model-facing menu MUST NOT list `memory_recall`/`memory_store` while the flag is OFF
+        // (else the model could pick one and eat a `memory_tool_disabled_flag_off` refusal = a
+        // changed trajectory). Hold the other L2 flags OFF in both arms to isolate this flag. The
+        // flag-OFF prompt must equal the flag-ON prompt minus only the two memory-tool lines.
+        let reg = ToolRegistry::default();
+        let off = build_tool_prompt_with_flagged("t", &reg, false, false, false, false);
+        let on = build_tool_prompt_with_flagged("t", &reg, false, false, false, true);
+        assert!(
+            !off.contains("memory_recall") && !off.contains("memory_store"),
+            "flag-OFF menu must NOT advertise the memory tools:\n{off}"
+        );
+        assert!(
+            on.contains("memory_recall") && on.contains("memory_store"),
+            "flag-ON menu MUST advertise both memory tools:\n{on}"
+        );
+        let on_without_memory: String = on
+            .split_inclusive('\n')
+            .filter(|l| !l.contains("memory_recall") && !l.contains("memory_store"))
+            .collect();
+        assert_eq!(
+            off, on_without_memory,
+            "flag-OFF prompt must equal the flag-ON prompt minus only the memory-tool lines"
+        );
+    }
+
+    #[test]
+    fn memory_tool_flag_off_refuses_tool_unavailable_executor_never_reached() {
+        // LOOP CLOSURE (flag-OFF arm): with FRIDAY_MEMORY_TOOL_ENABLED OFF, a dispatched
+        // memory_recall / memory_store is REFUSED at the chokepoint
+        // (`memory_tool_disabled_flag_off`) BEFORE the executor — the tools are UNAVAILABLE. We
+        // assert the refusal AND that the executor is NEVER reached (no recall query, no candidate
+        // write).
+        let db = Db::open_hub(&temp_path("mem-off")).unwrap();
+        let ws = temp_ws("mem-off");
+        let composite = memory_composite(db.conn(), ws, Some("alice"), 1000);
+        let exec = CountingExecutor {
+            inner: &composite,
+            calls: std::cell::Cell::new(0),
+        };
+        let approve = no_approval();
+        let policy = RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), false);
+
+        for (action, params) in [
+            ("memory_store", vec![("content", "x")]),
+            ("memory_recall", vec![]),
+        ] {
+            let call = raw(action, &params);
+            let out = gate_dispatch_with_policy_enforced(
+                db.conn(),
+                &exec,
+                &call,
+                AuthzMode::DenyAll,
+                &approve,
+                &policy,
+                1000,
+                false, // enforce_trust OFF
+                false, // web_fetch flag OFF
+                false, // web_search flag OFF
+                false, // vision flag OFF
+                false, // memory-tool flag OFF — the tools are unavailable
+            )
+            .unwrap();
+            match out {
+                GateDispatch::Denied(reason) => assert_eq!(
+                    reason,
+                    format!("memory_tool_disabled_flag_off:{action}"),
+                    "flag-OFF must refuse {action} with the documented reason"
+                ),
+                other => panic!("flag-OFF must Deny {action}, got {other:?}"),
+            }
+        }
+        assert_eq!(
+            exec.calls.get(),
+            0,
+            "flag-OFF: the executor is NEVER reached (tools unavailable = no recall/store)"
+        );
+        // Nothing was stored (the store never reached the executor).
+        assert_eq!(db.count("memory_item").unwrap(), 0);
+    }
+
+    #[test]
+    fn memory_tool_flag_off_is_byte_identical_for_other_tools() {
+        // The flag-gate fires ONLY for the memory tools: a NON-memory dispatch (read_file) is
+        // BYTE-IDENTICAL whether the memory-tool flag is ON or OFF.
+        let make = |flag: bool| {
+            let db = Db::open_hub(&temp_path("mem-bi")).unwrap();
+            let ws = temp_ws("mem-bi");
+            std::fs::write(ws.join("notes.md"), b"hello").unwrap();
+            let composite = memory_composite(db.conn(), ws, Some("alice"), 1000);
+            let exec = CountingExecutor {
+                inner: &composite,
+                calls: std::cell::Cell::new(0),
+            };
+            let approve = no_approval();
+            let policy = RunPolicy::default();
+            let out = gate_dispatch_with_policy_enforced(
+                db.conn(),
+                &exec,
+                &read_only_proposal(),
+                AuthzMode::DenyAll,
+                &approve,
+                &policy,
+                1000,
+                false,
+                false,
+                false,
+                false,
+                flag, // memory-tool flag toggled
+            )
+            .unwrap();
+            (matches!(out, GateDispatch::Executed(_)), exec.calls.get())
+        };
+        let off = make(false);
+        let on = make(true);
+        assert_eq!(
+            off, on,
+            "a non-memory tool is identical with the memory-tool flag on vs off"
+        );
+        assert!(off.0, "read_file should Execute (sanity)");
+    }
+
+    #[test]
+    fn memory_tool_flag_on_store_confirm_recall_loop_owner_scoped() {
+        // LOOP CLOSURE (flag-ON arm) — the FRIDAY_MEMORY_TOOL_ENABLED manifest-mapped test. With
+        // the flag ON, memory_store + memory_recall are dispatchable; the chokepoint Allows each
+        // (read-only — a candidate is NOT a live mutation, no approval pause) and the
+        // CompositeToolExecutor's MemoryToolExecutor delegates to the EXISTING spine. The full
+        // loop: store proposes an owner-scoped CANDIDATE → owner-confirm via the existing path →
+        // recall returns it; a DIFFERENT principal recalls NOTHING (isolation); recall applies the
+        // spine's PII redaction. NO model call, real Hub Db, real composite.
+        let db = Db::open_hub(&temp_path("mem-on")).unwrap();
+        let ws = temp_ws("mem-on");
+        let composite = memory_composite(db.conn(), ws, Some("alice"), 1000);
+        let approve = no_approval();
+        let policy = RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), false);
+        let dispatch = |call: &RawToolCall| {
+            gate_dispatch_with_policy_enforced(
+                db.conn(),
+                &composite,
+                call,
+                AuthzMode::DenyAll,
+                &approve,
+                &policy,
+                1000,
+                false, // enforce_trust OFF
+                false, // web_fetch flag OFF
+                false, // web_search flag OFF
+                false, // vision flag OFF
+                true,  // memory-tool flag ON
+            )
+            .unwrap()
+        };
+
+        // 1. memory_store proposes a CANDIDATE (with a non-keyword PII email — stored raw, redacted
+        //    at recall, parity with the spine). The gate Allows it (read-only) + it Executes.
+        let store = dispatch(&raw(
+            "memory_store",
+            &[("content", "Reach alice at alice@example.com about Falcon.")],
+        ));
+        match store {
+            GateDispatch::Executed(receipt) => {
+                assert_eq!(receipt.action, "memory_store");
+                assert!(receipt.summary.contains("candidate"), "{}", receipt.summary);
+            }
+            other => panic!("flag-ON memory_store must Execute, got {other:?}"),
+        }
+
+        // It is a pending candidate (NOT durable) owned by alice; recall returns nothing yet.
+        let pending = friday_storage::memory::pending_review(db.conn()).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].principal_id.as_deref(), Some("alice"));
+        let memory_id = pending[0].memory_id.clone();
+        match dispatch(&raw("memory_recall", &[])) {
+            GateDispatch::Executed(r) => assert_eq!(
+                r.content.as_deref(),
+                Some("No confirmed memory found for this owner."),
+                "recall returns nothing before confirm"
+            ),
+            other => panic!("flag-ON memory_recall must Execute, got {other:?}"),
+        }
+
+        // 2. Owner confirms via the EXISTING confirm path → it becomes recallable under alice.
+        friday_storage::memory::confirm(db.conn(), &memory_id, 2000).unwrap();
+        match dispatch(&raw("memory_recall", &[])) {
+            GateDispatch::Executed(r) => {
+                let content = r.content.unwrap();
+                assert!(
+                    content.contains("Falcon"),
+                    "recall must return it: {content}"
+                );
+                // recall applies the SPINE's PII redaction (email → [EMAIL]).
+                assert!(
+                    content.contains("[EMAIL]"),
+                    "recall must redact the email: {content}"
+                );
+                assert!(
+                    !content.contains("alice@example.com"),
+                    "raw email must NOT leak into recall: {content}"
+                );
+            }
+            other => panic!("flag-ON memory_recall must Execute, got {other:?}"),
+        }
+
+        // 3. ISOLATION: a DIFFERENT authenticated principal (mallory) recalls NOTHING — alice's
+        //    candidate is owner-scoped on the authenticated principal (no cross-owner read).
+        let mallory_ws = temp_ws("mem-on-m");
+        let mallory_composite = memory_composite(db.conn(), mallory_ws, Some("mallory"), 1000);
+        let mallory_policy =
+            RunPolicy::new(Some("mallory".to_string()), Vec::<String>::new(), false);
+        let m_out = gate_dispatch_with_policy_enforced(
+            db.conn(),
+            &mallory_composite,
+            &raw("memory_recall", &[]),
+            AuthzMode::DenyAll,
+            &approve,
+            &mallory_policy,
+            1000,
+            false,
+            false,
+            false,
+            false,
+            true, // memory-tool flag ON
+        )
+        .unwrap();
+        match m_out {
+            GateDispatch::Executed(r) => assert_eq!(
+                r.content.as_deref(),
+                Some("No confirmed memory found for this owner."),
+                "a different owner must not recall alice's memory"
+            ),
+            other => {
+                panic!("mallory's memory_recall must Execute (and return nothing), got {other:?}")
+            }
         }
     }
 
@@ -6815,6 +7237,7 @@ mod tests {
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
             false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
 
@@ -6908,6 +7331,7 @@ mod tests {
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
             false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
         assert!(
@@ -6964,6 +7388,7 @@ mod tests {
                 false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
                 false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
                 false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+                false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
             )
             .unwrap();
             label(&out)
@@ -7033,6 +7458,7 @@ mod tests {
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
             false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
         match out {
@@ -7064,6 +7490,7 @@ mod tests {
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
             false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
         assert!(
@@ -7154,6 +7581,7 @@ mod tests {
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
             false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
 
@@ -7209,6 +7637,7 @@ mod tests {
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
             false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+            false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
         )
         .unwrap();
 
@@ -7311,6 +7740,7 @@ mod tests {
                 false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
                 false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
                 false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+                false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
             )
             .unwrap();
             label(&out)
@@ -7381,6 +7811,7 @@ mod tests {
                 false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
                 false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
                 false, // L2-3: vision flag OFF (no image_analysis dispatched in this test)
+                false, // L2-4: memory-tool flag OFF (no memory tool dispatched in this test)
             )
             .unwrap();
             label(&out)
