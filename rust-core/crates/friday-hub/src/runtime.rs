@@ -5757,6 +5757,241 @@ mod tests {
         );
     }
 
+    // ---- THE END-TO-END MEMORY-LOOP GATE: extract → confirm → recall ---------
+    //
+    // The marquee proof that the loop is CLOSED on the live agent-run ingress: a sessioned run
+    // as alice MINTS a candidate under alice's COMPOSITE namespace (extraction), the LIVE confirm
+    // handler `memory_decision_result_for_db` (scoped by the AUTHENTICATED owner, NOT the body
+    // field) CONFIRMS it, and a LATER sessioned run as alice RECALLS the content. Plus the
+    // confirm-side owner-isolation negative (mallory cannot confirm alice's candidate).
+
+    /// Decode a `Message::MemoryDecisionResult` from the confirm handler's reply envelope.
+    fn decode_decision(
+        env: &friday_protocol::Envelope,
+    ) -> friday_protocol::MemoryDecisionResultWire {
+        match &env.message {
+            friday_protocol::Message::MemoryDecisionResult { result } => result.clone(),
+            other => panic!("expected MemoryDecisionResult, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn memory_loop_end_to_end_extract_confirm_recall_closes_on_agent_run_ingress() {
+        // FULL LOOP (the gate). One ScriptTransport serves, in order: post[0] = the agent loop's
+        // Finish answer; post[1] = the extraction `run_friday_ask` JSON (one item referencing the
+        // session's user turn `<session>:m0`). The session owner is the AUTHENTICATED caller alice
+        // (user_id set ⇒ a resolvable composite namespace), so extraction stores under alice's
+        // composite namespace — exactly the namespace recall + confirm derive.
+        let owner = "alice";
+        let session_id = "run-loop-alice"; // the EPHEMERAL per-run session id the None arm uses
+        let items = extraction_items_json(&format!("{session_id}:m0"));
+        let (rt, _ws, _c) = runtime_with_owner(
+            "memloop-e2e",
+            owner,
+            &["{\"tool\":\"none\",\"answer\":\"PONG\"}", &items],
+        );
+
+        // ---- 1. EXTRACT: run a sessioned run as alice, then fire post-run extraction. ----
+        let caller = authed_caller(owner);
+        let answer =
+            rt.run_session_task(&caller, "run-loop-alice", session_id, "remember me", 5_000);
+        let delivered_body = match &answer {
+            AuthedAnswer::Delivered { answer, status, .. } => {
+                assert_eq!(status, "finished", "the run finished");
+                answer.clone()
+            }
+            other => panic!("expected a Delivered answer, got {other:?}"),
+        };
+        assert_eq!(
+            rt.db().count("memory_item").unwrap(),
+            0,
+            "the run's OWN internal extraction is flag-OFF in the test env (no candidate yet)"
+        );
+        // Drive the flagged inner with a Finished outcome (env-race-free) ⇒ extraction fires,
+        // serving post[1] (the items JSON).
+        let outcome = LoopOutcome {
+            status: LoopStatus::Finished,
+            turns: 1,
+            executed_tools: 0,
+            final_message: Some(delivered_body),
+            detail: String::new(),
+        };
+        rt.maybe_extract_memory_post_run_flagged(
+            session_id,
+            "run-loop-alice",
+            &outcome,
+            6_000,
+            true,
+        );
+
+        // A Candidate was minted, keyed on alice's COMPOSITE namespace (NOT the raw "alice").
+        assert_eq!(
+            rt.db().count("memory_item").unwrap(),
+            1,
+            "extraction recorded exactly one candidate"
+        );
+        let composite_ns =
+            crate::session_namespace::resolve_session_memory_namespace(None, None, Some(owner))
+                .unwrap();
+        assert_eq!(
+            composite_ns, "tenant.default.channel.unknown.user.alice.shared",
+            "the composite namespace is the session-derived scope, not the raw principal"
+        );
+        // Find the minted candidate id + assert its principal_id is the composite namespace.
+        let cand_id: String = rt
+            .db()
+            .conn()
+            .query_row("SELECT memory_id FROM memory_item", [], |r| r.get(0))
+            .unwrap();
+        let cand = friday_storage::memory::get(rt.db().conn(), &cand_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            cand.principal_id.as_deref(),
+            Some(composite_ns.as_str()),
+            "the candidate is keyed on alice's composite namespace (the recall+confirm scope)"
+        );
+        assert_eq!(
+            cand.state,
+            friday_core::MemoryState::Candidate,
+            "freshly extracted ⇒ pending Candidate (not yet recallable)"
+        );
+
+        // ---- 2. CONFIRM via the LIVE handler, scoped by authenticated_owner=Some("alice"). ----
+        // The raw body owner_principal is DELIBERATELY junk to prove it is no longer the scope
+        // source; the Rust-derived authenticated owner is what scopes.
+        let env = crate::hub_server::memory_decision_result_for_db(
+            rt.db(),
+            "msg-loop-confirm",
+            friday_protocol::MemoryDecisionRequestWire {
+                memory_id: cand_id.clone(),
+                owner_principal: "ignored-body-field".into(),
+                decision: "confirm".into(),
+            },
+            Some(owner),
+            7_000,
+        );
+        let result = decode_decision(&env);
+        assert_eq!(
+            result.status, "confirmed",
+            "the live confirm handler confirmed it"
+        );
+        assert_eq!(result.state, "confirmed");
+        assert!(
+            result.recallable,
+            "the confirmed candidate must report recallable (recompute via recall_confirmed_multi)"
+        );
+        assert!(result.blocker.is_none());
+
+        // ---- 3. RECALL: a LATER sessioned run as alice surfaces the confirmed content. ----
+        // Recall is owner-namespace-keyed (not session-keyed): a DIFFERENT (later) session bound
+        // to alice recalls the candidate across runs — the loop closed across the run boundary.
+        bind_session_owner_st(&rt, "later-sess-alice", owner);
+        let preamble = rt
+            .recall_preamble_for_session("later-sess-alice", "run-later", 8_000)
+            .expect("a later alice session recall composes");
+        assert!(
+            preamble.contains("User wants concise answers."),
+            "the confirmed candidate's content must be recalled by a LATER alice session, \
+             got preamble: {preamble:?}"
+        );
+    }
+
+    /// Bind a session to owner `user` on a ScriptTransport runtime (the sessioned loop's
+    /// `SessionOwner { user_id: .. }` shape: account/channel unset), as `run_session_task_*` does.
+    fn bind_session_owner_st(rt: &HubRuntime<ScriptTransport>, session_id: &str, user: &str) {
+        friday_storage::agent_session::ensure_session_with_owner(
+            rt.db().conn(),
+            session_id,
+            &SessionOwner {
+                user_id: Some(user.to_string()),
+                ..SessionOwner::default()
+            },
+            1,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn memory_confirm_is_owner_isolated_mallory_cannot_confirm_alices_candidate() {
+        // CONFIRM OWNER-ISOLATION (the no-cross-owner-leak guard on the confirm side): seed a
+        // PENDING candidate under alice's composite namespace; mallory (authenticated) tries to
+        // confirm it ⇒ blocked owner_scope_mismatch, candidate UNCHANGED. Positive control: alice
+        // (authenticated) confirms the SAME candidate.
+        let (rt, _ws, _c) =
+            runtime_with_owner("memloop-isolation", "alice", &["{\"tool\":\"none\"}"]);
+        let alice_ns =
+            crate::session_namespace::resolve_session_memory_namespace(None, None, Some("alice"))
+                .unwrap();
+        let mallory_ns =
+            crate::session_namespace::resolve_session_memory_namespace(None, None, Some("mallory"))
+                .unwrap();
+        assert_ne!(
+            alice_ns, mallory_ns,
+            "distinct owners ⇒ distinct namespaces"
+        );
+        // Seed a PENDING (Candidate-state), content-bearing row under alice's composite namespace.
+        // record_candidate ONLY (NOT confirm) so the positive control below is decidable.
+        friday_storage::memory::record_candidate(
+            rt.db().conn(),
+            &friday_storage::memory::NewMemoryCandidate {
+                memory_id: "mem-iso",
+                scope: friday_core::MemoryScope::Global,
+                content_ref: None,
+                content: Some("alice's private fact"),
+                principal_id: Some(alice_ns.as_str()),
+                sensitive: false,
+                created_at: 1,
+            },
+        )
+        .unwrap();
+
+        // mallory CANNOT confirm: her namespace candidate list never contains alice's namespace.
+        let env = crate::hub_server::memory_decision_result_for_db(
+            rt.db(),
+            "msg-iso-mallory",
+            friday_protocol::MemoryDecisionRequestWire {
+                memory_id: "mem-iso".into(),
+                owner_principal: "alice".into(), // even spoofing alice in the body can't help
+                decision: "confirm".into(),
+            },
+            Some("mallory"),
+            100,
+        );
+        let blocked = decode_decision(&env);
+        assert_eq!(blocked.status, "blocked", "mallory must be blocked");
+        assert_eq!(blocked.blocker.as_deref(), Some("owner_scope_mismatch"));
+        assert!(!blocked.recallable);
+        // UNCHANGED: still a pending Candidate; recallable by no one.
+        assert_eq!(
+            friday_storage::memory::get(rt.db().conn(), "mem-iso")
+                .unwrap()
+                .unwrap()
+                .state,
+            friday_core::MemoryState::Candidate,
+            "the candidate is UNCHANGED after the blocked cross-owner confirm"
+        );
+
+        // POSITIVE CONTROL: alice (authenticated) confirms the SAME candidate ⇒ confirmed.
+        let env = crate::hub_server::memory_decision_result_for_db(
+            rt.db(),
+            "msg-iso-alice",
+            friday_protocol::MemoryDecisionRequestWire {
+                memory_id: "mem-iso".into(),
+                owner_principal: "ignored-body-field".into(),
+                decision: "confirm".into(),
+            },
+            Some("alice"),
+            101,
+        );
+        let confirmed = decode_decision(&env);
+        assert_eq!(
+            confirmed.status, "confirmed",
+            "alice (the true owner) confirms her own candidate"
+        );
+        assert!(confirmed.recallable);
+    }
+
     // ---- routing honesty (dispatchable_routes) ------------------------------
 
     #[test]
