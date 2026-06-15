@@ -236,7 +236,18 @@ pub fn mission_intake_result_for_db(
             .ok()
             .as_deref(),
     );
-    mission_intake_result_for_db_flagged(db, msg_id, request, now_ms, clarify_enabled)
+    // FRIDAY_SURFACE_EVENTS (DARK, default-OFF): read ONCE here and thread the resulting bool to
+    // the flagged body — the "split env-read from pure logic" idiom. OFF ⇒ no surface_event emit.
+    let surface_events =
+        crate::surface_events_from(std::env::var(crate::FRIDAY_SURFACE_EVENTS).ok().as_deref());
+    mission_intake_result_for_db_flagged(
+        db,
+        msg_id,
+        request,
+        now_ms,
+        clarify_enabled,
+        surface_events,
+    )
 }
 
 /// The parameterized Mission-intake producer body — see [`mission_intake_result_for_db`]
@@ -256,12 +267,21 @@ pub fn mission_intake_result_for_db(
 /// [`friday_core::questions_for_kind`] — writing ZERO rows (no Conversation/Mission/
 /// SurfaceThread/WorkItem/route_decision) and making NO model call. `created_or_ready` is
 /// `false` so the auto-dispatch producer NEVER fires for an under-specified intent.
+///
+/// **`surface_events`** is the resolved [`crate::FRIDAY_SURFACE_EVENTS`] bool (DARK, default-OFF).
+/// When ON, AFTER preflight succeeds (the READY path only — never the `needs_clarification` or
+/// `blocked` paths), a single intake-birth [`friday_core::SurfaceEvent`]
+/// ([`friday_core::SurfaceEventKind::SystemStatus`]) is emitted BEST-EFFORT via
+/// [`crate::surface_events::emit_surface_event`] so the Mission Workbench timeline reader has a
+/// birth row to fold in. OFF ⇒ byte-identical (no emit). The emit is failure-isolated: a write
+/// failure is logged + swallowed and the intake result is UNCHANGED.
 pub fn mission_intake_result_for_db_flagged(
     db: &Db,
     msg_id: &str,
     request: MissionIntakeRequestWire,
     now_ms: i64,
     clarify_enabled: bool,
+    surface_events: bool,
 ) -> Envelope {
     if let Err(err) = friday_core::validate_friday_conversation_id(&request.friday_conversation_id)
     {
@@ -493,6 +513,38 @@ pub fn mission_intake_result_for_db_flagged(
                 now_ms,
                 ErrorCode::Internal,
                 &format!("mission intake route decision write failed: {err}"),
+            );
+        }
+        // (FRIDAY_SURFACE_EVENTS, DARK, default-OFF) Intake-birth surface_event — emitted ONLY on
+        // the READY path (NOT needs_clarification / blocked), AFTER preflight wrote the
+        // Mission/SurfaceThread (so the linkage validates) and the route decision succeeded. The
+        // SurfaceThread the preflight upserted is bound to this Mission with `surface_kind` (the
+        // value resolved above), so `validate_surface_event` passes and the workbench timeline
+        // reader folds the row in. BEST-EFFORT: a write failure is logged + swallowed inside
+        // `emit_surface_event`, so the intake result below is UNCHANGED. `surface_events == false`
+        // ⇒ `emit_surface_event` returns before any write (byte-identical-off, belt-and-suspenders
+        // on top of the caller already skipping on flag-OFF).
+        if let MissionPreflightOutcome::Ready {
+            mission_id,
+            work_item_id,
+        } = &outcome
+        {
+            crate::surface_events::emit_surface_event(
+                db,
+                surface_events,
+                crate::surface_events::SurfaceEventLifecycle::IntakeBirth,
+                &crate::surface_events::SurfaceEventLink {
+                    friday_conversation_id: &request.friday_conversation_id,
+                    mission_id,
+                    work_item_id: Some(work_item_id),
+                    surface_thread_id: &request.surface_thread_id,
+                    source_surface: surface_kind,
+                },
+                // No run yet at intake birth; the event_id keys on the mission_id for this point.
+                mission_id,
+                None,
+                None,
+                now_ms,
             );
         }
     }
