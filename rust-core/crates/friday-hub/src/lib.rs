@@ -3840,6 +3840,129 @@ pub(crate) fn surface_events_from(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1"))
 }
 
+/// The `FRIDAY_RICH_SYSTEM_PROMPT_ENABLED` env var. When ON, the live agent loop PREPENDS a
+/// rich block of OPERATING GUIDANCE (tool-use strategy + behavior rules + approval/gate
+/// semantics + answer-format guidance) to the prompt the model sees — a faithful, contract-
+/// compatible subset of the TS oracle's system-prompt builder
+/// (`src/agent/runtime/friday-agent-system-prompt-builder.ts`, ~26KB). The Rust loop's stock
+/// prompt is a ~200-token stub that demonstrably strains deepseek-flash (the 512→4096
+/// completion bump exists to avoid empty-content parse failures); the guidance gives the model
+/// a concrete tool-use / recovery / answer strategy so it spends fewer reasoning tokens
+/// rediscovering how to behave.
+///
+/// ## Why a PREAMBLE, not a `system` role (architecture decision)
+/// The deepseek client sends a SINGLE `user`-role message — `messages: [{role:"user",
+/// content: prompt}]` (friday-deepseek/src/lib.rs `chat`) — and the anthropic failover target
+/// likewise carries no `system` layer. Adding a real `system` role would mean editing every
+/// provider client (deepseek + the failover/route targets) and is a far larger blast radius
+/// with more degrade risk. Instead we ride the EXISTING preamble channel: the guidance is
+/// prepended to `prompt_task` (the SAME `prompt_task` mutation point the recall preamble and
+/// the clarification-gate steering already use, which `build_loop_prompt(task, history)` carries
+/// to ALL providers). This reaches deepseek, claude, and codex routes identically with ZERO
+/// client changes.
+///
+/// ## What is PORTED vs DELIBERATELY DROPPED (no-degrade)
+/// The TS builder targets a NATIVE tool-calling API where the model replies in prose. The Rust
+/// loop is the OPPOSITE: `parse_tool_call` requires the reply to be EXACTLY one JSON object
+/// (`{"tool":..}` or `{"tool":"none","answer":..}`). So the TS builder's anti-JSON / "replies
+/// must be plain natural language" rules and its `<!--action:-->` chat-action markers are
+/// DELIBERATELY NOT ported — porting them would pull already-straining flash toward prose →
+/// `AgentError::Parse` → fail-closed (a DEGRADE). The TS routing table referencing tools that
+/// do not exist in the Rust registry (`task_status`, `provider`, `skills_list`, `cron`,
+/// `message`, `workflow_generate`, …) is also NOT ported — steering the model toward phantom
+/// tools produces calls that die at the gate. We port only the TOOL-AGNOSTIC,
+/// CONTRACT-COMPATIBLE subset: error-handling/self-recovery sequence, be-direct/concise/one-
+/// answer behavior, no-fabrication/carry-real-content rules, and the approval-gated destructive-
+/// action semantics (which faithfully match the UNW-001 gate's Pause).
+///
+/// DEFAULT-OFF: unset / empty / `"0"` / any non-`"1"` value ⇒ OFF, and the loop is
+/// BYTE-IDENTICAL to today — the model sees exactly today's `{recall}{task}` assembly with no
+/// guidance prepended. Read ONCE in the public [`run_loop_with_policy`] and threaded as a pure
+/// bool to the inner [`run_loop_with_policy_flagged`] — the same "split env-read from pure
+/// logic" idiom as [`FRIDAY_CLARIFICATION_GATE`], so the behavioral tests inject the bool
+/// directly and never race `std::env`.
+///
+/// QUALITY-LIFT PROOF IS OPERATOR-GATED: whether the richer prompt measurably improves a real
+/// model's OUTPUT requires a real-model A/B (provider quota spend) and is NOT run here — the
+/// committed tests prove the WIRING (flag-OFF byte-identical, flag-ON content present + the JSON
+/// contract still intact, exact-"1" matcher), not the answer-quality delta.
+pub const FRIDAY_RICH_SYSTEM_PROMPT_ENABLED: &str = "FRIDAY_RICH_SYSTEM_PROMPT_ENABLED";
+
+/// Pure flag-matcher for [`FRIDAY_RICH_SYSTEM_PROMPT_ENABLED`] (env read split out so it is
+/// unit-testable without `set_var`). DEFAULT-OFF: `None` (unset) ⇒ false; ON only for the exact
+/// opt-in value `"1"` (trimmed); everything else (including `"true"`) ⇒ false — the program's
+/// standard flag idiom, mirroring [`surface_events_from`]. `pub(crate)` so the public loop
+/// entrypoint reads it via `crate::` and the in-crate unit test reaches it.
+pub(crate) fn rich_system_prompt_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
+/// The rich OPERATING-GUIDANCE block prepended to the model prompt when
+/// [`FRIDAY_RICH_SYSTEM_PROMPT_ENABLED`] is ON. PURE + deterministic (no env read, no clock):
+/// the same constant guidance every run, so it is trivially snapshot-testable. See the flag's
+/// doc comment for the system-vs-preamble decision and the ported-vs-dropped rationale.
+///
+/// CONTRACT SAFETY (the load-bearing no-degrade property): this block contains NO instruction
+/// that conflicts with the loop's JSON reply contract — it never tells the model to "reply in
+/// plain natural language" or to avoid JSON; it REINFORCES that every step is the one-JSON-object
+/// tool call and that the FINAL answer rides in the finish object's `answer` field. It is
+/// tool-AGNOSTIC: it refers to "your available tools" / capability classes, never to a tool name
+/// that may be absent from the registry. The trailing `\n\n` separates it cleanly from the
+/// `{recall}{task}` body that follows.
+fn rich_operating_guidance() -> &'static str {
+    // ~1.1k tokens. Adapted (NOT transcribed) from the TS builder's tool-strategy + behavior +
+    // error-recovery + approval-semantics + answer-guidance sections, restricted to what is
+    // faithful to the Rust loop's single-JSON-object contract and its actual tool registry.
+    "Operating guidance (how to work this task):\n\
+     \n\
+     Reply contract (unchanged): every step is EXACTLY one JSON object — either a tool call \
+     {\"tool\": \"<name>\", \"parameters\": {..}} to make progress, or the finish object \
+     {\"tool\": \"none\", \"answer\": \"<your final answer>\"} when you are done. Put your final \
+     answer in the finish object's `answer` field — never as loose prose outside the JSON.\n\
+     \n\
+     Tool-use strategy:\n\
+     - Be direct and action-oriented: when the task needs a tool, call it immediately instead of \
+     narrating what you would do.\n\
+     - For questions about local files, repository paths, or workspace contents, read the file \
+     first; do not guess its contents and do not reach for the web for a local path.\n\
+     - For information lookup (facts, docs, news), prefer a search/fetch capability if one is \
+     available to you; for a specific URL, fetch that URL.\n\
+     - Use only the tools listed above as available to you. Do NOT invent tool names or call a \
+     tool that is not in the list — an unknown tool fails the step. If no listed tool fits, \
+     answer directly with the finish object.\n\
+     - You have a multi-turn loop: build on the results of earlier steps (shown under \"So far \
+     this run\") rather than repeating a tool call just to see its output again.\n\
+     \n\
+     Error handling and self-recovery (do not skip):\n\
+     - When a tool call fails, do NOT immediately give up or report the failure. First read the \
+     error, then try at least ONE alternative before reporting.\n\
+     - File not found: list the directory or search for a similar name, then read the correct \
+     path. Empty/unreadable fetch: retry with a different available fetch/search approach. \
+     Command failed: read the error, fix the syntax, retry. Search returned nothing: broaden \
+     the query or change keywords.\n\
+     - Only report a failure AFTER trying an alternative, and when you do, say what you tried, \
+     why it failed, and a concrete next step.\n\
+     \n\
+     Approval and safety semantics:\n\
+     - High-risk or destructive actions (deleting files, moving/overwriting data, running \
+     destructive shell commands, irreversible changes) are APPROVAL-GATED even when the user \
+     phrases them as immediate instructions. The system will PAUSE such an action for explicit \
+     approval — that is expected, not an error. Do not try to route around the gate.\n\
+     - For a destructive request, state plainly that it is high-risk and requires approval, \
+     confirm the exact target, and prefer a reversible/backed-up path; do not perform the \
+     destructive change yourself before approval.\n\
+     \n\
+     Honesty and answer quality:\n\
+     - Never fabricate results, file contents, or progress. If you did not read or run \
+     something, do not claim you did.\n\
+     - When you build an artifact from source files, carry forward the real content (or a \
+     faithful summary) — never write placeholders like \"Contents of X\". If an input is \
+     missing, still produce the useful output and clearly label what is blocked.\n\
+     - Give ONE clear, complete answer. Be concise: answer the question directly without \
+     unnecessary preamble or repeating yourself.\n\
+     \n"
+}
+
 /// `cancel` (C2-1) is an OPTIONAL cooperative cancellation handle checked at the TOP of
 /// each turn, BEFORE the model call. When `Some` and already tripped at a turn boundary,
 /// the loop stops with [`LoopStatus::Interrupted`]: it makes NO further model call and
@@ -3903,6 +4026,13 @@ pub fn run_loop_with_policy(
     let subagent_enabled = crate::subagent::subagent_tool_enabled_from(
         std::env::var(FRIDAY_SUBAGENT_TOOL_ENABLED).ok(),
     );
+    // Read the rich-system-prompt flag ONCE here (same default-OFF, read-once idiom). When OFF
+    // no operating-guidance block is prepended and the prompt is byte-identical to today.
+    let rich_prompt_enabled = rich_system_prompt_from(
+        std::env::var(FRIDAY_RICH_SYSTEM_PROMPT_ENABLED)
+            .ok()
+            .as_deref(),
+    );
     run_loop_with_policy_flagged(
         client,
         executor,
@@ -3920,6 +4050,7 @@ pub fn run_loop_with_policy(
         activity_needs_me,
         clarification_enabled,
         subagent_enabled,
+        rich_prompt_enabled,
         work_item_id,
     )
 }
@@ -3962,6 +4093,7 @@ pub(crate) fn run_loop_with_policy_flagged(
     activity_needs_me: bool,
     clarification_enabled: bool,
     subagent_enabled: bool,
+    rich_prompt_enabled: bool,
     work_item_id: Option<&str>,
 ) -> Result<LoopOutcome, StorageError> {
     // (#24b) Run the loop body to completion, then CLEAR the durable execution marker EXACTLY ONCE
@@ -3985,6 +4117,7 @@ pub(crate) fn run_loop_with_policy_flagged(
         activity_needs_me,
         clarification_enabled,
         subagent_enabled,
+        rich_prompt_enabled,
         work_item_id,
     );
     // THE no-degrade crux: clear on EVERY path (Ok of any status, or an Err). Fail-safe + a no-op
@@ -4017,6 +4150,7 @@ fn run_loop_with_policy_inner(
     activity_needs_me: bool,
     clarification_enabled: bool,
     subagent_enabled: bool,
+    rich_prompt_enabled: bool,
     work_item_id: Option<&str>,
 ) -> Result<LoopOutcome, StorageError> {
     // Plan classification recorded ONCE (it is a property of the task, constant across
@@ -4089,6 +4223,22 @@ fn run_loop_with_policy_inner(
     } else {
         format!("{recall_preamble}{task}")
     };
+
+    // (FRIDAY_RICH_SYSTEM_PROMPT_ENABLED) Rich operating guidance — GATED so flag-OFF is
+    // BYTE-IDENTICAL. When ON, prepend the tool-strategy/behavior/approval/answer guidance block
+    // (a faithful, contract-compatible subset of the TS system-prompt builder; see the flag's doc
+    // comment for the system-vs-preamble decision and the ported-vs-dropped rationale). We realize
+    // it by prepending to `prompt_task` — the SAME channel the recall preamble and the
+    // clarification steering ride into the prompt, reaching all three providers' `build_loop_prompt`
+    // — rather than threading a flag through the pure `build_tool_prompt_with` (which existing tests
+    // assert byte-for-byte). It is prepended FIRST (above any clarification steer) so it reads as
+    // top-level operating context. The guidance is PURE/constant and contains NO instruction that
+    // conflicts with the one-JSON-object reply contract (it reinforces it), so a flag-ON turn parses
+    // exactly as a flag-OFF turn would; only the prompt the model SEES is richer. When the flag is
+    // OFF this is skipped ⇒ `prompt_task` is exactly what it was before (byte-identical).
+    if rich_prompt_enabled {
+        prompt_task = format!("{}{prompt_task}", rich_operating_guidance());
+    }
 
     // (FRIDAY_CLARIFICATION_GATE) Prompt steering — GATED so flag-OFF is byte-identical. The
     // hard gate above already short-circuits the under-specified+CLASSIFIED case with ZERO
@@ -4349,6 +4499,7 @@ fn run_loop_with_policy_inner(
                 now_ms,
                 activity_needs_me,
                 clarification_enabled,
+                rich_prompt_enabled,
             )?;
             // A successful spawn (the child ran) increments the count; a fail-closed/over-cap spawn
             // does NOT consume a slot (it never minted a grant / ran a child). `trace.spawned`
@@ -4659,6 +4810,7 @@ fn spawn_subagent_turn(
     now_ms: i64,
     activity_needs_me: bool,
     clarification_enabled: bool,
+    rich_prompt_enabled: bool,
 ) -> Result<SubagentTurnTrace, StorageError> {
     use crate::subagent;
 
@@ -4736,7 +4888,8 @@ fn spawn_subagent_turn(
         activity_needs_me,
         clarification_enabled,
         true, // subagent_enabled: TRUE so the child's spawn is grant/policy-denied, not flag-skipped
-        None, // work_item_id: the sub-agent is NOT the bound work item
+        rich_prompt_enabled, // child inherits the parent's rich-prompt setting (OFF ⇒ byte-identical)
+        None,                // work_item_id: the sub-agent is NOT the bound work item
     )?;
 
     // The sub-agent's deliverable = its final message on Finished; otherwise an honest status
@@ -5772,6 +5925,7 @@ mod tests {
             activity_needs_me,
             false, // clarification gate OFF — the NS-7 scenario's task ("do it") classifies None anyway
             false, // subagent_enabled OFF — NS-7 scenario does not exercise subagent
+            false, // rich_prompt_enabled OFF — byte-identical prompt (default)
             None,  // work_item_id (#24b): NS-7 scenario binds no WorkItem ⇒ heartbeat no-op
         )
         .unwrap();
@@ -5953,6 +6107,7 @@ mod tests {
             false, // activity_needs_me: irrelevant here
             clarification_enabled,
             false, // subagent_enabled OFF — clarification scenario does not exercise subagent
+            false, // rich_prompt_enabled OFF — byte-identical prompt (default)
             None,  // work_item_id (#24b): clarification scenario binds no WorkItem ⇒ no-op
         )
         .unwrap();
@@ -6058,6 +6213,182 @@ mod tests {
             "destructive requests are handled by the Pause, not clarified"
         );
         assert_eq!(model_calls, 1, "the destructive task reaches the loop");
+    }
+
+    // ── FRIDAY_RICH_SYSTEM_PROMPT_ENABLED: rich operating-guidance preamble (bool-injected) ──
+    // FAITHFUL BEHAVIORAL TESTS (real DB + real FsToolExecutor + a CapturingAgentLlmClient that
+    // records the EXACT prompt the model sees each turn). The flag is injected via
+    // `run_loop_with_policy_flagged`'s `rich_prompt_enabled` bool — NOT `std::env::set_var` — so
+    // these never race other in-process loop tests. The pure env-matcher glue is covered by
+    // `rich_system_prompt_from_only_opt_in_enables`. ARCHITECTURE: the guidance rides the SAME
+    // `prompt_task` preamble channel as recall/clarification (no `system` role — the deepseek
+    // client sends one user message), so capturing `build_loop_prompt(prompt_task, history)` is
+    // exactly what the live `next_step` renders before `chat`.
+
+    #[test]
+    fn rich_system_prompt_from_only_opt_in_enables() {
+        // FRIDAY_RICH_SYSTEM_PROMPT_ENABLED: default-OFF; ON only for the exact opt-in value "1"
+        // (trimmed). The race-free env-string semantics proof for the rich-prompt preamble (the
+        // ON/OFF behavioral arms inject the bool below). Mirrors surface_events_from's matcher.
+        assert!(!rich_system_prompt_from(None), "unset ⇒ OFF (prod default)");
+        assert!(!rich_system_prompt_from(Some("")), "empty ⇒ OFF");
+        assert!(!rich_system_prompt_from(Some("0")), "0 ⇒ OFF");
+        assert!(!rich_system_prompt_from(Some("off")), "off ⇒ OFF");
+        assert!(rich_system_prompt_from(Some("1")), "1 ⇒ ON");
+        assert!(
+            rich_system_prompt_from(Some("  1  ")),
+            "padded 1 ⇒ ON (trimmed)"
+        );
+        assert!(
+            !rich_system_prompt_from(Some("true")),
+            "true ⇒ OFF (only exact 1)"
+        );
+    }
+
+    /// Drive ONE real turn through `run_loop_with_policy_flagged` with `rich_prompt_enabled`
+    /// injected, returning the EXACT prompt the model saw on turn 1 (captured via
+    /// `build_loop_prompt`, the same render the live `next_step` performs). A FinishOnly script
+    /// means the loop reaches the model once then finishes — so exactly one prompt is captured.
+    fn rich_prompt_capture(tag: &str, task: &str, rich_prompt_enabled: bool) -> String {
+        let root = TempDir::new(tag);
+        let db = Db::open_hub(&temp_path(tag)).unwrap();
+        agent_run::create_run(db.conn(), "r1", task, 1).unwrap();
+        let client = CapturingAgentLlmClient::new(vec![AgentStep::Finish {
+            message: "done".to_string(),
+        }]);
+        let executor = FsToolExecutor::new(&root.0);
+        let policy = RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), false);
+        let out = run_loop_with_policy_flagged(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            task,
+            "", // no recall preamble — isolate the rich-prompt block's effect
+            None,
+            &no_approval(),
+            &policy,
+            5,
+            None,
+            None,
+            1000,
+            false, // activity_needs_me: irrelevant
+            false, // clarification_enabled: OFF (isolate this flag; "do it" classifies None anyway)
+            false, // subagent_enabled: OFF
+            rich_prompt_enabled,
+            None, // work_item_id
+        )
+        .unwrap();
+        assert_eq!(
+            out.status,
+            LoopStatus::Finished,
+            "the loop ran to the model"
+        );
+        let prompts = client.prompts.borrow();
+        assert_eq!(prompts.len(), 1, "exactly one turn was prompted");
+        prompts[0].clone()
+    }
+
+    #[test]
+    fn rich_prompt_flag_off_is_byte_identical_to_the_thin_prompt() {
+        // Flag OFF (prod default): the prompt the model sees is EXACTLY today's
+        // `build_loop_prompt(task, [])` — the thin stub, no guidance prepended. Byte-identical.
+        let task = "read notes.md";
+        let got = rich_prompt_capture("rich-off", task, false);
+        let expected = build_loop_prompt(task, &[]);
+        assert_eq!(
+            got, expected,
+            "flag OFF must be byte-identical to the thin prompt"
+        );
+        // And it must NOT contain any of the ported guidance markers.
+        assert!(
+            !got.contains("Operating guidance"),
+            "flag OFF carries no operating-guidance block: {got}"
+        );
+    }
+
+    #[test]
+    fn rich_prompt_flag_on_prepends_guidance_and_keeps_the_json_contract() {
+        // Flag ON: the prompt the model sees gains the operating-guidance block — and CRUCIALLY
+        // the one-JSON-object reply contract is STILL intact (the no-degrade guard: we must NOT
+        // have imported the TS builder's anti-JSON / plain-text rules, which would steer flash to
+        // prose → parse failure). Both properties asserted on the SAME captured prompt.
+        let task = "read notes.md";
+        let got = rich_prompt_capture("rich-on", task, true);
+
+        // (a) The ported, tool-AGNOSTIC strategy/behavior/approval/answer guidance is present.
+        assert!(
+            got.contains("Operating guidance"),
+            "ON prepends the operating-guidance header: {got}"
+        );
+        assert!(
+            got.contains("Tool-use strategy:"),
+            "ON includes tool-use strategy"
+        );
+        assert!(
+            got.contains("Error handling and self-recovery"),
+            "ON includes the self-recovery sequence"
+        );
+        assert!(
+            got.contains("Approval and safety semantics:"),
+            "ON includes approval/gate semantics"
+        );
+        assert!(
+            got.contains("APPROVAL-GATED"),
+            "ON explains destructive actions are approval-gated"
+        );
+        assert!(
+            got.contains("Never fabricate"),
+            "ON includes the no-fabrication answer rule"
+        );
+        assert!(
+            got.contains("Give ONE clear, complete answer"),
+            "ON includes the concise-single-answer guidance"
+        );
+
+        // (b) NO-DEGRADE GUARD: the JSON reply contract is reinforced, not contradicted. The
+        // prompt must STILL instruct the one-JSON-object tool call + finish object, and must NOT
+        // contain the TS builder's prose-only / anti-JSON rules (which would break parse_tool_call).
+        assert!(
+            got.contains("{\"tool\": \"none\", \"answer\""),
+            "ON keeps the finish-object contract intact: {got}"
+        );
+        assert!(
+            got.contains("{\"tool\": \"<name>\", \"parameters\""),
+            "ON reinforces the one-JSON-object tool-call contract"
+        );
+        assert!(
+            !got.contains("plain natural language"),
+            "ON must NOT import the TS prose-only rule (would break the JSON contract)"
+        );
+        assert!(
+            !got.contains("not JSON") && !got.contains("Do not output raw JSON"),
+            "ON must NOT import the TS anti-JSON rules"
+        );
+        assert!(
+            !got.contains("<!--action:"),
+            "ON must NOT import the TS chat-action markers"
+        );
+
+        // (c) ADDITIVE-ONLY invariant: the ON prompt is EXACTLY what the loop renders when the
+        // guidance is prepended to the task inside the SAME `build_loop_prompt` wrapper — i.e. the
+        // ONLY change vs flag-OFF is the guidance riding the `prompt_task` channel (the recall/
+        // clarification channel), with the unchanged tool menu + JSON contract + list-hint emitted
+        // by the wrapper around it. No other field of the prompt is touched.
+        assert_eq!(
+            got,
+            build_loop_prompt(&format!("{}{task}", rich_operating_guidance()), &[]),
+            "the ON prompt = the thin wrapper rendered over (guidance ++ task), nothing else"
+        );
+        // The thin-OFF prompt is a structural SUBSET: every menu/contract line the OFF prompt has
+        // is still present ON (additive — we never removed a line). Spot-check the contract lines
+        // already asserted in (b); here assert the tool menu + list-hint survive verbatim too.
+        let thin = build_loop_prompt(task, &[]);
+        assert!(
+            thin.lines()
+                .all(|l| got.contains(l.trim_end()) || l.contains("Task:")),
+            "every non-task line of the thin prompt survives in the ON prompt (additive only)"
+        );
     }
 
     // ── NS-2: flag-gated trust-grant enforcement at the gate-dispatch chokepoint ──────
@@ -12515,7 +12846,8 @@ mod tests {
             1000,
             false,
             false,
-            true, // FRIDAY_SUBAGENT_TOOL_ENABLED = ON (the injected-bool form of the flag)
+            true,  // FRIDAY_SUBAGENT_TOOL_ENABLED = ON (the injected-bool form of the flag)
+            false, // rich_prompt_enabled OFF — byte-identical prompt (default)
             None,
         )
         .unwrap();
@@ -12665,6 +12997,7 @@ mod tests {
             false,
             false,
             false, // subagent_enabled = OFF
+            false, // rich_prompt_enabled OFF — byte-identical prompt (default)
             None,
         )
         .unwrap();
@@ -12738,6 +13071,7 @@ mod tests {
             false,
             false,
             true,
+            false, // rich_prompt_enabled OFF — byte-identical prompt (default)
             None,
         )
         .unwrap();
@@ -12904,6 +13238,7 @@ mod tests {
             false,
             false,
             true,
+            false, // rich_prompt_enabled OFF — byte-identical prompt (default)
             None,
         )
         .unwrap();
@@ -13019,6 +13354,7 @@ mod tests {
             false,
             false,
             true,
+            false, // rich_prompt_enabled OFF — byte-identical prompt (default)
             None,
         )
         .unwrap();
@@ -13086,6 +13422,7 @@ mod tests {
             false,
             false,
             true,
+            false, // rich_prompt_enabled OFF — byte-identical prompt (default)
             None,
         )
         .unwrap();
@@ -13151,6 +13488,7 @@ mod tests {
             false,
             false,
             true,
+            false, // rich_prompt_enabled OFF — byte-identical prompt (default)
             None,
         )
         .unwrap();
@@ -13232,6 +13570,7 @@ mod tests {
             false,
             false,
             true,
+            false, // rich_prompt_enabled OFF — byte-identical prompt (default)
             None,
         )
         .unwrap();
