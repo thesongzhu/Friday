@@ -119,6 +119,15 @@ pub const TS_RUST_PAIRS: &[ToolNamePair] = &[
         ts: "web_search",
         rust: "web_search",
     },
+    // L2-3: image_analysis is likewise present on BOTH sides under the SAME name (the TS tool and
+    // the Rust registry action are both `image_analysis`), an identity alias. Listing it here
+    // keeps a TS-shaped `disabledToolNames` entry of `image_analysis` disabling the Rust
+    // `image_analysis`, AND lets the FRIDAY_VISION_ENABLED flag-gate canonicalize an alias of it
+    // through this map.
+    ToolNamePair {
+        ts: "image_analysis",
+        rust: "image_analysis",
+    },
 ];
 
 /// Rust [`crate::ToolRegistry`] actions that have NO TS disable-alias today, recorded
@@ -162,7 +171,8 @@ pub const TS_ONLY_UNMAPPED: &[&str] = &[
     "gateway",
     "get_subagent",
     "guide_lens",
-    "image_analysis",
+    // L2-3: `image_analysis` now has a Rust executor (vision_tools::VisionExecutor) and is a
+    // TS_RUST_PAIRS identity alias above — removed from the unmapped list.
     "list_subagents",
     "mcp",
     "memory_extract",
@@ -259,6 +269,23 @@ pub const PARAM_SCHEMA_DIFFS: &[ParamSchemaDiff] = &[
                timeout + the same multi-provider routing (auto→keyless when premium keys are \
                absent; explicit serper/tavily without its key fails closed with a warning, NO \
                silent fallback). It returns snippets only (never fetches result pages).",
+    },
+    ParamSchemaDiff {
+        ts: "image_analysis",
+        rust: "image_analysis",
+        note: "params align by name: `prompt` (required) / `images` (required: workspace-path / \
+               http(s)-url / data:URI) / `model` (optional) / `detail` low|high|auto (optional) / \
+               `maxTokens` (optional). The Rust executor takes `images` as a flattened newline-\
+               separated string (the dev bridge serializes the TS string[] this way) rather than \
+               a nested array; everything else matches the TS schema. TWO deliberate Rust-side \
+               behaviors: (1) `detail` is OpenAI-shaped and has NO Anthropic image-block field, \
+               so it is VALIDATED for parity but NOT forwarded to the Claude API (a no-op for \
+               the Claude route — documented honest gap); (2) the vision provider key is read \
+               from env (FRIDAY_ANTHROPIC_API_KEY) at call time, not a tool param — same as the \
+               TS factory's injected vision-model fn. The Rust side ENFORCES image-input \
+               validation the TS tool documents: workspace-root scoping for local paths, SSRF on \
+               URL images, data-uri base64 + media-type (image/*) + decoded-size caps, and \
+               image-count/total-size bounds.",
     },
 ];
 

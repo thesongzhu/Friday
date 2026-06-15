@@ -66,6 +66,11 @@ ureq = { version = "2", features = ["json"] }
 # L2-1 web_fetch — WHATWG URL parser for the SSRF guard (scheme/host extraction) and redirect
 # resolution. Pure parsing, no I/O. Already transitively in Cargo.lock via ureq.
 url = "2.5"
+# L2-3 vision (image_analysis) — base64 ENCODE (workspace-path / URL image bytes → the Messages-
+# API base64 `source.data`). Already in Cargo.lock (transitively via ureq, same 0.22.x). Pure;
+# no I/O. Used by friday-vision (the model-call seam) + friday-hub (the VisionExecutor's
+# data-uri decode-to-measure). Hub-only — never on the phone (friday-ffi excludes both).
+base64 = "0.22.1"
 # Ed25519 asymmetric approval signatures (S6a). The OPERATOR holds the PRIVATE
 # signing key (offline, e.g. an S6c CLI); the Hub holds ONLY the PUBLIC verify
 # key — so the Hub (where the agent runs) can VERIFY an approval but can never

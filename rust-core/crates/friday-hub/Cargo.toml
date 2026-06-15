@@ -40,6 +40,12 @@ friday-deepseek.workspace = true
 # (same boundary as friday-deepseek; asserted by friday-arch-tests). Reachable only
 # behind an explicit default-OFF selection; the DeepSeek path is unchanged.
 friday-anthropic.workspace = true
+# L2-3 vision (image_analysis) — the VisionModelClient DI trait + the real Claude vision impl +
+# the deterministic stub. Secret-bearing, Hub-only (it reaches the Anthropic key via
+# friday-anthropic's transport; same boundary as friday-anthropic/friday-deepseek, asserted by
+# friday-arch-tests). The friday-hub VisionExecutor (vision_tools.rs) does the image
+# acquisition + validation and delegates the model call here. DARK / default-OFF.
+friday-vision.workspace = true
 friday-providers.workspace = true
 # The ToolExecutor's file read/write goes through the hardened workspace-root-contained
 # safe-open — NEVER std::fs on an agent-supplied path.
@@ -66,6 +72,11 @@ regex.workspace = true
 # into the ureq connection; auto-redirects are disabled and each hop is re-validated.
 ureq.workspace = true
 url.workspace = true
+# L2-3 vision (image_analysis) — base64 decode-to-MEASURE for a caller data-uri (validate its
+# payload + cap the DECODED size before sending). The VisionExecutor passes a data-uri's base64
+# THROUGH unchanged (no re-encode); workspace/URL image bytes are encoded by friday-vision.
+# Pure; no I/O. Already in Cargo.lock (transitively via ureq).
+base64.workspace = true
 
 [dev-dependencies]
 # (ureq is a production dependency above — it also serves the LIVE Telegram channels proof

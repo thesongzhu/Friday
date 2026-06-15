@@ -1,8 +1,24 @@
 [package]
 name = "friday-vision"
-description = "Friday F11 net-new media capability — vision (image_analysis) crate skeleton. Empty compiling stub, no logic/deps/executors yet (Hub-only, provider-secret-bearing → stays OUT of friday-ffi's phone dependency graph)."
+description = "Friday F11/L2-3 vision (image_analysis) capability — the VisionModelClient DI trait + a real Claude/Anthropic vision impl + a deterministic test stub. Hub-only, provider-secret-bearing (reads FRIDAY_ANTHROPIC_API_KEY via friday-anthropic's transport) → stays OUT of friday-ffi's phone dependency graph (asserted by friday-arch-tests)."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 publish = false
 rust-version.workspace = true
+
+# Hub-only, provider-secret-bearing crate. The real vision client reuses friday-anthropic's
+# audited ureq transport + key reader (one transport surface for the Claude route), so it must
+# stay OUT of friday-ffi's dependency graph (asserted by friday-arch-tests, mirroring
+# friday-anthropic / friday-deepseek). The VisionExecutor (image validation + delegation) is a
+# friday-hub module, not part of this crate.
+[dependencies]
+# Reuse the Claude/Anthropic Messages-API transport seam (UreqTransport, api_key_from_env_var,
+# BASE_URL / ENV_KEY / ANTHROPIC_VERSION). A vision request is a /v1/messages call whose user
+# content is image block(s) + a text block — the SAME endpoint friday-anthropic::chat uses.
+friday-anthropic.workspace = true
+serde_json = "1"
+thiserror.workspace = true
+# base64 ENCODE (workspace-path / URL image bytes → the Messages-API base64 `source.data`).
+# Already in Cargo.lock (transitively via ureq); workspace-pinned. No I/O.
+base64.workspace = true

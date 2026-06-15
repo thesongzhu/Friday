@@ -691,6 +691,7 @@ dependencies = [
 name = "friday-hub"
 version = "0.0.1"
 dependencies = [
+ "base64 0.22.1",
  "friday-anthropic",
  "friday-core",
  "friday-crypto",
@@ -700,6 +701,7 @@ dependencies = [
  "friday-providers",
  "friday-storage",
  "friday-transport",
+ "friday-vision",
  "regex",
  "rusqlite",
  "serde",
@@ -810,6 +812,12 @@ version = "0.0.1"
 [[package]]
 name = "friday-vision"
 version = "0.0.1"
+dependencies = [
+ "base64 0.22.1",
+ "friday-anthropic",
+ "serde_json",
+ "thiserror 1.0.69",
+]
 
 [[package]]
 name = "fs-err"
