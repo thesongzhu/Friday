@@ -222,14 +222,17 @@ pub struct HubRuntime<T: Transport> {
     /// S4 per-run policy: the bound principal (also the memory-recall owner — ONE source,
     /// see [`HubConfig::principal_id`]) + the run's disabled-tool / read-only restrictions.
     policy: RunPolicy,
-    /// C1 PR-B — the Hub gate-approval HMAC secret (from [`HubConfig::secret`]). RETAINED on the
-    /// runtime ONLY for the special-cased Codex gated-turn branch, which calls
-    /// [`crate::codex_gated_turn::run_codex_gated_turn`] → `friday_storage::authorize_agent_action`
-    /// (the HMAC authorize the gated turn was built on; see the PR-B note on the Ed25519/HMAC
-    /// divergence). The DeepSeek/Claude routed loop authorizes via the operator Ed25519 verify
-    /// key (`operator_vk`), NEVER this secret — so storing it here changes NOTHING for those
-    /// paths, and under the dark default (`approve_fn → None`) a mutating Codex action Pauses
-    /// (RequiresApproval) regardless, exactly as the #745 security review vetted.
+    /// C1 PR-B — the Hub gate-approval HMAC secret (from [`HubConfig::secret`]). VESTIGIAL on the
+    /// special-cased Codex gated-turn branch: it is still PASSED to
+    /// [`crate::CodexTurnExecutor::run_gated_turn`] (the trait carries `secret` so deepseek/claude
+    /// share the seam) but the live executor IGNORES it (`_secret`) — `run_codex_gated_turn`'s
+    /// protected (mutating) gate is now Ed25519 verify-only under the operator's PUBLIC
+    /// `operator_vk` (the IDENTICAL authorization the DeepSeek/Claude routed loop uses), NEVER
+    /// this HMAC secret. So storing it here changes NOTHING for any path. The Codex positive-
+    /// authorize key is forwarded ONLY behind the default-OFF `FRIDAY_CODEX_POSITIVE_AUTHORIZE_
+    /// ENABLED` flag (see `codex_positive_authorize_vk`); with it OFF (the dark default) the
+    /// executor receives `operator_vk = None`, so a mutating Codex action Pauses (RequiresApproval)
+    /// regardless — byte-identical to the pre-flag hardcoded-`None`, as the #745 review vetted.
     secret: Vec<u8>,
 }
 
@@ -765,9 +768,20 @@ impl<T: Transport> HubRuntime<T> {
                 model_size: selected.model_size,
                 backend_kind: selected.backend_kind,
             };
+            // C1 POSITIVE-AUTHORIZE GATE: resolve the operator verify key the codex gated turn
+            // authorizes protected (mutating) actions under. The key is passed to the executor
+            // ONLY behind the default-OFF `FRIDAY_CODEX_POSITIVE_AUTHORIZE_ENABLED` flag; with it
+            // OFF this is `None` ⇒ DenyAll (a mutating Codex action Pauses), BYTE-IDENTICAL to the
+            // historical hardcoded-`None`. With it ON the SAME provisioned `self.operator_vk` the
+            // deepseek/claude loop threads (`self.operator_vk.as_ref()`, see the routed tail below)
+            // is forwarded — no parallel provisioning, no new verifier. The Hub holds only a
+            // VERIFY key, so even ON it can never self-mint the approval it verifies.
+            let codex_operator_vk =
+                self.codex_positive_authorize_vk(codex_positive_authorize_enabled_from_env());
             let outcome = self.run_codex_route_turn(
                 codex,
                 policy,
+                codex_operator_vk,
                 run_id,
                 &recall_preamble,
                 task,
@@ -921,6 +935,11 @@ impl<T: Transport> HubRuntime<T> {
         &self,
         codex: &dyn CodexTurnExecutor,
         policy: &RunPolicy,
+        // The (already flag-resolved) operator verify key for the protected (mutating) gate. The
+        // CALLER decides `Some`/`None` behind `FRIDAY_CODEX_POSITIVE_AUTHORIZE_ENABLED`; this fn
+        // forwards it VERBATIM to the executor (the SAME verify-only authorization the routed loop
+        // threads). `None` ⇒ DenyAll (a mutating Codex action Pauses).
+        operator_vk: Option<&OperatorVerifyingKey>,
         run_id: &str,
         recall_preamble: &str,
         task: &str,
@@ -950,6 +969,7 @@ impl<T: Transport> HubRuntime<T> {
             self.db.conn(),
             policy,
             &self.secret,
+            operator_vk,
             approve,
             &prompt,
             run_id,
@@ -2339,6 +2359,36 @@ impl<T: Transport> HubRuntime<T> {
         self.operator_vk.as_ref()
     }
 
+    /// C1 POSITIVE-AUTHORIZE GATE — resolve the operator verify key the Codex gated-turn executor
+    /// authorizes protected (mutating) actions under, GATED on the `positive_authorize_on` flag
+    /// (the injected-bool inner of the `FRIDAY_CODEX_POSITIVE_AUTHORIZE_ENABLED` split-env idiom,
+    /// so the KAT drives the decision WITHOUT an env race — see the prod-flags manifest
+    /// `test_kind_note`). It NEVER provisions, generates, or copies a key — it only chooses
+    /// whether to FORWARD the runtime's ALREADY-provisioned `self.operator_vk` (the SAME public
+    /// verify key the deepseek/claude routed loop threads, resolved once at `live()` from the
+    /// operator-controlled env path):
+    ///   - `positive_authorize_on == false` (the default / flag-OFF) ⇒ `None` ⇒ the executor
+    ///     authorizes protected actions under DenyAll (a mutating Codex action Pauses, never
+    ///     auto-allows). This is BYTE-IDENTICAL to the historical hardcoded-`None` at the
+    ///     executor call site — no key reaches Codex regardless of whether one is provisioned.
+    ///   - `positive_authorize_on == true` (flag-ON) ⇒ `self.operator_vk.as_ref()`. If a key IS
+    ///     provisioned, an operator-Ed25519-signed approval bound to the EXACT action can upgrade
+    ///     a `RequiresApproval` to Allow (positive parity with the routed loop); if NO key is
+    ///     provisioned this is STILL `None` (fail-closed Pause) — flipping the flag without
+    ///     provisioning a key cannot fail open. NEVER fails open: an invalid/stale/missing
+    ///     signature stays Pause/Errored (the verify-only gate inside `run_codex_gated_turn`
+    ///     enforces this; this fn only routes the key, it adds no verifier).
+    fn codex_positive_authorize_vk(
+        &self,
+        positive_authorize_on: bool,
+    ) -> Option<&OperatorVerifyingKey> {
+        if positive_authorize_on {
+            self.operator_vk.as_ref()
+        } else {
+            None
+        }
+    }
+
     /// FIX-Q2 (hardening) — the run-owner principal this runtime is CONFIGURED with (the
     /// `--owner` allowlist's single entry, threaded via [`HubConfig::principal_id`] into the
     /// [`RunPolicy`]). This is the principal `run_task` stamps as the run's owner, recalls
@@ -2492,6 +2542,36 @@ pub const ENV_CODEX_ROUTE_ENABLED: &str = "FRIDAY_CODEX_ROUTE_ENABLED";
 
 fn codex_route_enabled_from_env() -> bool {
     matches!(std::env::var(ENV_CODEX_ROUTE_ENABLED), Ok(v) if v.trim() == "1")
+}
+
+/// C1 POSITIVE-AUTHORIZE GATE — the default-OFF environment gate that governs whether the Codex
+/// gated-turn route is given the operator's PUBLIC verify key (so an operator-signed approval can
+/// upgrade a protected (mutating) action's `RequiresApproval` to Allow — the positive-authorize
+/// path, at parity with the deepseek/claude routed loop). This is DISTINCT from
+/// `FRIDAY_CODEX_ROUTE_ENABLED` (route promotion) and `FRIDAY_CODEX_MUTATING_GATE` (the transport
+/// gate that decides whether our handler is consulted at all): it specifically gates the
+/// verify-key PROVISIONING into the executor. MIRRORS the route gates' narrow discipline: ON only
+/// when `FRIDAY_CODEX_POSITIVE_AUTHORIZE_ENABLED` is exactly `"1"` (after trimming). UNSET / empty
+/// / `"0"` / any other value ⇒ OFF ⇒ no key is forwarded ⇒ DenyAll Pause — BYTE-IDENTICAL to the
+/// historical hardcoded-`None`. Kept narrow + explicit so the positive-authorize path cannot be
+/// enabled by accident. Even ON it only FORWARDS an already-provisioned verify key (the Hub holds
+/// no signing key — it can never mint the approval it verifies), and ON with no key provisioned is
+/// still fail-closed Pause.
+pub const ENV_CODEX_POSITIVE_AUTHORIZE_ENABLED: &str = "FRIDAY_CODEX_POSITIVE_AUTHORIZE_ENABLED";
+
+/// The thin env read (the only un-tested hop — a trim=="1" parse). The decision is the pure
+/// [`codex_positive_authorize_from`] matcher so the KAT can pin it WITHOUT an env race (mirrors
+/// [`provider_failover_from`], per the prod-flags-manifest `test_kind_note`).
+fn codex_positive_authorize_enabled_from_env() -> bool {
+    codex_positive_authorize_from(
+        std::env::var(ENV_CODEX_POSITIVE_AUTHORIZE_ENABLED)
+            .ok()
+            .as_deref(),
+    )
+}
+
+fn codex_positive_authorize_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
 }
 
 /// #26 — the default-OFF environment gate that governs whether [`HubRuntime::live`] wraps
@@ -4139,6 +4219,16 @@ mod tests {
     struct StubCodexGatedExecutor {
         outcomes: Vec<crate::codex_gated_turn::CodexTurnOutcome>,
         calls: Cell<usize>,
+        /// SEAM PROBE: set to whether the LAST `run_gated_turn` received `Some` operator_vk (the
+        /// positive-authorize key) or `None`. Shared via `Rc<Cell>` so the gate KAT can read it
+        /// back AFTER the stub is boxed into the runtime — proving the runtime threads the key
+        /// through the EXECUTOR SEAM exactly when the positive-authorize flag is ON and withholds
+        /// it (None) when OFF. The free-fn gate behavior given a `Some`/`None` key is already
+        /// proven in `tests/codex_gated_turn_ed25519.rs` (positive parity / HMAC-downgrade-reject /
+        /// provisioned-unsigned-pause) + the `src` `codex_gated_turn.rs` `None`-DenyAll KATs; this
+        /// probe proves the SEAM that selects which one. The stub never inspects the key's BYTES
+        /// (it holds none) — only its presence — so this adds no signing-key reference.
+        last_vk_some: Rc<Cell<bool>>,
     }
     impl StubCodexGatedExecutor {
         /// A Finished-with-usage outcome carrying the C1-row token counts (13 prompt + 5 completion).
@@ -4157,6 +4247,19 @@ mod tests {
             Self {
                 outcomes,
                 calls: Cell::new(0),
+                last_vk_some: Rc::new(Cell::new(false)),
+            }
+        }
+        /// Like [`Self::new`] but with an EXTERNAL probe the caller retains a handle to, so it can
+        /// read back (after the stub is boxed into the runtime) whether the seam threaded the key.
+        fn with_probe(
+            outcomes: Vec<crate::codex_gated_turn::CodexTurnOutcome>,
+            last_vk_some: Rc<Cell<bool>>,
+        ) -> Self {
+            Self {
+                outcomes,
+                calls: Cell::new(0),
+                last_vk_some,
             }
         }
     }
@@ -4166,6 +4269,7 @@ mod tests {
             _conn: &rusqlite::Connection,
             _policy: &RunPolicy,
             _secret: &[u8],
+            operator_vk: Option<&OperatorVerifyingKey>,
             _approve: &dyn Fn(
                 &friday_core::gate::MutatingActionRequest,
             ) -> Option<friday_core::gate::CanonicalApproval>,
@@ -4176,6 +4280,8 @@ mod tests {
             crate::codex_gated_turn::CodexTurnOutcome,
             crate::codex_gated_turn::CodexGatedTurnError,
         > {
+            // Record what the runtime threaded (presence only — the stub holds no key bytes).
+            self.last_vk_some.set(operator_vk.is_some());
             let i = self.calls.get();
             self.calls.set(i + 1);
             Ok(self
@@ -4365,6 +4471,204 @@ mod tests {
                 .is_empty(),
             "a route error bills nothing"
         );
+    }
+
+    // ───────────── C1 POSITIVE-AUTHORIZE GATE — the executor-seam vk threading ─────────────
+    //
+    // These prove the NEW surface this PR adds: the runtime forwards the operator's PUBLIC verify
+    // key to the Codex gated-turn executor EXACTLY when the default-OFF
+    // `FRIDAY_CODEX_POSITIVE_AUTHORIZE_ENABLED` flag is ON, and withholds it (`None` ⇒ DenyAll
+    // Pause, BYTE-IDENTICAL to the historical hardcoded-`None`) when OFF. The gate BEHAVIOR given a
+    // `Some`/`None` key (positive parity accept→Finished / HMAC-downgrade reject→Errored /
+    // provisioned-unsigned→Pause / None-DenyAll→Pause) is already proven at the free-fn tier in
+    // `tests/codex_gated_turn_ed25519.rs` (a/b/c) + `codex_gated_turn.rs`'s `None`-DenyAll KATs (d);
+    // these prove the SEAM that decides which path is taken. They use the injected-bool inner of the
+    // split-env idiom (`codex_positive_authorize_vk(bool)`) so the flag decision is driven with NO
+    // env race (per the prod-flags-manifest `test_kind_note`), plus a full `run_task_pinned` seam
+    // probe that proves the threaded key actually REACHES the executor.
+
+    /// A VALID 32-byte Ed25519 PUBLIC verify key (RFC 8032 §7.1 TEST 1 public key). It is a real
+    /// curve point so `OperatorVerifyingKey::from_bytes` succeeds, but it is ONLY a verify key — no
+    /// signing key is constructed or named anywhere in `src/` (the
+    /// `operator_vk::tests::hub_crate_never_references_a_signing_key` structural guard forbids that).
+    /// Minting/signing-key KATs live in `tests/codex_gated_turn_ed25519.rs` (the integration tier,
+    /// not scanned by that guard). This fixture only needs to be a parseable `Some(vk)` so the
+    /// flag-gating decision (forward vs withhold) is observable.
+    const TEST_OPERATOR_VK_BYTES: [u8; 32] = [
+        0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64, 0x07,
+        0x3a, 0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68, 0xf7, 0x07,
+        0x51, 0x1a,
+    ];
+
+    fn valid_test_vk() -> OperatorVerifyingKey {
+        OperatorVerifyingKey::from_bytes(&TEST_OPERATOR_VK_BYTES)
+            .expect("RFC 8032 TEST 1 public key is a valid Ed25519 point")
+    }
+
+    /// Build a runtime with a provisioned operator verify key, the DARK Codex executor (a probed
+    /// stub) wired + its route promoted — the SAME flips the gated `live()` path performs, no
+    /// creds. Returns the runtime, the workspace temp dir, and the shared probe the caller reads
+    /// back to see whether the seam threaded the key into the executor.
+    fn runtime_with_codex_wired_probed_vk(
+        tag: &str,
+        operator_vk: Option<OperatorVerifyingKey>,
+    ) -> (HubRuntime<ScriptTransport>, TempDir, Rc<Cell<bool>>) {
+        let ws = TempDir::new(tag);
+        let transport = ScriptTransport::new(&["{\"tool\":\"none\"}"]);
+        let client = DeepSeekClient::with_transport(transport, "k".into());
+        let agent = DeepSeekAgentLlmClient::new(client);
+        let mut rt = HubRuntime::new(
+            HubConfig {
+                db_path: tmp(tag),
+                workspace_root: ws.0.clone(),
+                secret: SECRET.to_vec(),
+                max_turns: 6,
+                principal_id: None,
+                disabled_tools: vec![],
+                read_only: false,
+                operator_vk,
+            },
+            agent,
+            Box::new(DenyAllApprovals),
+        )
+        .unwrap();
+        let probe = Rc::new(Cell::new(false));
+        rt = rt.with_codex(Box::new(StubCodexGatedExecutor::with_probe(
+            vec![StubCodexGatedExecutor::finished("done")],
+            Rc::clone(&probe),
+        )));
+        rt.mark_route_available("codex");
+        rt.mark_route_validated("codex");
+        (rt, ws, probe)
+    }
+
+    // ---- (d) flag-OFF byte-identical: a provisioned key is WITHHELD when the flag is OFF ----
+    #[test]
+    fn codex_positive_authorize_flag_off_withholds_vk_byte_identical() {
+        // Even with the operator key fully provisioned, the OFF (false) decision returns `None`, so
+        // the executor authorizes protected actions under DenyAll — IDENTICAL to the historical
+        // hardcoded-`None`. Flipping route/transport flags without THIS flag cannot reach the key.
+        let (rt, _ws, _probe) =
+            runtime_with_codex_wired_probed_vk("c1-posauth-off", Some(valid_test_vk()));
+        assert!(
+            rt.codex_positive_authorize_vk(false).is_none(),
+            "flag-OFF must WITHHOLD the key (None) even when one is provisioned — byte-identical DenyAll"
+        );
+    }
+
+    // ---- (a)-enabling: flag-ON forwards the PROVISIONED key (the positive-authorize path) ----
+    #[test]
+    fn codex_positive_authorize_flag_on_forwards_provisioned_vk() {
+        // Flag-ON (true) forwards the SAME already-provisioned `self.operator_vk` (no parallel
+        // provisioning, no new verifier). With the key present, an operator-Ed25519-signed approval
+        // can now upgrade a RequiresApproval to Allow — the positive parity proven, given this key,
+        // by `tests/codex_gated_turn_ed25519.rs::ed25519_signed_approval_continues_and_finishes`.
+        let (rt, _ws, _probe) =
+            runtime_with_codex_wired_probed_vk("c1-posauth-on", Some(valid_test_vk()));
+        let forwarded = rt
+            .codex_positive_authorize_vk(true)
+            .expect("flag-ON forwards the provisioned key");
+        assert_eq!(
+            forwarded.to_bytes(),
+            TEST_OPERATOR_VK_BYTES,
+            "the SAME provisioned verify key is forwarded verbatim (not a copy/new key)"
+        );
+    }
+
+    // ---- (c)-defense: flag-ON with NO key provisioned stays None (no fail-open from a flip) ----
+    #[test]
+    fn codex_positive_authorize_flag_on_without_key_stays_none_fail_closed() {
+        // Flipping the flag ON without provisioning a key CANNOT fail open: there is no key to
+        // forward, so the executor still authorizes under DenyAll (Pause). The key must be
+        // separately provisioned from the operator-controlled source — the flag alone never Allows.
+        let (rt, _ws, _probe) = runtime_with_codex_wired_probed_vk("c1-posauth-on-nokey", None);
+        assert!(
+            rt.codex_positive_authorize_vk(true).is_none(),
+            "flag-ON with no provisioned key is STILL None (fail-closed Pause — no fail-open)"
+        );
+    }
+
+    // ---- the seam end-to-end: the resolved key actually REACHES the executor via run_task_pinned --
+    #[test]
+    fn codex_positive_authorize_seam_threads_key_into_executor() {
+        // Drive the REAL public `run_task_pinned("codex")` entry and read the probe back: the
+        // runtime resolves the vk at the codex branch and threads it through `run_codex_route_turn`
+        // -> `codex.run_gated_turn(.., operator_vk, ..)`. Because the env flag is OFF in the test
+        // process (asserted elsewhere), the resolved key is `None` here — proving the DEFAULT seam
+        // is fail-closed end-to-end (the executor receives None ⇒ DenyAll). The flag-ON forwarding
+        // is proven by the unit KAT above (the env read is the only un-exercised hop, a trim=="1").
+        let (rt, _ws, probe) =
+            runtime_with_codex_wired_probed_vk("c1-posauth-seam", Some(valid_test_vk()));
+        let (selection, outcome) = rt
+            .run_task_pinned("run-posauth-seam", "say done", "codex", 1_000)
+            .expect("pinned codex runs through the runtime");
+        assert_eq!(selection.provider_id, "codex");
+        assert_eq!(outcome.status, LoopStatus::Finished);
+        assert!(
+            !probe.get(),
+            "with the env flag OFF (default), the seam threads None into the executor — \
+             byte-identical DenyAll end-to-end"
+        );
+    }
+
+    // ---- direct flag-ON closure: the resolved key reaches the executor THROUGH the loop fn ----
+    #[test]
+    fn codex_positive_authorize_flag_on_threads_key_through_run_codex_route_turn() {
+        // The end-to-end seam test above runs with the env flag OFF (so it proves the None default
+        // reaches the executor). This proves the COMPLEMENT directly: inject the flag-ON decision
+        // (`codex_positive_authorize_vk(true)`) into the real `run_codex_route_turn` and assert the
+        // provisioned key is threaded all the way into `codex.run_gated_turn` (probe == true) AND
+        // the loop still maps the stub's Finished outcome. This closes the on-ramp claim (key
+        // forwarded when ON) without env mutation; the gate's Allow→continue behavior given that
+        // key is the mapped destination test in `tests/codex_gated_turn_ed25519.rs`.
+        let (rt, _ws, probe) =
+            runtime_with_codex_wired_probed_vk("c1-posauth-on-thread", Some(valid_test_vk()));
+        let no_approval =
+            |_req: &friday_core::gate::MutatingActionRequest| -> Option<CanonicalApproval> { None };
+        // `run_codex_route_turn` records run-attributed events, so seed the run row (the public
+        // `run_task_pinned` entry does this before delegating; we call the private fn directly).
+        agent_run::create_run(rt.db().conn(), "run-posauth-on-thread", "say done", 1_000)
+            .expect("seed run row");
+        let vk_on = rt.codex_positive_authorize_vk(true);
+        assert!(vk_on.is_some(), "precondition: flag-ON forwards the key");
+        let outcome = rt
+            .run_codex_route_turn(
+                rt.codex.as_deref().expect("codex wired"),
+                rt.policy(),
+                vk_on,
+                "run-posauth-on-thread",
+                "",
+                "say done",
+                &no_approval,
+                1_000,
+            )
+            .expect("the gated turn maps to a loop outcome");
+        assert_eq!(outcome.status, LoopStatus::Finished);
+        assert!(
+            probe.get(),
+            "flag-ON must thread the provisioned key INTO the executor (run_gated_turn saw Some)"
+        );
+    }
+
+    // ---- the env matcher is the narrow exact-'1' literal (cannot be enabled by accident) ----
+    #[test]
+    fn codex_positive_authorize_flag_matcher_only_literal_one() {
+        assert!(codex_positive_authorize_from(Some("1")));
+        assert!(codex_positive_authorize_from(Some(" 1 ")), "trimmed");
+        for off in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("true"),
+            Some("yes"),
+            Some("11"),
+            Some("1x"),
+        ] {
+            assert!(
+                !codex_positive_authorize_from(off),
+                "{off:?} must be OFF (the prod default)"
+            );
+        }
     }
 
     #[test]
