@@ -1477,10 +1477,18 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
             // has never had a MissionIntakeRequest arm), the deploy-safety invariant.
             Message::MissionIntakeRequest { request } if mission_intake_enabled => {
                 let now_ms = now_ms();
+                // (FIX-Q3b) BIND the persisted Mission/conversation owner to the Rust-derived
+                // AUTHENTICATED owner (`runtime.policy().principal_id()` == the configured
+                // `--owner`), NOT the self-asserted `request.owner_principal` body field. A body
+                // owner that does not match the authenticated owner is fail-closed (writes ZERO
+                // rows) — mirroring the MemoryDecisionRequest arm. NO-DEGRADE: under single-peer
+                // the body owner already equals the configured owner (the same string the bound
+                // run forwards + the allowlist gates), so the live auto-dispatch path is unchanged.
                 let result = friday_hub::hub_server::mission_intake_result_for_db(
                     runtime.db(),
                     &env.msg_id,
                     request,
+                    runtime.policy().principal_id(),
                     now_ms,
                 );
                 eprintln!(
@@ -1509,10 +1517,15 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
             // echo below — BYTE-IDENTICAL to today (the server has never had this arm).
             Message::MissionLifecycleRequest { request } if mission_spine_dispatch_enabled => {
                 let now_ms = now_ms();
+                // (FIX-Q3b) BIND the transition to the Rust-derived AUTHENTICATED owner
+                // (`runtime.policy().principal_id()` == the configured `--owner`): the target
+                // Mission MUST be owned by it, else fail-closed (no transition). An unknown Mission
+                // still surfaces the existing not-found Error. NO-DEGRADE under single-peer.
                 let result = friday_hub::hub_server::mission_lifecycle_result_for_db(
                     runtime.db(),
                     &env.msg_id,
                     request,
+                    runtime.policy().principal_id(),
                     now_ms,
                 );
                 eprintln!(
@@ -1539,10 +1552,15 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
             // BYTE-IDENTICAL to today.
             Message::WorkItemStatusRequest { request } if mission_spine_dispatch_enabled => {
                 let now_ms = now_ms();
+                // (FIX-Q3b) BIND the transition to the Rust-derived AUTHENTICATED owner
+                // (`runtime.policy().principal_id()` == the configured `--owner`): the target
+                // WorkItem MUST be owned by it, else fail-closed (no transition). An unknown
+                // WorkItem still surfaces the existing not-found Error. NO-DEGRADE under single-peer.
                 let result = friday_hub::hub_server::work_item_status_result_for_db(
                     runtime.db(),
                     &env.msg_id,
                     request,
+                    runtime.policy().principal_id(),
                     now_ms,
                 );
                 eprintln!(
@@ -2763,6 +2781,18 @@ mod tests {
         )
     }
 
+    /// (FIX-Q3b) The SAME intake shape as [`mission_intake_request`] but with a SPOOFED
+    /// `owner_principal` — a principal that is NOT the configured/authenticated owner. The dispatch
+    /// arm binds the persisted owner to `runtime.policy().principal_id()` (== `OWNER`), so this
+    /// self-asserted body owner must be REJECTED (writes ZERO rows), never silently persisted.
+    fn mission_intake_request_spoofed_owner(msg_id: &str) -> Envelope {
+        let mut env = mission_intake_request(msg_id);
+        if let Message::MissionIntakeRequest { request } = &mut env.message {
+            request.owner_principal = "principal:not-the-owner".into();
+        }
+        env
+    }
+
     /// (NS-5) FLAG-ON: an inbound MissionIntakeRequest driven through the REAL dispatch path
     /// (`accept_one` → `serve_sealed_session`, NOT a direct `mission_intake_result_for_db` call)
     /// BIRTHS a Mission: it persists a Mission row + a WorkItem(Draft) + a SurfaceThread +
@@ -2939,6 +2969,145 @@ mod tests {
                 .unwrap()
                 .is_empty(),
             "flag OFF writes NO route_decision"
+        );
+    }
+
+    /// (FIX-Q3b) OWNER-SPOOF: with the mission-intake flag ON, an inbound MissionIntakeRequest whose
+    /// self-asserted `owner_principal` does NOT match the AUTHENTICATED owner
+    /// (`runtime.policy().principal_id()` == the configured `--owner`) is FAIL-CLOSED — a typed
+    /// `Error` that births NO Mission and writes ZERO rows. This closes the audit gap where a
+    /// self-asserted owner_principal was silently persisted (the FIX-Q3b precondition before
+    /// multi-owner / live-flip). The happy path (matching owner) is unchanged — proven by
+    /// `flag_on_mission_intake_births_a_mission_through_dispatch_and_writes_no_ledger`.
+    #[test]
+    fn flag_on_mission_intake_spoofed_owner_is_rejected_and_writes_zero_rows() {
+        let (rt, _ws) = mock_runtime("intake-spoof", OWNER);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        let client_kp = DeviceKeypair::generate();
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let client = spawn_client(addr, client_kp, |session, _nonce| {
+            // SPOOFED owner_principal — NOT the configured/authenticated owner.
+            let req = mission_intake_request_spoofed_owner("req-intake-spoof");
+            (req, session.clone(), session.clone())
+        });
+
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false, // run-control OFF
+                false, // mission-bound seam OFF
+                true,  // (NS-5) mission-intake ingress ON
+                false, // (KEYSTONE) mission-spine dispatch OFF
+                false, // memory-confirm ingress OFF
+                false, // (Loop4) per-run token surface OFF
+            )
+            .unwrap();
+        assert_eq!(
+            processed, 1,
+            "the spoofed intake is processed (then denied)"
+        );
+
+        // FAIL-CLOSED: a typed Error, NOT a MissionIntakeResult.
+        match client.join().unwrap().result.expect("a reply is sent") {
+            Message::Error { message, .. } => {
+                assert!(
+                    message.contains("owner_principal does not match the authenticated owner"),
+                    "the spoofed owner is rejected with the owner-binding error: {message}"
+                );
+            }
+            other => panic!("a spoofed owner_principal must be a typed Error, got {other:?}"),
+        }
+
+        // ZERO rows: no Mission/WorkItem/SurfaceThread/route_decision/conversation born under either
+        // the spoofed owner OR the authenticated owner. The intake fail-closed BEFORE any write.
+        let db = rt.db();
+        assert!(
+            db.get_mission("mission-ns5").unwrap().is_none(),
+            "a spoofed owner births NO Mission"
+        );
+        assert!(
+            db.get_work_item("work-ns5").unwrap().is_none(),
+            "a spoofed owner births NO WorkItem"
+        );
+        assert!(
+            db.get_surface_thread("surface-ns5-intake")
+                .unwrap()
+                .is_none(),
+            "a spoofed owner births NO SurfaceThread"
+        );
+        assert!(
+            db.get_friday_conversation("fconv_ns5_intake")
+                .unwrap()
+                .is_none(),
+            "a spoofed owner births NO conversation row"
+        );
+        assert!(
+            db.list_route_decisions_for_mission("mission-ns5")
+                .unwrap()
+                .is_empty(),
+            "a spoofed owner writes NO route_decision"
+        );
+    }
+
+    /// (FIX-Q3b) OWNER-BINDING: with the flag ON, the created Mission's conversation owner is the
+    /// AUTHENTICATED owner regardless of what the (matching) body field carried — the persisted
+    /// owner is BOUND to `runtime.policy().principal_id()`, never the raw body string. (Today the
+    /// body field MUST equal the authenticated owner to pass the binding gate; this test proves the
+    /// persisted value tracks the authenticated identity, the load-bearing invariant before
+    /// multi-owner.)
+    #[test]
+    fn flag_on_mission_intake_persists_authenticated_owner() {
+        let (rt, _ws) = mock_runtime("intake-owner-bind", OWNER);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        let client_kp = DeviceKeypair::generate();
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let client = spawn_client(addr, client_kp, |session, _nonce| {
+            let req = mission_intake_request("req-intake-owner-bind");
+            (req, session.clone(), session.clone())
+        });
+
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false,
+                false,
+                true, // mission-intake ON
+                false,
+                false,
+                false,
+            )
+            .unwrap();
+        assert_eq!(processed, 1, "one intake processed");
+        assert!(
+            matches!(
+                client.join().unwrap().result,
+                Some(Message::MissionIntakeResult { .. })
+            ),
+            "the matching-owner intake births a Mission"
+        );
+
+        // The persisted conversation owner == the AUTHENTICATED owner (OWNER), not a body-supplied
+        // string — the binding the audit fix requires.
+        let conversation = rt
+            .db()
+            .get_friday_conversation("fconv_ns5_intake")
+            .unwrap()
+            .expect("conversation row persisted");
+        assert_eq!(
+            conversation.owner_principal, OWNER,
+            "the persisted owner is BOUND to the authenticated owner"
         );
     }
 
@@ -3229,7 +3398,15 @@ mod tests {
             Message::MissionIntakeRequest { request } => request,
             _ => unreachable!("the seed builder produces a MissionIntakeRequest"),
         };
-        let env = friday_hub::hub_server::mission_intake_result_for_db(rt.db(), "seed", req, 1_000);
+        // (FIX-Q3b) The seed binds the persisted owner to the authenticated owner (OWNER), the
+        // same identity the live dispatch arm threads from `runtime.policy().principal_id()`.
+        let env = friday_hub::hub_server::mission_intake_result_for_db(
+            rt.db(),
+            "seed",
+            req,
+            Some(OWNER),
+            1_000,
+        );
         match env.message {
             Message::MissionIntakeResult { result } => {
                 assert_eq!(
@@ -3239,6 +3416,51 @@ mod tests {
             }
             other => panic!("seed intake must succeed, got {other:?}"),
         }
+    }
+
+    /// (FIX-Q3b) The principal a FOREIGN-owned seed Mission/WorkItem belongs to — deliberately NOT
+    /// the session's authenticated `OWNER`, so a cross-owner transition must fail-closed.
+    const FOREIGN_OWNER: &str = "principal:other-owner";
+
+    /// (FIX-Q3b) Seed a Mission + WorkItem owned by `FOREIGN_OWNER` (NOT the session owner) by
+    /// driving the intake free-fn with that authenticated owner directly. The body's
+    /// `owner_principal` is set to match so the birth succeeds — this is how a row owned by a
+    /// different principal exists in the (hypothetical multi-owner) DB. The canonical ids match
+    /// `mission_lifecycle_request` / `work_item_status_request` so the cross-owner KATs have a real,
+    /// foreign-owned target to be denied against.
+    fn seed_foreign_owned_mission_and_work_item<T: Transport>(rt: &HubRuntime<T>) {
+        let mut env = mission_intake_request("seed-foreign");
+        if let Message::MissionIntakeRequest { request } = &mut env.message {
+            request.owner_principal = FOREIGN_OWNER.into();
+        }
+        let req = match env.message {
+            Message::MissionIntakeRequest { request } => request,
+            _ => unreachable!("the seed builder produces a MissionIntakeRequest"),
+        };
+        let result = friday_hub::hub_server::mission_intake_result_for_db(
+            rt.db(),
+            "seed-foreign",
+            req,
+            Some(FOREIGN_OWNER),
+            1_000,
+        );
+        match result.message {
+            Message::MissionIntakeResult { result } => assert_eq!(
+                result.status, "ready",
+                "the foreign-owned seed births a ready Mission/WorkItem"
+            ),
+            other => panic!("foreign seed intake must succeed, got {other:?}"),
+        }
+        // Confirm the seeded owner really is the foreign principal (not OWNER).
+        assert_eq!(
+            rt.db()
+                .get_friday_conversation("fconv_ns5_intake")
+                .unwrap()
+                .unwrap()
+                .owner_principal,
+            FOREIGN_OWNER,
+            "the seed is owned by the foreign principal"
+        );
     }
 
     /// (KEYSTONE) A `MissionLifecycleRequest` envelope. No `auth_proof`: the sealed session IS the
@@ -3567,6 +3789,118 @@ mod tests {
         // The seeded (owner's own) WorkItem is untouched — no cross-bleed write.
         let work = rt.db().get_work_item("work-ns5").unwrap().unwrap();
         assert_eq!(work.status, friday_core::WorkItemStatus::ReadyToDispatch);
+    }
+
+    /// (FIX-Q3b) CROSS-OWNER MISSION-LIFECYCLE: with the flag ON, a MissionLifecycleRequest that
+    /// targets a Mission owned by a DIFFERENT principal (the session authenticated as `OWNER`, the
+    /// Mission owned by `FOREIGN_OWNER`) is FAIL-CLOSED — a typed `Error` that does NOT transition
+    /// the Mission. The transition binds to `runtime.policy().principal_id()`, not the request's
+    /// `actor_ref`/conversation field. (An UNKNOWN Mission keeps its existing not-found shape; this
+    /// is the EXISTS-but-not-owned arm.)
+    #[test]
+    fn flag_on_mission_lifecycle_cross_owner_is_rejected_no_transition() {
+        let (rt, _ws) = mock_runtime("spine-lifecycle-cross", OWNER);
+        seed_foreign_owned_mission_and_work_item(&rt);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        let client_kp = DeviceKeypair::generate();
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let client = spawn_client(addr, client_kp, |session, _nonce| {
+            let req = mission_lifecycle_request("req-lifecycle-cross", "paused");
+            (req, session.clone(), session.clone())
+        });
+
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false,
+                false,
+                false,
+                true, // mission-spine dispatch ON
+                false,
+                false,
+            )
+            .unwrap();
+        assert_eq!(
+            processed, 1,
+            "the cross-owner request is processed (then denied)"
+        );
+
+        match client.join().unwrap().result.expect("a reply is sent") {
+            Message::Error { message, .. } => assert!(
+                message.contains("not owned by the authenticated owner"),
+                "a cross-owner Mission lifecycle is owner-rejected: {message}"
+            ),
+            other => panic!("a cross-owner Mission lifecycle must be a typed Error, got {other:?}"),
+        }
+        // NO transition: the foreign-owned Mission stays Active (the seed's birth status).
+        let mission = rt.db().get_mission("mission-ns5").unwrap().unwrap();
+        assert_eq!(
+            mission.status,
+            friday_core::MissionStatus::Active,
+            "a cross-owner request never transitions the foreign-owned Mission"
+        );
+    }
+
+    /// (FIX-Q3b) CROSS-OWNER WORK-ITEM-STATUS: with the flag ON, a WorkItemStatusRequest that
+    /// targets a WorkItem owned (via its Mission's conversation) by a DIFFERENT principal is
+    /// FAIL-CLOSED — a typed `Error` that does NOT transition the WorkItem. The owner is resolved
+    /// from the WorkItem's Mission, compared to `runtime.policy().principal_id()`.
+    #[test]
+    fn flag_on_work_item_status_cross_owner_is_rejected_no_transition() {
+        let (rt, _ws) = mock_runtime("spine-workitem-cross", OWNER);
+        seed_foreign_owned_mission_and_work_item(&rt);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        let client_kp = DeviceKeypair::generate();
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let client = spawn_client(addr, client_kp, |session, _nonce| {
+            // Target the foreign-owned WorkItem ("work-ns5"), a status it WOULD otherwise accept.
+            let req =
+                work_item_status_request("req-workitem-cross", "work-ns5", "dispatched", None);
+            (req, session.clone(), session.clone())
+        });
+
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false,
+                false,
+                false,
+                true, // mission-spine dispatch ON
+                false,
+                false,
+            )
+            .unwrap();
+        assert_eq!(
+            processed, 1,
+            "the cross-owner request is processed (then denied)"
+        );
+
+        match client.join().unwrap().result.expect("a reply is sent") {
+            Message::Error { message, .. } => assert!(
+                message.contains("not owned by the authenticated owner"),
+                "a cross-owner WorkItem status is owner-rejected: {message}"
+            ),
+            other => panic!("a cross-owner WorkItem status must be a typed Error, got {other:?}"),
+        }
+        // NO transition: the foreign-owned WorkItem stays at its seeded ReadyToDispatch status.
+        let work = rt.db().get_work_item("work-ns5").unwrap().unwrap();
+        assert_eq!(
+            work.status,
+            friday_core::WorkItemStatus::ReadyToDispatch,
+            "a cross-owner request never transitions the foreign-owned WorkItem"
+        );
     }
 
     /// (KEYSTONE / KAT d) DEPLOY-SAFETY: with the flag OFF, BOTH a MissionLifecycleRequest and a
@@ -5326,6 +5660,132 @@ mod tests {
         assert_eq!(
             n, 1,
             "the sessionless dispatch creates exactly ONE ephemeral per-run session row"
+        );
+    }
+
+    /// (FIX-Q3b) IDENTITY FLOW end-to-end: the SAME owner principal threads through
+    /// authenticate_forwarded -> mission intake -> auto-dispatch -> run -> run_result. The session
+    /// authenticates as `OWNER` (`authenticate_forwarded` against the allowlist); the mission
+    /// intake binds the persisted Mission owner to that authenticated principal; the bound run
+    /// (the Rust equivalent of the auto-dispatch driver firing `startRun` with the intake's owner)
+    /// authenticates as the SAME principal and records its owner-scoped run answer + ephemeral
+    /// session under it. We assert ONE identity (`OWNER`) is the owner at EVERY hop — closing the
+    /// "no end-to-end identity flow exists today" gap. (Intake and the run are separate sealed
+    /// envelopes, so they use separate `accept_one` connections — transport-stateless, DB-stateful;
+    /// the binding is the persisted owner, not the connection.)
+    #[test]
+    fn identity_flows_through_authenticate_intake_dispatch_run_and_run_result() {
+        let (rt, _ws) = mock_runtime("identity-flow", OWNER);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+
+        // ── Hop 1: authenticate (sealed session) -> mission intake -> Mission owned by OWNER ──
+        let intake_kp = DeviceKeypair::generate();
+        let intake_peer_allowlist = allowlist_of(intake_kp.public_bytes());
+        let intake_client = spawn_client(addr, intake_kp, |session, _nonce| {
+            let req = mission_intake_request("req-identity-intake");
+            (req, session.clone(), session.clone())
+        });
+        assert_eq!(
+            listener
+                .accept_one(
+                    &server_kp,
+                    &rt,
+                    &allowlist,
+                    &intake_peer_allowlist,
+                    false,
+                    false,
+                    true, // mission-intake ON
+                    false,
+                    false,
+                    false,
+                )
+                .unwrap(),
+            1
+        );
+        let intake_owner = match intake_client.join().unwrap().result {
+            Some(Message::MissionIntakeResult { .. }) => {
+                rt.db()
+                    .get_friday_conversation("fconv_ns5_intake")
+                    .unwrap()
+                    .expect("intake born the conversation")
+                    .owner_principal
+            }
+            other => panic!("intake must birth a Mission, got {other:?}"),
+        };
+        assert_eq!(
+            intake_owner, OWNER,
+            "intake binds the Mission owner to the authenticated principal"
+        );
+
+        // ── Hop 2: auto-dispatch fires the bound run as the SAME principal -> run_result ──
+        // (The run authenticates via authenticate_forwarded against the SAME allowlist; the Rust
+        // auto-dispatch driver forwards the intake owner as the run principal.)
+        let run_kp = DeviceKeypair::generate();
+        let run_peer_allowlist = allowlist_of(run_kp.public_bytes());
+        let run_client = spawn_client(addr, run_kp, |session, nonce| {
+            let req = agent_run_request("req-identity-run", "run-identity", OWNER, session, nonce);
+            (req, session.clone(), session.clone())
+        });
+        assert_eq!(
+            listener
+                .accept_one(
+                    &server_kp,
+                    &rt,
+                    &allowlist,
+                    &run_peer_allowlist,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                )
+                .unwrap(),
+            1
+        );
+        assert!(
+            matches!(
+                run_client.join().unwrap().result,
+                Some(Message::AgentRunResult { .. })
+            ),
+            "the bound run returns a refs result"
+        );
+
+        // ── The single identity threads through: the run's owner == the intake owner == OWNER ──
+        let run_session_owner = friday_storage::load_session_owner(rt.db().conn(), "run-identity")
+            .unwrap()
+            .expect("the bound run created its ephemeral session");
+        assert_eq!(
+            run_session_owner.user_id.as_deref(),
+            Some(OWNER),
+            "the run is owned by the SAME authenticated principal as the intake"
+        );
+        // The run answer is releasable ONLY to that same owner — a different principal is denied.
+        use friday_storage::{AnswerDenyReason, RunAnswerAccess};
+        assert!(
+            matches!(
+                friday_storage::get_run_answer_for_principal(rt.db().conn(), "run-identity", OWNER)
+                    .unwrap(),
+                RunAnswerAccess::Granted(_)
+            ),
+            "the same owner is Granted the bound run's answer"
+        );
+        assert_eq!(
+            friday_storage::get_run_answer_for_principal(
+                rt.db().conn(),
+                "run-identity",
+                "principal:not-the-owner"
+            )
+            .unwrap(),
+            RunAnswerAccess::Denied(AnswerDenyReason::PrincipalMismatch),
+            "a different principal is DENIED the bound run's answer"
+        );
+        assert_eq!(
+            intake_owner, OWNER,
+            "ONE identity (OWNER) is the owner at intake AND run — the end-to-end flow holds"
         );
     }
 }
