@@ -523,8 +523,13 @@ fn invalid_endpoint(endpoint: &str) -> ExecError {
 }
 
 /// Map a ureq error to a `web_search` transport error. A non-2xx HTTP status (ureq returns it as
-/// `Error::Status`) is a provider failure (parity with the TS `!response.ok` throw); a transport
-/// failure (connect/TLS/timeout) keeps its kind only — never a body, never a secret.
+/// `Error::Status`) is a provider failure — like the TS `!response.ok` throw, but a DELIBERATE
+/// adaptation to the Rust gate model: the TS oracle catches that throw and folds it into
+/// model-visible `errorResult` content, whereas here a provider failure surfaces as a tool
+/// `ExecError` (`GateDispatch::ExecError`). (NOT mimicking the web_fetch sibling, which returns
+/// 4xx/5xx bodies AS a `ToolReceipt` — wrong for a search API; a failed search has no useful
+/// body.) A transport failure (connect/TLS/timeout) keeps its kind only — never a body, never a
+/// secret.
 fn map_ureq_err(err: ureq::Error) -> ExecError {
     let kind = match err {
         ureq::Error::Status(code, _resp) => format!("http_{code}"),
