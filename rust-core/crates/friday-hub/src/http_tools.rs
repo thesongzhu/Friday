@@ -483,42 +483,52 @@ impl std::fmt::Display for WebFetchError {
 
 /// A tool executor that routes `web_fetch` to a [`WebFetchExecutor`], `web_search` to a
 /// [`crate::web_search::WebSearchExecutor`], `image_analysis` to a
-/// [`crate::vision_tools::VisionExecutor`], and EVERY other action to an inner fs executor
+/// [`crate::vision_tools::VisionExecutor`], `memory_recall`/`memory_store` to a
+/// [`crate::memory_tools::MemoryToolExecutor`], and EVERY other action to an inner fs executor
 /// (typically [`crate::FsToolExecutor`]). The composition keeps the fs/shell executor
 /// untouched — the L2 capability tools are purely additive. The gate chokepoint still runs
 /// before EVERY dispatch (the executor is reached only on `Allow`), and the per-capability
-/// flag-gates (`FRIDAY_WEB_FETCH_ENABLED` / `FRIDAY_WEB_SEARCH_ENABLED` / `FRIDAY_VISION_ENABLED`)
-/// refuse the respective tool when off, so this composite is behavior-neutral until a flag is
-/// flipped.
-pub struct CompositeToolExecutor<F: ToolExecutor> {
+/// flag-gates (`FRIDAY_WEB_FETCH_ENABLED` / `FRIDAY_WEB_SEARCH_ENABLED` / `FRIDAY_VISION_ENABLED` /
+/// `FRIDAY_MEMORY_TOOL_ENABLED`) refuse the respective tool when off, so this composite is
+/// behavior-neutral until a flag is flipped.
+///
+/// The `'c` lifetime is the borrowed DB connection the [`crate::memory_tools::MemoryToolExecutor`]
+/// holds (it keys recall/store on the run's authenticated principal against that connection); the
+/// composite is constructed PER-DISPATCH by the runtime where the connection, the principal, and
+/// the run clock are all in scope, so the borrow never outlives the dispatch.
+pub struct CompositeToolExecutor<'c, F: ToolExecutor> {
     fs: F,
     web: WebFetchExecutor,
     search: crate::web_search::WebSearchExecutor,
     vision: crate::vision_tools::VisionExecutor,
+    memory: crate::memory_tools::MemoryToolExecutor<'c>,
 }
 
-impl<F: ToolExecutor> CompositeToolExecutor<F> {
+impl<'c, F: ToolExecutor> CompositeToolExecutor<'c, F> {
     pub fn new(
         fs: F,
         web: WebFetchExecutor,
         search: crate::web_search::WebSearchExecutor,
         vision: crate::vision_tools::VisionExecutor,
+        memory: crate::memory_tools::MemoryToolExecutor<'c>,
     ) -> Self {
         Self {
             fs,
             web,
             search,
             vision,
+            memory,
         }
     }
 }
 
-impl<F: ToolExecutor> ToolExecutor for CompositeToolExecutor<F> {
+impl<F: ToolExecutor> ToolExecutor for CompositeToolExecutor<'_, F> {
     fn execute(&self, action: &str, params: &[(String, String)]) -> Result<ToolReceipt, ExecError> {
         match action {
             "web_fetch" => self.web.execute(action, params),
             "web_search" => self.search.execute(action, params),
             "image_analysis" => self.vision.execute(action, params),
+            "memory_recall" | "memory_store" => self.memory.execute(action, params),
             _ => self.fs.execute(action, params),
         }
     }
