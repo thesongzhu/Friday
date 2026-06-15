@@ -28,6 +28,7 @@ pub mod pending_request;
 pub mod process_registry;
 pub mod provider_session;
 pub mod provider_timeline_store;
+pub mod retention;
 pub mod run_result;
 pub mod schedule;
 mod schema;
@@ -62,6 +63,7 @@ pub use provider_timeline_store::{
     persist_timeline, timeline_exists, upsert_pending, PendingActionRow, PersistEventOutcome,
     StoredPendingAction, StoredTimeline, StoredTimelineEvent, TimelineEventRow, TimelineState,
 };
+pub use retention::{sweep_retention, RetentionOutcome, RetentionWindows};
 pub use run_result::{
     get_run_answer_for_principal, get_run_result, get_run_result_ref, persist_run_result,
     AnswerDenyReason, PersistRunResultOutcome, RunAnswerAccess, RunResult, RunResultRef,

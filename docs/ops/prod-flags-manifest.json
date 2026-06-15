@@ -141,6 +141,15 @@
       "notes": "Built-but-dark. Drives run_agent_loop_for_mission_with_overrides_flagged(.., passport_mint=true, ..) and asserts a ContextPassport row + links are persisted then the run proceeds. Sibling proofs cover sensitive-item-fails-closed, mixed-set-blocks-whole-handoff, and flag-off byte-identical."
     },
     {
+      "flag": "FRIDAY_RETENTION_SWEEP",
+      "process": "rust-ws-wrapper",
+      "prod_state": "dark",
+      "closes_loop": "The reaper tick prunes the unbounded artifact tables (token_ledger/surface_event 90d, terminal mission/work_item 365d, rejected/expired memory candidates 30d) by age AND terminal-state, FK-safe + bounded + fail-safe; audit_ledger is never touched; flag-off is byte-identical (no deletes).",
+      "coverage": "loop-e2e",
+      "e2e_test": "rust-core/crates/friday-storage/src/retention.rs::flag_on_sweep_prunes_only_old_terminal_rows_others_untouched",
+      "notes": "Built-but-dark (registry gap #25). The mapped test seeds, per table, an OLD-terminal row, a RECENT row, an ACTIVE/non-terminal row, a CONFIRMED-memory row, and audit_ledger rows on a real Db, runs sweep_retention with the operator-approved default windows, and asserts ONLY old-terminal rows are pruned while recent + non-terminal + confirmed-memory survive and verify_audit_chain stays clean (audit_ledger row count unchanged). The flag itself (FRIDAY_RETENTION_SWEEP, exact-1) is the thin env read in hub_agent_run_server.rs gating the reaper-tick call; its default-off/fail-closed parse is proven by retention_sweep_flag_is_default_off_and_fail_closed there, and flag-off byte-identical (no retention call) is the in-bin reaper wiring. Sibling storage proofs: FK-safe parent-kept-then-freed, idempotent second sweep, no-non-terminal-ever-deleted across every status, bounded-batch backlog drain, default-windows-are-approved-values."
+    },
+    {
       "flag": "FRIDAY_PROVIDER_FAILOVER",
       "process": "rust-ws-wrapper",
       "prod_state": "dark",
