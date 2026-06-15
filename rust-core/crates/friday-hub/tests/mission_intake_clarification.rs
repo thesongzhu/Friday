@@ -109,6 +109,7 @@ fn arm_a_flag_on_vague_intent_clarifies_and_writes_zero_rows() {
         &db,
         "req-arm-a",
         intake_request(VAGUE_INTENT),
+        Some(OWNER), // (FIX-Q3b) authenticated owner == the request's owner_principal
         1000,
         true,
         false, // FRIDAY_SURFACE_EVENTS OFF (orthogonal to the clarify arm under test)
@@ -168,6 +169,7 @@ fn arm_b_flag_on_detailed_classified_intent_births_a_mission_as_today() {
         &db,
         "req-arm-b",
         intake_request(DETAILED_INTENT),
+        Some(OWNER), // (FIX-Q3b) authenticated owner == the request's owner_principal
         2000,
         true,
         false, // FRIDAY_SURFACE_EVENTS OFF (orthogonal to the clarify arm under test)
@@ -211,6 +213,7 @@ fn arm_c_flag_off_vague_intent_births_a_mission_byte_identical() {
         &db,
         "req-arm-c",
         intake_request(VAGUE_INTENT),
+        Some(OWNER), // (FIX-Q3b) authenticated owner == the request's owner_principal
         3000,
         false,
         false, // FRIDAY_SURFACE_EVENTS OFF (orthogonal to the clarify arm under test)
@@ -253,6 +256,7 @@ fn arm_d_flag_on_unclassified_intent_births_a_mission() {
         &db,
         "req-arm-d",
         intake_request(UNCLASSIFIED_INTENT),
+        Some(OWNER), // (FIX-Q3b) authenticated owner == the request's owner_principal
         4000,
         true,
         false, // FRIDAY_SURFACE_EVENTS OFF (orthogonal to the clarify arm under test)
@@ -273,4 +277,103 @@ fn arm_d_flag_on_unclassified_intent_births_a_mission() {
         "Mission row written for an unclassified intent"
     );
     verify_audit_chain(db.conn()).expect("audit chain clean after an unclassified Mission birth");
+}
+
+/// (FIX-Q3b) OWNER-SPOOF at the producer boundary: an intake whose self-asserted `owner_principal`
+/// does NOT match the AUTHENTICATED owner is FAIL-CLOSED — a typed `Error` that writes ZERO rows
+/// (no Conversation/Mission/WorkItem/SurfaceThread/route_decision). This is the gating test that
+/// the persisted owner can never be a self-asserted body field — the FIX-Q3b precondition.
+#[test]
+fn owner_spoof_is_rejected_and_writes_zero_rows() {
+    let db = Db::open_hub(&temp_db("owner-spoof")).unwrap();
+    let mut request = intake_request(DETAILED_INTENT);
+    request.owner_principal = "owner-impersonator".into(); // a principal that is NOT the authed owner
+
+    let env = mission_intake_result_for_db_flagged(
+        &db,
+        "req-owner-spoof",
+        request,
+        Some(OWNER), // the AUTHENTICATED owner — differs from the spoofed body field
+        5000,
+        false, // clarify OFF (irrelevant — owner binding gates before any row)
+        false, // surface_events OFF
+    );
+
+    match env.message {
+        Message::Error { message, .. } => assert!(
+            message.contains("owner_principal does not match the authenticated owner"),
+            "a spoofed owner is owner-rejected: {message}"
+        ),
+        other => panic!("a spoofed owner_principal must be a typed Error, got {other:?}"),
+    }
+    // ZERO rows: nothing was born under either the spoofed owner OR the authenticated owner.
+    assert!(
+        db.get_mission(MISSION).unwrap().is_none(),
+        "a spoofed owner births NO Mission"
+    );
+    assert!(
+        db.get_work_item(WORK_ITEM).unwrap().is_none(),
+        "a spoofed owner births NO WorkItem"
+    );
+    assert!(
+        db.get_friday_conversation(FCONV).unwrap().is_none(),
+        "a spoofed owner births NO conversation row"
+    );
+    verify_audit_chain(db.conn()).expect("audit chain clean after a rejected owner-spoof intake");
+}
+
+/// (FIX-Q3b) The persisted Mission/conversation owner is BOUND to the AUTHENTICATED owner — the
+/// load-bearing invariant. With a MATCHING body field the intake births a Mission whose persisted
+/// `owner_principal` is the authenticated owner (here byte-equal — the only case the gate admits
+/// today; the binding is what lets multi-owner be safe later).
+#[test]
+fn persisted_owner_is_the_authenticated_owner() {
+    let db = Db::open_hub(&temp_db("owner-bind")).unwrap();
+    let env = mission_intake_result_for_db_flagged(
+        &db,
+        "req-owner-bind",
+        intake_request(DETAILED_INTENT),
+        Some(OWNER),
+        6000,
+        false,
+        false,
+    );
+    assert_eq!(
+        intake_result(env).status,
+        "ready",
+        "the matching-owner intake births a Mission"
+    );
+    assert_eq!(
+        db.get_friday_conversation(FCONV)
+            .unwrap()
+            .unwrap()
+            .owner_principal,
+        OWNER,
+        "the persisted owner is the authenticated owner, never a raw body field"
+    );
+}
+
+/// (FIX-Q3b) A MISSING authenticated owner (`None`) is FAIL-CLOSED — the producer can never persist
+/// an owner it cannot bind, even if the body carries one. (A future caller that forgets to thread
+/// the principal fails closed, never silently trusting the body.)
+#[test]
+fn missing_authenticated_owner_is_rejected() {
+    let db = Db::open_hub(&temp_db("owner-none")).unwrap();
+    let env = mission_intake_result_for_db_flagged(
+        &db,
+        "req-owner-none",
+        intake_request(DETAILED_INTENT), // body carries OWNER, but no AUTHENTICATED owner is supplied
+        None,
+        7000,
+        false,
+        false,
+    );
+    assert!(
+        matches!(env.message, Message::Error { .. }),
+        "a None authenticated owner fail-closes the intake"
+    );
+    assert!(
+        db.get_mission(MISSION).unwrap().is_none(),
+        "a None authenticated owner births NO Mission"
+    );
 }

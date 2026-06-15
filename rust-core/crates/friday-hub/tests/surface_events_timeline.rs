@@ -311,6 +311,7 @@ fn flag_on_emits_lifecycle_events_and_reader_includes_them_then_off_is_clean() {
         rt.db(),
         "req-surface-on",
         intake_request(),
+        Some("owner-surface"), // (FIX-Q3b) authenticated owner == the request's owner_principal
         900,
     );
     // The intake resolved READY (a row exists) — not an Error envelope.
@@ -378,6 +379,7 @@ fn flag_on_emits_lifecycle_events_and_reader_includes_them_then_off_is_clean() {
         rt_off.db(),
         "req-surface-off",
         intake_request(),
+        Some("owner-surface"), // (FIX-Q3b) authenticated owner == the request's owner_principal
         900,
     );
     run_to_completion(&rt_off, &ws_off, "run-surface-off");
