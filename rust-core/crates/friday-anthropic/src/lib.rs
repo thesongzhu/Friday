@@ -50,6 +50,21 @@ pub const DEFAULT_MODEL: &str = "claude-opus-4-8";
 /// Hub-only environment variable holding the Anthropic API key.
 pub const ENV_KEY: &str = "FRIDAY_ANTHROPIC_API_KEY";
 
+/// (#24b degrade-4, hardening) The wall-clock ceiling on a SINGLE Claude HTTP call (overall
+/// request: DNS + connect + send + read body). The bare `ureq::post().send_json()` this transport
+/// used had NO timeout, so one hung call (a server that ACCEPTS but never replies) could exceed the
+/// crash-recovery staleness threshold (`EXECUTION_STATE_STALE_THRESHOLD_MS` = 5 min) and let a
+/// concurrent boot reconcile ABORT a still-LIVE run. This bound bites BOTH the failover fallback
+/// (`ClaudeClient::chat`) AND vision (`friday_vision::ClaudeVisionClient`, which reuses this
+/// transport). 60s mirrors [`friday_deepseek::DEEPSEEK_REQUEST_TIMEOUT_MS`] exactly: with
+/// `FRIDAY_PROVIDER_FAILOVER=1` the worst-case gap is primary 60s + fallback 60s = 120s, still WELL
+/// under the 300s threshold (≈2.5x margin), and the agent loop re-sets its durable heartbeat before
+/// EACH attempt. It is generous for a real Claude completion (seconds to low tens-of-seconds). A
+/// timed-out call surfaces as a `ureq::Error::Transport` ⇒ [`ClaudeError::ProviderUnavailable`]
+/// (transient) ⇒ [`crate`-external `is_failover_worthy`] treats it as a transient outage — the run
+/// is never silently wedged.
+pub const ANTHROPIC_REQUEST_TIMEOUT_MS: u64 = 60_000;
+
 // `Clone + PartialEq + Eq` mirrors `DeepSeekError` so the structured error could be
 // carried (not stringified) if a future slice adds an `AgentError::ClaudeRoute`
 // variant + classifier arm. In THIS dark slice the friday-hub adapter maps a
@@ -96,12 +111,29 @@ pub trait Transport {
 
 /// Real blocking HTTP transport (ureq + rustls). Maps errors to controlled
 /// [`ClaudeError`] messages — it never formats the request (which carries the
-/// `x-api-key` header) into an error string.
-pub struct UreqTransport;
+/// `x-api-key` header) into an error string. Built on a shared [`ureq::Agent`] carrying the
+/// [`ANTHROPIC_REQUEST_TIMEOUT_MS`] overall-request timeout (#24b degrade-4, hardening) so no
+/// single Claude call (chat OR vision) can hang past the crash-recovery staleness threshold.
+pub struct UreqTransport {
+    agent: ureq::Agent,
+}
 
 impl UreqTransport {
     pub fn new() -> Self {
-        UreqTransport
+        Self::with_timeout_ms(ANTHROPIC_REQUEST_TIMEOUT_MS)
+    }
+
+    /// (#24b degrade-4, hardening) Build the transport with an explicit overall-request timeout
+    /// (ms). Used by [`Self::new`] with the production [`ANTHROPIC_REQUEST_TIMEOUT_MS`] ceiling, and
+    /// by tests with a short timeout to prove a hung server is bounded rather than wedging the run
+    /// forever. `pub` so the `friday-vision` tests can inject a short timeout into a
+    /// `ClaudeVisionClient` too (they construct the transport directly).
+    pub fn with_timeout_ms(timeout_ms: u64) -> Self {
+        UreqTransport {
+            agent: ureq::AgentBuilder::new()
+                .timeout(std::time::Duration::from_millis(timeout_ms))
+                .build(),
+        }
     }
 }
 
@@ -136,7 +168,11 @@ fn map_ureq_err(e: ureq::Error) -> ClaudeError {
 
 impl Transport for UreqTransport {
     fn post_json(&self, url: &str, api_key: &str, body: &Value) -> Result<Value, ClaudeError> {
-        let resp = ureq::post(url)
+        // (#24b degrade-4, hardening) Route through the timeout-bounded shared agent (see
+        // UreqTransport) — never a bare `ureq::post()` (which has no timeout).
+        let resp = self
+            .agent
+            .post(url)
             .set("x-api-key", api_key)
             .set("anthropic-version", ANTHROPIC_VERSION)
             .set("content-type", "application/json")
@@ -384,15 +420,45 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let handle = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut req = [0u8; 2048];
-            let n = stream.read(&mut req).unwrap_or(0);
-            let captured = String::from_utf8_lossy(&req[..n]).into_owned();
+            // Read the FULL request header block. A single `read()` can return a PARTIAL request
+            // (TCP segments the request line + headers + JSON body across packets); closing the
+            // socket with UNREAD bytes still in the recv buffer sends an RST (not a clean FIN),
+            // which the client surfaces as `transport: Network Error` mid-response — a latent race
+            // in the old single-read helper, exposed under parallel test load. Loop until we've
+            // seen the header terminator (`\r\n\r\n`), then respond.
+            let mut captured: Vec<u8> = Vec::new();
+            let mut tmp = [0u8; 1024];
+            loop {
+                match stream.read(&mut tmp) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        captured.extend_from_slice(&tmp[..n]);
+                        if captured.windows(4).any(|w| w == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
             let response = format!(
                 "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
                 body.len()
             );
             stream.write_all(response.as_bytes()).unwrap();
-            captured
+            stream.flush().unwrap();
+            // Deliver the response, then a CLEAN close (FIN, not RST): half-close the write side
+            // and drain whatever the client still sends. A short read timeout keeps the drain
+            // bounded so a keep-alive client (Content-Length set ⇒ ureq pools the conn) cannot
+            // block `handle.join()` forever.
+            let _ = stream.shutdown(std::net::Shutdown::Write);
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(200)));
+            let mut sink = [0u8; 1024];
+            while let Ok(n) = stream.read(&mut sink) {
+                if n == 0 {
+                    break;
+                }
+            }
+            String::from_utf8_lossy(&captured).into_owned()
         });
         (format!("http://{addr}"), handle)
     }
@@ -746,6 +812,56 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn real_transport_bounds_a_hung_request_with_a_wall_clock_timeout() {
+        // (#24b degrade-4, hardening) A server that ACCEPTS the connection but never replies must
+        // NOT wedge the Claude call forever — the overall-request timeout fires and surfaces a
+        // TRANSIENT ProviderUnavailable (so the loop's bounded transient retry / the failover
+        // classifier handles it; the run is never silently hung past the crash-recovery staleness
+        // threshold). A SHORT (250ms) timeout keeps the test fast; production uses
+        // ANTHROPIC_REQUEST_TIMEOUT_MS. This proves the CHAT (failover-fallback) path.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            // Accept then HANG: read the request but never write a response, holding the socket
+            // open until the client times out and drops it. The sleep need only OUTLAST the
+            // client's 250ms timeout — keeping it SHORT (and dropping the stream/listener promptly
+            // after) avoids holding sockets long enough to contend with the other parallel
+            // real-transport tests in this binary.
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut req = [0u8; 2048];
+                let _ = stream.read(&mut req);
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+        });
+        let c = ClaudeClient::with_transport_and_base_url(
+            UreqTransport::with_timeout_ms(250),
+            "test-key-not-real".to_string(),
+            format!("http://{addr}"),
+        );
+        let start = std::time::Instant::now();
+        let err = c.chat("claude-opus-4-8", "hi", 16).unwrap_err();
+        let elapsed = start.elapsed();
+        let _ = handle.join();
+        // It returned (did not hang) well within a second, classified as transient.
+        assert!(
+            elapsed < std::time::Duration::from_millis(1_500),
+            "the timeout must bound the call; took {elapsed:?}"
+        );
+        assert!(
+            matches!(err, ClaudeError::ProviderUnavailable(_)),
+            "a timed-out call is a transient ProviderUnavailable, got {err:?}"
+        );
+    }
+
+    // The production per-call ceiling MUST be well under the crash-recovery staleness threshold
+    // (300_000ms / 5 min), so a slow-but-live Claude call can never be mistaken for a crash. A
+    // compile-time assert (clippy rejects a runtime assert on a constant), mirroring DeepSeek.
+    const _: () = assert!(
+        ANTHROPIC_REQUEST_TIMEOUT_MS < 300_000,
+        "the per-call timeout must be under the 5-min crash-recovery staleness threshold"
+    );
 
     #[test]
     fn malformed_json_body_is_bad_response() {

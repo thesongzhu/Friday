@@ -459,6 +459,46 @@ mod tests {
     }
 
     #[test]
+    fn claude_vision_real_transport_bounds_a_hung_request_with_a_wall_clock_timeout() {
+        // (#24b degrade-4, hardening) The vision client REUSES the friday-anthropic UreqTransport,
+        // so the same wall-clock bound that protects `ClaudeClient::chat` protects vision: a server
+        // that ACCEPTS but never replies must NOT wedge the call forever. We point the REAL
+        // transport (short 250ms timeout) at a hung localhost server and assert the call returns a
+        // VisionError::Provider (the mapped transient ProviderUnavailable) well within a second —
+        // never hanging past the crash-recovery staleness threshold.
+        use std::io::Read as _;
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut req = [0u8; 2048];
+                let _ = stream.read(&mut req);
+                std::thread::sleep(std::time::Duration::from_millis(2_000));
+            }
+        });
+        let client = ClaudeVisionClient::with_transport_and_base_url(
+            UreqTransport::with_timeout_ms(250),
+            "test-key-not-real",
+            format!("http://{addr}"),
+        );
+        let start = std::time::Instant::now();
+        let err = client.analyze(&sample_request()).unwrap_err();
+        let elapsed = start.elapsed();
+        let _ = handle.join();
+        assert!(
+            elapsed < std::time::Duration::from_millis(1_500),
+            "the timeout must bound the vision call; took {elapsed:?}"
+        );
+        assert!(
+            matches!(err, VisionError::Provider(_)),
+            "a timed-out vision call maps to a provider error, got {err:?}"
+        );
+    }
+
+    #[test]
     fn encode_image_base64_round_trips_standard_alphabet() {
         let bytes = b"\x00\x01\x02\xff\xfe binary image bytes";
         let encoded = encode_image_base64(bytes);
