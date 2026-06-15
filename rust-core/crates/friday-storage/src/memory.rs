@@ -376,6 +376,54 @@ pub fn recall_confirmed_multi(conn: &Connection, principals: &[&str]) -> Result<
     Ok(out)
 }
 
+/// Raw FTS5 keyword relevance for a `MATCH` query, over the `memory_fts` index (v34).
+/// Returns `(memory_id, bm25)` pairs for every indexed row that matches `match_query`, where
+/// `bm25` is SQLite's `bm25()` rank — MORE-NEGATIVE = BETTER match (the caller normalizes the
+/// sign + scale before blending).
+///
+/// SECURITY — this NEVER widens the recall boundary. It returns scores keyed by `memory_id`;
+/// the caller intersects them with the OWNER-SCOPED candidate set
+/// ([`recall_confirmed`]/[`recall_confirmed_multi`]) so a score for a row the owner does not
+/// own can never cause an injection (only a candidate row can inject; this only RE-RANKS the
+/// candidates). The FTS index is global (cross-owner), so `bm25`'s IDF term is computed over
+/// all owners' documents — that subtly influences ranking WITHIN an owner's candidate set, but
+/// no other owner's CONTENT ever crosses (it is never a candidate). The caller is responsible
+/// for that intersection; this helper is owner-agnostic by design (it has no principal to scope
+/// to — the `memory_fts` index does not carry the owner axis).
+///
+/// `match_query` MUST already be a SAFE FTS5 MATCH expression (tokenized, each token quoted,
+/// joined with `OR`) — see `cognition::build_fts_match_query`. Passing raw user text risks an
+/// `fts5: syntax error`; an empty/blank query returns an empty map WITHOUT querying.
+pub fn fts_keyword_scores(
+    conn: &Connection,
+    match_query: &str,
+) -> Result<std::collections::HashMap<String, f64>> {
+    let mut out = std::collections::HashMap::new();
+    if match_query.trim().is_empty() {
+        return Ok(out);
+    }
+    let mut stmt = conn.prepare(
+        "SELECT memory_id, bm25(memory_fts) AS rank FROM memory_fts
+         WHERE memory_fts MATCH ?1",
+    )?;
+    let rows = stmt.query_map(params![match_query], |r| {
+        Ok((r.get::<_, String>("memory_id")?, r.get::<_, f64>("rank")?))
+    })?;
+    for r in rows {
+        let (id, rank) = r?;
+        // If the same memory_id somehow appears twice (it cannot under our triggers, which
+        // DELETE-then-INSERT by id), keep the BEST (most-negative) rank.
+        out.entry(id)
+            .and_modify(|cur: &mut f64| {
+                if rank < *cur {
+                    *cur = rank;
+                }
+            })
+            .or_insert(rank);
+    }
+    Ok(out)
+}
+
 // --- helpers ---------------------------------------------------------------
 
 fn current_state(conn: &Connection, memory_id: &str) -> Result<Option<MemoryState>> {
