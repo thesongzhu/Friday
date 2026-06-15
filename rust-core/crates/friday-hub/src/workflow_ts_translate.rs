@@ -1319,11 +1319,12 @@ mod tests {
 
     #[test]
     fn ts_only_skill_call_fails_closed_no_rust_executor() {
-        // `web_search` is on TS_ONLY_UNMAPPED — no Rust executor; storing it as a
-        // runnable step would be a misrepresentation.
+        // `tts` is on TS_ONLY_UNMAPPED — no Rust executor; storing it as a runnable step would
+        // be a misrepresentation. (Was `web_search` before L2-2 gave web_search a Rust executor;
+        // `tts` is a still-TS-only tool that exercises the same fail-closed path.)
         let g = compiled_v2(
-            json!([ { "id": "s", "type": "skill_call", "config": { "skillId": "web_search",
-                       "args": { "query": "rust" } } } ]),
+            json!([ { "id": "s", "type": "skill_call", "config": { "skillId": "tts",
+                       "args": { "text": "hi" } } } ]),
             json!([]),
         );
         let t = translate_ts_published_version(&g, "skill");
@@ -1335,7 +1336,7 @@ mod tests {
                     .iter()
                     .find(|r| r.feature == "action_no_rust_executor")
                     .unwrap();
-                assert!(r.reason.contains("web_search"), "reason: {}", r.reason);
+                assert!(r.reason.contains("tts"), "reason: {}", r.reason);
             }
             _ => panic!("must be Unsupported"),
         }

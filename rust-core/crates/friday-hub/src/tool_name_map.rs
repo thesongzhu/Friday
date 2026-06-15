@@ -111,6 +111,14 @@ pub const TS_RUST_PAIRS: &[ToolNamePair] = &[
         ts: "web_fetch",
         rust: "web_fetch",
     },
+    // L2-2: web_search is likewise present on BOTH sides under the SAME name (the TS tool and
+    // the Rust registry action are both `web_search`), an identity alias. Listing it here keeps
+    // a TS-shaped `disabledToolNames` entry of `web_search` disabling the Rust `web_search`, AND
+    // lets the FRIDAY_WEB_SEARCH_ENABLED flag-gate canonicalize an alias of it through this map.
+    ToolNamePair {
+        ts: "web_search",
+        rust: "web_search",
+    },
 ];
 
 /// Rust [`crate::ToolRegistry`] actions that have NO TS disable-alias today, recorded
@@ -182,7 +190,8 @@ pub const TS_ONLY_UNMAPPED: &[&str] = &[
     "tts",
     // L2-1: `web_fetch` now has a Rust executor (http_tools::WebFetchExecutor) and is a
     // TS_RUST_PAIRS identity alias above — removed from the unmapped list.
-    "web_search",
+    // L2-2: `web_search` likewise now has a Rust executor (web_search::WebSearchExecutor) and
+    // is a TS_RUST_PAIRS identity alias above — removed from the unmapped list.
     "workflow_generate",
     "workflow_list",
     "workflow_run",
@@ -239,6 +248,17 @@ pub const PARAM_SCHEMA_DIFFS: &[ParamSchemaDiff] = &[
                bridge serializes the TS object this way) rather than a nested object; \
                everything else matches the TS schema. The Rust side ENFORCES the same caps \
                (512KB read / 100KB model-facing / 30s default timeout) the TS tool documents.",
+    },
+    ParamSchemaDiff {
+        ts: "web_search",
+        rust: "web_search",
+        note: "params align by name: `query` (required) / `numResults` (1-20, default 5) / \
+               `freshness` (day|week|month, optional). The Rust executor reads the provider \
+               config (provider + serper/tavily keys) from construction (env in prod) rather \
+               than tool params — same as the TS factory options — and applies the same 15s \
+               timeout + the same multi-provider routing (auto→keyless when premium keys are \
+               absent; explicit serper/tavily without its key fails closed with a warning, NO \
+               silent fallback). It returns snippets only (never fetches result pages).",
     },
 ];
 

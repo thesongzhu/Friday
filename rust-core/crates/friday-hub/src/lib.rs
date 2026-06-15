@@ -330,6 +330,17 @@ pub mod ssrf_guard;
 /// timeout caps. Flipping the flag live is operator-gated (egress capability).
 pub mod http_tools;
 
+/// L2-2 `web_search` capability tool — multi-provider web search (serper/tavily/duckduckgo/
+/// google_news_rss) returning snippets (NOT result-page fetches). Registered in
+/// [`ToolRegistry::default`] but REFUSED by the gate-dispatch chokepoint unless
+/// `FRIDAY_WEB_SEARCH_ENABLED` is `"1"` (default-OFF → DARK → flag-OFF byte-identical) and
+/// HIDDEN from the model menu while off. `Auto` routing falls back to the KEYLESS providers
+/// when no premium key is configured; an explicitly-configured serper/tavily WITHOUT its key
+/// fails closed with a warning (NO silent degrade — parity with the TS oracle). Defensively
+/// validates the provider endpoint through [`ssrf_guard`]. Flipping the flag live needs
+/// operator-provisioned Serper/Tavily keys (operator-gated).
+pub mod web_search;
+
 /// execrun-enablement slice 2 (production key-sourcing pre-req): the SHARED, fail-closed
 /// master-key reader + the two domain-separated derivations both the `hub_agent_run_server`
 /// bin (the FileSecureStore KEK) and the `hub_agent_run_enroll` bin (the client X25519
@@ -1081,34 +1092,39 @@ pub fn build_tool_prompt(task: &str) -> String {
 /// single-JSON-object output contract the [`parse_tool_call`] reader enforces. The
 /// model can still NAME anything; the registry is the gate. Pure + deterministic.
 ///
-/// L2-1: the `web_fetch` capability tool is REGISTERED in the registry (so classification +
-/// the chokepoint flag-gate work) but is HIDDEN from this model-facing menu unless
-/// [`FRIDAY_WEB_FETCH_ENABLED`] is on — so with the flag OFF (the prod default) the prompt the
-/// model sees is BYTE-IDENTICAL to today (the model is never offered a tool that the
-/// chokepoint would only refuse). The flag is read ONCE here and the menu filtering is pure on
-/// the resulting bool (the split-env idiom); the pure inner is
-/// [`build_tool_prompt_with_flagged`].
+/// L2-1/L2-2: the `web_fetch` + `web_search` capability tools are REGISTERED in the registry (so
+/// classification + the chokepoint flag-gates work) but are each HIDDEN from this model-facing
+/// menu unless their flag ([`FRIDAY_WEB_FETCH_ENABLED`] / [`FRIDAY_WEB_SEARCH_ENABLED`]) is on —
+/// so with both flags OFF (the prod default) the prompt the model sees is BYTE-IDENTICAL to
+/// today (the model is never offered a tool that the chokepoint would only refuse). The flags
+/// are read ONCE here and the menu filtering is pure on the resulting bools (the split-env
+/// idiom); the pure inner is [`build_tool_prompt_with_flagged`].
 pub fn build_tool_prompt_with(task: &str, registry: &ToolRegistry) -> String {
     let web_fetch_enabled = web_fetch_enabled_from(std::env::var(FRIDAY_WEB_FETCH_ENABLED).ok());
-    build_tool_prompt_with_flagged(task, registry, web_fetch_enabled)
+    let web_search_enabled = web_search_enabled_from(std::env::var(FRIDAY_WEB_SEARCH_ENABLED).ok());
+    build_tool_prompt_with_flagged(task, registry, web_fetch_enabled, web_search_enabled)
 }
 
-/// Flag-parameterized menu builder (the pure inner of [`build_tool_prompt_with`]). When
-/// `web_fetch_enabled` is false, `web_fetch` is filtered OUT of the advertised menu so the
-/// model is never offered it (byte-identical to the pre-L2-1 prompt). Injected directly by the
-/// L2-1 prompt tests so they never mutate `std::env`.
+/// Flag-parameterized menu builder (the pure inner of [`build_tool_prompt_with`]). When a
+/// capability flag is false, its tool (`web_fetch` / `web_search`) is filtered OUT of the
+/// advertised menu so the model is never offered it (byte-identical to the pre-L2 prompt).
+/// Injected directly by the L2 prompt tests so they never mutate `std::env`.
 pub(crate) fn build_tool_prompt_with_flagged(
     task: &str,
     registry: &ToolRegistry,
     web_fetch_enabled: bool,
+    web_search_enabled: bool,
 ) -> String {
     let mut s = String::from(
         "You are Friday's tool-using agent. Pick exactly ONE tool to make progress.\n\
          Available tools:\n",
     );
     for (name, desc) in registry.advertised() {
-        // Hide the egress capability from the menu unless its flag is on (dark default).
+        // Hide each capability from the menu unless its flag is on (dark default).
         if name == "web_fetch" && !web_fetch_enabled {
+            continue;
+        }
+        if name == "web_search" && !web_search_enabled {
             continue;
         }
         s.push_str(&format!("- {name}: {desc}\n"));
@@ -1379,6 +1395,23 @@ impl Default for ToolRegistry {
             Risk::ReadOnly,
             "fetch a web URL over HTTP/HTTPS (params: url, method, headers, body, timeoutMs, \
              parseHtml); HTML is converted to readable text; body truncated to 100KB",
+        );
+        // L2-2 web_search — the second L2 capability tool. READ-ONLY (mutating:false,
+        // Risk::ReadOnly): it queries a web-search provider and returns snippets (title/URL/
+        // snippet) — never mutating local state, never fetching the result pages — so it
+        // base-Allows at the gate (no approval pause). The returned snippets ARE external
+        // content (prompt-injection-inward), but the UNW-001 gate still evaluates every
+        // SUBSEQUENT tool call (backstop), and the egress side is a single request to ONE of
+        // four FIXED public provider endpoints (defensively SSRF-guarded). ALWAYS registered,
+        // but the gate-dispatch chokepoint refuses it unless FRIDAY_WEB_SEARCH_ENABLED is "1"
+        // (default-OFF → DARK), so registering it changes nothing until the flag is flipped
+        // (operator-gated — needs provisioned Serper/Tavily keys for the premium providers).
+        r.register(
+            "web_search",
+            false,
+            Risk::ReadOnly,
+            "search the web for information (params: query, numResults 1-20, freshness \
+             day/week/month); returns titled results with URLs and snippets",
         );
         r
     }
@@ -2155,6 +2188,11 @@ pub enum ExecError {
     /// is NOT this — it is returned as a `ToolReceipt`. This variant is the fail-closed
     /// refusal of an unsafe or unreachable fetch.
     WebFetch(crate::http_tools::WebFetchError),
+    /// A `web_search` failure — the SSRF guard refused the provider endpoint, or a transport/
+    /// non-2xx-status failure from the provider. A missing required API key is NOT this — it
+    /// is a normal `ToolReceipt` carrying the fail-closed warning (so the model sees it). This
+    /// variant is a hard provider/egress failure.
+    WebSearch(crate::web_search::WebSearchError),
 }
 
 impl std::fmt::Display for ExecError {
@@ -2165,6 +2203,7 @@ impl std::fmt::Display for ExecError {
             ExecError::Fs(e) => write!(f, "fs_error:{e}"),
             ExecError::Io(e) => write!(f, "io_error:{e}"),
             ExecError::WebFetch(e) => write!(f, "web_fetch_error:{e}"),
+            ExecError::WebSearch(e) => write!(f, "web_search_error:{e}"),
         }
     }
 }
@@ -2836,6 +2875,7 @@ pub(crate) fn gate_dispatch_with_policy(
     // Read the flags ONCE here; the chokepoint logic is pure on the resulting bools.
     let enforce_trust = trust_grant_enforce_from(std::env::var(FRIDAY_TRUST_GRANT_ENFORCE).ok());
     let web_fetch_enabled = web_fetch_enabled_from(std::env::var(FRIDAY_WEB_FETCH_ENABLED).ok());
+    let web_search_enabled = web_search_enabled_from(std::env::var(FRIDAY_WEB_SEARCH_ENABLED).ok());
     gate_dispatch_with_policy_enforced(
         conn,
         executor,
@@ -2846,6 +2886,7 @@ pub(crate) fn gate_dispatch_with_policy(
         now_ms,
         enforce_trust,
         web_fetch_enabled,
+        web_search_enabled,
     )
 }
 
@@ -2877,11 +2918,28 @@ pub(crate) fn web_fetch_enabled_from(raw: Option<String>) -> bool {
     matches!(raw, Some(v) if v.trim() == "1")
 }
 
+/// The `FRIDAY_WEB_SEARCH_ENABLED` env var (L2-2). When exactly `"1"` (trimmed), the
+/// `web_search` capability tool is DISPATCHABLE; otherwise the gate-dispatch chokepoint
+/// REFUSES it fail-closed (`web_search_disabled_flag_off:web_search`) BEFORE classify/execute,
+/// so the tool — though always REGISTERED — is unavailable. DEFAULT-OFF (DARK): flipping it
+/// live enables outbound search egress (and needs operator-provisioned Serper/Tavily keys for
+/// the premium providers) and is OPERATOR-GATED. Kept narrow + explicit (literal `"1"` only) so
+/// the capability can never be enabled by accident.
+pub const FRIDAY_WEB_SEARCH_ENABLED: &str = "FRIDAY_WEB_SEARCH_ENABLED";
+
+/// Pure flag-matcher for [`FRIDAY_WEB_SEARCH_ENABLED`] (env read split out for race-free unit
+/// tests). ONLY the literal `"1"` (trimmed) enables; everything else (incl. `"true"`) is OFF.
+pub(crate) fn web_search_enabled_from(raw: Option<String>) -> bool {
+    matches!(raw, Some(v) if v.trim() == "1")
+}
+
 /// The flag-parameterized chokepoint. `enforce_trust` is supplied by the public
 /// [`gate_dispatch_with_policy`] (from the env flag) and injected directly by the NS-2
 /// behavioral tests (so they never mutate `std::env`, avoiding the in-process test race).
 /// When `enforce_trust` is FALSE the NS-2 branch is skipped and behavior is byte-identical
-/// to the NS-1 baseline.
+/// to the NS-1 baseline. `web_fetch_enabled` / `web_search_enabled` are the L2 capability
+/// flags (same split-env idiom): false ⇒ the corresponding capability tool is refused here
+/// before classify/execute (byte-identical to the pre-L2 baseline for every other action).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn gate_dispatch_with_policy_enforced(
     conn: &Connection,
@@ -2893,6 +2951,7 @@ pub(crate) fn gate_dispatch_with_policy_enforced(
     now_ms: i64,
     enforce_trust: bool,
     web_fetch_enabled: bool,
+    web_search_enabled: bool,
 ) -> Result<GateDispatch, StorageError> {
     // (NS-1) The run's action context is carried HERE on `policy` (`policy.action_context()`),
     // already shaped as a `friday_storage::AgentActionContext` — the NS-2 trust check (below)
@@ -2911,6 +2970,16 @@ pub(crate) fn gate_dispatch_with_policy_enforced(
     if !web_fetch_enabled && tool_name_map::canonical_rust_name(&raw.action) == Some("web_fetch") {
         return Ok(GateDispatch::Denied(format!(
             "web_fetch_disabled_flag_off:{}",
+            raw.action
+        )));
+    }
+    // (L2-2) FRIDAY_WEB_SEARCH_ENABLED flag-gate — identical posture to the web_fetch gate
+    //     above, for the `web_search` capability tool. Fires ONLY for `web_search` (canonicalized
+    //     through the same map), so a flag-OFF dispatch of any other action stays byte-identical.
+    if !web_search_enabled && tool_name_map::canonical_rust_name(&raw.action) == Some("web_search")
+    {
+        return Ok(GateDispatch::Denied(format!(
+            "web_search_disabled_flag_off:{}",
             raw.action
         )));
     }
@@ -5380,8 +5449,9 @@ mod tests {
         // menu; with it ON, `web_fetch` appears. `web_fetch` is REGISTERED in both cases (the
         // chokepoint/classification need it), but HIDDEN from the menu when off.
         let reg = ToolRegistry::default();
-        let off = build_tool_prompt_with_flagged("t", &reg, false);
-        let on = build_tool_prompt_with_flagged("t", &reg, true);
+        // Hold the web_search flag OFF in BOTH arms so this isolates the web_fetch flag.
+        let off = build_tool_prompt_with_flagged("t", &reg, false, false);
+        let on = build_tool_prompt_with_flagged("t", &reg, true, false);
         assert!(
             !off.contains("web_fetch"),
             "flag-OFF menu must NOT advertise web_fetch:\n{off}"
@@ -5435,7 +5505,10 @@ mod tests {
             allow_private_network: true,
             ..Default::default()
         });
-        crate::http_tools::CompositeToolExecutor::new(fs, web)
+        // The web_search arm is irrelevant to these web_fetch tests (no web_search is
+        // dispatched here) — a default-config executor satisfies the composite signature.
+        let search = crate::web_search::WebSearchExecutor::with_config(Default::default());
+        crate::http_tools::CompositeToolExecutor::new(fs, web, search)
     }
 
     #[test]
@@ -5467,6 +5540,7 @@ mod tests {
             1000,
             false, // enforce_trust OFF
             false, // web_fetch flag OFF — the tool is unavailable
+            false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
         )
         .unwrap();
 
@@ -5511,6 +5585,7 @@ mod tests {
                 1000,
                 false,
                 flag,
+                false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
             )
             .unwrap();
             (matches!(out, GateDispatch::Executed(_)), exec.calls.get())
@@ -5548,6 +5623,7 @@ mod tests {
             1000,
             false, // enforce_trust OFF
             true,  // web_fetch flag ON
+            false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
         )
         .unwrap();
 
@@ -5580,7 +5656,8 @@ mod tests {
         let fs = FsToolExecutor::new(ws);
         // PRODUCTION SSRF policy (deny-private) — NOT allow-private.
         let web = crate::http_tools::WebFetchExecutor::new();
-        let composite = crate::http_tools::CompositeToolExecutor::new(fs, web);
+        let search = crate::web_search::WebSearchExecutor::with_config(Default::default());
+        let composite = crate::http_tools::CompositeToolExecutor::new(fs, web, search);
         let approve = no_approval();
         let policy = RunPolicy::default();
         let call = raw(
@@ -5597,7 +5674,8 @@ mod tests {
             &policy,
             1000,
             false,
-            true, // web_fetch flag ON
+            true,  // web_fetch flag ON
+            false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
         )
         .unwrap();
 
@@ -5606,6 +5684,296 @@ mod tests {
             other => panic!(
                 "flag-ON + private target must be SSRF-blocked at the executor, got {other:?}"
             ),
+        }
+    }
+
+    // ── L2-2: FRIDAY_WEB_SEARCH_ENABLED gate-dispatch flag-gate (web_search availability) ──────
+    // Same FAITHFUL pattern as the L2-1 web_fetch tests above: a real DB + a real
+    // CompositeToolExecutor wrapping the SSRF-guarded WebSearchExecutor (endpoints pinned to an
+    // in-process 127.0.0.1 mock, allow-private SSRF so the loopback is reachable, NO real net) +
+    // the FsToolExecutor. The flag is injected via the `web_search_enabled` bool, never
+    // std::env::set_var, so these never race other in-process tests.
+
+    /// Pure env-matcher glue: exactly `"1"` (trimmed) enables; everything else is OFF.
+    #[test]
+    fn web_search_enabled_from_only_literal_one_enables() {
+        assert!(
+            !web_search_enabled_from(None),
+            "unset ⇒ OFF (prod default, DARK)"
+        );
+        assert!(!web_search_enabled_from(Some(String::new())), "empty ⇒ OFF");
+        assert!(!web_search_enabled_from(Some("0".to_string())), "0 ⇒ OFF");
+        assert!(
+            !web_search_enabled_from(Some("true".to_string())),
+            "`true` ⇒ OFF (only `1` enables)"
+        );
+        assert!(web_search_enabled_from(Some("1".to_string())), "`1` ⇒ ON");
+        assert!(
+            web_search_enabled_from(Some("  1  ".to_string())),
+            "whitespace-padded `1` ⇒ ON (trimmed)"
+        );
+    }
+
+    #[test]
+    fn web_search_flag_off_prompt_menu_is_byte_identical_no_web_search() {
+        // The model-facing menu MUST NOT list `web_search` while its flag is OFF (else the model
+        // could pick it and eat a `web_search_disabled_flag_off` refusal = a changed trajectory).
+        // Hold the web_fetch flag OFF in both arms so this isolates the web_search flag. The
+        // flag-OFF prompt must equal the flag-ON prompt minus only the web_search line.
+        let reg = ToolRegistry::default();
+        let off = build_tool_prompt_with_flagged("t", &reg, false, false);
+        let on = build_tool_prompt_with_flagged("t", &reg, false, true);
+        assert!(
+            !off.contains("web_search"),
+            "flag-OFF menu must NOT advertise web_search:\n{off}"
+        );
+        assert!(
+            on.contains("web_search"),
+            "flag-ON menu MUST advertise web_search:\n{on}"
+        );
+        let on_without_ws: String = on
+            .split_inclusive('\n')
+            .filter(|l| !l.contains("web_search"))
+            .collect();
+        assert_eq!(
+            off, on_without_ws,
+            "flag-OFF prompt must equal the flag-ON prompt minus only the web_search line"
+        );
+    }
+
+    /// A one-shot in-process mock returning a fixed body+content-type on 127.0.0.1 (no real net).
+    /// Drains the FULL request (headers + any Content-Length body) before replying — a POST body
+    /// can split across TCP segments, and replying+closing on a half-read socket can reset the
+    /// client mid-write (surfacing as a transport `Io`), so we read until the body is in hand
+    /// (bounded by a short read-timeout). Mirrors the L2-1 web_fetch mock.
+    fn spawn_search_mock(
+        body: &'static str,
+        content_type: &'static str,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read as _, Write as _};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(300)));
+                let mut buf: Vec<u8> = Vec::new();
+                let mut chunk = [0u8; 2048];
+                loop {
+                    match stream.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            buf.extend_from_slice(&chunk[..n]);
+                            let text = String::from_utf8_lossy(&buf);
+                            if let Some(hdr_end) = text.find("\r\n\r\n") {
+                                let content_len = text
+                                    .get(..hdr_end)
+                                    .and_then(|h| {
+                                        h.lines()
+                                            .find(|l| {
+                                                l.to_lowercase().starts_with("content-length:")
+                                            })
+                                            .and_then(|l| l.split(':').nth(1))
+                                            .and_then(|v| v.trim().parse::<usize>().ok())
+                                    })
+                                    .unwrap_or(0);
+                                if buf.len() - (hdr_end + 4) >= content_len {
+                                    break;
+                                }
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        (format!("http://{addr}/"), handle)
+    }
+
+    /// A composite (fs + web_fetch + a web_search whose endpoints all point at `base`) for the
+    /// loopback tests. Uses the allow-private SSRF policy so the e2e CAN reach 127.0.0.1; the
+    /// BLOCKING posture is proven by the ssrf_guard table tests — never weakened here.
+    fn web_search_composite(
+        ws: std::path::PathBuf,
+        base: &str,
+        provider: crate::web_search::ConfiguredProvider,
+        serper_key: Option<&str>,
+    ) -> crate::http_tools::CompositeToolExecutor<FsToolExecutor> {
+        let fs = FsToolExecutor::new(ws);
+        let web = crate::http_tools::WebFetchExecutor::new();
+        let search =
+            crate::web_search::WebSearchExecutor::with_config(crate::web_search::WebSearchConfig {
+                provider,
+                serper_api_key: serper_key.map(str::to_string),
+                tavily_api_key: None,
+                ssrf_policy: crate::ssrf_guard::SsrfPolicy {
+                    allow_private_network: true,
+                    ..Default::default()
+                },
+                endpoints: crate::web_search::Endpoints {
+                    serper: base.to_string(),
+                    tavily: base.to_string(),
+                    duckduckgo: base.to_string(),
+                    google_news_rss: base.to_string(),
+                },
+            });
+        crate::http_tools::CompositeToolExecutor::new(fs, web, search)
+    }
+
+    #[test]
+    fn web_search_flag_off_refuses_tool_unavailable_executor_never_reached() {
+        // LOOP CLOSURE (flag-OFF arm): with FRIDAY_WEB_SEARCH_ENABLED OFF, a dispatched
+        // `web_search` is REFUSED at the chokepoint (`web_search_disabled_flag_off`) BEFORE the
+        // executor — the tool is UNAVAILABLE. We assert the refusal AND that the executor is
+        // NEVER reached (no search attempted).
+        let db = Db::open_hub(&temp_path("ws-off")).unwrap();
+        let ws = temp_ws("ws-off");
+        // base URL is irrelevant — the executor must never be reached.
+        let composite = web_search_composite(
+            ws,
+            "http://127.0.0.1:9/",
+            crate::web_search::ConfiguredProvider::Auto,
+            None,
+        );
+        let exec = CountingExecutor {
+            inner: &composite,
+            calls: std::cell::Cell::new(0),
+        };
+        let approve = no_approval();
+        let policy = RunPolicy::default();
+        let call = raw("web_search", &[("query", "anything")]);
+
+        let out = gate_dispatch_with_policy_enforced(
+            db.conn(),
+            &exec,
+            &call,
+            AuthzMode::DenyAll,
+            &approve,
+            &policy,
+            1000,
+            false, // enforce_trust OFF
+            false, // web_fetch flag OFF
+            false, // web_search flag OFF — the tool is unavailable
+        )
+        .unwrap();
+
+        match out {
+            GateDispatch::Denied(reason) => assert_eq!(
+                reason, "web_search_disabled_flag_off:web_search",
+                "flag-OFF must refuse web_search with the documented reason"
+            ),
+            other => panic!("flag-OFF must Deny web_search, got {other:?}"),
+        }
+        assert_eq!(
+            exec.calls.get(),
+            0,
+            "flag-OFF: the executor is NEVER reached (tool unavailable = no search attempted)"
+        );
+    }
+
+    #[test]
+    fn web_search_flag_on_dispatches_and_executes_through_provider() {
+        // LOOP CLOSURE (flag-ON arm): with the flag ON, web_search is dispatchable; the chokepoint
+        // Allows it (read-only, no approval pause) and the CompositeToolExecutor runs it against
+        // the loopback serper mock — returning the parsed result snippets in the ToolReceipt.
+        let (base, h) = spawn_search_mock(
+            r#"{"organic":[{"title":"Loop Result","link":"https://r/","snippet":"the snippet","date":"2026-06-12"}]}"#,
+            "application/json",
+        );
+        let db = Db::open_hub(&temp_path("ws-on")).unwrap();
+        let ws = temp_ws("ws-on");
+        let composite = web_search_composite(
+            ws,
+            &base,
+            crate::web_search::ConfiguredProvider::Serper,
+            Some("test-serper-key"),
+        );
+        let approve = no_approval();
+        let policy = RunPolicy::default();
+        let call = raw("web_search", &[("query", "rust"), ("numResults", "5")]);
+
+        let out = gate_dispatch_with_policy_enforced(
+            db.conn(),
+            &composite,
+            &call,
+            AuthzMode::DenyAll,
+            &approve,
+            &policy,
+            1000,
+            false, // enforce_trust OFF
+            false, // web_fetch flag OFF
+            true,  // web_search flag ON
+        )
+        .unwrap();
+
+        match out {
+            GateDispatch::Executed(receipt) => {
+                assert_eq!(receipt.action, "web_search");
+                let content = receipt.content.expect("web_search returns content");
+                assert!(content.contains("Loop Result"), "content: {content}");
+                assert!(content.contains("the snippet"), "content: {content}");
+                assert!(
+                    receipt.summary.contains("web_search [serper]"),
+                    "summary: {}",
+                    receipt.summary
+                );
+            }
+            other => panic!("flag-ON must dispatch+Execute web_search, got {other:?}"),
+        }
+        h.join().unwrap();
+    }
+
+    #[test]
+    fn web_search_flag_on_serper_missing_key_returns_warning_not_silent_fallback() {
+        // Even with the flag ON, an EXPLICIT serper provider with NO key is dispatched + Executed
+        // but returns a result CARRYING the fail-closed warning (NOT a silent ddg fallback, NOT an
+        // error). This pins the no-silent-fallback parity at the loop level. No network needed —
+        // the missing-key path returns before any request.
+        let db = Db::open_hub(&temp_path("ws-nokey")).unwrap();
+        let ws = temp_ws("ws-nokey");
+        let composite = web_search_composite(
+            ws,
+            "http://127.0.0.1:9/",
+            crate::web_search::ConfiguredProvider::Serper,
+            None, // NO serper key
+        );
+        let approve = no_approval();
+        let policy = RunPolicy::default();
+        let call = raw("web_search", &[("query", "latest news")]);
+
+        let out = gate_dispatch_with_policy_enforced(
+            db.conn(),
+            &composite,
+            &call,
+            AuthzMode::DenyAll,
+            &approve,
+            &policy,
+            1000,
+            false, // enforce_trust OFF
+            false, // web_fetch flag OFF
+            true,  // web_search flag ON
+        )
+        .unwrap();
+
+        match out {
+            GateDispatch::Executed(receipt) => {
+                let content = receipt.content.expect("returns content");
+                assert!(
+                    content.contains("FRIDAY_SERPER_API_KEY"),
+                    "content: {content}"
+                );
+                assert!(
+                    content.contains("refusing to silently fall back"),
+                    "content: {content}"
+                );
+            }
+            other => panic!("missing-key serper must Execute a warning result, got {other:?}"),
         }
     }
 
@@ -5635,6 +6003,7 @@ mod tests {
             1000,
             true,  // flag ON
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
+            false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
         )
         .unwrap();
 
@@ -5726,6 +6095,7 @@ mod tests {
             1000,
             true,  // flag ON
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
+            false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
         )
         .unwrap();
         assert!(
@@ -5780,6 +6150,7 @@ mod tests {
                 1000,
                 enforce,
                 false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
+                false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
             )
             .unwrap();
             label(&out)
@@ -5847,6 +6218,7 @@ mod tests {
             1000,
             true,  // flag ON
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
+            false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
         )
         .unwrap();
         match out {
@@ -5876,6 +6248,7 @@ mod tests {
             1000,
             true,
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
+            false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
         )
         .unwrap();
         assert!(
@@ -5964,6 +6337,7 @@ mod tests {
             1000,
             true,  // flag ON
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
+            false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
         )
         .unwrap();
 
@@ -6017,6 +6391,7 @@ mod tests {
             1000,
             true,  // flag ON
             false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
+            false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
         )
         .unwrap();
 
@@ -6117,6 +6492,7 @@ mod tests {
                 1000,
                 enforce,
                 false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
+                false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
             )
             .unwrap();
             label(&out)
@@ -6185,6 +6561,7 @@ mod tests {
                 1000,
                 false, // flag OFF
                 false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
+                false, // L2-2: web_search flag OFF (no web_search dispatched in this test)
             )
             .unwrap();
             label(&out)
