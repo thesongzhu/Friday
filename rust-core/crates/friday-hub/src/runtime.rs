@@ -199,6 +199,35 @@ pub struct HubRuntime<T: Transport> {
     /// byte-identical to today. `self.deepseek` (and its `.inner()` used by post-run memory
     /// extraction — which must NOT failover) is retained UNTOUCHED alongside this.
     failover: Option<Box<dyn AgentLlmClient>>,
+    /// (PR-A1) DARK / default-off DeepSeek-PRO route client. `None` in every build EXCEPT a
+    /// `live()` build whose `FRIDAY_DEEPSEEK_PRO_ROUTE_ENABLED` gate is on. It is the SAME
+    /// DeepSeek key/client as `self.deepseek`, but built via
+    /// [`DeepSeekAgentLlmClient::with_model`] forcing the `deepseek-v4-pro` model string (NOT
+    /// `select_model`, which always prefers flash — so without the override a "pro" selection
+    /// would silently run flash, a hidden downgrade). Default-off at two layers: this field
+    /// stays `None`, AND the `deepseek-pro` route is registered `available: false` (see
+    /// [`Self::dispatchable_routes_flagged`]), so `select_route` never picks it ⇒ a Large
+    /// request still `NoEligibleRoute`s, byte-identical to today. When the gate is on, the
+    /// route becomes dispatchable AND this client answers it (a real Large/cheap→pro tier on
+    /// NO operator creds — pro uses the same key; the cost flip is the operator-gated reason
+    /// it is dark). It is BOXED (a concrete `DeepSeekAgentLlmClient<UreqTransport>` regardless
+    /// of `T`, so the field type is generic-free) and is ALSO reused as the escalation target
+    /// (see `escalation`).
+    deepseek_pro: Option<Box<dyn AgentLlmClient>>,
+    /// (a#3 quality-escalation) DARK / default-off flash→pro ESCALATION client. `None` in every
+    /// build EXCEPT a `live()` build whose `FRIDAY_QUALITY_ESCALATION_ENABLED` gate is on. When
+    /// `Some`, the live loop, after a flash turn FAILS THE PARSE CONTRACT (the
+    /// `Ok((Err(Parse), Some(flash_usage)))` shape — flash answered + was billed, but the reply
+    /// was unparseable), re-dispatches the SAME turn ONCE on this (pro) client and bills it on
+    /// its OWN distinct ledger row (no double-bill: flash's real tokens are already billed; pro's
+    /// real tokens are billed separately — two truthful rows). Threaded into the loop as
+    /// `escalation_client: Option<&dyn AgentLlmClient>` (the `cancel`/`steer`/`work_item_id`
+    /// optional-handle idiom): `None` ⇒ the parse-Err arm fails closed exactly as today,
+    /// BYTE-IDENTICAL. It is a FRESH pro client (its own `with_model("deepseek-v4-pro")` over the
+    /// same key) so it is INDEPENDENT of the `FRIDAY_DEEPSEEK_PRO_ROUTE_ENABLED` route flag — the
+    /// two dark flags compose but neither requires the other. Bound to ONE hop: pro's OWN parse
+    /// failure fails closed (never re-escalates).
+    escalation: Option<Box<dyn AgentLlmClient>>,
     /// C1 PR-B — DARK / default-off Codex (app-server) route executor. MIRRORS `claude`'s
     /// dark-by-default discipline: `None` in every build EXCEPT a `live()` build whose
     /// `FRIDAY_CODEX_ROUTE_ENABLED` gate is on. UNLIKE `claude` (a `dyn AgentLlmClient`), this is
@@ -316,6 +345,18 @@ impl<T: Transport> HubRuntime<T> {
             // may populate this. Tests + the prod default leave it `None` ⇒ the bare
             // `deepseek` client dispatches ⇒ byte-identical to today.
             failover: None,
+            // PR-A1: DARK — no DeepSeek-PRO route client by default. Only
+            // `maybe_attach_deepseek_pro_from_env` (reached from `live()` behind the default-OFF
+            // `FRIDAY_DEEPSEEK_PRO_ROUTE_ENABLED` gate) may populate this. Tests + the prod
+            // default leave it `None` AND the `deepseek-pro` route stays `available:false` ⇒ a
+            // Large request still `NoEligibleRoute`s ⇒ byte-identical to today.
+            deepseek_pro: None,
+            // a#3: DARK — no flash→pro escalation client by default. Only
+            // `maybe_attach_escalation_from_env` (reached from `live()` behind the default-OFF
+            // `FRIDAY_QUALITY_ESCALATION_ENABLED` gate) may populate this. Tests + the prod
+            // default leave it `None` ⇒ the loop's parse-error arm fails closed exactly as
+            // today ⇒ byte-identical.
+            escalation: None,
             // C1-3: DARK — no Codex client by default (mirrors `claude`). Only `live()` may
             // populate this, and only when the default-OFF `FRIDAY_CODEX_ROUTE_ENABLED` gate
             // is on (via [`Self::with_codex`]). Tests + the prod default leave it `None`.
@@ -443,17 +484,42 @@ impl<T: Transport> HubRuntime<T> {
 
     /// The route registry reflecting THIS build's ACTUAL dispatch capability: only the live
     /// `deepseek` (flash) route is available; `deepseek-pro`/`codex`/`claude` are marked
-    /// unavailable so a Large/other request honestly `NoEligibleRoute`s. The single live
-    /// client always `select_model`→flash, so marking pro unavailable prevents silently
-    /// running flash for a pro request (no hidden downgrade).
+    /// unavailable so a Large/other request honestly `NoEligibleRoute`s. PURE (no env read) —
+    /// the `deepseek-pro` route is promoted to dispatchable ONLY by
+    /// [`Self::attach_deepseek_pro_flagged`] (the gated `live()` path, alongside wiring the pro
+    /// client), exactly mirroring how `mark_route_available` promotes `claude`/`codex`. Keeping
+    /// this pure means "pro route selectable ⟺ pro client wired" is ALWAYS coherent: a request
+    /// can never select a route whose client is `None`. PROD DEFAULT: a Large request →
+    /// `NoEligibleRoute` (no silent flash-for-pro downgrade) — byte-identical to today.
     fn dispatchable_routes() -> RouteRegistry {
+        Self::dispatchable_routes_flagged(false)
+    }
+
+    /// (PR-A1) The testable inner of [`Self::dispatchable_routes`], parameterized on the
+    /// `deepseek-pro` route gate (so the registry decision is unit-testable WITHOUT `set_var`,
+    /// the env-race-free idiom this file uses everywhere). The production `dispatchable_routes`
+    /// always passes `false` (the promotion happens in the attach); this seam exists purely to
+    /// PIN the registry shape both ways in a unit test.
+    ///
+    /// - `pro_enabled == false` (the prod default): the `deepseek-pro` route is force-marked
+    ///   `available:false, validation_ok:false` — a Large request → `NoEligibleRoute` (never a
+    ///   silent flash-for-pro downgrade). BYTE-IDENTICAL to today.
+    /// - `pro_enabled == true` (dark, gated): the `deepseek-pro` route is left as the
+    ///   autonomous baseline sets it (`available:true, validation_ok:true`, priority 1), so a
+    ///   `model_size: Large` (or pro-pinned) request SELECTS `deepseek-pro` instead of erroring.
+    ///
+    /// `codex`/`claude` are UNTOUCHED in BOTH arms (still `available:false` — auth-gated /
+    /// dark behind their own flags).
+    fn dispatchable_routes_flagged(pro_enabled: bool) -> RouteRegistry {
         let mut r = RouteRegistry::autonomous_baseline();
-        if let Some(pro) = r.get("deepseek-pro").cloned() {
-            r.register(ProviderRoute {
-                available: false,
-                validation_ok: false,
-                ..pro
-            });
+        if !pro_enabled {
+            if let Some(pro) = r.get("deepseek-pro").cloned() {
+                r.register(ProviderRoute {
+                    available: false,
+                    validation_ok: false,
+                    ..pro
+                });
+            }
         }
         r
     }
@@ -868,6 +934,12 @@ impl<T: Transport> HubRuntime<T> {
             steer,
             now_ms,
             work_item_id,
+            // a#3: thread the DARK flash→pro escalation client (Some only when
+            // FRIDAY_QUALITY_ESCALATION_ENABLED was on at boot). Default-off ⇒ None ⇒
+            // byte-identical. HONEST SCOPE: the escalation target is the forced-pro client; on the
+            // (also-dark) pro/claude routes this is at worst a redundant same-tier retry, never a
+            // loop (bounded to one hop by construction) — the value path is flash(parse-fail)→pro.
+            self.escalation.as_deref(),
         )?;
 
         // D1 OWNER-WIRING: a FINISHED run produced a deliverable ANSWER; persist it Hub-side
@@ -1257,6 +1329,9 @@ impl<T: Transport> HubRuntime<T> {
             None, // steer: the sessioned entry is not steerable (C2-2 is sessionless)
             now_ms,
             None, // work_item_id (#24b): read-only sessioned chat binds no WorkItem ⇒ no-op
+            // a#3: thread the DARK flash→pro escalation client (Some only when
+            // FRIDAY_QUALITY_ESCALATION_ENABLED was on at boot). Default-off ⇒ None ⇒ byte-identical.
+            self.escalation.as_deref(),
         ) {
             Ok(outcome) => outcome,
             // A storage failure is a SAFE FAILURE: body-free NoAnswer (mirrors the
@@ -1462,6 +1537,8 @@ impl<T: Transport> HubRuntime<T> {
             None, // steer: the sessioned entry is not steerable (C2-2 is sessionless)
             now_ms,
             None, // work_item_id (#24b): pinned sessioned follow-up binds no WorkItem ⇒ no-op
+            // a#3: thread the DARK flash→pro escalation client (default-off ⇒ None ⇒ byte-identical).
+            self.escalation.as_deref(),
         ) {
             Ok(outcome) => outcome,
             Err(_) => {
@@ -2473,6 +2550,8 @@ impl HubRuntime<UreqTransport> {
         runtime
             .maybe_attach_claude_from_env()?
             .maybe_attach_codex_from_env()
+            .maybe_attach_deepseek_pro_from_env()?
+            .maybe_attach_escalation_from_env()?
             .maybe_wrap_for_failover()
     }
 
@@ -2534,6 +2613,82 @@ impl HubRuntime<UreqTransport> {
         // app-server health_check — a gated boot spawns no app-server.
         me.mark_route_available("codex");
         me
+    }
+
+    /// (PR-A1) Read the default-OFF `FRIDAY_DEEPSEEK_PRO_ROUTE_ENABLED` gate and, only when it is
+    /// on, build the FORCED-`deepseek-v4-pro` client from the SAME DeepSeek env key and attach it
+    /// (DARK). The env read is split from the logic so the decision is unit-testable WITHOUT
+    /// `set_var`; the real work is in [`Self::attach_deepseek_pro_flagged`]. Fallible (it reads the
+    /// DeepSeek key) — chained in `live()` after the Claude/Codex attaches.
+    fn maybe_attach_deepseek_pro_from_env(self) -> Result<Self, HubInitError> {
+        let enabled = deepseek_pro_route_enabled_from(
+            std::env::var(ENV_DEEPSEEK_PRO_ROUTE_ENABLED)
+                .ok()
+                .as_deref(),
+        );
+        self.attach_deepseek_pro_flagged(enabled)
+    }
+
+    /// (PR-A1) The testable inner of [`Self::maybe_attach_deepseek_pro_from_env`].
+    ///
+    /// - `enabled == false` (prod default) ⇒ `Ok(self)` UNCHANGED: no client built, no env read.
+    ///   The `deepseek-pro` route stays `available:false` (the registry was built flag-off), so a
+    ///   Large request still `NoEligibleRoute`s — BYTE-IDENTICAL to today.
+    /// - `enabled == true` ⇒ build a FRESH `DeepSeekClient::from_env` and a
+    ///   [`DeepSeekAgentLlmClient::with_model`] forcing `deepseek-v4-pro` (NOT `select_model`,
+    ///   which prefers flash), box it into `self.deepseek_pro`, AND promote the in-process
+    ///   `deepseek-pro` route `available:true`/`validation_ok:true` so `select_route` can pick it.
+    ///   Reading the env key spends no network/quota; this branch is reached only from `live()`
+    ///   (where the key is present — a missing key is a hard error, never a silent degrade).
+    fn attach_deepseek_pro_flagged(mut self, enabled: bool) -> Result<Self, HubInitError> {
+        if !enabled {
+            return Ok(self);
+        }
+        let client = DeepSeekClient::from_env().map_err(HubInitError::DeepSeek)?;
+        let pro = DeepSeekAgentLlmClient::with_model(client, DEEPSEEK_PRO_MODEL);
+        self.deepseek_pro = Some(Box::new(pro));
+        // Promote the in-process `deepseek-pro` route so a Large/pro-pinned request selects it —
+        // done HERE (not in the pure `dispatchable_routes`) so the route becomes dispatchable
+        // ONLY together with its client, keeping "pro selectable ⟺ pro client wired" coherent
+        // (mirrors how `mark_route_available` promotes `claude`/`codex` only when their client is
+        // attached). `validation_ok` is set because the pro route uses the SAME already-validated
+        // DeepSeek key — no separate live probe needed (unlike claude/codex).
+        self.mark_route_available("deepseek-pro");
+        self.mark_route_validated("deepseek-pro");
+        Ok(self)
+    }
+
+    /// (a#3) Read the default-OFF `FRIDAY_QUALITY_ESCALATION_ENABLED` gate and, only when it is on,
+    /// build the flash→pro ESCALATION client (a FRESH forced-`deepseek-v4-pro` client over the same
+    /// key) and attach it (DARK). The env read is split from the logic so the decision is
+    /// unit-testable WITHOUT `set_var`; the real work is in [`Self::attach_escalation_flagged`].
+    /// INDEPENDENT of the pro-route flag (it builds its own client). Fallible (it reads the
+    /// DeepSeek key) — chained in `live()`.
+    fn maybe_attach_escalation_from_env(self) -> Result<Self, HubInitError> {
+        let enabled = quality_escalation_from(
+            std::env::var(ENV_QUALITY_ESCALATION_ENABLED)
+                .ok()
+                .as_deref(),
+        );
+        self.attach_escalation_flagged(enabled)
+    }
+
+    /// (a#3) The testable inner of [`Self::maybe_attach_escalation_from_env`].
+    ///
+    /// - `enabled == false` (prod default) ⇒ `Ok(self)` UNCHANGED: no client built ⇒ the loop's
+    ///   parse-error arm fails closed exactly as today — BYTE-IDENTICAL.
+    /// - `enabled == true` ⇒ build a FRESH forced-`deepseek-v4-pro` client over the same key and
+    ///   box it into `self.escalation`. It does NOT touch the route registry or `self.deepseek` —
+    ///   escalation is an EXECUTION-layer one-shot retry, not a route. Reading the env key spends
+    ///   no quota; reached only from `live()` (where the key is present).
+    fn attach_escalation_flagged(mut self, enabled: bool) -> Result<Self, HubInitError> {
+        if !enabled {
+            return Ok(self);
+        }
+        let client = DeepSeekClient::from_env().map_err(HubInitError::DeepSeek)?;
+        let pro = DeepSeekAgentLlmClient::with_model(client, DEEPSEEK_PRO_MODEL);
+        self.escalation = Some(Box::new(pro));
+        Ok(self)
     }
 }
 
@@ -2605,6 +2760,42 @@ fn provider_failover_from(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1"))
 }
 
+/// (PR-A1) The default-OFF environment gate that governs whether the DARK `deepseek-pro` route
+/// is DISPATCHABLE (and its forced-`deepseek-v4-pro` client wired). MIRRORS the route gates'
+/// narrow discipline: ON only when `FRIDAY_DEEPSEEK_PRO_ROUTE_ENABLED` is exactly `"1"` (after
+/// trimming). UNSET / empty / `"0"` / any other value ⇒ OFF (unchanged prod default: the
+/// `deepseek-pro` route stays `available:false`, the client is never built, a Large request
+/// still `NoEligibleRoute`s — BYTE-IDENTICAL to today). DARK because pro spends MORE $/token
+/// than flash on the same DeepSeek key — the cost flip is operator-gated. Kept narrow +
+/// explicit so this cost-bearing route cannot be enabled by accident.
+pub const ENV_DEEPSEEK_PRO_ROUTE_ENABLED: &str = "FRIDAY_DEEPSEEK_PRO_ROUTE_ENABLED";
+
+/// Pure flag-matcher for [`ENV_DEEPSEEK_PRO_ROUTE_ENABLED`] (env read split out so it is
+/// unit-testable without `set_var`). DEFAULT-OFF: `None` (unset) ⇒ false; ON only for the exact
+/// opt-in value `"1"` (trimmed); everything else ⇒ false — mirroring [`provider_failover_from`].
+fn deepseek_pro_route_enabled_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
+/// (a#3) The default-OFF environment gate that governs whether the live agent loop ESCALATES a
+/// flash PARSE failure to a one-shot pro retry (flash→pro quality escalation). MIRRORS the
+/// route gates' narrow discipline: ON only when `FRIDAY_QUALITY_ESCALATION_ENABLED` is exactly
+/// `"1"` (after trimming). UNSET / empty / `"0"` / any other value ⇒ OFF (unchanged prod
+/// default: no escalation client is built, the loop's parse-error arm fails closed exactly as
+/// today — BYTE-IDENTICAL). It is INDEPENDENT of [`ENV_DEEPSEEK_PRO_ROUTE_ENABLED`] (escalation
+/// builds its OWN fresh forced-pro client from the same key, so neither dark flag requires the
+/// other). DARK because the escalation hop spends a SECOND (pro) call's tokens — the cost is
+/// operator-gated. Kept narrow + explicit so this cost-bearing path cannot be enabled by
+/// accident.
+pub const ENV_QUALITY_ESCALATION_ENABLED: &str = "FRIDAY_QUALITY_ESCALATION_ENABLED";
+
+/// Pure flag-matcher for [`ENV_QUALITY_ESCALATION_ENABLED`] (env read split out so it is
+/// unit-testable without `set_var`). DEFAULT-OFF: `None` (unset) ⇒ false; ON only for the exact
+/// opt-in value `"1"` (trimmed); everything else ⇒ false — mirroring [`provider_failover_from`].
+fn quality_escalation_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
 /// NS-6 — the default-OFF environment gate that governs whether the mission-bound agent
 /// handoff MINTS + PERSISTS + LINKS a destination-bound Context Passport for the WorkItem's
 /// lane/target. ON only when `FRIDAY_PASSPORT_MINT` is exactly `"1"` (after trimming). UNSET /
@@ -2669,6 +2860,13 @@ const CODEX_CLIENT_VERSION: &str = "0.0.1";
 /// adapter takes the route model from here.
 const CODEX_ROUTE_MODEL: &str = "gpt-5-codex";
 
+/// (PR-A1 / a#3) The model id the DARK `deepseek-pro` route + the flash→pro escalation force.
+/// Matches the autonomous-baseline `deepseek-pro` route's model (`select_route` never infers a
+/// model from a size; the registrant — here — sets the exact id). The forced override is
+/// load-bearing: `friday_deepseek::select_model` ALWAYS prefers `deepseek-v4-flash`, so a pro
+/// client built without forcing this would silently run flash (a hidden downgrade).
+const DEEPSEEK_PRO_MODEL: &str = "deepseek-v4-pro";
+
 impl<T: Transport> ProviderClientResolver for HubRuntime<T> {
     /// The live `deepseek` provider always has a wired client. The `claude` provider has
     /// one ONLY when the DARK route was enabled (`self.claude` is `Some` — see
@@ -2693,6 +2891,12 @@ impl<T: Transport> ProviderClientResolver for HubRuntime<T> {
             // still reports `provider_id="deepseek"` — failover is execution-layer, NOT a
             // reroute (UNW-003 routing-truth). Default-off ⇒ `loop_client()` is `&self.deepseek`.
             "deepseek" => Some(self.loop_client()),
+            // PR-A1: DARK — `as_deref()` yields `None` whenever the DeepSeek-PRO client was not
+            // wired (the default), so the default-off `deepseek-pro` route fail-closes like any
+            // other unwired provider. The route registry ALSO marks it `available:false` by
+            // default (two layers), so this arm only ever returns `Some` on the gated `live()`
+            // path. When wired, this client forces the `deepseek-v4-pro` model (never flash).
+            "deepseek-pro" => self.deepseek_pro.as_deref(),
             // DARK: `as_deref()` yields `None` whenever the Claude client was not wired
             // (the default), so the default-off route fail-closes exactly like any
             // other unwired provider.
@@ -2916,6 +3120,261 @@ mod tests {
             Err(other) => panic!("expected FailoverMisconfigured, got {other:?}"),
             Ok(_) => panic!("flag-ON with no fallback must be a hard error (no silent no-op)"),
         }
+    }
+
+    // ── (PR-A1) DeepSeek-PRO route + (a#3) quality-escalation flag matchers + wiring ─────────
+
+    /// (PR-A1) The pro-route flag matcher is exact-`"1"`, default-OFF (mirrors the failover gate).
+    #[test]
+    fn deepseek_pro_route_flag_matcher_is_exact_one_default_off() {
+        assert!(deepseek_pro_route_enabled_from(Some("1")));
+        assert!(deepseek_pro_route_enabled_from(Some(" 1 ")), "trimmed");
+        for off in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("true"),
+            Some("yes"),
+            Some("11"),
+            Some("1x"),
+        ] {
+            assert!(
+                !deepseek_pro_route_enabled_from(off),
+                "{off:?} must be OFF (default)"
+            );
+        }
+    }
+
+    /// (a#3) The quality-escalation flag matcher is exact-`"1"`, default-OFF.
+    #[test]
+    fn quality_escalation_flag_matcher_is_exact_one_default_off() {
+        assert!(quality_escalation_from(Some("1")));
+        assert!(quality_escalation_from(Some(" 1 ")), "trimmed");
+        for off in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("true"),
+            Some("yes"),
+            Some("11"),
+            Some("1x"),
+        ] {
+            assert!(
+                !quality_escalation_from(off),
+                "{off:?} must be OFF (default)"
+            );
+        }
+    }
+
+    /// (PR-A1) The route-registry decision both ways. FLAG-OFF (prod default): the `deepseek-pro`
+    /// route is `available:false` ⇒ a Large request `NoEligibleRoute`s (never silent flash-for-pro)
+    /// — BYTE-IDENTICAL to today. FLAG-ON (dark): `deepseek-pro` is dispatchable ⇒ a Large request
+    /// SELECTS `deepseek-pro` (priority 1), instead of erroring. The open (flash) request is
+    /// UNCHANGED in both arms, and `codex`/`claude` stay unavailable in both.
+    #[test]
+    fn dispatchable_routes_pro_flag_off_noeligible_on_selects_pro() {
+        // FLAG OFF — byte-identical to today's flash-only.
+        let off = HubRuntime::<ScriptTransport>::dispatchable_routes_flagged(false);
+        assert_eq!(
+            crate::routing::select_route(&off, &RouteRequest::any())
+                .unwrap()
+                .provider_id,
+            "deepseek",
+            "open request → flash (unchanged)"
+        );
+        let large = RouteRequest {
+            model_size: Some(crate::routing::ModelSize::Large),
+            ..RouteRequest::any()
+        };
+        assert!(
+            matches!(
+                crate::routing::select_route(&off, &large).unwrap_err(),
+                RouteError::NoEligibleRoute { .. }
+            ),
+            "FLAG-OFF: a Large request NoEligibleRoutes (no silent flash-for-pro downgrade)"
+        );
+
+        // FLAG ON — pro becomes selectable for a Large request.
+        let on = HubRuntime::<ScriptTransport>::dispatchable_routes_flagged(true);
+        assert_eq!(
+            crate::routing::select_route(&on, &RouteRequest::any())
+                .unwrap()
+                .provider_id,
+            "deepseek",
+            "open request STILL → flash (priority 0); pro only on a Large/pin"
+        );
+        assert_eq!(
+            crate::routing::select_route(&on, &large)
+                .unwrap()
+                .provider_id,
+            "deepseek-pro",
+            "FLAG-ON: a Large request SELECTS deepseek-pro (was NoEligibleRoute)"
+        );
+        // codex/claude stay unavailable in BOTH arms.
+        for r in [&off, &on] {
+            assert!(!r.get("codex").unwrap().is_dispatchable());
+            assert!(!r.get("claude").unwrap().is_dispatchable());
+        }
+        // The production `dispatchable_routes()` is the flag-OFF shape (pure, promotion happens in
+        // the attach) — pro stays unavailable, so a stray env var can never make it selectable.
+        let prod = HubRuntime::<ScriptTransport>::dispatchable_routes();
+        assert!(!prod.get("deepseek-pro").unwrap().is_dispatchable());
+    }
+
+    /// (PR-A1) The DARK pro wiring proves "pro selectable ⟺ pro client wired" is coherent.
+    /// FLAG-OFF (the default state of any built runtime): no pro client, the pro route is
+    /// unavailable (byte-identical to today). FLAG-ON (the in-crate analogue of the gated attach —
+    /// the real `attach_deepseek_pro_flagged` is `UreqTransport`-only because it builds a live
+    /// env-keyed client; here we inject a stub + the SAME two route-promotion flips it performs):
+    /// a Large request SELECTS pro AND resolves to its wired client.
+    #[test]
+    fn deepseek_pro_attach_flag_off_untouched_on_wires_and_resolves() {
+        // FLAG OFF: the default-built runtime has no pro client + the route is unavailable.
+        let (rt_off, _ws, _c) = runtime_with(
+            "pro-off",
+            &["{\"tool\":\"none\"}"],
+            Box::new(DenyAllApprovals),
+        );
+        assert!(
+            rt_off.deepseek_pro.is_none(),
+            "default (flag-OFF) wires no pro client"
+        );
+        assert!(
+            !rt_off.routes.get("deepseek-pro").unwrap().is_dispatchable(),
+            "default (flag-OFF) leaves the pro route unavailable"
+        );
+
+        // FLAG ON: wire a STUB pro client directly + promote the route (the in-crate analogue of
+        // the gated attach, which builds a real env-keyed client). A Large request selects pro AND
+        // resolves to that client.
+        let (mut rt_on, _ws2, _c2) = runtime_with(
+            "pro-on",
+            &["{\"tool\":\"none\"}"],
+            Box::new(DenyAllApprovals),
+        );
+        rt_on.deepseek_pro = Some(Box::new(StubClaudeMeteredClient::new(vec![], 5, 5)));
+        rt_on.mark_route_available("deepseek-pro");
+        rt_on.mark_route_validated("deepseek-pro");
+        let large = RouteRequest {
+            model_size: Some(crate::routing::ModelSize::Large),
+            ..RouteRequest::any()
+        };
+        let route = crate::routing::select_route(&rt_on.routes, &large).expect("pro selectable");
+        assert_eq!(route.provider_id, "deepseek-pro");
+        assert_eq!(
+            route.model, "deepseek-v4-pro",
+            "the pro route dispatches the pro model"
+        );
+        assert!(
+            rt_on.resolve(route).is_some(),
+            "the selected pro route resolves to its wired client (coherent: selectable ⟺ wired)"
+        );
+    }
+
+    /// (a#3) A pro-tagged metered stub that FINISHES — the escalation leg for the runtime-level
+    /// threading test. Counts calls so the test can assert it was reached EXACTLY once.
+    struct StubProFinishClient {
+        calls: Cell<usize>,
+    }
+    impl crate::AgentLlmClient for StubProFinishClient {
+        fn propose_tool_call(&self, _task: &str) -> Result<crate::RawToolCall, crate::AgentError> {
+            unreachable!("escalation drives next_step_metered")
+        }
+        fn next_step_metered(
+            &self,
+            _task: &str,
+            _history: &[crate::TurnTrace],
+        ) -> Result<crate::MeteredStep, crate::AgentError> {
+            self.calls.set(self.calls.get() + 1);
+            let usage = crate::BilledUsage {
+                provider_kind: friday_core::ProviderKind::DeepSeek,
+                model: "deepseek-v4-pro".to_string(),
+                prompt_tokens: 12,
+                completion_tokens: 7,
+            };
+            Ok((
+                Ok(crate::AgentStep::Finish {
+                    message: "PONG-pro".to_string(),
+                }),
+                Some(usage),
+            ))
+        }
+    }
+
+    /// (a#3) END-TO-END runtime on-ramp: the gap-#27 closure for the escalation flag. Proves the
+    /// FULL chain `self.escalation` (the field the gated `attach_escalation_flagged` populates) →
+    /// the live `run_task` dispatch entry → the loop ACTUALLY escalates a flash parse-fail to pro
+    /// and FINISHES, with the escalation row persisted. The flash transport is scripted to return
+    /// UNPARSEABLE content (so the deepseek route's `next_step_metered` yields the inner-parse-fail
+    /// `Ok((Err(Parse), Some(flash_usage)))`); `self.escalation` is wired to a finishing pro stub.
+    /// A sibling assertion (escalation `None`) proves the SAME run fails closed — byte-identical.
+    #[test]
+    fn run_task_threads_escalation_client_and_recovers_a_flash_parse_fail() {
+        // Flash transport: first turn returns unparseable content (a parse fail), then (unused) none.
+        let (mut rt, _ws, _c) = runtime_with(
+            "esc-thread",
+            &["this is not a json tool call object"],
+            Box::new(DenyAllApprovals),
+        );
+        let pro = StubProFinishClient {
+            calls: Cell::new(0),
+        };
+        // Wire the escalation field exactly as the gated `attach_escalation_flagged` would (here a
+        // stub instead of a live env-keyed pro client — the threading is what this test pins).
+        rt.escalation = Some(Box::new(pro));
+        let (sel, out) = rt.run_task("resc", "answer it", 1000).expect("run");
+        assert_eq!(
+            sel.provider_id, "deepseek",
+            "routed on the flash deepseek route"
+        );
+        assert_eq!(
+            out.status,
+            LoopStatus::Finished,
+            "the flash parse-fail escalated to pro, which finished — proving the on-ramp threads"
+        );
+        assert_eq!(out.final_message.as_deref(), Some("PONG-pro"));
+        // The escalation row is persisted (distinct `:esc` slot), attributed to pro.
+        let pro_model: String = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT model FROM token_ledger WHERE ledger_id = 'resc:t0:esc:ledger'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("the escalation row exists");
+        assert_eq!(pro_model, "deepseek-v4-pro");
+    }
+
+    /// (a#3) Sibling byte-identical proof: the SAME runtime + SAME flash parse-fail, but with NO
+    /// escalation wired (the prod default), fails the run CLOSED — no escalation row.
+    #[test]
+    fn run_task_without_escalation_fails_closed_byte_identical() {
+        let (rt, _ws, _c) = runtime_with(
+            "esc-thread-off",
+            &["this is not a json tool call object"],
+            Box::new(DenyAllApprovals),
+        );
+        assert!(
+            rt.escalation.is_none(),
+            "prod default: no escalation client"
+        );
+        let (_sel, out) = rt.run_task("rno", "answer it", 1000).expect("run");
+        assert_eq!(
+            out.status,
+            LoopStatus::Errored,
+            "no escalation ⇒ the parse failure fails the run closed (byte-identical to today)"
+        );
+        let esc_rows: i64 = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM token_ledger WHERE ledger_id LIKE 'rno:%:esc:ledger'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(esc_rows, 0, "no escalation row when the flag is off");
     }
 
     // ── TP-PR2 (H-1): the live boot AgentActionContext PRODUCER ──────────────────────────

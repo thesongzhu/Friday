@@ -337,6 +337,7 @@ fn pause_run(
         None,
         NOW,
         None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
+        None, // escalation_client (a#3): byte-identical default-off
     )
     .unwrap();
     assert_eq!(out.status, LoopStatus::Paused);

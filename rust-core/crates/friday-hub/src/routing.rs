@@ -465,6 +465,7 @@ pub fn run_routed_loop(
         None, // steer: no steer handle — pre-C2-2 behavior, byte-identical
         now_ms,
         None, // work_item_id (#24b): no bound WorkItem ⇒ heartbeat no-op, byte-identical
+        None, // escalation_client (a#3): no flash→pro escalation — byte-identical
     )
 }
 
@@ -494,6 +495,7 @@ pub fn run_routed_loop_with_policy(
     steer: Option<&crate::SteerHandle>,
     now_ms: i64,
     work_item_id: Option<&str>,
+    escalation_client: Option<&dyn AgentLlmClient>,
 ) -> Result<(RoutedSelection, LoopOutcome), RoutedLoopError> {
     let route = select_route(registry, request)?;
     let selection = RoutedSelection {
@@ -527,6 +529,7 @@ pub fn run_routed_loop_with_policy(
         steer,
         now_ms,
         work_item_id,
+        escalation_client,
     )?;
     Ok((selection, outcome))
 }

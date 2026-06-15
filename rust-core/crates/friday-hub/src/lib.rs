@@ -693,11 +693,54 @@ impl AgentLlmClient for MockAgentLlmClient {
 /// the model — classifies the resulting call via `build_request`/`trusted_classify`.
 pub struct DeepSeekAgentLlmClient<T: friday_deepseek::Transport> {
     client: friday_deepseek::DeepSeekClient<T>,
+    /// (PR-A1 pro-route) OPTIONAL forced model id. `None` (the default / every existing
+    /// caller via [`DeepSeekAgentLlmClient::new`]) ⇒ the historical
+    /// `discover_models → select_model` (prefers `deepseek-v4-flash`) path, BYTE-IDENTICAL.
+    /// `Some(model)` (the dark `deepseek-pro` route via [`DeepSeekAgentLlmClient::with_model`])
+    /// ⇒ that EXACT model is dispatched, bypassing `select_model` — which is load-bearing,
+    /// because `select_model` ALWAYS prefers flash, so a "pro" client built without this
+    /// override would silently run flash (a hidden downgrade). Discovery is still performed
+    /// (to fail closed if the key/list is broken), but the forced id is used.
+    model_override: Option<String>,
 }
 
 impl<T: friday_deepseek::Transport> DeepSeekAgentLlmClient<T> {
     pub fn new(client: friday_deepseek::DeepSeekClient<T>) -> Self {
-        Self { client }
+        Self {
+            client,
+            model_override: None,
+        }
+    }
+    /// (PR-A1 pro-route) Construct a DeepSeek agent client that FORCES `model` instead of
+    /// `select_model` (which always prefers flash). This is how the dark `deepseek-pro` route
+    /// dispatches the `deepseek-v4-pro` model on the SAME DeepSeek key/client — without this
+    /// the pro route would silently run flash. Existing callers keep using `new` (override
+    /// `None`) and are byte-identical.
+    pub fn with_model(
+        client: friday_deepseek::DeepSeekClient<T>,
+        model: impl Into<String>,
+    ) -> Self {
+        Self {
+            client,
+            model_override: Some(model.into()),
+        }
+    }
+
+    /// Resolve the model id for THIS call: the forced override if set (pro route), else the
+    /// historical `discover_models → select_model` (flash-preferred) path — byte-identical for
+    /// the default `model_override == None` client. Discovery still runs even with an override
+    /// so a broken key/empty model list fails closed exactly as before (never silently invents
+    /// a model that the live API does not serve).
+    fn resolve_model(&self) -> Result<String, AgentError> {
+        let models = self.client.discover_models().map_err(AgentError::Route)?;
+        match &self.model_override {
+            // Pro route: the registrant set the exact model; still require the live list to be
+            // non-empty (a broken key/discovery is an OUTER route error, nothing billed).
+            Some(forced) if !models.is_empty() => Ok(forced.clone()),
+            Some(_) => Err(AgentError::Model("no model available".to_string())),
+            None => friday_deepseek::select_model(&models)
+                .ok_or_else(|| AgentError::Model("no model available".to_string())),
+        }
     }
     /// Passthrough to the route's model discovery.
     pub fn discover_models(&self) -> Result<Vec<String>, friday_deepseek::DeepSeekError> {
@@ -727,9 +770,7 @@ const AGENTLOOP_MAX_TOKENS: u32 = 4096;
 
 impl<T: friday_deepseek::Transport> AgentLlmClient for DeepSeekAgentLlmClient<T> {
     fn propose_tool_call(&self, task: &str) -> Result<RawToolCall, AgentError> {
-        let models = self.client.discover_models().map_err(AgentError::Route)?;
-        let model = friday_deepseek::select_model(&models)
-            .ok_or_else(|| AgentError::Model("no model available".to_string()))?;
+        let model = self.resolve_model()?;
         let prompt = build_tool_prompt(task);
         let outcome = self
             .client
@@ -761,9 +802,7 @@ impl<T: friday_deepseek::Transport> AgentLlmClient for DeepSeekAgentLlmClient<T>
         task: &str,
         history: &[TurnTrace],
     ) -> Result<MeteredStep, AgentError> {
-        let models = self.client.discover_models().map_err(AgentError::Route)?;
-        let model = friday_deepseek::select_model(&models)
-            .ok_or_else(|| AgentError::Model("no model available".to_string()))?;
+        let model = self.resolve_model()?;
         let prompt = build_loop_prompt(task, history);
         let outcome = self
             .client
@@ -3679,15 +3718,42 @@ pub(crate) fn bill_model_call(
     outcome: &BilledUsage,
     now_ms: i64,
 ) -> Result<(), StorageError> {
-    let ledger_id = format!("{run_id}:t{turn_index}:ledger");
-    let activity_id = format!("{run_id}:t{turn_index}:askreceipt");
-    let audit_id = format!("{run_id}:t{turn_index}:modelcall");
+    bill_model_call_keyed(conn, run_id, &format!("t{turn_index}"), outcome, now_ms)
+}
+
+/// (a#3 escalation) The shared biller, keyed on an arbitrary per-call `slot` label instead of
+/// only a turn index, so the quality-escalation second leg (flash→pro) can write its own
+/// COLLISION-FREE row (`{run_id}:t{turn}:esc:ledger`, slot `t{turn}:esc`) alongside the flash
+/// leg's `{run_id}:t{turn}:ledger` (slot `t{turn}`). [`bill_model_call`] is the unchanged
+/// turn-index facade (slot `t{turn}`), so every existing caller is BYTE-IDENTICAL — same ids,
+/// same rows. Two truthful billed calls ⇒ two truthful rows (never a duplicate / phantom row,
+/// never the same call billed twice).
+pub(crate) fn bill_model_call_keyed(
+    conn: &Connection,
+    run_id: &str,
+    slot: &str,
+    outcome: &BilledUsage,
+    now_ms: i64,
+) -> Result<(), StorageError> {
+    let ledger_id = format!("{run_id}:{slot}:ledger");
+    let activity_id = format!("{run_id}:{slot}:askreceipt");
+    let audit_id = format!("{run_id}:{slot}:modelcall");
+    // (a#4 cost-table) Compute the per-(provider, model) USD estimate for THIS call from the
+    // Rust spine's pricing table. A known pair yields `Some(cost)`; an unknown pair (e.g. the
+    // local-app-server Codex route, or a renamed model) yields `None` ⇒ the column stays NULL,
+    // the honest "no published price on file" value (never a fabricated 0.0). PURE attribution:
+    // this stamps a number onto the row, it changes NO gating/ceiling/routing decision.
+    let cost_estimate = friday_core::estimate_cost_usd(
+        outcome.provider_kind,
+        &outcome.model,
+        outcome.prompt_tokens,
+        outcome.completion_tokens,
+    );
     // (C2) Pick the ledger ctor — provider_kind + host — off the neutral usage's enum, so
     // a Claude call records `provider_kind="anthropic"`/`api.anthropic.com` and a DeepSeek
-    // call stays byte-identical (`deepseek`/`api.deepseek.com`). `cost_estimate: None` for
-    // both (the loop biller has no per-provider pricing table — the honest value, as the
-    // ask path passes). The DeepSeek arm is the SAME `friday_route` the pre-C2
-    // `outcome.to_ledger_entry(..)` resolved to.
+    // call stays byte-identical (`deepseek`/`api.deepseek.com`). The DeepSeek arm is the SAME
+    // `friday_route` the pre-C2 `outcome.to_ledger_entry(..)` resolved to. `cost_estimate` is
+    // now POPULATED from the pricing table (a#4) instead of the historical hardcoded `None`.
     let entry = match outcome.provider_kind {
         friday_core::ProviderKind::DeepSeek => friday_core::LedgerEntry::friday_route(
             ledger_id.as_str(),
@@ -3696,7 +3762,7 @@ pub(crate) fn bill_model_call(
             &outcome.model,
             outcome.prompt_tokens,
             outcome.completion_tokens,
-            None,
+            cost_estimate,
             None,
             now_ms,
         ),
@@ -3707,7 +3773,7 @@ pub(crate) fn bill_model_call(
             &outcome.model,
             outcome.prompt_tokens,
             outcome.completion_tokens,
-            None,
+            cost_estimate,
             None,
             now_ms,
         ),
@@ -3720,7 +3786,7 @@ pub(crate) fn bill_model_call(
             &outcome.model,
             outcome.prompt_tokens,
             outcome.completion_tokens,
-            None,
+            cost_estimate,
             None,
             now_ms,
         ),
@@ -3783,6 +3849,7 @@ pub fn run_loop(
         None, // steer: no steer handle — pre-C2-2 behavior, byte-identical
         now_ms,
         None, // work_item_id (#24b): no bound WorkItem ⇒ heartbeat no-op, byte-identical
+        None, // escalation_client (a#3): no flash→pro escalation — byte-identical
     )
 }
 
@@ -4138,6 +4205,7 @@ pub fn run_loop_with_policy(
     steer: Option<&SteerHandle>,
     now_ms: i64,
     work_item_id: Option<&str>,
+    escalation_client: Option<&dyn AgentLlmClient>,
 ) -> Result<LoopOutcome, StorageError> {
     // Read the NS-7 flag ONCE here; the loop body is pure on the resulting bool.
     let activity_needs_me =
@@ -4177,6 +4245,7 @@ pub fn run_loop_with_policy(
         subagent_enabled,
         rich_prompt_enabled,
         work_item_id,
+        escalation_client,
     )
 }
 
@@ -4220,6 +4289,7 @@ pub(crate) fn run_loop_with_policy_flagged(
     subagent_enabled: bool,
     rich_prompt_enabled: bool,
     work_item_id: Option<&str>,
+    escalation_client: Option<&dyn AgentLlmClient>,
 ) -> Result<LoopOutcome, StorageError> {
     // (#24b) Run the loop body to completion, then CLEAR the durable execution marker EXACTLY ONCE
     // — covering EVERY exit (every `return` arm + every `?`-propagated error) structurally, so a
@@ -4244,6 +4314,7 @@ pub(crate) fn run_loop_with_policy_flagged(
         subagent_enabled,
         rich_prompt_enabled,
         work_item_id,
+        escalation_client,
     );
     // THE no-degrade crux: clear on EVERY path (Ok of any status, or an Err). Fail-safe + a no-op
     // when there is no bound work_item. The CLEAR's timestamp is irrelevant (PASS-2 only acts on
@@ -4277,6 +4348,7 @@ fn run_loop_with_policy_inner(
     subagent_enabled: bool,
     rich_prompt_enabled: bool,
     work_item_id: Option<&str>,
+    escalation_client: Option<&dyn AgentLlmClient>,
 ) -> Result<LoopOutcome, StorageError> {
     // Plan classification recorded ONCE (it is a property of the task, constant across
     // turns). Uses the CLEAN `task` — the recall preamble below augments only the prompt,
@@ -4536,6 +4608,12 @@ fn run_loop_with_policy_inner(
             }
         };
 
+        // (a#3) Capture whether the primary (flash) call actually billed BEFORE `usage` is moved
+        // into the bill below — the escalation only fires for a flash chat that ran + spent tokens
+        // (the inner-parse-fail shape `Ok((Err(Parse), Some(flash_usage)))`), never for a metering-
+        // less mock (no usage ⇒ nothing to bill ⇒ nothing to escalate over).
+        let flash_billed = usage.is_some();
+
         // BILL the call like the ask path: a chat that returned usage writes exactly ONE
         // run-attributed token_ledger row + ONE AskReceipt receipt + ONE hash-chained audit
         // event, atomically — REGARDLESS of how the loop then treats the step (finish, tool,
@@ -4545,6 +4623,54 @@ fn run_loop_with_policy_inner(
         if let Some(outcome) = usage {
             bill_model_call(conn, run_id, turn_index, &outcome, now_ms)?;
         }
+
+        // (a#3 quality-escalation) flash→pro ONE-SHOT escalation. The flash chat SUCCEEDED + was
+        // billed above, but its reply failed the tool-call contract (`Err(AgentError::Parse)`).
+        // When an escalation (pro) client is wired (the gated `FRIDAY_QUALITY_ESCALATION_ENABLED`
+        // live path; `None` ⇒ this arm is INERT and `step_result` is unchanged — BYTE-IDENTICAL),
+        // re-dispatch the SAME turn ONCE on pro and use pro's result instead. NO double-bill: flash
+        // already billed its real tokens (above); pro bills its OWN real tokens on a DISTINCT ledger
+        // slot (`t{turn}:esc`) — two truthful rows, never the same call billed twice, never a
+        // phantom row. Bounded BY CONSTRUCTION: this is a non-looping match arm, so pro is called at
+        // most ONCE per turn and pro's OWN parse failure (or any pro error) flows straight to the
+        // existing fail-closed `let step = match step_result` arm below — it never re-escalates.
+        // Pro sees the IDENTICAL `prompt_task`/`history` flash saw (flash's failed parse appended
+        // nothing to `history`).
+        let step_result = match step_result {
+            Err(AgentError::Parse(_)) if flash_billed && escalation_client.is_some() => {
+                agent_run::record_event(
+                    conn,
+                    &format!("{}:esc", ev("outcome")),
+                    run_id,
+                    "agent.escalate:flash_parse_to_pro",
+                    now_ms,
+                )?;
+                match escalation_client
+                    .expect("guarded by is_some()")
+                    .next_step_metered(&prompt_task, &history)
+                {
+                    // Pro answered: bill pro on its OWN distinct slot (only if it metered), then use
+                    // pro's parsed step — Ok flows to Finish/Tool below; a pro Err(Parse) fails closed.
+                    Ok((pro_step, pro_usage)) => {
+                        if let Some(pro_outcome) = pro_usage {
+                            bill_model_call_keyed(
+                                conn,
+                                run_id,
+                                &format!("t{turn_index}:esc"),
+                                &pro_outcome,
+                                now_ms,
+                            )?;
+                        }
+                        pro_step
+                    }
+                    // Pro's route call itself failed (no usage, nothing billed): surface it — the run
+                    // fails closed at the arm below, never a third attempt.
+                    Err(e) => Err(e),
+                }
+            }
+            // No escalation (off / no pro client / not a flash parse-fail): unchanged.
+            other => other,
+        };
 
         let step = match step_result {
             Ok(step) => step,
@@ -5015,6 +5141,7 @@ fn spawn_subagent_turn(
         true, // subagent_enabled: TRUE so the child's spawn is grant/policy-denied, not flag-skipped
         rich_prompt_enabled, // child inherits the parent's rich-prompt setting (OFF ⇒ byte-identical)
         None,                // work_item_id: the sub-agent is NOT the bound work item
+        None, // escalation_client (a#3): a bounded ephemeral sub-agent does not escalate — byte-identical
     )?;
 
     // The sub-agent's deliverable = its final message on Finished; otherwise an honest status
@@ -5122,6 +5249,7 @@ pub fn run_session_loop(
     steer: Option<&SteerHandle>,
     now_ms: i64,
     work_item_id: Option<&str>,
+    escalation_client: Option<&dyn AgentLlmClient>,
 ) -> Result<LoopOutcome, StorageError> {
     // 1. Ensure the session exists and LOAD its prior turns BEFORE persisting the
     //    current task (so the task is never folded into its own preamble). With a
@@ -5155,6 +5283,7 @@ pub fn run_session_loop(
         steer,
         now_ms,
         work_item_id,
+        escalation_client,
     )?;
 
     // 4. Persist this run's turn(s) so the next run in the session resumes with them:
@@ -5944,6 +6073,7 @@ mod tests {
                     None,
                     1000,
                     None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
+                    None, // escalation_client (a#3): byte-identical default-off
                 )
                 .unwrap();
                 // The write side effect (created or not) is part of the observable outcome.
@@ -6052,6 +6182,7 @@ mod tests {
             false, // subagent_enabled OFF — NS-7 scenario does not exercise subagent
             false, // rich_prompt_enabled OFF — byte-identical prompt (default)
             None,  // work_item_id (#24b): NS-7 scenario binds no WorkItem ⇒ heartbeat no-op
+            None,  // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
         let pending = friday_storage::list_pending_requests_for_run(db.conn(), "r1").unwrap();
@@ -6234,6 +6365,7 @@ mod tests {
             false, // subagent_enabled OFF — clarification scenario does not exercise subagent
             false, // rich_prompt_enabled OFF — byte-identical prompt (default)
             None,  // work_item_id (#24b): clarification scenario binds no WorkItem ⇒ no-op
+            None,  // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
         // `client.calls` counts `next_step` calls (the loop's metered call delegates to it);
@@ -6402,6 +6534,7 @@ mod tests {
             false, // subagent_enabled: OFF
             rich_prompt_enabled,
             None, // work_item_id
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
         assert_eq!(
@@ -9716,11 +9849,16 @@ mod tests {
     fn deepseek_provider_row_is_byte_identical_post_refactor() {
         // (C2 REGRESSION GATE / no-degrade) The metering generalization (neutral `BilledUsage`
         // + `bill_model_call` picking the ledger ctor off the provider_kind) MUST NOT change the
-        // PROVEN DeepSeek loop-billing row. A DeepSeek model call still records EXACTLY the row
-        // the pre-C2 `outcome.to_ledger_entry(..)` -> `LedgerEntry::friday_route(..)` produced:
-        // provider_kind="deepseek", base_url_host="api.deepseek.com", fallback=false,
-        // cost_estimate=NULL, the reported model + the part/total tokens. `list_token_usage`
-        // does NOT project `base_url_host`, so the full row (incl. host) is read via direct SQL.
+        // PROVEN DeepSeek loop-billing row's provider attribution: provider_kind="deepseek",
+        // base_url_host="api.deepseek.com", fallback=false, the reported model + the part/total
+        // tokens. `list_token_usage` does NOT project `base_url_host`, so the full row (incl.
+        // host) is read via direct SQL.
+        //
+        // (a#4 cost-table — the ONE deliberate change) `cost_estimate` is no longer NULL: it is
+        // now POPULATED from the Rust pricing table for a KNOWN (provider, model) pair. This is
+        // pure attribution (no gating/routing change). The asserted value is the exact computed
+        // estimate for flash at 11 prompt / 8 completion tokens — proving the column is wired,
+        // not silently NULL. Every OTHER field stays byte-identical.
         let root = TempDir::new("ds-byte-identical");
         let db = Db::open_hub(&temp_path("ds-byte-identical")).unwrap();
         agent_run::create_run(db.conn(), "r1", "do it", 1).unwrap();
@@ -9790,11 +9928,281 @@ mod tests {
             total, 19,
             "total = prompt + completion (computed by the ledger)"
         );
+        // (a#4) cost_estimate is now the computed estimate (NOT NULL) for the KNOWN flash pair.
+        let expected_cost =
+            friday_core::estimate_cost_usd(friday_core::ProviderKind::DeepSeek, &model, 11, 8)
+                .expect("flash is a priced model");
+        assert!(expected_cost > 0.0, "a positive cost for nonzero tokens");
         assert_eq!(
-            cost, None,
-            "loop biller passes no cost estimate (unchanged)"
+            cost,
+            Some(expected_cost),
+            "loop biller now stamps the pricing-table cost estimate (a#4 — was NULL)"
         );
         assert_eq!(fallback, 0, "Friday route is never a fallback (unchanged)");
+    }
+
+    // ---- (a#3) flash→pro quality escalation (loop-layer) ----------------------------------
+
+    /// A metered mock whose provider/model TAG + call-count are inspectable, so the escalation
+    /// tests can assert WHICH leg billed + that pro is called at most ONCE. Each scripted step is
+    /// returned as the OUTER `Ok((step, Some(usage)))` shape (a chat that ran + billed), so an
+    /// `Err(Parse)` step models the flash inner-parse-fail trap, and an `Ok(Finish)` step models a
+    /// finishing pro reply. The model id flows into the billed row (so its cost prices correctly).
+    struct TaggedMeteredClient {
+        steps: Vec<Result<AgentStep, AgentError>>,
+        calls: std::cell::Cell<usize>,
+        provider_kind: friday_core::ProviderKind,
+        model: String,
+        prompt_tokens: i64,
+        completion_tokens: i64,
+    }
+    impl TaggedMeteredClient {
+        fn new(
+            steps: Vec<Result<AgentStep, AgentError>>,
+            provider_kind: friday_core::ProviderKind,
+            model: &str,
+            prompt_tokens: i64,
+            completion_tokens: i64,
+        ) -> Self {
+            Self {
+                steps,
+                calls: std::cell::Cell::new(0),
+                provider_kind,
+                model: model.to_string(),
+                prompt_tokens,
+                completion_tokens,
+            }
+        }
+        fn calls(&self) -> usize {
+            self.calls.get()
+        }
+    }
+    impl AgentLlmClient for TaggedMeteredClient {
+        fn propose_tool_call(&self, _task: &str) -> Result<RawToolCall, AgentError> {
+            unreachable!("escalation tests drive next_step_metered")
+        }
+        fn next_step_metered(
+            &self,
+            _task: &str,
+            _history: &[TurnTrace],
+        ) -> Result<MeteredStep, AgentError> {
+            let i = self.calls.get();
+            self.calls.set(i + 1);
+            let step = self.steps.get(i).cloned().unwrap_or(Ok(AgentStep::Finish {
+                message: "script exhausted".to_string(),
+            }));
+            let usage = BilledUsage {
+                provider_kind: self.provider_kind,
+                model: self.model.clone(),
+                prompt_tokens: self.prompt_tokens,
+                completion_tokens: self.completion_tokens,
+            };
+            Ok((step, Some(usage)))
+        }
+    }
+
+    /// Drive `run_loop_with_policy` once with the given flash + optional escalation clients and a
+    /// fresh Hub Db, returning (outcome, db) for ledger assertions. Read-only (no executor calls).
+    fn run_escalation_loop(
+        tag: &str,
+        flash: &dyn AgentLlmClient,
+        escalation: Option<&dyn AgentLlmClient>,
+    ) -> (LoopOutcome, Db, TempDir) {
+        let root = TempDir::new(tag);
+        let db = Db::open_hub(&temp_path(tag)).unwrap();
+        agent_run::create_run(db.conn(), "r1", "answer it", 1).unwrap();
+        let executor = FsToolExecutor::new(&root.0);
+        let out = run_loop_with_policy(
+            flash,
+            &executor,
+            db.conn(),
+            "r1",
+            "answer it",
+            "",
+            None,
+            &no_approval(),
+            &RunPolicy::default(),
+            5,
+            None,
+            None,
+            1000,
+            None,
+            escalation,
+        )
+        .unwrap();
+        (out, db, root)
+    }
+
+    #[test]
+    fn escalation_on_flash_parse_fail_retries_pro_once_two_truthful_rows() {
+        // The core a#3 loop: flash's first turn 200s + bills but its reply fails the tool-call
+        // contract (the `Ok((Err(Parse), Some(flash_usage)))` trap). With an escalation (pro)
+        // client wired, the loop re-dispatches the SAME turn ONCE on pro, which finishes — and
+        // BOTH legs bill on DISTINCT ledger rows (flash + pro), never the same call twice.
+        let flash = TaggedMeteredClient::new(
+            vec![Err(AgentError::Parse(
+                "not a single JSON object".to_string(),
+            ))],
+            friday_core::ProviderKind::DeepSeek,
+            "deepseek-v4-flash",
+            10,
+            5,
+        );
+        let pro = TaggedMeteredClient::new(
+            vec![Ok(AgentStep::Finish {
+                message: "PONG".to_string(),
+            })],
+            friday_core::ProviderKind::DeepSeek,
+            "deepseek-v4-pro",
+            12,
+            7,
+        );
+        let (out, db, _root) = run_escalation_loop("esc-on", &flash, Some(&pro));
+        assert_eq!(
+            out.status,
+            LoopStatus::Finished,
+            "escalation to pro recovers the parse failure"
+        );
+        assert_eq!(out.final_message.as_deref(), Some("PONG"));
+        // Bounded to ONE hop: flash called once, pro called EXACTLY once.
+        assert_eq!(flash.calls(), 1, "flash tried once");
+        assert_eq!(pro.calls(), 1, "pro escalated exactly once (one hop)");
+        // TWO truthful rows, distinct ids: flash leg (`t0:ledger`) + pro leg (`t0:esc:ledger`).
+        assert_eq!(
+            db.count("token_ledger").unwrap(),
+            2,
+            "two truthful billed rows (flash + pro), no double-bill / phantom row"
+        );
+        let flash_model: String = db
+            .conn()
+            .query_row(
+                "SELECT model FROM token_ledger WHERE ledger_id = 'r1:t0:ledger'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            flash_model, "deepseek-v4-flash",
+            "flash row attributed to flash"
+        );
+        let (pro_model, pro_cost): (String, Option<f64>) = db
+            .conn()
+            .query_row(
+                "SELECT model, cost_estimate FROM token_ledger WHERE ledger_id = 'r1:t0:esc:ledger'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            pro_model, "deepseek-v4-pro",
+            "escalation row attributed to pro"
+        );
+        // (a#4 bonus) the pro escalation row is PRICED (pro is a known model).
+        assert_eq!(
+            pro_cost,
+            friday_core::estimate_cost_usd(
+                friday_core::ProviderKind::DeepSeek,
+                "deepseek-v4-pro",
+                12,
+                7
+            ),
+            "the escalation row carries the pro cost estimate"
+        );
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).unwrap() >= 2);
+    }
+
+    #[test]
+    fn escalation_flag_off_none_client_is_byte_identical_fail_closed() {
+        // Flag-OFF (escalation_client = None): the SAME flash parse failure fails the run CLOSED
+        // with exactly ONE billed (flash) row — byte-identical to today's no-escalation behavior.
+        let flash = TaggedMeteredClient::new(
+            vec![Err(AgentError::Parse(
+                "not a single JSON object".to_string(),
+            ))],
+            friday_core::ProviderKind::DeepSeek,
+            "deepseek-v4-flash",
+            10,
+            5,
+        );
+        let (out, db, _root) = run_escalation_loop("esc-off", &flash, None);
+        assert_eq!(
+            out.status,
+            LoopStatus::Errored,
+            "no escalation ⇒ the parse failure fails the run closed (unchanged)"
+        );
+        assert_eq!(flash.calls(), 1);
+        assert_eq!(
+            db.count("token_ledger").unwrap(),
+            1,
+            "only the flash call is billed (no escalation row)"
+        );
+    }
+
+    #[test]
+    fn escalation_pro_own_parse_fail_does_not_re_escalate_run_errors() {
+        // The one-hop BOUND: when the escalation (pro) leg ALSO fails the parse contract, the run
+        // fails closed — pro is NOT re-escalated (no third call). Both legs still bill truthfully.
+        let flash = TaggedMeteredClient::new(
+            vec![Err(AgentError::Parse("flash garbage".to_string()))],
+            friday_core::ProviderKind::DeepSeek,
+            "deepseek-v4-flash",
+            10,
+            5,
+        );
+        let pro = TaggedMeteredClient::new(
+            vec![Err(AgentError::Parse("pro garbage too".to_string()))],
+            friday_core::ProviderKind::DeepSeek,
+            "deepseek-v4-pro",
+            12,
+            7,
+        );
+        let (out, db, _root) = run_escalation_loop("esc-pro-fail", &flash, Some(&pro));
+        assert_eq!(
+            out.status,
+            LoopStatus::Errored,
+            "pro's own parse failure fails the run closed (one hop, no re-escalate)"
+        );
+        assert_eq!(flash.calls(), 1, "flash once");
+        assert_eq!(pro.calls(), 1, "pro once — NEVER re-escalated");
+        // Both billed (truthful): flash row + pro esc row.
+        assert_eq!(
+            db.count("token_ledger").unwrap(),
+            2,
+            "both spent calls billed (flash + pro), even though both failed to parse"
+        );
+    }
+
+    #[test]
+    fn escalation_does_not_fire_on_a_flash_finish_no_double_call() {
+        // The happy path: flash parses + finishes. The escalation client is wired but must NEVER
+        // be touched (escalation fires ONLY on a flash parse failure) — exactly ONE billed row.
+        let flash = TaggedMeteredClient::new(
+            vec![Ok(AgentStep::Finish {
+                message: "flash answer".to_string(),
+            })],
+            friday_core::ProviderKind::DeepSeek,
+            "deepseek-v4-flash",
+            10,
+            5,
+        );
+        let pro = TaggedMeteredClient::new(
+            vec![Ok(AgentStep::Finish {
+                message: "unused".to_string(),
+            })],
+            friday_core::ProviderKind::DeepSeek,
+            "deepseek-v4-pro",
+            12,
+            7,
+        );
+        let (out, db, _root) = run_escalation_loop("esc-finish", &flash, Some(&pro));
+        assert_eq!(out.status, LoopStatus::Finished);
+        assert_eq!(out.final_message.as_deref(), Some("flash answer"));
+        assert_eq!(
+            pro.calls(),
+            0,
+            "flash finished cleanly — pro is never called"
+        );
+        assert_eq!(db.count("token_ledger").unwrap(), 1, "only the flash row");
     }
 
     #[test]
@@ -10150,6 +10558,7 @@ mod tests {
             None, // steer: not exercised by this test
             1000,
             None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .expect("routed claude loop runs");
         assert_eq!(selection.provider_id, "claude", "pin routed to claude");
@@ -11241,6 +11650,7 @@ mod tests {
                 None, // steer: not exercised by this test
                 1000,
                 None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
+                None, // escalation_client (a#3): byte-identical default-off
             )
             .unwrap();
             assert_eq!(
@@ -11575,6 +11985,7 @@ mod tests {
             None, // steer: not exercised by this test
             10,
             None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
         assert_eq!(out.status, LoopStatus::Finished);
@@ -11645,6 +12056,7 @@ mod tests {
             None, // steer: not exercised by this test
             10,
             None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
         assert_eq!(o1.status, LoopStatus::Finished);
@@ -11673,6 +12085,7 @@ mod tests {
             None, // steer: not exercised by this test
             20,
             None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
         assert_eq!(o2.status, LoopStatus::Finished);
@@ -11771,6 +12184,7 @@ mod tests {
             None, // steer: not exercised by this test
             100,
             None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
         let prompts = client.prompts.borrow();
@@ -11816,6 +12230,7 @@ mod tests {
             None, // steer: not exercised by this test
             10,
             None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
         assert_eq!(out.status, LoopStatus::Finished);
@@ -11879,6 +12294,7 @@ mod tests {
             None, // steer: not exercised by this test
             10,
             None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
         assert_eq!(out.status, LoopStatus::Finished);
@@ -11928,6 +12344,7 @@ mod tests {
             None, // steer: not exercised by this test
             10,
             None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
         assert_eq!(
@@ -11982,6 +12399,7 @@ mod tests {
             None, // steer: not exercised by this test
             10,
             None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
         // The session was created OWNED...
@@ -12020,6 +12438,7 @@ mod tests {
             None, // steer: not exercised by this test
             20,
             None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
         let back = friday_storage::load_session_owner(db.conn(), "sess-bound")
@@ -12063,6 +12482,7 @@ mod tests {
             None, // steer: not exercised by this test
             10,
             None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
         let back = friday_storage::load_session_owner(db.conn(), "sess-null")
@@ -12220,6 +12640,7 @@ mod tests {
             None,
             1000,
             Some(work_item_id),
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .unwrap()
     }
@@ -12297,6 +12718,7 @@ mod tests {
                 None,
                 1000,
                 Some("wi-error"),
+                None, // escalation_client (a#3): byte-identical default-off
             )
             .unwrap();
             assert_eq!(
@@ -12388,6 +12810,7 @@ mod tests {
                 None,
                 now,
                 Some("wi-during"),
+                None, // escalation_client (a#3): byte-identical default-off
             )
             .unwrap()
         };
@@ -12760,6 +13183,7 @@ mod tests {
             None,
             1000,
             Some("wi-deg4"),
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
         assert_eq!(
@@ -12974,6 +13398,7 @@ mod tests {
             true,  // FRIDAY_SUBAGENT_TOOL_ENABLED = ON (the injected-bool form of the flag)
             false, // rich_prompt_enabled OFF — byte-identical prompt (default)
             None,
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
 
@@ -13124,6 +13549,7 @@ mod tests {
             false, // subagent_enabled = OFF
             false, // rich_prompt_enabled OFF — byte-identical prompt (default)
             None,
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
         assert_eq!(
@@ -13198,6 +13624,7 @@ mod tests {
             true,
             false, // rich_prompt_enabled OFF — byte-identical prompt (default)
             None,
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
         let child =
@@ -13365,6 +13792,7 @@ mod tests {
             true,
             false, // rich_prompt_enabled OFF — byte-identical prompt (default)
             None,
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
         assert_eq!(
@@ -13481,6 +13909,7 @@ mod tests {
             true,
             false, // rich_prompt_enabled OFF — byte-identical prompt (default)
             None,
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
         // The child grant was minted under the PARENT's derived identity, not a spoof.
@@ -13549,6 +13978,7 @@ mod tests {
             true,
             false, // rich_prompt_enabled OFF — byte-identical prompt (default)
             None,
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
         assert_eq!(
@@ -13615,6 +14045,7 @@ mod tests {
             true,
             false, // rich_prompt_enabled OFF — byte-identical prompt (default)
             None,
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
         // Per-run token ledger: the parent run and the child sub-run each accrue rows; they are
@@ -13697,6 +14128,7 @@ mod tests {
             true,
             false, // rich_prompt_enabled OFF — byte-identical prompt (default)
             None,
+            None, // escalation_client (a#3): byte-identical default-off
         )
         .unwrap();
         // The injected text reached only the parent's prompt; the parent finished with no mutation.
@@ -13965,6 +14397,74 @@ mod ask_coupling_tests {
         assert_eq!(outcome.completion_tokens, 5);
         assert_eq!(outcome.prompt_tokens + outcome.completion_tokens, 15);
         assert_eq!(outcome.model, "deepseek-v4-flash");
+    }
+
+    /// (PR-A1) `DeepSeekAgentLlmClient::with_model` FORCES the given model into the chat body,
+    /// bypassing `select_model` (which always prefers flash). This is the load-bearing property of
+    /// the dark pro route: a pro client built without the override would silently run flash. The
+    /// capturing transport records the `body["model"]` actually sent. Discovery (which only lists
+    /// flash) still runs — the override does NOT depend on the list containing the forced id.
+    #[test]
+    fn deepseek_with_model_forces_pro_model_not_select_model_flash() {
+        use std::sync::{Arc, Mutex};
+        #[derive(Clone)]
+        struct CapturingTransport {
+            sent_model: Arc<Mutex<Option<String>>>,
+        }
+        impl friday_deepseek::Transport for CapturingTransport {
+            fn get_json(
+                &self,
+                _url: &str,
+                _bearer: &str,
+            ) -> Result<serde_json::Value, friday_deepseek::DeepSeekError> {
+                // Discovery lists ONLY flash — proving the override does not rely on the list.
+                Ok(serde_json::json!({"data":[{"id":"deepseek-v4-flash"}]}))
+            }
+            fn post_json(
+                &self,
+                _url: &str,
+                _bearer: &str,
+                body: &serde_json::Value,
+            ) -> Result<serde_json::Value, friday_deepseek::DeepSeekError> {
+                *self.sent_model.lock().unwrap() = body
+                    .get("model")
+                    .and_then(|m| m.as_str())
+                    .map(str::to_string);
+                Ok(serde_json::json!({
+                    "model":"deepseek-v4-pro",
+                    "choices":[{"message":{"content":"hi"},"finish_reason":"stop"}],
+                    "usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}
+                }))
+            }
+        }
+        let sent_model = Arc::new(Mutex::new(None));
+        let transport = CapturingTransport {
+            sent_model: sent_model.clone(),
+        };
+
+        // `new` (override None) → select_model → flash (byte-identical to today).
+        let flash = DeepSeekAgentLlmClient::new(friday_deepseek::DeepSeekClient::with_transport(
+            transport.clone(),
+            "k".into(),
+        ));
+        let _ = flash.next_step_metered("task", &[]);
+        assert_eq!(
+            sent_model.lock().unwrap().as_deref(),
+            Some("deepseek-v4-flash"),
+            "default client uses select_model → flash"
+        );
+
+        // `with_model(pro)` → forces deepseek-v4-pro into the chat body, NOT flash.
+        let pro = DeepSeekAgentLlmClient::with_model(
+            friday_deepseek::DeepSeekClient::with_transport(transport, "k".into()),
+            "deepseek-v4-pro",
+        );
+        let _ = pro.next_step_metered("task", &[]);
+        assert_eq!(
+            sent_model.lock().unwrap().as_deref(),
+            Some("deepseek-v4-pro"),
+            "with_model forces pro — never silently downgraded to flash by select_model"
+        );
     }
 
     #[test]
