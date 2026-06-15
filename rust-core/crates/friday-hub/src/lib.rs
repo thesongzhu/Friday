@@ -4088,6 +4088,174 @@ fn rich_operating_guidance() -> &'static str {
      \n"
 }
 
+/// The `FRIDAY_SELF_CRITIQUE_ENABLED` env var. When ON **and** the run drives a WorkItem that
+/// carries non-empty `done_criteria`, the loop runs a SELF-CRITIQUE / VERIFY pass on the model's
+/// finish answer BEFORE accepting it: a DETERMINISTIC, cheap sufficiency check
+/// ([`answer_passes_done_criteria`]) and — only if that fails — exactly ONE bounded self-critique
+/// RE-PROMPT to the model (a metered model call) whose revised finish is then accepted (passing or
+/// not). This is the canonical cheap→strong amplifier: it spends at most ONE extra metered call to
+/// catch an empty/stub/truncated finish that does not even reference the WorkItem's required
+/// artifacts, instead of completing-with-proof on a deficient answer.
+///
+/// STRICT BOUNDS (no-runaway, by construction):
+/// - The check runs ONLY in the `Finish` arm — the loop's single `{"tool":"none","answer":..}`
+///   chokepoint — so it can fire AT MOST ONCE per run (a `Finish` returns the loop).
+/// - At most ONE critique re-prompt. After the single re-prompt the loop accepts the revised
+///   answer REGARDLESS of whether it now passes (never a verify loop). A re-prompt that errors /
+///   does not parse to a `Finish` / parses to a tool call FALLS BACK to the ORIGINAL answer, so
+///   the critique can NEVER produce a worse outcome than no-critique (structural no-degrade).
+/// - The re-prompt is a real model call, BILLED through the same [`bill_model_call`] path under a
+///   DISTINCT id namespace (a reserved sentinel turn index, see [`CRITIQUE_BILL_TURN`]) so it
+///   never PK-collides with a real turn's ledger/receipt/audit rows — the extra spend is honest
+///   and visible in the ledger. It happens ONLY flag-ON-with-criteria, so it is metered exactly
+///   like any other loop model call.
+///
+/// DEFAULT-OFF: unset / empty / `"0"` / any non-`"1"` value ⇒ OFF, and the loop's finish path is
+/// BYTE-IDENTICAL to today — no deterministic check, NO extra model call, the `Finish` arm returns
+/// the model's answer verbatim. It is read ONCE in the public [`run_loop_with_policy`] (the common
+/// chokepoint for every production loop caller) and threaded as a pure bool to the inner
+/// [`run_loop_with_policy_flagged`] — the same "split env-read from pure logic" idiom as
+/// [`FRIDAY_CLARIFICATION_GATE`] / [`FRIDAY_RICH_SYSTEM_PROMPT_ENABLED`], so the behavioral tests
+/// inject the bool directly and never race `std::env`. The `done_criteria` themselves are loaded
+/// (one storage read) ONLY when the flag is ON and a WorkItem is bound — flag-OFF reads nothing.
+///
+/// QUALITY-LIFT PROOF IS OPERATOR-GATED: whether the self-critique re-prompt measurably IMPROVES a
+/// real model's OUTPUT requires a real-model A/B (provider quota spend) and is NOT run here — the
+/// committed tests prove the WIRING (flag-OFF byte-identical incl. no extra call, flag-ON failing
+/// finish ⇒ exactly one re-prompt then accept, flag-ON passing finish ⇒ no re-prompt, the
+/// one-bounded-reprompt guard, exact-"1" matcher), not the answer-quality delta.
+pub const FRIDAY_SELF_CRITIQUE_ENABLED: &str = "FRIDAY_SELF_CRITIQUE_ENABLED";
+
+/// Pure flag-matcher for [`FRIDAY_SELF_CRITIQUE_ENABLED`] (env read split out so it is
+/// unit-testable without `set_var`). DEFAULT-OFF: `None` (unset) ⇒ false; ON only for the exact
+/// opt-in value `"1"` (trimmed); everything else (including `"true"`) ⇒ false — the program's
+/// standard flag idiom, mirroring [`rich_system_prompt_from`]. `pub(crate)` so the public loop
+/// entrypoint reads it via `crate::` and the in-crate unit test reaches it.
+pub(crate) fn self_critique_enabled_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
+/// ACQUIRE the bound WorkItem's `done_criteria` for the self-critique pass — the load half of
+/// [`FRIDAY_SELF_CRITIQUE_ENABLED`], extracted so it is unit-testable without `std::env`.
+///
+/// Returns the criteria ONLY when `enabled` AND a `work_item_id` is bound AND the row loads AND it
+/// carries criteria; EVERY other case returns an EMPTY vec, which the loop's Finish-arm guard
+/// treats as "no critique" ⇒ the finish path is byte-identical. FAIL-SAFE by construction: a read
+/// error (`.ok()`), a missing row (`.flatten()`), or a criteria-less WorkItem all yield empty — the
+/// loop NEVER blocks a finish because the criteria could not be read. Loading HERE (not inside the
+/// loop body) keeps the inner [`run_loop_with_policy_inner`] pure on `&[String]`, so the behavioral
+/// tests inject criteria directly and this acquisition half is proven separately.
+fn done_criteria_for_critique(
+    conn: &Connection,
+    work_item_id: Option<&str>,
+    enabled: bool,
+) -> Vec<String> {
+    if !enabled {
+        return Vec::new();
+    }
+    match work_item_id {
+        Some(wid) => friday_storage::mission::get_work_item(conn, wid)
+            .ok()
+            .flatten()
+            .map(|wi| wi.judgment_memory.done_criteria)
+            .unwrap_or_default(),
+        None => Vec::new(),
+    }
+}
+
+/// Reserved sentinel "turn index" for the self-critique RE-PROMPT's ledger/receipt/audit rows.
+/// The real loop runs `turn_index in 0..max_turns` (`max_turns` is bounded far below `u64::MAX`),
+/// so this value can NEVER be a real turn — guaranteeing the critique bill's ids
+/// (`{run_id}:t18446744073709551615:{ledger,askreceipt,modelcall}`, derived by [`bill_model_call`])
+/// never PK-collide with any real turn's rows. It is also self-documenting in the ledger: a row at
+/// this turn index IS the self-critique pass. The critique fires at most once per run, so this id
+/// is used at most once per run.
+const CRITIQUE_BILL_TURN: u64 = u64::MAX;
+
+/// DETERMINISTIC, cheap acceptance check of a finish `answer` against a WorkItem's `done_criteria`.
+/// Returns `true` when the answer is STRUCTURALLY sufficient, `false` when it is clearly deficient.
+///
+/// This is a HIGH-PRECISION STRUCTURAL SUFFICIENCY GATE — it is intentionally conservative so a
+/// flag-ON run never burns a metered critique call on a good answer. It is NOT a semantic verifier
+/// of the criteria (that needs a model; see the operator-gated A/B in the flag's doc comment). It
+/// fails ONLY on answers a human would unambiguously call deficient:
+///  1. EMPTY / whitespace-only answer (a finish with no deliverable content).
+///  2. A criterion that names an UNAMBIGUOUS REQUIRED-ARTIFACT TOKEN (a path / filename / URL /
+///     code-like identifier — a whitespace-free token of length ≥ 4 that contains a `/`, `.`, or
+///     `_`, e.g. `src/lib.rs`, `report.md`, `https://…`) that the answer does NOT mention. Such a
+///     token is a concrete deliverable the answer is expected to reference; its total absence is a
+///     deterministic, false-positive-resistant signal the answer skipped a required artifact.
+///
+/// Everything else PASSES: a criterion phrased as prose ("tests pass", "loop reaches a terminal
+/// status") contributes NO required token, so it never forces a critique on a substantive answer.
+/// Token matching is a plain case-insensitive substring test (no regex, no allocation per
+/// criterion beyond the lowercased copies) — deterministic and cheap. With `criteria` empty the
+/// caller never invokes this (the whole block is guarded on non-empty criteria), but for safety an
+/// empty-criteria call returns `true` (nothing to check ⇒ accept).
+fn answer_passes_done_criteria(answer: &str, criteria: &[String]) -> bool {
+    // (1) Empty/whitespace-only finish answer is always deficient.
+    if answer.trim().is_empty() {
+        return false;
+    }
+    let answer_lc = answer.to_lowercase();
+    // (2) For every criterion, extract any unambiguous required-artifact token and require the
+    //     answer to mention it. A criterion with no such token imposes no constraint here.
+    for criterion in criteria {
+        for token in criterion.split_whitespace() {
+            // Strip surrounding punctuation that commonly wraps an inline artifact reference
+            // (quotes, backticks, parens, trailing sentence punctuation) so `"src/lib.rs",`
+            // normalizes to `src/lib.rs`. Interior `/._` (what makes it artifact-like) is kept.
+            let token = token.trim_matches(|c: char| {
+                matches!(
+                    c,
+                    '"' | '\'' | '`' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';' | ':'
+                ) || (c.is_ascii_punctuation() && matches!(c, '.' | '!' | '?'))
+            });
+            let is_artifact_like = token.len() >= 4
+                && !token.contains(char::is_whitespace)
+                && token.chars().any(|c| matches!(c, '/' | '.' | '_'));
+            if is_artifact_like && !answer_lc.contains(&token.to_lowercase()) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Build the ONE bounded self-critique re-prompt handed to the model when
+/// [`answer_passes_done_criteria`] fails. PURE + deterministic. It restates the ORIGINAL TASK, the
+/// WorkItem's completion criteria, and the model's rejected answer, and asks for a single revised
+/// final answer in the SAME finish contract — so the re-prompt parses exactly like an ordinary loop
+/// turn (a `{"tool":"none","answer":..}` finish). It does NOT change the reply contract or steer
+/// toward a tool; it only asks the model to revise to meet the stated criteria. The original task
+/// is folded in so the revision is grounded (the loop's `history` reaches the model too, but the
+/// task itself is the surest anchor for a fair revision — and a fair eventual quality A/B).
+fn build_self_critique_prompt(task: &str, rejected_answer: &str, criteria: &[String]) -> String {
+    let mut criteria_block = String::new();
+    for c in criteria {
+        criteria_block.push_str("- ");
+        criteria_block.push_str(c);
+        criteria_block.push('\n');
+    }
+    format!(
+        "Your proposed final answer does not yet meet this work item's completion criteria.\n\
+         \n\
+         Original task:\n\
+         {task}\n\
+         \n\
+         Completion criteria:\n\
+         {criteria_block}\
+         \n\
+         Your proposed final answer was:\n\
+         {rejected_answer}\n\
+         \n\
+         Revise your final answer so it satisfies every completion criterion above: do not leave \
+         it empty, reference the concrete artifacts the criteria require, and carry forward the \
+         real content (never a placeholder). Reply with the SAME finish object as before — \
+         {{\"tool\": \"none\", \"answer\": \"<your revised final answer>\"}}.\n"
+    )
+}
+
 /// `cancel` (C2-1) is an OPTIONAL cooperative cancellation handle checked at the TOP of
 /// each turn, BEFORE the model call. When `Some` and already tripped at a turn boundary,
 /// the loop stops with [`LoopStatus::Interrupted`]: it makes NO further model call and
@@ -4158,6 +4326,16 @@ pub fn run_loop_with_policy(
             .ok()
             .as_deref(),
     );
+    // (FRIDAY_SELF_CRITIQUE_ENABLED) Read the self-critique flag ONCE here (same default-OFF,
+    // read-once idiom). The done_criteria are loaded (ONE storage read) ONLY when the flag is ON
+    // AND a WorkItem is bound — flag-OFF reads nothing and passes an empty slice, so the finish
+    // path is byte-identical. A read error / missing WorkItem / criteria-less WorkItem yields an
+    // empty slice, which the inner guard treats as "no critique" (fail-safe: never block a finish
+    // because the criteria could not be read). Loading them HERE (not inside the loop body) keeps
+    // the inner fn pure on `&[String]`, so the behavioral tests inject the criteria directly.
+    let self_critique_enabled =
+        self_critique_enabled_from(std::env::var(FRIDAY_SELF_CRITIQUE_ENABLED).ok().as_deref());
+    let done_criteria = done_criteria_for_critique(conn, work_item_id, self_critique_enabled);
     run_loop_with_policy_flagged(
         client,
         executor,
@@ -4176,6 +4354,8 @@ pub fn run_loop_with_policy(
         clarification_enabled,
         subagent_enabled,
         rich_prompt_enabled,
+        self_critique_enabled,
+        &done_criteria,
         work_item_id,
     )
 }
@@ -4219,6 +4399,8 @@ pub(crate) fn run_loop_with_policy_flagged(
     clarification_enabled: bool,
     subagent_enabled: bool,
     rich_prompt_enabled: bool,
+    self_critique_enabled: bool,
+    done_criteria: &[String],
     work_item_id: Option<&str>,
 ) -> Result<LoopOutcome, StorageError> {
     // (#24b) Run the loop body to completion, then CLEAR the durable execution marker EXACTLY ONCE
@@ -4243,6 +4425,8 @@ pub(crate) fn run_loop_with_policy_flagged(
         clarification_enabled,
         subagent_enabled,
         rich_prompt_enabled,
+        self_critique_enabled,
+        done_criteria,
         work_item_id,
     );
     // THE no-degrade crux: clear on EVERY path (Ok of any status, or an Err). Fail-safe + a no-op
@@ -4276,6 +4460,11 @@ fn run_loop_with_policy_inner(
     clarification_enabled: bool,
     subagent_enabled: bool,
     rich_prompt_enabled: bool,
+    // (FRIDAY_SELF_CRITIQUE_ENABLED) The self-critique flag + the bound WorkItem's done_criteria.
+    // The Finish arm runs the verify pass ONLY when `self_critique_enabled && !done_criteria
+    // .is_empty()`; otherwise the finish path is byte-identical to today (no check, no extra call).
+    self_critique_enabled: bool,
+    done_criteria: &[String],
     work_item_id: Option<&str>,
 ) -> Result<LoopOutcome, StorageError> {
     // Plan classification recorded ONCE (it is a property of the task, constant across
@@ -4570,12 +4759,82 @@ fn run_loop_with_policy_inner(
 
         let raw = match step {
             AgentStep::Finish { message } => {
+                // (FRIDAY_SELF_CRITIQUE_ENABLED) SELF-CRITIQUE / VERIFY pass before accepting the
+                // finish — STRICTLY BOUNDED. Runs ONLY when the flag is ON AND this run drives a
+                // WorkItem with non-empty `done_criteria`. When either is false, `final_message` is
+                // the model's `message` verbatim and NO extra model call is made ⇒ the finish path
+                // is BYTE-IDENTICAL to today (same event, same `turns: turn_index + 1`, same answer).
+                //
+                // ONE-SHOT, NO-RUNAWAY: this lives in the `Finish` arm, the loop's single
+                // `{"tool":"none","answer":..}` chokepoint that RETURNS the loop — so the whole pass
+                // can fire AT MOST ONCE per run. It runs at most ONE critique re-prompt; after that
+                // it accepts the (possibly still-failing) revised answer unconditionally — never a
+                // verify loop. STRUCTURAL NO-DEGRADE: a re-prompt that errors, does not parse, or
+                // parses to a tool call FALLS BACK to the ORIGINAL `message`, so the critique can
+                // never yield a worse outcome than no-critique.
+                let final_message = if self_critique_enabled
+                    && !done_criteria.is_empty()
+                    && !answer_passes_done_criteria(&message, done_criteria)
+                {
+                    // The model's finish answer is structurally deficient against the criteria.
+                    // Record a refs-only marker (NO ledger row — the billing is the critique call's
+                    // own row below) and issue exactly ONE bounded self-critique re-prompt.
+                    agent_run::record_event(
+                        conn,
+                        &ev("self_critique"),
+                        run_id,
+                        "agent.self_critique",
+                        now_ms,
+                    )?;
+                    // Ground the revision on the CLEAN `task` (not `prompt_task`, which carries the
+                    // recall preamble / rich-prompt guidance) — the task is the surest anchor.
+                    let critique_prompt = build_self_critique_prompt(task, &message, done_criteria);
+                    // ONE metered model call, billed through the SAME path as a loop turn but under
+                    // the reserved sentinel id namespace so it never PK-collides with a real turn's
+                    // ledger/receipt/audit rows. The critique is grounded on the SAME `history`.
+                    match client.next_step_metered(&critique_prompt, &history) {
+                        Ok((step_result, usage)) => {
+                            // BILL the critique call exactly like a loop turn (honest, visible spend)
+                            // BEFORE inspecting the parse — a chat that returned usage spent tokens
+                            // regardless of whether it parsed.
+                            if let Some(outcome) = usage {
+                                bill_model_call(
+                                    conn,
+                                    run_id,
+                                    CRITIQUE_BILL_TURN,
+                                    &outcome,
+                                    now_ms,
+                                )?;
+                            }
+                            match step_result {
+                                // Revised finish ⇒ accept the revised answer (passing or not — the
+                                // single re-prompt is the bound; we never re-check or re-prompt).
+                                Ok(AgentStep::Finish { message: revised }) => revised,
+                                // Re-prompt parsed to a TOOL call, not a finish: structural fallback
+                                // to the ORIGINAL answer (no-degrade; we do not start executing tools
+                                // from inside the finish chokepoint).
+                                Ok(AgentStep::Tool(_)) => message,
+                                // Re-prompt violated the contract: fall back to the ORIGINAL answer.
+                                Err(_) => message,
+                            }
+                        }
+                        // Re-prompt model/transport error: fall back to the ORIGINAL answer — the
+                        // run still Finishes (no-degrade; a critique failure never fails the run).
+                        Err(_) => message,
+                    }
+                } else {
+                    message
+                };
                 agent_run::record_event(conn, &ev("finish"), run_id, "agent.finished", now_ms)?;
                 return Ok(LoopOutcome {
                     status: LoopStatus::Finished,
+                    // `turns` counts LOOP TURNS, not raw model calls: the critique re-prompt is a
+                    // sub-call WITHIN this finish, not a new loop turn, so `turns` is unchanged from
+                    // the no-critique path. The extra model call is honestly recorded in the ledger
+                    // under the sentinel turn index (see CRITIQUE_BILL_TURN), not hidden.
                     turns: turn_index + 1,
                     executed_tools,
-                    final_message: Some(message),
+                    final_message: Some(final_message),
                     detail: "finished".to_string(),
                 });
             }
@@ -5014,7 +5273,13 @@ fn spawn_subagent_turn(
         clarification_enabled,
         true, // subagent_enabled: TRUE so the child's spawn is grant/policy-denied, not flag-skipped
         rich_prompt_enabled, // child inherits the parent's rich-prompt setting (OFF ⇒ byte-identical)
-        None,                // work_item_id: the sub-agent is NOT the bound work item
+        // (FRIDAY_SELF_CRITIQUE_ENABLED) The child is NEVER the bound WorkItem (work_item_id: None
+        // below), so it carries NO done_criteria and must never run the verify pass — pass
+        // `false` + an empty slice unconditionally. This is byte-identical to the pre-self-critique
+        // child loop regardless of the parent's flag (the guard requires non-empty criteria anyway).
+        false, // self_critique_enabled: a sub-agent has no done_criteria to verify against
+        &[],   // done_criteria: none for an ephemeral sub-agent
+        None,  // work_item_id: the sub-agent is NOT the bound work item
     )?;
 
     // The sub-agent's deliverable = its final message on Finished; otherwise an honest status
@@ -6051,6 +6316,8 @@ mod tests {
             false, // clarification gate OFF — the NS-7 scenario's task ("do it") classifies None anyway
             false, // subagent_enabled OFF — NS-7 scenario does not exercise subagent
             false, // rich_prompt_enabled OFF — byte-identical prompt (default)
+            false, // self_critique_enabled OFF (test default ⇒ byte-identical finish)
+            &[],   // done_criteria: none for this test scenario
             None,  // work_item_id (#24b): NS-7 scenario binds no WorkItem ⇒ heartbeat no-op
         )
         .unwrap();
@@ -6233,6 +6500,8 @@ mod tests {
             clarification_enabled,
             false, // subagent_enabled OFF — clarification scenario does not exercise subagent
             false, // rich_prompt_enabled OFF — byte-identical prompt (default)
+            false, // self_critique_enabled OFF (test default ⇒ byte-identical finish)
+            &[],   // done_criteria: none for this test scenario
             None,  // work_item_id (#24b): clarification scenario binds no WorkItem ⇒ no-op
         )
         .unwrap();
@@ -6401,7 +6670,9 @@ mod tests {
             false, // clarification_enabled: OFF (isolate this flag; "do it" classifies None anyway)
             false, // subagent_enabled: OFF
             rich_prompt_enabled,
-            None, // work_item_id
+            false, // self_critique_enabled OFF (test default ⇒ byte-identical finish)
+            &[],   // done_criteria: none for this test scenario
+            None,  // work_item_id
         )
         .unwrap();
         assert_eq!(
@@ -6514,6 +6785,411 @@ mod tests {
                 .all(|l| got.contains(l.trim_end()) || l.contains("Task:")),
             "every non-task line of the thin prompt survives in the ON prompt (additive only)"
         );
+    }
+
+    // ── FRIDAY_SELF_CRITIQUE_ENABLED: the self-critique / verify loop before finish ─────────────
+    // FAITHFUL BEHAVIORAL TESTS (real DB, NO real model call). The flag is injected as the
+    // `self_critique_enabled` bool + `done_criteria` slice into `run_loop_with_policy_flagged`
+    // directly (the program's split-env idiom), so these never race `std::env`. The scripted
+    // metering client below returns successive `MeteredStep`s, billing a fixed usage per call —
+    // so the count of `token_ledger` rows is an exact, deterministic proxy for "how many model
+    // calls were made" (no network). A critique re-prompt is therefore visible as ONE EXTRA
+    // ledger row beyond the loop's turns.
+
+    /// A scripted client that meters every call (overrides `next_step_metered`), returns the next
+    /// scripted parsed step, and records the EXACT prompt it was handed each call — so a test can
+    /// assert how many model calls happened (via the ledger), what the critique re-prompt SAW, and
+    /// that the re-prompt is bounded to one. Each call bills `(prompt_tokens, completion_tokens)`.
+    struct CritiqueScriptedClient {
+        steps: Vec<Result<AgentStep, AgentError>>,
+        calls: std::cell::Cell<usize>,
+        prompts: std::cell::RefCell<Vec<String>>,
+    }
+    impl CritiqueScriptedClient {
+        fn new(steps: Vec<Result<AgentStep, AgentError>>) -> Self {
+            Self {
+                steps,
+                calls: std::cell::Cell::new(0),
+                prompts: std::cell::RefCell::new(Vec::new()),
+            }
+        }
+    }
+    impl AgentLlmClient for CritiqueScriptedClient {
+        fn propose_tool_call(&self, _task: &str) -> Result<RawToolCall, AgentError> {
+            Err(AgentError::Parse(
+                "critique: single-turn path unused".to_string(),
+            ))
+        }
+        fn next_step_metered(
+            &self,
+            task: &str,
+            _history: &[TurnTrace],
+        ) -> Result<MeteredStep, AgentError> {
+            self.prompts.borrow_mut().push(task.to_string());
+            let i = self.calls.get();
+            self.calls.set(i + 1);
+            // A scripted step that is `Err` here models a chat that 200'd (billable) but produced
+            // unparseable content; an `Ok` is a parsed step. EITHER WAY the call is billed.
+            let step = self.steps.get(i).cloned().unwrap_or(Ok(AgentStep::Finish {
+                message: "script exhausted".to_string(),
+            }));
+            let usage = BilledUsage {
+                provider_kind: friday_core::ProviderKind::DeepSeek,
+                model: "deepseek-v4-flash".to_string(),
+                prompt_tokens: 10,
+                completion_tokens: 5,
+            };
+            Ok((step, Some(usage)))
+        }
+    }
+
+    fn finish(msg: &str) -> Result<AgentStep, AgentError> {
+        Ok(AgentStep::Finish {
+            message: msg.to_string(),
+        })
+    }
+
+    /// Drive ONE finish through `run_loop_with_policy_flagged` with the self-critique flag + the
+    /// given criteria injected, returning the outcome + the ledger-row count (== model calls) +
+    /// the prompts the client saw. NO recall preamble, NO operator key (the scripted finish never
+    /// hits the gate), `work_item_id: None` (criteria are injected directly, not loaded from a DB
+    /// row — that load path is exercised by the public-entrypoint behavior in production; here we
+    /// isolate the LOOP behavior on a `&[String]`).
+    fn critique_scenario(
+        tag: &str,
+        steps: Vec<Result<AgentStep, AgentError>>,
+        self_critique_enabled: bool,
+        criteria: &[String],
+    ) -> (LoopOutcome, i64, Vec<String>) {
+        let db = Db::open_hub(&temp_path(tag)).unwrap();
+        agent_run::create_run(db.conn(), "r1", "do the task", 1).unwrap();
+        let client = CritiqueScriptedClient::new(steps);
+        let root = TempDir::new(tag);
+        let executor = FsToolExecutor::new(&root.0);
+        let policy = RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), false);
+        let out = run_loop_with_policy_flagged(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "do the task",
+            "",
+            None,
+            &no_approval(),
+            &policy,
+            5,
+            None,
+            None,
+            1000,
+            false, // activity_needs_me
+            false, // clarification_enabled
+            false, // subagent_enabled
+            false, // rich_prompt_enabled
+            self_critique_enabled,
+            criteria,
+            None, // work_item_id (criteria injected directly)
+        )
+        .unwrap();
+        let ledger_rows = db.count("token_ledger").unwrap();
+        let prompts = client.prompts.borrow().clone();
+        (out, ledger_rows, prompts)
+    }
+
+    #[test]
+    fn self_critique_flag_off_is_byte_identical_no_extra_call() {
+        // Flag OFF (prod default): EVEN with criteria the finish path is byte-identical — the
+        // model's deficient (empty) answer is accepted verbatim, NO critique re-prompt, exactly
+        // ONE model call (ONE ledger row). This is the no-degrade / flag-OFF-byte-identical proof.
+        let criteria = vec!["produce report.md".to_string()];
+        // The model finishes with an EMPTY answer that WOULD fail the deterministic check if the
+        // flag were on — proving flag-OFF skips the check entirely.
+        let (out, ledger_rows, prompts) =
+            critique_scenario("crit-off", vec![finish("")], false, &criteria);
+        assert_eq!(out.status, LoopStatus::Finished);
+        assert_eq!(
+            out.final_message.as_deref(),
+            Some(""),
+            "flag OFF accepts the model's answer verbatim (no revision)"
+        );
+        assert_eq!(out.turns, 1, "one loop turn");
+        assert_eq!(
+            ledger_rows, 1,
+            "flag OFF makes NO extra model call (one ledger row)"
+        );
+        assert_eq!(prompts.len(), 1, "exactly one model call (the finish turn)");
+    }
+
+    #[test]
+    fn self_critique_no_criteria_is_byte_identical_even_when_flag_on() {
+        // Flag ON but NO done_criteria (the vast majority of runs — sessionless / criteria-less
+        // WorkItems / subagent children): the guard requires non-empty criteria, so the finish
+        // path is byte-identical — empty answer accepted, NO extra call.
+        let (out, ledger_rows, prompts) =
+            critique_scenario("crit-no-crit", vec![finish("")], true, &[]);
+        assert_eq!(out.status, LoopStatus::Finished);
+        assert_eq!(out.final_message.as_deref(), Some(""));
+        assert_eq!(ledger_rows, 1, "no criteria ⇒ no critique ⇒ one ledger row");
+        assert_eq!(prompts.len(), 1);
+    }
+
+    #[test]
+    fn self_critique_passing_finish_makes_no_reprompt() {
+        // Flag ON + criteria + an answer that PASSES the deterministic check (non-empty AND
+        // mentions the required artifact `report.md`): NO critique re-prompt, exactly one call.
+        let criteria = vec!["produce report.md".to_string()];
+        let (out, ledger_rows, prompts) = critique_scenario(
+            "crit-pass",
+            vec![finish(
+                "Done. I wrote the summary to report.md with the findings.",
+            )],
+            true,
+            &criteria,
+        );
+        assert_eq!(out.status, LoopStatus::Finished);
+        assert_eq!(
+            out.final_message.as_deref(),
+            Some("Done. I wrote the summary to report.md with the findings."),
+            "a passing answer is accepted as-is"
+        );
+        assert_eq!(out.turns, 1);
+        assert_eq!(
+            ledger_rows, 1,
+            "a passing finish triggers NO critique re-prompt"
+        );
+        assert_eq!(prompts.len(), 1, "only the finish turn was prompted");
+    }
+
+    #[test]
+    fn self_critique_failing_finish_reprompts_exactly_once_then_accepts() {
+        // Flag ON + criteria + a FAILING finish (empty answer): exactly ONE critique re-prompt is
+        // issued; the mocked client returns a BETTER revised answer the second time, which is
+        // accepted. Proof: TWO ledger rows (one loop turn + one critique re-prompt), the second
+        // prompt is the self-critique prompt (restates the criteria + the rejected answer), and
+        // `turns` stays 1 (the critique is a sub-call, not a new loop turn — honestly distinct from
+        // the ledger count).
+        let criteria = vec!["produce report.md".to_string()];
+        let (out, ledger_rows, prompts) = critique_scenario(
+            "crit-fail-revise",
+            vec![
+                finish(""), // turn 0: deficient (empty) ⇒ fails the deterministic check
+                finish("Revised: I generated report.md containing the full findings."), // the critique re-prompt's revised answer
+            ],
+            true,
+            &criteria,
+        );
+        assert_eq!(out.status, LoopStatus::Finished);
+        assert_eq!(
+            out.final_message.as_deref(),
+            Some("Revised: I generated report.md containing the full findings."),
+            "the revised answer from the single critique re-prompt is accepted"
+        );
+        assert_eq!(
+            out.turns, 1,
+            "the critique is a sub-call, not a new loop turn"
+        );
+        assert_eq!(
+            ledger_rows, 2,
+            "EXACTLY one extra metered model call (the critique re-prompt) was billed"
+        );
+        assert_eq!(
+            prompts.len(),
+            2,
+            "exactly two model calls: the turn + ONE critique re-prompt"
+        );
+        // The second prompt IS the self-critique prompt: it restates the criteria + the rejected
+        // answer and asks for a revision in the SAME finish contract.
+        assert!(
+            prompts[1].contains("does not yet meet")
+                && prompts[1].contains("report.md")
+                && prompts[1].contains("{\"tool\": \"none\", \"answer\""),
+            "the re-prompt restates the criteria + keeps the finish contract: {}",
+            prompts[1]
+        );
+        // ID-NAMESPACE / NO-PK-COLLISION PROOF (structural): if the critique bill reused the loop
+        // turn's ledger/receipt/audit ids (`r1:t0:...`), the second `bill_model_call` would hit a
+        // PRIMARY KEY collision and `?`-propagate a StorageError — `critique_scenario`'s `.unwrap()`
+        // would PANIC. The run reaching `Finished` with exactly TWO ledger rows IS the proof the
+        // critique uses the reserved sentinel turn id (CRITIQUE_BILL_TURN) and never collides.
+        assert_eq!(ledger_rows, 2);
+    }
+
+    #[test]
+    fn self_critique_is_bounded_to_one_reprompt_revised_still_failing_is_accepted() {
+        // The HARD no-runaway bound: even if the critique re-prompt ALSO returns a failing answer,
+        // the loop accepts it (it does NOT re-check or re-prompt). Proof: exactly TWO model calls
+        // (the turn + ONE critique), and the still-failing revised answer is the final message.
+        let criteria = vec!["produce report.md".to_string()];
+        let (out, ledger_rows, prompts) = critique_scenario(
+            "crit-bounded",
+            vec![
+                finish(""),                               // turn 0: empty ⇒ fails
+                finish("still no artifact"), // the critique re-prompt: STILL fails the check
+                finish("third call should never happen"), // would only be reached by a verify LOOP
+            ],
+            true,
+            &criteria,
+        );
+        assert_eq!(out.status, LoopStatus::Finished);
+        assert_eq!(
+            out.final_message.as_deref(),
+            Some("still no artifact"),
+            "the single revised answer is accepted even though it still fails (one bound, no loop)"
+        );
+        assert_eq!(
+            ledger_rows, 2,
+            "bounded to ONE re-prompt: exactly two billed calls (NEVER a third)"
+        );
+        assert_eq!(
+            prompts.len(),
+            2,
+            "the third scripted finish is never consumed"
+        );
+    }
+
+    #[test]
+    fn self_critique_reprompt_error_falls_back_to_original_answer_no_degrade() {
+        // STRUCTURAL NO-DEGRADE: if the critique re-prompt ERRORS (model/transport/parse), the
+        // loop falls back to the ORIGINAL answer and still Finishes — a critique failure can never
+        // fail the run or make the outcome worse than no-critique. Here the original answer is a
+        // non-empty (but criteria-failing) answer, so we can see it survive the fallback.
+        let criteria = vec!["produce report.md".to_string()];
+        let (out, ledger_rows, prompts) = critique_scenario(
+            "crit-err-fallback",
+            vec![
+                finish("partial answer with no artifact ref"), // turn 0: fails the check
+                Err(AgentError::Model("transport boom".to_string())), // the critique re-prompt errors
+            ],
+            true,
+            &criteria,
+        );
+        assert_eq!(out.status, LoopStatus::Finished, "the run still Finishes");
+        assert_eq!(
+            out.final_message.as_deref(),
+            Some("partial answer with no artifact ref"),
+            "a critique re-prompt error falls back to the ORIGINAL answer (no-degrade)"
+        );
+        // Both calls are still BILLED honestly (the errored critique call 200'd-with-usage in this
+        // mock, modeling a billable chat whose content was unusable).
+        assert_eq!(
+            ledger_rows, 2,
+            "both the turn and the (errored) critique call are billed"
+        );
+        assert_eq!(prompts.len(), 2);
+    }
+
+    #[test]
+    fn self_critique_reprompt_to_tool_falls_back_to_original_answer() {
+        // The re-prompt parsed to a TOOL call (not a finish): structural fallback to the ORIGINAL
+        // answer — we never start executing tools from inside the finish chokepoint.
+        let criteria = vec!["produce report.md".to_string()];
+        let (out, _ledger_rows, prompts) = critique_scenario(
+            "crit-tool-fallback",
+            vec![
+                finish("draft answer, no artifact"), // turn 0: fails
+                Ok(AgentStep::Tool(raw("read_file", &[("path", "x")]))), // re-prompt returns a tool call
+            ],
+            true,
+            &criteria,
+        );
+        assert_eq!(out.status, LoopStatus::Finished);
+        assert_eq!(
+            out.final_message.as_deref(),
+            Some("draft answer, no artifact"),
+            "a re-prompt that returns a tool call falls back to the original answer"
+        );
+        assert_eq!(
+            prompts.len(),
+            2,
+            "still exactly one critique re-prompt (bounded)"
+        );
+    }
+
+    #[test]
+    fn done_criteria_for_critique_loads_only_when_enabled_with_a_bound_work_item() {
+        // The ACQUISITION half of the flag (the load half the loop-behavior tests do NOT exercise,
+        // since they inject criteria directly with work_item_id: None). Proves the real path
+        // get_work_item(conn, wid) -> judgment_memory.done_criteria actually yields the criteria.
+        let db = Db::open_hub(&temp_path("crit-load")).unwrap();
+        // seed_loop_work_item seeds a WorkItem whose done_criteria == ["loop reaches a terminal status"].
+        seed_loop_work_item(&db, "wi-crit");
+
+        // (a) enabled=true + a bound WorkItem that loads + carries criteria ⇒ the criteria.
+        let got = done_criteria_for_critique(db.conn(), Some("wi-crit"), true);
+        assert_eq!(
+            got,
+            vec!["loop reaches a terminal status".to_string()],
+            "enabled + bound WorkItem ⇒ its done_criteria are loaded"
+        );
+
+        // (b) enabled=false ⇒ empty even with a bound WorkItem (flag-OFF reads nothing).
+        assert!(
+            done_criteria_for_critique(db.conn(), Some("wi-crit"), false).is_empty(),
+            "flag OFF loads nothing"
+        );
+
+        // (c) enabled=true but NO bound WorkItem ⇒ empty (sessionless / criteria-less runs).
+        assert!(
+            done_criteria_for_critique(db.conn(), None, true).is_empty(),
+            "no bound WorkItem ⇒ empty"
+        );
+
+        // (d) enabled=true + a MISSING WorkItem id ⇒ empty (fail-safe; never blocks a finish).
+        assert!(
+            done_criteria_for_critique(db.conn(), Some("wi-does-not-exist"), true).is_empty(),
+            "a missing WorkItem row fails safe to empty (no critique)"
+        );
+    }
+
+    #[test]
+    fn self_critique_enabled_from_only_opt_in_enables() {
+        // Exact-"1" matcher (the program-standard flag idiom): only "1" (trimmed) turns it ON.
+        assert!(self_critique_enabled_from(Some("1")));
+        assert!(self_critique_enabled_from(Some(" 1 ")));
+        assert!(!self_critique_enabled_from(None));
+        assert!(!self_critique_enabled_from(Some("")));
+        assert!(!self_critique_enabled_from(Some("0")));
+        assert!(!self_critique_enabled_from(Some("true")));
+        assert!(!self_critique_enabled_from(Some("2")));
+        assert!(!self_critique_enabled_from(Some("yes")));
+    }
+
+    #[test]
+    fn answer_passes_done_criteria_deterministic_check() {
+        // Empty / whitespace-only ⇒ always deficient.
+        assert!(!answer_passes_done_criteria("", &["x".to_string()]));
+        assert!(!answer_passes_done_criteria("   \n\t ", &["x".to_string()]));
+        // A prose criterion (no artifact-like token) imposes no required token ⇒ a non-empty
+        // answer PASSES (high-precision: we never force a critique on a substantive answer).
+        assert!(answer_passes_done_criteria(
+            "the tests all pass now",
+            &[
+                "tests pass".to_string(),
+                "loop reaches a terminal status".to_string()
+            ]
+        ));
+        // An artifact-like token (`src/lib.rs`) that the answer references ⇒ PASS.
+        assert!(answer_passes_done_criteria(
+            "I edited src/lib.rs and added the function",
+            &["modify src/lib.rs".to_string()]
+        ));
+        // The SAME required artifact token ABSENT from the answer ⇒ FAIL.
+        assert!(!answer_passes_done_criteria(
+            "I made the change as requested",
+            &["modify src/lib.rs".to_string()]
+        ));
+        // Case-insensitive + punctuation-trimmed matching: `report.md` referenced with surrounding
+        // punctuation still counts.
+        assert!(answer_passes_done_criteria(
+            "Wrote the file (Report.MD) successfully.",
+            &["produce \"report.md\"".to_string()]
+        ));
+        // A short non-artifact token (< 4 chars, or no `/._`) imposes no constraint.
+        assert!(answer_passes_done_criteria(
+            "anything",
+            &["do it".to_string(), "abc".to_string()]
+        ));
+        // Empty criteria ⇒ accept (defensive; the caller guards on non-empty anyway).
+        assert!(answer_passes_done_criteria("anything", &[]));
     }
 
     // ── NS-2: flag-gated trust-grant enforcement at the gate-dispatch chokepoint ──────
@@ -12973,6 +13649,8 @@ mod tests {
             false,
             true,  // FRIDAY_SUBAGENT_TOOL_ENABLED = ON (the injected-bool form of the flag)
             false, // rich_prompt_enabled OFF — byte-identical prompt (default)
+            false, // self_critique_enabled OFF (test default ⇒ byte-identical finish)
+            &[],   // done_criteria: none for this test scenario
             None,
         )
         .unwrap();
@@ -13123,6 +13801,8 @@ mod tests {
             false,
             false, // subagent_enabled = OFF
             false, // rich_prompt_enabled OFF — byte-identical prompt (default)
+            false, // self_critique_enabled OFF (test default ⇒ byte-identical finish)
+            &[],   // done_criteria: none for this test scenario
             None,
         )
         .unwrap();
@@ -13197,6 +13877,8 @@ mod tests {
             false,
             true,
             false, // rich_prompt_enabled OFF — byte-identical prompt (default)
+            false, // self_critique_enabled OFF (test default ⇒ byte-identical finish)
+            &[],   // done_criteria: none for this test scenario
             None,
         )
         .unwrap();
@@ -13364,6 +14046,8 @@ mod tests {
             false,
             true,
             false, // rich_prompt_enabled OFF — byte-identical prompt (default)
+            false, // self_critique_enabled OFF (test default ⇒ byte-identical finish)
+            &[],   // done_criteria: none for this test scenario
             None,
         )
         .unwrap();
@@ -13480,6 +14164,8 @@ mod tests {
             false,
             true,
             false, // rich_prompt_enabled OFF — byte-identical prompt (default)
+            false, // self_critique_enabled OFF (test default ⇒ byte-identical finish)
+            &[],   // done_criteria: none for this test scenario
             None,
         )
         .unwrap();
@@ -13548,6 +14234,8 @@ mod tests {
             false,
             true,
             false, // rich_prompt_enabled OFF — byte-identical prompt (default)
+            false, // self_critique_enabled OFF (test default ⇒ byte-identical finish)
+            &[],   // done_criteria: none for this test scenario
             None,
         )
         .unwrap();
@@ -13614,6 +14302,8 @@ mod tests {
             false,
             true,
             false, // rich_prompt_enabled OFF — byte-identical prompt (default)
+            false, // self_critique_enabled OFF (test default ⇒ byte-identical finish)
+            &[],   // done_criteria: none for this test scenario
             None,
         )
         .unwrap();
@@ -13696,6 +14386,8 @@ mod tests {
             false,
             true,
             false, // rich_prompt_enabled OFF — byte-identical prompt (default)
+            false, // self_critique_enabled OFF (test default ⇒ byte-identical finish)
+            &[],   // done_criteria: none for this test scenario
             None,
         )
         .unwrap();
