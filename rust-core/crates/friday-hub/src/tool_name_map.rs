@@ -140,6 +140,28 @@ pub const TS_RUST_PAIRS: &[ToolNamePair] = &[
         ts: "subagent",
         rust: "subagent",
     },
+    // L2-4: memory_recall is the Rust recall action; it is present under the SAME name on the
+    // Rust side (identity alias), so a TS-shaped `disabledToolNames` entry of `memory_recall`
+    // disables it, AND the FRIDAY_MEMORY_TOOL_ENABLED flag-gate canonicalizes it through this map.
+    ToolNamePair {
+        ts: "memory_recall",
+        rust: "memory_recall",
+    },
+    // L2-4: the TS oracle's recall tool is named `memory_search`; it maps to the Rust
+    // `memory_recall` action (the Rust name is `memory_recall` to read as "recall the owner's
+    // confirmed memory"). Listing this NON-identity alias keeps a TS-shaped `disabledToolNames`
+    // entry of `memory_search` correctly disabling the dispatched Rust `memory_recall`.
+    ToolNamePair {
+        ts: "memory_search",
+        rust: "memory_recall",
+    },
+    // L2-4: memory_store is present under the SAME name on both sides (identity alias), so a
+    // TS-shaped `disabledToolNames` entry of `memory_store` disables the Rust `memory_store`, AND
+    // the FRIDAY_MEMORY_TOOL_ENABLED flag-gate canonicalizes it through this map.
+    ToolNamePair {
+        ts: "memory_store",
+        rust: "memory_store",
+    },
 ];
 
 /// Rust [`crate::ToolRegistry`] actions that have NO TS disable-alias today, recorded
@@ -188,8 +210,11 @@ pub const TS_ONLY_UNMAPPED: &[&str] = &[
     "list_subagents",
     "mcp",
     "memory_extract",
-    "memory_search",
-    "memory_store",
+    // L2-4: `memory_search` (the TS recall tool) now maps to the Rust `memory_recall` executor,
+    // and `memory_store` now has a Rust executor (memory_tools::MemoryToolExecutor) — both are
+    // TS_RUST_PAIRS aliases above, removed from the unmapped list. (`memory_extract` stays
+    // unmapped: extraction is a job-driven path — memory_extraction::extract_inline — NOT an
+    // agent tool.)
     "message",
     "nodes",
     "pdf_parse",
@@ -310,6 +335,37 @@ pub const PARAM_SCHEMA_DIFFS: &[ParamSchemaDiff] = &[
                a CompositeToolExecutor action: it is INTERCEPTED at the loop dispatch seam, which \
                mints a ⊆-parent TrustGrant (via the existing friday-storage trust-issue path) and \
                recurses into a bounded nested `run_loop_with_policy` under a child RunPolicy.",
+    },
+    ParamSchemaDiff {
+        ts: "memory_recall",
+        rust: "memory_recall",
+        note: "params align by name: `query` / `limit` (1-10). DELIBERATE Rust-side scoping: the \
+               TS oracle's model-controlled `namespace` param is DROPPED — recall keys ONLY on \
+               the run's AUTHENTICATED principal (no cross-owner read). The Rust spine ranks by \
+               recency-decay (no FTS/lexical layer yet), so `query` is accepted for parity but \
+               does not drive a new ranking — the recall set is the owner's most-recent confirmed \
+               memory (the SAME set auto-recall injects), PII-redacted + Passport-gated.",
+    },
+    ParamSchemaDiff {
+        ts: "memory_search",
+        rust: "memory_recall",
+        note: "the TS recall tool is named `memory_search`; it maps to the Rust `memory_recall` \
+               action. Same param schema as the `memory_recall`→`memory_recall` row (`query` / \
+               `limit`, model-supplied `namespace` DROPPED, recall keyed on the authenticated \
+               principal). The two pairs differ only in the TS-side name.",
+    },
+    ParamSchemaDiff {
+        ts: "memory_store",
+        rust: "memory_store",
+        note: "params align by name: `content` (required) / `tags`. The Rust executor takes \
+               `tags` as a flattened newline-separated string (the dev bridge serializes the TS \
+               string[] this way) and uses them ONLY for the sensitivity check (the Rust \
+               memory_item row has no tags column — same disclosed deviation as extraction). \
+               DELIBERATE Rust-side scoping: the TS oracle's model-controlled `namespace` param \
+               is DROPPED — the candidate's owner is the run's AUTHENTICATED principal (no \
+               cross-owner write). Unlike the TS oracle's direct durable store, the Rust store \
+               mints a CANDIDATE (state=Candidate, non-durable) that is recallable only after the \
+               owner confirms it (the spine's extract→confirm→recall lifecycle).",
     },
 ];
 

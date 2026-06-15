@@ -156,12 +156,12 @@ fn intersect(requested: &[String], parent: &[String]) -> Vec<String> {
 ///   the parent's).
 /// - `allowed_tools`: `requested ∩ parent.allowed_tools` (default = the read-only subset of the
 ///   parent's), with `subagent` ALWAYS stripped (guard 3). A tool the parent lacks → dropped.
-/// - `allowed_channels`/`providers`/`workflow_families`/`skill_families`: intersected with the
-///   parent's; a sub-agent does not get NEW channels/providers/families it must explicitly carry,
-///   so the default (no request param for these) is the parent's set intersected with EMPTY =
-///   EMPTY = DENY-ALL. We pass the parent's set through verbatim so the sub-agent inherits the
-///   SAME non-tool envelope (no widening — it is the parent's own set, an intersection of a set
-///   with itself). This is conservative and never a superset.
+/// - `allowed_channels`/`providers`/`workflow_families`/`skill_families`: inherited from the
+///   parent VERBATIM (there is no request param for these dimensions), so the child gets EXACTLY
+///   the parent's set — child == parent for these dims, which is ⊆ parent (never a superset). The
+///   sub-agent gets NO new channels/providers/families the parent lacked. (NOT emptied to a
+///   DENY-ALL: verbatim inheritance — the parent's set intersected with itself — is already the
+///   conservative ⊆-parent choice; emptying would needlessly strip the envelope.)
 /// - `token_ceiling`/`max_runs`: DEFERRED (stored, not enforced — same as the parent); carried as
 ///   the parent's value (never raised).
 ///
