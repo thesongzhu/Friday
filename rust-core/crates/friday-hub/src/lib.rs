@@ -264,6 +264,12 @@ pub mod mission_preflight;
 /// blocks boot).
 pub mod crash_recovery;
 
+/// The `surface_event` timeline PRODUCER (`FRIDAY_SURFACE_EVENTS`, DARK, default-OFF). Emits
+/// refs-only `surface_event` rows at the Mission lifecycle points (intake-birth, run-start,
+/// run-finish/proof) so the existing Mission Workbench timeline reader has rows to fold in. Reuses
+/// the existing `upsert_surface_event` persist; best-effort / non-fatal; never touches the reader.
+pub(crate) mod surface_events;
+
 /// Skill / Capability Catalog / Advisor Bridge. Reads managed skill manifests as
 /// truth-labeled catalog entries and advisor inputs; it does not execute skills
 /// or grant control.
@@ -3266,6 +3272,30 @@ fn mission_intake_clarify_from(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1"))
 }
 
+/// The `FRIDAY_SURFACE_EVENTS` env var. When ON, the surface_event PRODUCER emits refs-only
+/// `surface_event` rows at the Mission lifecycle points (intake-birth, run-start, run-finish/proof)
+/// so the existing Mission Workbench timeline reader
+/// ([`workbench_projection::project_workbench`] → `append_surface_events`) — which already reads
+/// [`friday_storage::Db::list_surface_events_for_mission`] — has rows to fold in. Today nothing
+/// emits these rows on the live path, so the workbench timeline is empty of surface events. This is
+/// pure OBSERVABILITY: the emit is BEST-EFFORT (a write failure is logged + swallowed, never
+/// failing the run/intake) and NEVER changes a run outcome, billing, proof, or intake result.
+/// DEFAULT-OFF: unset / empty / `"0"` / any non-`"1"` value ⇒ OFF, and the intake + run paths are
+/// BYTE-IDENTICAL to today (no emit, no extra rows). The env is read ONCE inside each public
+/// producer entry and threaded as a pure bool to the inner flagged fn — the same "split env-read
+/// from pure logic" idiom as [`FRIDAY_MISSION_INTAKE_CLARIFY`], so the behavioral tests inject the
+/// bool directly and never race `std::env`.
+pub const FRIDAY_SURFACE_EVENTS: &str = "FRIDAY_SURFACE_EVENTS";
+
+/// Pure flag-matcher for [`FRIDAY_SURFACE_EVENTS`] (env read split out so it is unit-testable
+/// without `set_var`). DEFAULT-OFF: `None` (unset) ⇒ false; ON only for the exact opt-in value
+/// `"1"` (trimmed); everything else (including `"true"`) ⇒ false — the program's standard flag
+/// idiom, mirroring [`mission_intake_clarify_from`]. `pub(crate)` so BOTH producer entries (the
+/// intake in `hub_server` and the run loop in `runtime`) read it via `crate::`.
+pub(crate) fn surface_events_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
 /// `cancel` (C2-1) is an OPTIONAL cooperative cancellation handle checked at the TOP of
 /// each turn, BEFORE the model call. When `Some` and already tripped at a turn boundary,
 /// the loop stops with [`LoopStatus::Interrupted`]: it makes NO further model call and
@@ -4930,6 +4960,27 @@ mod tests {
         );
         assert!(
             !mission_intake_clarify_from(Some("true")),
+            "true ⇒ OFF (only exact 1)"
+        );
+    }
+
+    #[test]
+    fn surface_events_from_only_opt_in_enables() {
+        // FRIDAY_SURFACE_EVENTS: default-OFF; ON only for the exact opt-in value "1" (trimmed).
+        // The race-free env-string semantics proof for the surface_event PRODUCER (the ON/OFF
+        // behavioral arms inject the bool: the run path in-crate below, the intake + e2e in
+        // tests/surface_events_timeline.rs). Mirrors mission_intake_clarify_from's matcher.
+        assert!(!surface_events_from(None), "unset ⇒ OFF (prod default)");
+        assert!(!surface_events_from(Some("")), "empty ⇒ OFF");
+        assert!(!surface_events_from(Some("0")), "0 ⇒ OFF");
+        assert!(!surface_events_from(Some("off")), "off ⇒ OFF");
+        assert!(surface_events_from(Some("1")), "1 ⇒ ON");
+        assert!(
+            surface_events_from(Some("  1  ")),
+            "padded 1 ⇒ ON (trimmed)"
+        );
+        assert!(
+            !surface_events_from(Some("true")),
             "true ⇒ OFF (only exact 1)"
         );
     }

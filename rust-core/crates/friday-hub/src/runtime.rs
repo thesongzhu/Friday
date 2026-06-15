@@ -1398,6 +1398,11 @@ impl<T: Transport> HubRuntime<T> {
                 .ok()
                 .as_deref(),
         );
+        // FRIDAY_SURFACE_EVENTS (DARK, default-OFF): read ONCE here and thread the resulting bool
+        // into the flagged inner fn — the same split-env-read idiom as `passport_mint`. DEFAULT-OFF:
+        // when off the body is BYTE-IDENTICAL (no run-start / run-proof surface_event emitted).
+        let surface_events =
+            crate::surface_events_from(std::env::var(crate::FRIDAY_SURFACE_EVENTS).ok().as_deref());
         self.run_agent_loop_for_mission_with_overrides_flagged(
             mission_lookup,
             session_id,
@@ -1407,6 +1412,7 @@ impl<T: Transport> HubRuntime<T> {
             max_turns_override,
             passport_mint,
             workitem_guarded,
+            surface_events,
             now_ms,
         )
     }
@@ -1437,6 +1443,16 @@ impl<T: Transport> HubRuntime<T> {
     /// The passport is gated as ONE transfer unit (all-or-nothing): ANY sensitive item in the
     /// recalled set blocks the WHOLE handoff (nothing partially carried) — DELIBERATELY tighter
     /// than the per-item recall path. See [`Self::mint_handoff_passport`] for the full semantics.
+    ///
+    /// `surface_events = false` (the prod default) is BYTE-IDENTICAL to the pre-surface_events
+    /// body: no run-start / run-proof [`friday_core::SurfaceEvent`] is emitted (the emits are
+    /// SKIPPED). `surface_events = true` emits, BEST-EFFORT, a run-start
+    /// ([`friday_core::SurfaceEventKind::ProviderTrace`]) surface_event AFTER the envelope is Ready
+    /// (before the loop) and a run-proof ([`friday_core::SurfaceEventKind::ProofReceipt`])
+    /// surface_event AFTER a Finished loop completes the bound WorkItem with proof — so the existing
+    /// Mission Workbench timeline reader has run rows to fold in. The emits are failure-isolated
+    /// (logged + swallowed): a surface_event write failure NEVER changes the run outcome, billing,
+    /// proof, or the `MissionBoundLoopOutcome` returned here.
     #[allow(clippy::too_many_arguments)]
     fn run_agent_loop_for_mission_with_overrides_flagged(
         &self,
@@ -1448,6 +1464,7 @@ impl<T: Transport> HubRuntime<T> {
         max_turns_override: Option<u64>,
         passport_mint: bool,
         workitem_guarded: bool,
+        surface_events: bool,
         now_ms: i64,
     ) -> Result<MissionBoundLoopOutcome, RoutedLoopError> {
         // PREFLIGHT (fail-closed): validate the Mission/work-item BEFORE any run exists. On
@@ -1486,6 +1503,43 @@ impl<T: Transport> HubRuntime<T> {
             }
         }
 
+        // (FRIDAY_SURFACE_EVENTS, DARK, default-OFF) Resolve the SurfaceThread bound to THIS
+        // Mission ONCE — both the run-start and the run-proof surface_event below link to it. The
+        // resolved context's `surface_thread_id` is `None` on the live mission-bound lookup
+        // (`by_mission_work_item`), so the producer resolves by the surface_thread row's OWN
+        // `mission_id` column. OFF ⇒ skip the resolve entirely (byte-identical). A Mission with no
+        // bound thread ⇒ `None` ⇒ no surface_event emitted (best-effort observability, never an
+        // error). The `source_surface` is read FROM the resolved thread so the linkage validates.
+        let bound_surface_thread = if surface_events {
+            crate::surface_events::resolve_bound_surface_thread(
+                &self.db,
+                &envelope.context.mission_id,
+            )
+        } else {
+            None
+        };
+        if let Some(thread) = bound_surface_thread.as_ref() {
+            // RUN-STARTED: Friday dispatched the bound WorkItem to its provider/agent. Emitted
+            // BEFORE the loop runs. ProviderTrace (the reader renders `provider_ack` — a run in
+            // flight, NOT completion). BEST-EFFORT: a write failure cannot fail the run.
+            crate::surface_events::emit_surface_event(
+                &self.db,
+                surface_events,
+                crate::surface_events::SurfaceEventLifecycle::RunStarted,
+                &crate::surface_events::SurfaceEventLink {
+                    friday_conversation_id: &envelope.context.friday_conversation_id,
+                    mission_id: &envelope.context.mission_id,
+                    work_item_id: Some(&envelope.context.work_item_id),
+                    surface_thread_id: &thread.surface_thread_id,
+                    source_surface: thread.surface_kind,
+                },
+                run_id,
+                Some(format!("friday://surface-event-body/run-start/{run_id}")),
+                None,
+                now_ms,
+            );
+        }
+
         // Run the SAME composed loop as the unbound entry (no divergence), threading the
         // (effective) per-run policy + ceiling so a mission-bound run enforces the IDENTICAL
         // tightening the unbound dispatch arm applies. Absent override ⇒ boot config unchanged.
@@ -1516,6 +1570,49 @@ impl<T: Transport> HubRuntime<T> {
             workitem_guarded,
             now_ms,
         )?;
+
+        // (FRIDAY_SURFACE_EVENTS, DARK, default-OFF) RUN-PROOF surface_event — emitted ONLY when
+        // the loop Finished AND the attachment actually completed the bound WorkItem with proof
+        // (`Attached { work_item_status: CompletedWithProof }`). A Paused / Blocked / Errored loop
+        // (which binds at most at `ProviderRouted`) emits NO proof row — truth-honest, mirroring
+        // the WorkItem completion's own truth-honesty. ProofReceipt (the reader renders
+        // `completed_with_proof`). The proof_ref is a Friday-owned `proof://`-prefixed ref (NOT the
+        // `friday://agent-run/...` result_link, which the storage proof-ref validator rejects).
+        // BEST-EFFORT: a write failure cannot change the completion the run already wrote.
+        //
+        // ORDERING: stamp the proof event `now_ms + 1` so it sorts STRICTLY AFTER the run-start
+        // (which used `now_ms`) in `list_surface_events_for_mission`'s `ORDER BY created_at_ms,
+        // surface_event_id`. With an equal stamp the id tiebreak would put `run-proof` BEFORE
+        // `run-start` (`p` < `s`), rendering "completed" ahead of "in flight" — wrong for a timeline.
+        // The loop genuinely ran between start and finish, so a later stamp is also more honest.
+        if let Some(thread) = bound_surface_thread.as_ref() {
+            if completed
+                && matches!(
+                    attachment,
+                    MissionAttachmentOutcome::Attached {
+                        work_item_status: friday_core::WorkItemStatus::CompletedWithProof,
+                        ..
+                    }
+                )
+            {
+                crate::surface_events::emit_surface_event(
+                    &self.db,
+                    surface_events,
+                    crate::surface_events::SurfaceEventLifecycle::RunCompletedWithProof,
+                    &crate::surface_events::SurfaceEventLink {
+                        friday_conversation_id: &envelope.context.friday_conversation_id,
+                        mission_id: &envelope.context.mission_id,
+                        work_item_id: Some(&envelope.context.work_item_id),
+                        surface_thread_id: &thread.surface_thread_id,
+                        source_surface: thread.surface_kind,
+                    },
+                    run_id,
+                    None,
+                    Some(format!("proof://agent-run/{run_id}")),
+                    now_ms.saturating_add(1),
+                );
+            }
+        }
 
         Ok(MissionBoundLoopOutcome::Ran {
             envelope,
@@ -6458,6 +6555,140 @@ mod tests {
         assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
     }
 
+    /// FRIDAY_SURFACE_EVENTS (DARK) — the run-path producer, bool-INJECTED (no `std::env`). OFF ⇒
+    /// the Finished mission-bound run writes ZERO surface_event rows (byte-identical to today); ON ⇒
+    /// the SAME run emits exactly the run-start (provider_trace) + run-proof (proof_receipt) rows,
+    /// each correctly linked to the Mission's bound SurfaceThread (resolved BY MISSION, since the
+    /// `by_work_item` lookup leaves the context's surface_thread_id None). The intake-birth row is
+    /// the intake producer's responsibility (proven in tests/surface_events_timeline.rs); this
+    /// behavioral test isolates the run path. The flagged inner fn is `pub(crate)`-private, so this
+    /// must live in-crate. Asserts the producer NEVER changes the run outcome (Finished +
+    /// CompletedWithProof either way) and the audit chain stays clean.
+    #[test]
+    fn surface_events_run_path_off_is_byte_identical_on_emits_run_rows() {
+        // OFF arm: a normal Finished run with surface_events=false ⇒ zero surface_event rows.
+        let (rt_off, root_off, _post) = runtime_with(
+            "surface-off",
+            &[
+                "{\"tool\":\"read_file\",\"parameters\":{\"path\":\"notes.md\"}}",
+                "{\"tool\":\"none\"}",
+            ],
+            Box::new(DenyAllApprovals),
+        );
+        std::fs::write(root_off.join("notes.md"), b"note").unwrap();
+        seed_loop_mission(
+            rt_off.db(),
+            WorkLane::DeepSeek,
+            Some("deepseek"),
+            WorkItemStatus::ReadyToDispatch,
+        );
+        let outcome_off = rt_off
+            .run_agent_loop_for_mission_with_overrides_flagged(
+                loop_lookup(),
+                "friday-hub-session",
+                "run-surface-off",
+                "read the notes",
+                None,
+                None,
+                false, // passport_mint
+                false, // workitem_guarded
+                false, // surface_events OFF
+                1000,
+            )
+            .unwrap();
+        assert!(matches!(outcome_off, MissionBoundLoopOutcome::Ran { .. }));
+        assert_eq!(
+            rt_off
+                .db()
+                .get_work_item("work-loop")
+                .unwrap()
+                .unwrap()
+                .status,
+            WorkItemStatus::CompletedWithProof,
+            "the run completes with proof regardless of the surface_events flag"
+        );
+        assert!(
+            rt_off
+                .db()
+                .list_surface_events_for_mission("mission-loop")
+                .unwrap()
+                .is_empty(),
+            "flag-OFF writes NO surface_event rows"
+        );
+        assert!(friday_storage::audit::verify_audit_chain(rt_off.db().conn()).is_ok());
+
+        // ON arm: the SAME run with surface_events=true ⇒ run-start + run-proof rows.
+        let (rt_on, root_on, _post) = runtime_with(
+            "surface-on",
+            &[
+                "{\"tool\":\"read_file\",\"parameters\":{\"path\":\"notes.md\"}}",
+                "{\"tool\":\"none\"}",
+            ],
+            Box::new(DenyAllApprovals),
+        );
+        std::fs::write(root_on.join("notes.md"), b"note").unwrap();
+        seed_loop_mission(
+            rt_on.db(),
+            WorkLane::DeepSeek,
+            Some("deepseek"),
+            WorkItemStatus::ReadyToDispatch,
+        );
+        let outcome_on = rt_on
+            .run_agent_loop_for_mission_with_overrides_flagged(
+                loop_lookup(),
+                "friday-hub-session",
+                "run-surface-on",
+                "read the notes",
+                None,
+                None,
+                false, // passport_mint
+                false, // workitem_guarded
+                true,  // surface_events ON
+                1000,
+            )
+            .unwrap();
+        assert!(matches!(outcome_on, MissionBoundLoopOutcome::Ran { .. }));
+        // Same run outcome as OFF: the producer NEVER changes completion/proof.
+        assert_eq!(
+            rt_on
+                .db()
+                .get_work_item("work-loop")
+                .unwrap()
+                .unwrap()
+                .status,
+            WorkItemStatus::CompletedWithProof
+        );
+        let events = rt_on
+            .db()
+            .list_surface_events_for_mission("mission-loop")
+            .unwrap();
+        let kinds: Vec<&str> = events.iter().map(|e| e.event_kind.as_str()).collect();
+        assert!(
+            kinds.contains(&"provider_trace"),
+            "run-start (provider_trace) emitted: {kinds:?}"
+        );
+        assert!(
+            kinds.contains(&"proof_receipt"),
+            "run-proof (proof_receipt) emitted: {kinds:?}"
+        );
+        // ORDER: the reader sorts by (created_at_ms, surface_event_id); run-start must precede
+        // run-proof in the timeline (the now_ms+1 proof stamp guards the equal-stamp id-tiebreak
+        // that would otherwise put "completed" ahead of "in flight").
+        let start_idx = kinds.iter().position(|k| *k == "provider_trace").unwrap();
+        let proof_idx = kinds.iter().position(|k| *k == "proof_receipt").unwrap();
+        assert!(
+            start_idx < proof_idx,
+            "run-start must sort before run-proof in the timeline: {kinds:?}"
+        );
+        // Linked to the Mission's bound surface thread (resolved BY MISSION, not via the lookup).
+        for event in &events {
+            assert_eq!(event.mission_id, "mission-loop");
+            assert_eq!(event.surface_thread_id, "surface-mobile-loop");
+            assert_eq!(event.source_surface, SurfaceKind::Mobile);
+        }
+        assert!(friday_storage::audit::verify_audit_chain(rt_on.db().conn()).is_ok());
+    }
+
     /// A NON-Finished (Paused) loop is still bound to the Mission (link tied to run_id) but
     /// the binding is TRUTH-honest: it does NOT over-claim `CompletedWithProof` — it stops at
     /// `ProviderRouted` (true for any Ok loop outcome).
@@ -7172,6 +7403,7 @@ mod tests {
                 None,
                 /* passport_mint = */ true,
                 /* workitem_guarded = */ false,
+                /* surface_events = */ false,
                 1000,
             )
             .unwrap();
@@ -7252,6 +7484,7 @@ mod tests {
                 None,
                 /* passport_mint = */ true,
                 /* workitem_guarded = */ false,
+                /* surface_events = */ false,
                 1000,
             )
             .unwrap();
@@ -7351,6 +7584,7 @@ mod tests {
                 None,
                 /* passport_mint = */ true,
                 /* workitem_guarded = */ false,
+                /* surface_events = */ false,
                 1000,
             )
             .unwrap();
@@ -7449,6 +7683,7 @@ mod tests {
                 None,
                 /* passport_mint = */ false,
                 /* workitem_guarded = */ false,
+                /* surface_events = */ false,
                 1000,
             )
             .unwrap();
