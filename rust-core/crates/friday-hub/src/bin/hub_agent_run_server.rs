@@ -372,6 +372,23 @@ fn run() -> Result<(), ServerError> {
         );
     }
 
+    // (S10-B) The SCHEDULER TICK engine (DARK, DEFAULT-OFF). Spawn a background thread that opens
+    // its OWN DB connection and runs the bounded `scheduler_tick::run_one_tick_live` on an interval —
+    // BUT ONLY when the operator has explicitly enabled it via `FRIDAY_SCHEDULER_TICK_ENABLED` (exact
+    // trimmed "1"). Unset/anything-else ⇒ the thread is NOT spawned ⇒ no second DB connection, no
+    // scan, NOTHING fires ⇒ byte-identical to today (schedules never fire). This is what makes
+    // deploying the binary SAFE: the tick (which dispatches REAL workflow runs) does nothing until
+    // the operator flips the flag. Wire-live = (rebuild bin + deploy + enrol the lease holder + set
+    // the env flag) is a SEPARATE operator-gated DEPLOY-GO step. The lease/pause kill-switch +
+    // catch-up storm guard + per-tick caps live in `friday_hub::scheduler_tick`.
+    if scheduler_tick_enabled() {
+        spawn_scheduler_tick(db_path.clone(), workspace_root.clone());
+    } else {
+        eprintln!(
+            "hub_agent_run_server: scheduler TICK engine DISABLED (set FRIDAY_SCHEDULER_TICK_ENABLED=1 to enable) — scheduled jobs never fire"
+        );
+    }
+
     // (A1 run-controls) Read the run-control flag ONCE at boot (default-off). When false the
     // server emits/handles EXACTLY the pre-A1 wire (a paused run ⇒ `AgentRunResult{no_answer}`;
     // a control message ⇒ benign keepalive echo), so deploying a v13 binary changes NO live
@@ -832,6 +849,138 @@ fn spawn_session_reaper(db_path: String, retention_on: bool) {
                         r.memory_item_deleted,
                         r.table_errors,
                     );
+                }
+            }
+        }
+    });
+}
+
+/// (S10-B) The env flag that gates the SCHEDULER TICK engine — the FIRING half of the scheduler
+/// (S10-A built the parser/evaluator + storage rows/lease/control/receipts; this is the loop that
+/// makes a DUE schedule actually fire). DEFAULT-OFF and STRICT exact-1 (the program-standard idiom
+/// used by mission-/run-control/retention flags): the tick thread is spawned ONLY when
+/// `FRIDAY_SCHEDULER_TICK_ENABLED` is exactly the trimmed `"1"`. Unset, empty, `"true"`, `"0"`, or
+/// any other value ⇒ the thread is NEVER spawned ⇒ no second DB connection, no scan, NOTHING fires
+/// ⇒ byte-identical to today (schedules never fire). Because the tick dispatches REAL workflow runs,
+/// this is the riskiest dark flag — wire-live = (deploy + WAL flip + enrol the lease holder + set
+/// this flag) is a SEPARATE operator-gated DEPLOY-GO step.
+const SCHEDULER_TICK_ENABLED_ENV: &str = "FRIDAY_SCHEDULER_TICK_ENABLED";
+
+/// The scheduler tick cadence (60s — one minute, the slot granularity). One tick per minute is
+/// sufficient: the engine's storm guard collapses any missed ticks to the most-recent due slot, so a
+/// slower-than-once-a-minute cadence never double-fires and never loses more than the most-recent
+/// slot of a missed window.
+const SCHEDULER_TICK_INTERVAL: Duration = Duration::from_secs(60);
+
+/// The lease cadence: the holder claims the single-instance lease for a TTL of a few ticks so a
+/// crashed holder is reclaimed within bounds, and refreshes it on every tick.
+const SCHEDULER_LEASE_TTL: Duration = Duration::from_secs(180);
+
+/// Whether the operator has explicitly enabled the scheduler tick engine. Fail-closed: only the
+/// exact trimmed `"1"` enables it; everything else (including unset) is OFF.
+fn scheduler_tick_enabled() -> bool {
+    scheduler_tick_enabled_from(env::var(SCHEDULER_TICK_ENABLED_ENV).ok().as_deref())
+}
+
+/// Pure flag-matcher for [`SCHEDULER_TICK_ENABLED_ENV`] (separated from the env read so it is
+/// testable without mutating the process-global environment). DEFAULT-OFF: `None` (unset) ⇒ false;
+/// ON only for the exact opt-in value `"1"` (trimmed), matching the program's standard flag idiom;
+/// everything else (including `"true"`) ⇒ false.
+fn scheduler_tick_enabled_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
+/// Spawn the DARK scheduler TICK engine on its OWN thread + OWN DB connection (mirrors the reaper:
+/// `Db::open_hub`, NOT `open_hub_concurrent` — the persistent WAL flip is an operator live-flip, not
+/// a dark deploy). On every [`SCHEDULER_TICK_INTERVAL`] it:
+///   1. acquires/refreshes the SINGLE-INSTANCE lease (`acquire_lease`) for this holder. If another
+///      LIVE holder owns it, this instance stands down for the tick (the containment layer — exactly
+///      one daemon may tick at a time). A crashed holder's expired lease is superseded.
+///   2. runs ONE bounded tick (`scheduler_tick::run_one_tick_live`) — pause-checked, storm-guarded,
+///      serialization-guarded, fire/consider-capped — dispatching due workflows through the existing
+///      `run_stored_published_workflow` seam with a DENY-ALL approval policy (so an unattended
+///      scheduled run PAUSES at its first mutating step and never executes a side effect).
+///
+/// Errors (a failed open, a failed tick) are LOGGED (category only — never the db_path/row bodies)
+/// and the loop CONTINUES — the tick never panics the daemon. A non-empty tick logs refs-only counts.
+fn spawn_scheduler_tick(db_path: String, workspace_root: String) {
+    thread::spawn(move || {
+        // This thread's OWN connection. A failed open is logged (category only) and the tick exits;
+        // the daemon keeps serving.
+        let db = match friday_storage::Db::open_hub(&db_path) {
+            Ok(db) => db,
+            Err(_e) => {
+                eprintln!(
+                    "hub_agent_run_server: scheduler tick could not open its DB connection — tick not running"
+                );
+                return;
+            }
+        };
+        // A stable, per-process lease holder id (pid-anchored). The lease is single-instance
+        // containment; the HARD at-most-once is the engine's deterministic-run-id create_run PK.
+        let holder = format!("hub-agent-run-server:{}", std::process::id());
+        // The agent loop's fs tools are contained to the workspace root (the same root the live
+        // session loop uses). Built once; reused across ticks.
+        let executor = friday_hub::FsToolExecutor::new(PathBuf::from(&workspace_root));
+        // DENY-ALL approval: a fired workflow's mutating/checkpoint step is never auto-approved — it
+        // PAUSES (AwaitingCheckpoint). An unattended scheduled run can never execute a side effect.
+        let deny_all = |_r: &friday_core::gate::MutatingActionRequest| -> Option<
+            friday_core::gate::CanonicalApproval,
+        > { None };
+        // The engine evidence-signing secret. This is the scheduler thread's OWN ephemeral secret,
+        // built ONCE and reused for every tick so it is self-consistent WITHIN this thread (a run's
+        // read-step evidence verifies against the same key that signed it). It is NOT the main
+        // server's session-loop secret (that one is seeded with real nanos); the two are independent
+        // ephemeral keys. That is safe in this dark slice because a scheduled run is dispatched and
+        // (for a read-only workflow) completes WITHIN this thread's run — it is never handed to the
+        // main server's run-control plane for resume (scheduled-run resume is not wired here), so no
+        // cross-secret evidence re-verification can occur. Under deny-all a mutating step PAUSES and
+        // never executes, so this signs only read-step evidence.
+        let secret = ephemeral_dev_secret(std::process::id(), 0);
+        let bounds = friday_hub::scheduler_tick::TickBounds::default();
+        eprintln!(
+            "hub_agent_run_server: scheduler TICK engine ENABLED (interval={}s, holder={holder})",
+            SCHEDULER_TICK_INTERVAL.as_secs()
+        );
+        loop {
+            thread::sleep(SCHEDULER_TICK_INTERVAL);
+            let now_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            let lease_expires = now_ms + SCHEDULER_LEASE_TTL.as_millis() as i64;
+            // (1) Single-instance containment: claim/refresh the lease. If a DIFFERENT live holder
+            // owns it, stand down this tick (only one daemon ticks at a time). A lease error is
+            // logged (category only) and the tick is skipped — never crashes the loop.
+            match friday_storage::schedule::acquire_lease(db.conn(), &holder, lease_expires, now_ms)
+            {
+                Ok(friday_storage::schedule::LeaseAcquireOutcome::Acquired) => {}
+                Ok(friday_storage::schedule::LeaseAcquireOutcome::HeldByOther) => {
+                    // Another instance is the active ticker; this one is a hot standby.
+                    continue;
+                }
+                Err(_e) => {
+                    eprintln!(
+                        "hub_agent_run_server: scheduler lease acquire failed (skipping tick)"
+                    );
+                    continue;
+                }
+            }
+            // (2) Run ONE bounded tick. A tick error is logged (category only) and the loop
+            // continues; the tick never crashes the daemon.
+            match friday_hub::scheduler_tick::run_one_tick_live(
+                &db, &bounds, now_ms, &executor, &secret, &deny_all,
+            ) {
+                Ok(out) if !out.is_empty() => {
+                    eprintln!(
+                        "hub_agent_run_server: scheduler tick fired={} considered={} paused={}",
+                        out.fired, out.considered, out.paused,
+                    );
+                }
+                // A quiet tick (nothing due) stays silent to avoid log spam.
+                Ok(_) => {}
+                Err(_e) => {
+                    eprintln!("hub_agent_run_server: scheduler tick failed (continuing)");
                 }
             }
         }
@@ -2721,6 +2870,37 @@ mod tests {
             "padded true ⇒ enabled"
         );
         assert!(reaper_enabled_from(Some(" 1 ")), "padded 1 ⇒ enabled");
+    }
+
+    #[test]
+    fn scheduler_tick_flag_is_default_off_and_fail_closed() {
+        // (S10-B) DEFAULT-OFF + STRICT exact-1 (the program-standard idiom; NOT the reaper's
+        // 1|true). This is the byte-identical guarantee for the riskiest dark flag: unset/empty/0/
+        // false/true/garbage ⇒ the tick thread is NEVER spawned ⇒ nothing fires ⇒ today's behavior.
+        assert!(
+            !scheduler_tick_enabled_from(None),
+            "unset ⇒ disabled (default-off; the tick thread is never spawned)"
+        );
+        assert!(!scheduler_tick_enabled_from(Some("")), "empty ⇒ disabled");
+        assert!(!scheduler_tick_enabled_from(Some("0")), "0 ⇒ disabled");
+        assert!(
+            !scheduler_tick_enabled_from(Some("false")),
+            "false ⇒ disabled"
+        );
+        assert!(
+            !scheduler_tick_enabled_from(Some("true")),
+            "true is NOT the opt-in value (exact-1 idiom)"
+        );
+        assert!(
+            !scheduler_tick_enabled_from(Some("enabled")),
+            "garbage ⇒ disabled"
+        );
+        // Only the exact (trimmed) "1" enables it.
+        assert!(scheduler_tick_enabled_from(Some("1")), "1 ⇒ enabled");
+        assert!(
+            scheduler_tick_enabled_from(Some(" 1 ")),
+            "padded 1 ⇒ enabled (trimmed)"
+        );
     }
 
     #[test]
