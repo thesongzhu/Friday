@@ -216,32 +216,51 @@ const HUB_OPEN_RETRY_ATTEMPTS: u32 = 5;
 /// boot stall, while a never-clearing lock still fails closed promptly.
 const HUB_OPEN_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_millis(200);
 
-/// True iff `e` is a SQLite busy/locked failure — the ONLY class the writable-open
-/// retry self-heals. Matched on the STRUCTURED `ErrorCode` (never the message string,
-/// which is locale/version-fragile) so a real init error — `SchemaTooNew`, a migration
-/// failure, an IO error — is NEVER masked as "retryable" and propagates immediately.
-/// Reaches through the `StorageError::Sqlite` wrapper so a busy surfaced from the WAL
-/// flip pragma OR from the migration write-txn is recognised identically.
+/// True iff `e` is a SQLite busy/locked failure — the ONLY class the busy retry
+/// self-heals (the writable-open WAL flip AND the run-billing write txn). Matched on the
+/// STRUCTURED `ErrorCode` (never the message string, which is locale/version-fragile) so a
+/// real error — `SchemaTooNew`, a migration failure, an IO error, a constraint violation —
+/// is NEVER masked as "retryable" and propagates immediately. Reaches through the
+/// `StorageError::Sqlite` wrapper so a busy surfaced from the WAL flip pragma, the migration
+/// write-txn, OR a contended billing INSERT is recognised identically.
+///
+/// BUSY_SNAPSHOT (belt-and-suspenders): the extended result code `SQLITE_BUSY_SNAPSHOT`
+/// (517) is the contention a WAL writer hits when its snapshot is stale — and crucially, the
+/// `busy_timeout` handler does NOT auto-retry it (it returns immediately), so ONLY an
+/// application-level retry recovers it. NOTE this `extended_code` arm is REDUNDANT for
+/// MATCHING: rusqlite derives the primary `code` as `extended_code & 0xff`, and
+/// `517 & 0xff == 5 == SQLITE_BUSY`, so the `DatabaseBusy` arm above ALREADY returns true for
+/// BUSY_SNAPSHOT. It is kept EXPLICIT to (a) document that BUSY_SNAPSHOT's recovery path is
+/// this retry — not `busy_timeout` — and (b) stay correct if a future rusqlite ever decoded
+/// it to a distinct primary code. It widens nothing today; the retry, not this matcher, is
+/// what absorbs BUSY_SNAPSHOT.
 fn is_storage_busy(e: &StorageError) -> bool {
     matches!(
         e,
         StorageError::Sqlite(rusqlite::Error::SqliteFailure(err, _))
             if matches!(err.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
+                || err.extended_code == rusqlite::ffi::SQLITE_BUSY_SNAPSHOT
     )
 }
 
-/// Run a writable-Hub open closure with a SHORT bounded retry on SQLite busy/locked.
-/// Each attempt re-runs `open` from scratch (a fresh `Connection` carries no partial
-/// state, and the WAL flip is atomic — a BUSY means the conversion did NOT happen — so
-/// a retry can never compound a half-converted file). Only the busy/locked case
-/// retries: every other error propagates on the FIRST attempt with zero delay (never
-/// mask a real init failure). After the final attempt the last busy error is returned
-/// so the caller still fails closed.
-fn open_hub_with_busy_retry(mut open: impl FnMut() -> Result<Db>) -> Result<Db> {
+/// Run a fallible storage `op` with a SHORT bounded retry on SQLite busy/locked. Each
+/// attempt re-runs `op` from scratch: for the writable-Hub open a fresh `Connection`
+/// carries no partial state (the WAL flip is atomic — a BUSY means the conversion did NOT
+/// happen — so a retry can never compound a half-converted file); for a write txn the
+/// failed txn has already rolled back (a BUSY means NOTHING committed), so a retry re-opens
+/// the txn and re-runs the body cleanly. Only the busy/locked case retries: every other
+/// error propagates on the FIRST attempt with zero delay (never mask a real failure). After
+/// the final attempt the last busy error is returned so the caller still fails closed.
+///
+/// This is the ONE bounded busy-retry idiom in the crate — the writable-Hub open
+/// ([`open_hub_with_busy_retry`]) and the run-billing write txn
+/// ([`record_run_model_call`]) BOTH go through it, so they share identical retry budget,
+/// backoff, and the [`is_storage_busy`] error class (never an ad-hoc second policy).
+fn with_busy_retry<T>(mut op: impl FnMut() -> Result<T>) -> Result<T> {
     let mut attempt: u32 = 0;
     loop {
-        match open() {
-            Ok(db) => return Ok(db),
+        match op() {
+            Ok(v) => return Ok(v),
             Err(e) if is_storage_busy(&e) && attempt + 1 < HUB_OPEN_RETRY_ATTEMPTS => {
                 attempt += 1;
                 std::thread::sleep(HUB_OPEN_RETRY_BACKOFF);
@@ -249,6 +268,12 @@ fn open_hub_with_busy_retry(mut open: impl FnMut() -> Result<Db>) -> Result<Db> 
             Err(e) => return Err(e),
         }
     }
+}
+
+/// Run a writable-Hub open closure with the bounded busy-retry idiom. Thin alias over the
+/// generic [`with_busy_retry`] preserved as a named seam so the open path reads as before.
+fn open_hub_with_busy_retry(open: impl FnMut() -> Result<Db>) -> Result<Db> {
+    with_busy_retry(open)
 }
 
 impl Db {
@@ -1193,6 +1218,17 @@ impl Db {
     /// `activity_item`, and `audit_ledger` in one transaction. If any insert
     /// fails, none persist (gate 21 §2.3). Hub-only (the audit ledger does not
     /// exist on a phone).
+    ///
+    /// CONCURRENCY: this is the ASK-path sibling of [`record_run_model_call`] and shares its
+    /// exact txn shape (open → token_ledger + activity + audit inserts → commit) on the same
+    /// long-lived Hub connection, so it carries the IDENTICAL latent `SQLITE_BUSY`-under-reaper
+    /// crash class. It is wrapped in the SAME bounded busy-retry idiom ([`with_busy_retry`]) for
+    /// the same reasons documented on `record_run_model_call`: the retry re-runs the WHOLE txn
+    /// (REQUIRED — `append_audit` reads the prev chain hash THEN inserts, so a stale-prev-hash
+    /// retry would forge a broken chain; a BUSY rolled the failed txn back, so a re-run re-reads
+    /// the live prev-hash). NO-DEGRADE: the retry fires ONLY on a busy error, so with no
+    /// contention the closure runs exactly once and the result is byte-identical to the pre-fix
+    /// single-txn path.
     pub fn record_model_call(
         &mut self,
         entry: &LedgerEntry,
@@ -1204,20 +1240,23 @@ impl Db {
                 "record_model_call requires the Hub profile (audit_ledger is Hub-only)".into(),
             ));
         }
-        let tx = self.conn.transaction()?;
-        // Ask path: DB-wide ledger row (no owning run) — `run_id` is NULL.
-        insert_token_ledger_conn(&tx, entry, None)?;
-        insert_activity_conn(&tx, activity)?;
-        audit::append_audit(
-            &tx,
-            &audit.audit_id,
-            &audit.actor,
-            &audit.action,
-            audit.payload_ref.as_deref(),
-            audit.created_at,
-        )?;
-        tx.commit()?;
-        Ok(())
+        let conn = &mut self.conn;
+        with_busy_retry(|| {
+            let tx = conn.transaction()?;
+            // Ask path: DB-wide ledger row (no owning run) — `run_id` is NULL.
+            insert_token_ledger_conn(&tx, entry, None)?;
+            insert_activity_conn(&tx, activity)?;
+            audit::append_audit(
+                &tx,
+                &audit.audit_id,
+                &audit.actor,
+                &audit.action,
+                audit.payload_ref.as_deref(),
+                audit.created_at,
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     /// Atomically record a Hub EVENT: one `activity_item` + one hash-chained `audit_ledger`
@@ -1276,6 +1315,27 @@ impl Db {
 ///
 /// Hub-only: `audit_ledger` does not exist on a phone, so a phone connection fails closed
 /// on the audit insert. The agent loop runs only on a Hub DB by construction.
+///
+/// CONCURRENCY (MED bug, hardening audit): this txn opens a deferred write txn (its FIRST
+/// statement is the `token_ledger` INSERT) and runs on the long-lived WS-server connection.
+/// Once a SECOND writer exists — the reaper thread's `sweep_lifecycle` + (when
+/// `FRIDAY_RETENTION_SWEEP=1`) `sweep_retention`'s batched DELETE on a SEPARATE connection —
+/// a batch that out-holds the WAL write lock LONGER than `busy_timeout`
+/// ([`HUB_BUSY_TIMEOUT_MS`]) makes the billing INSERT return `SQLITE_BUSY`; un-retried the
+/// caller's `?` would CRASH the run mid-billing. So the WHOLE txn is wrapped in the SAME
+/// bounded busy-retry idiom as the writable open ([`with_busy_retry`]) — never a new policy.
+///
+/// The retry re-runs the ENTIRE body per attempt (open `unchecked_transaction` → the three
+/// inserts → commit), NOT just the commit: this is REQUIRED for audit-chain atomicity —
+/// `append_audit` reads the previous chain hash THEN inserts, so a stale-prev-hash retry
+/// would forge a broken chain. On a BUSY the failed txn has already rolled back (NOTHING
+/// committed), so the next attempt re-reads the live prev-hash and re-inserts the
+/// deterministic `run_id:tN:*` ids cleanly — no duplicate row, no half-bill.
+///
+/// NO-DEGRADE: the retry fires ONLY on [`is_storage_busy`]. With no contention the closure
+/// runs exactly ONCE and the result is BYTE-IDENTICAL to the pre-fix single-txn path (same
+/// txn contents, same insert ordering, same commit) — the wrapper adds a loop that is never
+/// re-entered. Every non-busy error still propagates on the first attempt with zero delay.
 pub fn record_run_model_call(
     conn: &Connection,
     run_id: &str,
@@ -1283,19 +1343,21 @@ pub fn record_run_model_call(
     activity: &ActivityRow,
     audit: &AuditEvent,
 ) -> Result<()> {
-    let tx = conn.unchecked_transaction()?;
-    insert_token_ledger_conn(&tx, entry, Some(run_id))?;
-    insert_activity_conn(&tx, activity)?;
-    audit::append_audit(
-        &tx,
-        &audit.audit_id,
-        &audit.actor,
-        &audit.action,
-        audit.payload_ref.as_deref(),
-        audit.created_at,
-    )?;
-    tx.commit()?;
-    Ok(())
+    with_busy_retry(|| {
+        let tx = conn.unchecked_transaction()?;
+        insert_token_ledger_conn(&tx, entry, Some(run_id))?;
+        insert_activity_conn(&tx, activity)?;
+        audit::append_audit(
+            &tx,
+            &audit.audit_id,
+            &audit.actor,
+            &audit.action,
+            audit.payload_ref.as_deref(),
+            audit.created_at,
+        )?;
+        tx.commit()?;
+        Ok(())
+    })
 }
 
 fn quote_existing_table(conn: &Connection, table: &str) -> Result<String> {
@@ -1424,8 +1486,8 @@ pub(crate) fn insert_activity_conn(conn: &Connection, a: &ActivityRow) -> rusqli
 #[cfg(test)]
 mod busy_retry_tests {
     use super::{
-        is_storage_busy, now_ms, open_hub_with_busy_retry, Db, Profile, StorageError,
-        HUB_OPEN_RETRY_ATTEMPTS,
+        is_storage_busy, now_ms, open_hub_with_busy_retry, with_busy_retry, Db, Profile, Result,
+        StorageError, HUB_OPEN_RETRY_ATTEMPTS,
     };
     use std::cell::Cell;
 
@@ -1459,6 +1521,58 @@ mod busy_retry_tests {
             disk: 99,
             code: 1
         }));
+    }
+
+    /// BUSY_SNAPSHOT (517) is recognised as busy — AND this proves WHY the explicit
+    /// `extended_code` arm is redundant-for-matching: rusqlite derives the primary `code` as
+    /// `extended_code & 0xff`, and `517 & 0xff == 5 == SQLITE_BUSY`, so the row already carries
+    /// `ErrorCode::DatabaseBusy`. We assert both: that `is_storage_busy` matches it, and that the
+    /// constructed error's primary code is already `DatabaseBusy` (so the `DatabaseBusy` arm
+    /// alone would suffice — the explicit arm is documentation + future-proofing, not coverage).
+    #[test]
+    fn busy_snapshot_extended_code_is_recognised_and_already_primary_busy() {
+        let e = busy_storage_error(rusqlite::ffi::SQLITE_BUSY_SNAPSHOT);
+        assert!(is_storage_busy(&e), "BUSY_SNAPSHOT must be treated as busy");
+        match &e {
+            StorageError::Sqlite(rusqlite::Error::SqliteFailure(err, _)) => {
+                assert_eq!(
+                    err.extended_code,
+                    rusqlite::ffi::SQLITE_BUSY_SNAPSHOT,
+                    "extended_code is 517"
+                );
+                assert_eq!(
+                    err.code,
+                    rusqlite::ErrorCode::DatabaseBusy,
+                    "the primary code of BUSY_SNAPSHOT is already DatabaseBusy (517 & 0xff == 5)"
+                );
+            }
+            other => panic!("expected a SqliteFailure, got {other:?}"),
+        }
+    }
+
+    /// The GENERIC `with_busy_retry` is the one idiom both the open path and the run-billing
+    /// path use: it retries a busy `Result<T>` for an arbitrary `T` (here `u32`) on the SAME
+    /// budget, then returns the value once contention clears. (`record_run_model_call` rides
+    /// this with `T = ()`.)
+    #[test]
+    fn generic_with_busy_retry_retries_then_yields_value() {
+        let calls = Cell::new(0u32);
+        let busy_before_success = HUB_OPEN_RETRY_ATTEMPTS - 1;
+        let out: Result<u32> = with_busy_retry(|| {
+            let n = calls.get();
+            calls.set(n + 1);
+            if n < busy_before_success {
+                Err(busy_storage_error(rusqlite::ffi::SQLITE_BUSY))
+            } else {
+                Ok(42)
+            }
+        });
+        assert_eq!(
+            out.unwrap(),
+            42,
+            "yields the closure's value once busy clears"
+        );
+        assert_eq!(calls.get(), HUB_OPEN_RETRY_ATTEMPTS);
     }
 
     /// The loop retries a busy open and SUCCEEDS once the contender clears — modeled

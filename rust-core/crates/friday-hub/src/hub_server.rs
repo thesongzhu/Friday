@@ -205,8 +205,33 @@ impl<T: Transport> HubServer<T> {
         // bin (which holds a `HubRuntime`, not a `HubServer`) REUSE the exact same Mission-birth
         // path through its flag-gated dispatch arm WITHOUT reimplementing it. This dispatch and the
         // bin's arm therefore birth a Mission identically (same rows, same wire result).
-        mission_intake_result_for_db(&self.db, msg_id, request, now_ms)
+        //
+        // (FIX-Q3b) `authenticated_owner` is the identity the persisted owner is BOUND to (never
+        // the raw body field). This LEGACY `HubServer::dispatch` path has NO production binary
+        // caller (both live bins use `HubRuntime`; this serve-loop is the in-crate TS-bridge under
+        // test only) and carries no session-derived principal, so it passes the request's own
+        // `owner_principal` as the authenticated owner — keeping this path BYTE-IDENTICAL (the
+        // equality check below is a tautology here, the persisted owner is unchanged). The LIVE
+        // mission-spine path is the bin's flag-gated arm, which threads `runtime.policy()
+        // .principal_id()` (== the configured `--owner`) as the real authenticated owner.
+        let body_owner = request.owner_principal.clone();
+        mission_intake_result_for_db(&self.db, msg_id, request, Some(body_owner.as_str()), now_ms)
     }
+}
+
+/// (FIX-Q3b) Resolve the canonical OWNER principal of `friday_conversation_id` from the Hub's
+/// `friday_conversation` row — the single source of truth for "who this Mission belongs to". Used
+/// by the mission-spine free fns to bind an inbound mutation to the AUTHENTICATED owner instead of
+/// trusting a self-asserted body field. `None` when the conversation does not exist OR its
+/// `owner_principal` is empty/whitespace (fail-closed: an unresolvable owner can match no
+/// authenticated principal). A DB read error is treated as unresolvable (`None`) so a transient
+/// failure fails CLOSED rather than admitting the mutation.
+fn resolve_conversation_owner(db: &Db, friday_conversation_id: &str) -> Option<String> {
+    db.get_friday_conversation(friday_conversation_id)
+        .ok()
+        .flatten()
+        .map(|c| c.owner_principal.trim().to_string())
+        .filter(|owner| !owner.is_empty())
 }
 
 /// (NS-5) The Mission-intake/preflight mutation, parameterized over `&Db` so BOTH the
@@ -223,12 +248,21 @@ impl<T: Transport> HubServer<T> {
 /// read; semantics in [`crate::mission_intake_clarify_from`]) and threaded as a pure bool
 /// to the parameterized [`mission_intake_result_for_db_flagged`]. **Default-OFF:** when
 /// off the producer is BYTE-IDENTICAL to the pre-clarification baseline — no detail check,
-/// every intent births a Mission exactly as now. The signature is unchanged so both callers
-/// (the [`HubServer::dispatch`] method + the live bin's flag-gated arm) are untouched.
+/// every intent births a Mission exactly as now.
+///
+/// ## Owner binding ([`crate::FRIDAY_MISSION_INTAKE`] dispatch — FIX-Q3b)
+/// `authenticated_owner` is the identity the persisted Mission/conversation owner is BOUND to —
+/// the Rust-derived session principal at the dispatch arm (`runtime.policy().principal_id()`),
+/// NEVER the self-asserted `request.owner_principal` body field. BEFORE persisting ANY row the
+/// producer fail-closes unless `request.owner_principal == authenticated_owner` (a `None`/empty
+/// authenticated owner, or any mismatch, is a typed `Error` and writes ZERO rows), then persists
+/// the AUTHENTICATED owner. Single-peer/single-owner happy path (the body owner == the configured
+/// owner) is UNCHANGED — only a MISMATCHED body owner is now rejected (was silently persisted).
 pub fn mission_intake_result_for_db(
     db: &Db,
     msg_id: &str,
     request: MissionIntakeRequestWire,
+    authenticated_owner: Option<&str>,
     now_ms: i64,
 ) -> Envelope {
     let clarify_enabled = crate::mission_intake_clarify_from(
@@ -244,6 +278,7 @@ pub fn mission_intake_result_for_db(
         db,
         msg_id,
         request,
+        authenticated_owner,
         now_ms,
         clarify_enabled,
         surface_events,
@@ -279,10 +314,28 @@ pub fn mission_intake_result_for_db_flagged(
     db: &Db,
     msg_id: &str,
     request: MissionIntakeRequestWire,
+    authenticated_owner: Option<&str>,
     now_ms: i64,
     clarify_enabled: bool,
     surface_events: bool,
 ) -> Envelope {
+    // (FIX-Q3b) OWNER BINDING — fail-closed BEFORE constructing or persisting ANY row. The
+    // persisted Mission/conversation owner MUST be the AUTHENTICATED owner (the Rust-derived
+    // session principal threaded from the dispatch arm), NEVER the self-asserted
+    // `request.owner_principal` body field. A `None`/empty authenticated owner, or a body
+    // `owner_principal` that does not byte-equal it (after trim), is a typed `Error` that writes
+    // ZERO rows — closing the audit gap where a self-asserted owner_principal was silently
+    // persisted. NO-DEGRADE: the single-peer/single-owner happy path (the body owner == the
+    // configured owner == the authenticated owner) passes this check unchanged.
+    let authenticated_owner = authenticated_owner.unwrap_or("").trim();
+    if authenticated_owner.is_empty() || request.owner_principal.trim() != authenticated_owner {
+        return mission_intake_error(
+            msg_id,
+            now_ms,
+            ErrorCode::Internal,
+            "mission intake owner_principal does not match the authenticated owner",
+        );
+    }
     if let Err(err) = friday_core::validate_friday_conversation_id(&request.friday_conversation_id)
     {
         return mission_intake_error(msg_id, now_ms, ErrorCode::Internal, &err.to_string());
@@ -387,7 +440,12 @@ pub fn mission_intake_result_for_db_flagged(
 
     let conversation = friday_core::FridayConversation {
         friday_conversation_id: request.friday_conversation_id.clone(),
-        owner_principal: request.owner_principal.clone(),
+        // (FIX-Q3b) BIND the persisted owner to the AUTHENTICATED owner, never the raw body field.
+        // The owner-binding check above already guarantees these are byte-equal (after trim), so
+        // this is byte-identical on the happy path — but persisting the authenticated identity is
+        // the load-bearing invariant: the audit-trail owner can never disagree with the executing
+        // owner, even if a future caller's body field and authenticated principal diverged.
+        owner_principal: authenticated_owner.to_string(),
         title: title.clone(),
         current_focus_summary: request.intent.clone(),
         active_mission_ids: Vec::new(),
@@ -620,10 +678,22 @@ fn mission_intake_error(msg_id: &str, now_ms: i64, code: ErrorCode, message: &st
 /// envelope on an unknown target status / invalid transition / missing Mission, correlated to
 /// `msg_id`. A status change here is a Mission-management fact, NOT provider completion unless the
 /// command carried and persisted valid proof.
+///
+/// ## Owner binding (FIX-Q3b)
+/// `authenticated_owner` is the Rust-derived session principal threaded from the dispatch arm
+/// (`runtime.policy().principal_id()`). The target Mission's OWNER (its conversation's
+/// `owner_principal`) MUST match it: a request to transition a Mission owned by a DIFFERENT
+/// principal — or by no authenticated principal at all (`None`/empty) — is a typed `Error` that
+/// transitions NOTHING. The owner check runs only when the target Mission EXISTS; an unknown
+/// Mission falls through to the storage transition, preserving the existing not-found Error shape
+/// (so the cross-owner/not-found denial stays "not found"). NO-DEGRADE: under single-peer/
+/// single-owner the Mission owner == the configured owner == the authenticated owner, so the
+/// happy-path transition is unchanged.
 pub fn mission_lifecycle_result_for_db(
     db: &Db,
     msg_id: &str,
     request: MissionLifecycleRequestWire,
+    authenticated_owner: Option<&str>,
     now_ms: i64,
 ) -> Envelope {
     let next_status = match mission_status_from_wire(&request.target_status) {
@@ -632,6 +702,30 @@ pub fn mission_lifecycle_result_for_db(
             return mission_intake_error(msg_id, now_ms, ErrorCode::Internal, message);
         }
     };
+
+    // (FIX-Q3b) OWNER BINDING — reject a cross-owner transition BEFORE any write. The target
+    // Mission's owner is its conversation's `owner_principal` (the Hub's single source of truth).
+    // Resolve it ONLY when the Mission exists; an unknown Mission yields `None` here and falls
+    // through to `transition_mission_status`, which produces the existing "not found" Error — so
+    // the cross-owner/not-found denial keeps its current shape. A present Mission whose owner does
+    // NOT match the authenticated owner (or a `None`/empty authenticated owner) is fail-closed.
+    let authenticated_owner = authenticated_owner.unwrap_or("").trim();
+    if let Ok(Some(mission)) = db.get_mission(&request.mission_id) {
+        // Resolve the owner from the Mission's OWN conversation (its source of truth), not the
+        // request's `friday_conversation_id` — so a body that points the wrong conversation at a
+        // real Mission cannot dodge the owner check.
+        let mission_owner = resolve_conversation_owner(db, &mission.friday_conversation_id);
+        let owner_ok = !authenticated_owner.is_empty()
+            && mission_owner.as_deref() == Some(authenticated_owner);
+        if !owner_ok {
+            return mission_intake_error(
+                msg_id,
+                now_ms,
+                ErrorCode::Internal,
+                "mission lifecycle blocked: target Mission is not owned by the authenticated owner",
+            );
+        }
+    }
 
     match db.transition_mission_status(
         &request.friday_conversation_id,
@@ -683,10 +777,21 @@ pub fn mission_lifecycle_result_for_db(
 /// `proof_receipt` (or an empty one), so "done" can never be claimed without proof. This function
 /// surfaces that rejection as a typed [`Message::Error`] — it never fakes a completion. Returns a
 /// [`Message::WorkItemStatusResult`] on success, correlated to `msg_id`.
+///
+/// ## Owner binding (FIX-Q3b)
+/// `authenticated_owner` is the Rust-derived session principal threaded from the dispatch arm
+/// (`runtime.policy().principal_id()`). The target WorkItem's OWNER (its Mission's conversation's
+/// `owner_principal`) MUST match it: advancing a WorkItem owned by a DIFFERENT principal — or by
+/// no authenticated principal (`None`/empty) — is a typed `Error` that transitions NOTHING. The
+/// check runs only when the target WorkItem EXISTS; an unknown WorkItem falls through to the
+/// storage transition, preserving the existing "not found" denial shape (the cross-owner/not-found
+/// equivalence under single-peer). NO-DEGRADE: under single-peer/single-owner the owner == the
+/// configured owner == the authenticated owner, so the happy-path transition is unchanged.
 pub fn work_item_status_result_for_db(
     db: &Db,
     msg_id: &str,
     request: WorkItemStatusRequestWire,
+    authenticated_owner: Option<&str>,
     now_ms: i64,
 ) -> Envelope {
     let next_status = match work_item_status_from_wire(&request.target_status) {
@@ -695,6 +800,31 @@ pub fn work_item_status_result_for_db(
             return mission_intake_error(msg_id, now_ms, ErrorCode::Internal, message);
         }
     };
+
+    // (FIX-Q3b) OWNER BINDING — reject a cross-owner transition BEFORE any write. The target
+    // WorkItem's owner is its Mission's conversation's `owner_principal`. Resolve it ONLY when the
+    // WorkItem (and its Mission) exists; an unknown WorkItem yields `None` and falls through to
+    // `transition_work_item_status`, which produces the existing "not found" Error — so the
+    // cross-owner/not-found denial keeps its current shape. A present WorkItem whose owner does NOT
+    // match the authenticated owner (or a `None`/empty authenticated owner) is fail-closed.
+    let authenticated_owner = authenticated_owner.unwrap_or("").trim();
+    if let Ok(Some(work_item)) = db.get_work_item(&request.work_item_id) {
+        let owner = db
+            .get_mission(&work_item.mission_id)
+            .ok()
+            .flatten()
+            .and_then(|m| resolve_conversation_owner(db, &m.friday_conversation_id));
+        let owner_ok =
+            !authenticated_owner.is_empty() && owner.as_deref() == Some(authenticated_owner);
+        if !owner_ok {
+            return mission_intake_error(
+                msg_id,
+                now_ms,
+                ErrorCode::Internal,
+                "work item lifecycle blocked: target WorkItem is not owned by the authenticated owner",
+            );
+        }
+    }
 
     // A blank proof_receipt is normalized to `None` BEFORE the call so the storage layer's
     // (CompletedWithProof, None) rejection fires for an all-whitespace receipt too — a
@@ -1342,7 +1472,21 @@ impl<T: Transport> HubServer<T> {
         // extracted to the free `mission_lifecycle_result_for_db` — letting the LIVE agent-run
         // server bin (which holds a `HubRuntime`, not a `HubServer`) REUSE the exact same Hub
         // state-machine transition through its flag-gated dispatch arm WITHOUT reimplementing it.
-        mission_lifecycle_result_for_db(&self.db, msg_id, request, now_ms)
+        //
+        // (FIX-Q3b) This LEGACY `HubServer::dispatch` path has NO production binary caller and
+        // carries no session-derived principal, so it supplies the target Mission's OWN owner
+        // (resolved from the Hub, the source of truth) as the authenticated owner — keeping this
+        // path BYTE-IDENTICAL (the owner check is a tautology here). The LIVE mission-spine path is
+        // the bin's flag-gated arm, which threads `runtime.policy().principal_id()` (== the
+        // configured `--owner`) as the real authenticated owner. An unknown Mission resolves to
+        // `None` here, which still flows through to the existing not-found Error.
+        let legacy_owner = self
+            .db
+            .get_mission(&request.mission_id)
+            .ok()
+            .flatten()
+            .and_then(|m| resolve_conversation_owner(&self.db, &m.friday_conversation_id));
+        mission_lifecycle_result_for_db(&self.db, msg_id, request, legacy_owner.as_deref(), now_ms)
     }
 
     fn error(msg_id: &str, now_ms: i64, code: ErrorCode, message: &str) -> Envelope {
