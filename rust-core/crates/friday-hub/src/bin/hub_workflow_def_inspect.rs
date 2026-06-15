@@ -26,7 +26,7 @@ use std::env;
 use std::path::Path;
 
 use friday_storage::workflow_def::list_definitions;
-use friday_storage::Db;
+use friday_storage::{Db, StorageError};
 use serde_json::json;
 
 /// Fail-closed error: only a coarse, safe category is surfaced (no raw detail,
@@ -70,7 +70,18 @@ fn run() -> Result<String, InspectError> {
     let workflow_filter = arg_value(&args, "--workflow-id");
 
     // Read-only open: inspection can NEVER mutate an operator DB.
-    let db = Db::open_hub_readonly(&db_path).map_err(|_| InspectError::new("open_failed"))?;
+    // FAIL CLOSED + NAME the skew if the on-disk schema is strictly NEWER than this (stale)
+    // binary understands — the always-on `Db::open_hub_readonly` guard surfaced distinctly.
+    let db = Db::open_hub_readonly(&db_path).map_err(|e| match e {
+        StorageError::SchemaTooNew { disk, code } => {
+            eprintln!(
+                "hub_workflow_def_inspect: leg=open error_kind=schema_too_new disk_version={disk} \
+                 code_version={code} (stale binary: rebuild from the deploying commit)"
+            );
+            InspectError::new("schema_too_new")
+        }
+        _ => InspectError::new("open_failed"),
+    })?;
 
     let mut summaries =
         list_definitions(db.conn()).map_err(|_| InspectError::new("read_failed"))?;

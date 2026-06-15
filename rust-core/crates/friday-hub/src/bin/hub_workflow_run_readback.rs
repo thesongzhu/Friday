@@ -40,7 +40,7 @@ use std::path::Path;
 use friday_storage::audit::verify_audit_chain;
 use friday_storage::workflow::first_pending_seq;
 use friday_storage::workflow_read::{get_workflow_run_summary, list_workflow_step_summaries};
-use friday_storage::Db;
+use friday_storage::{Db, StorageError};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
@@ -90,7 +90,18 @@ fn run(args: &[String]) -> Result<String, ReadbackError> {
     let run_id = arg_value(args, "--run-id").ok_or(ReadbackError::new("bad_args"))?;
 
     // Read-only open: a readback can NEVER mutate an operator DB just because TS asks.
-    let db = Db::open_hub_readonly(&db_path).map_err(|_| ReadbackError::new("open_failed"))?;
+    // FAIL CLOSED + NAME the skew if the on-disk schema is strictly NEWER than this (stale)
+    // binary understands — the always-on `Db::open_hub_readonly` guard surfaced distinctly.
+    let db = Db::open_hub_readonly(&db_path).map_err(|e| match e {
+        StorageError::SchemaTooNew { disk, code } => {
+            eprintln!(
+                "hub_workflow_run_readback: leg=open error_kind=schema_too_new disk_version={disk} \
+                 code_version={code} (stale binary: rebuild from the deploying commit)"
+            );
+            ReadbackError::new("schema_too_new")
+        }
+        _ => ReadbackError::new("open_failed"),
+    })?;
 
     let summary = get_workflow_run_summary(db.conn(), &run_id)
         .map_err(|_| ReadbackError::new("read_failed"))?

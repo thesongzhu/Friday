@@ -44,7 +44,8 @@ use std::env;
 use std::path::Path;
 
 use friday_storage::{
-    get_run_answer_for_principal, AnswerDenyReason, Db, RunAnswerAccess, StoredRunResult,
+    get_run_answer_for_principal, AnswerDenyReason, Db, RunAnswerAccess, StorageError,
+    StoredRunResult,
 };
 use serde_json::json;
 
@@ -109,10 +110,7 @@ fn run() -> Result<String, ReadbackError> {
     // readback failure that left NO log trail is attributable to a leg next time. As of the
     // WAL + busy_timeout opener fix a contended open RETRIES instead of an immediate
     // SQLITE_BUSY, so `open_failed` should be rare; logging it confirms that.
-    let db = Db::open_hub_readonly(&db_path).map_err(|_| {
-        eprintln!("hub_run_answer_readback: run_id={run_id} leg=open error_kind=open_failed");
-        ReadbackError::new("open_failed")
-    })?;
+    let db = open_hub_readonly_guarded(&db_path, &run_id)?;
 
     // The OWNER-GATING decision lives entirely in this single storage primitive: it
     // releases the body ONLY inside `Granted` (caller == the run's bound owner); every
@@ -208,6 +206,32 @@ fn arg_value(args: &[String], name: &str) -> Option<String> {
         })
 }
 
+/// Open the hub DB READ-ONLY, mapping a fail-closed schema-version skew to a DISTINCT,
+/// diagnosable `error_kind`. [`Db::open_hub_readonly`] already FAILS CLOSED when the
+/// on-disk schema is strictly NEWER than this binary understands (`StorageError::SchemaTooNew`
+/// — the always-on guard a STALE bin, built from an older commit with a lower `hub_code_max()`,
+/// hits against a forward-migrated DB). The behavior is unchanged — the open still errors and
+/// the bin refuses to serve — but instead of collapsing it into the generic `open_failed`, we
+/// surface `schema_too_new` and a stderr line NAMING the version skew so the next stale-bin
+/// incident (the 13:40-vs-19:04 case) is attributable instead of an opaque open failure. Every
+/// other open error keeps the existing `open_failed` kind, byte-identical to before.
+fn open_hub_readonly_guarded(db_path: &str, run_id: &str) -> Result<Db, ReadbackError> {
+    Db::open_hub_readonly(db_path).map_err(|e| match e {
+        StorageError::SchemaTooNew { disk, code } => {
+            eprintln!(
+                "hub_run_answer_readback: run_id={run_id} leg=open error_kind=schema_too_new \
+                 disk_version={disk} code_version={code} (stale binary: on-disk schema is newer \
+                 than this build understands — rebuild from the deploying commit)"
+            );
+            ReadbackError::new("schema_too_new")
+        }
+        _ => {
+            eprintln!("hub_run_answer_readback: run_id={run_id} leg=open error_kind=open_failed");
+            ReadbackError::new("open_failed")
+        }
+    })
+}
+
 /// Defense-in-depth for the BODY-FREE payloads ONLY (`denied` / `not_found` / error):
 /// refuse to print if any forbidden marker leaked into a payload that must carry only
 /// labels/refs. Delegates to the SAME shared guard the refs-only proof bins use
@@ -274,8 +298,7 @@ mod tests {
         let db_path = arg_value(&args, "--db").unwrap();
         let run_id = arg_value(&args, "--run-id").unwrap();
         let caller_principal = arg_value(&args, "--caller-principal").unwrap();
-        let opened =
-            Db::open_hub_readonly(&db_path).map_err(|_| ReadbackError::new("open_failed"))?;
+        let opened = open_hub_readonly_guarded(&db_path, &run_id)?;
         let access = get_run_answer_for_principal(opened.conn(), &run_id, &caller_principal)
             .map_err(|_| ReadbackError::new("read_failed"))?;
         match access {
@@ -449,5 +472,56 @@ mod tests {
             deny_reason_label(AnswerDenyReason::PrincipalMismatch),
             "principal_mismatch"
         );
+    }
+
+    /// NORMAL same-commit deploy: the DB is at exactly `hub_code_max()` (what `open_hub`
+    /// migrates to), so the read bin OPENS and SERVES the owner's body — byte-identical to
+    /// before the guard. The schema-version guard NEVER fires on the equal case.
+    #[test]
+    fn equal_schema_version_serves_normally() {
+        let db = seed("equal", "run-1", Some(OWNER), BODY);
+        // The seeded DB is at exactly the binary's code_max.
+        {
+            let opened = Db::open_hub_readonly(&db).unwrap();
+            assert_eq!(opened.version().unwrap(), friday_storage::hub_code_max());
+        }
+        let rendered = run_with(&db, "run-1", OWNER).unwrap();
+        let v: Value = from_str(&rendered).unwrap();
+        assert_eq!(v["outcome"], "delivered");
+        assert_eq!(v["answer"], BODY);
+    }
+
+    /// STALE binary vs a forward-migrated DB: the on-disk version is `code_max + 1`, so the
+    /// read bin FAILS CLOSED with the distinct `schema_too_new` kind and serves NO data — it
+    /// does NOT misread the newer schema. (Today this collapsed into the opaque `open_failed`;
+    /// the guard always fired, but the skew was un-diagnosable — the 13:40-vs-19:04 incident.)
+    #[test]
+    fn newer_on_disk_schema_fails_closed_with_named_skew() {
+        let path = tmp("too-new");
+        {
+            // Seed a valid run, then forge a strictly-newer on-disk schema version to
+            // simulate a DB written by a NEWER deploy than this (stale) binary.
+            let db = Db::open_hub(&path).unwrap();
+            let result = RunResult::new("finished", BODY, Some("audit-skew".to_string()))
+                .with_owner_principal(OWNER);
+            persist_run_result(db.conn(), "run-1", &result, 7000).unwrap();
+            db.conn()
+                .execute(
+                    "UPDATE schema_version SET version = ?1 WHERE id = 1",
+                    [friday_storage::hub_code_max() + 1],
+                )
+                .unwrap();
+            drop(db);
+        }
+        // The owner — who WOULD be served on an equal-version DB — gets fail-closed instead.
+        let err = match run_with(&path, "run-1", OWNER) {
+            Ok(rendered) => panic!("a stale bin must NOT serve a forward-migrated DB: {rendered}"),
+            Err(e) => e,
+        };
+        assert_eq!(
+            err.kind, "schema_too_new",
+            "the fail-closed kind must NAME the version skew, not the opaque open_failed"
+        );
+        // The owner's body must never have been read/served under the skew.
     }
 }
