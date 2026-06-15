@@ -554,6 +554,33 @@ pub fn hub_migrations() -> Vec<Migration> {
             destructive: false,
             up: m0032_agent_session_forked_from,
         },
+        // #24b crash-recovery durable EXECUTION STATE: two additive columns on the Hub-only
+        // `work_item` table — `executing` (a 0/1 marker the agent loop SETs just before each
+        // model call and CLEARs at EVERY loop exit) + `last_heartbeat_ms` (the epoch-ms of the
+        // last SET; nullable). This is the durable run-execution state #767's module docs
+        // EXPLICITLY deferred ("catching [crash-orphaned ProviderRouted/ProviderWaiting] needs a
+        // durable run-execution state this codebase does not yet carry") — it lets boot
+        // crash-recovery PASS-2 tell a CRASHED-while-executing `ProviderRouted`/`ProviderWaiting`
+        // row (executing=1 + a STALE heartbeat) apart from a legitimately-paused/awaiting one
+        // (executing=0). Both are NULLABLE-or-DEFAULT additive `ALTER`s: every existing v32
+        // `work_item` row reads back `executing = 0` (NOT executing — never reconciled by PASS-2)
+        // and `last_heartbeat_ms = NULL`, so no pre-existing row is mis-classified as crashed and
+        // no existing query changes (the `work_item` reader selects an explicit column list that
+        // does NOT include these two — they are managed ONLY by the dedicated
+        // `set_work_item_executing` helper, never by `upsert_work_item`, so a status-preserving
+        // re-upsert can never clobber the executing marker). The `work_item` CREATE-DDL const
+        // stays FROZEN at its pre-v33 shape, so a fresh install runs the base CREATE then this
+        // ALTER (no duplicate-column on fresh install) — mirrors how m0028/m0032 added columns.
+        // Purely additive (ALTER only) — touches no other table. Hub-only — `work_item` is
+        // Hub-only (never created on a phone). The PASS-2 reconcile that consumes these is gated
+        // under the EXISTING default-OFF `FRIDAY_CRASH_RECOVERY` flag, so this migration is dark
+        // on deploy until the operator flips it.
+        Migration {
+            version: 33,
+            name: "work_item_execution_state",
+            destructive: false,
+            up: m0033_work_item_execution_state,
+        },
     ]
 }
 
@@ -2287,4 +2314,19 @@ fn m0031_trust_grant(tx: &Transaction) -> rusqlite::Result<()> {
 // Purely additive (ALTER only) — touches no other table, so v31 rows/queries are unaffected.
 fn m0032_agent_session_forked_from(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch("ALTER TABLE agent_session ADD COLUMN forked_from TEXT;")
+}
+
+// #24b: durable execution-state on the Hub-only `work_item` table — `executing` (a 0/1 marker the
+// agent loop SETs just before each model call and CLEARs at EVERY loop exit) + `last_heartbeat_ms`
+// (the epoch-ms of the last SET; nullable). `executing` is `NOT NULL DEFAULT 0` so every existing
+// v32 row backfills to NOT-executing (never mis-classified as a crash). `last_heartbeat_ms` is a
+// plain nullable epoch-ms. The `work_item` CREATE-DDL const stays FROZEN at its pre-v33 shape, so a
+// fresh install runs the base CREATE then this ALTER (no duplicate-column on fresh install) —
+// mirrors how m0028/m0032 added their columns. Purely additive (ALTER only) — touches no other
+// table, so v32 rows/queries are unaffected. Hub-only — `work_item` is a Hub-only table.
+fn m0033_work_item_execution_state(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "ALTER TABLE work_item ADD COLUMN executing INTEGER NOT NULL DEFAULT 0;
+         ALTER TABLE work_item ADD COLUMN last_heartbeat_ms INTEGER;",
+    )
 }

@@ -18,10 +18,33 @@
 //!   (a) an orphaned in-flight WorkItem (`Dispatched`, `HubAccepted`) ⇒ flag-ON reconcile
 //!       advances it to `FailedTerminal` + `blocking_reason == crash_recovery_abort`, audit clean;
 //!   (b) legitimately-WAITING WorkItems (`ProviderRouted`, `ProviderWaiting` w/no approval,
-//!       `WaitingForUser`) ⇒ UNTOUCHED;
+//!       `WaitingForUser`) WITH `executing == 0` ⇒ UNTOUCHED;
 //!   (c) a terminal WorkItem (`CompletedWithProof`) ⇒ UNTOUCHED;
 //!   flag-OFF ⇒ all untouched (byte-identical: the server never calls reconcile when OFF);
 //!   idempotency ⇒ a second reconcile is a no-op (0 aborted).
+//!
+//! #24b PASS-2 arms (durable execution-state crash recovery — the COMMON mid-call crash):
+//!   * `pass2_aborts_stale_executing_provider_waiting`: `ProviderWaiting` + `executing=1` + a STALE
+//!     heartbeat ⇒ reconciled to `FailedTerminal` + the `crash_recovery_abort` marker (the crash a
+//!     process died mid-model-call leaves behind).
+//!   * `pass2_leaves_fresh_executing_provider_waiting_untouched`: `ProviderWaiting` + `executing=1`
+//!     with a FRESH heartbeat ⇒ UNTOUCHED — the slow-but-LIVE model-call guard (the cardinal sin to
+//!     break: aborting a live run).
+//!   * `pass2_leaves_legit_paused_provider_routed_untouched`: `ProviderRouted` + `executing=0`
+//!     (legit-paused, awaiting approval) + a STALE timestamp ⇒ UNTOUCHED (executing==0 is never
+//!     reconciled, regardless of age).
+//!   * `pass2_disabled_when_flag_off`: even a stale-executing crash row stays untouched when the
+//!     flag is OFF (the server never calls reconcile).
+//!   * `loop_clears_executing_at_every_exit` (in lib.rs): a run through the real loop ends with
+//!     `executing == 0` for Finished / Paused / Blocked — proving the wrapper's tail clear.
+//!   * `loop_sets_executing_during_the_call_and_re_entry_re_sets_it` (in lib.rs): executing==1 is
+//!     observed mid-model-call, and a SECOND loop entry on the SAME work_item re-SETs it (the
+//!     re-entry re-set). NOTE: the signed-approval resume (`resume_with_approval`) does NOT re-enter
+//!     this loop — it runs ONE `executor.execute` — so the re-set is a property of any loop
+//!     RE-ENTRY (a continued/redriven run), not of the approval-resume path specifically.
+//!   * `forward_path_during_call_status_is_provider_routed_and_pass2_reconciles_a_mid_call_crash`
+//!     (in lib.rs): the REACHABILITY proof — the real pre-dispatch binding makes the during-call
+//!     status `ProviderRouted`, and PASS-2 reconciles a simulated mid-call crash there.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -31,6 +54,7 @@ use friday_core::{
 };
 use friday_hub::crash_recovery::{
     crash_recovery_enabled_from, reconcile_orphaned_work_items, CRASH_RECOVERY_MARKER,
+    EXECUTION_STATE_STALE_THRESHOLD_MS,
 };
 use friday_storage::audit::verify_audit_chain;
 use friday_storage::Db;
@@ -154,6 +178,28 @@ fn blocking_reason_of(db: &Db, work_item_id: &str) -> Option<String> {
         .unwrap()
         .blocking_reason
 }
+
+/// (#24b) SET a seeded WorkItem's durable execution marker + heartbeat directly (the SAME
+/// status-preserving helper the agent loop uses), so a PASS-2 arm can reproduce a crashed-mid-call
+/// row (`executing=1` + a stale/fresh heartbeat) or a legit-paused row (`executing=0`).
+fn set_executing(db: &Db, work_item_id: &str, executing: bool, heartbeat_ms: i64) {
+    db.set_work_item_executing(work_item_id, executing, heartbeat_ms)
+        .unwrap();
+}
+
+/// (#24b) Read back a WorkItem's durable execution state for an assertion.
+fn execution_state_of(db: &Db, work_item_id: &str) -> (bool, Option<i64>) {
+    let s = db
+        .get_work_item_execution_state(work_item_id)
+        .unwrap()
+        .unwrap();
+    (s.executing, s.last_heartbeat_ms)
+}
+
+// A heartbeat older than the threshold = a crashed process; a recent one = a slow-but-live call.
+// RECONCILE_AT - STALE_HEARTBEAT == 600s > 300s threshold (stale); RECONCILE_AT - FRESH == 1s (fresh).
+const STALE_HEARTBEAT: i64 = RECONCILE_AT - 600_000;
+const FRESH_HEARTBEAT: i64 = RECONCILE_AT - 1_000;
 
 #[test]
 fn flag_matcher_is_default_off_and_exact_one() {
@@ -309,4 +355,196 @@ fn reconcile_is_idempotent_second_sweep_is_a_noop() {
         status_of(&db, "wi-waiting-idem"),
         WorkItemStatus::ProviderWaiting
     );
+}
+
+// ───────────────────────────── #24b PASS-2 (durable execution state) ─────────────────────────────
+
+#[test]
+fn pass2_aborts_stale_executing_provider_waiting() {
+    // The COMMON mid-call crash: a `ProviderWaiting` run whose process DIED mid-model-call, so its
+    // durable `executing` marker is still 1 and the heartbeat is STALE. PASS-2 reconciles it.
+    let db = Db::open_hub(&temp_db("p2-stale")).unwrap();
+    let mission = format!("mission-{}", unique("p2-stale"));
+    seed_mission(&db, &mission);
+
+    // A ProviderWaiting row + a ProviderRouted row, BOTH executing=1 with a stale heartbeat (a
+    // crash mid-call). No operator-approval row exists — exactly the case #767 could not handle.
+    seed_work_item(
+        &db,
+        &mission,
+        "wi-waiting-crashed",
+        WorkItemStatus::ProviderWaiting,
+    );
+    set_executing(&db, "wi-waiting-crashed", true, STALE_HEARTBEAT);
+    seed_work_item(
+        &db,
+        &mission,
+        "wi-routed-crashed",
+        WorkItemStatus::ProviderRouted,
+    );
+    set_executing(&db, "wi-routed-crashed", true, STALE_HEARTBEAT);
+
+    let audit_before = verify_audit_chain(db.conn()).unwrap();
+    let outcome = reconcile_orphaned_work_items(&db, RECONCILE_AT).unwrap();
+
+    assert_eq!(
+        outcome.aborted, 2,
+        "both stale-executing provider rows aborted"
+    );
+    assert_eq!(outcome.skipped, 0);
+    for wi in ["wi-waiting-crashed", "wi-routed-crashed"] {
+        assert_eq!(
+            status_of(&db, wi),
+            WorkItemStatus::FailedTerminal,
+            "{wi} stale-executing crash row reconciled"
+        );
+        assert_eq!(
+            blocking_reason_of(&db, wi).as_deref(),
+            Some(CRASH_RECOVERY_MARKER),
+            "{wi} carries the crash_recovery_abort marker"
+        );
+    }
+    // Exactly one hash-chained lifecycle row per abort; the chain still verifies.
+    assert_eq!(
+        verify_audit_chain(db.conn()).unwrap(),
+        audit_before + 2,
+        "one legal lifecycle audit row per PASS-2 abort"
+    );
+}
+
+#[test]
+fn pass2_leaves_fresh_executing_provider_waiting_untouched() {
+    // THE slow-but-LIVE guard (the cardinal sin to break): a `ProviderWaiting` run that is
+    // executing=1 with a FRESH heartbeat is a live model call still in flight — NEVER reconcile it.
+    let db = Db::open_hub(&temp_db("p2-fresh")).unwrap();
+    let mission = format!("mission-{}", unique("p2-fresh"));
+    seed_mission(&db, &mission);
+
+    seed_work_item(&db, &mission, "wi-live", WorkItemStatus::ProviderWaiting);
+    set_executing(&db, "wi-live", true, FRESH_HEARTBEAT);
+
+    let audit_before = verify_audit_chain(db.conn()).unwrap();
+    let outcome = reconcile_orphaned_work_items(&db, RECONCILE_AT).unwrap();
+
+    assert_eq!(outcome.aborted, 0, "a slow-but-live row is NEVER aborted");
+    assert_eq!(outcome.skipped, 0);
+    assert_eq!(
+        status_of(&db, "wi-live"),
+        WorkItemStatus::ProviderWaiting,
+        "the live run is untouched"
+    );
+    assert_eq!(blocking_reason_of(&db, "wi-live"), None, "not marked");
+    // The execution marker is left exactly as seeded (PASS-2 never wrote it).
+    assert_eq!(
+        execution_state_of(&db, "wi-live"),
+        (true, Some(FRESH_HEARTBEAT))
+    );
+    assert_eq!(verify_audit_chain(db.conn()).unwrap(), audit_before);
+}
+
+#[test]
+fn pass2_leaves_legit_paused_provider_routed_untouched() {
+    // A legitimately-PAUSED run (awaiting operator approval) sits at `ProviderRouted` with
+    // executing=0 — the resume path (resume_agent_loop_for_mission) will pick it up. Even with a
+    // STALE timestamp it must be UNTOUCHED: executing==0 is never a crash candidate. This is the
+    // discriminator that makes PASS-2 safe — without it, aborting this row would BREAK resume.
+    let db = Db::open_hub(&temp_db("p2-paused")).unwrap();
+    let mission = format!("mission-{}", unique("p2-paused"));
+    seed_mission(&db, &mission);
+
+    seed_work_item(&db, &mission, "wi-paused", WorkItemStatus::ProviderRouted);
+    // executing=0 with an OLD timestamp (e.g. it was executing long ago, then cleared on Pause).
+    set_executing(&db, "wi-paused", false, STALE_HEARTBEAT);
+    // Also a never-touched ProviderWaiting row (the migration default: executing=0, heartbeat NULL).
+    seed_work_item(&db, &mission, "wi-default", WorkItemStatus::ProviderWaiting);
+
+    let outcome = reconcile_orphaned_work_items(&db, RECONCILE_AT).unwrap();
+
+    assert_eq!(outcome.aborted, 0, "executing==0 rows are never reconciled");
+    assert_eq!(
+        status_of(&db, "wi-paused"),
+        WorkItemStatus::ProviderRouted,
+        "the legit-paused run is untouched (resume must still pick it up)"
+    );
+    assert_eq!(blocking_reason_of(&db, "wi-paused"), None);
+    // The never-touched default row reads back executing=0, heartbeat NULL (the fail-closed at-rest
+    // value) and is untouched.
+    assert_eq!(execution_state_of(&db, "wi-default"), (false, None));
+    assert_eq!(
+        status_of(&db, "wi-default"),
+        WorkItemStatus::ProviderWaiting
+    );
+}
+
+#[test]
+fn pass2_disabled_when_flag_off() {
+    // Flag-OFF is byte-identical: the server never calls reconcile. A stale-executing crash row
+    // stays exactly as seeded (this arm proves the matcher gates the PASS-2 path too).
+    assert!(!crash_recovery_enabled_from(None));
+
+    let db = Db::open_hub(&temp_db("p2-off")).unwrap();
+    let mission = format!("mission-{}", unique("p2-off"));
+    seed_mission(&db, &mission);
+    seed_work_item(
+        &db,
+        &mission,
+        "wi-crashed-off",
+        WorkItemStatus::ProviderWaiting,
+    );
+    set_executing(&db, "wi-crashed-off", true, STALE_HEARTBEAT);
+    let audit_before = verify_audit_chain(db.conn()).unwrap();
+
+    // Flag OFF ⇒ no reconcile is invoked. The crash row stays ProviderWaiting + executing=1.
+    assert_eq!(
+        status_of(&db, "wi-crashed-off"),
+        WorkItemStatus::ProviderWaiting
+    );
+    assert_eq!(blocking_reason_of(&db, "wi-crashed-off"), None);
+    assert_eq!(
+        execution_state_of(&db, "wi-crashed-off"),
+        (true, Some(STALE_HEARTBEAT))
+    );
+    assert_eq!(verify_audit_chain(db.conn()).unwrap(), audit_before);
+}
+
+#[test]
+fn pass2_exactly_at_threshold_is_stale_and_reconciled() {
+    // Boundary: a heartbeat EXACTLY `EXECUTION_STATE_STALE_THRESHOLD_MS` old is treated as stale
+    // (the `>=` boundary), so the reconcile fires. Documents the inclusive boundary so a future
+    // edit that flips it to `>` fails here.
+    let db = Db::open_hub(&temp_db("p2-edge")).unwrap();
+    let mission = format!("mission-{}", unique("p2-edge"));
+    seed_mission(&db, &mission);
+    seed_work_item(&db, &mission, "wi-edge", WorkItemStatus::ProviderWaiting);
+    set_executing(
+        &db,
+        "wi-edge",
+        true,
+        RECONCILE_AT - EXECUTION_STATE_STALE_THRESHOLD_MS,
+    );
+
+    let outcome = reconcile_orphaned_work_items(&db, RECONCILE_AT).unwrap();
+    assert_eq!(
+        outcome.aborted, 1,
+        "a heartbeat exactly at the threshold is stale"
+    );
+    assert_eq!(status_of(&db, "wi-edge"), WorkItemStatus::FailedTerminal);
+
+    // And ONE millisecond fresher (threshold - 1) is NOT stale ⇒ untouched.
+    let db2 = Db::open_hub(&temp_db("p2-edge2")).unwrap();
+    let mission2 = format!("mission-{}", unique("p2-edge2"));
+    seed_mission(&db2, &mission2);
+    seed_work_item(&db2, &mission2, "wi-edge2", WorkItemStatus::ProviderWaiting);
+    set_executing(
+        &db2,
+        "wi-edge2",
+        true,
+        RECONCILE_AT - EXECUTION_STATE_STALE_THRESHOLD_MS + 1,
+    );
+    let outcome2 = reconcile_orphaned_work_items(&db2, RECONCILE_AT).unwrap();
+    assert_eq!(
+        outcome2.aborted, 0,
+        "one ms under the threshold is still live"
+    );
+    assert_eq!(status_of(&db2, "wi-edge2"), WorkItemStatus::ProviderWaiting);
 }

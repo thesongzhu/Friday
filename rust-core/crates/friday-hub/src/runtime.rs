@@ -599,6 +599,7 @@ impl<T: Transport> HubRuntime<T> {
             None, // cancel: not cancellable here (C2-1)
             None, // steer: not steerable here (C2-2)
             now_ms,
+            None, // work_item_id (#24b): the sessionless entry binds no WorkItem ⇒ heartbeat no-op
         )
     }
 
@@ -621,7 +622,7 @@ impl<T: Transport> HubRuntime<T> {
             preferred_provider: Some(provider_id.to_string()),
             ..RouteRequest::any()
         };
-        self.run_with_request(run_id, task, &request, None, None, None, None, now_ms)
+        self.run_with_request(run_id, task, &request, None, None, None, None, now_ms, None)
     }
 
     /// (C2-1) [`Self::run_task_pinned`] with a cooperative [`CancelToken`] threaded into the
@@ -654,6 +655,7 @@ impl<T: Transport> HubRuntime<T> {
             Some(cancel),
             None,
             now_ms,
+            None, // work_item_id (#24b): pinned cancellable entry binds no WorkItem ⇒ no-op
         )
     }
 
@@ -689,6 +691,7 @@ impl<T: Transport> HubRuntime<T> {
             None,
             Some(steer),
             now_ms,
+            None, // work_item_id (#24b): pinned steerable entry binds no WorkItem ⇒ no-op
         )
     }
 
@@ -710,6 +713,10 @@ impl<T: Transport> HubRuntime<T> {
         cancel: Option<&CancelToken>,
         steer: Option<&crate::SteerHandle>,
         now_ms: i64,
+        // (#24b) The OPTIONAL bound WorkItem this run drives — threaded to the routed loop's
+        // durable-execution heartbeat. `None` (the sessionless / pinned / default entries) is a
+        // NO-OP ⇒ byte-identical. `Some` is supplied ONLY by the mission-bound forward entrypoint.
+        work_item_id: Option<&str>,
     ) -> Result<(RoutedSelection, LoopOutcome), RoutedLoopError> {
         // The effective per-run policy + ceiling. Absent override ⇒ boot config unchanged.
         let policy = policy_override.unwrap_or(&self.policy);
@@ -831,6 +838,7 @@ impl<T: Transport> HubRuntime<T> {
             cancel,
             steer,
             now_ms,
+            work_item_id,
         )?;
 
         // D1 OWNER-WIRING: a FINISHED run produced a deliverable ANSWER; persist it Hub-side
@@ -1181,6 +1189,7 @@ impl<T: Transport> HubRuntime<T> {
             None, // cancel: the sessioned entry is not cancellable (C2-1 is sessionless)
             None, // steer: the sessioned entry is not steerable (C2-2 is sessionless)
             now_ms,
+            None, // work_item_id (#24b): read-only sessioned chat binds no WorkItem ⇒ no-op
         ) {
             Ok(outcome) => outcome,
             // A storage failure is a SAFE FAILURE: body-free NoAnswer (mirrors the
@@ -1353,6 +1362,7 @@ impl<T: Transport> HubRuntime<T> {
             None, // cancel: the sessioned entry is not cancellable (C2-1 is sessionless)
             None, // steer: the sessioned entry is not steerable (C2-2 is sessionless)
             now_ms,
+            None, // work_item_id (#24b): pinned sessioned follow-up binds no WorkItem ⇒ no-op
         ) {
             Ok(outcome) => outcome,
             Err(_) => {
@@ -1693,17 +1703,47 @@ impl<T: Transport> HubRuntime<T> {
         // Run the SAME composed loop as the unbound entry (no divergence), threading the
         // (effective) per-run policy + ceiling so a mission-bound run enforces the IDENTICAL
         // tightening the unbound dispatch arm applies. Absent override ⇒ boot config unchanged.
-        let (selection, outcome) = self.run_task_with_overrides(
+        //
+        // (#24b — REVISED, panel BLOCK fix for degrades 1+2) The WorkItem binding is driven AFTER
+        // the loop (the pre-#24b order), NOT before it. The reverted #24b SPLIT pre-advanced the
+        // row to `ProviderRouted` BEFORE the model call, which introduced two LIVE degrades: (1) a
+        // loop `Err` (provider/transport failure) propagated by `?` left the row STRANDED at
+        // `ProviderRouted` (an orphan that looks paused) instead of `ReadyToDispatch`
+        // (dispatch-retryable, the pre-#24b rest state); and (2) the pre-dispatch binding's `?`
+        // made any `StorageError` (SQLITE_BUSY is documented prod history) FATAL before the model
+        // call + before the answer persisted. Keeping the binding AFTER the loop fixes BOTH: an
+        // errored run never advances past `ReadyToDispatch` (stays retryable), and the binding's
+        // `StorageError` can only fire once the loop has already returned (so the answer the loop
+        // persisted is durable). The DURABLE-execution heartbeat still runs INSIDE the loop on the
+        // now-`ReadyToDispatch` row: this is the ONE entry that binds a real WorkItem, so it calls
+        // `run_with_request` DIRECTLY (instead of `run_task_with_overrides`, which the sessionless
+        // entry uses with no WorkItem) to thread `Some(work_item_id)` into the loop's heartbeat —
+        // so a mid-model-call crash leaves a STALE `executing` marker on the `ReadyToDispatch` row,
+        // which boot crash-recovery PASS-2 reconciles via the additive
+        // `ReadyToDispatch -> FailedTerminal` edge. Everything else is byte-identical to
+        // `run_task_with_overrides(.., now_ms)` (same `RouteRequest::any()`, same `None`
+        // cancel/steer).
+        let (selection, outcome) = self.run_with_request(
             run_id,
             task,
+            &RouteRequest::any(),
             policy_override,
             max_turns_override,
+            None, // cancel: the mission-bound entry is not cancellable
+            None, // steer: the mission-bound entry is not steerable
             now_ms,
+            Some(envelope.context.work_item_id.as_str()),
         )?;
 
-        // Bind the run to the Mission via the ask path's provider-timeline attachment.
-        // Truth-honest: complete the WorkItem with the run as proof ONLY when the loop
-        // Finished; otherwise bind at RoutedToProvider without over-claiming completion.
+        // Bind the run to the Mission via the ask path's provider-timeline attachment, AFTER the
+        // loop. Truth-honest: complete the WorkItem with the run as proof ONLY when the loop
+        // Finished; otherwise bind at `ProviderRouted` (the pause/await rest state the #755 resume
+        // path drives from) without over-claiming completion. The binding ALSO clears the durable
+        // `executing` marker ATOMICALLY in the SAME transaction as its FINAL status hop (degrade-3
+        // fix): a run that reaches a binding rest state (`ProviderRouted` on pause/await,
+        // `CompletedWithProof` on completion) ends with `executing == 0` written in the SAME tx, so
+        // a swallowed best-effort tail-clear can NEVER strand `executing == 1` on a live paused run
+        // (which PASS-2 would then falsely reconcile after a long human approval latency).
         let completed = outcome.status == LoopStatus::Finished;
         let result_link = format!("friday://agent-run/{run_id}");
         let attachment = attach_agent_loop_provider_state(
