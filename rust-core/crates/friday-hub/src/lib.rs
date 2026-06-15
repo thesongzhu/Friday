@@ -2091,8 +2091,25 @@ pub fn recall_preamble_for(
     receipt_audit_id: &str,
     now_ms: i64,
 ) -> Result<String, StorageError> {
+    // BYTE-IDENTICAL delegator: `None` query ⇒ recency-only.
+    recall_preamble_for_with_query(db, principal, None, receipt_audit_id, now_ms)
+}
+
+/// QUERY-AWARE single-principal recall preamble — the `query`-carrying sibling of
+/// [`recall_preamble_for`], delegating to [`recall_preamble_for_principals_with_query`] with the
+/// one principal. `None` principal ⇒ empty; `None`/blank query (or flag OFF) ⇒ recency-only
+/// (byte-identical to [`recall_preamble_for`]).
+pub fn recall_preamble_for_with_query(
+    db: &Db,
+    principal: Option<&str>,
+    query: Option<&str>,
+    receipt_audit_id: &str,
+    now_ms: i64,
+) -> Result<String, StorageError> {
     match principal {
-        Some(p) => recall_preamble_for_principals(db, &[p], receipt_audit_id, now_ms),
+        Some(p) => {
+            recall_preamble_for_principals_with_query(db, &[p], query, receipt_audit_id, now_ms)
+        }
         None => Ok(String::new()),
     }
 }
@@ -2121,6 +2138,55 @@ pub fn recall_preamble_for_principals(
     receipt_audit_id: &str,
     now_ms: i64,
 ) -> Result<String, StorageError> {
+    // BYTE-IDENTICAL delegator: `None` query ⇒ recency-only ranking, identical to the pre-hybrid
+    // body (the hybrid branch is never taken without a query, and is itself flag-gated).
+    recall_preamble_for_principals_with_query(db, principals, None, receipt_audit_id, now_ms)
+}
+
+/// QUERY-AWARE recall preamble — the SAME owner-scoped dual-read recall composition as
+/// [`recall_preamble_for_principals`], plus an OPTIONAL `query` (e.g. the run's task / the asked
+/// question) that, WHEN the `FRIDAY_HYBRID_RECALL_ENABLED` flag is ON and the query has usable
+/// tokens, drives the FTS5 keyword-relevance blend ([`cognition::rank_recall_hybrid`]). In EVERY
+/// other case — flag OFF, `None`/blank/punctuation-only query, or no FTS match — it falls back to
+/// the recency-only [`cognition::rank_recall`], BYTE-IDENTICAL to the pre-hybrid path.
+///
+/// OWNER-ISOLATION is unchanged and INHERITED: the candidate set is STILL
+/// `recall_confirmed_multi` (per-principal exact-match SQL, union+dedup in memory). The keyword
+/// scores only RE-RANK that set — a `memory_fts` row outside the candidate set can never inject
+/// (it is never a candidate). The Context Passport gate + PII redaction run identically.
+pub fn recall_preamble_for_principals_with_query(
+    db: &Db,
+    principals: &[&str],
+    query: Option<&str>,
+    receipt_audit_id: &str,
+    now_ms: i64,
+) -> Result<String, StorageError> {
+    // Read the hybrid flag ONCE here (the only env read) and inject it into the pure-ish body
+    // below — the split-env idiom so the behavior is unit-testable without mutating `std::env`.
+    let hybrid_on = hybrid_recall_enabled_from(std::env::var(FRIDAY_HYBRID_RECALL_ENABLED).ok());
+    recall_preamble_for_principals_blended(
+        db,
+        principals,
+        query,
+        hybrid_on,
+        receipt_audit_id,
+        now_ms,
+    )
+}
+
+/// The flag-parameterized body of [`recall_preamble_for_principals_with_query`]. `hybrid_on` is
+/// supplied by the public wrapper (from the env flag) and injected DIRECTLY by tests (so they
+/// never mutate `std::env`, avoiding the in-process test race — the same split-env idiom the gate
+/// chokepoint uses). When `hybrid_on` is FALSE the ranking is recency-only and BYTE-IDENTICAL to
+/// the pre-hybrid path regardless of `query`.
+pub(crate) fn recall_preamble_for_principals_blended(
+    db: &Db,
+    principals: &[&str],
+    query: Option<&str>,
+    hybrid_on: bool,
+    receipt_audit_id: &str,
+    now_ms: i64,
+) -> Result<String, StorageError> {
     let Some(receipt_actor) = principals.first() else {
         return Ok(String::new());
     };
@@ -2128,12 +2194,32 @@ pub fn recall_preamble_for_principals(
     // inside stays single-principal exact-match (no widening); the union + dedup happen in
     // memory, so this can never read another owner's rows.
     let rows = friday_storage::memory::recall_confirmed_multi(db.conn(), principals)?;
-    let ranked = cognition::rank_recall(
-        &rows,
-        now_ms,
-        cognition::DEFAULT_RECALL_TOP_K,
-        cognition::DEFAULT_HALF_LIFE_MS,
-    );
+
+    // HYBRID branch — taken ONLY when ALL hold: the flag is ON, a query is present, and the query
+    // has a usable FTS5 MATCH expression. Any miss ⇒ recency-only (byte-identical). The keyword
+    // scores are intersected with the owner-scoped `rows` inside `rank_recall_hybrid`, so no
+    // cross-owner row can ever inject.
+    let ranked = match (hybrid_on, query.and_then(cognition::build_fts_match_query)) {
+        (true, Some(match_query)) => {
+            let keyword_scores =
+                friday_storage::memory::fts_keyword_scores(db.conn(), &match_query)?;
+            cognition::rank_recall_hybrid(
+                &rows,
+                &keyword_scores,
+                now_ms,
+                cognition::DEFAULT_RECALL_TOP_K,
+                cognition::DEFAULT_HALF_LIFE_MS,
+                cognition::DEFAULT_FTS_WEIGHT,
+            )
+        }
+        // Flag OFF, or no query, or no usable tokens ⇒ recency-only (byte-identical to pre-hybrid).
+        _ => cognition::rank_recall(
+            &rows,
+            now_ms,
+            cognition::DEFAULT_RECALL_TOP_K,
+            cognition::DEFAULT_HALF_LIFE_MS,
+        ),
+    };
     // v1 deny-all: no sensitive-transfer approval is wired, so sensitive memory never injects.
     let (preamble, receipt) = cognition::gate_and_render_recall(&ranked, false);
     if receipt.recalled > 0 {
@@ -2178,9 +2264,16 @@ pub fn record_friday_ask_with_recall<T: friday_deepseek::Transport>(
     max_tokens: u32,
     now_ms: i64,
 ) -> Result<friday_deepseek::ModelCallOutcome, RecordAskError> {
-    let preamble =
-        recall_preamble_for(db, principal, &format!("{ledger_id}:memory-recall"), now_ms)
-            .map_err(RecordAskError::Storage)?;
+    // The asked `question` is the QUERY for the optional FTS5 hybrid-recall blend (used ONLY when
+    // `FRIDAY_HYBRID_RECALL_ENABLED` is ON; flag-OFF / no usable tokens ⇒ recency-only, byte-identical).
+    let preamble = recall_preamble_for_with_query(
+        db,
+        principal,
+        Some(question),
+        &format!("{ledger_id}:memory-recall"),
+        now_ms,
+    )
+    .map_err(RecordAskError::Storage)?;
     let prompt = if preamble.is_empty() {
         question.to_string()
     } else {
@@ -3169,6 +3262,25 @@ pub const FRIDAY_MEMORY_TOOL_ENABLED: &str = "FRIDAY_MEMORY_TOOL_ENABLED";
 /// Pure flag-matcher for [`FRIDAY_MEMORY_TOOL_ENABLED`] (env read split out for race-free unit
 /// tests). ONLY the literal `"1"` (trimmed) enables; everything else (incl. `"true"`) is OFF.
 pub(crate) fn memory_tool_enabled_from(raw: Option<String>) -> bool {
+    matches!(raw, Some(v) if v.trim() == "1")
+}
+
+/// The `FRIDAY_HYBRID_RECALL_ENABLED` env var (hybrid recall b#1). When exactly `"1"` (trimmed),
+/// memory recall BLENDS FTS5 keyword relevance (`bm25` over the v34 `memory_fts` index) with the
+/// existing recency-decay ranking ([`cognition::rank_recall_hybrid`]) so a keyword-relevant but
+/// OLDER confirmed memory can surface where recency-only would drop it; otherwise recall is
+/// recency-decay ONLY ([`cognition::rank_recall`]) and is BYTE-IDENTICAL to the pre-hybrid path.
+/// The hybrid path NEVER widens the candidate set — it only RE-RANKS the SAME owner-scoped,
+/// Confirmed, content-bearing rows the recall SQL already returned (owner-isolation inherited
+/// from the query), and the SAME Context Passport gate + PII redaction still run. DEFAULT-OFF
+/// (DARK): flipping it live changes ONLY recall ORDERING within an owner's own memory (no new
+/// egress, no new content class, no quota spend). Kept narrow + explicit (literal `"1"` only) so
+/// it can never be enabled by accident.
+pub const FRIDAY_HYBRID_RECALL_ENABLED: &str = "FRIDAY_HYBRID_RECALL_ENABLED";
+
+/// Pure flag-matcher for [`FRIDAY_HYBRID_RECALL_ENABLED`] (env read split out for race-free unit
+/// tests). ONLY the literal `"1"` (trimmed) enables; everything else (incl. `"true"`) is OFF.
+pub(crate) fn hybrid_recall_enabled_from(raw: Option<String>) -> bool {
     matches!(raw, Some(v) if v.trim() == "1")
 }
 
@@ -13243,6 +13355,176 @@ mod tests {
             "no mutation path: the read-only file is untouched"
         );
         assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
+    }
+
+    // ── Hybrid recall (b#1): FTS5 keyword + recency blend, flag-gated ──────────
+
+    /// Record an owned candidate + confirm it, so it is durable, recallable, and (by the v34
+    /// trigger) FTS-indexed. `confirmed_at` controls its recency-decay anchor.
+    fn seed_confirmed_memory(
+        db: &Db,
+        memory_id: &str,
+        content: &str,
+        principal_id: &str,
+        confirmed_at: i64,
+    ) {
+        friday_storage::memory::record_candidate(
+            db.conn(),
+            &friday_storage::memory::NewMemoryCandidate {
+                memory_id,
+                scope: friday_core::MemoryScope::Global,
+                content_ref: None,
+                content: Some(content),
+                principal_id: Some(principal_id),
+                sensitive: false,
+                created_at: confirmed_at,
+            },
+        )
+        .unwrap();
+        friday_storage::memory::confirm(db.conn(), memory_id, confirmed_at).unwrap();
+    }
+
+    /// THE PRODUCT PROOF: with the flag ON, an FTS-keyword-relevant but OLDER confirmed memory
+    /// is INJECTED into the recall preamble where the recency-only (flag-OFF) path drops it.
+    #[test]
+    fn hybrid_recall_surfaces_keyword_relevant_older_memory_flag_on() {
+        let db = Db::open_hub(&temp_path("hybrid-on")).unwrap();
+        let day = 24 * 60 * 60 * 1000_i64;
+        let now = 1_000_000_000_000_i64;
+        // Fill top_k (8) with RECENT but irrelevant memories, plus ONE old relevant one.
+        for i in 0..8 {
+            seed_confirmed_memory(
+                &db,
+                &format!("recent{i}"),
+                &format!("recent unrelated note number {i} about lunch"),
+                "alice",
+                now - (i as i64 + 1) * day,
+            );
+        }
+        seed_confirmed_memory(
+            &db,
+            "old_kafka",
+            "the user runs their event pipeline on apache kafka",
+            "alice",
+            now - 200 * day, // very old
+        );
+
+        // Flag OFF (recency-only): the old kafka memory is squeezed out of top_k=8.
+        let off = recall_preamble_for_principals_blended(
+            &db,
+            &["alice"],
+            Some("how do I tune my kafka cluster?"),
+            false,
+            "audit-off",
+            now,
+        )
+        .unwrap();
+        assert!(
+            !off.contains("kafka"),
+            "recency-only must drop the old kafka memory (the gap hybrid closes): {off:?}"
+        );
+
+        // Flag ON (hybrid): the kafka query surfaces the keyword-relevant old memory.
+        let on = recall_preamble_for_principals_blended(
+            &db,
+            &["alice"],
+            Some("how do I tune my kafka cluster?"),
+            true,
+            "audit-on",
+            now,
+        )
+        .unwrap();
+        assert!(
+            on.contains("kafka"),
+            "hybrid recall must surface the keyword-relevant older memory: {on:?}"
+        );
+    }
+
+    /// NO-DEGRADE: flag-OFF output is BYTE-IDENTICAL to the legacy recency-only path AND
+    /// independent of the query argument (the OFF path never consults FTS or the query).
+    #[test]
+    fn flag_off_is_byte_identical_to_recency_only_and_query_independent() {
+        let db = Db::open_hub(&temp_path("hybrid-off-id")).unwrap();
+        let day = 24 * 60 * 60 * 1000_i64;
+        let now = 1_000_000_000_000_i64;
+        seed_confirmed_memory(&db, "m1", "alice likes rust", "alice", now - day);
+        seed_confirmed_memory(&db, "m2", "alice ships on fridays", "alice", now - 2 * day);
+        seed_confirmed_memory(
+            &db,
+            "m3",
+            "alice uses kafka heavily",
+            "alice",
+            now - 3 * day,
+        );
+
+        // The LEGACY entrypoint (no query param at all).
+        let legacy = recall_preamble_for_principals(&db, &["alice"], "audit-legacy", now).unwrap();
+
+        // Flag OFF with a STRONG kafka query — must STILL equal the legacy recency-only output
+        // (the query is ignored when OFF). Run with DIFFERENT queries to prove independence.
+        let off_kafka = recall_preamble_for_principals_blended(
+            &db,
+            &["alice"],
+            Some("kafka kafka kafka"),
+            false,
+            "audit-k",
+            now,
+        )
+        .unwrap();
+        let off_none =
+            recall_preamble_for_principals_blended(&db, &["alice"], None, false, "audit-n", now)
+                .unwrap();
+        assert_eq!(
+            legacy, off_kafka,
+            "flag-OFF must be byte-identical to the legacy recency-only preamble"
+        );
+        assert_eq!(
+            off_kafka, off_none,
+            "flag-OFF output must be independent of the query argument"
+        );
+        assert!(
+            !legacy.is_empty(),
+            "sanity: the recall actually produced content"
+        );
+    }
+
+    /// OWNER-ISOLATION holds under hybrid: owner A's query (ON) never injects owner B's memory,
+    /// even when B's content is the strongest keyword match in the global FTS index.
+    #[test]
+    fn hybrid_recall_never_leaks_another_owners_memory() {
+        let db = Db::open_hub(&temp_path("hybrid-iso")).unwrap();
+        let now = 1_000_000_000_000_i64;
+        // B owns the ONLY strong "quantum" match; A owns unrelated memory.
+        seed_confirmed_memory(
+            &db,
+            "b_secret",
+            "bob's quantum research breakthrough notes",
+            "bob",
+            now,
+        );
+        seed_confirmed_memory(
+            &db,
+            "a_note",
+            "alice prefers tabs over spaces",
+            "alice",
+            now,
+        );
+
+        // A queries for "quantum" with the flag ON — B's matching row must NEVER appear (it is
+        // not in A's owner-scoped candidate set; the FTS score for it is simply ignored).
+        let a_view = recall_preamble_for_principals_blended(
+            &db,
+            &["alice"],
+            Some("tell me about quantum research"),
+            true,
+            "audit-iso",
+            now,
+        )
+        .unwrap();
+        assert!(
+            !a_view.contains("quantum") && !a_view.contains("bob"),
+            "owner A must never recall owner B's memory under hybrid: {a_view:?}"
+        );
     }
 }
 

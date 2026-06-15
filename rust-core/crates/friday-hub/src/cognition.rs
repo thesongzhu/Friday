@@ -12,12 +12,18 @@
 //!    last Luhn-validated) before the text leaves the Hub, ported from the oracle
 //!    PII guard. This is defense-in-depth ON TOP of the Context Passport gate.
 //!
-//! **Honest scope:** there is NO semantic / embedding / FTS recall here. The
-//! oracle's hybrid vector search (`friday-memory-hybrid.ts`) has no Rust
-//! counterpart — that is greenfield / NO-GO and is NOT claimed. Relevance here is
-//! recency-decay only; the SQL query already did the same-principal + Confirmed +
-//! content-bearing filtering, so this layer adds bounded ranking, a
-//! defense-in-depth trust re-check, and redaction.
+//! **Honest scope:** there is NO semantic / EMBEDDING recall here — the oracle's
+//! hybrid VECTOR search (`friday-memory-hybrid.ts`) has no Rust counterpart (that is
+//! greenfield / NO-GO and is NOT claimed). There IS now an OPTIONAL, flag-gated FTS5
+//! KEYWORD-relevance blend ([`rank_recall_hybrid`], default-OFF behind
+//! `FRIDAY_HYBRID_RECALL_ENABLED`): when ON, it re-ranks the SAME owner-scoped
+//! candidate set by `bm25` keyword relevance blended with the recency decay; when OFF,
+//! recall is recency-decay only via [`rank_recall`], BYTE-IDENTICAL to the pre-hybrid
+//! path. The SQL query still did the same-principal + Confirmed + content-bearing
+//! filtering, so this layer adds bounded ranking (recency-only OR hybrid), a
+//! defense-in-depth trust re-check, and redaction. The keyword index NEVER widens the
+//! candidate set (it only re-orders rows the owner already owns — owner-isolation is
+//! inherited from the SQL), so hybrid recall can never leak another owner's memory.
 //!
 //! **PII-port fidelity (honest deviations from the oracle PII guard):**
 //! - **SSN** drops the oracle's invalid-prefix look-aheads (the Rust engine is
@@ -325,6 +331,151 @@ pub fn rank_recall(
             .then(a.1.memory_id.cmp(&b.1.memory_id))
     });
     scored
+        .into_iter()
+        .take(top_k)
+        .map(|(score, r)| {
+            let (content, kinds) = redact_pii(r.content.as_deref().unwrap_or(""));
+            RecalledMemory {
+                memory_id: r.memory_id.clone(),
+                content,
+                score,
+                sensitive: r.sensitive,
+                redacted: !kinds.is_empty(),
+            }
+        })
+        .collect()
+}
+
+/// Default blend weight on FTS5 keyword relevance in the hybrid recall score (the rest is
+/// recency). `0.6` keyword + `0.4` recency: high enough that a strongly keyword-relevant but
+/// OLDER memory out-ranks a recent-but-irrelevant one (the whole point of hybrid recall —
+/// recency-only would drop the relevant item), while recency still breaks ties among
+/// comparably-relevant items and a zero-keyword-match item degrades gracefully to its recency
+/// score scaled by `(1 - weight)`. A weight in `[0, 1]`; `0.0` reproduces recency-only.
+pub const DEFAULT_FTS_WEIGHT: f64 = 0.6;
+
+/// Build a SAFE FTS5 `MATCH` query string from raw query text (e.g. the current task/question).
+///
+/// Raw user text fed straight to `MATCH` throws `fts5: syntax error` on punctuation, quotes, a
+/// bare `*`, or the bareword keywords `AND`/`OR`/`NOT`/`NEAR`. So we TOKENIZE on
+/// non-alphanumeric boundaries (keeping Unicode letters/digits, so CJK runs survive as tokens),
+/// DROP empty tokens, wrap EACH surviving token in double quotes (an FTS5 "string" — which is
+/// matched literally and cannot be a syntax keyword or operator), and join them with ` OR ` so
+/// ANY token matching contributes (recall is best-effort relevance, not a conjunctive search).
+/// An embedded `"` in a token is escaped FTS5-style (doubled) so it can never break out of the
+/// quoted string.
+///
+/// Returns `None` when there is NO usable token (empty/blank/punctuation-only query) — the
+/// caller then SKIPS FTS entirely and falls back to recency-only (byte-identical to today). This
+/// is the invariant that makes flag-ON-with-empty-query degrade exactly to the OFF path.
+pub fn build_fts_match_query(raw: &str) -> Option<String> {
+    let tokens: Vec<String> = raw
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        // Quote each token as an FTS5 string literal; double any embedded quote.
+        .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
+        .collect();
+    if tokens.is_empty() {
+        return None;
+    }
+    Some(tokens.join(" OR "))
+}
+
+/// HYBRID rank: blend FTS5 keyword relevance (`keyword_scores`, raw `bm25` keyed by `memory_id`
+/// — MORE-NEGATIVE = BETTER) with the SAME recency-decay [`rank_recall`] uses, over the SAME
+/// owner-scoped candidate `rows`. Caps at `top_k`, redacts PII identically.
+///
+/// This is a SIBLING of [`rank_recall`], not a replacement: the flag-OFF path still calls
+/// `rank_recall` unchanged (byte-identical). The blend NEVER widens the candidate set — it only
+/// re-orders `rows` (already owner-scoped + Confirmed + content-bearing by the SQL), so
+/// owner-isolation is INHERITED from the caller's query; a `keyword_scores` entry for a row that
+/// is not in `rows` is simply ignored (it can never inject).
+///
+/// Blend (all per-candidate, in `[0, 1]`):
+/// - `recency` = `0.5^(age / half_life)` — identical to `rank_recall`.
+/// - `keyword` = the candidate's `bm25` NEGATED (so larger = better) then MIN-MAX normalized
+///   over the candidate set's matched scores to `[0, 1]`; a candidate with NO `bm25` entry (no
+///   keyword match) gets `keyword = 0.0`. If only one candidate matched (or all matched scores
+///   are equal), every matched candidate gets `keyword = 1.0` (min==max ⇒ no spread to scale).
+/// - `score` = `fts_weight * keyword + (1 - fts_weight) * recency`.
+///
+/// `fts_weight` is clamped to `[0, 1]`. With `fts_weight = 0.0` the score is exactly the
+/// recency term and the ordering matches `rank_recall` (the OFF-equivalent, useful as a test
+/// oracle). The deterministic tie-break is the SAME as `rank_recall` (recency `confirmed_at`
+/// desc, then `memory_id`), so equal blended scores order identically.
+pub fn rank_recall_hybrid(
+    rows: &[MemoryRow],
+    keyword_scores: &std::collections::HashMap<String, f64>,
+    now_ms: i64,
+    top_k: usize,
+    half_life_ms: i64,
+    fts_weight: f64,
+) -> Vec<RecalledMemory> {
+    let hl = half_life_ms.max(1) as f64;
+    let w = fts_weight.clamp(0.0, 1.0);
+
+    // First pass: keep only durable, auto-usable, content-bearing rows (SAME filter as
+    // `rank_recall`'s defense-in-depth) and compute each row's recency + raw (negated) bm25.
+    struct Scored<'a> {
+        row: &'a MemoryRow,
+        recency: f64,
+        // Negated bm25 (larger = better) for matched rows; `None` ⇒ no keyword match.
+        kw_raw: Option<f64>,
+    }
+    let mut scored: Vec<Scored> = rows
+        .iter()
+        .filter(|r| r.state.is_durable() && r.confidence.auto_usable())
+        .filter(|r| r.content.as_deref().is_some_and(|c| !c.is_empty()))
+        .map(|r| {
+            let anchor = r.confirmed_at.unwrap_or(r.created_at);
+            let age = (now_ms - anchor).max(0) as f64;
+            let recency = 0.5_f64.powf(age / hl);
+            // bm25 is more-negative-better; negate so larger = better.
+            let kw_raw = keyword_scores.get(&r.memory_id).map(|bm25| -bm25);
+            Scored {
+                row: r,
+                recency,
+                kw_raw,
+            }
+        })
+        .collect();
+
+    // Min-max normalize the MATCHED keyword scores over the candidate set to `[0, 1]`.
+    let matched: Vec<f64> = scored.iter().filter_map(|s| s.kw_raw).collect();
+    let kw_min = matched.iter().cloned().fold(f64::INFINITY, f64::min);
+    let kw_max = matched.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let spread = kw_max - kw_min;
+    let normalize_kw = |kw_raw: Option<f64>| -> f64 {
+        match kw_raw {
+            // No keyword match ⇒ 0 keyword relevance (degrades to recency * (1 - w)).
+            None => 0.0,
+            Some(v) => {
+                if spread > 0.0 {
+                    (v - kw_min) / spread
+                } else {
+                    // Single match, or all matched scores equal: full keyword relevance.
+                    1.0
+                }
+            }
+        }
+    };
+
+    let mut blended: Vec<(f64, &MemoryRow)> = scored
+        .iter_mut()
+        .map(|s| {
+            let keyword = normalize_kw(s.kw_raw);
+            let score = w * keyword + (1.0 - w) * s.recency;
+            (score, s.row)
+        })
+        .collect();
+
+    // Highest blended score first; SAME deterministic tie-break as `rank_recall`.
+    blended.sort_by(|a, b| {
+        b.0.total_cmp(&a.0)
+            .then(b.1.confirmed_at.cmp(&a.1.confirmed_at))
+            .then(a.1.memory_id.cmp(&b.1.memory_id))
+    });
+    blended
         .into_iter()
         .take(top_k)
         .map(|(score, r)| {
@@ -707,5 +858,176 @@ mod tests {
         assert!((ranked[0].score - 1.0).abs() < 1e-9);
         // top_k == 0 recalls nothing.
         assert!(rank_recall(&[future], now, 0, DEFAULT_HALF_LIFE_MS).is_empty());
+    }
+
+    // --- hybrid recall: FTS MATCH-query builder -------------------------------
+
+    #[test]
+    fn fts_match_query_tokenizes_quotes_and_ors() {
+        // Plain words → each quoted, joined by OR.
+        assert_eq!(
+            build_fts_match_query("rust async runtime").as_deref(),
+            Some("\"rust\" OR \"async\" OR \"runtime\"")
+        );
+    }
+
+    #[test]
+    fn fts_match_query_neutralizes_syntax_and_keywords() {
+        // Punctuation / quotes / bare `*` / the AND·OR·NOT keywords would all throw
+        // `fts5: syntax error` raw; quoting each token makes them literal strings.
+        let q = build_fts_match_query("alice AND NOT (bob) \"x\" *").unwrap();
+        // Every token is a quoted string literal — no bareword operator survives.
+        assert_eq!(q, "\"alice\" OR \"AND\" OR \"NOT\" OR \"bob\" OR \"x\"");
+        // The embedded-quote token would be escaped (doubled) — exercise it directly.
+        let q2 = build_fts_match_query("say\"hi").unwrap();
+        // split on non-alphanumeric splits the `"` so we get two tokens here; the point is
+        // no token can break out of its quoting.
+        assert!(q2.starts_with('"') && q2.ends_with('"'));
+        assert!(!q2.contains("\"hi\" OR") || q2.contains("\"say\""));
+    }
+
+    #[test]
+    fn fts_match_query_empty_or_punctuation_only_is_none() {
+        // No usable token ⇒ None ⇒ caller falls back to recency-only (byte-identical OFF path).
+        assert_eq!(build_fts_match_query(""), None);
+        assert_eq!(build_fts_match_query("   "), None);
+        assert_eq!(build_fts_match_query("!@#$ %^&*()"), None);
+    }
+
+    #[test]
+    fn fts_match_query_keeps_cjk_tokens() {
+        // CJK runs are alphanumeric to `char::is_alphanumeric`, so they survive as tokens.
+        let q = build_fts_match_query("喜欢 rust").unwrap();
+        assert_eq!(q, "\"喜欢\" OR \"rust\"");
+    }
+
+    // --- hybrid recall: the blend ranking -------------------------------------
+
+    /// THE CORE PROOF: a keyword-relevant but OLDER memory surfaces into top_k under the
+    /// hybrid blend, where recency-only would drop it for newer-but-irrelevant memories.
+    #[test]
+    fn hybrid_surfaces_keyword_relevant_older_item_recency_only_would_miss() {
+        let now = 1_000_000_000_000;
+        let day = 24 * 60 * 60 * 1000;
+        // "old_relevant" is the keyword match but 90 days old; two recent-but-irrelevant rows.
+        let rows = vec![
+            row("recent_a", Some("today's grocery list"), Some(now - day)),
+            row("recent_b", Some("weather is sunny"), Some(now - 2 * day)),
+            row(
+                "old_relevant",
+                Some("prefers the rust async runtime tokio"),
+                Some(now - 90 * day),
+            ),
+        ];
+
+        // Recency-only, top_k=2: the OLD relevant item is dropped (the bug hybrid fixes).
+        let recency = rank_recall(&rows, now, 2, DEFAULT_HALF_LIFE_MS);
+        let recency_ids: Vec<&str> = recency.iter().map(|r| r.memory_id.as_str()).collect();
+        assert_eq!(recency_ids, vec!["recent_a", "recent_b"]);
+        assert!(
+            !recency_ids.contains(&"old_relevant"),
+            "recency-only must drop the old item — that is the gap hybrid closes"
+        );
+
+        // Hybrid, top_k=2: a strong keyword match on "old_relevant" (very negative bm25 =
+        // strong) and no match on the others ⇒ it surfaces into the top.
+        let mut scores = std::collections::HashMap::new();
+        scores.insert("old_relevant".to_string(), -5.0_f64); // strong keyword match
+                                                             // the recent rows have NO keyword match (absent from the map ⇒ keyword=0).
+        let hybrid = rank_recall_hybrid(
+            &rows,
+            &scores,
+            now,
+            2,
+            DEFAULT_HALF_LIFE_MS,
+            DEFAULT_FTS_WEIGHT,
+        );
+        let hybrid_ids: Vec<&str> = hybrid.iter().map(|r| r.memory_id.as_str()).collect();
+        assert!(
+            hybrid_ids.contains(&"old_relevant"),
+            "hybrid must surface the keyword-relevant older item: got {hybrid_ids:?}"
+        );
+        // It should rank FIRST (full keyword weight 0.6 > any pure-recency row's 0.4*recency).
+        assert_eq!(hybrid_ids[0], "old_relevant");
+    }
+
+    #[test]
+    fn hybrid_weight_zero_matches_recency_only_ordering() {
+        // fts_weight = 0 ⇒ the blend is pure recency; ordering must equal rank_recall.
+        let now = 1_000_000_000_000;
+        let day = 24 * 60 * 60 * 1000;
+        let rows = vec![
+            row("r1", Some("alpha"), Some(now - day)),
+            row("r2", Some("beta"), Some(now - 10 * day)),
+            row("r3", Some("gamma"), Some(now - 100 * day)),
+        ];
+        // Even with a keyword score present, weight 0 ignores it.
+        let mut scores = std::collections::HashMap::new();
+        scores.insert("r3".to_string(), -9.0_f64);
+        let recency = rank_recall(&rows, now, 10, DEFAULT_HALF_LIFE_MS);
+        let hybrid0 = rank_recall_hybrid(&rows, &scores, now, 10, DEFAULT_HALF_LIFE_MS, 0.0);
+        let r_ids: Vec<&str> = recency.iter().map(|r| r.memory_id.as_str()).collect();
+        let h_ids: Vec<&str> = hybrid0.iter().map(|r| r.memory_id.as_str()).collect();
+        assert_eq!(
+            r_ids, h_ids,
+            "weight=0 must reproduce recency-only ordering"
+        );
+    }
+
+    #[test]
+    fn hybrid_inherits_filter_and_redaction_and_top_k() {
+        let now = 1_000_000;
+        // A non-confirmed row leaked into the candidate set must STILL be dropped (same
+        // defense-in-depth as rank_recall), and PII still redacted.
+        let mut candidate = row("cand", Some("unconfirmed"), Some(now));
+        candidate.state = MemoryState::Candidate;
+        candidate.confidence = Confidence::Candidate;
+        let pii = row("pii", Some("email alice@example.com"), Some(now));
+        let mut scores = std::collections::HashMap::new();
+        scores.insert("cand".to_string(), -8.0_f64); // strong match — must STILL be dropped
+        scores.insert("pii".to_string(), -3.0_f64);
+        let ranked = rank_recall_hybrid(
+            &[candidate, pii],
+            &scores,
+            now,
+            10,
+            DEFAULT_HALF_LIFE_MS,
+            DEFAULT_FTS_WEIGHT,
+        );
+        let ids: Vec<&str> = ranked.iter().map(|r| r.memory_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["pii"],
+            "a non-confirmed candidate is never recalled"
+        );
+        assert!(ranked[0].redacted);
+        assert!(ranked[0].content.contains("[EMAIL]"));
+        assert!(!ranked[0].content.contains("alice@example.com"));
+    }
+
+    #[test]
+    fn hybrid_no_keyword_match_falls_back_to_recency_ordering() {
+        // Empty score map ⇒ every keyword term = 0 ⇒ score = (1-w)*recency ⇒ recency ordering.
+        let now = 1_000_000_000_000;
+        let day = 24 * 60 * 60 * 1000;
+        let rows = vec![
+            row("new", Some("a"), Some(now - day)),
+            row("old", Some("b"), Some(now - 50 * day)),
+        ];
+        let empty = std::collections::HashMap::new();
+        let hybrid = rank_recall_hybrid(
+            &rows,
+            &empty,
+            now,
+            10,
+            DEFAULT_HALF_LIFE_MS,
+            DEFAULT_FTS_WEIGHT,
+        );
+        let ids: Vec<&str> = hybrid.iter().map(|r| r.memory_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["new", "old"],
+            "no match ⇒ recency ordering preserved"
+        );
     }
 }

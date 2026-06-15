@@ -732,7 +732,7 @@ impl<T: Transport> HubRuntime<T> {
         // Context Passport, and inject it as a prompt PREAMBLE (the run's `task` stays
         // clean — the preamble is added only to what the model sees). `None` principal ⇒
         // no recall. Records a hash-chained `memory.recalled` audit receipt.
-        let recall_preamble = self.recall_preamble(run_id, now_ms)?;
+        let recall_preamble = self.recall_preamble(run_id, Some(task), now_ms)?;
         // The routing request is supplied by the caller: `RouteRequest::any()` for the default
         // entries (selects the highest-priority dispatchable route = deepseek-flash, the only
         // live one), or a provider-pin for `run_task_pinned` (C2). Deriving required
@@ -1182,14 +1182,15 @@ impl<T: Transport> HubRuntime<T> {
         // composite namespace (ALIGNED with how post-run extraction STORES candidates), NOT
         // the raw `--owner`. A recall failure is a SAFE FAILURE (body-free NoAnswer); an
         // unresolvable namespace recalls NOTHING (empty preamble, never an error).
-        let recall_preamble = match self.recall_preamble_for_session(session_id, run_id, now_ms) {
-            Ok(p) => p,
-            Err(_) => {
-                return AuthedAnswer::NoAnswer {
-                    run_id: run_id.to_string(),
-                };
-            }
-        };
+        let recall_preamble =
+            match self.recall_preamble_for_session(session_id, run_id, Some(task), now_ms) {
+                Ok(p) => p,
+                Err(_) => {
+                    return AuthedAnswer::NoAnswer {
+                        run_id: run_id.to_string(),
+                    };
+                }
+            };
 
         // L2-4: the SESSION-DERIVED dual-read composite memory namespaces — the EXACT scope list
         // auto-extraction STORES under (primary) and auto-recall READS the union over, so the
@@ -1387,17 +1388,18 @@ impl<T: Transport> HubRuntime<T> {
         // The owner's confirmed-memory recall preamble — keyed on the SESSION-DERIVED
         // composite namespace (ALIGNED with how post-run extraction STORES candidates), same
         // source as the unpinned sessioned entry. Unresolvable namespace ⇒ empty recall.
-        let recall_preamble = match self.recall_preamble_for_session(session_id, run_id, now_ms) {
-            Ok(p) => p,
-            Err(_) => {
-                return Ok((
-                    selection,
-                    AuthedAnswer::NoAnswer {
-                        run_id: run_id.to_string(),
-                    },
-                ));
-            }
-        };
+        let recall_preamble =
+            match self.recall_preamble_for_session(session_id, run_id, Some(task), now_ms) {
+                Ok(p) => p,
+                Err(_) => {
+                    return Ok((
+                        selection,
+                        AuthedAnswer::NoAnswer {
+                            run_id: run_id.to_string(),
+                        },
+                    ));
+                }
+            };
 
         // L2-4: the SESSION-DERIVED dual-read composite memory namespaces (the SAME scope
         // auto-extraction/auto-recall use), so the explicit memory tools interoperate with the
@@ -2037,14 +2039,22 @@ impl<T: Transport> HubRuntime<T> {
     /// SCOPE: this records the audit RECEIPT; it does NOT ledger tokens — the recall step
     /// itself spends no model call, so no token-accounting claim is made here. (The loop's
     /// per-turn MODEL calls ARE ledgered as of S1.2 by `run_loop` via `bill_model_call`.)
-    fn recall_preamble(&self, run_id: &str, now_ms: i64) -> Result<String, RoutedLoopError> {
+    fn recall_preamble(
+        &self,
+        run_id: &str,
+        // The run's task text — the QUERY for the optional FTS5 hybrid-recall blend (used ONLY
+        // when `FRIDAY_HYBRID_RECALL_ENABLED` is ON; `None`/blank ⇒ recency-only, byte-identical).
+        query: Option<&str>,
+        now_ms: i64,
+    ) -> Result<String, RoutedLoopError> {
         // Delegates to the SHARED recall composition so the loop and the `friday_ask`
         // surface apply the identical per-item Passport gate (no divergence). As of S4 the
         // recall principal and the gate Actor's principal are the SAME source
         // (`self.policy.principal_id()`) — they can no longer silently diverge.
-        let preamble = crate::recall_preamble_for(
+        let preamble = crate::recall_preamble_for_with_query(
             &self.db,
             self.policy.principal_id(),
+            query,
             &format!("{run_id}:memory-recall"),
             now_ms,
         )?;
@@ -2090,6 +2100,9 @@ impl<T: Transport> HubRuntime<T> {
         &self,
         session_id: &str,
         run_id: &str,
+        // The run's task text — the QUERY for the optional FTS5 hybrid-recall blend (used ONLY
+        // when `FRIDAY_HYBRID_RECALL_ENABLED` is ON; `None`/blank ⇒ recency-only, byte-identical).
+        query: Option<&str>,
         now_ms: i64,
     ) -> Result<String, RoutedLoopError> {
         // Load the session's owner axes (same source extraction uses). An absent session row
@@ -2121,9 +2134,10 @@ impl<T: Transport> HubRuntime<T> {
             }
         };
         let principal_refs: Vec<&str> = candidates.iter().map(String::as_str).collect();
-        let preamble = crate::recall_preamble_for_principals(
+        let preamble = crate::recall_preamble_for_principals_with_query(
             &self.db,
             &principal_refs,
+            query,
             &format!("{run_id}:memory-recall"),
             now_ms,
         )?;
@@ -6512,7 +6526,7 @@ mod tests {
         seed_confirmed(&rt, "m-rt", "MEMMARKER-alice-composite", &ns, false);
 
         let preamble = rt
-            .recall_preamble_for_session("sess-rt", "run-rt", 100)
+            .recall_preamble_for_session("sess-rt", "run-rt", None, 100)
             .expect("session recall composes");
         assert!(
             preamble.contains("MEMMARKER-alice-composite"),
@@ -6523,7 +6537,7 @@ mod tests {
         // CONTROL: the OLD raw-keyed recall would NOT have found it (proves the row is keyed
         // on the composite namespace, not the raw owner — the misalignment the fix closes).
         let raw_preamble = rt
-            .recall_preamble("run-rt-raw", 100)
+            .recall_preamble("run-rt-raw", None, 100)
             .expect("raw recall composes");
         assert!(
             !raw_preamble.contains("MEMMARKER-alice-composite"),
@@ -6549,7 +6563,7 @@ mod tests {
 
         // O recalls it (positive control, so the negative below is non-vacuous)...
         let preamble_o = rt
-            .recall_preamble_for_session("sess-O", "run-O", 100)
+            .recall_preamble_for_session("sess-O", "run-O", None, 100)
             .expect("O's session recall composes");
         assert!(
             preamble_o.contains("MEMMARKER-alice-private-O"),
@@ -6558,7 +6572,7 @@ mod tests {
 
         // ...but O2's session recalls NOTHING (the load-bearing assertion: NO cross-owner leak).
         let preamble_o2 = rt
-            .recall_preamble_for_session("sess-O2", "run-O2", 100)
+            .recall_preamble_for_session("sess-O2", "run-O2", None, 100)
             .expect("O2's session recall composes");
         assert!(
             preamble_o2.is_empty(),
@@ -6601,7 +6615,7 @@ mod tests {
             false,
         );
         let preamble = rt
-            .recall_preamble_for_session("sess-nouser", "run-nouser", 100)
+            .recall_preamble_for_session("sess-nouser", "run-nouser", None, 100)
             .expect("unresolvable namespace recalls empty, never errors");
         assert!(
             preamble.is_empty(),
@@ -6610,7 +6624,7 @@ mod tests {
 
         // An ABSENT session row (no owner at all) is likewise empty, not an error.
         let absent = rt
-            .recall_preamble_for_session("no-such-session", "run-absent", 100)
+            .recall_preamble_for_session("no-such-session", "run-absent", None, 100)
             .expect("absent session recalls empty, never errors");
         assert!(absent.is_empty(), "an absent session recalls nothing");
     }
@@ -6673,7 +6687,7 @@ mod tests {
         // Confirm via the existing path, then AUTO-recall must surface it — interop proven.
         friday_storage::memory::confirm(rt.db().conn(), "run-mt:memtool:c0", 200).unwrap();
         let preamble = rt
-            .recall_preamble_for_session("sess-mt", "run-mt-recall", 300)
+            .recall_preamble_for_session("sess-mt", "run-mt-recall", None, 300)
             .expect("session recall composes");
         assert!(
             preamble.contains("MEMMARKER-tool-stored-interop"),
@@ -6712,7 +6726,7 @@ mod tests {
         .unwrap();
         seed_confirmed(&rt, "m-dm", "MEMMARKER-dm-derived", &ns, false);
         let preamble = rt
-            .recall_preamble_for_session("dm-sess", "run-dm", 100)
+            .recall_preamble_for_session("dm-sess", "run-dm", None, 100)
             .expect("dm session recall composes");
         assert!(
             preamble.contains("MEMMARKER-dm-derived"),
@@ -6851,7 +6865,7 @@ mod tests {
         // to alice recalls the candidate across runs — the loop closed across the run boundary.
         bind_session_owner_st(&rt, "later-sess-alice", owner);
         let preamble = rt
-            .recall_preamble_for_session("later-sess-alice", "run-later", 8_000)
+            .recall_preamble_for_session("later-sess-alice", "run-later", None, 8_000)
             .expect("a later alice session recall composes");
         assert!(
             preamble.contains("User wants concise answers."),
@@ -8360,13 +8374,20 @@ mod tests {
         );
 
         // The secret string appears in NO persisted TRANSFER artifact. The secret legitimately
-        // lives ONLY in `memory_item` (the Hub-held source we seeded — that is where confirmed
-        // memory rightfully rests); the fail-closed proof is that it NEVER escaped into any
-        // transfer-surface row (the passport object/items, the mission_link, the run, the audit).
-        let leaked = secret_string_present_in_db(rt.db(), SECRET_CANARY, &["memory_item"]);
+        // lives ONLY in the Hub-held confirmed-memory store: `memory_item` (the source we seeded)
+        // AND its v34 FTS5 keyword index (`memory_fts` + the `memory_fts_content` shadow), which is
+        // by construction a COPY of the SAME confirmed memory text — a Hub-held index, NOT a
+        // transfer surface (it never leaves the Hub, exactly like `memory_item`). The fail-closed
+        // proof is that the secret NEVER escaped into any transfer-surface row (the passport
+        // object/items, the mission_link, the run, the audit).
+        let leaked = secret_string_present_in_db(
+            rt.db(),
+            SECRET_CANARY,
+            &["memory_item", "memory_fts", "memory_fts_content"],
+        );
         assert!(
             !leaked,
-            "the secret canary must NOT appear in any transfer artifact (it stays Hub-held in memory_item only)"
+            "the secret canary must NOT appear in any transfer artifact (it stays Hub-held in the memory store only)"
         );
     }
 
@@ -8465,11 +8486,17 @@ mod tests {
             mission.context_passport_refs
         );
 
-        // The secret string lands in NO transfer artifact (it stays Hub-held in `memory_item`).
-        let leaked = secret_string_present_in_db(rt.db(), SECRET_CANARY, &["memory_item"]);
+        // The secret string lands in NO transfer artifact. It stays Hub-held in the confirmed-memory
+        // store only: `memory_item` AND its v34 FTS5 index (`memory_fts` + `memory_fts_content`
+        // shadow), which is a COPY of the same Hub-held memory text — never a transfer surface.
+        let leaked = secret_string_present_in_db(
+            rt.db(),
+            SECRET_CANARY,
+            &["memory_item", "memory_fts", "memory_fts_content"],
+        );
         assert!(
             !leaked,
-            "the secret canary must NOT appear in any transfer artifact (it stays Hub-held in memory_item only)"
+            "the secret canary must NOT appear in any transfer artifact (it stays Hub-held in the memory store only)"
         );
         assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
     }
