@@ -58,10 +58,15 @@ thiserror.workspace = true
 # Memory-recall PII redaction (Hub-only — recall is Hub-side, the phone never
 # recalls). Pure computation, no I/O. NOT depended on by friday-ffi (phone).
 regex.workspace = true
+# L2-1 web_fetch — the egress HTTP client (blocking ureq + rustls; no async runtime, no
+# system certs) and the WHATWG URL parser for the SSRF guard. Hub-only: the agent loop +
+# its tool executors run Hub-side, NEVER on the phone (friday-ffi excludes friday-hub from
+# its dependency closure — asserted by friday-arch-tests). web_fetch ALWAYS resolves the
+# host itself + validates every IP through ssrf_guard, then PINS the validated addresses
+# into the ureq connection; auto-redirects are disabled and each hop is re-validated.
+ureq.workspace = true
+url.workspace = true
 
 [dev-dependencies]
-# TEST-ONLY HTTP client for the LIVE Telegram channels proof (tests/telegram_live.rs,
-# `#[ignore]`d, run only in the phase-24-live-channels CI env). dev-dependencies are NOT
-# part of the production dependency graph (friday-arch-tests scans dependencies /
-# build-dependencies only) and never reach the phone (friday-ffi).
-ureq = { version = "2", features = ["json"] }
+# (ureq is a production dependency above — it also serves the LIVE Telegram channels proof
+# in tests/telegram_live.rs, `#[ignore]`d, run only in the phase-24-live-channels CI env.)

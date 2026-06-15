@@ -101,6 +101,16 @@ pub const TS_RUST_PAIRS: &[ToolNamePair] = &[
         ts: "exec",
         rust: "run_command",
     },
+    // L2-1: web_fetch is present on BOTH sides under the SAME name (the TS tool name and the
+    // Rust registry action are both `web_fetch`), so the alias is an identity row. Listing it
+    // here (rather than RUST_ONLY_ACTIONS) keeps a TS-shaped `disabledToolNames` entry of
+    // `web_fetch` correctly disabling the dispatched Rust `web_fetch`, AND lets the
+    // FRIDAY_WEB_FETCH_ENABLED flag-gate canonicalize an alias of it (there is only the one
+    // form today, but the chokepoint canonicalizes through this map regardless).
+    ToolNamePair {
+        ts: "web_fetch",
+        rust: "web_fetch",
+    },
 ];
 
 /// Rust [`crate::ToolRegistry`] actions that have NO TS disable-alias today, recorded
@@ -170,7 +180,8 @@ pub const TS_ONLY_UNMAPPED: &[&str] = &[
     "task_status",
     "tool_search",
     "tts",
-    "web_fetch",
+    // L2-1: `web_fetch` now has a Rust executor (http_tools::WebFetchExecutor) and is a
+    // TS_RUST_PAIRS identity alias above — removed from the unmapped list.
     "web_search",
     "workflow_generate",
     "workflow_list",
@@ -219,6 +230,15 @@ pub const PARAM_SCHEMA_DIFFS: &[ParamSchemaDiff] = &[
         rust: "run_command",
         note: "TS `command` ↔ Rust `command`; TS-only `workdir`/`env`/`timeoutMs`/`background` \
                have no Rust `run_command` surface yet and would be dropped.",
+    },
+    ParamSchemaDiff {
+        ts: "web_fetch",
+        rust: "web_fetch",
+        note: "params align by name: `url`/`method`/`headers`/`body`/`timeoutMs`/`parseHtml`. \
+               The Rust executor takes `headers` as a flattened `\"k:v\\nk:v\"` string (the dev \
+               bridge serializes the TS object this way) rather than a nested object; \
+               everything else matches the TS schema. The Rust side ENFORCES the same caps \
+               (512KB read / 100KB model-facing / 30s default timeout) the TS tool documents.",
     },
 ];
 

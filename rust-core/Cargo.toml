@@ -58,6 +58,14 @@ libc = "0.2"
 # PII detection on the memory-recall path (Hub-only; ported from the oracle PII
 # guard). Pure computation, no I/O. Used only by friday-hub, never by the phone FFI.
 regex = "1.11.1"
+# L2-1 web_fetch — blocking HTTP client (rustls/webpki-roots; no async runtime, no system
+# certs). Already in Cargo.lock via friday-deepseek/friday-anthropic (same version), and a
+# dev-dep of friday-hub for the Telegram live test. Now a PRODUCTION dep of friday-hub for the
+# web_fetch capability tool's egress (Hub-only; the agent loop runs Hub-side, never the phone).
+ureq = { version = "2", features = ["json"] }
+# L2-1 web_fetch — WHATWG URL parser for the SSRF guard (scheme/host extraction) and redirect
+# resolution. Pure parsing, no I/O. Already transitively in Cargo.lock via ureq.
+url = "2.5"
 # Ed25519 asymmetric approval signatures (S6a). The OPERATOR holds the PRIVATE
 # signing key (offline, e.g. an S6c CLI); the Hub holds ONLY the PUBLIC verify
 # key — so the Hub (where the agent runs) can VERIFY an approval but can never
