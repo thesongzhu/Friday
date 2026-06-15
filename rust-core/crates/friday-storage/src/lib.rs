@@ -787,6 +787,15 @@ impl Db {
         mission::get_surface_thread(&self.conn, surface_thread_id)
     }
 
+    pub fn list_surface_threads_for_mission(&self, mission_id: &str) -> Result<Vec<SurfaceThread>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "SurfaceThread records are Hub-only".into(),
+            ));
+        }
+        mission::list_surface_threads_for_mission(&self.conn, mission_id)
+    }
+
     pub fn upsert_surface_event(&self, event: &SurfaceEvent) -> Result<()> {
         if self.profile != Profile::Hub {
             return Err(StorageError::Unsupported(

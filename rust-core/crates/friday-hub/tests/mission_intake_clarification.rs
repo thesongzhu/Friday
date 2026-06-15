@@ -111,6 +111,7 @@ fn arm_a_flag_on_vague_intent_clarifies_and_writes_zero_rows() {
         intake_request(VAGUE_INTENT),
         1000,
         true,
+        false, // FRIDAY_SURFACE_EVENTS OFF (orthogonal to the clarify arm under test)
     );
     let result = intake_result(env);
 
@@ -169,6 +170,7 @@ fn arm_b_flag_on_detailed_classified_intent_births_a_mission_as_today() {
         intake_request(DETAILED_INTENT),
         2000,
         true,
+        false, // FRIDAY_SURFACE_EVENTS OFF (orthogonal to the clarify arm under test)
     );
     let result = intake_result(env);
 
@@ -211,6 +213,7 @@ fn arm_c_flag_off_vague_intent_births_a_mission_byte_identical() {
         intake_request(VAGUE_INTENT),
         3000,
         false,
+        false, // FRIDAY_SURFACE_EVENTS OFF (orthogonal to the clarify arm under test)
     );
     let result = intake_result(env);
 
@@ -252,6 +255,7 @@ fn arm_d_flag_on_unclassified_intent_births_a_mission() {
         intake_request(UNCLASSIFIED_INTENT),
         4000,
         true,
+        false, // FRIDAY_SURFACE_EVENTS OFF (orthogonal to the clarify arm under test)
     );
     let result = intake_result(env);
 

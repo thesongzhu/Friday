@@ -1237,6 +1237,79 @@ pub fn get_surface_thread(
     .transpose()
 }
 
+/// All [`SurfaceThread`]s bound to `mission_id` (the surface_thread row's OWN `mission_id`
+/// column — the canonical binding, NOT the conversation's `surface_thread_ids` list), oldest
+/// first, with `surface_thread_id` as the deterministic tie-break. Index-backed by
+/// `idx_surface_thread_mission`.
+///
+/// This is the read the surface_event PRODUCER uses at the run lifecycle points: the resolved
+/// mission context carries an OPTIONAL `surface_thread_id` (the `by_mission_work_item` lookup the
+/// live mission-bound run uses leaves it `None`), so the producer resolves the bound thread by
+/// mission here instead. A surface_event REQUIRES a thread bound to its mission with a matching
+/// `surface_kind` (see `validate_surface_event`), so the producer reads `source_surface` FROM the
+/// thread returned here — never a hardcoded kind.
+pub fn list_surface_threads_for_mission(
+    conn: &Connection,
+    mission_id: &str,
+) -> Result<Vec<SurfaceThread>> {
+    let mut stmt = conn.prepare(
+        "SELECT surface_thread_id, friday_conversation_id, mission_id, surface_kind,
+                channel_binding_id, delivery_route, visibility_policy, allowed_actions,
+                last_seen_at_ms, last_delivered_event_seq, created_at_ms, updated_at_ms
+         FROM surface_thread
+         WHERE mission_id = ?1
+         ORDER BY created_at_ms, surface_thread_id",
+    )?;
+    let rows = stmt.query_map([mission_id], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, Option<String>>(2)?,
+            r.get::<_, String>(3)?,
+            r.get::<_, Option<String>>(4)?,
+            r.get::<_, String>(5)?,
+            r.get::<_, String>(6)?,
+            r.get::<_, String>(7)?,
+            r.get::<_, Option<i64>>(8)?,
+            r.get::<_, Option<i64>>(9)?,
+            r.get::<_, i64>(10)?,
+            r.get::<_, i64>(11)?,
+        ))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (
+            surface_thread_id,
+            friday_conversation_id,
+            mission_id,
+            surface_kind,
+            channel_binding_id,
+            delivery_route,
+            visibility_policy,
+            allowed_actions,
+            last_seen_at_ms,
+            last_delivered_event_seq,
+            created_at_ms,
+            updated_at_ms,
+        ) = row?;
+        out.push(SurfaceThread {
+            surface_thread_id,
+            friday_conversation_id,
+            mission_id,
+            surface_kind: parse_surface_kind(surface_kind)?,
+            channel_binding_id,
+            delivery_route,
+            visibility_policy: parse_visibility_policy(visibility_policy)?,
+            allowed_actions: decode_vec(allowed_actions, "surface_thread.allowed_actions")?,
+            last_seen_at_ms,
+            last_delivered_event_seq: last_delivered_event_seq.map(|v| v as u64),
+            created_at_ms,
+            updated_at_ms,
+        });
+    }
+    Ok(out)
+}
+
 pub fn upsert_surface_event(conn: &Connection, event: &SurfaceEvent) -> Result<()> {
     validate_surface_event(conn, event)?;
     conn.execute(
