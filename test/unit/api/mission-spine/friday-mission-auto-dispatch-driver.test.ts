@@ -57,6 +57,24 @@ const BLOCKED_RESULT: FridayRustHubMissionIntakeResult = {
   createdOrReady: false,
 };
 
+// (Mission-intake clarification — DARK) A `needs_clarification` result: the Rust producer asked
+// clarifying questions for an UNDER-SPECIFIED intent and wrote ZERO rows (no workItemId, status is
+// NOT "ready", createdOrReady is false). This is the INTERACTION GUARD fixture — it must NEVER
+// trigger auto-dispatch (we never dispatch an under-specified mission).
+const NEEDS_CLARIFICATION_RESULT: FridayRustHubMissionIntakeResult = {
+  truthLabel: "rust_wired",
+  fridayConversationId: "conv-from-SERVER-result",
+  missionId: "mission-from-SERVER-result",
+  surfaceThreadId: "thread-1",
+  status: "needs_clarification",
+  blockers: [],
+  createdOrReady: false,
+  clarificationQuestions: [
+    "What outcome matters most for this decision?",
+    "What constraints, risks, or non-goals must the plan respect?",
+  ],
+};
+
 function makeDriver(opts?: {
   startRun?: MissionAutoDispatchStartRun | undefined;
   onDispatchError?: (error: unknown) => void;
@@ -127,6 +145,20 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
       void _omit;
 
       driver.onIntakeReady(REQUEST, noWorkItem as FridayRustHubMissionIntakeResult);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(startRun).not.toHaveBeenCalled();
+    });
+
+    // INTERACTION GUARD (Mission-intake clarification × auto-dispatch): a needs_clarification result
+    // (status !== "ready", createdOrReady false, no workItemId) must NEVER auto-dispatch. The driver
+    // keys on `status === "ready"`, so this naturally won't fire — this test PINS that invariant so
+    // we can never auto-dispatch an under-specified mission.
+    it("does NOT dispatch for a needs_clarification result (never dispatch an under-specified mission)", async () => {
+      const { driver, startRun } = makeDriver();
+
+      driver.onIntakeReady(REQUEST, NEEDS_CLARIFICATION_RESULT);
       await Promise.resolve();
       await Promise.resolve();
 
