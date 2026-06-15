@@ -337,7 +337,22 @@ fn run() -> Result<(), ServerError> {
     // operator-gated step. The reaper owns lifecycle on `agent_session` (the retired TS
     // `session-lifecycle-sweep` replacement).
     if reaper_enabled() {
-        spawn_session_reaper(db_path.clone());
+        // (gap #25) The retention sweep rides the SAME reaper tick (no new thread). Its own
+        // default-off flag is read ONCE here and passed in; OFF ⇒ the tick runs the pre-#25
+        // session-sweep-only behavior, byte-identical. The retention sweep needs the reaper thread
+        // to be running at all, so when the reaper is DISABLED there is no retention either — the
+        // wire-live order is: enable the reaper, then (separately) enable retention.
+        let retention_on = retention_sweep_enabled();
+        if retention_on {
+            eprintln!(
+                "hub_agent_run_server: artifact-RETENTION sweep ENABLED (FRIDAY_RETENTION_SWEEP) — rides the reaper tick"
+            );
+        } else {
+            eprintln!(
+                "hub_agent_run_server: artifact-RETENTION sweep DISABLED (set FRIDAY_RETENTION_SWEEP=1 to enable)"
+            );
+        }
+        spawn_session_reaper(db_path.clone(), retention_on);
     } else {
         eprintln!(
             "hub_agent_run_server: session-lifecycle reaper DISABLED (set FRIDAY_RUST_SESSION_REAPER_ENABLED=1 to enable)"
@@ -497,6 +512,17 @@ const SESSION_REAPER_ENABLED_ENV: &str = "FRIDAY_RUST_SESSION_REAPER_ENABLED";
 
 /// The reaper sweep cadence (120s), matching the old TS sweep's interval.
 const SESSION_REAPER_INTERVAL: Duration = Duration::from_secs(120);
+
+/// (gap #25) The env flag that gates the ARTIFACT-RETENTION sweep, which runs on the SAME reaper
+/// tick (after `sweep_lifecycle`) and prunes the unbounded artifact tables — `token_ledger` /
+/// `surface_event` (90d), terminal `mission` / `work_item` (365d), and rejected/expired memory
+/// CANDIDATES (30d) — by age AND terminal-state, FK-safe + bounded + fail-safe. DEFAULT-OFF and
+/// INDEPENDENT of the session reaper flag: the retention sweep runs ONLY when this is exactly
+/// `"1"` (the trimmed exact-1 idiom, NOT the reaper's `1|true`). `audit_ledger` (the hash-chained
+/// audit "chain") is NEVER touched. Unset/anything-else ⇒ no retention deletes (byte-identical to
+/// the pre-#25 reaper, which only swept `agent_session`). Wire-live = (deploy + set this flag) is
+/// a SEPARATE operator-gated step.
+const RETENTION_SWEEP_ENABLED_ENV: &str = "FRIDAY_RETENTION_SWEEP";
 
 /// (A1 run-controls) The env flag that gates the on-wire RUN-CONTROL protocol. DEFAULT-OFF: the
 /// server emits `AgentRunPaused` (instead of the pre-A1 `AgentRunResult{no_answer}` for a paused
@@ -697,6 +723,20 @@ fn reaper_enabled_from(raw: Option<&str>) -> bool {
     )
 }
 
+/// (gap #25) Whether the operator has explicitly enabled the artifact-retention sweep. Fail-closed.
+fn retention_sweep_enabled() -> bool {
+    retention_sweep_enabled_from(env::var(RETENTION_SWEEP_ENABLED_ENV).ok().as_deref())
+}
+
+/// (gap #25) Pure flag-matcher for `FRIDAY_RETENTION_SWEEP` (separated from the env read so it is
+/// testable without mutating the process environment). DEFAULT-OFF and STRICT: only the exact
+/// trimmed `"1"` enables it (the program-standard exact-1 idiom used by mission-/run-control
+/// flags); unset, empty, `"true"`, `"0"`, or any other value ⇒ false. OFF ⇒ the reaper tick runs
+/// the pre-#25 behavior (session sweep only), byte-identical.
+fn retention_sweep_enabled_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
 /// Spawn the DARK session-lifecycle reaper tick on its OWN thread + OWN DB connection.
 ///
 /// The thread opens a SEPARATE `Db::open_hub` connection (NOT the accept-loop's, never
@@ -705,7 +745,14 @@ fn reaper_enabled_from(raw: Option<&str>) -> bool {
 /// `sweep_lifecycle` every [`SESSION_REAPER_INTERVAL`]. Errors (a failed open, or a failed
 /// sweep) are LOGGED and the loop continues — the reaper never panics the daemon. A
 /// non-empty sweep logs its per-transition counts (refs-only: counts, never session bodies).
-fn spawn_session_reaper(db_path: String) {
+///
+/// (gap #25) When `retention_on` is true the SAME tick ALSO runs the artifact-retention sweep
+/// (`friday_storage::sweep_retention`) right after the session sweep, on the SAME connection. The
+/// retention sweep is internally fail-safe (each table in its own txn; a per-table error is
+/// recorded, not propagated) so it never returns `Err`; a non-empty retention sweep logs its
+/// per-table counts (refs-only). When `retention_on` is false the retention call is never made —
+/// byte-identical to the pre-#25 session-only reaper.
+fn spawn_session_reaper(db_path: String, retention_on: bool) {
     thread::spawn(move || {
         // Open this thread's OWN connection. A failed open is logged and the reaper exits
         // (the daemon keeps serving); it does NOT crash the process.
@@ -746,6 +793,32 @@ fn spawn_session_reaper(db_path: String) {
                 // reaper never crashes the daemon. Category only — never row contents.
                 Err(_e) => {
                     eprintln!("hub_agent_run_server: session sweep failed (continuing)");
+                }
+            }
+            // (gap #25) On the SAME tick, run the artifact-retention sweep when enabled. It is
+            // internally fail-safe (never returns Err; a per-table failure is counted, the sweep
+            // moves on), so a retention problem can never crash the reaper. Refs-only count log on
+            // a non-empty sweep; empty sweeps stay quiet.
+            if retention_on {
+                let now_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
+                let r = friday_storage::sweep_retention(
+                    db.conn(),
+                    now_ms,
+                    friday_storage::RetentionWindows::default(),
+                );
+                if !r.is_empty() {
+                    eprintln!(
+                        "hub_agent_run_server: retention sweep token_ledger={} surface_event={} mission={} work_item={} memory_item={} table_errors={}",
+                        r.token_ledger_deleted,
+                        r.surface_event_deleted,
+                        r.mission_deleted,
+                        r.work_item_deleted,
+                        r.memory_item_deleted,
+                        r.table_errors,
+                    );
                 }
             }
         }
@@ -2533,6 +2606,37 @@ mod tests {
             "padded true ⇒ enabled"
         );
         assert!(reaper_enabled_from(Some(" 1 ")), "padded 1 ⇒ enabled");
+    }
+
+    #[test]
+    fn retention_sweep_flag_is_default_off_and_fail_closed() {
+        // (gap #25) DEFAULT-OFF + STRICT exact-1 (NOT the reaper's 1|true): unset/empty/0/false/
+        // garbage ⇒ no retention sweep. OFF is what makes deploying the binary byte-identical to
+        // the pre-#25 session-only reaper.
+        assert!(
+            !retention_sweep_enabled_from(None),
+            "unset ⇒ disabled (default-off)"
+        );
+        assert!(!retention_sweep_enabled_from(Some("")), "empty ⇒ disabled");
+        assert!(!retention_sweep_enabled_from(Some("0")), "0 ⇒ disabled");
+        assert!(
+            !retention_sweep_enabled_from(Some("false")),
+            "false ⇒ disabled"
+        );
+        assert!(
+            !retention_sweep_enabled_from(Some("true")),
+            "true is NOT the opt-in value (exact-1 idiom; differs from the reaper flag)"
+        );
+        assert!(
+            !retention_sweep_enabled_from(Some("enabled")),
+            "garbage ⇒ disabled"
+        );
+        // Only the exact (trimmed) "1" enables it.
+        assert!(retention_sweep_enabled_from(Some("1")), "1 ⇒ enabled");
+        assert!(
+            retention_sweep_enabled_from(Some(" 1 ")),
+            "padded 1 ⇒ enabled (trimmed)"
+        );
     }
 
     #[test]
