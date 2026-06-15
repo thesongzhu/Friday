@@ -45,7 +45,7 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use friday_hub::diagnostics::{ChainStatus, DiagnosticsSnapshot};
-use friday_storage::Db;
+use friday_storage::{Db, StorageError};
 use serde_json::json;
 
 /// A fail-closed error: `kind` is a coarse, safe category (the only thing
@@ -122,7 +122,18 @@ fn run(args: &[String]) -> Result<String, BridgeError> {
         return Err(BridgeError::new("db_not_found"));
     }
     // Read-only open: a diagnostics read can NEVER mutate an operator DB.
-    let db = Db::open_hub_readonly(&db_path).map_err(|_| BridgeError::new("open_failed"))?;
+    // FAIL CLOSED + NAME the skew if the on-disk schema is strictly NEWER than this (stale)
+    // binary understands — the always-on `Db::open_hub_readonly` guard surfaced distinctly.
+    let db = Db::open_hub_readonly(&db_path).map_err(|e| match e {
+        StorageError::SchemaTooNew { disk, code } => {
+            eprintln!(
+                "diagnostics_snapshot: leg=open error_kind=schema_too_new disk_version={disk} \
+                 code_version={code} (stale binary: rebuild from the deploying commit)"
+            );
+            BridgeError::new("schema_too_new")
+        }
+        _ => BridgeError::new("open_failed"),
+    })?;
     // The collect error path is mapped to a coarse kind — a StorageError can
     // carry path/io detail, so it is never printed (same leak surface as the
     // omitted `reason`).

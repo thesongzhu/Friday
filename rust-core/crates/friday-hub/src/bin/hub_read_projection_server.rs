@@ -83,7 +83,7 @@ use friday_protocol::{
     WorkbenchProjectionSnapshotWire,
 };
 use friday_providers::{CliProbe, ProviderProbe};
-use friday_storage::Db;
+use friday_storage::{Db, StorageError};
 use friday_transport::{ws_recv_envelope, ws_send_envelope, TransportError, WireWebSocket};
 
 /// The session AAD binding every sealed envelope on a READ session to this protocol/version. A
@@ -112,6 +112,16 @@ enum ServerError {
     /// The read-only hub DB could not be opened ⇒ the server refuses to start (no projection
     /// surface). The category only — never the db path.
     DbUnavailable,
+    /// The on-disk hub schema is STRICTLY NEWER than this binary understands ⇒ FAIL CLOSED.
+    /// A STALE read server (built from an older commit, lower `hub_code_max()`) must NEVER
+    /// serve projections over a forward-migrated DB it would misread — it refuses to boot and
+    /// NAMES the version skew (the 13:40-vs-19:04 stale-bin incident, made diagnosable). The
+    /// fail-closed behavior already lived in [`Db::open_hub_readonly`]; this distinct variant
+    /// surfaces the skew instead of collapsing it into the opaque `db_unavailable`.
+    SchemaTooNew {
+        disk: i64,
+        code: i64,
+    },
     /// The SecureStore peer-pubkey allowlist is MISSING, INVALID, or EMPTY ⇒ FAIL CLOSED. (J2: the
     /// read seam admits a NON-EMPTY MULTI-peer list, so there is no longer a multi-peer refusal —
     /// only the missing/empty/corrupt fail-closed remains.)
@@ -124,16 +134,36 @@ enum ServerError {
 
 fn main() {
     if let Err(err) = run() {
-        let kind = match err {
-            ServerError::BadArgs => "bad_args",
-            ServerError::Bind => "bind_failed",
-            ServerError::DbUnavailable => "db_unavailable",
-            ServerError::PeerAllowlist => "peer_allowlist_unavailable",
-            ServerError::MasterKeyUnavailable => "master_key_unavailable",
-            ServerError::StoreUnavailable => "secure_store_unavailable",
-        };
-        eprintln!("hub_read_projection_server_unavailable: {kind}");
+        // NAME the version skew on the schema-too-new fail-closed (the diagnosability fix). The
+        // pure `boot_error_kind` mapping is shared with the tests so the surfaced token can never
+        // drift from what `main` emits.
+        if let ServerError::SchemaTooNew { disk, code } = &err {
+            eprintln!(
+                "hub_read_projection_server: leg=open error_kind=schema_too_new \
+                 disk_version={disk} code_version={code} (stale binary: on-disk schema is \
+                 newer than this build understands — rebuild from the deploying commit)"
+            );
+        }
+        eprintln!(
+            "hub_read_projection_server_unavailable: {}",
+            boot_error_kind(&err)
+        );
         std::process::exit(2);
+    }
+}
+
+/// The coarse, closed-vocabulary `error_kind` token surfaced for each boot failure category.
+/// Pure (no I/O) so it is shared by `main` AND the tests — the surfaced token is asserted
+/// against the SAME mapping `main` uses, never a duplicate that could drift.
+fn boot_error_kind(err: &ServerError) -> &'static str {
+    match err {
+        ServerError::BadArgs => "bad_args",
+        ServerError::Bind => "bind_failed",
+        ServerError::DbUnavailable => "db_unavailable",
+        ServerError::SchemaTooNew { .. } => "schema_too_new",
+        ServerError::PeerAllowlist => "peer_allowlist_unavailable",
+        ServerError::MasterKeyUnavailable => "master_key_unavailable",
+        ServerError::StoreUnavailable => "secure_store_unavailable",
     }
 }
 
@@ -190,7 +220,7 @@ fn run() -> Result<(), ServerError> {
     // (1) Open the hub DB READ-ONLY. This is the capability-isolation cornerstone: NO HubRuntime, NO
     // DeepSeekClient, NO `from_env`, NO model-call path — the read server holds no provider
     // credential and can only READ. A read client cannot spend quota or write by construction.
-    let db = Db::open_hub_readonly(&db_path).map_err(|_| ServerError::DbUnavailable)?;
+    let db = open_hub_readonly_guarded(&db_path)?;
 
     // (1a) The provider-CLI status probe for the S-R3 providers-doctor projection. The REAL probe
     // runs ONLY each CLI's read-only `login/auth status` subcommand (never a prompt/send) — no model
@@ -819,6 +849,21 @@ fn arg_value(args: &[String], name: &str) -> Option<String> {
             args.iter()
                 .find_map(|arg| arg.strip_prefix(&prefix).map(str::to_string))
         })
+}
+
+/// Open the hub DB READ-ONLY, mapping a fail-closed schema-version skew to a DISTINCT,
+/// diagnosable [`ServerError::SchemaTooNew`]. [`Db::open_hub_readonly`] already FAILS CLOSED
+/// when the on-disk schema is strictly NEWER than this binary understands (`SchemaTooNew` — the
+/// always-on guard a STALE read server, built from an older commit with a lower `hub_code_max()`,
+/// hits against a forward-migrated DB). The behavior is unchanged — the open still errors and the
+/// server refuses to boot/serve — but instead of collapsing it into the generic `db_unavailable`,
+/// the skew is surfaced (and NAMED in `main`) so a stale-bin incident is attributable. Every other
+/// open error keeps `DbUnavailable`, byte-identical to before.
+fn open_hub_readonly_guarded(db_path: &str) -> Result<Db, ServerError> {
+    Db::open_hub_readonly(db_path).map_err(|e| match e {
+        StorageError::SchemaTooNew { disk, code } => ServerError::SchemaTooNew { disk, code },
+        _ => ServerError::DbUnavailable,
+    })
 }
 
 /// Lowercase-hex encode (the owner-sealed projection ciphertext rides a `String` field).
@@ -2463,6 +2508,58 @@ mod tests {
         assert!(!json.contains("PAUSED-RUN-TASK-BODY"), "no run task body");
         drop(ws);
         assert_eq!(server.join().unwrap(), 1);
+    }
+
+    /// NORMAL same-commit deploy: a DB at exactly `hub_code_max()` opens read-only and the read
+    /// server proceeds — BYTE-IDENTICAL to before the guard (the guard NEVER fires on equal).
+    #[test]
+    fn equal_schema_version_opens_read_only() {
+        let path = temp_db_path("ro-equal");
+        drop(Db::open_hub(&path).unwrap());
+        let db = open_hub_readonly_guarded(&path).expect("equal version must open read-only");
+        assert_eq!(db.version().unwrap(), friday_storage::hub_code_max());
+    }
+
+    /// STALE read server vs a forward-migrated DB: the on-disk version is `code_max + 1`, so the
+    /// open FAILS CLOSED with `ServerError::SchemaTooNew` (kind `schema_too_new`, NAMING the skew)
+    /// — the server never boots and never serves projections it would misread. The fail-closed
+    /// behavior already lived in `Db::open_hub_readonly`; this asserts the bin surfaces the skew
+    /// instead of the opaque `db_unavailable`.
+    #[test]
+    fn newer_on_disk_schema_fails_closed_with_named_skew() {
+        let path = temp_db_path("ro-too-new");
+        {
+            let db = Db::open_hub(&path).unwrap();
+            db.conn()
+                .execute(
+                    "UPDATE schema_version SET version = ?1 WHERE id = 1",
+                    [friday_storage::hub_code_max() + 1],
+                )
+                .unwrap();
+            drop(db);
+        }
+        let err = match open_hub_readonly_guarded(&path) {
+            Ok(_) => panic!("a stale read server must NOT open a forward-migrated DB"),
+            Err(e) => e,
+        };
+        match err {
+            ServerError::SchemaTooNew { disk, code } => {
+                assert_eq!(disk, friday_storage::hub_code_max() + 1);
+                assert_eq!(code, friday_storage::hub_code_max());
+            }
+            other => panic!("expected SchemaTooNew naming the skew, got {other:?}"),
+        }
+        // The surfaced error_kind is the distinct, diagnosable token — asserted against the SAME
+        // `boot_error_kind` mapping `main` emits (not a duplicate that could drift): a stale-bin
+        // open maps to `schema_too_new`, while every other open error stays `db_unavailable`.
+        assert_eq!(
+            boot_error_kind(&ServerError::SchemaTooNew { disk: 99, code: 1 }),
+            "schema_too_new"
+        );
+        assert_eq!(
+            boot_error_kind(&ServerError::DbUnavailable),
+            "db_unavailable"
+        );
     }
 
     /// Lowercase-hex decode helper for the test (mirror of the bin's `hex_encode`).

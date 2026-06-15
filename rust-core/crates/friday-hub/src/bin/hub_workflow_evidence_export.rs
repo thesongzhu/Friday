@@ -47,7 +47,7 @@ use std::env;
 use std::path::Path;
 
 use friday_storage::workflow_read::{get_workflow_run_summary, list_evidence_export};
-use friday_storage::Db;
+use friday_storage::{Db, StorageError};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
@@ -97,7 +97,19 @@ fn run(args: &[String]) -> Result<String, ExportError> {
     let run_id = arg_value(args, "--run-id").ok_or(ExportError::new("bad_args"))?;
 
     // Read-only open: an export can NEVER mutate an operator DB just because TS asks.
-    let db = Db::open_hub_readonly(&db_path).map_err(|_| ExportError::new("open_failed"))?;
+    // FAIL CLOSED + NAME the skew if the on-disk schema is strictly NEWER than this (stale)
+    // binary understands — the always-on `Db::open_hub_readonly` guard surfaced distinctly.
+    let db = Db::open_hub_readonly(&db_path).map_err(|e| match e {
+        StorageError::SchemaTooNew { disk, code } => {
+            eprintln!(
+                "hub_workflow_evidence_export: leg=open error_kind=schema_too_new \
+                 disk_version={disk} code_version={code} (stale binary: rebuild from the \
+                 deploying commit)"
+            );
+            ExportError::new("schema_too_new")
+        }
+        _ => ExportError::new("open_failed"),
+    })?;
 
     // The run summary is the run-EXISTENCE oracle (an unknown run is an explicit
     // fail-closed `run_not_found`, distinct from a known run with zero steps).
