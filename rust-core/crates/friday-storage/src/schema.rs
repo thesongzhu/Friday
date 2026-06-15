@@ -144,6 +144,16 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     // lifecycle timestamps, and a JSON boundaries blob (path prefix / risk ceiling /
     // allowlists; token/run ceilings are STORED but DEFERRED-not-enforced).
     "trust_grant",
+    // Hybrid recall (v34): the FTS5 keyword index over confirmed memory text — the
+    // keyword-relevance half of the flag-gated hybrid recall blend. Hub-only because
+    // `memory_item` (the indexed source) is Hub-only and recall is Hub-side (`07` §9). It
+    // holds the SAME confirmed memory text the recall path already injects (no new content
+    // class, no secret/key material). Its FTS5 shadow tables (`memory_fts_data`,
+    // `memory_fts_idx`, `memory_fts_docsize`, `memory_fts_config`) also appear in
+    // `sqlite_master` but are implementation detail — NOT listed here; the schema tests only
+    // assert listed tables are PRESENT on the hub and ABSENT on the phone, and the shadow
+    // names contain no forbidden secret-store word.
+    "memory_fts",
 ];
 
 /// Tables present only on a phone (never created on the Hub).
@@ -580,6 +590,24 @@ pub fn hub_migrations() -> Vec<Migration> {
             name: "work_item_execution_state",
             destructive: false,
             up: m0033_work_item_execution_state,
+        },
+        // Hybrid recall (b#1): a NEW Hub-only FTS5 virtual table `memory_fts` over the
+        // confirmed, content-bearing `memory_item` text + sync triggers + a backfill of
+        // existing confirmed rows. NEW-VIRTUAL-TABLE pattern (analogous to m0030/m0031's
+        // new-table migrations); it touches no `memory_item` COLUMN, so every pre-v34 row
+        // and query is unaffected. The index is the keyword-relevance half of the
+        // flag-gated (`FRIDAY_HYBRID_RECALL_ENABLED`, default-OFF) hybrid recall blend; with
+        // the flag OFF nothing reads `memory_fts`, so recall stays recency-only and
+        // byte-identical. Hub-only — `memory_item` is Hub-only (recall is Hub-side, `07` §9).
+        // The table holds ONLY the SAME confirmed memory text the recall path already injects
+        // (no new content class, no secret/key material — sensitive rows are still gated by the
+        // Context Passport at injection time, not by this index). Triggers keep it crash-safe +
+        // idempotent (DELETE-by-id then INSERT on the candidate→confirmed transition).
+        Migration {
+            version: 34,
+            name: "memory_fts5_hybrid_recall",
+            destructive: false,
+            up: m0034_memory_fts5_hybrid_recall,
         },
     ]
 }
@@ -2328,5 +2356,76 @@ fn m0033_work_item_execution_state(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(
         "ALTER TABLE work_item ADD COLUMN executing INTEGER NOT NULL DEFAULT 0;
          ALTER TABLE work_item ADD COLUMN last_heartbeat_ms INTEGER;",
+    )
+}
+
+// Hybrid recall (b#1): the NEW Hub-only `memory_fts` FTS5 virtual table over confirmed
+// memory text, its sync triggers, and a one-time backfill of existing confirmed rows.
+//
+// Why a STANDALONE (NOT external-content / NOT contentless) FTS5 table:
+// `memory_fts(content, memory_id UNINDEXED)` stores its own copy of the indexed `content`
+// plus the `memory_id` as an UNINDEXED column we join back on. This deliberately avoids the
+// external-content (`content='memory_item'`) variant, which would couple the index to
+// `memory_item`'s implicit rowid and force the fiddly `INSERT INTO memory_fts(memory_fts,
+// rowid, ...) VALUES('delete', ...)` shadow-delete dance on every change. The standalone copy
+// is the SAME confirmed text the recall path already injects into a prompt — no new content
+// class is stored, and sensitive rows are still gated by the Context Passport at injection
+// time, never by this index (the index holds text identically whether or not a row is
+// `sensitive`; the gate, not the index, decides injection).
+//
+// Sync invariant — index EXACTLY the confirmed + content-bearing rows the recall SQL reads
+// (`state='confirmed' AND content IS NOT NULL AND content != ''`). Kept in sync by triggers on
+// `memory_item` (so the `memory.rs` write helpers stay byte-identical — the DB enforces sync,
+// not app code):
+//   * AFTER UPDATE WHEN NEW.state='confirmed' — the candidate→confirm transition (`decide`),
+//     which is the ONLY way a row becomes recallable. DELETE-by-id THEN conditional INSERT, so
+//     it is IDEMPOTENT (a re-confirm or a content edit re-indexes cleanly, never duplicates).
+//   * AFTER INSERT WHEN NEW.state='confirmed' — defensive: a row inserted already-confirmed
+//     (not the normal candidate-first path, but possible via a direct seed/import) is indexed.
+//   * AFTER DELETE — drop the row's index entry. Retention (`retention.rs`) prunes ONLY
+//     candidate/rejected rows (confirmed memory is kept indefinitely), so a confirmed row is
+//     never swept today; the delete trigger is DEFENSIVE so the index can never go stale if any
+//     future path removes a confirmed row. CRASH-SAFE: the trigger and the row delete commit in
+//     the SAME transaction as the originating statement, so there is no window where the index
+//     references a deleted row.
+//
+// The INSERT triggers guard `content IS NOT NULL AND content != ''` so an empty-content row is
+// never indexed (it is never recallable). The backfill applies the SAME predicate to seed
+// existing confirmed rows, so flipping the flag works immediately against prod memory.
+//
+// Purely additive — touches no `memory_item` column and no other table. Hub-only — `memory_item`
+// is Hub-only. NEW-VIRTUAL-TABLE pattern (analogous to m0030/m0031). Idempotent on re-run? No —
+// migrations run exactly once (version-gated), so the CREATE/backfill run a single time; the
+// TRIGGERS' bodies are what must be idempotent (DELETE-then-INSERT), and they are.
+fn m0034_memory_fts5_hybrid_recall(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "CREATE VIRTUAL TABLE memory_fts USING fts5(content, memory_id UNINDEXED);
+
+         -- Sync: index exactly the confirmed + content-bearing rows recall reads.
+         CREATE TRIGGER memory_fts_ai AFTER INSERT ON memory_item
+           WHEN NEW.state = 'confirmed' AND NEW.content IS NOT NULL AND NEW.content != ''
+         BEGIN
+           DELETE FROM memory_fts WHERE memory_id = NEW.memory_id;
+           INSERT INTO memory_fts(content, memory_id) VALUES (NEW.content, NEW.memory_id);
+         END;
+
+         CREATE TRIGGER memory_fts_au AFTER UPDATE ON memory_item
+           WHEN NEW.state = 'confirmed'
+         BEGIN
+           DELETE FROM memory_fts WHERE memory_id = NEW.memory_id;
+           INSERT INTO memory_fts(content, memory_id)
+             SELECT NEW.content, NEW.memory_id
+             WHERE NEW.content IS NOT NULL AND NEW.content != '';
+         END;
+
+         CREATE TRIGGER memory_fts_ad AFTER DELETE ON memory_item
+         BEGIN
+           DELETE FROM memory_fts WHERE memory_id = OLD.memory_id;
+         END;
+
+         -- Backfill existing confirmed rows so the flag works immediately on prod memory.
+         INSERT INTO memory_fts(content, memory_id)
+           SELECT content, memory_id FROM memory_item
+            WHERE state = 'confirmed' AND content IS NOT NULL AND content != '';",
     )
 }

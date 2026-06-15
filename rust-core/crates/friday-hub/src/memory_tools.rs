@@ -16,7 +16,11 @@
 //!     top-k + PII redaction) → [`crate::cognition::gate_and_render_recall`] (the per-item Context
 //!     Passport gate — a `sensitive` memory drops itself under v1 deny-all). This is the IDENTICAL
 //!     chain the runtime's auto-recall preamble renders ([`crate::recall_preamble_for`]); the only
-//!     difference is the agent triggers it on demand. NO new ranking / redaction / gate logic.
+//!     difference is the agent triggers it on demand. NO new redaction / gate logic. When the
+//!     default-OFF `FRIDAY_HYBRID_RECALL_ENABLED` flag is ON AND the model supplies a `query`, the
+//!     ranking step swaps `rank_recall` for the FTS5 keyword+recency blend
+//!     [`crate::cognition::rank_recall_hybrid`] over the SAME owner-scoped candidate set (flag-OFF /
+//!     no usable query ⇒ recency-only, byte-identical).
 //!   - **store** delegates to [`friday_storage::memory::record_candidate`] (writes
 //!     `state = Candidate`, NON-durable) — the SAME primitive `memory_extraction::extract_inline`
 //!     uses to persist an auto-extracted candidate. A candidate is recallable ONLY after explicit
@@ -146,7 +150,31 @@ impl<'c> MemoryToolExecutor<'c> {
     /// result is the rendered preamble lines as the model-facing content; the summary is REFS-ONLY
     /// (a count, NEVER the recalled bodies — the recall content is PII-redacted but still owner data,
     /// kept off the audit-summary surface, mirroring web_fetch keeping the body off the ledger).
+    ///
+    /// HYBRID RECALL (`FRIDAY_HYBRID_RECALL_ENABLED`, default-OFF): when the flag is ON AND the
+    /// model supplied a `query` with usable tokens, the recall is RE-RANKED by FTS5 keyword
+    /// relevance blended with recency-decay ([`crate::cognition::rank_recall_hybrid`]) over the SAME
+    /// owner-scoped candidate set — so a keyword-relevant older memory surfaces. With the flag OFF
+    /// (or no usable query) the ranking is recency-only, BYTE-IDENTICAL to before. The keyword
+    /// scores only re-rank the owner's OWN candidate rows (owner-isolation inherited from the SQL).
     fn recall(&self, params: &[(String, String)]) -> Result<ToolReceipt, ExecError> {
+        // Read the hybrid flag ONCE here (the only env read) and inject it into the logic seam
+        // below — the split-env idiom so the behavior is unit-testable without mutating `std::env`.
+        let hybrid_on = crate::hybrid_recall_enabled_from(
+            std::env::var(crate::FRIDAY_HYBRID_RECALL_ENABLED).ok(),
+        );
+        self.recall_with_flag(params, hybrid_on)
+    }
+
+    /// The flag-parameterized body of [`Self::recall`]. `hybrid_on` is supplied by [`Self::recall`]
+    /// (from the env flag) and injected DIRECTLY by tests (so they never mutate `std::env`). With
+    /// `hybrid_on` FALSE the ranking is recency-only and BYTE-IDENTICAL to the pre-hybrid path
+    /// regardless of the `query` param.
+    fn recall_with_flag(
+        &self,
+        params: &[(String, String)],
+        hybrid_on: bool,
+    ) -> Result<ToolReceipt, ExecError> {
         // `limit`: TS-parity, clamped to MAX_RECALL_RESULTS. An absent/invalid limit ⇒ the cap.
         let limit = Self::param(params, "limit")
             .and_then(|s| s.trim().parse::<usize>().ok())
@@ -165,17 +193,38 @@ impl<'c> MemoryToolExecutor<'c> {
         // REUSE the spine: the dual-read UNION over the ORDERED candidate namespaces. Each
         // per-principal SQL inside `recall_confirmed_multi` stays `principal_id = ?` EXACT-MATCH
         // (the union + dedup happen in memory), so this can never widen to another owner's rows.
-        // Then recency-decay + PII redaction (rank_recall) → per-item Passport gate
-        // (gate_and_render_recall). NO new ranking/redaction/gate logic here.
+        // Then recency-decay (OR the hybrid keyword blend when ON) + PII redaction (rank_recall*) →
+        // per-item Passport gate (gate_and_render_recall). NO new redaction/gate logic here.
         let principal_refs: Vec<&str> = self.recall_principals.iter().map(String::as_str).collect();
         let rows = friday_storage::memory::recall_confirmed_multi(self.conn, &principal_refs)
             .map_err(ExecError::Memory)?;
-        let ranked = crate::cognition::rank_recall(
-            &rows,
-            self.now_ms,
-            limit,
-            crate::cognition::DEFAULT_HALF_LIFE_MS,
-        );
+
+        // HYBRID branch — taken ONLY when the flag is ON AND the model's `query` yields a usable
+        // FTS5 MATCH expression. Any miss ⇒ recency-only (byte-identical). Scores are intersected
+        // with the owner-scoped `rows` inside `rank_recall_hybrid`, so no cross-owner row injects.
+        let match_query = Self::param(params, "query")
+            .filter(|_| hybrid_on)
+            .and_then(crate::cognition::build_fts_match_query);
+        let ranked = match match_query {
+            Some(mq) => {
+                let keyword_scores = friday_storage::memory::fts_keyword_scores(self.conn, &mq)
+                    .map_err(ExecError::Memory)?;
+                crate::cognition::rank_recall_hybrid(
+                    &rows,
+                    &keyword_scores,
+                    self.now_ms,
+                    limit,
+                    crate::cognition::DEFAULT_HALF_LIFE_MS,
+                    crate::cognition::DEFAULT_FTS_WEIGHT,
+                )
+            }
+            None => crate::cognition::rank_recall(
+                &rows,
+                self.now_ms,
+                limit,
+                crate::cognition::DEFAULT_HALF_LIFE_MS,
+            ),
+        };
         // v1 deny-all: no sensitive-transfer approval is wired (same as the auto-recall preamble),
         // so a `sensitive` memory drops itself per-item and the rest still render.
         let (preamble, receipt) = crate::cognition::gate_and_render_recall(&ranked, false);
@@ -659,6 +708,94 @@ mod tests {
         assert!(
             content.contains("legacy-namespace fact"),
             "recall must ALSO surface the legacy-namespace row (dual-read union): {content}"
+        );
+    }
+
+    /// HYBRID via the explicit `memory_recall` tool: with the flag ON and a keyword `query`, an
+    /// older-but-relevant confirmed memory surfaces where recency-only (flag OFF) drops it under a
+    /// small `limit`. Uses the `recall_with_flag` seam to inject the flag without `set_var`.
+    #[test]
+    fn memory_recall_tool_hybrid_surfaces_older_relevant_under_flag() {
+        let db = Db::open_hub(&tmp("memtool-hybrid")).unwrap();
+        let day = 24 * 60 * 60 * 1000_i64;
+        let now = 1_000_000_000_000_i64;
+        let exec = MemoryToolExecutor::new(db.conn(), Some("alice"), now, "rh:memtool");
+        let seed = |id_content: &str, when: i64| {
+            friday_storage::memory::record_candidate(
+                db.conn(),
+                &NewMemoryCandidate {
+                    memory_id: id_content,
+                    scope: friday_core::MemoryScope::Global,
+                    content_ref: None,
+                    content: Some(id_content),
+                    principal_id: Some("alice"),
+                    sensitive: false,
+                    created_at: when,
+                },
+            )
+            .unwrap();
+            friday_storage::memory::confirm(db.conn(), id_content, when).unwrap();
+        };
+        seed("recent lunch note one", now - day);
+        seed("recent lunch note two", now - 2 * day);
+        seed("the pipeline runs on apache kafka", now - 100 * day);
+
+        let params = p(
+            "memory_recall",
+            &[("query", "how to tune kafka"), ("limit", "2")],
+        );
+        // Flag OFF (recency-only, limit=2): the old kafka fact is dropped.
+        let off = exec.recall_with_flag(&params, false).unwrap();
+        assert!(
+            !off.content.as_deref().unwrap_or("").contains("kafka"),
+            "recency-only must drop the old kafka memory: {:?}",
+            off.content
+        );
+        // Flag ON (hybrid): the kafka query surfaces the older relevant memory.
+        let on = exec.recall_with_flag(&params, true).unwrap();
+        assert!(
+            on.content.as_deref().unwrap_or("").contains("kafka"),
+            "hybrid recall via the tool must surface the keyword-relevant older memory: {:?}",
+            on.content
+        );
+    }
+
+    /// NO-DEGRADE for the tool: flag OFF is independent of the `query` param (the recency-only
+    /// path never consults the query or FTS).
+    #[test]
+    fn memory_recall_tool_flag_off_is_query_independent() {
+        let db = Db::open_hub(&tmp("memtool-off")).unwrap();
+        let now = 1_000_000_i64;
+        let exec = MemoryToolExecutor::new(db.conn(), Some("alice"), now, "ro:memtool");
+        for c in [
+            "alice likes rust",
+            "alice uses kafka",
+            "alice ships fridays",
+        ] {
+            friday_storage::memory::record_candidate(
+                db.conn(),
+                &NewMemoryCandidate {
+                    memory_id: c,
+                    scope: friday_core::MemoryScope::Global,
+                    content_ref: None,
+                    content: Some(c),
+                    principal_id: Some("alice"),
+                    sensitive: false,
+                    created_at: now,
+                },
+            )
+            .unwrap();
+            friday_storage::memory::confirm(db.conn(), c, now).unwrap();
+        }
+        let with_q = exec
+            .recall_with_flag(&p("memory_recall", &[("query", "kafka kafka")]), false)
+            .unwrap();
+        let no_q = exec
+            .recall_with_flag(&p("memory_recall", &[]), false)
+            .unwrap();
+        assert_eq!(
+            with_q.content, no_q.content,
+            "flag-OFF tool recall must be independent of the query argument"
         );
     }
 }

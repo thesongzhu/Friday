@@ -76,6 +76,71 @@ pub fn set_run_state(conn: &Connection, run_id: &str, next: PlanState, now: i64)
     Ok(())
 }
 
+/// The terminal `agent_run.state` value for a run that REACHED A RESULT but did
+/// NOT flow through the [`PlanState`] plan-approval machine (the common case: an
+/// ordinary Q&A / read-only task `Finished`, or a resumed mutation `mutation_completed`).
+///
+/// ## Why this exists (the stuck-state defect it fixes)
+/// `create_run` seeds every run at `awaiting_clarification` (the gate's entry
+/// state). The live agent loop records terminal *events* (`agent.finished`,
+/// `agent.outcome:*`) and persists a terminal `run_result`, but NOTHING moved the
+/// `agent_run.state` column off its `create_run` value — `set_run_state` (the
+/// [`PlanState`] machine) has zero live callers, and the loop never reaches the
+/// plan-approval lifecycle. So a finished run's `agent_run.state` stayed stuck at
+/// `awaiting_clarification` forever, contradicting both its terminal `run_result`
+/// AND the event-log-derived status the readback already reports. This is the
+/// chokepoint that completes the lifecycle, mirroring how [`cancel_run`] writes a
+/// terminal out-of-vocab state directly.
+///
+/// ## Vocabulary + no migration
+/// Like [`STATE_CANCELLED`], the written string is the `run_result.status` LABEL
+/// (`finished` / `mutation_completed` / `errored` / `bounded` / …) — DELIBERATELY
+/// OUTSIDE the closed [`PlanState`] vocab so [`parse_plan_state`] returns `None`
+/// (a terminal run has no live PlanState, exactly like a cancelled one). The
+/// `agent_run.state` column is free-form `TEXT` (no CHECK), so this writes WITHOUT
+/// a migration. Keeping the column value equal to `run_result.status` makes the
+/// readback (`run_state`) COHERENT with the stored result + the derived status.
+///
+/// ## Fail-closed, gate-preserving, cancel-safe (NO-DEGRADE)
+///   - It is a NO-OP for the `awaiting_clarification` status: a run genuinely held
+///     by the clarification gate (terminal `LoopStatus::AwaitingClarification`,
+///     ZERO model calls) keeps its `awaiting_clarification` column verbatim — the
+///     gate hold is structurally untouched (the only legitimate persisted
+///     `awaiting_clarification` is a genuine hold).
+///   - It NEVER clobbers [`STATE_CANCELLED`]: a run cancelled out-of-band keeps its
+///     terminal `cancelled` flag even if a late result is persisted (mirrors
+///     [`cancel_run`]'s "never touches `run_result`" half — the two terminal
+///     writers do not fight).
+///   - It is a no-op when the run row does not exist (`UPDATE … WHERE` affects 0
+///     rows) and when the column already holds the same terminal value (idempotent
+///     re-persist).
+///
+/// Intended to be called INSIDE the same transaction that persists the
+/// `run_result` (see [`crate::run_result::persist_run_result`]) so the result and
+/// the lifecycle state move atomically together.
+pub fn mark_run_terminal_state(
+    conn: &Connection,
+    run_id: &str,
+    status: &str,
+    now: i64,
+) -> Result<()> {
+    // A genuine clarification HOLD is the one legitimate non-terminal persisted
+    // status: leave the `create_run` `awaiting_clarification` column verbatim so the
+    // gate hold is structurally preserved (NO-DEGRADE). Any other status is terminal.
+    if status == PlanState::AwaitingClarification.as_str() {
+        return Ok(());
+    }
+    // Move the column to the terminal status string, EXCEPT when the run was cancelled
+    // out-of-band — a `cancelled` flag is never clobbered by a late result persist.
+    // `WHERE run_id = ?` over a missing row is a harmless 0-row update.
+    conn.execute(
+        "UPDATE agent_run SET state = ?1, updated_at = ?2 \
+         WHERE run_id = ?3 AND state != ?4",
+        params![status, now, run_id, STATE_CANCELLED],
+    )?;
+    Ok(())
+}
+
 /// Append an event to a run's log with the next monotonic `seq` (1-based,
 /// per-run). Returns the assigned `seq`. The run must exist.
 pub fn record_event(

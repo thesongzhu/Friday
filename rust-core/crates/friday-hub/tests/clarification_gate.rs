@@ -242,3 +242,129 @@ fn resume_with_plain_answer_runs_the_loop_and_finishes_gate_does_not_refire() {
         other => panic!("expected a Finished delivery on resume, got {other:?}"),
     }
 }
+
+// --- stuck-`awaiting_clarification` lifecycle fix (runtime integration) ----------
+//
+// The storage-level chokepoint is proven in `friday-storage::run_result` tests; these
+// lock that the LIVE RUNTIME actually routes a terminal run through it, so the
+// readback `agent_run.state` is coherent with the result instead of stuck at the
+// `create_run` entry value — AND that a genuine gate hold is NOT moved.
+
+/// INTEGRATION REPRO: a run that FINISHES through the real `run_session_task` →
+/// `run_session_loop` → step-5 `persist_run_result` chain must leave the persisted
+/// `agent_run.state` at the terminal `"finished"` — NOT stuck at the `create_run`
+/// `"awaiting_clarification"` value (the live-DB defect: 120 finished runs stuck).
+#[test]
+fn finished_run_through_runtime_persists_terminal_agent_run_state() {
+    std::env::set_var(friday_hub::FRIDAY_CLARIFICATION_GATE, "1");
+    let owner = "owner-state-finished";
+    // A PLAIN task (no planning verb) classifies None ⇒ the gate does not fire ⇒ the
+    // loop runs to Finished on the scripted transport.
+    let (rt, _ws) = runtime_with(
+        "state-finished",
+        owner,
+        ScriptTransport::new(&["{\"tool\":\"none\",\"answer\":\"All done.\"}"]),
+    );
+    let caller = authed_caller(owner);
+    let answer = rt.run_session_task(
+        &caller,
+        "run-state-finished",
+        "sess-state-finished",
+        "Tell me the current time in UTC",
+        5_000,
+    );
+    match &answer {
+        AuthedAnswer::Delivered { status, .. } => assert_eq!(status, "finished"),
+        other => panic!("expected a Finished delivery, got {other:?}"),
+    }
+    // THE FIX: the persisted run-state (what the refs-only readback surfaces as
+    // `run_state`) is now the terminal status, not the stuck entry value.
+    let summary =
+        friday_storage::agent_run_read::get_run_summary(rt.db().conn(), "run-state-finished")
+            .unwrap()
+            .expect("the finished run has an agent_run row");
+    assert_eq!(
+        summary.state, "finished",
+        "a finished run's agent_run.state must be terminal, not stuck at awaiting_clarification"
+    );
+    // The terminal transition stamps `updated_at` with the run's clock. This single-turn
+    // dispatch threads ONE `now_ms` through create + persist, so the two timestamps coincide
+    // (a real run that spans wall-clock time between create and finish strictly advances it —
+    // the storage-level test exercises that with distinct timestamps).
+    assert!(
+        summary.updated_at >= summary.created_at,
+        "the terminal transition must (re)stamp updated_at"
+    );
+}
+
+/// NO-DEGRADE (runtime): a genuine clarification HOLD — an under-specified, classified
+/// planning task — STILL persists `agent_run.state == "awaiting_clarification"` AND makes
+/// ZERO model calls (PanicTransport). The fix must never move a genuine hold to a terminal
+/// state; the gate is structurally preserved end-to-end.
+#[test]
+fn genuine_clarification_hold_keeps_awaiting_state_with_no_model_call() {
+    std::env::set_var(friday_hub::FRIDAY_CLARIFICATION_GATE, "1");
+    let owner = "owner-state-hold";
+    let (rt, _ws) = runtime_with("state-hold", owner, PanicTransport);
+    let caller = authed_caller(owner);
+    let answer = rt.run_session_task(
+        &caller,
+        "run-state-hold",
+        "sess-state-hold",
+        "create a workflow that posts a daily summary",
+        5_000,
+    );
+    match &answer {
+        AuthedAnswer::Delivered { status, .. } => assert_eq!(
+            status, "awaiting_clarification",
+            "the under-specified task is held at the gate (PanicTransport proves 0 model calls)"
+        ),
+        other => panic!("expected a clarification Delivered, got {other:?}"),
+    }
+    // THE GATE-PRESERVING INVARIANT: the persisted run-state stays at the gate's hold
+    // value — the fix's chokepoint is a no-op for the `awaiting_clarification` status.
+    let summary = friday_storage::agent_run_read::get_run_summary(rt.db().conn(), "run-state-hold")
+        .unwrap()
+        .expect("the held run has an agent_run row");
+    assert_eq!(
+        summary.state, "awaiting_clarification",
+        "a genuine clarification hold must remain awaiting_clarification (gate not weakened)"
+    );
+}
+
+/// INTEGRATION REPRO on the SESSIONLESS path that actually produced the stuck rows.
+/// The live-DB stuck rows ("Read-only self-probe: confirm the repository is reachable")
+/// flowed through `HubRuntime::run_task` → `run_with_request` (persist at the routed-loop
+/// tail), NOT the sessioned chat entry the tests above exercise. Both share the same
+/// `persist_run_result` chokepoint, but this mirrors the path of the actual defect: a
+/// finished sessionless run's `agent_run.state` must be terminal, not stuck.
+#[test]
+fn finished_sessionless_run_task_persists_terminal_agent_run_state() {
+    let owner = "owner-sessionless-finished";
+    let (rt, _ws) = runtime_with(
+        "sessionless-finished",
+        owner,
+        ScriptTransport::new(&["{\"tool\":\"none\",\"answer\":\"repo reachable\"}"]),
+    );
+    let (_selection, outcome) = rt
+        .run_task(
+            "run-sessionless-finished",
+            "Read-only self-probe: confirm the repository is reachable",
+            5_000,
+        )
+        .expect("the sessionless run drives to a terminal LoopOutcome");
+    assert_eq!(
+        outcome.status,
+        friday_hub::LoopStatus::Finished,
+        "the scripted finish must produce a Finished outcome"
+    );
+    let summary =
+        friday_storage::agent_run_read::get_run_summary(rt.db().conn(), "run-sessionless-finished")
+            .unwrap()
+            .expect("the finished sessionless run has an agent_run row");
+    assert_eq!(
+        summary.state, "finished",
+        "the sessionless path (which produced the live stuck rows) must also persist a \
+         terminal agent_run.state"
+    );
+}
