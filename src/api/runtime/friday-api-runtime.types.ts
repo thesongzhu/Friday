@@ -28,6 +28,7 @@ import type {
 } from "../../autonomy/index.js";
 import type { FridayProviderService } from "#providers";
 import type { FridayRustHubAgentRunSealedClientService } from "../mission-spine/friday-rust-hub-agent-run-sealed-client-service.js";
+import type { FridayRustHubAgentRunMissionContext } from "../mission-spine/friday-rust-hub-agent-run-ws-sealed-client.js";
 import type { FridayRustHubRunContinuityProjectorService } from "../mission-spine/friday-rust-hub-run-continuity-projector-service.js";
 import type { FridayRustHubRunAnswerReadbackService } from "../mission-spine/friday-rust-hub-run-answer-readback-service.js";
 import type { FridayRustHubProvidersDetectService } from "../mission-spine/friday-rust-hub-providers-detect-bridge-service.js";
@@ -88,6 +89,23 @@ import type {
   WhatsappWebhookService,
 } from "#channels";
 
+/**
+ * (Organic mission→run binding PRODUCER — DARK) The narrow structural shape of the ROUTING `startRun`
+ * (`routeStartRun`) exposed on {@link FridayApiRuntime.agent}. Typed to the fields the mission
+ * auto-dispatch driver sets (the route's full input type is a SUPERSET, so the assignment is
+ * type-compatible). The result is awaited-and-discarded by the driver (fire-and-forget); the bound
+ * seam is the observability surface.
+ */
+export type FridayAgentRouteStartRun = (input: {
+  task: string;
+  principalId?: string;
+  providerId?: string;
+  model?: string;
+  constraints?: { readOnly?: boolean };
+  allowedRustRouteTools?: string[];
+  missionContext?: FridayRustHubAgentRunMissionContext;
+}) => Promise<unknown>;
+
 export interface FridayApiRuntime {
   auth: FridayAuthService;
   tokenValidator: FridayTokenValidator;
@@ -118,6 +136,15 @@ export interface FridayApiRuntime {
   agentEventEmitter?: FridayAgentEventEmitter;
   agentRunRepository?: FridayAgentRunRepository;
   agentAutomationService?: FridayAgentAutomationService;
+  /**
+   * (Organic mission→run binding PRODUCER — DARK) The ROUTING `startRun` entrypoint (the
+   * `routeStartRun` wrapper the HTTP startRun route uses). Present only when the agent runtime +
+   * emitter are wired; `startRun` is undefined otherwise. Bootstrap hands this to the mission
+   * auto-dispatch driver (behind two default-OFF flags) so an organic intake can fire a bound
+   * read-only run via the SAME route-qualifying path as a manual startRun. No other consumer reads
+   * it, so exposing it is additive + dark-safe.
+   */
+  agent?: { startRun?: FridayAgentRouteStartRun };
   mcpServer?: FridayMcpServerRoutesDeps;
   deterministicPipeline?: FridayDeterministicPipelineRoutesDeps;
   diagnosis?: FridayDiagnosisRoutesDeps;

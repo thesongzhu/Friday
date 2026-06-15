@@ -41,6 +41,7 @@ export {
   resolveRouteAgentRunViaRust,
   resolveRouteMissionSpineViaRust,
   resolveRouteMemorySpineViaRust,
+  resolveMissionAutoDispatch,
   resolveRouteProvidersViaRust,
   resolveRouteWorkflowsViaRust,
   sanitizeFridayChannelVisibleReply,

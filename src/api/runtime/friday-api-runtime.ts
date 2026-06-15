@@ -48,7 +48,11 @@ import type { FridayDeterministicDispatchDeps } from "../../sessions/services/fr
 import { dispatchManagedAsync } from "../../sessions/services/friday-managed-async-dispatch.js";
 import type { FridayManagedAsyncDispatchDeps } from "../../sessions/services/friday-managed-async-dispatch.js";
 import { parseFridayReflexExplicitPreferenceMessage } from "../../reflex/index.js";
-import type { CreateFridayApiRuntimeDeps, FridayApiRuntime } from "./friday-api-runtime.types.js";
+import type {
+  CreateFridayApiRuntimeDeps,
+  FridayAgentRouteStartRun,
+  FridayApiRuntime,
+} from "./friday-api-runtime.types.js";
 import { createFridayAuthService } from "../auth/friday-auth-service.js";
 import { createFridayTokenValidator } from "../auth/friday-token-validator.js";
 import { createFridayRateLimitService } from "../auth/friday-rate-limit-service.js";
@@ -995,8 +999,11 @@ export function resolveApiRuntimeCanonicalGateRequired(env: NodeJS.ProcessEnv = 
 // read-only loop natively exposes, which is exactly what the future route gates.
 export const RUST_ROUTE_READ_TOOL_ALLOWLIST = ["read_file", "list_dir", "stat_file", "search"] as const;
 
-const RUST_ROUTE_DEEPSEEK_PROVIDER_ID = "deepseek";
-const RUST_ROUTE_DEEPSEEK_FLASH_MODEL = "deepseek-v4-flash";
+// EXPORTED so the mission auto-dispatch driver (and any future qualifying caller) can pass the EXACT
+// provider id / model the Rust read-only route qualifier (clause 3, `qualifiesForRustReadOnlyRoute`)
+// requires WITHOUT retyping the literal — a single source of truth for the qualifying shape.
+export const RUST_ROUTE_DEEPSEEK_PROVIDER_ID = "deepseek";
+export const RUST_ROUTE_DEEPSEEK_FLASH_MODEL = "deepseek-v4-flash";
 
 // (honest-non-finished) The well-known SHA-256 of the EMPTY byte string. A non-Finished terminal
 // run produced NO answer body, but the continuity-projector receipt requires a `finalMessageSha256`
@@ -4655,6 +4662,13 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
   // Register agent routes (optional — only if runtime and emitter are provided)
   let agentAutomationService: FridayAgentAutomationService | undefined;
+  // (Organic mission→run binding PRODUCER — DARK) Function-scoped ref to the ROUTING `startRun`
+  // (the `routeStartRun` wrapper at the route registration below). Hoisted here because
+  // `routeStartRun` is block-scoped inside the `if (deps.agentRuntime…)` arm and is otherwise
+  // invisible at the runtime return. Exposed as `agent.startRun` so bootstrap can hand the SAME
+  // route-qualifying entrypoint to the mission auto-dispatch driver. agentRuntime/emitter absent
+  // ⇒ this stays undefined ⇒ `agent.startRun` undefined ⇒ the driver no-ops (default-OFF safe).
+  let routeStartRunRef: FridayAgentRouteStartRun | undefined;
   if (deps.agentRuntime && deps.agentEventEmitter && agentRepo && agentRunEventRepo) {
     const agentAbortControllers = new Map<string, AbortController>();
     const throwRetiredAgentRunControl = (): never => {
@@ -5072,6 +5086,11 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       // Flag off OR disqualified → today's unchanged path (byte-identical 503 inside).
       return startRun(input);
     };
+    // (Organic mission→run binding PRODUCER — DARK) Publish the ROUTING `startRun` (this wrapper, NOT
+    // the bare `startRun` nor the automation copy) so bootstrap can hand the mission auto-dispatch
+    // driver the SAME entrypoint the HTTP startRun route uses. Additive + default-OFF: nothing reads
+    // this ref unless the driver is constructed (behind two default-OFF flags).
+    routeStartRunRef = routeStartRun;
 
     // (S6 mutating-chat — DARK, default-off) Runtime-level RESUME relay handed to the resume HTTP
     // route. The route already (1) flag-gated on `deps.agentRunControlViaRust` BEFORE any run lookup
@@ -5313,6 +5332,10 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     agentRuntime: deps.agentRuntime,
     agentEventEmitter: deps.agentEventEmitter,
     agentAutomationService,
+    // (Organic mission→run binding PRODUCER — DARK) Expose the ROUTING startRun so bootstrap can
+    // hand the mission auto-dispatch driver the SAME route-qualifying entrypoint. Undefined when the
+    // agent runtime/emitter are absent ⇒ the driver no-ops (default-OFF safe).
+    agent: { startRun: routeStartRunRef },
     mcpServer: deps.mcpServer,
     deterministicPipeline: deps.deterministicPipeline,
     diagnosis: deps.diagnosis,

@@ -1,5 +1,6 @@
 import { FridayDomainError } from "#errors";
 
+import type { FridayMissionAutoDispatchDriver } from "./friday-mission-auto-dispatch-driver.js";
 import type { FridayMissionSpineDispatchService } from "../http/routes/friday-mission-spine-routes.js";
 import {
   createFridayRustHubAgentRunSealedClient,
@@ -84,6 +85,17 @@ export interface CreateFridayMissionSpineDispatchAdapterOptions {
    * Constructed LAZILY per-call so this factory itself is side-effect-free.
    */
   readonly createClient?: CreateMissionSpineSealedClientFn;
+  /**
+   * (Organic mission→run binding PRODUCER — DARK, default-OFF) Optional auto-dispatch driver. When
+   * PRESENT (bootstrap injects it only behind `FRIDAY_MISSION_AUTO_DISPATCH` + the route flag), a
+   * SUCCESSFUL `intakeMission` invokes `onIntakeReady(request, result)` AFTER the dispatch returns
+   * but BEFORE the result is handed back — firing a read-only bound agent-run for a fresh-ready
+   * intake (async, non-blocking, fully error-isolated inside the driver). When ABSENT (the default)
+   * `intakeMission` is BYTE-IDENTICAL to today: no hook, no auto-dispatch. NEVER awaited and NEVER
+   * able to throw into the intake path (the driver isolates all errors), so an absent OR present
+   * driver leaves the intake response unchanged.
+   */
+  readonly autoDispatchDriver?: FridayMissionAutoDispatchDriver;
 }
 
 function unavailable(message: string): FridayDomainError {
@@ -110,6 +122,7 @@ export function createFridayMissionSpineDispatchAdapter(
   const { host, port, timeoutMs } = options;
   const createClient = options.createClient ?? createFridayRustHubAgentRunSealedClient;
   const secretResolver = options.secretResolver;
+  const autoDispatchDriver = options.autoDispatchDriver;
 
   /**
    * Resolve the X25519 secret + construct the underlying sealed client — shared by all three methods.
@@ -138,13 +151,21 @@ export function createFridayMissionSpineDispatchAdapter(
       request: FridayRustHubMissionIntakeRequest,
     ): Promise<FridayRustHubMissionIntakeResult> {
       const client = buildClient();
+      let result: FridayRustHubMissionIntakeResult;
       try {
-        return await client.intakeMission(request);
+        result = await client.intakeMission(request);
       } catch (error) {
         throw error instanceof FridayDomainError
           ? error
           : unavailable("Mission-spine intake dispatch failed.");
       }
+      // (Organic mission→run binding PRODUCER — DARK) When the auto-dispatch driver is injected
+      // (flag-ON only), fire the bound read-only run for a fresh-ready intake. The driver's
+      // `onIntakeReady` is SYNCHRONOUS + void + fully error-isolated and does NOT await the run,
+      // so the intake result returns immediately and the intake path is NEVER perturbed. When the
+      // driver is absent (the default) this is a no-op ⇒ byte-identical to today.
+      autoDispatchDriver?.onIntakeReady(request, result);
+      return result;
     },
 
     async transitionMission(

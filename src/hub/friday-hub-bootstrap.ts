@@ -108,10 +108,14 @@ import { createFridayWorkflowTriggerRepository } from "#workflows";
 import {
   createFridayApiRuntime,
   createFridayDeterministicPipelineRuntime,
+  createFridayMissionAutoDispatchDriver,
   createFridayReflexRoutes,
   getChannelPersona,
   hydrateChannelPersonaStore,
+  RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
+  RUST_ROUTE_DEEPSEEK_PROVIDER_ID,
 } from "#api";
+import type { MissionAutoDispatchStartRun } from "#api";
 import {
   createFridayMediaUnderstandingService,
   createFridayOpenAiVisionProvider,
@@ -1088,6 +1092,39 @@ export function resolveRouteMemorySpineViaRust(
     return configValue;
   }
   const raw = (env.FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true";
+}
+
+/**
+ * (Organic mission→run binding PRODUCER — DARK): single source of truth resolving the
+ * `missionAutoDispatch` flag from (1) an EXPLICIT {@link FridayHubConfig.missionAutoDispatch} and,
+ * only as a fallback, (2) the `FRIDAY_MISSION_AUTO_DISPATCH` env var — the operator knob that lets a
+ * fresh-Ready `/v1/mission-spine/intake` immediately fire a READ-ONLY bound agent-run carrying the
+ * server-produced mission handle (closing the #1 organic-driver gap: nothing originates a
+ * `mission_context` handle on a live run today).
+ *
+ * PRECEDENCE + PARSE mirror {@link resolveRouteMissionSpineViaRust} exactly: an explicit config
+ * boolean (true OR false) ALWAYS wins; the env is consulted ONLY when config does not specify.
+ * Case-insensitive, trimmed `"1"` or `"true"` ⇒ true; ABSENT / `""` / `"0"` / `"false"` / ANY other
+ * value ⇒ false. DEFAULT (both unset) ⇒ false, so the auto-dispatch driver is NEVER constructed, the
+ * dispatch adapter's `autoDispatchDriver` option is omitted, `intakeMission` is byte-identical, and
+ * no organic run is produced.
+ *
+ * NOTE: the driver is wired ONLY when BOTH this AND `resolveRouteMissionSpineViaRust` resolve true
+ * (the auto-dispatch road piggybacks the already-callable mission-spine dispatch adapter). End-to-end
+ * joined proof ALSO needs the Rust read-only route flag (`FRIDAY_ROUTE_AGENT_RUN_VIA_RUST`), the
+ * SERVER `FRIDAY_MISSION_INTAKE`/`FRIDAY_MISSION_SPINE_DISPATCH` flags, a deploy, and the SecureStore
+ * + launchd provisioning (operator-gated). This client-side knob only PRODUCES the bound run.
+ */
+export function resolveMissionAutoDispatch(
+  configValue: boolean | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  // Config explicit (true OR false) wins — env is the fallback for the unset gap only.
+  if (typeof configValue === "boolean") {
+    return configValue;
+  }
+  const raw = (env.FRIDAY_MISSION_AUTO_DISPATCH ?? "").trim().toLowerCase();
   return raw === "1" || raw === "true";
 }
 
@@ -7064,11 +7101,34 @@ export async function createFridayHub(
   // agent-run sealed-WS path (friday-api-runtime.ts ~:4816); the DB path is intentionally NOT carried
   // (the mission round-trips are refs-only WS, no DB readback).
   const routeMissionSpineViaRust = resolveRouteMissionSpineViaRust(config.routeMissionSpineViaRust);
+  // (Organic mission→run binding PRODUCER — DARK) When BOTH `missionAutoDispatch` AND the mission-spine
+  // route flag resolve true, construct the auto-dispatch driver and wire it into the dispatch adapter so
+  // a fresh-Ready intake immediately fires a READ-ONLY bound agent-run carrying the server-produced
+  // handle. DEFAULT-OFF: with `missionAutoDispatch` false the driver is NEVER built, the adapter's
+  // `autoDispatchDriver` option is OMITTED, `intakeMission` is byte-identical, and no organic run fires.
+  //
+  // ORDERING: the adapter is constructed here, BEFORE `createFridayApiRuntime` below, so the driver
+  // cannot capture `apiRuntime.agent.startRun` directly. The driver instead takes a THUNK
+  // (`() => resolvedMissionAutoDispatchStartRun`) that is populated AFTER the runtime exists. The
+  // driver's `onIntakeReady` only fires at request time (long after boot), by which point the ref is set.
+  const missionAutoDispatch = resolveMissionAutoDispatch(config.missionAutoDispatch);
+  let resolvedMissionAutoDispatchStartRun: MissionAutoDispatchStartRun | undefined;
+  const missionAutoDispatchDriver =
+    missionAutoDispatch && routeMissionSpineViaRust
+      ? createFridayMissionAutoDispatchDriver({
+        startRun: () => resolvedMissionAutoDispatchStartRun,
+        deepseekProviderId: RUST_ROUTE_DEEPSEEK_PROVIDER_ID,
+        deepseekFlashModel: RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
+      })
+      : undefined;
   const missionSpineDispatch = routeMissionSpineViaRust
     ? createFridayMissionSpineDispatchAdapter({
       host: process.env.FRIDAY_HUB_AGENT_RUN_WS_HOST ?? "127.0.0.1",
       port: readMissionSpineRustWsPort(process.env.FRIDAY_HUB_AGENT_RUN_WS_PORT),
       secretResolver: resolveRustAgentRunWsClientX25519Secret,
+      // DARK: present ONLY when `missionAutoDispatch` is also on (above). Absent (the default) ⇒ no
+      // hook ⇒ `intakeMission` byte-identical.
+      ...(missionAutoDispatchDriver ? { autoDispatchDriver: missionAutoDispatchDriver } : {}),
     })
     : null;
 
@@ -7407,6 +7467,14 @@ export async function createFridayHub(
     socialImport: socialImportDeps,
     taskWorkflows: taskWorkflowDeps,
   });
+
+  // (Organic mission→run binding PRODUCER — DARK) Populate the auto-dispatch driver's startRun thunk
+  // now that the api runtime exists. `apiRuntime.agent?.startRun` is the ROUTING `routeStartRun`
+  // (the SAME entrypoint the HTTP startRun route uses — route-qualifying for the Rust read-only path).
+  // No-op assignment when the driver was never constructed (flag-OFF) or the agent surface is absent.
+  if (missionAutoDispatchDriver) {
+    resolvedMissionAutoDispatchStartRun = apiRuntime.agent?.startRun;
+  }
 
   if (reflexService) {
     for (const route of createFridayReflexRoutes({ service: reflexService })) {
