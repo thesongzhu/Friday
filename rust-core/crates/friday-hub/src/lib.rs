@@ -218,6 +218,19 @@ pub mod workflow_run_control;
 /// operator-gated. NOT v1 GO.
 pub mod scheduler;
 
+/// S10-B — the scheduler TICK engine (DARK, default-OFF `FRIDAY_SCHEDULER_TICK_ENABLED`).
+/// The FIRING half the S10-A substrate was built for but never wired: a bounded tick
+/// that scans the ENABLED schedules, fires the DUE ones through the existing
+/// `workflow_run` dispatch seam, and never double-fires. The at-most-once anchor is
+/// the engine's deterministic-run-id `create_run` PK; the tick adds the catch-up
+/// STORM guard (fire only the most-recent due slot, skip the backlog), the
+/// serialization guard (no fire onto a still-running prior fire of the SAME
+/// schedule), per-tick fire/consider CAPS, and a durable last-tick watermark for
+/// crash-safe restart. Flag-OFF the tick thread is never spawned — NOTHING fires,
+/// byte-identical to today. Live enable (deploy + WAL flip + lease enrol + flag) is
+/// operator-gated. NOT v1 GO.
+pub mod scheduler_tick;
+
 /// PAIR-002 — Hub-side local pairing message handler. It consumes the structured
 /// QR payload from PAIR-001 and the first-slice protocol `Pair` message, writes a
 /// trusted device through the existing authenticated pairing proof, and never
