@@ -980,12 +980,22 @@ pub trait CodexTurnExecutor {
     /// `conn`/`policy`/`secret`/`approve` come from the RUN context; `run_id`/`now_ms` time the
     /// pending-approval row on a `RequiresApproval`. Errors are Friday-side faults the caller
     /// fail-closes on (e.g. a pending-persist failure) — never a silent default or auto-approve.
+    ///
+    /// `operator_vk` is the operator's PUBLIC Ed25519 verify key (the only half the Hub holds),
+    /// forwarded VERBATIM to [`codex_gated_turn::run_codex_gated_turn`] — the SAME verify-only
+    /// authorization the deepseek/claude routed loop threads (`lib.rs` `run_routed_loop_with_policy`'s
+    /// `operator_vk` param). `None` ⇒ the protected (mutating) gate's base decision stands
+    /// (DenyAll-equivalent): a mutating action `RequiresApproval` → Pauses, never auto-allows. This
+    /// param being `Some` is GATED by the caller behind `FRIDAY_CODEX_POSITIVE_AUTHORIZE_ENABLED`
+    /// (see `HubRuntime::run_with_request`): the key is provisioned/passed ONLY with that flag ON,
+    /// so flag-OFF is byte-identical to the historical hardcoded-`None` DenyAll.
     #[allow(clippy::too_many_arguments)]
     fn run_gated_turn(
         &self,
         conn: &Connection,
         policy: &RunPolicy,
         secret: &[u8],
+        operator_vk: Option<&OperatorVerifyingKey>,
         approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
         task: &str,
         run_id: &str,
@@ -1040,10 +1050,14 @@ impl CodexTurnExecutor for LocalCodexGatedTurnExecutor {
         policy: &RunPolicy,
         // The HMAC `secret` is no longer consulted: `run_codex_gated_turn` is now Ed25519
         // verify-only. The `CodexTurnExecutor` trait still carries it (deepseek/claude share
-        // the seam) — threading a provisioned `operator_vk` through the trait is a follow-up
-        // (see the `None` below). Until then this executor authorizes protected actions under
-        // DenyAll (the triple-dark default), so a mutating Codex turn always Pauses.
+        // the seam) — the live authorization is the operator's PUBLIC `operator_vk` below.
         _secret: &[u8],
+        // The operator's PUBLIC Ed25519 verify key, forwarded VERBATIM to `run_codex_gated_turn`
+        // (the IDENTICAL verify-only authorization the routed loop uses). `None` ⇒ DenyAll
+        // (protected action Pauses, never auto-allows). The caller (`run_with_request`) only
+        // passes `Some` behind the default-OFF `FRIDAY_CODEX_POSITIVE_AUTHORIZE_ENABLED` flag, so
+        // with that flag OFF this is `None` — byte-identical to the historical hardcoded DenyAll.
+        operator_vk: Option<&OperatorVerifyingKey>,
         approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
         task: &str,
         run_id: &str,
@@ -1075,11 +1089,13 @@ impl CodexTurnExecutor for LocalCodexGatedTurnExecutor {
             conn,
             client,
             policy,
-            // TODO(follow-up): thread a provisioned `operator_vk` through `CodexTurnExecutor`
-            // so the live route can verify operator-signed approvals. Until then DenyAll: a
-            // protected (mutating) Codex action is never upgraded — it Pauses. This is the
-            // triple-dark default and keeps the route un-flippable without the key + flags.
-            None,
+            // The provisioned operator verify key, forwarded VERBATIM (the IDENTICAL verify-only
+            // path the routed loop uses). `Some(vk)` only when the caller resolved it behind
+            // `FRIDAY_CODEX_POSITIVE_AUTHORIZE_ENABLED` AND the operator key was provisioned;
+            // otherwise `None` ⇒ DenyAll (a protected Codex action Pauses, never auto-allows).
+            // This executor never inspects/holds a SIGNING key — verify-only, so it can never
+            // self-mint the approval it verifies.
+            operator_vk,
             &approve,
             &thread.thread_id,
             None,
