@@ -1,0 +1,144 @@
+{
+  "$schema_note": "Canonical source-of-truth for Friday loop feature-flags and their loop-closing e2e tests. The prod launch files (the rust-ws-wrapper script + the TS plist) are NOT committed to this repo, so THIS file is the authoritative, CI-enforced record of which flags exist, their intended prod state, and the committed test that drives the WHOLE loop with the flag ON. Registry gap #27 — 'every prod-ON flag has a passing loop e2e test' — is enforced against this file by scripts/ci/verify-prod-flag-tests.mjs.",
+  "why_this_exists": "Recurrence prevention for the L0 silently-inert-loop disaster: three loops shipped with their flags ON in prod while NO committed test drove the loop to its outcome. A hand-proof done once is not a committed, CI-run test. The MAPPING gate (scripts/ci/verify-prod-flag-tests.mjs) runs on EVERY PR and asserts the flag<->test mapping exists + resolves. It does NOT verify the live wrapper/plist actually sets these flags — that drift check is deploy-time (see deployment_critical + the docs note).",
+  "test_execution_note": "All mapped e2e_test entries are Rust friday-hub tests, RUN by `cargo test --workspace` in .github/workflows/rust-core.yml (none are #[ignore]'d; no key/network needed). Caveat: rust-core.yml is pull_request-triggered but PATH-FILTERED to rust-core/** — so the loop tests run on PRs that touch rust-core/, not on every PR. The mapped tests can only break when rust-core/ changes (and then rust-core.yml runs them), so coverage is sound; but a PR that does not touch rust-core/ gets only the existence check. A future vitest mapping would instead be run by the ci.yml `test` job.",
+  "deployment_critical": {
+    "note": "These flags are DEPLOYMENT-CRITICAL: their prod_state below is the contract a deploy MUST honor. A deploy must set EXACTLY the flags marked prod_state=on (no more, no less) on the named process. Wrapper-flag-durability concern: the rust-ws-wrapper and the TS plist must persist these env vars across restarts; a flag silently dropped on restart re-creates the inert-loop disaster. Drift-vs-live-wrapper (does the running process actually carry the manifest's prod_state=on set?) is a DEPLOY-TIME check, OUT OF CI SCOPE — tracked as a follow-up in docs/ops/prod-flag-test-gate.md.",
+    "flags": [
+      "FRIDAY_MISSION_INTAKE",
+      "FRIDAY_MISSION_SPINE_DISPATCH",
+      "FRIDAY_MISSION_BOUND_RUN",
+      "FRIDAY_RUN_LOOP_MEMORY_EXTRACTION",
+      "FRIDAY_MEMORY_CONFIRM",
+      "FRIDAY_CLARIFICATION_GATE",
+      "FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST",
+      "FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST",
+      "FRIDAY_ROUTE_AGENT_RUN_VIA_RUST",
+      "FRIDAY_MISSION_AUTO_DISPATCH"
+    ]
+  },
+  "coverage_legend": {
+    "loop-e2e": "A committed, PR-CI-run test drives the WHOLE loop with the flag's behavior ON and asserts the LOOP OUTCOME (e.g. mission born, work-item CompletedWithProof, memory becomes recallable, surface events emitted+read, clarification questions returned with zero model calls). This is the standard the gate's founding promise requires.",
+    "destination-only": "The DESTINATION loop this flag routes into has a real loop-e2e test (mapped here), but the flag's OWN on-ramp/routing decision is NOT exercised by any PR-CI test that closes the loop end-to-end. The mapped test is real and runs every PR, but it does not read this flag. This is a REAL coverage gap, recorded honestly — not a fabricated mapping."
+  },
+  "test_kind_note": "Rust producer tests use the program-standard split-env idiom: the env read (== \"1\") lives in a thin public wrapper, and the loop logic is a private *_flagged(bool) inner the test drives with the bool set ON directly (avoids cross-test env races; see the test file doc comments). Mapping to those tests is legitimate — the injected bool IS the flag's semantics. The ONLY thing those tests do not exercise is the thin env-string read in the binary (hub_agent_run_server.rs / bootstrap), which is the trivial trim()==\"1\" parse.",
+  "flags": [
+    {
+      "flag": "FRIDAY_MISSION_INTAKE",
+      "process": "rust-ws-wrapper",
+      "prod_state": "on",
+      "closes_loop": "An inbound MissionIntakeRequest births a Mission + WorkItem (no model call).",
+      "coverage": "loop-e2e",
+      "e2e_test": "rust-core/crates/friday-hub/tests/mission_intake_clarification.rs::arm_b_flag_on_detailed_classified_intent_births_a_mission_as_today",
+      "notes": "Drives mission_intake_result_for_db_flagged(.., clarify=true, ..) on a detailed intent and asserts a Mission(Active) + WorkItem row are written (the birth). arm_c (flag-off byte-identical) and arm_d (unclassified births) are sibling proofs in the same file."
+    },
+    {
+      "flag": "FRIDAY_MISSION_SPINE_DISPATCH",
+      "process": "rust-ws-wrapper",
+      "prod_state": "on",
+      "closes_loop": "Mission/WorkItem lifecycle requests transition the Hub state machine (no model call).",
+      "coverage": "loop-e2e",
+      "e2e_test": "rust-core/crates/friday-hub/src/hub_server.rs::mission_lifecycle_request_updates_mission_without_provider_call",
+      "notes": "Drives HubServer::dispatch with a MissionLifecycleRequest through the SAME mission_lifecycle_result producer the flag-ON binary arm invokes; asserts active->archived transition, zero provider/model calls, zero token_ledger rows, then reads it back via MissionTimelineRequest. JUDGMENT: the WorkItem-status arm (work_item_status_result_for_db) shares this flag but has no by-name dispatch test of equal strength — sub-coverage gap noted in the report (the mission-lifecycle arm is the loop closure for the flag)."
+    },
+    {
+      "flag": "FRIDAY_MISSION_BOUND_RUN",
+      "process": "rust-ws-wrapper",
+      "prod_state": "on",
+      "closes_loop": "A run whose session resolves to a live Mission is dispatched bound; on executed approval the bound WorkItem advances ProviderRouted -> CompletedWithProof.",
+      "coverage": "loop-e2e",
+      "e2e_test": "rust-core/crates/friday-hub/tests/resume_mission_workitem_completion.rs::executed_resume_advances_bound_work_item_to_completed_with_proof",
+      "notes": "Seeds a mission, binds the run ProviderRouted, pauses, then resume_agent_loop_for_mission executes the operator-signed mutation and asserts WorkItem -> CompletedWithProof with the run as proof receipt. False-proof guards (replay/expired/exec-failed) are sibling proofs."
+    },
+    {
+      "flag": "FRIDAY_RUN_LOOP_MEMORY_EXTRACTION",
+      "process": "rust-ws-wrapper",
+      "prod_state": "on",
+      "closes_loop": "After a finished agent run, extract a memory candidate from the turn (writes memory_item as a pending Candidate; never mutates the run).",
+      "coverage": "loop-e2e",
+      "e2e_test": "rust-core/crates/friday-hub/src/runtime.rs::post_run_extraction_flag_on_finished_fires_and_never_changes_the_run",
+      "notes": "Drives maybe_extract_memory_post_run_flagged(.., enabled=true) on a Finished outcome and asserts a candidate is extracted while the run result is unchanged. Sibling proofs cover flag-off byte-identical, non-finished-no-fire, and isolated-failure."
+    },
+    {
+      "flag": "FRIDAY_MEMORY_CONFIRM",
+      "process": "rust-ws-wrapper",
+      "prod_state": "on",
+      "closes_loop": "An owner-authed MemoryDecisionRequest confirms a memory candidate, making it recallable by a later session (no model call).",
+      "coverage": "loop-e2e",
+      "e2e_test": "rust-core/crates/friday-hub/src/runtime.rs::memory_loop_end_to_end_extract_confirm_recall_closes_on_agent_run_ingress",
+      "notes": "FULL memory loop: extract -> confirm (via the LIVE memory_decision_result_for_db handler, owner-scoped) -> assert recallable -> a LATER session recalls the content across the run boundary. The confirm leg is the FRIDAY_MEMORY_CONFIRM closure. A narrower dispatch-level proof is hub_server.rs::memory_decision_confirm_makes_candidate_recallable."
+    },
+    {
+      "flag": "FRIDAY_CLARIFICATION_GATE",
+      "process": "rust-ws-wrapper",
+      "prod_state": "on",
+      "closes_loop": "An under-specified planning task is answered with specific clarification questions instead of guessing (zero model calls); a plain-answer resume then runs the loop and the gate does not re-fire.",
+      "coverage": "loop-e2e",
+      "e2e_test": "rust-core/crates/friday-hub/tests/clarification_gate.rs::vague_planning_task_delivers_specific_questions_with_no_model_call",
+      "notes": "Sets FRIDAY_CLARIFICATION_GATE=1 on the LIVE runtime path and asserts specific questions are delivered with no model call. Sibling: resume_with_plain_answer_runs_the_loop_and_finishes_gate_does_not_refire."
+    },
+    {
+      "flag": "FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST",
+      "process": "ts-plist",
+      "prod_state": "on",
+      "closes_loop": "The TS memory-spine routes (confirm/decision) forward to the Rust hub instead of the legacy TS path; the loop closes Rust-side.",
+      "coverage": "destination-only",
+      "e2e_test": "rust-core/crates/friday-hub/src/runtime.rs::memory_loop_end_to_end_extract_confirm_recall_closes_on_agent_run_ingress",
+      "notes": "CRITICAL FINDING: this routing flag's destination loop (memory confirm->recall) is proven Rust-side by the mapped test, but NO PR-CI test drives flag-ON TS-routing -> real Rust -> loop-closed. The TS dispatch adapter (friday-memory-spine-dispatch-adapter.test.ts) uses a MOCKED sealed client, and the bootstrap env test only parses config. The flag's own on-ramp is mock-only in PR CI."
+    },
+    {
+      "flag": "FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST",
+      "process": "ts-plist",
+      "prod_state": "on",
+      "closes_loop": "The TS mission-spine routes (intake/lifecycle/workitem) forward to the Rust hub; the loop closes Rust-side.",
+      "coverage": "destination-only",
+      "e2e_test": "rust-core/crates/friday-hub/src/hub_server.rs::mission_lifecycle_request_updates_mission_without_provider_call",
+      "notes": "CRITICAL FINDING: destination loop (mission lifecycle dispatch) is proven Rust-side by the mapped test, but NO PR-CI test drives flag-ON TS-routing -> real Rust -> loop-closed. friday-mission-spine-dispatch-adapter.test.ts mocks the sealed client. The flag's own on-ramp is mock-only in PR CI."
+    },
+    {
+      "flag": "FRIDAY_ROUTE_AGENT_RUN_VIA_RUST",
+      "process": "ts-plist",
+      "prod_state": "on",
+      "closes_loop": "The TS agent-run start forwards the run to the Rust hub agent-run seam; the Rust run loop delivers the answer.",
+      "coverage": "destination-only",
+      "e2e_test": "rust-core/crates/friday-hub/src/runtime.rs::memory_loop_end_to_end_extract_confirm_recall_closes_on_agent_run_ingress",
+      "notes": "CRITICAL FINDING: the destination agent-run loop (run_session_task -> Delivered answer with status 'finished') is proven Rust-side by the mapped test, but NO PR-CI test drives flag-ON TS-routing -> real Rust -> delivered answer. The routed parity harnesses (routed_claude_parity.rs / routed_codex_parity.rs) ARE end-to-end but are #[ignore]'d + live-key-gated, so they never run in PR CI. The flag's own on-ramp is mock-only/live-gated in PR CI."
+    },
+    {
+      "flag": "FRIDAY_MISSION_AUTO_DISPATCH",
+      "process": "ts-plist",
+      "prod_state": "on",
+      "closes_loop": "A Ready mission intake automatically produces a bound read-only run (organic mission->run binding), no re-spend on blocked/duplicate intakes.",
+      "coverage": "destination-only",
+      "e2e_test": "rust-core/crates/friday-hub/tests/mission_intake_clarification.rs::arm_b_flag_on_detailed_classified_intent_births_a_mission_as_today",
+      "notes": "CRITICAL FINDING: the TS auto-dispatch DRIVER (friday-mission-auto-dispatch-driver.test.ts) is well-tested at the unit level (dispatch-exactly-once / no-dispatch-on-blocked / bind-to-result-ids), but with a MOCKED startRun thunk — no PR-CI test drives intake-ready -> real Rust bound run end-to-end. The mapped Rust test proves the upstream condition (a Ready intake that qualifies for auto-dispatch, asserted by auto_dispatch_allows_new_work); the bound-run production itself closes via FRIDAY_MISSION_BOUND_RUN's loop-e2e test. The auto-dispatch on-ramp is mock-only in PR CI."
+    },
+    {
+      "flag": "FRIDAY_MISSION_INTAKE_CLARIFY",
+      "process": "rust-ws-wrapper",
+      "prod_state": "dark",
+      "closes_loop": "A vague mission intent is CLARIFIED (specific questions returned, ZERO mission/workitem rows written) instead of silently birthing a Mission.",
+      "coverage": "loop-e2e",
+      "e2e_test": "rust-core/crates/friday-hub/tests/mission_intake_clarification.rs::arm_a_flag_on_vague_intent_clarifies_and_writes_zero_rows",
+      "notes": "Built-but-dark. Drives mission_intake_result_for_db_flagged(.., clarify=true, ..) on a vague intent and asserts clarification questions + zero rows. arm_c is the flag-off byte-identical birth proof."
+    },
+    {
+      "flag": "FRIDAY_SURFACE_EVENTS",
+      "process": "rust-ws-wrapper",
+      "prod_state": "dark",
+      "closes_loop": "Mission-bound run lifecycle emits surface_event timeline rows that the read projection includes; flag-off is byte-identical (no events).",
+      "coverage": "loop-e2e",
+      "e2e_test": "rust-core/crates/friday-hub/tests/surface_events_timeline.rs::flag_on_emits_lifecycle_events_and_reader_includes_them_then_off_is_clean",
+      "notes": "Built-but-dark. One sequential test sets FRIDAY_SURFACE_EVENTS=1, runs the loop, asserts lifecycle surface_events are emitted AND appear in the read projection, then flips to 0 and asserts a clean (event-free) run (no env race; both arms in one #[test])."
+    },
+    {
+      "flag": "FRIDAY_PASSPORT_MINT",
+      "process": "rust-ws-wrapper",
+      "prod_state": "dark",
+      "closes_loop": "A mission-bound run mints + persists a ContextPassport (carrying confirmed-memory items as handoff context) before running; a sensitive item fails the whole handoff closed.",
+      "coverage": "loop-e2e",
+      "e2e_test": "rust-core/crates/friday-hub/src/runtime.rs::passport_mint_on_benign_mints_persists_links_then_runs",
+      "notes": "Built-but-dark. Drives run_agent_loop_for_mission_with_overrides_flagged(.., passport_mint=true, ..) and asserts a ContextPassport row + links are persisted then the run proceeds. Sibling proofs cover sensitive-item-fails-closed, mixed-set-blocks-whole-handoff, and flag-off byte-identical."
+    }
+  ]
+}
