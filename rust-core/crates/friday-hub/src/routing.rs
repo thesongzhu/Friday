@@ -464,6 +464,7 @@ pub fn run_routed_loop(
         None, // cancel: no cancellation handle — pre-C2-1 behavior, byte-identical
         None, // steer: no steer handle — pre-C2-2 behavior, byte-identical
         now_ms,
+        None, // work_item_id (#24b): no bound WorkItem ⇒ heartbeat no-op, byte-identical
     )
 }
 
@@ -471,6 +472,10 @@ pub fn run_routed_loop(
 /// as the default path (routing has zero authority over classification or the gate), then
 /// drives [`run_loop_with_policy`] so the run's principal binds into the action digest and
 /// its disabled/read-only restrictions are enforced before any tool executes.
+///
+/// (#24b) `work_item_id` is the OPTIONAL bound WorkItem this run drives — threaded VERBATIM into
+/// the inner [`run_loop_with_policy`] for the durable-execution heartbeat. `None` (the default /
+/// non-mission path) is a NO-OP ⇒ byte-identical to the pre-#24b routed loop.
 #[allow(clippy::too_many_arguments)]
 pub fn run_routed_loop_with_policy(
     registry: &RouteRegistry,
@@ -488,6 +493,7 @@ pub fn run_routed_loop_with_policy(
     cancel: Option<&crate::CancelToken>,
     steer: Option<&crate::SteerHandle>,
     now_ms: i64,
+    work_item_id: Option<&str>,
 ) -> Result<(RoutedSelection, LoopOutcome), RoutedLoopError> {
     let route = select_route(registry, request)?;
     let selection = RoutedSelection {
@@ -520,6 +526,7 @@ pub fn run_routed_loop_with_policy(
         cancel,
         steer,
         now_ms,
+        work_item_id,
     )?;
     Ok((selection, outcome))
 }

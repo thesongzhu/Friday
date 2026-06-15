@@ -736,6 +736,33 @@ impl Db {
         mission::list_active_work_items(&self.conn)
     }
 
+    /// SET/CLEAR a WorkItem's durable execution marker (#24b). See
+    /// [`mission::set_work_item_executing`]. Status-preserving + best-effort (a missing/sessionless
+    /// work_item is a 0-row no-op `Ok`).
+    pub fn set_work_item_executing(
+        &self,
+        work_item_id: &str,
+        executing: bool,
+        heartbeat_ms: i64,
+    ) -> Result<()> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported("WorkItems are Hub-only".into()));
+        }
+        mission::set_work_item_executing(&self.conn, work_item_id, executing, heartbeat_ms)
+    }
+
+    /// Read a WorkItem's durable execution state (#24b). See
+    /// [`mission::get_work_item_execution_state`]. `Ok(None)` when the row does not exist.
+    pub fn get_work_item_execution_state(
+        &self,
+        work_item_id: &str,
+    ) -> Result<Option<mission::WorkItemExecutionState>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported("WorkItems are Hub-only".into()));
+        }
+        mission::get_work_item_execution_state(&self.conn, work_item_id)
+    }
+
     pub fn find_duplicate_work_item(&self, candidate: &WorkItem) -> Result<Option<WorkItem>> {
         if self.profile != Profile::Hub {
             return Err(StorageError::Unsupported("WorkItems are Hub-only".into()));

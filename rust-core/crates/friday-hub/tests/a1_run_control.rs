@@ -174,6 +174,7 @@ fn pause_owned_run(
         None, // cancel: not exercised by this test
         None, // steer: not exercised by this test
         NOW,
+        None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
     )
     .unwrap();
     assert_eq!(out.status, LoopStatus::Paused);

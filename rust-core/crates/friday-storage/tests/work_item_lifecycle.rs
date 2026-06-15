@@ -229,3 +229,92 @@ fn proof_receipt_on_a_non_completion_transition_is_rejected() {
         WorkItemStatus::Draft
     );
 }
+
+// ───────────────────────── #24b durable execution-state helpers ─────────────────────────
+
+#[test]
+fn execution_state_default_is_not_executing_and_null_heartbeat() {
+    // A freshly-seeded (migrated) WorkItem reads back the fail-closed at-rest value: NOT executing,
+    // NULL heartbeat — so boot crash-recovery PASS-2 never mis-classifies a never-touched row.
+    let db = Db::open_hub(&temp_db_path("wi-exec-default")).unwrap();
+    seed(&db, WorkItemStatus::ProviderWaiting);
+
+    let state = db
+        .get_work_item_execution_state("work-wi")
+        .unwrap()
+        .unwrap();
+    assert!(!state.executing, "default executing == false");
+    assert_eq!(state.last_heartbeat_ms, None, "default heartbeat == NULL");
+}
+
+#[test]
+fn set_work_item_executing_round_trips_set_and_clear() {
+    let db = Db::open_hub(&temp_db_path("wi-exec-rt")).unwrap();
+    seed(&db, WorkItemStatus::ProviderWaiting);
+
+    // SET (model call in flight).
+    db.set_work_item_executing("work-wi", true, 5_000).unwrap();
+    let s = db
+        .get_work_item_execution_state("work-wi")
+        .unwrap()
+        .unwrap();
+    assert!(s.executing);
+    assert_eq!(s.last_heartbeat_ms, Some(5_000));
+
+    // CLEAR (loop exit).
+    db.set_work_item_executing("work-wi", false, 6_000).unwrap();
+    let s = db
+        .get_work_item_execution_state("work-wi")
+        .unwrap()
+        .unwrap();
+    assert!(!s.executing, "cleared at loop exit");
+    assert_eq!(s.last_heartbeat_ms, Some(6_000));
+}
+
+#[test]
+fn set_work_item_executing_on_missing_row_is_a_no_op_not_an_error() {
+    // A sessionless / missing work_item is a 0-row UPDATE no-op (fail-safe): the loop's best-effort
+    // heartbeat must never error on a run with no bound WorkItem.
+    let db = Db::open_hub(&temp_db_path("wi-exec-missing")).unwrap();
+    db.set_work_item_executing("no-such-work-item", true, 1_000)
+        .expect("missing-row set is a no-op Ok");
+    assert!(db
+        .get_work_item_execution_state("no-such-work-item")
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn upsert_work_item_does_not_clobber_the_execution_marker() {
+    // THE no-degrade invariant the crash-recovery `blocking_reason` re-upsert relies on:
+    // `upsert_work_item` does NOT write `executing`/`last_heartbeat_ms`, so a status-preserving
+    // re-upsert (which clones the WorkItem) leaves the durable execution marker intact.
+    let db = Db::open_hub(&temp_db_path("wi-exec-noclobber")).unwrap();
+    seed(&db, WorkItemStatus::ProviderWaiting);
+    db.set_work_item_executing("work-wi", true, 9_000).unwrap();
+
+    // Re-upsert the WorkItem (the marker write path the reconcile uses to stamp blocking_reason).
+    let mut item = db.get_work_item("work-wi").unwrap().unwrap();
+    item.blocking_reason = Some("crash_recovery_abort".into());
+    item.updated_at_ms = 12_345;
+    db.upsert_work_item(&item).unwrap();
+
+    // The execution marker survived the re-upsert untouched.
+    let s = db
+        .get_work_item_execution_state("work-wi")
+        .unwrap()
+        .unwrap();
+    assert!(s.executing, "upsert must not clobber executing");
+    assert_eq!(
+        s.last_heartbeat_ms,
+        Some(9_000),
+        "upsert must not clobber the heartbeat"
+    );
+    assert_eq!(
+        db.get_work_item("work-wi")
+            .unwrap()
+            .unwrap()
+            .blocking_reason,
+        Some("crash_recovery_abort".into())
+    );
+}

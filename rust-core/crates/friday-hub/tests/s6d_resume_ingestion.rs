@@ -196,6 +196,7 @@ fn loop_protected_no_approval_pauses_and_persists_csprng_pending() {
         None, // cancel: not exercised by this test
         None, // steer: not exercised by this test
         NOW,
+        None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
     )
     .unwrap();
 
@@ -259,6 +260,7 @@ fn loop_valid_ed25519_approval_executes_the_mutation() {
         None, // cancel: not exercised by this test
         None, // steer: not exercised by this test
         NOW,
+        None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
     )
     .unwrap();
     assert_eq!(out.status, LoopStatus::Finished);
@@ -298,6 +300,7 @@ fn loop_hmac_approval_cannot_execute_even_with_operator_key() {
         None, // cancel: not exercised by this test
         None, // steer: not exercised by this test
         NOW,
+        None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
     )
     .unwrap();
     assert_eq!(
@@ -344,6 +347,7 @@ fn pause_a_run_with_policy(
         None, // cancel: not exercised by this test
         None, // steer: not exercised by this test
         NOW,
+        None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
     )
     .unwrap();
     assert_eq!(out.status, LoopStatus::Paused);

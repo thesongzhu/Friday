@@ -3190,6 +3190,7 @@ pub fn run_loop(
         None, // cancel: no cancellation handle — pre-C2-1 behavior, byte-identical
         None, // steer: no steer handle — pre-C2-2 behavior, byte-identical
         now_ms,
+        None, // work_item_id (#24b): no bound WorkItem ⇒ heartbeat no-op, byte-identical
     )
 }
 
@@ -3241,6 +3242,51 @@ pub fn run_loop(
 /// produces NO usage, it bills NOTHING and writes NO audit/event — only the successful
 /// attempt (or the final exhausted failure) is recorded once, OUTSIDE this inner loop.
 const RUN_LOOP_MAX_PROVIDER_ATTEMPTS: u32 = 3;
+
+/// (#24b) The current wall-clock epoch-ms, for the durable heartbeat timestamp. The loop body
+/// otherwise runs off a FIXED injected `now_ms` (for deterministic tests), but the heartbeat
+/// staleness guard MUST be measured against REAL elapsed time: a long multi-turn run that kept
+/// re-writing the loop's start-time `now_ms` would, after `EXECUTION_STATE_STALE_THRESHOLD_MS`,
+/// look "stale" to a concurrent boot reconcile and be aborted WHILE STILL LIVE (a degrade). Reading
+/// the real clock at each SET keeps the heartbeat fresh per turn, so only a process that has STOPPED
+/// writing it (a crash — no more turns, no tail clear) goes stale. Boot crash-recovery reads the
+/// SAME wall-clock for its comparison (`run_boot_crash_recovery` uses `SystemTime::now()`), so the
+/// two timestamps are directly comparable. A clock error falls back to `0` (⇒ instantly "stale", but
+/// the row is reconciled only if it is ALSO `executing == 1` at boot — fail-safe, never a live abort).
+fn wall_clock_now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// (#24b) FAIL-SAFE heartbeat write for the loop's durable execution marker. SETs/CLEARs the bound
+/// WorkItem's `executing` + `last_heartbeat_ms` columns via the status-PRESERVING
+/// [`friday_storage::Db::set_work_item_executing`] helper. EVERY error is LOGGED (category only) and
+/// SWALLOWED — a heartbeat write failure MUST NEVER crash the loop, change the turn outcome, or
+/// touch billing (the marker is best-effort crash-recovery metadata, never load-bearing for the run
+/// itself). A `None` `work_item_id` (every non-mission-bound caller, and any sessionless run) is a
+/// NO-OP — no write, byte-identical to the pre-#24b loop. A missing/sessionless work_item row is a
+/// 0-row UPDATE no-op inside the helper, never an error. The timestamp is a FRESH wall-clock read
+/// ([`wall_clock_now_ms`]) — NOT the loop's fixed `now_ms` — so a long multi-turn run keeps a fresh
+/// heartbeat and is never mistaken for a crash (see the staleness rationale on the threshold const).
+fn heartbeat_work_item_executing(conn: &Connection, work_item_id: Option<&str>, executing: bool) {
+    let Some(work_item_id) = work_item_id else {
+        return; // No bound work_item (non-mission / sessionless run) ⇒ byte-identical no-op.
+    };
+    let heartbeat_ms = wall_clock_now_ms();
+    if let Err(_e) = friday_storage::mission::set_work_item_executing(
+        conn,
+        work_item_id,
+        executing,
+        heartbeat_ms,
+    ) {
+        // Category only — never the work_item_id contents. Fail-safe: the run proceeds unchanged.
+        eprintln!(
+            "run_loop: crash-recovery heartbeat write failed (swallowed — run/billing unaffected)"
+        );
+    }
+}
 
 /// The `FRIDAY_ACTIVITY_NEEDS_ME` env var (NS-7). When ON, a run that Pauses for approval
 /// ALSO writes ONE [`friday_storage::insert_pending_approval_activity`] row so the pending
@@ -3356,6 +3402,11 @@ pub(crate) fn surface_events_from(raw: Option<&str>) -> bool {
 /// (`run_loop`, the run-bound wrapper, `routing.rs`, the integration tests) is untouched — the
 /// `activity_needs_me` bool lives only on the private inner fn (the codebase's "split env-read
 /// from pure logic" idiom, mirroring NS-2's `gate_dispatch_with_policy` → `_enforced`).
+///
+/// (#24b) `work_item_id` is the OPTIONAL bound WorkItem this run drives. `None` (every
+/// non-mission / sessionless caller) makes the durable-execution heartbeat a NO-OP ⇒ byte-identical
+/// to the pre-#24b loop. `Some` (the mission-bound entrypoint) plumbs the durable `executing`
+/// marker so boot crash-recovery PASS-2 can distinguish a crashed-mid-call run from a paused one.
 #[allow(clippy::too_many_arguments)]
 pub fn run_loop_with_policy(
     client: &dyn AgentLlmClient,
@@ -3371,6 +3422,7 @@ pub fn run_loop_with_policy(
     cancel: Option<&CancelToken>,
     steer: Option<&SteerHandle>,
     now_ms: i64,
+    work_item_id: Option<&str>,
 ) -> Result<LoopOutcome, StorageError> {
     // Read the NS-7 flag ONCE here; the loop body is pure on the resulting bool.
     let activity_needs_me =
@@ -3395,6 +3447,7 @@ pub fn run_loop_with_policy(
         now_ms,
         activity_needs_me,
         clarification_enabled,
+        work_item_id,
     )
 }
 
@@ -3403,6 +3456,21 @@ pub fn run_loop_with_policy(
 /// test (so it never mutates `std::env`, avoiding the in-process test race). When
 /// `activity_needs_me` is FALSE the Pause arm writes NO activity row and is byte-identical to
 /// the pre-NS-7 baseline.
+///
+/// ## (#24b) Durable execution-state heartbeat — the no-degrade CRUX
+/// `work_item_id` is the OPTIONAL bound WorkItem this run drives. When `Some`, the loop SETs that
+/// WorkItem's durable `executing` marker JUST BEFORE each model call ([`heartbeat_work_item_executing`])
+/// and CLEARs it on EVERY loop exit — done STRUCTURALLY here (not at each `return` arm): the inner
+/// body [`run_loop_with_policy_inner`] is run to completion, then this wrapper CLEARs the marker
+/// EXACTLY ONCE on its way out, so every exit (Finished, Paused/RequiresApproval, Errored, Blocked,
+/// Bounded, Interrupted, AwaitingClarification) AND every `?`-propagated `StorageError` is covered
+/// by ONE clear — a missed-exit stale-executing row (the cardinal sin, a false-positive reconcile)
+/// is UNREPRESENTABLE. `None` (every non-mission / sessionless caller) makes BOTH the SET and the
+/// CLEAR no-ops ⇒ byte-identical to the pre-#24b loop. The heartbeat write is FAIL-SAFE: a write
+/// error is logged + swallowed and never changes the turn outcome / billing / the returned status.
+/// Boot crash-recovery PASS-2 (gated under `FRIDAY_CRASH_RECOVERY`) reconciles a
+/// `ProviderRouted`/`ProviderWaiting` row left `executing == 1` with a STALE heartbeat after a
+/// mid-call crash; a row this loop cleared (`executing == 0`) is NEVER touched.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_loop_with_policy_flagged(
     client: &dyn AgentLlmClient,
@@ -3420,6 +3488,60 @@ pub(crate) fn run_loop_with_policy_flagged(
     now_ms: i64,
     activity_needs_me: bool,
     clarification_enabled: bool,
+    work_item_id: Option<&str>,
+) -> Result<LoopOutcome, StorageError> {
+    // (#24b) Run the loop body to completion, then CLEAR the durable execution marker EXACTLY ONCE
+    // — covering EVERY exit (every `return` arm + every `?`-propagated error) structurally, so a
+    // stale-executing row can never be left behind. The SET happens per-turn inside the inner fn,
+    // just before each model call. With `work_item_id == None` both are no-ops (byte-identical).
+    let result = run_loop_with_policy_inner(
+        client,
+        executor,
+        conn,
+        run_id,
+        task,
+        recall_preamble,
+        operator_vk,
+        approve,
+        policy,
+        max_turns,
+        cancel,
+        steer,
+        now_ms,
+        activity_needs_me,
+        clarification_enabled,
+        work_item_id,
+    );
+    // THE no-degrade crux: clear on EVERY path (Ok of any status, or an Err). Fail-safe + a no-op
+    // when there is no bound work_item. The CLEAR's timestamp is irrelevant (PASS-2 only acts on
+    // executing==1 rows); what matters is `executing` going to 0 so a cleanly-exited run is NEVER
+    // a crash candidate next boot.
+    heartbeat_work_item_executing(conn, work_item_id, false);
+    result
+}
+
+/// The actual loop body (#24b refactor). Identical to the pre-#24b `run_loop_with_policy_flagged`
+/// EXCEPT it SETs the bound WorkItem's durable `executing` marker just before each model call; the
+/// matching CLEAR-on-every-exit is owned by the wrapper [`run_loop_with_policy_flagged`] (so the
+/// clear is exhaustive by construction). `work_item_id == None` ⇒ the SET is a no-op (byte-identical).
+#[allow(clippy::too_many_arguments)]
+fn run_loop_with_policy_inner(
+    client: &dyn AgentLlmClient,
+    executor: &dyn ToolExecutor,
+    conn: &Connection,
+    run_id: &str,
+    task: &str,
+    recall_preamble: &str,
+    operator_vk: Option<&OperatorVerifyingKey>,
+    approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
+    policy: &RunPolicy,
+    max_turns: u64,
+    cancel: Option<&CancelToken>,
+    steer: Option<&SteerHandle>,
+    now_ms: i64,
+    activity_needs_me: bool,
+    clarification_enabled: bool,
+    work_item_id: Option<&str>,
 ) -> Result<LoopOutcome, StorageError> {
     // Plan classification recorded ONCE (it is a property of the task, constant across
     // turns). Uses the CLEAN `task` — the recall preamble below augments only the prompt,
@@ -3595,6 +3717,15 @@ pub(crate) fn run_loop_with_policy_flagged(
         // fails closed EXACTLY as before — the original `Err(e)` is surfaced to the single
         // error site below. `attempts` counts attempts ALREADY made (incl. the just-failed
         // one) so the bound is TOTAL attempts == `RUN_LOOP_MAX_PROVIDER_ATTEMPTS`.
+        //
+        // (#24b) SET the bound WorkItem's durable `executing` marker + a FRESH wall-clock heartbeat
+        // JUST BEFORE the model call (and its bounded retries) — the window a mid-call crash leaves
+        // orphaned. The matching CLEAR is the wrapper's single tail clear (covers every exit).
+        // FAIL-SAFE + a no-op when `work_item_id` is `None` (byte-identical to the pre-#24b loop).
+        // It is RE-SET with a FRESH timestamp every turn, so a long multi-turn run keeps a fresh
+        // heartbeat (never mistaken for a crash); a re-entering run re-SETs `executing = 1` here.
+        heartbeat_work_item_executing(conn, work_item_id, true);
+
         let metered_result = {
             let mut attempts: u32 = 0;
             loop {
@@ -3929,6 +4060,9 @@ pub(crate) fn run_loop_with_policy_flagged(
 /// messages (the clean `task` and the loop's final answer) are unchanged, so the steer never
 /// rewrites the durable session transcript. `None` (every existing caller) is byte-identical to the
 /// pre-C2-2 sessioned behavior.
+/// (#24b) `work_item_id` is the OPTIONAL bound WorkItem this sessioned run drives — threaded
+/// VERBATIM into the inner [`run_loop_with_policy`] for the durable-execution heartbeat. `None`
+/// (every non-mission caller) is a NO-OP ⇒ byte-identical to the pre-#24b sessioned behavior.
 #[allow(clippy::too_many_arguments)]
 pub fn run_session_loop(
     client: &dyn AgentLlmClient,
@@ -3946,6 +4080,7 @@ pub fn run_session_loop(
     cancel: Option<&CancelToken>,
     steer: Option<&SteerHandle>,
     now_ms: i64,
+    work_item_id: Option<&str>,
 ) -> Result<LoopOutcome, StorageError> {
     // 1. Ensure the session exists and LOAD its prior turns BEFORE persisting the
     //    current task (so the task is never folded into its own preamble). With a
@@ -3978,6 +4113,7 @@ pub fn run_session_loop(
         cancel,
         steer,
         now_ms,
+        work_item_id,
     )?;
 
     // 4. Persist this run's turn(s) so the next run in the session resumes with them:
@@ -4766,6 +4902,7 @@ mod tests {
                     None,
                     None,
                     1000,
+                    None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
                 )
                 .unwrap();
                 // The write side effect (created or not) is part of the observable outcome.
@@ -4871,6 +5008,7 @@ mod tests {
             1000,
             activity_needs_me,
             false, // clarification gate OFF — the NS-7 scenario's task ("do it") classifies None anyway
+            None,  // work_item_id (#24b): NS-7 scenario binds no WorkItem ⇒ heartbeat no-op
         )
         .unwrap();
         let pending = friday_storage::list_pending_requests_for_run(db.conn(), "r1").unwrap();
@@ -5050,6 +5188,7 @@ mod tests {
             1000,
             false, // activity_needs_me: irrelevant here
             clarification_enabled,
+            None, // work_item_id (#24b): clarification scenario binds no WorkItem ⇒ no-op
         )
         .unwrap();
         // `client.calls` counts `next_step` calls (the loop's metered call delegates to it);
@@ -7280,6 +7419,7 @@ mod tests {
             None, // cancel: not exercised by this test
             None, // steer: not exercised by this test
             1000,
+            None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
         )
         .expect("routed claude loop runs");
         assert_eq!(selection.provider_id, "claude", "pin routed to claude");
@@ -8370,6 +8510,7 @@ mod tests {
                 None, // cancel: not exercised by this test
                 None, // steer: not exercised by this test
                 1000,
+                None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
             )
             .unwrap();
             assert_eq!(
@@ -8703,6 +8844,7 @@ mod tests {
             None, // cancel: not exercised by this test
             None, // steer: not exercised by this test
             10,
+            None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
         )
         .unwrap();
         assert_eq!(out.status, LoopStatus::Finished);
@@ -8772,6 +8914,7 @@ mod tests {
             None, // cancel: not exercised by this test
             None, // steer: not exercised by this test
             10,
+            None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
         )
         .unwrap();
         assert_eq!(o1.status, LoopStatus::Finished);
@@ -8799,6 +8942,7 @@ mod tests {
             None, // cancel: not exercised by this test
             None, // steer: not exercised by this test
             20,
+            None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
         )
         .unwrap();
         assert_eq!(o2.status, LoopStatus::Finished);
@@ -8896,6 +9040,7 @@ mod tests {
             None, // cancel: not exercised by this test
             None, // steer: not exercised by this test
             100,
+            None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
         )
         .unwrap();
         let prompts = client.prompts.borrow();
@@ -8940,6 +9085,7 @@ mod tests {
             None, // cancel: not exercised by this test
             None, // steer: not exercised by this test
             10,
+            None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
         )
         .unwrap();
         assert_eq!(out.status, LoopStatus::Finished);
@@ -9002,6 +9148,7 @@ mod tests {
             None, // cancel: not exercised by this test
             None, // steer: not exercised by this test
             10,
+            None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
         )
         .unwrap();
         assert_eq!(out.status, LoopStatus::Finished);
@@ -9050,6 +9197,7 @@ mod tests {
             None, // cancel: not exercised by this test
             None, // steer: not exercised by this test
             10,
+            None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
         )
         .unwrap();
         assert_eq!(
@@ -9103,6 +9251,7 @@ mod tests {
             None, // cancel: not exercised by this test
             None, // steer: not exercised by this test
             10,
+            None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
         )
         .unwrap();
         // The session was created OWNED...
@@ -9140,6 +9289,7 @@ mod tests {
             None, // cancel: not exercised by this test
             None, // steer: not exercised by this test
             20,
+            None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
         )
         .unwrap();
         let back = friday_storage::load_session_owner(db.conn(), "sess-bound")
@@ -9182,6 +9332,7 @@ mod tests {
             None, // cancel: not exercised by this test
             None, // steer: not exercised by this test
             10,
+            None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
         )
         .unwrap();
         let back = friday_storage::load_session_owner(db.conn(), "sess-null")
@@ -9209,6 +9360,476 @@ mod tests {
             friday_storage::get_run_answer_for_principal(db.conn(), "r1", "anyone").unwrap(),
             RunAnswerAccess::Denied(AnswerDenyReason::NoOwnerPrincipal),
             "an ownerless row is unreadable by everyone (fail-closed)"
+        );
+    }
+
+    // ───────────────────────── #24b durable execution-state heartbeat ─────────────────────────
+
+    /// Seed a Mission + a single WorkItem (the FK chain `upsert_work_item` needs), returning the
+    /// work_item_id. Read-only-shaped (no workspace refs ⇒ no ownership required).
+    fn seed_loop_work_item(db: &Db, work_item_id: &str) {
+        use friday_core::{
+            FridayConversation, HandoffJudgmentMemory, Mission, MissionStatus, TruthStatus,
+            WorkItem, WorkItemStatus, WorkLane,
+        };
+        let fconv = format!("fconv_{}", work_item_id.replace('-', "_"));
+        let mission = format!("mission-{work_item_id}");
+        db.upsert_friday_conversation(&FridayConversation {
+            friday_conversation_id: fconv.clone(),
+            owner_principal: "owner-hb".into(),
+            title: "heartbeat".into(),
+            current_focus_summary: "exec state".into(),
+            active_mission_ids: vec![mission.clone()],
+            surface_thread_ids: Vec::new(),
+            memory_scope_ref: None,
+            truth_status: TruthStatus::WiredRegistry,
+            proof_refs: vec!["proof://hb".into()],
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        })
+        .unwrap();
+        db.upsert_mission(&Mission {
+            mission_id: mission.clone(),
+            friday_conversation_id: fconv,
+            title: "heartbeat".into(),
+            intent: "exercise the durable execution heartbeat".into(),
+            status: MissionStatus::Active,
+            why_now: "crash recovery".into(),
+            decision_path_summary: "set/clear executing".into(),
+            considered_options: Vec::new(),
+            deferred_options: Vec::new(),
+            known_pitfalls: Vec::new(),
+            handoff_inheritance: Vec::new(),
+            work_item_ids: vec![work_item_id.to_string()],
+            memory_candidate_refs: Vec::new(),
+            context_passport_refs: Vec::new(),
+            proof_refs: vec!["proof://hb".into()],
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        })
+        .unwrap();
+        db.upsert_work_item(&WorkItem {
+            work_item_id: work_item_id.to_string(),
+            mission_id: mission,
+            lane: WorkLane::DeepSeek,
+            target_provider_or_agent: Some("deepseek".into()),
+            status: WorkItemStatus::ProviderWaiting,
+            owner_claim_ids: Vec::new(),
+            workspace_refs: Vec::new(),
+            capability_id: Some("mission.run".into()),
+            risk_level: Risk::Medium,
+            approval_state: friday_core::ApprovalState::NotRequired,
+            blocking_reason: None,
+            input_refs: vec!["input://run".into()],
+            output_refs: Vec::new(),
+            proof_requirements: Vec::new(),
+            proof_receipts: Vec::new(),
+            judgment_memory: HandoffJudgmentMemory {
+                task: "run the bound loop".into(),
+                current_blocker: None,
+                target_lane_thread_agent_provider: "deepseek".into(),
+                read_first_files: vec!["rust-core/crates/friday-hub/src/lib.rs".into()],
+                required_output: "loop completion".into(),
+                done_criteria: vec!["loop reaches a terminal status".into()],
+                red_lines: vec!["never leave a stale executing marker".into()],
+                why_this_route: "the WorkItem lane owns the loop".into(),
+                considered_options: vec!["unbound run".into()],
+                deferred_options: vec!["multi-provider".into()],
+                previous_pitfalls: vec!["a paused run looked orphaned".into()],
+                inheritable_context: vec!["Mission is product truth".into()],
+                proof_requirements: vec!["crash-recovery tests".into()],
+                ownership_claim_ids: Vec::new(),
+            },
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        })
+        .unwrap();
+    }
+
+    fn exec_state(db: &Db, work_item_id: &str) -> (bool, Option<i64>) {
+        let s = db
+            .get_work_item_execution_state(work_item_id)
+            .unwrap()
+            .unwrap();
+        (s.executing, s.last_heartbeat_ms)
+    }
+
+    /// Run the loop with a bound work_item through a scripted outcome, returning the LoopOutcome.
+    /// `operator_vk = None` (so a mutating tool Pauses), `clarification` OFF.
+    fn run_loop_bound(
+        db: &Db,
+        work_item_id: &str,
+        root: &std::path::Path,
+        steps: Vec<AgentStep>,
+    ) -> LoopOutcome {
+        let client = ScriptedAgentLlmClient::new(steps);
+        let executor = FsToolExecutor::new(root);
+        let policy = RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), false);
+        run_loop_with_policy(
+            &client,
+            &executor,
+            db.conn(),
+            "r1",
+            "do it",
+            "",
+            None,
+            &no_approval(),
+            &policy,
+            5,
+            None,
+            None,
+            1000,
+            Some(work_item_id),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn loop_clears_executing_at_every_exit() {
+        // THE no-degrade crux: EVERY loop exit must leave `executing == 0`, so no exit leaves a
+        // stale-executing row that the next boot's PASS-2 would falsely reconcile. We pre-SET
+        // executing=1 (a stale prior state) on the bound work_item, then drive the loop to three
+        // distinct exits and assert it is cleared each time.
+        //
+        // Finished — the model immediately finishes.
+        {
+            let root = TempDir::new("hb-finish");
+            let db = Db::open_hub(&temp_path("hb-finish")).unwrap();
+            agent_run::create_run(db.conn(), "r1", "do it", 1).unwrap();
+            seed_loop_work_item(&db, "wi-finish");
+            db.set_work_item_executing("wi-finish", true, 1).unwrap(); // stale prior marker
+            let out = run_loop_bound(
+                &db,
+                "wi-finish",
+                &root.0,
+                vec![AgentStep::Finish {
+                    message: "done".into(),
+                }],
+            );
+            assert_eq!(out.status, LoopStatus::Finished);
+            assert!(
+                !exec_state(&db, "wi-finish").0,
+                "Finished exit clears executing"
+            );
+        }
+        // Paused (RequiresApproval) — a mutating write with no operator key Pauses.
+        {
+            let root = TempDir::new("hb-pause");
+            let db = Db::open_hub(&temp_path("hb-pause")).unwrap();
+            agent_run::create_run(db.conn(), "r1", "do it", 1).unwrap();
+            seed_loop_work_item(&db, "wi-pause");
+            db.set_work_item_executing("wi-pause", true, 1).unwrap();
+            let write = raw("write_file", &[("path", "out.txt"), ("content", "X")]);
+            let out = run_loop_bound(&db, "wi-pause", &root.0, vec![AgentStep::Tool(write)]);
+            assert_eq!(out.status, LoopStatus::Paused, "mutating write Pauses");
+            assert!(
+                !exec_state(&db, "wi-pause").0,
+                "Paused (RequiresApproval) exit clears executing — the resume re-sets it on re-entry"
+            );
+        }
+        // Errored — the client returns a route error (no usage, run Errors).
+        {
+            let root = TempDir::new("hb-error");
+            let db = Db::open_hub(&temp_path("hb-error")).unwrap();
+            agent_run::create_run(db.conn(), "r1", "do it", 1).unwrap();
+            seed_loop_work_item(&db, "wi-error");
+            db.set_work_item_executing("wi-error", true, 1).unwrap();
+            // A client whose next_step parse-fails closed ⇒ the loop Errors.
+            let client = ScriptedAgentLlmClient::new(vec![AgentStep::Tool(raw(
+                "definitely_not_a_registered_tool_xyz",
+                &[],
+            ))]);
+            // Unregistered tool ⇒ Blocked (still a clean exit through the wrapper).
+            let executor = FsToolExecutor::new(&root.0);
+            let policy = RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), false);
+            let out = run_loop_with_policy(
+                &client,
+                &executor,
+                db.conn(),
+                "r1",
+                "do it",
+                "",
+                None,
+                &no_approval(),
+                &policy,
+                5,
+                None,
+                None,
+                1000,
+                Some("wi-error"),
+            )
+            .unwrap();
+            assert_eq!(
+                out.status,
+                LoopStatus::Blocked,
+                "unregistered tool ⇒ Blocked exit"
+            );
+            assert!(
+                !exec_state(&db, "wi-error").0,
+                "Blocked exit clears executing"
+            );
+        }
+    }
+
+    /// A scripted client that, on each `next_step`, snapshots the bound work_item's durable
+    /// execution state by opening its OWN read connection to the SAME DB file — so a test can
+    /// assert `executing == 1` DURING the model call (the SET fired just before this call).
+    struct ExecObservingClient {
+        steps: Vec<AgentStep>,
+        calls: std::cell::Cell<usize>,
+        db_path: String,
+        work_item_id: String,
+        // The executing state observed at the START of each next_step (i.e. mid-call).
+        observed: std::cell::RefCell<Vec<bool>>,
+    }
+    impl AgentLlmClient for ExecObservingClient {
+        fn propose_tool_call(&self, _task: &str) -> Result<RawToolCall, AgentError> {
+            Err(AgentError::Parse("unused".into()))
+        }
+        fn next_step(&self, _task: &str, _history: &[TurnTrace]) -> Result<AgentStep, AgentError> {
+            // Read the executing marker through a fresh connection to the same file — this is what
+            // a CONCURRENT boot-reconcile would see while this turn's model call is in flight.
+            let db = Db::open_hub(&self.db_path).unwrap();
+            let executing = db
+                .get_work_item_execution_state(&self.work_item_id)
+                .unwrap()
+                .map(|s| s.executing)
+                .unwrap_or(false);
+            self.observed.borrow_mut().push(executing);
+            let i = self.calls.get();
+            self.calls.set(i + 1);
+            Ok(self.steps.get(i).cloned().unwrap_or(AgentStep::Finish {
+                message: "done".into(),
+            }))
+        }
+    }
+
+    #[test]
+    fn loop_sets_executing_during_the_call_and_re_entry_re_sets_it() {
+        // (a) DURING the model call, the bound work_item is `executing == 1` (the SET fired just
+        //     before next_step). (b) After the loop, it is cleared. (c) A SECOND loop entry on the
+        //     SAME work_item re-SETs executing=1 during ITS call (the resume/re-entry re-set: a
+        //     resumed run that re-enters the loop never stays cleared).
+        let db_path = temp_path("hb-during");
+        let db = Db::open_hub(&db_path).unwrap();
+        agent_run::create_run(db.conn(), "r1", "do it", 1).unwrap();
+        seed_loop_work_item(&db, "wi-during");
+        // Starts cleared (the migration default).
+        assert_eq!(exec_state(&db, "wi-during"), (false, None));
+
+        let observer = ExecObservingClient {
+            steps: vec![AgentStep::Finish {
+                message: "first".into(),
+            }],
+            calls: std::cell::Cell::new(0),
+            db_path: db_path.clone(),
+            work_item_id: "wi-during".into(),
+            observed: std::cell::RefCell::new(Vec::new()),
+        };
+        let root = TempDir::new("hb-during");
+        let executor = FsToolExecutor::new(&root.0);
+        let policy = RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), false);
+        // A re-entry is a NEW run (distinct run_id + now_ms) that binds the SAME work_item — exactly
+        // how a resumed/continued run re-drives the loop. Distinct ids avoid an agent_run_event PK
+        // collision (the test scaffolding concern, not a product one).
+        let run_once = |client: &ExecObservingClient, run_id: &str, now: i64| {
+            run_loop_with_policy(
+                client,
+                &executor,
+                db.conn(),
+                run_id,
+                "do it",
+                "",
+                None,
+                &no_approval(),
+                &policy,
+                5,
+                None,
+                None,
+                now,
+                Some("wi-during"),
+            )
+            .unwrap()
+        };
+
+        let out1 = run_once(&observer, "r1", 1000);
+        assert_eq!(out1.status, LoopStatus::Finished);
+        // (a) DURING the call the observer saw executing == 1.
+        assert_eq!(
+            observer.observed.borrow().as_slice(),
+            &[true],
+            "executing == 1 was observed mid-model-call"
+        );
+        // (b) After the loop, cleared.
+        assert!(!exec_state(&db, "wi-during").0, "cleared at exit");
+
+        // (c) A SECOND entry on the SAME work_item re-SETs executing during its call (resume/re-entry).
+        agent_run::create_run(db.conn(), "r2", "do it", 2000).unwrap();
+        let observer2 = ExecObservingClient {
+            steps: vec![AgentStep::Finish {
+                message: "second".into(),
+            }],
+            calls: std::cell::Cell::new(0),
+            db_path,
+            work_item_id: "wi-during".into(),
+            observed: std::cell::RefCell::new(Vec::new()),
+        };
+        let out2 = run_once(&observer2, "r2", 2000);
+        assert_eq!(out2.status, LoopStatus::Finished);
+        assert_eq!(
+            observer2.observed.borrow().as_slice(),
+            &[true],
+            "a re-entering run re-SETs executing == 1 (never stays cleared)"
+        );
+        assert!(!exec_state(&db, "wi-during").0, "cleared again at exit");
+    }
+
+    #[test]
+    fn forward_path_during_call_status_is_provider_routed_and_pass2_reconciles_a_mid_call_crash() {
+        // THE end-to-end reachability proof for #24b: drive the REAL production PRE-DISPATCH binding
+        // (`attach_agent_loop_pre_dispatch_state`, run BEFORE the model call), assert the during-call
+        // status is `ProviderRouted` (NOT the pre-#24b `ReadyToDispatch`, which has no legal
+        // `-> FailedTerminal` hop), then simulate a mid-model-call CRASH (the loop's heartbeat SET
+        // fired — executing=1 + stale — but the process DIED before the tail clear), and prove boot
+        // crash-recovery PASS-2 reconciles it. This is the exact state a real forward mission-bound
+        // run leaves on a mid-call crash — NOT a hand-seeded unreachable status.
+        use friday_core::WorkItemStatus;
+        // Seed the work_item at the GENUINE pre-loop status a freshly-dispatched mission-bound run
+        // starts at — `ReadyToDispatch` — so this proof drives the real production binding, not a
+        // hand-placed provider status.
+        let db2 = Db::open_hub(&temp_path("hb-fwd")).unwrap();
+        {
+            use friday_core::{
+                FridayConversation, HandoffJudgmentMemory, Mission, MissionStatus, TruthStatus,
+                WorkItem, WorkLane,
+            };
+            db2.upsert_friday_conversation(&FridayConversation {
+                friday_conversation_id: "fconv_wi_fwd".into(),
+                owner_principal: "owner-fwd".into(),
+                title: "fwd".into(),
+                current_focus_summary: "fwd".into(),
+                active_mission_ids: vec!["mission-wi-fwd".into()],
+                surface_thread_ids: Vec::new(),
+                memory_scope_ref: None,
+                truth_status: TruthStatus::WiredRegistry,
+                proof_refs: vec!["proof://fwd".into()],
+                created_at_ms: 1,
+                updated_at_ms: 1,
+            })
+            .unwrap();
+            db2.upsert_mission(&Mission {
+                mission_id: "mission-wi-fwd".into(),
+                friday_conversation_id: "fconv_wi_fwd".into(),
+                title: "fwd".into(),
+                intent: "forward-path crash reachability".into(),
+                status: MissionStatus::Active,
+                why_now: "crash recovery".into(),
+                decision_path_summary: "pre-dispatch then crash".into(),
+                considered_options: Vec::new(),
+                deferred_options: Vec::new(),
+                known_pitfalls: Vec::new(),
+                handoff_inheritance: Vec::new(),
+                work_item_ids: vec!["wi-fwd".into()],
+                memory_candidate_refs: Vec::new(),
+                context_passport_refs: Vec::new(),
+                proof_refs: vec!["proof://fwd".into()],
+                created_at_ms: 1,
+                updated_at_ms: 1,
+            })
+            .unwrap();
+            db2.upsert_work_item(&WorkItem {
+                work_item_id: "wi-fwd".into(),
+                mission_id: "mission-wi-fwd".into(),
+                lane: WorkLane::DeepSeek,
+                target_provider_or_agent: Some("deepseek".into()),
+                status: WorkItemStatus::ReadyToDispatch, // the genuine pre-loop status
+                owner_claim_ids: Vec::new(),
+                workspace_refs: Vec::new(),
+                capability_id: Some("mission.run".into()),
+                risk_level: Risk::Medium,
+                approval_state: friday_core::ApprovalState::NotRequired,
+                blocking_reason: None,
+                input_refs: vec!["input://run".into()],
+                output_refs: Vec::new(),
+                proof_requirements: Vec::new(),
+                proof_receipts: Vec::new(),
+                judgment_memory: HandoffJudgmentMemory {
+                    task: "forward".into(),
+                    current_blocker: None,
+                    target_lane_thread_agent_provider: "deepseek".into(),
+                    read_first_files: vec!["x".into()],
+                    required_output: "done".into(),
+                    done_criteria: vec!["done".into()],
+                    red_lines: vec!["no degrade".into()],
+                    why_this_route: "lane owns it".into(),
+                    considered_options: vec!["a".into()],
+                    deferred_options: vec!["b".into()],
+                    previous_pitfalls: vec!["c".into()],
+                    inheritable_context: vec!["d".into()],
+                    proof_requirements: vec!["e".into()],
+                    ownership_claim_ids: Vec::new(),
+                },
+                created_at_ms: 1,
+                updated_at_ms: 1,
+            })
+            .unwrap();
+        }
+
+        // (1) Drive the REAL production pre-dispatch binding (what runs BEFORE the model call).
+        let attach = crate::mission_runtime::attach_agent_loop_pre_dispatch_state(
+            &db2,
+            "mission-wi-fwd",
+            "wi-fwd",
+            "sess-fwd",
+            "run-fwd",
+            /* guarded = */ false,
+            10_000,
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                attach,
+                crate::mission_preflight::MissionAttachmentOutcome::Attached {
+                    work_item_status: WorkItemStatus::ProviderRouted,
+                    ..
+                }
+            ),
+            "the real pre-dispatch binding leaves the during-call status at ProviderRouted, got {attach:?}"
+        );
+        assert_eq!(
+            db2.get_work_item("wi-fwd").unwrap().unwrap().status,
+            WorkItemStatus::ProviderRouted,
+            "during the model call the bound work_item is ProviderRouted (NOT ReadyToDispatch)"
+        );
+
+        // (2) Simulate the mid-call crash: the loop's heartbeat SET fired (executing=1) at a real
+        //     wall-clock that is now STALE; the process DIED before the wrapper's tail clear.
+        let boot_now = 1_700_000_000_000_i64;
+        db2.set_work_item_executing(
+            "wi-fwd",
+            true,
+            boot_now - crash_recovery::EXECUTION_STATE_STALE_THRESHOLD_MS - 1,
+        )
+        .unwrap();
+
+        // (3) Boot crash-recovery PASS-2 reconciles this REAL forward-path crash row to FailedTerminal.
+        let outcome = crash_recovery::reconcile_orphaned_work_items(&db2, boot_now).unwrap();
+        assert_eq!(
+            outcome.aborted, 1,
+            "PASS-2 reconciles the real mid-call crash"
+        );
+        assert_eq!(
+            db2.get_work_item("wi-fwd").unwrap().unwrap().status,
+            WorkItemStatus::FailedTerminal,
+            "the crashed forward-path run is advanced to FailedTerminal"
+        );
+        assert_eq!(
+            db2.get_work_item("wi-fwd")
+                .unwrap()
+                .unwrap()
+                .blocking_reason
+                .as_deref(),
+            Some(crash_recovery::CRASH_RECOVERY_MARKER)
         );
     }
 }

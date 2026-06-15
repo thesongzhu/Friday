@@ -336,6 +336,7 @@ fn pause_run(
         None,
         None,
         NOW,
+        None, // work_item_id (#24b): test binds no WorkItem ⇒ heartbeat no-op
     )
     .unwrap();
     assert_eq!(out.status, LoopStatus::Paused);

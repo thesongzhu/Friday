@@ -532,6 +532,16 @@ fn attach_completed_provider_state_for_ask(
 /// so the per-hop audit_ids — derived from `(work_item_id, now_ms)`, the `audit_ledger` PRIMARY
 /// KEY — are unique across the multi-hop drive and the run never errors on a PK collision. OFF
 /// keeps the single caller-side `now_ms` (byte-identical to pre-WI-1).
+///
+/// The COMBINED all-at-once agent-loop binding drive (`SentToHub -> AcceptedByHub ->
+/// RoutedToProvider`, plus `WaitingProvider -> ProviderCompleted` when `completed`). Pre-#24b this
+/// was the production drive, run AFTER the loop; #24b SPLIT it into
+/// [`attach_agent_loop_pre_dispatch_state`] (before the loop) + [`attach_agent_loop_completion_state`]
+/// (after, on completion) so the during-call status is `ProviderRouted`. This combined form is
+/// retained as TEST SCAFFOLDING that pins the all-at-once audit/now_ms invariants and the
+/// pause-time-link write (the split legs share the same `drive_provider_states` core, so the
+/// invariants carry over). It is `#[cfg(test)]` — production uses the split.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn attach_agent_loop_provider_state(
     db: &Db,
@@ -553,20 +563,133 @@ pub(crate) fn attach_agent_loop_provider_state(
         states.push(PendingState::WaitingProvider);
         states.push(PendingState::ProviderCompleted);
     }
+    drive_provider_states(
+        db,
+        mission_id,
+        work_item_id,
+        session_id,
+        run_id,
+        &states,
+        0,
+        proof_ref,
+        guarded,
+        now_ms,
+    )
+}
+
+/// (#24b) The PRE-DISPATCH leg of the agent-loop binding: drive ONLY the in-flight hops
+/// `SentToHub -> AcceptedByHub -> RoutedToProvider` (ending at `ProviderRouted`), BEFORE the model
+/// call runs. This is what makes the bound WorkItem's status during the model call be
+/// `ProviderRouted` (the COMMON mid-call crash state), so the durable `executing` heartbeat +
+/// boot crash-recovery PASS-2 can legally reconcile a process that DIED mid-call (`ProviderRouted`
+/// has a legal `-> FailedTerminal` hop; `ReadyToDispatch`, the pre-#24b during-call status, did NOT).
+///
+/// END-STATE-NEUTRAL vs the pre-#24b single post-loop drive: a NON-completed run already ended at
+/// `ProviderRouted` (the post-loop `attach_agent_loop_provider_state(completed=false)` drove exactly
+/// these three hops), so moving them earlier changes only WHEN the row reaches `ProviderRouted`, not
+/// the final status. A completed run's remaining `WaitingProvider -> ProviderCompleted` hops are
+/// driven AFTER the loop by [`attach_agent_loop_completion_state`] (with a `start_idx` offset so the
+/// guarded per-hop `now_ms` never collides with the pre-dispatch hops' audit_ids). No `proof_ref` is
+/// recorded here (none of these three is `ProviderCompleted`).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn attach_agent_loop_pre_dispatch_state(
+    db: &Db,
+    mission_id: &str,
+    work_item_id: &str,
+    session_id: &str,
+    run_id: &str,
+    guarded: bool,
+    now_ms: i64,
+) -> Result<MissionAttachmentOutcome, StorageError> {
+    let states = [
+        PendingState::SentToHub,
+        PendingState::AcceptedByHub,
+        PendingState::RoutedToProvider,
+    ];
+    drive_provider_states(
+        db,
+        mission_id,
+        work_item_id,
+        session_id,
+        run_id,
+        &states,
+        0,
+        "", // no proof on the in-flight hops
+        guarded,
+        now_ms,
+    )
+}
+
+/// (#24b) The COMPLETION leg, driven AFTER a FINISHED loop: advance the already-`ProviderRouted`
+/// WorkItem `WaitingProvider -> ProviderCompleted` with the run as proof. `start_idx = 3` continues
+/// the guarded per-hop `now_ms` offset past the three pre-dispatch hops so the `audit_ledger`
+/// PRIMARY KEY (`work_item_id` + `now_ms`) never collides across the two legs. A NON-completed run
+/// calls this NOT AT ALL (it already rests at `ProviderRouted` from the pre-dispatch leg) — so the
+/// final status for every loop outcome is byte-identical to the pre-#24b single-call drive.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn attach_agent_loop_completion_state(
+    db: &Db,
+    mission_id: &str,
+    work_item_id: &str,
+    session_id: &str,
+    run_id: &str,
+    proof_ref: &str,
+    guarded: bool,
+    now_ms: i64,
+) -> Result<MissionAttachmentOutcome, StorageError> {
+    let states = [
+        PendingState::WaitingProvider,
+        PendingState::ProviderCompleted,
+    ];
+    drive_provider_states(
+        db,
+        mission_id,
+        work_item_id,
+        session_id,
+        run_id,
+        &states,
+        3, // continue the per-hop now_ms offset past the 3 pre-dispatch hops
+        proof_ref,
+        guarded,
+        now_ms,
+    )
+}
+
+/// Shared driver for a run of provider-timeline hops on the SAME bound WorkItem. `start_idx` seeds
+/// the guarded per-hop `now_ms` offset so a caller can split the drive into pre-/post-loop legs
+/// without an `audit_ledger` PK collision (the audit_id is derived from `(work_item_id, now_ms)`).
+#[allow(clippy::too_many_arguments)]
+fn drive_provider_states(
+    db: &Db,
+    mission_id: &str,
+    work_item_id: &str,
+    session_id: &str,
+    run_id: &str,
+    states: &[PendingState],
+    start_idx: usize,
+    proof_ref: &str,
+    guarded: bool,
+    now_ms: i64,
+) -> Result<MissionAttachmentOutcome, StorageError> {
     let mut last = MissionAttachmentOutcome::Blocked {
         blockers: vec!["provider_state_not_attached".into()],
     };
-    for (idx, state) in states.into_iter().enumerate() {
+    for (idx, &state) in states.iter().enumerate() {
         // WI-1 (M-6) audit_id uniqueness: the guarded primitive derives each lifecycle row's
         // audit_id from `(work_item_id, now_ms)`, and that id is the `audit_ledger` PRIMARY KEY.
         // This loop drives MULTIPLE hops for the SAME work_item, so reusing the single caller-side
         // `now_ms` across hops would collide on the 2nd row's id and the primitive would return Err
         // — erroring the run. ONLY on the guarded path we give each hop a distinct `now_ms` (the
-        // per-hop monotonic offset), so the audit_ids are unique and the chain extends cleanly.
-        // The OFF path is UNCHANGED — it keeps the single `now_ms`, so it stays BYTE-IDENTICAL to
-        // the pre-WI-1 inline write (which is PK-idempotent on `upsert_work_item` and never wrote
-        // an audit row, so it never had this constraint).
-        let hop_now_ms = if guarded { now_ms + idx as i64 } else { now_ms };
+        // per-hop monotonic offset, seeded by `start_idx` so split legs never collide), so the
+        // audit_ids are unique and the chain extends cleanly. The OFF path is UNCHANGED — it keeps
+        // the single `now_ms`, so it stays BYTE-IDENTICAL to the pre-WI-1 inline write (which is
+        // PK-idempotent on `upsert_work_item` and never wrote an audit row, so it never had this
+        // constraint).
+        let hop_now_ms = if guarded {
+            now_ms + (start_idx + idx) as i64
+        } else {
+            now_ms
+        };
         last = attach_provider_timeline_state_guarded(
             db,
             ProviderTimelineAttachment {
