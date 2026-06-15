@@ -534,14 +534,20 @@ fn attach_completed_provider_state_for_ask(
 /// keeps the single caller-side `now_ms` (byte-identical to pre-WI-1).
 ///
 /// The COMBINED all-at-once agent-loop binding drive (`SentToHub -> AcceptedByHub ->
-/// RoutedToProvider`, plus `WaitingProvider -> ProviderCompleted` when `completed`). Pre-#24b this
-/// was the production drive, run AFTER the loop; #24b SPLIT it into
-/// [`attach_agent_loop_pre_dispatch_state`] (before the loop) + [`attach_agent_loop_completion_state`]
-/// (after, on completion) so the during-call status is `ProviderRouted`. This combined form is
-/// retained as TEST SCAFFOLDING that pins the all-at-once audit/now_ms invariants and the
-/// pause-time-link write (the split legs share the same `drive_provider_states` core, so the
-/// invariants carry over). It is `#[cfg(test)]` — production uses the split.
-#[cfg(test)]
+/// RoutedToProvider`, plus `WaitingProvider -> ProviderCompleted` when `completed`), run AFTER the
+/// loop. This is the PRODUCTION drive — the pre-#24b order, RESTORED in the panel-BLOCK fix.
+///
+/// (#24b history) The original #24b SPLIT this into a pre-dispatch leg (before the loop, advancing
+/// the row to `ProviderRouted`) + a completion leg (after), so the during-call status would be
+/// `ProviderRouted`. An adversarial panel BLOCKED that reorder for two LIVE degrades: a loop `Err`
+/// left the row stranded at `ProviderRouted` (an orphan, not the retryable `ReadyToDispatch`), and
+/// the pre-dispatch `?` made any `StorageError` fatal BEFORE the answer persisted. The fix REVERTS
+/// to driving the whole binding AFTER the loop (here), so an errored run stays `ReadyToDispatch`
+/// (retryable) and the binding can only fail after the loop returned (answer durable). The
+/// crash-during-call state is therefore `ReadyToDispatch + executing == 1 + stale`, reconciled by
+/// PASS-2 via the additive `ReadyToDispatch -> FailedTerminal` edge (see `crash_recovery`). The
+/// FINAL hop of this drive clears `executing` atomically with its status write (degrade-3 fix; see
+/// [`drive_provider_states`]). The split legs are retained as `#[cfg(test)]` scaffolding only.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn attach_agent_loop_provider_state(
     db: &Db,
@@ -577,83 +583,13 @@ pub(crate) fn attach_agent_loop_provider_state(
     )
 }
 
-/// (#24b) The PRE-DISPATCH leg of the agent-loop binding: drive ONLY the in-flight hops
-/// `SentToHub -> AcceptedByHub -> RoutedToProvider` (ending at `ProviderRouted`), BEFORE the model
-/// call runs. This is what makes the bound WorkItem's status during the model call be
-/// `ProviderRouted` (the COMMON mid-call crash state), so the durable `executing` heartbeat +
-/// boot crash-recovery PASS-2 can legally reconcile a process that DIED mid-call (`ProviderRouted`
-/// has a legal `-> FailedTerminal` hop; `ReadyToDispatch`, the pre-#24b during-call status, did NOT).
-///
-/// END-STATE-NEUTRAL vs the pre-#24b single post-loop drive: a NON-completed run already ended at
-/// `ProviderRouted` (the post-loop `attach_agent_loop_provider_state(completed=false)` drove exactly
-/// these three hops), so moving them earlier changes only WHEN the row reaches `ProviderRouted`, not
-/// the final status. A completed run's remaining `WaitingProvider -> ProviderCompleted` hops are
-/// driven AFTER the loop by [`attach_agent_loop_completion_state`] (with a `start_idx` offset so the
-/// guarded per-hop `now_ms` never collides with the pre-dispatch hops' audit_ids). No `proof_ref` is
-/// recorded here (none of these three is `ProviderCompleted`).
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn attach_agent_loop_pre_dispatch_state(
-    db: &Db,
-    mission_id: &str,
-    work_item_id: &str,
-    session_id: &str,
-    run_id: &str,
-    guarded: bool,
-    now_ms: i64,
-) -> Result<MissionAttachmentOutcome, StorageError> {
-    let states = [
-        PendingState::SentToHub,
-        PendingState::AcceptedByHub,
-        PendingState::RoutedToProvider,
-    ];
-    drive_provider_states(
-        db,
-        mission_id,
-        work_item_id,
-        session_id,
-        run_id,
-        &states,
-        0,
-        "", // no proof on the in-flight hops
-        guarded,
-        now_ms,
-    )
-}
-
-/// (#24b) The COMPLETION leg, driven AFTER a FINISHED loop: advance the already-`ProviderRouted`
-/// WorkItem `WaitingProvider -> ProviderCompleted` with the run as proof. `start_idx = 3` continues
-/// the guarded per-hop `now_ms` offset past the three pre-dispatch hops so the `audit_ledger`
-/// PRIMARY KEY (`work_item_id` + `now_ms`) never collides across the two legs. A NON-completed run
-/// calls this NOT AT ALL (it already rests at `ProviderRouted` from the pre-dispatch leg) — so the
-/// final status for every loop outcome is byte-identical to the pre-#24b single-call drive.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn attach_agent_loop_completion_state(
-    db: &Db,
-    mission_id: &str,
-    work_item_id: &str,
-    session_id: &str,
-    run_id: &str,
-    proof_ref: &str,
-    guarded: bool,
-    now_ms: i64,
-) -> Result<MissionAttachmentOutcome, StorageError> {
-    let states = [
-        PendingState::WaitingProvider,
-        PendingState::ProviderCompleted,
-    ];
-    drive_provider_states(
-        db,
-        mission_id,
-        work_item_id,
-        session_id,
-        run_id,
-        &states,
-        3, // continue the per-hop now_ms offset past the 3 pre-dispatch hops
-        proof_ref,
-        guarded,
-        now_ms,
-    )
-}
+// (#24b history) The original #24b SPLIT the binding into a pre-dispatch leg (driving
+// `SentToHub -> AcceptedByHub -> RoutedToProvider` BEFORE the loop) and a completion leg (after).
+// The adversarial panel BLOCKED that reorder for two live degrades (a loop `Err` stranding the row
+// at `ProviderRouted`, and a pre-dispatch `StorageError` aborting the run before the answer
+// persisted). The fix REVERTED to the combined post-loop `attach_agent_loop_provider_state` above,
+// so the split-leg functions are gone — `drive_provider_states` (below) is now driven only by the
+// combined entrypoint, with a `start_idx` of 0 for every caller.
 
 /// Shared driver for a run of provider-timeline hops on the SAME bound WorkItem. `start_idx` seeds
 /// the guarded per-hop `now_ms` offset so a caller can split the drive into pre-/post-loop legs
@@ -690,6 +626,14 @@ fn drive_provider_states(
         } else {
             now_ms
         };
+        // (#24b degrade-3 fix) Clear the durable `executing` marker ATOMICALLY with the FINAL hop's
+        // status write. Every caller of this driver is the agent-loop binding, whose final hop is
+        // the run's resting state (`ProviderRouted` on pause/await/error, `CompletedWithProof` on
+        // completion) — a state where `executing` MUST be 0. Doing the clear in the SAME tx as that
+        // status write means a swallowed best-effort loop tail-clear can NEVER strand
+        // `executing == 1` on a live paused run (which PASS-2 would then falsely reconcile). The
+        // non-final in-flight hops keep `false` (the marker is still live mid-drive).
+        let clear_executing = idx + 1 == states.len();
         last = attach_provider_timeline_state_guarded(
             db,
             ProviderTimelineAttachment {
@@ -703,6 +647,7 @@ fn drive_provider_states(
                 now_ms: hop_now_ms,
             },
             guarded,
+            clear_executing,
         )?;
         if matches!(last, MissionAttachmentOutcome::Blocked { .. }) {
             return Ok(last);
@@ -836,6 +781,11 @@ pub fn resume_agent_loop_for_mission(
                 now_ms,
             },
             /* guarded = */ false,
+            // (#24b degrade-3) Clear `executing` on the resume completion hop too: a resumed run that
+            // reaches `CompletedWithProof` must not leave a stale marker (terminal rows are already
+            // never reconciled by PASS-2, but clearing keeps the marker truthful for observability).
+            /* clear_executing = */
+            state == PendingState::ProviderCompleted,
         )?;
         // A non-advancing outcome (e.g. an already-completed run ⇒ illegal/duplicate transition) is
         // NON-FATAL: the mutation DID run (the spine returned accepted), so we still report it. The

@@ -3719,16 +3719,22 @@ fn run_loop_with_policy_inner(
         // one) so the bound is TOTAL attempts == `RUN_LOOP_MAX_PROVIDER_ATTEMPTS`.
         //
         // (#24b) SET the bound WorkItem's durable `executing` marker + a FRESH wall-clock heartbeat
-        // JUST BEFORE the model call (and its bounded retries) — the window a mid-call crash leaves
-        // orphaned. The matching CLEAR is the wrapper's single tail clear (covers every exit).
-        // FAIL-SAFE + a no-op when `work_item_id` is `None` (byte-identical to the pre-#24b loop).
-        // It is RE-SET with a FRESH timestamp every turn, so a long multi-turn run keeps a fresh
-        // heartbeat (never mistaken for a crash); a re-entering run re-SETs `executing = 1` here.
+        // JUST BEFORE the model call — the window a mid-call crash leaves orphaned. The matching
+        // CLEAR is the wrapper's single tail clear (covers every exit). FAIL-SAFE + a no-op when
+        // `work_item_id` is `None` (byte-identical to the pre-#24b loop). It is RE-SET with a FRESH
+        // timestamp every turn (and before each retry attempt + before tool execution below), so a
+        // long multi-turn run keeps a fresh heartbeat (never mistaken for a crash); a re-entering run
+        // re-SETs `executing = 1` here.
         heartbeat_work_item_executing(conn, work_item_id, true);
 
         let metered_result = {
             let mut attempts: u32 = 0;
             loop {
+                // (#24b degrade-4) RE-SET the heartbeat with a FRESH wall-clock timestamp before
+                // EACH attempt, so the staleness is measured against ONE attempt (wall-clock-bounded
+                // by the transport timeout, ~60s), never the whole ≤3-attempt group — keeping a
+                // slow-but-live retried turn far under the 5-min threshold.
+                heartbeat_work_item_executing(conn, work_item_id, true);
                 let outcome = client.next_step_metered(&prompt_task, &history);
                 match &outcome {
                     Err(AgentError::Route(e)) => {
@@ -3819,6 +3825,13 @@ fn run_loop_with_policy_inner(
             }
             AgentStep::Tool(raw) => raw,
         };
+
+        // (#24b degrade-4) RE-SET the heartbeat with a FRESH wall-clock timestamp BEFORE tool
+        // execution too (not only before the model call): a tool dispatch is the OTHER unit of work
+        // a turn spends time in, so refreshing here keeps the heartbeat fresh across it and a
+        // long-running turn is never mistaken for a crash. FAIL-SAFE + a no-op when `work_item_id`
+        // is `None` (byte-identical to the pre-#24b loop).
+        heartbeat_work_item_executing(conn, work_item_id, true);
 
         // Gate-mandatory dispatch via the SHARED chokepoint (same as run_workflow):
         // (disabled/read-only restriction) → bind principal → classify → authorize →
@@ -9365,12 +9378,22 @@ mod tests {
 
     // ───────────────────────── #24b durable execution-state heartbeat ─────────────────────────
 
-    /// Seed a Mission + a single WorkItem (the FK chain `upsert_work_item` needs), returning the
-    /// work_item_id. Read-only-shaped (no workspace refs ⇒ no ownership required).
+    /// Seed a Mission + a single WorkItem (the FK chain `upsert_work_item` needs). Read-only-shaped
+    /// (no workspace refs ⇒ no ownership required). Defaults the WorkItem to `ProviderWaiting`.
     fn seed_loop_work_item(db: &Db, work_item_id: &str) {
+        seed_loop_work_item_at(
+            db,
+            work_item_id,
+            friday_core::WorkItemStatus::ProviderWaiting,
+        );
+    }
+
+    /// Like [`seed_loop_work_item`] but seeds the WorkItem at the given status (e.g.
+    /// `ReadyToDispatch` for the during-call / mid-call-crash reachability proofs).
+    fn seed_loop_work_item_at(db: &Db, work_item_id: &str, status: friday_core::WorkItemStatus) {
         use friday_core::{
             FridayConversation, HandoffJudgmentMemory, Mission, MissionStatus, TruthStatus,
-            WorkItem, WorkItemStatus, WorkLane,
+            WorkItem, WorkLane,
         };
         let fconv = format!("fconv_{}", work_item_id.replace('-', "_"));
         let mission = format!("mission-{work_item_id}");
@@ -9413,7 +9436,7 @@ mod tests {
             mission_id: mission,
             lane: WorkLane::DeepSeek,
             target_provider_or_agent: Some("deepseek".into()),
-            status: WorkItemStatus::ProviderWaiting,
+            status,
             owner_claim_ids: Vec::new(),
             workspace_refs: Vec::new(),
             capability_id: Some("mission.run".into()),
@@ -9685,18 +9708,21 @@ mod tests {
     }
 
     #[test]
-    fn forward_path_during_call_status_is_provider_routed_and_pass2_reconciles_a_mid_call_crash() {
-        // THE end-to-end reachability proof for #24b: drive the REAL production PRE-DISPATCH binding
-        // (`attach_agent_loop_pre_dispatch_state`, run BEFORE the model call), assert the during-call
-        // status is `ProviderRouted` (NOT the pre-#24b `ReadyToDispatch`, which has no legal
-        // `-> FailedTerminal` hop), then simulate a mid-model-call CRASH (the loop's heartbeat SET
-        // fired — executing=1 + stale — but the process DIED before the tail clear), and prove boot
-        // crash-recovery PASS-2 reconciles it. This is the exact state a real forward mission-bound
-        // run leaves on a mid-call crash — NOT a hand-seeded unreachable status.
+    fn forward_path_during_call_status_is_ready_to_dispatch_and_pass2_reconciles_a_mid_call_crash()
+    {
+        // THE end-to-end reachability proof for #24b (panel-BLOCK-fixed, no-reorder design): a
+        // mission-bound run executes the model call WHILE its WorkItem rests at `ReadyToDispatch`
+        // (the binding to `ProviderRouted` is driven AFTER the loop returns, NOT before it). So a
+        // mid-model-call CRASH (the loop's heartbeat SET fired — executing=1 + stale — but the
+        // process DIED before the tail clear AND before the post-loop bind) leaves
+        // `ReadyToDispatch + executing=1 + stale`. We prove boot crash-recovery PASS-2 reconciles
+        // exactly that, via the additive `ReadyToDispatch -> FailedTerminal` edge. This is the exact
+        // state a real forward mission-bound run leaves on a mid-call crash — NOT a hand-seeded
+        // unreachable status (the run never advanced past `ReadyToDispatch`, so an errored run is
+        // also left retryable, not stranded — the degrade-1 fix).
         use friday_core::WorkItemStatus;
-        // Seed the work_item at the GENUINE pre-loop status a freshly-dispatched mission-bound run
-        // starts at — `ReadyToDispatch` — so this proof drives the real production binding, not a
-        // hand-placed provider status.
+        // Seed the work_item at the GENUINE during-call status a freshly-dispatched mission-bound
+        // run sits at — `ReadyToDispatch`.
         let db2 = Db::open_hub(&temp_path("hb-fwd")).unwrap();
         {
             use friday_core::{
@@ -9775,35 +9801,17 @@ mod tests {
             .unwrap();
         }
 
-        // (1) Drive the REAL production pre-dispatch binding (what runs BEFORE the model call).
-        let attach = crate::mission_runtime::attach_agent_loop_pre_dispatch_state(
-            &db2,
-            "mission-wi-fwd",
-            "wi-fwd",
-            "sess-fwd",
-            "run-fwd",
-            /* guarded = */ false,
-            10_000,
-        )
-        .unwrap();
-        assert!(
-            matches!(
-                attach,
-                crate::mission_preflight::MissionAttachmentOutcome::Attached {
-                    work_item_status: WorkItemStatus::ProviderRouted,
-                    ..
-                }
-            ),
-            "the real pre-dispatch binding leaves the during-call status at ProviderRouted, got {attach:?}"
-        );
+        // (1) During the model call the bound work_item is `ReadyToDispatch` (no pre-dispatch
+        //     advance — the binding is driven AFTER the loop). Confirm the seeded during-call status.
         assert_eq!(
             db2.get_work_item("wi-fwd").unwrap().unwrap().status,
-            WorkItemStatus::ProviderRouted,
-            "during the model call the bound work_item is ProviderRouted (NOT ReadyToDispatch)"
+            WorkItemStatus::ReadyToDispatch,
+            "during the model call the bound work_item is ReadyToDispatch (binding is post-loop)"
         );
 
         // (2) Simulate the mid-call crash: the loop's heartbeat SET fired (executing=1) at a real
-        //     wall-clock that is now STALE; the process DIED before the wrapper's tail clear.
+        //     wall-clock that is now STALE; the process DIED before the wrapper's tail clear AND
+        //     before the post-loop bind — so the row is still `ReadyToDispatch`.
         let boot_now = 1_700_000_000_000_i64;
         db2.set_work_item_executing(
             "wi-fwd",
@@ -9812,11 +9820,12 @@ mod tests {
         )
         .unwrap();
 
-        // (3) Boot crash-recovery PASS-2 reconciles this REAL forward-path crash row to FailedTerminal.
+        // (3) Boot crash-recovery PASS-2 reconciles this REAL forward-path crash row to FailedTerminal
+        //     via the additive `ReadyToDispatch -> FailedTerminal` edge.
         let outcome = crash_recovery::reconcile_orphaned_work_items(&db2, boot_now).unwrap();
         assert_eq!(
             outcome.aborted, 1,
-            "PASS-2 reconciles the real mid-call crash"
+            "PASS-2 reconciles the real mid-call crash on a ReadyToDispatch row"
         );
         assert_eq!(
             db2.get_work_item("wi-fwd").unwrap().unwrap().status,
@@ -9830,6 +9839,231 @@ mod tests {
                 .blocking_reason
                 .as_deref(),
             Some(crash_recovery::CRASH_RECOVERY_MARKER)
+        );
+    }
+
+    #[test]
+    fn errored_mission_bound_run_stays_ready_to_dispatch_not_stranded() {
+        // DEGRADE-1 regression guard: a mission-bound loop that ERRORS (no Finished) must NOT have
+        // advanced the WorkItem past `ReadyToDispatch` — it stays retryable (the pre-#24b rest
+        // state), NOT stranded at `ProviderRouted`. We drive the REAL post-loop binding with
+        // `completed = false` (the non-Finished outcome) and assert the row rests at `ProviderRouted`
+        // ONLY because the bind ran (post-loop); the during-call status was `ReadyToDispatch`. The
+        // dispatch-retryability property is the during-call status, proven by the reachability test
+        // above; here we assert the post-loop `completed=false` bind is END-STATE-identical to
+        // pre-#24b (rests at `ProviderRouted`, no over-claimed completion) — i.e. the reorder is gone.
+        use friday_core::WorkItemStatus;
+        let db3 = Db::open_hub(&temp_path("hb-err")).unwrap();
+        seed_loop_work_item_at(&db3, "wi-err", WorkItemStatus::ReadyToDispatch);
+        // The loop errored ⇒ the post-loop bind runs with completed=false (3 in-flight hops).
+        let attach = crate::mission_runtime::attach_agent_loop_provider_state(
+            &db3,
+            &format!("mission-{}", "wi-err"),
+            "wi-err",
+            "sess-err",
+            "run-err",
+            /* completed = */ false,
+            "",
+            /* guarded = */ false,
+            10_000,
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                attach,
+                crate::mission_preflight::MissionAttachmentOutcome::Attached {
+                    work_item_status: WorkItemStatus::ProviderRouted,
+                    ..
+                }
+            ),
+            "a non-completed run rests at ProviderRouted (post-loop bind), got {attach:?}"
+        );
+        // And the binding's final hop cleared executing atomically (degrade-3): a swallowed tail
+        // clear can never strand executing=1 on this rest state.
+        assert!(
+            !exec_state(&db3, "wi-err").0,
+            "the post-loop bind's final hop cleared executing atomically"
+        );
+    }
+
+    #[test]
+    fn paused_run_with_swallowed_tail_clear_is_not_pass2_reconciled() {
+        // DEGRADE-3 regression guard (the cardinal sin): a mission-bound run that PAUSES for
+        // approval while SQLite is contended could have its best-effort loop tail-clear SWALLOWED,
+        // leaving executing=1. After a long (>5 min) human approval latency the heartbeat is stale.
+        // If PASS-2 then reconciled it, a LIVE resumable run would be falsely aborted. The
+        // degrade-3 fix makes the post-loop binding clear executing ATOMICALLY in the SAME tx as its
+        // final resting-state hop — so even with a SIMULATED swallowed tail-clear (executing left 1
+        // + stale), the bind lands the row at ProviderRouted with executing=0, and PASS-2 leaves it.
+        use friday_core::WorkItemStatus;
+        let db = Db::open_hub(&temp_path("hb-deg3")).unwrap();
+        seed_loop_work_item_at(&db, "wi-deg3", WorkItemStatus::ReadyToDispatch);
+
+        // SIMULATE the swallowed/failed best-effort tail clear: the loop SET executing=1 mid-call,
+        // and the tail clear never landed — so executing is still 1 with a (soon-stale) heartbeat.
+        let boot_now = 1_700_000_000_000_i64;
+        db.set_work_item_executing(
+            "wi-deg3",
+            true,
+            boot_now - crash_recovery::EXECUTION_STATE_STALE_THRESHOLD_MS - 1,
+        )
+        .unwrap();
+
+        // The post-loop binding for a PAUSED (non-completed) run drives the 3 in-flight hops to
+        // ProviderRouted — and its FINAL hop clears executing ATOMICALLY (degrade-3 fix).
+        let attach = crate::mission_runtime::attach_agent_loop_provider_state(
+            &db,
+            "mission-wi-deg3",
+            "wi-deg3",
+            "sess-deg3",
+            "run-deg3",
+            /* completed = */ false,
+            "",
+            /* guarded = */ false,
+            10_000,
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                attach,
+                crate::mission_preflight::MissionAttachmentOutcome::Attached {
+                    work_item_status: WorkItemStatus::ProviderRouted,
+                    ..
+                }
+            ),
+            "paused run rests at ProviderRouted, got {attach:?}"
+        );
+        assert!(
+            !exec_state(&db, "wi-deg3").0,
+            "the atomic final-hop clear cleared executing despite the swallowed tail clear"
+        );
+
+        // PASS-2 (crash-recovery on) must NOT reconcile this LIVE paused run — executing is 0.
+        let outcome =
+            crash_recovery::reconcile_orphaned_work_items(&db, boot_now + 600_000).unwrap();
+        assert_eq!(
+            outcome.aborted, 0,
+            "the live paused run is NEVER PASS-2-reconciled (executing was cleared atomically)"
+        );
+        assert_eq!(
+            db.get_work_item("wi-deg3").unwrap().unwrap().status,
+            WorkItemStatus::ProviderRouted,
+            "the paused run survives at ProviderRouted (resume path can drive it to completion)"
+        );
+    }
+
+    #[test]
+    fn long_multi_step_turn_keeps_a_fresh_heartbeat_and_is_not_reconciled() {
+        // DEGRADE-4 regression guard: a long multi-step turn must keep a FRESH heartbeat (re-set
+        // before the model call, before each retry, and before each tool execution) so a concurrent
+        // boot reconcile never mistakes a slow-but-LIVE run for a crash. We run a real bound loop
+        // with MULTIPLE tool steps; after it finishes, the heartbeat reflects the LAST SET (cleared
+        // at exit). To prove freshness DURING the run we use an observer that, at each next_step,
+        // checks the heartbeat is recent vs the wall clock (it was just SET before this call).
+        use friday_core::WorkItemStatus;
+        let db_path = temp_path("hb-deg4");
+        let db = Db::open_hub(&db_path).unwrap();
+        agent_run::create_run(db.conn(), "r1", "do it", 1).unwrap();
+        seed_loop_work_item_at(&db, "wi-deg4", WorkItemStatus::ReadyToDispatch);
+
+        // An observer that records, at each model call, whether the heartbeat is FRESH (within the
+        // staleness threshold of the real wall clock) — proving the per-turn re-SET keeps it live.
+        struct FreshnessObserver {
+            steps: Vec<AgentStep>,
+            calls: std::cell::Cell<usize>,
+            db_path: String,
+            work_item_id: String,
+            all_fresh: std::cell::Cell<bool>,
+        }
+        impl AgentLlmClient for FreshnessObserver {
+            fn propose_tool_call(&self, _task: &str) -> Result<RawToolCall, AgentError> {
+                Err(AgentError::Parse("unused".into()))
+            }
+            fn next_step(
+                &self,
+                _task: &str,
+                _history: &[TurnTrace],
+            ) -> Result<AgentStep, AgentError> {
+                let db = Db::open_hub(&self.db_path).unwrap();
+                let st = db
+                    .get_work_item_execution_state(&self.work_item_id)
+                    .unwrap()
+                    .unwrap();
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as i64;
+                let fresh = st.executing
+                    && st.last_heartbeat_ms.is_some_and(|hb| {
+                        now - hb < crash_recovery::EXECUTION_STATE_STALE_THRESHOLD_MS
+                    });
+                if !fresh {
+                    self.all_fresh.set(false);
+                }
+                let i = self.calls.get();
+                self.calls.set(i + 1);
+                Ok(self.steps.get(i).cloned().unwrap_or(AgentStep::Finish {
+                    message: "done".into(),
+                }))
+            }
+        }
+
+        let root = TempDir::new("hb-deg4");
+        // Write a file first (so a later read tool returns content) — multiple read steps = a long
+        // multi-step turn, each preceded by a fresh heartbeat SET (model call + tool exec re-sets).
+        std::fs::write(root.0.join("a.txt"), b"hello").unwrap();
+        let observer = FreshnessObserver {
+            steps: vec![
+                AgentStep::Tool(raw("read_file", &[("path", "a.txt")])),
+                AgentStep::Tool(raw("read_file", &[("path", "a.txt")])),
+                AgentStep::Tool(raw("read_file", &[("path", "a.txt")])),
+                AgentStep::Finish {
+                    message: "done".into(),
+                },
+            ],
+            calls: std::cell::Cell::new(0),
+            db_path: db_path.clone(),
+            work_item_id: "wi-deg4".into(),
+            all_fresh: std::cell::Cell::new(true),
+        };
+        let executor = FsToolExecutor::new(&root.0);
+        let policy = RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), false);
+        let out = run_loop_with_policy(
+            &observer,
+            &executor,
+            db.conn(),
+            "r1",
+            "do it",
+            "",
+            None,
+            &no_approval(),
+            &policy,
+            10,
+            None,
+            None,
+            1000,
+            Some("wi-deg4"),
+        )
+        .unwrap();
+        assert_eq!(
+            out.status,
+            LoopStatus::Finished,
+            "the multi-step turn finishes"
+        );
+        assert!(
+            observer.all_fresh.get(),
+            "every model call saw a FRESH heartbeat (the per-call re-SET kept it live)"
+        );
+        // After a clean exit the marker is cleared, so a boot reconcile finds nothing to abort.
+        assert!(!exec_state(&db, "wi-deg4").0, "cleared at exit");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let outcome = crash_recovery::reconcile_orphaned_work_items(&db, now).unwrap();
+        assert_eq!(
+            outcome.aborted, 0,
+            "a cleanly-finished multi-step run is never reconciled"
         );
     }
 }

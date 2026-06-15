@@ -36,9 +36,8 @@ use crate::hub_server::{project_answer_for_authed, AuthedAnswer, AuthedPrincipal
 use crate::mission_context::MissionContextLookup;
 use crate::mission_preflight::MissionAttachmentOutcome;
 use crate::mission_runtime::{
-    attach_agent_loop_completion_state, attach_agent_loop_pre_dispatch_state,
-    resolve_mission_runtime_envelope, MissionRuntimeEnvelope, MissionRuntimeOutcome,
-    MissionRuntimeRequest,
+    attach_agent_loop_provider_state, resolve_mission_runtime_envelope, MissionRuntimeEnvelope,
+    MissionRuntimeOutcome, MissionRuntimeRequest,
 };
 use crate::routing::{
     run_routed_loop_with_policy, ProviderClientResolver, ProviderRoute, RouteRegistry,
@@ -1675,36 +1674,29 @@ impl<T: Transport> HubRuntime<T> {
             );
         }
 
-        // (#24b) PRE-DISPATCH binding: advance the bound WorkItem `SentToHub -> AcceptedByHub ->
-        // RoutedToProvider` (ending at `ProviderRouted`) BEFORE the model call. This is what makes
-        // the during-call status be `ProviderRouted` (the COMMON mid-call crash state), so the
-        // loop's durable `executing` heartbeat lands on a row boot crash-recovery PASS-2 can legally
-        // reconcile after a mid-call crash (`ReadyToDispatch`, the pre-#24b during-call status, has
-        // NO legal `-> FailedTerminal` hop, so PASS-2 could never abort it). END-STATE-NEUTRAL: a
-        // non-completed run already ended at `ProviderRouted` (the old single post-loop drive with
-        // `completed=false` drove exactly these three hops) — so only the TIMING moved, not the
-        // final status of any loop outcome. A binding failure here is non-fatal observability (the
-        // run still proceeds); we do not gate the run on it.
-        let _pre_dispatch = attach_agent_loop_pre_dispatch_state(
-            &self.db,
-            &envelope.context.mission_id,
-            &envelope.context.work_item_id,
-            session_id,
-            run_id,
-            workitem_guarded,
-            now_ms,
-        )?;
-
         // Run the SAME composed loop as the unbound entry (no divergence), threading the
         // (effective) per-run policy + ceiling so a mission-bound run enforces the IDENTICAL
         // tightening the unbound dispatch arm applies. Absent override ⇒ boot config unchanged.
-        // (#24b) This is the ONE entry that binds a real WorkItem, so it calls `run_with_request`
-        // DIRECTLY (instead of `run_task_with_overrides`, which the sessionless entry uses with no
-        // WorkItem) to thread `Some(work_item_id)` into the loop's durable-execution heartbeat — so
-        // a mid-model-call crash on a mission-bound run leaves a STALE `executing` marker (on a now
-        // `ProviderRouted` row) that boot crash-recovery PASS-2 can reconcile. Everything else is
-        // byte-identical to `run_task_with_overrides(.., now_ms)` (same `RouteRequest::any()`, same
-        // `None` cancel/steer).
+        //
+        // (#24b — REVISED, panel BLOCK fix for degrades 1+2) The WorkItem binding is driven AFTER
+        // the loop (the pre-#24b order), NOT before it. The reverted #24b SPLIT pre-advanced the
+        // row to `ProviderRouted` BEFORE the model call, which introduced two LIVE degrades: (1) a
+        // loop `Err` (provider/transport failure) propagated by `?` left the row STRANDED at
+        // `ProviderRouted` (an orphan that looks paused) instead of `ReadyToDispatch`
+        // (dispatch-retryable, the pre-#24b rest state); and (2) the pre-dispatch binding's `?`
+        // made any `StorageError` (SQLITE_BUSY is documented prod history) FATAL before the model
+        // call + before the answer persisted. Keeping the binding AFTER the loop fixes BOTH: an
+        // errored run never advances past `ReadyToDispatch` (stays retryable), and the binding's
+        // `StorageError` can only fire once the loop has already returned (so the answer the loop
+        // persisted is durable). The DURABLE-execution heartbeat still runs INSIDE the loop on the
+        // now-`ReadyToDispatch` row: this is the ONE entry that binds a real WorkItem, so it calls
+        // `run_with_request` DIRECTLY (instead of `run_task_with_overrides`, which the sessionless
+        // entry uses with no WorkItem) to thread `Some(work_item_id)` into the loop's heartbeat —
+        // so a mid-model-call crash leaves a STALE `executing` marker on the `ReadyToDispatch` row,
+        // which boot crash-recovery PASS-2 reconciles via the additive
+        // `ReadyToDispatch -> FailedTerminal` edge. Everything else is byte-identical to
+        // `run_task_with_overrides(.., now_ms)` (same `RouteRequest::any()`, same `None`
+        // cancel/steer).
         let (selection, outcome) = self.run_with_request(
             run_id,
             task,
@@ -1717,34 +1709,31 @@ impl<T: Transport> HubRuntime<T> {
             Some(envelope.context.work_item_id.as_str()),
         )?;
 
-        // Bind the run's COMPLETION to the Mission. Truth-honest: complete the WorkItem with the run
-        // as proof ONLY when the loop Finished (`WaitingProvider -> ProviderCompleted` from the
-        // pre-dispatch `ProviderRouted`); otherwise the row RESTS at `ProviderRouted` (set
-        // pre-dispatch) without over-claiming completion — byte-identical FINAL status to the
-        // pre-#24b single post-loop drive. `start_idx=3` inside the completion call continues the
-        // guarded per-hop `now_ms` offset past the three pre-dispatch hops (no audit_ledger PK clash).
+        // Bind the run to the Mission via the ask path's provider-timeline attachment, AFTER the
+        // loop. Truth-honest: complete the WorkItem with the run as proof ONLY when the loop
+        // Finished; otherwise bind at `ProviderRouted` (the pause/await rest state the #755 resume
+        // path drives from) without over-claiming completion. The binding ALSO clears the durable
+        // `executing` marker ATOMICALLY in the SAME transaction as its FINAL status hop (degrade-3
+        // fix): a run that reaches a binding rest state (`ProviderRouted` on pause/await,
+        // `CompletedWithProof` on completion) ends with `executing == 0` written in the SAME tx, so
+        // a swallowed best-effort tail-clear can NEVER strand `executing == 1` on a live paused run
+        // (which PASS-2 would then falsely reconcile after a long human approval latency).
         let completed = outcome.status == LoopStatus::Finished;
         let result_link = format!("friday://agent-run/{run_id}");
-        let attachment = if completed {
-            attach_agent_loop_completion_state(
-                &self.db,
-                &envelope.context.mission_id,
-                &envelope.context.work_item_id,
-                session_id,
-                run_id,
-                &result_link,
-                // WI-1 (M-6): DARK-flag bool threaded from the entrypoint env read. OFF ⇒ the inline
-                // status-advance write (byte-identical); ON ⇒ each hop goes through the guarded
-                // `transition_work_item_status` primitive, adding the atomic hash-chained audit row.
-                workitem_guarded,
-                now_ms,
-            )?
-        } else {
-            // The non-completed run already rests at `ProviderRouted` from the pre-dispatch leg
-            // (the run-proof surface_event below fires ONLY on a CompletedWithProof attachment, so a
-            // non-completed `Attached{ProviderRouted}` correctly emits no proof row).
-            _pre_dispatch
-        };
+        let attachment = attach_agent_loop_provider_state(
+            &self.db,
+            &envelope.context.mission_id,
+            &envelope.context.work_item_id,
+            session_id,
+            run_id,
+            completed,
+            &result_link,
+            // WI-1 (M-6): DARK-flag bool threaded from the entrypoint env read. OFF ⇒ the inline
+            // status-advance write (byte-identical); ON ⇒ each hop goes through the guarded
+            // `transition_work_item_status` primitive, adding the atomic hash-chained audit row.
+            workitem_guarded,
+            now_ms,
+        )?;
 
         // (FRIDAY_SURFACE_EVENTS, DARK, default-OFF) RUN-PROOF surface_event — emitted ONLY when
         // the loop Finished AND the attachment actually completed the bound WorkItem with proof

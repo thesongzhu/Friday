@@ -23,27 +23,35 @@
 //!     orphans.** Both `Dispatched->FailedTerminal` and `HubAccepted->FailedTerminal` are legal
 //!     transitions (`friday_core::WorkItemStatus::can_transition_to`), so the reconcile uses the
 //!     standard `transition_work_item_status` primitive (audit row + upsert in one tx).
-//!   * `ProviderRouted`/`ProviderWaiting` are the COMMON mid-call crash states (#24b). A run that
-//!     PAUSED for operator approval sits at `ProviderRouted` (the signed-mutation resume path
-//!     `resume_agent_loop_for_mission`, #755, drives it to completion); a run actively waiting on
-//!     the provider sits at `ProviderWaiting` (it has NO operator-approval row by design, so
-//!     approval-presence is the WRONG discriminator). #767 left BOTH untouched because, with no
-//!     durable run-execution marker, a crash-orphaned one could not be told apart from a
-//!     legitimately-waiting one — reconciling blindly would abort a live run (a degrade).
+//!   * `ReadyToDispatch` (PRIMARY PASS-2 state) is where a mission-bound WorkItem RESTS WHILE the
+//!     agent loop runs the model call (#24b, panel-fixed): the binding to `ProviderRouted` happens
+//!     AFTER the loop returns, so the during-call status is `ReadyToDispatch`. #767 left it untouched
+//!     because, with no durable run-execution marker, a crashed-mid-call `ReadyToDispatch` could not
+//!     be told apart from a freshly-dispatched-but-not-yet-running one (dispatch's normal hand-off
+//!     state) — reconciling blindly would abort a run that never started (a degrade).
+//!     `ProviderRouted`/`ProviderWaiting` (DEFENSIVE PASS-2 states) are the legacy provider in-flight
+//!     hops: the normal post-loop bind clears `executing` ATOMICALLY at its final hop, so a paused
+//!     run never sits there `executing == 1`, but they stay in the candidate set defensively.
 //!
-//!     **PASS-2 (#24b) closes that exact gap with a DURABLE execution marker.** The agent loop now
-//!     SETs `work_item.executing = 1` + `last_heartbeat_ms = now` JUST BEFORE each model call and
-//!     CLEARs `executing = 0` at EVERY loop exit. PASS-2 reconciles a `ProviderRouted`/
-//!     `ProviderWaiting` row ONLY when it is `executing == 1` AND `last_heartbeat_ms` is STALE
-//!     (older than [`EXECUTION_STATE_STALE_THRESHOLD_MS`] = 5 min, which strictly exceeds the
-//!     longest legit single model call) — i.e. the process that set the marker DIED mid-call. A
-//!     row with `executing == 0` (legit-paused/awaiting/finished), or a FRESH heartbeat (a
-//!     slow-but-LIVE call), is NEVER touched. Both `ProviderRouted -> FailedTerminal` and
-//!     `ProviderWaiting -> FailedTerminal` are legal hops, so PASS-2 uses the SAME legal
-//!     `transition_work_item_status` primitive + `crash_recovery_abort` marker as PASS-1.
+//!     **PASS-2 (#24b) closes that exact gap with a DURABLE execution marker.** The agent loop SETs
+//!     `work_item.executing = 1` + `last_heartbeat_ms = now` JUST BEFORE each model call AND before
+//!     each tool execution, and CLEARs `executing = 0` at EVERY loop exit; the post-loop binding
+//!     additionally clears it ATOMICALLY in the same transaction as its final resting-state hop.
+//!     PASS-2 reconciles a `ReadyToDispatch`/`ProviderRouted`/`ProviderWaiting` row ONLY when it is
+//!     `executing == 1` AND `last_heartbeat_ms` is STALE (older than
+//!     [`EXECUTION_STATE_STALE_THRESHOLD_MS`] = 5 min, which strictly exceeds the longest legit
+//!     single model call — itself wall-clock-bounded by the friday-deepseek transport timeout) —
+//!     i.e. the process that set the marker DIED mid-call. A row with `executing == 0`
+//!     (legit-paused/awaiting/finished/not-yet-running), or a FRESH heartbeat (a slow-but-LIVE call),
+//!     is NEVER touched. `ReadyToDispatch -> FailedTerminal` (additive #24b edge),
+//!     `ProviderRouted -> FailedTerminal`, and `ProviderWaiting -> FailedTerminal` are all legal
+//!     hops, so PASS-2 uses the SAME legal `transition_work_item_status` primitive +
+//!     `crash_recovery_abort` marker as PASS-1.
 //!   * `WaitingForUser` is awaiting the user (the awaiting-clarification flow); `Draft` /
-//!     `PreflightBlocked` are owned by preflight; `ReadyToDispatch` by dispatch; `FailedRetryable`
-//!     by the retry path. None is an in-flight hub hop and each has its own owner. WAITING.
+//!     `PreflightBlocked` are owned by preflight; `FailedRetryable` by the retry path. None is an
+//!     in-flight hub hop and each has its own owner. WAITING. (`ReadyToDispatch` is owned by dispatch
+//!     too — and PASS-2 honors that: a `ReadyToDispatch` row is touched ONLY when `executing == 1 +
+//!     stale`, never the normal `executing == 0` dispatch hand-off state.)
 //!   * the five terminal statuses are never in the scan set (`list_active_work_items` excludes
 //!     them) and are never touched.
 //!
@@ -51,39 +59,42 @@
 //!   * **Flag-OFF ⇒ no PASS-2 reconcile (no scan, no write).** [`crash_recovery_enabled_from`] is
 //!     the pure matcher; the server reads `FRIDAY_CRASH_RECOVERY` ONCE at boot and, when OFF
 //!     (default / anything but the exact trimmed `"1"`), NEVER calls
-//!     [`reconcile_orphaned_work_items`]. NOTE — the two #24b loop-side changes are FLAG-INDEPENDENT
-//!     (they run on every mission-bound run, flag on or off): (1) the work_item reaches
-//!     `ProviderRouted` BEFORE the model call (pre-#24b it reached it AFTER), and (2) the
-//!     `executing`/`last_heartbeat_ms` columns are written. So flag-OFF is BYTE-IDENTICAL for
-//!     NON-mission runs, and END-STATE- + AUDIT-IDENTICAL for mission-bound runs (only the timing of
-//!     the ProviderRouted hop moves + two columns no read path consults are written) — proven by the
-//!     full mission_runtime/runtime/resume/surface-event suites staying green. This is a deliberate,
-//!     no-degrade reorder, NOT dark-until-flipped: deploying the binary moves the mission-bound
-//!     dispatch timing regardless of the flag; only the boot reconcile is gated.
+//!     [`reconcile_orphaned_work_items`]. NOTE — the #24b loop-side change is FLAG-INDEPENDENT (it
+//!     runs on every mission-bound run, flag on or off): the `executing`/`last_heartbeat_ms` columns
+//!     are written by the loop. The WorkItem-status TIMING is UNCHANGED vs pre-#24b: the binding is
+//!     driven AFTER the loop (the panel-BLOCK fix REVERTED the original pre-dispatch reorder), so an
+//!     errored run stays `ReadyToDispatch` (retryable) and the during-call status is `ReadyToDispatch`
+//!     exactly as before. So flag-OFF is BYTE-IDENTICAL for NON-mission runs, and END-STATE- +
+//!     AUDIT-IDENTICAL for mission-bound runs (only two columns no read path consults are written, +
+//!     the final-hop bind clears `executing` in the same tx) — proven by the full
+//!     mission_runtime/runtime/resume/surface-event suites staying green. Only the boot reconcile is
+//!     gated.
 //!   * **Best-effort + fail-safe.** Reconciliation runs BEFORE the server accepts connections, but
 //!     a reconcile error is LOGGED (category only) and SWALLOWED — it MUST NEVER block boot (the
 //!     server coming up is load-bearing; this is cleanup). A per-row transition failure is logged
 //!     and skipped; one bad row never aborts the sweep.
 //!   * **Only advances DEAD rows.** PASS-1 touches only `Dispatched` / `HubAccepted`; PASS-2 touches
-//!     a `ProviderRouted` / `ProviderWaiting` row ONLY when it is `executing == 1` with a STALE
-//!     heartbeat. Every other row — a paused/awaiting `executing == 0` provider row, a fresh-heartbeat
-//!     LIVE row, every other waiting status, and every terminal row — is left byte-for-byte unchanged.
+//!     a `ReadyToDispatch` / `ProviderRouted` / `ProviderWaiting` row ONLY when it is `executing == 1`
+//!     with a STALE heartbeat. Every other row — an `executing == 0` ready/paused/awaiting row, a
+//!     fresh-heartbeat LIVE row, every other waiting status, and every terminal row — is left
+//!     byte-for-byte unchanged.
 //!   * **Idempotent.** After the first sweep the orphans are `FailedTerminal` ⇒ excluded from the
 //!     scan ⇒ a second boot finds nothing (a no-op).
 //!
 //! ## Residual limitations (named honestly, like #767 named its deferral — NOT fixed here)
-//!   * **The pre-dispatch→first-SET window.** Between the pre-dispatch binding (`ProviderRouted`,
-//!     `executing == 0`) and the loop's first heartbeat SET, a crash leaves
-//!     `ProviderRouted + executing == 0` — indistinguishable from a legit pause, so unreconciled.
-//!     The window is narrow (no model call happens in it), but it is the SAME orphan class #767
-//!     deferred. Setting `executing = 1` inside the pre-dispatch binding would close it.
+//!   * **The dispatch→first-SET window.** Between a mission-bound run reaching `ReadyToDispatch` and
+//!     the loop's first heartbeat SET, a crash leaves `ReadyToDispatch + executing == 0` —
+//!     indistinguishable from a freshly-dispatched-not-yet-running row, so unreconciled. The window
+//!     is narrow (no model call happens in it), and the dispatch path already owns re-driving a
+//!     never-started `ReadyToDispatch`.
 //!   * **The codex mission-bound path.** Codex runs bypass `run_loop_with_policy` (the special-cased
 //!     gated-turn path), so they NEVER write the heartbeat — a codex mission-bound run crashing
-//!     mid-turn leaves `ProviderRouted + executing == 0`, also unreconciled. Dark today (codex
-//!     unavailable in the autonomous baseline); named for when it is wired.
+//!     mid-turn leaves `executing == 0`, also unreconciled. Dark today (codex unavailable in the
+//!     autonomous baseline); named for when it is wired.
 //!
 //! GATING: the boot PASS-1+PASS-2 reconcile is default-OFF (`FRIDAY_CRASH_RECOVERY`). The loop-side
-//! marker writes + the pre-dispatch reorder are flag-INDEPENDENT (see the no-degrade posture above).
+//! marker writes are flag-INDEPENDENT (see the no-degrade posture above), but the WorkItem-status
+//! timing is UNCHANGED vs pre-#24b (binding driven after the loop).
 
 use friday_core::WorkItemStatus;
 use friday_storage::{Db, StorageError};
@@ -99,22 +110,25 @@ const CRASH_RECOVERY_ACTOR: &str = "crash-recovery";
 pub const CRASH_RECOVERY_MARKER: &str = "crash_recovery_abort";
 
 /// (#24b) How stale a durable `executing` heartbeat must be before boot crash-recovery PASS-2
-/// treats a `ProviderRouted`/`ProviderWaiting` row as CRASHED-while-executing (vs a slow-but-LIVE
-/// model call). 5 MINUTES — chosen to strictly EXCEED the longest legitimate single model call
-/// this codebase can make, so a slow-but-live turn is NEVER reconciled:
-///   * The agent loop makes ONE `next_step_metered` call per turn, plus up to
-///     `RUN_LOOP_MAX_PROVIDER_ATTEMPTS - 1` (= 2) bounded transient-route RETRIES of that SAME
-///     call (lib.rs) — at most 3 provider attempts per turn. The heartbeat is RE-SET at the top of
-///     EVERY turn (just before the call), so the staleness is measured against ONE turn's model
-///     call (+ its retries), not the whole multi-turn run.
-///   * The DeepSeek/Claude HTTP transport (ureq) has no multi-minute per-call ceiling, but real
-///     completions return in seconds to low-minutes even for long generations; 3 attempts of a
-///     slow call stay comfortably under 5 min. For scale: the WS server's per-read timeout is 30s
-///     (`READ_TIMEOUT`) and the session reaper interval is 120s — 300s exceeds both by a wide margin.
+/// treats a `ReadyToDispatch`/`ProviderRouted`/`ProviderWaiting` row as CRASHED-while-executing (vs
+/// a slow-but-LIVE model call). 5 MINUTES — chosen to strictly EXCEED the longest legitimate gap
+/// between two heartbeat writes this codebase can have, so a slow-but-live turn is NEVER reconciled:
+///   * The heartbeat is RE-SET with a FRESH wall-clock timestamp at MULTIPLE points per turn: just
+///     before the model call, before EACH bounded transient-route retry attempt, and again just
+///     before each tool execution (degrade-4 fix). So the staleness is measured against the gap
+///     between ANY two consecutive heartbeat writes, NOT a whole turn and NOT a whole run.
+///   * The model HTTP call is now WALL-CLOCK-BOUNDED by the friday-deepseek `UreqTransport` overall
+///     request timeout (`DEEPSEEK_REQUEST_TIMEOUT` = 60s; a timed-out call returns a transient
+///     `ProviderUnavailable` route error). With the heartbeat re-set before EACH of the ≤3 attempts,
+///     the longest gap a model-call group can introduce is ONE attempt ≈ 60s. A single tool
+///     execution is local FS/IO (sub-second). So the worst-case gap between heartbeat writes is ~60s
+///     — well under the 300s threshold, a ~5x margin. For scale: the WS server's per-read timeout is
+///     30s (`READ_TIMEOUT`) and the session reaper interval is 120s; 300s exceeds both by a wide margin.
 ///
 /// So a heartbeat older than 5 min reliably means the process that SET it is DEAD (it never reached
-/// the loop's tail clear), not that a live call is still running. Tightening this risks reconciling
-/// a slow-but-live run (a degrade); loosening it only delays cleanup of a genuinely-dead row (safe).
+/// the next heartbeat write or the loop's tail clear), not that a live call is still running.
+/// Tightening this risks reconciling a slow-but-live run (a degrade); loosening it only delays
+/// cleanup of a genuinely-dead row (safe).
 pub const EXECUTION_STATE_STALE_THRESHOLD_MS: i64 = 300_000;
 
 /// Pure flag-matcher (separated from the env read so it is testable without mutating the
@@ -141,17 +155,31 @@ pub fn is_orphaned_in_flight(status: WorkItemStatus) -> bool {
 }
 
 /// (#24b) Whether a non-terminal status is one PASS-2 may reconcile WHEN it is durably
-/// `executing` with a STALE heartbeat — the `ProviderRouted`/`ProviderWaiting` rows #767's PASS-1
-/// classifier ([`is_orphaned_in_flight`]) deliberately left untouched because, WITHOUT a durable
-/// execution marker, a crash-orphaned one could not be told apart from a legitimately-waiting one.
-/// The durable `executing` marker (set by the agent loop just before each model call, cleared at
-/// every loop exit) now makes that distinction safe: a row that is `executing == 1` with a
-/// heartbeat older than [`EXECUTION_STATE_STALE_THRESHOLD_MS`] is a process that DIED mid-call. A
-/// row with `executing == 0` (paused/awaiting/finished) is NEVER in this set's action path.
+/// `executing` with a STALE heartbeat — the states a process can DIE in while the agent loop is
+/// actively running, which #767's PASS-1 classifier ([`is_orphaned_in_flight`]) deliberately left
+/// untouched because, WITHOUT a durable execution marker, a crash-orphaned one could not be told
+/// apart from a legitimately-waiting one.
+///
+/// `ReadyToDispatch` is the PRIMARY member: in the panel-BLOCK-fixed #24b design the WorkItem rests
+/// at `ReadyToDispatch` WHILE the agent loop runs the model call (the binding to `ProviderRouted`
+/// happens AFTER the loop returns, atomically clearing `executing`), so a mid-model-call crash
+/// leaves `ReadyToDispatch + executing == 1 + stale`. The additive `ReadyToDispatch ->
+/// FailedTerminal` edge (see `friday_core::WorkItemStatus::can_transition_to`) makes reconciling it
+/// legal. `ProviderRouted`/`ProviderWaiting` are retained as DEFENSIVE members for any path that
+/// leaves an `executing == 1` provider row (the normal post-loop bind clears `executing` atomically
+/// at its final hop, so a paused run never sits there `executing == 1`).
+///
+/// The durable `executing` marker (set by the agent loop just before each model call + before tool
+/// execution, cleared at every loop exit AND atomically by the binding's final hop) makes the
+/// distinction safe: a row that is `executing == 1` with a heartbeat older than
+/// [`EXECUTION_STATE_STALE_THRESHOLD_MS`] is a process that DIED mid-call. A row with
+/// `executing == 0` (paused/awaiting/finished/not-yet-running) is NEVER in this set's action path.
 pub fn is_stale_executing_candidate(status: WorkItemStatus) -> bool {
     matches!(
         status,
-        WorkItemStatus::ProviderRouted | WorkItemStatus::ProviderWaiting
+        WorkItemStatus::ReadyToDispatch
+            | WorkItemStatus::ProviderRouted
+            | WorkItemStatus::ProviderWaiting
     )
 }
 
@@ -204,12 +232,14 @@ pub fn reconcile_orphaned_work_items(
         let abort = if is_orphaned_in_flight(item.status) {
             true
         } else if is_stale_executing_candidate(item.status) {
-            // PASS-2 (#24b): a `ProviderRouted`/`ProviderWaiting` row is reconciled ONLY when it is
+            // PASS-2 (#24b): a `ReadyToDispatch` (the mid-model-call crash state in the no-reorder
+            // design) / `ProviderRouted` / `ProviderWaiting` row is reconciled ONLY when it is
             // durably `executing == 1` AND its heartbeat is STALE (older than the threshold) — i.e.
             // the process that set the marker DIED mid-model-call. A row with `executing == 0`
-            // (legit-paused/awaiting), or one with a FRESH heartbeat (a slow-but-LIVE model call),
-            // is NEVER touched. A read error on the execution-state column is FAIL-SAFE: treat the
-            // row as NOT a crash candidate (leave it untouched) rather than risk aborting a live run.
+            // (a not-yet-running ready row, a legit-paused/awaiting run), or one with a FRESH
+            // heartbeat (a slow-but-LIVE model call), is NEVER touched. A read error on the
+            // execution-state column is FAIL-SAFE: treat the row as NOT a crash candidate (leave it
+            // untouched) rather than risk aborting a live run.
             match db.get_work_item_execution_state(&item.work_item_id) {
                 Ok(Some(state)) => {
                     state.executing
@@ -222,8 +252,8 @@ pub fn reconcile_orphaned_work_items(
             }
         } else {
             // Every other non-terminal status (waiting / not-orphaned) — leave it byte-for-byte
-            // unchanged. Includes a `ProviderRouted`/`ProviderWaiting` row with `executing == 0`
-            // (paused/awaiting) or a fresh heartbeat (live).
+            // unchanged. Includes a `ReadyToDispatch`/`ProviderRouted`/`ProviderWaiting` row with
+            // `executing == 0` (ready/paused/awaiting) or a fresh heartbeat (live).
             false
         };
 
@@ -338,20 +368,26 @@ mod tests {
     #[test]
     fn every_orphan_has_a_legal_failed_terminal_transition() {
         // The reconcile relies on the PASS-1 hops `Dispatched->FailedTerminal` /
-        // `HubAccepted->FailedTerminal` AND the PASS-2 hops `ProviderRouted->FailedTerminal` /
-        // `ProviderWaiting->FailedTerminal` being legal in the core state machine; assert that
-        // contract so a future state-machine edit that breaks it fails HERE (not silently at
-        // runtime, where it would be a logged skip).
+        // `HubAccepted->FailedTerminal` AND the PASS-2 hops `ReadyToDispatch->FailedTerminal` (the
+        // mid-model-call crash state in the panel-fixed no-reorder design) /
+        // `ProviderRouted->FailedTerminal` / `ProviderWaiting->FailedTerminal` being legal in the
+        // core state machine; assert that contract so a future state-machine edit that breaks it
+        // fails HERE (not silently at runtime, where it would be a logged skip).
         assert!(WorkItemStatus::Dispatched.can_transition_to(WorkItemStatus::FailedTerminal));
         assert!(WorkItemStatus::HubAccepted.can_transition_to(WorkItemStatus::FailedTerminal));
+        assert!(WorkItemStatus::ReadyToDispatch.can_transition_to(WorkItemStatus::FailedTerminal));
         assert!(WorkItemStatus::ProviderRouted.can_transition_to(WorkItemStatus::FailedTerminal));
         assert!(WorkItemStatus::ProviderWaiting.can_transition_to(WorkItemStatus::FailedTerminal));
+        // The happy-path dispatch edge is UNCHANGED (additive-only state-machine change).
+        assert!(WorkItemStatus::ReadyToDispatch.can_transition_to(WorkItemStatus::Dispatched));
     }
 
     #[test]
-    fn stale_executing_candidate_is_only_provider_routed_and_waiting() {
+    fn stale_executing_candidate_is_ready_to_dispatch_and_provider_states() {
         use WorkItemStatus::*;
-        // PASS-2's candidate set: exactly the two provider in-flight states #767 deferred.
+        // PASS-2's candidate set: the mid-model-call crash state `ReadyToDispatch` (the panel-fixed
+        // no-reorder during-call status) plus the two defensive provider in-flight states.
+        assert!(is_stale_executing_candidate(ReadyToDispatch));
         assert!(is_stale_executing_candidate(ProviderRouted));
         assert!(is_stale_executing_candidate(ProviderWaiting));
         // The PASS-1 orphans are NOT PASS-2 candidates (they are caught unconditionally by PASS-1).
@@ -362,7 +398,6 @@ mod tests {
             Draft,
             PreflightBlocked,
             WaitingForUser,
-            ReadyToDispatch,
             FailedRetryable,
             CompletedWithProof,
             FailedTerminal,
@@ -380,6 +415,7 @@ mod tests {
         for s in [
             Dispatched,
             HubAccepted,
+            ReadyToDispatch,
             ProviderRouted,
             ProviderWaiting,
             Draft,

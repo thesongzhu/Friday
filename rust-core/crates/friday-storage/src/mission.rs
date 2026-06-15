@@ -653,6 +653,60 @@ pub fn transition_work_item_status(
     proof_receipt: Option<&str>,
     now_ms: i64,
 ) -> Result<(WorkItem, WorkItemStatus)> {
+    transition_work_item_status_inner(
+        conn,
+        work_item_id,
+        next_status,
+        actor_ref,
+        reason,
+        proof_receipt,
+        now_ms,
+        /* clear_executing = */ false,
+    )
+}
+
+/// (#24b degrade-3 fix) Like [`transition_work_item_status`], but ALSO clears the durable
+/// `executing` marker (`executing = 0`) in the SAME transaction as the status hop. The agent-loop
+/// binding routes its FINAL resting-state hop (`ProviderRouted` on a pause/await/error, or
+/// `CompletedWithProof` on completion) through this so a run that reaches a binding rest state
+/// ALWAYS has `executing == 0` written ATOMICALLY with the status — a swallowed best-effort tail
+/// clear can therefore NEVER strand `executing == 1` on a live paused/awaiting run (which boot
+/// crash-recovery PASS-2 would then falsely reconcile after a long human approval latency). The
+/// clear is status-preserving on the execution columns only (`last_heartbeat_ms` is left as-is —
+/// PASS-2 only acts on `executing == 1` rows, so a cleared row's timestamp is never consulted).
+#[allow(clippy::too_many_arguments)]
+pub fn transition_work_item_status_clearing_executing(
+    conn: &Connection,
+    work_item_id: &str,
+    next_status: WorkItemStatus,
+    actor_ref: &str,
+    reason: &str,
+    proof_receipt: Option<&str>,
+    now_ms: i64,
+) -> Result<(WorkItem, WorkItemStatus)> {
+    transition_work_item_status_inner(
+        conn,
+        work_item_id,
+        next_status,
+        actor_ref,
+        reason,
+        proof_receipt,
+        now_ms,
+        /* clear_executing = */ true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn transition_work_item_status_inner(
+    conn: &Connection,
+    work_item_id: &str,
+    next_status: WorkItemStatus,
+    actor_ref: &str,
+    reason: &str,
+    proof_receipt: Option<&str>,
+    now_ms: i64,
+    clear_executing: bool,
+) -> Result<(WorkItem, WorkItemStatus)> {
     require_non_empty(work_item_id, "work_item_lifecycle.work_item_id")?;
     require_non_empty(actor_ref, "work_item_lifecycle.actor_ref")?;
     require_non_empty(reason, "work_item_lifecycle.reason")?;
@@ -717,6 +771,19 @@ pub fn transition_work_item_status(
         now_ms,
     )?;
     upsert_work_item(&tx, &item)?;
+    // (#24b degrade-3) ATOMIC executing-clear: when the caller routes a binding rest-state hop
+    // through `transition_work_item_status_clearing_executing`, clear the durable `executing`
+    // marker in the SAME transaction as the status write. `upsert_work_item` does NOT touch the
+    // execution columns (they are managed only by `set_work_item_executing`), so this targeted
+    // `UPDATE` is required to land `executing = 0` atomically with the status. `last_heartbeat_ms`
+    // is left as-is — PASS-2 only acts on `executing == 1` rows, so a cleared row's timestamp is
+    // never consulted by the reconcile.
+    if clear_executing {
+        tx.execute(
+            "UPDATE work_item SET executing = 0 WHERE work_item_id = ?1",
+            params![work_item_id],
+        )?;
+    }
     tx.commit()?;
 
     Ok((item, previous_status))
@@ -940,6 +1007,23 @@ pub fn upsert_work_item(conn: &Connection, item: &WorkItem) -> Result<()> {
             item.updated_at_ms,
         ],
     )?;
+    Ok(())
+}
+
+/// (#24b degrade-3 fix) `upsert_work_item` followed by clearing the durable `executing` marker
+/// (`executing = 0`) in the SAME transaction — the OFF-path (un-guarded, no-audit-row) parity of
+/// [`transition_work_item_status_clearing_executing`]. The agent-loop binding routes its FINAL
+/// resting-state hop through this on the OFF path so a run that reaches its rest state ALWAYS has
+/// `executing == 0` written atomically with the status. `last_heartbeat_ms` is left as-is (PASS-2
+/// only acts on `executing == 1` rows).
+pub fn upsert_work_item_clearing_executing(conn: &Connection, item: &WorkItem) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    upsert_work_item(&tx, item)?;
+    tx.execute(
+        "UPDATE work_item SET executing = 0 WHERE work_item_id = ?1",
+        params![item.work_item_id],
+    )?;
+    tx.commit()?;
     Ok(())
 }
 

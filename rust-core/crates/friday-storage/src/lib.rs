@@ -691,6 +691,16 @@ impl Db {
         mission::upsert_work_item(&self.conn, item)
     }
 
+    /// (#24b degrade-3 fix) `upsert_work_item` + atomic `executing = 0` clear in one transaction
+    /// (the OFF-path parity of [`Self::transition_work_item_status_clearing_executing`]). See
+    /// [`mission::upsert_work_item_clearing_executing`].
+    pub fn upsert_work_item_clearing_executing(&self, item: &WorkItem) -> Result<()> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported("WorkItems are Hub-only".into()));
+        }
+        mission::upsert_work_item_clearing_executing(&self.conn, item)
+    }
+
     pub fn get_work_item(&self, work_item_id: &str) -> Result<Option<WorkItem>> {
         if self.profile != Profile::Hub {
             return Err(StorageError::Unsupported("WorkItems are Hub-only".into()));
@@ -712,6 +722,33 @@ impl Db {
             return Err(StorageError::Unsupported("WorkItems are Hub-only".into()));
         }
         mission::transition_work_item_status(
+            &self.conn,
+            work_item_id,
+            next_status,
+            actor_ref,
+            reason,
+            proof_receipt,
+            now_ms,
+        )
+    }
+
+    /// (#24b degrade-3 fix) Like [`Self::transition_work_item_status`] but ALSO clears the durable
+    /// `executing` marker in the SAME transaction as the status hop. See
+    /// [`mission::transition_work_item_status_clearing_executing`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn transition_work_item_status_clearing_executing(
+        &self,
+        work_item_id: &str,
+        next_status: friday_core::WorkItemStatus,
+        actor_ref: &str,
+        reason: &str,
+        proof_receipt: Option<&str>,
+        now_ms: i64,
+    ) -> Result<(WorkItem, friday_core::WorkItemStatus)> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported("WorkItems are Hub-only".into()));
+        }
+        mission::transition_work_item_status_clearing_executing(
             &self.conn,
             work_item_id,
             next_status,

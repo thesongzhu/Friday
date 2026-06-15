@@ -318,3 +318,63 @@ fn upsert_work_item_does_not_clobber_the_execution_marker() {
         Some("crash_recovery_abort".into())
     );
 }
+
+#[test]
+fn transition_clearing_executing_lands_status_and_clear_in_one_write() {
+    // DEGRADE-3 atomicity KAT (guarded path): the clearing transition variant lands the status hop
+    // AND `executing = 0` together. A run that reaches its rest state can therefore never be left
+    // `executing == 1` by a swallowed best-effort tail clear.
+    let db = Db::open_hub(&temp_db_path("wi-exec-clear-guarded")).unwrap();
+    seed(&db, WorkItemStatus::ReadyToDispatch);
+    db.set_work_item_executing("work-wi", true, 9_000).unwrap();
+
+    // ReadyToDispatch -> Dispatched, clearing executing in the SAME tx.
+    let (_item, prev) = db
+        .transition_work_item_status_clearing_executing(
+            "work-wi",
+            WorkItemStatus::Dispatched,
+            "agent:friday",
+            "advance",
+            None,
+            10_000,
+        )
+        .unwrap();
+    assert_eq!(prev, WorkItemStatus::ReadyToDispatch);
+    assert_eq!(
+        db.get_work_item("work-wi").unwrap().unwrap().status,
+        WorkItemStatus::Dispatched
+    );
+    let s = db
+        .get_work_item_execution_state("work-wi")
+        .unwrap()
+        .unwrap();
+    assert!(
+        !s.executing,
+        "executing cleared atomically with the status hop"
+    );
+    assert_eq!(
+        s.last_heartbeat_ms,
+        Some(9_000),
+        "the clear preserves last_heartbeat_ms (PASS-2 ignores it on executing==0 rows)"
+    );
+}
+
+#[test]
+fn upsert_clearing_executing_lands_status_and_clear_in_one_write() {
+    // DEGRADE-3 atomicity KAT (OFF / inline path): the clearing upsert variant lands the row write
+    // AND `executing = 0` together — the un-guarded parity of the clearing transition above.
+    let db = Db::open_hub(&temp_db_path("wi-exec-clear-off")).unwrap();
+    seed(&db, WorkItemStatus::ProviderRouted);
+    db.set_work_item_executing("work-wi", true, 9_000).unwrap();
+
+    let mut item = db.get_work_item("work-wi").unwrap().unwrap();
+    item.updated_at_ms = 11_000;
+    db.upsert_work_item_clearing_executing(&item).unwrap();
+
+    let s = db
+        .get_work_item_execution_state("work-wi")
+        .unwrap()
+        .unwrap();
+    assert!(!s.executing, "executing cleared atomically with the upsert");
+    assert_eq!(s.last_heartbeat_ms, Some(9_000));
+}
