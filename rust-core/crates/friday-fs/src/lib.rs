@@ -1862,9 +1862,10 @@ mod tests {
 
     /// SETSID-ESCAPE BOUND (the load-bearing reliability test). A `perl` LEADER forks a grandchild
     /// that calls `POSIX::setsid()` — ESCAPING the leader's process group — and then HOLDS stdout
-    /// open while sleeping far longer than the timeout+grace; the leader then EXITS immediately.
+    /// open while sleeping far longer than the timeout+grace; the leader then EXITS (but only AFTER
+    /// the grandchild has escaped — a sync pipe enforces that ordering deterministically, see below).
     /// `recv_timeout` returns the instant the leader exits (`timed_out=false`), and our process-group
-    /// SIGKILL can NOT reach the escaped grandchild, so the stdout pipe never EOFs. Pre-fix the
+    /// SIGKILL can NOT reach the (now-escaped) grandchild, so the stdout pipe never EOFs. Pre-fix the
     /// unbounded `r.join()` would block on the grandchild's full lifetime (or forever), pinning the
     /// calling thread. Post-fix the reader drain is deadline-bounded, so the call MUST return within
     /// ~timeout + grace regardless. We use a 1s timeout (grace 2s ⇒ ~3s drain deadline) and a
@@ -1879,10 +1880,27 @@ mod tests {
         // single-quoted arg so the script survives as a single literal token (no shell, no $expand).
         // The grandchild setsid()'s (new session ⇒ new process group ⇒ escapes the leader's group),
         // keeps STDOUT (it does NOT close it) and sleeps 30s; the leader prints + exits at once.
-        let script = "my $pid = fork(); \
+        //
+        // DETERMINISM (the only thing that made this flake): the grandchild MUST complete
+        // `POSIX::setsid()` — i.e. ESCAPE the leader's process group — BEFORE the leader exits.
+        // The helper's recv_timeout returns the instant the leader exits and then fires the
+        // unconditional `kill(-pid, SIGKILL)` against the leader's group. If a loaded runner had
+        // not yet scheduled the grandchild's `setsid()`, the grandchild would still be IN that group,
+        // get killed, close its stdout fd → the pipe would EOF and `output_truncated` would be FALSE
+        // (the helper behaving correctly for the scenario that actually happened — an un-escaped,
+        // in-group descendant IS the killpg's job — but NOT the escape scenario this test means to
+        // exercise). We close that window with a SYNC PIPE created inside perl (`pipe`, on its own
+        // fds — NOT stdout/stderr, so the drains are untouched): the grandchild does `setsid()`
+        // first, then writes one byte; the leader BLOCKS reading that byte before it prints/exits.
+        // So the leader cannot exit (and the helper's kill cannot fire) until the escape is a fact.
+        // Each side closes the pipe end it does not use, so a grandchild that died for any reason
+        // yields EOF on the leader's `sysread` (returns 0, the leader proceeds and exits) — never a
+        // hang. The leader's `print "leader\n"` is therefore still emitted only after the escape.
+        let script = "pipe(my $rd, my $wr) or exit 4; \
+                      my $pid = fork(); \
                       if (!defined $pid) { exit 3 } \
-                      if ($pid == 0) { POSIX::setsid(); $| = 1; print \"grandchild\\n\"; sleep 30; exit 0 } \
-                      print \"leader\\n\"; exit 0;";
+                      if ($pid == 0) { close $rd; POSIX::setsid(); $| = 1; print \"grandchild\\n\"; syswrite($wr, \"x\", 1); sleep 30; exit 0 } \
+                      close $wr; my $b; sysread($rd, $b, 1); print \"leader\\n\"; exit 0;";
         let command = format!("perl -MPOSIX -e '{script}'");
         let timeout = std::time::Duration::from_secs(1);
         // Bound: well above the ~3s drain deadline (loaded-CI headroom) yet far below the

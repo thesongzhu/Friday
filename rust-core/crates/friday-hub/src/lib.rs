@@ -317,6 +317,19 @@ pub mod session_namespace;
 /// Dark substrate: `rust_wired`, NOTHING routes through it yet, NOT a v1 GO.
 pub mod tool_name_map;
 
+/// L2-1 egress SSRF guard — blocks requests to private/internal/metadata addresses (literal
+/// IP + DNS-resolved). Pure + fail-closed; ported from the TS `friday-agent-ssrf-guard`.
+/// Called by [`http_tools::WebFetchExecutor`] before EVERY fetch (and every redirect hop).
+pub mod ssrf_guard;
+
+/// L2-1 `web_fetch` capability tool — SSRF-guarded outbound HTTP (the FIRST L2 capability).
+/// Registered in [`ToolRegistry::default`] but REFUSED by the gate-dispatch chokepoint unless
+/// `FRIDAY_WEB_FETCH_ENABLED` is `"1"` (default-OFF → DARK → flag-OFF byte-identical). The
+/// executor calls [`ssrf_guard`] fail-closed before every fetch, resolves+pins validated IPs,
+/// re-validates each manual redirect hop, and enforces 512KB read / 100KB model-facing /
+/// timeout caps. Flipping the flag live is operator-gated (egress capability).
+pub mod http_tools;
+
 /// execrun-enablement slice 2 (production key-sourcing pre-req): the SHARED, fail-closed
 /// master-key reader + the two domain-separated derivations both the `hub_agent_run_server`
 /// bin (the FileSecureStore KEK) and the `hub_agent_run_enroll` bin (the client X25519
@@ -1067,12 +1080,37 @@ pub fn build_tool_prompt(task: &str) -> String {
 /// the classification allow-list are the SAME source of truth) + the EXACT
 /// single-JSON-object output contract the [`parse_tool_call`] reader enforces. The
 /// model can still NAME anything; the registry is the gate. Pure + deterministic.
+///
+/// L2-1: the `web_fetch` capability tool is REGISTERED in the registry (so classification +
+/// the chokepoint flag-gate work) but is HIDDEN from this model-facing menu unless
+/// [`FRIDAY_WEB_FETCH_ENABLED`] is on — so with the flag OFF (the prod default) the prompt the
+/// model sees is BYTE-IDENTICAL to today (the model is never offered a tool that the
+/// chokepoint would only refuse). The flag is read ONCE here and the menu filtering is pure on
+/// the resulting bool (the split-env idiom); the pure inner is
+/// [`build_tool_prompt_with_flagged`].
 pub fn build_tool_prompt_with(task: &str, registry: &ToolRegistry) -> String {
+    let web_fetch_enabled = web_fetch_enabled_from(std::env::var(FRIDAY_WEB_FETCH_ENABLED).ok());
+    build_tool_prompt_with_flagged(task, registry, web_fetch_enabled)
+}
+
+/// Flag-parameterized menu builder (the pure inner of [`build_tool_prompt_with`]). When
+/// `web_fetch_enabled` is false, `web_fetch` is filtered OUT of the advertised menu so the
+/// model is never offered it (byte-identical to the pre-L2-1 prompt). Injected directly by the
+/// L2-1 prompt tests so they never mutate `std::env`.
+pub(crate) fn build_tool_prompt_with_flagged(
+    task: &str,
+    registry: &ToolRegistry,
+    web_fetch_enabled: bool,
+) -> String {
     let mut s = String::from(
         "You are Friday's tool-using agent. Pick exactly ONE tool to make progress.\n\
          Available tools:\n",
     );
     for (name, desc) in registry.advertised() {
+        // Hide the egress capability from the menu unless its flag is on (dark default).
+        if name == "web_fetch" && !web_fetch_enabled {
+            continue;
+        }
         s.push_str(&format!("- {name}: {desc}\n"));
     }
     s.push_str(
@@ -1326,6 +1364,21 @@ impl Default for ToolRegistry {
             true,
             Risk::High,
             "run a shell command (params: command)",
+        );
+        // L2-1 web_fetch — the first L2 capability tool. READ-ONLY (mutating:false,
+        // Risk::ReadOnly): it pulls external web content, never mutating local state, so it
+        // base-Allows at the gate (no approval pause). External content IS prompt-injection-
+        // inward, but the UNW-001 gate still evaluates every SUBSEQUENT tool call (backstop),
+        // and the egress side is closed by the SSRF guard the executor runs fail-closed before
+        // every fetch. The tool is ALWAYS registered, but the gate-dispatch chokepoint refuses
+        // it unless FRIDAY_WEB_FETCH_ENABLED is "1" (default-OFF → DARK), so registering it
+        // changes nothing until the flag is flipped (operator-gated egress capability).
+        r.register(
+            "web_fetch",
+            false,
+            Risk::ReadOnly,
+            "fetch a web URL over HTTP/HTTPS (params: url, method, headers, body, timeoutMs, \
+             parseHtml); HTML is converted to readable text; body truncated to 100KB",
         );
         r
     }
@@ -2097,6 +2150,11 @@ pub enum ExecError {
     Fs(friday_fs::FsError),
     /// A read/write I/O error after a successful safe-open.
     Io(std::io::Error),
+    /// A `web_fetch` failure — the SSRF guard refused the URL / a redirect hop / the
+    /// resolved IPs, or a transport/redirect anomaly. A NORMAL HTTP error response (4xx/5xx)
+    /// is NOT this — it is returned as a `ToolReceipt`. This variant is the fail-closed
+    /// refusal of an unsafe or unreachable fetch.
+    WebFetch(crate::http_tools::WebFetchError),
 }
 
 impl std::fmt::Display for ExecError {
@@ -2106,6 +2164,7 @@ impl std::fmt::Display for ExecError {
             ExecError::Unsupported(a) => write!(f, "unsupported_tool:{a}"),
             ExecError::Fs(e) => write!(f, "fs_error:{e}"),
             ExecError::Io(e) => write!(f, "io_error:{e}"),
+            ExecError::WebFetch(e) => write!(f, "web_fetch_error:{e}"),
         }
     }
 }
@@ -2116,6 +2175,17 @@ impl std::fmt::Display for ExecError {
 /// an executor that skips it (this is the UNW-001 non-optional-DI property).
 pub trait ToolExecutor {
     fn execute(&self, action: &str, params: &[(String, String)]) -> Result<ToolReceipt, ExecError>;
+}
+
+/// Blanket impl so a shared reference to any executor is itself an executor. Lets the live
+/// loop wrap the runtime's owned `FsToolExecutor` in a `http_tools::CompositeToolExecutor`
+/// by REFERENCE (`CompositeToolExecutor::new(&self.executor, ..)`) — without moving the field
+/// out of the runtime (the resume/control path keeps using the same owned executor). The
+/// composite is then a thin, per-dispatch wrapper; flag-OFF it delegates everything to fs.
+impl<T: ToolExecutor + ?Sized> ToolExecutor for &T {
+    fn execute(&self, action: &str, params: &[(String, String)]) -> Result<ToolReceipt, ExecError> {
+        (**self).execute(action, params)
+    }
 }
 
 /// The real executor: every file operation goes through a `friday-fs` hardened
@@ -2649,6 +2719,7 @@ pub struct LoopOutcome {
 /// [`workflow_exec::run_workflow`] (the definition-driven workflow engine), so the
 /// two drivers cannot drift on the security-critical dispatch. The caller records
 /// the outcome (event log / step state / history) in its own vocabulary.
+#[derive(Debug)]
 pub(crate) enum GateDispatch {
     /// Gate `Allow`ed AND the executor ran successfully.
     Executed(ToolReceipt),
@@ -2762,8 +2833,9 @@ pub(crate) fn gate_dispatch_with_policy(
     policy: &RunPolicy,
     now_ms: i64,
 ) -> Result<GateDispatch, StorageError> {
-    // Read the flag ONCE here; the chokepoint logic is pure on the resulting bool.
+    // Read the flags ONCE here; the chokepoint logic is pure on the resulting bools.
     let enforce_trust = trust_grant_enforce_from(std::env::var(FRIDAY_TRUST_GRANT_ENFORCE).ok());
+    let web_fetch_enabled = web_fetch_enabled_from(std::env::var(FRIDAY_WEB_FETCH_ENABLED).ok());
     gate_dispatch_with_policy_enforced(
         conn,
         executor,
@@ -2773,6 +2845,7 @@ pub(crate) fn gate_dispatch_with_policy(
         policy,
         now_ms,
         enforce_trust,
+        web_fetch_enabled,
     )
 }
 
@@ -2787,6 +2860,20 @@ pub const FRIDAY_TRUST_GRANT_ENFORCE: &str = "FRIDAY_TRUST_GRANT_ENFORCE";
 /// testable without `set_var` — the env-race-free idiom this codebase uses everywhere). ONLY
 /// the literal `"1"` (trimmed) enables; everything else (including `"true"`) is OFF.
 fn trust_grant_enforce_from(raw: Option<String>) -> bool {
+    matches!(raw, Some(v) if v.trim() == "1")
+}
+
+/// The `FRIDAY_WEB_FETCH_ENABLED` env var (L2-1). When exactly `"1"` (trimmed), the
+/// `web_fetch` capability tool is DISPATCHABLE; otherwise the gate-dispatch chokepoint
+/// REFUSES it fail-closed (`web_fetch_disabled_flag_off:web_fetch`) BEFORE classify/execute,
+/// so the tool — though always REGISTERED — is unavailable. DEFAULT-OFF (DARK): flipping it
+/// live enables outbound egress and is OPERATOR-GATED. Kept narrow + explicit (literal `"1"`
+/// only) so the egress capability can never be enabled by accident.
+pub const FRIDAY_WEB_FETCH_ENABLED: &str = "FRIDAY_WEB_FETCH_ENABLED";
+
+/// Pure flag-matcher for [`FRIDAY_WEB_FETCH_ENABLED`] (env read split out for race-free unit
+/// tests). ONLY the literal `"1"` (trimmed) enables; everything else (incl. `"true"`) is OFF.
+pub(crate) fn web_fetch_enabled_from(raw: Option<String>) -> bool {
     matches!(raw, Some(v) if v.trim() == "1")
 }
 
@@ -2805,11 +2892,28 @@ pub(crate) fn gate_dispatch_with_policy_enforced(
     policy: &RunPolicy,
     now_ms: i64,
     enforce_trust: bool,
+    web_fetch_enabled: bool,
 ) -> Result<GateDispatch, StorageError> {
     // (NS-1) The run's action context is carried HERE on `policy` (`policy.action_context()`),
     // already shaped as a `friday_storage::AgentActionContext` — the NS-2 trust check (below)
     // consumes it directly via the accessor; no re-derivation of `agent_id` anywhere else.
     //
+    // (L2-1) FRIDAY_WEB_FETCH_ENABLED flag-gate — fail-closed, BEFORE everything. The
+    //     `web_fetch` capability tool is ALWAYS registered, but the egress it performs is
+    //     OPERATOR-GATED: unless the flag is ON, a dispatched `web_fetch` is REFUSED here (it
+    //     never reaches classify/authorize/execute), exactly like a per-run disabled tool.
+    //     The check canonicalizes the action through the SAME `canonical_rust_name` map the
+    //     disabled-set uses, so an alias of `web_fetch` is caught too. CRUCIALLY this branch
+    //     ONLY fires for `web_fetch` — every OTHER action skips it, so a flag-OFF dispatch of
+    //     any existing tool is BYTE-IDENTICAL to the pre-L2-1 baseline. (When the flag is ON
+    //     the tool is dispatchable and the executor — a `CompositeToolExecutor` — runs it; the
+    //     executor itself calls the SSRF guard fail-closed before any socket.)
+    if !web_fetch_enabled && tool_name_map::canonical_rust_name(&raw.action) == Some("web_fetch") {
+        return Ok(GateDispatch::Denied(format!(
+            "web_fetch_disabled_flag_off:{}",
+            raw.action
+        )));
+    }
     // (0) disabledToolNames — fail-closed, BEFORE classify/authorize/execute. A tool not
     //     available to this run must never run; refusing here (it never reaches the gate)
     //     is strictly stricter than any gate decision.
@@ -5386,6 +5490,277 @@ mod tests {
         );
     }
 
+    // ── L2-1: FRIDAY_WEB_FETCH_ENABLED gate-dispatch flag-gate (web_fetch availability) ──────
+    // FAITHFUL BEHAVIORAL TESTS (real DB + a real CompositeToolExecutor wrapping the SSRF-guarded
+    // WebFetchExecutor + the FsToolExecutor, NO mock of the chokepoint). The flag is injected via
+    // `gate_dispatch_with_policy_enforced`'s `web_fetch_enabled` bool — NOT `std::env::set_var` —
+    // so these never race other in-process tests. The pure env-matcher glue is covered separately
+    // by `web_fetch_enabled_from_only_literal_one_enables`. These prove the LOOP-CLOSING contract:
+    // flag-OFF ⇒ web_fetch is UNAVAILABLE (refused before the executor, byte-identical to today);
+    // flag-ON ⇒ web_fetch is dispatchable AND the SSRF guard still runs fail-closed before any
+    // socket. The mock HTTP server is in-process on 127.0.0.1 (NO real network).
+
+    /// Pure env-matcher glue: exactly `"1"` (trimmed) enables; everything else is OFF.
+    #[test]
+    fn web_fetch_enabled_from_only_literal_one_enables() {
+        assert!(
+            !web_fetch_enabled_from(None),
+            "unset ⇒ OFF (prod default, DARK)"
+        );
+        assert!(!web_fetch_enabled_from(Some(String::new())), "empty ⇒ OFF");
+        assert!(!web_fetch_enabled_from(Some("0".to_string())), "0 ⇒ OFF");
+        assert!(
+            !web_fetch_enabled_from(Some("true".to_string())),
+            "`true` ⇒ OFF (only `1` enables — narrow + explicit for an egress capability)"
+        );
+        assert!(
+            !web_fetch_enabled_from(Some("yes".to_string())),
+            "`yes` ⇒ OFF"
+        );
+        assert!(web_fetch_enabled_from(Some("1".to_string())), "`1` ⇒ ON");
+        assert!(
+            web_fetch_enabled_from(Some("  1  ".to_string())),
+            "whitespace-padded `1` ⇒ ON (trimmed)"
+        );
+    }
+
+    #[test]
+    fn web_fetch_flag_off_prompt_menu_is_byte_identical_no_web_fetch() {
+        // The model-facing tool menu MUST NOT list `web_fetch` while the flag is OFF — else the
+        // model could pick it and eat a `web_fetch_disabled_flag_off` refusal = a changed run
+        // trajectory (NOT byte-identical). With the flag OFF the prompt is exactly the pre-L2-1
+        // menu; with it ON, `web_fetch` appears. `web_fetch` is REGISTERED in both cases (the
+        // chokepoint/classification need it), but HIDDEN from the menu when off.
+        let reg = ToolRegistry::default();
+        let off = build_tool_prompt_with_flagged("t", &reg, false);
+        let on = build_tool_prompt_with_flagged("t", &reg, true);
+        assert!(
+            !off.contains("web_fetch"),
+            "flag-OFF menu must NOT advertise web_fetch:\n{off}"
+        );
+        assert!(
+            on.contains("web_fetch"),
+            "flag-ON menu MUST advertise web_fetch:\n{on}"
+        );
+        // The flag-OFF menu is exactly the menu with web_fetch removed from the flag-ON menu —
+        // i.e. the ONLY difference between the two prompts is the single web_fetch menu line.
+        // Split on '\n' (NOT `.lines()`, which would drop the trailing newline) so the
+        // reconstruction preserves the prompt's terminating newline exactly.
+        let on_without_wf: String = on
+            .split_inclusive('\n')
+            .filter(|l| !l.contains("web_fetch"))
+            .collect();
+        assert_eq!(
+            off, on_without_wf,
+            "flag-OFF prompt must equal the flag-ON prompt minus only the web_fetch line"
+        );
+    }
+
+    /// A one-shot in-process mock HTTP server on 127.0.0.1 (loopback only, NO real network).
+    fn spawn_web_mock(status: u16, body: &'static str) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read as _, Write as _};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut req = [0u8; 2048];
+                let _ = stream.read(&mut req);
+                let resp = format!(
+                    "HTTP/1.1 {status} OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(resp.as_bytes());
+            }
+        });
+        (format!("http://{addr}/"), handle)
+    }
+
+    /// A composite executor (fs + the SSRF-guarded web_fetch) for the loopback tests. Uses the
+    /// allow-private SSRF policy so the e2e CAN reach 127.0.0.1 (the BLOCKING posture is proven
+    /// by the prod-policy SSRF tests + the ssrf_guard table tests — never weakened here).
+    fn web_composite(
+        ws: std::path::PathBuf,
+    ) -> crate::http_tools::CompositeToolExecutor<FsToolExecutor> {
+        let fs = FsToolExecutor::new(ws);
+        let web = crate::http_tools::WebFetchExecutor::with_policy(crate::ssrf_guard::SsrfPolicy {
+            allow_private_network: true,
+            ..Default::default()
+        });
+        crate::http_tools::CompositeToolExecutor::new(fs, web)
+    }
+
+    #[test]
+    fn web_fetch_flag_off_refuses_tool_unavailable_executor_never_reached() {
+        // LOOP CLOSURE (flag-OFF arm): with FRIDAY_WEB_FETCH_ENABLED OFF, a dispatched
+        // `web_fetch` is REFUSED at the chokepoint (`web_fetch_disabled_flag_off`) BEFORE the
+        // executor — the tool is UNAVAILABLE, exactly as today. We assert the refusal AND that
+        // the executor is NEVER reached (no fetch attempted). No mock server is needed: if the
+        // refusal ever regressed, the executor would try to connect to the (unbound) URL and the
+        // call count would be 1.
+        let db = Db::open_hub(&temp_path("wf-off")).unwrap();
+        let ws = temp_ws("wf-off");
+        let composite = web_composite(ws);
+        let exec = CountingExecutor {
+            inner: &composite,
+            calls: std::cell::Cell::new(0),
+        };
+        let approve = no_approval();
+        let policy = RunPolicy::default();
+        let call = raw("web_fetch", &[("url", "http://127.0.0.1:9/")]);
+
+        let out = gate_dispatch_with_policy_enforced(
+            db.conn(),
+            &exec,
+            &call,
+            AuthzMode::DenyAll,
+            &approve,
+            &policy,
+            1000,
+            false, // enforce_trust OFF
+            false, // web_fetch flag OFF — the tool is unavailable
+        )
+        .unwrap();
+
+        match out {
+            GateDispatch::Denied(reason) => assert_eq!(
+                reason, "web_fetch_disabled_flag_off:web_fetch",
+                "flag-OFF must refuse web_fetch with the documented reason"
+            ),
+            other => panic!("flag-OFF must Deny web_fetch, got {other:?}"),
+        }
+        assert_eq!(
+            exec.calls.get(),
+            0,
+            "flag-OFF: the executor is NEVER reached (tool unavailable = no fetch attempted)"
+        );
+    }
+
+    #[test]
+    fn web_fetch_flag_off_is_byte_identical_for_other_tools() {
+        // The flag-gate fires ONLY for web_fetch: a NON-web_fetch dispatch (read_file) is
+        // BYTE-IDENTICAL whether the web_fetch flag is ON or OFF — same verdict, same executor
+        // reach. This is the "flag-OFF byte-identical" guarantee for every existing tool.
+        let make = |flag: bool| {
+            let db = Db::open_hub(&temp_path("wf-bi")).unwrap();
+            let ws = temp_ws("wf-bi");
+            // Seed a file so read_file Allows + Executes.
+            std::fs::write(ws.join("notes.md"), b"hello").unwrap();
+            let fs = FsToolExecutor::new(ws);
+            let exec = CountingExecutor {
+                inner: &fs,
+                calls: std::cell::Cell::new(0),
+            };
+            let approve = no_approval();
+            let policy = RunPolicy::default();
+            let out = gate_dispatch_with_policy_enforced(
+                db.conn(),
+                &exec,
+                &read_only_proposal(),
+                AuthzMode::DenyAll,
+                &approve,
+                &policy,
+                1000,
+                false,
+                flag,
+            )
+            .unwrap();
+            (matches!(out, GateDispatch::Executed(_)), exec.calls.get())
+        };
+        let off = make(false);
+        let on = make(true);
+        assert_eq!(
+            off, on,
+            "a non-web_fetch tool is identical with the web_fetch flag on vs off"
+        );
+        assert!(off.0, "read_file should Execute (sanity)");
+    }
+
+    #[test]
+    fn web_fetch_flag_on_dispatches_and_executes_through_ssrf_guard() {
+        // LOOP CLOSURE (flag-ON arm): with the flag ON, web_fetch is dispatchable; the chokepoint
+        // Allows it (read-only, no approval pause) and the CompositeToolExecutor runs it — through
+        // the SSRF guard (allow-private here so the loopback mock is reachable) — returning the
+        // fetched body in the ToolReceipt content.
+        let (url, h) = spawn_web_mock(200, "FETCHED-OK");
+        let db = Db::open_hub(&temp_path("wf-on")).unwrap();
+        let ws = temp_ws("wf-on");
+        let composite = web_composite(ws);
+        let approve = no_approval();
+        let policy = RunPolicy::default();
+        let call = raw("web_fetch", &[("url", &url), ("parseHtml", "false")]);
+
+        let out = gate_dispatch_with_policy_enforced(
+            db.conn(),
+            &composite,
+            &call,
+            AuthzMode::DenyAll,
+            &approve,
+            &policy,
+            1000,
+            false, // enforce_trust OFF
+            true,  // web_fetch flag ON
+        )
+        .unwrap();
+
+        match out {
+            GateDispatch::Executed(receipt) => {
+                assert_eq!(receipt.action, "web_fetch");
+                let content = receipt.content.expect("web_fetch returns content");
+                assert!(content.contains("HTTP 200"), "content: {content}");
+                assert!(content.contains("FETCHED-OK"), "content: {content}");
+                assert!(
+                    receipt.summary.contains("web_fetch GET"),
+                    "summary: {}",
+                    receipt.summary
+                );
+            }
+            other => panic!("flag-ON must dispatch+Execute web_fetch, got {other:?}"),
+        }
+        h.join().unwrap();
+    }
+
+    #[test]
+    fn web_fetch_flag_on_ssrf_blocks_private_target_at_executor() {
+        // Even with the flag ON, the SSRF guard runs fail-closed BEFORE any socket: a web_fetch
+        // to a private/metadata target under the PRODUCTION policy (deny-private) is refused by
+        // the executor — surfaced as GateDispatch::ExecError (the gate Allowed the read-only
+        // tool, but the executor's SSRF guard refused the egress). This proves there is no
+        // flag-ON window where an unguarded fetch can reach a private address.
+        let db = Db::open_hub(&temp_path("wf-ssrf")).unwrap();
+        let ws = temp_ws("wf-ssrf");
+        let fs = FsToolExecutor::new(ws);
+        // PRODUCTION SSRF policy (deny-private) — NOT allow-private.
+        let web = crate::http_tools::WebFetchExecutor::new();
+        let composite = crate::http_tools::CompositeToolExecutor::new(fs, web);
+        let approve = no_approval();
+        let policy = RunPolicy::default();
+        let call = raw(
+            "web_fetch",
+            &[("url", "http://169.254.169.254/latest/meta-data/")],
+        );
+
+        let out = gate_dispatch_with_policy_enforced(
+            db.conn(),
+            &composite,
+            &call,
+            AuthzMode::DenyAll,
+            &approve,
+            &policy,
+            1000,
+            false,
+            true, // web_fetch flag ON
+        )
+        .unwrap();
+
+        match out {
+            GateDispatch::ExecError(ExecError::WebFetch(http_tools::WebFetchError::Ssrf(_))) => {}
+            other => panic!(
+                "flag-ON + private target must be SSRF-blocked at the executor, got {other:?}"
+            ),
+        }
+    }
+
     #[test]
     fn ns2_flag_on_no_grant_fails_closed_and_executor_never_reached() {
         // (i) flag ON + NO grant row → a mutating action is Denied `trust_no_active_grant`
@@ -5410,7 +5785,8 @@ mod tests {
             &approve,
             &policy,
             1000,
-            true, // flag ON
+            true,  // flag ON
+            false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
         )
         .unwrap();
 
@@ -5500,7 +5876,8 @@ mod tests {
             &approve,
             &policy,
             1000,
-            true, // flag ON
+            true,  // flag ON
+            false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
         )
         .unwrap();
         assert!(
@@ -5554,6 +5931,7 @@ mod tests {
                 policy,
                 1000,
                 enforce,
+                false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             )
             .unwrap();
             label(&out)
@@ -5619,7 +5997,8 @@ mod tests {
             &approve,
             &policy,
             1000,
-            true, // flag ON
+            true,  // flag ON
+            false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
         )
         .unwrap();
         match out {
@@ -5648,6 +6027,7 @@ mod tests {
             &policy,
             1000,
             true,
+            false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
         )
         .unwrap();
         assert!(
@@ -5734,7 +6114,8 @@ mod tests {
             &approve,
             &policy,
             1000,
-            true, // flag ON
+            true,  // flag ON
+            false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
         )
         .unwrap();
 
@@ -5786,7 +6167,8 @@ mod tests {
             &approve,
             &policy,
             1000,
-            true, // flag ON
+            true,  // flag ON
+            false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
         )
         .unwrap();
 
@@ -5886,6 +6268,7 @@ mod tests {
                 &policy,
                 1000,
                 enforce,
+                false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             )
             .unwrap();
             label(&out)
@@ -5953,6 +6336,7 @@ mod tests {
                 policy,
                 1000,
                 false, // flag OFF
+                false, // L2-1: web_fetch flag OFF (no web_fetch dispatched in this test)
             )
             .unwrap();
             label(&out)
