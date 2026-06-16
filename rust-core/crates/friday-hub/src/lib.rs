@@ -4521,13 +4521,75 @@ pub fn run_loop_with_policy(
     work_item_id: Option<&str>,
     escalation_client: Option<&dyn AgentLlmClient>,
 ) -> Result<LoopOutcome, StorageError> {
+    // Every existing caller reads the clarification flag straight from env (no override). The
+    // env-read prologue lives in the shared [`run_loop_reading_flags`] helper so the
+    // clarification-resume path can pass an explicit `clarification_override` (suppress the gate
+    // on a turn that ANSWERS a prior hold) WITHOUT duplicating the five env reads. `None` here ⇒
+    // the env flag is used verbatim ⇒ BYTE-IDENTICAL to the pre-refactor entrypoint.
+    run_loop_reading_flags(
+        client,
+        executor,
+        conn,
+        run_id,
+        task,
+        recall_preamble,
+        operator_vk,
+        approve,
+        policy,
+        max_turns,
+        cancel,
+        steer,
+        now_ms,
+        work_item_id,
+        escalation_client,
+        /* clarification_override = */ None,
+    )
+}
+
+/// Shared env-read prologue for [`run_loop_with_policy`] (and the clarification-resume seam):
+/// read the five default-OFF flags ONCE, then delegate to [`run_loop_with_policy_flagged`].
+///
+/// `clarification_override`:
+/// * `None` — use the [`FRIDAY_CLARIFICATION_GATE`] env flag verbatim (every ordinary caller;
+///   byte-identical to the historical inline prologue).
+/// * `Some(false)` — FORCE the clarification gate OFF for this turn, REGARDLESS of the env flag.
+///   This is the clarification-RESUME path ([`run_session_loop`]): a turn that ANSWERS a prior
+///   `awaiting_clarification` hold must not RE-FIRE the gate (which would re-park a planning-shaped
+///   answer forever — an infinite clarification loop). It only ever forces the gate OFF (never on),
+///   so it can never widen clarification beyond what the env flag already enabled.
+/// * `Some(true)` — force ON (unused today; included for symmetry / future explicit-enable callers).
+///
+/// All OTHER flags (activity-needs-me / subagent / rich-prompt / self-critique) are read from env
+/// exactly as before — the override touches ONLY the clarification gate.
+#[allow(clippy::too_many_arguments)]
+fn run_loop_reading_flags(
+    client: &dyn AgentLlmClient,
+    executor: &dyn ToolExecutor,
+    conn: &Connection,
+    run_id: &str,
+    task: &str,
+    recall_preamble: &str,
+    operator_vk: Option<&OperatorVerifyingKey>,
+    approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
+    policy: &RunPolicy,
+    max_turns: u64,
+    cancel: Option<&CancelToken>,
+    steer: Option<&SteerHandle>,
+    now_ms: i64,
+    work_item_id: Option<&str>,
+    escalation_client: Option<&dyn AgentLlmClient>,
+    clarification_override: Option<bool>,
+) -> Result<LoopOutcome, StorageError> {
     // Read the NS-7 flag ONCE here; the loop body is pure on the resulting bool.
     let activity_needs_me =
         activity_needs_me_from(std::env::var(FRIDAY_ACTIVITY_NEEDS_ME).ok().as_deref());
     // Read the clarification-gate flag ONCE here (same default-OFF, read-once idiom). When OFF
-    // the loop is byte-identical (no gate, no prompt steering).
-    let clarification_enabled =
-        clarification_gate_from(std::env::var(FRIDAY_CLARIFICATION_GATE).ok().as_deref());
+    // the loop is byte-identical (no gate, no prompt steering). A `clarification_override` (the
+    // resume seam) takes precedence over the env flag — `Some(false)` suppresses the gate for a
+    // turn that answers a prior hold; `None` uses the env flag verbatim.
+    let clarification_enabled = clarification_override.unwrap_or_else(|| {
+        clarification_gate_from(std::env::var(FRIDAY_CLARIFICATION_GATE).ok().as_deref())
+    });
     // Read the subagent-tool flag ONCE here (same default-OFF idiom). When OFF the `subagent`
     // dispatch-seam interception NEVER fires and the loop is byte-identical to today.
     let subagent_enabled = crate::subagent::subagent_tool_enabled_from(
@@ -5581,6 +5643,59 @@ fn spawn_subagent_turn(
     })
 }
 
+/// Is this session currently HELD by the clarification gate FOR THIS OWNER — i.e. did its MOST
+/// RECENT prior run park at `awaiting_clarification` AND is that parked run owned by `principal`?
+/// If so, the next turn is the OWNER ANSWERING the questions and the gate must be SUPPRESSED for it
+/// (see the resume seam in [`run_session_loop`]).
+///
+/// Detection (cheap, OWNER-SCOPED, no new table):
+///   * Walk `prior` (this session's own messages, already loaded — in `seq` order) from the END to
+///     find the run_id of the LAST turn that carries a producing-run `refs`.
+///   * Read THAT run's `run_result` ([`friday_storage::get_run_result`]). Suppress ONLY when its
+///     status is `awaiting_clarification` AND its recorded `owner_principal` equals `principal` —
+///     the authenticated owner of THIS turn. A parked run owned by a DIFFERENT principal (or an
+///     owner-less parked run) never suppresses this owner's gate.
+///
+/// Why owner-binding (NO CROSS-OWNER LEAK): a `session_id` is a client-asserted thread handle, not
+/// an identity. The run loop always binds the run to the AUTHENTICATED caller, but two different
+/// authenticated owners could (in principle) assert the same `session_id`. Keying the suppression on
+/// the parked run's recorded `owner_principal` makes a different owner's outstanding hold UNABLE to
+/// suppress this owner's gate — the suppression is a per-owner property, enforced locally here
+/// rather than assumed from the session handle.
+///
+/// Why "most recent run", not "any prior hold": once a hold is ANSWERED, the answering run produces
+/// a NON-`awaiting_clarification` result (it finished / errored / etc.), so the most-recent-run
+/// status is `awaiting_clarification` ONLY while a hold is genuinely OUTSTANDING. A later, fully
+/// separate vague task in the same session re-parks and is detected as a fresh hold — correct.
+///
+/// FAIL-SAFE + NO-DEGRADE: an empty session, a session whose last run finished, a last turn with no
+/// `refs`, a `None`/empty `principal`, or a parked run owned by someone else ⇒ `false` (the gate
+/// behaves exactly as the env flag dictates). A storage error PROPAGATES (never silently suppresses
+/// or fires the gate). It can ONLY return `true` for a session that actually parked under THIS
+/// owner, which requires the gate to have fired (flag ON); with the flag OFF this fn is not even
+/// consulted (see the caller's flag-gating) ⇒ byte-identical to the pre-fix loop.
+fn session_is_in_clarification_hold(
+    conn: &Connection,
+    prior: &[friday_storage::StoredSessionMessage],
+    principal: Option<&str>,
+) -> Result<bool, StorageError> {
+    // No bound principal ⇒ no owner to match ⇒ never suppress (fail-closed, no leak).
+    let Some(owner) = principal.filter(|p| !p.is_empty()) else {
+        return Ok(false);
+    };
+    // The producing run_id of the most-recent prior turn that records one.
+    let Some(last_run_id) = prior.iter().rev().find_map(|m| m.refs.as_deref()) else {
+        return Ok(false); // no prior run in this session ⇒ not a resume
+    };
+    match friday_storage::get_run_result(conn, last_run_id)? {
+        // Suppress ONLY a hold owned by THIS authenticated owner.
+        Some(r) => {
+            Ok(r.status == "awaiting_clarification" && r.owner_principal.as_deref() == Some(owner))
+        }
+        None => Ok(false), // the prior run has no persisted result ⇒ not a clarification hold
+    }
+}
+
 /// Drive a history-aware agent loop WITHIN a session (S5 inbound history + resume).
 /// A SESSION groups runs: this loads the session's prior conversation messages,
 /// prepends them (BOUNDED) to the prompt so the model sees the multi-turn inbound
@@ -5680,6 +5795,25 @@ pub fn run_session_loop(
     }
     let prior = friday_storage::load_session_messages(conn, session_id)?;
 
+    // 1b. CLARIFICATION-RESUME detection (the answer-consumer half of the loop). If the MOST
+    //     RECENT prior run in this session PARKED at `awaiting_clarification`, THIS turn is the
+    //     user ANSWERING those questions — it must NOT re-fire the gate. Without this a
+    //     planning-shaped answer (e.g. "trigger daily and build a dashboard") would re-classify as
+    //     a planning kind and re-park FOREVER (an infinite clarification loop — confirmed against
+    //     the pre-fix tree). The fold of the questions+answer into the prompt happens for free via
+    //     the session-history preamble (step 4 now also persists the asked questions as an
+    //     `assistant` turn), so the resumed turn sees `[task][questions][answer]` and acts.
+    //
+    //     OWNER-SCOPING + NO-DEGRADE: the detection is gated behind the SAME default-OFF
+    //     `FRIDAY_CLARIFICATION_GATE` flag, so with the flag OFF NO extra storage read happens at
+    //     all (byte-identical, including DB access). When ON, detection reads ONLY this session's
+    //     own prior turns + the parked run's `run_result`, and suppresses ONLY when that run parked
+    //     at `awaiting_clarification` AND is owned by the SAME authenticated principal (so a
+    //     different owner's hold can never suppress THIS owner's gate — no cross-owner leak).
+    let in_clarification_hold =
+        clarification_gate_from(std::env::var(FRIDAY_CLARIFICATION_GATE).ok().as_deref())
+            && session_is_in_clarification_hold(conn, &prior, policy.principal_id())?;
+
     // 2. Fold the BOUNDED prior-session history AHEAD of the recall preamble. The loop
     //    already builds `prompt_task = preamble + task`, so passing the combined
     //    preamble threads inbound history into the model WITHOUT any loop change.
@@ -5687,7 +5821,14 @@ pub fn run_session_loop(
     let combined_preamble = format!("{session_preamble}{recall_preamble}");
 
     // 3. Run the SAME gate-mandatory loop (principal/scope/operator-key/cancel/steer aware).
-    let outcome = run_loop_with_policy(
+    //    `clarification_override`: `Some(false)` ONLY on a resume turn (suppress the gate so the
+    //    answer is consumed, never re-asked); `None` otherwise ⇒ the env flag governs verbatim.
+    let clarification_override = if in_clarification_hold {
+        Some(false)
+    } else {
+        None
+    };
+    let outcome = run_loop_reading_flags(
         client,
         executor,
         conn,
@@ -5703,6 +5844,7 @@ pub fn run_session_loop(
         now_ms,
         work_item_id,
         escalation_client,
+        clarification_override,
     )?;
 
     // 4. Persist this run's turn(s) so the next run in the session resumes with them:
@@ -5720,6 +5862,29 @@ pub fn run_session_loop(
                 conn,
                 session_id,
                 &friday_storage::SessionMessage::new("assistant", answer, Some(run_id.to_string())),
+                now_ms,
+            )?;
+        }
+    }
+    // 4b. CLARIFICATION fold (the answer-consumer's SETUP half). An `AwaitingClarification` outcome
+    //     carries the SPECIFIC clarifying questions in `final_message`; persist them as an
+    //     `assistant` turn so the NEXT run in this session (the user's ANSWER) sees the questions in
+    //     its history preamble and can answer THEM — closing the loop. Without this the resume turn
+    //     saw only the original under-specified `user` task and had to GUESS what it was answering.
+    //     This append happens ONLY on `AwaitingClarification`, which ONLY occurs when the gate fired
+    //     (flag ON); with the flag OFF no run parks ⇒ this arm is never reached ⇒ byte-identical to
+    //     today (the session transcript is unchanged). The body stays Hub-side (refs-only event
+    //     below), exactly like the `user`/`assistant` answer turns.
+    if outcome.status == LoopStatus::AwaitingClarification {
+        if let Some(questions) = outcome.final_message.as_deref() {
+            friday_storage::append_session_message(
+                conn,
+                session_id,
+                &friday_storage::SessionMessage::new(
+                    "assistant",
+                    questions,
+                    Some(run_id.to_string()),
+                ),
                 now_ms,
             )?;
         }
@@ -6893,6 +7058,114 @@ mod tests {
             "destructive requests are handled by the Pause, not clarified"
         );
         assert_eq!(model_calls, 1, "the destructive task reaches the loop");
+    }
+
+    // ── session_is_in_clarification_hold: the answer-consumer's resume-detection, OWNER-BOUND ──
+    // Direct unit tests of the private detector (a `tests/` binary cannot reach it). They craft the
+    // exact DB shape (a parked run + a session message that refs it) and assert: a hold owned by THIS
+    // owner suppresses; a hold owned by ANOTHER owner does NOT (no cross-owner leak); a finished prior
+    // run, an empty session, and a None principal all return false.
+
+    /// Set up a session whose most-recent prior run has `prior_status`, owned by `run_owner`, then
+    /// ask whether `caller` sees a clarification hold. Returns the detector's verdict.
+    fn hold_scenario(
+        tag: &str,
+        prior_status: &str,
+        prior_answer: &str,
+        run_owner: Option<&str>,
+        caller: Option<&str>,
+    ) -> bool {
+        let db = Db::open_hub(&temp_path(tag)).unwrap();
+        let conn = db.conn();
+        // A prior run that produced `prior_status` (e.g. parked at awaiting_clarification),
+        // owner-wired to `run_owner`, plus a session message that refs it (as run_session_loop
+        // persists). The detector reads the run_result of the last refs'd run.
+        agent_run::create_run(conn, "prior-run", "create a workflow daily summary", 1).unwrap();
+        let mut result = friday_storage::RunResult::new(prior_status, prior_answer, None);
+        if let Some(o) = run_owner {
+            result = result.with_owner_principal(o);
+        }
+        friday_storage::persist_run_result(conn, "prior-run", &result, 2).unwrap();
+        friday_storage::ensure_session(conn, "sess-hold", 3).unwrap();
+        friday_storage::append_session_message(
+            conn,
+            "sess-hold",
+            &friday_storage::SessionMessage::new(
+                "user",
+                "create a workflow",
+                Some("prior-run".to_string()),
+            ),
+            3,
+        )
+        .unwrap();
+        let prior = friday_storage::load_session_messages(conn, "sess-hold").unwrap();
+        session_is_in_clarification_hold(conn, &prior, caller).unwrap()
+    }
+
+    #[test]
+    fn clarification_hold_detected_for_same_owner() {
+        assert!(
+            hold_scenario(
+                "hold-same",
+                "awaiting_clarification",
+                "Question 1/2: ...",
+                Some("alice"),
+                Some("alice"),
+            ),
+            "a parked run owned by the SAME caller IS a hold ⇒ suppress the gate (resume)"
+        );
+    }
+
+    #[test]
+    fn clarification_hold_not_detected_for_different_owner_no_cross_owner_leak() {
+        assert!(
+            !hold_scenario(
+                "hold-diff",
+                "awaiting_clarification",
+                "Question 1/2: ...",
+                Some("alice"),
+                Some("bob"), // a DIFFERENT authenticated owner on the same session_id
+            ),
+            "a parked run owned by ANOTHER principal must NOT suppress this owner's gate (no leak)"
+        );
+    }
+
+    #[test]
+    fn clarification_hold_not_detected_when_prior_run_finished() {
+        assert!(
+            !hold_scenario(
+                "hold-fin",
+                "finished",
+                "All done.",
+                Some("alice"),
+                Some("alice")
+            ),
+            "a prior run that FINISHED is not an outstanding hold ⇒ the gate evaluates normally"
+        );
+    }
+
+    #[test]
+    fn clarification_hold_not_detected_with_no_caller_principal() {
+        assert!(
+            !hold_scenario(
+                "hold-noprin",
+                "awaiting_clarification",
+                "Question 1/2: ...",
+                Some("alice"),
+                None, // no bound principal ⇒ never suppress (fail-closed)
+            ),
+            "no bound caller principal ⇒ never suppress (fail-closed, no owner to match)"
+        );
+    }
+
+    #[test]
+    fn clarification_hold_not_detected_for_empty_session() {
+        let db = Db::open_hub(&temp_path("hold-empty")).unwrap();
+        // No prior messages at all ⇒ not a resume.
+        assert!(
+            !session_is_in_clarification_hold(db.conn(), &[], Some("alice")).unwrap(),
+            "an empty session has no prior run ⇒ not a hold"
+        );
     }
 
     // ── FRIDAY_RICH_SYSTEM_PROMPT_ENABLED: rich operating-guidance preamble (bool-injected) ──
