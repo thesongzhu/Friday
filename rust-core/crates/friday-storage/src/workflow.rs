@@ -73,6 +73,62 @@ pub fn runs_in_state(conn: &Connection, state: WorkflowRunState) -> Result<Vec<(
     Ok(out)
 }
 
+/// `(run_id, state, updated_at)` for every run whose `run_id` begins with `id_prefix`,
+/// whose state is one of the IN-FLIGHT non-terminal states (`Pending` / `Running`), and
+/// whose `updated_at <= updated_before` — most-recently-updated first.
+///
+/// This is the read that backs the scheduler-run crash reconcile (registry gap #784(b)):
+/// a scheduled workflow run is keyed by the deterministic id `sched:<schedule_id>:<slot>`
+/// and executes SYNCHRONOUSLY inside one scheduler tick, so a `Pending`/`Running` such run
+/// found at BOOT is a process that DIED mid-tick (the tick never reached the run's terminal
+/// `Done`/`Failed`/`AwaitingCheckpoint` write). `AwaitingCheckpoint` is DELIBERATELY EXCLUDED
+/// — it is a LEGITIMATE pause (a deny-all-approved mutating step), not a crash artifact. The
+/// `updated_before` cutoff lets the caller skip a run a CONCURRENT live tick is still driving
+/// (a fresh `updated_at`), mirroring the WorkItem PASS-2 staleness discipline. The state filter
+/// is applied in SQL via the `state IN (...)` predicate; the prefix + cutoff bound the scan to
+/// exactly the orphan candidates. Read-only — performs no write.
+pub fn in_flight_runs_with_prefix_before(
+    conn: &Connection,
+    id_prefix: &str,
+    updated_before: i64,
+) -> Result<Vec<(String, WorkflowRunState, i64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT run_id, state, updated_at FROM workflow_run
+          WHERE state IN (?1, ?2) AND run_id LIKE ?3 ESCAPE '\\' AND updated_at <= ?4
+          ORDER BY updated_at DESC, run_id",
+    )?;
+    // Escape the LIKE metacharacters in the (caller-supplied, but in practice constant)
+    // prefix so a prefix containing `%`/`_`/`\` matches literally, then anchor with a
+    // trailing `%` wildcard.
+    let like = format!(
+        "{}%",
+        id_prefix
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_")
+    );
+    let rows = stmt.query_map(
+        params![
+            WorkflowRunState::Pending.as_str(),
+            WorkflowRunState::Running.as_str(),
+            like,
+            updated_before,
+        ],
+        |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                parse_run_state(&r.get::<_, String>(1)?),
+                r.get::<_, i64>(2)?,
+            ))
+        },
+    )?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
 /// The seq of the run's first `Pending` step (the paused checkpoint of an
 /// `AwaitingCheckpoint` run), or `None` if it has no pending step. Used to label the
 /// Needs-Me item with the exact step awaiting the user.
