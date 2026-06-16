@@ -223,6 +223,59 @@ mod tests {
         ));
     }
 
+    /// NO-DEGRADE PROOF for the env wrapper the LIVE WS server (`hub_agent_run_server`)
+    /// delegates to at boot. The path loader's three states are proven above; this proves
+    /// the env-resolved wrapper that the serve path calls inherits them EXACTLY:
+    ///   - `FRIDAY_OPERATOR_VK_PATH` UNSET ⇒ `Ok(None)` (byte-identical Pause behavior — the
+    ///     runtime's `operator_vk()` is then `None`, so every protected action fail-closes);
+    ///   - SET to a valid 64-hex verify-key file ⇒ `Ok(Some(_))` (loadable, so B4/C1 can verify);
+    ///   - SET to a malformed file ⇒ a HARD `Err` (never silently `None` — the server REFUSES TO
+    ///     BOOT rather than degrade to "no key").
+    ///
+    /// This test mutates a PROCESS env var, so it must not run concurrently with another reader of
+    /// `FRIDAY_OPERATOR_VK_PATH`; no other test in this crate reads it (server tests drive a MOCK
+    /// `HubRuntime::new` that never resolves the env). It restores the prior value on exit.
+    #[test]
+    fn env_wrapper_unset_is_none_valid_is_some_malformed_is_hard_error() {
+        let prior = std::env::var(OPERATOR_VK_PATH_ENV).ok();
+
+        // (1) UNSET ⇒ None ⇒ byte-identical fail-closed Pause (today's behavior).
+        std::env::remove_var(OPERATOR_VK_PATH_ENV);
+        assert!(matches!(provision_operator_vk_from_env(), Ok(None)));
+
+        // Empty/whitespace is treated as unset (still fail-closed None), not a Read error.
+        std::env::set_var(OPERATOR_VK_PATH_ENV, "   ");
+        assert!(matches!(provision_operator_vk_from_env(), Ok(None)));
+
+        // (2) SET to a valid operator-keygen public key file ⇒ Some (loadable ⇒ verify can run).
+        let vk = OperatorSigningKey::generate().verifying_key();
+        let good = tmp("env-ok.vk");
+        std::fs::write(&good, format!("{}\n", vk_hex(&vk))).unwrap();
+        std::env::set_var(OPERATOR_VK_PATH_ENV, &good);
+        let loaded = match provision_operator_vk_from_env() {
+            Ok(Some(k)) => k,
+            _ => panic!("a valid env-configured vk file must load to Some"),
+        };
+        assert_eq!(loaded.to_bytes(), vk.to_bytes());
+
+        // (3) SET to a malformed file ⇒ a HARD Err (NOT a silent degrade to None).
+        let bad = tmp("env-bad.vk");
+        std::fs::write(&bad, b"not-a-valid-verify-key").unwrap();
+        std::env::set_var(OPERATOR_VK_PATH_ENV, &bad);
+        assert!(matches!(
+            provision_operator_vk_from_env(),
+            Err(OperatorVkError::Malformed)
+        ));
+
+        // Restore the prior env so a parallel test that *adds* an env read later is unaffected.
+        match prior {
+            Some(v) => std::env::set_var(OPERATOR_VK_PATH_ENV, v),
+            None => std::env::remove_var(OPERATOR_VK_PATH_ENV),
+        }
+        std::fs::remove_file(&good).ok();
+        std::fs::remove_file(&bad).ok();
+    }
+
     /// KEY-SUBSTITUTION DEFENSE (structural): the entire `friday-hub` source tree must
     /// never reference `OperatorSigningKey`. The Hub holds ONLY a verify key; if any Hub
     /// code could construct/derive a signing key, it could mint the very approvals it

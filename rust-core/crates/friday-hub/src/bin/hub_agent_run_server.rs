@@ -194,6 +194,13 @@ enum ServerError {
     /// store dir is unresolvable, or the open failed) ⇒ FAIL CLOSED. The category only — never the
     /// path (a path can carry the operator's home/username).
     StoreUnavailable,
+    /// `FRIDAY_OPERATOR_VK_PATH` is SET but the file is unreadable or not a valid 64-hex Ed25519
+    /// public key ⇒ REFUSE TO BOOT. A configured-but-broken operator key MUST be a loud, distinct
+    /// failure (not the generic `init_failed`) so the operator notices — it NEVER silently degrades
+    /// to "no key provisioned" (which would Pause every protected action). UNSET ⇒ this is not
+    /// reached (that is `Ok(None)`, fail-closed Pause). The category only — never the (public, but
+    /// operator-controlled) key bytes, never the path.
+    OperatorVk,
 }
 
 fn main() {
@@ -212,6 +219,10 @@ fn main() {
             // and never the store path (which can carry the operator's home/username).
             ServerError::MasterKeyUnavailable => "master_key_unavailable",
             ServerError::StoreUnavailable => "secure_store_unavailable",
+            // A configured-but-malformed operator verify key fails the boot CLOSED + DISTINCT from
+            // a DB/init error (so the operator can tell a broken approval key apart from a storage
+            // fault). The category only — never the key bytes, never the path.
+            ServerError::OperatorVk => "operator_vk_malformed",
         };
         eprintln!("hub_agent_run_server_unavailable: {kind}");
         std::process::exit(2);
@@ -295,6 +306,33 @@ fn run() -> Result<(), ServerError> {
     // is wiped (Kek is ZeroizeOnDrop) rather than lingering for the lifetime of the serving loop.
     drop(secure_store);
 
+    // (0b) S6d — LOAD the operator approval VERIFY key from the operator-controlled source BEFORE
+    // building the runtime, so B4 (signed-mutation) + C1 positive-authorize can verify operator
+    // signatures LIVE. This delegates to `friday_hub::operator_vk::provision_operator_vk_from_env`
+    // (the SAME parse-only loader the lib uses; the Hub never references a SIGNING key, so it can
+    // never mint the approvals it verifies — anti-self-mint). Fail-closed contract:
+    //   * `FRIDAY_OPERATOR_VK_PATH` UNSET/empty ⇒ `Ok(None)` ⇒ the loop Pauses every protected
+    //     action (BYTE-IDENTICAL to before this load was made explicit);
+    //   * SET-but-unreadable/malformed ⇒ a HARD `ServerError::OperatorVk` ⇒ REFUSE TO BOOT with a
+    //     DISTINCT, non-leaking message (never a silent degrade to None).
+    // NB: `HubRuntime::live` ALSO backfills `operator_vk` from this same env path when the config
+    // passes `None` — so passing the resolved `Some/None` here is idempotent with that backfill
+    // (Some ⇒ `live` skips its own read; None ⇒ both yield None). Making it explicit at the serve
+    // path is what gives the operator a BOOT LOG + a precise fail-closed error category.
+    let operator_vk = friday_hub::operator_vk::provision_operator_vk_from_env()
+        .map_err(|_| ServerError::OperatorVk)?;
+    if operator_vk.is_some() {
+        eprintln!(
+            "hub_agent_run_server: operator approval verify-key LOADED from {} — protected actions can be operator-authorized",
+            friday_hub::operator_vk::OPERATOR_VK_PATH_ENV
+        );
+    } else {
+        eprintln!(
+            "hub_agent_run_server: no operator vk provisioned (set {} to a 64-hex verify-key file) — protected actions Pause",
+            friday_hub::operator_vk::OPERATOR_VK_PATH_ENV
+        );
+    }
+
     // (1) Build ONE HubRuntime at boot so the DeepSeek-client/DB cold-start is paid ONCE (not
     // per connection). S-C HOLDS this runtime and DISPATCHES into `run_task` for an authenticated
     // peer. The runtime is single-owner (v1): it is configured with the SAME principal the
@@ -312,7 +350,7 @@ fn run() -> Result<(), ServerError> {
         principal_id: owner_allowlist.first().cloned(),
         disabled_tools: vec![],
         read_only: false,
-        operator_vk: None,
+        operator_vk,
     })
     .map_err(|_| ServerError::Init)?;
 

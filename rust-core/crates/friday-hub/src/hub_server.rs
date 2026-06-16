@@ -48,6 +48,10 @@ use crate::mission_runtime::{ask_friday_for_mission, MissionBoundAskOutcome};
 use crate::provider_dispatch::{
     dispatch_provider_action, DispatchContext, DispatchError, ProviderDispatchAdapter,
 };
+use crate::provider_dispatch_adapter::{
+    provider_workspace_dispatch_enabled, LocalCodexWorkspaceClient,
+    ProviderWorkspaceDispatchAdapter,
+};
 use crate::provider_workspace::ProviderWorkspaceCatalog;
 use crate::runtime::HubRuntime;
 use crate::RecordAskError;
@@ -1142,13 +1146,36 @@ impl<T: Transport> HubServer<T> {
                 .get_provider_session_link(&request.friday_session_id)
             {
                 Ok(Some(link)) => match provider_workspace_session_from_link(&link) {
-                    Some(session) => dispatch_provider_action(
-                        &ProviderWorkspaceCatalog::friday_current(),
-                        &NoProviderWorkspaceDispatchAdapter,
-                        &session,
-                        &self.db,
-                        request,
-                    ),
+                    Some(session) => {
+                        // Flag-gated adapter selection at REQUEST time (the real adapter holds
+                        // no client — it spawns a `codex app-server` per action and is
+                        // stateless config, so a missing Codex CLI surfaces as a per-action
+                        // typed blocker, never a hub-boot crash). Flag-OFF (the default) keeps
+                        // the `NoProviderWorkspaceDispatchAdapter` — BYTE-IDENTICAL to today.
+                        // Production reachability ALSO requires the action's capability to be
+                        // `Verified` (none in `friday_current()` are), so the guard refuses
+                        // every real request before the adapter is consulted regardless.
+                        let no_adapter = NoProviderWorkspaceDispatchAdapter;
+                        let live_adapter =
+                            ProviderWorkspaceDispatchAdapter::new(LocalCodexWorkspaceClient::new(
+                                "codex",
+                                "friday-hub",
+                                env!("CARGO_PKG_VERSION"),
+                            ));
+                        let adapter: &dyn ProviderDispatchAdapter =
+                            if provider_workspace_dispatch_enabled() {
+                                &live_adapter
+                            } else {
+                                &no_adapter
+                            };
+                        dispatch_provider_action(
+                            &ProviderWorkspaceCatalog::friday_current(),
+                            adapter,
+                            &session,
+                            &self.db,
+                            request,
+                        )
+                    }
                     None => Self::provider_workspace_rejected_result(
                         request,
                         "unknown_provider",
@@ -4905,6 +4932,87 @@ mod tests {
                 "provider workspace guard leaked private value {forbidden}: {rendered}"
             );
         }
+    }
+
+    #[test]
+    fn provider_workspace_dispatch_flag_is_byte_identical_at_the_hub_slot() {
+        // The hub slot selects the live ProviderWorkspaceDispatchAdapter when
+        // FRIDAY_PROVIDER_WORKSPACE_DISPATCH=1, else the NoProviderWorkspaceDispatchAdapter.
+        // But the production catalog (`friday_current()`) marks NO capability Verified, so the
+        // guard refuses every action BEFORE the adapter is consulted — making the slot's
+        // RESULT byte-identical regardless of the flag. Both env states are exercised in ONE
+        // #[test] (no cross-test env race; the live adapter only ever spawns a real codex
+        // app-server, which a non-Verified request can never reach).
+        //
+        // SAFETY NOTE: the env mutation here is race-free ONLY because nothing is Verified —
+        // both arms return `implemented_unproven` regardless of the flag, so a concurrent test
+        // hitting this slot cannot flake on it. The DAY a capability is marked Verified, this
+        // test must convert to the injected-adapter style of the discriminators in
+        // `provider_dispatch_adapter.rs` (which never touch `std::env`).
+        fn dispatch_once() -> ProviderWorkspaceActionResultWire {
+            let db_path = tmp_db();
+            let calls = Arc::new(AtomicUsize::new(0));
+            let db = Db::open_hub(&db_path).unwrap();
+            seed_provider_workspace_mission(&db);
+            db.upsert_provider_session_link(&provider_session_link())
+                .unwrap();
+            let client = DeepSeekClient::with_transport(
+                CountingMock {
+                    calls: calls.clone(),
+                },
+                "test-key-not-real".to_string(), // pragma: allowlist secret
+            );
+            let mut hub = HubServer::new(db, client, vec!["provider_workspace".into()], 256);
+            let response = hub.dispatch(
+                Envelope::new(
+                    "provider-action",
+                    1,
+                    Message::ProviderWorkspaceActionRequest {
+                        request: ProviderWorkspaceActionRequestWire {
+                            request_id: "provider-action-1".into(),
+                            friday_session_id: "friday-session-1".into(),
+                            provider: "codex".into(),
+                            action: "list_sessions".into(),
+                            capability_id: "provider.codex.list_sessions".into(),
+                            payload_ref: None,
+                            mission_context: Some(
+                                friday_protocol::ProviderWorkspaceMissionContextWire {
+                                    friday_conversation_id: "fconv_provider_workspace".into(),
+                                    mission_id: "mission-provider-workspace".into(),
+                                    work_item_id: "work-provider-workspace".into(),
+                                },
+                            ),
+                        },
+                    },
+                ),
+                1_700_000_100_300,
+            );
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                0,
+                "no model call on a guarded action"
+            );
+            let Message::ProviderWorkspaceActionResult { result } = response.message else {
+                panic!("expected provider workspace action result");
+            };
+            result
+        }
+
+        std::env::remove_var("FRIDAY_PROVIDER_WORKSPACE_DISPATCH");
+        let off = dispatch_once();
+        std::env::set_var("FRIDAY_PROVIDER_WORKSPACE_DISPATCH", "1");
+        let on = dispatch_once();
+        std::env::remove_var("FRIDAY_PROVIDER_WORKSPACE_DISPATCH");
+
+        // Byte-identical: same status, accepted/routed, blocker, dispatch_ref.
+        assert_eq!(off.status, "implemented_unproven");
+        assert_eq!(on.status, off.status);
+        assert_eq!(on.accepted, off.accepted);
+        assert_eq!(on.routed, off.routed);
+        assert_eq!(on.blocker, off.blocker);
+        assert_eq!(on.dispatch_ref, off.dispatch_ref);
+        assert!(!on.accepted);
+        assert!(on.dispatch_ref.is_none());
     }
 
     #[test]
