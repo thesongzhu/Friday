@@ -113,6 +113,37 @@ public enum RealReadClientFactory {
       missionId: missionId)
   }
 
+  /// Construct the LIVE read client for a REAL DEVICE using its OWN device-generated keypair
+  /// identity (the J2/I4 mobile read-half client side).
+  ///
+  /// A real phone has no `~/.friday/master.key`, so `makeLive()` (the master-derived host/desktop
+  /// path) yields honest `.masterKeyMissing` there. This overload instead uses the device's
+  /// Keychain-persisted X25519 keypair (`DeviceKeypairStore.loadOrGenerate()`). Its PUBLIC key must
+  /// be enrolled in the read-projection server's peer-allowlist via
+  /// `hub_read_seam_enroll --pubkey <deviceKeypair.publicKeyHex> --add` (the operator's one-time
+  /// per-device pairing step — the read seam is multi-peer on the hub side). The owner principal is
+  /// still `admin-001` (the LaunchAgent `--owner`): the device is a new PEER, same OWNER, so it
+  /// clears BOTH the peer-allowlist and owner-allowlist gates.
+  ///
+  /// Crypto-identical to the master path: same `SealedWSReadClient` over the same
+  /// `LoopbackSealedWSTransport`, only the peer identity differs. NOT `throws` — like the desktop
+  /// `make(...)`, construction always succeeds; the honest-unavailable fallback is intrinsic at
+  /// `fetchWorkbench()` time (a dark / un-enrolled server fails the connect/handshake → a
+  /// `FridayReadClientError.transport(...)`, never a silent mock). The byte-identical master-key
+  /// `makeLive()` above is untouched (no-degrade — the device path is purely additive).
+  public static func makeLive(
+    deviceKeypair: DeviceKeypair,
+    config: ReadProjectionServerConfig = .liveLoopback,
+    forwardedPrincipal: String = liveReadProjectionOwnerPrincipal,
+    missionId: String? = nil
+  ) -> FridayRustReadClient {
+    make(
+      config: config,
+      keypair: deviceKeypair.keypair,
+      forwardedPrincipal: forwardedPrincipal,
+      missionId: missionId)
+  }
+
   /// A real-protocol client that always fails closed to honest "unavailable" with `reason`.
   /// Used by the app when LIVE mode is requested but the master key is unavailable: the UI must
   /// render the truth, NOT silently fall back to a fabricated ready view. Reuses the module's

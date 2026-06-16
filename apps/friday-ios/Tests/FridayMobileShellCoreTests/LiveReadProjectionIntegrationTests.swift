@@ -70,6 +70,43 @@ func liveReadProjectionSealedRoundTripWithMasterDerivedPeer() async throws {
 }
 
 @Test(.enabled(if: liveTestEnabled))
+func liveDeviceKeypairPathDrivesServerAndIsRefusedUntilEnrolled() async throws {
+  // The DEVICE path (J2/I4 client half) against the LIVE server. HONEST SCOPE: this uses an
+  // in-memory backend (the real Keychain is operator-gated on-device), so it mints a FRESH random
+  // device key each run that is discarded — therefore this peer is NEVER in the allowlist and this
+  // test can ONLY exercise connect → handshake → fail-closed-refuse (the un-paired state). It proves
+  // `makeLive(deviceKeypair:)` drives the SAME live transport as the master path and is refused
+  // honestly (NOT a mock) for a non-enrolled peer. It does NOT — and structurally cannot — prove an
+  // enrolled device round-trip: that needs the STABLE on-device Keychain key + the operator running
+  // `hub_read_seam_enroll --pubkey <that device's hex> --add`, which is the physical-device step.
+  let device = try DeviceKeypairStore.loadOrGenerate(backend: InMemoryLiveDeviceBackend())
+  print("[live] DEVICE (ephemeral, host-test) peer pubkey = \(device.publicKeyHex) "
+    + "(on a real device, enroll the STABLE Keychain pubkey via "
+    + "hub_read_seam_enroll --pubkey <hex> --add)")
+
+  let client = RealReadClientFactory.makeLive(deviceKeypair: device)
+  do {
+    _ = try await client.fetchWorkbench()
+    Issue.record("a non-enrolled device peer must NOT get a successful read")
+  } catch let FridayReadClientError.serverError(code, message) {
+    Issue.record("non-enrolled device peer unexpectedly authenticated: \(code) \(message)")
+  } catch {
+    // Expected: the fresh (non-enrolled) device peer is refused / session-ended fail-closed.
+    print("[live] non-enrolled device peer REFUSED (fail-closed) as expected: \(error)")
+  }
+}
+
+/// In-memory backend for the live device test (the real Keychain is operator-gated on-device). Empty
+/// at start, so `loadOrGenerate` mints a fresh ephemeral key per run — this host test proves the
+/// CLIENT transport path + honest refuse, NOT the device Keychain persistence or an enrolled
+/// round-trip (those are the on-device + operator step).
+private final class InMemoryLiveDeviceBackend: DeviceKeypairBackend, @unchecked Sendable {
+  private var secret: [UInt8]?
+  func loadSecret() throws -> [UInt8]? { secret }
+  func storeSecret(_ secret: [UInt8]) throws { self.secret = secret }
+}
+
+@Test(.enabled(if: liveTestEnabled))
 func liveReadProjectionRefusesFreshEphemeralPeer() async throws {
   // NEGATIVE CONTROL — proves the master-derivation is load-bearing. A FRESH ephemeral keypair is
   // NOT the enrolled allowlist peer, so the server refuses it: the session ends with no owner-
