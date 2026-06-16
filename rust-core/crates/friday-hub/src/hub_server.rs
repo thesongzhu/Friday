@@ -1134,95 +1134,122 @@ impl<T: Transport> HubServer<T> {
         request: ProviderWorkspaceActionRequestWire,
         now_ms: i64,
     ) -> Envelope {
-        let result = if request.mission_context.is_none() {
-            Self::provider_workspace_rejected_result(
-                request,
-                "mission_context_required",
-                "provider workspace action requires Mission context".to_string(),
-            )
-        } else {
-            match self
-                .db
-                .get_provider_session_link(&request.friday_session_id)
-            {
-                Ok(Some(link)) => match provider_workspace_session_from_link(&link) {
-                    Some(session) => {
-                        // Flag-gated adapter selection at REQUEST time (the real adapter holds
-                        // no client — it spawns a `codex app-server` per action and is
-                        // stateless config, so a missing Codex CLI surfaces as a per-action
-                        // typed blocker, never a hub-boot crash). Flag-OFF (the default) keeps
-                        // the `NoProviderWorkspaceDispatchAdapter` — BYTE-IDENTICAL to today.
-                        // Production reachability ALSO requires the action's capability to be
-                        // `Verified` (none in `friday_current()` are), so the guard refuses
-                        // every real request before the adapter is consulted regardless.
-                        let no_adapter = NoProviderWorkspaceDispatchAdapter;
-                        let live_adapter =
-                            ProviderWorkspaceDispatchAdapter::new(LocalCodexWorkspaceClient::new(
-                                "codex",
-                                "friday-hub",
-                                env!("CARGO_PKG_VERSION"),
-                            ));
-                        let adapter: &dyn ProviderDispatchAdapter =
-                            if provider_workspace_dispatch_enabled() {
-                                &live_adapter
-                            } else {
-                                &no_adapter
-                            };
-                        dispatch_provider_action(
-                            &ProviderWorkspaceCatalog::friday_current(),
-                            adapter,
-                            &session,
-                            &self.db,
-                            request,
-                        )
-                    }
-                    None => Self::provider_workspace_rejected_result(
-                        request,
-                        "unknown_provider",
-                        "provider session has unknown provider".to_string(),
-                    ),
-                },
-                Ok(None) => Self::provider_workspace_rejected_result(
-                    request,
-                    "missing_session",
-                    "provider workspace session not found".to_string(),
-                ),
-                Err(_) => Self::provider_workspace_rejected_result(
-                    request,
-                    "session_read_failed",
-                    "provider workspace session read failed".to_string(),
-                ),
-            }
-        };
-        Envelope::new(
-            format!("{msg_id}-provider-workspace-action"),
-            now_ms,
-            Message::ProviderWorkspaceActionResult { result },
+        // Delegate to the standalone `&Db` producer so the live serve-bin's flag-gated
+        // `ProviderWorkspaceActionRequest` arm and this `HubServer::dispatch` arm share ONE
+        // implementation (no divergence). Byte-identical to the prior inline body.
+        provider_workspace_action_result_for_db(&self.db, msg_id, request, now_ms)
+    }
+}
+
+/// Standalone `&Db` producer for one Provider Workspace action — the pre-dispatch GUARD +
+/// (flag-gated) adapter dispatch, returning the correlated [`Message::ProviderWorkspaceActionResult`]
+/// envelope. Extracted from [`HubServer::provider_workspace_action_result`] so the live
+/// serve-bin (`hub_agent_run_server`) can route a sealed-session `ProviderWorkspaceActionRequest`
+/// through the SAME path the `HubServer::dispatch` arm uses (no second implementation to drift).
+///
+/// OWNER-GATING NOTE (mirrors the seam, NOT FIX-Q3b): this path is NOT principal-bound. Unlike
+/// the Mission-intake/lifecycle/work-item/memory arms, the `ProviderWorkspaceActionRequestWire`
+/// carries NO self-asserted `owner_principal` body field, so there is nothing for FIX-Q3b to bind.
+/// Owner-binding here is STRUCTURAL via Mission context: [`dispatch_provider_action`] resolves the
+/// request's `mission_context` to a live WorkItem and requires `WorkItem.target_provider_or_agent`
+/// to match the session's provider (and the session to match the request) before the adapter is
+/// ever consulted. The authenticated boundary is the SEALED SESSION (allowlisted peer + session
+/// key) the caller already holds — exactly the channel auth the sibling `_for_db` arms rely on.
+/// Safe today because the boot `enforce_single_peer` guard refuses >1 peer and the dispatch flag
+/// is DARK; a per-principal binding is the multi-owner hardening FIX-Q3b defers.
+pub fn provider_workspace_action_result_for_db(
+    db: &Db,
+    msg_id: &str,
+    request: ProviderWorkspaceActionRequestWire,
+    now_ms: i64,
+) -> Envelope {
+    let result = if request.mission_context.is_none() {
+        provider_workspace_rejected_result(
+            request,
+            "mission_context_required",
+            "provider workspace action requires Mission context".to_string(),
         )
-    }
-
-    fn provider_workspace_rejected_result(
-        request: ProviderWorkspaceActionRequestWire,
-        status: &str,
-        blocker: String,
-    ) -> ProviderWorkspaceActionResultWire {
-        ProviderWorkspaceActionResultWire {
-            request_id: request.request_id,
-            friday_session_id: request.friday_session_id,
-            provider: request.provider,
-            action: request.action,
-            capability_id: request.capability_id,
-            accepted: false,
-            routed: false,
-            status: status.to_string(),
-            truth_label: "provider_workspace_action_refused_before_dispatch".to_string(),
-            blocker: Some(blocker),
-            proof_ref: None,
-            dispatch_ref: None,
-            mission_context: request.mission_context,
+    } else {
+        match db.get_provider_session_link(&request.friday_session_id) {
+            Ok(Some(link)) => match provider_workspace_session_from_link(&link) {
+                Some(session) => {
+                    // Flag-gated adapter selection at REQUEST time (the real adapter holds
+                    // no client — it spawns a `codex app-server` per action and is
+                    // stateless config, so a missing Codex CLI surfaces as a per-action
+                    // typed blocker, never a hub-boot crash). Flag-OFF (the default) keeps
+                    // the `NoProviderWorkspaceDispatchAdapter` — BYTE-IDENTICAL to today.
+                    // Production reachability ALSO requires the action's capability to be
+                    // `Verified` (none in `friday_current()` are), so the guard refuses
+                    // every real request before the adapter is consulted regardless.
+                    let no_adapter = NoProviderWorkspaceDispatchAdapter;
+                    let live_adapter =
+                        ProviderWorkspaceDispatchAdapter::new(LocalCodexWorkspaceClient::new(
+                            "codex",
+                            "friday-hub",
+                            env!("CARGO_PKG_VERSION"),
+                        ));
+                    let adapter: &dyn ProviderDispatchAdapter =
+                        if provider_workspace_dispatch_enabled() {
+                            &live_adapter
+                        } else {
+                            &no_adapter
+                        };
+                    dispatch_provider_action(
+                        &ProviderWorkspaceCatalog::friday_current(),
+                        adapter,
+                        &session,
+                        db,
+                        request,
+                    )
+                }
+                None => provider_workspace_rejected_result(
+                    request,
+                    "unknown_provider",
+                    "provider session has unknown provider".to_string(),
+                ),
+            },
+            Ok(None) => provider_workspace_rejected_result(
+                request,
+                "missing_session",
+                "provider workspace session not found".to_string(),
+            ),
+            Err(_) => provider_workspace_rejected_result(
+                request,
+                "session_read_failed",
+                "provider workspace session read failed".to_string(),
+            ),
         }
-    }
+    };
+    Envelope::new(
+        format!("{msg_id}-provider-workspace-action"),
+        now_ms,
+        Message::ProviderWorkspaceActionResult { result },
+    )
+}
 
+fn provider_workspace_rejected_result(
+    request: ProviderWorkspaceActionRequestWire,
+    status: &str,
+    blocker: String,
+) -> ProviderWorkspaceActionResultWire {
+    ProviderWorkspaceActionResultWire {
+        request_id: request.request_id,
+        friday_session_id: request.friday_session_id,
+        provider: request.provider,
+        action: request.action,
+        capability_id: request.capability_id,
+        accepted: false,
+        routed: false,
+        status: status.to_string(),
+        truth_label: "provider_workspace_action_refused_before_dispatch".to_string(),
+        blocker: Some(blocker),
+        proof_ref: None,
+        dispatch_ref: None,
+        mission_context: request.mission_context,
+    }
+}
+
+impl<T: Transport> HubServer<T> {
     fn mission_bound_ask(&mut self, dispatch: MissionAskDispatch<'_>) -> Envelope {
         match ask_friday_for_mission(
             &mut self.db,

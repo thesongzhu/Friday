@@ -509,6 +509,29 @@ fn run() -> Result<(), ServerError> {
         );
     }
 
+    // (C1/C2 §3) Read the PROVIDER-WORKSPACE-DISPATCH flag ONCE at boot (default-off). It gates the
+    // serve-bin's `ProviderWorkspaceActionRequest` arm: when false the dispatch arm NEVER handles a
+    // `ProviderWorkspaceActionRequest` — it falls through to the EXISTING catch-all keepalive echo
+    // (byte-identical to today, since the server has never had this arm), so deploying this binary
+    // changes NO live behavior until the operator flips this flag. This is the SAME
+    // `FRIDAY_PROVIDER_WORKSPACE_DISPATCH` flag #797 already reads INSIDE the producer to select the
+    // live-vs-No adapter; here it ADDITIONALLY gates whether the arm is reached at all. Even with the
+    // flag ON, the per-action capability must be `Verified` for the guard to route to the adapter (no
+    // `friday_current()` capability is), so a real request is refused before the adapter regardless.
+    let provider_workspace_dispatch_enabled =
+        friday_hub::provider_dispatch_adapter::provider_workspace_dispatch_from(
+            env::var(friday_hub::provider_dispatch_adapter::ENV_PROVIDER_WORKSPACE_DISPATCH).ok(),
+        );
+    if provider_workspace_dispatch_enabled {
+        eprintln!(
+            "hub_agent_run_server: PROVIDER-WORKSPACE dispatch ENABLED (FRIDAY_PROVIDER_WORKSPACE_DISPATCH) — a sealed-session ProviderWorkspaceActionRequest routes through the gated dispatch_provider_action (capability must still be Verified to reach the adapter)"
+        );
+    } else {
+        eprintln!(
+            "hub_agent_run_server: PROVIDER-WORKSPACE dispatch DISABLED (set FRIDAY_PROVIDER_WORKSPACE_DISPATCH=1 to enable) — a ProviderWorkspaceActionRequest is a benign keepalive echo"
+        );
+    }
+
     // (Loop4 wire-fields) Read the per-run TOKEN-SURFACE flag ONCE at boot (default-off). When false
     // the terminal `AgentRunResult` emits `prompt_tokens: None` / `completion_tokens: None` —
     // byte-identical to today (the agent-run path is LIVE in prod). When true the emit path sums the
@@ -564,6 +587,7 @@ fn run() -> Result<(), ServerError> {
             mission_spine_dispatch_enabled,
             memory_confirm_enabled,
             token_surface_enabled,
+            provider_workspace_dispatch_enabled,
         ) {
             Ok(_served) => {}
             // A connection-level error ends THAT connection only; the server keeps listening.
@@ -1136,6 +1160,7 @@ impl AgentRunWsListener {
         mission_spine_dispatch_enabled: bool,
         memory_confirm_enabled: bool,
         token_surface_enabled: bool,
+        provider_workspace_dispatch_enabled: bool,
     ) -> Result<usize, TransportError> {
         let (stream, _peer) = self.listener.accept()?;
         // HARDENING: a per-connection read timeout BEFORE any read, so a stalled peer cannot
@@ -1155,6 +1180,7 @@ impl AgentRunWsListener {
             mission_spine_dispatch_enabled,
             memory_confirm_enabled,
             token_surface_enabled,
+            provider_workspace_dispatch_enabled,
         )
     }
 }
@@ -1200,6 +1226,7 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
     mission_spine_dispatch_enabled: bool,
     memory_confirm_enabled: bool,
     token_surface_enabled: bool,
+    provider_workspace_dispatch_enabled: bool,
 ) -> Result<usize, TransportError> {
     let mut processed = 0usize;
     // S-E: per-session msg_id dedup. A reconnect mints a FRESH tracker (so it is not a
@@ -1836,13 +1863,63 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 ws_send_envelope(ws, session_key, &result, SESSION_AAD)?;
                 processed += 1;
             }
+            // (C1/C2 §3) PROVIDER-WORKSPACE dispatch — FLAG-GATED. When `FRIDAY_PROVIDER_WORKSPACE_DISPATCH`
+            // is ON, an inbound `ProviderWorkspaceActionRequest` is routed through the EXISTING
+            // `friday_hub::hub_server::provider_workspace_action_result_for_db` — the SAME GATE-FIRST
+            // path the `HubServer::dispatch` arm uses: it loads the Hub provider-session link, runs
+            // the PWS-003 capability guard, and (only on an accepted+routed action) hands it to
+            // `dispatch_provider_action` → the flag-selected adapter. It replies with a
+            // `ProviderWorkspaceActionResult` carrying the guard's accepted/routed/status/blocker.
+            //
+            // GATE LAYERS (fail-closed, no new unauthenticated surface): (1) the SEALED SESSION is
+            // the channel auth (an allowlisted peer holding the session key — the boot
+            // `enforce_single_peer` guard pins this to ONE owner), mirroring the merged
+            // mission-intake/spine/memory arms which also carry no per-request `auth_proof`; (2)
+            // owner-binding is STRUCTURAL via the request's Mission context (the producer resolves it
+            // to a live WorkItem and requires WorkItem.target_provider == session.provider == request
+            // provider), so a detached/foreign-mission request fails closed before the adapter; (3)
+            // the capability must be `Verified` for the guard to ROUTE — no `friday_current()`
+            // capability is, so today every real request is REFUSED before the adapter regardless of
+            // this flag. This arm makes the #797 dark machinery REACHABLE from the live serve-bin
+            // (closing the C1/C2 §3 parity reachability gap) WITHOUT routing any verified action yet.
+            //
+            // PURE provider-metadata path: the live set (`list_sessions`/`start_session`) spends ZERO
+            // model tokens (NO `token_ledger` row), and the producer never surfaces provider
+            // credentials/account-ids/raw output (fixed wire blockers). When the flag is OFF this
+            // guard FAILS and the request falls through to the catch-all keepalive echo below —
+            // BYTE-IDENTICAL to today (the server has never had this arm).
+            Message::ProviderWorkspaceActionRequest { request }
+                if provider_workspace_dispatch_enabled =>
+            {
+                let now_ms = now_ms();
+                let result = friday_hub::hub_server::provider_workspace_action_result_for_db(
+                    runtime.db(),
+                    &env.msg_id,
+                    request,
+                    now_ms,
+                );
+                eprintln!(
+                    "hub_agent_run_server_dispatch: msg_id={} leg=provider_workspace_action (provider-workspace dispatch enabled)",
+                    env.msg_id
+                );
+                // Correlate the reply to the inbound request (consistent with the sibling arms).
+                ws_send_envelope(
+                    ws,
+                    session_key,
+                    &result.with_correlation(env.msg_id.clone()),
+                    SESSION_AAD,
+                )?;
+                processed += 1;
+            }
             // Benign keepalive (S-B behaviour): echo the opened envelope back, sealed under the
             // SAME session key, correlated to the request. NO dispatch. This is ALSO where a
             // control message lands when the run-control flag is OFF (the guards above are not
             // met), so a v13 control message on a DARK server is a harmless echo — no handling.
             // (NS-5) A `MissionIntakeRequest` with the mission-intake flag OFF ALSO lands here, so
             // a DARK server treats it as a harmless echo — byte-identical to today. A
-            // `MemoryDecisionRequest` with `FRIDAY_MEMORY_CONFIRM` OFF lands here too.
+            // `MemoryDecisionRequest` with `FRIDAY_MEMORY_CONFIRM` OFF lands here too. (C1/C2) A
+            // `ProviderWorkspaceActionRequest` with `FRIDAY_PROVIDER_WORKSPACE_DISPATCH` OFF lands
+            // here too — the dark-when-off echo (the server has never had a provider arm).
             _ => {
                 let reply = Envelope::new(env.msg_id.clone(), env.sent_at, env.message)
                     .with_correlation(env.msg_id.clone());
@@ -2410,6 +2487,7 @@ mod tests {
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 1, "one authed dispatch processed");
@@ -2525,6 +2603,7 @@ mod tests {
                 false, // (KEYSTONE) mission-spine dispatch OFF for the run-control flag tests
                 false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 1, "[{tag}] the paused dispatch is processed");
@@ -2761,6 +2840,7 @@ mod tests {
                     false, // mission-spine dispatch OFF
                     false, // memory-confirm ingress OFF
                     token_surface_enabled,
+                    false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
                 )
                 .unwrap();
             assert_eq!(processed, 1, "[{tag}] the authed dispatch is processed");
@@ -2856,6 +2936,7 @@ mod tests {
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(
@@ -2901,6 +2982,7 @@ mod tests {
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 0, "[{tag}] rejected dispatch processes ZERO");
@@ -3167,6 +3249,7 @@ mod tests {
                 false, // (KEYSTONE) mission-spine dispatch OFF for the mission-intake test
                 false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 1, "one mission-intake request processed");
@@ -3270,6 +3353,7 @@ mod tests {
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(
@@ -3346,6 +3430,7 @@ mod tests {
                 false, // (KEYSTONE) mission-spine dispatch OFF
                 false, // memory-confirm ingress OFF
                 false, // (Loop4) per-run token surface OFF
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(
@@ -3427,6 +3512,7 @@ mod tests {
                 false,
                 false,
                 false,
+                false, // (C1/C2) provider-workspace dispatch OFF
             )
             .unwrap();
         assert_eq!(processed, 1, "one intake processed");
@@ -3448,6 +3534,361 @@ mod tests {
         assert_eq!(
             conversation.owner_principal, OWNER,
             "the persisted owner is BOUND to the authenticated owner"
+        );
+    }
+
+    // =======================================================================
+    // (C1/C2 §3) FRIDAY_PROVIDER_WORKSPACE_DISPATCH — Provider Workspace action arm
+    // =======================================================================
+
+    const PW_FCONV: &str = "fconv_pw_dispatch";
+    const PW_MISSION: &str = "mission-pw-dispatch";
+    const PW_WORK_ITEM: &str = "work-pw-dispatch";
+    const PW_SESSION: &str = "friday-codex-pw";
+
+    /// (C1/C2) A `ProviderWorkspaceActionRequest` envelope for the codex `list_sessions` action,
+    /// carrying the canonical Mission context. The SAME wire shape an inbound provider-action
+    /// message carries. No `auth_proof`: the sealed session IS the channel auth (mirroring the
+    /// merged mission-intake/spine/memory arms).
+    fn provider_workspace_action_request(msg_id: &str) -> Envelope {
+        Envelope::new(
+            msg_id,
+            1000,
+            Message::ProviderWorkspaceActionRequest {
+                request: friday_protocol::ProviderWorkspaceActionRequestWire {
+                    request_id: "pw-req-1".into(),
+                    friday_session_id: PW_SESSION.into(),
+                    provider: "codex".into(),
+                    action: "list_sessions".into(),
+                    capability_id: "provider.codex.list_sessions".into(),
+                    payload_ref: Some("friday://body/provider-action/pw-1".into()),
+                    mission_context: Some(friday_protocol::ProviderWorkspaceMissionContextWire {
+                        friday_conversation_id: PW_FCONV.into(),
+                        mission_id: PW_MISSION.into(),
+                        work_item_id: PW_WORK_ITEM.into(),
+                    }),
+                },
+            },
+        )
+    }
+
+    /// Seed the canonical rows the provider-dispatch GATE resolves before the adapter: a
+    /// FridayConversation + Mission + WorkItem (codex-targeted, active) + a Hub provider-session
+    /// link. With these present the guard reaches the capability lookup (which is
+    /// `ImplementedUnproven` ⇒ routed:false), proving the request reached `dispatch_provider_action`.
+    fn seed_provider_workspace_context(db: &friday_storage::Db) {
+        use friday_core::{
+            ApprovalState, FridayConversation, HandoffJudgmentMemory, Mission, MissionStatus,
+            ProviderSessionLink, Risk, SyncMode, TruthStatus, WorkItem, WorkItemStatus, WorkLane,
+        };
+        let now = 1_700_000_000_000;
+        db.upsert_friday_conversation(&FridayConversation {
+            friday_conversation_id: PW_FCONV.into(),
+            owner_principal: OWNER.into(),
+            title: "Provider workspace dispatch".into(),
+            current_focus_summary: "provider action attached to WorkItem".into(),
+            active_mission_ids: vec![PW_MISSION.into()],
+            surface_thread_ids: Vec::new(),
+            memory_scope_ref: None,
+            truth_status: TruthStatus::WiredRegistry,
+            proof_refs: vec!["proof://pw-dispatch".into()],
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        db.upsert_mission(&Mission {
+            mission_id: PW_MISSION.into(),
+            friday_conversation_id: PW_FCONV.into(),
+            title: "Provider workspace dispatch".into(),
+            intent: "dispatch a provider workspace action with Mission context".into(),
+            status: MissionStatus::Active,
+            why_now: "Provider work must attach to a WorkItem.".into(),
+            decision_path_summary: "Resolve Mission context before adapter call.".into(),
+            considered_options: vec!["detached dispatch".into(), "mission-bound dispatch".into()],
+            deferred_options: vec!["provider live proof".into()],
+            known_pitfalls: vec!["ack is not completion".into()],
+            handoff_inheritance: vec!["preserve judgment".into()],
+            work_item_ids: vec![PW_WORK_ITEM.into()],
+            memory_candidate_refs: Vec::new(),
+            context_passport_refs: Vec::new(),
+            proof_refs: vec!["proof://pw-dispatch".into()],
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        db.upsert_work_item(&WorkItem {
+            work_item_id: PW_WORK_ITEM.into(),
+            mission_id: PW_MISSION.into(),
+            lane: WorkLane::Codex,
+            target_provider_or_agent: Some("codex".into()),
+            status: WorkItemStatus::ReadyToDispatch,
+            owner_claim_ids: Vec::new(),
+            workspace_refs: Vec::new(),
+            capability_id: Some("provider.codex.list_sessions".into()),
+            risk_level: Risk::Low,
+            approval_state: ApprovalState::NotRequired,
+            blocking_reason: None,
+            input_refs: vec!["friday://body/provider-action/pw-1".into()],
+            output_refs: Vec::new(),
+            proof_requirements: vec!["provider dispatch test".into()],
+            proof_receipts: Vec::new(),
+            judgment_memory: HandoffJudgmentMemory {
+                task: "Dispatch a provider workspace action".into(),
+                current_blocker: None,
+                target_lane_thread_agent_provider: "codex".into(),
+                read_first_files: vec![
+                    "rust-core/crates/friday-hub/src/provider_dispatch.rs".into()
+                ],
+                required_output: "provider dispatch result".into(),
+                done_criteria: vec!["adapter called only after Mission context resolves".into()],
+                red_lines: vec!["do not dispatch detached provider work".into()],
+                why_this_route: "Provider action must attach to a WorkItem.".into(),
+                considered_options: vec![
+                    "detached provider dispatch".into(),
+                    "Mission context".into(),
+                ],
+                deferred_options: vec!["native UI".into()],
+                previous_pitfalls: vec!["provider ack looked like completion".into()],
+                inheritable_context: vec!["Mission Spine owns product state".into()],
+                proof_requirements: vec!["provider dispatch test".into()],
+                ownership_claim_ids: vec!["own-test".into()],
+            },
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        db.upsert_provider_session_link(&ProviderSessionLink {
+            friday_session_id: PW_SESSION.into(),
+            provider: "codex".into(),
+            account_key_hash: "acct-hash-test".into(),
+            workspace_id: "workspace-pw".into(),
+            cwd: None,
+            external_session_id: None,
+            external_thread_id: None,
+            external_url: None,
+            sync_mode: SyncMode::ProviderAppServerLocal,
+            capability_snapshot: "[]".into(),
+            last_provider_seen_at: None,
+            last_friday_event_id: None,
+            truth_label: "provider dispatch test".into(),
+        })
+        .unwrap();
+    }
+
+    /// (C1/C2) DEFAULT-OFF KAT (the standard exact-`"1"` flag idiom). The provider-workspace
+    /// dispatch flag matcher (shared with #797's adapter selection) is DEFAULT-OFF; only the exact
+    /// opt-in value `"1"` (after trim) enables it; everything else (including unset / `"true"`) is OFF.
+    #[test]
+    fn provider_workspace_dispatch_flag_is_default_off_and_fail_closed() {
+        use friday_hub::provider_dispatch_adapter::provider_workspace_dispatch_from as f;
+        assert!(!f(None), "unset ⇒ disabled (default-off, deploy-safe)");
+        assert!(!f(Some(String::new())), "empty ⇒ disabled");
+        assert!(!f(Some("0".into())), "0 ⇒ disabled");
+        assert!(!f(Some("false".into())), "false ⇒ disabled");
+        assert!(!f(Some("on".into())), "garbage ⇒ disabled");
+        assert!(!f(Some("true".into())), "true ⇒ disabled (only exact 1)");
+        assert!(f(Some("1".into())), "1 ⇒ enabled");
+        assert!(f(Some("  1  ".into())), "padded 1 ⇒ enabled (trimmed)");
+    }
+
+    /// (C1/C2) DEPLOY-SAFETY (the load-bearing inertness test): with the provider-workspace flag
+    /// OFF, an inbound ProviderWorkspaceActionRequest is treated as a benign keepalive ECHO —
+    /// BYTE-IDENTICAL to today (the server has never had a provider arm, so the live behavior on
+    /// this message is the catch-all echo). It reaches NO `dispatch_provider_action`, writes NO row.
+    /// The reply is the ECHOED *Request* (NOT a `ProviderWorkspaceActionResult`).
+    #[test]
+    fn flag_off_provider_workspace_action_is_keepalive_echo() {
+        let (rt, _ws) = mock_runtime("pw-off", OWNER);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        // Seed the context so the ONLY thing keeping the request from dispatching is the FLAG.
+        seed_provider_workspace_context(rt.db());
+        let client_kp = DeviceKeypair::generate();
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let client = spawn_client(addr, client_kp, |session, _nonce| {
+            let req = provider_workspace_action_request("req-pw-off");
+            (req, session.clone(), session.clone())
+        });
+
+        // Flag OFF (last arg) ⇒ the ProviderWorkspaceActionRequest falls through to the keepalive echo.
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false, // run-control OFF
+                false, // mission-bound seam OFF
+                false, // mission-intake ingress OFF
+                false, // mission-spine dispatch OFF
+                false, // memory-confirm ingress OFF
+                false, // (Loop4) per-run token surface OFF
+                false, // (C1/C2) provider-workspace dispatch OFF — the bit under test
+            )
+            .unwrap();
+        assert_eq!(
+            processed, 1,
+            "the provider action message is processed as a keepalive"
+        );
+
+        // The flag is OFF ⇒ the request is ECHOED verbatim (keepalive), NOT a result.
+        match client.join().unwrap().result.expect("an echo reply") {
+            Message::ProviderWorkspaceActionRequest { request } => {
+                assert_eq!(
+                    request.request_id, "pw-req-1",
+                    "the request is echoed verbatim"
+                );
+                assert_eq!(request.action, "list_sessions");
+            }
+            other => panic!("flag OFF must echo the ProviderWorkspaceActionRequest, got {other:?}"),
+        }
+    }
+
+    /// (C1/C2) FLAG-ON, arm-specific FAIL-CLOSED: there is NO per-request principal to forge on this
+    /// wire shape (the unauthenticated boundary is the handshake/peer-allowlist, proven by
+    /// `non_allowlisted_peer_pubkey_gets_no_session_forgery_defeated`). The arm's OWN fail-closed
+    /// gate is the producer's session-link lookup: with the flag ON but NO provider session link
+    /// seeded, the producer refuses with `missing_session` BEFORE `dispatch_provider_action` is
+    /// called at all (the call lives only inside the resolved-session arm) — so the adapter is never
+    /// touched. (The full structural owner-binding — `WorkItem.target_provider == session.provider`
+    /// inside `dispatch_provider_action` — is unit-tested in `provider_dispatch.rs`; it is NOT
+    /// reached here, nor in any serve-bin test, because no capability is `Verified`.)
+    #[test]
+    fn flag_on_provider_workspace_action_without_session_link_is_refused() {
+        let (rt, _ws) = mock_runtime("pw-no-session", OWNER);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        // Intentionally do NOT seed the provider session link (nor the Mission rows): the gate must
+        // refuse before any adapter call.
+        let client_kp = DeviceKeypair::generate();
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let client = spawn_client(addr, client_kp, |session, _nonce| {
+            let req = provider_workspace_action_request("req-pw-no-session");
+            (req, session.clone(), session.clone())
+        });
+
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                true, // (C1/C2) provider-workspace dispatch ON
+            )
+            .unwrap();
+        assert_eq!(
+            processed, 1,
+            "the provider action is processed (then refused)"
+        );
+
+        match client.join().unwrap().result.expect("a result is sent") {
+            Message::ProviderWorkspaceActionResult { result } => {
+                assert!(!result.accepted, "no session link ⇒ NOT accepted");
+                assert!(!result.routed, "no session link ⇒ NOT routed");
+                assert_eq!(
+                    result.status, "missing_session",
+                    "the producer's session-link lookup refuses BEFORE dispatch_provider_action"
+                );
+                assert!(
+                    result.dispatch_ref.is_none(),
+                    "no dispatch on a refused action"
+                );
+            }
+            other => {
+                panic!("flag ON must reply with a ProviderWorkspaceActionResult, got {other:?}")
+            }
+        }
+    }
+
+    /// (C1/C2) FLAG-ON REACHABILITY (the headline of this slice): with the flag ON, a seeded,
+    /// Mission-resolvable, session-linked ProviderWorkspaceActionRequest routes through
+    /// `dispatch_provider_action`'s GATE — and is REFUSED with the capability's
+    /// `implemented_unproven` status (the codex `list_sessions` capability is `ImplementedUnproven`
+    /// in `friday_current()`, so the guard sets routed:false). ONLY the capability guard produces
+    /// that exact status, so this PROVES the request reached `dispatch_provider_action` (the #797
+    /// dark machinery is now REACHABLE from the live serve-bin). The adapter is NOT consulted (the
+    /// guard refuses first) and ZERO `token_ledger` rows are written (no model call).
+    #[test]
+    fn flag_on_provider_workspace_action_reaches_dispatch_gate_and_is_unproven() {
+        let (rt, _ws) = mock_runtime("pw-on", OWNER);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        // Seed the canonical context so the guard reaches the capability lookup (the ONLY producer
+        // of the `implemented_unproven` status).
+        seed_provider_workspace_context(rt.db());
+        let client_kp = DeviceKeypair::generate();
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let client = spawn_client(addr, client_kp, |session, _nonce| {
+            let req = provider_workspace_action_request("req-pw-on");
+            (req, session.clone(), session.clone())
+        });
+
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                true, // (C1/C2) provider-workspace dispatch ON
+            )
+            .unwrap();
+        assert_eq!(processed, 1, "one provider action processed");
+
+        match client.join().unwrap().result.expect("a result is sent") {
+            Message::ProviderWorkspaceActionResult { result } => {
+                assert_eq!(result.request_id, "pw-req-1");
+                assert_eq!(result.provider, "codex");
+                assert_eq!(result.action, "list_sessions");
+                // REACHED the gate: only the capability guard emits `implemented_unproven`.
+                assert_eq!(
+                    result.status, "implemented_unproven",
+                    "the request reached dispatch_provider_action's capability guard"
+                );
+                assert!(
+                    !result.accepted && !result.routed,
+                    "an ImplementedUnproven capability is refused before the adapter"
+                );
+                assert!(
+                    result.dispatch_ref.is_none(),
+                    "a non-routed action carries no dispatch_ref"
+                );
+                assert!(
+                    result.blocker.is_some(),
+                    "the unproven capability carries its exact blocker"
+                );
+            }
+            other => {
+                panic!("flag ON must reply with a ProviderWorkspaceActionResult, got {other:?}")
+            }
+        }
+
+        // ZERO model call: the guard refused before the adapter, so the token_ledger has NO rows.
+        let ledger_rows: i64 = rt
+            .db()
+            .conn()
+            .query_row("SELECT COUNT(*) FROM token_ledger", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            ledger_rows, 0,
+            "a refused provider action makes NO model call ⇒ ZERO token_ledger rows"
         );
     }
 
@@ -3612,6 +4053,7 @@ mod tests {
                 false, // mission-spine dispatch OFF
                 true,  // memory-confirm ingress ON
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 1, "one memory-decision request processed");
@@ -3688,6 +4130,7 @@ mod tests {
                 false, // mission-spine dispatch OFF
                 false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(
@@ -3876,6 +4319,7 @@ mod tests {
                 true,  // (KEYSTONE) mission-spine dispatch ON
                 false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 1, "one mission-lifecycle request processed");
@@ -3964,6 +4408,7 @@ mod tests {
                 true,  // (KEYSTONE) mission-spine dispatch ON
                 false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 1, "one work-item-status request processed");
@@ -4045,6 +4490,7 @@ mod tests {
                 true,  // (KEYSTONE) mission-spine dispatch ON
                 false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 1, "the request is processed (then rejected)");
@@ -4113,6 +4559,7 @@ mod tests {
                 true,  // (KEYSTONE) mission-spine dispatch ON
                 false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 1, "the request is processed (then denied)");
@@ -4164,6 +4611,7 @@ mod tests {
                 true, // mission-spine dispatch ON
                 false,
                 false,
+                false, // (C1/C2) provider-workspace dispatch OFF
             )
             .unwrap();
         assert_eq!(
@@ -4220,6 +4668,7 @@ mod tests {
                 true, // mission-spine dispatch ON
                 false,
                 false,
+                false, // (C1/C2) provider-workspace dispatch OFF
             )
             .unwrap();
         assert_eq!(
@@ -4275,6 +4724,7 @@ mod tests {
                     false, // (KEYSTONE) mission-spine dispatch OFF
                     false, // memory-confirm ingress OFF — byte-identical to today
                     false, // (Loop4) per-run token surface OFF — byte-identical to today
+                    false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
                 )
                 .unwrap();
             assert_eq!(
@@ -4319,6 +4769,7 @@ mod tests {
                     false, // (KEYSTONE) mission-spine dispatch OFF
                     false, // memory-confirm ingress OFF — byte-identical to today
                     false, // (Loop4) per-run token surface OFF — byte-identical to today
+                    false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
                 )
                 .unwrap();
             assert_eq!(
@@ -4405,6 +4856,7 @@ mod tests {
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(
@@ -4451,6 +4903,7 @@ mod tests {
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(
@@ -4497,6 +4950,7 @@ mod tests {
             false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             false, // memory-confirm ingress OFF — byte-identical to today
             false, // (Loop4) per-run token surface OFF — byte-identical to today
+            false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
         );
         client.join().unwrap();
         assert!(
@@ -4820,6 +5274,7 @@ mod tests {
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed1, 1, "connection-1 is a VALID dispatch");
@@ -4865,6 +5320,7 @@ mod tests {
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(
@@ -4927,6 +5383,7 @@ mod tests {
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .unwrap();
         // The first keepalive was processed (echoed); the replayed msg_id ended the session.
@@ -5006,6 +5463,7 @@ mod tests {
             false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             false, // memory-confirm ingress OFF — byte-identical to today
             false, // (Loop4) per-run token surface OFF — byte-identical to today
+            false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
         );
         let obs = client.join().unwrap();
 
@@ -5066,6 +5524,7 @@ mod tests {
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(
@@ -5478,6 +5937,7 @@ mod tests {
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .expect("server serves the interop session");
         assert_eq!(processed, 1, "one authed dispatch processed");
@@ -5536,6 +5996,7 @@ mod tests {
             false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             false, // memory-confirm ingress OFF — byte-identical to today
             false, // (Loop4) per-run token surface OFF — byte-identical to today
+            false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
         );
         assert!(
             served.is_err(),
@@ -5589,6 +6050,7 @@ mod tests {
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .expect("server serves the session but runs nothing");
         assert_eq!(
@@ -5700,6 +6162,7 @@ mod tests {
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .expect("server serves the compose-adapter session");
         assert_eq!(processed, 1, "one authed dispatch processed");
@@ -5758,6 +6221,7 @@ mod tests {
             false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             false, // memory-confirm ingress OFF — byte-identical to today
             false, // (Loop4) per-run token surface OFF — byte-identical to today
+            false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
         );
         assert!(
             served.is_err(),
@@ -5822,6 +6286,7 @@ mod tests {
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
+                false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
             .unwrap();
         assert_eq!(processed, 1, "one sessioned dispatch processed");
@@ -5924,7 +6389,8 @@ mod tests {
         assert_eq!(
             listener
                 .accept_one(
-                    &server_kp, &rt, &allowlist, &peer1, false, false, false, false, false, false
+                    &server_kp, &rt, &allowlist, &peer1, false, false, false, false, false, false,
+                    false
                 )
                 .unwrap(),
             1
@@ -5943,7 +6409,8 @@ mod tests {
         assert_eq!(
             listener
                 .accept_one(
-                    &server_kp, &rt, &allowlist, &peer2, false, false, false, false, false, false
+                    &server_kp, &rt, &allowlist, &peer2, false, false, false, false, false, false,
+                    false
                 )
                 .unwrap(),
             1
@@ -6004,6 +6471,7 @@ mod tests {
                     false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                     false, // memory-confirm ingress OFF — byte-identical to today
                     false, // (Loop4) per-run token surface OFF — byte-identical to today
+                    false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
                 )
                 .unwrap(),
             1
@@ -6074,6 +6542,7 @@ mod tests {
                     false,
                     false,
                     false,
+                    false, // (C1/C2) provider-workspace dispatch OFF
                 )
                 .unwrap(),
             1
@@ -6115,6 +6584,7 @@ mod tests {
                     false,
                     false,
                     false,
+                    false, // (C1/C2) provider-workspace dispatch OFF
                 )
                 .unwrap(),
             1
