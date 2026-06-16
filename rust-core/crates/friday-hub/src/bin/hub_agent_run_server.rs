@@ -3660,7 +3660,7 @@ mod tests {
         db.upsert_provider_session_link(&ProviderSessionLink {
             friday_session_id: PW_SESSION.into(),
             provider: "codex".into(),
-            account_key_hash: "acct-hash-test".into(),
+            account_key_hash: "acct-hash-test".into(), // pragma: allowlist secret
             workspace_id: "workspace-pw".into(),
             cwd: None,
             external_session_id: None,
