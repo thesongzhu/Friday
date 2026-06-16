@@ -25,10 +25,15 @@ use serde_json::{json, Map, Value};
 /// when `None`) from an already-opened read-only hub [`Db`]. Returns the refs-only snapshot
 /// `serde_json::Value` on success.
 ///
-/// Fail-closed: a missing mission, a non-canonical `mission_` id, a mission with no work items / no
-/// route decision, or a forbidden-marker leak all return `Err(String)` (the same coarse error
-/// strings the bin surfaced) — never a partial or a raw body. The forbidden-output guard runs
-/// INSIDE this fn so both the bin and the read server inherit it.
+/// Fail-closed: a missing mission, a mission with no work items / no route decision, or a
+/// forbidden-marker leak all return `Err(String)` (the same coarse error strings the bin surfaced)
+/// — never a partial or a raw body. The forbidden-output guard runs INSIDE this fn so both the bin
+/// and the read server inherit it.
+///
+/// The projection is id-shape-AGNOSTIC: it accepts ANY mission id the real producer mints (the live
+/// hub mints HYPHEN ids — `mission-{work_item_id}` and `mission-autodisp-…` / `mission-loop1-…`),
+/// never an underscore `mission_` shape. There is no shape gate: safety is enforced SUBSTANTIVELY by
+/// the existence + work-item + route-decision + forbidden-output guards below, not by the id text.
 pub fn project_workbench(db: &Db, requested_mission_id: Option<&str>) -> Result<Value, String> {
     let mission = match requested_mission_id {
         Some(id) => db
@@ -42,9 +47,6 @@ pub fn project_workbench(db: &Db, requested_mission_id: Option<&str>) -> Result<
             .next()
             .ok_or_else(|| "no active mission found".to_string())?,
     };
-    if !mission.mission_id.starts_with("mission_") {
-        return Err("mission id is not UI proof canonical mission_ shape".to_string());
-    }
 
     let mut projections = db
         .list_mission_surface_projections(&mission.friday_conversation_id)
@@ -880,4 +882,156 @@ fn reject_forbidden_output(rendered: &str) -> Result<(), String> {
         ],
     )
     .map_err(|marker| format!("forbidden marker in projection: {marker}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use friday_core::{
+        ApprovalState, FridayConversation, HandoffJudgmentMemory, Mission, MissionStatus,
+        RouteDecisionCard, TruthStatus, WorkItem, WorkItemStatus, WorkLane,
+    };
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static C: AtomicU64 = AtomicU64::new(0);
+    fn tmp() -> String {
+        std::env::temp_dir()
+            .join(format!(
+                "friday-workbench-projection-{}-{}.sqlite",
+                std::process::id(),
+                C.fetch_add(1, Ordering::Relaxed)
+            ))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    fn judgment() -> HandoffJudgmentMemory {
+        HandoffJudgmentMemory {
+            task: "Mission-bound provider action".into(),
+            current_blocker: None,
+            target_lane_thread_agent_provider: "deepseek".into(),
+            read_first_files: vec![],
+            required_output: "redacted Mission Workbench projection".into(),
+            done_criteria: vec!["proof receipt required before done".into()],
+            red_lines: vec!["do not leak raw transcripts or ids".into()],
+            why_this_route: "The Workbench must consume Rust Hub Mission truth.".into(),
+            considered_options: vec!["missing route".into(), "Rust Hub projection".into()],
+            deferred_options: vec!["final UI/device capture".into()],
+            previous_pitfalls: vec!["provider ack looked like done".into()],
+            inheritable_context: vec!["carry proof refs, not raw transcript".into()],
+            proof_requirements: vec!["redacted route projection".into()],
+            ownership_claim_ids: Vec::new(),
+        }
+    }
+
+    /// Seed a Mission EXACTLY the way the REAL live producer mints it — a HYPHEN `mission-{…}` id
+    /// (the live hub's `format!("mission-{work_item_id}")` shape; cf. `lib.rs` heartbeat seed +
+    /// the real prod DB rows `mission-autodisp-…` / `mission-loop1-proof-001`) and an underscore
+    /// `fconv_` conversation. Gives it the ≥1 work_item + ≥1 route_decision the SUBSTANTIVE guards
+    /// require. Returns the exact minted hyphen mission id.
+    ///
+    /// This is DELIBERATELY a hyphen id, NOT the synthetic underscore `mission_` fixtures the older
+    /// read-seam/surface-timeline tests use — those synthetic shapes the real producer never mints
+    /// false-passed the deleted `mission_`-prefix gate, while every REAL (hyphen) mission failed it,
+    /// rendering nothing in the live Console. This test drives producer reality.
+    fn seed_real_producer_mission(db: &Db) -> String {
+        let now = 1_780_640_000_000;
+        let work_item_id = "autodisp-1781492033";
+        // The live producer shape: HYPHEN mission id, underscore conversation id.
+        let mission_id = format!("mission-{work_item_id}");
+        let conversation_id = format!("fconv_{}", work_item_id.replace('-', "_"));
+
+        db.upsert_friday_conversation(&FridayConversation {
+            friday_conversation_id: conversation_id.clone(),
+            owner_principal: "owner-real".into(),
+            title: "Real producer-minted mission".into(),
+            current_focus_summary: "hyphen mission id must project".into(),
+            active_mission_ids: vec![mission_id.clone()],
+            surface_thread_ids: vec![],
+            memory_scope_ref: None,
+            truth_status: TruthStatus::Proven,
+            proof_refs: vec!["proof://mission/real-producer".into()],
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        db.upsert_mission(&Mission {
+            mission_id: mission_id.clone(),
+            friday_conversation_id: conversation_id.clone(),
+            title: "Prove the real (hyphen) mission projects".into(),
+            intent: "render the live producer-minted mission in the workbench".into(),
+            status: MissionStatus::Active,
+            why_now: "the read seam must project real producer ids".into(),
+            decision_path_summary: "Rust Hub owns the Mission projection; UI reads it.".into(),
+            considered_options: vec!["route missing".into(), "live Rust projection".into()],
+            deferred_options: vec!["final UI/device evidence".into()],
+            known_pitfalls: vec!["provider ack is not completion".into()],
+            handoff_inheritance: vec!["keep proof refs redacted".into()],
+            work_item_ids: vec![work_item_id.into()],
+            memory_candidate_refs: vec![],
+            context_passport_refs: Vec::new(),
+            proof_refs: vec!["proof://mission/real-producer".into()],
+            created_at_ms: now,
+            updated_at_ms: now + 10,
+        })
+        .unwrap();
+        let provider_item = WorkItem {
+            work_item_id: work_item_id.into(),
+            mission_id: mission_id.clone(),
+            lane: WorkLane::DeepSeek,
+            target_provider_or_agent: Some("deepseek".into()),
+            status: WorkItemStatus::ProviderWaiting,
+            owner_claim_ids: Vec::new(),
+            workspace_refs: Vec::new(),
+            capability_id: Some("skill.mission-advisor".into()),
+            risk_level: friday_core::Risk::Low,
+            approval_state: ApprovalState::Required,
+            blocking_reason: Some("provider receipt pending".into()),
+            input_refs: vec!["body://redacted/provider-request".into()],
+            output_refs: Vec::new(),
+            proof_requirements: vec!["provider proof receipt before completion".into()],
+            proof_receipts: Vec::new(),
+            judgment_memory: judgment(),
+            created_at_ms: now + 4,
+            updated_at_ms: now + 5,
+        };
+        db.upsert_work_item(&provider_item).unwrap();
+        db.upsert_route_decision(&RouteDecisionCard::from_work_item(
+            "route_real_producer".into(),
+            &provider_item,
+            vec!["trace://redacted/provider-route".into()],
+            now + 8,
+            None,
+        ))
+        .unwrap();
+        mission_id
+    }
+
+    /// NO-FALSE-CLOSURE regression. Drives the REAL producer id-shape (a HYPHEN `mission-…` id, the
+    /// ONLY shape the live hub mints) end-to-end through `project_workbench` and asserts it SUCCEEDS
+    /// and the snapshot carries that EXACT hyphen id.
+    ///
+    /// This FAILS against the deleted `if !mission.mission_id.starts_with("mission_")` gate — that
+    /// gate returned `Err("mission id is not UI proof canonical mission_ shape")` for every real
+    /// (hyphen) mission, so `.unwrap()` here would panic. Restore the 3-line gate locally to watch
+    /// it fail; that is what makes this a genuine contract guard, not a shape-coincidence pass.
+    #[test]
+    fn real_producer_hyphen_mission_id_projects_without_false_closure() {
+        let db = Db::open_hub(&tmp()).unwrap();
+        let mission_id = seed_real_producer_mission(&db);
+        assert!(
+            !mission_id.starts_with("mission_"),
+            "guard precondition: the real producer mints a HYPHEN id, never `mission_`: {mission_id}"
+        );
+
+        let snapshot = project_workbench(&db, Some(&mission_id)).expect(
+            "a real producer-minted (hyphen) mission must project — no shape false-closure",
+        );
+
+        assert_eq!(
+            snapshot.get("missionId").and_then(Value::as_str),
+            Some(mission_id.as_str()),
+            "the snapshot must carry the EXACT real hyphen mission id, not a rewritten/synthetic shape"
+        );
+    }
 }

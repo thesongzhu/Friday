@@ -139,10 +139,12 @@ fn runtime_with(tag: &str) -> (HubRuntime<ScriptTransport>, TempDir) {
     (rt, ws)
 }
 
-// The mission/conversation MUST be UI-proof canonical (`mission_` / `fconv_`) so project_workbench
-// accepts the mission and the conversation id validates.
+// The conversation id MUST be `fconv_`-shaped (the intake path validates it). The mission id is the
+// REAL producer HYPHEN shape (`mission-…`, the only shape the live hub mints) — project_workbench has
+// no id-shape gate, so this reflects producer reality (cf. the no-false-closure regression in
+// `workbench_projection`).
 const FCONV: &str = "fconv_surface";
-const MISSION: &str = "mission_surface";
+const MISSION: &str = "mission-surface";
 const WORK_ITEM: &str = "work_surface";
 const SURFACE: &str = "surface_mobile_surface";
 
@@ -165,9 +167,10 @@ fn judgment() -> HandoffJudgmentMemory {
     }
 }
 
-/// Seed a canonical `FridayConversation -> Mission -> WorkItem` (+ a Mission-bound SurfaceThread, the
-/// thread the producer resolves BY MISSION) and a route_decision so `project_workbench` accepts the
-/// mission. Mirrors the in-crate `seed_loop_mission` but with `mission_`/`fconv_` canonical ids.
+/// Seed a `FridayConversation -> Mission -> WorkItem` (+ a Mission-bound SurfaceThread, the thread
+/// the producer resolves BY MISSION) and a route_decision so `project_workbench` projects the
+/// mission. Mirrors the in-crate `seed_loop_mission` with a `fconv_` conversation id + a real
+/// producer-shaped HYPHEN `mission-` id (the only shape the live hub mints).
 fn seed_mission(db: &Db) {
     let now = 1_700_000_000_000;
     db.upsert_friday_conversation(&FridayConversation {
