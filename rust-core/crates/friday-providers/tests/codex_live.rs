@@ -1,21 +1,19 @@
 //! LIVE Codex app-server smoke (CODEX-LIVE-001). `#[ignore]`d — run only where the Codex
 //! CLI is installed + logged in (`cargo test -p friday-providers --test codex_live -- --ignored`).
 //!
-//! Boots the persistent Codex app-server daemon (idempotent `codex app-server daemon start`),
-//! spawns a `codex app-server proxy` stdio bridge to its control socket, and drives the REAL
-//! local lifecycle over that bridge: `initialize` -> `initialized` -> `thread/list` (a
-//! metadata read — NO model turn, NO `codex exec`). (codex-cli 0.140.0 retired the bare
-//! `codex app-server` stdio handler; `LocalCodexAppServer::spawn` performs the daemon+proxy
-//! bootstrap.) It proves Friday's LOCAL Codex control lane, labeled
+//! Spawns `codex app-server --stdio` (the DIRECT JSON-RPC-over-stdio transport on codex-cli
+//! 0.140.0; `LocalCodexAppServer::spawn`) and drives the REAL local lifecycle straight over
+//! its stdio: `initialize` -> `initialized` -> `thread/list` (a metadata read — NO model
+//! turn, NO `codex exec`). It proves Friday's LOCAL Codex control lane, labeled
 //! `provider_app_server_local`; it deliberately does NOT claim official ChatGPT/Codex
 //! same-account history sync (that is the operator-gated CODEX-REMOTE-001 lane).
 //!
 //! Honesty / safety:
-//! - codex CLI absent / daemon won't boot / control socket missing -> graceful SKIP
-//!   (a typed `CodexAppServerError`, not a Friday defect).
+//! - codex CLI absent / app-server won't spawn -> graceful SKIP (a typed
+//!   `CodexAppServerError`, not a Friday defect).
 //! - codex present but a real round trip fails (login/account) -> exact blocker surfaced,
 //!   never faked.
-//! - a pid watchdog kills the child if the lifecycle hangs, so a blocking read can never
+//! - a pid watchdog kills the app-server if the lifecycle hangs, so a blocking read can never
 //!   freeze the suite.
 //! - the evidence artifact records only counts + truth labels — no thread paths/contents,
 //!   no account ids, no provider secrets.
@@ -34,14 +32,13 @@ fn codex_app_server_local_lifecycle_smoke() {
     let mut server = match LocalCodexAppServer::spawn(&program) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("SKIP: could not bootstrap daemon+proxy for `{program} app-server` ({e:?}) — Codex CLI / daemon not available here");
+            eprintln!("SKIP: could not spawn `{program} app-server --stdio` ({e:?}) — Codex CLI not available here");
             return;
         }
     };
 
-    // Watchdog: if the lifecycle hangs > 20s, kill the PROXY bridge by pid so the blocking read
-    // returns EOF and the call errors (never a frozen suite); the persistent daemon survives.
-    // Stood down on completion.
+    // Watchdog: if the lifecycle hangs > 20s, kill the app-server by pid so the blocking read
+    // returns EOF and the call errors (never a frozen suite). Stood down on completion.
     let pid = server.child_id();
     let (done_tx, done_rx) = mpsc::channel::<()>();
     let watchdog = std::thread::spawn(move || {
@@ -124,8 +121,8 @@ fn codex_app_server_local_lifecycle_smoke() {
 /// Codex CLI is installed + logged in:
 /// `cargo test -p friday-providers --test codex_live -- --ignored run_turn`.
 ///
-/// Drives the REAL model-turn path end-to-end: daemon+proxy bootstrap (`codex app-server
-/// daemon start` then `codex app-server proxy`) -> `initialize` -> `initialized` ->
+/// Drives the REAL model-turn path end-to-end: spawn `codex app-server --stdio` (direct
+/// stdio transport) -> `initialize` -> `initialized` ->
 /// `thread/start` -> `run_turn("…ping…")` ->
 /// the server's `turn/started`/`item/*`/`thread/tokenUsage/updated` notification stream
 /// is drained until `turn/completed`, returning the authoritative assistant text +
@@ -142,14 +139,14 @@ fn codex_model_turn_live_completion() {
     let mut server = match LocalCodexAppServer::spawn(&program) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("SKIP: could not bootstrap daemon+proxy for `{program} app-server` ({e:?}) — Codex CLI / daemon not available here");
+            eprintln!("SKIP: could not spawn `{program} app-server --stdio` ({e:?}) — Codex CLI not available here");
             return;
         }
     };
 
-    // Watchdog: a model turn is slower than a metadata read; allow 90s, then kill the PROXY
-    // bridge by pid so a blocking read returns EOF and the call errors (never a frozen suite);
-    // the persistent daemon survives.
+    // Watchdog: a model turn is slower than a metadata read; allow 90s, then kill the
+    // app-server by pid so a blocking read returns EOF and the call errors (never a frozen
+    // suite).
     let pid = server.child_id();
     let (done_tx, done_rx) = mpsc::channel::<()>();
     let watchdog = std::thread::spawn(move || {

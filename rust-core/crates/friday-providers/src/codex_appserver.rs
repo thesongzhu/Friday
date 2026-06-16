@@ -18,12 +18,6 @@ use friday_core::ProviderSessionEvent;
 pub const CODEX_APP_SERVER_SYNC_MODE: &str = "provider_app_server_local";
 pub const CODEX_APP_SERVER_CLI_VERSION: &str = "codex-cli 0.140.0";
 
-/// Relative location of the Codex app-server daemon's control socket under the Codex home
-/// (`$CODEX_HOME`, else `$HOME/.codex`). Documented + verified against codex-cli 0.140.0
-/// (`codex app-server daemon version` / `daemon start` both name this exact path on failure).
-/// The daemon binds it; `codex app-server proxy` bridges stdio ↔ it. See [`control_socket_path`].
-const CODEX_CONTROL_SOCKET_REL: &str = "app-server-control/app-server-control.sock";
-
 /// Approval policy pinned for a [`CodexAppServerClient::run_turn`] model turn. `"never"`
 /// (a value of `v2/AskForApproval`) keeps a non-interactive completion from triggering an
 /// approval ask in this dark, no-operator-in-the-loop slice. Interactive approval routing
@@ -1200,99 +1194,31 @@ pub struct LocalCodexAppServer {
     client: CodexAppServerClient<JsonLineTransport<ChildStdout, ChildStdin>>,
 }
 
-/// Resolve the Codex app-server daemon's control-socket path the SAME way codex-cli does:
-/// `$CODEX_HOME/<rel>` if `CODEX_HOME` is set (and non-empty), else `$HOME/.codex/<rel>`.
-/// Split out (taking the env values, not reading the process env) so it is unit-testable
-/// without `set_var` — the env-race-free idiom this module already uses (see
-/// [`codex_mutating_gate_from`]). Returns `None` only when neither `CODEX_HOME` nor `HOME`
-/// is available, so the caller can fail closed with `control-socket-home-unset` rather than
-/// guess a path. NEVER hardcodes `~/.codex` (would diverge from where the daemon actually
-/// bound under a custom `CODEX_HOME`).
-fn control_socket_path(
-    codex_home: Option<&std::ffi::OsStr>,
-    home: Option<&std::ffi::OsStr>,
-) -> Option<std::path::PathBuf> {
-    let base = match codex_home {
-        Some(h) if !h.is_empty() => std::path::PathBuf::from(h),
-        _ => {
-            let home = home.filter(|h| !h.is_empty())?;
-            std::path::PathBuf::from(home).join(".codex")
-        }
-    };
-    Some(base.join(CODEX_CONTROL_SOCKET_REL))
-}
-
 impl LocalCodexAppServer {
-    /// Boot (idempotently) the persistent Codex app-server daemon, then spawn a
-    /// `<program> app-server proxy` stdio bridge to its control socket and wrap that JSON-RPC
-    /// stream (default `program` = `"codex"`). codex-cli 0.140.0 made bare `codex app-server`
-    /// a selector that HANGS on stdio; the working stdio path is daemon + proxy:
+    /// Spawn `<program> app-server --stdio` (default `program` = `"codex"`) and wrap its
+    /// newline-delimited JSON-RPC stdio stream in the (UNCHANGED) [`JsonLineTransport`].
     ///
-    ///   1. `<program> app-server daemon start` — idempotent (boots a daemon only when none is
-    ///      running; blocks until ready). The exit code is NOT trusted as the success signal
-    ///      (the common path is "already running", whose exit status we do not assume) — see (2).
-    ///   2. Resolve the documented control socket (`$CODEX_HOME|$HOME/.codex` +
-    ///      `app-server-control/app-server-control.sock`); the socket EXISTING is the readiness
-    ///      gate (bound = ready, freshly-started OR already-running). If absent, fail closed:
-    ///      `daemon-start` when the start command itself failed, else `control-socket-missing`
-    ///      (a silently-degraded start) — never hand the transport a proxy that cannot connect.
-    ///   3. `<program> app-server proxy --sock <path>` over piped stdin/stdout — THIS is the
-    ///      newline-delimited JSON-RPC stream the (UNCHANGED) [`JsonLineTransport`] reads. The
-    ///      handshake, methods, approval routing, and gating downstream are all unchanged.
+    /// `--stdio` (equivalent to `--listen stdio://`, the default transport — see
+    /// `codex app-server --help`) is the DIRECT stdio path on codex-cli 0.140.0: the
+    /// app-server speaks JSON-RPC straight over its own piped stdin/stdout, so the
+    /// `initialize` handshake round-trips against the logged-in account with no broker in
+    /// between. (The `app-server daemon start` + `app-server proxy --sock` bridge fails the
+    /// handshake on 0.140.0 — the daemon closes the proxy's control connection, so the
+    /// client's `initialize` reads `response-eof`; remote-control enabled does not help. This
+    /// is the same single-process model the pre-0.140 bare `codex app-server` used, now made
+    /// explicit with the `--stdio` flag.) The handshake, methods, approval routing, and gating
+    /// downstream are all unchanged.
     ///
-    /// The `child` this owns is the PROXY (the daemon persists by design — idempotent reuse
-    /// across spawns); `child_id`/`kill`/`Drop` therefore manage the bridge, not the daemon.
+    /// The owned `child` IS the app-server process; `child_id`/`kill`/`Drop` manage it
+    /// directly (killed on drop). Spawning requires the Codex CLI installed + logged in; a
+    /// `.spawn()` failure means the CLI is absent and surfaces as the code-only / secret-free
+    /// `app-server-spawn` transport error (the error type is code-only by contract — see
+    /// `friday-hub`'s `codex_error_code`). stderr is discarded so a noisy app-server can never
+    /// leak diagnostics into an error path or block on a full pipe.
     pub fn spawn(program: &str) -> Result<Self, CodexAppServerError> {
-        // (1) Ensure the daemon is up (idempotent). `daemon start` BLOCKS until the daemon is
-        // ready (or it times out with "did not become ready"), so the bound control socket —
-        // NOT the exit code — is the authoritative readiness signal. This is deliberate: the
-        // common production path is "daemon already running" (the daemon persists across spawns
-        // by design), and we do not assume the CLI returns exit 0 in that case. A `.spawn()`
-        // failure here means the CLI itself is absent. Output is CAPTURED (so a slow start can
-        // never hang this call on a piped stderr) but NEVER relayed into an error — the error
-        // type is code-only / secret-free by contract (see `friday-hub`'s `codex_error_code`).
-        let daemon = Command::new(program)
-            .arg("app-server")
-            .arg("daemon")
-            .arg("start")
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|_| CodexAppServerError::Transport {
-                code: "daemon-start",
-            })?;
-
-        // (2) Resolve + require the control socket. Honors `CODEX_HOME`; fails closed if the
-        // home is unresolvable. The socket EXISTING is the readiness gate: it succeeds whenever
-        // the daemon is bound (freshly started by us OR already running, regardless of the
-        // `daemon start` exit code). If it is absent, the exit code picks the diagnostic —
-        // `daemon-start` when the start itself failed, else `control-socket-missing` (a
-        // silently-degraded/partial start).
-        let socket = control_socket_path(
-            std::env::var_os("CODEX_HOME").as_deref(),
-            std::env::var_os("HOME").as_deref(),
-        )
-        .ok_or(CodexAppServerError::Transport {
-            code: "control-socket-home-unset",
-        })?;
-        if !socket.exists() {
-            return Err(CodexAppServerError::Transport {
-                code: if daemon.status.success() {
-                    "control-socket-missing"
-                } else {
-                    "daemon-start"
-                },
-            });
-        }
-
-        // (3) Spawn the stdio↔socket proxy. This stdout/stdin pair is the JSON-RPC stream the
-        // existing transport drives — byte-identical downstream to the pre-0.140 bare-stdio
-        // app-server. `--sock` pins the resolved path (proxy would default to the same socket,
-        // but pinning keeps the bridge and the existence check we just made in lock-step).
         let mut child = Command::new(program)
             .arg("app-server")
-            .arg("proxy")
-            .arg("--sock")
-            .arg(&socket)
+            .arg("--stdio")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -1310,9 +1236,9 @@ impl LocalCodexAppServer {
         Ok(Self { child, client })
     }
 
-    /// The OS pid of the spawned proxy bridge (for an external watchdog kill). NOTE: this is
-    /// the PROXY pid, not the daemon's — killing it tears down this turn's stdio bridge; the
-    /// persistent daemon is left running for the next idempotent [`Self::spawn`].
+    /// The OS pid of the spawned `codex app-server --stdio` process (for an external watchdog
+    /// kill). Killing it tears down the app-server and its stdio stream, so a blocking read
+    /// returns EOF and the in-flight call errors instead of hanging.
     pub fn child_id(&self) -> u32 {
         self.child.id()
     }
@@ -1323,9 +1249,7 @@ impl LocalCodexAppServer {
         &mut self.client
     }
 
-    /// Terminate the proxy bridge (idempotent). The persistent app-server daemon is NOT
-    /// stopped (it is shared, idempotently reused; the coordinator stops it explicitly with
-    /// `codex app-server daemon stop` / `daemon restart`).
+    /// Terminate the spawned `codex app-server --stdio` process (idempotent).
     pub fn kill(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -2555,44 +2479,10 @@ mod tests {
     }
 
     #[test]
-    fn control_socket_path_honors_codex_home_then_home() {
-        use std::ffi::OsStr;
-        use std::path::PathBuf;
-
-        // CODEX_HOME set (and non-empty) wins — never `~/.codex`.
-        assert_eq!(
-            control_socket_path(
-                Some(OsStr::new("/custom/codex")),
-                Some(OsStr::new("/home/u"))
-            ),
-            Some(PathBuf::from(
-                "/custom/codex/app-server-control/app-server-control.sock"
-            ))
-        );
-        // CODEX_HOME unset → `$HOME/.codex/...` (the codex-cli default, verified vs 0.140.0).
-        assert_eq!(
-            control_socket_path(None, Some(OsStr::new("/home/u"))),
-            Some(PathBuf::from(
-                "/home/u/.codex/app-server-control/app-server-control.sock"
-            ))
-        );
-        // Empty CODEX_HOME is treated as unset (falls back to HOME), not as a root-relative path.
-        assert_eq!(
-            control_socket_path(Some(OsStr::new("")), Some(OsStr::new("/home/u"))),
-            Some(PathBuf::from(
-                "/home/u/.codex/app-server-control/app-server-control.sock"
-            ))
-        );
-        // Neither resolvable (and empty HOME) → None, so `spawn` fails closed
-        // (`control-socket-home-unset`) rather than guessing a path.
-        assert_eq!(control_socket_path(None, None), None);
-        assert_eq!(control_socket_path(None, Some(OsStr::new(""))), None);
-    }
-
-    #[test]
     fn cli_version_constant_pins_codex_0_140() {
-        // Doc-only constant (no live code reads it); pinned to the daemon+proxy era so the
-        // re-port's target version is greppable. Format mirrors `codex --version`.
+        // Doc-only constant (no live code reads it); pins the codex-cli version the
+        // `app-server --stdio` direct transport was re-ported against, so the target version
+        // is greppable. Format mirrors `codex --version`.
         assert_eq!(CODEX_APP_SERVER_CLI_VERSION, "codex-cli 0.140.0");
     }
 
