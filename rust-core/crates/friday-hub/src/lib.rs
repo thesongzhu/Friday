@@ -250,6 +250,13 @@ pub mod provider_workspace;
 /// in CODEX-LIVE-001 / CLAUDE-MIRROR-001.
 pub mod provider_dispatch;
 
+/// The FIRST real [`provider_dispatch::ProviderDispatchAdapter`] impl — bridges the Provider
+/// Workspace action matrix onto the live Codex app-server client behind a default-OFF flag
+/// ([`provider_dispatch_adapter::ENV_PROVIDER_WORKSPACE_DISPATCH`]). Flag-OFF keeps the
+/// `NoProviderWorkspaceDispatchAdapter` (byte-identical); flag-ON routes the two non-model
+/// Codex metadata actions live, with every other action honestly typed-deferred.
+pub mod provider_dispatch_adapter;
+
 /// Global work graph / session adoption / advisor preflight. Reads stored
 /// process/workspace/provider/channel metadata as truth-labeled refs, proposes
 /// operator-gated adoption, and blocks duplicate/conflicting work before dispatch.
