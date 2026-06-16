@@ -633,6 +633,54 @@ impl Db {
         mission::upsert_conversation(&self.conn, conversation)
     }
 
+    /// (#H1, hardening audit) ATOMICALLY stage a mission-intake's product graph: the
+    /// `FridayConversation`, the `Mission`, an OPTIONAL `SurfaceThread`, and the `WorkItem`, in ONE
+    /// transaction — so the four rows are all-or-nothing.
+    ///
+    /// Pre-fix the Hub's `preflight_and_stage_work_item` wrote these as FOUR independent
+    /// auto-committed upserts with no shared txn: a failure (or crash) AFTER the Mission upsert but
+    /// BEFORE the WorkItem upsert left a permanently-stuck Active Mission with NO WorkItem, and the
+    /// surface-bound duplicate guard (`find_duplicate_mission`, keyed on conversation+intent) then
+    /// matched the orphan and BLOCKED a clean retry. Folding the four upserts into one
+    /// `unchecked_transaction` makes a failure write ZERO rows, so a retry is clean (no orphan
+    /// Mission). The four `mission::upsert_*` free fns each take `&Connection`, and `&tx` derefs to
+    /// it, so they participate in the shared txn (the SAME mechanism `transition_work_item_status`
+    /// uses with `upsert_work_item(&tx, …)`).
+    ///
+    /// CONCURRENCY: the WHOLE txn is wrapped in the crate's ONE bounded busy-retry idiom
+    /// ([`with_busy_retry`]) — the SAME wrapper the writable open / run-billing txn / retention
+    /// sweep use, never a second policy. These upserts are pure INSERT…ON CONFLICT UPDATE writes (no
+    /// read-then-write inside), so a re-run after a BUSY-rolled-back attempt is idempotent and
+    /// re-applies the identical rows. NO-DEGRADE: the retry fires ONLY on [`is_storage_busy`]; with
+    /// no contention the closure runs EXACTLY ONCE and the four committed rows are byte-identical to
+    /// the pre-fix sequence (same upsert contents, same conversation→mission→surface→work_item
+    /// order). Hub-only (Missions/WorkItems/conversations are Hub-only).
+    pub fn stage_intake_atomic(
+        &self,
+        conversation: &FridayConversation,
+        mission: &Mission,
+        surface_thread: Option<&SurfaceThread>,
+        work_item: &WorkItem,
+    ) -> Result<()> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "mission intake is Hub-only".into(),
+            ));
+        }
+        let conn = &self.conn;
+        with_busy_retry(|| {
+            let tx = conn.unchecked_transaction()?;
+            mission::upsert_conversation(&tx, conversation)?;
+            mission::upsert_mission(&tx, mission)?;
+            if let Some(surface) = surface_thread {
+                mission::upsert_surface_thread(&tx, surface)?;
+            }
+            mission::upsert_work_item(&tx, work_item)?;
+            tx.commit()?;
+            Ok(())
+        })
+    }
+
     pub fn get_friday_conversation(
         &self,
         friday_conversation_id: &str,

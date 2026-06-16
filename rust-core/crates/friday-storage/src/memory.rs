@@ -158,32 +158,53 @@ pub fn get(conn: &Connection, memory_id: &str) -> Result<Option<MemoryRow>> {
 /// sets `confidence` on its own, so a confirmed-confidence/non-confirmed-state
 /// row is unrepresentable. A terminal item is refused (no re-write / no
 /// downgrade). Returns the resulting state.
+///
+/// CONCURRENCY (#H3, hardening audit): the read (`current_state`) + the `UPDATE`
+/// run on the long-lived Hub connection while the reaper/retention tick writes on a
+/// SEPARATE connection. Under WAL contention either statement can return
+/// `SQLITE_BUSY` (notably `SQLITE_BUSY_SNAPSHOT`, which `busy_timeout` does NOT
+/// auto-retry — only an app-level retry recovers it). So the WHOLE body is wrapped
+/// in the crate's ONE bounded busy-retry idiom ([`crate::with_busy_retry`]) — the
+/// SAME wrapper the writable open, the run-billing txn, and the retention sweep use,
+/// never a second policy. The retry re-runs the read THEN the `UPDATE`: this is the
+/// IDEMPOTENT order — on a BUSY the `UPDATE` did NOT apply (the row stays its prior
+/// pending Candidate), so the retry re-reads the SAME pre-decision state and
+/// re-derives the SAME terminal write; there is no double-apply and no
+/// terminal-refusal-on-retry (a committed prior attempt would have returned `Ok`,
+/// not BUSY). NO-DEGRADE: the retry fires ONLY on [`crate::is_storage_busy`]; with
+/// no contention the closure runs EXACTLY ONCE and the result is byte-identical to
+/// the pre-fix path. When called inside an already-open txn (e.g. via
+/// [`edit_candidate`]'s `reject`), the inner retry is harmless — a single idempotent
+/// UPDATE — and the enclosing txn still governs atomicity.
 pub fn decide(
     conn: &Connection,
     memory_id: &str,
     user_confirmed: bool,
     now: i64,
 ) -> Result<MemoryState> {
-    let cur = current_state(conn, memory_id)?
-        .ok_or_else(|| StorageError::Unsupported(format!("memory_item '{memory_id}' not found")))?;
-    if cur.is_terminal() {
-        return Err(StorageError::Unsupported(format!(
-            "memory_item '{memory_id}' is already terminal ({}); refusing to re-decide",
-            cur.as_str()
-        )));
-    }
-    let next = decide_candidate(cur, Some(user_confirmed));
-    let (confidence, confirmed_at) = match next {
-        MemoryState::Confirmed => (Confidence::Confirmed, Some(now)),
-        // Rejected / still-Candidate are not durable: confidence stays non-confirmed.
-        MemoryState::Rejected | MemoryState::Candidate => (Confidence::Candidate, None),
-    };
-    conn.execute(
-        "UPDATE memory_item SET state = ?1, confidence = ?2, confirmed_at = ?3
-         WHERE memory_id = ?4",
-        params![next.as_str(), confidence.as_str(), confirmed_at, memory_id],
-    )?;
-    Ok(next)
+    crate::with_busy_retry(|| {
+        let cur = current_state(conn, memory_id)?.ok_or_else(|| {
+            StorageError::Unsupported(format!("memory_item '{memory_id}' not found"))
+        })?;
+        if cur.is_terminal() {
+            return Err(StorageError::Unsupported(format!(
+                "memory_item '{memory_id}' is already terminal ({}); refusing to re-decide",
+                cur.as_str()
+            )));
+        }
+        let next = decide_candidate(cur, Some(user_confirmed));
+        let (confidence, confirmed_at) = match next {
+            MemoryState::Confirmed => (Confidence::Confirmed, Some(now)),
+            // Rejected / still-Candidate are not durable: confidence stays non-confirmed.
+            MemoryState::Rejected | MemoryState::Candidate => (Confidence::Candidate, None),
+        };
+        conn.execute(
+            "UPDATE memory_item SET state = ?1, confidence = ?2, confirmed_at = ?3
+             WHERE memory_id = ?4",
+            params![next.as_str(), confidence.as_str(), confirmed_at, memory_id],
+        )?;
+        Ok(next)
+    })
 }
 
 /// Confirm a candidate (explicit user yes). Durable iff it was a pending candidate.

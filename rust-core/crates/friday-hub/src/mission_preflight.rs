@@ -148,12 +148,13 @@ pub fn preflight_and_stage_work_item(
     work_item.status = WorkItemStatus::ReadyToDispatch;
     work_item.blocking_reason = None;
 
-    db.upsert_friday_conversation(&conversation)?;
-    db.upsert_mission(&mission)?;
-    if let Some(surface) = surface_thread {
-        db.upsert_surface_thread(&surface)?;
-    }
-    db.upsert_work_item(&work_item)?;
+    // (#H1, hardening audit) Stage the four rows ATOMICALLY in ONE transaction. Pre-fix these were
+    // four independent auto-committed upserts: a failure (or crash) AFTER the Mission upsert but
+    // BEFORE the WorkItem upsert left a permanently-stuck Active Mission with NO WorkItem, which the
+    // conversation+intent duplicate guard then matched and BLOCKED a clean retry against (binding the
+    // surface to the orphan). `stage_intake_atomic` writes all-or-nothing (and busy-retries under
+    // reaper/retention WAL contention), so a failure writes ZERO rows and a retry is clean.
+    db.stage_intake_atomic(&conversation, &mission, surface_thread.as_ref(), &work_item)?;
 
     Ok(MissionPreflightOutcome::Ready {
         mission_id: mission.mission_id,
@@ -1076,6 +1077,65 @@ mod tests {
                 duplicate_work_item_id: None
             }
         );
+        assert_eq!(db.count("mission").unwrap(), 1);
+        assert_eq!(db.count("work_item").unwrap(), 1);
+    }
+
+    // (#H1, hardening audit) A failure on the LAST upsert of the intake sequence (here the
+    // WorkItem, whose empty `work_item_id` trips `require_non_empty` INSIDE `upsert_work_item`,
+    // after the conversation + mission + surface upserts have run on the shared txn) must leave
+    // ZERO rows — proving the four upserts are now ONE atomic transaction. Pre-fix the conversation
+    // and mission (and surface) would have auto-committed, stranding a permanently-Active Mission
+    // with no WorkItem that the duplicate guard then matched, blocking a clean retry.
+    #[test]
+    fn mid_sequence_intake_failure_leaves_zero_rows_no_orphan_mission() {
+        let db = Db::open_hub(&tmp()).unwrap();
+        let mut req = request(
+            "mission-atomic",
+            "work-atomic",
+            "atomic intake must be all-or-nothing",
+            WorkLane::FridayHub,
+            Vec::new(),
+            false,
+            1,
+        );
+        // Inject the mid-txn failure: an empty WorkItem id is rejected by `upsert_work_item`'s
+        // `require_non_empty` — the LAST write in the staged sequence, so the conversation/mission/
+        // surface upserts ran first and MUST be rolled back with it.
+        req.work_item.work_item_id = String::new();
+
+        let result = preflight_and_stage_work_item(&db, req);
+        assert!(
+            result.is_err(),
+            "an empty work_item_id must fail the staged intake, got {result:?}"
+        );
+
+        // All-or-nothing: NOT ONE of the four rows persisted. Crucially mission == 0 (no orphan
+        // Active Mission) and conversation == 0 (no surface bound to an orphan).
+        assert_eq!(db.count("mission").unwrap(), 0, "no orphan Mission");
+        assert_eq!(
+            db.count("friday_conversation").unwrap(),
+            0,
+            "no orphan conversation"
+        );
+        assert_eq!(db.count("surface_thread").unwrap(), 0, "no orphan surface");
+        assert_eq!(db.count("work_item").unwrap(), 0, "no work_item");
+
+        // And a clean retry (valid ids) now SUCCEEDS — it is not blocked by a stranded orphan.
+        let retry = preflight_and_stage_work_item(
+            &db,
+            request(
+                "mission-atomic",
+                "work-atomic",
+                "atomic intake must be all-or-nothing",
+                WorkLane::FridayHub,
+                Vec::new(),
+                false,
+                2,
+            ),
+        )
+        .unwrap();
+        assert!(retry.is_ready(), "clean retry should stage, got {retry:?}");
         assert_eq!(db.count("mission").unwrap(), 1);
         assert_eq!(db.count("work_item").unwrap(), 1);
     }
