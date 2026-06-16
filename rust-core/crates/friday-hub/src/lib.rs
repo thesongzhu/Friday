@@ -440,6 +440,12 @@ pub mod run_readback_projection;
 /// no quota, no credential read); provider lanes are conservatively `linked_only`. DARK.
 pub mod providers_doctor_projection;
 
+/// **J2 read-seam enroll core** — the ADDITIVE, idempotent, no-eviction read-seam allowlist
+/// mutators (append + remove), factored out of [`hub_read_seam_enroll`]'s inline `--add` path so
+/// that CLI AND the [`hub_pairing_server`] pairing→read-seam bridge share ONE format-sensitive
+/// implementation. The WRITE seam is never named here. DARK.
+pub mod read_seam_enroll;
+
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
     CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,
