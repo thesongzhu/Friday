@@ -291,22 +291,20 @@ fn run() -> Result<(), EnrollError> {
     drop(master);
     let mut store = FileSecureStore::open(&store_dir, kek).map_err(|_| EnrollError::StoreOpen)?;
 
-    // (6) Build the value to write. REPLACE (single-peer v1) = exactly the 32 pubkey bytes. APPEND
-    // (multi-peer, server-unsupported) = the existing allowlist bytes followed by the new 32 — but
-    // only when the new key is not already present (idempotent), and with a LOUD warning.
-    let value: Vec<u8> = if opts.add {
-        let mut existing = store
-            .try_get(READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID)
-            .map_err(|_| EnrollError::StoreRead)?
-            .unwrap_or_default();
-        // Idempotent: if the new pubkey is already an aligned 32-byte chunk, do not duplicate it.
-        let already = existing.len() % X25519_PUBKEY_LEN == 0
-            && existing
-                .chunks_exact(X25519_PUBKEY_LEN)
-                .any(|c| c == pubkey);
-        if !already {
-            existing.extend_from_slice(&pubkey);
-        }
+    // (6) Write the allowlist value. REPLACE (single-peer v1) = exactly the 32 pubkey bytes. APPEND
+    // (multi-peer) DELEGATES to the SHARED `read_seam_enroll::enroll_read_seam_peer_additive` — the
+    // SAME format-sensitive, idempotent, no-eviction append the `hub_pairing_server` bridge uses, so
+    // the two callers can never drift on the on-disk format or the idempotency rule.
+    let peers: usize = if opts.add {
+        let outcome =
+            friday_hub::read_seam_enroll::enroll_read_seam_peer_additive(&mut store, &pubkey)
+                .map_err(|e| match e {
+                    friday_hub::read_seam_enroll::ReadSeamEnrollError::StoreRead => {
+                        EnrollError::StoreRead
+                    }
+                    // BadPubkeyLen is unreachable here (pubkey is a fixed [u8; 32]); StoreWrite ⇒ write.
+                    _ => EnrollError::EnrollWrite,
+                })?;
         eprintln!(
             "hub_read_seam_enroll: APPEND mode wrote a MULTI-PEER read-seam allowlist \
              ({} peer(s)). The read-projection server enforces enforce_peer_allowlist_nonempty at \
@@ -314,24 +312,22 @@ fn run() -> Result<(), EnrollError> {
              isolation (binding the authed caller to the matched pubkey) is still the deferred \
              pubkey->principal binding — v1 is single-OWNER, so multi-peer = multi-DEVICE for the \
              one owner.",
-            existing.len() / X25519_PUBKEY_LEN
+            outcome.total_peers
         );
-        existing
+        outcome.total_peers
     } else {
-        pubkey.to_vec()
+        // (7) CHECKED REPLACE write — the CLI must KNOW it landed.
+        store
+            .try_put(READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID, &pubkey)
+            .map_err(|_| EnrollError::EnrollWrite)?;
+        1
     };
-
-    // (7) CHECKED enrollment write — the CLI must KNOW it landed.
-    store
-        .try_put(READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID, &value)
-        .map_err(|_| EnrollError::EnrollWrite)?;
 
     let mode = if opts.add {
         "appended"
     } else {
         "enrolled (REPLACE)"
     };
-    let peers = value.len() / X25519_PUBKEY_LEN;
     let multi_note = if opts.add && peers > 1 {
         " [multi-peer SUPPORTED: read server admits a non-empty multi-peer allowlist — no eviction]"
     } else {
