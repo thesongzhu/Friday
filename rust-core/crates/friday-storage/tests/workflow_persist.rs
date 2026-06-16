@@ -677,3 +677,59 @@ fn step_has_side_effect_reads_the_persisted_flag() {
         None
     );
 }
+
+#[test]
+fn in_flight_runs_with_prefix_before_filters_by_state_prefix_and_cutoff() {
+    // The read backing the scheduler-run crash reconcile (#784(b)): only IN-FLIGHT
+    // (`Pending`/`Running`) runs whose id has the given prefix AND whose `updated_at` is
+    // at-or-before the cutoff are returned — `AwaitingCheckpoint`/terminal, a different
+    // prefix, and a too-fresh run are all excluded.
+    let p = temp_db_path("inflight-prefix");
+    let db = Db::open_hub(&p).unwrap();
+
+    // Two stale `sched:` in-flight runs (the target): one Pending, one Running.
+    workflow::create_run(db.conn(), "sched:s1:600000", "wf", 100).unwrap(); // stays Pending @100
+    workflow::create_run(db.conn(), "sched:s2:600000", "wf", 100).unwrap();
+    workflow::set_run_state(db.conn(), "sched:s2:600000", WorkflowRunState::Running, 110).unwrap();
+
+    // A stale `sched:` run at AwaitingCheckpoint — EXCLUDED (legit pause, not in the state filter).
+    workflow::create_run(db.conn(), "sched:s3:600000", "wf", 100).unwrap();
+    workflow::set_run_state(db.conn(), "sched:s3:600000", WorkflowRunState::Running, 110).unwrap();
+    workflow::set_run_state(
+        db.conn(),
+        "sched:s3:600000",
+        WorkflowRunState::AwaitingCheckpoint,
+        120,
+    )
+    .unwrap();
+
+    // A stale `sched:` run already terminal Failed — EXCLUDED (not in-flight).
+    workflow::create_run(db.conn(), "sched:s4:600000", "wf", 100).unwrap();
+    workflow::set_run_state(db.conn(), "sched:s4:600000", WorkflowRunState::Failed, 110).unwrap();
+
+    // A stale NON-`sched:` in-flight run — EXCLUDED (wrong prefix).
+    workflow::create_run(db.conn(), "manual-r1", "wf", 100).unwrap();
+    workflow::set_run_state(db.conn(), "manual-r1", WorkflowRunState::Running, 110).unwrap();
+
+    // A `sched:` Running run updated AFTER the cutoff — EXCLUDED (too fresh).
+    workflow::create_run(db.conn(), "sched:s5:600000", "wf", 100).unwrap();
+    workflow::set_run_state(
+        db.conn(),
+        "sched:s5:600000",
+        WorkflowRunState::Running,
+        5000,
+    )
+    .unwrap();
+
+    // Cutoff at 1000: catches the @100/@110 stale runs, excludes the @5000 fresh one.
+    let got = workflow::in_flight_runs_with_prefix_before(db.conn(), "sched:", 1000).unwrap();
+    let ids: Vec<&str> = got.iter().map(|(id, _, _)| id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["sched:s2:600000", "sched:s1:600000"],
+        "only the stale in-flight sched runs, newest-updated first"
+    );
+    // The states come back correctly typed.
+    assert_eq!(got[0].1, WorkflowRunState::Running);
+    assert_eq!(got[1].1, WorkflowRunState::Pending);
+}
