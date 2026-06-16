@@ -32,22 +32,80 @@ public enum WorkbenchLoadState: Sendable, Equatable {
   }
 }
 
+/// The state of a single spine-WRITE action (mission intake / memory decision).
+///
+/// Mirrors `WorkbenchLoadState`'s honest vocabulary: a `.sent` action shows pending, a terminal
+/// `.confirmed` carries a coarse refs-only summary, and any failure (transport / typed Error / a
+/// server `status:"blocked"`) renders AS `.error` — never upgraded to a fake-confirmed look.
+public enum WriteActionState: Sendable, Equatable {
+  /// No action attempted (or reset) — the control is enabled.
+  case ready
+  /// The request is in flight (handshake + sealed send + awaiting the refs-only receipt).
+  case sent
+  /// A terminal SUCCESS receipt. `summary` is a coarse refs-only line (status + ids + recallable);
+  /// `clarificationQuestions` is non-empty ONLY for a `needs_clarification` intake.
+  case confirmed(summary: String, clarificationQuestions: [String] = [])
+  /// A terminal FAILURE rendered AS truth — a transport/honest-unavailable error, a typed server
+  /// Error, OR a server `status:"blocked"` receipt (e.g. the synthetic-candidate-id block). Never a
+  /// fabricated success.
+  case error(reason: String)
+
+  public var isSent: Bool {
+    if case .sent = self { return true }
+    return false
+  }
+
+  /// `true` once a terminal outcome has been reached (success or error) — the control disables.
+  public var isTerminal: Bool {
+    switch self {
+    case .confirmed, .error: return true
+    case .ready, .sent: return false
+    }
+  }
+}
+
 /// View model for the Operations Overview screen.
 ///
-/// READ-ONLY by construction. The only actions it exposes are:
-///  - `refresh()`         — re-fetch the projection (RefreshStatus),
-///  - `select(_:)`        — focus a row in the proof inspector (OpenEvidence-class nav).
-/// There is no mutate / dispatch / approve / provider-admin method, and none can
-/// be added without violating the D-PR1 truth contract.
+/// READ-FIRST: the read projection (`refresh()` + `select(_:)`) stays a pure read — it NEVER writes.
+/// The spine-WRITE surface is an ADDITIVE, separately-injected collaborator (`writeClient`), used
+/// ONLY by the two explicit organic-loop drivers below; it is never folded into `refresh()`:
+///  - `refresh()`              — re-fetch the projection (RefreshStatus),
+///  - `select(_:)`             — focus a row in the proof inspector (OpenEvidence-class nav),
+///  - `submitIntake(intent:)`  — drive ONE operator-typed Mission intake over the sealed WRITE seam,
+///  - `decideMemory(...)`      — drive ONE owner confirm/reject of a memory candidate.
+/// The write drivers are gated: with no `writeClient` (or an honest-unavailable one) they render the
+/// truth, never a fabricated confirm. No provider-admin / arbitrary-mutation method is exposed.
 @MainActor
 public final class OperationsOverviewViewModel: ObservableObject {
   @Published public private(set) var state: WorkbenchLoadState = .idle
   @Published public var selection: InspectorSelection = .none
 
-  private let client: FridayRustReadClient
+  /// The mission-intake compose action's honest state.
+  @Published public private(set) var intakeState: WriteActionState = .ready
+  /// Per-candidate memory-decision action state, keyed by the candidate's display id.
+  @Published public private(set) var memoryDecisionStates: [String: WriteActionState] = [:]
 
-  public init(client: FridayRustReadClient) {
+  private let client: FridayRustReadClient
+  /// The spine-WRITE collaborator. `nil` ⇒ the write seam is not configured (the drivers render
+  /// honest-unavailable). Separate from `client` so the read contract stays a pure read.
+  private let writeClient: FridayMissionSpineWriteClient?
+  /// The owner principal the WRITE body self-supplies — MUST equal the server's `--owner`
+  /// (`admin-001`); the server fail-closes a mismatch (FIX-Q3b). Wired from config, not UI input.
+  private let writeOwnerPrincipal: String
+  /// A fresh-id factory for the client-supplied mission/work-item ids (the server births rows from
+  /// them). Injectable for deterministic tests.
+  private let newId: @Sendable () -> String
+
+  public init(
+    client: FridayRustReadClient,
+    writeClient: FridayMissionSpineWriteClient? = nil,
+    writeOwnerPrincipal: String = liveReadProjectionOwnerPrincipal,
+    newId: @escaping @Sendable () -> String = { UUID().uuidString }
+  ) {
     self.client = client
+    self.writeClient = writeClient
+    self.writeOwnerPrincipal = writeOwnerPrincipal
+    self.newId = newId
   }
 
   /// Re-fetch the Workbench projection. The only mutating-looking action — and it
@@ -72,6 +130,141 @@ public final class OperationsOverviewViewModel: ObservableObject {
   /// Focus a row in the proof inspector (read-only navigation).
   public func select(_ selection: InspectorSelection) {
     self.selection = selection
+  }
+
+  // MARK: - Spine-WRITE drivers (Lane-D entry-point-A organic loop)
+
+  /// Submit ONE operator-typed Mission intake over the sealed WRITE seam. Births a Mission +
+  /// WorkItem(Draft) server-side (NO model call); renders the refs-only receipt honestly:
+  ///  - `ready`               ⇒ `.confirmed` (status + mission/work-item ids),
+  ///  - `needs_clarification` ⇒ `.confirmed` carrying the questions (rendered as a clarification ask),
+  ///  - `blocked`             ⇒ `.error` (the blockers),
+  ///  - a transport/honest-unavailable throw ⇒ `.error` (the truth).
+  /// On any SUCCESS path it then `await refresh()`s so the new Mission appears in the read projection.
+  public func submitIntake(intent: String) async {
+    let trimmed = intent.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+      intakeState = .error(reason: "Enter an intent before submitting.")
+      return
+    }
+    guard let writeClient else {
+      intakeState = .error(reason: "Write seam not configured — cannot submit an intake.")
+      return
+    }
+    intakeState = .sent
+    let request = Self.buildIntakeRequest(
+      intent: trimmed, owner: writeOwnerPrincipal, idFactory: newId)
+    do {
+      let result = try await writeClient.submitMissionIntake(request)
+      switch result.status {
+      case "blocked":
+        let why = result.blockers.isEmpty ? "blocked" : result.blockers.joined(separator: ", ")
+        intakeState = .error(reason: "Intake blocked — \(why)")
+      case "needs_clarification":
+        intakeState = .confirmed(
+          summary: "Needs clarification — no rows written yet (mission \(result.missionId))",
+          clarificationQuestions: result.clarificationQuestions)
+        await refresh()
+      default:
+        // ready / created_or_ready
+        var summary = "Mission intake \(result.status) · mission_id=\(result.missionId)"
+        if let workItemId = result.workItemId { summary += " · work_item_id=\(workItemId)" }
+        intakeState = .confirmed(summary: summary, clarificationQuestions: result.clarificationQuestions)
+        await refresh()
+      }
+    } catch {
+      intakeState = .error(reason: Self.writeReason(for: error))
+    }
+  }
+
+  /// Submit ONE owner confirm/reject for a memory candidate over the sealed WRITE seam, keyed by the
+  /// candidate's display id. `memoryId` is what the server decides on.
+  ///
+  /// HONEST-STATE NOTE (Layer-D prerequisite): the read projection currently surfaces a SYNTHETIC
+  /// candidate id, not the durable `memory_item` row id, so a confirm against it returns
+  /// `status:"blocked"` (`unknown_candidate`) — which is rendered AS `.error` (never a fake confirm).
+  /// A real confirm closes only once the read projection surfaces the real memory_id (a cross-team
+  /// Rust change, out of scope here). Either way the control is wired end-to-end and honest.
+  public func decideMemory(candidateId: String, memoryId: String, confirm: Bool) async {
+    guard let writeClient else {
+      memoryDecisionStates[candidateId] = .error(reason: "Write seam not configured.")
+      return
+    }
+    memoryDecisionStates[candidateId] = .sent
+    let request = MemoryDecisionRequestWire(
+      memoryId: memoryId, ownerPrincipal: writeOwnerPrincipal,
+      decision: confirm ? "confirm" : "reject")
+    do {
+      let result = try await writeClient.submitMemoryDecision(request)
+      switch result.status {
+      case "confirmed", "rejected":
+        memoryDecisionStates[candidateId] = .confirmed(
+          summary: "\(result.status) · state=\(result.state) · recallable=\(result.recallable)")
+        await refresh()
+      default:  // "blocked"
+        let why = result.blocker ?? "blocked"
+        memoryDecisionStates[candidateId] = .error(reason: "Decision blocked — \(why)")
+      }
+    } catch {
+      memoryDecisionStates[candidateId] = .error(reason: Self.writeReason(for: error))
+    }
+  }
+
+  /// Build a desktop Mission-intake request from one operator intent. The mission/work-item ids are
+  /// CLIENT-supplied (the server births rows from them); `surface_kind`/`visibility_policy`/`lane`
+  /// are server-accepted tokens; `delivery_route` is a non-empty desktop route hint. `owner` MUST
+  /// equal the server `--owner` (FIX-Q3b). The title is a short prefix of the intent.
+  static func buildIntakeRequest(
+    intent: String, owner: String, idFactory: () -> String
+  ) -> MissionIntakeRequestWire {
+    let title = String(intent.prefix(72))
+    let id = idFactory()
+    return MissionIntakeRequestWire(
+      fridayConversationId: "fconv_desktop_\(id)",
+      ownerPrincipal: owner,
+      surfaceThreadId: "surface-desktop-\(id)",
+      surfaceKind: "desktop",
+      deliveryRoute: "desktop://hub-console/operations/\(id)",
+      visibilityPolicy: "compact",
+      missionId: "mission-desktop-\(id)",
+      workItemId: "work-desktop-\(id)",
+      title: title,
+      intent: intent,
+      lane: "deepseek")
+  }
+
+  /// Map a write-client error to an honest unavailable reason (mirrors `reason(for:)`'s tone).
+  static func writeReason(for error: Error) -> String {
+    if let writeError = error as? FridayWriteClientError {
+      switch writeError {
+      case let .transport(detail):
+        return "Hub offline — write seam unavailable (\(detail))"
+      case .badServerPubkey:
+        return "Write seam unavailable — invalid server identity"
+      case .badSessionNonce:
+        return "Write seam unavailable — invalid session handshake"
+      case let .serverError(code, message):
+        return "Write rejected — server error \(code): \(message)"
+      case let .unexpectedResponse(kind):
+        return "Write seam unavailable — unexpected response (\(kind))"
+      case let .missingRef(detail):
+        return "Write seam unavailable — \(detail)"
+      case .runControlDisabled:
+        return "Write seam unavailable — run control disabled"
+      case .emptySignedBlob:
+        return "Write seam unavailable — empty signed blob"
+      }
+    }
+    // The LoopbackSealedWSTransport throws the package READ error type from its frame I/O.
+    if let readError = error as? FridayReadClientError {
+      switch readError {
+      case let .transport(detail):
+        return "Hub offline — write seam unavailable (\(detail))"
+      default:
+        return "Write seam unavailable — \(readError)"
+      }
+    }
+    return "Write seam unavailable — \(error)"
   }
 
   private static func reason(for error: Error) -> String {

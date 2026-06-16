@@ -149,12 +149,41 @@ public protocol FridayRustWriteClient {
   func resumeWithApproval(runId: String, opaqueSignedBlob: [UInt8]) async throws -> ResumeRelayResult
 }
 
+// MARK: - The mission-spine WRITE client protocol (Lane-D entry-point-A organic driver)
+
+/// The product-facing mission-spine WRITE client — the two organic-loop drivers over the SAME
+/// sealed-WS WRITE seam (:48750) the agent-run client uses, but WITHOUT a per-request `auth_proof`
+/// (the sealed single-peer session IS the channel auth; the server binds the write to the
+/// authenticated `--owner`).
+///
+/// `Sendable` so a `@MainActor` view model can store one and `await` a call that hops off the
+/// MainActor (the concrete `SealedWSWriteClient` is `@unchecked Sendable`, justified by its
+/// all-immutable stored state — same posture as `SealedWSReadClient`). This lets the blocking
+/// synchronous transport run OFF the main thread.
+public protocol FridayMissionSpineWriteClient: Sendable {
+  /// Submit one operator-typed Mission intake over the sealed WRITE session. Births a Mission +
+  /// WorkItem(Draft) server-side (no model call); returns the refs-only receipt (which may be
+  /// `status:"needs_clarification"` with questions, or `status:"blocked"`).
+  func submitMissionIntake(_ request: MissionIntakeRequestWire) async throws -> MissionIntakeResultWire
+  /// Submit the owner's explicit confirm/reject for ONE pending memory candidate. Returns the
+  /// refs-only receipt (`status:"confirmed"`/`"rejected"`/`"blocked"`). `decision` MUST be
+  /// `"confirm"` or `"reject"`.
+  func submitMemoryDecision(_ request: MemoryDecisionRequestWire) async throws -> MemoryDecisionResultWire
+}
+
 // MARK: - The sealed-WS write client implementation
 
 /// The sealed-WS WRITE client. Drives the full handshake + dispatch + courier LOGIC over an
 /// injected `SealedWSTransport` (reused from #677). Pure byte-exact logic; the network is the
 /// injected pipe (the live transport is the deferred slice-6 AC).
-public final class SealedWSWriteClient: FridayRustWriteClient {
+///
+/// `@unchecked Sendable`: every stored property is an immutable `let` (the keypair, the principal,
+/// the injected `@escaping` factory/closures). The closures are not statically `@Sendable` (so the
+/// `FridayMissionSpineWriteClient: Sendable` conformance is not auto-satisfied), but the instance
+/// carries no mutable shared state across an `await`, so it is safe to send — the SAME asserted
+/// posture as `SealedWSReadClient`. This lets a `@MainActor` view model store one and run the
+/// blocking synchronous transport OFF the main thread.
+public final class SealedWSWriteClient: FridayRustWriteClient, FridayMissionSpineWriteClient, @unchecked Sendable {
   private let keypair: FridayCrypto.DeviceKeypair
   private let forwardedPrincipal: String
   private let sessionId: String?
@@ -272,10 +301,73 @@ public final class SealedWSWriteClient: FridayRustWriteClient {
     case .error(let code, let message):
       throw FridayWriteClientError.serverError(code: code, message: message)
     case .agentRunRequest, .agentRunResume, .agentRunControlResult,
-         .workbenchProjectionRequest, .workbenchProjectionSnapshot:
+         .workbenchProjectionRequest, .workbenchProjectionSnapshot,
+         .missionIntakeRequest, .missionIntakeResult,
+         .memoryDecisionRequest, .memoryDecisionResult:
       throw FridayWriteClientError.unexpectedResponse(kind: dispatchKind(message))
     case .unsupported(let kind):
       throw FridayWriteClientError.unexpectedResponse(kind: kind)
+    }
+  }
+
+  // MARK: Mission-spine WRITE drivers (NO auth_proof — the sealed session IS the channel auth)
+
+  /// Submit one Mission intake over the sealed WRITE session. SIMPLER than `dispatchAgentRun`: it
+  /// performs ONLY the handshake (the allowlisted peer pubkey is the admission) and sends the
+  /// `MissionIntakeRequest` sealed under the WRITE SESSION_AAD — it builds NO `auth_proof` (this
+  /// wire shape carries none; the server binds the write to the authenticated `--owner`). Settles
+  /// on the FIRST inbound: a `MissionIntakeResult` ⇒ returned; a typed `Error` ⇒ thrown; anything
+  /// else ⇒ fail-closed. The session nonce is unused (no possession proof to bind).
+  public func submitMissionIntake(_ request: MissionIntakeRequestWire) async throws -> MissionIntakeResultWire {
+    let transport = try makeTransport()
+    let (sessionKey, _) = try handshake(transport)
+    let msgId = "mission-intake-\(request.missionId)"
+    let env = FridayEnvelope(msgId: msgId, sentAt: now(), message: .missionIntakeRequest(request))
+      .withCorrelation(msgId)
+    try transport.sendMessage(try sealEnvelope(env, sessionKey: sessionKey))
+    let respBody: [UInt8]
+    do {
+      respBody = try transport.recvMessage()
+    } catch {
+      throw FridayWriteClientError.transport("no intake result (session ended fail-closed): \(error)")
+    }
+    let resp = try openEnvelope(respBody, sessionKey: sessionKey)
+    switch resp.message {
+    case .missionIntakeResult(let r):
+      return r
+    case .error(let code, let message):
+      throw FridayWriteClientError.serverError(code: code, message: message)
+    default:
+      throw FridayWriteClientError.unexpectedResponse(kind: dispatchKind(resp.message))
+    }
+  }
+
+  /// Submit the owner's confirm/reject for ONE pending memory candidate over the sealed WRITE
+  /// session. Like `submitMissionIntake`: handshake-only auth (NO `auth_proof`), seal the
+  /// `MemoryDecisionRequest` under the WRITE SESSION_AAD, settle on the first
+  /// `MemoryDecisionResult` (a `status:"blocked"` result is a VALID receipt the caller surfaces
+  /// honestly — NOT a thrown error), a typed `Error` is thrown, anything else fails closed.
+  public func submitMemoryDecision(_ request: MemoryDecisionRequestWire) async throws -> MemoryDecisionResultWire {
+    let transport = try makeTransport()
+    let (sessionKey, _) = try handshake(transport)
+    let msgId = "memory-decision-\(request.memoryId)"
+    let env = FridayEnvelope(msgId: msgId, sentAt: now(), message: .memoryDecisionRequest(request))
+      .withCorrelation(msgId)
+    try transport.sendMessage(try sealEnvelope(env, sessionKey: sessionKey))
+    let respBody: [UInt8]
+    do {
+      respBody = try transport.recvMessage()
+    } catch {
+      throw FridayWriteClientError.transport("no memory-decision result (session ended fail-closed): \(error)")
+    }
+    let resp = try openEnvelope(respBody, sessionKey: sessionKey)
+    switch resp.message {
+    case .memoryDecisionResult(let r):
+      return r
+    case .error(let code, let message):
+      throw FridayWriteClientError.serverError(code: code, message: message)
+    default:
+      throw FridayWriteClientError.unexpectedResponse(kind: dispatchKind(resp.message))
     }
   }
 
@@ -401,6 +493,10 @@ private func dispatchKind(_ message: FridayMessage) -> String {
   case .agentRunPaused: return "AgentRunPaused"
   case .agentRunResume: return "AgentRunResume"
   case .agentRunControlResult: return "AgentRunControlResult"
+  case .missionIntakeRequest: return "MissionIntakeRequest"
+  case .missionIntakeResult: return "MissionIntakeResult"
+  case .memoryDecisionRequest: return "MemoryDecisionRequest"
+  case .memoryDecisionResult: return "MemoryDecisionResult"
   case .unsupported(let kind): return kind
   }
 }

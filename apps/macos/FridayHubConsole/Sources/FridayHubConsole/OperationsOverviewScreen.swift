@@ -10,6 +10,8 @@ import SwiftUI
 ///  - NO mutating action, NO provider-admin exec, NO NO-GO row made executable.
 struct OperationsOverviewScreen: View {
   @ObservedObject var viewModel: OperationsOverviewViewModel
+  /// The operator-typed Mission-intake draft (the spine-WRITE compose field).
+  @State private var intentDraft: String = ""
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -111,7 +113,43 @@ struct OperationsOverviewScreen: View {
         }
         RefPill(label: "mission_id", ref: snapshot.missionId)
         RefPill(label: "friday_conversation_id", ref: snapshot.fridayConversationId)
+
+        Divider().opacity(0.3).padding(.vertical, 2)
+        missionIntakeCompose
       }
+    }
+  }
+
+  /// The spine-WRITE compose affordance — an operator types an intent and submits it as a
+  /// `MissionIntakeRequest` over the sealed WRITE seam (:48750). The result renders HONESTLY below:
+  /// pending while sent, the refs on a confirm, the questions on needs-clarification, and the truth
+  /// on an error/blocked. The button disables while in flight or on an empty draft.
+  @ViewBuilder
+  private var missionIntakeCompose: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text("Submit Mission Intent")
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundStyle(HubTheme.textSecondary)
+      HStack(spacing: 8) {
+        TextField("Describe what Friday should coordinate…", text: $intentDraft)
+          .textFieldStyle(.roundedBorder)
+          .font(.system(size: 12))
+          .disabled(viewModel.intakeState.isSent)
+        Button {
+          Task { await viewModel.submitIntake(intent: intentDraft) }
+        } label: {
+          Label("Submit Intent", systemImage: "paperplane")
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(HubTheme.cyan)
+        .disabled(
+          viewModel.intakeState.isSent
+            || intentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+      }
+      WriteActionStateView(state: viewModel.intakeState, pendingText: "Submitting intake…")
+      Text("Births a Mission + WorkItem(Draft) through the Rust spine — no model call.")
+        .font(.system(size: 10))
+        .foregroundStyle(HubTheme.textSecondary)
     }
   }
 
@@ -222,17 +260,28 @@ struct OperationsOverviewScreen: View {
       VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
         cardTitle("Memory Candidates")
         ForEach(snapshot.memoryCandidates) { candidate in
-          VStack(alignment: .leading, spacing: 4) {
-            HStack {
-              Text(candidate.preview)
-                .font(.system(size: 12))
-                .foregroundStyle(HubTheme.textPrimary)
-              Spacer()
-              StatusChip(text: "review only", bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
-            }
-            RefPill(label: "evidenceRef", ref: candidate.evidenceRef)
-          }
+          MemoryCandidateRow(
+            candidate: candidate,
+            state: viewModel.memoryDecisionStates[candidate.id] ?? .ready,
+            onConfirm: {
+              Task {
+                await viewModel.decideMemory(
+                  candidateId: candidate.id, memoryId: candidate.id, confirm: true)
+              }
+            },
+            onReject: {
+              Task {
+                await viewModel.decideMemory(
+                  candidateId: candidate.id, memoryId: candidate.id, confirm: false)
+              }
+            })
         }
+        Text(
+          "Confirm/reject drives the owner decision through the Rust spine. NOTE: the read "
+            + "projection surfaces a synthetic candidate id today — a confirm returns "
+            + "\"blocked\" until the durable memory_id is projected (rendered honestly).")
+          .font(.system(size: 10))
+          .foregroundStyle(HubTheme.textSecondary)
       }
     }
   }
@@ -299,6 +348,94 @@ struct StatusBanner: View {
         .fill(HubTheme.coralSoft)
     )
   }
+}
+
+// MARK: - Spine-WRITE controls (honest pending / confirmed / error rendering)
+
+/// Renders a `WriteActionState` AS truth — pending spinner while sent, a calm-green confirm chip +
+/// refs-only summary on success (plus any clarification questions), a coral error chip + reason on
+/// failure (incl. a server `blocked`). Never upgrades an error/blocked to a ready look.
+struct WriteActionStateView: View {
+  let state: WriteActionState
+  let pendingText: String
+
+  var body: some View {
+    switch state {
+    case .ready:
+      EmptyView()
+    case .sent:
+      HStack(spacing: 8) {
+        ProgressView().scaleEffect(0.6)
+        Text(pendingText)
+          .font(.system(size: 11))
+          .foregroundStyle(HubTheme.textSecondary)
+      }
+    case let .confirmed(summary, clarificationQuestions):
+      VStack(alignment: .leading, spacing: 4) {
+        HStack(spacing: 8) {
+          StatusChip(
+            text: clarificationQuestions.isEmpty ? "submitted" : "needs clarification",
+            bg: clarificationQuestions.isEmpty ? HubTheme.chipDoneBG : HubTheme.chipNeutralBG,
+            fg: clarificationQuestions.isEmpty ? HubTheme.chipDoneFG : HubTheme.chipNeutralFG)
+          Text(summary)
+            .font(.system(size: 11))
+            .foregroundStyle(HubTheme.textSecondary)
+            .textSelection(.enabled)
+        }
+        ForEach(clarificationQuestions, id: \.self) { question in
+          Text("• \(question)")
+            .font(.system(size: 11))
+            .foregroundStyle(HubTheme.textPrimary)
+        }
+      }
+    case let .error(reason):
+      HStack(spacing: 8) {
+        StatusChip(text: "unavailable", bg: HubTheme.chipWarnBG, fg: HubTheme.chipWarnFG)
+        Text(reason)
+          .font(.system(size: 11))
+          .foregroundStyle(HubTheme.textSecondary)
+          .textSelection(.enabled)
+      }
+    }
+  }
+}
+
+/// One memory-candidate row with the spine-WRITE confirm/reject control. The buttons drive the
+/// owner decision over the sealed WRITE seam; the per-candidate state renders AS truth (pending /
+/// confirmed / error|blocked) and the buttons disable while in flight and after a terminal outcome.
+struct MemoryCandidateRow: View {
+  let candidate: MissionWorkbenchMemoryCandidate
+  let state: WriteActionState
+  let onConfirm: () -> Void
+  let onReject: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack {
+        Text(candidate.preview)
+          .font(.system(size: 12))
+          .foregroundStyle(HubTheme.textPrimary)
+        Spacer()
+        HStack(spacing: 6) {
+          Button("Confirm", action: onConfirm)
+            .buttonStyle(.borderedProminent)
+            .tint(HubTheme.cyan)
+            .controlSize(.small)
+            .disabled(controlsDisabled)
+          Button("Reject", action: onReject)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(controlsDisabled)
+        }
+      }
+      RefPill(label: "evidenceRef", ref: candidate.evidenceRef)
+      WriteActionStateView(state: state, pendingText: "Applying decision…")
+    }
+    .padding(.vertical, 2)
+  }
+
+  /// Disabled while in flight or after a terminal outcome (a decision is applied once).
+  private var controlsDisabled: Bool { state.isSent || state.isTerminal }
 }
 
 // MARK: - Rows

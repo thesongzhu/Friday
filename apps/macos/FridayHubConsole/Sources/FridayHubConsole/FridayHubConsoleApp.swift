@@ -1,4 +1,5 @@
 import FridayHubConsoleCore
+import FridayRustClient
 import SwiftUI
 
 /// Friday Hub Console — the v1 desktop UI shell (D-PR1).
@@ -46,20 +47,23 @@ struct FridayHubConsoleApp: App {
 
   var body: some Scene {
     WindowGroup("Friday Hub Console") {
-      HubConsoleShell(client: Self.readClient)
+      HubConsoleShell(client: Self.readClient, writeClient: Self.writeClient)
     }
     .windowStyle(.titleBar)
     .defaultSize(width: 1180, height: 720)
   }
 
-  /// The read client the shell uses. DEFAULT = LIVE; MOCK only when explicitly opted in.
-  static var readClient: FridayRustReadClient {
+  /// `true` when the explicit design/demo MOCK opt-in is set. A normal run is `false` (LIVE).
+  private static var useMock: Bool {
     let args = ProcessInfo.processInfo.arguments
     let env = ProcessInfo.processInfo.environment
+    return args.contains("--use-mock-read-client") || env["FRIDAY_CONSOLE_MOCK"] == "1"
+  }
+
+  /// The read client the shell uses. DEFAULT = LIVE; MOCK only when explicitly opted in.
+  static var readClient: FridayRustReadClient {
     // MOCK is an explicit design/demo opt-in only (re-adopting #682's `--use-mock-read-client`
     // flag, mirrored by an env for arg/env symmetry). A normal run NEVER takes this branch.
-    let useMock =
-      args.contains("--use-mock-read-client") || env["FRIDAY_CONSOLE_MOCK"] == "1"
     if useMock {
       return MockReadClient(behavior: .loaded)
     }
@@ -71,6 +75,23 @@ struct FridayHubConsoleApp: App {
       return try RealReadClientFactory.makeLive()
     } catch {
       return RealReadClientFactory.makeHonestlyUnavailable(reason: "\(error)")
+    }
+  }
+
+  /// The mission-spine WRITE client the shell uses (Lane-D entry-point-A). Mirrors `readClient`:
+  /// DEFAULT = LIVE (the enrolled master-derived peer targeting the agent-run WRITE server on
+  /// 48750 as `admin-001`), honest-unavailable on master-key failure (NEVER a fabricated confirm).
+  ///
+  /// In MOCK/design mode there is NO write seam — `nil` — so the compose/confirm controls render
+  /// honest-unavailable rather than pretending to write against mock read data. The actual connect
+  /// happens only when the operator submits an intake / decides a memory candidate (non-blocking
+  /// at launch).
+  static var writeClient: FridayMissionSpineWriteClient? {
+    if useMock { return nil }
+    do {
+      return try RealWriteClientFactory.makeLiveWrite()
+    } catch {
+      return RealWriteClientFactory.makeHonestlyUnavailableWrite(reason: "\(error)")
     }
   }
 }
