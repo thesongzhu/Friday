@@ -96,7 +96,7 @@
 //! marker writes are flag-INDEPENDENT (see the no-degrade posture above), but the WorkItem-status
 //! timing is UNCHANGED vs pre-#24b (binding driven after the loop).
 
-use friday_core::WorkItemStatus;
+use friday_core::{WorkItemStatus, WorkflowRunState};
 use friday_storage::{Db, StorageError};
 
 /// The env flag that gates boot-time crash-recovery reconciliation. DEFAULT-OFF.
@@ -297,6 +297,98 @@ pub fn reconcile_orphaned_work_items(
             Err(_e) => {
                 eprintln!(
                     "hub_agent_run_server: crash-recovery could not abort an orphaned WorkItem (skipping)"
+                );
+                outcome.skipped += 1;
+            }
+        }
+    }
+
+    Ok(outcome)
+}
+
+/// The deterministic id PREFIX of a scheduled workflow run (`sched:<schedule_id>:<slot_ts>` —
+/// see `crate::scheduler::scheduled_run_id`). Boot crash-recovery scopes its scheduled-run
+/// reconcile to EXACTLY this prefix so it never touches a manually-dispatched workflow run
+/// (which has no scheduler-tick owner and a different id shape).
+const SCHEDULED_RUN_ID_PREFIX: &str = "sched:";
+
+/// Reconcile orphaned SCHEDULED workflow runs at boot (registry gap #784(b) — the scheduler-tick
+/// flip-precondition).
+///
+/// A scheduled workflow run is keyed by the deterministic id `sched:<schedule_id>:<slot_ts>` and
+/// executes SYNCHRONOUSLY inside ONE scheduler tick (`scheduler_tick::run_one_tick_live` calls
+/// `run_stored_published_workflow` inline; the run reaches `Done` / `Failed` / `AwaitingCheckpoint`
+/// before that tick returns). So `Pending`/`Running` is NEVER a durable rest state for a scheduled
+/// run — a scheduled run found in `Pending`/`Running` at boot is one the daemon was mid-tick on when
+/// it DIED. Unlike a mission WorkItem (which `reconcile_orphaned_work_items` covers), an orphaned
+/// scheduled run has NO reconciliation path today: the tick's receipt layer heals the FIRE RECEIPT
+/// forward (`recovered_orphan_run`) but never the orphaned `workflow_run` row, so it stays
+/// non-terminal forever. That PERMANENTLY WEDGES the schedule, because the tick's serialization guard
+/// (`previous_fire_non_terminal`) reads the prior fire's run state and refuses to fire while it is
+/// non-terminal — every future slot becomes `skipped_previous_awaiting`. This sweep closes that gap
+/// by advancing each such orphan to the terminal `Failed` state via the LEGAL `set_run_state`
+/// transition (`Pending -> Failed` / `Running -> Failed` are both valid core edges), so the next tick
+/// is free to fire again. This is fail-STOPPED (a wedge stops firing — it never double-fires nor
+/// loses data), so the reconcile is a robustness precondition, not a safety hole.
+///
+/// SCOPE (NO-DEGRADE):
+/// * Only `Pending`/`Running` — `AwaitingCheckpoint` is a LEGITIMATE pause (a deny-all-approved
+///   mutating step under the dark scheduler's deny-all policy), NOT a crash artifact, and is left
+///   untouched. The read filter excludes it in SQL.
+/// * Only the `sched:` id prefix — a manually-dispatched workflow run is never touched.
+/// * UNCONDITIONAL on age (no staleness window). This sweep runs ONCE at boot, BEFORE the scheduler
+///   tick thread is spawned (see `run_boot_crash_recovery` ordering), so THIS daemon owns NO live
+///   tick yet — any `Pending`/`Running` `sched:` run that already exists in the DB is unambiguously a
+///   DEAD orphan from a prior process, never a run a live tick is currently driving. A staleness
+///   window would be WRONG here: the common crash is a FAST launchd restart (the `SQLITE_BUSY` /
+///   `init_failed` crash-loop restarts in seconds), so a freshly-orphaned run (`updated_at` only
+///   seconds old) is the NORMAL case and MUST be reconciled — skipping it on an age threshold would
+///   re-wedge the schedule exactly when this fix is supposed to unwedge it. Prod is a SINGLE launchd
+///   hub (a second concurrent hub against the same DB is a forbidden config), so there is no live
+///   peer tick to protect from at boot; the single-instance scheduler lease + the boot-before-tick
+///   ordering already cover the supported topology. (A genuine multi-daemon-safe reconcile would be a
+///   separate lease-aware design, not this slice.)
+///
+/// FAIL-SAFE: a scan-level read error returns `Err` (the caller LOGS + SWALLOWS it — boot is never
+/// blocked). A per-row transition failure (e.g. a racing terminal write) is logged + counted in
+/// `skipped`; the sweep continues. IDEMPOTENT: a reconciled run is now `Failed` (terminal), so a
+/// second sweep finds nothing.
+pub fn reconcile_orphaned_scheduled_runs(
+    db: &Db,
+    now_ms: i64,
+) -> Result<ReconcileOutcome, StorageError> {
+    // Reconcile every in-flight `sched:` run that exists at boot — UNCONDITIONAL on age. The cutoff is
+    // `now_ms` (not `now_ms - threshold`): no existing row can have a future `updated_at`, so this
+    // catches a run orphaned even a fraction of a second ago (the fast-restart crash-loop case). At
+    // boot this daemon owns no live tick, so a fresh `Pending`/`Running` run is a dead orphan, not a
+    // live one to spare. (Reusing the bounded helper keeps the `Pending`/`Running`-only + `sched:`
+    // filters in one tested SQL read.)
+    let orphans = friday_storage::workflow::in_flight_runs_with_prefix_before(
+        db.conn(),
+        SCHEDULED_RUN_ID_PREFIX,
+        now_ms,
+    )?;
+    let mut outcome = ReconcileOutcome {
+        scanned: orphans.len(),
+        ..ReconcileOutcome::default()
+    };
+
+    for (run_id, _state, _updated_at) in orphans {
+        // Advance to the terminal `Failed` via the LEGAL core transition (`Pending`/`Running ->
+        // Failed`). `set_run_state` re-reads the current state and validates the edge, so a row that
+        // a racing tick just drove terminal (Done/Failed/Cancelled) is refused here and counted
+        // `skipped` — never a double-write or an illegal hop.
+        match friday_storage::workflow::set_run_state(
+            db.conn(),
+            &run_id,
+            WorkflowRunState::Failed,
+            now_ms,
+        ) {
+            Ok(()) => outcome.aborted += 1,
+            Err(_e) => {
+                // Category only — never the run id / row contents.
+                eprintln!(
+                    "hub_agent_run_server: crash-recovery could not abort an orphaned scheduled run (skipping)"
                 );
                 outcome.skipped += 1;
             }

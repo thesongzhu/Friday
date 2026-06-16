@@ -807,10 +807,12 @@ fn retention_sweep_enabled_from(raw: Option<&str>) -> bool {
 
 /// Spawn the DARK session-lifecycle reaper tick on its OWN thread + OWN DB connection.
 ///
-/// The thread opens a SEPARATE `Db::open_hub` connection (NOT the accept-loop's, never
-/// shared across threads, and deliberately NOT `open_hub_concurrent` — that flips the prod
-/// DB to WAL persistently, which is an operator live-flip, not a dark deploy) and calls
-/// `sweep_lifecycle` every [`SESSION_REAPER_INTERVAL`]. Errors (a failed open, or a failed
+/// The thread opens a SEPARATE `Db::open_hub` connection (NOT the accept-loop's, never shared
+/// across threads). `Db::open_hub` IS the concurrency-safe opener (`open_hub_concurrent`: WAL +
+/// `HUB_BUSY_TIMEOUT_MS` busy_timeout + the bounded busy-retry on open), so this thread's writes
+/// retry under contention instead of failing immediately — the same WAL/busy-retry posture every
+/// other Hub writer uses. It calls `sweep_lifecycle` every [`SESSION_REAPER_INTERVAL`]. Errors (a
+/// failed open, or a failed
 /// sweep) are LOGGED and the loop continues — the reaper never panics the daemon. A
 /// non-empty sweep logs its per-transition counts (refs-only: counts, never session bodies).
 ///
@@ -929,8 +931,10 @@ fn scheduler_tick_enabled_from(raw: Option<&str>) -> bool {
 }
 
 /// Spawn the DARK scheduler TICK engine on its OWN thread + OWN DB connection (mirrors the reaper:
-/// `Db::open_hub`, NOT `open_hub_concurrent` — the persistent WAL flip is an operator live-flip, not
-/// a dark deploy). On every [`SCHEDULER_TICK_INTERVAL`] it:
+/// `Db::open_hub`, which IS the concurrency-safe `open_hub_concurrent` — WAL + `HUB_BUSY_TIMEOUT_MS`
+/// busy_timeout + a bounded busy-retry on open — so a tick write under contention RETRIES instead of
+/// failing/corrupting, the same posture every other Hub writer uses; the one-time WAL flip is a no-op
+/// once the prod file is already WAL). On every [`SCHEDULER_TICK_INTERVAL`] it:
 ///   1. acquires/refreshes the SINGLE-INSTANCE lease (`acquire_lease`) for this holder. If another
 ///      LIVE holder owns it, this instance stands down for the tick (the containment layer — exactly
 ///      one daemon may tick at a time). A crashed holder's expired lease is superseded.
@@ -1068,6 +1072,27 @@ fn run_boot_crash_recovery(db_path: &str) {
         Err(_e) => {
             eprintln!(
                 "hub_agent_run_server: crash-recovery reconcile failed (continuing — boot is not blocked)"
+            );
+        }
+    }
+    // (#784(b)) ALSO reconcile orphaned SCHEDULED workflow runs to `Failed`. A scheduled run executes
+    // synchronously inside one scheduler tick, so a `Pending`/`Running` `sched:` run at boot is a
+    // daemon that DIED mid-tick; left non-terminal it permanently WEDGES its schedule (the tick's
+    // serialization guard refuses to fire while a prior run is non-terminal). This runs BEFORE the
+    // scheduler tick thread is spawned, so a cleared wedge fires again on the first post-boot tick.
+    // Same fail-safe posture as the WorkItem sweep — a scan/per-row error is logged + swallowed.
+    match friday_hub::crash_recovery::reconcile_orphaned_scheduled_runs(&db, now_ms) {
+        Ok(outcome) if !outcome.is_empty() => {
+            eprintln!(
+                "hub_agent_run_server: crash-recovery scheduled-run reconcile aborted={} skipped={}",
+                outcome.aborted, outcome.skipped,
+            );
+        }
+        // No orphaned scheduled runs (the common case) — stay quiet to avoid boot log spam.
+        Ok(_) => {}
+        Err(_e) => {
+            eprintln!(
+                "hub_agent_run_server: crash-recovery scheduled-run reconcile failed (continuing — boot is not blocked)"
             );
         }
     }

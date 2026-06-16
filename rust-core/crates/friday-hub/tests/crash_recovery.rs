@@ -548,3 +548,174 @@ fn pass2_exactly_at_threshold_is_stale_and_reconciled() {
     );
     assert_eq!(status_of(&db2, "wi-edge2"), WorkItemStatus::ProviderWaiting);
 }
+
+// ── #784(b): boot reconcile of orphaned SCHEDULED workflow runs ───────────────────────────────
+// A scheduled run executes synchronously inside one tick, so a `Pending`/`Running` `sched:` run at
+// boot is a daemon that DIED mid-tick. Left non-terminal it permanently WEDGES its schedule (the
+// tick's serialization guard refuses to fire while a prior fire is non-terminal). The boot sweep
+// (run BEFORE the tick thread is spawned, so this daemon owns no live tick) advances such a run to
+// `Failed` UNCONDITIONALLY on age — so a FAST-restart orphan (`updated_at` seconds old, the common
+// crash-loop case) is unwedged too — without ever touching a legit pause (`AwaitingCheckpoint`) or a
+// non-scheduler run.
+
+use friday_core::WorkflowRunState;
+use friday_hub::crash_recovery::reconcile_orphaned_scheduled_runs;
+
+/// Seed a workflow run at `run_id` in `state`, with `updated_at` stamped at `updated_at_ms`. Used to
+/// stand up a crash orphan (the daemon died mid-tick, leaving the run non-terminal).
+fn seed_run_at(db: &Db, run_id: &str, state: WorkflowRunState, updated_at_ms: i64) {
+    friday_storage::workflow::create_run(db.conn(), run_id, "wf-sched", updated_at_ms).unwrap();
+    // Walk to the requested non-terminal state via legal edges, keeping `updated_at` at the stamp.
+    match state {
+        WorkflowRunState::Pending => {}
+        WorkflowRunState::Running => {
+            friday_storage::workflow::set_run_state(
+                db.conn(),
+                run_id,
+                WorkflowRunState::Running,
+                updated_at_ms,
+            )
+            .unwrap();
+        }
+        WorkflowRunState::AwaitingCheckpoint => {
+            friday_storage::workflow::set_run_state(
+                db.conn(),
+                run_id,
+                WorkflowRunState::Running,
+                updated_at_ms,
+            )
+            .unwrap();
+            friday_storage::workflow::set_run_state(
+                db.conn(),
+                run_id,
+                WorkflowRunState::AwaitingCheckpoint,
+                updated_at_ms,
+            )
+            .unwrap();
+        }
+        other => panic!("seed_run_at only seeds non-terminal states, got {other:?}"),
+    }
+}
+
+/// Seed a crash orphan whose `updated_at` is OLD (a daemon down for a while). `RECONCILE_AT` is the
+/// boot time; the orphan is stamped well before it.
+fn seed_stale_run(db: &Db, run_id: &str, state: WorkflowRunState) {
+    seed_run_at(
+        db,
+        run_id,
+        state,
+        RECONCILE_AT - EXECUTION_STATE_STALE_THRESHOLD_MS - 10_000,
+    );
+}
+
+fn run_state_of(db: &Db, run_id: &str) -> WorkflowRunState {
+    friday_storage::workflow::run_state(db.conn(), run_id)
+        .unwrap()
+        .unwrap()
+}
+
+#[test]
+fn scheduled_reconcile_aborts_stale_pending_and_running_sched_runs_to_failed() {
+    let db = Db::open_hub(&temp_db("sched-orphan")).unwrap();
+    seed_stale_run(&db, "sched:s1:600000", WorkflowRunState::Pending);
+    seed_stale_run(&db, "sched:s2:600000", WorkflowRunState::Running);
+
+    let outcome = reconcile_orphaned_scheduled_runs(&db, RECONCILE_AT).unwrap();
+    assert_eq!(outcome.scanned, 2);
+    assert_eq!(outcome.aborted, 2, "both stale orphans are reconciled");
+    assert_eq!(outcome.skipped, 0);
+    // Both are now terminal `Failed` ⇒ the schedule's serialization guard unblocks.
+    assert_eq!(
+        run_state_of(&db, "sched:s1:600000"),
+        WorkflowRunState::Failed
+    );
+    assert_eq!(
+        run_state_of(&db, "sched:s2:600000"),
+        WorkflowRunState::Failed
+    );
+}
+
+#[test]
+fn scheduled_reconcile_leaves_awaiting_checkpoint_untouched() {
+    // A deny-all-paused mutating step rests at `AwaitingCheckpoint` — a LEGITIMATE pause, NOT a
+    // crash artifact. Reconciling it would kill a live paused run (a degrade). It must survive.
+    let db = Db::open_hub(&temp_db("sched-pause")).unwrap();
+    seed_stale_run(&db, "sched:s1:600000", WorkflowRunState::AwaitingCheckpoint);
+
+    let outcome = reconcile_orphaned_scheduled_runs(&db, RECONCILE_AT).unwrap();
+    assert_eq!(
+        outcome.scanned, 0,
+        "awaiting_checkpoint is not a scan candidate"
+    );
+    assert_eq!(outcome.aborted, 0);
+    assert_eq!(
+        run_state_of(&db, "sched:s1:600000"),
+        WorkflowRunState::AwaitingCheckpoint,
+        "a legit pause is left byte-for-byte untouched"
+    );
+}
+
+#[test]
+fn scheduled_reconcile_leaves_non_scheduler_runs_untouched() {
+    // A manually-dispatched workflow run (no `sched:` prefix) has no scheduler-tick owner and must
+    // never be touched by the scheduled-run sweep.
+    let db = Db::open_hub(&temp_db("sched-manual")).unwrap();
+    seed_stale_run(&db, "manual-run-1", WorkflowRunState::Running);
+
+    let outcome = reconcile_orphaned_scheduled_runs(&db, RECONCILE_AT).unwrap();
+    assert_eq!(
+        outcome.scanned, 0,
+        "a non-sched run is not a scan candidate"
+    );
+    assert_eq!(outcome.aborted, 0);
+    assert_eq!(run_state_of(&db, "manual-run-1"), WorkflowRunState::Running);
+}
+
+#[test]
+fn scheduled_reconcile_reconciles_a_fresh_orphan_from_a_fast_restart() {
+    // THE regression guard for the staleness-cutoff bug: the COMMON crash is a FAST launchd restart
+    // (the SQLITE_BUSY / init_failed crash-loop restarts in seconds), so the orphan's `updated_at` is
+    // only ~60s old at boot. Because boot recovery runs BEFORE the tick spawns, this daemon owns no
+    // live tick — the fresh `Running` run is a DEAD orphan, NOT a live run to spare. It MUST be
+    // reconciled, or the schedule re-wedges exactly when this fix should unwedge it. (An age-threshold
+    // skip here would be the bug.)
+    let db = Db::open_hub(&temp_db("sched-fast-restart")).unwrap();
+    // Orphaned ~60s before this boot — far inside any plausible staleness window.
+    seed_run_at(
+        &db,
+        "sched:s1:600000",
+        WorkflowRunState::Running,
+        RECONCILE_AT - 60_000,
+    );
+
+    let outcome = reconcile_orphaned_scheduled_runs(&db, RECONCILE_AT).unwrap();
+    assert_eq!(outcome.scanned, 1);
+    assert_eq!(
+        outcome.aborted, 1,
+        "a fast-restart orphan IS reconciled (no age gate at boot)"
+    );
+    assert_eq!(
+        run_state_of(&db, "sched:s1:600000"),
+        WorkflowRunState::Failed,
+        "the freshly-orphaned run is unwedged ⇒ the next tick can fire"
+    );
+}
+
+#[test]
+fn scheduled_reconcile_is_idempotent_second_sweep_is_a_noop() {
+    let db = Db::open_hub(&temp_db("sched-idem")).unwrap();
+    seed_stale_run(&db, "sched:s1:600000", WorkflowRunState::Pending);
+
+    let first = reconcile_orphaned_scheduled_runs(&db, RECONCILE_AT).unwrap();
+    assert_eq!(first.aborted, 1);
+    assert_eq!(
+        run_state_of(&db, "sched:s1:600000"),
+        WorkflowRunState::Failed
+    );
+
+    // The run is now terminal `Failed` ⇒ excluded from the in-flight scan ⇒ a second sweep is a no-op.
+    let second = reconcile_orphaned_scheduled_runs(&db, RECONCILE_AT).unwrap();
+    assert_eq!(second.scanned, 0);
+    assert_eq!(second.aborted, 0);
+    assert!(second.is_empty());
+}
