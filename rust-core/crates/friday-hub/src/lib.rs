@@ -4449,8 +4449,16 @@ pub fn run_loop_with_policy(
 /// Boot crash-recovery PASS-2 (gated under `FRIDAY_CRASH_RECOVERY`) reconciles a
 /// `ProviderRouted`/`ProviderWaiting` row left `executing == 1` with a STALE heartbeat after a
 /// mid-call crash; a row this loop cleared (`executing == 0`) is NEVER touched.
+///
+/// ## Why `pub` (not `pub(crate)`)
+/// This is `pub` (additive, no behavior change) so the out-of-crate `cheap_vs_strong_ab` A/B
+/// harness bin can drive the loop with each cheap→stronger mechanism's flag INJECTED as a pure
+/// bool (`rich_prompt_enabled`, `self_critique_enabled`) and the `escalation_client` passed
+/// directly — i.e. a DETERMINISTIC, env-free, per-arm comparison that never mutates `std::env`.
+/// Every production caller still goes through [`run_loop_with_policy`] (which reads the flags
+/// from env once and forwards them here), so prod behavior is unchanged.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run_loop_with_policy_flagged(
+pub fn run_loop_with_policy_flagged(
     client: &dyn AgentLlmClient,
     executor: &dyn ToolExecutor,
     conn: &Connection,
