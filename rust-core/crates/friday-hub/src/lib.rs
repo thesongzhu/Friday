@@ -4171,6 +4171,17 @@ fn rich_operating_guidance() -> &'static str {
 ///   answer REGARDLESS of whether it now passes (never a verify loop). A re-prompt that errors /
 ///   does not parse to a `Finish` / parses to a tool call FALLS BACK to the ORIGINAL answer, so
 ///   the critique can NEVER produce a worse outcome than no-critique (structural no-degrade).
+/// - GROUNDING-AWARE (anti-fabrication). The deterministic check ([`answer_passes_done_criteria`])
+///   ACCEPTS a grounded honest-negative — an answer that explicitly says a required artifact does
+///   not exist / could not be found — so the loop never forces a critique that would pressure the
+///   model into FABRICATING a concrete-but-false answer just to make a missing artifact token
+///   appear. The re-prompt ([`build_self_critique_prompt`]) likewise forbids inventing files /
+///   paths / code / facts and explicitly endorses an honest "it does not exist / I could not
+///   verify X" as an acceptable final answer. This closes a real degrade proven by a live A/B
+///   (run #791): on a read task over an empty workspace the structural-only gate rejected the
+///   honest answer ("src/limiter.rs does not exist") and the old re-prompt drove the model to
+///   fabricate file contents to satisfy the token — a WORSE outcome than no-critique. With the
+///   grounding awareness, flag-ON is never worse than flag-OFF for an honest answer.
 /// - The re-prompt is a real model call, BILLED through the same [`bill_model_call`] path under a
 ///   DISTINCT id namespace (a reserved sentinel turn index, see [`CRITIQUE_BILL_TURN`]) so it
 ///   never PK-collides with a real turn's ledger/receipt/audit rows — the extra spend is honest
@@ -4259,8 +4270,41 @@ const CRITIQUE_BILL_TURN: u64 = u64::MAX;
 /// criterion beyond the lowercased copies) — deterministic and cheap. With `criteria` empty the
 /// caller never invokes this (the whole block is guarded on non-empty criteria), but for safety an
 /// empty-criteria call returns `true` (nothing to check ⇒ accept).
+///
+/// GROUNDING-AWARE ESCAPE (anti-fabrication). A missing required-artifact token does NOT fail the
+/// check when the answer carries a GROUNDED HONEST-NEGATIVE marker — an explicit statement that the
+/// thing does not exist / could not be found (see [`is_grounded_honest_negative`]). RATIONALE: on a
+/// read/factual task over an empty workspace the model's truthful answer is exactly that the
+/// artifact does not exist; the structural-only gate would reject it and the re-prompt would then
+/// pressure the model to FABRICATE a concrete-but-false answer to make the token appear (proven by
+/// the live A/B in the flag's doc comment, run #791). Accepting the honest-negative keeps flag-ON
+/// no worse than flag-OFF for an honest answer. The empty/whitespace rejection (rule 1) is
+/// UNCHANGED — an empty answer is never an honest-negative, it is just deficient.
+///
+/// STEM-BOUND ESCAPE (precision). The escape is NOT a global marker scan: it accepts only when the
+/// honest-negative is plausibly ABOUT the missing artifact. At the escape point we already know the
+/// exact missing token, so we require BOTH (a) an honest-negative marker is present AND (b) the
+/// answer mentions a DISTINCTIVE STEM of the missing token (its final path component without
+/// directory or extension — `src/limiter.rs` ⇒ `limiter`, `report.md` ⇒ `report`,
+/// `https://x/y.json` ⇒ `y`). This rejects an incidental marker that is about something else (e.g.
+/// a completion-asserting answer that happens to say "a 404 not found" while silently omitting the
+/// required `src/limiter.rs`) while still accepting the genuine honest answer ("the limiter file
+/// does not exist"). Residual masking across criteria is thereby greatly reduced — a marker only
+/// rescues the token whose stem co-occurs with it.
+///
+/// OVER-REJECT IS HARMLESS (no-degrade). A false-REJECT here only fires the ONE bounded
+/// self-critique re-prompt, which now EXPLICITLY forbids fabrication and tells the model a grounded
+/// "it does not exist" is an acceptable final answer (see [`build_self_critique_prompt`]); the worst
+/// case is one extra metered turn that re-affirms the honest answer. Only a false-ACCEPT (silently
+/// suppressing a legitimate critique of a deficient answer) is a real defect, so the escape is
+/// tuned toward precision: it rejects incidental markers. Two deterministic stem edge cases are
+/// accepted as safe: a token with no `/` or `.` (e.g. `last_refill`) has stem == token, so the
+/// stem-check collapses to the already-required full-token check (escape effectively unavailable ⇒
+/// over-reject ⇒ harmless); and a too-short stem (< 3 chars, e.g. the `y` of `https://x/y.json`)
+/// would match almost anything, so it falls back to requiring the full token rather than reopening
+/// a looseness hole. Matching stays allocation-light fixed-substring over the pre-lowercased copy.
 fn answer_passes_done_criteria(answer: &str, criteria: &[String]) -> bool {
-    // (1) Empty/whitespace-only finish answer is always deficient.
+    // (1) Empty/whitespace-only finish answer is always deficient (never an honest-negative).
     if answer.trim().is_empty() {
         return false;
     }
@@ -4282,11 +4326,98 @@ fn answer_passes_done_criteria(answer: &str, criteria: &[String]) -> bool {
                 && !token.contains(char::is_whitespace)
                 && token.chars().any(|c| matches!(c, '/' | '.' | '_'));
             if is_artifact_like && !answer_lc.contains(&token.to_lowercase()) {
+                // GROUNDING-AWARE escape: a missing artifact token is NOT a deficiency when the
+                // answer explicitly says THIS artifact does not exist / could not be found. This
+                // prevents the gate from forcing a critique that would push the model to fabricate
+                // a concrete-but-false answer (run #791 A/B). The escape is BOUND to the missing
+                // `token` (its stem must co-occur with the marker) so an incidental marker about
+                // something else does not wrongly rescue a deficient answer. Reuses the lowercased
+                // answer; `token` is the original-case missing token.
+                if is_grounded_honest_negative(&answer_lc, token) {
+                    return true;
+                }
                 return false;
             }
         }
     }
     true
+}
+
+/// DETERMINISTIC, allocation-light detector of a GROUNDED HONEST-NEGATIVE that is ABOUT a specific
+/// missing artifact, in an already-lowercased answer: an explicit statement that the required
+/// artifact named by `missing_token` does NOT exist or could NOT be located. Used by
+/// [`answer_passes_done_criteria`] so the structural gate ACCEPTS an honest "it doesn't exist"
+/// instead of forcing a critique that would pressure the model into fabrication — but ONLY when the
+/// negative is plausibly about THIS artifact, not an incidental marker about something else.
+///
+/// Accepts iff BOTH hold:
+///  - (a) MARKER PRESENT. An honest-negative marker (the narrow non-existence / could-not-find
+///    family below) appears anywhere in the answer. Each marker asserts the NON-EXISTENCE or
+///    UNLOCATABILITY of a concrete thing; none is a generic capability hedge:
+///      - `does not exist` / `doesn't exist` / `do not exist` — direct non-existence.
+///      - `no such file` — the canonical "the path is not there" phrasing.
+///      - `not found` / `could not find` / `couldn't find` / `cannot find` / `can't find` /
+///        `unable to find` / `unable to locate` — the artifact could not be located.
+///
+///    DELIBERATELY EXCLUDED: bare `unable to` / `cannot` / `can't` (a generic "I couldn't fully X,
+///    but here is a partial result" is NOT an honest-negative). The capability markers are SCOPED
+///    to `... find` / `... locate`.
+///  - (b) STEM CO-OCCURS. The answer mentions a DISTINCTIVE STEM of `missing_token` — its final
+///    path component with any extension stripped (`src/limiter.rs` ⇒ `limiter`, `report.md` ⇒
+///    `report`, `https://x/y.json` ⇒ `y`). This binds the negative to the missing artifact so a
+///    stray "404 not found" about an unrelated endpoint does NOT rescue a deficient answer.
+///
+/// STEM EDGE CASES (both fail SAFE toward over-reject, which is harmless — see
+/// [`answer_passes_done_criteria`] doc):
+///  - A token with no `/` or `.` (e.g. `last_refill`) has stem == token. The caller only reaches
+///    here when the FULL token is already absent, so the stem-check is then unsatisfiable and the
+///    escape is effectively unavailable for such a token ⇒ it over-rejects ⇒ harmless re-prompt.
+///  - A too-short stem (< [`MIN_STEM_LEN`] chars, e.g. the `y` of `https://x/y.json`) would match
+///    almost any prose, so we DECLINE to use it and require the full token instead — never
+///    reopening a looseness hole. (`y.json` itself, with the `.`, would also be unsatisfiable here.)
+///
+/// All matching is case-insensitive fixed-substring on the caller's pre-lowercased `answer_lc` (no
+/// regex); the only allocation is the lowercased stem (≤ one short String).
+fn is_grounded_honest_negative(answer_lc: &str, missing_token: &str) -> bool {
+    const HONEST_NEGATIVE_MARKERS: &[&str] = &[
+        "does not exist",
+        "doesn't exist",
+        "do not exist",
+        "no such file",
+        "not found",
+        "could not find",
+        "couldn't find",
+        "cannot find",
+        "can't find",
+        "unable to find",
+        "unable to locate",
+    ];
+    /// Minimum stem length that is distinctive enough to bind a marker to the missing artifact;
+    /// shorter stems (e.g. a single-letter URL path segment) match too much, so we fall back to
+    /// requiring the full token (over-reject, harmless).
+    const MIN_STEM_LEN: usize = 3;
+
+    // (a) Is any honest-negative marker present at all?
+    if !HONEST_NEGATIVE_MARKERS
+        .iter()
+        .any(|m| answer_lc.contains(m))
+    {
+        return false;
+    }
+    // (b) Is the missing artifact's distinctive stem mentioned, binding the negative to THIS token?
+    //     Stem = final `/`-segment, then everything before the last `.` (drop the extension).
+    let last_segment = missing_token.rsplit('/').next().unwrap_or(missing_token);
+    let stem = match last_segment.rfind('.') {
+        // `report.md` ⇒ `report`; a leading-dot-only `.env` (rfind == 0) keeps the whole segment.
+        Some(dot) if dot > 0 => &last_segment[..dot],
+        _ => last_segment,
+    };
+    if stem.len() < MIN_STEM_LEN {
+        // Stem too short to be distinctive ⇒ do not rescue on it (require the full token, which the
+        // caller already found absent), so this over-rejects rather than false-accepts.
+        return false;
+    }
+    answer_lc.contains(&stem.to_lowercase())
 }
 
 /// Build the ONE bounded self-critique re-prompt handed to the model when
@@ -4297,6 +4428,15 @@ fn answer_passes_done_criteria(answer: &str, criteria: &[String]) -> bool {
 /// toward a tool; it only asks the model to revise to meet the stated criteria. The original task
 /// is folded in so the revision is grounded (the loop's `history` reaches the model too, but the
 /// task itself is the surest anchor for a fair revision — and a fair eventual quality A/B).
+///
+/// GROUNDING-AWARE (anti-fabrication). The re-prompt EXPLICITLY forbids inventing files, paths,
+/// code, or facts and tells the model that if a required artifact genuinely does not exist or
+/// cannot be verified from the available workspace/tools, it must say so plainly — a grounded
+/// honest "it does not exist / I could not verify X" is an ACCEPTABLE final answer and is
+/// STRONGLY PREFERRED over fabricating content to satisfy a criterion. This replaces the old
+/// "reference the concrete artifacts … carry forward the real content (never a placeholder)"
+/// wording, which read as "make the token appear no matter what" and drove a real fabrication in
+/// the run #791 A/B. The finish contract and structure are unchanged.
 fn build_self_critique_prompt(task: &str, rejected_answer: &str, criteria: &[String]) -> String {
     let mut criteria_block = String::new();
     for c in criteria {
@@ -4316,9 +4456,15 @@ fn build_self_critique_prompt(task: &str, rejected_answer: &str, criteria: &[Str
          Your proposed final answer was:\n\
          {rejected_answer}\n\
          \n\
-         Revise your final answer so it satisfies every completion criterion above: do not leave \
-         it empty, reference the concrete artifacts the criteria require, and carry forward the \
-         real content (never a placeholder). Reply with the SAME finish object as before — \
+         Revise your final answer so it satisfies every completion criterion above, using ONLY \
+         what you can actually verify from the workspace and tools. Do NOT invent files, paths, \
+         code, or facts: never write content for an artifact you have not confirmed exists. If a \
+         required artifact genuinely does not exist, or you cannot verify it from what is \
+         available, SAY SO EXPLICITLY — a grounded, honest answer such as \"that file does not \
+         exist\" or \"I could not verify X\" is an acceptable and PREFERRED final answer; it is \
+         far better than fabricating content to satisfy a criterion. Where the criteria DO refer \
+         to artifacts you have genuinely confirmed, carry their real content forward (never a \
+         placeholder). Reply with the SAME finish object as before — \
          {{\"tool\": \"none\", \"answer\": \"<your revised final answer>\"}}.\n"
     )
 }
@@ -7332,6 +7478,135 @@ mod tests {
         ));
         // Empty criteria ⇒ accept (defensive; the caller guards on non-empty anyway).
         assert!(answer_passes_done_criteria("anything", &[]));
+    }
+
+    #[test]
+    fn answer_passes_done_criteria_accepts_grounded_honest_negative() {
+        // (a) GROUNDING-AWARE, STEM-BOUND escape: an honest answer that a required artifact does NOT
+        // exist PASSES — the gate does not force a critique that would pressure the model into
+        // fabricating content (the run #791 A/B defect). The criterion names two artifact-like
+        // tokens; the answer omits the FULL path `src/limiter.rs` (⇒ that token is the missing
+        // trigger) but mentions its distinctive STEM `limiter` alongside a non-existence marker, so
+        // the stem-bound escape binds the negative to THIS artifact and accepts.
+        assert!(answer_passes_done_criteria(
+            "the workspace is empty; the limiter file does not exist",
+            &["src/limiter.rs defines last_refill".to_string()]
+        ));
+        // The full marker family is recognized. Each fixture mentions the missing token's stem
+        // (`report` for `report.md`) WITHOUT echoing the full token `report.md` (verified below), so
+        // each PASSES strictly via the stem-bound honest-negative escape — not by accident of
+        // full-token presence — proving every marker actually reaches and satisfies the new branch.
+        for honest in [
+            "no such file as the report in the workspace",
+            "I could not find the report file anywhere",
+            "couldn't find the report in the tree",
+            "the requested report was not found",
+            "the report you asked about doesn't exist",
+            "I was unable to locate the report",
+        ] {
+            assert!(
+                !honest.contains("report.md"),
+                "fixture must NOT echo the full token, else it passes via presence not the escape: {honest}"
+            );
+            assert!(
+                honest.contains("report"),
+                "fixture must mention the stem so the stem-bound escape is what accepts it: {honest}"
+            );
+            assert!(
+                answer_passes_done_criteria(honest, &["produce report.md".to_string()]),
+                "stem-bound honest-negative should PASS: {honest}"
+            );
+        }
+    }
+
+    #[test]
+    fn answer_passes_done_criteria_rejects_incidental_marker_not_about_missing_artifact() {
+        // PRECISION (the reviewer's exact false-accept). A completion-asserting, genuinely deficient
+        // answer that incidentally contains an honest-negative marker about something ELSE must NOT
+        // be rescued. Criterion requires `src/limiter.rs`; the answer omits it (and its stem
+        // `limiter`) and only says "404 not found" about an unrelated endpoint. The stem of the
+        // missing token (`limiter`) is absent ⇒ the escape declines ⇒ the gate FAILS ⇒ the
+        // anti-fabrication critique correctly fires (no silent suppression).
+        let incidental =
+            "Everything is done; the old endpoint returned a 404 not found but I handled it.";
+        assert!(
+            incidental.contains("not found"),
+            "fixture must carry a marker, else it would fail trivially without exercising the bind"
+        );
+        assert!(
+            !incidental.to_lowercase().contains("limiter"),
+            "fixture must NOT mention the missing artifact's stem, else it would legitimately pass"
+        );
+        assert!(
+            !answer_passes_done_criteria(
+                incidental,
+                &["src/limiter.rs defines last_refill".to_string()]
+            ),
+            "an incidental marker not about the missing artifact must NOT rescue a deficient answer"
+        );
+        // Companion: the SAME deficient answer DOES pass once it actually grounds the negative in the
+        // missing artifact's stem — confirming the bind is what flipped the verdict, not the marker.
+        assert!(answer_passes_done_criteria(
+            "Everything is done; but the limiter file was not found in the workspace.",
+            &["src/limiter.rs defines last_refill".to_string()]
+        ));
+    }
+
+    #[test]
+    fn answer_passes_done_criteria_still_fails_deficient_without_honest_negative() {
+        // (b) NO-DEGRADE: a genuinely deficient answer still FAILS.
+        // (b1) Empty answer is never an honest-negative — rule 1 still rejects it.
+        assert!(!answer_passes_done_criteria(
+            "",
+            &["src/limiter.rs defines last_refill".to_string()]
+        ));
+        // (b2) A substantive answer that simply omits the required artifact, with NO honest-negative
+        // marker, still fails (the structural gate is intact).
+        assert!(!answer_passes_done_criteria(
+            "I finished the work and everything looks good now.",
+            &["src/limiter.rs defines last_refill".to_string()]
+        ));
+        // (b3) A generic capability hedge is NOT an honest-negative and must NOT false-accept: bare
+        // "unable to" / "cannot" are deliberately excluded from the marker set, so a partial-result
+        // hedge that skips the required artifact still fails.
+        assert!(!answer_passes_done_criteria(
+            "I was unable to fully optimize it, but here is a partial result.",
+            &["src/limiter.rs defines last_refill".to_string()]
+        ));
+        // (b4) The honest-negative escape only matters when a required token is MISSING — it never
+        // weakens the existing pass for an answer that does reference the artifact.
+        assert!(answer_passes_done_criteria(
+            "src/limiter.rs now defines last_refill as expected",
+            &["src/limiter.rs defines last_refill".to_string()]
+        ));
+    }
+
+    #[test]
+    fn build_self_critique_prompt_forbids_fabrication() {
+        // (c) The re-prompt carries the anti-fabrication instruction AND keeps the original finish
+        // contract + structure (so it still parses as an ordinary finish turn).
+        let prompt = build_self_critique_prompt(
+            "Read src/limiter.rs and report what last_refill does",
+            "src/limiter.rs contains a last_refill field",
+            &["src/limiter.rs defines last_refill".to_string()],
+        );
+        // Anti-fabrication instruction present.
+        assert!(
+            prompt.contains("Do NOT invent files, paths, code, or facts"),
+            "missing the anti-fabrication clause: {prompt}"
+        );
+        // An honest non-existence answer is explicitly endorsed as acceptable/preferred.
+        assert!(
+            prompt.contains("does not exist") && prompt.contains("PREFERRED"),
+            "honest-negative is not endorsed as preferred: {prompt}"
+        );
+        // The original structure + finish contract are preserved (the existing behavioral tests
+        // assert these exact substrings too).
+        assert!(prompt.contains("does not yet meet"));
+        assert!(prompt.contains("Original task:"));
+        assert!(prompt.contains("Completion criteria:"));
+        assert!(prompt.contains("src/limiter.rs defines last_refill"));
+        assert!(prompt.contains("{\"tool\": \"none\", \"answer\""));
     }
 
     // ── NS-2: flag-gated trust-grant enforcement at the gate-dispatch chokepoint ──────
