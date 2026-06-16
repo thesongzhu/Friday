@@ -525,6 +525,11 @@ pub fn transition_mission_status(
             "mission_lifecycle done requires proof_ref so completion is not fake-ready",
         ));
     }
+    if next_status != MissionStatus::Merged && merged_into_mission_id.is_some() {
+        return Err(unsupported(
+            "mission_lifecycle merged_into_mission_id is only valid for merged status",
+        ));
+    }
     if next_status == MissionStatus::Merged {
         let Some(target_mission_id) = merged_into_mission_id else {
             return Err(unsupported(
@@ -540,94 +545,121 @@ pub fn transition_mission_status(
                 "mission_lifecycle cannot merge a Mission into itself",
             ));
         }
-        let target = get_mission(conn, target_mission_id)?.ok_or_else(|| {
+    }
+
+    // ATOMICITY + CONCURRENCY (#H1/#H3, hardening audit): this transition reads the mission (and,
+    // on a merge, the merge target), the conversation, then writes BOTH the mission AND the
+    // conversation. Pre-fix those two writes (`upsert_mission` + `upsert_conversation`) were SEPARATE
+    // auto-committed statements on the bare conn — so a failure (or a crash) AFTER the mission write
+    // but BEFORE the conversation write left the mission's new status persisted while the
+    // conversation's `active_mission_ids` membership lagged: a split-brain active-set. AND, because
+    // it touches two rows in sequence on the long-lived Hub connection while the reaper/retention
+    // tick writes on a SEPARATE connection, a WAL `SQLITE_BUSY` (notably `SQLITE_BUSY_SNAPSHOT`,
+    // which `busy_timeout` does NOT auto-retry) on the second write would crash the transition
+    // spuriously. Naively wrapping the OLD two-write shape in busy-retry would be UNSAFE: a retry
+    // would re-read the ALREADY-committed new status and `try_transition` would re-apply from the
+    // mutated state (illegal-hop error or double-apply). So both writes are now made ONE
+    // `unchecked_transaction` (all reads + both upserts + commit) FIRST — all-or-nothing, no
+    // split-brain — and only THEN wrapped in the crate's ONE bounded busy-retry idiom
+    // ([`crate::with_busy_retry`]). On a BUSY the txn has rolled back (NOTHING committed), so the
+    // retry re-reads the live pre-transition mission/conversation and re-applies cleanly. NO-DEGRADE:
+    // the success-path rows are byte-identical (same upsert contents, mission-then-conversation
+    // order preserved inside the txn); the failure path goes from partial-write to all-or-nothing.
+    crate::with_busy_retry(|| {
+        let tx = conn.unchecked_transaction()?;
+
+        // Merge-target validation reads the live target row INSIDE the txn so the active-like /
+        // ownership check sees a consistent snapshot with the writes below (and rolls back with them
+        // on any error). The scalar guards above already rejected the empty/self-merge cases.
+        if next_status == MissionStatus::Merged {
+            let target_mission_id = merged_into_mission_id.expect("checked above");
+            let target = get_mission(&tx, target_mission_id)?.ok_or_else(|| {
+                unsupported(format!(
+                    "mission_lifecycle merge target Mission '{target_mission_id}' not found"
+                ))
+            })?;
+            if target.friday_conversation_id != friday_conversation_id {
+                return Err(unsupported(format!(
+                    "mission_lifecycle merge target belongs to conversation '{}' not '{}'",
+                    target.friday_conversation_id, friday_conversation_id
+                )));
+            }
+            if !target.status.is_active_like() {
+                return Err(unsupported(format!(
+                    "mission_lifecycle merge target Mission '{target_mission_id}' is not active-like"
+                )));
+            }
+        }
+
+        let mut mission = get_mission(&tx, mission_id)?.ok_or_else(|| {
             unsupported(format!(
-                "mission_lifecycle merge target Mission '{target_mission_id}' not found"
+                "mission_lifecycle Mission '{mission_id}' not found"
             ))
         })?;
-        if target.friday_conversation_id != friday_conversation_id {
+        if mission.friday_conversation_id != friday_conversation_id {
             return Err(unsupported(format!(
-                "mission_lifecycle merge target belongs to conversation '{}' not '{}'",
-                target.friday_conversation_id, friday_conversation_id
+                "mission_lifecycle Mission belongs to conversation '{}' not '{}'",
+                mission.friday_conversation_id, friday_conversation_id
             )));
         }
-        if !target.status.is_active_like() {
-            return Err(unsupported(format!(
-                "mission_lifecycle merge target Mission '{target_mission_id}' is not active-like"
-            )));
-        }
-    } else if merged_into_mission_id.is_some() {
-        return Err(unsupported(
-            "mission_lifecycle merged_into_mission_id is only valid for merged status",
-        ));
-    }
 
-    let mut mission = get_mission(conn, mission_id)?.ok_or_else(|| {
-        unsupported(format!(
-            "mission_lifecycle Mission '{mission_id}' not found"
-        ))
-    })?;
-    if mission.friday_conversation_id != friday_conversation_id {
-        return Err(unsupported(format!(
-            "mission_lifecycle Mission belongs to conversation '{}' not '{}'",
-            mission.friday_conversation_id, friday_conversation_id
-        )));
-    }
-
-    let previous_status = mission.status;
-    mission.status = previous_status
-        .try_transition(next_status)
-        .map_err(|e| unsupported(e.to_string()))?;
-    mission.updated_at_ms = now_ms;
-    if let Some(proof_ref) = proof_ref {
-        let proof_ref = proof_ref.to_string();
-        if !mission.proof_refs.contains(&proof_ref) {
-            mission.proof_refs.push(proof_ref);
+        let previous_status = mission.status;
+        mission.status = previous_status
+            .try_transition(next_status)
+            .map_err(|e| unsupported(e.to_string()))?;
+        mission.updated_at_ms = now_ms;
+        if let Some(proof_ref) = proof_ref {
+            let proof_ref = proof_ref.to_string();
+            if !mission.proof_refs.contains(&proof_ref) {
+                mission.proof_refs.push(proof_ref);
+            }
         }
-    }
-    let mut lifecycle_entry = format!(
-        "lifecycle:{}:{}->{} by {}: {}",
-        mission.mission_id,
-        previous_status.as_str(),
-        mission.status.as_str(),
-        actor_ref,
-        reason
-    );
-    if let Some(target) = merged_into_mission_id {
-        lifecycle_entry.push_str(&format!("; merged_into:{target}"));
-        let inherited = format!("merged_into_mission_id:{target}");
-        if !mission.handoff_inheritance.contains(&inherited) {
-            mission.handoff_inheritance.push(inherited);
+        let mut lifecycle_entry = format!(
+            "lifecycle:{}:{}->{} by {}: {}",
+            mission.mission_id,
+            previous_status.as_str(),
+            mission.status.as_str(),
+            actor_ref,
+            reason
+        );
+        if let Some(target) = merged_into_mission_id {
+            lifecycle_entry.push_str(&format!("; merged_into:{target}"));
+            let inherited = format!("merged_into_mission_id:{target}");
+            if !mission.handoff_inheritance.contains(&inherited) {
+                mission.handoff_inheritance.push(inherited);
+            }
         }
-    }
-    mission.decision_path_summary =
-        append_lifecycle_summary(&mission.decision_path_summary, &lifecycle_entry);
-    upsert_mission(conn, &mission)?;
+        mission.decision_path_summary =
+            append_lifecycle_summary(&mission.decision_path_summary, &lifecycle_entry);
+        upsert_mission(&tx, &mission)?;
 
-    let mut conversation = get_conversation(conn, friday_conversation_id)?.ok_or_else(|| {
-        unsupported(format!(
-            "mission_lifecycle conversation '{friday_conversation_id}' not found"
-        ))
-    })?;
-    if mission.status.is_active_like() {
-        if !conversation
-            .active_mission_ids
-            .iter()
-            .any(|id| id == &mission.mission_id)
-        {
+        let mut conversation = get_conversation(&tx, friday_conversation_id)?.ok_or_else(|| {
+            unsupported(format!(
+                "mission_lifecycle conversation '{friday_conversation_id}' not found"
+            ))
+        })?;
+        if mission.status.is_active_like() {
+            if !conversation
+                .active_mission_ids
+                .iter()
+                .any(|id| id == &mission.mission_id)
+            {
+                conversation
+                    .active_mission_ids
+                    .push(mission.mission_id.clone());
+            }
+        } else {
             conversation
                 .active_mission_ids
-                .push(mission.mission_id.clone());
+                .retain(|id| id != &mission.mission_id);
         }
-    } else {
-        conversation
-            .active_mission_ids
-            .retain(|id| id != &mission.mission_id);
-    }
-    conversation.updated_at_ms = now_ms;
-    upsert_conversation(conn, &conversation)?;
+        conversation.updated_at_ms = now_ms;
+        upsert_conversation(&tx, &conversation)?;
 
-    Ok((mission, previous_status, conversation.active_mission_ids))
+        tx.commit()?;
+
+        Ok((mission, previous_status, conversation.active_mission_ids))
+    })
 }
 
 /// Transition a WorkItem's lifecycle status at the persistence boundary — the
@@ -732,61 +764,78 @@ fn transition_work_item_status_inner(
         (_, None) => {}
     }
 
-    let mut item = get_work_item(conn, work_item_id)?.ok_or_else(|| {
-        unsupported(format!(
-            "work_item_lifecycle WorkItem '{work_item_id}' not found"
-        ))
-    })?;
+    // CONCURRENCY (#H3, hardening audit): the read (`get_work_item`) + the audit/upsert txn run
+    // on the long-lived Hub connection while the reaper/retention tick writes on a SEPARATE
+    // connection. Under WAL contention the read or the deferred write txn can return `SQLITE_BUSY`
+    // (notably `SQLITE_BUSY_SNAPSHOT`, which `busy_timeout` does NOT auto-retry — only an app-level
+    // retry recovers it); un-retried the caller's `?` would CRASH the transition spuriously. So the
+    // WHOLE read+txn body is wrapped in the crate's ONE bounded busy-retry idiom
+    // ([`crate::with_busy_retry`]) — the SAME wrapper the writable open / run-billing txn /
+    // retention sweep use, never a second policy. The retry re-runs the READ then the txn: this is
+    // REQUIRED for audit-chain atomicity (`append_audit` reads the prev chain hash THEN inserts, so
+    // a stale-prev-hash retry would forge a broken chain) AND for transition correctness (`item` is
+    // re-read from the live row, so `try_transition` is re-applied from the persisted state, never a
+    // stale in-memory copy). On a BUSY the failed txn has ALREADY rolled back (NOTHING committed),
+    // so each retry re-reads the live row and re-runs the deterministic `now_ms`-keyed audit id +
+    // upsert cleanly. NO-DEGRADE: the retry fires ONLY on [`crate::is_storage_busy`]; with no
+    // contention the closure runs EXACTLY ONCE and the result is byte-identical to the pre-fix path.
+    crate::with_busy_retry(|| {
+        let mut item = get_work_item(conn, work_item_id)?.ok_or_else(|| {
+            unsupported(format!(
+                "work_item_lifecycle WorkItem '{work_item_id}' not found"
+            ))
+        })?;
 
-    let previous_status = item.status;
-    item.status = previous_status
-        .try_transition(next_status)
-        .map_err(|e| unsupported(e.to_string()))?;
-    item.updated_at_ms = now_ms;
-    if let Some(receipt) = proof_receipt {
-        let receipt = receipt.to_string();
-        if !item.proof_receipts.contains(&receipt) {
-            item.proof_receipts.push(receipt);
+        let previous_status = item.status;
+        item.status = previous_status
+            .try_transition(next_status)
+            .map_err(|e| unsupported(e.to_string()))?;
+        item.updated_at_ms = now_ms;
+        if let Some(receipt) = proof_receipt {
+            let receipt = receipt.to_string();
+            if !item.proof_receipts.contains(&receipt) {
+                item.proof_receipts.push(receipt);
+            }
         }
-    }
 
-    // One transaction: the lifecycle audit row (the hash-chain read + insert) and the
-    // upsert commit together, so a recorded transition always has a persisted state.
-    // The audit row IS the WorkItem's lifecycle entry — it carries actor, the
-    // from->to hop, and the reason (a WorkItem has no decision_path_summary column).
-    let tx = conn.unchecked_transaction()?;
-    let audit_id = format!("workitem_lifecycle:{work_item_id}:{now_ms}");
-    let action = format!(
-        "work_item.lifecycle:{}->{}:{}",
-        previous_status.as_str(),
-        item.status.as_str(),
-        reason
-    );
-    crate::audit::append_audit(
-        &tx,
-        &audit_id,
-        actor_ref,
-        &action,
-        Some(work_item_id),
-        now_ms,
-    )?;
-    upsert_work_item(&tx, &item)?;
-    // (#24b degrade-3) ATOMIC executing-clear: when the caller routes a binding rest-state hop
-    // through `transition_work_item_status_clearing_executing`, clear the durable `executing`
-    // marker in the SAME transaction as the status write. `upsert_work_item` does NOT touch the
-    // execution columns (they are managed only by `set_work_item_executing`), so this targeted
-    // `UPDATE` is required to land `executing = 0` atomically with the status. `last_heartbeat_ms`
-    // is left as-is — PASS-2 only acts on `executing == 1` rows, so a cleared row's timestamp is
-    // never consulted by the reconcile.
-    if clear_executing {
-        tx.execute(
-            "UPDATE work_item SET executing = 0 WHERE work_item_id = ?1",
-            params![work_item_id],
+        // One transaction: the lifecycle audit row (the hash-chain read + insert) and the
+        // upsert commit together, so a recorded transition always has a persisted state.
+        // The audit row IS the WorkItem's lifecycle entry — it carries actor, the
+        // from->to hop, and the reason (a WorkItem has no decision_path_summary column).
+        let tx = conn.unchecked_transaction()?;
+        let audit_id = format!("workitem_lifecycle:{work_item_id}:{now_ms}");
+        let action = format!(
+            "work_item.lifecycle:{}->{}:{}",
+            previous_status.as_str(),
+            item.status.as_str(),
+            reason
+        );
+        crate::audit::append_audit(
+            &tx,
+            &audit_id,
+            actor_ref,
+            &action,
+            Some(work_item_id),
+            now_ms,
         )?;
-    }
-    tx.commit()?;
+        upsert_work_item(&tx, &item)?;
+        // (#24b degrade-3) ATOMIC executing-clear: when the caller routes a binding rest-state hop
+        // through `transition_work_item_status_clearing_executing`, clear the durable `executing`
+        // marker in the SAME transaction as the status write. `upsert_work_item` does NOT touch the
+        // execution columns (they are managed only by `set_work_item_executing`), so this targeted
+        // `UPDATE` is required to land `executing = 0` atomically with the status. `last_heartbeat_ms`
+        // is left as-is — PASS-2 only acts on `executing == 1` rows, so a cleared row's timestamp is
+        // never consulted by the reconcile.
+        if clear_executing {
+            tx.execute(
+                "UPDATE work_item SET executing = 0 WHERE work_item_id = ?1",
+                params![work_item_id],
+            )?;
+        }
+        tx.commit()?;
 
-    Ok((item, previous_status))
+        Ok((item, previous_status))
+    })
 }
 
 pub fn list_missions_for_conversation(
