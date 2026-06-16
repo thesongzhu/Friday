@@ -19,6 +19,38 @@ use friday_transport::{
 };
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Source of the TRUSTED server wall-clock used to decide pairing EXPIRY.
+///
+/// The pairing EXPIRY decision MUST NOT trust the client's `sent_at` (it is
+/// attacker-controlled — see [`PairingHub::handle_pair`]). It is evaluated against
+/// THIS clock, owned by the hub. In prod the clock is [`PairClock::System`] (real
+/// UNIX-ms `SystemTime::now()`); tests inject [`PairClock::Fixed`] for determinism.
+#[derive(Clone, Copy, Debug)]
+pub enum PairClock {
+    /// Real server wall-clock (UNIX epoch milliseconds). The prod default.
+    System,
+    /// A fixed server-now in UNIX ms, for deterministic tests only.
+    Fixed(i64),
+}
+
+impl PairClock {
+    /// The trusted server "now" in UNIX milliseconds. `System` reads the real
+    /// wall-clock against the UNIX epoch. A degenerate pre-1970 hub clock (the only
+    /// case `duration_since` errors) saturates to `i64::MAX` — fail-CLOSED: every QR
+    /// then reads as expired (`expires_at <= i64::MAX`) and pairing is denied, rather
+    /// than fail-open (a `0` would make every QR look unexpired).
+    pub fn now_ms(&self) -> i64 {
+        match self {
+            PairClock::System => SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(i64::MAX),
+            PairClock::Fixed(now) => *now,
+        }
+    }
+}
 
 /// Minimal Hub pairing runtime. A future listener owns sockets/mDNS; this type
 /// owns the pairing semantics and can be tested without network or provider I/O.
@@ -26,13 +58,36 @@ use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 pub struct PairingHub {
     payload: FridayPairPayload,
     capabilities: Vec<String>,
+    /// The TRUSTED server clock used for the pairing EXPIRY check. Defaults to
+    /// [`PairClock::System`] (prod) via [`PairingHub::new`]; tests use
+    /// [`PairingHub::new_with_clock`].
+    clock: PairClock,
 }
 
 impl PairingHub {
+    /// Construct a pairing hub that enforces EXPIRY against the real server
+    /// wall-clock ([`PairClock::System`]). This is the prod constructor: the bin
+    /// and every existing call site keep this signature.
     pub fn new(payload: FridayPairPayload, capabilities: Vec<String>) -> Self {
         Self {
             payload,
             capabilities,
+            clock: PairClock::System,
+        }
+    }
+
+    /// Construct a pairing hub with an injected server clock for deterministic
+    /// tests. `now_ms` is the TRUSTED server-now (UNIX ms) the EXPIRY check uses;
+    /// it is NOT the client's `sent_at`.
+    pub fn new_with_clock(
+        payload: FridayPairPayload,
+        capabilities: Vec<String>,
+        now_ms: i64,
+    ) -> Self {
+        Self {
+            payload,
+            capabilities,
+            clock: PairClock::Fixed(now_ms),
         }
     }
 
@@ -118,12 +173,20 @@ impl PairingHub {
         device_pubkey: Vec<u8>,
         pairing_proof: Vec<u8>,
     ) -> Envelope {
+        // EXPIRY trust: evaluate `expires_at` against the TRUSTED SERVER clock, NEVER the client's
+        // `sent_at`. `sent_at` is attacker-controlled (the receive path enforces no freshness/skew
+        // on it, and the `pairing_proof` HMAC covers ONLY `device_pubkey`, not the timestamp) — so a
+        // backdated `sent_at` must NOT be able to revive an expired QR. We pass the server-now as the
+        // `complete_qr_pairing` time arg, so both the `validate_at` expiry check AND the recorded
+        // `paired_at`/audit timestamp use the hub's own clock. The reply still echoes the client's
+        // `sent_at` for correlation; only the EXPIRY/record decision uses the server clock.
+        let server_now = self.clock.now_ms();
         let result = db.complete_qr_pairing(
             &self.payload,
             &device_id,
             &device_pubkey,
             &pairing_proof,
-            sent_at,
+            server_now,
             &format!("audit-pair-{msg_id}"),
         );
         match result {
@@ -199,10 +262,12 @@ impl PairingListener {
     /// The bridge enrolls the device pubkey ONLY when [`PairingHub::handle_envelope`] returns
     /// `PairAck { accepted: true }` for THIS connection's `Pair` message. That ack is returned ONLY
     /// when `db.complete_qr_pairing` returned `Ok(())`, i.e. the `pairing_proof` was a valid
-    /// `HMAC(qr_secret, device_pubkey)`, the payload was UNEXPIRED, and the device_id was not a
-    /// replay (PK conflict) — verified INSIDE `pair_device` over EXACTLY the `device_pubkey` we then
-    /// enroll, so there is no TOCTOU. An invalid / replayed / expired / revoked pairing yields
-    /// `PairAck { accepted: false }` (or an `Error`) and enrolls NOTHING.
+    /// `HMAC(qr_secret, device_pubkey)`, the payload was UNEXPIRED **as judged by the hub's own
+    /// TRUSTED SERVER clock** (NOT the client's `sent_at` — `sent_at` is untrusted client input and
+    /// is not used for the expiry decision; see [`PairingHub::handle_pair`]), and the device_id was
+    /// not a replay (PK conflict) — verified INSIDE `pair_device` over EXACTLY the `device_pubkey`
+    /// we then enroll, so there is no TOCTOU. An invalid / replayed / expired / revoked pairing
+    /// yields `PairAck { accepted: false }` (or an `Error`) and enrolls NOTHING.
     ///
     /// ## NO eviction, additive only
     /// Enroll goes through the SHARED [`enroll_read_seam_peer_additive`]: APPEND-only + idempotent,
@@ -421,7 +486,8 @@ mod tests {
         let mut db = Db::open_hub(tmp.path()).unwrap();
         let payload = sample_payload(2000);
         let secret = payload.pairing_secret.expose_for_qr().as_bytes().to_vec();
-        let hub = PairingHub::new(payload, vec!["pairing".into()]);
+        // Server clock = 500 (< expires_at 2000) ⇒ UNEXPIRED by the trusted clock.
+        let hub = PairingHub::new_with_clock(payload, vec!["pairing".into()], 500);
         let pubkey = vec![7u8; 32];
         let proof = pairing_proof(&secret, &pubkey);
 
@@ -453,7 +519,8 @@ mod tests {
     fn bad_pair_and_ask_on_pairing_channel_do_not_call_model_or_write_trust() {
         let tmp = TempDb::new("bad");
         let mut db = Db::open_hub(tmp.path()).unwrap();
-        let hub = PairingHub::new(sample_payload(2000), vec!["pairing".into()]);
+        // Server clock UNEXPIRED (500 < 2000) so the denial is from the BAD PROOF, not expiry.
+        let hub = PairingHub::new_with_clock(sample_payload(2000), vec!["pairing".into()], 500);
 
         let bad_pair = Envelope::new(
             "bad-pair",
@@ -534,7 +601,8 @@ mod tests {
         let db_path = tmp.path().to_string();
         let payload = sample_payload(2000);
         let secret = payload.pairing_secret.expose_for_qr().as_bytes().to_vec();
-        let hub = PairingHub::new(payload, vec!["pairing".into()]);
+        // Server clock UNEXPIRED (500 < 2000).
+        let hub = PairingHub::new_with_clock(payload, vec!["pairing".into()], 500);
         let hub_kp = DeviceKeypair::generate();
         let phone_kp = DeviceKeypair::generate();
         let hub_pub = hub_kp.public_bytes();
@@ -679,9 +747,11 @@ mod tests {
         let mut db = Db::open_hub(tmp.path()).unwrap();
         let payload = sample_payload(1000); // expires_at = 1000
         let msg = pair_msg(&payload, "ios-exp", &[7u8; 32]);
-        let hub = PairingHub::new(payload, vec!["pairing".into()]);
-        // sent_at == expires_at → expired (validate_at: expires_at <= now).
-        let response = hub.handle_envelope(&mut db, Envelope::new("pair-exp", 1000, msg));
+        // SERVER clock == expires_at (1000) → expired (validate_at: expires_at <= now). The client's
+        // `sent_at` is irrelevant to the expiry decision; here we even backdate it to 0 (a fresh
+        // capture) to prove the SERVER clock, not `sent_at`, decides expiry.
+        let hub = PairingHub::new_with_clock(payload, vec!["pairing".into()], 1000);
+        let response = hub.handle_envelope(&mut db, Envelope::new("pair-exp", 0, msg));
         assert_eq!(
             response.message,
             Message::PairAck {
@@ -701,7 +771,8 @@ mod tests {
         let pubkey = [7u8; 32];
         let first_msg = pair_msg(&payload, "ios-replay", &pubkey);
         let replay_msg = pair_msg(&payload, "ios-replay", &pubkey); // identical proof
-        let hub = PairingHub::new(payload, vec!["pairing".into()]);
+                                                                    // Server clock UNEXPIRED (1000 < 5000); the replay is denied by the PK conflict, not expiry.
+        let hub = PairingHub::new_with_clock(payload, vec!["pairing".into()], 1000);
 
         let first = hub.handle_envelope(&mut db, Envelope::new("pair-1", 1000, first_msg));
         assert_eq!(
@@ -732,7 +803,8 @@ mod tests {
         let mut db = Db::open_hub(tmp.path()).unwrap();
         let payload = sample_payload(5000);
         let msg = pair_msg(&payload, "ios-revoke", &[7u8; 32]);
-        let hub = PairingHub::new(payload, vec!["pairing".into()]);
+        // Server clock UNEXPIRED (1000 < 5000) so the pair succeeds and can then be revoked.
+        let hub = PairingHub::new_with_clock(payload, vec!["pairing".into()], 1000);
         hub.handle_envelope(&mut db, Envelope::new("pair-rev", 1000, msg));
         assert!(friday_storage::pairing::is_trusted(db.conn(), "ios-revoke").unwrap());
 
@@ -796,7 +868,8 @@ mod tests {
         let db_path = tmp.path().to_string();
         let payload = sample_payload(5000);
         let secret = payload.pairing_secret.expose_for_qr().as_bytes().to_vec();
-        let hub = PairingHub::new(payload, vec!["pairing".into()]);
+        // Server clock UNEXPIRED (1000 < 5000).
+        let hub = PairingHub::new_with_clock(payload, vec!["pairing".into()], 1000);
         let hub_kp = DeviceKeypair::generate();
         let phone_kp = DeviceKeypair::generate();
         let hub_pub = hub_kp.public_bytes();
@@ -897,8 +970,11 @@ mod tests {
     /// Drive ONE live pairing connection end-to-end and return the server's `PairOutcome`. The
     /// device uses `device_kp`'s REAL X25519 pubkey as its `Message::Pair` device_pubkey (so the
     /// enrolled key is the SAME key the device would present at the read seam). The server pre-seeds
-    /// `seed_peers` into the read-seam allowlist (to prove no-eviction). Returns (outcome, store_dir,
-    /// device_pub) for post-assertions.
+    /// `seed_peers` into the read-seam allowlist (to prove no-eviction). `server_now_ms` is the
+    /// TRUSTED server clock the EXPIRY check uses; `sent_at` is the (untrusted) client timestamp on
+    /// the wire — deliberately DECOUPLED so a test can backdate `sent_at` while the server clock is
+    /// past expiry. Returns (outcome, store_dir, device_pub) for post-assertions.
+    #[allow(clippy::too_many_arguments)]
     fn run_live_pair(
         tag: &str,
         payload: FridayPairPayload,
@@ -906,6 +982,7 @@ mod tests {
         device_id: &str,
         proof: Vec<u8>,
         sent_at: i64,
+        server_now_ms: i64,
         seed_peers: &[[u8; X25519_PUBKEY_LEN]],
     ) -> (PairOutcome, TempStore, [u8; X25519_PUBKEY_LEN]) {
         let tmp = TempDb::new(tag);
@@ -921,7 +998,7 @@ mod tests {
         }
 
         let device_pub = device_kp.public_bytes();
-        let hub = PairingHub::new(payload, vec!["pairing".into()]);
+        let hub = PairingHub::new_with_clock(payload, vec!["pairing".into()], server_now_ms);
         let server_kp = DeviceKeypair::generate();
         let server_pub = server_kp.public_bytes();
         let listener = PairingListener::bind_loopback(hub, 0).unwrap();
@@ -980,7 +1057,8 @@ mod tests {
             &device_kp,
             "ios-live",
             proof,
-            1000,
+            1000, // client sent_at
+            1000, // trusted server now (< expires_at 5000 ⇒ UNEXPIRED)
             &[master_peer],
         );
 
@@ -1007,7 +1085,7 @@ mod tests {
 
     #[test]
     fn live_expired_pair_enrolls_nothing_and_does_not_evict() {
-        // expires_at = 1000; sent_at = 1000 → expired (validate_at: expires_at <= now).
+        // expires_at = 1000; trusted server now = 1000 → expired (validate_at: expires_at <= now).
         let payload = sample_payload(1000);
         let secret = payload.pairing_secret.expose_for_qr().as_bytes().to_vec();
         let device_kp = DeviceKeypair::generate();
@@ -1021,7 +1099,8 @@ mod tests {
             &device_kp,
             "ios-exp",
             proof,
-            1000,
+            1000, // client sent_at
+            1000, // trusted server now == expires_at ⇒ EXPIRED
             &[master_peer],
         );
 
@@ -1040,6 +1119,54 @@ mod tests {
     }
 
     #[test]
+    fn live_expired_pair_with_backdated_client_sent_at_enrolls_nothing() {
+        // THE EXPLOIT THIS PR CLOSES (BLOCKER): an attacker who captured a `qr_secret` + `expires_at`
+        // sends a Pair with a BACKDATED client `sent_at` (here 0) to try to slip an EXPIRED QR past
+        // the freshness check. Expiry MUST be judged by the TRUSTED SERVER clock — NOT `sent_at` —
+        // so the long-expired QR enrolls NOTHING even though `sent_at` is well before `expires_at`.
+        //
+        // expires_at = 1000; client sent_at = 0 (backdated, attacker-controlled); trusted server
+        // now = 2000 (well PAST expiry). Pre-fix this enrolled the device (sent_at=0 passed the
+        // check); post-fix the server clock denies it.
+        let payload = sample_payload(1000);
+        let secret = payload.pairing_secret.expose_for_qr().as_bytes().to_vec();
+        let device_kp = DeviceKeypair::generate();
+        let device_pub = device_kp.public_bytes();
+        let proof = pairing_proof(&secret, &device_pub); // a VALID HMAC proof over the device pubkey
+        let master_peer = [0xAAu8; X25519_PUBKEY_LEN];
+
+        let (outcome, store, device) = run_live_pair(
+            "expired-backdated",
+            payload,
+            &device_kp,
+            "ios-exp-backdated",
+            proof,
+            0,    // BACKDATED client sent_at — attacker-controlled, must carry NO authority
+            2000, // trusted server now (> expires_at 1000) ⇒ EXPIRED by the server clock
+            &[master_peer],
+        );
+
+        // The ack is DENIED and NOTHING is enrolled — the read-seam allowlist BYTES are unchanged.
+        assert!(
+            !outcome.accepted,
+            "expired QR with backdated sent_at MUST be denied by the SERVER clock"
+        );
+        assert!(outcome.enroll_outcome.is_none(), "nothing enrolled");
+        let store2 = store.open();
+        let allow = load_peer_allowlist(&store2, READ_SEAM_PEER_PUBKEY_ALLOWLIST_ID).unwrap();
+        assert_eq!(
+            allow.len(),
+            1,
+            "still just the pre-seeded master peer (unchanged)"
+        );
+        assert!(peer_is_allowlisted(&allow, &master_peer));
+        assert!(
+            !peer_is_allowlisted(&allow, &device),
+            "expired-by-server-clock device NOT enrolled despite backdated sent_at"
+        );
+    }
+
+    #[test]
     fn live_invalid_proof_pair_enrolls_nothing() {
         let payload = sample_payload(5000);
         let device_kp = DeviceKeypair::generate();
@@ -1052,7 +1179,8 @@ mod tests {
             &device_kp,
             "ios-bad",
             bad_proof,
-            1000,
+            1000, // client sent_at
+            1000, // trusted server now (< expires_at 5000 ⇒ UNEXPIRED; denial is from the bad proof)
             &[],
         );
 
@@ -1085,7 +1213,9 @@ mod tests {
         let store = TempStore::new("replay-live");
 
         let drive_once = |sent_at: i64| -> PairOutcome {
-            let hub = PairingHub::new(sample_payload(5000), vec!["pairing".into()]);
+            // Server clock UNEXPIRED (1000 < 5000); the replay is denied by the PK conflict.
+            let hub =
+                PairingHub::new_with_clock(sample_payload(5000), vec!["pairing".into()], 1000);
             let listener = PairingListener::bind_loopback(hub, 0).unwrap();
             let addr = listener.local_addr().unwrap();
             let db_path = db_path.clone();
@@ -1165,7 +1295,8 @@ mod tests {
         }
         let server_kp = DeviceKeypair::generate();
         let server_pub = server_kp.public_bytes();
-        let hub = PairingHub::new(payload, vec!["pairing".into()]);
+        // Server clock UNEXPIRED (1000 < 5000).
+        let hub = PairingHub::new_with_clock(payload, vec!["pairing".into()], 1000);
         let listener = PairingListener::bind_loopback(hub, 0).unwrap();
         let addr = listener.local_addr().unwrap();
         let store_dir = store.dir.clone();
