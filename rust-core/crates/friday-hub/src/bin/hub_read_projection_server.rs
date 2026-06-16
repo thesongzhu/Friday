@@ -967,7 +967,10 @@ mod tests {
     /// Seed a probe hub DB with one canonical Mission + a route decision + work items, then return
     /// its path. Reuses the SAME storage upserts the bin's `write_mission_workbench_probe_db` proof
     /// uses, but inlined here (the bin test is `#[ignore]`-gated on an env var). The shape mirrors
-    /// `project_workbench`'s requirements: a `mission_` id, ≥1 work item, ≥1 route decision.
+    /// `project_workbench`'s requirements: ≥1 work item + ≥1 route decision. The mission id is the
+    /// REAL producer HYPHEN shape (`mission-…`, the only shape the live hub mints) — NOT a synthetic
+    /// underscore `mission_` id, so this round-trip reflects producer reality (see the no-false-
+    /// closure regression in `workbench_projection`; the projection has no id-shape gate).
     fn seed_probe_db(tag: &str) -> String {
         use friday_core::{
             ApprovalState, FridayConversation, HandoffJudgmentMemory, Mission, MissionStatus,
@@ -977,7 +980,7 @@ mod tests {
         let db = Db::open_hub(&path).unwrap();
         let now = 1_780_640_000_000;
         let conversation_id = "fconv_read_seam_probe";
-        let mission_id = "mission_read_seam_probe_20260611";
+        let mission_id = "mission-read-seam-probe-20260611";
         let work_provider = "work_read_probe_provider";
 
         db.upsert_friday_conversation(&FridayConversation {
@@ -1359,8 +1362,8 @@ mod tests {
         let opened = crypto_open(&session_key, &decode_sealed(&sealed_bytes), SESSION_AAD).unwrap();
         let json = String::from_utf8(opened).unwrap();
         assert!(
-            json.contains("mission_read_seam_probe_20260611"),
-            "the owner-opened snapshot carries the canonical mission id"
+            json.contains("mission-read-seam-probe-20260611"),
+            "the owner-opened snapshot carries the real producer-shaped mission id"
         );
         assert!(json.contains("live_rust_hub_projection"));
         assert!(
@@ -1427,8 +1430,8 @@ mod tests {
                 crypto_open(&session_key, &decode_sealed(&sealed_bytes), SESSION_AAD).unwrap();
             let json = String::from_utf8(opened).unwrap();
             assert!(
-                json.contains("mission_read_seam_probe_20260611"),
-                "the owner-opened snapshot carries the canonical mission id"
+                json.contains("mission-read-seam-probe-20260611"),
+                "the owner-opened snapshot carries the real producer-shaped mission id"
             );
             drop(ws);
         });
