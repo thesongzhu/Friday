@@ -33,6 +33,95 @@ impl ProviderKind {
     }
 }
 
+/// (a#4 cost-table) Published list price for one model, in **USD per 1,000,000 tokens**,
+/// split into the input (prompt) and output (completion) rates. This is the Rust spine's
+/// FIRST pricing table — the split-brain note (the real cost router lives in the TS stack;
+/// the Rust hub had ZERO pricing data, so every `token_ledger.cost_estimate` was NULL). It
+/// is pure ATTRIBUTION data: a USD estimate stamped onto each billed row. It changes NO
+/// gating, ceiling, or routing decision (those remain DEFERRED / operator-gated); it only
+/// stops the cost column from being silently NULL so future cost-ordered escalation has a
+/// number to order by.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ModelPrice {
+    /// USD per 1,000,000 INPUT (prompt) tokens.
+    pub input_per_1m_usd: f64,
+    /// USD per 1,000,000 OUTPUT (completion) tokens.
+    pub output_per_1m_usd: f64,
+}
+
+/// The per-`(provider, model)` price table. Keyed on the RESPONSE-reported model id (the
+/// SAME id ledgered), so a row's cost is computed from the exact model that answered. An
+/// UNKNOWN `(provider, model)` returns `None` from [`estimate_cost_usd`] (the cost stays
+/// `None`/NULL — the honest "no published price on file" value, never a fabricated 0.0).
+///
+/// HONEST scope: these are published list prices captured for attribution, NOT a live
+/// billing feed — a provider price change is a manual table edit. The pro/flash SPREAD is
+/// the load-bearing relationship (pro costs strictly more than flash), which is what makes
+/// the dark cheap→escalate tiering a real cost trade-off; the absolute values are
+/// approximate list prices.
+const MODEL_PRICES: &[(ProviderKind, &str, ModelPrice)] = &[
+    // DeepSeek — flash (Small, the live default) is the cheapest; pro (Large) costs more,
+    // which is the cost flip the dark `FRIDAY_DEEPSEEK_PRO_ROUTE_ENABLED` route opts into.
+    (
+        ProviderKind::DeepSeek,
+        "deepseek-v4-flash",
+        ModelPrice {
+            input_per_1m_usd: 0.07,
+            output_per_1m_usd: 1.10,
+        },
+    ),
+    (
+        ProviderKind::DeepSeek,
+        "deepseek-v4-pro",
+        ModelPrice {
+            input_per_1m_usd: 0.55,
+            output_per_1m_usd: 2.19,
+        },
+    ),
+    // Anthropic — the dark Claude failover/route target.
+    (
+        ProviderKind::Anthropic,
+        "claude-opus-4-8",
+        ModelPrice {
+            input_per_1m_usd: 5.00,
+            output_per_1m_usd: 25.00,
+        },
+    ),
+    // Codex — the dark local-app-server route. The app-server bills no per-token list price
+    // to Friday (it runs under the operator's own Codex plan), so its cost stays UNKNOWN
+    // (None) rather than a fabricated number — deliberately absent from this table.
+];
+
+/// (a#4 cost-table) Estimate the USD cost of one billed model call from its provider, the
+/// RESPONSE-reported `model`, and the prompt/completion token counts. PURE + deterministic
+/// (no clock, no I/O): `(prompt/1e6)*input_rate + (completion/1e6)*output_rate`.
+///
+/// Returns `None` (⇒ the ledger row's `cost_estimate` stays NULL, exactly as today) when:
+///   - the `(provider, model)` pair has no published price on file (e.g. Codex, or an
+///     unrecognized/renamed model) — an honest "unknown", never a fabricated `0.0`;
+///   - either token count is negative (a malformed/hostile usage — the [`LedgerEntry`] ctor
+///     rejects those separately; here we simply decline to price it).
+///
+/// This NEVER changes a gating/ceiling/routing decision — it only populates the attribution
+/// column. A `Some` cost is always `>= 0.0` and finite for non-negative token counts.
+pub fn estimate_cost_usd(
+    provider: ProviderKind,
+    model: &str,
+    prompt_tokens: i64,
+    completion_tokens: i64,
+) -> Option<f64> {
+    if prompt_tokens < 0 || completion_tokens < 0 {
+        return None;
+    }
+    let price = MODEL_PRICES
+        .iter()
+        .find(|(p, m, _)| *p == provider && *m == model)
+        .map(|(_, _, price)| *price)?;
+    let input = (prompt_tokens as f64 / 1_000_000.0) * price.input_per_1m_usd;
+    let output = (completion_tokens as f64 / 1_000_000.0) * price.output_per_1m_usd;
+    Some(input + output)
+}
+
 /// One token/model ledger row (read projection + Hub authoritative write).
 #[derive(Clone, Debug, PartialEq)]
 pub struct LedgerEntry {
@@ -300,6 +389,86 @@ mod tests {
         assert_ne!(e.base_url_host, "api.openai.com");
         assert!(!e.fallback);
         assert_eq!(e.total_tokens, 19);
+        // The CTOR passes through whatever cost the caller supplies (here None); the
+        // POPULATION of cost from the pricing table is the biller's job (a#4), proven
+        // separately by `estimate_cost_usd_*` below + the hub's billing test.
         assert_eq!(e.cost_estimate, None);
+    }
+
+    // ---- (a#4) cost table -----------------------------------------------------
+
+    #[test]
+    fn estimate_cost_usd_computes_from_per_1m_rates() {
+        // flash @ 0.07/1M in, 1.10/1M out, for 1,000,000 prompt + 1,000,000 completion
+        // tokens = exactly the per-1M rates summed.
+        let c = estimate_cost_usd(
+            ProviderKind::DeepSeek,
+            "deepseek-v4-flash",
+            1_000_000,
+            1_000_000,
+        )
+        .unwrap();
+        assert!((c - (0.07 + 1.10)).abs() < 1e-9, "got {c}");
+
+        // A small realistic call (11 prompt / 8 completion) is a tiny positive cost.
+        let small = estimate_cost_usd(ProviderKind::DeepSeek, "deepseek-v4-flash", 11, 8).unwrap();
+        assert!(small > 0.0 && small < 0.001, "got {small}");
+    }
+
+    #[test]
+    fn estimate_cost_usd_pro_costs_strictly_more_than_flash() {
+        // The load-bearing relationship for the dark cheap→escalate tiering: the SAME token
+        // counts cost STRICTLY MORE on pro than on flash (so escalating is a real cost flip,
+        // and a future cost-ordered escalator has a number to order by).
+        let flash =
+            estimate_cost_usd(ProviderKind::DeepSeek, "deepseek-v4-flash", 1000, 1000).unwrap();
+        let pro = estimate_cost_usd(ProviderKind::DeepSeek, "deepseek-v4-pro", 1000, 1000).unwrap();
+        assert!(
+            pro > flash,
+            "pro ({pro}) must cost more than flash ({flash})"
+        );
+    }
+
+    #[test]
+    fn estimate_cost_usd_unknown_pair_is_none_never_fabricated_zero() {
+        // An unknown model, a wrong-provider pairing, and the deliberately-unpriced Codex
+        // local-app-server route all return None (the honest "no published price" value) —
+        // NEVER a fabricated 0.0 that would understate cost.
+        assert_eq!(
+            estimate_cost_usd(ProviderKind::DeepSeek, "deepseek-v9-imaginary", 10, 10),
+            None
+        );
+        // Right model string but WRONG provider kind ⇒ no match ⇒ None.
+        assert_eq!(
+            estimate_cost_usd(ProviderKind::Anthropic, "deepseek-v4-flash", 10, 10),
+            None
+        );
+        // Codex is intentionally absent from the table (the operator's own plan pays it).
+        assert_eq!(
+            estimate_cost_usd(ProviderKind::Codex, "gpt-5-codex", 10, 10),
+            None
+        );
+    }
+
+    #[test]
+    fn estimate_cost_usd_negative_tokens_decline_to_price() {
+        assert_eq!(
+            estimate_cost_usd(ProviderKind::DeepSeek, "deepseek-v4-flash", -1, 8),
+            None
+        );
+        assert_eq!(
+            estimate_cost_usd(ProviderKind::DeepSeek, "deepseek-v4-flash", 8, -1),
+            None
+        );
+    }
+
+    #[test]
+    fn estimate_cost_usd_zero_tokens_is_zero_not_none_for_known_model() {
+        // A known model with zero tokens is a real, priced (free) call: Some(0.0), not None
+        // (None is reserved for "no price on file").
+        assert_eq!(
+            estimate_cost_usd(ProviderKind::DeepSeek, "deepseek-v4-flash", 0, 0),
+            Some(0.0)
+        );
     }
 }
