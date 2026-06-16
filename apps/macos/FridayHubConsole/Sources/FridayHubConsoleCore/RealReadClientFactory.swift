@@ -99,8 +99,10 @@ public enum RealReadClientFactory {
   /// authenticates as `admin-001` (the LaunchAgent's `--owner`). Throws (fail-closed) if the
   /// master key is missing/invalid — never substitutes an ephemeral key for the live path.
   ///
-  /// This is the launch-mode the app selects under `FRIDAY_CONSOLE_LIVE=1`. The mock stays the
-  /// default for previews + CI; this never runs without an enrolled host master key.
+  /// This is the DEFAULT launch-mode the app selects (the slice-6 flip): a normal run reads live.
+  /// The mock is an explicit opt-in (`--use-mock-read-client` / `FRIDAY_CONSOLE_MOCK=1`) for
+  /// design/demo work, and tests inject their own clients; this path never runs without an
+  /// enrolled host master key (fail-closed otherwise → honest unavailable).
   public static func makeLive(
     config: ReadProjectionServerConfig = .liveLoopback,
     forwardedPrincipal: String = liveReadProjectionOwnerPrincipal,
