@@ -131,6 +131,7 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Full E2E — Batch 1 (A–F)", () => 
       allowTestOnlySessionExecution: true,
       allowTestOnlySessionRunExecution: true,
       allowTestOnlyAgentRunExecution: true,
+      allowTestOnlyTsMemoryWrites: true,
       allowTestOnlySessionMemoryExtractionExecution: true,
       allowTestOnlyRealtimeExecution: true,
       allowTestOnlySkillConverterExecution: true,

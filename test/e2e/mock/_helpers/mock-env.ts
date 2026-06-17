@@ -349,6 +349,8 @@ export async function createMockHubEnv(opts?: {
   allowTestOnlyAgentRunControlExecution?: boolean;
   /** Test-oracle opt-in for the legacy TS agent run loop executeRun method; set false to prove default fail-closed behavior. */
   allowTestOnlyAgentRunExecution?: boolean;
+  /** Test-oracle opt-in for legacy TS durable memory writes; set false to prove default fail-closed behavior. */
+  allowTestOnlyTsMemoryWrites?: boolean;
   /** Test-oracle opt-in for legacy TS session lifecycle/message mutations; set false to prove default fail-closed behavior. */
   allowTestOnlySessionExecution?: boolean;
   /** Test-oracle opt-in for legacy TS session agent-run execution; set false to prove default fail-closed behavior. */
@@ -446,6 +448,7 @@ export async function createMockHubEnv(opts?: {
       allowTestOnlyAgentRunStartExecution: opts?.allowTestOnlyAgentRunStartExecution ?? true,
       allowTestOnlyAgentRunControlExecution: opts?.allowTestOnlyAgentRunControlExecution ?? true,
       allowTestOnlyAgentRunExecution: opts?.allowTestOnlyAgentRunExecution ?? true,
+      allowTestOnlyTsMemoryWrites: opts?.allowTestOnlyTsMemoryWrites ?? true,
       allowTestOnlySessionExecution: opts?.allowTestOnlySessionExecution ?? true,
       allowTestOnlySessionRunExecution: opts?.allowTestOnlySessionRunExecution ?? true,
       allowTestOnlySessionMemoryExtractionExecution: opts?.allowTestOnlySessionMemoryExtractionExecution ?? true,
