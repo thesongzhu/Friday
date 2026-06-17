@@ -925,6 +925,11 @@ describe("Codex mission proof gates", () => {
     expect(proofSource).toContain(
       "readonly CODEX_MISSION_DISPATCH_TIMEOUT_MS=300000",
     );
+    const proofTimeoutDefault = proofSource.match(
+      /readonly TIMEOUT_SEC="\$\{FRIDAY_CODEX_MISSION_PROOF_TIMEOUT_SEC:-(\d+)\}"/,
+    );
+    expect(proofTimeoutDefault).not.toBeNull();
+    expect(Number(proofTimeoutDefault?.[1])).toBeGreaterThanOrEqual(300);
     expect(proofSource).toContain(
       "readonly PROOF_TIMEOUT_MS=$((TIMEOUT_SEC * 1000))",
     );
