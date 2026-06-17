@@ -15,6 +15,37 @@ use friday_core::{
     TruthStatus, WorkItem, WorkItemStatus, WorkLane,
 };
 use friday_storage::{Db, StorageError};
+use std::sync::{Mutex, MutexGuard};
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+struct EnvGuard {
+    key: &'static str,
+    previous: Option<String>,
+    _lock: MutexGuard<'static, ()>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let lock = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+        let previous = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self {
+            key,
+            previous,
+            _lock: lock,
+        }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
 
 fn conversation() -> FridayConversation {
     FridayConversation {
@@ -204,6 +235,75 @@ fn completed_with_proof_without_a_receipt_is_rejected() {
     assert_eq!(prev, WorkItemStatus::ProviderWaiting);
     assert_eq!(item.status, WorkItemStatus::CompletedWithProof);
     assert!(item.completion_is_proven());
+}
+
+#[test]
+fn outcome_checked_flag_rejects_free_text_completion_for_outcome_requirement() {
+    let _guard = EnvGuard::set("FRIDAY_OUTCOME_CHECKED_PROOF", "1");
+    let db = Db::open_hub(&temp_db_path("wi-outcome-free-text")).unwrap();
+    seed(&db, WorkItemStatus::ProviderWaiting);
+    let mut item = db.get_work_item("work-wi").unwrap().unwrap();
+    item.proof_requirements = vec!["outcome:ToolsExecuted:>=1".into()];
+    db.upsert_work_item(&item).unwrap();
+
+    let err = db
+        .transition_work_item_status(
+            "work-wi",
+            WorkItemStatus::CompletedWithProof,
+            "agent:friday",
+            "claim done with free-text proof",
+            Some("proof://provider-completed"),
+            10,
+        )
+        .unwrap_err();
+    assert!(matches!(err, StorageError::Unsupported(_)));
+
+    let stored = db.get_work_item("work-wi").unwrap().unwrap();
+    assert_eq!(stored.status, WorkItemStatus::ProviderWaiting);
+    assert!(stored.proof_receipts.is_empty());
+}
+
+#[test]
+fn outcome_checked_flag_accepts_matching_typed_outcome_receipt() {
+    let _guard = EnvGuard::set("FRIDAY_OUTCOME_CHECKED_PROOF", "1");
+    let db = Db::open_hub(&temp_db_path("wi-outcome-typed")).unwrap();
+    seed(&db, WorkItemStatus::ProviderWaiting);
+    let mut item = db.get_work_item("work-wi").unwrap().unwrap();
+    item.proof_requirements = vec!["outcome:ToolsExecuted:>=1".into()];
+    db.upsert_work_item(&item).unwrap();
+
+    let (item, prev) = db
+        .transition_work_item_status(
+            "work-wi",
+            WorkItemStatus::CompletedWithProof,
+            "agent:friday",
+            "claim done with typed outcome",
+            Some("proof://outcome/ToolsExecuted/run-1?signal=executed_tools=1"),
+            10,
+        )
+        .unwrap();
+    assert_eq!(prev, WorkItemStatus::ProviderWaiting);
+    assert_eq!(item.status, WorkItemStatus::CompletedWithProof);
+    assert!(item.completion_outcome_is_proven());
+}
+
+#[test]
+fn outcome_checked_flag_rejects_direct_upsert_with_untyped_outcome_receipt() {
+    let _guard = EnvGuard::set("FRIDAY_OUTCOME_CHECKED_PROOF", "1");
+    let db = Db::open_hub(&temp_db_path("wi-outcome-direct-upsert")).unwrap();
+    seed(&db, WorkItemStatus::ProviderWaiting);
+
+    let mut item = db.get_work_item("work-wi").unwrap().unwrap();
+    item.status = WorkItemStatus::CompletedWithProof;
+    item.proof_requirements = vec!["outcome:ToolsExecuted:>=1".into()];
+    item.proof_receipts = vec!["proof://provider-completed".into()];
+
+    let err = db.upsert_work_item(&item).unwrap_err();
+    assert!(matches!(err, StorageError::Unsupported(_)));
+
+    let stored = db.get_work_item("work-wi").unwrap().unwrap();
+    assert_eq!(stored.status, WorkItemStatus::ProviderWaiting);
+    assert!(stored.proof_receipts.is_empty());
 }
 
 #[test]

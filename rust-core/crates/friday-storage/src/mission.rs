@@ -9,11 +9,11 @@ use crate::error::{Result, StorageError};
 use friday_core::Risk;
 use friday_core::{
     find_duplicate_mission as core_find_duplicate_mission,
-    find_duplicate_work_item as core_find_duplicate_work_item, validate_friday_conversation_id,
-    ApprovalState, FridayConversation, HandoffJudgmentMemory, Mission, MissionLink,
-    MissionLinkKind, MissionStatus, MissionSurfaceProjection, RouteDecisionCard,
-    RouteDecisionProjection, SurfaceEvent, SurfaceEventKind, SurfaceKind, SurfaceThread,
-    TruthStatus, VisibilityPolicy, WorkItem, WorkItemStatus, WorkLane,
+    find_duplicate_work_item as core_find_duplicate_work_item, outcome_checked_proof_enabled,
+    validate_friday_conversation_id, ApprovalState, FridayConversation, HandoffJudgmentMemory,
+    Mission, MissionLink, MissionLinkKind, MissionStatus, MissionSurfaceProjection,
+    RouteDecisionCard, RouteDecisionProjection, SurfaceEvent, SurfaceEventKind, SurfaceKind,
+    SurfaceThread, TruthStatus, VisibilityPolicy, WorkItem, WorkItemStatus, WorkLane,
 };
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -192,6 +192,16 @@ fn validate_work_item(item: &WorkItem) -> Result<()> {
     if item.status == WorkItemStatus::CompletedWithProof && item.proof_receipts.is_empty() {
         return Err(unsupported(format!(
             "work_item '{}' cannot be completed_with_proof without proof_receipts",
+            item.work_item_id
+        )));
+    }
+    if item.status == WorkItemStatus::CompletedWithProof
+        && outcome_checked_proof_enabled()
+        && item.has_outcome_proof_requirements()
+        && !item.completion_outcome_is_proven()
+    {
+        return Err(unsupported(format!(
+            "work_item '{}' outcome-checked completion requires a typed outcome proof receipt matching every outcome proof requirement",
             item.work_item_id
         )));
     }
@@ -796,6 +806,15 @@ fn transition_work_item_status_inner(
             if !item.proof_receipts.contains(&receipt) {
                 item.proof_receipts.push(receipt);
             }
+        }
+        if item.status == WorkItemStatus::CompletedWithProof
+            && outcome_checked_proof_enabled()
+            && item.has_outcome_proof_requirements()
+            && !item.completion_outcome_is_proven()
+        {
+            return Err(unsupported(
+                "work_item_lifecycle outcome-checked completion requires a typed outcome proof receipt matching an outcome proof requirement",
+            ));
         }
 
         // One transaction: the lifecycle audit row (the hash-chain read + insert) and the

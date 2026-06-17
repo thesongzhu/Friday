@@ -59,12 +59,14 @@ pub use memory::{
     PassportItemKind, RedactedPassportItem, MEMORY_REVIEW_PRIORITY,
 };
 pub use mission::{
-    find_duplicate_mission, find_duplicate_work_item, requires_context_passport,
+    find_duplicate_mission, find_duplicate_work_item, outcome_checked_proof_enabled,
+    outcome_checked_proof_enabled_from, parse_outcome_receipt, requires_context_passport,
     validate_friday_conversation_id, ApprovalState, FridayConversation, HandoffJudgmentMemory,
     Mission, MissionLink, MissionLinkKind, MissionSpineError, MissionStatus,
-    MissionSurfaceProjection, RouteDecisionCard, RouteDecisionProjection, SurfaceEvent,
-    SurfaceEventKind, SurfaceKind, SurfaceThread, TruthStatus, VisibilityPolicy, WorkItem,
-    WorkItemStatus, WorkLane,
+    MissionSurfaceProjection, OutcomeProofReceipt, ProofRequirementKind, ProofRequirementSpec,
+    RouteDecisionCard, RouteDecisionProjection, SurfaceEvent, SurfaceEventKind, SurfaceKind,
+    SurfaceThread, TruthStatus, VisibilityPolicy, WorkItem, WorkItemStatus, WorkLane,
+    OUTCOME_CHECKED_PROOF_FLAG,
 };
 pub use offline::OfflineQueueState;
 pub use pairing::{

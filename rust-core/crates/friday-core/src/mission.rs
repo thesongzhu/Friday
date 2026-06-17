@@ -494,6 +494,158 @@ impl HandoffJudgmentMemory {
     }
 }
 
+pub const OUTCOME_CHECKED_PROOF_FLAG: &str = "FRIDAY_OUTCOME_CHECKED_PROOF";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProofRequirementKind {
+    AnswerProduced,
+    ToolsExecuted,
+    AnswerFingerprintMatches,
+    TestsPassed,
+    ServerBooted,
+    ArtifactDiff,
+    FileContentMatches,
+}
+
+impl ProofRequirementKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ProofRequirementKind::AnswerProduced => "AnswerProduced",
+            ProofRequirementKind::ToolsExecuted => "ToolsExecuted",
+            ProofRequirementKind::AnswerFingerprintMatches => "AnswerFingerprintMatches",
+            ProofRequirementKind::TestsPassed => "TestsPassed",
+            ProofRequirementKind::ServerBooted => "ServerBooted",
+            ProofRequirementKind::ArtifactDiff => "ArtifactDiff",
+            ProofRequirementKind::FileContentMatches => "FileContentMatches",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "AnswerProduced" => Some(ProofRequirementKind::AnswerProduced),
+            "ToolsExecuted" => Some(ProofRequirementKind::ToolsExecuted),
+            "AnswerFingerprintMatches" => Some(ProofRequirementKind::AnswerFingerprintMatches),
+            "TestsPassed" => Some(ProofRequirementKind::TestsPassed),
+            "ServerBooted" => Some(ProofRequirementKind::ServerBooted),
+            "ArtifactDiff" => Some(ProofRequirementKind::ArtifactDiff),
+            "FileContentMatches" => Some(ProofRequirementKind::FileContentMatches),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProofRequirementSpec {
+    pub kind: ProofRequirementKind,
+    pub expectation: String,
+}
+
+impl ProofRequirementSpec {
+    pub fn parse(value: &str) -> Option<Self> {
+        let body = value.trim().strip_prefix("outcome:")?;
+        let (kind, expectation) = body.split_once(':')?;
+        let kind = ProofRequirementKind::parse(kind)?;
+        let expectation = expectation.trim();
+        if expectation.is_empty() {
+            return None;
+        }
+        Some(Self {
+            kind,
+            expectation: expectation.to_string(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OutcomeProofReceipt {
+    pub kind: ProofRequirementKind,
+    pub run_id: String,
+    pub signal: String,
+}
+
+pub fn parse_outcome_receipt(value: &str) -> Option<OutcomeProofReceipt> {
+    let body = value.trim().strip_prefix("proof://outcome/")?;
+    let (path, query) = body.split_once('?')?;
+    let (kind, run_id) = path.split_once('/')?;
+    let kind = ProofRequirementKind::parse(kind)?;
+    let run_id = run_id.trim();
+    if run_id.is_empty() {
+        return None;
+    }
+    let signal = query
+        .split('&')
+        .find_map(|part| part.strip_prefix("signal="))?
+        .trim();
+    if signal.is_empty() {
+        return None;
+    }
+    Some(OutcomeProofReceipt {
+        kind,
+        run_id: run_id.to_string(),
+        signal: signal.to_string(),
+    })
+}
+
+pub fn outcome_checked_proof_enabled_from(value: Option<&str>) -> bool {
+    matches!(value.map(str::trim), Some("1"))
+}
+
+pub fn outcome_checked_proof_enabled() -> bool {
+    match std::env::var(OUTCOME_CHECKED_PROOF_FLAG) {
+        Ok(value) => outcome_checked_proof_enabled_from(Some(&value)),
+        Err(_) => false,
+    }
+}
+
+fn numeric_signal(value: &str) -> Option<i64> {
+    let value = value.trim();
+    if let Ok(parsed) = value.parse::<i64>() {
+        return Some(parsed);
+    }
+    let suffix: String = value
+        .chars()
+        .rev()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    if suffix.is_empty() {
+        None
+    } else {
+        suffix.parse::<i64>().ok()
+    }
+}
+
+fn outcome_signal_satisfies(expectation: &str, signal: &str) -> bool {
+    let expectation = expectation.trim();
+    let signal = signal.trim();
+    if signal.is_empty() {
+        return false;
+    }
+    if matches!(expectation, "*" | "nonempty" | "present") {
+        return true;
+    }
+    if let Some(expected) = expectation.strip_prefix(">=") {
+        let expected = expected.trim().parse::<i64>().ok();
+        let actual = numeric_signal(signal);
+        return matches!((actual, expected), (Some(actual), Some(expected)) if actual >= expected);
+    }
+    if let Some(expected) = expectation.strip_prefix('>') {
+        let expected = expected.trim().parse::<i64>().ok();
+        let actual = numeric_signal(signal);
+        return matches!((actual, expected), (Some(actual), Some(expected)) if actual > expected);
+    }
+    for op in ["==", "="] {
+        if let Some(expected) = expectation.strip_prefix(op) {
+            let expected = expected.trim().parse::<i64>().ok();
+            let actual = numeric_signal(signal);
+            return matches!((actual, expected), (Some(actual), Some(expected)) if actual == expected);
+        }
+    }
+    signal == expectation
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorkItem {
     pub work_item_id: String,
@@ -531,6 +683,38 @@ impl WorkItem {
     /// at least one proof receipt.
     pub fn completion_is_proven(&self) -> bool {
         self.status == WorkItemStatus::CompletedWithProof && !self.proof_receipts.is_empty()
+    }
+
+    pub fn outcome_requirement_specs(&self) -> Vec<ProofRequirementSpec> {
+        self.proof_requirements
+            .iter()
+            .filter_map(|requirement| ProofRequirementSpec::parse(requirement))
+            .collect()
+    }
+
+    pub fn has_outcome_proof_requirements(&self) -> bool {
+        self.proof_requirements
+            .iter()
+            .any(|requirement| ProofRequirementSpec::parse(requirement).is_some())
+    }
+
+    pub fn completion_outcome_is_proven(&self) -> bool {
+        if !self.completion_is_proven() {
+            return false;
+        }
+        let requirements = self.outcome_requirement_specs();
+        if requirements.is_empty() {
+            return true;
+        }
+        requirements.iter().all(|requirement| {
+            self.proof_receipts.iter().any(|receipt| {
+                let Some(receipt) = parse_outcome_receipt(receipt) else {
+                    return false;
+                };
+                receipt.kind == requirement.kind
+                    && outcome_signal_satisfies(&requirement.expectation, &receipt.signal)
+            })
+        })
     }
 }
 
@@ -1157,5 +1341,56 @@ mod tests {
         assert!(done.completion_is_proven());
         done.proof_receipts.clear();
         assert!(!done.completion_is_proven());
+    }
+
+    #[test]
+    fn outcome_specs_parse_and_require_matching_typed_signal() {
+        let spec = ProofRequirementSpec::parse("outcome:ToolsExecuted:>=1").unwrap();
+        assert_eq!(spec.kind, ProofRequirementKind::ToolsExecuted);
+        assert_eq!(spec.expectation, ">=1");
+        assert!(ProofRequirementSpec::parse("provider completion receipt").is_none());
+
+        let receipt =
+            parse_outcome_receipt("proof://outcome/ToolsExecuted/run-1?signal=executed_tools=2")
+                .unwrap();
+        assert_eq!(receipt.kind, ProofRequirementKind::ToolsExecuted);
+        assert_eq!(receipt.run_id, "run-1");
+        assert_eq!(receipt.signal, "executed_tools=2");
+        assert!(parse_outcome_receipt("proof://outcome/ToolsExecuted/run-1").is_none());
+        assert!(parse_outcome_receipt("proof://outcome/ToolsExecuted/run-1?signal=").is_none());
+
+        let mut done = work("wi-outcome", WorkItemStatus::CompletedWithProof);
+        done.proof_requirements = vec!["outcome:ToolsExecuted:>=1".into()];
+        done.proof_receipts =
+            vec!["proof://outcome/ToolsExecuted/run-1?signal=executed_tools=2".into()];
+        assert!(done.has_outcome_proof_requirements());
+        assert!(done.completion_outcome_is_proven());
+
+        done.proof_receipts = vec!["proof://outcome/ToolsExecuted/run-1?signal=0".into()];
+        assert!(!done.completion_outcome_is_proven());
+
+        done.proof_receipts = vec!["proof://provider-free-text".into()];
+        assert!(!done.completion_outcome_is_proven());
+
+        done.proof_requirements = vec![
+            "outcome:ToolsExecuted:>=1".into(),
+            "outcome:TestsPassed:>=1".into(),
+        ];
+        done.proof_receipts =
+            vec!["proof://outcome/ToolsExecuted/run-1?signal=executed_tools=2".into()];
+        assert!(!done.completion_outcome_is_proven());
+        done.proof_receipts
+            .push("proof://outcome/TestsPassed/run-1?signal=passed_tests=12".into());
+        assert!(done.completion_outcome_is_proven());
+    }
+
+    #[test]
+    fn legacy_requirements_remain_floor_only_for_outcome_predicate() {
+        let done = work("wi-legacy", WorkItemStatus::CompletedWithProof);
+        assert!(!done.has_outcome_proof_requirements());
+        assert!(done.completion_outcome_is_proven());
+        assert!(outcome_checked_proof_enabled_from(Some("1")));
+        assert!(!outcome_checked_proof_enabled_from(Some("true")));
+        assert!(!outcome_checked_proof_enabled_from(None));
     }
 }
