@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createFridayApiRuntime } from "#api";
+import {
+  createFridayApiRuntime,
+  RUST_ROUTE_CODEX_MODEL,
+  RUST_ROUTE_CODEX_PROVIDER_ID,
+} from "#api";
 import { FridayDomainError } from "#errors";
 import {
   createFridayAgentEventEmitter,
@@ -1458,6 +1462,31 @@ describe("FridayApiRuntime — NS45-PR2 mission-bound run driver (DARK, additive
     expect(ws.calls[0].forwardedPrincipal).toBe(OWNER_PRINCIPAL);
     // Qualification UNCHANGED: a missionContext-bearing run still qualifies via the SAME read-only
     // clauses (it routed to the sealed dispatch + the read-only constraint is forwarded as before).
+    expect(ws.calls[0].constraints).toEqual({ readOnly: true });
+  });
+
+  it("CODEX PRESENT: a mission-bound Codex observe-wrapper run qualifies and reaches sealed dispatch", async () => {
+    db = createTestDb();
+    const ws = makeStubWsClient();
+    const readback = makeStubReadback(OWNER_PRINCIPAL);
+    const runtime = makeRuntime(db, {
+      routeAgentRunViaRust: true,
+      wsClient: ws.service,
+      readback: readback.service,
+    });
+
+    const result = (await callStartRoute(runtime, {
+      ...QUALIFYING_BODY,
+      providerId: RUST_ROUTE_CODEX_PROVIDER_ID,
+      model: RUST_ROUTE_CODEX_MODEL,
+      missionContext: { ...VALID_MISSION_CONTEXT },
+    })) as { status: string; response: string };
+
+    expect(result.status).toBe("completed");
+    expect(result.response).toBe(OWNER_BODY);
+    expect(ws.calls).toHaveLength(1);
+    expect(ws.calls[0].missionContext).toEqual(VALID_MISSION_CONTEXT);
+    expect(ws.calls[0].forwardedPrincipal).toBe(OWNER_PRINCIPAL);
     expect(ws.calls[0].constraints).toEqual({ readOnly: true });
   });
 

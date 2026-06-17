@@ -35,6 +35,8 @@
 /// chokepoint regardless of the routed provider.
 pub mod operator_vk;
 
+pub mod observe_wrapper;
+
 pub mod resume;
 
 /// C1 PR-A — the authorize-only CORE of a gated Codex turn: routes each Codex
@@ -1064,6 +1066,7 @@ pub trait CodexTurnExecutor {
         approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
         task: &str,
         run_id: &str,
+        observe_context: Option<&observe_wrapper::CodexObserveMissionContext>,
         now_ms: i64,
     ) -> Result<codex_gated_turn::CodexTurnOutcome, codex_gated_turn::CodexGatedTurnError>;
 }
@@ -1126,6 +1129,7 @@ impl CodexTurnExecutor for LocalCodexGatedTurnExecutor {
         approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
         task: &str,
         run_id: &str,
+        observe_context: Option<&observe_wrapper::CodexObserveMissionContext>,
         now_ms: i64,
     ) -> Result<codex_gated_turn::CodexTurnOutcome, codex_gated_turn::CodexGatedTurnError> {
         // Fresh process per turn — `server` is killed on drop at the end of this scope (the
@@ -1139,6 +1143,7 @@ impl CodexTurnExecutor for LocalCodexGatedTurnExecutor {
                 Ok(server) => server,
                 Err(e) => return Ok(errored_outcome(&e)),
             };
+        let child_pid = server.child_id() as i64;
         let client = server.client();
         if let Err(e) = client.initialize(&self.client_name, &self.client_version) {
             return Ok(errored_outcome(&e));
@@ -1150,7 +1155,55 @@ impl CodexTurnExecutor for LocalCodexGatedTurnExecutor {
             Ok(thread) => thread,
             Err(e) => return Ok(errored_outcome(&e)),
         };
-        codex_gated_turn::run_codex_gated_turn(
+
+        let observe_enabled = observe_wrapper::observe_wrapper_enabled();
+        let friday_session_id = observe_wrapper::codex_friday_session_id(run_id);
+        if observe_enabled {
+            let _ = observe_wrapper::upsert_codex_session_link(
+                conn,
+                &friday_session_id,
+                &thread.thread_id,
+                &self.model,
+                self.cwd.as_deref(),
+                now_ms,
+            );
+            if let Some(context) = observe_context {
+                let observation_id = observe_wrapper::codex_process_observation_id(run_id);
+                let cwd_ref = self
+                    .cwd
+                    .as_deref()
+                    .unwrap_or("codex-app-server-default-cwd");
+                let _ = observe_wrapper::upsert_claimed_codex_process_observation_for_context(
+                    conn,
+                    &observation_id,
+                    &friday_session_id,
+                    child_pid,
+                    context,
+                    cwd_ref,
+                    now_ms,
+                );
+            }
+        }
+        let mut mirror_seq = 0_u64;
+        let mut observer = |message: &friday_providers::codex_appserver::JsonRpcServerMessage| {
+            observe_codex_provider_message_best_effort(
+                observe_enabled,
+                &mut mirror_seq,
+                now_ms,
+                |observed_at, mirror_seq| {
+                    observe_wrapper::append_codex_provider_event(
+                        conn,
+                        &friday_session_id,
+                        message,
+                        observed_at,
+                        mirror_seq,
+                        None,
+                    )
+                },
+            );
+        };
+
+        codex_gated_turn::run_codex_gated_turn_observed(
             conn,
             client,
             policy,
@@ -1168,6 +1221,7 @@ impl CodexTurnExecutor for LocalCodexGatedTurnExecutor {
             &self.model,
             run_id,
             now_ms,
+            &mut observer,
         )
     }
 }
@@ -1186,6 +1240,22 @@ fn errored_outcome(
         CodexAppServerError::SchemaDrift => "codex_schema_drift".to_string(),
     };
     codex_gated_turn::CodexTurnOutcome::Errored { reason }
+}
+
+fn observe_codex_provider_message_best_effort<F>(
+    observe_enabled: bool,
+    mirror_seq: &mut u64,
+    now_ms: i64,
+    mut write_event: F,
+) where
+    F: FnMut(i64, u64) -> friday_storage::Result<Option<String>>,
+{
+    if !observe_enabled {
+        return;
+    }
+    *mirror_seq = mirror_seq.saturating_add(1);
+    let observed_at = now_ms.saturating_add(*mirror_seq as i64);
+    let _ = write_event(observed_at, *mirror_seq);
 }
 
 /// The process-wide DEFAULT (built-in) tool registry, built once and reused. The free
@@ -11469,9 +11539,9 @@ mod tests {
                 total_tokens: 19,
             }),
         };
-        let billed = BilledUsage::from_codex(&outcome, "gpt-5-codex");
+        let billed = BilledUsage::from_codex(&outcome, "gpt-5.5");
         assert_eq!(billed.provider_kind, friday_core::ProviderKind::Codex);
-        assert_eq!(billed.model, "gpt-5-codex"); // taken from the route, not the outcome
+        assert_eq!(billed.model, "gpt-5.5"); // taken from the route, not the outcome
         assert_eq!(billed.prompt_tokens, 11);
         assert_eq!(billed.completion_tokens, 8);
     }
@@ -11488,11 +11558,37 @@ mod tests {
             content: "ok".to_string(),
             usage: None,
         };
-        let billed = BilledUsage::from_codex(&outcome, "gpt-5-codex");
+        let billed = BilledUsage::from_codex(&outcome, "gpt-5.5");
         assert_eq!(billed.provider_kind, friday_core::ProviderKind::Codex);
-        assert_eq!(billed.model, "gpt-5-codex");
+        assert_eq!(billed.model, "gpt-5.5");
         assert_eq!(billed.prompt_tokens, 0);
         assert_eq!(billed.completion_tokens, 0);
+    }
+
+    #[test]
+    fn codex_observe_provider_message_best_effort_ignores_writer_error_and_advances_seq() {
+        let mut seq = 0;
+        let mut calls = 0;
+        observe_codex_provider_message_best_effort(
+            true,
+            &mut seq,
+            42,
+            |observed_at, mirror_seq| {
+                calls += 1;
+                assert_eq!(observed_at, 43);
+                assert_eq!(mirror_seq, 1);
+                Err(friday_storage::StorageError::Unsupported(
+                    "simulated observe writer failure".into(),
+                ))
+            },
+        );
+        assert_eq!(seq, 1);
+        assert_eq!(calls, 1);
+
+        observe_codex_provider_message_best_effort(false, &mut seq, 42, |_observed_at, _seq| {
+            panic!("flag-off observe path must not call the writer")
+        });
+        assert_eq!(seq, 1);
     }
 
     // ---- C1-2 CodexAgentLlmClient adapter KATs ----
@@ -11556,7 +11652,7 @@ mod tests {
             r#"{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[]}}}"#,
             "\n",
         );
-        let client = CodexAgentLlmClient::new(ScriptedCodexTurnSource { stream }, "gpt-5-codex");
+        let client = CodexAgentLlmClient::new(ScriptedCodexTurnSource { stream }, "gpt-5.5");
         let (step, usage) = client.next_step_metered("do it", &[]).unwrap();
 
         // The authoritative item text parsed as the finish step (NOT the ignored delta).
@@ -11572,7 +11668,7 @@ mod tests {
             usage,
             Some(BilledUsage {
                 provider_kind: friday_core::ProviderKind::Codex,
-                model: "gpt-5-codex".to_string(),
+                model: "gpt-5.5".to_string(),
                 prompt_tokens: 11,
                 completion_tokens: 8,
             })
@@ -11593,7 +11689,7 @@ mod tests {
             r#"{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[]}}}"#,
             "\n",
         );
-        let client = CodexAgentLlmClient::new(ScriptedCodexTurnSource { stream }, "gpt-5-codex");
+        let client = CodexAgentLlmClient::new(ScriptedCodexTurnSource { stream }, "gpt-5.5");
         let (step, usage) = client.next_step_metered("list it", &[]).unwrap();
 
         assert_eq!(
@@ -11607,7 +11703,7 @@ mod tests {
             usage,
             Some(BilledUsage {
                 provider_kind: friday_core::ProviderKind::Codex,
-                model: "gpt-5-codex".to_string(),
+                model: "gpt-5.5".to_string(),
                 prompt_tokens: 0,
                 completion_tokens: 0,
             })
@@ -11630,7 +11726,7 @@ mod tests {
             r#"{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[]}}}"#,
             "\n",
         );
-        let client = CodexAgentLlmClient::new(ScriptedCodexTurnSource { stream }, "gpt-5-codex");
+        let client = CodexAgentLlmClient::new(ScriptedCodexTurnSource { stream }, "gpt-5.5");
         let (step, usage) = client.next_step_metered("chat", &[]).unwrap();
 
         assert!(matches!(step, Err(AgentError::Parse(_))));
@@ -11639,7 +11735,7 @@ mod tests {
             usage,
             Some(BilledUsage {
                 provider_kind: friday_core::ProviderKind::Codex,
-                model: "gpt-5-codex".to_string(),
+                model: "gpt-5.5".to_string(),
                 prompt_tokens: 5,
                 completion_tokens: 3,
             })
@@ -11657,7 +11753,7 @@ mod tests {
             r#"{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","completedAtMs":1,"item":{"id":"i","type":"agentMessage","text":"{\"tool\":\"none\",\"answer\":\"partial\"}"}}}"#,
             "\n",
         );
-        let client = CodexAgentLlmClient::new(ScriptedCodexTurnSource { stream }, "gpt-5-codex");
+        let client = CodexAgentLlmClient::new(ScriptedCodexTurnSource { stream }, "gpt-5.5");
         let err = client.next_step_metered("do it", &[]).unwrap_err();
         // OUTER Err — no MeteredStep tuple produced, so nothing could be billed. The
         // CodexAppServerError maps to the secret-free string-bearing AgentError::Model.
@@ -11676,7 +11772,7 @@ mod tests {
             r#"{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[]}}}"#,
             "\n",
         );
-        let client = CodexAgentLlmClient::new(ScriptedCodexTurnSource { stream }, "gpt-5-codex");
+        let client = CodexAgentLlmClient::new(ScriptedCodexTurnSource { stream }, "gpt-5.5");
         let step = client.next_step("do it", &[]).unwrap();
         assert_eq!(
             step,

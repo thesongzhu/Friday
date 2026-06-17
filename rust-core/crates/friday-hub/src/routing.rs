@@ -211,7 +211,7 @@ impl RouteRegistry {
             provider_id: "codex".to_string(),
             api: ProviderApi::OpenAiCodexResponses,
             backend_kind: BackendKind::Cli,
-            model: "gpt-5-codex".to_string(),
+            model: "gpt-5.5".to_string(),
             model_size: ModelSize::Large,
             capabilities: text_files.clone(),
             available: false, // CLI auth-gated in this build

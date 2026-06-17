@@ -170,6 +170,20 @@ import { createFridayRustHubCapabilityDoctorService } from "../mission-spine/fri
 import { createFridayRustHubWorkflowCatalogBridgeService } from "../mission-spine/friday-rust-hub-workflow-catalog-bridge-service.js";
 import { resolveRustAgentRunWsClientX25519Secret } from "../mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
 import type { FridayRustAgentRunWsClientX25519SecretResolver } from "../mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
+import {
+  RUST_ROUTE_CODEX_MODEL,
+  RUST_ROUTE_CODEX_PROVIDER_ID,
+  RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
+  RUST_ROUTE_DEEPSEEK_PROVIDER_ID,
+  RUST_ROUTE_READ_TOOL_ALLOWLIST,
+} from "./friday-rust-route-constants.js";
+export {
+  RUST_ROUTE_CODEX_MODEL,
+  RUST_ROUTE_CODEX_PROVIDER_ID,
+  RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
+  RUST_ROUTE_DEEPSEEK_PROVIDER_ID,
+  RUST_ROUTE_READ_TOOL_ALLOWLIST,
+} from "./friday-rust-route-constants.js";
 import { createFridayStudioService } from "../../studio/index.js";
 import {
   createFridayMutatingActionDigest,
@@ -994,16 +1008,9 @@ export function resolveApiRuntimeCanonicalGateRequired(env: NodeJS.ProcessEnv = 
 //          (clause 2 hard-blocks mutating tool calls) + the reads-only allow-list
 //          (clause 4). No separate field.
 //
-// NOTE: these are the RUST registry read-tool names (read_file / list_dir / stat_file /
-// search). list_dir/stat_file/search have no TS alias; the grant names what the Rust
-// read-only loop natively exposes, which is exactly what the future route gates.
-export const RUST_ROUTE_READ_TOOL_ALLOWLIST = ["read_file", "list_dir", "stat_file", "search"] as const;
-
-// EXPORTED so the mission auto-dispatch driver (and any future qualifying caller) can pass the EXACT
-// provider id / model the Rust read-only route qualifier (clause 3, `qualifiesForRustReadOnlyRoute`)
-// requires WITHOUT retyping the literal — a single source of truth for the qualifying shape.
-export const RUST_ROUTE_DEEPSEEK_PROVIDER_ID = "deepseek";
-export const RUST_ROUTE_DEEPSEEK_FLASH_MODEL = "deepseek-v4-flash";
+// NOTE: RUST_ROUTE_READ_TOOL_ALLOWLIST / RUST_ROUTE_DEEPSEEK_* are imported + re-exported from
+// `friday-rust-route-constants.ts` so lean producers such as the mission auto-dispatch driver can
+// use the exact same route shape without importing this full runtime module.
 
 // (honest-non-finished) The well-known SHA-256 of the EMPTY byte string. A non-Finished terminal
 // run produced NO answer body, but the continuity-projector receipt requires a `finalMessageSha256`
@@ -1089,6 +1096,7 @@ export interface RustRouteQualificationInput {
     enabled?: boolean;
   };
   model?: string;
+  missionContext?: FridayRustHubAgentRunMissionContext;
   sessionKey?: string;
   /**
    * (A2a Phase 1) The OWNER principal for the run. Used ONLY by the relaxed clause-5 session
@@ -1184,6 +1192,32 @@ export function isGatedMutatingRustRouteRun(input: RustRouteQualificationInput):
   );
 }
 
+function hasValidMissionContext(input: RustRouteQualificationInput): boolean {
+  const context = input.missionContext;
+  return !!context
+    && typeof context.fridayConversationId === "string"
+    && context.fridayConversationId.trim().length > 0
+    && typeof context.missionId === "string"
+    && context.missionId.trim().length > 0
+    && typeof context.workItemId === "string"
+    && context.workItemId.trim().length > 0;
+}
+
+// The sole Codex admission arm: a route-wrapper request with a validated 3-field
+// Mission handle plus an authenticated owner principal. The handle may come from
+// the HTTP body (for operator/driver-triggered mission-bound starts) or from
+// server-produced auto-dispatch, but it is only a selector. Authority remains the
+// authenticated principal, and the Rust mission-bound path re-validates the
+// Mission/WorkItem ownership before producing proof or readback.
+function isMissionBoundCodexObserveRoute(input: RustRouteQualificationInput): boolean {
+  return input.providerId === RUST_ROUTE_CODEX_PROVIDER_ID
+    && input.model === RUST_ROUTE_CODEX_MODEL
+    && (input.taskProfile?.model === undefined || input.taskProfile.model === RUST_ROUTE_CODEX_MODEL)
+    && hasValidMissionContext(input)
+    && typeof input.principalId === "string"
+    && input.principalId.trim().length > 0;
+}
+
 /**
  * Fail-closed qualifying predicate for the future Rust read-only route (DARK).
  * TOTAL + side-effect-free: returns `true` only when EVERY clause holds; any missing /
@@ -1230,7 +1264,11 @@ export function qualifiesForRustReadOnlyRoute(input: RustRouteQualificationInput
     return false;
   }
 
-  // Clause 3 — DeepSeek-flash only; no silent downgrade, no pro/codex/claude/missing.
+  // Clause 3 — Provider/model. The default route remains DeepSeek-flash only; the sole Codex
+  // admission is a mission-bound observe-wrapper run with a validated 3-field missionContext
+  // and bound owner principal. That context selects the Mission/WorkItem only; the
+  // authenticated principal remains the owner and Rust re-validates the binding. Ordinary
+  // Codex/Claude/pro/missing-provider runs stay disqualified.
   // Provider identity qualifies via EITHER real shape:
   //   (a) the literal provider id "deepseek" (test/RGG envs seed the row with that id), OR
   //   (b) a NON-EMPTY requested providerId whose RESOLVED record (route wrapper's cheap
@@ -1242,16 +1280,11 @@ export function qualifiesForRustReadOnlyRoute(input: RustRouteQualificationInput
     && input.providerId.trim().length > 0
     && input.resolvedProvider?.kind === RUST_ROUTE_DEEPSEEK_PROVIDER_ID
     && input.resolvedProvider.enabled === true;
-  if (input.providerId !== RUST_ROUTE_DEEPSEEK_PROVIDER_ID && !resolvedDeepseekProvider) {
-    return false;
-  }
-  if (input.model !== RUST_ROUTE_DEEPSEEK_FLASH_MODEL) {
-    return false;
-  }
-  if (
-    input.taskProfile?.model !== undefined
-    && input.taskProfile.model !== RUST_ROUTE_DEEPSEEK_FLASH_MODEL
-  ) {
+  const deepseekFlashRoute =
+    (input.providerId === RUST_ROUTE_DEEPSEEK_PROVIDER_ID || resolvedDeepseekProvider)
+    && input.model === RUST_ROUTE_DEEPSEEK_FLASH_MODEL
+    && (input.taskProfile?.model === undefined || input.taskProfile.model === RUST_ROUTE_DEEPSEEK_FLASH_MODEL);
+  if (!deepseekFlashRoute && !isMissionBoundCodexObserveRoute(input)) {
     return false;
   }
 
@@ -4735,9 +4768,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       mutationGate?: string;
       // (NS45-PR2 mission-bound driver — DARK) the first-class Mission handle this run binds to.
       // Purely additive + optional — every existing caller omits it. The HTTP route forwards the
-      // validated `body.missionContext`. Carried in this shared type so `routeStartRun` (typeof
-      // startRun) can thread it onto the sealed-WS dispatch; the BARE fail-closed `startRun` below
-      // never reaches the wire, so it only carries the field. NEVER overrides principal/owner.
+      // validated `body.missionContext`; server-produced auto-dispatch may also pass the same shape.
+      // `routeStartRun` uses it to qualify the sole Codex mission-bound observe route and threads it
+      // onto sealed-WS dispatch. It NEVER overrides principal/owner; Rust re-validates binding.
       missionContext?: FridayRustHubAgentRunMissionContext;
     }) => {
       if (deps.allowTestOnlyAgentRunStartExecution !== true) {
@@ -4950,6 +4983,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
           // existing caller (→ the mutating branch never opens). Consulted only behind the flag.
           mutatingToolGrant: input.mutatingToolGrant,
           mutationGate: input.mutationGate,
+          missionContext: input.missionContext,
         };
         const qualifies = qualifiesForRustReadOnlyRoute(rustRouteQualificationInput);
         if (qualifies) {
@@ -5059,10 +5093,10 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             nowIso: deps.nowIso,
             // (NS45-PR2 mission-bound driver — DARK) forward the Mission handle so the sealed-WS
             // dispatch emits the `mission_context` wire block when present (absent ⇒ omitted ⇒
-            // byte-identical unbound dispatch). This rides ALONGSIDE the qualifying fields — it is
-            // deliberately NOT part of `rustRouteQualificationInput` above, so it does NOT change
-            // Rust-route QUALIFICATION. SECURITY: it does not touch `principalId` — the bound owner
-            // stays the authenticated `normalizedPrincipal`; this handle only SELECTS the binding.
+            // byte-identical unbound dispatch). This is part of `rustRouteQualificationInput` for
+            // the sole Codex mission-bound observe route, but only as a selector: it does not touch
+            // `principalId`; the bound owner stays the authenticated `normalizedPrincipal`, and Rust
+            // re-validates the Mission/WorkItem binding before producing proof/readback.
             ...(input.missionContext !== undefined ? { missionContext: input.missionContext } : {}),
             // Stamp the apiRequest idempotency descriptor onto the projected row so a
             // SUBSEQUENT request sharing this key REPLAYS this run (the lookup above) rather

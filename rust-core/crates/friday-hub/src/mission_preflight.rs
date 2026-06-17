@@ -10,7 +10,7 @@
 use friday_core::MemoryState;
 use friday_core::{
     requires_context_passport, ApprovalState, FridayConversation, Mission, MissionLink,
-    MissionLinkKind, SurfaceThread, WorkItem, WorkItemStatus,
+    MissionLinkKind, SurfaceThread, WorkItem, WorkItemStatus, WorkspaceClaim,
 };
 use friday_storage::{memory, workflow, Db, StorageError};
 
@@ -87,6 +87,14 @@ pub fn preflight_and_stage_work_item(
     db: &Db,
     request: MissionPreflightRequest,
 ) -> Result<MissionPreflightOutcome, StorageError> {
+    preflight_and_stage_work_item_with_workspace_claims(db, request, &[])
+}
+
+pub fn preflight_and_stage_work_item_with_workspace_claims(
+    db: &Db,
+    request: MissionPreflightRequest,
+    workspace_claims: &[WorkspaceClaim],
+) -> Result<MissionPreflightOutcome, StorageError> {
     let mut blockers = validate_preflight_request(&request);
     // Db-backed Context Passport gate (destination-binding; appended to the SAME vec so
     // collect-all-then-block semantics hold — never reordered ahead of the pure checks).
@@ -154,7 +162,13 @@ pub fn preflight_and_stage_work_item(
     // conversation+intent duplicate guard then matched and BLOCKED a clean retry against (binding the
     // surface to the orphan). `stage_intake_atomic` writes all-or-nothing (and busy-retries under
     // reaper/retention WAL contention), so a failure writes ZERO rows and a retry is clean.
-    db.stage_intake_atomic(&conversation, &mission, surface_thread.as_ref(), &work_item)?;
+    db.stage_intake_atomic_with_workspace_claims(
+        &conversation,
+        &mission,
+        surface_thread.as_ref(),
+        &work_item,
+        workspace_claims,
+    )?;
 
     Ok(MissionPreflightOutcome::Ready {
         mission_id: mission.mission_id,

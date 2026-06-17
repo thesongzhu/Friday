@@ -380,8 +380,8 @@ mod tests {
         // (C1) The Codex route entry records the Codex provider kind + the LOCAL
         // app-server host label (NOT a remote API), never fallback, with the total
         // computed from the parts.
-        let e = LedgerEntry::codex_route("l4", "s1", "a1", "gpt-5-codex", 11, 8, None, None, 4000)
-            .unwrap();
+        let e =
+            LedgerEntry::codex_route("l4", "s1", "a1", "gpt-5.5", 11, 8, None, None, 4000).unwrap();
         assert_eq!(e.provider_kind, ProviderKind::Codex);
         assert_eq!(e.provider_kind.as_str(), "codex");
         // LOCAL app-server label, never a remote API the routed path never calls.
@@ -445,7 +445,7 @@ mod tests {
         );
         // Codex is intentionally absent from the table (the operator's own plan pays it).
         assert_eq!(
-            estimate_cost_usd(ProviderKind::Codex, "gpt-5-codex", 10, 10),
+            estimate_cost_usd(ProviderKind::Codex, "gpt-5.5", 10, 10),
             None
         );
     }

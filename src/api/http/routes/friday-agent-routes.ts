@@ -924,10 +924,12 @@ export interface FridayAgentRoutesDeps {
     mutatingToolGrant?: string[];
     mutationGate?: string;
     // (NS45-PR2 mission-bound driver — DARK) the first-class Mission handle this run binds to.
-    // Additive + optional; forwarded straight to the route-bound startRun wrapper, which threads
-    // it (UNCHANGED, camelCase) onto the sealed-WS dispatch ONLY when present. Absent for every
-    // existing caller (→ omitted on the wire → byte-identical unbound run). Does NOT change
-    // Rust-route qualification; the bound owner stays the authenticated principal, never this handle.
+    // Additive + optional; forwarded straight to the route-bound startRun wrapper, which uses the
+    // validated 3-field body shape as the Codex mission-bound route selector and threads it
+    // (UNCHANGED, camelCase) onto the sealed-WS dispatch ONLY when present. Absent for every
+    // existing caller (→ omitted on the wire → byte-identical unbound run). SECURITY: the bound
+    // owner stays the authenticated principal, never this handle; Rust re-validates the
+    // Mission/WorkItem binding before completing the run.
     missionContext?: {
       fridayConversationId: string;
       missionId: string;
@@ -1516,10 +1518,11 @@ export function createFridayAgentRoutes(
         // accepted ONLY as an object carrying all THREE required, non-empty string fields
         // (fridayConversationId/missionId/workItemId — the exact 3 the Rust `MissionWorkItemContextWire`
         // requires). Any other shape — absence, non-object, or a MISSING/blank field — ⇒ undefined ⇒
-        // the conditional spread below OMITS the key ⇒ a byte-identical unbound dispatch (today's
-        // behavior). PRESENCE-ONLY: never fabricate a field, never crash on a partial body. This
-        // handle ONLY SELECTS the Mission/WorkItem to bind; the run's owner stays the authenticated
-        // principal (forwarded below via `principalInput`), never this handle.
+        // the conditional spread below OMITS the key ⇒ a byte-identical unbound dispatch for
+        // non-Codex routes. PRESENCE-ONLY: never fabricate a field, never crash on a partial body.
+        // For Codex observe-wrapper admission this is part of route selection, not authorization:
+        // the run's owner stays the authenticated principal (forwarded below via `principalInput`),
+        // and Rust re-checks the Mission/WorkItem/owner binding before producing proof.
         let missionContext:
           | { fridayConversationId: string; missionId: string; workItemId: string }
           | undefined;

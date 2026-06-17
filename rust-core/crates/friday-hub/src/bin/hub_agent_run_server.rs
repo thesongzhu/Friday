@@ -2338,6 +2338,33 @@ mod tests {
         )
     }
 
+    /// A sealed `AgentRunRequest` carrying the FIRST-CLASS Mission/WorkItem handle emitted by
+    /// mission intake. This is the real Rust surface the TS auto-dispatch path ultimately drives:
+    /// the request is authenticated exactly like the unbound run, but it gives the mission-bound
+    /// dispatch arm enough canonical context to bind the run to product work.
+    fn mission_bound_agent_run_request(
+        msg_id: &str,
+        run_id: &str,
+        principal: &str,
+        client_session: &DataKey,
+        session_nonce: &[u8],
+        mission_context: friday_protocol::MissionWorkItemContextWire,
+    ) -> Envelope {
+        Envelope::new(
+            msg_id,
+            1000,
+            Message::AgentRunRequest {
+                run_id: run_id.to_string(),
+                task: "answer me".into(),
+                forwarded_principal: principal.to_string(),
+                auth_proof: auth_proof_bytes(client_session, session_nonce, principal, run_id),
+                session_id: None,
+                constraints: None,
+                mission_context: Some(mission_context),
+            },
+        )
+    }
+
     /// (A2a Phase 1) A SESSIONED `AgentRunRequest` — identical to [`agent_run_request`] but
     /// carrying a non-empty `session_id`, so the server's dispatch arm branches into
     /// `run_session_task` (the existing `run_session_loop`) instead of `run_authed_agent_loop`.
@@ -5867,6 +5894,65 @@ mod tests {
             .expect("spawn node TS client subprocess")
     }
 
+    /// Spawn the TS sealed-client runner in auto-dispatch mode: the subprocess first calls the real
+    /// `intakeMission`, then invokes the real `createFridayMissionAutoDispatchDriver`, whose
+    /// `startRun` thunk calls the real sealed client's `dispatchRun` with the emitted
+    /// missionContext. The Rust side serves two loopback sealed sessions.
+    fn spawn_ts_auto_dispatch_client(
+        port: u16,
+        secret_hex: &str,
+        principal: &str,
+        run_id: &str,
+    ) -> std::process::Child {
+        let bundle = worktree_root().join("test/interop/.build/sealed-client-runner.cjs");
+        assert!(
+            bundle.exists(),
+            "interop bundle missing at {bundle:?} — run `node test/interop/build-sealed-client-runner.mjs` first"
+        );
+        std::process::Command::new("node")
+            .arg(bundle)
+            .arg("--mode=auto-dispatch")
+            .arg(format!("--port={port}"))
+            .arg(format!("--secret-hex={secret_hex}"))
+            .arg(format!("--principal={principal}"))
+            .arg(format!("--run-id={run_id}"))
+            .arg("--timeout-ms=15000")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn node TS auto-dispatch subprocess")
+    }
+
+    /// Spawn the TS sealed-client runner in mission-route auto-dispatch mode: the subprocess calls
+    /// the REAL `createFridayMissionSpineRoutes` POST handler, which delegates to the REAL dispatch
+    /// adapter + REAL sealed client and then fires the REAL auto-dispatch driver into a second
+    /// sealed `dispatchRun` carrying missionContext. This is the operator-surface-shaped proof for
+    /// the same two Rust loopback sessions.
+    fn spawn_ts_mission_route_auto_dispatch_client(
+        port: u16,
+        secret_hex: &str,
+        principal: &str,
+        run_id: &str,
+    ) -> std::process::Child {
+        let bundle = worktree_root().join("test/interop/.build/sealed-client-runner.cjs");
+        assert!(
+            bundle.exists(),
+            "interop bundle missing at {bundle:?} — run `node test/interop/build-sealed-client-runner.mjs` first"
+        );
+        std::process::Command::new("node")
+            .arg(bundle)
+            .arg("--mode=mission-route-auto-dispatch")
+            .arg(format!("--port={port}"))
+            .arg(format!("--secret-hex={secret_hex}"))
+            .arg(format!("--principal={principal}"))
+            .arg(format!("--run-id={run_id}"))
+            .arg("--timeout-ms=15000")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn node TS mission-route auto-dispatch subprocess")
+    }
+
     /// Read the ONE JSON line the runner prints on stdout.
     fn read_client_json(child: std::process::Child) -> serde_json::Value {
         let out = child
@@ -5966,6 +6052,270 @@ mod tests {
             serde_json::json!(ANSWER.len()),
             "TS surfaced the refs len"
         );
+    }
+
+    // (1b) AUTO-DISPATCH FULL ROUND-TRIP: real TS sealed client -> real MissionIntakeRequest ->
+    // real TS auto-dispatch driver -> real sealed AgentRunRequest with missionContext -> real Rust
+    // mission-bound seam. This remains manual/ignored (Node bundle + subprocess), but closes the
+    // split proof at the destination interop layer without claiming organic operator traffic.
+    #[test]
+    #[ignore = "needs `node` + the prebuilt interop bundle; opt in with --ignored"]
+    fn interop_ts_auto_dispatch_driver_intake_to_mission_bound_run() {
+        const ANSWER: &str = "PONG";
+        const RUN_ID: &str = "run-interop-auto";
+        const FCONV_ID: &str = "fconv_interop_auto";
+        const MISSION_ID: &str = "mission-interop-auto";
+        const WORK_ITEM_ID: &str = "work-interop-auto";
+
+        let (rt, _ws) = pong_runtime("interop-auto-dispatch", OWNER, ANSWER);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let owner_allowlist = vec![OWNER.to_string()];
+        let peer_allowlist = allowlist_of(ts_client_pubkey());
+
+        let mut child =
+            spawn_ts_auto_dispatch_client(addr.port(), &ts_client_secret_hex(), OWNER, RUN_ID);
+
+        let intake_processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &owner_allowlist,
+                &peer_allowlist,
+                false,
+                false,
+                true,  // mission-intake ingress ON
+                false, // mission-spine dispatch OFF
+                false, // memory-confirm ingress OFF
+                false, // token surface OFF
+                false, // provider-workspace dispatch OFF
+            )
+            .expect("server serves the TS intake session");
+        assert_eq!(intake_processed, 1, "one intake request processed");
+        eprintln!("interop_auto_dispatch: intake session processed");
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if let Some(status) = child.try_wait().expect("poll TS auto-dispatch subprocess") {
+            let v = read_client_json(child);
+            panic!(
+                "TS auto-dispatch subprocess exited before opening the run session: status={status:?} json={v:?}"
+            );
+        }
+        eprintln!("interop_auto_dispatch: TS subprocess still running; awaiting bound run session");
+
+        let run_processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &owner_allowlist,
+                &peer_allowlist,
+                true,  // run-control ON so the driver's read-only constraints are applied
+                true,  // mission-bound run ON
+                false, // mission-intake ingress OFF
+                false, // mission-spine dispatch OFF
+                false, // memory-confirm ingress OFF
+                false, // token surface OFF
+                false, // provider-workspace dispatch OFF
+            )
+            .expect("server serves the TS auto-dispatched run session");
+        assert_eq!(run_processed, 1, "one bound run processed");
+        eprintln!("interop_auto_dispatch: bound run session processed");
+
+        let v = read_client_json(child);
+        assert_eq!(
+            v["ok"],
+            serde_json::json!(true),
+            "TS auto-dispatch runner reports success: {v:?}"
+        );
+        assert_eq!(v["mode"], serde_json::json!("auto-dispatch"));
+        assert_eq!(v["intakeStatus"], serde_json::json!("ready"));
+        assert_eq!(v["intakeCreatedOrReady"], serde_json::json!(true));
+        assert_eq!(v["runStatus"], serde_json::json!("finished"));
+        assert_eq!(v["runId"], serde_json::json!(RUN_ID));
+        assert_eq!(
+            v["answerSha256"],
+            serde_json::json!(sha256_hex(ANSWER.as_bytes()))
+        );
+        assert_eq!(v["answerLen"], serde_json::json!(ANSWER.len()));
+        assert_eq!(
+            v["missionContext"],
+            serde_json::json!({
+                "fridayConversationId": FCONV_ID,
+                "missionId": MISSION_ID,
+                "workItemId": WORK_ITEM_ID,
+            }),
+            "driver must bind to the server-produced MissionIntakeResult handle"
+        );
+        assert_eq!(
+            v["allowedRustRouteTools"],
+            serde_json::json!(["read_file", "list_dir", "stat_file", "search"]),
+            "driver must dispatch the exact Rust read-tool grant"
+        );
+        assert_eq!(v["constraints"], serde_json::json!({ "readOnly": true }));
+
+        let work = rt
+            .db()
+            .get_work_item(WORK_ITEM_ID)
+            .unwrap()
+            .expect("auto-dispatched run keeps the intake WorkItem");
+        assert_eq!(work.status, friday_core::WorkItemStatus::CompletedWithProof);
+        assert!(work
+            .proof_receipts
+            .contains(&format!("friday://agent-run/{RUN_ID}")));
+
+        let links = rt.db().list_mission_links(MISSION_ID).unwrap();
+        assert!(
+            links.iter().any(|link| link.target_ref
+                == format!("friday://provider-timeline/{FCONV_ID}#{RUN_ID}")
+                && link.work_item_id.as_deref() == Some(WORK_ITEM_ID)),
+            "MissionLink must bind the TS auto-dispatched run: {links:?}"
+        );
+
+        let route = rt
+            .db()
+            .get_route_decision(&format!("route-decision:agent-loop:{RUN_ID}"))
+            .unwrap()
+            .expect("auto-dispatched mission-bound run writes route_decision");
+        assert_eq!(route.mission_id, MISSION_ID);
+        assert_eq!(route.work_item_id, WORK_ITEM_ID);
+        assert_eq!(route.selected_lane, friday_core::WorkLane::DeepSeek);
+    }
+
+    // (1c) OPERATOR-SURFACE-SHAPED FULL ROUND-TRIP: real TS mission-spine POST route handler ->
+    // real dispatch adapter -> real sealed MissionIntakeRequest -> real auto-dispatch driver ->
+    // real sealed AgentRunRequest with missionContext -> real Rust mission-bound seam. This is
+    // still manual/ignored (Node bundle + subprocess), not organic dogfood traffic, but closes the
+    // split proof at the HTTP route surface rather than calling the driver directly.
+    #[test]
+    #[ignore = "needs `node` + the prebuilt interop bundle; opt in with --ignored"]
+    fn interop_ts_mission_route_auto_dispatch_to_mission_bound_run() {
+        const ANSWER: &str = "PONG";
+        const RUN_ID: &str = "run-interop-route-auto";
+        const FCONV_ID: &str = "fconv_interop_route_auto";
+        const MISSION_ID: &str = "mission-interop-route-auto";
+        const WORK_ITEM_ID: &str = "work-interop-route-auto";
+
+        let (rt, _ws) = pong_runtime("interop-route-auto-dispatch", OWNER, ANSWER);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let owner_allowlist = vec![OWNER.to_string()];
+        let peer_allowlist = allowlist_of(ts_client_pubkey());
+
+        let mut child = spawn_ts_mission_route_auto_dispatch_client(
+            addr.port(),
+            &ts_client_secret_hex(),
+            OWNER,
+            RUN_ID,
+        );
+
+        let intake_processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &owner_allowlist,
+                &peer_allowlist,
+                false,
+                false,
+                true,  // mission-intake ingress ON
+                false, // mission-spine dispatch OFF
+                false, // memory-confirm ingress OFF
+                false, // token surface OFF
+                false, // provider-workspace dispatch OFF
+            )
+            .expect("server serves the TS mission-route intake session");
+        assert_eq!(intake_processed, 1, "one route intake request processed");
+        eprintln!("interop_route_auto_dispatch: intake session processed");
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if let Some(status) = child
+            .try_wait()
+            .expect("poll TS mission-route auto-dispatch subprocess")
+        {
+            let v = read_client_json(child);
+            panic!(
+                "TS mission-route auto-dispatch subprocess exited before opening the run session: status={status:?} json={v:?}"
+            );
+        }
+        eprintln!(
+            "interop_route_auto_dispatch: TS subprocess still running; awaiting bound run session"
+        );
+
+        let run_processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &owner_allowlist,
+                &peer_allowlist,
+                true,  // run-control ON so the driver's read-only constraints are applied
+                true,  // mission-bound run ON
+                false, // mission-intake ingress OFF
+                false, // mission-spine dispatch OFF
+                false, // memory-confirm ingress OFF
+                false, // token surface OFF
+                false, // provider-workspace dispatch OFF
+            )
+            .expect("server serves the TS mission-route auto-dispatched run session");
+        assert_eq!(run_processed, 1, "one route-triggered bound run processed");
+        eprintln!("interop_route_auto_dispatch: bound run session processed");
+
+        let v = read_client_json(child);
+        assert_eq!(
+            v["ok"],
+            serde_json::json!(true),
+            "TS mission-route auto-dispatch runner reports success: {v:?}"
+        );
+        assert_eq!(v["mode"], serde_json::json!("mission-route-auto-dispatch"));
+        assert_eq!(v["intakeStatus"], serde_json::json!("ready"));
+        assert_eq!(v["intakeCreatedOrReady"], serde_json::json!(true));
+        assert_eq!(v["runStatus"], serde_json::json!("finished"));
+        assert_eq!(v["runId"], serde_json::json!(RUN_ID));
+        assert_eq!(
+            v["answerSha256"],
+            serde_json::json!(sha256_hex(ANSWER.as_bytes()))
+        );
+        assert_eq!(v["answerLen"], serde_json::json!(ANSWER.len()));
+        assert_eq!(
+            v["missionContext"],
+            serde_json::json!({
+                "fridayConversationId": FCONV_ID,
+                "missionId": MISSION_ID,
+                "workItemId": WORK_ITEM_ID,
+            }),
+            "route-triggered driver must bind to the server-produced MissionIntakeResult handle"
+        );
+        assert_eq!(
+            v["allowedRustRouteTools"],
+            serde_json::json!(["read_file", "list_dir", "stat_file", "search"]),
+            "route-triggered driver must dispatch the exact Rust read-tool grant"
+        );
+        assert_eq!(v["constraints"], serde_json::json!({ "readOnly": true }));
+
+        let work = rt
+            .db()
+            .get_work_item(WORK_ITEM_ID)
+            .unwrap()
+            .expect("route-triggered auto-dispatched run keeps the intake WorkItem");
+        assert_eq!(work.status, friday_core::WorkItemStatus::CompletedWithProof);
+        assert!(work
+            .proof_receipts
+            .contains(&format!("friday://agent-run/{RUN_ID}")));
+
+        let links = rt.db().list_mission_links(MISSION_ID).unwrap();
+        assert!(
+            links.iter().any(|link| link.target_ref
+                == format!("friday://provider-timeline/{FCONV_ID}#{RUN_ID}")
+                && link.work_item_id.as_deref() == Some(WORK_ITEM_ID)),
+            "MissionLink must bind the TS route-triggered auto-dispatched run: {links:?}"
+        );
+
+        let route = rt
+            .db()
+            .get_route_decision(&format!("route-decision:agent-loop:{RUN_ID}"))
+            .unwrap()
+            .expect("route-triggered auto-dispatched mission-bound run writes route_decision");
+        assert_eq!(route.mission_id, MISSION_ID);
+        assert_eq!(route.work_item_id, WORK_ITEM_ID);
+        assert_eq!(route.selected_lane, friday_core::WorkLane::DeepSeek);
     }
 
     // (2) FAIL-CLOSED — FORGED PEER: a client pubkey NOT in the allowlist ⇒ the server establishes
@@ -6547,28 +6897,46 @@ mod tests {
                 .unwrap(),
             1
         );
-        let intake_owner = match intake_client.join().unwrap().result {
-            Some(Message::MissionIntakeResult { .. }) => {
-                rt.db()
-                    .get_friday_conversation("fconv_ns5_intake")
-                    .unwrap()
-                    .expect("intake born the conversation")
-                    .owner_principal
-            }
+        let intake_result = match intake_client.join().unwrap().result {
+            Some(Message::MissionIntakeResult { result }) => result,
             other => panic!("intake must birth a Mission, got {other:?}"),
         };
+        assert_eq!(intake_result.status, "ready");
+        assert!(intake_result.created_or_ready);
+        let intake_owner = rt
+            .db()
+            .get_friday_conversation(&intake_result.friday_conversation_id)
+            .unwrap()
+            .expect("intake born the conversation")
+            .owner_principal;
         assert_eq!(
             intake_owner, OWNER,
             "intake binds the Mission owner to the authenticated principal"
         );
 
-        // ── Hop 2: auto-dispatch fires the bound run as the SAME principal -> run_result ──
+        // ── Hop 2: auto-dispatch fires the Mission-bound run as the SAME principal -> run_result ──
         // (The run authenticates via authenticate_forwarded against the SAME allowlist; the Rust
-        // auto-dispatch driver forwards the intake owner as the run principal.)
+        // auto-dispatch driver forwards the intake owner as the run principal and carries the
+        // canonical Mission/WorkItem ids emitted by intake.)
         let run_kp = DeviceKeypair::generate();
         let run_peer_allowlist = allowlist_of(run_kp.public_bytes());
+        let mission_context = friday_protocol::MissionWorkItemContextWire {
+            friday_conversation_id: intake_result.friday_conversation_id.clone(),
+            mission_id: intake_result.mission_id.clone(),
+            work_item_id: intake_result
+                .work_item_id
+                .clone()
+                .expect("ready intake includes a WorkItem id"),
+        };
         let run_client = spawn_client(addr, run_kp, |session, nonce| {
-            let req = agent_run_request("req-identity-run", "run-identity", OWNER, session, nonce);
+            let req = mission_bound_agent_run_request(
+                "req-identity-run",
+                "run-identity",
+                OWNER,
+                session,
+                nonce,
+                mission_context,
+            );
             (req, session.clone(), session.clone())
         });
         assert_eq!(
@@ -6579,7 +6947,7 @@ mod tests {
                     &allowlist,
                     &run_peer_allowlist,
                     false,
-                    false,
+                    true, // mission-bound run ON
                     false,
                     false,
                     false,
@@ -6597,14 +6965,61 @@ mod tests {
             "the bound run returns a refs result"
         );
 
-        // ── The single identity threads through: the run's owner == the intake owner == OWNER ──
-        let run_session_owner = friday_storage::load_session_owner(rt.db().conn(), "run-identity")
-            .unwrap()
-            .expect("the bound run created its ephemeral session");
+        // ── The single identity threads through: intake owner == run answer owner == OWNER ──
+        let run_rows: i64 = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM agent_run WHERE run_id = ?1",
+                ["run-identity"],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(
-            run_session_owner.user_id.as_deref(),
-            Some(OWNER),
-            "the run is owned by the SAME authenticated principal as the intake"
+            run_rows, 1,
+            "the Mission-bound dispatch runs the agent loop exactly once"
+        );
+        let work_item_id = intake_result.work_item_id.as_deref().unwrap();
+        let work_item = rt
+            .db()
+            .get_work_item(work_item_id)
+            .unwrap()
+            .expect("Mission-bound run keeps the intake WorkItem");
+        assert_eq!(
+            work_item.status,
+            friday_core::WorkItemStatus::CompletedWithProof,
+            "the Mission-bound run completes the intake WorkItem with proof"
+        );
+        assert!(
+            work_item
+                .proof_receipts
+                .contains(&"friday://agent-run/run-identity".to_string()),
+            "the WorkItem proof receipts must include this run: {:?}",
+            work_item.proof_receipts
+        );
+        let links = rt
+            .db()
+            .list_mission_links(&intake_result.mission_id)
+            .unwrap();
+        assert!(
+            links.iter().any(|link| link.target_ref
+                == format!(
+                    "friday://provider-timeline/{}#run-identity",
+                    intake_result.friday_conversation_id
+                )
+                && link.work_item_id.as_deref() == Some(work_item_id)),
+            "a provider-timeline mission_link must bind this sealed run to the intake WorkItem: {links:?}"
+        );
+        let route_decision = rt
+            .db()
+            .get_route_decision("route-decision:agent-loop:run-identity")
+            .unwrap()
+            .expect("Mission-bound run writes a route_decision keyed to the run id");
+        assert_eq!(route_decision.mission_id, intake_result.mission_id);
+        assert_eq!(route_decision.work_item_id, work_item_id);
+        assert_eq!(
+            route_decision.selected_lane,
+            friday_core::WorkLane::DeepSeek
         );
         // The run answer is releasable ONLY to that same owner — a different principal is denied.
         use friday_storage::{AnswerDenyReason, RunAnswerAccess};

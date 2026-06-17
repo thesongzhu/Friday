@@ -17,6 +17,16 @@
  *   fail-closed: {"ok":false,"code":"…","httpStatus":503}
  */
 import { createFridayRustHubAgentRunSealedClient } from "../../src/api/mission-spine/friday-rust-hub-agent-run-ws-sealed-client.js";
+import { createFridayMissionSpineDispatchAdapter } from "../../src/api/mission-spine/friday-mission-spine-dispatch-adapter.js";
+import { createFridayMissionAutoDispatchDriver } from "../../src/api/mission-spine/friday-mission-auto-dispatch-driver.js";
+import { createFridayMissionSpineRoutes } from "../../src/api/http/routes/friday-mission-spine-routes.js";
+import {
+  RUST_ROUTE_CODEX_MODEL,
+  RUST_ROUTE_CODEX_PROVIDER_ID,
+  RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
+  RUST_ROUTE_DEEPSEEK_PROVIDER_ID,
+} from "../../src/api/runtime/friday-rust-route-constants.js";
+import type { MissionAutoDispatchStartRun } from "../../src/api/mission-spine/friday-mission-auto-dispatch-driver.js";
 
 function arg(name: string): string | undefined {
   const prefix = `--${name}=`;
@@ -25,6 +35,7 @@ function arg(name: string): string | undefined {
 }
 
 async function main(): Promise<void> {
+  const mode = arg("mode") ?? "dispatch-run";
   const port = Number.parseInt(arg("port") ?? "", 10);
   const secretHex = arg("secret-hex") ?? "";
   const principal = arg("principal") ?? "";
@@ -46,6 +57,222 @@ async function main(): Promise<void> {
   });
 
   try {
+    if (mode === "auto-dispatch") {
+      const intakeRequest = {
+        fridayConversationId: arg("friday-conversation-id") ?? "fconv_interop_auto",
+        ownerPrincipal: principal,
+        surfaceThreadId: arg("surface-thread-id") ?? "surface-interop-auto",
+        surfaceKind: "mobile",
+        deliveryRoute: "interop://sealed-client/auto-dispatch",
+        visibilityPolicy: "compact",
+        missionId: arg("mission-id") ?? "mission-interop-auto",
+        workItemId: arg("work-item-id") ?? "work-interop-auto",
+        title: "Interop auto-dispatch mission",
+        intent: "Drive the real TS auto-dispatch driver into the real Rust mission-bound seam",
+        lane: "deepseek",
+        targetProviderOrAgent: "deepseek",
+        capabilityId: "ask_friday.deepseek",
+        bodyRef: "friday://body/interop/auto-dispatch",
+        includesSensitiveContext: false,
+      };
+      const intake = await client.intakeMission(intakeRequest);
+      let dispatchedInput: Parameters<MissionAutoDispatchStartRun>[0] | undefined;
+      let dispatchPromise: Promise<unknown> | undefined;
+      let dispatchError: unknown;
+      const driver = createFridayMissionAutoDispatchDriver({
+        startRun: () => (input) => {
+          dispatchedInput = input;
+          dispatchPromise = client.dispatchRun({
+            runId,
+            task: input.task,
+            forwardedPrincipal: input.principalId ?? principal,
+            ...(input.constraints !== undefined ? { constraints: input.constraints } : {}),
+            ...(input.missionContext !== undefined ? { missionContext: input.missionContext } : {}),
+          });
+          return dispatchPromise;
+        },
+        deepseekProviderId: RUST_ROUTE_DEEPSEEK_PROVIDER_ID,
+        deepseekFlashModel: RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
+        codexProviderId: RUST_ROUTE_CODEX_PROVIDER_ID,
+        codexModel: RUST_ROUTE_CODEX_MODEL,
+        onDispatchError: (error) => {
+          dispatchError = error;
+        },
+      });
+      driver.onIntakeReady(intakeRequest, intake);
+      if (!dispatchPromise || !dispatchedInput) {
+        process.stdout.write(
+          JSON.stringify({
+            ok: false,
+            code: "AUTO_DISPATCH_DID_NOT_START",
+            httpStatus: 0,
+            intakeStatus: intake.status,
+          }) + "\n",
+        );
+        process.exit(5);
+        return;
+      }
+      const result = await dispatchPromise;
+      if (dispatchError) {
+        throw dispatchError;
+      }
+      if (typeof result === "object" && result !== null && "outcome" in result && result.outcome === "paused") {
+        process.stdout.write(JSON.stringify({ ok: false, code: "UNEXPECTED_PAUSE", httpStatus: 0 }) + "\n");
+        process.exit(4);
+        return;
+      }
+      const refs = result as {
+        status?: string;
+        runId?: string;
+        answerSha256?: string;
+        answerLen?: number;
+      };
+      process.stdout.write(
+        JSON.stringify({
+          ok: true,
+          mode,
+          intakeStatus: intake.status,
+          intakeCreatedOrReady: intake.createdOrReady,
+          runStatus: refs.status,
+          runId: refs.runId,
+          answerSha256: refs.answerSha256 ?? null,
+          answerLen: refs.answerLen ?? null,
+          task: dispatchedInput.task,
+          providerId: dispatchedInput.providerId,
+          model: dispatchedInput.model,
+          constraints: dispatchedInput.constraints ?? null,
+          allowedRustRouteTools: dispatchedInput.allowedRustRouteTools ?? [],
+          missionContext: dispatchedInput.missionContext ?? null,
+        }) + "\n",
+      );
+      process.exit(0);
+      return;
+    }
+
+    if (mode === "mission-route-auto-dispatch") {
+      const clientSecret = new Uint8Array(Buffer.from(secretHex, "hex"));
+      const intakeRequest = {
+        fridayConversationId: arg("friday-conversation-id") ?? "fconv_interop_route_auto",
+        ownerPrincipal: principal,
+        surfaceThreadId: arg("surface-thread-id") ?? "surface-interop-route-auto",
+        surfaceKind: "mobile",
+        deliveryRoute: "interop://mission-route/auto-dispatch",
+        visibilityPolicy: "compact",
+        missionId: arg("mission-id") ?? "mission-interop-route-auto",
+        workItemId: arg("work-item-id") ?? "work-interop-route-auto",
+        title: "Interop mission-route auto-dispatch mission",
+        intent: "Drive the real HTTP mission-spine route into the real Rust mission-bound seam",
+        lane: "deepseek",
+        targetProviderOrAgent: "deepseek",
+        capabilityId: "ask_friday.deepseek",
+        bodyRef: "friday://body/interop/mission-route-auto-dispatch",
+        includesSensitiveContext: false,
+      };
+      let dispatchedInput: Parameters<MissionAutoDispatchStartRun>[0] | undefined;
+      let dispatchPromise: Promise<unknown> | undefined;
+      let dispatchError: unknown;
+      const driver = createFridayMissionAutoDispatchDriver({
+        startRun: () => (input) => {
+          dispatchedInput = input;
+          dispatchPromise = client.dispatchRun({
+            runId,
+            task: input.task,
+            forwardedPrincipal: input.principalId ?? principal,
+            ...(input.constraints !== undefined ? { constraints: input.constraints } : {}),
+            ...(input.missionContext !== undefined ? { missionContext: input.missionContext } : {}),
+          });
+          return dispatchPromise;
+        },
+        deepseekProviderId: RUST_ROUTE_DEEPSEEK_PROVIDER_ID,
+        deepseekFlashModel: RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
+        codexProviderId: RUST_ROUTE_CODEX_PROVIDER_ID,
+        codexModel: RUST_ROUTE_CODEX_MODEL,
+        onDispatchError: (error) => {
+          dispatchError = error;
+        },
+      });
+      const dispatch = createFridayMissionSpineDispatchAdapter({
+        host: "127.0.0.1",
+        port,
+        timeoutMs,
+        secretResolver: () => clientSecret,
+        autoDispatchDriver: driver,
+      });
+      const route = createFridayMissionSpineRoutes({
+        workbench: null,
+        disabledReason: null,
+        dispatch,
+      }).find((candidate) => candidate.operationId === "mission.spine.intake.create");
+      if (!route) {
+        process.stdout.write(JSON.stringify({ ok: false, code: "MISSION_ROUTE_MISSING", httpStatus: 0 }) + "\n");
+        process.exit(6);
+        return;
+      }
+      const routeResponse = await route.handler({
+        requestId: "req-interop-mission-route-auto-dispatch",
+        receivedAt: new Date(0).toISOString(),
+        params: {},
+        query: {},
+        body: intakeRequest,
+        headers: {},
+        principal: {
+          principalType: "user",
+          principalId: principal,
+          userId: principal,
+          role: "admin",
+          scopes: ["hub.admin"],
+        },
+      } as never);
+      const intake = (routeResponse as { result?: { status?: string; createdOrReady?: boolean } }).result;
+      if (!dispatchPromise || !dispatchedInput) {
+        process.stdout.write(
+          JSON.stringify({
+            ok: false,
+            code: "MISSION_ROUTE_AUTO_DISPATCH_DID_NOT_START",
+            httpStatus: 0,
+            intakeStatus: intake?.status ?? null,
+          }) + "\n",
+        );
+        process.exit(5);
+        return;
+      }
+      const result = await dispatchPromise;
+      if (dispatchError) {
+        throw dispatchError;
+      }
+      if (typeof result === "object" && result !== null && "outcome" in result && result.outcome === "paused") {
+        process.stdout.write(JSON.stringify({ ok: false, code: "UNEXPECTED_PAUSE", httpStatus: 0 }) + "\n");
+        process.exit(4);
+        return;
+      }
+      const refs = result as {
+        status?: string;
+        runId?: string;
+        answerSha256?: string;
+        answerLen?: number;
+      };
+      process.stdout.write(
+        JSON.stringify({
+          ok: true,
+          mode,
+          intakeStatus: intake?.status ?? null,
+          intakeCreatedOrReady: intake?.createdOrReady ?? null,
+          runStatus: refs.status,
+          runId: refs.runId,
+          answerSha256: refs.answerSha256 ?? null,
+          answerLen: refs.answerLen ?? null,
+          task: dispatchedInput.task,
+          providerId: dispatchedInput.providerId,
+          model: dispatchedInput.model,
+          constraints: dispatchedInput.constraints ?? null,
+          allowedRustRouteTools: dispatchedInput.allowedRustRouteTools ?? [],
+          missionContext: dispatchedInput.missionContext ?? null,
+        }) + "\n",
+      );
+      process.exit(0);
+      return;
+    }
+
     const result = await client.dispatchRun({ runId, task, forwardedPrincipal: principal });
     // (A3 courier) dispatch returns a discriminated union (result | paused). This runner drives the
     // read-only path with the run-control flag OFF, so a paused outcome is unreachable here — narrow
@@ -68,7 +295,8 @@ async function main(): Promise<void> {
     const code = error && typeof error === "object" && "code" in error ? String((error as { code: unknown }).code) : "UNKNOWN";
     const httpStatus =
       error && typeof error === "object" && "httpStatus" in error ? Number((error as { httpStatus: unknown }).httpStatus) : 0;
-    process.stdout.write(JSON.stringify({ ok: false, code, httpStatus }) + "\n");
+    const message = error instanceof Error ? error.message : undefined;
+    process.stdout.write(JSON.stringify({ ok: false, code, httpStatus, ...(message ? { message } : {}) }) + "\n");
     process.exit(3);
   }
 }

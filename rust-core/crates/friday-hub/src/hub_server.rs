@@ -42,7 +42,8 @@ use std::io::{Read, Write};
 
 use crate::mission_context::MissionContextLookup;
 use crate::mission_preflight::{
-    preflight_and_stage_work_item, MissionPreflightOutcome, MissionPreflightRequest,
+    preflight_and_stage_work_item_with_workspace_claims, MissionPreflightOutcome,
+    MissionPreflightRequest,
 };
 use crate::mission_runtime::{ask_friday_for_mission, MissionBoundAskOutcome};
 use crate::provider_dispatch::{
@@ -441,6 +442,46 @@ pub fn mission_intake_result_for_db_flagged(
             projection_ref_part(&request.work_item_id)
         )
     });
+    let codex_provider_claim = if lane == friday_core::WorkLane::Codex
+        || target.as_deref() == Some("codex")
+    {
+        Some(friday_core::WorkspaceClaim {
+            claim_id: format!(
+                "claim-codex-provider-session-{}-{}",
+                projection_ref_part(&request.mission_id),
+                projection_ref_part(&request.work_item_id)
+            ),
+            mission_id: request.mission_id.clone(),
+            work_item_id: Some(request.work_item_id.clone()),
+            owner_principal: authenticated_owner.to_string(),
+            owner_agent: "friday-hub:mission-intake".into(),
+            workspace_ref: format!(
+                "friday://provider-session/codex/{}",
+                projection_ref_part(&request.work_item_id)
+            ),
+            claim_kind: friday_core::WorkspaceClaimKind::ProviderSession,
+            state: friday_core::ClaimState::Active,
+            reason: "Mission intake reserved the Codex provider session for observe-wrapper proof."
+                .into(),
+            safe_release_policy: "release when the bound WorkItem completes or stale recovery reclaims the provider session".into(),
+            proof_requirements: vec!["claim-bound Codex process observation".into()],
+            proof_refs: vec![format!(
+                "proof://mission-intake/{}",
+                projection_ref_part(&request.mission_id)
+            )],
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+            released_at_ms: None,
+        })
+    } else {
+        None
+    };
+    let owner_claim_ids: Vec<String> = codex_provider_claim
+        .as_ref()
+        .map(|claim| vec![claim.claim_id.clone()])
+        .unwrap_or_default();
+    let workspace_claims: Vec<friday_core::WorkspaceClaim> =
+        codex_provider_claim.into_iter().collect();
 
     let conversation = friday_core::FridayConversation {
         friday_conversation_id: request.friday_conversation_id.clone(),
@@ -503,7 +544,7 @@ pub fn mission_intake_result_for_db_flagged(
         lane,
         target_provider_or_agent: target,
         status: friday_core::WorkItemStatus::Draft,
-        owner_claim_ids: Vec::new(),
+        owner_claim_ids: owner_claim_ids.clone(),
         workspace_refs: Vec::new(),
         capability_id,
         risk_level: friday_core::Risk::Low,
@@ -527,7 +568,7 @@ pub fn mission_intake_result_for_db_flagged(
             previous_pitfalls: vec!["provider ack looked like done".into()],
             inheritable_context: vec!["same Mission renders across surfaces".into()],
             proof_requirements: vec!["ledger/activity/audit proof".into()],
-            ownership_claim_ids: Vec::new(),
+            ownership_claim_ids: owner_claim_ids,
         },
         created_at_ms: now_ms,
         updated_at_ms: now_ms,
@@ -547,7 +588,7 @@ pub fn mission_intake_result_for_db_flagged(
         None,
     );
 
-    let outcome = match preflight_and_stage_work_item(
+    let outcome = match preflight_and_stage_work_item_with_workspace_claims(
         db,
         MissionPreflightRequest {
             conversation,
@@ -556,6 +597,7 @@ pub fn mission_intake_result_for_db_flagged(
             work_item,
             includes_sensitive_context: request.includes_sensitive_context,
         },
+        &workspace_claims,
     ) {
         Ok(outcome) => outcome,
         Err(err) => {
@@ -2165,8 +2207,8 @@ pub fn run_authed_agent_loop_with_policy<T: Transport>(
 /// (NS-4) The FLAG-GATED Mission-BOUND dispatch seam — the live-reachable counterpart of the
 /// UNBOUND [`run_authed_agent_loop_with_policy`]. When the operator has flipped
 /// `FRIDAY_MISSION_BOUND_RUN` ON **and** a [`MissionContextLookup`] resolves to a live
-/// DeepSeek-lane Mission/WorkItem for this run, it dispatches the run through
-/// [`HubRuntime::run_agent_loop_for_mission_with_overrides`] — minting the mission-birth /
+/// provider-lane Mission/WorkItem for this run, it dispatches the run through the matching
+/// mission-bound runtime entry — minting the mission-birth /
 /// WorkItem bind (a `MissionLink` + a WorkItem status transition + a `route_decision`) the
 /// unbound `run_task` path never produces. This is the seam mission-birth + passport-mint
 /// depend on to be live-reachable.
@@ -2226,8 +2268,9 @@ pub fn run_authed_agent_loop_with_policy<T: Transport>(
 /// matches the unbound arm so a peer-asserted tightening constraint is enforced identically
 /// (read-only / disabled-tools / max-turns).
 ///
-/// The bound path is pinned to `WorkLane::DeepSeek` (the single live provider) by
-/// `run_agent_loop_for_mission_with_overrides` — expected, not a defect.
+/// Codex WorkItems (`lane=codex`, `target_provider_or_agent=codex`) route to the Codex sibling;
+/// every other handle preserves the existing DeepSeek mission-bound entry and its fall-through
+/// behavior.
 #[allow(clippy::too_many_arguments)]
 pub fn run_authed_agent_loop_mission_bound<T: Transport>(
     runtime: &HubRuntime<T>,
@@ -2271,15 +2314,29 @@ pub fn run_authed_agent_loop_mission_bound<T: Transport>(
     // matches the Mission's conversation by the time the bind runs.
     let session = handle.friday_conversation_id.as_str();
 
-    match runtime.run_agent_loop_for_mission_with_overrides(
-        lookup,
-        session,
-        run_id,
-        task,
-        policy_override,
-        max_turns_override,
-        now_ms,
-    ) {
+    let result = if mission_handle_targets_codex(runtime, handle) {
+        runtime.run_codex_agent_loop_for_mission_with_overrides(
+            lookup,
+            session,
+            run_id,
+            task,
+            policy_override,
+            max_turns_override,
+            now_ms,
+        )
+    } else {
+        runtime.run_agent_loop_for_mission_with_overrides(
+            lookup,
+            session,
+            run_id,
+            task,
+            policy_override,
+            max_turns_override,
+            now_ms,
+        )
+    };
+
+    match result {
         // The Mission was valid: the composed loop ran and the run was bound to the Mission.
         // Project the owner-gated body EXACTLY as the unbound entry does (both persist
         // `run_result` with the same owner-wiring via `run_with_request`), then attach the
@@ -2298,6 +2355,17 @@ pub fn run_authed_agent_loop_mission_bound<T: Transport>(
             run_id: run_id.to_string(),
         }),
     }
+}
+
+fn mission_handle_targets_codex<T: Transport>(
+    runtime: &HubRuntime<T>,
+    handle: &MissionWorkItemContextWire,
+) -> bool {
+    let Ok(Some(work_item)) = runtime.db().get_work_item(&handle.work_item_id) else {
+        return false;
+    };
+    work_item.lane == friday_core::WorkLane::Codex
+        && work_item.target_provider_or_agent.as_deref().map(str::trim) == Some("codex")
 }
 
 fn work_item_timeline_wire(item: friday_core::WorkItem) -> MissionTimelineWorkItemWire {
@@ -2606,10 +2674,10 @@ fn work_item_status_from_wire(value: &str) -> Result<friday_core::WorkItemStatus
 mod tests {
     use super::*;
     use friday_core::{
-        ApprovalState, FridayConversation, HandoffJudgmentMemory, MemoryScope, Mission,
+        ApprovalState, ClaimState, FridayConversation, HandoffJudgmentMemory, MemoryScope, Mission,
         MissionLink, MissionLinkKind, MissionStatus, ProviderSessionLink, RouteDecisionCard,
         SurfaceEvent, SurfaceEventKind, SurfaceKind, SurfaceThread, SyncMode, TruthStatus,
-        VisibilityPolicy, WorkItem, WorkItemStatus, WorkLane,
+        VisibilityPolicy, WorkItem, WorkItemStatus, WorkLane, WorkspaceClaimKind,
     };
     use friday_crypto::DeviceKeypair;
     use friday_deepseek::{DeepSeekError, Transport};
@@ -4231,9 +4299,9 @@ mod tests {
                         work_item_id: "work-intake-mobile".into(),
                         title: "Mission intake".into(),
                         intent: shared_intent.into(),
-                        lane: "deepseek".into(),
-                        target_provider_or_agent: Some("deepseek".into()),
-                        capability_id: Some("ask_friday.deepseek".into()),
+                        lane: "codex".into(),
+                        target_provider_or_agent: Some("codex".into()),
+                        capability_id: Some("observe-wrapper.codex".into()),
                         body_ref: Some("friday://body/mobile/intake-1".into()),
                         includes_sensitive_context: false,
                     },
@@ -4279,9 +4347,9 @@ mod tests {
                         work_item_id: "work-intake-desktop-duplicate".into(),
                         title: "Desktop duplicate".into(),
                         intent: shared_intent.into(),
-                        lane: "deepseek".into(),
-                        target_provider_or_agent: Some("deepseek".into()),
-                        capability_id: Some("ask_friday.deepseek".into()),
+                        lane: "codex".into(),
+                        target_provider_or_agent: Some("codex".into()),
+                        capability_id: Some("observe-wrapper.codex".into()),
                         body_ref: Some("friday://body/desktop/intake-duplicate".into()),
                         includes_sensitive_context: false,
                     },
@@ -4322,9 +4390,9 @@ mod tests {
                         work_item_id: "work-intake-channel-duplicate".into(),
                         title: "Channel duplicate".into(),
                         intent: shared_intent.into(),
-                        lane: "deepseek".into(),
-                        target_provider_or_agent: Some("deepseek".into()),
-                        capability_id: Some("ask_friday.deepseek".into()),
+                        lane: "codex".into(),
+                        target_provider_or_agent: Some("codex".into()),
+                        capability_id: Some("observe-wrapper.codex".into()),
                         body_ref: Some("friday://surface-event-body/telegram/intake".into()),
                         includes_sensitive_context: false,
                     },
@@ -4378,8 +4446,8 @@ mod tests {
             assert!(snapshot.route_decisions.iter().any(|route| {
                 route.mission_id == "mission-intake"
                     && route.work_item_id == "work-intake-mobile"
-                    && route.selected_lane == "deepseek"
-                    && route.selected_target_label.as_deref() == Some("deepseek")
+                    && route.selected_lane == "codex"
+                    && route.selected_target_label.as_deref() == Some("codex")
             }));
             let debug = format!("{snapshot:?}");
             for forbidden in [
@@ -4406,6 +4474,7 @@ mod tests {
         assert_eq!(db.count("mission").unwrap(), 1);
         assert_eq!(db.count("work_item").unwrap(), 1);
         assert_eq!(db.count("surface_thread").unwrap(), 3);
+        assert_eq!(db.count("workspace_claim").unwrap(), 1);
         assert_eq!(db.count("token_ledger").unwrap(), 0);
         assert_eq!(db.count("activity_item").unwrap(), 0);
         assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -4446,6 +4515,29 @@ mod tests {
             .expect("work item");
         assert_eq!(work.status, WorkItemStatus::ReadyToDispatch);
         assert_eq!(work.input_refs, vec!["friday://body/mobile/intake-1"]);
+        let claim_id = format!(
+            "claim-codex-provider-session-{}-{}",
+            projection_ref_part("mission-intake"),
+            projection_ref_part("work-intake-mobile")
+        );
+        assert_eq!(work.owner_claim_ids, vec![claim_id.clone()]);
+        assert_eq!(
+            work.judgment_memory.ownership_claim_ids,
+            vec![claim_id.clone()]
+        );
+        let claim = db
+            .get_workspace_claim(&claim_id)
+            .unwrap()
+            .expect("Codex provider-session claim");
+        assert_eq!(claim.mission_id, "mission-intake");
+        assert_eq!(claim.work_item_id.as_deref(), Some("work-intake-mobile"));
+        assert_eq!(claim.owner_principal, "principal:jarvis");
+        assert_eq!(claim.claim_kind, WorkspaceClaimKind::ProviderSession);
+        assert_eq!(claim.state, ClaimState::Active);
+        assert_eq!(
+            claim.workspace_ref,
+            "friday://provider-session/codex/work-intake-mobile"
+        );
     }
 
     /// One sealed-WS proof chain in the user-requested order:
@@ -6650,6 +6742,7 @@ mod authed_route_tests {
     use serde_json::Value;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
 
     static C: AtomicU64 = AtomicU64::new(0);
     fn tmp(tag: &str) -> String {
@@ -7724,12 +7817,14 @@ mod authed_route_tests {
     // byte-identical fall-through.
 
     use friday_core::{
-        ApprovalState as NsApprovalState, FridayConversation as NsFridayConversation,
+        ApprovalState as NsApprovalState, ClaimState as NsClaimState,
+        FridayConversation as NsFridayConversation,
         HandoffJudgmentMemory as NsHandoffJudgmentMemory, Mission as NsMission,
         MissionStatus as NsMissionStatus, Risk as NsRisk, SurfaceKind as NsSurfaceKind,
         SurfaceThread as NsSurfaceThread, TruthStatus as NsTruthStatus,
         VisibilityPolicy as NsVisibilityPolicy, WorkItem as NsWorkItem,
         WorkItemStatus as NsWorkItemStatus, WorkLane as NsWorkLane,
+        WorkspaceClaim as NsWorkspaceClaim, WorkspaceClaimKind as NsWorkspaceClaimKind,
     };
 
     /// The FIRST-CLASS Mission handle (NS45-PR1) that resolves against the graph
@@ -7749,6 +7844,24 @@ mod authed_route_tests {
     /// (NS45-PR1 retired the surface-thread shim). A DeepSeek-lane / `deepseek`-target active
     /// WorkItem makes the bound dispatch RESOLVABLE.
     fn ns4_seed_mission<T: Transport>(rt: &HubRuntime<T>, surface_thread_id: &str) {
+        ns4_seed_mission_with_route(
+            rt,
+            surface_thread_id,
+            NsWorkLane::DeepSeek,
+            Some("deepseek"),
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+
+    fn ns4_seed_mission_with_route<T: Transport>(
+        rt: &HubRuntime<T>,
+        surface_thread_id: &str,
+        lane: NsWorkLane,
+        target: Option<&str>,
+        owner_claim_ids: Vec<String>,
+        workspace_refs: Vec<String>,
+    ) {
         let now = 1_700_000_000_000;
         let db = rt.db();
         db.upsert_friday_conversation(&NsFridayConversation {
@@ -7800,14 +7913,15 @@ mod authed_route_tests {
             updated_at_ms: now,
         })
         .unwrap();
+        let target = target.map(str::to_string);
         db.upsert_work_item(&NsWorkItem {
             work_item_id: "work-ns4".into(),
             mission_id: "mission-ns4".into(),
-            lane: NsWorkLane::DeepSeek,
-            target_provider_or_agent: Some("deepseek".into()),
+            lane,
+            target_provider_or_agent: target.clone(),
             status: NsWorkItemStatus::ReadyToDispatch,
-            owner_claim_ids: Vec::new(),
-            workspace_refs: Vec::new(),
+            owner_claim_ids,
+            workspace_refs,
             capability_id: Some("mission.ns4".into()),
             risk_level: NsRisk::Medium,
             approval_state: NsApprovalState::NotRequired,
@@ -7816,29 +7930,311 @@ mod authed_route_tests {
             output_refs: Vec::new(),
             proof_requirements: vec!["ns4 tests".into()],
             proof_receipts: Vec::new(),
-            judgment_memory: ns4_judgment(),
+            judgment_memory: ns4_judgment_for(lane, target.as_deref().unwrap_or(lane.as_str())),
             created_at_ms: now,
             updated_at_ms: now,
         })
         .unwrap();
     }
 
-    fn ns4_judgment() -> NsHandoffJudgmentMemory {
+    fn ns4_judgment_for(lane: NsWorkLane, target: &str) -> NsHandoffJudgmentMemory {
         NsHandoffJudgmentMemory {
             task: "Run the Mission-bound agent loop".into(),
             current_blocker: None,
-            target_lane_thread_agent_provider: NsWorkLane::DeepSeek.as_str().into(),
+            target_lane_thread_agent_provider: target.into(),
             read_first_files: vec!["rust-core/crates/friday-hub/src/hub_server.rs".into()],
             required_output: "Mission-bound run".into(),
             done_criteria: vec!["run bound to mission".into()],
             red_lines: vec!["do not run before mission context".into()],
-            why_this_route: "The WorkItem lane owns the agent loop.".into(),
+            why_this_route: format!("The {} WorkItem lane owns the agent loop.", lane.as_str()),
             considered_options: vec!["unbound run_task".into()],
             deferred_options: vec!["multi-provider loop".into()],
             previous_pitfalls: vec!["detached run looked bound".into()],
             inheritable_context: vec!["Mission is product truth".into()],
             proof_requirements: vec!["ns4 tests".into()],
             ownership_claim_ids: Vec::new(),
+        }
+    }
+
+    const CODEX_BOUND_BODY: &str = "CODEX-BOUND-BODY-CANARY-only-owner-P";
+    type CodexObserveContextProbe =
+        Arc<Mutex<Option<crate::observe_wrapper::CodexObserveMissionContext>>>;
+    type CodexSeamFixture = (
+        HubRuntime<ProviderDownTransport>,
+        TempWs,
+        Arc<AtomicU64>,
+        CodexObserveContextProbe,
+    );
+
+    struct SeamCodexStub {
+        answer: String,
+        calls: Arc<AtomicU64>,
+        last_context: CodexObserveContextProbe,
+    }
+
+    impl crate::CodexTurnExecutor for SeamCodexStub {
+        fn run_gated_turn(
+            &self,
+            _conn: &rusqlite::Connection,
+            _policy: &crate::RunPolicy,
+            _secret: &[u8],
+            _operator_vk: Option<&friday_crypto::OperatorVerifyingKey>,
+            _approve: &dyn Fn(
+                &friday_core::gate::MutatingActionRequest,
+            ) -> Option<friday_core::gate::CanonicalApproval>,
+            _task: &str,
+            _run_id: &str,
+            observe_context: Option<&crate::observe_wrapper::CodexObserveMissionContext>,
+            _now_ms: i64,
+        ) -> Result<
+            crate::codex_gated_turn::CodexTurnOutcome,
+            crate::codex_gated_turn::CodexGatedTurnError,
+        > {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            *self.last_context.lock().unwrap() = observe_context.cloned();
+            Ok(crate::codex_gated_turn::CodexTurnOutcome::Finished {
+                answer: self.answer.clone(),
+                usage: crate::BilledUsage {
+                    provider_kind: friday_core::ProviderKind::Codex,
+                    model: "gpt-5.5".into(),
+                    prompt_tokens: 2,
+                    completion_tokens: 3,
+                },
+            })
+        }
+    }
+
+    fn runtime_with_codex_stub(tag: &str) -> CodexSeamFixture {
+        let (rt, ws) = runtime_with(tag, ProviderDownTransport, "principal:owner");
+        let calls = Arc::new(AtomicU64::new(0));
+        let last_context = Arc::new(Mutex::new(None));
+        let stub = SeamCodexStub {
+            answer: CODEX_BOUND_BODY.into(),
+            calls: Arc::clone(&calls),
+            last_context: Arc::clone(&last_context),
+        };
+        let mut rt = rt.with_codex(Box::new(stub));
+        rt.mark_route_available("codex");
+        rt.mark_route_validated("codex");
+        (rt, ws, calls, last_context)
+    }
+
+    fn ns4_codex_provider_claim() -> NsWorkspaceClaim {
+        NsWorkspaceClaim {
+            claim_id: "claim-ns4-codex-provider-session".into(),
+            mission_id: "mission-ns4".into(),
+            work_item_id: Some("work-ns4".into()),
+            owner_principal: "principal:owner".into(),
+            owner_agent: "codex".into(),
+            workspace_ref: "friday://provider-session/ns4-codex".into(),
+            claim_kind: NsWorkspaceClaimKind::ProviderSession,
+            state: NsClaimState::Active,
+            reason: "mission-bound hub seam owns this Codex provider session".into(),
+            safe_release_policy: "release after observe-wrapper proof".into(),
+            proof_requirements: vec!["hub seam Codex observe context proof".into()],
+            proof_refs: Vec::new(),
+            created_at_ms: 1_700_000_000_001,
+            updated_at_ms: 1_700_000_000_001,
+            released_at_ms: None,
+        }
+    }
+
+    struct Ns4CodexMissionSeed {
+        handle: MissionWorkItemContextWire,
+        claim_id: String,
+        work_item_id: String,
+    }
+
+    fn ns4_seed_unique_codex_mission<T: Transport>(
+        rt: &HubRuntime<T>,
+        suffix: &str,
+    ) -> Ns4CodexMissionSeed {
+        let now = 1_700_000_100_000;
+        let friday_conversation_id = format!("fconv_ns4_{suffix}");
+        let mission_id = format!("mission-ns4-{suffix}");
+        let work_item_id = format!("work-ns4-{suffix}");
+        let surface_thread_id = format!("surface-ns4-{suffix}");
+        let claim_id = format!("claim-ns4-codex-provider-session-{suffix}");
+        let workspace_ref = format!("friday://provider-session/ns4-codex-{suffix}");
+        let db = rt.db();
+        db.upsert_friday_conversation(&NsFridayConversation {
+            friday_conversation_id: friday_conversation_id.clone(),
+            owner_principal: "principal:owner".into(),
+            title: format!("NS-4 Codex soak mission {suffix}"),
+            current_focus_summary: "Mission-bound Codex observe soak".into(),
+            active_mission_ids: vec![mission_id.clone()],
+            surface_thread_ids: vec![surface_thread_id.clone()],
+            memory_scope_ref: None,
+            truth_status: NsTruthStatus::WiredRegistry,
+            proof_refs: vec![format!("proof://ns4-codex-soak/{suffix}")],
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        db.upsert_mission(&NsMission {
+            mission_id: mission_id.clone(),
+            friday_conversation_id: friday_conversation_id.clone(),
+            title: format!("NS-4 Codex soak mission {suffix}"),
+            intent: "observe one real Codex app-server run bound to this Mission".into(),
+            status: NsMissionStatus::Active,
+            why_now: "high-pressure observe-wrapper soak needs independent work items".into(),
+            decision_path_summary: "mission-bound Codex seam with provider-session claim".into(),
+            considered_options: vec!["reuse one WorkItem".into()],
+            deferred_options: vec!["organic operator dogfood".into()],
+            known_pitfalls: vec!["terminal WorkItem cannot be reused".into()],
+            handoff_inheritance: vec!["preserve claim-to-observation truth".into()],
+            work_item_ids: vec![work_item_id.clone()],
+            memory_candidate_refs: Vec::new(),
+            context_passport_refs: Vec::new(),
+            proof_refs: vec![format!("proof://ns4-codex-soak/{suffix}")],
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        db.upsert_surface_thread(&NsSurfaceThread {
+            surface_thread_id,
+            friday_conversation_id: friday_conversation_id.clone(),
+            mission_id: Some(mission_id.clone()),
+            surface_kind: NsSurfaceKind::Mobile,
+            channel_binding_id: None,
+            delivery_route: "mobile".into(),
+            visibility_policy: NsVisibilityPolicy::Compact,
+            allowed_actions: vec!["open_mission".into()],
+            last_seen_at_ms: Some(now),
+            last_delivered_event_seq: Some(1),
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        db.upsert_work_item(&NsWorkItem {
+            work_item_id: work_item_id.clone(),
+            mission_id: mission_id.clone(),
+            lane: NsWorkLane::Codex,
+            target_provider_or_agent: Some("codex".into()),
+            status: NsWorkItemStatus::ReadyToDispatch,
+            owner_claim_ids: vec![claim_id.clone()],
+            workspace_refs: vec![workspace_ref.clone()],
+            capability_id: Some(format!("mission.ns4.codex.{suffix}")),
+            risk_level: NsRisk::Medium,
+            approval_state: NsApprovalState::NotRequired,
+            blocking_reason: None,
+            input_refs: vec![format!("input://ns4-codex-soak/{suffix}")],
+            output_refs: Vec::new(),
+            proof_requirements: vec!["real Codex observe-wrapper rows reconcile".into()],
+            proof_receipts: Vec::new(),
+            judgment_memory: ns4_judgment_for(NsWorkLane::Codex, "codex"),
+            created_at_ms: now,
+            updated_at_ms: now,
+        })
+        .unwrap();
+        db.upsert_workspace_claim(&NsWorkspaceClaim {
+            claim_id: claim_id.clone(),
+            mission_id: mission_id.clone(),
+            work_item_id: Some(work_item_id.clone()),
+            owner_principal: "principal:owner".into(),
+            owner_agent: "codex".into(),
+            workspace_ref,
+            claim_kind: NsWorkspaceClaimKind::ProviderSession,
+            state: NsClaimState::Active,
+            reason: "soak owns this Codex provider session observation".into(),
+            safe_release_policy: "release after soak iteration".into(),
+            proof_requirements: vec!["observe wrapper process claim proof".into()],
+            proof_refs: Vec::new(),
+            created_at_ms: now,
+            updated_at_ms: now,
+            released_at_ms: None,
+        })
+        .unwrap();
+        Ns4CodexMissionSeed {
+            handle: MissionWorkItemContextWire {
+                friday_conversation_id,
+                mission_id,
+                work_item_id: work_item_id.clone(),
+            },
+            claim_id,
+            work_item_id,
+        }
+    }
+
+    fn assert_live_codex_observe_invariants<T: Transport>(
+        rt: &HubRuntime<T>,
+        run_id: &str,
+        claim_id: &str,
+        work_item_id: &str,
+    ) {
+        let session_id = crate::observe_wrapper::codex_friday_session_id(run_id);
+        let link = friday_storage::provider_session::get_link(rt.db().conn(), &session_id)
+            .unwrap()
+            .expect("observe wrapper must write a provider_session_link");
+        assert_eq!(link.provider, "codex");
+        assert!(
+            link.external_thread_id.is_some(),
+            "provider thread id should be mirrored as a ref"
+        );
+
+        let usage = rt.db().list_run_token_usage(run_id).unwrap();
+        assert_eq!(usage.len(), 1, "live Codex turn writes one ledger row");
+        assert_eq!(usage[0].provider_kind, "codex");
+        assert!(!usage[0].fallback);
+
+        let events = friday_storage::provider_session::list_events(rt.db().conn(), &session_id)
+            .expect("provider events readable");
+        assert!(
+            !events.is_empty(),
+            "observe wrapper must mirror at least one provider event"
+        );
+        assert!(
+            events
+                .iter()
+                .all(|event| event.redaction_level == "metadata_only"),
+            "provider events stay refs-only metadata"
+        );
+        let ledger_id = format!("{run_id}:t0:ledger");
+        assert!(
+            events
+                .iter()
+                .any(|event| event.token_ledger_ref.as_deref() == Some(ledger_id.as_str())),
+            "provider events should be reconciled to the run ledger"
+        );
+
+        let observation_id = crate::observe_wrapper::codex_process_observation_id(run_id);
+        let observation = friday_storage::process_registry::get_process_observation(
+            rt.db().conn(),
+            &observation_id,
+        )
+        .unwrap()
+        .expect("observe wrapper must write a claimed process observation");
+        assert!(observation.pid > 0);
+        assert_eq!(observation.matched_claim_id.as_deref(), Some(claim_id));
+        assert_eq!(
+            observation.ownership_status,
+            friday_core::OwnershipStatus::FridayOwnedClaimed
+        );
+
+        let work_item = rt.db().get_work_item(work_item_id).unwrap().unwrap();
+        assert_eq!(work_item.status, NsWorkItemStatus::CompletedWithProof);
+        assert!(work_item
+            .proof_receipts
+            .contains(&format!("friday://agent-run/{run_id}")));
+    }
+
+    struct EnvRestore {
+        key: &'static str,
+        prev: Option<String>,
+    }
+    impl EnvRestore {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+    }
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            match &self.prev {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
         }
     }
 
@@ -7943,6 +8339,209 @@ mod authed_route_tests {
         );
         assert_eq!(agent_run_count(&rt, "run-ns4-bound"), 1, "the loop ran");
         assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
+    }
+
+    #[test]
+    fn mission_bound_seam_on_codex_work_item_routes_to_codex_and_threads_claim_context() {
+        let (rt, _ws, codex_calls, codex_context) = runtime_with_codex_stub("ns4-bound-codex");
+        let claim = ns4_codex_provider_claim();
+        let claim_id = claim.claim_id.clone();
+        let workspace_ref = claim.workspace_ref.clone();
+        ns4_seed_mission_with_route(
+            &rt,
+            "surface-ns4-codex-session",
+            NsWorkLane::Codex,
+            Some("codex"),
+            vec![claim_id.clone()],
+            vec![workspace_ref],
+        );
+        rt.db().upsert_workspace_claim(&claim).unwrap();
+        let caller = authed("principal:owner");
+        let handle = ns4_handle();
+
+        let out = run_authed_agent_loop_mission_bound(
+            &rt,
+            &caller,
+            "run-ns4-codex-bound",
+            "do the Codex mission work",
+            Some(&handle),
+            None,
+            None,
+            1000,
+        )
+        .expect("the bound Codex seam took the run (Some), not a fall-through");
+
+        assert_eq!(
+            out.delivered_body(),
+            Some(CODEX_BOUND_BODY),
+            "a Codex WorkItem must dispatch through the Codex runner, not DeepSeek"
+        );
+        assert_eq!(
+            codex_calls.load(Ordering::Relaxed),
+            1,
+            "the Codex executor was called exactly once"
+        );
+        let observed_context = codex_context
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("hub seam threaded WorkItem claim context into the Codex executor");
+        assert_eq!(observed_context.mission_id, "mission-ns4");
+        assert_eq!(observed_context.work_item_id, "work-ns4");
+        assert_eq!(observed_context.owner_claim_ids, vec![claim_id]);
+
+        let work_item = rt.db().get_work_item("work-ns4").unwrap().unwrap();
+        assert_eq!(work_item.status, NsWorkItemStatus::CompletedWithProof);
+        assert!(work_item
+            .proof_receipts
+            .contains(&"friday://agent-run/run-ns4-codex-bound".to_string()));
+        let route_decisions: i64 = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM route_decision WHERE decision_id = ?1",
+                ["route-decision:agent-loop:run-ns4-codex-bound"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(route_decisions, 1);
+        let usage = rt.db().list_run_token_usage("run-ns4-codex-bound").unwrap();
+        assert_eq!(usage.len(), 1);
+        assert_eq!(usage[0].provider_kind, "codex");
+        assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
+    }
+
+    #[test]
+    #[ignore = "live: needs logged-in Codex CLI; spawns codex app-server and spends one Codex turn"]
+    fn live_mission_bound_codex_observe_wrapper_records_session_ledger_and_claimed_process() {
+        let _observe = EnvRestore::set(
+            crate::observe_wrapper::ENV_FRIDAY_OBSERVE_WRAPPER_ENABLED,
+            "1",
+        );
+        let (rt, ws) = runtime_with(
+            "ns4-live-codex-observe",
+            ProviderDownTransport,
+            "principal:owner",
+        );
+        let cwd = ws.0.to_string_lossy().to_string();
+        let mut rt = rt.with_codex(Box::new(crate::LocalCodexGatedTurnExecutor::new(
+            "codex",
+            "friday-hub-live-observe-test",
+            "0.0.1",
+            Some(cwd),
+            "gpt-5.5",
+        )));
+        rt.mark_route_available("codex");
+        rt.validate_and_enable_codex()
+            .expect("logged-in Codex app-server health check must pass");
+
+        let claim = ns4_codex_provider_claim();
+        let claim_id = claim.claim_id.clone();
+        let workspace_ref = claim.workspace_ref.clone();
+        ns4_seed_mission_with_route(
+            &rt,
+            "surface-ns4-live-codex-session",
+            NsWorkLane::Codex,
+            Some("codex"),
+            vec![claim_id.clone()],
+            vec![workspace_ref],
+        );
+        rt.db().upsert_workspace_claim(&claim).unwrap();
+
+        let run_id = "run-ns4-live-codex-observe";
+        let handle = ns4_handle();
+        let out = run_authed_agent_loop_mission_bound(
+            &rt,
+            &authed("principal:owner"),
+            run_id,
+            "Reply with exactly PONG. Do not use tools.",
+            Some(&handle),
+            None,
+            Some(1),
+            1_700_000_000_100,
+        )
+        .expect("mission-bound Codex seam must take the live run");
+        assert!(
+            out.delivered_body().is_some(),
+            "the owner should receive the live Codex answer body"
+        );
+
+        assert_live_codex_observe_invariants(&rt, run_id, &claim_id, "work-ns4");
+        assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
+    }
+
+    #[test]
+    #[ignore = "live: needs logged-in Codex CLI; spawns codex app-server and spends twenty Codex turns"]
+    fn live_mission_bound_codex_observe_wrapper_20_session_soak() {
+        const SOAK_SESSIONS: usize = 20;
+        let _observe = EnvRestore::set(
+            crate::observe_wrapper::ENV_FRIDAY_OBSERVE_WRAPPER_ENABLED,
+            "1",
+        );
+        let _watchdog = EnvRestore::set(
+            friday_providers::codex_appserver::FRIDAY_CODEX_APP_SERVER_TIMEOUT_MS,
+            "120000",
+        );
+        let (rt, ws) = runtime_with(
+            "ns4-live-codex-observe-soak",
+            ProviderDownTransport,
+            "principal:owner",
+        );
+        let cwd = ws.0.to_string_lossy().to_string();
+        let mut rt = rt.with_codex(Box::new(crate::LocalCodexGatedTurnExecutor::new(
+            "codex",
+            "friday-hub-live-observe-soak",
+            "0.0.1",
+            Some(cwd),
+            "gpt-5.5",
+        )));
+        rt.mark_route_available("codex");
+        rt.validate_and_enable_codex()
+            .expect("logged-in Codex app-server health check must pass before the soak");
+
+        for i in 0..SOAK_SESSIONS {
+            let suffix = format!("soak-{i:02}");
+            let seed = ns4_seed_unique_codex_mission(&rt, &suffix);
+            let run_id = format!("run-ns4-live-codex-observe-soak-{i:02}");
+            let out = run_authed_agent_loop_mission_bound(
+                &rt,
+                &authed("principal:owner"),
+                &run_id,
+                "Reply with exactly PONG. Do not use tools.",
+                Some(&seed.handle),
+                None,
+                Some(1),
+                1_700_000_100_000 + i as i64,
+            )
+            .expect("mission-bound Codex seam must take every live soak run");
+            assert!(
+                out.delivered_body().is_some(),
+                "the owner should receive the live Codex answer body for soak iteration {i}"
+            );
+            assert_live_codex_observe_invariants(&rt, &run_id, &seed.claim_id, &seed.work_item_id);
+            assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
+        }
+
+        let ledger_rows: i64 = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM token_ledger WHERE provider_kind = 'codex'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(ledger_rows, SOAK_SESSIONS as i64);
+        let claimed_observations: i64 = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM process_observation WHERE ownership_status = 'friday_owned_claimed'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(claimed_observations, SOAK_SESSIONS as i64);
     }
 
     /// FLAG-OFF byte-identical: when the flag is OFF, the bin NEVER calls the seam (the

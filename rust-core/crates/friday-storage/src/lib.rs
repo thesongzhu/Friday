@@ -662,6 +662,23 @@ impl Db {
         surface_thread: Option<&SurfaceThread>,
         work_item: &WorkItem,
     ) -> Result<()> {
+        self.stage_intake_atomic_with_workspace_claims(
+            conversation,
+            mission,
+            surface_thread,
+            work_item,
+            &[],
+        )
+    }
+
+    pub fn stage_intake_atomic_with_workspace_claims(
+        &self,
+        conversation: &FridayConversation,
+        mission: &Mission,
+        surface_thread: Option<&SurfaceThread>,
+        work_item: &WorkItem,
+        workspace_claims: &[WorkspaceClaim],
+    ) -> Result<()> {
         if self.profile != Profile::Hub {
             return Err(StorageError::Unsupported(
                 "mission intake is Hub-only".into(),
@@ -676,6 +693,9 @@ impl Db {
                 mission::upsert_surface_thread(&tx, surface)?;
             }
             mission::upsert_work_item(&tx, work_item)?;
+            for claim in workspace_claims {
+                process_registry::upsert_workspace_claim(&tx, claim)?;
+            }
             tx.commit()?;
             Ok(())
         })

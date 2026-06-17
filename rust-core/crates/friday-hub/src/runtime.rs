@@ -531,7 +531,7 @@ impl<T: Transport> HubRuntime<T> {
     /// [`Self::maybe_attach_claude_from_env`]). It leaves `validation_ok` untouched, so the
     /// route is STILL not dispatchable until [`Self::validate_and_enable_claude`] flips that
     /// (via the live key probe). A no-op if the route is absent.
-    fn mark_route_available(&mut self, provider_id: &str) {
+    pub(crate) fn mark_route_available(&mut self, provider_id: &str) {
         if let Some(r) = self.routes.get(provider_id).cloned() {
             self.routes.register(ProviderRoute {
                 available: true,
@@ -544,7 +544,7 @@ impl<T: Transport> HubRuntime<T> {
     /// (mirrors [`Self::mark_route_available`]). Set ONLY after the live key probe returns
     /// `Valid` — see [`Self::validate_and_enable_claude`] — so a gated boot that never runs
     /// the probe leaves the route fail-closed (non-dispatchable). A no-op if absent.
-    fn mark_route_validated(&mut self, provider_id: &str) {
+    pub(crate) fn mark_route_validated(&mut self, provider_id: &str) {
         if let Some(r) = self.routes.get(provider_id).cloned() {
             self.routes.register(ProviderRoute {
                 validation_ok: true,
@@ -844,6 +844,10 @@ impl<T: Transport> HubRuntime<T> {
             // VERIFY key, so even ON it can never self-mint the approval it verifies.
             let codex_operator_vk =
                 self.codex_positive_authorize_vk(codex_positive_authorize_enabled_from_env());
+            let observe_context = match work_item_id {
+                Some(work_item_id) => self.codex_observe_context_for_work_item(work_item_id)?,
+                None => None,
+            };
             let outcome = self.run_codex_route_turn(
                 codex,
                 policy,
@@ -852,6 +856,7 @@ impl<T: Transport> HubRuntime<T> {
                 &recall_preamble,
                 task,
                 &approve,
+                observe_context.as_ref(),
                 now_ms,
             )?;
             // D1 OWNER-WIRING parity: persist a Finished answer Hub-side keyed by `run_id` with
@@ -1016,6 +1021,7 @@ impl<T: Transport> HubRuntime<T> {
         recall_preamble: &str,
         task: &str,
         approve: &dyn Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
+        observe_context: Option<&crate::observe_wrapper::CodexObserveMissionContext>,
         now_ms: i64,
     ) -> Result<LoopOutcome, RoutedLoopError> {
         // Plan classification + the SAME recall-preamble prompt the loop records/builds, so a
@@ -1045,6 +1051,7 @@ impl<T: Transport> HubRuntime<T> {
             approve,
             &prompt,
             run_id,
+            observe_context,
             now_ms,
         ) {
             Ok(outcome) => outcome,
@@ -1073,6 +1080,15 @@ impl<T: Transport> HubRuntime<T> {
             // the SAME `agent.finished` marker the loop's Finish arm records, surface the answer.
             crate::codex_gated_turn::CodexTurnOutcome::Finished { answer, usage } => {
                 crate::bill_model_call(self.db.conn(), run_id, 0, &usage, now_ms)?;
+                if crate::observe_wrapper::observe_wrapper_enabled() {
+                    let session_id = crate::observe_wrapper::codex_friday_session_id(run_id);
+                    let ledger_id = format!("{run_id}:t0:ledger");
+                    let _ = crate::observe_wrapper::attach_token_ledger_ref(
+                        self.db.conn(),
+                        &session_id,
+                        &ledger_id,
+                    );
+                }
                 agent_run::record_event(
                     self.db.conn(),
                     &ev("finish"),
@@ -1141,6 +1157,20 @@ impl<T: Transport> HubRuntime<T> {
                 })
             }
         }
+    }
+
+    fn codex_observe_context_for_work_item(
+        &self,
+        work_item_id: &str,
+    ) -> Result<Option<crate::observe_wrapper::CodexObserveMissionContext>, RoutedLoopError> {
+        let Some(work_item) = self.db.get_work_item(work_item_id)? else {
+            return Ok(None);
+        };
+        Ok(Some(crate::observe_wrapper::CodexObserveMissionContext {
+            mission_id: work_item.mission_id,
+            work_item_id: work_item.work_item_id,
+            owner_claim_ids: work_item.owner_claim_ids,
+        }))
     }
 
     /// (A2a Phase 1) The SESSIONED authenticated agent-loop entry — the read-only chat
@@ -1753,6 +1783,51 @@ impl<T: Transport> HubRuntime<T> {
         )
     }
 
+    /// DARK Codex sibling of [`Self::run_agent_loop_for_mission_with_overrides`]. It uses the same
+    /// Mission preflight/bind path, but validates a Codex WorkItem (`lane=codex`,
+    /// `target_provider_or_agent=codex`) and pins the run to the Codex routed-turn seam. This is
+    /// the first mission-bound caller that can carry observe-wrapper claim context into the Codex
+    /// executor; the default DeepSeek mission-bound entry above stays unchanged.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_codex_agent_loop_for_mission_with_overrides(
+        &self,
+        mission_lookup: MissionContextLookup,
+        session_id: &str,
+        run_id: &str,
+        task: &str,
+        policy_override: Option<&RunPolicy>,
+        max_turns_override: Option<u64>,
+        now_ms: i64,
+    ) -> Result<MissionBoundLoopOutcome, RoutedLoopError> {
+        let passport_mint = passport_mint_from(std::env::var(ENV_PASSPORT_MINT).ok().as_deref());
+        let workitem_guarded = workitem_guarded_transition_from(
+            std::env::var(ENV_WORKITEM_GUARDED_TRANSITION)
+                .ok()
+                .as_deref(),
+        );
+        let surface_events =
+            crate::surface_events_from(std::env::var(crate::FRIDAY_SURFACE_EVENTS).ok().as_deref());
+        let route_request = RouteRequest {
+            preferred_provider: Some("codex".to_string()),
+            ..RouteRequest::any()
+        };
+        self.run_agent_loop_for_mission_routed_with_overrides_flagged(
+            mission_lookup,
+            session_id,
+            run_id,
+            task,
+            WorkLane::Codex,
+            Some("codex".to_string()),
+            &route_request,
+            policy_override,
+            max_turns_override,
+            passport_mint,
+            workitem_guarded,
+            surface_events,
+            now_ms,
+        )
+    }
+
     /// (NS-6) [`Self::run_agent_loop_for_mission_with_overrides`] with the DARK passport-mint
     /// flag threaded in as a pure bool — the env read lives ONLY in the public wrapper (the
     /// "split env-read from pure logic" idiom), so the behavioral tests drive this directly with
@@ -1803,6 +1878,41 @@ impl<T: Transport> HubRuntime<T> {
         surface_events: bool,
         now_ms: i64,
     ) -> Result<MissionBoundLoopOutcome, RoutedLoopError> {
+        let route_request = RouteRequest::any();
+        self.run_agent_loop_for_mission_routed_with_overrides_flagged(
+            mission_lookup,
+            session_id,
+            run_id,
+            task,
+            WorkLane::DeepSeek,
+            Some("deepseek".to_string()),
+            &route_request,
+            policy_override,
+            max_turns_override,
+            passport_mint,
+            workitem_guarded,
+            surface_events,
+            now_ms,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_agent_loop_for_mission_routed_with_overrides_flagged(
+        &self,
+        mission_lookup: MissionContextLookup,
+        session_id: &str,
+        run_id: &str,
+        task: &str,
+        expected_lane: WorkLane,
+        expected_target: Option<String>,
+        route_request: &RouteRequest,
+        policy_override: Option<&RunPolicy>,
+        max_turns_override: Option<u64>,
+        passport_mint: bool,
+        workitem_guarded: bool,
+        surface_events: bool,
+        now_ms: i64,
+    ) -> Result<MissionBoundLoopOutcome, RoutedLoopError> {
         // PREFLIGHT (fail-closed): validate the Mission/work-item BEFORE any run exists. On
         // Blocked we return without ever calling `run_task`, so no `agent_run` row and no
         // model call happen for an invalid Mission — mirroring the ask path's preflight.
@@ -1810,8 +1920,8 @@ impl<T: Transport> HubRuntime<T> {
             &self.db,
             MissionRuntimeRequest {
                 lookup: mission_lookup,
-                expected_lane: WorkLane::DeepSeek,
-                expected_target: Some("deepseek".to_string()),
+                expected_lane,
+                expected_target,
                 decision_id: format!("route-decision:agent-loop:{run_id}"),
                 trace_refs: vec![
                     format!("agent-run:{run_id}"),
@@ -1902,7 +2012,7 @@ impl<T: Transport> HubRuntime<T> {
         let (selection, outcome) = self.run_with_request(
             run_id,
             task,
-            &RouteRequest::any(),
+            route_request,
             policy_override,
             max_turns_override,
             None, // cancel: the mission-bound entry is not cancellable
@@ -2596,7 +2706,7 @@ impl HubRuntime<UreqTransport> {
         }
         // Gate is ON: build the real Codex executor over the production per-turn app-server
         // (no credential read here — the spawn is lazy). `cwd: None` lets the app-server
-        // default; the model id matches the `codex` route (`gpt-5-codex`).
+        // default; the model id matches the `codex` route (`gpt-5.5`).
         let executor = crate::LocalCodexGatedTurnExecutor::new(
             CODEX_APP_SERVER_PROGRAM,
             CODEX_CLIENT_NAME,
@@ -2858,7 +2968,7 @@ const CODEX_CLIENT_VERSION: &str = "0.0.1";
 /// The model id the `codex` route bills against (matches the autonomous-baseline `codex`
 /// route model). The Codex app-server `turn/completed` does not report a model, so the
 /// adapter takes the route model from here.
-const CODEX_ROUTE_MODEL: &str = "gpt-5-codex";
+const CODEX_ROUTE_MODEL: &str = "gpt-5.5";
 
 /// (PR-A1 / a#3) The model id the DARK `deepseek-pro` route + the flash→pro escalation force.
 /// Matches the autonomous-baseline `deepseek-pro` route's model (`select_route` never infers a
@@ -2913,7 +3023,7 @@ mod tests {
     use crate::{mint_approval, AgentStep, LoopStatus};
     use friday_deepseek::DeepSeekError;
     use serde_json::Value;
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -4702,6 +4812,8 @@ mod tests {
         /// probe proves the SEAM that selects which one. The stub never inspects the key's BYTES
         /// (it holds none) — only its presence — so this adds no signing-key reference.
         last_vk_some: Rc<Cell<bool>>,
+        last_observe_context:
+            Rc<RefCell<Option<crate::observe_wrapper::CodexObserveMissionContext>>>,
     }
     impl StubCodexGatedExecutor {
         /// A Finished-with-usage outcome carrying the C1-row token counts (13 prompt + 5 completion).
@@ -4721,6 +4833,7 @@ mod tests {
                 outcomes,
                 calls: Cell::new(0),
                 last_vk_some: Rc::new(Cell::new(false)),
+                last_observe_context: Rc::new(RefCell::new(None)),
             }
         }
         /// Like [`Self::new`] but with an EXTERNAL probe the caller retains a handle to, so it can
@@ -4733,6 +4846,20 @@ mod tests {
                 outcomes,
                 calls: Cell::new(0),
                 last_vk_some,
+                last_observe_context: Rc::new(RefCell::new(None)),
+            }
+        }
+        fn with_observe_probe(
+            outcomes: Vec<crate::codex_gated_turn::CodexTurnOutcome>,
+            last_observe_context: Rc<
+                RefCell<Option<crate::observe_wrapper::CodexObserveMissionContext>>,
+            >,
+        ) -> Self {
+            Self {
+                outcomes,
+                calls: Cell::new(0),
+                last_vk_some: Rc::new(Cell::new(false)),
+                last_observe_context,
             }
         }
     }
@@ -4748,6 +4875,7 @@ mod tests {
             ) -> Option<friday_core::gate::CanonicalApproval>,
             _task: &str,
             _run_id: &str,
+            observe_context: Option<&crate::observe_wrapper::CodexObserveMissionContext>,
             _now_ms: i64,
         ) -> Result<
             crate::codex_gated_turn::CodexTurnOutcome,
@@ -4755,6 +4883,7 @@ mod tests {
         > {
             // Record what the runtime threaded (presence only — the stub holds no key bytes).
             self.last_vk_some.set(operator_vk.is_some());
+            *self.last_observe_context.borrow_mut() = observe_context.cloned();
             let i = self.calls.get();
             self.calls.set(i + 1);
             Ok(self
@@ -4806,11 +4935,48 @@ mod tests {
         (rt, ws)
     }
 
+    fn runtime_with_codex_wired_observe_probe(
+        tag: &str,
+        outcomes: Vec<crate::codex_gated_turn::CodexTurnOutcome>,
+    ) -> (
+        HubRuntime<ScriptTransport>,
+        TempDir,
+        Rc<RefCell<Option<crate::observe_wrapper::CodexObserveMissionContext>>>,
+    ) {
+        let ws = TempDir::new(tag);
+        let transport = ScriptTransport::new(&["{\"tool\":\"none\"}"]);
+        let client = DeepSeekClient::with_transport(transport, "k".into());
+        let agent = DeepSeekAgentLlmClient::new(client);
+        let probe = Rc::new(RefCell::new(None));
+        let mut rt = HubRuntime::new(
+            HubConfig {
+                db_path: tmp(tag),
+                workspace_root: ws.0.clone(),
+                secret: SECRET.to_vec(),
+                max_turns: 6,
+                principal_id: None,
+                disabled_tools: vec![],
+                read_only: false,
+                operator_vk: None,
+            },
+            agent,
+            Box::new(DenyAllApprovals),
+        )
+        .unwrap();
+        rt = rt.with_codex(Box::new(StubCodexGatedExecutor::with_observe_probe(
+            outcomes,
+            Rc::clone(&probe),
+        )));
+        rt.mark_route_available("codex");
+        rt.mark_route_validated("codex");
+        (rt, ws, probe)
+    }
+
     #[test]
     fn run_task_pinned_codex_routes_through_runtime_and_writes_codex_row() {
         // (1) CHAT FLOW: a `run_task_pinned("codex")` through the REAL HubRuntime entry routes to
         // the wired Codex client, finishes, and records EXACTLY ONE run-scoped token_ledger row
-        // attributed to Codex — provider_kind="codex", the LOCAL app-server host, the gpt-5-codex
+        // attributed to Codex — provider_kind="codex", the LOCAL app-server host, the gpt-5.5
         // model, fallback=false. NO creds, NO spawn, NO network.
         let (rt, _ws) = runtime_with_codex_wired(
             "c1-3-pinned-codex-chat",
@@ -4842,6 +5008,81 @@ mod tests {
         let all = rt.db().list_token_usage().unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].provider_kind, "codex");
+    }
+
+    #[test]
+    fn run_task_pinned_codex_observe_wrapper_backfills_token_ledger_ref_after_billing() {
+        struct EnvRestore {
+            key: &'static str,
+            prev: Option<String>,
+        }
+        impl Drop for EnvRestore {
+            fn drop(&mut self) {
+                match &self.prev {
+                    Some(value) => std::env::set_var(self.key, value),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
+
+        let _guard = EnvRestore {
+            key: crate::observe_wrapper::ENV_FRIDAY_OBSERVE_WRAPPER_ENABLED,
+            prev: std::env::var(crate::observe_wrapper::ENV_FRIDAY_OBSERVE_WRAPPER_ENABLED).ok(),
+        };
+        std::env::set_var(
+            crate::observe_wrapper::ENV_FRIDAY_OBSERVE_WRAPPER_ENABLED,
+            "1",
+        );
+
+        let run_id = "run-c1-observe-ledger";
+        let session_id = crate::observe_wrapper::codex_friday_session_id(run_id);
+        let (rt, _ws) = runtime_with_codex_wired(
+            "c1-observe-ledger",
+            vec![StubCodexGatedExecutor::finished("PONG")],
+            Box::new(DenyAllApprovals),
+        );
+        crate::observe_wrapper::upsert_codex_session_link(
+            rt.db().conn(),
+            &session_id,
+            "thread-1",
+            CODEX_ROUTE_MODEL,
+            None,
+            1_000,
+        )
+        .unwrap();
+        let message = friday_providers::codex_appserver::JsonRpcServerMessage {
+            id: None,
+            method: "turn/completed".to_string(),
+            params: serde_json::json!({
+                "threadId": "thread-1",
+                "turn": {"id": "turn-1", "status": "completed", "items": []}
+            }),
+        };
+        crate::observe_wrapper::append_codex_provider_event(
+            rt.db().conn(),
+            &session_id,
+            &message,
+            1_001,
+            1,
+            None,
+        )
+        .unwrap();
+
+        let (selection, outcome) = rt
+            .run_task_pinned(run_id, "say pong", "codex", 1_000)
+            .expect("pinned codex runs through the runtime");
+        assert_eq!(selection.provider_id, "codex");
+        assert_eq!(outcome.status, LoopStatus::Finished);
+
+        let rows = rt.db().list_run_token_usage(run_id).unwrap();
+        assert_eq!(rows.len(), 1, "the Codex turn wrote its real ledger row");
+        let events = friday_storage::provider_session::list_events(rt.db().conn(), &session_id)
+            .expect("provider events readable");
+        assert_eq!(
+            events[0].token_ledger_ref.as_deref(),
+            Some("run-c1-observe-ledger:t0:ledger"),
+            "observe-wrapper events are linked only after bill_model_call succeeds"
+        );
     }
 
     #[test]
@@ -5113,6 +5354,7 @@ mod tests {
                 "",
                 "say done",
                 &no_approval,
+                None,
                 1_000,
             )
             .expect("the gated turn maps to a loop outcome");
@@ -7666,8 +7908,9 @@ mod tests {
     // ---- S1.3 Mission-bound agent loop --------------------------------------
 
     use friday_core::{
-        ApprovalState, FridayConversation, HandoffJudgmentMemory, Mission, MissionStatus, Risk,
-        SurfaceKind, SurfaceThread, TruthStatus, VisibilityPolicy, WorkItem, WorkItemStatus,
+        ApprovalState, ClaimState, FridayConversation, HandoffJudgmentMemory, Mission,
+        MissionStatus, Risk, SurfaceKind, SurfaceThread, TruthStatus, VisibilityPolicy, WorkItem,
+        WorkItemStatus, WorkspaceClaim, WorkspaceClaimKind,
     };
 
     fn judgment_loop() -> HandoffJudgmentMemory {
@@ -7691,6 +7934,17 @@ mod tests {
 
     /// Seed a `FridayConversation -> Mission -> WorkItem` graph the loop's preflight resolves.
     fn seed_loop_mission(db: &Db, lane: WorkLane, target: Option<&str>, status: WorkItemStatus) {
+        seed_loop_mission_with_ownership(db, lane, target, status, Vec::new(), Vec::new());
+    }
+
+    fn seed_loop_mission_with_ownership(
+        db: &Db,
+        lane: WorkLane,
+        target: Option<&str>,
+        status: WorkItemStatus,
+        owner_claim_ids: Vec<String>,
+        workspace_refs: Vec<String>,
+    ) {
         let now = 1_700_000_000_000;
         db.upsert_friday_conversation(&FridayConversation {
             friday_conversation_id: "fconv_loop".into(),
@@ -7747,8 +8001,8 @@ mod tests {
             lane,
             target_provider_or_agent: target.map(str::to_string),
             status,
-            owner_claim_ids: Vec::new(),
-            workspace_refs: Vec::new(),
+            owner_claim_ids,
+            workspace_refs,
             capability_id: Some("mission.loop".into()),
             risk_level: Risk::Medium,
             approval_state: ApprovalState::NotRequired,
@@ -7766,6 +8020,26 @@ mod tests {
 
     fn loop_lookup() -> MissionContextLookup {
         MissionContextLookup::by_work_item("fconv_loop", "mission-loop", "work-loop")
+    }
+
+    fn codex_provider_session_claim() -> WorkspaceClaim {
+        WorkspaceClaim {
+            claim_id: "claim-codex-provider-session".into(),
+            mission_id: "mission-loop".into(),
+            work_item_id: Some("work-loop".into()),
+            owner_principal: "owner-1".into(),
+            owner_agent: "codex".into(),
+            workspace_ref: "friday://provider-session/codex-observe".into(),
+            claim_kind: WorkspaceClaimKind::ProviderSession,
+            state: ClaimState::Active,
+            reason: "mission-bound Codex observe-wrapper test owns this provider session".into(),
+            safe_release_policy: "release after observe-wrapper proof".into(),
+            proof_requirements: vec!["observe-wrapper context proof".into()],
+            proof_refs: Vec::new(),
+            created_at_ms: 1_700_000_000_001,
+            updated_at_ms: 1_700_000_000_001,
+            released_at_ms: None,
+        }
     }
 
     fn agent_run_count(rt: &HubRuntime<ScriptTransport>, run_id: &str) -> i64 {
@@ -7855,6 +8129,83 @@ mod tests {
         assert!(work_item
             .proof_receipts
             .contains(&"friday://agent-run/run-mloop".to_string()));
+        assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
+    }
+
+    #[test]
+    fn mission_bound_codex_loop_threads_observe_claim_context_and_records_binding() {
+        let run_id = "run-mloop-codex-observe";
+        let (rt, _ws, observe_probe) = runtime_with_codex_wired_observe_probe(
+            "mloop-codex-observe",
+            vec![StubCodexGatedExecutor::finished("PONG")],
+        );
+        let claim = codex_provider_session_claim();
+        let claim_id = claim.claim_id.clone();
+        let workspace_ref = claim.workspace_ref.clone();
+        seed_loop_mission_with_ownership(
+            rt.db(),
+            WorkLane::Codex,
+            Some("codex"),
+            WorkItemStatus::ReadyToDispatch,
+            vec![claim_id.clone()],
+            vec![workspace_ref],
+        );
+        rt.db().upsert_workspace_claim(&claim).unwrap();
+
+        let outcome = rt
+            .run_codex_agent_loop_for_mission_with_overrides(
+                loop_lookup(),
+                "friday-hub-session",
+                run_id,
+                "say pong",
+                None,
+                None,
+                1_000,
+            )
+            .unwrap();
+
+        let MissionBoundLoopOutcome::Ran {
+            envelope,
+            selection,
+            outcome,
+            result_link,
+            attachment,
+        } = outcome
+        else {
+            panic!("expected the mission-bound Codex loop to run");
+        };
+        assert_eq!(selection.provider_id, "codex");
+        assert_eq!(outcome.status, LoopStatus::Finished);
+        assert_eq!(result_link, format!("friday://agent-run/{run_id}"));
+        assert_eq!(envelope.route_decision.selected_lane, WorkLane::Codex);
+        assert_eq!(
+            envelope
+                .route_decision
+                .selected_provider_or_agent
+                .as_deref(),
+            Some("codex")
+        );
+        assert!(matches!(
+            attachment,
+            MissionAttachmentOutcome::Attached {
+                work_item_status: WorkItemStatus::CompletedWithProof,
+                ..
+            }
+        ));
+
+        let observed_context = observe_probe
+            .borrow()
+            .clone()
+            .expect("runtime threaded Mission claim context into the Codex executor");
+        assert_eq!(observed_context.mission_id, "mission-loop");
+        assert_eq!(observed_context.work_item_id, "work-loop");
+        assert_eq!(observed_context.owner_claim_ids, vec![claim_id]);
+
+        let work_item = rt.db().get_work_item("work-loop").unwrap().unwrap();
+        assert_eq!(work_item.status, WorkItemStatus::CompletedWithProof);
+        assert!(work_item
+            .proof_receipts
+            .contains(&format!("friday://agent-run/{run_id}")));
         assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
     }
 
