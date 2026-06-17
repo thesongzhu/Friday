@@ -230,6 +230,15 @@ const SKILL_IMPORT_DEPENDENT_SCENARIOS = [
   "l5-phase-06-skill-upgrade-lifecycle",
 ];
 
+// D17/D1 retires legacy TypeScript durable memory writes while preserving
+// bounded memory reads/search compatibility. The public-surface create contract
+// POSTs /v1/memory/items, so once memory.items.create is classified
+// fail_closed it must be honestly excluded instead of treating the intended
+// 503 as a product regression.
+const MEMORY_DURABLE_ITEM_CREATE_DEPENDENT_SCENARIOS = [
+  "l2-memory-items-create-contract",
+];
+
 const CLAUDE_SKILL_TESTS = [
   "test/unit/skills/registry/friday-skill-discovery.test.ts",
   "test/unit/skills/manifest/friday-skill-package-loader.test.ts",
@@ -468,6 +477,26 @@ export function resolveRetiredSkillImportScenarioExclusions(repoRoot) {
   return SKILL_IMPORT_DEPENDENT_SCENARIOS.map((scenarioId) => ({
     scenarioId,
     reason: "POST /v1/skills/import is classified fail_closed in the TS runtime retirement manifest.",
+  }));
+}
+
+export function isMemoryDurableItemCreateFailClosed(manifest) {
+  const surfaces = Array.isArray(manifest?.surfaces) ? manifest.surfaces : [];
+  return surfaces.some((surface) =>
+    surface?.id === "memory_items_create"
+    && surface?.classification === "fail_closed"
+    && surface?.executes_product_logic === false
+  );
+}
+
+export function resolveRetiredMemoryDurableWriteScenarioExclusions(repoRoot) {
+  const manifest = readJsonFile(path.join(repoRoot, "docs", "ops", "ts-runtime-retirement-manifest.json"));
+  if (!isMemoryDurableItemCreateFailClosed(manifest)) {
+    return [];
+  }
+  return MEMORY_DURABLE_ITEM_CREATE_DEPENDENT_SCENARIOS.map((scenarioId) => ({
+    scenarioId,
+    reason: "POST /v1/memory/items is classified fail_closed in the TS runtime retirement manifest.",
   }));
 }
 
@@ -798,6 +827,7 @@ export function buildSummary({
   retiredObservabilityScenarioExclusions,
   retiredSessionScenarioExclusions,
   retiredSkillImportScenarioExclusions,
+  retiredMemoryDurableWriteScenarioExclusions,
   error,
 }) {
   const summary = {
@@ -823,6 +853,7 @@ export function buildSummary({
     retiredObservabilityScenarioExclusions: retiredObservabilityScenarioExclusions ?? [],
     retiredSessionScenarioExclusions: retiredSessionScenarioExclusions ?? [],
     retiredSkillImportScenarioExclusions: retiredSkillImportScenarioExclusions ?? [],
+    retiredMemoryDurableWriteScenarioExclusions: retiredMemoryDurableWriteScenarioExclusions ?? [],
     error: error ?? null,
   };
   summary.gate = {
@@ -863,6 +894,7 @@ async function main() {
   const retiredObservabilityScenarioExclusions = resolveRetiredObservabilityScenarioExclusions(repoRoot);
   const retiredSessionScenarioExclusions = resolveRetiredSessionScenarioExclusions(repoRoot);
   const retiredSkillImportScenarioExclusions = resolveRetiredSkillImportScenarioExclusions(repoRoot);
+  const retiredMemoryDurableWriteScenarioExclusions = resolveRetiredMemoryDurableWriteScenarioExclusions(repoRoot);
   const excludedScenarioIds = [
     ...retiredAgentRunScenarioExclusions,
     ...retiredWorkflowRunScenarioExclusions,
@@ -871,6 +903,7 @@ async function main() {
     ...retiredObservabilityScenarioExclusions,
     ...retiredSessionScenarioExclusions,
     ...retiredSkillImportScenarioExclusions,
+    ...retiredMemoryDurableWriteScenarioExclusions,
   ].map((entry) => entry.scenarioId);
   const runId = createRunId();
   const reportRoot = options.reportRoot
@@ -1099,6 +1132,7 @@ async function main() {
       retiredObservabilityScenarioExclusions,
       retiredSessionScenarioExclusions,
       retiredSkillImportScenarioExclusions,
+      retiredMemoryDurableWriteScenarioExclusions,
       error: terminalError,
     });
     flushTerminalArtifacts(reportRoot, summary);
