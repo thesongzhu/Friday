@@ -781,6 +781,7 @@ pub fn build_mission_intake_request(
                 target_provider_or_agent,
                 capability_id,
                 body_ref,
+                proof_requirements: Vec::new(),
                 includes_sensitive_context,
             },
         },
