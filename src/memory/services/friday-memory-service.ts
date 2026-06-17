@@ -74,12 +74,28 @@ function warnMemoryFallback(
   );
 }
 
+function assertTsDurableMemoryWriteEnabled(enabled: boolean, operation: string): void {
+  if (enabled) return;
+  throw new FridayDomainError(
+    FRIDAY_MEMORY_ERROR_CODES.TS_RUNTIME_DURABLE_MEMORY_WRITE_RETIRED,
+    "TypeScript durable memory writes are retired for this runtime; use the Rust-owned memory confirmation spine.",
+    {
+      httpStatus: 503,
+      details: {
+        operation,
+        replacement: "rust_owned_memory_confirmation_spine",
+      },
+    },
+  );
+}
+
 export function createFridayMemoryService(
   deps: CreateFridayMemoryServiceDeps,
 ): FridayMemoryService {
   const itemRepo = createFridayMemoryItemRepository();
   const embeddingRepo = createFridayMemoryEmbeddingRepository();
   const resolvedEmbeddingModel = deps.embeddingModel ?? FRIDAY_MEMORY_DEFAULT_EMBEDDING_MODEL;
+  const tsMemoryWritesEnabled = deps.tsMemoryWritesEnabled ?? true;
   const embeddingClient = createFridayMemoryByokEmbeddingClient({
     providerService: deps.providerService,
     embeddingModel: resolvedEmbeddingModel,
@@ -125,6 +141,7 @@ export function createFridayMemoryService(
           { httpStatus: 400 },
         );
       }
+      assertTsDurableMemoryWriteEnabled(tsMemoryWritesEnabled, "memory.store");
       const now = deps.nowIso();
       const id = deps.idGenerator();
       const source = metadata?.source ?? FRIDAY_MEMORY_DEFAULT_SOURCE;
@@ -382,7 +399,7 @@ export function createFridayMemoryService(
       // increment on raw `get()` / `list()` reads — the counter is meant to
       // mean "served to the agent as part of recall," not "row was fetched by
       // some internal lookup."
-      if (results.length > 0) {
+      if (results.length > 0 && tsMemoryWritesEnabled) {
         try {
           deps.db.withWriteTransaction((db) =>
             itemRepo.recordAccess(db, {
@@ -422,11 +439,13 @@ export function createFridayMemoryService(
     },
 
     async delete(itemId) {
+      assertTsDurableMemoryWriteEnabled(tsMemoryWritesEnabled, "memory.delete");
       // FK cascade deletes embeddings
       return deps.db.withWriteTransaction((db) => itemRepo.deleteById(db, itemId));
     },
 
     async prune(options) {
+      assertTsDurableMemoryWriteEnabled(tsMemoryWritesEnabled, "memory.prune");
       const now = deps.nowIso();
       const dryRun = options?.dryRun ?? false;
 

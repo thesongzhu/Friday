@@ -203,6 +203,26 @@ describe("FridayMemoryService", () => {
     ).toHaveLength(0);
   });
 
+  it("fail-closes store() when TS durable memory writes are retired", async () => {
+    const disabledProviderService = createMockProviderService();
+    const disabledService = createFridayMemoryService({
+      db,
+      providerService: disabledProviderService,
+      idGenerator: idGen,
+      nowIso: () => NOW,
+      tsMemoryWritesEnabled: false,
+    });
+
+    await expect(disabledService.store("retired-write-ns", "blocked memory write"))
+      .rejects.toMatchObject({
+        code: FRIDAY_MEMORY_ERROR_CODES.TS_RUNTIME_DURABLE_MEMORY_WRITE_RETIRED,
+        httpStatus: 503,
+        details: { operation: "memory.store" },
+      });
+    expect(disabledProviderService.runWithFallback).not.toHaveBeenCalled();
+    expect(await service.list({ namespace: "retired-write-ns" })).toHaveLength(0);
+  });
+
   // ─── Get / List / Delete ───
 
   it("gets a stored item by ID", async () => {
@@ -237,6 +257,24 @@ describe("FridayMemoryService", () => {
   it("returns false when deleting non-existent item", async () => {
     const deleted = await service.delete("nonexistent");
     expect(deleted).toBe(false);
+  });
+
+  it("fail-closes delete() when TS durable memory writes are retired", async () => {
+    const item = await service.store("retired-delete-ns", "do not delete");
+    const disabledService = createFridayMemoryService({
+      db,
+      providerService: mockProviderService,
+      idGenerator: idGen,
+      nowIso: () => NOW,
+      tsMemoryWritesEnabled: false,
+    });
+
+    await expect(disabledService.delete(item.id)).rejects.toMatchObject({
+      code: FRIDAY_MEMORY_ERROR_CODES.TS_RUNTIME_DURABLE_MEMORY_WRITE_RETIRED,
+      httpStatus: 503,
+      details: { operation: "memory.delete" },
+    });
+    await expect(disabledService.get(item.id)).resolves.toMatchObject({ id: item.id });
   });
 
   // ─── Search ───
@@ -348,6 +386,27 @@ describe("FridayMemoryService", () => {
     ).toHaveLength(0);
   });
 
+  it("keeps search() read-only when TS durable memory writes are retired", async () => {
+    const stored = await service.store("retired-search-ns", "read-only recall target");
+    const before = await service.get(stored.id);
+    const disabledService = createFridayMemoryService({
+      db,
+      providerService: mockProviderService,
+      idGenerator: idGen,
+      nowIso: () => NOW,
+      tsMemoryWritesEnabled: false,
+    });
+
+    const results = await disabledService.search("recall target", {
+      namespace: "retired-search-ns",
+    });
+    const after = await service.get(stored.id);
+
+    expect(results.map((result) => result.item.id)).toContain(stored.id);
+    expect(after!.accessCount ?? 0).toBe(before!.accessCount ?? 0);
+    expect(after!.lastAccessedAt).toBe(before!.lastAccessedAt);
+  });
+
   // ─── Prune ───
 
   it("prunes expired items", async () => {
@@ -389,6 +448,27 @@ describe("FridayMemoryService", () => {
     const nsBItems = await service.list({ namespace: "ns-b", includeExpired: true });
     expect(nsBItems).toHaveLength(1);
     expect(nsBItems[0]?.content).toBe("other namespace expired item");
+  });
+
+  it("fail-closes prune() when TS durable memory writes are retired", async () => {
+    const past = "2025-01-01T00:00:00.000Z";
+    await service.store("retired-prune-ns", "expired but protected", { expiresAt: past });
+    const disabledService = createFridayMemoryService({
+      db,
+      providerService: mockProviderService,
+      idGenerator: idGen,
+      nowIso: () => NOW,
+      tsMemoryWritesEnabled: false,
+    });
+
+    await expect(disabledService.prune({ namespace: "retired-prune-ns", expiredOnly: true }))
+      .rejects.toMatchObject({
+        code: FRIDAY_MEMORY_ERROR_CODES.TS_RUNTIME_DURABLE_MEMORY_WRITE_RETIRED,
+        httpStatus: 503,
+        details: { operation: "memory.prune" },
+      });
+    const items = await disabledService.list({ namespace: "retired-prune-ns", includeExpired: true });
+    expect(items).toHaveLength(1);
   });
 
   // ─── A3: Memory Hybrid Search (service-level) ───

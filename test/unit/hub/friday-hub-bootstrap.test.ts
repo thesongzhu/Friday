@@ -20,6 +20,7 @@ import {
   restoreAutoDetectProviderEnv,
   type FridayAutoDetectProviderEnvSnapshot,
 } from "../../_helpers/auto-detect-provider-env.js";
+import { FRIDAY_MEMORY_ERROR_CODES } from "#memory";
 import * as hubAuditWriterModule from "../../../src/hub/services/friday-hub-audit-log-writer.js";
 import { createMockFetch, type MockLlmReply } from "../../_mocks/mock-llm-providers.js";
 
@@ -218,6 +219,9 @@ describe("createFridayHub", () => {
       // to the test-oracle flag so the channel-mirror addMessage path stays live.
       // Overridable per-test (e.g. to prove default fail-closed).
       allowTestOnlySessionExecution: true,
+      // Hub tests use memory rows as local fixtures; prod/default bootstrap
+      // must leave legacy TS durable memory writes fail-closed.
+      allowTestOnlyTsMemoryWrites: true,
       skillDirs: [bundledSkillsDir, managedSkillsDir],
       stateDir,
       ...overrides,
@@ -279,6 +283,16 @@ describe("createFridayHub", () => {
     expect(hub).toBeDefined();
     expect(hub.skills).toBeDefined();
     expect(hub.executor).toBeDefined();
+  });
+
+  it("fails closed for legacy TS durable memory writes without the test-only override", async () => {
+    hub = await createIsolatedHub({ allowTestOnlyTsMemoryWrites: false });
+    await expect(hub.apiRuntime.memoryService!.store("agent", "blocked legacy TS write"))
+      .rejects.toMatchObject({
+        code: FRIDAY_MEMORY_ERROR_CODES.TS_RUNTIME_DURABLE_MEMORY_WRITE_RETIRED,
+        httpStatus: 503,
+        details: { operation: "memory.store" },
+      });
   });
 
   it("fails closed for unsupported QQ in explicit startup channel config", async () => {

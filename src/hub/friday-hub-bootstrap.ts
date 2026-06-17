@@ -1804,6 +1804,7 @@ export async function createFridayHub(
       providerService,
       idGenerator,
       nowIso,
+      tsMemoryWritesEnabled: config.allowTestOnlyTsMemoryWrites === true,
     });
   }
   const memoryGuardFactory: FridayMemoryGuardServiceFactory | undefined = stateRuntime && memoryService
