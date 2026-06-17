@@ -173,7 +173,7 @@ fn run<T: CodexAppServerTransport, F: Fn(&MutatingActionRequest) -> Option<Canon
         "thread-1",
         None,
         text,
-        "gpt-5-codex",
+        "gpt-5.5",
         "run-1",
         1_000,
     )
@@ -204,7 +204,7 @@ fn ed25519_signed_approval_continues_and_finishes() {
         CodexTurnOutcome::Finished { answer, usage } => {
             assert_eq!(answer, "done");
             assert_eq!(usage.provider_kind, friday_core::ProviderKind::Codex);
-            assert_eq!(usage.model, "gpt-5-codex");
+            assert_eq!(usage.model, "gpt-5.5");
         }
         other => panic!("expected Finished, got {other:?}"),
     }

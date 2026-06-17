@@ -571,7 +571,7 @@ export interface FridayRustHubMemoryDecisionResult {
   readonly recallable: boolean;
 }
 
-function unavailable(message: string): FridayDomainError {
+function unavailable(message: string, details?: Record<string, unknown>): FridayDomainError {
   return new FridayDomainError("MISSION_SPINE_RUST_AGENT_RUN_SEALED_WS_CLIENT_UNAVAILABLE", message, {
     httpStatus: 503,
     details: {
@@ -579,7 +579,24 @@ function unavailable(message: string): FridayDomainError {
       bridge: "rust_wired",
       proofOnly: true,
       proofReady: false,
+      ...(details ?? {}),
     },
+  });
+}
+
+/**
+ * Convert Rust's typed `Message::Error` envelope into the same fail-closed 503 shape while keeping
+ * the safe code/message locally inspectable. HTTP still applies its existing 5xx redaction layer.
+ */
+export function missionSpineUnavailableFromRustErrorEnvelope(
+  leg: string,
+  fields: Record<string, unknown>,
+): FridayDomainError {
+  const code = asString(fields.code) ?? "unknown";
+  const message = asString(fields.message) ?? "unknown";
+  return unavailable(`Sealed mission-spine client (${leg}) received a Rust Error envelope.`, {
+    leg,
+    rustError: { code, message },
   });
 }
 
@@ -1542,7 +1559,13 @@ function runMissionRoundTrip<TResult>(params: MissionRoundTripParams<TResult>): 
         return;
       }
       // STRICT: only the matching Result kind is accepted. A server `Error` envelope (or any other
-      // kind) is a typed fail-closed — never coerced to a result, never a partial.
+      // kind) is a typed fail-closed — never coerced to a result, never a partial. The typed Rust
+      // error keeps safe local diagnostics so a real intake/preflight failure is not masked as an
+      // undifferentiated unknown-shape transport failure.
+      if (inbound.kind === "Error") {
+        fail(missionSpineUnavailableFromRustErrorEnvelope(leg, inbound.fields));
+        return;
+      }
       if (inbound.kind !== expectedKind) {
         fail(unavailable(`Sealed mission-spine client (${leg}) received an unknown message shape.`));
         return;

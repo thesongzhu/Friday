@@ -284,10 +284,12 @@ export type { FridayCloudWorkerSetupRoutesDeps } from "./http/routes/friday-clou
 
 // Runtime
 export { createFridayApiRuntime } from "./runtime/friday-api-runtime.js";
-// (Organic mission→run binding PRODUCER — DARK) The DeepSeek-flash provider id / model the Rust
-// read-only route qualifier requires (clause 3). Re-exported so bootstrap can hand the mission
-// auto-dispatch driver the EXACT qualifying shape without retyping literals.
+// (Organic mission→run binding PRODUCER — DARK) The provider/model shapes the Rust route qualifier
+// admits. Re-exported so bootstrap can hand the mission auto-dispatch driver the EXACT qualifying
+// shapes without retyping literals.
 export {
+  RUST_ROUTE_CODEX_MODEL,
+  RUST_ROUTE_CODEX_PROVIDER_ID,
   RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
   RUST_ROUTE_DEEPSEEK_PROVIDER_ID,
 } from "./runtime/friday-api-runtime.js";

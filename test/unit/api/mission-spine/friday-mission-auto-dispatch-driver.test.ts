@@ -17,6 +17,8 @@ import type {
 
 const DEEPSEEK_PROVIDER = "deepseek";
 const DEEPSEEK_FLASH = "deepseek-v4-flash";
+const CODEX_PROVIDER = "codex";
+const CODEX_MODEL = "gpt-5.5";
 const READ_TOOLS = ["read_file", "list_dir", "stat_file", "search"];
 
 const REQUEST: FridayRustHubMissionIntakeRequest = {
@@ -86,6 +88,8 @@ function makeDriver(opts?: {
     startRun: () => startRun,
     deepseekProviderId: DEEPSEEK_PROVIDER,
     deepseekFlashModel: DEEPSEEK_FLASH,
+    codexProviderId: CODEX_PROVIDER,
+    codexModel: CODEX_MODEL,
     ...(opts?.onDispatchError ? { onDispatchError: opts.onDispatchError } : {}),
   });
   return { driver, startRun };
@@ -99,6 +103,8 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
         startRun: () => startRun,
         deepseekProviderId: DEEPSEEK_PROVIDER,
         deepseekFlashModel: DEEPSEEK_FLASH,
+        codexProviderId: CODEX_PROVIDER,
+        codexModel: CODEX_MODEL,
       });
 
       driver.onIntakeReady(REQUEST, READY_RESULT);
@@ -116,6 +122,43 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
         model: DEEPSEEK_FLASH,
         constraints: { readOnly: true },
         allowedRustRouteTools: READ_TOOLS,
+      });
+    });
+
+    it("dispatches a codex-targeted intake with the Codex observe-wrapper route shape", async () => {
+      const startRun = vi.fn(async () => ({ runId: "run-1" })) as unknown as MissionAutoDispatchStartRun;
+      const driver = createFridayMissionAutoDispatchDriver({
+        startRun: () => startRun,
+        deepseekProviderId: DEEPSEEK_PROVIDER,
+        deepseekFlashModel: DEEPSEEK_FLASH,
+        codexProviderId: CODEX_PROVIDER,
+        codexModel: CODEX_MODEL,
+      });
+
+      driver.onIntakeReady(
+        {
+          ...REQUEST,
+          lane: "codex",
+          targetProviderOrAgent: "codex",
+        },
+        READY_RESULT,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(startRun).toHaveBeenCalledTimes(1);
+      const arg = (startRun as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(arg).toMatchObject({
+        principalId: "principal-owner",
+        providerId: CODEX_PROVIDER,
+        model: CODEX_MODEL,
+        constraints: { readOnly: true },
+        allowedRustRouteTools: READ_TOOLS,
+        missionContext: {
+          fridayConversationId: "conv-from-SERVER-result",
+          missionId: "mission-from-SERVER-result",
+          workItemId: "wi-from-SERVER-result",
+        },
       });
     });
 
@@ -173,6 +216,8 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
         startRun: () => startRun,
         deepseekProviderId: DEEPSEEK_PROVIDER,
         deepseekFlashModel: DEEPSEEK_FLASH,
+        codexProviderId: CODEX_PROVIDER,
+        codexModel: CODEX_MODEL,
       });
 
       driver.onIntakeReady(REQUEST, READY_RESULT);
@@ -205,6 +250,8 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
         startRun: () => startRun,
         deepseekProviderId: DEEPSEEK_PROVIDER,
         deepseekFlashModel: DEEPSEEK_FLASH,
+        codexProviderId: CODEX_PROVIDER,
+        codexModel: CODEX_MODEL,
       });
 
       // The call must return (void) BEFORE the run promise settles — proving non-blocking.
@@ -224,6 +271,8 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
         startRun: () => startRun,
         deepseekProviderId: DEEPSEEK_PROVIDER,
         deepseekFlashModel: DEEPSEEK_FLASH,
+        codexProviderId: CODEX_PROVIDER,
+        codexModel: CODEX_MODEL,
         onDispatchError,
       });
 
@@ -240,6 +289,8 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
         startRun: () => undefined,
         deepseekProviderId: DEEPSEEK_PROVIDER,
         deepseekFlashModel: DEEPSEEK_FLASH,
+        codexProviderId: CODEX_PROVIDER,
+        codexModel: CODEX_MODEL,
       });
 
       expect(() => driver.onIntakeReady(REQUEST, READY_RESULT)).not.toThrow();

@@ -317,6 +317,8 @@ describe("createFridayMissionSpineDispatchAdapter (Lane B-2, dark, adapter)", ()
         startRun: () => startRun,
         deepseekProviderId: "deepseek",
         deepseekFlashModel: "deepseek-v4-flash",
+        codexProviderId: "codex",
+        codexModel: "gpt-5.5",
       });
       const adapter = createFridayMissionSpineDispatchAdapter({
         port: 48750,

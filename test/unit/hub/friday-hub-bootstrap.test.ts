@@ -439,6 +439,40 @@ describe("createFridayHub", () => {
     expect(operationIds).toContain("agent.loop.policy.get");
   });
 
+  it("wires the mission-spine dispatch surface when the route and auto-dispatch flags are on", async () => {
+    hub = await createIsolatedHub({
+      routeMissionSpineViaRust: true,
+      missionAutoDispatch: true,
+    });
+    const route = hub.apiRuntime.routes.getRoutes().find(
+      (candidate) => candidate.operationId === "mission.spine.intake.create",
+    );
+
+    await expect(route!.handler({
+      requestId: "req-bootstrap-mission-spine-dispatch-surface",
+      receivedAt: "2026-06-16T00:00:00.000Z",
+      params: {},
+      query: {},
+      body: {
+        fridayConversationId: "conversation_bootstrap_surface",
+        ownerPrincipal: "principal_bootstrap_surface",
+        surfaceThreadId: "surface_bootstrap_surface",
+        surfaceKind: "mobile",
+        deliveryRoute: "in_app",
+        visibilityPolicy: "owner_only",
+        missionId: "mission_bootstrap_surface",
+        workItemId: "work_bootstrap_surface",
+        title: "Bootstrap mission-spine dispatch surface",
+        intent: "Prove flag-on bootstrap injects dispatch before any socket is opened",
+        lane: "deepseek",
+      },
+      headers: {},
+      principal: null,
+    } as never)).rejects.toMatchObject({
+      httpStatus: 401,
+    });
+  });
+
   it("wires canonical skill lifecycle routes into the API runtime", async () => {
     hub = await createIsolatedHub({ allowTestOnlySkillVerifyExecution: true });
     const routes = hub.apiRuntime.routes.getRoutes();

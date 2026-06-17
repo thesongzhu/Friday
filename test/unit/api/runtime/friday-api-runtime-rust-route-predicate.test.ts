@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   qualifiesForRustReadOnlyRoute,
+  RUST_ROUTE_CODEX_MODEL,
+  RUST_ROUTE_CODEX_PROVIDER_ID,
   RUST_ROUTE_READ_TOOL_ALLOWLIST,
   RUST_ROUTE_MUTATING_TOOL_ALLOWLIST,
   type RustRouteQualificationInput,
@@ -22,6 +24,20 @@ function qualifyingInput(): RustRouteQualificationInput {
     constraints: { readOnly: true },
     allowedRustRouteTools: [...RUST_ROUTE_READ_TOOL_ALLOWLIST],
     // no sessionKey, no requireReview, no plan-review override, no resume/skip → all-clear
+  };
+}
+
+function codexMissionBoundInput(): RustRouteQualificationInput {
+  return {
+    ...qualifyingInput(),
+    providerId: RUST_ROUTE_CODEX_PROVIDER_ID,
+    model: RUST_ROUTE_CODEX_MODEL,
+    principalId: "principal:owner-1",
+    missionContext: {
+      fridayConversationId: "conv-codex",
+      missionId: "mission-codex",
+      workItemId: "work-codex",
+    },
   };
 }
 
@@ -55,6 +71,52 @@ describe("qualifiesForRustReadOnlyRoute (execrun slice 4, dark predicate)", () =
   it("disqualifies a non-deepseek provider", () => {
     expect(qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), providerId: "anthropic" })).toBe(false);
     expect(qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), providerId: undefined })).toBe(false);
+  });
+
+  it("admits a mission-bound Codex observe-wrapper run with missionContext and owner principal", () => {
+    expect(qualifiesForRustReadOnlyRoute(codexMissionBoundInput())).toBe(true);
+  });
+
+  it("disqualifies ordinary Codex runs without missionContext or owner principal", () => {
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...codexMissionBoundInput(),
+        missionContext: undefined,
+      }),
+    ).toBe(false);
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...codexMissionBoundInput(),
+        principalId: undefined,
+      }),
+    ).toBe(false);
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...codexMissionBoundInput(),
+        principalId: "   ",
+      }),
+    ).toBe(false);
+  });
+
+  it("disqualifies Codex mission-bound runs with the wrong model or taskProfile override", () => {
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...codexMissionBoundInput(),
+        model: "codex",
+      }),
+    ).toBe(false);
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...codexMissionBoundInput(),
+        taskProfile: { model: "deepseek-v4-flash" },
+      }),
+    ).toBe(false);
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...codexMissionBoundInput(),
+        taskProfile: { model: RUST_ROUTE_CODEX_MODEL },
+      }),
+    ).toBe(true);
   });
 
   // ── Clause 3 (prod provider shape): resolved provider RECORD kind ────────────

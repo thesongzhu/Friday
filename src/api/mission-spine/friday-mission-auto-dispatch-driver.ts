@@ -1,4 +1,4 @@
-import { RUST_ROUTE_READ_TOOL_ALLOWLIST } from "../runtime/friday-api-runtime.js";
+import { RUST_ROUTE_READ_TOOL_ALLOWLIST } from "../runtime/friday-rust-route-constants.js";
 
 import type {
   FridayRustHubAgentRunMissionContext,
@@ -78,6 +78,10 @@ export interface CreateFridayMissionAutoDispatchDriverOptions {
    * api-runtime constant.
    */
   readonly deepseekFlashModel: string;
+  /** Codex provider id for mission-bound observe-wrapper WorkItems. */
+  readonly codexProviderId: string;
+  /** Codex model for mission-bound observe-wrapper WorkItems. */
+  readonly codexModel: string;
   /**
    * Optional sink for the fire-and-forget run's rejection (never throws into the intake path).
    * Defaults to a silent swallow — the bound seam is the observability surface, not this driver.
@@ -118,6 +122,11 @@ function deriveTask(
   return `Advance mission work item ${result.workItemId ?? ""}`.trim();
 }
 
+function isCodexMissionTarget(request: FridayRustHubMissionIntakeRequest): boolean {
+  return request.lane.trim() === "codex"
+    && request.targetProviderOrAgent?.trim() === "codex";
+}
+
 export function createFridayMissionAutoDispatchDriver(
   options: CreateFridayMissionAutoDispatchDriverOptions,
 ): FridayMissionAutoDispatchDriver {
@@ -125,6 +134,8 @@ export function createFridayMissionAutoDispatchDriver(
     startRun: resolveStartRun,
     deepseekProviderId,
     deepseekFlashModel,
+    codexProviderId,
+    codexModel,
     onDispatchError,
   } = options;
 
@@ -165,6 +176,9 @@ export function createFridayMissionAutoDispatchDriver(
           typeof request.ownerPrincipal === "string" && request.ownerPrincipal.trim().length > 0
             ? request.ownerPrincipal.trim()
             : undefined;
+        const route = isCodexMissionTarget(request)
+          ? { providerId: codexProviderId, model: codexModel }
+          : { providerId: deepseekProviderId, model: deepseekFlashModel };
 
         // Fire-and-forget: invoke startRun WITHOUT awaiting. The intake response returns
         // immediately; the bound run walks the WorkItem via the Rust seam. A synchronous throw
@@ -173,8 +187,8 @@ export function createFridayMissionAutoDispatchDriver(
         void startRun({
           task: deriveTask(request, result),
           ...(ownerPrincipal !== undefined ? { principalId: ownerPrincipal } : {}),
-          providerId: deepseekProviderId,
-          model: deepseekFlashModel,
+          providerId: route.providerId,
+          model: route.model,
           constraints: { readOnly: true },
           allowedRustRouteTools: [...RUST_ROUTE_READ_TOOL_ALLOWLIST],
           missionContext,

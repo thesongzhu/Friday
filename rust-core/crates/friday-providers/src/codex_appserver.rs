@@ -11,6 +11,9 @@ use std::collections::{BTreeSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::mpsc::{self, Sender};
+use std::thread;
+use std::time::Duration;
 use thiserror::Error;
 
 use friday_core::ProviderSessionEvent;
@@ -74,6 +77,13 @@ fn codex_mutating_gate_from(raw: Option<String>) -> bool {
 /// before giving up with a typed `turn-no-completion` error. Guarantees a malformed or
 /// never-completing notification stream terminates the loop instead of spinning forever.
 pub const MODEL_TURN_MAX_MESSAGES: usize = 100_000;
+
+/// Env override for the local `codex app-server --stdio` watchdog. The watchdog is a
+/// process-level no-wedge guard: if the app-server stops emitting stdout, killing the child
+/// breaks any blocking `read_line` in the stdio transport. DEFAULT is deliberately generous
+/// for live provider calls; tests can exercise the parser without mutating process env.
+pub const FRIDAY_CODEX_APP_SERVER_TIMEOUT_MS: &str = "FRIDAY_CODEX_APP_SERVER_TIMEOUT_MS";
+pub const DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS: u64 = 120_000;
 
 pub const REQUIRED_CLIENT_METHODS: &[&str] = &[
     "initialize",
@@ -1039,6 +1049,38 @@ impl<T: CodexAppServerTransport> CodexAppServerClient<T> {
         self.run_turn_core(thread_id, client_user_message_id, text, gate_on, &handler)
     }
 
+    /// Run a complete Codex model turn like [`Self::run_turn_with_handler`], while mirroring
+    /// provider-originated JSON-RPC notifications/requests to `observer`.
+    ///
+    /// The observer is best-effort and metadata-oriented: it is called after the app-server
+    /// message is read but before Friday maps it into any durable row. This crate still does
+    /// NOT persist anything, bill anything, or interpret the observer's result; callers that
+    /// store observations must keep failures isolated so an observe tap can never change the
+    /// observed Codex turn. The existing public entrypoints delegate through a no-op observer
+    /// and keep their signatures/behavior unchanged.
+    pub fn run_turn_with_handler_observed<F, O>(
+        &mut self,
+        thread_id: &str,
+        client_user_message_id: Option<&str>,
+        text: &str,
+        handler: F,
+        mut observer: O,
+    ) -> Result<ModelTurnOutcome, CodexAppServerError>
+    where
+        F: Fn(&CodexServerRequest) -> Result<CodexApprovalDecision, CodexAppServerError>,
+        O: FnMut(&JsonRpcServerMessage),
+    {
+        let gate_on = codex_mutating_gate_from(std::env::var(FRIDAY_CODEX_MUTATING_GATE).ok());
+        self.run_turn_core_observed(
+            thread_id,
+            client_user_message_id,
+            text,
+            gate_on,
+            &handler,
+            &mut observer,
+        )
+    }
+
     /// The flag-parameterized turn core. `gate_on` is supplied by the public entrypoints
     /// (from the env flag) and injected directly by the gate KATs (so they never mutate
     /// `std::env`, avoiding the in-process test race). When `gate_on` is FALSE the turn is
@@ -1052,6 +1094,26 @@ impl<T: CodexAppServerTransport> CodexAppServerClient<T> {
         text: &str,
         gate_on: bool,
         handler: &dyn Fn(&CodexServerRequest) -> Result<CodexApprovalDecision, CodexAppServerError>,
+    ) -> Result<ModelTurnOutcome, CodexAppServerError> {
+        let mut observer = |_message: &JsonRpcServerMessage| {};
+        self.run_turn_core_observed(
+            thread_id,
+            client_user_message_id,
+            text,
+            gate_on,
+            handler,
+            &mut observer,
+        )
+    }
+
+    fn run_turn_core_observed(
+        &mut self,
+        thread_id: &str,
+        client_user_message_id: Option<&str>,
+        text: &str,
+        gate_on: bool,
+        handler: &dyn Fn(&CodexServerRequest) -> Result<CodexApprovalDecision, CodexAppServerError>,
+        observer: &mut dyn FnMut(&JsonRpcServerMessage),
     ) -> Result<ModelTurnOutcome, CodexAppServerError> {
         let approval_policy = if gate_on {
             MODEL_TURN_GATE_APPROVAL_POLICY
@@ -1092,6 +1154,11 @@ impl<T: CodexAppServerTransport> CodexAppServerClient<T> {
                             .as_deref()
                             == Some(turn_id.as_str())
                     {
+                        observer(&JsonRpcServerMessage {
+                            id: None,
+                            method: method.clone(),
+                            params: params.clone(),
+                        });
                         match method.as_str() {
                             "item/completed" => {
                                 if let Some(text) = agent_message_item_text(&params) {
@@ -1124,6 +1191,11 @@ impl<T: CodexAppServerTransport> CodexAppServerClient<T> {
                 }
                 // A server→client REQUEST mid-turn (approval/elicitation).
                 CodexInboundMessage::ServerRequest { id, method, params } => {
+                    observer(&JsonRpcServerMessage {
+                        id: Some(id.clone()),
+                        method: method.clone(),
+                        params: params.clone(),
+                    });
                     if !gate_on {
                         // Flag OFF (default): not routed — fail closed with the historical
                         // typed blocker so the turn can never hang waiting for a response we
@@ -1192,6 +1264,7 @@ impl<T: CodexAppServerTransport> CodexAppServerClient<T> {
 pub struct LocalCodexAppServer {
     child: Child,
     client: CodexAppServerClient<JsonLineTransport<ChildStdout, ChildStdin>>,
+    watchdog_release: Option<Sender<()>>,
 }
 
 impl LocalCodexAppServer {
@@ -1232,8 +1305,18 @@ impl LocalCodexAppServer {
         let stdout = child.stdout.take().ok_or(CodexAppServerError::Transport {
             code: "app-server-stdout",
         })?;
+        let timeout = codex_app_server_watchdog_timeout_from(
+            std::env::var(FRIDAY_CODEX_APP_SERVER_TIMEOUT_MS)
+                .ok()
+                .as_deref(),
+        );
+        let watchdog_release = Some(spawn_app_server_watchdog(child.id(), timeout));
         let client = CodexAppServerClient::new(JsonLineTransport::new(stdout, stdin));
-        Ok(Self { child, client })
+        Ok(Self {
+            child,
+            client,
+            watchdog_release,
+        })
     }
 
     /// The OS pid of the spawned `codex app-server --stdio` process (for an external watchdog
@@ -1251,6 +1334,9 @@ impl LocalCodexAppServer {
 
     /// Terminate the spawned `codex app-server --stdio` process (idempotent).
     pub fn kill(&mut self) {
+        if let Some(release) = self.watchdog_release.take() {
+            let _ = release.send(());
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -1260,6 +1346,28 @@ impl Drop for LocalCodexAppServer {
     fn drop(&mut self) {
         self.kill();
     }
+}
+
+fn codex_app_server_watchdog_timeout_from(raw: Option<&str>) -> Duration {
+    let millis = raw
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS);
+    Duration::from_millis(millis)
+}
+
+fn spawn_app_server_watchdog(pid: u32, timeout: Duration) -> Sender<()> {
+    let (release, released) = mpsc::channel();
+    let _ = thread::spawn(move || {
+        if released.recv_timeout(timeout).is_ok() {
+            return;
+        }
+        let pid = pid.to_string();
+        let _ = Command::new("/bin/kill").args(["-TERM", &pid]).status();
+        thread::sleep(Duration::from_millis(500));
+        let _ = Command::new("/bin/kill").args(["-KILL", &pid]).status();
+    });
+    release
 }
 
 /// (C1-2) The seam a hub-side `AgentLlmClient` adapter drives to run ONE Codex model turn
@@ -2034,6 +2142,44 @@ mod tests {
     }
 
     #[test]
+    fn run_turn_with_handler_observed_mirrors_provider_messages_without_changing_outcome() {
+        let stream = concat!(
+            r#"{"id":1,"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"inProgress","items":[]}}}"#,
+            "\n",
+            r#"{"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","completedAtMs":1,"item":{"id":"item-1","type":"agentMessage","text":"PONG"}}}"#,
+            "\n",
+            r#"{"method":"thread/tokenUsage/updated","params":{"threadId":"thread-1","turnId":"turn-1","tokenUsage":{"last":{"cachedInputTokens":0,"inputTokens":11,"outputTokens":8,"reasoningOutputTokens":0,"totalTokens":19},"total":{"cachedInputTokens":0,"inputTokens":11,"outputTokens":8,"reasoningOutputTokens":0,"totalTokens":19}}}}"#,
+            "\n",
+            r#"{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[]}}}"#,
+            "\n",
+        );
+        let mut client = run_turn_client(stream);
+        let mut observed = Vec::new();
+        let out = client
+            .run_turn_with_handler_observed(
+                "thread-1",
+                Some("client-msg-1"),
+                "ping",
+                |_req| Ok(CodexApprovalDecision::Deny),
+                |message| observed.push(message.method.clone()),
+            )
+            .unwrap();
+
+        assert_eq!(out.content, "PONG");
+        assert_eq!(
+            observed,
+            vec![
+                "turn/started",
+                "item/completed",
+                "thread/tokenUsage/updated",
+                "turn/completed"
+            ]
+        );
+    }
+
+    #[test]
     fn run_turn_multiple_agent_items_concatenate_and_skip_non_agent_items() {
         // Two authoritative agentMessage items concatenate; a reasoning / command item
         // (any non-"agentMessage" ThreadItem type) is skipped. No tokenUsage notification
@@ -2476,6 +2622,30 @@ mod tests {
         assert!(!codex_mutating_gate_from(Some("true".to_string())));
         assert!(!codex_mutating_gate_from(Some(String::new())));
         assert!(!codex_mutating_gate_from(None));
+    }
+
+    #[test]
+    fn codex_app_server_watchdog_timeout_defaults_and_requires_positive_millis() {
+        assert_eq!(
+            codex_app_server_watchdog_timeout_from(None),
+            Duration::from_millis(DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS)
+        );
+        assert_eq!(
+            codex_app_server_watchdog_timeout_from(Some("")),
+            Duration::from_millis(DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS)
+        );
+        assert_eq!(
+            codex_app_server_watchdog_timeout_from(Some("not-a-number")),
+            Duration::from_millis(DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS)
+        );
+        assert_eq!(
+            codex_app_server_watchdog_timeout_from(Some("0")),
+            Duration::from_millis(DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS)
+        );
+        assert_eq!(
+            codex_app_server_watchdog_timeout_from(Some(" 250 ")),
+            Duration::from_millis(250)
+        );
     }
 
     #[test]

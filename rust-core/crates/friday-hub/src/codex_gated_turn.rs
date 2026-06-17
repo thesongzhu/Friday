@@ -87,7 +87,7 @@ use friday_core::gate::{CanonicalApproval, GateDecision, MutatingActionRequest};
 use friday_crypto::OperatorVerifyingKey;
 use friday_providers::codex_appserver::{
     CodexAppServerClient, CodexAppServerTransport, CodexApprovalDecision, CodexServerRequest,
-    ModelTurnOutcome,
+    JsonRpcServerMessage, ModelTurnOutcome,
 };
 use friday_storage::{authorize_mutating_action_ed25519, AgentActionContext};
 use rusqlite::Connection;
@@ -231,6 +231,47 @@ where
     T: CodexAppServerTransport,
     F: Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
 {
+    let mut observer = |_message: &JsonRpcServerMessage| {};
+    run_codex_gated_turn_observed(
+        conn,
+        codex_client,
+        policy,
+        operator_vk,
+        approve_fn,
+        thread_id,
+        user_message_id,
+        text,
+        route_model,
+        run_id,
+        now_ms,
+        &mut observer,
+    )
+}
+
+/// Observed sibling of [`run_codex_gated_turn`]. The turn/gate semantics are identical; the
+/// extra observer receives provider-originated JSON-RPC notifications/requests for refs-only
+/// mirroring. Observer failures must be handled by the caller and must never influence the
+/// Codex turn.
+#[allow(clippy::too_many_arguments)]
+pub fn run_codex_gated_turn_observed<T, F, O>(
+    conn: &Connection,
+    codex_client: &mut CodexAppServerClient<T>,
+    policy: &RunPolicy,
+    operator_vk: Option<&OperatorVerifyingKey>,
+    approve_fn: &F,
+    thread_id: &str,
+    user_message_id: Option<&str>,
+    text: &str,
+    route_model: &str,
+    run_id: &str,
+    now_ms: i64,
+    observer: O,
+) -> Result<CodexTurnOutcome, CodexGatedTurnError>
+where
+    T: CodexAppServerTransport,
+    F: Fn(&MutatingActionRequest) -> Option<CanonicalApproval>,
+    O: FnMut(&JsonRpcServerMessage),
+{
     // Build the trust-check context ONCE from the run policy. `None` ⇒ no agent identity ⇒
     // no grant can apply ⇒ the gate fails closed (`trust_no_active_grant`); we still run the
     // turn (a text-only turn `Finished`s), but any tool proposal is Denied. The action
@@ -356,7 +397,13 @@ where
     // Drive the turn. `run_turn_with_handler` reads the gate flag itself: flag OFF ⇒ a
     // mid-turn approval request fails closed (the handler is never consulted); flag ON ⇒ each
     // approval request routes through `handler` and a Deny aborts with `approval-denied`.
-    let turn_result = codex_client.run_turn_with_handler(thread_id, user_message_id, text, handler);
+    let turn_result = codex_client.run_turn_with_handler_observed(
+        thread_id,
+        user_message_id,
+        text,
+        handler,
+        observer,
+    );
 
     // Finalize. A captured gate result takes precedence over the raw transport error (a Deny
     // surfaces as `approval-denied`; we want the richer gate reason / a real Paused).
@@ -654,7 +701,7 @@ mod tests {
             "thread-1",
             None,
             text,
-            "gpt-5-codex",
+            "gpt-5.5",
             "run-1",
             1_000,
         )
@@ -858,6 +905,57 @@ mod tests {
             CodexTurnOutcome::Finished { answer, .. } => assert_eq!(answer, "hello"),
             other => panic!("text-only turn must Finish, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn observed_turn_ignores_observe_writer_failures_and_still_finishes() {
+        let _lock = GATE_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::remove_var(FRIDAY_CODEX_MUTATING_GATE);
+        let db = Db::open_hub(&temp_path("observe-failure-isolated")).unwrap();
+        let policy = policy_for("agent-1");
+        let mut client = client_over(Box::leak(text_turn("PONG").into_boxed_str()));
+        let mut observed_methods = Vec::new();
+        let mut mirror_seq = 0;
+        let out = run_codex_gated_turn_observed(
+            db.conn(),
+            &mut client,
+            &policy,
+            None,
+            &no_approval,
+            "thread-1",
+            None,
+            "say pong",
+            "gpt-5.5",
+            "run-observe-failure-isolated",
+            1_000,
+            |message| {
+                observed_methods.push(message.method.clone());
+                crate::observe_codex_provider_message_best_effort(
+                    true,
+                    &mut mirror_seq,
+                    1_000,
+                    |_observed_at, _mirror_seq| {
+                        Err(friday_storage::StorageError::Unsupported(
+                            "simulated observe writer failure".into(),
+                        ))
+                    },
+                );
+            },
+        )
+        .unwrap();
+
+        match out {
+            CodexTurnOutcome::Finished { answer, usage } => {
+                assert_eq!(answer, "PONG");
+                assert_eq!(usage.provider_kind, friday_core::ProviderKind::Codex);
+            }
+            other => panic!("observe writer failure must not change the turn outcome: {other:?}"),
+        }
+        assert_eq!(
+            observed_methods,
+            vec!["item/completed".to_string(), "turn/completed".to_string()]
+        );
+        assert_eq!(mirror_seq, 2);
     }
 
     // ---- unmappable request (no command string) fails closed ----

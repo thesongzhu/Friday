@@ -76,7 +76,7 @@
 // completed Codex turn ALWAYS bills exactly ONE codex ledger row, but that row may carry 0/0
 // tokens. The ledger-row assertions here therefore tolerate a 0/0 codex row: they prove provider
 // ATTRIBUTION (provider_kind == "codex", base_url_host == "provider_app_server_local",
-// fallback == false, model == the gpt-5-codex route model) and DO NOT require nonzero tokens. The
+// fallback == false, model == the gpt-5.5 route model) and DO NOT require nonzero tokens. The
 // row's EXISTENCE + correct attribution is the faithful invariant; a 0-token row is still a real
 // routed+metered Codex turn, never a DeepSeek/Anthropic mis-attribution.
 //
@@ -162,9 +162,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The model id the `codex` route bills against — matches the private `CODEX_ROUTE_MODEL` in
-/// runtime.rs (`gpt-5-codex`). Hardcoded here because that const is crate-private; the in-crate
+/// runtime.rs (`gpt-5.5`). Hardcoded here because that const is crate-private; the in-crate
 /// C1-3 tests assert the same value, so a drift would red those deterministic tests too.
-const CODEX_ROUTE_MODEL: &str = "gpt-5-codex";
+const CODEX_ROUTE_MODEL: &str = "gpt-5.5";
 
 static C: AtomicU64 = AtomicU64::new(0);
 
@@ -288,7 +288,7 @@ fn assert_codex_rows(
             row.base_url_host, "provider_app_server_local",
             "the LOCAL Codex app-server host label (never a remote API host)"
         );
-        assert_eq!(row.model, CODEX_ROUTE_MODEL, "the gpt-5-codex route model");
+        assert_eq!(row.model, CODEX_ROUTE_MODEL, "the gpt-5.5 route model");
         assert!(!row.fallback, "the codex route is never a fallback");
         // Tokens are NOT asserted nonzero: a completed Codex turn with no tokenUsage update bills a
         // 0/0 row, which still proves attribution. (See the Option-usage flakiness note above.)

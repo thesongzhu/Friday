@@ -7,6 +7,7 @@ import {
   handlePaused,
   handleResult,
   handleServerClose,
+  missionSpineUnavailableFromRustErrorEnvelope,
   parseControlResult,
   routeInboundEnvelope,
   type FridayRustHubAgentRunSealedDispatchOutcome,
@@ -188,6 +189,32 @@ describe("friday-rust-hub-agent-run-ws-sealed-client settle handlers (leg-A deco
     // Token counts are DEFERRED server-side ⇒ omitted (never 0-faked).
     expect(result?.promptTokens).toBeUndefined();
     expect(result?.completionTokens).toBeUndefined();
+  });
+});
+
+describe("friday-rust-hub-agent-run-ws-sealed-client mission-spine typed errors", () => {
+  it("keeps Rust Error envelope diagnostics while still failing closed as a 503", () => {
+    const err = missionSpineUnavailableFromRustErrorEnvelope("mission-intake", {
+      kind: "Error",
+      code: "Internal",
+      message: "non-canonical Friday conversation id: codex-proof-conv-123",
+    });
+
+    expect(err).toBeInstanceOf(FridayDomainError);
+    expect(err.code).toBe("MISSION_SPINE_RUST_AGENT_RUN_SEALED_WS_CLIENT_UNAVAILABLE");
+    expect(err.httpStatus).toBe(503);
+    expect(err.message).toContain("Rust Error envelope");
+    expect(err.details).toMatchObject({
+      surface: "service:rust_hub_agent_run_sealed_ws_client",
+      bridge: "rust_wired",
+      proofOnly: true,
+      proofReady: false,
+      leg: "mission-intake",
+      rustError: {
+        code: "Internal",
+        message: "non-canonical Friday conversation id: codex-proof-conv-123",
+      },
+    });
   });
 });
 
