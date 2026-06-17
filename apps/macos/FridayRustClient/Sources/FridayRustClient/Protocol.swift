@@ -120,6 +120,22 @@ public enum FridayMessage: Equatable {
   /// `friday_protocol::Message::AgentRunControlResult`.
   case agentRunControlResult(AgentRunControlResultWire)
 
+  // MARK: - Mission-spine WRITE seam (Lane-D entry-point-A organic driver)
+
+  /// trusted-peer→hub: resolve/create a Mission from one surface input (a Hub-owned preflight
+  /// mutation, NOT a provider/model call). Mirrors `friday_protocol::Message::MissionIntakeRequest`
+  /// — a NESTED struct variant `{ request: … }` (NOT flattened like the AgentRun* variants).
+  case missionIntakeRequest(MissionIntakeRequestWire)
+  /// hub→trusted-peer: Mission intake/preflight receipt (refs-only). Mirrors
+  /// `friday_protocol::Message::MissionIntakeResult` — NESTED `{ result: … }`.
+  case missionIntakeResult(MissionIntakeResultWire)
+  /// trusted-peer→hub: apply the OWNER's explicit confirm/reject to ONE pending memory candidate.
+  /// Mirrors `friday_protocol::Message::MemoryDecisionRequest` — NESTED `{ request: … }`.
+  case memoryDecisionRequest(MemoryDecisionRequestWire)
+  /// hub→trusted-peer: memory decision receipt (refs-only). Mirrors
+  /// `friday_protocol::Message::MemoryDecisionResult` — NESTED `{ result: … }`.
+  case memoryDecisionResult(MemoryDecisionResultWire)
+
   /// A decoded-but-not-handled message kind. Carries the raw `kind` for truth-labeled surfacing
   /// (e.g. an `AgentRunPaused` reaching the read client, or any frame the client cannot handle).
   case unsupported(kind: String)
@@ -129,6 +145,7 @@ extension FridayMessage: Codable {
   private enum TagKey: String, CodingKey { case kind }
   private enum SnapshotKey: String, CodingKey { case snapshot }
   private enum RequestKey: String, CodingKey { case request }
+  private enum ResultKey: String, CodingKey { case result }
   private enum ErrorKey: String, CodingKey { case code, message }
   /// The flattened keys the WRITE variants carry as SIBLINGS of `kind` (serde's internally-tagged
   /// shape for struct variants with named fields). The read variants nest a single `request`/
@@ -216,6 +233,20 @@ extension FridayMessage: Codable {
         status: try c.decode(String.self, forKey: .status),
         auditRef: try c.decodeIfPresent(String.self, forKey: .auditRef)
       ))
+    // Mission-spine WRITE variants — NESTED `{ request }` / `{ result }` (NOT the flattened
+    // WriteKey path). Same shape as the read WorkbenchProjection* variants.
+    case "MissionIntakeRequest":
+      let c = try decoder.container(keyedBy: RequestKey.self)
+      self = .missionIntakeRequest(try c.decode(MissionIntakeRequestWire.self, forKey: .request))
+    case "MissionIntakeResult":
+      let c = try decoder.container(keyedBy: ResultKey.self)
+      self = .missionIntakeResult(try c.decode(MissionIntakeResultWire.self, forKey: .result))
+    case "MemoryDecisionRequest":
+      let c = try decoder.container(keyedBy: RequestKey.self)
+      self = .memoryDecisionRequest(try c.decode(MemoryDecisionRequestWire.self, forKey: .request))
+    case "MemoryDecisionResult":
+      let c = try decoder.container(keyedBy: ResultKey.self)
+      self = .memoryDecisionResult(try c.decode(MemoryDecisionResultWire.self, forKey: .result))
     default:
       self = .unsupported(kind: kind)
     }
@@ -286,6 +317,24 @@ extension FridayMessage: Codable {
       try c.encode(r.accepted, forKey: .accepted)
       try c.encode(r.status, forKey: .status)
       if let v = r.auditRef { try c.encode(v, forKey: .auditRef) }
+    // Mission-spine WRITE variants — NEST the payload under a single `request`/`result` field
+    // (the internally-tagged struct-variant shape the Rust serde + the read variants use).
+    case .missionIntakeRequest(let r):
+      try tag.encode("MissionIntakeRequest", forKey: .kind)
+      var c = encoder.container(keyedBy: RequestKey.self)
+      try c.encode(r, forKey: .request)
+    case .missionIntakeResult(let r):
+      try tag.encode("MissionIntakeResult", forKey: .kind)
+      var c = encoder.container(keyedBy: ResultKey.self)
+      try c.encode(r, forKey: .result)
+    case .memoryDecisionRequest(let r):
+      try tag.encode("MemoryDecisionRequest", forKey: .kind)
+      var c = encoder.container(keyedBy: RequestKey.self)
+      try c.encode(r, forKey: .request)
+    case .memoryDecisionResult(let r):
+      try tag.encode("MemoryDecisionResult", forKey: .kind)
+      var c = encoder.container(keyedBy: ResultKey.self)
+      try c.encode(r, forKey: .result)
     case .unsupported(let kind):
       try tag.encode(kind, forKey: .kind)
     }

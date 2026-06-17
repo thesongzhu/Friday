@@ -229,6 +229,16 @@ public final class SealedWSReadClient: FridayRustReadClient, @unchecked Sendable
       throw FridayReadClientError.unexpectedResponse(kind: "AgentRunResume")
     case .agentRunControlResult:
       throw FridayReadClientError.unexpectedResponse(kind: "AgentRunControlResult")
+    // The mission-spine WRITE variants share the `FridayMessage` enum but are NEVER answers a READ
+    // server gives — surface them as unexpected (the read seam only answers a snapshot / Error).
+    case .missionIntakeRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "MissionIntakeRequest")
+    case .missionIntakeResult:
+      throw FridayReadClientError.unexpectedResponse(kind: "MissionIntakeResult")
+    case .memoryDecisionRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "MemoryDecisionRequest")
+    case .memoryDecisionResult:
+      throw FridayReadClientError.unexpectedResponse(kind: "MemoryDecisionResult")
     case .unsupported(let kind):
       throw FridayReadClientError.unexpectedResponse(kind: kind)
     }

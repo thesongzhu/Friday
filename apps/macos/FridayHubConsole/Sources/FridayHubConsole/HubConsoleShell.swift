@@ -1,4 +1,5 @@
 import FridayHubConsoleCore
+import FridayRustClient
 import SwiftUI
 
 /// The three-pane Hub Console shell (locked: layout = threePane):
@@ -9,8 +10,9 @@ struct HubConsoleShell: View {
   @State private var destination: HubDestination = .operations
   @StateObject private var operationsVM: OperationsOverviewViewModel
 
-  init(client: FridayRustReadClient) {
-    _operationsVM = StateObject(wrappedValue: OperationsOverviewViewModel(client: client))
+  init(client: FridayRustReadClient, writeClient: FridayMissionSpineWriteClient? = nil) {
+    _operationsVM = StateObject(
+      wrappedValue: OperationsOverviewViewModel(client: client, writeClient: writeClient))
   }
 
   var body: some View {

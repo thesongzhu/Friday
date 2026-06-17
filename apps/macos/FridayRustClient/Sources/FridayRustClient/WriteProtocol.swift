@@ -224,3 +224,299 @@ public struct AgentRunControlResultWire: Equatable, Sendable {
     self.auditRef = auditRef
   }
 }
+
+// MARK: - Mission-spine WRITE wire types (MissionIntake + MemoryDecision)
+//
+// The Lane-D entry-point-A spine-WRITE shapes — Swift ports of the `friday-protocol` serde structs
+// the live agent-run WRITE server (`bin/hub_agent_run_server.rs`) handles under
+// `FRIDAY_MISSION_INTAKE=1` / `FRIDAY_MEMORY_CONFIRM=1` (BOTH ON in the live launch script). These
+// drive the FIRST organic loop through the Rust spine: an operator-typed `MissionIntakeRequest`
+// BIRTHS a Mission + WorkItem(Draft), and a `MemoryDecisionRequest{decision:"confirm"}` makes a
+// pending memory candidate durable/recallable.
+//
+// TWO load-bearing facts that differ from the AgentRun* variants above:
+//  1. WIRE SHAPE — the `FridayMessage` variants for these NEST the payload under a single named
+//     field (`{"kind":"MissionIntakeRequest","request":{…}}`), the SAME internally-tagged shape as
+//     the read `WorkbenchProjection*` variants — NOT the flattened `WriteKey` shape the AgentRun*
+//     variants use. The Rust test `memory_decision_wire_round_trips_and_uses_the_request_result_wrapper`
+//     asserts `"request":{` / `"result":{` and documents that a prior FLAT shape "503'd every call."
+//  2. AUTH — these carry NO per-request `auth_proof`. The SEALED SESSION itself is the channel auth
+//     (an allowlisted single peer holding the session key; the server binds the write to the
+//     Rust-derived AUTHENTICATED owner `--owner admin-001`, FIX-Q3b). Unlike `dispatchAgentRun`,
+//     the submit methods build NO `buildAuthProof` for these messages.
+
+/// Client→hub Mission intake/preflight request. Mirrors `friday_protocol::MissionIntakeRequestWire`.
+/// Resolves/creates a Mission from one surface input (a Hub-owned preflight mutation, NOT a
+/// provider/model call). The server FAIL-CLOSES (writes ZERO rows) when `ownerPrincipal` != the
+/// authenticated `--owner` (FIX-Q3b), so `ownerPrincipal` MUST equal the configured owner.
+public struct MissionIntakeRequestWire: Codable, Equatable, Sendable {
+  public var fridayConversationId: String
+  /// MUST equal the authenticated `--owner` (live: `admin-001`) — a mismatch is a typed Error that
+  /// persists nothing (NOT a silent write). Wire it from config, never raw UI input.
+  public var ownerPrincipal: String
+  public var surfaceThreadId: String
+  /// One of the server's `surface_kind_from_wire` tokens (e.g. `desktop`, `mobile`, …); an unknown
+  /// value blocks the intake.
+  public var surfaceKind: String
+  /// Non-empty free-form route hint (server only requires it non-empty).
+  public var deliveryRoute: String
+  /// One of `compact` / `rich_proof` / `status_only` / `hidden_trace_only`.
+  public var visibilityPolicy: String
+  /// The client SUPPLIES the Mission id (the server births the row from it).
+  public var missionId: String
+  /// The client SUPPLIES the WorkItem id (the server births the Draft from it).
+  public var workItemId: String
+  public var title: String
+  public var intent: String
+  /// One of `friday_hub`/`codex`/`claude`/`deepseek`/`workflow`/`channel`/`human`/`future_api`.
+  public var lane: String
+  /// Optional — omitted from the wire when nil (serde `skip_serializing_if`).
+  public var targetProviderOrAgent: String?
+  /// Optional — omitted when nil.
+  public var capabilityId: String?
+  /// Optional — omitted when nil. When present MUST be a Friday-owned body ref
+  /// (`friday://body/…` / `friday://surface-event-body/…` / `blob://…`) or the intake blocks.
+  public var bodyRef: String?
+  /// ALWAYS emitted (serde `#[serde(default)]` WITHOUT skip — the server itself always serializes it).
+  public var includesSensitiveContext: Bool
+
+  public init(
+    fridayConversationId: String, ownerPrincipal: String, surfaceThreadId: String,
+    surfaceKind: String, deliveryRoute: String, visibilityPolicy: String,
+    missionId: String, workItemId: String, title: String, intent: String, lane: String,
+    targetProviderOrAgent: String? = nil, capabilityId: String? = nil,
+    bodyRef: String? = nil, includesSensitiveContext: Bool = false
+  ) {
+    self.fridayConversationId = fridayConversationId
+    self.ownerPrincipal = ownerPrincipal
+    self.surfaceThreadId = surfaceThreadId
+    self.surfaceKind = surfaceKind
+    self.deliveryRoute = deliveryRoute
+    self.visibilityPolicy = visibilityPolicy
+    self.missionId = missionId
+    self.workItemId = workItemId
+    self.title = title
+    self.intent = intent
+    self.lane = lane
+    self.targetProviderOrAgent = targetProviderOrAgent
+    self.capabilityId = capabilityId
+    self.bodyRef = bodyRef
+    self.includesSensitiveContext = includesSensitiveContext
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case fridayConversationId = "friday_conversation_id"
+    case ownerPrincipal = "owner_principal"
+    case surfaceThreadId = "surface_thread_id"
+    case surfaceKind = "surface_kind"
+    case deliveryRoute = "delivery_route"
+    case visibilityPolicy = "visibility_policy"
+    case missionId = "mission_id"
+    case workItemId = "work_item_id"
+    case title, intent, lane
+    case targetProviderOrAgent = "target_provider_or_agent"
+    case capabilityId = "capability_id"
+    case bodyRef = "body_ref"
+    case includesSensitiveContext = "includes_sensitive_context"
+  }
+
+  /// Custom encode mirroring the Rust serde discipline: the 3 optionals are OMITTED when nil
+  /// (`skip_serializing_if`); `includes_sensitive_context` is ALWAYS emitted (the server's own
+  /// serialization always emits it — `#[serde(default)]` without skip).
+  public func encode(to encoder: Encoder) throws {
+    var c = encoder.container(keyedBy: CodingKeys.self)
+    try c.encode(fridayConversationId, forKey: .fridayConversationId)
+    try c.encode(ownerPrincipal, forKey: .ownerPrincipal)
+    try c.encode(surfaceThreadId, forKey: .surfaceThreadId)
+    try c.encode(surfaceKind, forKey: .surfaceKind)
+    try c.encode(deliveryRoute, forKey: .deliveryRoute)
+    try c.encode(visibilityPolicy, forKey: .visibilityPolicy)
+    try c.encode(missionId, forKey: .missionId)
+    try c.encode(workItemId, forKey: .workItemId)
+    try c.encode(title, forKey: .title)
+    try c.encode(intent, forKey: .intent)
+    try c.encode(lane, forKey: .lane)
+    if let v = targetProviderOrAgent { try c.encode(v, forKey: .targetProviderOrAgent) }
+    if let v = capabilityId { try c.encode(v, forKey: .capabilityId) }
+    if let v = bodyRef { try c.encode(v, forKey: .bodyRef) }
+    try c.encode(includesSensitiveContext, forKey: .includesSensitiveContext)
+  }
+
+  /// Decode tolerant of the optionals being absent and of `includes_sensitive_context` being
+  /// omitted (serde `default` tolerance) — `?? false`.
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    fridayConversationId = try c.decode(String.self, forKey: .fridayConversationId)
+    ownerPrincipal = try c.decode(String.self, forKey: .ownerPrincipal)
+    surfaceThreadId = try c.decode(String.self, forKey: .surfaceThreadId)
+    surfaceKind = try c.decode(String.self, forKey: .surfaceKind)
+    deliveryRoute = try c.decode(String.self, forKey: .deliveryRoute)
+    visibilityPolicy = try c.decode(String.self, forKey: .visibilityPolicy)
+    missionId = try c.decode(String.self, forKey: .missionId)
+    workItemId = try c.decode(String.self, forKey: .workItemId)
+    title = try c.decode(String.self, forKey: .title)
+    intent = try c.decode(String.self, forKey: .intent)
+    lane = try c.decode(String.self, forKey: .lane)
+    targetProviderOrAgent = try c.decodeIfPresent(String.self, forKey: .targetProviderOrAgent)
+    capabilityId = try c.decodeIfPresent(String.self, forKey: .capabilityId)
+    bodyRef = try c.decodeIfPresent(String.self, forKey: .bodyRef)
+    includesSensitiveContext =
+      (try c.decodeIfPresent(Bool.self, forKey: .includesSensitiveContext)) ?? false
+  }
+}
+
+/// Hub→client Mission intake/preflight receipt. Mirrors `friday_protocol::MissionIntakeResultWire`.
+/// `status` is `"ready"` / `"blocked"` / `"needs_clarification"`. With `FRIDAY_MISSION_INTAKE_CLARIFY=1`
+/// LIVE, an UNDER-SPECIFIED intent returns `status:"needs_clarification"` + a non-empty
+/// `clarificationQuestions` + `createdOrReady:false` (no rows written) — the Swift result MUST carry
+/// these. Refs-only: it carries ids/status/blockers, never a body.
+public struct MissionIntakeResultWire: Codable, Equatable, Sendable {
+  public var fridayConversationId: String
+  public var missionId: String
+  /// Omitted from the wire when nil (serde `skip_serializing_if`).
+  public var workItemId: String?
+  public var surfaceThreadId: String
+  public var status: String
+  /// Always present (default `[]`).
+  public var blockers: [String]
+  public var duplicateMissionId: String?
+  public var duplicateWorkItemId: String?
+  public var createdOrReady: Bool
+  /// Non-empty ONLY when `status == "needs_clarification"`; omitted (skip-if-empty) otherwise.
+  public var clarificationQuestions: [String]
+
+  public init(
+    fridayConversationId: String, missionId: String, workItemId: String? = nil,
+    surfaceThreadId: String, status: String, blockers: [String] = [],
+    duplicateMissionId: String? = nil, duplicateWorkItemId: String? = nil,
+    createdOrReady: Bool, clarificationQuestions: [String] = []
+  ) {
+    self.fridayConversationId = fridayConversationId
+    self.missionId = missionId
+    self.workItemId = workItemId
+    self.surfaceThreadId = surfaceThreadId
+    self.status = status
+    self.blockers = blockers
+    self.duplicateMissionId = duplicateMissionId
+    self.duplicateWorkItemId = duplicateWorkItemId
+    self.createdOrReady = createdOrReady
+    self.clarificationQuestions = clarificationQuestions
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case fridayConversationId = "friday_conversation_id"
+    case missionId = "mission_id"
+    case workItemId = "work_item_id"
+    case surfaceThreadId = "surface_thread_id"
+    case status, blockers
+    case duplicateMissionId = "duplicate_mission_id"
+    case duplicateWorkItemId = "duplicate_work_item_id"
+    case createdOrReady = "created_or_ready"
+    case clarificationQuestions = "clarification_questions"
+  }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    fridayConversationId = try c.decode(String.self, forKey: .fridayConversationId)
+    missionId = try c.decode(String.self, forKey: .missionId)
+    workItemId = try c.decodeIfPresent(String.self, forKey: .workItemId)
+    surfaceThreadId = try c.decode(String.self, forKey: .surfaceThreadId)
+    status = try c.decode(String.self, forKey: .status)
+    blockers = (try c.decodeIfPresent([String].self, forKey: .blockers)) ?? []
+    duplicateMissionId = try c.decodeIfPresent(String.self, forKey: .duplicateMissionId)
+    duplicateWorkItemId = try c.decodeIfPresent(String.self, forKey: .duplicateWorkItemId)
+    createdOrReady = try c.decode(Bool.self, forKey: .createdOrReady)
+    clarificationQuestions =
+      (try c.decodeIfPresent([String].self, forKey: .clarificationQuestions)) ?? []
+  }
+
+  /// Mirror the serde skip discipline: `work_item_id`/`duplicate_*` omitted when nil;
+  /// `clarification_questions` omitted when empty; the rest always emitted.
+  public func encode(to encoder: Encoder) throws {
+    var c = encoder.container(keyedBy: CodingKeys.self)
+    try c.encode(fridayConversationId, forKey: .fridayConversationId)
+    try c.encode(missionId, forKey: .missionId)
+    if let v = workItemId { try c.encode(v, forKey: .workItemId) }
+    try c.encode(surfaceThreadId, forKey: .surfaceThreadId)
+    try c.encode(status, forKey: .status)
+    try c.encode(blockers, forKey: .blockers)
+    if let v = duplicateMissionId { try c.encode(v, forKey: .duplicateMissionId) }
+    if let v = duplicateWorkItemId { try c.encode(v, forKey: .duplicateWorkItemId) }
+    try c.encode(createdOrReady, forKey: .createdOrReady)
+    if !clarificationQuestions.isEmpty {
+      try c.encode(clarificationQuestions, forKey: .clarificationQuestions)
+    }
+  }
+}
+
+/// Client→hub memory-decision request. Mirrors `friday_protocol::MemoryDecisionRequestWire`. The
+/// owner's OWN action over the sealed session (NOT an agent mutating-tool action) — it does NOT
+/// route the approval/trust gate. All 3 fields are always emitted. `decision` MUST be exactly
+/// `"confirm"` or `"reject"` (the server parses fail-closed — any other token is an Error). The
+/// server scopes from the AUTHENTICATED owner's composite namespace and IGNORES this body
+/// `ownerPrincipal` for scope (set it to the configured owner anyway, for consistency).
+public struct MemoryDecisionRequestWire: Codable, Equatable, Sendable {
+  public var memoryId: String
+  public var ownerPrincipal: String
+  /// EXACTLY `"confirm"` or `"reject"`.
+  public var decision: String
+
+  public init(memoryId: String, ownerPrincipal: String, decision: String) {
+    self.memoryId = memoryId
+    self.ownerPrincipal = ownerPrincipal
+    self.decision = decision
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case memoryId = "memory_id"
+    case ownerPrincipal = "owner_principal"
+    case decision
+  }
+}
+
+/// Hub→client memory-decision receipt. Mirrors `friday_protocol::MemoryDecisionResultWire`.
+/// Refs-only: candidate id + resulting lifecycle state + coarse status + recallable flag — NEVER
+/// the candidate content. `status` is `"confirmed"` / `"rejected"` (applied) or `"blocked"`
+/// (scope mismatch / unknown candidate / terminal / invalid decision); `blocker` is set only when
+/// `status == "blocked"`.
+public struct MemoryDecisionResultWire: Codable, Equatable, Sendable {
+  public var memoryId: String
+  /// `"candidate"` / `"confirmed"` / `"rejected"` / `"unknown"`.
+  public var state: String
+  /// `"confirmed"` / `"rejected"` / `"blocked"`.
+  public var status: String
+  /// Set ONLY when `status == "blocked"` (omitted otherwise — serde `skip_serializing_if`).
+  public var blocker: String?
+  public var recallable: Bool
+
+  public init(memoryId: String, state: String, status: String, blocker: String? = nil, recallable: Bool) {
+    self.memoryId = memoryId
+    self.state = state
+    self.status = status
+    self.blocker = blocker
+    self.recallable = recallable
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case memoryId = "memory_id"
+    case state, status, blocker, recallable
+  }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    memoryId = try c.decode(String.self, forKey: .memoryId)
+    state = try c.decode(String.self, forKey: .state)
+    status = try c.decode(String.self, forKey: .status)
+    blocker = try c.decodeIfPresent(String.self, forKey: .blocker)
+    recallable = try c.decode(Bool.self, forKey: .recallable)
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var c = encoder.container(keyedBy: CodingKeys.self)
+    try c.encode(memoryId, forKey: .memoryId)
+    try c.encode(state, forKey: .state)
+    try c.encode(status, forKey: .status)
+    if let v = blocker { try c.encode(v, forKey: .blocker) }
+    try c.encode(recallable, forKey: .recallable)
+  }
+}

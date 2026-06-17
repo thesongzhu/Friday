@@ -263,3 +263,205 @@ func realClientFactoryBuildsAgainstLoopbackConfig() {
   #expect(client is SealedWSReadClient)
   #expect(ReadProjectionServerConfig.slice6LoopbackPlaceholder.host == "127.0.0.1")
 }
+
+// MARK: - Spine-WRITE drivers (Lane-D entry-point-A organic loop)
+
+/// An in-memory `FridayMissionSpineWriteClient` for view-model tests. Returns a programmed
+/// intake/decision outcome, OR throws to exercise the honest-unavailable path. Captures the last
+/// request so a test can assert the owner_principal / decision the view model wired.
+final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, @unchecked Sendable {
+  enum Behavior: Sendable {
+    case intakeReady
+    case intakeNeedsClarification
+    case intakeBlocked
+    case memoryConfirmed
+    case memoryBlocked
+    case throwsTransport
+  }
+  let behavior: Behavior
+  private let lock = NSLock()
+  private var _lastIntake: MissionIntakeRequestWire?
+  private var _lastDecision: MemoryDecisionRequestWire?
+  var lastIntake: MissionIntakeRequestWire? { lock.withLock { _lastIntake } }
+  var lastDecision: MemoryDecisionRequestWire? { lock.withLock { _lastDecision } }
+
+  init(behavior: Behavior) { self.behavior = behavior }
+
+  func submitMissionIntake(_ request: MissionIntakeRequestWire) async throws -> MissionIntakeResultWire {
+    lock.withLock { _lastIntake = request }
+    switch behavior {
+    case .throwsTransport:
+      throw FridayWriteClientError.transport("connection refused (write server dark)")
+    case .intakeNeedsClarification:
+      return MissionIntakeResultWire(
+        fridayConversationId: request.fridayConversationId, missionId: request.missionId,
+        surfaceThreadId: request.surfaceThreadId, status: "needs_clarification",
+        createdOrReady: false, clarificationQuestions: ["What is the deadline?"])
+    case .intakeBlocked:
+      return MissionIntakeResultWire(
+        fridayConversationId: request.fridayConversationId, missionId: request.missionId,
+        surfaceThreadId: request.surfaceThreadId, status: "blocked",
+        blockers: ["duplicate_mission"], createdOrReady: false)
+    default:
+      return MissionIntakeResultWire(
+        fridayConversationId: request.fridayConversationId, missionId: request.missionId,
+        workItemId: request.workItemId, surfaceThreadId: request.surfaceThreadId,
+        status: "ready", createdOrReady: true)
+    }
+  }
+
+  func submitMemoryDecision(_ request: MemoryDecisionRequestWire) async throws -> MemoryDecisionResultWire {
+    lock.withLock { _lastDecision = request }
+    switch behavior {
+    case .throwsTransport:
+      throw FridayWriteClientError.transport("connection refused (write server dark)")
+    case .memoryBlocked:
+      return MemoryDecisionResultWire(
+        memoryId: request.memoryId, state: "unknown", status: "blocked",
+        blocker: "unknown_candidate", recallable: false)
+    default:
+      return MemoryDecisionResultWire(
+        memoryId: request.memoryId,
+        state: request.decision == "confirm" ? "confirmed" : "rejected",
+        status: request.decision == "confirm" ? "confirmed" : "rejected",
+        recallable: request.decision == "confirm")
+    }
+  }
+}
+
+@Test
+@MainActor
+func submitIntakeReadyRendersConfirmedAndWiresOwnerAdmin001() async {
+  let write = MockMissionSpineWriteClient(behavior: .intakeReady)
+  let vm = OperationsOverviewViewModel(
+    client: MockReadClient(behavior: .loaded), writeClient: write,
+    writeOwnerPrincipal: "admin-001", newId: { "fixed" })
+  await vm.submitIntake(intent: "keep one Mission across every surface")
+
+  guard case let .confirmed(summary, questions) = vm.intakeState else {
+    Issue.record("expected .confirmed, got \(vm.intakeState)")
+    return
+  }
+  #expect(summary.contains("ready"))
+  #expect(summary.contains("mission-desktop-fixed"))
+  #expect(questions.isEmpty)
+  // FIX-Q3b: the body owner the view model wired MUST be the configured owner (admin-001).
+  #expect(write.lastIntake?.ownerPrincipal == "admin-001")
+  #expect(write.lastIntake?.surfaceKind == "desktop")
+  #expect(write.lastIntake?.lane == "deepseek")
+}
+
+@Test
+@MainActor
+func submitIntakeNeedsClarificationCarriesQuestionsHonestly() async {
+  let vm = OperationsOverviewViewModel(
+    client: MockReadClient(behavior: .loaded),
+    writeClient: MockMissionSpineWriteClient(behavior: .intakeNeedsClarification))
+  await vm.submitIntake(intent: "do the thing")
+  guard case let .confirmed(_, questions) = vm.intakeState else {
+    Issue.record("expected .confirmed (with questions), got \(vm.intakeState)")
+    return
+  }
+  #expect(questions == ["What is the deadline?"])
+}
+
+@Test
+@MainActor
+func submitIntakeBlockedRendersErrorNotConfirmed() async {
+  let vm = OperationsOverviewViewModel(
+    client: MockReadClient(behavior: .loaded),
+    writeClient: MockMissionSpineWriteClient(behavior: .intakeBlocked))
+  await vm.submitIntake(intent: "duplicate intent")
+  guard case let .error(reason) = vm.intakeState else {
+    Issue.record("a blocked intake must render .error, got \(vm.intakeState)")
+    return
+  }
+  #expect(reason.contains("blocked"))
+}
+
+@Test
+@MainActor
+func submitIntakeEmptyDraftRendersErrorWithoutCallingWrite() async {
+  let write = MockMissionSpineWriteClient(behavior: .intakeReady)
+  let vm = OperationsOverviewViewModel(
+    client: MockReadClient(behavior: .loaded), writeClient: write)
+  await vm.submitIntake(intent: "   ")
+  guard case .error = vm.intakeState else {
+    Issue.record("an empty intent must render .error, got \(vm.intakeState)")
+    return
+  }
+  #expect(write.lastIntake == nil)
+}
+
+@Test
+@MainActor
+func submitIntakeWithNoWriteClientRendersHonestUnavailable() async {
+  let vm = OperationsOverviewViewModel(client: MockReadClient(behavior: .loaded))  // no write client
+  await vm.submitIntake(intent: "something")
+  guard case let .error(reason) = vm.intakeState else {
+    Issue.record("no write client must render .error, got \(vm.intakeState)")
+    return
+  }
+  #expect(reason.contains("not configured"))
+}
+
+@Test
+@MainActor
+func submitIntakeTransportFailureRendersHonestUnavailable() async {
+  let vm = OperationsOverviewViewModel(
+    client: MockReadClient(behavior: .loaded),
+    writeClient: MockMissionSpineWriteClient(behavior: .throwsTransport))
+  await vm.submitIntake(intent: "something")
+  guard case let .error(reason) = vm.intakeState else {
+    Issue.record("a transport failure must render .error, got \(vm.intakeState)")
+    return
+  }
+  #expect(reason.contains("offline") || reason.contains("unavailable"))
+}
+
+@Test
+@MainActor
+func decideMemoryConfirmRendersConfirmedRecallable() async {
+  let write = MockMissionSpineWriteClient(behavior: .memoryConfirmed)
+  let vm = OperationsOverviewViewModel(
+    client: MockReadClient(behavior: .loaded), writeClient: write, writeOwnerPrincipal: "admin-001")
+  await vm.decideMemory(candidateId: "cand-1", memoryId: "mem-1", confirm: true)
+  guard case let .confirmed(summary, _) = vm.memoryDecisionStates["cand-1"] else {
+    Issue.record("expected .confirmed, got \(String(describing: vm.memoryDecisionStates["cand-1"]))")
+    return
+  }
+  #expect(summary.contains("confirmed"))
+  #expect(summary.contains("recallable=true"))
+  #expect(write.lastDecision?.decision == "confirm")
+  #expect(write.lastDecision?.ownerPrincipal == "admin-001")
+}
+
+@Test
+@MainActor
+func decideMemoryBlockedRendersErrorNotConfirmed() async {
+  // THE synthetic-candidate-id reality today: a confirm against the synthetic id returns
+  // status:"blocked" — which MUST render .error (never a fabricated confirm).
+  let vm = OperationsOverviewViewModel(
+    client: MockReadClient(behavior: .loaded),
+    writeClient: MockMissionSpineWriteClient(behavior: .memoryBlocked))
+  await vm.decideMemory(
+    candidateId: "cand-synthetic", memoryId: "memory_candidate_mission_x_0", confirm: true)
+  guard case let .error(reason) = vm.memoryDecisionStates["cand-synthetic"] else {
+    Issue.record("a blocked decision must render .error, got \(String(describing: vm.memoryDecisionStates["cand-synthetic"]))")
+    return
+  }
+  #expect(reason.contains("unknown_candidate") || reason.contains("blocked"))
+}
+
+@Test
+@MainActor
+func realWriteClientFactoryBuildsLiveAgainst48750OrHonestUnavailable() {
+  // The factory builds a real `SealedWSWriteClient` for the WRITE server's loopback seam (48750),
+  // OR (if the host master key is absent) an honest-unavailable client — never a fabricated one.
+  // Wiring-only; the live round-trip against a RUNNING server is the operator-gated AC.
+  #expect(AgentRunWriteServerConfig.liveLoopback.port == 48750)
+  #expect(AgentRunWriteServerConfig.liveLoopback.host == "127.0.0.1")
+  let client = RealWriteClientFactory.make(
+    config: .liveLoopback, forwardedPrincipal: "admin-001")
+  #expect(client is SealedWSWriteClient)
+}
