@@ -29,6 +29,41 @@
 //! `friday-ffi` (phone) must NOT. That compile-time no-provider-key-on-phone
 //! boundary is asserted by `friday-arch-tests`.
 
+#[cfg(test)]
+pub(crate) mod test_env {
+    use std::sync::{Mutex, MutexGuard};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    pub(crate) struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<String>,
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    impl EnvVarGuard {
+        pub(crate) fn set(key: &'static str, value: &str) -> Self {
+            let lock = ENV_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self {
+                key,
+                previous,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+}
+
 /// UNW-003 — dynamic provider routing (which provider/model answers a request).
 /// Routing decides *who answers*; it has zero authority over tool-call
 /// classification, which stays the trusted [`build_request`]/`trusted_classify`

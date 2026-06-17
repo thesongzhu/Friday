@@ -8,7 +8,7 @@
 //! masquerade as Friday work.
 
 use friday_core::gate::{CanonicalApproval, MutatingActionRequest};
-use friday_core::{MissionLinkKind, Risk, RouteDecisionCard, WorkLane};
+use friday_core::{MissionLinkKind, ProofRequirementKind, Risk, RouteDecisionCard, WorkLane};
 use friday_crypto::{OperatorVerifyingKey, SecureStore};
 use friday_deepseek::{DeepSeekClient, Transport};
 use friday_storage::channel::get_channel;
@@ -22,9 +22,9 @@ use crate::mission_context::{
     MissionContextResolution, ResolvedMissionContext,
 };
 use crate::mission_preflight::{
-    attach_channel_inbound_receipt, attach_provider_timeline_state,
-    attach_provider_timeline_state_guarded, attach_workflow_run_ref, MissionAttachmentOutcome,
-    ProviderTimelineAttachment,
+    attach_channel_inbound_receipt, attach_provider_timeline_state_guarded,
+    attach_provider_timeline_state_guarded_with_completion_receipt, attach_workflow_run_ref,
+    MissionAttachmentOutcome, ProviderTimelineAttachment,
 };
 use crate::planner::WorkflowDefinition;
 use crate::provider_timeline::PendingState;
@@ -321,7 +321,7 @@ pub fn ask_friday_for_mission<T: Transport>(
         }
     };
 
-    record_friday_ask(
+    let ask_outcome = record_friday_ask(
         db,
         client,
         ledger_id,
@@ -333,14 +333,24 @@ pub fn ask_friday_for_mission<T: Transport>(
     )?;
 
     let proof_ref = format!("friday://activity/{activity_id}");
+    let outcome_proof_receipt = answer_produced_outcome_receipt_for_work_item(
+        db,
+        &envelope.context.work_item_id,
+        ledger_id,
+        &ask_outcome.content,
+    )
+    .map_err(RecordAskError::Storage)?;
     let attachment = attach_completed_provider_state_for_ask(
         db,
-        &envelope.context.mission_id,
-        &envelope.context.work_item_id,
-        session_id,
-        ledger_id,
-        &proof_ref,
-        now_ms,
+        CompletedAskProviderAttachment {
+            mission_id: &envelope.context.mission_id,
+            work_item_id: &envelope.context.work_item_id,
+            session_id,
+            ledger_id,
+            proof_ref: &proof_ref,
+            completion_proof_receipt: outcome_proof_receipt.as_deref(),
+            now_ms,
+        },
     )
     .map_err(RecordAskError::Storage)?;
 
@@ -350,6 +360,42 @@ pub fn ask_friday_for_mission<T: Transport>(
         result_link: proof_ref,
         attachment,
     })
+}
+
+struct CompletedAskProviderAttachment<'a> {
+    mission_id: &'a str,
+    work_item_id: &'a str,
+    session_id: &'a str,
+    ledger_id: &'a str,
+    proof_ref: &'a str,
+    completion_proof_receipt: Option<&'a str>,
+    now_ms: i64,
+}
+
+fn answer_produced_outcome_receipt_for_work_item(
+    db: &Db,
+    work_item_id: &str,
+    ledger_id: &str,
+    answer: &str,
+) -> Result<Option<String>, StorageError> {
+    if !friday_core::outcome_checked_proof_enabled() {
+        return Ok(None);
+    }
+    let Some(work_item) = db.get_work_item(work_item_id)? else {
+        return Ok(None);
+    };
+    let requires_answer_produced = work_item
+        .outcome_requirement_specs()
+        .iter()
+        .any(|spec| spec.kind == ProofRequirementKind::AnswerProduced);
+    if !requires_answer_produced {
+        return Ok(None);
+    }
+    Ok(Some(format!(
+        "proof://outcome/{}/{ledger_id}?signal=answer_len={}",
+        ProofRequirementKind::AnswerProduced.as_str(),
+        answer.chars().count()
+    )))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -460,12 +506,7 @@ fn inbound_rejection_label(reason: InboundRejection) -> &'static str {
 
 fn attach_completed_provider_state_for_ask(
     db: &Db,
-    mission_id: &str,
-    work_item_id: &str,
-    session_id: &str,
-    ledger_id: &str,
-    proof_ref: &str,
-    now_ms: i64,
+    input: CompletedAskProviderAttachment<'_>,
 ) -> Result<MissionAttachmentOutcome, StorageError> {
     let mut last = MissionAttachmentOutcome::Blocked {
         blockers: vec!["provider_state_not_attached".into()],
@@ -477,18 +518,23 @@ fn attach_completed_provider_state_for_ask(
         PendingState::WaitingProvider,
         PendingState::ProviderCompleted,
     ] {
-        last = attach_provider_timeline_state(
+        last = attach_provider_timeline_state_guarded_with_completion_receipt(
             db,
             ProviderTimelineAttachment {
-                mission_id: mission_id.to_string(),
-                work_item_id: work_item_id.to_string(),
-                friday_session_id: session_id.to_string(),
-                request_id: ledger_id.to_string(),
+                mission_id: input.mission_id.to_string(),
+                work_item_id: input.work_item_id.to_string(),
+                friday_session_id: input.session_id.to_string(),
+                request_id: input.ledger_id.to_string(),
                 state,
                 proof_ref: (state == PendingState::ProviderCompleted)
-                    .then(|| proof_ref.to_string()),
-                now_ms,
+                    .then(|| input.proof_ref.to_string()),
+                now_ms: input.now_ms,
             },
+            false,
+            false,
+            (state == PendingState::ProviderCompleted)
+                .then_some(input.completion_proof_receipt)
+                .flatten(),
         )?;
         if matches!(last, MissionAttachmentOutcome::Blocked { .. }) {
             return Ok(last);
@@ -1606,6 +1652,80 @@ mod tests {
                 && link.target_ref == "friday://provider-timeline/friday-hub-session#ledger-ask-1"
                 && link.proof_ref.as_deref() == Some("friday://activity/activity-ask-1")
         }));
+    }
+
+    #[test]
+    fn mission_bound_ask_mints_typed_outcome_receipt_when_required() {
+        let _guard =
+            crate::test_env::EnvVarGuard::set(friday_core::OUTCOME_CHECKED_PROOF_FLAG, "1");
+        let mut db = Db::open_hub(&tmp("ask-outcome-proof")).unwrap();
+        seed_work_item(
+            &db,
+            WorkLane::DeepSeek,
+            Some("deepseek"),
+            WorkItemStatus::ReadyToDispatch,
+        );
+        let mut work_item = db.get_work_item("work-runtime").unwrap().unwrap();
+        work_item.proof_requirements = vec!["outcome:AnswerProduced:>=1".into()];
+        db.upsert_work_item(&work_item).unwrap();
+        let gets = Rc::new(Cell::new(0));
+        let posts = Rc::new(Cell::new(0));
+        let client = deepseek_client(gets.clone(), posts.clone());
+
+        let outcome = ask_friday_for_mission(
+            &mut db,
+            &client,
+            lookup(),
+            "ledger-ask-outcome-1",
+            "friday-hub-session",
+            "activity-ask-outcome-1",
+            "what next?",
+            64,
+            7,
+        )
+        .unwrap();
+
+        let MissionBoundAskOutcome::Answered {
+            result_link,
+            attachment,
+            ..
+        } = outcome
+        else {
+            panic!("expected mission-bound ask answer");
+        };
+        assert_eq!(result_link, "friday://activity/activity-ask-outcome-1");
+        assert!(matches!(
+            attachment,
+            MissionAttachmentOutcome::Attached {
+                work_item_status: WorkItemStatus::CompletedWithProof,
+                ..
+            }
+        ));
+        let work_item = db.get_work_item("work-runtime").unwrap().unwrap();
+        assert_eq!(work_item.status, WorkItemStatus::CompletedWithProof);
+        assert_eq!(
+            work_item.proof_receipts,
+            vec![
+                "proof://outcome/AnswerProduced/ledger-ask-outcome-1?signal=answer_len=18"
+                    .to_string()
+            ]
+        );
+        assert!(!work_item
+            .proof_receipts
+            .contains(&"friday://activity/activity-ask-outcome-1".to_string()));
+        let mission = db.get_mission("mission-runtime").unwrap().unwrap();
+        assert!(mission
+            .proof_refs
+            .contains(&"friday://activity/activity-ask-outcome-1".to_string()));
+        let links = db.list_mission_links("mission-runtime").unwrap();
+        assert!(links.iter().any(|link| {
+            link.link_kind == friday_core::MissionLinkKind::ProviderTimeline
+                && link.target_ref
+                    == "friday://provider-timeline/friday-hub-session#ledger-ask-outcome-1"
+                && link.proof_ref.as_deref() == Some("friday://activity/activity-ask-outcome-1")
+        }));
+        assert_eq!(gets.get(), 1);
+        assert_eq!(posts.get(), 1);
     }
 
     // ===================== WI-1 (M-6) guarded transition — PRODUCTION caller shape =============

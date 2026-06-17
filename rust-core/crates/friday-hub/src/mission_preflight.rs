@@ -9,8 +9,8 @@
 
 use friday_core::MemoryState;
 use friday_core::{
-    requires_context_passport, ApprovalState, FridayConversation, Mission, MissionLink,
-    MissionLinkKind, SurfaceThread, WorkItem, WorkItemStatus, WorkspaceClaim,
+    outcome_checked_proof_enabled, requires_context_passport, ApprovalState, FridayConversation,
+    Mission, MissionLink, MissionLinkKind, SurfaceThread, WorkItem, WorkItemStatus, WorkspaceClaim,
 };
 use friday_storage::{memory, workflow, Db, StorageError};
 
@@ -500,8 +500,8 @@ pub fn attach_provider_timeline_state(
     // untouched. The guarded variant is the single behavioral knob (default-OFF), threaded
     // in as a pure bool from the run-loop entrypoint's env read (the codebase's
     // "split env-read from pure logic" idiom). `false` here = the pre-WI-1 path, byte-identical.
-    attach_provider_timeline_state_guarded(
-        db, attachment, false, /* clear_executing = */ false,
+    attach_provider_timeline_state_guarded_with_completion_receipt(
+        db, attachment, false, /* clear_executing = */ false, None,
     )
 }
 
@@ -546,6 +546,22 @@ pub fn attach_provider_timeline_state_guarded(
     // (the resume completion legs, the tests) passes `false` (byte-identical to pre-#24b).
     clear_executing: bool,
 ) -> Result<MissionAttachmentOutcome, StorageError> {
+    attach_provider_timeline_state_guarded_with_completion_receipt(
+        db,
+        attachment,
+        guarded,
+        clear_executing,
+        None,
+    )
+}
+
+pub(crate) fn attach_provider_timeline_state_guarded_with_completion_receipt(
+    db: &Db,
+    attachment: ProviderTimelineAttachment,
+    guarded: bool,
+    clear_executing: bool,
+    completion_proof_receipt: Option<&str>,
+) -> Result<MissionAttachmentOutcome, StorageError> {
     let Some(mut mission) = db.get_mission(&attachment.mission_id)? else {
         return Ok(MissionAttachmentOutcome::blocked("unknown_mission"));
     };
@@ -588,7 +604,7 @@ pub fn attach_provider_timeline_state_guarded(
         let actor_ref = format!("friday://agent-run/{}", attachment.request_id);
         let reason = format!("provider_timeline:{}", attachment.state.as_str());
         let proof_receipt = if next_status == WorkItemStatus::CompletedWithProof {
-            attachment.proof_ref.as_deref()
+            completion_proof_receipt.or(attachment.proof_ref.as_deref())
         } else {
             None
         };
@@ -627,10 +643,22 @@ pub fn attach_provider_timeline_state_guarded(
         work_item.status = next_status;
         work_item.updated_at_ms = attachment.now_ms;
         if next_status == WorkItemStatus::CompletedWithProof {
+            if let Some(proof_receipt) =
+                completion_proof_receipt.or(attachment.proof_ref.as_deref())
+            {
+                push_unique(&mut work_item.proof_receipts, proof_receipt.to_string());
+            }
             if let Some(proof_ref) = attachment.proof_ref.as_ref() {
-                push_unique(&mut work_item.proof_receipts, proof_ref.clone());
                 push_unique(&mut mission.proof_refs, proof_ref.clone());
                 mission.updated_at_ms = attachment.now_ms;
+            }
+            if outcome_checked_proof_enabled()
+                && work_item.has_outcome_proof_requirements()
+                && !work_item.completion_outcome_is_proven()
+            {
+                return Err(StorageError::Unsupported(
+                    "provider_timeline outcome-checked completion requires a typed outcome proof receipt matching an outcome proof requirement".into(),
+                ));
             }
         }
         // (#24b degrade-3) On the binding's final resting-state hop, clear `executing = 0` in the
@@ -1543,6 +1571,74 @@ mod tests {
         assert!(links
             .iter()
             .any(|link| link.link_kind == MissionLinkKind::ProviderTimeline));
+    }
+
+    #[test]
+    fn provider_timeline_inline_completion_rejects_untyped_outcome_receipt_when_flag_on() {
+        let _guard =
+            crate::test_env::EnvVarGuard::set(friday_core::OUTCOME_CHECKED_PROOF_FLAG, "1");
+        let db = Db::open_hub(&tmp()).unwrap();
+        assert!(preflight_and_stage_work_item(
+            &db,
+            request(
+                "mission-provider-outcome",
+                "work-provider-outcome",
+                "provider routed task",
+                WorkLane::Codex,
+                Vec::new(),
+                false,
+                1,
+            ),
+        )
+        .unwrap()
+        .is_ready());
+
+        for state in [
+            PendingState::SentToHub,
+            PendingState::AcceptedByHub,
+            PendingState::RoutedToProvider,
+            PendingState::WaitingProvider,
+        ] {
+            attach_provider_timeline_state(
+                &db,
+                ProviderTimelineAttachment {
+                    mission_id: "mission-provider-outcome".into(),
+                    work_item_id: "work-provider-outcome".into(),
+                    friday_session_id: "friday-session-codex".into(),
+                    request_id: "req-outcome-1".into(),
+                    state,
+                    proof_ref: None,
+                    now_ms: 10,
+                },
+            )
+            .unwrap();
+        }
+
+        let mut item = db.get_work_item("work-provider-outcome").unwrap().unwrap();
+        item.proof_requirements = vec!["outcome:ToolsExecuted:>=1".into()];
+        db.upsert_work_item(&item).unwrap();
+
+        let err = attach_provider_timeline_state(
+            &db,
+            ProviderTimelineAttachment {
+                mission_id: "mission-provider-outcome".into(),
+                work_item_id: "work-provider-outcome".into(),
+                friday_session_id: "friday-session-codex".into(),
+                request_id: "req-outcome-1".into(),
+                state: PendingState::ProviderCompleted,
+                proof_ref: Some("friday://activity/not-an-outcome-proof".into()),
+                now_ms: 12,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            StorageError::Unsupported(message)
+                if message.contains("outcome-checked completion requires a typed outcome proof receipt")
+        ));
+        let item = db.get_work_item("work-provider-outcome").unwrap().unwrap();
+        assert_eq!(item.status, WorkItemStatus::ProviderWaiting);
+        assert!(item.proof_receipts.is_empty());
     }
 
     #[test]

@@ -870,6 +870,17 @@ pub fn work_item_status_result_for_db(
                 "work item lifecycle blocked: target WorkItem is not owned by the authenticated owner",
             );
         }
+        if next_status == friday_core::WorkItemStatus::CompletedWithProof
+            && friday_core::outcome_checked_proof_enabled()
+            && work_item.has_outcome_proof_requirements()
+        {
+            return mission_intake_error(
+                msg_id,
+                now_ms,
+                ErrorCode::Internal,
+                "work item lifecycle blocked: outcome-checked completion requires a server-minted outcome receipt; WorkItemStatus WS ingress cannot accept client-supplied outcome proof",
+            );
+        }
     }
 
     // A blank proof_receipt is normalized to `None` BEFORE the call so the storage layer's
@@ -5351,6 +5362,46 @@ mod tests {
                 "Mission-bound ask leaked {forbidden}: {debug}"
             );
         }
+    }
+
+    #[test]
+    fn work_item_status_ws_ingress_rejects_client_supplied_outcome_proof_when_flag_on() {
+        let _guard = crate::test_env::EnvVarGuard::set("FRIDAY_OUTCOME_CHECKED_PROOF", "1");
+        let db_path = tmp_db();
+        let db = Db::open_hub(&db_path).unwrap();
+        seed_mission_ask(&db);
+        let mut work = db.get_work_item("work-hub-ask").unwrap().unwrap();
+        work.status = WorkItemStatus::ProviderWaiting;
+        work.proof_requirements = vec!["outcome:ToolsExecuted:>=1".into()];
+        db.upsert_work_item(&work).unwrap();
+
+        let response = work_item_status_result_for_db(
+            &db,
+            "ws-outcome-client-proof",
+            WorkItemStatusRequestWire {
+                work_item_id: "work-hub-ask".into(),
+                target_status: "completed_with_proof".into(),
+                actor_ref: "client:mobile".into(),
+                reason: "client claims outcome".into(),
+                proof_receipt: Some(
+                    "proof://outcome/ToolsExecuted/run-1?signal=executed_tools=1".into(),
+                ),
+            },
+            Some("owner-1"),
+            1_700_000_100_650,
+        );
+        let Message::Error { code, message } = response.message else {
+            panic!("expected outcome proof ingress block, got {response:?}");
+        };
+        assert_eq!(code, ErrorCode::Internal);
+        assert!(message.contains("server-minted outcome receipt"));
+
+        let stored = db.get_work_item("work-hub-ask").unwrap().unwrap();
+        assert_eq!(stored.status, WorkItemStatus::ProviderWaiting);
+        assert!(
+            stored.proof_receipts.is_empty(),
+            "client-supplied outcome receipt must not persist"
+        );
     }
 
     #[test]
