@@ -81,9 +81,10 @@ pub const MODEL_TURN_MAX_MESSAGES: usize = 100_000;
 /// Env override for the local `codex app-server --stdio` watchdog. The watchdog is a
 /// process-level no-wedge guard: if the app-server stops emitting stdout, killing the child
 /// breaks any blocking `read_line` in the stdio transport. DEFAULT is deliberately generous
-/// for live provider calls; tests can exercise the parser without mutating process env.
+/// for live provider calls and matches the mission-bound Codex dispatch budget; tests can
+/// exercise the parser without mutating process env.
 pub const FRIDAY_CODEX_APP_SERVER_TIMEOUT_MS: &str = "FRIDAY_CODEX_APP_SERVER_TIMEOUT_MS";
-pub const DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS: u64 = 120_000;
+pub const DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS: u64 = 300_000;
 
 pub const REQUIRED_CLIENT_METHODS: &[&str] = &[
     "initialize",
@@ -2626,6 +2627,7 @@ mod tests {
 
     #[test]
     fn codex_app_server_watchdog_timeout_defaults_and_requires_positive_millis() {
+        assert_eq!(DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS, 300_000);
         assert_eq!(
             codex_app_server_watchdog_timeout_from(None),
             Duration::from_millis(DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS)
