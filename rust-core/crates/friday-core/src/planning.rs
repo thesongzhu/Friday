@@ -898,6 +898,12 @@ mod tests {
         assert_eq!(classify_kind("summarize this thread for me"), None);
         assert_eq!(classify_kind("explain how OAuth works"), None);
         assert_eq!(classify_kind("what is the capital of France"), None);
+        assert_eq!(
+            classify_kind(
+                "Codex proof token — What is the proof token? Answer exactly FRIDAY_CODEX_PROOF_OK."
+            ),
+            None
+        );
         // An unrecognized, non-actionable task is also None.
         assert_eq!(classify_kind("the weather is nice today"), None);
     }
