@@ -21,6 +21,8 @@ import { createFridayMissionSpineDispatchAdapter } from "../../src/api/mission-s
 import { createFridayMissionAutoDispatchDriver } from "../../src/api/mission-spine/friday-mission-auto-dispatch-driver.js";
 import { createFridayMissionSpineRoutes } from "../../src/api/http/routes/friday-mission-spine-routes.js";
 import {
+  RUST_ROUTE_CLAUDE_MODEL,
+  RUST_ROUTE_CLAUDE_PROVIDER_ID,
   RUST_ROUTE_CODEX_MODEL,
   RUST_ROUTE_CODEX_PROVIDER_ID,
   RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
@@ -95,6 +97,8 @@ async function main(): Promise<void> {
         deepseekFlashModel: RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
         codexProviderId: RUST_ROUTE_CODEX_PROVIDER_ID,
         codexModel: RUST_ROUTE_CODEX_MODEL,
+        claudeProviderId: RUST_ROUTE_CLAUDE_PROVIDER_ID,
+        claudeModel: RUST_ROUTE_CLAUDE_MODEL,
         onDispatchError: (error) => {
           dispatchError = error;
         },
@@ -187,6 +191,8 @@ async function main(): Promise<void> {
         deepseekFlashModel: RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
         codexProviderId: RUST_ROUTE_CODEX_PROVIDER_ID,
         codexModel: RUST_ROUTE_CODEX_MODEL,
+        claudeProviderId: RUST_ROUTE_CLAUDE_PROVIDER_ID,
+        claudeModel: RUST_ROUTE_CLAUDE_MODEL,
         onDispatchError: (error) => {
           dispatchError = error;
         },

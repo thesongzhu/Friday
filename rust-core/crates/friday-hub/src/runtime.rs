@@ -1828,6 +1828,51 @@ impl<T: Transport> HubRuntime<T> {
         )
     }
 
+    /// Claude sibling of [`Self::run_agent_loop_for_mission_with_overrides`]. It uses the same
+    /// Mission preflight/bind path, but validates a Claude WorkItem (`lane=claude`,
+    /// `target_provider_or_agent=claude`) and pins the run to the dispatchable Claude route. The
+    /// generic routed-loop tail still owns billing, owner-wired result persistence, approvals, and
+    /// WorkItem proof attachment.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_claude_agent_loop_for_mission_with_overrides(
+        &self,
+        mission_lookup: MissionContextLookup,
+        session_id: &str,
+        run_id: &str,
+        task: &str,
+        policy_override: Option<&RunPolicy>,
+        max_turns_override: Option<u64>,
+        now_ms: i64,
+    ) -> Result<MissionBoundLoopOutcome, RoutedLoopError> {
+        let passport_mint = passport_mint_from(std::env::var(ENV_PASSPORT_MINT).ok().as_deref());
+        let workitem_guarded = workitem_guarded_transition_from(
+            std::env::var(ENV_WORKITEM_GUARDED_TRANSITION)
+                .ok()
+                .as_deref(),
+        );
+        let surface_events =
+            crate::surface_events_from(std::env::var(crate::FRIDAY_SURFACE_EVENTS).ok().as_deref());
+        let route_request = RouteRequest {
+            preferred_provider: Some("claude".to_string()),
+            ..RouteRequest::any()
+        };
+        self.run_agent_loop_for_mission_routed_with_overrides_flagged(
+            mission_lookup,
+            session_id,
+            run_id,
+            task,
+            WorkLane::Claude,
+            Some("claude".to_string()),
+            &route_request,
+            policy_override,
+            max_turns_override,
+            passport_mint,
+            workitem_guarded,
+            surface_events,
+            now_ms,
+        )
+    }
+
     /// (NS-6) [`Self::run_agent_loop_for_mission_with_overrides`] with the DARK passport-mint
     /// flag threaded in as a pure bool — the env read lives ONLY in the public wrapper (the
     /// "split env-read from pure logic" idiom), so the behavioral tests drive this directly with
@@ -4048,7 +4093,7 @@ mod tests {
         // runs the R7 live probe, which fails closed to CredentialMissing (NO quota spent, the
         // route stays non-validated). A subsequent claude pin therefore still fails closed with
         // RequestedProviderUnavailable. This is the no-key fail-closed proof; it presupposes the
-        // test env has no FRIDAY_ANTHROPIC_API_KEY (CI is DeepSeek-only; asserted below).
+        // test env has no FRIDAY_ANTHROPIC_API_KEY (CI is DeepSeek-backed here; asserted below).
         use friday_providers::KeyValidationOutcome;
         assert!(
             std::env::var("FRIDAY_ANTHROPIC_API_KEY")
@@ -8201,6 +8246,76 @@ mod tests {
         assert_eq!(observed_context.work_item_id, "work-loop");
         assert_eq!(observed_context.owner_claim_ids, vec![claim_id]);
 
+        let work_item = rt.db().get_work_item("work-loop").unwrap().unwrap();
+        assert_eq!(work_item.status, WorkItemStatus::CompletedWithProof);
+        assert!(work_item
+            .proof_receipts
+            .contains(&format!("friday://agent-run/{run_id}")));
+        assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
+    }
+
+    #[test]
+    fn mission_bound_claude_loop_routes_to_claude_and_records_anthropic_binding() {
+        let run_id = "run-mloop-claude";
+        let (rt, _ws) = runtime_with_claude_wired(
+            "mloop-claude",
+            vec![AgentStep::Finish {
+                message: "CLAUDE-PONG".to_string(),
+            }],
+            Box::new(DenyAllApprovals),
+        );
+        seed_loop_mission(
+            rt.db(),
+            WorkLane::Claude,
+            Some("claude"),
+            WorkItemStatus::ReadyToDispatch,
+        );
+
+        let outcome = rt
+            .run_claude_agent_loop_for_mission_with_overrides(
+                loop_lookup(),
+                "friday-hub-session",
+                run_id,
+                "say pong",
+                None,
+                None,
+                1_000,
+            )
+            .unwrap();
+
+        let MissionBoundLoopOutcome::Ran {
+            envelope,
+            selection,
+            outcome,
+            result_link,
+            attachment,
+        } = outcome
+        else {
+            panic!("expected the mission-bound Claude loop to run");
+        };
+        assert_eq!(selection.provider_id, "claude");
+        assert_eq!(outcome.status, LoopStatus::Finished);
+        assert_eq!(result_link, format!("friday://agent-run/{run_id}"));
+        assert_eq!(envelope.route_decision.selected_lane, WorkLane::Claude);
+        assert_eq!(
+            envelope
+                .route_decision
+                .selected_provider_or_agent
+                .as_deref(),
+            Some("claude")
+        );
+        assert!(matches!(
+            attachment,
+            MissionAttachmentOutcome::Attached {
+                work_item_status: WorkItemStatus::CompletedWithProof,
+                ..
+            }
+        ));
+
+        let usage = rt.db().list_run_token_usage(run_id).unwrap();
+        assert_eq!(usage.len(), 1);
+        assert_eq!(usage[0].provider_kind, "anthropic");
+        assert!(!usage[0].fallback);
         let work_item = rt.db().get_work_item("work-loop").unwrap().unwrap();
         assert_eq!(work_item.status, WorkItemStatus::CompletedWithProof);
         assert!(work_item

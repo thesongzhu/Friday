@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createFridayAgentRoutes } from "#api";
+import {
+  createFridayAgentRoutes,
+  RUST_ROUTE_CLAUDE_MODEL,
+  RUST_ROUTE_CLAUDE_PROVIDER_ID,
+  RUST_ROUTE_READ_TOOL_ALLOWLIST,
+} from "#api";
 import type { FridayAgentRoutesDeps } from "#api";
 import type { FridayAgentEventEmitter } from "#agent";
 import type { FridayAgentRunRecord, FridayAgentRuntimeResult, FridayAgentAutomationService } from "#agent";
@@ -1480,6 +1485,118 @@ describe("FridayAgentRoutes", () => {
         tenantContext: { hubId: "user-approver-1", userId: "user-approver-1" },
         disabledToolNames: undefined,
       }));
+    });
+
+    it("skips TS provider-profile validation for an authenticated mission-bound Claude Rust sentinel", async () => {
+      stubDeps.validateRequestedRoute = vi.fn().mockRejectedValue(
+        new Error("ordinary provider validation must not run for mission-bound Claude sentinel"),
+      );
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+      const principal = createStubPrincipal();
+      const ctx = {
+        body: {
+          task: "Run the Claude mission-bound work item",
+          providerId: RUST_ROUTE_CLAUDE_PROVIDER_ID,
+          model: RUST_ROUTE_CLAUDE_MODEL,
+          constraints: { readOnly: true },
+          allowedRustRouteTools: [...RUST_ROUTE_READ_TOOL_ALLOWLIST],
+          missionContext: {
+            fridayConversationId: " conv-claude ",
+            missionId: " mission-claude ",
+            workItemId: " work-claude ",
+          },
+        },
+        params: {},
+        query: {},
+        headers: {},
+        principal,
+        requestId: "req-claude-mission-bound",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      await route.handler(ctx);
+
+      expect(stubDeps.validateRequestedRoute).not.toHaveBeenCalled();
+      expect(stubDeps.startRun).toHaveBeenCalledWith(expect.objectContaining({
+        task: "Run the Claude mission-bound work item",
+        providerId: RUST_ROUTE_CLAUDE_PROVIDER_ID,
+        model: RUST_ROUTE_CLAUDE_MODEL,
+        principalId: principal.principalId,
+        constraints: { readOnly: true },
+        allowedRustRouteTools: [...RUST_ROUTE_READ_TOOL_ALLOWLIST],
+        missionContext: {
+          fridayConversationId: "conv-claude",
+          missionId: "mission-claude",
+          workItemId: "work-claude",
+        },
+      }));
+    });
+
+    it("still validates the Claude sentinel when the Rust read-tool grant is missing", async () => {
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+      const principal = createStubPrincipal();
+      const ctx = {
+        body: {
+          task: "Run a malformed Claude mission-bound request",
+          providerId: RUST_ROUTE_CLAUDE_PROVIDER_ID,
+          model: RUST_ROUTE_CLAUDE_MODEL,
+          constraints: { readOnly: true },
+          missionContext: {
+            fridayConversationId: "conv-claude",
+            missionId: "mission-claude",
+            workItemId: "work-claude",
+          },
+        },
+        params: {},
+        query: {},
+        headers: {},
+        principal,
+        requestId: "req-claude-missing-read-grant",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      await route.handler(ctx);
+
+      expect(stubDeps.validateRequestedRoute).toHaveBeenCalledWith(
+        RUST_ROUTE_CLAUDE_PROVIDER_ID,
+        RUST_ROUTE_CLAUDE_MODEL,
+        { hubId: "user-approver-1", userId: "user-approver-1" },
+      );
+    });
+
+    it("still validates the Claude sentinel as an ordinary provider request without missionContext", async () => {
+      const routes = createFridayAgentRoutes(stubDeps);
+      const route = routes.find((r) => r.operationId === "agent.runs.start")!;
+      const principal = createStubPrincipal();
+      const ctx = {
+        body: {
+          task: "Run ordinary Claude without a mission binding",
+          providerId: RUST_ROUTE_CLAUDE_PROVIDER_ID,
+          model: RUST_ROUTE_CLAUDE_MODEL,
+        },
+        params: {},
+        query: {},
+        headers: {},
+        principal,
+        requestId: "req-ordinary-claude",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      await route.handler(ctx);
+
+      expect(stubDeps.validateRequestedRoute).toHaveBeenCalledWith(
+        RUST_ROUTE_CLAUDE_PROVIDER_ID,
+        RUST_ROUTE_CLAUDE_MODEL,
+        { hubId: "user-approver-1", userId: "user-approver-1" },
+      );
+      expect(stubDeps.startRun).toHaveBeenCalledWith(expect.objectContaining({
+        providerId: RUST_ROUTE_CLAUDE_PROVIDER_ID,
+        model: RUST_ROUTE_CLAUDE_MODEL,
+      }));
+      const startArg = vi.mocked(stubDeps.startRun).mock.calls[0][0] as Record<string, unknown>;
+      expect("missionContext" in startArg).toBe(false);
     });
 
     it("rejects conflicting provider/model aliases", async () => {

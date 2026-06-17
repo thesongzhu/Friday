@@ -4,7 +4,11 @@ import {
   createFridayMissionAutoDispatchDriver,
   type MissionAutoDispatchStartRun,
 } from "../../../../src/api/mission-spine/friday-mission-auto-dispatch-driver.js";
-import { RUST_ROUTE_CODEX_MISSION_DISPATCH_TIMEOUT_MS } from "../../../../src/api/runtime/friday-rust-route-constants.js";
+import {
+  RUST_ROUTE_CLAUDE_MODEL,
+  RUST_ROUTE_CLAUDE_PROVIDER_ID,
+  RUST_ROUTE_CODEX_MISSION_DISPATCH_TIMEOUT_MS,
+} from "../../../../src/api/runtime/friday-rust-route-constants.js";
 import type {
   FridayRustHubMissionIntakeRequest,
   FridayRustHubMissionIntakeResult,
@@ -20,6 +24,8 @@ const DEEPSEEK_PROVIDER = "deepseek";
 const DEEPSEEK_FLASH = "deepseek-v4-flash";
 const CODEX_PROVIDER = "codex";
 const CODEX_MODEL = "gpt-5.5";
+const CLAUDE_PROVIDER = RUST_ROUTE_CLAUDE_PROVIDER_ID;
+const CLAUDE_MODEL = RUST_ROUTE_CLAUDE_MODEL;
 const READ_TOOLS = ["read_file", "list_dir", "stat_file", "search"];
 
 const REQUEST: FridayRustHubMissionIntakeRequest = {
@@ -95,6 +101,8 @@ function makeDriver(opts?: {
     deepseekFlashModel: DEEPSEEK_FLASH,
     codexProviderId: CODEX_PROVIDER,
     codexModel: CODEX_MODEL,
+    claudeProviderId: CLAUDE_PROVIDER,
+    claudeModel: CLAUDE_MODEL,
     ...(opts?.onDispatchError ? { onDispatchError: opts.onDispatchError } : {}),
   });
   return { driver, startRun };
@@ -112,6 +120,8 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
         deepseekFlashModel: DEEPSEEK_FLASH,
         codexProviderId: CODEX_PROVIDER,
         codexModel: CODEX_MODEL,
+        claudeProviderId: CLAUDE_PROVIDER,
+        claudeModel: CLAUDE_MODEL,
       });
 
       driver.onIntakeReady(REQUEST, READY_RESULT);
@@ -144,6 +154,8 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
         deepseekFlashModel: DEEPSEEK_FLASH,
         codexProviderId: CODEX_PROVIDER,
         codexModel: CODEX_MODEL,
+        claudeProviderId: CLAUDE_PROVIDER,
+        claudeModel: CLAUDE_MODEL,
       });
 
       driver.onIntakeReady(
@@ -173,6 +185,49 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
           workItemId: "wi-from-SERVER-result",
         },
       });
+    });
+
+    it("dispatches a claude-targeted intake with the Claude mission-bound route shape", async () => {
+      const startRun = vi.fn(async () => ({
+        runId: "run-1",
+      })) as unknown as MissionAutoDispatchStartRun;
+      const driver = createFridayMissionAutoDispatchDriver({
+        startRun: () => startRun,
+        deepseekProviderId: DEEPSEEK_PROVIDER,
+        deepseekFlashModel: DEEPSEEK_FLASH,
+        codexProviderId: CODEX_PROVIDER,
+        codexModel: CODEX_MODEL,
+        claudeProviderId: CLAUDE_PROVIDER,
+        claudeModel: CLAUDE_MODEL,
+      });
+
+      driver.onIntakeReady(
+        {
+          ...REQUEST,
+          lane: "claude",
+          targetProviderOrAgent: "claude",
+        },
+        READY_RESULT,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(startRun).toHaveBeenCalledTimes(1);
+      const arg = (startRun as unknown as ReturnType<typeof vi.fn>).mock
+        .calls[0][0];
+      expect(arg).toMatchObject({
+        principalId: "principal-owner",
+        providerId: CLAUDE_PROVIDER,
+        model: CLAUDE_MODEL,
+        constraints: { readOnly: true },
+        allowedRustRouteTools: READ_TOOLS,
+        missionContext: {
+          fridayConversationId: "conv-from-SERVER-result",
+          missionId: "mission-from-SERVER-result",
+          workItemId: "wi-from-SERVER-result",
+        },
+      });
+      expect(arg.timeoutMs).toBeUndefined();
     });
 
     it("does NOT dispatch for a blocked/duplicate intake (no re-spend)", async () => {
@@ -236,6 +291,8 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
         deepseekFlashModel: DEEPSEEK_FLASH,
         codexProviderId: CODEX_PROVIDER,
         codexModel: CODEX_MODEL,
+        claudeProviderId: CLAUDE_PROVIDER,
+        claudeModel: CLAUDE_MODEL,
       });
 
       driver.onIntakeReady(REQUEST, READY_RESULT);
@@ -273,6 +330,8 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
         deepseekFlashModel: DEEPSEEK_FLASH,
         codexProviderId: CODEX_PROVIDER,
         codexModel: CODEX_MODEL,
+        claudeProviderId: CLAUDE_PROVIDER,
+        claudeModel: CLAUDE_MODEL,
       });
 
       // The call must return (void) BEFORE the run promise settles — proving non-blocking.
@@ -294,6 +353,8 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
         deepseekFlashModel: DEEPSEEK_FLASH,
         codexProviderId: CODEX_PROVIDER,
         codexModel: CODEX_MODEL,
+        claudeProviderId: CLAUDE_PROVIDER,
+        claudeModel: CLAUDE_MODEL,
         onDispatchError,
       });
 
@@ -312,6 +373,8 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
         deepseekFlashModel: DEEPSEEK_FLASH,
         codexProviderId: CODEX_PROVIDER,
         codexModel: CODEX_MODEL,
+        claudeProviderId: CLAUDE_PROVIDER,
+        claudeModel: CLAUDE_MODEL,
       });
 
       expect(() => driver.onIntakeReady(REQUEST, READY_RESULT)).not.toThrow();
