@@ -4,6 +4,7 @@ import {
   createFridayMissionAutoDispatchDriver,
   type MissionAutoDispatchStartRun,
 } from "../../../../src/api/mission-spine/friday-mission-auto-dispatch-driver.js";
+import { RUST_ROUTE_CODEX_MISSION_DISPATCH_TIMEOUT_MS } from "../../../../src/api/runtime/friday-rust-route-constants.js";
 import type {
   FridayRustHubMissionIntakeRequest,
   FridayRustHubMissionIntakeResult,
@@ -82,7 +83,11 @@ function makeDriver(opts?: {
   onDispatchError?: (error: unknown) => void;
 }) {
   const startRunImpl =
-    opts && "startRun" in opts ? opts.startRun : (vi.fn(async () => ({ runId: "run-1" })) as MissionAutoDispatchStartRun);
+    opts && "startRun" in opts
+      ? opts.startRun
+      : (vi.fn(async () => ({
+          runId: "run-1",
+        })) as MissionAutoDispatchStartRun);
   const startRun = startRunImpl;
   const driver = createFridayMissionAutoDispatchDriver({
     startRun: () => startRun,
@@ -98,7 +103,9 @@ function makeDriver(opts?: {
 describe("createFridayMissionAutoDispatchDriver (organic mission→run binding PRODUCER, dark)", () => {
   describe("trigger condition", () => {
     it("dispatches EXACTLY ONCE for a fresh-ready intake with the read-only bound shape", async () => {
-      const startRun = vi.fn(async () => ({ runId: "run-1" })) as unknown as MissionAutoDispatchStartRun;
+      const startRun = vi.fn(async () => ({
+        runId: "run-1",
+      })) as unknown as MissionAutoDispatchStartRun;
       const driver = createFridayMissionAutoDispatchDriver({
         startRun: () => startRun,
         deepseekProviderId: DEEPSEEK_PROVIDER,
@@ -114,7 +121,8 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
       await Promise.resolve();
 
       expect(startRun).toHaveBeenCalledTimes(1);
-      const arg = (startRun as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const arg = (startRun as unknown as ReturnType<typeof vi.fn>).mock
+        .calls[0][0];
       expect(arg).toMatchObject({
         task: "Summarize the repo — produce a read-only overview",
         principalId: "principal-owner",
@@ -123,10 +131,13 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
         constraints: { readOnly: true },
         allowedRustRouteTools: READ_TOOLS,
       });
+      expect(arg.timeoutMs).toBeUndefined();
     });
 
     it("dispatches a codex-targeted intake with the Codex observe-wrapper route shape", async () => {
-      const startRun = vi.fn(async () => ({ runId: "run-1" })) as unknown as MissionAutoDispatchStartRun;
+      const startRun = vi.fn(async () => ({
+        runId: "run-1",
+      })) as unknown as MissionAutoDispatchStartRun;
       const driver = createFridayMissionAutoDispatchDriver({
         startRun: () => startRun,
         deepseekProviderId: DEEPSEEK_PROVIDER,
@@ -147,13 +158,15 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
       await Promise.resolve();
 
       expect(startRun).toHaveBeenCalledTimes(1);
-      const arg = (startRun as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const arg = (startRun as unknown as ReturnType<typeof vi.fn>).mock
+        .calls[0][0];
       expect(arg).toMatchObject({
         principalId: "principal-owner",
         providerId: CODEX_PROVIDER,
         model: CODEX_MODEL,
         constraints: { readOnly: true },
         allowedRustRouteTools: READ_TOOLS,
+        timeoutMs: RUST_ROUTE_CODEX_MISSION_DISPATCH_TIMEOUT_MS,
         missionContext: {
           fridayConversationId: "conv-from-SERVER-result",
           missionId: "mission-from-SERVER-result",
@@ -187,7 +200,10 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
       const { workItemId: _omit, ...noWorkItem } = READY_RESULT;
       void _omit;
 
-      driver.onIntakeReady(REQUEST, noWorkItem as FridayRustHubMissionIntakeResult);
+      driver.onIntakeReady(
+        REQUEST,
+        noWorkItem as FridayRustHubMissionIntakeResult,
+      );
       await Promise.resolve();
       await Promise.resolve();
 
@@ -211,7 +227,9 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
 
   describe("the handle is the SERVER-PRODUCED result — never a raw client body", () => {
     it("binds missionContext to the RESULT ids, NOT the (different) REQUEST body ids", async () => {
-      const startRun = vi.fn(async () => ({ runId: "run-1" })) as unknown as MissionAutoDispatchStartRun;
+      const startRun = vi.fn(async () => ({
+        runId: "run-1",
+      })) as unknown as MissionAutoDispatchStartRun;
       const driver = createFridayMissionAutoDispatchDriver({
         startRun: () => startRun,
         deepseekProviderId: DEEPSEEK_PROVIDER,
@@ -224,7 +242,8 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
       await Promise.resolve();
       await Promise.resolve();
 
-      const arg = (startRun as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const arg = (startRun as unknown as ReturnType<typeof vi.fn>).mock
+        .calls[0][0];
       expect(arg.missionContext).toEqual({
         fridayConversationId: "conv-from-SERVER-result",
         missionId: "mission-from-SERVER-result",
@@ -233,7 +252,9 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
       // The REQUEST body ids must NOT have leaked into the handle.
       expect(arg.missionContext.missionId).not.toBe(REQUEST.missionId);
       expect(arg.missionContext.workItemId).not.toBe(REQUEST.workItemId);
-      expect(arg.missionContext.fridayConversationId).not.toBe(REQUEST.fridayConversationId);
+      expect(arg.missionContext.fridayConversationId).not.toBe(
+        REQUEST.fridayConversationId,
+      );
     });
   });
 

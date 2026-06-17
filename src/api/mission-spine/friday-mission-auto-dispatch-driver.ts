@@ -1,4 +1,7 @@
-import { RUST_ROUTE_READ_TOOL_ALLOWLIST } from "../runtime/friday-rust-route-constants.js";
+import {
+  RUST_ROUTE_CODEX_MISSION_DISPATCH_TIMEOUT_MS,
+  RUST_ROUTE_READ_TOOL_ALLOWLIST,
+} from "../runtime/friday-rust-route-constants.js";
 
 import type {
   FridayRustHubAgentRunMissionContext,
@@ -58,6 +61,7 @@ export type MissionAutoDispatchStartRun = (input: {
   constraints?: { readOnly?: boolean };
   allowedRustRouteTools?: string[];
   missionContext?: FridayRustHubAgentRunMissionContext;
+  timeoutMs?: number;
 }) => Promise<unknown>;
 
 export interface CreateFridayMissionAutoDispatchDriverOptions {
@@ -113,7 +117,8 @@ function deriveTask(
   result: FridayRustHubMissionIntakeResult,
 ): string {
   const title = typeof request.title === "string" ? request.title.trim() : "";
-  const intent = typeof request.intent === "string" ? request.intent.trim() : "";
+  const intent =
+    typeof request.intent === "string" ? request.intent.trim() : "";
   if (title.length > 0 && intent.length > 0 && intent !== title) {
     return `${title} — ${intent}`;
   }
@@ -122,9 +127,13 @@ function deriveTask(
   return `Advance mission work item ${result.workItemId ?? ""}`.trim();
 }
 
-function isCodexMissionTarget(request: FridayRustHubMissionIntakeRequest): boolean {
-  return request.lane.trim() === "codex"
-    && request.targetProviderOrAgent?.trim() === "codex";
+function isCodexMissionTarget(
+  request: FridayRustHubMissionIntakeRequest,
+): boolean {
+  return (
+    request.lane.trim() === "codex" &&
+    request.targetProviderOrAgent?.trim() === "codex"
+  );
 }
 
 export function createFridayMissionAutoDispatchDriver(
@@ -150,11 +159,11 @@ export function createFridayMissionAutoDispatchDriver(
         // duplicate intake (status !== "ready" OR createdOrReady !== true OR no workItemId)
         // dispatches NOTHING — no re-spend.
         if (
-          typeof result.status !== "string"
-          || result.status.trim() !== "ready"
-          || result.createdOrReady !== true
-          || typeof result.workItemId !== "string"
-          || result.workItemId.trim().length === 0
+          typeof result.status !== "string" ||
+          result.status.trim() !== "ready" ||
+          result.createdOrReady !== true ||
+          typeof result.workItemId !== "string" ||
+          result.workItemId.trim().length === 0
         ) {
           return;
         }
@@ -173,10 +182,12 @@ export function createFridayMissionAutoDispatchDriver(
           workItemId: result.workItemId,
         };
         const ownerPrincipal =
-          typeof request.ownerPrincipal === "string" && request.ownerPrincipal.trim().length > 0
+          typeof request.ownerPrincipal === "string" &&
+          request.ownerPrincipal.trim().length > 0
             ? request.ownerPrincipal.trim()
             : undefined;
-        const route = isCodexMissionTarget(request)
+        const codexMissionTarget = isCodexMissionTarget(request);
+        const route = codexMissionTarget
           ? { providerId: codexProviderId, model: codexModel }
           : { providerId: deepseekProviderId, model: deepseekFlashModel };
 
@@ -186,12 +197,17 @@ export function createFridayMissionAutoDispatchDriver(
         // `.catch` so there is no unhandled rejection and the intake path is never perturbed.
         void startRun({
           task: deriveTask(request, result),
-          ...(ownerPrincipal !== undefined ? { principalId: ownerPrincipal } : {}),
+          ...(ownerPrincipal !== undefined
+            ? { principalId: ownerPrincipal }
+            : {}),
           providerId: route.providerId,
           model: route.model,
           constraints: { readOnly: true },
           allowedRustRouteTools: [...RUST_ROUTE_READ_TOOL_ALLOWLIST],
           missionContext,
+          ...(codexMissionTarget
+            ? { timeoutMs: RUST_ROUTE_CODEX_MISSION_DISPATCH_TIMEOUT_MS }
+            : {}),
         }).catch((error: unknown) => {
           onDispatchError?.(error);
         });
