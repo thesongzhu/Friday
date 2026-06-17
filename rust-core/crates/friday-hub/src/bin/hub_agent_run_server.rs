@@ -3325,6 +3325,7 @@ mod tests {
                     target_provider_or_agent: Some("deepseek".into()),
                     capability_id: Some("ask_friday.deepseek".into()),
                     body_ref: Some("friday://body/mobile/ns5-intake".into()),
+                    proof_requirements: Vec::new(),
                     includes_sensitive_context: false,
                 },
             },

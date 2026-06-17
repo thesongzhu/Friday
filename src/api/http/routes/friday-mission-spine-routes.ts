@@ -199,6 +199,28 @@ function readOptionalBoolean(
   return value;
 }
 
+function readOptionalStringArray(
+  body: Record<string, unknown>,
+  field: string,
+  failures: string[],
+): string[] | undefined {
+  const value = body[field];
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value) || value.length === 0) {
+    failures.push(`${field}_invalid`);
+    return undefined;
+  }
+  const items: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "string" || entry.trim().length === 0) {
+      failures.push(`${field}_invalid`);
+      return undefined;
+    }
+    items.push(entry.trim());
+  }
+  return items;
+}
+
 const WORK_ITEM_COMPLETED_WITH_PROOF = "completed_with_proof";
 
 /** Validate a Mission intake body into the typed request (or throw a typed 400). */
@@ -220,6 +242,7 @@ function validateIntakeBody(body: unknown): FridayRustHubMissionIntakeRequest {
   const targetProviderOrAgent = readOptionalString(b, "targetProviderOrAgent", failures);
   const capabilityId = readOptionalString(b, "capabilityId", failures);
   const bodyRef = readOptionalString(b, "bodyRef", failures);
+  const proofRequirements = readOptionalStringArray(b, "proofRequirements", failures);
   const includesSensitiveContext = readOptionalBoolean(b, "includesSensitiveContext", failures);
   if (
     failures.length > 0 ||
@@ -252,6 +275,7 @@ function validateIntakeBody(body: unknown): FridayRustHubMissionIntakeRequest {
     ...(targetProviderOrAgent !== undefined ? { targetProviderOrAgent } : {}),
     ...(capabilityId !== undefined ? { capabilityId } : {}),
     ...(bodyRef !== undefined ? { bodyRef } : {}),
+    ...(proofRequirements !== undefined ? { proofRequirements } : {}),
     ...(includesSensitiveContext !== undefined ? { includesSensitiveContext } : {}),
   };
 }

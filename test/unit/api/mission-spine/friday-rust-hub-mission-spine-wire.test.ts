@@ -39,7 +39,7 @@ const FULL_INTAKE: FridayRustHubMissionIntakeRequest = {
 };
 
 describe("buildMissionIntakeEnvelope (MissionIntakeRequestWire wire mapping)", () => {
-  it("nests the required fields under `request` + kind, omitting all four optionals when absent", () => {
+  it("nests the required fields under `request` + kind, omitting all optionals when absent", () => {
     const env = buildMissionIntakeEnvelope(FULL_INTAKE);
     expect(env.schema_version).toBe(12);
     expect(env.msg_id).toBe("mission-intake-mission_x");
@@ -66,6 +66,7 @@ describe("buildMissionIntakeEnvelope (MissionIntakeRequestWire wire mapping)", (
     expect("target_provider_or_agent" in request).toBe(false);
     expect("capability_id" in request).toBe(false);
     expect("body_ref" in request).toBe(false);
+    expect("proof_requirements" in request).toBe(false);
     expect("includes_sensitive_context" in request).toBe(false);
   });
 
@@ -75,12 +76,14 @@ describe("buildMissionIntakeEnvelope (MissionIntakeRequestWire wire mapping)", (
       targetProviderOrAgent: "deepseek-v4",
       capabilityId: "cap_x",
       bodyRef: "body://ref",
+      proofRequirements: ["outcome:AnswerProduced:>=1"],
       includesSensitiveContext: true,
     }).message as Record<string, unknown>;
     const request = message.request as Record<string, unknown>;
     expect(request.target_provider_or_agent).toBe("deepseek-v4");
     expect(request.capability_id).toBe("cap_x");
     expect(request.body_ref).toBe("body://ref");
+    expect(request.proof_requirements).toEqual(["outcome:AnswerProduced:>=1"]);
     expect(request.includes_sensitive_context).toBe(true);
   });
 

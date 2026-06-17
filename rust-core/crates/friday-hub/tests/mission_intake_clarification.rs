@@ -71,6 +71,7 @@ fn intake_request(intent: &str) -> MissionIntakeRequestWire {
         target_provider_or_agent: Some("deepseek".into()),
         capability_id: Some("ask_friday.deepseek".into()),
         body_ref: Some("friday://body/mobile/clar".into()),
+        proof_requirements: Vec::new(),
         includes_sensitive_context: false,
     }
 }

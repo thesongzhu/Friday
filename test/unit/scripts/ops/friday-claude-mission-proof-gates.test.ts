@@ -29,9 +29,11 @@ describe("Claude mission proof operator gate", () => {
 
     expect(source).toContain("FRIDAY_CLAUDE_MISSION_PROOF_PREFLIGHT_ONLY");
     expect(source).toContain("FRIDAY_CLAUDE_MISSION_PROOF_PASSPHRASE_STDIN");
+    expect(source).toContain("FRIDAY_CLAUDE_MISSION_PROOF_OUTCOME_CHECKED");
     expect(source).toContain('readonly CLAUDE_MODEL="claude-opus-4-8"');
     expect(source).toContain('lane: "claude"');
     expect(source).toContain('targetProviderOrAgent: "claude"');
+    expect(source).toContain('proofRequirements: ["outcome:AnswerProduced:>=1"]');
     expect(source).toContain(
       'deliveryRoute: "ops://claude-mission-proof-of-life"',
     );
@@ -54,6 +56,9 @@ describe("Claude mission proof operator gate", () => {
     expect(source).toContain(
       "p.proof_receipt = 'friday://agent-run/' || ledger.run_id",
     );
+    expect(source).toContain("proof://outcome/AnswerProduced/");
+    expect(source).toContain("answer_len");
+    expect(source).toContain("CAST(p.answer_len AS INTEGER) > 0");
     expect(source).toContain("ledger.provider_kind='anthropic'");
     expect(source).toContain("ledger.model='${CLAUDE_MODEL}'");
     expect(source).toContain("ledger.fallback=0");
@@ -64,6 +69,8 @@ describe("Claude mission proof operator gate", () => {
     );
     expect(source).toContain("PASS (STRONG)");
     expect(source).toContain("PASS (PARTIAL)");
+    expect(source).toContain("PASS (STRONG OUTCOME)");
+    expect(source).toContain("PASS (PARTIAL OUTCOME)");
     expect(source).toContain(
       "Truth: operator-triggered Claude mission proof, not D8 / not soak / not UI-device-channel proof / not GO.",
     );

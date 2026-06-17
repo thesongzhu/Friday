@@ -439,6 +439,7 @@ fn intake_request() -> MissionIntakeRequestWire {
         target_provider_or_agent: Some("deepseek".into()),
         capability_id: Some("mission.surface".into()),
         body_ref: None,
+        proof_requirements: Vec::new(),
         includes_sensitive_context: false,
     }
 }

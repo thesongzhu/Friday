@@ -264,6 +264,8 @@ pub struct MissionIntakeRequestWire {
     pub capability_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proof_requirements: Vec<String>,
     #[serde(default)]
     pub includes_sensitive_context: bool,
 }
@@ -2074,6 +2076,7 @@ mod tests {
                     target_provider_or_agent: Some("deepseek".into()),
                     capability_id: Some("ask_friday.deepseek".into()),
                     body_ref: Some("friday://body/mobile/1".into()),
+                    proof_requirements: Vec::new(),
                     includes_sensitive_context: false,
                 },
             },

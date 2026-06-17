@@ -39,6 +39,7 @@ readonly TIMEOUT_SEC="${FRIDAY_CLAUDE_MISSION_PROOF_TIMEOUT_SEC:-240}"
 readonly POLL_INTERVAL_SEC="${FRIDAY_CLAUDE_MISSION_PROOF_POLL_INTERVAL_SEC:-3}"
 readonly PASSPHRASE_STDIN="${FRIDAY_CLAUDE_MISSION_PROOF_PASSPHRASE_STDIN:-0}"
 readonly PREFLIGHT_ONLY="${FRIDAY_CLAUDE_MISSION_PROOF_PREFLIGHT_ONLY:-0}"
+readonly OUTCOME_CHECKED="${FRIDAY_CLAUDE_MISSION_PROOF_OUTCOME_CHECKED:-0}"
 readonly RUST_WS_LAUNCH_WRAPPER="${FRIDAY_RUST_AGENT_RUN_WS_WRAPPER:-/Users/jarvis/.friday/launchd/rust-agent-run-ws-server-run.sh}"
 readonly RUST_WS_LAUNCH_PLIST="${FRIDAY_RUST_AGENT_RUN_WS_LAUNCH_PLIST:-/Users/jarvis/Library/LaunchAgents/com.friday.rust-agent-run-ws-server.plist}"
 readonly RUST_WS_LAUNCH_LABEL="${FRIDAY_RUST_AGENT_RUN_WS_LAUNCH_LABEL:-com.friday.rust-agent-run-ws-server}"
@@ -89,6 +90,10 @@ if [ "${PASSPHRASE_STDIN}" != "0" ] && [ "${PASSPHRASE_STDIN}" != "1" ]; then
 fi
 if [ "${PREFLIGHT_ONLY}" != "0" ] && [ "${PREFLIGHT_ONLY}" != "1" ]; then
   echo "FATAL: FRIDAY_CLAUDE_MISSION_PROOF_PREFLIGHT_ONLY must be 0 or 1; got '${PREFLIGHT_ONLY}'." >&2
+  exit 3
+fi
+if [ "${OUTCOME_CHECKED}" != "0" ] && [ "${OUTCOME_CHECKED}" != "1" ]; then
+  echo "FATAL: FRIDAY_CLAUDE_MISSION_PROOF_OUTCOME_CHECKED must be 0 or 1; got '${OUTCOME_CHECKED}'." >&2
   exit 3
 fi
 if [ "${POLL_INTERVAL_SEC}" -gt "${TIMEOUT_SEC}" ]; then
@@ -353,6 +358,7 @@ if [ "${PREFLIGHT_ONLY}" = "1" ]; then
   fi
   echo "  anthropicLedgerRows: $(sql_count "preflight anthropic ledger" "SELECT COUNT(*) FROM token_ledger WHERE provider_kind='anthropic';")"
   echo "  claudeWorkItems: $(sql_count "preflight claude work items" "SELECT COUNT(*) FROM work_item WHERE lane='claude' OR target_provider_or_agent='claude';")"
+  echo "  outcomeCheckedMode: ${OUTCOME_CHECKED}"
   echo "Truth: preflight creates no traffic and proves only local readiness, not Claude proof / D8 / GO."
   exit 0
 fi
@@ -370,6 +376,7 @@ echo "  Rust DB: ${RUST_HUB_DB}"
 echo "  missionId: ${MISSION_ID}"
 echo "  workItemId: ${WORK_ITEM_ID}"
 echo "  startedAtMs: ${STARTED_AT_MS}"
+echo "  outcomeCheckedMode: ${OUTCOME_CHECKED}"
 echo
 
 if [ "${PASSPHRASE_STDIN}" = "1" ]; then
@@ -420,6 +427,7 @@ INTAKE_BODY="$(jq -nc \
   --arg surface "${SURFACE_THREAD_ID}" \
   --arg mission "${MISSION_ID}" \
   --arg work "${WORK_ITEM_ID}" \
+  --arg outcome_checked "${OUTCOME_CHECKED}" \
   '{
     fridayConversationId: $conv,
     ownerPrincipal: $owner,
@@ -436,7 +444,7 @@ INTAKE_BODY="$(jq -nc \
     capabilityId: "ask_friday.claude",
     bodyRef: "friday://body/ops/claude-mission-proof-of-life",
     includesSensitiveContext: false
-  }')"
+  } + (if $outcome_checked == "1" then {proofRequirements: ["outcome:AnswerProduced:>=1"]} else {} end)')"
 
 echo "Step 2: POST /v1/mission-spine/intake (Claude target)..."
 INTAKE_RAW="$(
@@ -463,34 +471,75 @@ surface_bound_proof=0
 work_status=""
 while [ "$(date +%s)" -le "${deadline}" ]; do
   work_status="$(sql_scalar "SELECT COALESCE(status, '') FROM work_item WHERE work_item_id='${WORK_ITEM_ID}' LIMIT 1;")"
-  joined_proof="$(sql_count "this completed Claude work item with linked Anthropic ledger proof" "
-    WITH proof AS (
-      SELECT
-        w.work_item_id AS work_item_id,
-        w.status AS status,
-        proof.value AS proof_receipt,
-        replace(proof.value, 'friday://agent-run/', '') AS run_id
-      FROM work_item w
-      JOIN json_each(w.proof_receipts) proof
-        ON proof.value IS NOT NULL
-      WHERE w.work_item_id='${WORK_ITEM_ID}'
-        AND w.mission_id='${MISSION_ID}'
-        AND w.lane='claude'
-        AND COALESCE(w.target_provider_or_agent,'')='claude'
-        AND w.status='completed_with_proof'
-        AND w.updated_at_ms >= ${STARTED_AT_MS}
-    )
-    SELECT COUNT(*)
-    FROM proof p
-    JOIN token_ledger ledger
-      ON p.proof_receipt = 'friday://agent-run/' || ledger.run_id
-     AND ledger.run_id = p.run_id
-     AND ledger.provider_kind='anthropic'
-     AND ledger.model='${CLAUDE_MODEL}'
-     AND ledger.fallback=0
-     AND ledger.total_tokens > 0
-     AND ledger.created_at >= ${STARTED_AT_MS};
-  ")"
+  if [ "${OUTCOME_CHECKED}" = "1" ]; then
+    joined_proof="$(sql_count "this completed Claude work item with linked Anthropic outcome proof" "
+      WITH raw_proof AS (
+        SELECT
+          w.work_item_id AS work_item_id,
+          w.status AS status,
+          proof.value AS proof_receipt,
+          replace(proof.value, 'proof://outcome/AnswerProduced/', '') AS payload
+        FROM work_item w
+        JOIN json_each(w.proof_receipts) proof
+          ON proof.value IS NOT NULL
+        WHERE w.work_item_id='${WORK_ITEM_ID}'
+          AND w.mission_id='${MISSION_ID}'
+          AND w.lane='claude'
+          AND COALESCE(w.target_provider_or_agent,'')='claude'
+          AND w.status='completed_with_proof'
+          AND w.updated_at_ms >= ${STARTED_AT_MS}
+          AND proof.value LIKE 'proof://outcome/AnswerProduced/%?signal=answer_len=%'
+      ),
+      proof AS (
+        SELECT
+          work_item_id,
+          status,
+          proof_receipt,
+          CASE WHEN instr(payload, '?') > 0 THEN substr(payload, 1, instr(payload, '?') - 1) ELSE payload END AS run_id,
+          CASE WHEN instr(payload, 'answer_len=') > 0 THEN substr(payload, instr(payload, 'answer_len=') + length('answer_len=')) ELSE '' END AS answer_len
+        FROM raw_proof
+      )
+      SELECT COUNT(*)
+      FROM proof p
+      JOIN token_ledger ledger
+        ON ledger.run_id = p.run_id
+       AND ledger.provider_kind='anthropic'
+       AND ledger.model='${CLAUDE_MODEL}'
+       AND ledger.fallback=0
+       AND ledger.total_tokens > 0
+       AND ledger.created_at >= ${STARTED_AT_MS}
+      WHERE CAST(p.answer_len AS INTEGER) > 0;
+    ")"
+  else
+    joined_proof="$(sql_count "this completed Claude work item with linked Anthropic ledger proof" "
+      WITH proof AS (
+        SELECT
+          w.work_item_id AS work_item_id,
+          w.status AS status,
+          proof.value AS proof_receipt,
+          replace(proof.value, 'friday://agent-run/', '') AS run_id
+        FROM work_item w
+        JOIN json_each(w.proof_receipts) proof
+          ON proof.value IS NOT NULL
+        WHERE w.work_item_id='${WORK_ITEM_ID}'
+          AND w.mission_id='${MISSION_ID}'
+          AND w.lane='claude'
+          AND COALESCE(w.target_provider_or_agent,'')='claude'
+          AND w.status='completed_with_proof'
+          AND w.updated_at_ms >= ${STARTED_AT_MS}
+      )
+      SELECT COUNT(*)
+      FROM proof p
+      JOIN token_ledger ledger
+        ON p.proof_receipt = 'friday://agent-run/' || ledger.run_id
+       AND ledger.run_id = p.run_id
+       AND ledger.provider_kind='anthropic'
+       AND ledger.model='${CLAUDE_MODEL}'
+       AND ledger.fallback=0
+       AND ledger.total_tokens > 0
+       AND ledger.created_at >= ${STARTED_AT_MS};
+    ")"
+  fi
   surface_bound_proof="$(sql_count "this completed Claude work item with bound surface thread" "
     SELECT COUNT(DISTINCT surface.surface_thread_id)
     FROM work_item w
@@ -516,8 +565,8 @@ while [ "$(date +%s)" -le "${deadline}" ]; do
   ")"
   ledger_count="$(sql_count "anthropic ledger since start" "SELECT COUNT(*) FROM token_ledger WHERE provider_kind='anthropic' AND model='${CLAUDE_MODEL}' AND fallback=0 AND total_tokens>0 AND created_at >= ${STARTED_AT_MS};")"
   proof_count="$(sql_count "this completed claude proof receipts" "SELECT COUNT(*) FROM work_item w JOIN json_each(w.proof_receipts) proof ON proof.value IS NOT NULL WHERE w.work_item_id='${WORK_ITEM_ID}' AND w.status='completed_with_proof';")"
-  printf 'Polling: workStatus=%s proofReceipts=%s anthropicLedger=%s joinedProof=%s surfaceBoundProof=%s\n' \
-    "${work_status:-<none>}" "${proof_count}" "${ledger_count}" "${joined_proof}" "${surface_bound_proof}"
+  printf 'Polling: outcomeChecked=%s workStatus=%s proofReceipts=%s anthropicLedger=%s joinedProof=%s surfaceBoundProof=%s\n' \
+    "${OUTCOME_CHECKED}" "${work_status:-<none>}" "${proof_count}" "${ledger_count}" "${joined_proof}" "${surface_bound_proof}"
   if [ "${joined_proof}" -gt 0 ] && [ "${surface_bound_proof}" -gt 0 ]; then
     break
   fi
@@ -531,41 +580,92 @@ echo "Work item: ${WORK_ITEM_ID}"
 echo "Started at ms: ${STARTED_AT_MS}"
 echo
 echo "Claude proof joined rows:"
-sql_json "
-  WITH proof AS (
+if [ "${OUTCOME_CHECKED}" = "1" ]; then
+  sql_json "
+    WITH raw_proof AS (
+      SELECT
+        w.work_item_id AS work_item_id,
+        w.mission_id AS mission_id,
+        w.status AS status,
+        proof.value AS proof_receipt,
+        replace(proof.value, 'proof://outcome/AnswerProduced/', '') AS payload
+      FROM work_item w
+      JOIN json_each(w.proof_receipts) proof
+        ON proof.value IS NOT NULL
+      WHERE w.work_item_id='${WORK_ITEM_ID}'
+        AND w.mission_id='${MISSION_ID}'
+        AND w.lane='claude'
+        AND COALESCE(w.target_provider_or_agent,'')='claude'
+        AND proof.value LIKE 'proof://outcome/AnswerProduced/%?signal=answer_len=%'
+    ),
+    proof AS (
+      SELECT
+        work_item_id,
+        mission_id,
+        status,
+        proof_receipt,
+        CASE WHEN instr(payload, '?') > 0 THEN substr(payload, 1, instr(payload, '?') - 1) ELSE payload END AS run_id,
+        CASE WHEN instr(payload, 'answer_len=') > 0 THEN substr(payload, instr(payload, 'answer_len=') + length('answer_len=')) ELSE '' END AS answer_len
+      FROM raw_proof
+    )
     SELECT
-      w.work_item_id AS work_item_id,
-      w.mission_id AS mission_id,
-      w.status AS status,
-      proof.value AS proof_receipt,
-      replace(proof.value, 'friday://agent-run/', '') AS run_id
-    FROM work_item w
-    JOIN json_each(w.proof_receipts) proof
-      ON proof.value IS NOT NULL
-    WHERE w.work_item_id='${WORK_ITEM_ID}'
-      AND w.mission_id='${MISSION_ID}'
-      AND w.lane='claude'
-      AND COALESCE(w.target_provider_or_agent,'')='claude'
-  )
-  SELECT
-    p.work_item_id,
-    p.mission_id,
-    p.status,
-    p.proof_receipt,
-    ledger.run_id,
-    ledger.provider_kind,
-    ledger.model,
-    ledger.base_url_host,
-    ledger.total_tokens,
-    ledger.fallback,
-    datetime(ledger.created_at/1000,'unixepoch') AS created_at_utc
-  FROM proof p
-  JOIN token_ledger ledger
-    ON ledger.run_id=p.run_id
-  WHERE ledger.created_at >= ${STARTED_AT_MS}
-  ORDER BY ledger.created_at DESC
-  LIMIT 5;
-"
+      p.work_item_id,
+      p.mission_id,
+      p.status,
+      p.proof_receipt,
+      p.run_id,
+      p.answer_len,
+      ledger.provider_kind,
+      ledger.model,
+      ledger.base_url_host,
+      ledger.total_tokens,
+      ledger.fallback,
+      datetime(ledger.created_at/1000,'unixepoch') AS created_at_utc
+    FROM proof p
+    JOIN token_ledger ledger
+      ON ledger.run_id=p.run_id
+    WHERE ledger.created_at >= ${STARTED_AT_MS}
+      AND CAST(p.answer_len AS INTEGER) > 0
+    ORDER BY ledger.created_at DESC
+    LIMIT 5;
+  "
+else
+  sql_json "
+    WITH proof AS (
+      SELECT
+        w.work_item_id AS work_item_id,
+        w.mission_id AS mission_id,
+        w.status AS status,
+        proof.value AS proof_receipt,
+        replace(proof.value, 'friday://agent-run/', '') AS run_id
+      FROM work_item w
+      JOIN json_each(w.proof_receipts) proof
+        ON proof.value IS NOT NULL
+      WHERE w.work_item_id='${WORK_ITEM_ID}'
+        AND w.mission_id='${MISSION_ID}'
+        AND w.lane='claude'
+        AND COALESCE(w.target_provider_or_agent,'')='claude'
+    )
+    SELECT
+      p.work_item_id,
+      p.mission_id,
+      p.status,
+      p.proof_receipt,
+      ledger.run_id,
+      ledger.provider_kind,
+      ledger.model,
+      ledger.base_url_host,
+      ledger.total_tokens,
+      ledger.fallback,
+      datetime(ledger.created_at/1000,'unixepoch') AS created_at_utc
+    FROM proof p
+    JOIN token_ledger ledger
+      ON ledger.run_id=p.run_id
+    WHERE ledger.created_at >= ${STARTED_AT_MS}
+    ORDER BY ledger.created_at DESC
+    LIMIT 5;
+  "
+fi
 echo
 echo "Work item row:"
 sql_json "SELECT work_item_id, mission_id, lane, target_provider_or_agent, status, proof_receipts, datetime(updated_at_ms/1000,'unixepoch') AS updated_at_utc FROM work_item WHERE work_item_id='${WORK_ITEM_ID}' LIMIT 1;"
@@ -578,13 +678,21 @@ sql_json "SELECT surface_thread_id, friday_conversation_id, mission_id, surface_
 echo "----------------------------------------------"
 
 if [ "${joined_proof:-0}" -gt 0 ] && [ "${surface_bound_proof:-0}" -gt 0 ]; then
-  echo "PASS (STRONG) - this Claude WorkItem completed_with_proof, the proof receipt joins to a same-run non-fallback Anthropic ledger row for ${CLAUDE_MODEL}, and the operator surface binding is present."
+  if [ "${OUTCOME_CHECKED}" = "1" ]; then
+    echo "PASS (STRONG OUTCOME) - this Claude WorkItem completed_with_proof, its AnswerProduced outcome proof receipt joins to a same-run non-fallback Anthropic ledger row for ${CLAUDE_MODEL}, and the operator surface binding is present."
+  else
+    echo "PASS (STRONG) - this Claude WorkItem completed_with_proof, the proof receipt joins to a same-run non-fallback Anthropic ledger row for ${CLAUDE_MODEL}, and the operator surface binding is present."
+  fi
   echo "Truth: operator-triggered Claude mission proof, not D8 / not soak / not UI-device-channel proof / not GO."
   exit 0
 fi
 
 if [ "${joined_proof:-0}" -gt 0 ]; then
-  echo "PASS (PARTIAL) - Claude WorkItem proof receipt joined to Anthropic ledger, but bound Mission SurfaceThread was not proven in the polling window."
+  if [ "${OUTCOME_CHECKED}" = "1" ]; then
+    echo "PASS (PARTIAL OUTCOME) - Claude WorkItem AnswerProduced outcome proof receipt joined to Anthropic ledger, but bound Mission SurfaceThread was not proven in the polling window."
+  else
+    echo "PASS (PARTIAL) - Claude WorkItem proof receipt joined to Anthropic ledger, but bound Mission SurfaceThread was not proven in the polling window."
+  fi
   echo "Truth: Claude route+ledger proof is present, but operator surface binding remains incomplete."
   exit 2
 fi
