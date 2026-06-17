@@ -37,6 +37,13 @@ import {
 } from "./friday-route-idempotency.js";
 import { assertBoundPrincipalForOperation } from "../../../security/friday-owner-session-channel-capability.js";
 import { buildPublicV1AgentRunIsolation } from "./friday-public-v1-agent-isolation.js";
+import {
+  RUST_ROUTE_CLAUDE_MODEL,
+  RUST_ROUTE_CLAUDE_PROVIDER_ID,
+  RUST_ROUTE_CODEX_MODEL,
+  RUST_ROUTE_CODEX_PROVIDER_ID,
+  RUST_ROUTE_READ_TOOL_ALLOWLIST,
+} from "../../runtime/friday-rust-route-constants.js";
 
 // ─── Constants ───
 
@@ -73,6 +80,83 @@ const CUSTOM_PACK_INTERNAL_LINE_DROP_PATTERNS: ReadonlyArray<RegExp> = [
   /(?:子代理|会话键|父会话|父子会话|运行深度|元数据)/i,
   /(?:当前运行.*正在执行中)/i,
 ];
+
+type FridayAgentRouteMissionContext = {
+  fridayConversationId: string;
+  missionId: string;
+  workItemId: string;
+};
+
+function parseMissionContext(value: unknown): FridayAgentRouteMissionContext | undefined {
+  if (
+    value === undefined
+    || typeof value !== "object"
+    || value === null
+    || Array.isArray(value)
+  ) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const fridayConversationId =
+    typeof record.fridayConversationId === "string" && record.fridayConversationId.trim().length > 0
+      ? record.fridayConversationId.trim()
+      : undefined;
+  const missionId =
+    typeof record.missionId === "string" && record.missionId.trim().length > 0
+      ? record.missionId.trim()
+      : undefined;
+  const workItemId =
+    typeof record.workItemId === "string" && record.workItemId.trim().length > 0
+      ? record.workItemId.trim()
+      : undefined;
+  return fridayConversationId && missionId && workItemId
+    ? { fridayConversationId, missionId, workItemId }
+    : undefined;
+}
+
+function isMissionBoundRustRouteSentinel(input: {
+  providerId?: string;
+  model?: string;
+  constraints?: FridayAgentRunConstraints;
+  allowedRustRouteTools?: string[];
+  missionContext?: FridayAgentRouteMissionContext;
+  principal?: FridayAuthPrincipal | null;
+}): boolean {
+  const hasBoundPrincipal =
+    typeof input.principal?.principalId === "string"
+    && input.principal.principalId.trim().length > 0;
+  if (
+    !hasBoundPrincipal
+    || input.missionContext === undefined
+    || input.constraints?.readOnly !== true
+    || !hasExactRustReadToolGrant(input.allowedRustRouteTools)
+  ) {
+    return false;
+  }
+  return (
+    input.providerId === RUST_ROUTE_CODEX_PROVIDER_ID
+    && input.model === RUST_ROUTE_CODEX_MODEL
+  ) || (
+    input.providerId === RUST_ROUTE_CLAUDE_PROVIDER_ID
+    && input.model === RUST_ROUTE_CLAUDE_MODEL
+  );
+}
+
+function hasExactRustReadToolGrant(value: string[] | undefined): boolean {
+  if (!Array.isArray(value) || value.length !== RUST_ROUTE_READ_TOOL_ALLOWLIST.length) {
+    return false;
+  }
+  const granted = new Set(value);
+  if (granted.size !== RUST_ROUTE_READ_TOOL_ALLOWLIST.length) {
+    return false;
+  }
+  for (const tool of RUST_ROUTE_READ_TOOL_ALLOWLIST) {
+    if (!granted.has(tool)) {
+      return false;
+    }
+  }
+  return true;
+}
 const CUSTOM_PACK_UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 
 function getRunSurface(run: FridayAgentRunRecord): string | undefined {
@@ -925,7 +1009,7 @@ export interface FridayAgentRoutesDeps {
     mutationGate?: string;
     // (NS45-PR2 mission-bound driver — DARK) the first-class Mission handle this run binds to.
     // Additive + optional; forwarded straight to the route-bound startRun wrapper, which uses the
-    // validated 3-field body shape as the Codex mission-bound route selector and threads it
+    // validated 3-field body shape as the Codex/Claude mission-bound route selector and threads it
     // (UNCHANGED, camelCase) onto the sealed-WS dispatch ONLY when present. Absent for every
     // existing caller (→ omitted on the wire → byte-identical unbound run). SECURITY: the bound
     // owner stays the authenticated principal, never this handle; Rust re-validates the
@@ -1304,7 +1388,54 @@ export function createFridayAgentRoutes(
         const model = readPreferredString(body.model, body.requestedModel);
         const publicIsolation = buildPublicV1AgentRunIsolation(ctx.principal);
         const tenantContext = publicIsolation ? undefined : buildTenantContext(ctx.principal);
-        if (providerId || model) {
+
+        // IMPL-4: constraints
+        let constraints: FridayAgentRunConstraints | undefined;
+        if (body.constraints !== undefined && typeof body.constraints === "object" && body.constraints !== null && !Array.isArray(body.constraints)) {
+          const c = body.constraints as Record<string, unknown>;
+          const validModes = ["plan", "execute", "restricted"] as const;
+          const parsedMode = typeof c.operationalMode === "string" && (validModes as readonly string[]).includes(c.operationalMode)
+            ? (c.operationalMode as "plan" | "execute" | "restricted")
+            : undefined;
+          constraints = {
+            readOnly: typeof c.readOnly === "boolean" ? c.readOnly : undefined,
+            operationalMode: parsedMode,
+          };
+        }
+        if (publicIsolation) {
+          constraints = {
+            ...constraints,
+            ...publicIsolation.constraints,
+          };
+        }
+
+        // execrun-replacement S-F-compose (DARK): parse the explicit, optional per-run Rust
+        // read-tool grant. Accepted ONLY as an array of non-empty strings; any other shape
+        // (or absence) ⇒ undefined ⇒ the Rust-route predicate's clause-4 fails ⇒ today's
+        // unchanged 503. Additive: no existing caller sends it, so behavior is unchanged.
+        const allowedRustRouteTools = Array.isArray(body.allowedRustRouteTools)
+          && body.allowedRustRouteTools.every(
+            (t): t is string => typeof t === "string" && t.length > 0,
+          )
+          ? body.allowedRustRouteTools
+          : undefined;
+
+        // (NS45-PR2 mission-bound driver — DARK) parse the optional first-class Mission handle
+        // before provider validation: Codex/Claude mission-bound Rust routes use sentinel
+        // provider/model identifiers, not TS provider profile ids. Only a complete handle,
+        // bound authenticated principal, read-only constraint, and exact Rust read-tool grant may
+        // skip TS profile validation; otherwise ordinary provider validation remains unchanged and
+        // fail-closed.
+        const missionContext = parseMissionContext(body.missionContext);
+        const missionBoundRustRouteSentinel = isMissionBoundRustRouteSentinel({
+          providerId,
+          model,
+          constraints,
+          allowedRustRouteTools,
+          missionContext,
+          principal: publicIsolation ? null : ctx.principal,
+        });
+        if ((providerId || model) && !missionBoundRustRouteSentinel) {
           await deps.validateRequestedRoute?.(providerId, model, tenantContext);
         }
         const replyToMessageId = typeof body.replyToMessageId === "string" ? body.replyToMessageId : undefined;
@@ -1349,26 +1480,6 @@ export function createFridayAgentRoutes(
 
         // IMPL-1: requireReview flag
         const requireReview = typeof body.requireReview === "boolean" ? body.requireReview : undefined;
-
-        // IMPL-4: constraints
-        let constraints: FridayAgentRunConstraints | undefined;
-        if (body.constraints !== undefined && typeof body.constraints === "object" && body.constraints !== null && !Array.isArray(body.constraints)) {
-          const c = body.constraints as Record<string, unknown>;
-          const validModes = ["plan", "execute", "restricted"] as const;
-          const parsedMode = typeof c.operationalMode === "string" && (validModes as readonly string[]).includes(c.operationalMode)
-            ? (c.operationalMode as "plan" | "execute" | "restricted")
-            : undefined;
-          constraints = {
-            readOnly: typeof c.readOnly === "boolean" ? c.readOnly : undefined,
-            operationalMode: parsedMode,
-          };
-        }
-        if (publicIsolation) {
-          constraints = {
-            ...constraints,
-            ...publicIsolation.constraints,
-          };
-        }
 
         let executionContext:
           | {
@@ -1470,17 +1581,6 @@ export function createFridayAgentRoutes(
           })
           : undefined;
 
-        // execrun-replacement S-F-compose (DARK): parse the explicit, optional per-run Rust
-        // read-tool grant. Accepted ONLY as an array of non-empty strings; any other shape
-        // (or absence) ⇒ undefined ⇒ the Rust-route predicate's clause-4 fails ⇒ today's
-        // unchanged 503. Additive: no existing caller sends it, so behavior is unchanged.
-        const allowedRustRouteTools = Array.isArray(body.allowedRustRouteTools)
-          && body.allowedRustRouteTools.every(
-            (t): t is string => typeof t === "string" && t.length > 0,
-          )
-          ? body.allowedRustRouteTools
-          : undefined;
-
         // execrun S-F carry-forward (DARK): forward `body.planReviewOverride` RAW into the
         // route-bound startRun wrapper so the Rust-route predicate's clause-5 plan-review
         // disqualifier can fire (PRESENCE → disqualified → today's unchanged 503). Parsed
@@ -1512,43 +1612,6 @@ export function createFridayAgentRoutes(
           typeof body.mutationGate === "string" && body.mutationGate.length > 0
             ? body.mutationGate
             : undefined;
-
-        // (NS45-PR2 mission-bound driver — DARK) parse the optional first-class Mission handle.
-        // ALL-OR-NOTHING (mirrors the executionContext/taskProfile structured-body discipline):
-        // accepted ONLY as an object carrying all THREE required, non-empty string fields
-        // (fridayConversationId/missionId/workItemId — the exact 3 the Rust `MissionWorkItemContextWire`
-        // requires). Any other shape — absence, non-object, or a MISSING/blank field — ⇒ undefined ⇒
-        // the conditional spread below OMITS the key ⇒ a byte-identical unbound dispatch for
-        // non-Codex routes. PRESENCE-ONLY: never fabricate a field, never crash on a partial body.
-        // For Codex observe-wrapper admission this is part of route selection, not authorization:
-        // the run's owner stays the authenticated principal (forwarded below via `principalInput`),
-        // and Rust re-checks the Mission/WorkItem/owner binding before producing proof.
-        let missionContext:
-          | { fridayConversationId: string; missionId: string; workItemId: string }
-          | undefined;
-        if (
-          body.missionContext !== undefined
-          && typeof body.missionContext === "object"
-          && body.missionContext !== null
-          && !Array.isArray(body.missionContext)
-        ) {
-          const mc = body.missionContext as Record<string, unknown>;
-          const fridayConversationId =
-            typeof mc.fridayConversationId === "string" && mc.fridayConversationId.trim().length > 0
-              ? mc.fridayConversationId.trim()
-              : undefined;
-          const missionId =
-            typeof mc.missionId === "string" && mc.missionId.trim().length > 0
-              ? mc.missionId.trim()
-              : undefined;
-          const workItemId =
-            typeof mc.workItemId === "string" && mc.workItemId.trim().length > 0
-              ? mc.workItemId.trim()
-              : undefined;
-          if (fridayConversationId && missionId && workItemId) {
-            missionContext = { fridayConversationId, missionId, workItemId };
-          }
-        }
 
         const result = await deps.startRun({
           task: body.task,

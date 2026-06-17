@@ -171,6 +171,8 @@ import { createFridayRustHubWorkflowCatalogBridgeService } from "../mission-spin
 import { resolveRustAgentRunWsClientX25519Secret } from "../mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
 import type { FridayRustAgentRunWsClientX25519SecretResolver } from "../mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
 import {
+  RUST_ROUTE_CLAUDE_MODEL,
+  RUST_ROUTE_CLAUDE_PROVIDER_ID,
   RUST_ROUTE_CODEX_MODEL,
   RUST_ROUTE_CODEX_PROVIDER_ID,
   RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
@@ -178,6 +180,8 @@ import {
   RUST_ROUTE_READ_TOOL_ALLOWLIST,
 } from "./friday-rust-route-constants.js";
 export {
+  RUST_ROUTE_CLAUDE_MODEL,
+  RUST_ROUTE_CLAUDE_PROVIDER_ID,
   RUST_ROUTE_CODEX_MODEL,
   RUST_ROUTE_CODEX_PROVIDER_ID,
   RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
@@ -978,16 +982,20 @@ export function resolveApiRuntimeCanonicalGateRequired(env: NodeJS.ProcessEnv = 
 //      this route, and never set the marker → never admitted. This avoids the historical
 //      route-only-retirement trap of pinning at the method chokepoint.
 //   2. constraints.readOnly === true (hard-blocks every mutating tool at the runtime).
-//   3. DeepSeek-flash ONLY: the provider identity must be DeepSeek via EITHER real shape —
-//      providerId === "deepseek" (the literal id the test/RGG envs seed), OR the requested
-//      providerId RESOLVES to an enabled provider record whose kind === "deepseek"
-//      (production rows carry UUID ids, e.g. kind="deepseek", id="fa15f1fe-…"; the route
-//      wrapper populates `resolvedProvider` from ONE cheap providerService.getProvider
-//      read). Fail-closed: unresolvable / disabled / non-deepseek kind → DISQUALIFIED.
-//      AND requested model === "deepseek-v4-flash" (still LITERAL). A request for
-//      deepseek-pro / codex / claude / chat / reasoner / a missing model → DISQUALIFIED
-//      (no silent downgrade to flash). If a taskProfile model override is present it must
-//      ALSO be exactly the flash identifier.
+//   3. Provider/model must match one of the admitted Rust route shapes:
+//      (a) DeepSeek flash via EITHER real provider shape — providerId === "deepseek" (the literal
+//          id the test/RGG envs seed), OR the requested providerId RESOLVES to an enabled provider
+//          record whose kind === "deepseek" (production rows carry UUID ids, e.g.
+//          kind="deepseek", id="fa15f1fe-…"; the route wrapper populates `resolvedProvider` from
+//          ONE cheap providerService.getProvider read). Fail-closed: unresolvable / disabled /
+//          non-deepseek kind → DISQUALIFIED. Requested model must be exactly
+//          "deepseek-v4-flash"; deepseek-pro / chat / reasoner / a missing model stay
+//          disqualified.
+//      (b) Mission-bound Codex observe route: exact Codex sentinel provider/model plus a valid
+//          3-field missionContext and non-empty authenticated principal.
+//      (c) Mission-bound Claude route: exact Claude sentinel provider/model plus the same
+//          missionContext + principal gates. Ordinary Codex/Claude requests remain disqualified.
+//      If a taskProfile model override is present it must match the admitted model for that route.
 //   4. The 4 READ tools ONLY: the run must positively grant exactly the Rust read-tool
 //      set {read_file, list_dir, stat_file, search} via `allowedRustRouteTools`. Any other
 //      tool (run_command / write_file / edit_file / append_file / delete_file / move_file /
@@ -999,8 +1007,8 @@ export function resolveApiRuntimeCanonicalGateRequired(env: NodeJS.ProcessEnv = 
 //      (mutating/approval) action:
 //        * plan-review: requireReview === true OR planReviewOverride present OR
 //          skipPlanningReview / resumeExistingRun truthy → disqualified.
-//        * session-mirror: input.sessionKey present → disqualified (a sessioned run
-//          participates in session mirroring).
+//        * session-mirror: a non-empty input.sessionKey is admitted only with a non-empty
+//          owner principal; blank/anonymous sessioned runs are disqualified.
 //        * subagents: no startRun-input field represents them — a subagent child reaches
 //          executeRun, not this HTTP route (covered by the route marker), and the
 //          allow-list excludes spawn_subagent. Stated explicitly; bound structurally.
@@ -1203,16 +1211,25 @@ function hasValidMissionContext(input: RustRouteQualificationInput): boolean {
     && context.workItemId.trim().length > 0;
 }
 
-// The sole Codex admission arm: a route-wrapper request with a validated 3-field
-// Mission handle plus an authenticated owner principal. The handle may come from
-// the HTTP body (for operator/driver-triggered mission-bound starts) or from
-// server-produced auto-dispatch, but it is only a selector. Authority remains the
-// authenticated principal, and the Rust mission-bound path re-validates the
-// Mission/WorkItem ownership before producing proof or readback.
+// Mission-bound provider admission arms: a route-wrapper request with a validated 3-field
+// Mission handle plus an authenticated owner principal. The handle may come from the HTTP
+// body (for operator/driver-triggered mission-bound starts) or from server-produced
+// auto-dispatch, but it is only a selector. Authority remains the authenticated principal,
+// and the Rust mission-bound path re-validates the Mission/WorkItem ownership before
+// producing proof or readback.
 function isMissionBoundCodexObserveRoute(input: RustRouteQualificationInput): boolean {
   return input.providerId === RUST_ROUTE_CODEX_PROVIDER_ID
     && input.model === RUST_ROUTE_CODEX_MODEL
     && (input.taskProfile?.model === undefined || input.taskProfile.model === RUST_ROUTE_CODEX_MODEL)
+    && hasValidMissionContext(input)
+    && typeof input.principalId === "string"
+    && input.principalId.trim().length > 0;
+}
+
+function isMissionBoundClaudeRoute(input: RustRouteQualificationInput): boolean {
+  return input.providerId === RUST_ROUTE_CLAUDE_PROVIDER_ID
+    && input.model === RUST_ROUTE_CLAUDE_MODEL
+    && (input.taskProfile?.model === undefined || input.taskProfile.model === RUST_ROUTE_CLAUDE_MODEL)
     && hasValidMissionContext(input)
     && typeof input.principalId === "string"
     && input.principalId.trim().length > 0;
@@ -1264,9 +1281,9 @@ export function qualifiesForRustReadOnlyRoute(input: RustRouteQualificationInput
     return false;
   }
 
-  // Clause 3 — Provider/model. The default route remains DeepSeek-flash only; the sole Codex
-  // admission is a mission-bound observe-wrapper run with a validated 3-field missionContext
-  // and bound owner principal. That context selects the Mission/WorkItem only; the
+  // Clause 3 — Provider/model. The default non-mission route remains exact DeepSeek flash; Codex
+  // and Claude are admitted only as mission-bound provider runs with a validated 3-field
+  // missionContext and bound owner principal. That context selects the Mission/WorkItem only; the
   // authenticated principal remains the owner and Rust re-validates the binding. Ordinary
   // Codex/Claude/pro/missing-provider runs stay disqualified.
   // Provider identity qualifies via EITHER real shape:
@@ -1284,7 +1301,11 @@ export function qualifiesForRustReadOnlyRoute(input: RustRouteQualificationInput
     (input.providerId === RUST_ROUTE_DEEPSEEK_PROVIDER_ID || resolvedDeepseekProvider)
     && input.model === RUST_ROUTE_DEEPSEEK_FLASH_MODEL
     && (input.taskProfile?.model === undefined || input.taskProfile.model === RUST_ROUTE_DEEPSEEK_FLASH_MODEL);
-  if (!deepseekFlashRoute && !isMissionBoundCodexObserveRoute(input)) {
+  if (
+    !deepseekFlashRoute
+    && !isMissionBoundCodexObserveRoute(input)
+    && !isMissionBoundClaudeRoute(input)
+  ) {
     return false;
   }
 
@@ -1335,8 +1356,8 @@ export function qualifiesForRustReadOnlyRoute(input: RustRouteQualificationInput
   // A non-empty `sessionKey` NO LONGER disqualifies — a read-only sessioned (multi-turn)
   // chat run may now route to Rust, where the server reloads + threads the session history
   // via the already-built `run_session_loop`. This is the ONLY relaxation in Phase 1: clause
-  // 2 (readOnly), clause 3 (deepseek-flash), clause 4 (exactly the 4 read tools), and the
-  // plan-review sub-clauses above all stay intact and fail-closed.
+  // 2 (readOnly), clause 3 (admitted provider/model shapes), clause 4 (exactly the 4 read tools),
+  // and the plan-review sub-clauses above all stay intact and fail-closed.
   //
   // COMPENSATING REQUIREMENT (the matched tightening): a sessioned run is admitted ONLY with
   // a NON-EMPTY owner `principalId`. The session history + answer body are releasable only to
@@ -4769,8 +4790,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       // (NS45-PR2 mission-bound driver — DARK) the first-class Mission handle this run binds to.
       // Purely additive + optional — every existing caller omits it. The HTTP route forwards the
       // validated `body.missionContext`; server-produced auto-dispatch may also pass the same shape.
-      // `routeStartRun` uses it to qualify the sole Codex mission-bound observe route and threads it
-      // onto sealed-WS dispatch. It NEVER overrides principal/owner; Rust re-validates binding.
+      // `routeStartRun` uses it to qualify mission-bound Codex/Claude routes and threads it onto
+      // sealed-WS dispatch. It NEVER overrides principal/owner; Rust re-validates binding.
       missionContext?: FridayRustHubAgentRunMissionContext;
     }) => {
       if (deps.allowTestOnlyAgentRunStartExecution !== true) {
@@ -5048,8 +5069,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
 
           // Qualifying run: route via Rust. Fail-closed on missing key / WS / readback /
           // projector — this NEVER falls through to the TS `startRun`. providerId/model
-          // are guaranteed defined here (the predicate required the exact deepseek-flash
-          // identifiers), but coalesce defensively to satisfy the type.
+          // are guaranteed defined here (the predicate required an exact admitted route shape),
+          // but coalesce defensively to satisfy the type.
           return composeRustReadOnlyAgentRun({
             runId: deps.idGenerator(),
             task: input.task,
@@ -5094,9 +5115,9 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
             // (NS45-PR2 mission-bound driver — DARK) forward the Mission handle so the sealed-WS
             // dispatch emits the `mission_context` wire block when present (absent ⇒ omitted ⇒
             // byte-identical unbound dispatch). This is part of `rustRouteQualificationInput` for
-            // the sole Codex mission-bound observe route, but only as a selector: it does not touch
-            // `principalId`; the bound owner stays the authenticated `normalizedPrincipal`, and Rust
-            // re-validates the Mission/WorkItem binding before producing proof/readback.
+            // mission-bound Codex/Claude routes, but only as a selector: it does not touch
+            // `principalId`; the bound owner stays the authenticated `normalizedPrincipal`, and
+            // Rust re-validates the Mission/WorkItem binding before producing proof/readback.
             ...(input.missionContext !== undefined ? { missionContext: input.missionContext } : {}),
             // Stamp the apiRequest idempotency descriptor onto the projected row so a
             // SUBSEQUENT request sharing this key REPLAYS this run (the lookup above) rather

@@ -22,6 +22,11 @@ export const RUST_ROUTE_DEEPSEEK_FLASH_MODEL = "deepseek-v4-flash";
 export const RUST_ROUTE_CODEX_PROVIDER_ID = "codex";
 export const RUST_ROUTE_CODEX_MODEL = "gpt-5.5";
 
+// Single source of truth for mission-bound Claude mirror runs. Like Codex, this route shape is
+// admitted only with a validated missionContext selector and authenticated principal.
+export const RUST_ROUTE_CLAUDE_PROVIDER_ID = "claude";
+export const RUST_ROUTE_CLAUDE_MODEL = "claude-opus-4-8";
+
 // Codex app-server observe-wrapper runs can legitimately take longer than the generic sealed-WS
 // default (30s). Keep the longer budget scoped to mission-bound Codex auto-dispatch so DeepSeek
 // read-only smoke runs stay on the short fail-closed path.

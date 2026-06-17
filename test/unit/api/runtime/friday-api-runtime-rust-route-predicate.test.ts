@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   qualifiesForRustReadOnlyRoute,
+  RUST_ROUTE_CLAUDE_MODEL,
+  RUST_ROUTE_CLAUDE_PROVIDER_ID,
   RUST_ROUTE_CODEX_MODEL,
   RUST_ROUTE_CODEX_PROVIDER_ID,
   RUST_ROUTE_READ_TOOL_ALLOWLIST,
@@ -41,6 +43,20 @@ function codexMissionBoundInput(): RustRouteQualificationInput {
   };
 }
 
+function claudeMissionBoundInput(): RustRouteQualificationInput {
+  return {
+    ...qualifyingInput(),
+    providerId: RUST_ROUTE_CLAUDE_PROVIDER_ID,
+    model: RUST_ROUTE_CLAUDE_MODEL,
+    principalId: "principal:owner-1",
+    missionContext: {
+      fridayConversationId: "conv-claude",
+      missionId: "mission-claude",
+      workItemId: "work-claude",
+    },
+  };
+}
+
 describe("qualifiesForRustReadOnlyRoute (execrun slice 4, dark predicate)", () => {
   it("admits a fully-qualifying read-only DeepSeek-flash route run", () => {
     expect(qualifiesForRustReadOnlyRoute(qualifyingInput())).toBe(true);
@@ -67,7 +83,7 @@ describe("qualifiesForRustReadOnlyRoute (execrun slice 4, dark predicate)", () =
     expect(qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), constraints: undefined })).toBe(false);
   });
 
-  // ── Clause 3: DeepSeek-flash only, no silent downgrade ───────────────────────
+  // ── Clause 3: admitted provider/model route shapes, no silent downgrade ──────
   it("disqualifies a non-deepseek provider", () => {
     expect(qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), providerId: "anthropic" })).toBe(false);
     expect(qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), providerId: undefined })).toBe(false);
@@ -115,6 +131,52 @@ describe("qualifiesForRustReadOnlyRoute (execrun slice 4, dark predicate)", () =
       qualifiesForRustReadOnlyRoute({
         ...codexMissionBoundInput(),
         taskProfile: { model: RUST_ROUTE_CODEX_MODEL },
+      }),
+    ).toBe(true);
+  });
+
+  it("admits a mission-bound Claude mirror run with missionContext and owner principal", () => {
+    expect(qualifiesForRustReadOnlyRoute(claudeMissionBoundInput())).toBe(true);
+  });
+
+  it("disqualifies ordinary Claude runs without missionContext or owner principal", () => {
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...claudeMissionBoundInput(),
+        missionContext: undefined,
+      }),
+    ).toBe(false);
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...claudeMissionBoundInput(),
+        principalId: undefined,
+      }),
+    ).toBe(false);
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...claudeMissionBoundInput(),
+        principalId: "   ",
+      }),
+    ).toBe(false);
+  });
+
+  it("disqualifies Claude mission-bound runs with the wrong model or taskProfile override", () => {
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...claudeMissionBoundInput(),
+        model: "claude-3-7",
+      }),
+    ).toBe(false);
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...claudeMissionBoundInput(),
+        taskProfile: { model: "deepseek-v4-flash" },
+      }),
+    ).toBe(false);
+    expect(
+      qualifiesForRustReadOnlyRoute({
+        ...claudeMissionBoundInput(),
+        taskProfile: { model: RUST_ROUTE_CLAUDE_MODEL },
       }),
     ).toBe(true);
   });
@@ -261,7 +323,7 @@ describe("qualifiesForRustReadOnlyRoute (execrun slice 4, dark predicate)", () =
     ).toBe(false);
   });
 
-  it("disqualifies deepseek-pro / codex / claude / a missing model (no downgrade to flash)", () => {
+  it("disqualifies deepseek-pro / codex / ordinary claude / a missing model (no downgrade to flash)", () => {
     for (const model of ["deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner", "codex", "claude-3-7", undefined]) {
       expect(qualifiesForRustReadOnlyRoute({ ...qualifyingInput(), model })).toBe(false);
     }
@@ -493,14 +555,14 @@ describe("qualifiesForRustReadOnlyRoute (execrun slice 4, dark predicate)", () =
       ).toBe(true);
     });
 
-    // (d) clause 1 (route-marker) + clause 3 (deepseek-flash) + bound-owner STILL enforced.
+    // (d) clause 1 (route-marker) + clause 3 (provider/model shape) + bound-owner STILL enforced.
     it("(d) a gated mutating run STILL requires clause 1 (route marker)", () => {
       expect(
         qualifiesForRustReadOnlyRoute({ ...gatedMutatingInput(), invokedFromHttpStartRunRoute: false }),
       ).toBe(false);
     });
 
-    it("(d) a gated mutating run STILL requires clause 3 (deepseek-flash only; not Claude/pro)", () => {
+    it("(d) a gated mutating run STILL requires an admitted clause-3 provider/model shape", () => {
       expect(
         qualifiesForRustReadOnlyRoute({ ...gatedMutatingInput(), providerId: "anthropic", model: "claude-3-7" }),
       ).toBe(false);

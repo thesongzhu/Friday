@@ -112,6 +112,8 @@ import {
   createFridayReflexRoutes,
   getChannelPersona,
   hydrateChannelPersonaStore,
+  RUST_ROUTE_CLAUDE_MODEL,
+  RUST_ROUTE_CLAUDE_PROVIDER_ID,
   RUST_ROUTE_CODEX_MODEL,
   RUST_ROUTE_CODEX_PROVIDER_ID,
   RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
@@ -7123,6 +7125,8 @@ export async function createFridayHub(
         deepseekFlashModel: RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
         codexProviderId: RUST_ROUTE_CODEX_PROVIDER_ID,
         codexModel: RUST_ROUTE_CODEX_MODEL,
+        claudeProviderId: RUST_ROUTE_CLAUDE_PROVIDER_ID,
+        claudeModel: RUST_ROUTE_CLAUDE_MODEL,
       })
       : undefined;
   const missionSpineDispatch = routeMissionSpineViaRust

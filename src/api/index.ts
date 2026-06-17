@@ -288,10 +288,13 @@ export { createFridayApiRuntime } from "./runtime/friday-api-runtime.js";
 // admits. Re-exported so bootstrap can hand the mission auto-dispatch driver the EXACT qualifying
 // shapes without retyping literals.
 export {
+  RUST_ROUTE_CLAUDE_MODEL,
+  RUST_ROUTE_CLAUDE_PROVIDER_ID,
   RUST_ROUTE_CODEX_MODEL,
   RUST_ROUTE_CODEX_PROVIDER_ID,
   RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
   RUST_ROUTE_DEEPSEEK_PROVIDER_ID,
+  RUST_ROUTE_READ_TOOL_ALLOWLIST,
 } from "./runtime/friday-api-runtime.js";
 export type {
   FridayApiRuntime,

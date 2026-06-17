@@ -443,18 +443,19 @@ fn run() -> Result<(), ServerError> {
         );
     }
 
-    // (NS-4) Read the MISSION-BOUND run seam flag ONCE at boot (default-off). When false the
-    // dispatch arm NEVER enters the bound-seam code — every run takes the EXACT pre-NS-4 unbound
-    // path, so deploying this binary changes NO live behavior until the operator flips this flag.
+    // (NS-4) Read the MISSION-BOUND run seam flag ONCE at boot (default-off). When false, ordinary
+    // no-handle requests still take the EXACT pre-NS-4 unbound path. A request that already carries
+    // `mission_context` has asserted mission-bound intent and fails closed to NoAnswer instead of
+    // running unbound under a false route projection.
     let mission_bound_run_enabled =
         mission_bound_run_enabled_from(env::var(MISSION_BOUND_RUN_ENABLED_ENV).ok().as_deref());
     if mission_bound_run_enabled {
         eprintln!(
-            "hub_agent_run_server: MISSION-BOUND run seam ENABLED (FRIDAY_MISSION_BOUND_RUN) — a run whose session resolves to a live Mission is dispatched bound"
+            "hub_agent_run_server: MISSION-BOUND run seam ENABLED (FRIDAY_MISSION_BOUND_RUN) — a run whose mission_context resolves to a live Mission is dispatched bound"
         );
     } else {
         eprintln!(
-            "hub_agent_run_server: MISSION-BOUND run seam DISABLED (set FRIDAY_MISSION_BOUND_RUN=1 to enable) — all runs dispatch unbound"
+            "hub_agent_run_server: MISSION-BOUND run seam DISABLED (set FRIDAY_MISSION_BOUND_RUN=1 to enable) — no-handle runs dispatch unbound; mission_context runs fail closed"
         );
     }
 
@@ -639,14 +640,15 @@ fn agent_run_control_enabled_from(raw: Option<&str>) -> bool {
 /// (NS-4) The env flag that gates the MISSION-BOUND run seam. DEFAULT-OFF: a run is dispatched
 /// through the Mission-bound entry ([`friday_hub::run_authed_agent_loop_mission_bound`] — which
 /// mints the mission-birth + WorkItem bind) ONLY when `FRIDAY_MISSION_BOUND_RUN` is exactly
-/// `"1"` (after trim). Unset — or any other value — leaves the seam DARK: every
-/// run takes the EXISTING unbound dispatch (`HubRuntime::run_session_task_with_overrides`, which
-/// BOTH the sessioned and the ephemeral-per-run-session arms now use), so deploying this binary
-/// changes
-/// NO live behavior until the operator flips this SEPARATE flag. Even with the flag ON, a run is
-/// bound only if it carries a FIRST-CLASS `mission_context` handle (NS45-PR1 / M-4) that resolves
-/// to a live Mission/WorkItem via `MissionContextLookup::by_mission_work_item`; a run with no
-/// handle (every live courier today) falls through unbound. SEPARATE from
+/// `"1"` (after trim). Unset — or any other value — leaves the seam DARK for ordinary runs: a
+/// request with NO `mission_context` takes the EXISTING unbound dispatch
+/// (`HubRuntime::run_session_task_with_overrides`, which BOTH the sessioned and the
+/// ephemeral-per-run-session arms now use), so deploying this binary changes NO live behavior for
+/// today's unbound courier. A request that DOES carry a FIRST-CLASS `mission_context` has asserted
+/// mission-bound intent; with this flag OFF, or with this flag ON but an unresolvable handle, it
+/// fails closed to body-free NoAnswer rather than falling through unbound. With the flag ON, a run
+/// is bound only if that handle (NS45-PR1 / M-4) resolves to a live Mission/WorkItem via
+/// `MissionContextLookup::by_mission_work_item`. SEPARATE from
 /// `FRIDAY_ROUTE_AGENT_RUN_VIA_RUST` (run-START) and `FRIDAY_AGENT_RUN_CONTROL_VIA_RUST`
 /// (run-CONTROL); flipping THIS one is an operator cutover decision gated on organic Mission
 /// ingress (the courier populating `AgentRunRequest.mission_context`).
@@ -1355,16 +1357,17 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
 
                 // (NS45-PR1 / M-4) MISSION-BOUND seam — FLAG-GATED, the FIRST dispatch consulted.
                 // When `FRIDAY_MISSION_BOUND_RUN` is ON **and** this run carries a FIRST-CLASS
-                // `mission_context` handle that resolves to a live DeepSeek-lane Mission/WorkItem,
-                // the run is dispatched BOUND (minting the mission-birth + WorkItem bind) and the
-                // seam returns `Some(answer)`. Otherwise it returns `None` and we fall through to
-                // the EXISTING unbound dispatch below — BYTE-IDENTICAL to the pre-NS-4 path.
+                // `mission_context` handle that resolves to a live Mission/WorkItem, the run is
+                // dispatched BOUND through that WorkItem's routed provider seam and returns
+                // `Some(answer)`. A present handle that cannot be serviced fails closed to
+                // body-free `NoAnswer`; only a request with NO handle falls through to the
+                // EXISTING unbound dispatch below.
                 //
                 // The mission handle, NOT the `session_id` shim, is now the resolution source
                 // (M-4: the provisional surface-thread conflation is retired). With the flag OFF
-                // the `else` arm binds `None` WITHOUT ever calling the seam; and with the flag ON
-                // but NO handle the seam returns `None` immediately — in BOTH cases the run takes
-                // the exact same `match session_id` unbound dispatch it always has, byte-identical.
+                // and NO handle the `else` arm binds `None` WITHOUT ever calling the seam. With the
+                // flag OFF but a handle present, fail closed rather than running unbound under a
+                // mission-bound route projection.
                 let mission_bound = if mission_bound_run_enabled {
                     friday_hub::hub_server::run_authed_agent_loop_mission_bound(
                         runtime,
@@ -1376,6 +1379,10 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                         max_turns_override,
                         now_ms,
                     )
+                } else if mission_context.is_some() {
+                    Some(friday_hub::hub_server::AuthedAnswer::NoAnswer {
+                        run_id: run_id.clone(),
+                    })
                 } else {
                     None
                 };
@@ -2175,6 +2182,7 @@ mod tests {
     };
     use friday_hub::DeepSeekAgentLlmClient;
     use friday_transport::{read_frame, write_frame, ws_connect, ws_send_envelope};
+    use rusqlite::OptionalExtension;
     use serde_json::{json, Value};
     use sha2::{Digest, Sha256};
     use std::net::TcpStream;
@@ -2551,6 +2559,99 @@ mod tests {
         let inner = decode_sealed_proof(&inner_bytes).expect("owner-sealed body decodes");
         let opened = friday_crypto::open(&client_session, &inner, SESSION_AAD).unwrap();
         assert_eq!(opened, BODY.as_bytes(), "owner opens the sealed body");
+    }
+
+    // Explicit mission_context means "mission-bound or fail closed." If the server-side
+    // FRIDAY_MISSION_BOUND_RUN gate is off, the request must NOT run unbound and then surface a
+    // normal answer under the caller's mission/provider projection.
+    #[test]
+    fn mission_context_with_mission_bound_flag_off_returns_no_answer_not_unbound_success() {
+        let (rt, _ws) = mock_runtime("mission-flag-off", OWNER);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        let client_kp = DeviceKeypair::generate();
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let mission_context = friday_protocol::MissionWorkItemContextWire {
+            friday_conversation_id: "fconv_flag_off".into(),
+            mission_id: "mission-flag-off".into(),
+            work_item_id: "work-flag-off".into(),
+        };
+        let client = spawn_client(addr, client_kp, move |session, nonce| {
+            let req = mission_bound_agent_run_request(
+                "req-mission-flag-off",
+                "run-mission-flag-off",
+                OWNER,
+                session,
+                nonce,
+                mission_context,
+            );
+            (req, session.clone(), session.clone())
+        });
+
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false, // run-control OFF
+                false, // mission-bound run OFF: explicit handle must fail closed
+                false, // mission-intake ingress OFF
+                false, // mission-spine dispatch OFF
+                false, // memory-confirm ingress OFF
+                false, // token surface OFF
+                false, // provider-workspace dispatch OFF
+            )
+            .unwrap();
+        assert_eq!(processed, 1, "one authed dispatch processed");
+
+        let obs = client.join().unwrap();
+        let Some(Message::AgentRunResult {
+            run_id,
+            status,
+            answer_sha256,
+            answer_len,
+            ..
+        }) = obs.result.clone()
+        else {
+            panic!(
+                "expected AgentRunResult no-answer frame, got {:?}",
+                obs.result
+            );
+        };
+        assert_eq!(run_id, "run-mission-flag-off");
+        assert_eq!(
+            status, "no_answer_safe_failure",
+            "mission_context with the mission-bound flag off must fail closed, not execute unbound"
+        );
+        assert!(
+            answer_sha256.is_none(),
+            "no answer fingerprint on fail-closed no-answer"
+        );
+        assert!(
+            answer_len.is_none(),
+            "no answer length on fail-closed no-answer"
+        );
+        assert!(
+            obs.body_chunk.is_none(),
+            "fail-closed mission-context request must not deliver the unbound body"
+        );
+        let answer = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT answer_sha256 FROM run_result WHERE run_id = ?1",
+                ["run-mission-flag-off"],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .unwrap();
+        assert!(
+            answer.is_none(),
+            "mission_context flag-off fail-closed path must not persist an unbound run_result"
+        );
     }
 
     /// A MOCK transport that PROPOSES a mutating tool call (write_file) every turn. With the

@@ -2230,18 +2230,17 @@ pub fn run_authed_agent_loop_with_policy<T: Transport>(
 ///     * `MissionBoundLoopOutcome::Ran` ⇒ the owner-gated body, projected by
 ///       [`project_answer_for_authed`] EXACTLY as the unbound entry does (same owner-wiring —
 ///       both go through `run_with_request`), with the loop's COUNTS attached.
+///     * `MissionBoundLoopOutcome::Blocked` ⇒ a body-free [`AuthedAnswer::NoAnswer`]. A request
+///       carrying an explicit first-class `mission_context` asserted mission-bound intent; if that
+///       handle cannot resolve/preflight, we fail closed instead of silently running an unbound
+///       session and letting upstream project a false mission/provider route.
 ///     * `Err(_)` ⇒ a body-free [`AuthedAnswer::NoAnswer`]. A SAFE FAILURE that MUST NOT fall
 ///       through: by the time `run_agent_loop_for_mission` errors it has ALREADY created the
 ///       `agent_run` row + may have spent model calls, so re-running the unbound path would
 ///       conflict on `create_run` and double-bill. We stop here.
 /// - `None` — the bound path was NOT taken; the caller falls through to the EXISTING unbound
-///   dispatch BYTE-IDENTICALLY. Two cases, both write NOTHING:
-///     * the flag is OFF, or no `MissionContextLookup` was derivable (sessionless run); OR
-///     * `MissionBoundLoopOutcome::Blocked` — the preflight failed closed (the common case: the
-///       run's `session_id` is an ordinary chat session, not a Mission surface thread). The
-///       preflight returns Blocked BEFORE `upsert_route_decision` and BEFORE `create_run`, so a
-///       fall-through leaves NO stray `route_decision`/`agent_run`/`mission_link` row — the
-///       unbound run that follows is byte-identical to today.
+///   dispatch BYTE-IDENTICALLY only when no first-class Mission handle was present. A present but
+///   invalid handle is never a fall-through.
 ///
 /// ## FIX-Q2 owner gate (UNCHANGED invariant)
 /// The `caller == configured_principal` gate is asserted HERE, BEFORE any dispatch — the SAME
@@ -2256,13 +2255,16 @@ pub fn run_authed_agent_loop_with_policy<T: Transport>(
 /// conflated the client-asserted `session_id` with a surface-thread id for mission resolution
 /// (the `session_id` field stays on the wire for the sessioned-chat unbound path, but it is NO
 /// LONGER the mission-resolution key). A run with NO handle (`None`) is NOT mission-resolvable ⇒
-/// `None` ⇒ the caller falls through to the unbound path, BYTE-IDENTICAL to today. The handle is
-/// a CLIENT ASSERTION that selects WHICH Mission to bind to; it is never an authority — the
-/// FIX-Q2 owner gate below is the authority.
+/// `None` ⇒ the caller falls through to the unbound path, BYTE-IDENTICAL to today. A present handle
+/// that fails preflight returns `Some(NoAnswer)`, not `None`, so upstream cannot turn an unbound
+/// answer into a false mission-bound provider projection. The handle is a CLIENT ASSERTION that
+/// selects WHICH Mission to bind to; it is never an authority — the FIX-Q2 owner gate below is the
+/// authority.
 ///
 /// The handle is populated by organic ingress (the native client / courier from the NS-5
-/// `MissionIntakeResult`) + the operator flips the flag; until both exist the flag is OFF and
-/// this returns `None` for every live request, so the live run path is unchanged.
+/// `MissionIntakeResult`) + the operator flips the flag. This helper is only called after the WS
+/// arm has admitted the mission-bound flag; the WS arm itself treats handle-present/flag-off as
+/// fail-closed `NoAnswer`, while no-handle requests keep the unchanged unbound path.
 ///
 /// ## Go-live caveat (DEFERRED — a named gate, NOT added here)
 /// A client-asserted `mission_id` under an `owner_allowlist > 1` is a cross-principal resolution
@@ -2280,8 +2282,9 @@ pub fn run_authed_agent_loop_with_policy<T: Transport>(
 /// (read-only / disabled-tools / max-turns).
 ///
 /// Codex WorkItems (`lane=codex`, `target_provider_or_agent=codex`) route to the Codex sibling;
-/// every other handle preserves the existing DeepSeek mission-bound entry and its fall-through
-/// behavior.
+/// Claude WorkItems (`lane=claude`, `target_provider_or_agent=claude`) route to the Claude
+/// sibling; every other handle preserves the existing DeepSeek mission-bound entry and its
+/// fail-closed preflight behavior.
 #[allow(clippy::too_many_arguments)]
 pub fn run_authed_agent_loop_mission_bound<T: Transport>(
     runtime: &HubRuntime<T>,
@@ -2325,8 +2328,28 @@ pub fn run_authed_agent_loop_mission_bound<T: Transport>(
     // matches the Mission's conversation by the time the bind runs.
     let session = handle.friday_conversation_id.as_str();
 
-    let result = if mission_handle_targets_codex(runtime, handle) {
-        runtime.run_codex_agent_loop_for_mission_with_overrides(
+    let result = match mission_handle_provider_target(runtime, handle) {
+        MissionBoundProviderTarget::Codex => runtime
+            .run_codex_agent_loop_for_mission_with_overrides(
+                lookup,
+                session,
+                run_id,
+                task,
+                policy_override,
+                max_turns_override,
+                now_ms,
+            ),
+        MissionBoundProviderTarget::Claude => runtime
+            .run_claude_agent_loop_for_mission_with_overrides(
+                lookup,
+                session,
+                run_id,
+                task,
+                policy_override,
+                max_turns_override,
+                now_ms,
+            ),
+        MissionBoundProviderTarget::DeepSeek => runtime.run_agent_loop_for_mission_with_overrides(
             lookup,
             session,
             run_id,
@@ -2334,17 +2357,7 @@ pub fn run_authed_agent_loop_mission_bound<T: Transport>(
             policy_override,
             max_turns_override,
             now_ms,
-        )
-    } else {
-        runtime.run_agent_loop_for_mission_with_overrides(
-            lookup,
-            session,
-            run_id,
-            task,
-            policy_override,
-            max_turns_override,
-            now_ms,
-        )
+        ),
     };
 
     match result {
@@ -2356,10 +2369,16 @@ pub fn run_authed_agent_loop_mission_bound<T: Transport>(
             project_answer_for_authed(runtime.db().conn(), run_id, caller)
                 .with_counts(outcome.turns, outcome.executed_tools),
         ),
-        // The preflight failed CLOSED (no resolvable/valid Mission for this run) — it wrote
-        // NOTHING (no `agent_run`, no `route_decision`, no `mission_link`). Fall through to the
-        // EXISTING unbound dispatch, BYTE-IDENTICAL to today.
-        Ok(crate::runtime::MissionBoundLoopOutcome::Blocked { .. }) => None,
+        // The preflight failed CLOSED (no resolvable/valid Mission for this explicit handle) — it
+        // wrote NOTHING (no `agent_run`, no `route_decision`, no `mission_link`). Do NOT fall
+        // through to unbound: the peer asserted a mission_context, and upstream may project the
+        // requested provider/model as the route shape. A body-free NoAnswer preserves fail-closed
+        // truth without running a different route.
+        Ok(crate::runtime::MissionBoundLoopOutcome::Blocked { .. }) => {
+            Some(AuthedAnswer::NoAnswer {
+                run_id: run_id.to_string(),
+            })
+        }
         // SAFE FAILURE: a route/storage error AFTER the run row exists. Body-free `NoAnswer`; we
         // MUST NOT fall through (the unbound path would re-`create_run` and double-bill).
         Err(_) => Some(AuthedAnswer::NoAnswer {
@@ -2368,15 +2387,27 @@ pub fn run_authed_agent_loop_mission_bound<T: Transport>(
     }
 }
 
-fn mission_handle_targets_codex<T: Transport>(
+enum MissionBoundProviderTarget {
+    DeepSeek,
+    Codex,
+    Claude,
+}
+
+fn mission_handle_provider_target<T: Transport>(
     runtime: &HubRuntime<T>,
     handle: &MissionWorkItemContextWire,
-) -> bool {
+) -> MissionBoundProviderTarget {
     let Ok(Some(work_item)) = runtime.db().get_work_item(&handle.work_item_id) else {
-        return false;
+        return MissionBoundProviderTarget::DeepSeek;
     };
-    work_item.lane == friday_core::WorkLane::Codex
-        && work_item.target_provider_or_agent.as_deref().map(str::trim) == Some("codex")
+    match (
+        work_item.lane,
+        work_item.target_provider_or_agent.as_deref().map(str::trim),
+    ) {
+        (friday_core::WorkLane::Codex, Some("codex")) => MissionBoundProviderTarget::Codex,
+        (friday_core::WorkLane::Claude, Some("claude")) => MissionBoundProviderTarget::Claude,
+        _ => MissionBoundProviderTarget::DeepSeek,
+    }
 }
 
 fn work_item_timeline_wire(item: friday_core::WorkItem) -> MissionTimelineWorkItemWire {
@@ -7858,14 +7889,15 @@ mod authed_route_tests {
     //
     // `run_authed_agent_loop_mission_bound` is the live-reachable counterpart of the unbound
     // entry: when (in the bin) `FRIDAY_MISSION_BOUND_RUN` is ON and the run carries a FIRST-CLASS
-    // `mission_context` handle that resolves to a live DeepSeek-lane Mission/WorkItem, a run is
+    // `mission_context` handle that resolves to a live routed-provider Mission/WorkItem, a run is
     // dispatched BOUND (minting the mission-birth + WorkItem bind). NS45-PR1 (M-4) retired the
     // `session_id`-as-surface-thread shim: resolution now keys off the handle
     // `{friday_conversation_id, mission_id, work_item_id}` via `by_mission_work_item`. These tests
-    // drive the SEAM directly (the bin's flag plumbing is exercised by its own `*_enabled_from`
-    // matcher tests). The flag-on test proves REAL mission binding (MissionLink + WorkItem
-    // transition + route_decision); the flag-off / no-handle / unresolvable tests prove
-    // byte-identical fall-through.
+    // drive the SEAM directly (the bin's flag plumbing, including handle-present/flag-off
+    // fail-closed behavior, is exercised by bin tests). The flag-on tests prove REAL mission
+    // binding (MissionLink + WorkItem transition + route_decision); the no-handle test proves
+    // byte-identical fall-through; the unresolvable-handle test proves explicit handles fail
+    // closed instead of falling through unbound.
 
     use friday_core::{
         ApprovalState as NsApprovalState, ClaimState as NsClaimState,
@@ -8068,6 +8100,52 @@ mod authed_route_tests {
         rt.mark_route_available("codex");
         rt.mark_route_validated("codex");
         (rt, ws, calls, last_context)
+    }
+
+    const CLAUDE_BOUND_BODY: &str = "CLAUDE-BOUND-BODY-CANARY-only-owner-P";
+    type ClaudeSeamFixture = (HubRuntime<ProviderDownTransport>, TempWs, Arc<AtomicU64>);
+
+    struct SeamClaudeStub {
+        answer: String,
+        calls: Arc<AtomicU64>,
+    }
+
+    impl crate::AgentLlmClient for SeamClaudeStub {
+        fn propose_tool_call(&self, _task: &str) -> Result<crate::RawToolCall, crate::AgentError> {
+            unreachable!("mission-bound Claude seam uses next_step_metered")
+        }
+
+        fn next_step_metered(
+            &self,
+            _task: &str,
+            _history: &[crate::TurnTrace],
+        ) -> Result<crate::MeteredStep, crate::AgentError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Ok((
+                Ok(crate::AgentStep::Finish {
+                    message: self.answer.clone(),
+                }),
+                Some(crate::BilledUsage {
+                    provider_kind: friday_core::ProviderKind::Anthropic,
+                    model: friday_anthropic::DEFAULT_MODEL.to_string(),
+                    prompt_tokens: 11,
+                    completion_tokens: 8,
+                }),
+            ))
+        }
+    }
+
+    fn runtime_with_claude_stub(tag: &str) -> ClaudeSeamFixture {
+        let (rt, ws) = runtime_with(tag, ProviderDownTransport, "principal:owner");
+        let calls = Arc::new(AtomicU64::new(0));
+        let stub = SeamClaudeStub {
+            answer: CLAUDE_BOUND_BODY.into(),
+            calls: Arc::clone(&calls),
+        };
+        let mut rt = rt.with_claude(Box::new(stub));
+        rt.mark_route_available("claude");
+        rt.mark_route_validated("claude");
+        (rt, ws, calls)
     }
 
     fn ns4_codex_provider_claim() -> NsWorkspaceClaim {
@@ -8307,10 +8385,11 @@ mod authed_route_tests {
             .unwrap()
     }
 
-    /// FLAG-ON happy path: a run whose `session_id` resolves to a live DeepSeek-lane Mission is
-    /// dispatched BOUND. The seam returns the owner-gated body AND mints REAL mission binding —
-    /// a `MissionLink` tied to THIS run_id, a `ReadyToDispatch -> CompletedWithProof` WorkItem
-    /// transition (the run as proof), and a `route_decision` row keyed to this run.
+    /// FLAG-ON happy path: a run whose first-class `mission_context` handle resolves to a live
+    /// routed WorkItem is dispatched BOUND. The seam returns the owner-gated body AND mints REAL
+    /// mission binding — a `MissionLink` tied to THIS run_id, a
+    /// `ReadyToDispatch -> CompletedWithProof` WorkItem transition (the run as proof), and a
+    /// `route_decision` row keyed to this run.
     #[test]
     fn mission_bound_seam_on_binds_run_to_mission_and_delivers_body_to_owner() {
         let (rt, _ws) = runtime_with(
@@ -8463,6 +8542,68 @@ mod authed_route_tests {
     }
 
     #[test]
+    fn mission_bound_seam_on_claude_work_item_routes_to_claude_and_bills_anthropic() {
+        let (rt, _ws, claude_calls) = runtime_with_claude_stub("ns4-bound-claude");
+        ns4_seed_mission_with_route(
+            &rt,
+            "surface-ns4-claude-session",
+            NsWorkLane::Claude,
+            Some("claude"),
+            Vec::new(),
+            Vec::new(),
+        );
+        let caller = authed("principal:owner");
+        let handle = ns4_handle();
+
+        let out = run_authed_agent_loop_mission_bound(
+            &rt,
+            &caller,
+            "run-ns4-claude-bound",
+            "do the Claude mission work",
+            Some(&handle),
+            None,
+            None,
+            1000,
+        )
+        .expect("the bound Claude seam took the run (Some), not a fall-through");
+
+        assert_eq!(
+            out.delivered_body(),
+            Some(CLAUDE_BOUND_BODY),
+            "a Claude WorkItem must dispatch through the Claude client, not DeepSeek"
+        );
+        assert_eq!(
+            claude_calls.load(Ordering::Relaxed),
+            1,
+            "the Claude client was called exactly once"
+        );
+
+        let work_item = rt.db().get_work_item("work-ns4").unwrap().unwrap();
+        assert_eq!(work_item.status, NsWorkItemStatus::CompletedWithProof);
+        assert!(work_item
+            .proof_receipts
+            .contains(&"friday://agent-run/run-ns4-claude-bound".to_string()));
+        let route_decisions: i64 = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM route_decision WHERE decision_id = ?1",
+                ["route-decision:agent-loop:run-ns4-claude-bound"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(route_decisions, 1);
+        let usage = rt
+            .db()
+            .list_run_token_usage("run-ns4-claude-bound")
+            .unwrap();
+        assert_eq!(usage.len(), 1);
+        assert_eq!(usage[0].provider_kind, "anthropic");
+        assert!(!usage[0].fallback);
+        assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
+    }
+
+    #[test]
     #[ignore = "live: needs logged-in Codex CLI; spawns codex app-server and spends one Codex turn"]
     fn live_mission_bound_codex_observe_wrapper_records_session_ledger_and_claimed_process() {
         let _observe = EnvRestore::set(
@@ -8595,13 +8736,11 @@ mod authed_route_tests {
         assert_eq!(claimed_observations, SOAK_SESSIONS as i64);
     }
 
-    /// FLAG-OFF byte-identical: when the flag is OFF, the bin NEVER calls the seam (the
-    /// `if mission_bound_run_enabled { seam } else { None }` else-arm) — every run takes the EXACT
-    /// unbound `run_authed_agent_loop_with_policy` path, even one carrying a resolvable
-    /// `mission_context` handle. This test pins that unbound result, with the SAME Mission staged,
-    /// produces ZERO mission binding (no MissionLink, no WorkItem transition, no route_decision)
-    /// and delivers the IDENTICAL body — i.e. the run is byte-identical to today even though a
-    /// resolvable Mission exists.
+    /// Direct unbound-entry parity: when the caller does not enter the mission-bound seam, the
+    /// unbound `run_authed_agent_loop_with_policy` path still produces ZERO mission binding (no
+    /// MissionLink, no WorkItem transition, no route_decision) and delivers the IDENTICAL body even
+    /// with the SAME Mission staged. The real WS flag-off + explicit `mission_context` case is
+    /// covered in `hub_agent_run_server` and must fail closed, not call this unbound path.
     #[test]
     fn mission_bound_flag_off_is_byte_identical_unbound_run_no_binding() {
         let (rt, _ws) = runtime_with(
@@ -8662,11 +8801,11 @@ mod authed_route_tests {
     }
 
     /// FLAG-ON but UNRESOLVABLE handle: a `mission_context` handle pointing at a Mission/WorkItem
-    /// that does NOT exist (no graph staged) makes the seam fail CLOSED to `None` — the caller
-    /// falls through to the unbound path, byte-identical to today, with NO crash. The preflight
-    /// blocked BEFORE `create_run`, so it wrote NOTHING.
+    /// that does NOT exist (no graph staged) fails CLOSED to `Some(NoAnswer)` — the caller must not
+    /// fall through to the unbound path and accidentally surface an unbound answer as mission-bound.
+    /// The preflight blocked BEFORE `create_run`, so it wrote NOTHING.
     #[test]
-    fn mission_bound_seam_on_unresolvable_handle_falls_through_none_no_binding() {
+    fn mission_bound_seam_on_unresolvable_handle_returns_no_answer_no_binding() {
         let (rt, _ws) = runtime_with(
             "ns4-fallthrough",
             FinishTransport {
@@ -8693,10 +8832,12 @@ mod authed_route_tests {
             1000,
         );
 
-        // The seam returned None ⇒ the caller falls through to the unbound dispatch (no crash).
+        // The seam returns Some(NoAnswer) ⇒ no unbound dispatch fallback for an explicit handle.
+        let out =
+            out.expect("an explicit but unresolvable handle must fail closed, not fall through");
         assert!(
-            out.is_none(),
-            "an unresolvable handle must fall through (None), not bind / not crash"
+            matches!(out, AuthedAnswer::NoAnswer { .. }),
+            "an unresolvable handle must not bind and must not fall through"
         );
         // The fail-closed preflight wrote nothing: no run, no route_decision, no mission_link.
         assert_eq!(

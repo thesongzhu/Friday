@@ -1,4 +1,5 @@
 import {
+  RUST_ROUTE_CLAUDE_PROVIDER_ID,
   RUST_ROUTE_CODEX_MISSION_DISPATCH_TIMEOUT_MS,
   RUST_ROUTE_READ_TOOL_ALLOWLIST,
 } from "../runtime/friday-rust-route-constants.js";
@@ -18,7 +19,7 @@ import type {
  * READ-ONLY bound agent-run carrying that server-produced handle. The already-merged route→sealed-
  * client `missionContext` road (#752) + the Rust bound seam + the DB resolver then walk the WorkItem
  * `ready_to_dispatch → … → completed_with_proof` (a read-only Finished closes WITHOUT an operator
- * signature). No Rust change; no runtime.rs touch; no new route.
+ * signature). The driver selects only provider/model shapes the Rust route qualifier already admits.
  *
  * ## Trigger contract (mirrors the Rust producer predicate exactly)
  * Dispatch fires ONLY for a FRESH ready intake — `status === "ready" && createdOrReady === true`
@@ -86,6 +87,10 @@ export interface CreateFridayMissionAutoDispatchDriverOptions {
   readonly codexProviderId: string;
   /** Codex model for mission-bound observe-wrapper WorkItems. */
   readonly codexModel: string;
+  /** Claude provider id for mission-bound mirror WorkItems. */
+  readonly claudeProviderId: string;
+  /** Claude model for mission-bound mirror WorkItems. */
+  readonly claudeModel: string;
   /**
    * Optional sink for the fire-and-forget run's rejection (never throws into the intake path).
    * Defaults to a silent swallow — the bound seam is the observability surface, not this driver.
@@ -136,6 +141,15 @@ function isCodexMissionTarget(
   );
 }
 
+function isClaudeMissionTarget(
+  request: FridayRustHubMissionIntakeRequest,
+): boolean {
+  return (
+    request.lane.trim() === RUST_ROUTE_CLAUDE_PROVIDER_ID &&
+    request.targetProviderOrAgent?.trim() === RUST_ROUTE_CLAUDE_PROVIDER_ID
+  );
+}
+
 export function createFridayMissionAutoDispatchDriver(
   options: CreateFridayMissionAutoDispatchDriverOptions,
 ): FridayMissionAutoDispatchDriver {
@@ -145,6 +159,8 @@ export function createFridayMissionAutoDispatchDriver(
     deepseekFlashModel,
     codexProviderId,
     codexModel,
+    claudeProviderId,
+    claudeModel,
     onDispatchError,
   } = options;
 
@@ -187,9 +203,12 @@ export function createFridayMissionAutoDispatchDriver(
             ? request.ownerPrincipal.trim()
             : undefined;
         const codexMissionTarget = isCodexMissionTarget(request);
+        const claudeMissionTarget = isClaudeMissionTarget(request);
         const route = codexMissionTarget
           ? { providerId: codexProviderId, model: codexModel }
-          : { providerId: deepseekProviderId, model: deepseekFlashModel };
+          : claudeMissionTarget
+            ? { providerId: claudeProviderId, model: claudeModel }
+            : { providerId: deepseekProviderId, model: deepseekFlashModel };
 
         // Fire-and-forget: invoke startRun WITHOUT awaiting. The intake response returns
         // immediately; the bound run walks the WorkItem via the Rust seam. A synchronous throw
