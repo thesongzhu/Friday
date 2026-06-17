@@ -8,6 +8,7 @@ import { createFridayMigrationTelemetryWriter } from "./telemetry/friday-migrati
 import type { FridayMigrationTelemetryWriter } from "./telemetry/friday-migration-telemetry.js";
 import { resolveStateDir } from "./paths/friday-state-dir-resolver.js";
 import { createFridaySqliteLayer } from "./sqlite/friday-sqlite-layer.js";
+import { verifyFridayRustHubSchemaHandshake } from "./sqlite/friday-rust-hub-schema-handshake.js";
 
 // SQLite types
 export type {
@@ -35,6 +36,11 @@ export type {
 
 // Migration runner
 export { runFridayMigrations } from "./sqlite/friday-migration-runner.js";
+export {
+  FRIDAY_EXPECTED_RUST_HUB_SCHEMA_VERSION,
+  FRIDAY_HUB_AGENT_RUN_DB_PATH_ENV,
+  verifyFridayRustHubSchemaHandshake,
+} from "./sqlite/friday-rust-hub-schema-handshake.js";
 
 // Migration types
 export type { FridaySqliteMigration } from "./sqlite/migrations/friday-migration.types.js";
@@ -77,7 +83,13 @@ export function initializeFridayState(
     summaryFileName: config.telemetry.summaryFileName,
   });
 
-  // 4. Create sqlite layer (includes migrations)
+  // 4. Fail closed if a configured/present Rust hub DB is not this build's schema peer.
+  const rustHubSchemaHandshake = verifyFridayRustHubSchemaHandshake({
+    stateDir,
+    env: options?.env,
+  });
+
+  // 5. Create sqlite layer (includes migrations)
   const dbPath = `${stateDir}/friday.db`;
   const sqlite = createFridaySqliteLayer({
     dbPath,
@@ -88,11 +100,11 @@ export function initializeFridayState(
     },
   });
 
-  // 5. Record migration telemetry
+  // 6. Record migration telemetry
   telemetry.record({
     type: "sqlite-migration",
     status: "ok",
-    message: "Phase 0 state initialized",
+    message: `Phase 0 state initialized; rust hub schema handshake=${rustHubSchemaHandshake.status}`,
   });
 
   return {
