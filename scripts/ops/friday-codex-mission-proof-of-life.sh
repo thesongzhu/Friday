@@ -609,7 +609,7 @@ while [ "$(date +%s)" -le "${deadline}" ]; do
       AND w.lane = 'codex'
       AND COALESCE(w.target_provider_or_agent,'') = 'codex'
       AND w.status = 'completed_with_proof'
-      AND w.updated_at_ms >= MAX(event.observed_at, ledger.created_at);
+      AND w.updated_at_ms >= ledger.created_at;
   ")"
   WORK_ITEM_CLAIM_BOUND_PROCESS_PROOF="$(sql_count "this completed codex work item with claim-bound process proof" "
     WITH matching_proofs AS (
@@ -621,10 +621,7 @@ while [ "$(date +%s)" -le "${deadline}" ]; do
             THEN COALESCE(link.last_provider_seen_at,0)
           ELSE event.observed_at
         END AS seen_at,
-        CASE
-          WHEN event.observed_at >= ledger.created_at THEN event.observed_at
-          ELSE ledger.created_at
-        END AS evidence_at
+        ledger.created_at AS ledger_created_at
       FROM work_item w
       JOIN json_each(w.proof_receipts) proof
         ON proof.value IS NOT NULL
@@ -648,10 +645,7 @@ while [ "$(date +%s)" -le "${deadline}" ]; do
         AND w.lane = 'codex'
         AND COALESCE(w.target_provider_or_agent,'') = 'codex'
         AND w.status = 'completed_with_proof'
-        AND w.updated_at_ms >= CASE
-          WHEN event.observed_at >= ledger.created_at THEN event.observed_at
-          ELSE ledger.created_at
-        END
+        AND w.updated_at_ms >= ledger.created_at
     )
     SELECT COUNT(DISTINCT p.friday_session_id)
     FROM matching_proofs p
@@ -694,12 +688,7 @@ while [ "$(date +%s)" -le "${deadline}" ]; do
       SELECT
         event.friday_session_id AS friday_session_id,
         ledger.run_id AS run_id,
-        MAX(
-          CASE
-            WHEN event.observed_at >= ledger.created_at THEN event.observed_at
-            ELSE ledger.created_at
-          END
-        ) AS evidence_at
+        MAX(ledger.created_at) AS ledger_created_at
       FROM provider_session_link link
       JOIN provider_session_event event
         ON event.friday_session_id = link.friday_session_id
@@ -728,7 +717,7 @@ while [ "$(date +%s)" -le "${deadline}" ]; do
       WHERE (w.lane = 'codex' OR w.target_provider_or_agent = 'codex')
         AND w.status = 'completed_with_proof'
         AND w.updated_at_ms >= ${STARTED_AT_MS}
-        AND w.updated_at_ms >= r.evidence_at
+        AND w.updated_at_ms >= r.ledger_created_at
     );
   ")"
   WORK_STATUS="$(sql_scalar "SELECT COALESCE(status, '') FROM work_item WHERE work_item_id='${WORK_ITEM_ID}' LIMIT 1;")"

@@ -139,6 +139,9 @@ function createD8FixtureDb(
     addExtraMatchingWorkItemForFirstRun?: boolean;
     addUnrelatedCompletedWorkItem?: boolean;
     addUnqualifiedLinkedSession?: boolean;
+    eventObservedAt?: number;
+    lastProviderSeenAt?: number;
+    ledgerCreatedAt?: number;
     processKind?: string;
     processMatchedClaimId?: string | null;
     processObservedAt?: number;
@@ -191,6 +194,9 @@ function createD8FixtureDb(
   const workspaceClaimWorkItemId = options.workspaceClaimWorkItemId ?? "work-1";
   const workItemProvider = options.workItemProvider ?? provider;
   const workItemUpdatedAt = options.workItemUpdatedAt ?? 1000;
+  const eventObservedAt = options.eventObservedAt ?? 1000;
+  const lastProviderSeenAt = options.lastProviderSeenAt ?? 1000;
+  const ledgerCreatedAt = options.ledgerCreatedAt ?? 1000;
   const db = new Database(dbPath);
   db.exec(`
     CREATE TABLE provider_session_link (
@@ -252,18 +258,18 @@ function createD8FixtureDb(
   db.prepare(
     `INSERT INTO provider_session_link
       (friday_session_id, provider, sync_mode, last_provider_seen_at)
-      VALUES (?, ?, ?, 1000)`,
-  ).run(sessionId, provider, syncMode);
+      VALUES (?, ?, ?, ?)`,
+  ).run(sessionId, provider, syncMode, lastProviderSeenAt);
   db.prepare(
     `INSERT INTO provider_session_event
       (friday_session_id, provider_event_id, provider, observed_at, token_ledger_ref)
-      VALUES (?, 'event-1', ?, 1000, 'ledger-1')`,
-  ).run(sessionId, provider);
+      VALUES (?, 'event-1', ?, ?, 'ledger-1')`,
+  ).run(sessionId, provider, eventObservedAt);
   db.prepare(
     `INSERT INTO token_ledger
       (ledger_id, provider_kind, fallback, total_tokens, created_at, run_id)
-      VALUES ('ledger-1', ?, 0, 12, 1000, 'run-1')`,
-  ).run(ledgerProviderKind);
+      VALUES ('ledger-1', ?, 0, 12, ?, 'run-1')`,
+  ).run(ledgerProviderKind, ledgerCreatedAt);
   db.prepare(
     `INSERT INTO mission
       (mission_id, friday_conversation_id, created_at_ms)
@@ -455,6 +461,27 @@ describe("Codex mission proof gates", () => {
     expect(result.stdout).toContain("PASS - D8 evidence is present");
   });
 
+  it("D8 audit accepts provider events ledger-linked milliseconds after WorkItem completion", async () => {
+    const tempRoot = makeTempRoot();
+    const dbPath = join(tempRoot, "d8-event-after-workitem.sqlite");
+    createD8FixtureDb(dbPath, "friday://agent-run/run-1", {
+      eventObservedAt: 1016,
+      lastProviderSeenAt: 1016,
+      ledgerCreatedAt: 1000,
+      workItemUpdatedAt: 1000,
+    });
+
+    const result = await runD8Audit(dbPath);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("last_1_completed_proof_sessions=1");
+    expect(result.stdout).toContain(
+      "last_1_claim_bound_process_proved_sessions=1",
+    );
+    expect(result.stdout).toContain("unproved_linked_session_runs=0");
+    expect(result.stdout).toContain("PASS - D8 evidence is present");
+  });
+
   it("D8 audit rejects completed WorkItem proof without a bound Mission SurfaceThread", async () => {
     const tempRoot = makeTempRoot();
     const dbPath = join(tempRoot, "d8-proof-without-surface-thread.sqlite");
@@ -527,7 +554,7 @@ describe("Codex mission proof gates", () => {
     );
   });
 
-  it("D8 audit rejects completed WorkItem proof recorded before provider evidence", async () => {
+  it("D8 audit rejects completed WorkItem proof recorded before ledger creation", async () => {
     const tempRoot = makeTempRoot();
     const dbPath = join(tempRoot, "d8-proof-before-evidence.sqlite");
     createD8FixtureDb(dbPath, "friday://agent-run/run-1", {
@@ -1006,9 +1033,7 @@ describe("Codex mission proof gates", () => {
     expect(proofSource).toContain("WORK_ITEM_CLAIM_BOUND_PROCESS_PROOF");
     expect(proofSource).toContain("WORK_ITEM_SURFACE_BOUND_PROOF");
     expect(proofSource).toContain("UNPROVED_LINKED_SESSION_RUNS");
-    expect(proofSource).toContain(
-      "w.updated_at_ms >= MAX(event.observed_at, ledger.created_at)",
-    );
+    expect(proofSource).toContain("w.updated_at_ms >= ledger.created_at");
     expect(proofSource).toContain(
       "surface.surface_thread_id = '${SURFACE_THREAD_ID}'",
     );
@@ -1089,9 +1114,9 @@ describe("Codex mission proof gates", () => {
       "w.lane = r.provider OR w.target_provider_or_agent = r.provider",
     );
     expect(d8Source).toContain(
-      "MAX(e.observed_at, ledger.created_at) AS evidence_at",
+      "ledger.created_at AS ledger_created_at",
     );
-    expect(d8Source).toContain("w.updated_at_ms >= r.evidence_at");
+    expect(d8Source).toContain("w.updated_at_ms >= r.ledger_created_at");
     expect(d8Source).toContain("rust_agent_run_ws_port_ok");
     expect(d8Source).toContain(
       "Rust agent-run WS port did not accept a local TCP connection",

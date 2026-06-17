@@ -413,12 +413,7 @@ unproved_linked_session_runs="$(
         l.friday_session_id AS friday_session_id,
         e.provider AS provider,
         ledger.run_id AS run_id,
-        MAX(
-          CASE
-            WHEN e.observed_at >= ledger.created_at THEN e.observed_at
-            ELSE ledger.created_at
-          END
-        ) AS evidence_at
+        MAX(ledger.created_at) AS ledger_created_at
       FROM provider_session_link l
       JOIN provider_session_event e
         ON e.friday_session_id = l.friday_session_id
@@ -451,7 +446,7 @@ unproved_linked_session_runs="$(
       WHERE (w.lane = r.provider OR w.target_provider_or_agent = r.provider)
         AND w.status = 'completed_with_proof'
         AND w.updated_at_ms >= ${SINCE_MS}
-        AND w.updated_at_ms >= r.evidence_at
+        AND w.updated_at_ms >= r.ledger_created_at
     );
   "
 )"
@@ -611,7 +606,7 @@ last_n_claim_bound_process_proved_sessions="$(
         n.provider AS provider,
         n.seen_at AS seen_at,
         ledger.run_id AS run_id,
-        MAX(e.observed_at, ledger.created_at) AS evidence_at
+        ledger.created_at AS ledger_created_at
       FROM last_n n
       JOIN provider_session_event e
         ON e.friday_session_id = n.friday_session_id
@@ -639,7 +634,7 @@ last_n_claim_bound_process_proved_sessions="$(
         ON (w.lane = r.provider OR w.target_provider_or_agent = r.provider)
        AND w.status = 'completed_with_proof'
        AND w.updated_at_ms >= ${SINCE_MS}
-       AND w.updated_at_ms >= r.evidence_at
+       AND w.updated_at_ms >= r.ledger_created_at
       JOIN json_each(w.proof_receipts) proof
         ON proof.value = 'friday://agent-run/' || r.run_id
     )
@@ -799,7 +794,7 @@ last_n_completed_proof_sessions="$(
         n.friday_session_id AS friday_session_id,
         n.provider AS provider,
         ledger.run_id AS run_id,
-        MAX(e.observed_at, ledger.created_at) AS evidence_at
+        ledger.created_at AS ledger_created_at
       FROM last_n n
       JOIN provider_session_event e
         ON e.friday_session_id = n.friday_session_id
@@ -822,7 +817,7 @@ last_n_completed_proof_sessions="$(
       ON (w.lane = r.provider OR w.target_provider_or_agent = r.provider)
      AND w.status = 'completed_with_proof'
      AND w.updated_at_ms >= ${SINCE_MS}
-     AND w.updated_at_ms >= r.evidence_at
+     AND w.updated_at_ms >= r.ledger_created_at
     JOIN json_each(w.proof_receipts) proof
       ON proof.value = 'friday://agent-run/' || r.run_id;
   "
@@ -874,7 +869,7 @@ last_n_completed_proof_work_items="$(
         n.friday_session_id AS friday_session_id,
         n.provider AS provider,
         ledger.run_id AS run_id,
-        MAX(e.observed_at, ledger.created_at) AS evidence_at
+        ledger.created_at AS ledger_created_at
       FROM last_n n
       JOIN provider_session_event e
         ON e.friday_session_id = n.friday_session_id
@@ -897,7 +892,7 @@ last_n_completed_proof_work_items="$(
       ON (w.lane = r.provider OR w.target_provider_or_agent = r.provider)
      AND w.status = 'completed_with_proof'
      AND w.updated_at_ms >= ${SINCE_MS}
-     AND w.updated_at_ms >= r.evidence_at
+     AND w.updated_at_ms >= r.ledger_created_at
     JOIN json_each(w.proof_receipts) proof
       ON proof.value = 'friday://agent-run/' || r.run_id;
   "
@@ -949,7 +944,7 @@ multi_session_proof_work_items="$(
         n.friday_session_id AS friday_session_id,
         n.provider AS provider,
         ledger.run_id AS run_id,
-        MAX(e.observed_at, ledger.created_at) AS evidence_at
+        ledger.created_at AS ledger_created_at
       FROM last_n n
       JOIN provider_session_event e
         ON e.friday_session_id = n.friday_session_id
@@ -975,7 +970,7 @@ multi_session_proof_work_items="$(
         ON (w.lane = r.provider OR w.target_provider_or_agent = r.provider)
        AND w.status = 'completed_with_proof'
        AND w.updated_at_ms >= ${SINCE_MS}
-       AND w.updated_at_ms >= r.evidence_at
+       AND w.updated_at_ms >= r.ledger_created_at
       JOIN json_each(w.proof_receipts) proof
         ON proof.value = 'friday://agent-run/' || r.run_id
     )
@@ -1035,7 +1030,7 @@ last_n_surface_bound_proof_sessions="$(
         n.friday_session_id AS friday_session_id,
         n.provider AS provider,
         ledger.run_id AS run_id,
-        MAX(e.observed_at, ledger.created_at) AS evidence_at
+        ledger.created_at AS ledger_created_at
       FROM last_n n
       JOIN provider_session_event e
         ON e.friday_session_id = n.friday_session_id
@@ -1058,7 +1053,7 @@ last_n_surface_bound_proof_sessions="$(
       ON (w.lane = r.provider OR w.target_provider_or_agent = r.provider)
      AND w.status = 'completed_with_proof'
      AND w.updated_at_ms >= ${SINCE_MS}
-     AND w.updated_at_ms >= r.evidence_at
+     AND w.updated_at_ms >= r.ledger_created_at
     JOIN json_each(w.proof_receipts) proof
       ON proof.value = 'friday://agent-run/' || r.run_id
     JOIN mission m
@@ -1082,12 +1077,7 @@ surface_unbound_proof_session_runs="$(
         l.friday_session_id AS friday_session_id,
         e.provider AS provider,
         ledger.run_id AS run_id,
-        MAX(
-          CASE
-            WHEN e.observed_at >= ledger.created_at THEN e.observed_at
-            ELSE ledger.created_at
-          END
-        ) AS evidence_at
+        MAX(ledger.created_at) AS ledger_created_at
       FROM provider_session_link l
       JOIN provider_session_event e
         ON e.friday_session_id = l.friday_session_id
@@ -1120,7 +1110,7 @@ surface_unbound_proof_session_runs="$(
       WHERE (w.lane = r.provider OR w.target_provider_or_agent = r.provider)
         AND w.status = 'completed_with_proof'
         AND w.updated_at_ms >= ${SINCE_MS}
-        AND w.updated_at_ms >= r.evidence_at
+        AND w.updated_at_ms >= r.ledger_created_at
     )
     AND NOT EXISTS (
       SELECT 1
@@ -1141,7 +1131,7 @@ surface_unbound_proof_session_runs="$(
       WHERE (w.lane = r.provider OR w.target_provider_or_agent = r.provider)
         AND w.status = 'completed_with_proof'
         AND w.updated_at_ms >= ${SINCE_MS}
-        AND w.updated_at_ms >= r.evidence_at
+        AND w.updated_at_ms >= r.ledger_created_at
     );
   "
 )"
