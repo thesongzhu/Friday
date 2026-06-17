@@ -733,11 +733,19 @@ describe("createFridayMissionSpineRoutes — Lane B organic mutation routes", ()
       const routes = createFridayMissionSpineRoutes({ workbench: null, disabledReason: null, dispatch });
       const route = findPost(routes, "mission.spine.intake.create");
       const response = await route.handler(
-        makeCtx({ principal: BOUND_PRINCIPAL, body: { ...VALID_INTAKE_BODY, includesSensitiveContext: true } }) as never,
+        makeCtx({
+          principal: BOUND_PRINCIPAL,
+          body: {
+            ...VALID_INTAKE_BODY,
+            proofRequirements: [" outcome:AnswerProduced:>=1 "],
+            includesSensitiveContext: true,
+          },
+        }) as never,
       );
       expect(intake).toHaveBeenCalledTimes(1);
       expect(intake).toHaveBeenCalledWith({
         ...VALID_INTAKE_BODY,
+        proofRequirements: ["outcome:AnswerProduced:>=1"],
         includesSensitiveContext: true,
       });
       expect((response as { result: { status: string } }).result.status).toBe("ready");
@@ -796,6 +804,26 @@ describe("createFridayMissionSpineRoutes — Lane B organic mutation routes", ()
       expect((thrown as FridayDomainError).code).toBe("MISSION_SPINE_DISPATCH_REQUEST_INVALID");
       expect((thrown as FridayDomainError).httpStatus).toBe(400);
       expect(JSON.stringify((thrown as FridayDomainError).details)).toContain("missionId_missing_or_empty");
+      expect(intake).not.toHaveBeenCalled();
+    });
+
+    it("intake rejects invalid proofRequirements before dispatch", async () => {
+      const { dispatch, intake } = makeDispatch();
+      const routes = createFridayMissionSpineRoutes({ workbench: null, disabledReason: null, dispatch });
+      const route = findPost(routes, "mission.spine.intake.create");
+      let thrown: unknown = null;
+      try {
+        await route.handler(
+          makeCtx({
+            principal: BOUND_PRINCIPAL,
+            body: { ...VALID_INTAKE_BODY, proofRequirements: [""] },
+          }) as never,
+        );
+      } catch (err) {
+        thrown = err;
+      }
+      expect((thrown as FridayDomainError).httpStatus).toBe(400);
+      expect(JSON.stringify((thrown as FridayDomainError).details)).toContain("proofRequirements_invalid");
       expect(intake).not.toHaveBeenCalled();
     });
 

@@ -454,6 +454,7 @@ export interface FridayRustHubMissionIntakeRequest {
   readonly targetProviderOrAgent?: string;
   readonly capabilityId?: string;
   readonly bodyRef?: string;
+  readonly proofRequirements?: readonly string[];
   readonly includesSensitiveContext?: boolean;
 }
 
@@ -925,6 +926,7 @@ export function buildMissionIntakeEnvelope(
       : {}),
     ...(request.capabilityId !== undefined ? { capability_id: request.capabilityId } : {}),
     ...(request.bodyRef !== undefined ? { body_ref: request.bodyRef } : {}),
+    ...(request.proofRequirements !== undefined ? { proof_requirements: request.proofRequirements } : {}),
     // `includes_sensitive_context` is `#[serde(default)]` WITHOUT `skip_serializing_if` Rust-side,
     // so an absent key deserializes to `false` (interop-safe). We OMIT it when false to keep the
     // outbound minimal; serde's `default` accepts the omission. We only EMIT it when true.

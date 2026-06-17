@@ -14381,6 +14381,7 @@ mod tests {
             "run-err",
             /* completed = */ false,
             "",
+            None,
             /* guarded = */ false,
             10_000,
         )
@@ -14436,6 +14437,7 @@ mod tests {
             "run-deg3",
             /* completed = */ false,
             "",
+            None,
             /* guarded = */ false,
             10_000,
         )

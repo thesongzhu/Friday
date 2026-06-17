@@ -538,6 +538,11 @@ pub fn mission_intake_result_for_db_flagged(
         created_at_ms: now_ms,
         updated_at_ms: now_ms,
     };
+    let proof_requirements = if request.proof_requirements.is_empty() {
+        vec!["Mission-bound provider proof receipt".into()]
+    } else {
+        request.proof_requirements.clone()
+    };
     let work_item = friday_core::WorkItem {
         work_item_id: request.work_item_id.clone(),
         mission_id: request.mission_id.clone(),
@@ -552,7 +557,7 @@ pub fn mission_intake_result_for_db_flagged(
         blocking_reason: None,
         input_refs: vec![input_ref],
         output_refs: Vec::new(),
-        proof_requirements: vec!["Mission-bound provider proof receipt".into()],
+        proof_requirements: proof_requirements.clone(),
         proof_receipts: Vec::new(),
         judgment_memory: friday_core::HandoffJudgmentMemory {
             task: request.intent.clone(),
@@ -567,7 +572,7 @@ pub fn mission_intake_result_for_db_flagged(
             deferred_options: vec!["native UI implementation".into()],
             previous_pitfalls: vec!["provider ack looked like done".into()],
             inheritable_context: vec!["same Mission renders across surfaces".into()],
-            proof_requirements: vec!["ledger/activity/audit proof".into()],
+            proof_requirements,
             ownership_claim_ids: owner_claim_ids,
         },
         created_at_ms: now_ms,
@@ -4345,6 +4350,7 @@ mod tests {
                         target_provider_or_agent: Some("codex".into()),
                         capability_id: Some("observe-wrapper.codex".into()),
                         body_ref: Some("friday://body/mobile/intake-1".into()),
+                        proof_requirements: vec!["outcome:AnswerProduced:>=1".into()],
                         includes_sensitive_context: false,
                     },
                 },
@@ -4393,6 +4399,7 @@ mod tests {
                         target_provider_or_agent: Some("codex".into()),
                         capability_id: Some("observe-wrapper.codex".into()),
                         body_ref: Some("friday://body/desktop/intake-duplicate".into()),
+                        proof_requirements: Vec::new(),
                         includes_sensitive_context: false,
                     },
                 },
@@ -4436,6 +4443,7 @@ mod tests {
                         target_provider_or_agent: Some("codex".into()),
                         capability_id: Some("observe-wrapper.codex".into()),
                         body_ref: Some("friday://surface-event-body/telegram/intake".into()),
+                        proof_requirements: Vec::new(),
                         includes_sensitive_context: false,
                     },
                 },
@@ -4557,6 +4565,14 @@ mod tests {
             .expect("work item");
         assert_eq!(work.status, WorkItemStatus::ReadyToDispatch);
         assert_eq!(work.input_refs, vec!["friday://body/mobile/intake-1"]);
+        assert_eq!(
+            work.proof_requirements,
+            vec!["outcome:AnswerProduced:>=1".to_string()]
+        );
+        assert_eq!(
+            work.judgment_memory.proof_requirements,
+            vec!["outcome:AnswerProduced:>=1".to_string()]
+        );
         let claim_id = format!(
             "claim-codex-provider-session-{}-{}",
             projection_ref_part("mission-intake"),
@@ -4659,6 +4675,7 @@ mod tests {
                         target_provider_or_agent: Some("deepseek".into()),
                         capability_id: Some("ask_friday.deepseek".into()),
                         body_ref: Some("friday://body/mobile/chain".into()),
+                        proof_requirements: Vec::new(),
                         includes_sensitive_context: false,
                     },
                 },
@@ -4774,6 +4791,7 @@ mod tests {
                             target_provider_or_agent: Some("deepseek".into()),
                             capability_id: Some("ask_friday.deepseek".into()),
                             body_ref: Some(body_ref.into()),
+                            proof_requirements: Vec::new(),
                             includes_sensitive_context: false,
                         },
                     },

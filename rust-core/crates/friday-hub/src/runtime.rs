@@ -36,8 +36,9 @@ use crate::hub_server::{project_answer_for_authed, AuthedAnswer, AuthedPrincipal
 use crate::mission_context::MissionContextLookup;
 use crate::mission_preflight::MissionAttachmentOutcome;
 use crate::mission_runtime::{
-    attach_agent_loop_provider_state, resolve_mission_runtime_envelope, MissionRuntimeEnvelope,
-    MissionRuntimeOutcome, MissionRuntimeRequest,
+    answer_produced_outcome_receipt_for_work_item, attach_agent_loop_provider_state,
+    resolve_mission_runtime_envelope, MissionRuntimeEnvelope, MissionRuntimeOutcome,
+    MissionRuntimeRequest,
 };
 use crate::routing::{
     run_routed_loop_with_policy, ProviderClientResolver, ProviderRoute, RouteRegistry,
@@ -2077,6 +2078,16 @@ impl<T: Transport> HubRuntime<T> {
         // (which PASS-2 would then falsely reconcile after a long human approval latency).
         let completed = outcome.status == LoopStatus::Finished;
         let result_link = format!("friday://agent-run/{run_id}");
+        let completion_proof_receipt = if completed {
+            answer_produced_outcome_receipt_for_work_item(
+                &self.db,
+                &envelope.context.work_item_id,
+                run_id,
+                outcome.final_message.as_deref().unwrap_or_default(),
+            )?
+        } else {
+            None
+        };
         let attachment = attach_agent_loop_provider_state(
             &self.db,
             &envelope.context.mission_id,
@@ -2085,6 +2096,7 @@ impl<T: Transport> HubRuntime<T> {
             run_id,
             completed,
             &result_link,
+            completion_proof_receipt.as_deref(),
             // WI-1 (M-6): DARK-flag bool threaded from the entrypoint env read. OFF ⇒ the inline
             // status-advance write (byte-identical); ON ⇒ each hop goes through the guarded
             // `transition_work_item_status` primitive, adding the atomic hash-chained audit row.
@@ -8321,6 +8333,74 @@ mod tests {
         assert!(work_item
             .proof_receipts
             .contains(&format!("friday://agent-run/{run_id}")));
+        assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
+    }
+
+    #[test]
+    fn mission_bound_claude_loop_mints_answer_produced_outcome_receipt_when_required() {
+        let _guard =
+            crate::test_env::EnvVarGuard::set(friday_core::OUTCOME_CHECKED_PROOF_FLAG, "1");
+        let run_id = "run-mloop-claude-outcome";
+        let (rt, _ws) = runtime_with_claude_wired(
+            "mloop-claude-outcome",
+            vec![AgentStep::Finish {
+                message: "CLAUDE-PONG".to_string(),
+            }],
+            Box::new(DenyAllApprovals),
+        );
+        seed_loop_mission(
+            rt.db(),
+            WorkLane::Claude,
+            Some("claude"),
+            WorkItemStatus::ReadyToDispatch,
+        );
+        let mut work_item = rt.db().get_work_item("work-loop").unwrap().unwrap();
+        work_item.proof_requirements = vec!["outcome:AnswerProduced:>=1".into()];
+        rt.db().upsert_work_item(&work_item).unwrap();
+
+        let outcome = rt
+            .run_claude_agent_loop_for_mission_with_overrides(
+                loop_lookup(),
+                "friday-hub-session",
+                run_id,
+                "say pong",
+                None,
+                None,
+                1_000,
+            )
+            .unwrap();
+
+        let MissionBoundLoopOutcome::Ran {
+            outcome,
+            result_link,
+            attachment,
+            ..
+        } = outcome
+        else {
+            panic!("expected the outcome-checked mission-bound Claude loop to run");
+        };
+        assert_eq!(outcome.status, LoopStatus::Finished);
+        assert_eq!(result_link, format!("friday://agent-run/{run_id}"));
+        assert!(matches!(
+            attachment,
+            MissionAttachmentOutcome::Attached {
+                work_item_status: WorkItemStatus::CompletedWithProof,
+                ..
+            }
+        ));
+
+        let usage = rt.db().list_run_token_usage(run_id).unwrap();
+        assert_eq!(usage.len(), 1);
+        assert_eq!(usage[0].provider_kind, "anthropic");
+        let work_item = rt.db().get_work_item("work-loop").unwrap().unwrap();
+        assert_eq!(work_item.status, WorkItemStatus::CompletedWithProof);
+        assert_eq!(
+            work_item.proof_receipts,
+            vec![format!(
+                "proof://outcome/AnswerProduced/{run_id}?signal=answer_len=11"
+            )]
+        );
+        assert!(work_item.completion_outcome_is_proven());
         assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
     }
 

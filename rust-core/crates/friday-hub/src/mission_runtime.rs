@@ -372,10 +372,10 @@ struct CompletedAskProviderAttachment<'a> {
     now_ms: i64,
 }
 
-fn answer_produced_outcome_receipt_for_work_item(
+pub(crate) fn answer_produced_outcome_receipt_for_work_item(
     db: &Db,
     work_item_id: &str,
-    ledger_id: &str,
+    proof_id: &str,
     answer: &str,
 ) -> Result<Option<String>, StorageError> {
     if !friday_core::outcome_checked_proof_enabled() {
@@ -392,7 +392,7 @@ fn answer_produced_outcome_receipt_for_work_item(
         return Ok(None);
     }
     Ok(Some(format!(
-        "proof://outcome/{}/{ledger_id}?signal=answer_len={}",
+        "proof://outcome/{}/{proof_id}?signal=answer_len={}",
         ProofRequirementKind::AnswerProduced.as_str(),
         answer.chars().count()
     )))
@@ -603,6 +603,7 @@ pub(crate) fn attach_agent_loop_provider_state(
     run_id: &str,
     completed: bool,
     proof_ref: &str,
+    completion_proof_receipt: Option<&str>,
     guarded: bool,
     now_ms: i64,
 ) -> Result<MissionAttachmentOutcome, StorageError> {
@@ -624,6 +625,7 @@ pub(crate) fn attach_agent_loop_provider_state(
         &states,
         0,
         proof_ref,
+        completion_proof_receipt,
         guarded,
         now_ms,
     )
@@ -650,6 +652,7 @@ fn drive_provider_states(
     states: &[PendingState],
     start_idx: usize,
     proof_ref: &str,
+    completion_proof_receipt: Option<&str>,
     guarded: bool,
     now_ms: i64,
 ) -> Result<MissionAttachmentOutcome, StorageError> {
@@ -680,7 +683,7 @@ fn drive_provider_states(
         // `executing == 1` on a live paused run (which PASS-2 would then falsely reconcile). The
         // non-final in-flight hops keep `false` (the marker is still live mid-drive).
         let clear_executing = idx + 1 == states.len();
-        last = attach_provider_timeline_state_guarded(
+        last = attach_provider_timeline_state_guarded_with_completion_receipt(
             db,
             ProviderTimelineAttachment {
                 mission_id: mission_id.to_string(),
@@ -694,6 +697,9 @@ fn drive_provider_states(
             },
             guarded,
             clear_executing,
+            (state == PendingState::ProviderCompleted)
+                .then_some(())
+                .and(completion_proof_receipt),
         )?;
         if matches!(last, MissionAttachmentOutcome::Blocked { .. }) {
             return Ok(last);
@@ -1765,6 +1771,7 @@ mod tests {
             "run-loop-1",
             /* completed = */ true,
             "friday://agent-run/run-loop-1",
+            None,
             /* guarded = */ true,
             now,
         )
@@ -1829,6 +1836,7 @@ mod tests {
             "run-loop-2",
             /* completed = */ true,
             "friday://agent-run/run-loop-2",
+            None,
             /* guarded = */ false,
             now,
         )
@@ -1907,6 +1915,7 @@ mod tests {
             "run-z",
             /* completed = */ false,
             "friday://agent-run/run-z",
+            None,
             /* guarded = */ false,
             10,
         )
