@@ -85,6 +85,8 @@ describe("FridaySecretCrypto", () => {
   describe("getMasterKey", () => {
     const originalEnv = process.env.FRIDAY_MASTER_KEY;
     const originalSource = process.env.FRIDAY_MASTER_KEY_SOURCE;
+    const originalKeychainService = process.env.FRIDAY_MASTER_KEY_KEYCHAIN_SERVICE;
+    const originalKeychainAccount = process.env.FRIDAY_MASTER_KEY_KEYCHAIN_ACCOUNT;
 
     beforeEach(() => {
       resetMasterKeyCache();
@@ -100,6 +102,16 @@ describe("FridaySecretCrypto", () => {
         process.env.FRIDAY_MASTER_KEY_SOURCE = originalSource;
       } else {
         delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+      }
+      if (originalKeychainService !== undefined) {
+        process.env.FRIDAY_MASTER_KEY_KEYCHAIN_SERVICE = originalKeychainService;
+      } else {
+        delete process.env.FRIDAY_MASTER_KEY_KEYCHAIN_SERVICE;
+      }
+      if (originalKeychainAccount !== undefined) {
+        process.env.FRIDAY_MASTER_KEY_KEYCHAIN_ACCOUNT = originalKeychainAccount;
+      } else {
+        delete process.env.FRIDAY_MASTER_KEY_KEYCHAIN_ACCOUNT;
       }
       resetMasterKeyCache();
     });
@@ -122,6 +134,8 @@ describe("FridaySecretCrypto", () => {
     it("does not generate and write a keychain master key through process arguments", () => {
       delete process.env.FRIDAY_MASTER_KEY;
       process.env.FRIDAY_MASTER_KEY_SOURCE = "keychain";
+      process.env.FRIDAY_MASTER_KEY_KEYCHAIN_SERVICE = `Friday Test Missing ${crypto.randomUUID()}`;
+      process.env.FRIDAY_MASTER_KEY_KEYCHAIN_ACCOUNT = `friday-test-${crypto.randomUUID()}`;
 
       expect(() => getMasterKey()).toThrow("FRIDAY_MASTER_KEY_SOURCE=keychain");
     });

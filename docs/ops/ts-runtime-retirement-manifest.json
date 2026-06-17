@@ -3282,6 +3282,19 @@
       "next_action": "Replace the fail-closed response with the Rust-owned session memory extraction entrypoint when available."
     },
     {
+      "id": "memory_items_create",
+      "route": {
+        "method": "POST",
+        "path": "/v1/memory/items",
+        "operationId": "memory.items.create"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "D17/D1 retires legacy TypeScript durable memory writes to stop friday.db diverging from the Rust-owned memory confirmation spine. src/hub/friday-hub-bootstrap.ts wires createFridayMemoryService with tsMemoryWritesEnabled: config.allowTestOnlyTsMemoryWrites === true, so default/live hub construction disables TS durable writes. src/memory/services/friday-memory-service.ts then throws TS_RUNTIME_DURABLE_MEMORY_WRITE_RETIRED from store() before id generation, provider embedding, item insert, embedding insert, or dedup advisory writes. The POST /v1/memory/items route still performs request validation, approval-boundary checks, idempotency replay reads, and principal guard setup before delegating to the guarded core store; legacy create behavior is reachable only through explicit allowTestOnlyTsMemoryWrites test-oracle wiring.",
+      "next_action": "Replace the fail-closed response with the Rust-owned memory confirmation spine write entrypoint when available; keep memory reads/search bounded as compatibility surfaces."
+    },
+    {
       "id": "sessions_outbound_send",
       "route": {
         "method": "POST",

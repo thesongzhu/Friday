@@ -5,6 +5,7 @@ import {
   buildSummary,
   isAgentRunStartFailClosed,
   isAutonomySkillLifecycleFailClosed,
+  isMemoryDurableItemCreateFailClosed,
   isObservabilityAlertDestinationCreateFailClosed,
   isSessionCreateFailClosed,
   isSkillImportFailClosed,
@@ -15,6 +16,7 @@ import {
   resolveGateSuiteReportRoot,
   resolveRetiredAgentRunScenarioExclusions,
   resolveRetiredAutonomySkillLifecycleScenarioExclusions,
+  resolveRetiredMemoryDurableWriteScenarioExclusions,
   resolveRetiredObservabilityScenarioExclusions,
   resolveRetiredSessionScenarioExclusions,
   resolveRetiredSkillImportScenarioExclusions,
@@ -338,6 +340,37 @@ describe("run-real-green-gate helpers", () => {
     ]);
   });
 
+  it("detects fail-closed durable memory item create retirement from the manifest", () => {
+    expect(isMemoryDurableItemCreateFailClosed({
+      surfaces: [
+        {
+          id: "memory_items_create",
+          classification: "fail_closed",
+          executes_product_logic: false,
+        },
+      ],
+    })).toBe(true);
+    expect(isMemoryDurableItemCreateFailClosed({
+      surfaces: [
+        {
+          id: "memory_items_create",
+          classification: "compat_shim",
+          executes_product_logic: true,
+        },
+      ],
+    })).toBe(false);
+    expect(isMemoryDurableItemCreateFailClosed({ surfaces: [] })).toBe(false);
+  });
+
+  it("excludes the memory item create contract while durable TS memory writes are fail-closed", () => {
+    expect(resolveRetiredMemoryDurableWriteScenarioExclusions(process.cwd())).toEqual([
+      {
+        scenarioId: "l2-memory-items-create-contract",
+        reason: "POST /v1/memory/items is classified fail_closed in the TS runtime retirement manifest.",
+      },
+    ]);
+  });
+
   it("preserves retired runtime scenario exclusions in the terminal summary", () => {
     const summary = buildSummary({
       runId: "run-1",
@@ -403,6 +436,12 @@ describe("run-real-green-gate helpers", () => {
           reason: "POST /v1/sessions is classified fail_closed in the TS runtime retirement manifest.",
         },
       ],
+      retiredMemoryDurableWriteScenarioExclusions: [
+        {
+          scenarioId: "l2-memory-items-create-contract",
+          reason: "POST /v1/memory/items is classified fail_closed in the TS runtime retirement manifest.",
+        },
+      ],
     });
 
     expect(summary.retiredSessionScenarioExclusions).toEqual([
@@ -439,6 +478,12 @@ describe("run-real-green-gate helpers", () => {
       {
         scenarioId: "l5-workflow-approval-roundtrip",
         reason: "POST /v1/workflow-runs is classified fail_closed in the TS runtime retirement manifest.",
+      },
+    ]);
+    expect(summary.retiredMemoryDurableWriteScenarioExclusions).toEqual([
+      {
+        scenarioId: "l2-memory-items-create-contract",
+        reason: "POST /v1/memory/items is classified fail_closed in the TS runtime retirement manifest.",
       },
     ]);
     expect(summary.gate).toEqual({

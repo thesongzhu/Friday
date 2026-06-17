@@ -146,6 +146,7 @@ describe.skipIf(!CORE_E2E_ENABLED)("Friday Real Scenarios E2E (NON-LLM)", () => 
       allowTestOnlySessionExecution: true,
       allowTestOnlySessionRunExecution: true,
       allowTestOnlyAgentRunExecution: true,
+      allowTestOnlyTsMemoryWrites: true,
       allowTestOnlySessionMemoryExtractionExecution: true,
       allowTestOnlySkillConverterExecution: true,
     });
@@ -1673,6 +1674,7 @@ describe.skipIf(!ANTHROPIC_E2E_ENABLED || !HAS_LLM_CREDENTIAL)(
         allowTestOnlySessionExecution: true,
         allowTestOnlySessionRunExecution: true,
         allowTestOnlyAgentRunExecution: true,
+        allowTestOnlyTsMemoryWrites: true,
         allowTestOnlySessionMemoryExtractionExecution: true,
       });
       await hub.start();

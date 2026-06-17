@@ -73,6 +73,13 @@ export interface CreateFridayMemoryServiceDeps {
   nowIso: () => string;
   embeddingModel?: string;
   /**
+   * D17/D1 two-DB split guard. When false, this TS service may still read/search
+   * but must not write durable memory rows into the legacy TS SQLite state DB.
+   * Defaults to true for direct unit construction; hub bootstrap pins prod/default
+   * to false unless a test-oracle override opts into legacy fixture writes.
+   */
+  tsMemoryWritesEnabled?: boolean;
+  /**
    * B4 / FRI-AUD-006 advisory-only dedup wiring. Optional. If provided,
    * called from `store()` AFTER successful persist when a near-duplicate is
    * detected. The sink MUST NOT throw (the service catches and logs to
