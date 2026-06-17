@@ -8480,7 +8480,7 @@ mod authed_route_tests {
         );
         let _watchdog = EnvRestore::set(
             friday_providers::codex_appserver::FRIDAY_CODEX_APP_SERVER_TIMEOUT_MS,
-            "120000",
+            "300000",
         );
         let (rt, ws) = runtime_with(
             "ns4-live-codex-observe-soak",

@@ -892,27 +892,60 @@ describe("Codex mission proof gates", () => {
     expect(proofSource).toContain(
       'require_file_contains "${RUST_WS_LAUNCH_WRAPPER}" "--validate-codex"',
     );
+    expect(proofSource).toContain(
+      "readonly DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS=300000",
+    );
+    expect(proofSource).toContain(
+      "readonly CODEX_MISSION_DISPATCH_TIMEOUT_MS=300000",
+    );
+    expect(proofSource).toContain(
+      "readonly PROOF_TIMEOUT_MS=$((TIMEOUT_SEC * 1000))",
+    );
+    expect(
+      proofSource.indexOf(
+        'require_positive_int "FRIDAY_CODEX_MISSION_PROOF_TIMEOUT_SEC"',
+      ),
+    ).toBeLessThan(
+      proofSource.indexOf(
+        "readonly PROOF_TIMEOUT_MS=$((TIMEOUT_SEC * 1000))",
+      ),
+    );
+    expect(proofSource).toContain("REQUIRED_CODEX_APP_SERVER_TIMEOUT_MS");
+    expect(proofSource).toContain(
+      'require_codex_app_server_timeout "Rust default" "${DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS}"',
+    );
+    expect(proofSource).toContain("CODEX_APP_SERVER_TIMEOUT_EFFECTIVE_SOURCE_SEEN");
+    expect(proofSource).toContain("RUST_WS_LAUNCH_PLIST");
+    expect(proofSource).toContain("RUST_WS_LAUNCH_LABEL");
+    expect(proofSource).toContain("RUST_WS_LAUNCH_DOMAIN");
+    expect(proofSource).toContain('rust_ws_export_value()');
+    expect(proofSource).toContain("plist_optional_env_value()");
+    expect(proofSource).toContain("launchctl_optional_env_value()");
+    expect(proofSource).toContain("Rust WS LaunchAgent plist");
+    expect(proofSource).toContain("live Rust WS LaunchAgent");
+    expect(proofSource).toContain("FRIDAY_CODEX_APP_SERVER_TIMEOUT_MS");
+    expect(proofSource).toContain("shorter than required");
     expect(proofSource).toContain("TS_HUB_LAUNCH_PLIST");
     expect(proofSource).toContain(
-      'require_plist_env_equals "FRIDAY_MISSION_AUTO_DISPATCH" "1"',
+      'require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_AUTO_DISPATCH" "1"',
     );
     expect(proofSource).toContain(
-      'require_plist_env_equals "FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST" "1"',
+      'require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST" "1"',
     );
     expect(proofSource).toContain(
-      'require_plist_env_equals "FRIDAY_ROUTE_AGENT_RUN_VIA_RUST" "1"',
+      'require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_ROUTE_AGENT_RUN_VIA_RUST" "1"',
     );
     expect(proofSource).toContain(
-      'require_plist_env_equals "FRIDAY_HUB_AGENT_RUN_WS_PORT" "48750"',
+      'require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_HUB_AGENT_RUN_WS_PORT" "48750"',
     );
     expect(proofSource).toContain(
-      'require_plist_env_equals "FRIDAY_HUB_AGENT_RUN_DB_PATH" "${RUST_HUB_DB}"',
+      'require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_HUB_AGENT_RUN_DB_PATH" "${RUST_HUB_DB}"',
     );
     expect(proofSource).toContain(
-      'require_plist_path_contains "PATH" "/Users/jarvis/.local/bin"',
+      'require_plist_path_contains "${TS_HUB_LAUNCH_PLIST}" "PATH" "/Users/jarvis/.local/bin"',
     );
     expect(proofSource).toContain(
-      'TS_HUB_NODE_BIN="$(plist_env_value "FRIDAY_NODE_BIN")"',
+      'TS_HUB_NODE_BIN="$(plist_env_value "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_NODE_BIN" "TS hub")"',
     );
     expect(proofSource).toContain("tsHubLaunchFlags: ok");
     expect(proofSource).toContain("TS_HUB_LAUNCH_LABEL");
@@ -921,28 +954,31 @@ describe("Codex mission proof gates", () => {
       'launchctl print "${TS_HUB_LAUNCH_DOMAIN}/${TS_HUB_LAUNCH_LABEL}"',
     );
     expect(proofSource).toContain(
+      'launchctl print "${RUST_WS_LAUNCH_DOMAIN}/${RUST_WS_LAUNCH_LABEL}"',
+    );
+    expect(proofSource).toContain(
       '$1 == "environment" && $2 == "=" && $3 == "{"',
     );
     expect(proofSource).toContain(
-      'require_launchctl_env_equals "FRIDAY_MISSION_AUTO_DISPATCH" "1"',
+      'require_launchctl_env_equals "${TS_HUB_LAUNCHCTL_PRINT}" "FRIDAY_MISSION_AUTO_DISPATCH" "1"',
     );
     expect(proofSource).toContain(
-      'require_launchctl_env_equals "FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST" "1"',
+      'require_launchctl_env_equals "${TS_HUB_LAUNCHCTL_PRINT}" "FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST" "1"',
     );
     expect(proofSource).toContain(
-      'require_launchctl_env_equals "FRIDAY_ROUTE_AGENT_RUN_VIA_RUST" "1"',
+      'require_launchctl_env_equals "${TS_HUB_LAUNCHCTL_PRINT}" "FRIDAY_ROUTE_AGENT_RUN_VIA_RUST" "1"',
     );
     expect(proofSource).toContain(
-      'require_launchctl_env_equals "FRIDAY_HUB_AGENT_RUN_WS_PORT" "48750"',
+      'require_launchctl_env_equals "${TS_HUB_LAUNCHCTL_PRINT}" "FRIDAY_HUB_AGENT_RUN_WS_PORT" "48750"',
     );
     expect(proofSource).toContain(
-      'require_launchctl_env_equals "FRIDAY_HUB_AGENT_RUN_DB_PATH" "${RUST_HUB_DB}"',
+      'require_launchctl_env_equals "${TS_HUB_LAUNCHCTL_PRINT}" "FRIDAY_HUB_AGENT_RUN_DB_PATH" "${RUST_HUB_DB}"',
     );
     expect(proofSource).toContain(
-      'require_launchctl_path_contains "PATH" "/Users/jarvis/.local/bin"',
+      'require_launchctl_path_contains "${TS_HUB_LAUNCHCTL_PRINT}" "PATH" "/Users/jarvis/.local/bin"',
     );
     expect(proofSource).toContain(
-      'TS_HUB_RUNTIME_NODE_BIN="$(launchctl_env_value "FRIDAY_NODE_BIN")"',
+      'TS_HUB_RUNTIME_NODE_BIN="$(launchctl_env_value "${TS_HUB_LAUNCHCTL_PRINT}" "FRIDAY_NODE_BIN" "TS hub")"',
     );
     expect(proofSource).toContain("tsHubLaunchRuntime: ok");
     expect(
@@ -956,13 +992,16 @@ describe("Codex mission proof gates", () => {
     ).toBeLessThan(proofSource.indexOf("read -rs PASSPHRASE"));
     expect(
       proofSource.indexOf(
-        'require_plist_env_equals "FRIDAY_MISSION_AUTO_DISPATCH" "1"',
+        'require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_AUTO_DISPATCH" "1"',
       ),
     ).toBeLessThan(proofSource.indexOf("read -rs PASSPHRASE"));
     expect(
       proofSource.indexOf(
-        'require_launchctl_env_equals "FRIDAY_MISSION_AUTO_DISPATCH" "1"',
+        'require_launchctl_env_equals "${TS_HUB_LAUNCHCTL_PRINT}" "FRIDAY_MISSION_AUTO_DISPATCH" "1"',
       ),
+    ).toBeLessThan(proofSource.indexOf("read -rs PASSPHRASE"));
+    expect(
+      proofSource.indexOf("RUST_WS_RUNTIME_CODEX_APP_SERVER_TIMEOUT_MS"),
     ).toBeLessThan(proofSource.indexOf("read -rs PASSPHRASE"));
     expect(proofSource).toContain("WORK_ITEM_CLAIM_BOUND_PROCESS_PROOF");
     expect(proofSource).toContain("WORK_ITEM_SURFACE_BOUND_PROOF");

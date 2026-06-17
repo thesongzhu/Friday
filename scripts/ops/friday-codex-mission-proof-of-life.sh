@@ -33,10 +33,15 @@ readonly TS_HUB="${FRIDAY_TS_HUB_URL:-http://127.0.0.1:3141}"
 readonly RUST_HUB_DB="${FRIDAY_HUB_AGENT_RUN_DB_PATH:-/Users/jarvis/Library/Application Support/Friday/state/rust-hub.sqlite}"
 readonly OWNER_PRINCIPAL="${FRIDAY_CODEX_MISSION_PROOF_OWNER:-admin-001}"
 readonly TIMEOUT_SEC="${FRIDAY_CODEX_MISSION_PROOF_TIMEOUT_SEC:-180}"
+readonly DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS=300000
+readonly CODEX_MISSION_DISPATCH_TIMEOUT_MS=300000
 readonly POLL_INTERVAL_SEC="${FRIDAY_CODEX_MISSION_PROOF_POLL_INTERVAL_SEC:-3}"
 readonly PASSPHRASE_STDIN="${FRIDAY_CODEX_MISSION_PROOF_PASSPHRASE_STDIN:-0}"
 readonly PREFLIGHT_ONLY="${FRIDAY_CODEX_MISSION_PROOF_PREFLIGHT_ONLY:-0}"
 readonly RUST_WS_LAUNCH_WRAPPER="${FRIDAY_RUST_AGENT_RUN_WS_WRAPPER:-/Users/jarvis/.friday/launchd/rust-agent-run-ws-server-run.sh}"
+readonly RUST_WS_LAUNCH_PLIST="${FRIDAY_RUST_AGENT_RUN_WS_LAUNCH_PLIST:-/Users/jarvis/Library/LaunchAgents/com.friday.rust-agent-run-ws-server.plist}"
+readonly RUST_WS_LAUNCH_LABEL="${FRIDAY_RUST_AGENT_RUN_WS_LAUNCH_LABEL:-com.friday.rust-agent-run-ws-server}"
+readonly RUST_WS_LAUNCH_DOMAIN="${FRIDAY_RUST_AGENT_RUN_WS_LAUNCH_DOMAIN:-gui/$(id -u)}"
 readonly RUST_WS_HOST="127.0.0.1"
 readonly RUST_WS_PORT="48750"
 readonly TS_HUB_LAUNCH_PLIST="${FRIDAY_TS_HUB_LAUNCH_PLIST:-/Users/jarvis/Library/LaunchAgents/com.friday.hub.plist}"
@@ -91,6 +96,12 @@ require_positive_int() {
 
 require_positive_int "FRIDAY_CODEX_MISSION_PROOF_TIMEOUT_SEC" "${TIMEOUT_SEC}"
 require_positive_int "FRIDAY_CODEX_MISSION_PROOF_POLL_INTERVAL_SEC" "${POLL_INTERVAL_SEC}"
+readonly PROOF_TIMEOUT_MS=$((TIMEOUT_SEC * 1000))
+REQUIRED_CODEX_APP_SERVER_TIMEOUT_MS="${CODEX_MISSION_DISPATCH_TIMEOUT_MS}"
+if [ "${PROOF_TIMEOUT_MS}" -gt "${REQUIRED_CODEX_APP_SERVER_TIMEOUT_MS}" ]; then
+  REQUIRED_CODEX_APP_SERVER_TIMEOUT_MS="${PROOF_TIMEOUT_MS}"
+fi
+CODEX_APP_SERVER_TIMEOUT_EFFECTIVE_SOURCE_SEEN=0
 if [ "${PASSPHRASE_STDIN}" != "0" ] && [ "${PASSPHRASE_STDIN}" != "1" ]; then
   echo "FATAL: FRIDAY_CODEX_MISSION_PROOF_PASSPHRASE_STDIN must be 0 or 1; got '${PASSPHRASE_STDIN}'." >&2
   exit 3
@@ -105,6 +116,10 @@ if [ "${POLL_INTERVAL_SEC}" -gt "${TIMEOUT_SEC}" ]; then
 fi
 if [ ! -r "${RUST_WS_LAUNCH_WRAPPER}" ]; then
   echo "FATAL: Rust agent-run WS launch wrapper is not readable at: ${RUST_WS_LAUNCH_WRAPPER}" >&2
+  exit 3
+fi
+if [ ! -r "${RUST_WS_LAUNCH_PLIST}" ]; then
+  echo "FATAL: Rust agent-run WS LaunchAgent plist is not readable at: ${RUST_WS_LAUNCH_PLIST}" >&2
   exit 3
 fi
 if [ ! -r "${TS_HUB_LAUNCH_PLIST}" ]; then
@@ -143,64 +158,119 @@ require_file_contains "${RUST_WS_LAUNCH_WRAPPER}" "export FRIDAY_OBSERVE_WRAPPER
 require_file_contains "${RUST_WS_LAUNCH_WRAPPER}" "export FRIDAY_MISSION_BOUND_RUN=1" "mission-bound run flag"
 require_file_contains "${RUST_WS_LAUNCH_WRAPPER}" "--validate-codex" "Rust server Codex validation flag"
 
-plist_env_value() {
+rust_ws_export_value() {
   local key="$1"
+  local line
+  line="$(grep -E "^[[:space:]]*export[[:space:]]+${key}=" "${RUST_WS_LAUNCH_WRAPPER}" | tail -n1 || true)"
+  if [ -z "${line}" ]; then
+    return 1
+  fi
+  line="${line#*${key}=}"
+  line="${line%%#*}"
+  line="${line#"${line%%[![:space:]]*}"}"
+  line="${line%"${line##*[![:space:]]}"}"
+  line="${line%\"}"
+  line="${line#\"}"
+  line="${line%\'}"
+  line="${line#\'}"
+  printf '%s' "${line}"
+}
+
+require_codex_app_server_timeout() {
+  local label="$1"
+  local value="$2"
+  if [[ ! "${value}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "FATAL: ${label} FRIDAY_CODEX_APP_SERVER_TIMEOUT_MS must be a literal positive millisecond value; got '${value}'." >&2
+    exit 3
+  fi
+  if [ "${value}" -lt "${REQUIRED_CODEX_APP_SERVER_TIMEOUT_MS}" ]; then
+    echo "FATAL: ${label} FRIDAY_CODEX_APP_SERVER_TIMEOUT_MS=${value}ms is shorter than required ${REQUIRED_CODEX_APP_SERVER_TIMEOUT_MS}ms." >&2
+    exit 3
+  fi
+}
+
+if CODEX_APP_SERVER_TIMEOUT_MS_OVERRIDE="$(rust_ws_export_value "FRIDAY_CODEX_APP_SERVER_TIMEOUT_MS")"; then
+  require_codex_app_server_timeout "Rust WS launch wrapper" "${CODEX_APP_SERVER_TIMEOUT_MS_OVERRIDE}"
+  CODEX_APP_SERVER_TIMEOUT_EFFECTIVE_SOURCE_SEEN=1
+fi
+
+plist_optional_env_value() {
+  local plist="$1"
+  local key="$2"
+  /usr/bin/plutil -extract "EnvironmentVariables.${key}" raw -o - "${plist}" 2>/dev/null
+}
+
+plist_env_value() {
+  local plist="$1"
+  local key="$2"
+  local label="$3"
   local value
-  if ! value="$(/usr/bin/plutil -extract "EnvironmentVariables.${key}" raw -o - "${TS_HUB_LAUNCH_PLIST}" 2>/dev/null)"; then
-    echo "FATAL: TS hub LaunchAgent plist is missing EnvironmentVariables.${key}." >&2
+  if ! value="$(plist_optional_env_value "${plist}" "${key}")"; then
+    echo "FATAL: ${label} LaunchAgent plist is missing EnvironmentVariables.${key}." >&2
     exit 3
   fi
   printf '%s' "${value}"
 }
 
 require_plist_env_equals() {
-  local key="$1"
-  local expected="$2"
-  local label="$3"
+  local plist="$1"
+  local key="$2"
+  local expected="$3"
+  local label="$4"
   local actual
-  actual="$(plist_env_value "${key}")"
+  actual="$(plist_env_value "${plist}" "${key}" "${label}")"
   if [ "${actual}" != "${expected}" ]; then
-    echo "FATAL: ${label} mismatch in ${TS_HUB_LAUNCH_PLIST}; expected '${expected}', got '${actual}'." >&2
+    echo "FATAL: ${label} mismatch in ${plist}; expected '${expected}', got '${actual}'." >&2
     exit 3
   fi
 }
 
 require_plist_path_contains() {
-  local key="$1"
-  local required_path="$2"
-  local label="$3"
+  local plist="$1"
+  local key="$2"
+  local required_path="$3"
+  local label="$4"
   local actual
-  actual="$(plist_env_value "${key}")"
+  actual="$(plist_env_value "${plist}" "${key}" "${label}")"
   case ":${actual}:" in
     *":${required_path}:"*) ;;
     *)
-      echo "FATAL: ${label} missing '${required_path}' in ${TS_HUB_LAUNCH_PLIST}." >&2
+      echo "FATAL: ${label} missing '${required_path}' in ${plist}." >&2
       exit 3
       ;;
   esac
 }
 
-require_plist_env_equals "FRIDAY_MISSION_AUTO_DISPATCH" "1" "TS hub mission auto-dispatch flag"
-require_plist_env_equals "FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST" "1" "TS hub mission spine Rust route flag"
-require_plist_env_equals "FRIDAY_ROUTE_AGENT_RUN_VIA_RUST" "1" "TS hub agent-run Rust route flag"
-require_plist_env_equals "FRIDAY_HUB_AGENT_RUN_WS_PORT" "48750" "TS hub Rust agent-run WS port"
-require_plist_env_equals "FRIDAY_HUB_AGENT_RUN_DB_PATH" "${RUST_HUB_DB}" "TS hub Rust DB path"
-require_plist_path_contains "PATH" "/Users/jarvis/.local/bin" "TS hub PATH"
-TS_HUB_NODE_BIN="$(plist_env_value "FRIDAY_NODE_BIN")"
+if RUST_WS_PLIST_CODEX_APP_SERVER_TIMEOUT_MS="$(plist_optional_env_value "${RUST_WS_LAUNCH_PLIST}" "FRIDAY_CODEX_APP_SERVER_TIMEOUT_MS")"; then
+  require_codex_app_server_timeout "Rust WS LaunchAgent plist" "${RUST_WS_PLIST_CODEX_APP_SERVER_TIMEOUT_MS}"
+fi
+
+require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_AUTO_DISPATCH" "1" "TS hub mission auto-dispatch flag"
+require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST" "1" "TS hub mission spine Rust route flag"
+require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_ROUTE_AGENT_RUN_VIA_RUST" "1" "TS hub agent-run Rust route flag"
+require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_HUB_AGENT_RUN_WS_PORT" "48750" "TS hub Rust agent-run WS port"
+require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_HUB_AGENT_RUN_DB_PATH" "${RUST_HUB_DB}" "TS hub Rust DB path"
+require_plist_path_contains "${TS_HUB_LAUNCH_PLIST}" "PATH" "/Users/jarvis/.local/bin" "TS hub PATH"
+TS_HUB_NODE_BIN="$(plist_env_value "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_NODE_BIN" "TS hub")"
 if [ ! -x "${TS_HUB_NODE_BIN}" ]; then
   echo "FATAL: TS hub FRIDAY_NODE_BIN is not executable at: ${TS_HUB_NODE_BIN}" >&2
   exit 3
 fi
 
+if ! RUST_WS_LAUNCHCTL_PRINT="$(launchctl print "${RUST_WS_LAUNCH_DOMAIN}/${RUST_WS_LAUNCH_LABEL}" 2>/dev/null)"; then
+  echo "FATAL: live Rust WS LaunchAgent is not printable at ${RUST_WS_LAUNCH_DOMAIN}/${RUST_WS_LAUNCH_LABEL}." >&2
+  exit 3
+fi
 if ! TS_HUB_LAUNCHCTL_PRINT="$(launchctl print "${TS_HUB_LAUNCH_DOMAIN}/${TS_HUB_LAUNCH_LABEL}" 2>/dev/null)"; then
   echo "FATAL: live TS hub LaunchAgent is not printable at ${TS_HUB_LAUNCH_DOMAIN}/${TS_HUB_LAUNCH_LABEL}." >&2
   exit 3
 fi
 
-launchctl_env_value() {
-  local key="$1"
+launchctl_optional_env_value() {
+  local print_body="$1"
+  local key="$2"
   local value
-  if ! value="$(printf '%s\n' "${TS_HUB_LAUNCHCTL_PRINT}" | awk -v key="${key}" '
+  printf '%s\n' "${print_body}" | awk -v key="${key}" '
     $1 == "environment" && $2 == "=" && $3 == "{" {
       in_env = 1
       next
@@ -219,47 +289,65 @@ launchctl_env_value() {
         exit 1
       }
     }
-  ')"; then
-    echo "FATAL: live TS hub LaunchAgent environment is missing ${key}." >&2
+  '
+}
+
+launchctl_env_value() {
+  local print_body="$1"
+  local key="$2"
+  local label="$3"
+  local value
+  if ! value="$(launchctl_optional_env_value "${print_body}" "${key}")"; then
+    echo "FATAL: live ${label} LaunchAgent environment is missing ${key}." >&2
     exit 3
   fi
   printf '%s' "${value}"
 }
 
 require_launchctl_env_equals() {
-  local key="$1"
-  local expected="$2"
-  local label="$3"
+  local print_body="$1"
+  local key="$2"
+  local expected="$3"
+  local label="$4"
   local actual
-  actual="$(launchctl_env_value "${key}")"
+  actual="$(launchctl_env_value "${print_body}" "${key}" "${label}")"
   if [ "${actual}" != "${expected}" ]; then
-    echo "FATAL: ${label} mismatch in live TS hub LaunchAgent; expected '${expected}', got '${actual}'." >&2
+    echo "FATAL: ${label} mismatch in live LaunchAgent; expected '${expected}', got '${actual}'." >&2
     exit 3
   fi
 }
 
 require_launchctl_path_contains() {
-  local key="$1"
-  local required_path="$2"
-  local label="$3"
+  local print_body="$1"
+  local key="$2"
+  local required_path="$3"
+  local label="$4"
   local actual
-  actual="$(launchctl_env_value "${key}")"
+  actual="$(launchctl_env_value "${print_body}" "${key}" "${label}")"
   case ":${actual}:" in
     *":${required_path}:"*) ;;
     *)
-      echo "FATAL: ${label} missing '${required_path}' in live TS hub LaunchAgent." >&2
+      echo "FATAL: ${label} missing '${required_path}' in live LaunchAgent." >&2
       exit 3
       ;;
   esac
 }
 
-require_launchctl_env_equals "FRIDAY_MISSION_AUTO_DISPATCH" "1" "live TS hub mission auto-dispatch flag"
-require_launchctl_env_equals "FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST" "1" "live TS hub mission spine Rust route flag"
-require_launchctl_env_equals "FRIDAY_ROUTE_AGENT_RUN_VIA_RUST" "1" "live TS hub agent-run Rust route flag"
-require_launchctl_env_equals "FRIDAY_HUB_AGENT_RUN_WS_PORT" "48750" "live TS hub Rust agent-run WS port"
-require_launchctl_env_equals "FRIDAY_HUB_AGENT_RUN_DB_PATH" "${RUST_HUB_DB}" "live TS hub Rust DB path"
-require_launchctl_path_contains "PATH" "/Users/jarvis/.local/bin" "live TS hub PATH"
-TS_HUB_RUNTIME_NODE_BIN="$(launchctl_env_value "FRIDAY_NODE_BIN")"
+if RUST_WS_RUNTIME_CODEX_APP_SERVER_TIMEOUT_MS="$(launchctl_optional_env_value "${RUST_WS_LAUNCHCTL_PRINT}" "FRIDAY_CODEX_APP_SERVER_TIMEOUT_MS")"; then
+  require_codex_app_server_timeout "live Rust WS LaunchAgent" "${RUST_WS_RUNTIME_CODEX_APP_SERVER_TIMEOUT_MS}"
+  CODEX_APP_SERVER_TIMEOUT_EFFECTIVE_SOURCE_SEEN=1
+fi
+if [ "${CODEX_APP_SERVER_TIMEOUT_EFFECTIVE_SOURCE_SEEN}" -eq 0 ]; then
+  require_codex_app_server_timeout "Rust default" "${DEFAULT_CODEX_APP_SERVER_TIMEOUT_MS}"
+fi
+
+require_launchctl_env_equals "${TS_HUB_LAUNCHCTL_PRINT}" "FRIDAY_MISSION_AUTO_DISPATCH" "1" "live TS hub mission auto-dispatch flag"
+require_launchctl_env_equals "${TS_HUB_LAUNCHCTL_PRINT}" "FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST" "1" "live TS hub mission spine Rust route flag"
+require_launchctl_env_equals "${TS_HUB_LAUNCHCTL_PRINT}" "FRIDAY_ROUTE_AGENT_RUN_VIA_RUST" "1" "live TS hub agent-run Rust route flag"
+require_launchctl_env_equals "${TS_HUB_LAUNCHCTL_PRINT}" "FRIDAY_HUB_AGENT_RUN_WS_PORT" "48750" "live TS hub Rust agent-run WS port"
+require_launchctl_env_equals "${TS_HUB_LAUNCHCTL_PRINT}" "FRIDAY_HUB_AGENT_RUN_DB_PATH" "${RUST_HUB_DB}" "live TS hub Rust DB path"
+require_launchctl_path_contains "${TS_HUB_LAUNCHCTL_PRINT}" "PATH" "/Users/jarvis/.local/bin" "live TS hub PATH"
+TS_HUB_RUNTIME_NODE_BIN="$(launchctl_env_value "${TS_HUB_LAUNCHCTL_PRINT}" "FRIDAY_NODE_BIN" "TS hub")"
 if [ ! -x "${TS_HUB_RUNTIME_NODE_BIN}" ]; then
   echo "FATAL: live TS hub FRIDAY_NODE_BIN is not executable at: ${TS_HUB_RUNTIME_NODE_BIN}" >&2
   exit 3
