@@ -65,8 +65,9 @@ fn in_boundary_spec(expires_at: Option<i64>) -> TrustGrantSpec {
         Risk::Medium,
         expires_at,
         Some(WORKSPACE.to_string()),
-        Some(1000), // token_ceiling — stored, DEFERRED-not-enforced
-        Some(5),    // max_runs — stored, DEFERRED-not-enforced
+        Some(1000),      // token_ceiling — stored, DEFERRED-not-enforced
+        Some(5),         // max_runs — stored, DEFERRED-not-enforced
+        Some(Risk::Low), // D20 trust-dial metadata — stored, inert
         trust_grant::parse_csv(Some("telegram")),
         trust_grant::parse_csv(Some("deepseek")),
         trust_grant::parse_csv(Some("read_file,write_file")),
@@ -238,6 +239,7 @@ fn empty_grant_id_and_empty_agent_fail_closed() {
         None,
         None,
         None,
+        None,
         Vec::new(),
         Vec::new(),
         Vec::new(),
@@ -249,6 +251,7 @@ fn empty_grant_id_and_empty_agent_fail_closed() {
         GRANT_ID.to_string(),
         String::new(),
         Risk::Low,
+        None,
         None,
         None,
         None,

@@ -194,6 +194,7 @@ pub fn mint_child_boundaries(parent: &TrustBoundaries, req: &SubagentRequest) ->
         // DEFERRED dims carried from the parent (never raised).
         token_ceiling: parent.token_ceiling,
         max_runs: parent.max_runs,
+        auto_allow_reversible_ceiling: parent.auto_allow_reversible_ceiling,
         // Non-tool allowlists: the parent's set intersected with itself = the parent's set
         // (never a superset). A sub-agent inherits the SAME non-tool envelope, no wider.
         allowed_channels: parent.allowed_channels.clone(),
@@ -275,6 +276,7 @@ mod tests {
             risk_ceiling: Risk::High,
             token_ceiling: Some(1000),
             max_runs: Some(5),
+            auto_allow_reversible_ceiling: None,
             allowed_channels: vec!["telegram".into()],
             allowed_providers: vec!["deepseek".into()],
             // parent CAN spawn + read + write

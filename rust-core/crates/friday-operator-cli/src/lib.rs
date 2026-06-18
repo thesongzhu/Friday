@@ -411,6 +411,9 @@ pub mod trust_grant {
         pub token_ceiling: Option<i64>,
         /// DEFERRED in storage (stored, NOT enforced).
         pub max_runs: Option<i64>,
+        /// D20 W2-S2 DARK metadata: operator-owned reversible auto-allow ceiling.
+        /// Stored and echoed only; the Hub does not consume it as authorization.
+        pub auto_allow_reversible_ceiling: Option<Risk>,
         pub allowed_channels: Vec<String>,
         pub allowed_providers: Vec<String>,
         pub allowed_tools: Vec<String>,
@@ -434,6 +437,7 @@ pub mod trust_grant {
                     risk_ceiling: self.risk_ceiling,
                     token_ceiling: self.token_ceiling,
                     max_runs: self.max_runs,
+                    auto_allow_reversible_ceiling: self.auto_allow_reversible_ceiling,
                     allowed_channels: self.allowed_channels.clone(),
                     allowed_providers: self.allowed_providers.clone(),
                     allowed_tools: self.allowed_tools.clone(),
@@ -488,6 +492,7 @@ pub mod trust_grant {
         workspace: Option<String>,
         token_ceiling: Option<i64>,
         max_runs: Option<i64>,
+        auto_allow_reversible_ceiling: Option<Risk>,
         allowed_channels: Vec<String>,
         allowed_providers: Vec<String>,
         allowed_tools: Vec<String>,
@@ -508,6 +513,7 @@ pub mod trust_grant {
             workspace,
             token_ceiling,
             max_runs,
+            auto_allow_reversible_ceiling,
             allowed_channels,
             allowed_providers,
             allowed_tools,

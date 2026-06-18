@@ -17,6 +17,8 @@
 //! a run and fail-closed when a capped grant is used without a run id. Token ceilings are
 //! action-time guardrails over already-ledgered model calls for claimed runs; they block
 //! subsequent actions after the ceiling is reached, not the model call that spent tokens.
+//! `auto_allow_reversible_ceiling` is D20 trust-dial metadata for a later signed-batch
+//! verifier. It is stored/decoded but not consumed here; no fake auto-allow branch exists.
 
 use crate::error::{Result, StorageError};
 use friday_core::gate::{
@@ -51,6 +53,7 @@ fn encode_boundaries(b: &TrustBoundaries) -> Result<String> {
         "risk_ceiling": risk_as_str(b.risk_ceiling),
         "token_ceiling": b.token_ceiling,
         "max_runs": b.max_runs,
+        "auto_allow_reversible_ceiling": b.auto_allow_reversible_ceiling.map(risk_as_str),
         "allowed_channels": b.allowed_channels,
         "allowed_providers": b.allowed_providers,
         "allowed_tools": b.allowed_tools,
@@ -86,6 +89,14 @@ fn decode_opt_i64(v: &Value, field: &str) -> Result<Option<i64>> {
     }
 }
 
+fn decode_opt_risk(v: &Value, field: &str) -> Result<Option<Risk>> {
+    match v {
+        Value::Null => Ok(None),
+        Value::String(s) => parse_risk(s).map(Some),
+        _ => Err(unsupported(format!("{field} not a string/null"))),
+    }
+}
+
 fn decode_opt_string(v: &Value, field: &str) -> Result<Option<String>> {
     match v {
         Value::Null => Ok(None),
@@ -109,6 +120,11 @@ fn decode_boundaries(blob: &str) -> Result<TrustBoundaries> {
             "token_ceiling",
         )?,
         max_runs: decode_opt_i64(v.get("max_runs").unwrap_or(&Value::Null), "max_runs")?,
+        auto_allow_reversible_ceiling: decode_opt_risk(
+            v.get("auto_allow_reversible_ceiling")
+                .unwrap_or(&Value::Null),
+            "auto_allow_reversible_ceiling",
+        )?,
         allowed_channels: decode_string_vec(
             v.get("allowed_channels").unwrap_or(&Value::Null),
             "allowed_channels",

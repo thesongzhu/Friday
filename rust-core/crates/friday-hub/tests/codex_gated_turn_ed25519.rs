@@ -113,6 +113,7 @@ fn insert_grant(db: &Db, agent_id: &str, allowed_tools: &[&str], risk_ceiling: R
             risk_ceiling,
             token_ceiling: None,
             max_runs: None,
+            auto_allow_reversible_ceiling: None,
             allowed_channels: vec![],
             allowed_providers: vec![],
             allowed_tools: allowed_tools.iter().map(|s| s.to_string()).collect(),
