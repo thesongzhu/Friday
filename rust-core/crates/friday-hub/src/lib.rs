@@ -16411,6 +16411,21 @@ mod tool_registry_tests {
     }
 
     #[test]
+    fn outbound_send_tool_requires_irreversible() {
+        let classified = trusted_classify(
+            "web_fetch",
+            &[
+                ("url".into(), "https://example.test/collect".into()),
+                ("method".into(), "POST".into()),
+                ("body".into(), "payload".into()),
+            ],
+        )
+        .unwrap();
+        assert!(classified.mutating());
+        assert_eq!(classified.reversibility(), Reversibility::Irreversible);
+    }
+
+    #[test]
     fn custom_registry_late_binds_a_tool_pack() {
         // UNW-002: a runtime tool pack registers a NEW tool with a TRUSTED classification.
         let mut r = ToolRegistry::default();

@@ -848,6 +848,52 @@ fn dial_worktree_driver_allows_signed_member_inside_active_worktree_and_audits()
 }
 
 #[test]
+fn audit_covers_every_dial_allow() {
+    let mut db = Db::open_hub(&temp_db_path("ed-dial-worktree-audit")).unwrap();
+    let worktree = temp_worktree("audit");
+    let (sk, vk) = operator();
+
+    for i in 0..3 {
+        let batch_id = format!("dial-audit-batch-{i}");
+        let target = worktree.join(format!("src/owned-{i}.txt"));
+        let req = req_with(
+            "write_file",
+            ActorKind::Owner,
+            true,
+            Risk::Medium,
+            Some(target.to_string_lossy().as_ref()),
+            "p1",
+        );
+        let batch = batch_approval(&[&req], &sk, &batch_id, Some(FUTURE));
+        let scope = DialWorktreeScope {
+            plan_sign_id: batch_id,
+            active_worktree: worktree.clone(),
+        };
+        let r = authorize_reversible_batch_in_worktree(
+            db.conn_mut(),
+            &req,
+            Some(&batch),
+            &vk,
+            NOW + i,
+            &scope,
+        )
+        .unwrap();
+        assert_eq!(r.decision, GateDecision::Allow);
+    }
+
+    assert_eq!(consumed_count(&db), 3);
+    assert_eq!(
+        audit_count(&db),
+        consumed_count(&db),
+        "every dial auto-allow must append exactly one audit row"
+    );
+    assert_eq!(
+        friday_storage::audit::verify_audit_chain(db.conn()).unwrap(),
+        3
+    );
+}
+
+#[test]
 fn dial_worktree_driver_pauses_resource_outside_active_worktree_without_consuming() {
     let mut db = Db::open_hub(&temp_db_path("ed-dial-worktree-escape")).unwrap();
     let worktree = temp_worktree("escape");

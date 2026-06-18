@@ -276,20 +276,36 @@ mod tests {
         std::fs::remove_file(&bad).ok();
     }
 
-    /// KEY-SUBSTITUTION DEFENSE (structural): the entire `friday-hub` source tree must
-    /// never reference `OperatorSigningKey`. The Hub holds ONLY a verify key; if any Hub
-    /// code could construct/derive a signing key, it could mint the very approvals it
+    /// KEY-SUBSTITUTION DEFENSE (structural): the loop-reachable runtime source trees
+    /// must never reference `OperatorSigningKey`. The Hub holds ONLY a verify key; if any
+    /// loop code could construct/derive a signing key, it could mint the very approvals it
     /// verifies (self-mint). We cannot runtime-prove the absence of a mint path, but we
-    /// CAN prove the type that produces signatures is never named in the Hub crate.
+    /// CAN prove the type that produces signatures is never named in the runtime crates.
     #[test]
     fn hub_crate_never_references_a_signing_key() {
-        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        loop_reachable_crates_never_reference_a_signing_key();
+    }
+
+    #[test]
+    fn loop_reachable_crates_never_reference_a_signing_key() {
+        let crates_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("friday-hub crate has a parent crates dir");
+        let runtime_src_dirs = [
+            crates_dir.join("friday-core/src"),
+            crates_dir.join("friday-ffi/src"),
+            crates_dir.join("friday-hub/src"),
+            crates_dir.join("friday-protocol/src"),
+            crates_dir.join("friday-storage/src"),
+        ];
         let mut offenders = Vec::new();
-        scan_for(&src, "OperatorSigningKey", &mut offenders);
+        for src in runtime_src_dirs {
+            scan_for(&src, "OperatorSigningKey", &mut offenders);
+        }
         assert!(
             offenders.is_empty(),
-            "friday-hub must never reference OperatorSigningKey (a Hub-generated operator \
-             key would be full self-mint); found in: {offenders:?}"
+            "loop-reachable runtime crates must never reference OperatorSigningKey \
+             (a Hub-generated operator key would be full self-mint); found in: {offenders:?}"
         );
     }
 

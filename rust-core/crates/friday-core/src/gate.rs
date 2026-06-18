@@ -1091,6 +1091,67 @@ mod tests {
     }
 
     #[test]
+    fn irreversible_always_gated() {
+        let classification = classify_with_reversibility(
+            true,
+            Risk::Medium,
+            Reversibility::Irreversible,
+            "write_file",
+            &[("path".to_string(), "/worktree/src/lib.rs".to_string())],
+        );
+        assert_eq!(classification.reversibility(), Reversibility::Irreversible);
+        let req = MutatingActionRequest::from_classification(
+            classification,
+            "write_file".to_string(),
+            actor(ActorKind::Owner),
+            "agent".to_string(),
+            vec![],
+            None,
+            None,
+            None,
+        );
+        assert_eq!(evaluate(&req).decision, GateDecision::RequiresApproval);
+    }
+
+    #[test]
+    fn run_command_is_always_irreversible() {
+        let c = classify(
+            true,
+            Risk::Low,
+            "run_command",
+            &[("command".to_string(), "pwd".to_string())],
+        );
+        assert_eq!(c.reversibility(), Reversibility::Irreversible);
+    }
+
+    #[test]
+    fn mislabeled_irreversible_still_pauses() {
+        let c = classify_with_reversibility(
+            true,
+            Risk::Low,
+            Reversibility::Reversible,
+            "write_file",
+            &[(
+                "path".to_string(),
+                "delete production deployment".to_string(),
+            )],
+        );
+        assert_eq!(c.risk(), Some(Risk::High));
+        assert_eq!(c.reversibility(), Reversibility::Irreversible);
+        let req = MutatingActionRequest::from_classification(
+            c,
+            "write_file".to_string(),
+            actor(ActorKind::Owner),
+            "agent".to_string(),
+            vec![],
+            None,
+            None,
+            None,
+        );
+        assert_eq!(evaluate(&req).decision, GateDecision::RequiresApproval);
+    }
+
+    #[test]
     fn base_reversibility_is_never_allowed_to_lower_authoritative_irreversible() {
         let mislabeled = classify_with_reversibility(
             true,
