@@ -56,6 +56,12 @@ const lifecycleStates = new Set([...nonDoneStates, "completed_with_proof"]);
 const capabilityKinds = new Set(["skill", "capability", "advisor"]);
 const approvalStates = new Set(["not_required", "required", "approved", "blocked"]);
 const controlTruthLabels = new Set(["friday_owned", "friday_adopted"]);
+const routeActionTargetKinds = new Set(["file", "command", "subtask"]);
+const routeActionReversibility = new Set([
+  "reversible_git_worktree",
+  "operator_gate_required",
+  "pending_classify",
+]);
 const transcriptGroupKinds = new Set([
   "mission",
   "work_item",
@@ -250,6 +256,27 @@ function validateSnapshot(snapshot, expectedMissionId, failures) {
     validateStringField(routeDecision.selectedRoute, failures, "route_decision_selected_missing", "routeDecision.selectedRoute");
     if (!truthLabels.has(routeDecision.truthLabel)) {
       recordFailure(failures, "route_decision_truth_label_invalid", String(routeDecision.truthLabel || ""));
+    }
+    const actionItems = Array.isArray(routeDecision.actionItems) ? routeDecision.actionItems : [];
+    if (!Array.isArray(routeDecision.actionItems)) {
+      recordFailure(failures, "route_decision_action_items_not_array", "routeDecision.actionItems");
+    }
+    for (const [index, item] of actionItems.entries()) {
+      const action = asObject(item);
+      if (!action) {
+        recordFailure(failures, "route_decision_action_not_object", `routeDecision.actionItems[${index}]`);
+        continue;
+      }
+      validateStringField(action.description, failures, "route_decision_action_description_missing", `routeDecision.actionItems[${index}].description`);
+      validateStringField(action.targetRef, failures, "route_decision_action_target_ref_missing", `routeDecision.actionItems[${index}].targetRef`);
+      validateStringField(action.assignedLane, failures, "route_decision_action_assigned_lane_missing", `routeDecision.actionItems[${index}].assignedLane`);
+      validateStringField(action.routeReason, failures, "route_decision_action_route_reason_missing", `routeDecision.actionItems[${index}].routeReason`);
+      if (!routeActionTargetKinds.has(action.targetKind)) {
+        recordFailure(failures, "route_decision_action_target_kind_invalid", String(action.targetKind || ""));
+      }
+      if (!routeActionReversibility.has(action.reversibility)) {
+        recordFailure(failures, "route_decision_action_reversibility_invalid", String(action.reversibility || ""));
+      }
     }
   }
 

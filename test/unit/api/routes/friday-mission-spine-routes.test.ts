@@ -21,6 +21,17 @@ const snapshot: FridayMissionSpineWorkbenchSnapshot = {
     advisorSummary: "Rust Hub route decision projection.",
     selectedRoute: "route_decision_ref",
     alternatives: ["alternate_ref"],
+    actionItems: [
+      {
+        description: "Implement Mission Spine domain types",
+        targetKind: "file",
+        targetRef: "rust-core/crates/friday-core/src/lib.rs",
+        reversibility: "operator_gate_required",
+        assignedLane: "codex",
+        assignedProviderOrAgent: "codex",
+        routeReason: "Rust Hub must own product truth before UI wiring",
+      },
+    ],
     truthLabel: "friday_owned",
   },
   providerReceiptRefs: ["proof://provider/receipt/redacted"],
@@ -348,6 +359,33 @@ describe("createFridayMissionSpineRoutes", () => {
     expect(error.httpStatus).toBe(503);
     expect(JSON.stringify(error.details)).toContain("runtime_feed_not_live");
     expect(JSON.stringify(error.details)).toContain("placeholder:mission_pending_runtime_projection");
+  });
+
+  it("fails closed instead of throwing a TypeError when route action items are malformed", async () => {
+    const invalidSnapshot = cloneSnapshot({
+      routeDecision: {
+        ...snapshot.routeDecision,
+        actionItems: [null],
+      } as never,
+    });
+    const routes = createFridayMissionSpineRoutes({
+      workbench: { getSnapshot: vi.fn(async () => invalidSnapshot) },
+      disabledReason: null,
+    });
+    const route = findRoute(routes);
+
+    let thrown: unknown = null;
+    try {
+      await route.handler(makeCtx() as never);
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(FridayDomainError);
+    const error = thrown as FridayDomainError;
+    expect(error.code).toBe("MISSION_SPINE_WORKBENCH_SNAPSHOT_INVALID");
+    expect(error.httpStatus).toBe(503);
+    expect(JSON.stringify(error.details)).toContain("route_decision_action_not_object:0");
   });
 
   it("fails closed when provider ack or timeline read is marked done", async () => {

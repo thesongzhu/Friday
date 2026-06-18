@@ -90,6 +90,12 @@ const CAPABILITY_KINDS = new Set(["skill", "capability", "advisor"]);
 const APPROVAL_STATES = new Set(["not_required", "required", "approved", "blocked"]);
 const TRUTH_LABELS = new Set(["friday_owned", "friday_adopted", "observed_only", "linked_only", "unknown"]);
 const CONTROL_TRUTH_LABELS = new Set(["friday_owned", "friday_adopted"]);
+const ROUTE_ACTION_TARGET_KINDS = new Set(["file", "command", "subtask"]);
+const ROUTE_ACTION_REVERSIBILITY = new Set([
+  "reversible_git_worktree",
+  "operator_gate_required",
+  "pending_classify",
+]);
 const PLACEHOLDER_MARKERS = [
   "mission_pending_runtime_projection",
   "conversation_pending_runtime_projection",
@@ -353,8 +359,12 @@ function readPathParam(params: unknown, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
-function hasText(value: string | undefined): boolean {
+function hasText(value: unknown): boolean {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function pushIfInvalid(failures: string[], condition: boolean, code: string): void {
@@ -406,6 +416,29 @@ function validateSnapshotHeader(
   pushIfInvalid(failures, hasText(snapshot.routeDecision.advisorSummary), "route_decision_summary_missing");
   pushIfInvalid(failures, hasText(snapshot.routeDecision.selectedRoute), "route_decision_selected_missing");
   pushIfInvalid(failures, TRUTH_LABELS.has(snapshot.routeDecision.truthLabel), "route_decision_truth_label_invalid");
+  pushIfInvalid(failures, Array.isArray(snapshot.routeDecision.actionItems), "route_decision_action_items_not_array");
+  if (Array.isArray(snapshot.routeDecision.actionItems)) {
+    for (const [index, item] of snapshot.routeDecision.actionItems.entries()) {
+      if (!isRecord(item)) {
+        failures.push(`route_decision_action_not_object:${index}`);
+        continue;
+      }
+      pushIfInvalid(failures, hasText(item.description), `route_decision_action_description_missing:${index}`);
+      pushIfInvalid(
+        failures,
+        typeof item.targetKind === "string" && ROUTE_ACTION_TARGET_KINDS.has(item.targetKind),
+        `route_decision_action_target_kind_invalid:${index}`,
+      );
+      pushIfInvalid(failures, hasText(item.targetRef), `route_decision_action_target_ref_missing:${index}`);
+      pushIfInvalid(
+        failures,
+        typeof item.reversibility === "string" && ROUTE_ACTION_REVERSIBILITY.has(item.reversibility),
+        `route_decision_action_reversibility_invalid:${index}`,
+      );
+      pushIfInvalid(failures, hasText(item.assignedLane), `route_decision_action_assigned_lane_missing:${index}`);
+      pushIfInvalid(failures, hasText(item.routeReason), `route_decision_action_route_reason_missing:${index}`);
+    }
+  }
   pushIfInvalid(failures, Array.isArray(snapshot.providerReceiptRefs), "provider_receipt_refs_not_array");
   pushIfInvalid(failures, Array.isArray(snapshot.channelReceiptRefs), "channel_receipt_refs_not_array");
 }

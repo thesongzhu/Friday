@@ -188,6 +188,42 @@ export function MissionWorkbenchPage() {
                 ))}
               </div>
             </div>
+            {snapshot.routeDecision.actionItems.length > 0 ? (
+              <div className="mt-4 border-t border-[color:var(--color-border-soft)] pt-4">
+                <div className="grid gap-3 md:grid-cols-2">
+                  {snapshot.routeDecision.actionItems.map((item, index) => (
+                    <div key={`${item.targetRef}-${index}`} className="rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-subtle)] p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <StatusPill tone="neutral">{item.targetKind}</StatusPill>
+                        <StatusPill
+                          tone={
+                            item.reversibility === "operator_gate_required"
+                              ? "warning"
+                              : item.reversibility === "pending_classify"
+                                ? "neutral"
+                                : "success"
+                          }
+                        >
+                          {item.reversibility}
+                        </StatusPill>
+                        <StatusPill tone="neutral">
+                          {item.assignedProviderOrAgent ?? item.assignedLane}
+                        </StatusPill>
+                      </div>
+                      <p className="mt-3 text-sm font-semibold leading-5 text-[color:var(--color-text-primary)]">
+                        {item.description}
+                      </p>
+                      <p className="mt-2 break-all text-xs text-[color:var(--color-text-tertiary)]">
+                        {item.targetRef}
+                      </p>
+                      <p className="mt-2 text-xs leading-5 text-[color:var(--color-text-secondary)]">
+                        {item.routeReason}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </ShellCard>
 
           <ShellCard eyebrow="Bounded timeline" title={localize(locale, "分页时间线", "Timeline pages")}>
