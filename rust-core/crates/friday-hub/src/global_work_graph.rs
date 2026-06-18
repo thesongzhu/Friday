@@ -512,6 +512,7 @@ pub fn adopt_observed_work(
         proof_requirements: proposal.proof_requirements.clone(),
         ownership_claim_ids: work_item.owner_claim_ids.clone(),
         trace_refs: vec![adoption_ref.clone(), operator_ref.clone()],
+        action_items: vec![],
         created_at_ms: command.now_ms,
         expires_at_ms: None,
     };

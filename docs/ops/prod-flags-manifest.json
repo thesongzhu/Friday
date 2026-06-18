@@ -133,6 +133,15 @@
       "notes": "Built-but-dark. One sequential test sets FRIDAY_SURFACE_EVENTS=1, runs the loop, asserts lifecycle surface_events are emitted AND appear in the read projection, then flips to 0 and asserts a clean (event-free) run (no env race; both arms in one #[test])."
     },
     {
+      "flag": "FRIDAY_D20_ACTION_LIST_ENABLED",
+      "process": "rust-ws-wrapper",
+      "prod_state": "dark",
+      "closes_loop": "A ready Mission intake persists a structured D20 plan-as-action-list item on the route_decision and projects it back through the surface-safe route decision projection.",
+      "coverage": "loop-e2e",
+      "e2e_test": "rust-core/crates/friday-hub/tests/mission_intake_clarification.rs::d20_action_list_flag_on_persists_route_action_items_for_ready_intake",
+      "notes": "Built-but-dark. Drives mission_intake_result_for_db_flagged(.., action_list_enabled=true) on a detailed intent and asserts route_decision.action_items round-trip through Hub storage plus list_route_decision_projections_for_mission. Sibling storage proof verifies the full Hub card can retain raw refs while the projection redacts channel targets and file paths."
+    },
+    {
       "flag": "FRIDAY_PASSPORT_MINT",
       "process": "rust-ws-wrapper",
       "prod_state": "dark",

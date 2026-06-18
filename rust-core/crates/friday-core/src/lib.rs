@@ -64,9 +64,9 @@ pub use mission::{
     validate_friday_conversation_id, ApprovalState, FridayConversation, HandoffJudgmentMemory,
     Mission, MissionLink, MissionLinkKind, MissionSpineError, MissionStatus,
     MissionSurfaceProjection, OutcomeProofReceipt, ProofRequirementKind, ProofRequirementSpec,
-    RouteDecisionCard, RouteDecisionProjection, SurfaceEvent, SurfaceEventKind, SurfaceKind,
-    SurfaceThread, TruthStatus, VisibilityPolicy, WorkItem, WorkItemStatus, WorkLane,
-    OUTCOME_CHECKED_PROOF_FLAG,
+    RouteActionItem, RouteActionReversibility, RouteActionTargetKind, RouteDecisionCard,
+    RouteDecisionProjection, SurfaceEvent, SurfaceEventKind, SurfaceKind, SurfaceThread,
+    TruthStatus, VisibilityPolicy, WorkItem, WorkItemStatus, WorkLane, OUTCOME_CHECKED_PROOF_FLAG,
 };
 pub use offline::OfflineQueueState;
 pub use pairing::{

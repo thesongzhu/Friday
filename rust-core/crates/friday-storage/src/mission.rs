@@ -12,8 +12,9 @@ use friday_core::{
     find_duplicate_work_item as core_find_duplicate_work_item, outcome_checked_proof_enabled,
     validate_friday_conversation_id, ApprovalState, FridayConversation, HandoffJudgmentMemory,
     Mission, MissionLink, MissionLinkKind, MissionStatus, MissionSurfaceProjection,
-    RouteDecisionCard, RouteDecisionProjection, SurfaceEvent, SurfaceEventKind, SurfaceKind,
-    SurfaceThread, TruthStatus, VisibilityPolicy, WorkItem, WorkItemStatus, WorkLane,
+    RouteActionItem, RouteActionReversibility, RouteActionTargetKind, RouteDecisionCard,
+    RouteDecisionProjection, SurfaceEvent, SurfaceEventKind, SurfaceKind, SurfaceThread,
+    TruthStatus, VisibilityPolicy, WorkItem, WorkItemStatus, WorkLane,
 };
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -39,6 +40,121 @@ fn encode_vec(values: &[String], field: &str) -> Result<String> {
 fn decode_vec(value: String, field: &str) -> Result<Vec<String>> {
     serde_json::from_str(&value)
         .map_err(|e| unsupported(format!("failed to decode {field} json: {e}")))
+}
+
+fn encode_route_action_items(values: &[RouteActionItem], field: &str) -> Result<String> {
+    let items = values
+        .iter()
+        .map(|item| {
+            serde_json::json!({
+                "description": item.description,
+                "target_kind": item.target_kind.as_str(),
+                "target_ref": item.target_ref,
+                "reversibility": item.reversibility.as_str(),
+                "assigned_lane": item.assigned_lane.as_str(),
+                "assigned_provider_or_agent": item.assigned_provider_or_agent,
+                "route_reason": item.route_reason,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::to_string(&items)
+        .map_err(|e| unsupported(format!("failed to encode {field} as json: {e}")))
+}
+
+fn decode_route_action_items(value: String, field: &str) -> Result<Vec<RouteActionItem>> {
+    let values = serde_json::from_str::<Vec<serde_json::Value>>(&value)
+        .map_err(|e| unsupported(format!("failed to decode {field} json: {e}")))?;
+    values
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| decode_route_action_item(value, field, index))
+        .collect()
+}
+
+fn decode_route_action_item(
+    value: serde_json::Value,
+    field: &str,
+    index: usize,
+) -> Result<RouteActionItem> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| unsupported(format!("{field}[{index}] must be a route action object")))?;
+    let assigned_provider_or_agent = match object.get("assigned_provider_or_agent") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => Some(json_string(
+            value,
+            field,
+            index,
+            "assigned_provider_or_agent",
+        )?),
+    };
+    Ok(RouteActionItem {
+        description: json_string(
+            object
+                .get("description")
+                .ok_or_else(|| missing_json_field(field, index, "description"))?,
+            field,
+            index,
+            "description",
+        )?,
+        target_kind: parse_route_action_target_kind(&json_string(
+            object
+                .get("target_kind")
+                .ok_or_else(|| missing_json_field(field, index, "target_kind"))?,
+            field,
+            index,
+            "target_kind",
+        )?)?,
+        target_ref: json_string(
+            object
+                .get("target_ref")
+                .ok_or_else(|| missing_json_field(field, index, "target_ref"))?,
+            field,
+            index,
+            "target_ref",
+        )?,
+        reversibility: parse_route_action_reversibility(&json_string(
+            object
+                .get("reversibility")
+                .ok_or_else(|| missing_json_field(field, index, "reversibility"))?,
+            field,
+            index,
+            "reversibility",
+        )?)?,
+        assigned_lane: parse_work_lane(json_string(
+            object
+                .get("assigned_lane")
+                .ok_or_else(|| missing_json_field(field, index, "assigned_lane"))?,
+            field,
+            index,
+            "assigned_lane",
+        )?)?,
+        assigned_provider_or_agent,
+        route_reason: json_string(
+            object
+                .get("route_reason")
+                .ok_or_else(|| missing_json_field(field, index, "route_reason"))?,
+            field,
+            index,
+            "route_reason",
+        )?,
+    })
+}
+
+fn json_string(
+    value: &serde_json::Value,
+    field: &str,
+    index: usize,
+    child: &str,
+) -> Result<String> {
+    value
+        .as_str()
+        .map(ToString::to_string)
+        .ok_or_else(|| unsupported(format!("{field}[{index}].{child} must be a string")))
+}
+
+fn missing_json_field(field: &str, index: usize, child: &str) -> StorageError {
+    unsupported(format!("{field}[{index}].{child} is required"))
 }
 
 fn parse_truth_status(value: String) -> Result<TruthStatus> {
@@ -78,6 +194,28 @@ fn parse_work_lane(value: String) -> Result<WorkLane> {
         "human" => Ok(WorkLane::Human),
         "future_api" => Ok(WorkLane::FutureApi),
         _ => Err(unsupported(format!("unknown work lane '{value}'"))),
+    }
+}
+
+fn parse_route_action_target_kind(value: &str) -> Result<RouteActionTargetKind> {
+    match value {
+        "file" => Ok(RouteActionTargetKind::File),
+        "command" => Ok(RouteActionTargetKind::Command),
+        "subtask" => Ok(RouteActionTargetKind::Subtask),
+        _ => Err(unsupported(format!(
+            "unknown route action target kind '{value}'"
+        ))),
+    }
+}
+
+fn parse_route_action_reversibility(value: &str) -> Result<RouteActionReversibility> {
+    match value {
+        "reversible_git_worktree" => Ok(RouteActionReversibility::ReversibleGitWorktree),
+        "operator_gate_required" => Ok(RouteActionReversibility::OperatorGateRequired),
+        "pending_classify" => Ok(RouteActionReversibility::PendingClassify),
+        _ => Err(unsupported(format!(
+            "unknown route action reversibility '{value}'"
+        ))),
     }
 }
 
@@ -1790,8 +1928,8 @@ pub fn upsert_route_decision(conn: &Connection, card: &RouteDecisionCard) -> Res
              selected_provider_or_agent, why_this_route, considered_options,
              deferred_options, previous_pitfalls, inheritable_context,
              conflict_refs, proof_requirements, ownership_claim_ids, trace_refs,
-             created_at_ms, expires_at_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+             action_items, created_at_ms, expires_at_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
          ON CONFLICT(decision_id) DO UPDATE SET
             mission_id = excluded.mission_id,
             work_item_id = excluded.work_item_id,
@@ -1806,6 +1944,7 @@ pub fn upsert_route_decision(conn: &Connection, card: &RouteDecisionCard) -> Res
             proof_requirements = excluded.proof_requirements,
             ownership_claim_ids = excluded.ownership_claim_ids,
             trace_refs = excluded.trace_refs,
+            action_items = excluded.action_items,
             created_at_ms = excluded.created_at_ms,
             expires_at_ms = excluded.expires_at_ms",
         params![
@@ -1835,6 +1974,7 @@ pub fn upsert_route_decision(conn: &Connection, card: &RouteDecisionCard) -> Res
                 "route_decision.ownership_claim_ids"
             )?,
             encode_vec(&card.trace_refs, "route_decision.trace_refs")?,
+            encode_route_action_items(&card.action_items, "route_decision.action_items")?,
             card.created_at_ms,
             card.expires_at_ms,
         ],
@@ -1863,7 +2003,7 @@ pub fn get_route_decision(
                     selected_provider_or_agent, why_this_route, considered_options,
                     deferred_options, previous_pitfalls, inheritable_context,
                     conflict_refs, proof_requirements, ownership_claim_ids, trace_refs,
-                    created_at_ms, expires_at_ms
+                    action_items, created_at_ms, expires_at_ms
              FROM route_decision
              WHERE decision_id = ?1",
             [decision_id],
@@ -1883,8 +2023,9 @@ pub fn get_route_decision(
                     r.get::<_, String>(11)?,
                     r.get::<_, String>(12)?,
                     r.get::<_, String>(13)?,
-                    r.get::<_, i64>(14)?,
-                    r.get::<_, Option<i64>>(15)?,
+                    r.get::<_, String>(14)?,
+                    r.get::<_, i64>(15)?,
+                    r.get::<_, Option<i64>>(16)?,
                 ))
             },
         )
@@ -1901,7 +2042,7 @@ pub fn list_route_decisions_for_mission(
                 selected_provider_or_agent, why_this_route, considered_options,
                 deferred_options, previous_pitfalls, inheritable_context,
                 conflict_refs, proof_requirements, ownership_claim_ids, trace_refs,
-                created_at_ms, expires_at_ms
+                action_items, created_at_ms, expires_at_ms
          FROM route_decision
          WHERE mission_id = ?1
          ORDER BY created_at_ms, decision_id",
@@ -1922,8 +2063,9 @@ pub fn list_route_decisions_for_mission(
             r.get::<_, String>(11)?,
             r.get::<_, String>(12)?,
             r.get::<_, String>(13)?,
-            r.get::<_, i64>(14)?,
-            r.get::<_, Option<i64>>(15)?,
+            r.get::<_, String>(14)?,
+            r.get::<_, i64>(15)?,
+            r.get::<_, Option<i64>>(16)?,
         ))
     })?;
     let mut out = Vec::new();
@@ -1960,6 +2102,7 @@ fn route_decision_from_row(
         String,
         String,
         String,
+        String,
         i64,
         Option<i64>,
     ),
@@ -1979,6 +2122,7 @@ fn route_decision_from_row(
         proof_requirements,
         ownership_claim_ids,
         trace_refs,
+        action_items,
         created_at_ms,
         expires_at_ms,
     ) = row;
@@ -1997,6 +2141,7 @@ fn route_decision_from_row(
         proof_requirements: decode_vec(proof_requirements, "route_decision.proof_requirements")?,
         ownership_claim_ids: decode_vec(ownership_claim_ids, "route_decision.ownership_claim_ids")?,
         trace_refs: decode_vec(trace_refs, "route_decision.trace_refs")?,
+        action_items: decode_route_action_items(action_items, "route_decision.action_items")?,
         created_at_ms,
         expires_at_ms,
     };

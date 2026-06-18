@@ -16,7 +16,7 @@
 //! ("1"/" 1 "/""/None/"true") are covered race-free by the in-crate
 //! `mission_intake_clarify_from_*` pure-matcher unit test.
 
-use friday_hub::hub_server::mission_intake_result_for_db_flagged;
+use friday_hub::hub_server::{mission_intake_result_for_db_flagged, MissionIntakeFeatureFlags};
 use friday_protocol::{Message, MissionIntakeRequestWire};
 use friday_storage::audit::verify_audit_chain;
 use friday_storage::Db;
@@ -30,6 +30,14 @@ use friday_storage::Db;
 /// driver test (the real consumer). A clarification result MUST make this false.
 fn auto_dispatch_allows_new_work(status: &str, created_or_ready: bool) -> bool {
     status.trim() == "ready" && created_or_ready
+}
+
+fn intake_flags(
+    clarify_enabled: bool,
+    surface_events: bool,
+    action_list_enabled: bool,
+) -> MissionIntakeFeatureFlags {
+    MissionIntakeFeatureFlags::new(clarify_enabled, surface_events, action_list_enabled)
 }
 
 fn temp_db(tag: &str) -> String {
@@ -112,8 +120,11 @@ fn arm_a_flag_on_vague_intent_clarifies_and_writes_zero_rows() {
         intake_request(VAGUE_INTENT),
         Some(OWNER), // (FIX-Q3b) authenticated owner == the request's owner_principal
         1000,
-        true,
-        false, // FRIDAY_SURFACE_EVENTS OFF (orthogonal to the clarify arm under test)
+        intake_flags(
+            true,
+            false, // FRIDAY_SURFACE_EVENTS OFF (orthogonal to the clarify arm under test)
+            false, // FRIDAY_D20_ACTION_LIST_ENABLED OFF (orthogonal to clarify)
+        ),
     );
     let result = intake_result(env);
 
@@ -172,8 +183,11 @@ fn arm_b_flag_on_detailed_classified_intent_births_a_mission_as_today() {
         intake_request(DETAILED_INTENT),
         Some(OWNER), // (FIX-Q3b) authenticated owner == the request's owner_principal
         2000,
-        true,
-        false, // FRIDAY_SURFACE_EVENTS OFF (orthogonal to the clarify arm under test)
+        intake_flags(
+            true,
+            false, // FRIDAY_SURFACE_EVENTS OFF (orthogonal to the clarify arm under test)
+            false, // FRIDAY_D20_ACTION_LIST_ENABLED OFF (orthogonal to clarify)
+        ),
     );
     let result = intake_result(env);
 
@@ -206,6 +220,52 @@ fn arm_b_flag_on_detailed_classified_intent_births_a_mission_as_today() {
 }
 
 #[test]
+fn d20_action_list_flag_on_persists_route_action_items_for_ready_intake() {
+    let db = Db::open_hub(&temp_db("d20-action-list")).unwrap();
+    let env = mission_intake_result_for_db_flagged(
+        &db,
+        "req-d20-action-list",
+        intake_request(DETAILED_INTENT),
+        Some(OWNER),
+        2500,
+        intake_flags(
+            true, false, // FRIDAY_SURFACE_EVENTS OFF (orthogonal)
+            true,  // FRIDAY_D20_ACTION_LIST_ENABLED ON
+        ),
+    );
+    let result = intake_result(env);
+    assert_eq!(result.status, "ready");
+
+    let route_decisions = db.list_route_decisions_for_mission(MISSION).unwrap();
+    assert_eq!(route_decisions.len(), 1);
+    let action_items = &route_decisions[0].action_items;
+    assert_eq!(action_items.len(), 1);
+    let item = &action_items[0];
+    assert_eq!(item.description, DETAILED_INTENT);
+    assert_eq!(
+        item.target_kind,
+        friday_core::RouteActionTargetKind::Subtask
+    );
+    assert_eq!(item.target_ref, format!("friday://work-item/{WORK_ITEM}"));
+    assert_eq!(
+        item.reversibility,
+        friday_core::RouteActionReversibility::PendingClassify
+    );
+    assert_eq!(item.assigned_lane, friday_core::WorkLane::DeepSeek);
+    assert_eq!(item.assigned_provider_or_agent.as_deref(), Some("deepseek"));
+    assert_eq!(
+        item.route_reason,
+        "Surface input must resolve to a canonical Mission."
+    );
+
+    let projections = db
+        .list_route_decision_projections_for_mission(MISSION)
+        .unwrap();
+    assert_eq!(projections[0].action_items, *action_items);
+    verify_audit_chain(db.conn()).expect("audit chain clean after D20 action-list intake");
+}
+
+#[test]
 fn arm_c_flag_off_vague_intent_births_a_mission_byte_identical() {
     let db = Db::open_hub(&temp_db("arm-c")).unwrap();
     // Flag OFF + the SAME vague intent as arm (a). Flag-OFF skips the whole clarification block ⇒
@@ -216,8 +276,11 @@ fn arm_c_flag_off_vague_intent_births_a_mission_byte_identical() {
         intake_request(VAGUE_INTENT),
         Some(OWNER), // (FIX-Q3b) authenticated owner == the request's owner_principal
         3000,
-        false,
-        false, // FRIDAY_SURFACE_EVENTS OFF (orthogonal to the clarify arm under test)
+        intake_flags(
+            false,
+            false, // FRIDAY_SURFACE_EVENTS OFF (orthogonal to the clarify arm under test)
+            false, // FRIDAY_D20_ACTION_LIST_ENABLED OFF (baseline)
+        ),
     );
     let result = intake_result(env);
 
@@ -259,8 +322,11 @@ fn arm_d_flag_on_unclassified_intent_births_a_mission() {
         intake_request(UNCLASSIFIED_INTENT),
         Some(OWNER), // (FIX-Q3b) authenticated owner == the request's owner_principal
         4000,
-        true,
-        false, // FRIDAY_SURFACE_EVENTS OFF (orthogonal to the clarify arm under test)
+        intake_flags(
+            true,
+            false, // FRIDAY_SURFACE_EVENTS OFF (orthogonal to the clarify arm under test)
+            false, // FRIDAY_D20_ACTION_LIST_ENABLED OFF (orthogonal to clarify)
+        ),
     );
     let result = intake_result(env);
 
@@ -296,8 +362,11 @@ fn owner_spoof_is_rejected_and_writes_zero_rows() {
         request,
         Some(OWNER), // the AUTHENTICATED owner — differs from the spoofed body field
         5000,
-        false, // clarify OFF (irrelevant — owner binding gates before any row)
-        false, // surface_events OFF
+        intake_flags(
+            false, // clarify OFF (irrelevant — owner binding gates before any row)
+            false, // surface_events OFF
+            false, // D20 action list OFF
+        ),
     );
 
     match env.message {
@@ -336,8 +405,7 @@ fn persisted_owner_is_the_authenticated_owner() {
         intake_request(DETAILED_INTENT),
         Some(OWNER),
         6000,
-        false,
-        false,
+        intake_flags(false, false, false),
     );
     assert_eq!(
         intake_result(env).status,
@@ -366,8 +434,7 @@ fn missing_authenticated_owner_is_rejected() {
         intake_request(DETAILED_INTENT), // body carries OWNER, but no AUTHENTICATED owner is supplied
         None,
         7000,
-        false,
-        false,
+        intake_flags(false, false, false),
     );
     assert!(
         matches!(env.message, Message::Error { .. }),

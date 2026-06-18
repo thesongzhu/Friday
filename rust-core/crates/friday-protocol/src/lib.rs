@@ -90,6 +90,33 @@ impl From<friday_core::MissionSurfaceProjection> for MissionSurfaceProjectionWir
     }
 }
 
+/// Surface-safe D20 W1 plan action attached to a route decision.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteActionItemWire {
+    pub description: String,
+    pub target_kind: String,
+    pub target_ref: String,
+    pub reversibility: String,
+    pub assigned_lane: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assigned_provider_or_agent: Option<String>,
+    pub route_reason: String,
+}
+
+impl From<friday_core::RouteActionItem> for RouteActionItemWire {
+    fn from(value: friday_core::RouteActionItem) -> Self {
+        Self {
+            description: value.description,
+            target_kind: value.target_kind.as_str().to_string(),
+            target_ref: value.target_ref,
+            reversibility: value.reversibility.as_str().to_string(),
+            assigned_lane: value.assigned_lane.as_str().to_string(),
+            assigned_provider_or_agent: value.assigned_provider_or_agent,
+            route_reason: value.route_reason,
+        }
+    }
+}
+
 /// Surface-safe route judgment attached to a Mission snapshot. This preserves
 /// Friday's lane/agent/channel judgment path for UI and handoff dashboards, but
 /// carries only redacted refs/counts. Raw channel chat ids, provider thread ids,
@@ -111,6 +138,8 @@ pub struct RouteDecisionProjectionWire {
     pub proof_requirements: Vec<String>,
     pub ownership_claim_count: u64,
     pub trace_ref_count: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub action_items: Vec<RouteActionItemWire>,
     pub created_at_ms: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at_ms: Option<i64>,
@@ -133,6 +162,7 @@ impl From<friday_core::RouteDecisionProjection> for RouteDecisionProjectionWire 
             proof_requirements: value.proof_requirements,
             ownership_claim_count: value.ownership_claim_count as u64,
             trace_ref_count: value.trace_ref_count as u64,
+            action_items: value.action_items.into_iter().map(Into::into).collect(),
             created_at_ms: value.created_at_ms,
             expires_at_ms: value.expires_at_ms,
         }
@@ -1885,6 +1915,7 @@ mod tests {
                     proof_requirements: vec!["route decision projection test".into()],
                     ownership_claim_count: 0,
                     trace_ref_count: 2,
+                    action_items: vec![],
                     created_at_ms: 1_700_000_000_002,
                     expires_at_ms: None,
                 }],
@@ -1987,6 +2018,7 @@ mod tests {
                     proof_requirements: vec!["route decision projection test".into()],
                     ownership_claim_count: 0,
                     trace_ref_count: 2,
+                    action_items: vec![],
                     created_at_ms: 1_700_000_000_002,
                     expires_at_ms: None,
                 }],
