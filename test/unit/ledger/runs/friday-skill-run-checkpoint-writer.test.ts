@@ -52,13 +52,17 @@ describe("FridaySkillRunCheckpointWriter", () => {
     expect(result.runPersisted).toBe(true);
     expect(result.eventInserted).toBeUndefined();
 
-    // Verify in DB
     const row = db.writer
-      .prepare("SELECT value_json FROM memory_items WHERE namespace = 'skill_runs' AND key = 'run-001'")
+      .prepare("SELECT value_json FROM skill_run_snapshots WHERE run_id = 'run-001'")
       .get() as { value_json: string };
     expect(row).toBeTruthy();
     const parsed = JSON.parse(row.value_json);
     expect(parsed.runId).toBe("run-001");
+
+    const memoryRows = db.writer
+      .prepare("SELECT COUNT(*) as cnt FROM memory_items WHERE namespace = 'skill_runs'")
+      .get() as { cnt: number };
+    expect(memoryRows.cnt).toBe(0);
   });
 
   it("persists run snapshot with learning event atomically", () => {
@@ -71,9 +75,8 @@ describe("FridaySkillRunCheckpointWriter", () => {
     expect(result.runPersisted).toBe(true);
     expect(result.eventInserted).toBe(true);
 
-    // Both should exist
     const runRow = db.writer
-      .prepare("SELECT * FROM memory_items WHERE namespace = 'skill_runs' AND key = 'run-001'")
+      .prepare("SELECT * FROM skill_run_snapshots WHERE run_id = 'run-001'")
       .get();
     expect(runRow).toBeTruthy();
 
@@ -119,7 +122,7 @@ describe("FridaySkillRunCheckpointWriter", () => {
     writer.persistCheckpoint({ run: updatedSnapshot });
 
     const row = db.writer
-      .prepare("SELECT value_json FROM memory_items WHERE namespace = 'skill_runs' AND key = 'run-001'")
+      .prepare("SELECT value_json FROM skill_run_snapshots WHERE run_id = 'run-001'")
       .get() as { value_json: string };
     const parsed = JSON.parse(row.value_json);
     expect(parsed.status).toBe("completed");
@@ -147,7 +150,7 @@ describe("FridaySkillRunCheckpointWriter", () => {
     // Verify run snapshot was NOT persisted (rolled back)
     const runRow = db.writer
       .prepare(
-        "SELECT * FROM memory_items WHERE namespace = 'skill_runs' AND key = 'run-rollback'",
+        "SELECT * FROM skill_run_snapshots WHERE run_id = 'run-rollback'",
       )
       .get();
     expect(runRow).toBeUndefined();
@@ -179,7 +182,7 @@ describe("FridaySkillRunCheckpointWriter", () => {
 
     // Both runs should exist
     const runs = db.writer
-      .prepare("SELECT COUNT(*) as cnt FROM memory_items WHERE namespace = 'skill_runs'")
+      .prepare("SELECT COUNT(*) as cnt FROM skill_run_snapshots")
       .get() as { cnt: number };
     expect(runs.cnt).toBe(2);
 

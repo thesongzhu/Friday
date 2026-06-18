@@ -259,6 +259,46 @@ describe("FridayRetentionJob", () => {
     const result = job.run(NOW);
 
     expect(result.deletedSkillRuns).toBe(1);
+
+    const legacyRows = db.writer
+      .prepare("SELECT COUNT(*) as cnt FROM memory_items WHERE namespace = 'skill_runs'")
+      .get() as { cnt: number };
+    expect(legacyRows.cnt).toBe(0);
+  });
+
+  it("does not delete legacy memory_items skill_runs during retention", () => {
+    db.writer
+      .prepare(
+        `INSERT INTO memory_items (id, namespace, key, value_json, tags_json, created_at, updated_at)
+         VALUES ('legacy-run-old', 'skill_runs', 'legacy-run-old', ?, ?, '2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.000Z')`,
+      )
+      .run(
+        JSON.stringify({
+          runId: "legacy-run-old",
+          skillId: "s",
+          version: "1.0",
+          status: "completed",
+          currentStepId: "step",
+          attemptsByStep: {},
+          state: {},
+          startedAt: "2024-01-01T00:00:00.000Z",
+          updatedAt: "2024-01-01T00:00:00.000Z",
+          sessionId: "sess",
+          userId: "test-user",
+          channel: "discord",
+          lastTransitionAt: "2024-01-01T00:00:00.000Z",
+        }),
+        JSON.stringify(["skill:s", "status:completed", "user:test-user"]),
+      );
+
+    const job = createJob();
+    const result = job.run(NOW);
+
+    const legacyRows = db.writer
+      .prepare("SELECT COUNT(*) as cnt FROM memory_items WHERE namespace = 'skill_runs'")
+      .get() as { cnt: number };
+    expect(result.deletedSkillRuns).toBe(0);
+    expect(legacyRows.cnt).toBe(1);
   });
 
   it("returns all zeros when nothing to clean", () => {
