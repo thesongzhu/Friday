@@ -127,7 +127,10 @@ export interface GuardTestSetup {
   context: FridayMemoryGuardContext;
 }
 
-export function createGuardTestSetup(contextOverrides?: Partial<FridayMemoryGuardContext>): GuardTestSetup {
+export function createGuardTestSetup(
+  contextOverrides?: Partial<FridayMemoryGuardContext>,
+  options?: { tsMemoryWritesEnabled?: boolean },
+): GuardTestSetup {
   const core = createMockCoreService();
   const rateLimiter = createMockRateLimiter();
   const quotaRepo = createMockQuotaRepo();
@@ -150,6 +153,7 @@ export function createGuardTestSetup(contextOverrides?: Partial<FridayMemoryGuar
     db,
     nowIso: () => NOW,
     nowMs: () => NOW_MS,
+    tsMemoryWritesEnabled: options?.tsMemoryWritesEnabled,
     context,
     rateLimiter,
     quotaRepo,

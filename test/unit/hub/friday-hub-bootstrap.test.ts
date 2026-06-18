@@ -1035,6 +1035,7 @@ describe("createFridayHub", () => {
     hub = await createIsolatedHub({
       allowTestOnlyWorkflowRunExecution: true,
       allowTestOnlyAgentRunExecution: true,
+      allowTestOnlyTsMemoryWrites: true,
     });
     const channel = createTestChannelPlugin();
     hub.channelRegistry.register(channel.plugin);

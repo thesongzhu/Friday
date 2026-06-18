@@ -149,6 +149,12 @@ export interface CreateFridayMemoryGuardServiceDeps {
   db: FridaySqliteLayer;
   nowIso: () => string;
   nowMs: () => number;
+  /**
+   * Mirrors the core memory service retirement switch. When false, guarded
+   * memory write legs fail before guard-local pre-write maintenance such as
+   * quota auto-prune can mutate legacy `memory_items`.
+   */
+  tsMemoryWritesEnabled?: boolean;
   context: FridayMemoryGuardContext;
   rateLimiter: FridayMemoryGuardRateLimiter;
   quotaRepo: FridayMemoryGuardQuotaRepository;
@@ -168,5 +174,6 @@ export interface CreateFridayMemoryGuardServiceFactoryDeps {
   db: FridaySqliteLayer;
   nowIso: () => string;
   nowMs: () => number;
+  tsMemoryWritesEnabled?: boolean;
   resolveContextFromPrincipal?: (principal: FridayAuthPrincipal | null) => FridayMemoryGuardContext;
 }

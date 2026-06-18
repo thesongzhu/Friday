@@ -166,6 +166,13 @@ export interface CreateFridayApiRuntimeDeps {
   nowIso: () => string;
   providerService: FridayProviderService;
   memoryService?: FridayMemoryService;
+  /**
+   * Test-oracle only: allows legacy TypeScript durable memory writes in
+   * isolated validation. Production/runtime callers must leave this unset so
+   * memory store/delete/prune, including guard-local quota pre-prune, fail
+   * closed until Rust owns durable memory writes.
+   */
+  allowTestOnlyTsMemoryWrites?: boolean;
   skillGenerator?: FridaySkillGeneratorService;
   converterService?: FridaySkillConverterService;
   workflowGenerator?: FridayWorkflowGeneratorService;

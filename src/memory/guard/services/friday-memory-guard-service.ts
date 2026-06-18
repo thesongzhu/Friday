@@ -16,6 +16,7 @@ import type {
 } from "../../model/friday-memory.types.js";
 
 import { FridayDomainError } from "#errors";
+import { FRIDAY_MEMORY_ERROR_CODES } from "../../friday-memory.constants.js";
 
 import {
   FRIDAY_MEMORY_GUARD_AUTO_PRUNE_BATCH_SIZE,
@@ -55,6 +56,21 @@ function isStringArray(value: unknown): value is string[] {
 
 function byteLength(str: string): number {
   return new TextEncoder().encode(str).length;
+}
+
+function assertTsDurableMemoryWriteEnabled(enabled: boolean, operation: string): void {
+  if (enabled) return;
+  throw new FridayDomainError(
+    FRIDAY_MEMORY_ERROR_CODES.TS_RUNTIME_DURABLE_MEMORY_WRITE_RETIRED,
+    "TypeScript durable memory writes are retired for this runtime; use the Rust-owned memory confirmation spine.",
+    {
+      httpStatus: 503,
+      details: {
+        operation,
+        replacement: "rust_owned_memory_confirmation_spine",
+      },
+    },
+  );
 }
 
 // ─── Namespace resolution ───
@@ -357,6 +373,7 @@ export function createFridayMemoryGuardService(
 ): FridayMemoryGuardService {
   const { core, db, context, rateLimiter, quotaRepo, piiGuard, outputFilter } = deps;
   const scopePrefix = buildScopePrefix(context);
+  const tsMemoryWritesEnabled = deps.tsMemoryWritesEnabled ?? true;
 
   // ─── Error boundary: wraps unknown errors in FridayDomainError ───
 
@@ -498,14 +515,18 @@ export function createFridayMemoryGuardService(
         const resolution = resolveNamespace(namespace, context);
         enforceReservedNamespacePolicy(resolution.requestedNamespace, context);
 
-        // 3. Rate limit
+        // 3. Legacy TS writes are retired by default. Guard-local quota
+        // auto-prune is itself a memory_items delete, so fail before it.
+        assertTsDurableMemoryWriteEnabled(tsMemoryWritesEnabled, "memory.store");
+
+        // 4. Rate limit
         consumeRate("write", resolution.effectiveNamespace);
 
-        // 4. Quota
+        // 5. Quota
         const contentBytes = byteLength(content);
         checkQuotaAndPrune(resolution.effectiveNamespace, contentBytes);
 
-        // 5. PII policy — scan/redact content AND caller-supplied metadata, and drop tags that
+        // 6. PII policy — scan/redact content AND caller-supplied metadata, and drop tags that
         // themselves contain PII (metadata + tags reach the store via the HTTP route, so they
         // must be covered too). Metadata values are free-form, so PII is redacted in place; a
         // tag is a constrained-charset label, so a "[EMAIL]"-style redaction marker would be an
@@ -552,14 +573,14 @@ export function createFridayMemoryGuardService(
           validateTags(mergedTags);
         }
 
-        // 6. Delegate to core — store redacted content, redacted metadata, PII-stripped tags
+        // 7. Delegate to core — store redacted content, redacted metadata, PII-stripped tags
         const item = await core.store(resolution.effectiveNamespace, piiResult.transformedContent, {
           ...metadata,
           ...(metadata?.metadata !== undefined ? { metadata: redactedMetadata } : {}),
           tags: mergedTags.length > 0 ? mergedTags : metadata?.tags,
         });
 
-        // 7. Output filter
+        // 8. Output filter
         return outputFilter.filterItem(item);
       });
     },
@@ -676,6 +697,8 @@ export function createFridayMemoryGuardService(
 
     delete(itemId: string): Promise<boolean> {
       return guardErrorBoundary(async () => {
+        assertTsDurableMemoryWriteEnabled(tsMemoryWritesEnabled, "memory.delete");
+
         // Scope check first
         const item = await core.get(itemId);
         if (!item) return false;
@@ -691,6 +714,8 @@ export function createFridayMemoryGuardService(
 
     prune(options?: FridayMemoryPruneOptions): Promise<FridayMemoryPruneResult> {
       return guardErrorBoundary(async () => {
+        assertTsDurableMemoryWriteEnabled(tsMemoryWritesEnabled, "memory.prune");
+
         // Scope namespace filter
         const scopedNamespace = scopeNamespaceFilter(options?.namespace, context, scopePrefix, quotaRepo, db);
 

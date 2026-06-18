@@ -4308,6 +4308,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       db: deps.db,
       nowIso: deps.nowIso,
       nowMs: () => new Date(deps.nowIso()).getTime(),
+      tsMemoryWritesEnabled: deps.allowTestOnlyTsMemoryWrites === true,
     });
 
     for (const route of createFridayMemoryRoutes({

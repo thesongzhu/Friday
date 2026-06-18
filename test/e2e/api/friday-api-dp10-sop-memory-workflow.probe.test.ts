@@ -413,6 +413,7 @@ describe("DP-10 probe — SOP memory triggers workflow execution", () => {
       allowTestOnlySessionExecution: true,
       allowTestOnlySessionRunExecution: true,
       allowTestOnlySessionMemoryExtractionExecution: true,
+      allowTestOnlyTsMemoryWrites: true,
       computeChecksum: sha256,
       resolveSkill: (skillId) => skillId === WORKFLOW_SKILL_ID ? { id: skillId } : null,
       invokeSkill: async () => ({}),

@@ -185,6 +185,7 @@ describe("DP-10 probe — cross-session SOP trigger memory", () => {
       allowTestOnlySessionExecution: true,
       allowTestOnlySessionRunExecution: true,
       allowTestOnlySessionMemoryExtractionExecution: true,
+      allowTestOnlyTsMemoryWrites: true,
     });
 
     const port = await findFreePort();
