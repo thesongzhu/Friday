@@ -19,6 +19,8 @@ function makeSnapshot(overrides: Record<string, unknown> = {}) {
     routeDecision: {
       advisorSummary: "Rust Hub route decision projection.",
       selectedRoute: "route_decision_ref",
+      controlRef: "friday://route-decision-projection/mission_cli_snapshot_contract/work_provider/1700000000000",
+      workItemId: "work_provider",
       alternatives: ["alternate_ref"],
       actionItems: [
         {

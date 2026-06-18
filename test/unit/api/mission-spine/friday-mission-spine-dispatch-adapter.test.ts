@@ -16,6 +16,8 @@ import type {
   FridayRustHubMissionIntakeResult,
   FridayRustHubMissionLifecycleRequest,
   FridayRustHubMissionLifecycleResult,
+  FridayRustHubRouteDecisionControlRequest,
+  FridayRustHubRouteDecisionControlResult,
   FridayRustHubWorkItemStatusRequest,
   FridayRustHubWorkItemStatusResult,
 } from "../../../../src/api/mission-spine/friday-rust-hub-agent-run-ws-sealed-client.js";
@@ -90,17 +92,37 @@ const WORKITEM_RESULT: FridayRustHubWorkItemStatusResult = {
   updatedAtMs: 1,
 };
 
+const ROUTE_CONTROL_REQ: FridayRustHubRouteDecisionControlRequest = {
+  decisionId: "route-decision-1",
+  controlKind: "veto",
+  actorRef: "actor-1",
+  reason: "operator veto",
+};
+
+const ROUTE_CONTROL_RESULT: FridayRustHubRouteDecisionControlResult = {
+  truthLabel: "rust_wired",
+  decisionId: "route-decision-1",
+  missionId: "mission-1",
+  workItemId: "wi-1",
+  controlKind: "veto",
+  actorRef: "actor-1",
+  reason: "operator veto",
+  updatedAtMs: 1,
+};
+
 /** A fake underlying sealed client + a recorder of how it was constructed/called. */
 function makeFakeClient(behavior: {
   intake?: FridayRustHubMissionIntakeResult;
   lifecycle?: FridayRustHubMissionLifecycleResult;
   workItem?: FridayRustHubWorkItemStatusResult;
+  routeControl?: FridayRustHubRouteDecisionControlResult;
   reject?: unknown;
 }) {
   const constructed: CreateFridayRustHubAgentRunSealedClientOptions[] = [];
   const intakeCalls: FridayRustHubMissionIntakeRequest[] = [];
   const lifecycleCalls: FridayRustHubMissionLifecycleRequest[] = [];
   const workItemCalls: FridayRustHubWorkItemStatusRequest[] = [];
+  const routeControlCalls: FridayRustHubRouteDecisionControlRequest[] = [];
   const createClient = vi.fn(
     (options: CreateFridayRustHubAgentRunSealedClientOptions): FridayRustHubAgentRunSealedClient => {
       constructed.push(options);
@@ -126,10 +148,15 @@ function makeFakeClient(behavior: {
           if (behavior.reject !== undefined) throw behavior.reject;
           return behavior.workItem!;
         }),
+        controlRouteDecision: vi.fn(async (req: FridayRustHubRouteDecisionControlRequest) => {
+          routeControlCalls.push(req);
+          if (behavior.reject !== undefined) throw behavior.reject;
+          return behavior.routeControl!;
+        }),
       };
     },
   );
-  return { createClient, constructed, intakeCalls, lifecycleCalls, workItemCalls };
+  return { createClient, constructed, intakeCalls, lifecycleCalls, workItemCalls, routeControlCalls };
 }
 
 describe("createFridayMissionSpineDispatchAdapter (Lane B-2, dark, adapter)", () => {
@@ -157,8 +184,12 @@ describe("createFridayMissionSpineDispatchAdapter (Lane B-2, dark, adapter)", ()
       expect(fake.intakeCalls).toEqual([INTAKE_REQ]);
     });
 
-    it("transitionMission + transitionWorkItem delegate verbatim", async () => {
-      const fake = makeFakeClient({ lifecycle: LIFECYCLE_RESULT, workItem: WORKITEM_RESULT });
+    it("transitionMission + transitionWorkItem + controlRouteDecision delegate verbatim", async () => {
+      const fake = makeFakeClient({
+        lifecycle: LIFECYCLE_RESULT,
+        workItem: WORKITEM_RESULT,
+        routeControl: ROUTE_CONTROL_RESULT,
+      });
       const adapter = createFridayMissionSpineDispatchAdapter({
         port: 48750,
         secretResolver: () => SECRET,
@@ -167,8 +198,10 @@ describe("createFridayMissionSpineDispatchAdapter (Lane B-2, dark, adapter)", ()
 
       expect(await adapter.transitionMission(LIFECYCLE_REQ)).toBe(LIFECYCLE_RESULT);
       expect(await adapter.transitionWorkItem(WORKITEM_REQ)).toBe(WORKITEM_RESULT);
+      expect(await adapter.controlRouteDecision(ROUTE_CONTROL_REQ)).toBe(ROUTE_CONTROL_RESULT);
       expect(fake.lifecycleCalls).toEqual([LIFECYCLE_REQ]);
       expect(fake.workItemCalls).toEqual([WORKITEM_REQ]);
+      expect(fake.routeControlCalls).toEqual([ROUTE_CONTROL_REQ]);
     });
   });
 

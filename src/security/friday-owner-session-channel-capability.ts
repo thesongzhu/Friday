@@ -86,13 +86,14 @@ export type FridayPublicMutationOperation =
   | "cloud.worker.dns.validate"
   | "cloud.worker.package.generate"
   | "cloud.worker.teardown.receipt"
-  // Lane B — organic mission-spine mutations driven over the sealed-WS dispatch
-  // arms (Mission intake / Mission lifecycle / WorkItem status). Public mutating
-  // routes: refuse the synthetic public principal; only a bound owner drives a
-  // Mission/WorkItem transition.
+  // Lane B / D20 W1 — organic mission-spine mutations driven over the sealed-WS dispatch
+  // arms (Mission intake / Mission lifecycle / WorkItem status / RouteDecision control).
+  // Public mutating routes: refuse the synthetic public principal; only a bound owner drives a
+  // Mission/WorkItem transition or pre-dispatch route veto/override.
   | "mission.spine.intake"
   | "mission.spine.lifecycle"
   | "mission.spine.workitem.status"
+  | "mission.spine.routedecision.control"
   // Lane M — the memory-confirmation loop's terminal mutation driven over the
   // sealed-WS dispatch arm (OWNER confirm/reject of ONE memory candidate). Public
   // mutating route: refuse the synthetic public principal; only a bound owner can

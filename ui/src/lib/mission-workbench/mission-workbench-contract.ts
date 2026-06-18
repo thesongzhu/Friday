@@ -141,6 +141,8 @@ export interface MissionWorkbenchSnapshot {
   routeDecision: {
     advisorSummary: string;
     selectedRoute: string;
+    controlRef: string;
+    workItemId: string;
     alternatives: string[];
     actionItems: MissionRouteActionItem[];
     truthLabel: MissionTruthLabel;

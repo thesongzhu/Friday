@@ -20,6 +20,8 @@ const snapshot: FridayMissionSpineWorkbenchSnapshot = {
   routeDecision: {
     advisorSummary: "Rust Hub route decision projection.",
     selectedRoute: "route_decision_ref",
+    controlRef: "friday://route-decision-projection/mission_live_projection_test/work_live_projection_test/1700000000000",
+    workItemId: "work_live_projection_test",
     alternatives: ["alternate_ref"],
     actionItems: [
       {
@@ -594,6 +596,7 @@ function makeDispatch(overrides: Partial<FridayMissionSpineDispatchService> = {}
   intake: ReturnType<typeof vi.fn>;
   lifecycle: ReturnType<typeof vi.fn>;
   workItem: ReturnType<typeof vi.fn>;
+  routeControl: ReturnType<typeof vi.fn>;
 } {
   const intake = vi.fn(async () => ({
     truthLabel: "rust_wired" as const,
@@ -627,16 +630,28 @@ function makeDispatch(overrides: Partial<FridayMissionSpineDispatchService> = {}
     proofReceiptCount: 1,
     updatedAtMs: 1_700_000_000_000,
   }));
+  const routeControl = vi.fn(async () => ({
+    truthLabel: "rust_wired" as const,
+    decisionId: "route_decision_lane_b",
+    missionId: "mission_lane_b",
+    workItemId: "work_lane_b",
+    controlKind: "veto" as const,
+    actorRef: "actor_lane_b",
+    reason: "operator veto",
+    updatedAtMs: 1_700_000_000_000,
+  }));
   return {
     dispatch: {
       intakeMission: intake,
       transitionMission: lifecycle,
       transitionWorkItem: workItem,
+      controlRouteDecision: routeControl,
       ...overrides,
     } as FridayMissionSpineDispatchService,
     intake,
     lifecycle,
     workItem,
+    routeControl,
   };
 }
 
@@ -681,18 +696,27 @@ const VALID_WORK_ITEM_BODY = {
   reason: "stage",
 };
 
+const VALID_ROUTE_CONTROL_BODY = {
+  controlKind: "veto",
+  actorRef: "actor_lane_b",
+  reason: "operator veto",
+};
+
 describe("createFridayMissionSpineRoutes — Lane B organic mutation routes", () => {
-  it("registers the three POST routes as public, byte-additive to the GET route", () => {
+  it("registers the four POST routes as public, byte-additive to the GET route", () => {
     const { dispatch } = makeDispatch();
     const routes = createFridayMissionSpineRoutes({ workbench: null, disabledReason: null, dispatch });
     const intake = findPost(routes, "mission.spine.intake.create");
     const lifecycle = findPost(routes, "mission.spine.lifecycle.transition");
     const workItem = findPost(routes, "mission.spine.workitem.status.transition");
+    const routeControl = findPost(routes, "mission.spine.routedecision.control");
     expect(intake.method).toBe("POST");
     expect(intake.path).toBe("/v1/mission-spine/intake");
     expect(intake.auth).toEqual({ public: true });
     expect(lifecycle.path).toBe("/v1/mission-spine/:missionId/lifecycle");
     expect(workItem.path).toBe("/v1/mission-spine/work-items/:workItemId/status");
+    expect(routeControl.path).toBe("/v1/mission-spine/route-decisions/:decisionId/control");
+    expect(routeControl.auth).toEqual({ public: true });
     // The GET route is unchanged and still present.
     expect(findRoute(routes).method).toBe("GET");
   });
@@ -715,13 +739,15 @@ describe("createFridayMissionSpineRoutes — Lane B organic mutation routes", ()
       expect(intake).not.toHaveBeenCalled();
     });
 
-    it("lifecycle and work-item also 503 when dispatch is null", async () => {
+    it("lifecycle, work-item, and route-control also 503 when dispatch is null", async () => {
       const routes = createFridayMissionSpineRoutes({ workbench: null, disabledReason: null, dispatch: null });
       const lifecycle = findPost(routes, "mission.spine.lifecycle.transition");
       const workItem = findPost(routes, "mission.spine.workitem.status.transition");
+      const routeControl = findPost(routes, "mission.spine.routedecision.control");
       for (const [route, params, body] of [
         [lifecycle, { missionId: "mission_lane_b" }, VALID_LIFECYCLE_BODY],
         [workItem, { workItemId: "work_lane_b" }, VALID_WORK_ITEM_BODY],
+        [routeControl, { decisionId: "route_decision_lane_b" }, VALID_ROUTE_CONTROL_BODY],
       ] as const) {
         let thrown: unknown = null;
         try {
@@ -825,6 +851,34 @@ describe("createFridayMissionSpineRoutes — Lane B organic mutation routes", ()
       });
       expect((response as { result: { proofReceiptCount: number } }).result.proofReceiptCount).toBe(1);
     });
+
+    it("route-control takes the decisionId from the path and delegates veto/override", async () => {
+      const { dispatch, routeControl } = makeDispatch();
+      const routes = createFridayMissionSpineRoutes({ workbench: null, disabledReason: null, dispatch });
+      const route = findPost(routes, "mission.spine.routedecision.control");
+      const response = await route.handler(
+        makeCtx({
+          principal: BOUND_PRINCIPAL,
+          params: { decisionId: "route_decision_from_path" },
+          body: {
+            controlKind: "override",
+            overrideLane: "codex",
+            overrideProviderOrAgent: "codex",
+            actorRef: "actor_lane_b",
+            reason: "Codex owns this edit",
+          },
+        }) as never,
+      );
+      expect(routeControl).toHaveBeenCalledWith({
+        decisionId: "route_decision_from_path",
+        controlKind: "override",
+        overrideLane: "codex",
+        overrideProviderOrAgent: "codex",
+        actorRef: "actor_lane_b",
+        reason: "Codex owns this edit",
+      });
+      expect((response as { result: { decisionId: string } }).result.decisionId).toBe("route_decision_lane_b");
+    });
   });
 
   describe("flag-ON: invalid body → typed 400, fail-closed (no dispatch)", () => {
@@ -901,6 +955,29 @@ describe("createFridayMissionSpineRoutes — Lane B organic mutation routes", ()
         "proof_receipt_required_for_completion",
       );
       expect(workItem).not.toHaveBeenCalled();
+    });
+
+    it("route-control rejects malformed veto/override bodies before dispatch", async () => {
+      const { dispatch, routeControl } = makeDispatch();
+      const routes = createFridayMissionSpineRoutes({ workbench: null, disabledReason: null, dispatch });
+      const route = findPost(routes, "mission.spine.routedecision.control");
+      let thrown: unknown = null;
+      try {
+        await route.handler(
+          makeCtx({
+            principal: BOUND_PRINCIPAL,
+            params: { decisionId: "route_decision_from_path" },
+            body: { controlKind: "veto", overrideLane: "codex", actorRef: "a", reason: "r" },
+          }) as never,
+        );
+      } catch (err) {
+        thrown = err;
+      }
+      expect((thrown as FridayDomainError).httpStatus).toBe(400);
+      expect(JSON.stringify((thrown as FridayDomainError).details)).toContain(
+        "veto_cannot_carry_override_target",
+      );
+      expect(routeControl).not.toHaveBeenCalled();
     });
   });
 });

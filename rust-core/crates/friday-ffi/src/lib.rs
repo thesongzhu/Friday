@@ -1956,6 +1956,11 @@ fn message_kind_name(m: &friday_protocol::Message) -> &'static str {
         M::MissionLifecycleResult { .. } => "MissionLifecycleResult",
         M::WorkItemStatusRequest { .. } => "WorkItemStatusRequest",
         M::WorkItemStatusResult { .. } => "WorkItemStatusResult",
+        // D20 W1-S3 route-decision control rides the sealed Mission-Spine dispatch arm, not FFI.
+        // Keep it named here so unsupported out-of-slice envelopes remain truth-labeled and this
+        // exhaustive match catches future protocol variants.
+        M::RouteDecisionControlRequest { .. } => "RouteDecisionControlRequest",
+        M::RouteDecisionControlResult { .. } => "RouteDecisionControlResult",
         // S-R1 — the DARK sealed-WS READ-seam projection kinds. NAMED here so the exhaustive match
         // holds and the truth label carries the real kind; nothing on the FFI surface constructs or
         // dispatches them (the UI reads them directly over the sealed-WS read server, not via FFI).

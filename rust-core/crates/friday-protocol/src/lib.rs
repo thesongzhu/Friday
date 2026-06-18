@@ -50,9 +50,15 @@ use thiserror::Error;
 /// so deploying a v13 binary changes NO live behavior. The constraint fields added
 /// to `AgentRunRequest` are additive-optional (absent ⇒ byte-identical to the
 /// pre-A1 wire), so the live courier's current bytes still decode to no-constraints.
-pub const CURRENT_SCHEMA_VERSION: u16 = 13;
+///
+/// v14 (D20 W1 route-decision control) adds `RouteDecisionControlRequest/Result`.
+/// These wire the existing Hub-owned route veto/override lifecycle controls through
+/// the sealed Mission Spine dispatch flag. They stay refs-only and default-dark: a
+/// v14 binary with the dispatch flag off still echoes the message as a keepalive,
+/// changing no live behavior.
+pub const CURRENT_SCHEMA_VERSION: u16 = 14;
 /// The inclusive range of versions this build supports.
-pub const SUPPORTED: VersionRange = VersionRange { min: 1, max: 13 };
+pub const SUPPORTED: VersionRange = VersionRange { min: 1, max: 14 };
 
 /// A surface-safe Mission projection. This is the wire shape mobile, desktop, and
 /// channel surfaces may render. It intentionally has no raw provider ids, channel
@@ -268,6 +274,43 @@ pub struct WorkItemStatusResultWire {
     pub reason: String,
     /// COUNT of persisted proof receipts (never the raw receipt refs themselves).
     pub proof_receipt_count: u64,
+    pub updated_at_ms: i64,
+}
+
+/// Client request to apply one OWNER route-decision control before dispatch.
+/// `control_kind="veto"` blocks the `ReadyToDispatch -> Dispatched` transition;
+/// `control_kind="override"` changes the selected lane/target when that transition
+/// is applied. This is Hub-owned lifecycle control, never a provider/model call.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteDecisionControlRequestWire {
+    pub decision_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mission_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_item_id: Option<String>,
+    pub control_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub override_lane: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub override_provider_or_agent: Option<String>,
+    pub actor_ref: String,
+    pub reason: String,
+}
+
+/// Hub response after one route-decision control is persisted. It carries only
+/// canonical ids and the chosen control; it is not a provider dispatch receipt.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteDecisionControlResultWire {
+    pub decision_id: String,
+    pub mission_id: String,
+    pub work_item_id: String,
+    pub control_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub override_lane: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub override_provider_or_agent: Option<String>,
+    pub actor_ref: String,
+    pub reason: String,
     pub updated_at_ms: i64,
 }
 
@@ -1328,6 +1371,17 @@ pub enum Message {
     /// status here is honest precisely because the proof-on-completion invariant
     /// was enforced before the write.
     WorkItemStatusResult { result: WorkItemStatusResultWire },
+    /// client->hub: apply an OWNER route-decision control before dispatch.
+    /// A veto blocks the dispatch transition; an override changes lane/target at
+    /// the lifecycle hook. Never a provider/model call.
+    RouteDecisionControlRequest {
+        request: RouteDecisionControlRequestWire,
+    },
+    /// hub->client: route-decision control receipt. This only records the
+    /// pre-dispatch control, not provider execution.
+    RouteDecisionControlResult {
+        result: RouteDecisionControlResultWire,
+    },
     /// client->hub: apply the OWNER's explicit confirm/reject decision to ONE
     /// pending memory candidate (the Memory-confirmation loop's terminal action).
     /// Never a provider/model call. Owner/namespace-scoped: applies ONLY when
@@ -2984,14 +3038,49 @@ mod tests {
     }
 
     #[test]
-    fn schema_version_bumped_to_thirteen_for_run_controls() {
+    fn schema_version_bumped_to_fourteen_for_route_decision_controls() {
         // A1 bumps the wire version so a v13 peer advertises the run-CONTROL kinds
         // (Paused/Resume/Cancel/Reject/ControlResult) exist — wire-compat honesty — even
         // while nothing emits them yet (DARK, behind the default-off flag). S-A's v12
         // substrate kinds are still present and unchanged.
-        assert_eq!(CURRENT_SCHEMA_VERSION, 13);
-        assert_eq!(SUPPORTED.max, 13);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 14);
+        assert_eq!(SUPPORTED.max, 14);
         assert_eq!(SUPPORTED.min, 1);
+    }
+
+    #[test]
+    fn route_decision_control_wire_is_refs_only_and_round_trips() {
+        let env = Envelope::new(
+            "route-control-1",
+            1000,
+            Message::RouteDecisionControlRequest {
+                request: RouteDecisionControlRequestWire {
+                    decision_id: "route-decision-1".into(),
+                    mission_id: Some("mission-1".into()),
+                    work_item_id: Some("work-1".into()),
+                    control_kind: "override".into(),
+                    override_lane: Some("codex".into()),
+                    override_provider_or_agent: Some("codex".into()),
+                    actor_ref: "operator:jarvis".into(),
+                    reason: "Codex owns this edit".into(),
+                },
+            },
+        );
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"RouteDecisionControlRequest\""));
+        assert!(json.contains("\"decision_id\":\"route-decision-1\""));
+        for forbidden in [
+            "raw transcript",
+            "provider-thread",
+            "sk-",
+            "/Users/jarvis/private",
+        ] {
+            assert!(
+                !json.contains(forbidden),
+                "route decision control wire leaked {forbidden}: {json}"
+            );
+        }
+        assert_eq!(Envelope::decode(&json).unwrap(), env);
     }
 
     // --- A1 run-controls: the on-wire control protocol (v13) --------------------

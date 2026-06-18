@@ -141,6 +141,8 @@ export interface FridayMissionSpineWorkbenchSnapshot {
   routeDecision: {
     advisorSummary: string;
     selectedRoute: string;
+    controlRef: string;
+    workItemId: string;
     alternatives: string[];
     actionItems: FridayMissionSpineRouteActionItem[];
     truthLabel: FridayMissionSpineTruthLabel;

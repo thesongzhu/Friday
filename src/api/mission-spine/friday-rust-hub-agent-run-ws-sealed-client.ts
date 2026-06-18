@@ -402,6 +402,16 @@ export interface FridayRustHubAgentRunSealedClient {
     request: FridayRustHubWorkItemStatusRequest,
   ): Promise<FridayRustHubWorkItemStatusResult>;
   /**
+   * (D20 W1-S3) Apply one OWNER route-decision veto/override over a sealed session —
+   * `Message::RouteDecisionControlRequest`. PURE Hub mutation. Awaits the FIRST
+   * `RouteDecisionControlResult`; fails closed on any other inbound. The storage lifecycle hook
+   * makes this control load-bearing at `ReadyToDispatch -> Dispatched`; this is not a decorative
+   * UI-only field.
+   */
+  controlRouteDecision(
+    request: FridayRustHubRouteDecisionControlRequest,
+  ): Promise<FridayRustHubRouteDecisionControlResult>;
+  /**
    * (Lane M) Apply the OWNER's explicit confirm/reject to ONE pending memory candidate over a
    * sealed session — `Message::MemoryDecisionRequest`. PURE Hub `&Db` mutation (NO model/provider
    * call). Awaits the FIRST `MemoryDecisionResult`; fails closed on any other inbound (including the
@@ -530,6 +540,32 @@ export interface FridayRustHubWorkItemStatusResult {
   readonly reason: string;
   /** COUNT of persisted proof receipts (never the raw receipt refs themselves). */
   readonly proofReceiptCount: number;
+  readonly updatedAtMs: number;
+}
+
+/** (D20 W1-S3) A pre-dispatch route decision veto/override — `RouteDecisionControlRequestWire`. */
+export interface FridayRustHubRouteDecisionControlRequest {
+  readonly decisionId: string;
+  readonly missionId?: string;
+  readonly workItemId?: string;
+  readonly controlKind: "veto" | "override";
+  readonly overrideLane?: string;
+  readonly overrideProviderOrAgent?: string;
+  readonly actorRef: string;
+  readonly reason: string;
+}
+
+/** (D20 W1-S3) Refs-only route decision control result — `RouteDecisionControlResultWire`. */
+export interface FridayRustHubRouteDecisionControlResult {
+  readonly truthLabel: "rust_wired";
+  readonly decisionId: string;
+  readonly missionId: string;
+  readonly workItemId: string;
+  readonly controlKind: "veto" | "override";
+  readonly overrideLane?: string;
+  readonly overrideProviderOrAgent?: string;
+  readonly actorRef: string;
+  readonly reason: string;
   readonly updatedAtMs: number;
 }
 
@@ -990,6 +1026,32 @@ export function buildWorkItemStatusEnvelope(
 }
 
 /**
+ * (D20 W1-S3) Build the `RouteDecisionControlRequest` inner message — the EXACT
+ * `RouteDecisionControlRequestWire` shape. `override_*` fields are omitted unless present; Rust
+ * validates the control kind and lane fail-closed.
+ */
+export function buildRouteDecisionControlEnvelope(
+  request: FridayRustHubRouteDecisionControlRequest,
+): Record<string, unknown> {
+  const inner: Record<string, unknown> = {
+    decision_id: request.decisionId,
+    ...(request.missionId !== undefined ? { mission_id: request.missionId } : {}),
+    ...(request.workItemId !== undefined ? { work_item_id: request.workItemId } : {}),
+    control_kind: request.controlKind,
+    ...(request.overrideLane !== undefined ? { override_lane: request.overrideLane } : {}),
+    ...(request.overrideProviderOrAgent !== undefined
+      ? { override_provider_or_agent: request.overrideProviderOrAgent }
+      : {}),
+    actor_ref: request.actorRef,
+    reason: request.reason,
+  };
+  return buildMissionEnvelope(`route-decision-control-${request.decisionId}`, {
+    kind: "RouteDecisionControlRequest",
+    request: inner,
+  });
+}
+
+/**
  * (Lane M) Build the `MemoryDecisionRequest` inner message — the EXACT `MemoryDecisionRequestWire`
  * shape. CRITICAL: `Message::MemoryDecisionRequest { request: MemoryDecisionRequestWire }` is a
  * SINGLE-FIELD wrapper on an internally-tagged (`#[serde(tag = "kind")]`) `Message`, so serde
@@ -1171,6 +1233,50 @@ export function parseWorkItemStatusResult(
     actorRef,
     reason,
     proofReceiptCount,
+    updatedAtMs,
+  };
+}
+
+/**
+ * (D20 W1-S3) Parse a `RouteDecisionControlResult` inbound into the refs-only TS result.
+ */
+export function parseRouteDecisionControlResult(
+  fields: Record<string, unknown>,
+): FridayRustHubRouteDecisionControlResult | undefined {
+  const r = unwrapResult(fields);
+  if (r === undefined) {
+    return undefined;
+  }
+  const decisionId = asString(r.decision_id);
+  const missionId = asString(r.mission_id);
+  const workItemId = asString(r.work_item_id);
+  const controlKind = asString(r.control_kind);
+  const overrideLane = asString(r.override_lane);
+  const overrideProviderOrAgent = asString(r.override_provider_or_agent);
+  const actorRef = asString(r.actor_ref);
+  const reason = asString(r.reason);
+  const updatedAtMs = asNumber(r.updated_at_ms);
+  if (
+    !decisionId ||
+    !missionId ||
+    !workItemId ||
+    (controlKind !== "veto" && controlKind !== "override") ||
+    !actorRef ||
+    !reason ||
+    updatedAtMs === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    truthLabel: "rust_wired",
+    decisionId,
+    missionId,
+    workItemId,
+    controlKind,
+    ...(overrideLane !== undefined ? { overrideLane } : {}),
+    ...(overrideProviderOrAgent !== undefined ? { overrideProviderOrAgent } : {}),
+    actorRef,
+    reason,
     updatedAtMs,
   };
 }
@@ -2099,6 +2205,26 @@ export function createFridayRustHubAgentRunSealedClient(
         expectedKind: "WorkItemStatusResult",
         parse: parseWorkItemStatusResult,
         leg: "work-item-status",
+      });
+    },
+
+    controlRouteDecision(
+      request: FridayRustHubRouteDecisionControlRequest,
+    ): Promise<FridayRustHubRouteDecisionControlResult> {
+      if (!request.decisionId || !request.controlKind) {
+        return Promise.reject(
+          unavailable("Sealed mission-spine client route decision control requires a decision id and control kind."),
+        );
+      }
+      return runMissionRoundTrip<FridayRustHubRouteDecisionControlResult>({
+        host,
+        port,
+        timeoutMs,
+        keypair,
+        envelope: buildRouteDecisionControlEnvelope(request),
+        expectedKind: "RouteDecisionControlResult",
+        parse: parseRouteDecisionControlResult,
+        leg: "route-decision-control",
       });
     },
 

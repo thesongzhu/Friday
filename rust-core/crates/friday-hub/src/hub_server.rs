@@ -28,7 +28,8 @@ use friday_protocol::{
     MissionTimelineMissionWire, MissionTimelineRequestWire, MissionTimelineSnapshotWire,
     MissionTimelineSurfaceEventWire, MissionTimelineWorkItemWire, MissionWorkItemContextWire,
     ProviderWorkspaceActionRequestWire, ProviderWorkspaceActionResultWire,
-    RouteDecisionProjectionWire, WorkItemStatusRequestWire, WorkItemStatusResultWire, SUPPORTED,
+    RouteDecisionControlRequestWire, RouteDecisionControlResultWire, RouteDecisionProjectionWire,
+    WorkItemStatusRequestWire, WorkItemStatusResultWire, SUPPORTED,
 };
 use friday_providers::unified::{FallbackStatus, PlatformProvider, ProviderSession, SessionStatus};
 use friday_storage::{
@@ -968,6 +969,189 @@ pub fn work_item_status_result_for_db(
             &format!("work item lifecycle blocked: {err}"),
         ),
     }
+}
+
+/// Apply one OWNER route-decision control before dispatch. This is the operator-facing half of
+/// D20 W1-S3: it does not decorate the card only; the persisted control is consulted by the
+/// `ReadyToDispatch -> Dispatched` WorkItem lifecycle transition in `friday-storage`, where a veto
+/// blocks dispatch and an override changes lane/target inside the same transaction.
+///
+/// Owner binding mirrors WorkItem status: resolve decision -> WorkItem -> Mission -> conversation
+/// owner, and require it to match the Rust-derived authenticated owner before writing.
+pub fn route_decision_control_result_for_db(
+    db: &Db,
+    msg_id: &str,
+    request: RouteDecisionControlRequestWire,
+    authenticated_owner: Option<&str>,
+    now_ms: i64,
+) -> Envelope {
+    let (resolved_decision_id, decision) = match resolve_route_decision_control_target(db, &request)
+    {
+        Ok((decision_id, Some(decision))) => (decision_id, decision),
+        Ok((_, None)) => {
+            return mission_intake_error(
+                msg_id,
+                now_ms,
+                ErrorCode::Internal,
+                "route decision control blocked: target RouteDecision not found",
+            );
+        }
+        Err(message) => {
+            return mission_intake_error(msg_id, now_ms, ErrorCode::Internal, message);
+        }
+    };
+
+    let authenticated_owner = authenticated_owner.unwrap_or("").trim();
+    let owner = db
+        .get_mission(&decision.mission_id)
+        .ok()
+        .flatten()
+        .and_then(|m| resolve_conversation_owner(db, &m.friday_conversation_id));
+    let owner_ok = !authenticated_owner.is_empty() && owner.as_deref() == Some(authenticated_owner);
+    if !owner_ok {
+        return mission_intake_error(
+            msg_id,
+            now_ms,
+            ErrorCode::Internal,
+            "route decision control blocked: target RouteDecision is not owned by the authenticated owner",
+        );
+    }
+
+    let (override_lane, override_provider_or_agent) = match request.control_kind.as_str() {
+        "veto" => {
+            if request.override_lane.is_some() || request.override_provider_or_agent.is_some() {
+                return mission_intake_error(
+                    msg_id,
+                    now_ms,
+                    ErrorCode::Internal,
+                    "route decision control blocked: veto cannot carry override target",
+                );
+            }
+            (None, None)
+        }
+        "override" => {
+            let Some(lane) = request.override_lane.as_deref() else {
+                return mission_intake_error(
+                    msg_id,
+                    now_ms,
+                    ErrorCode::Internal,
+                    "route decision control blocked: override requires override_lane",
+                );
+            };
+            let lane = match work_lane_from_wire(lane) {
+                Ok(lane) => lane,
+                Err(message) => {
+                    return mission_intake_error(msg_id, now_ms, ErrorCode::Internal, message);
+                }
+            };
+            (Some(lane), request.override_provider_or_agent.as_deref())
+        }
+        _ => {
+            return mission_intake_error(
+                msg_id,
+                now_ms,
+                ErrorCode::Internal,
+                "route decision control blocked: control_kind is unknown",
+            );
+        }
+    };
+
+    let result = match request.control_kind.as_str() {
+        "veto" => db.veto_route_decision(
+            &resolved_decision_id,
+            &request.actor_ref,
+            &request.reason,
+            now_ms,
+        ),
+        "override" => db.override_route_decision(
+            &resolved_decision_id,
+            override_lane.expect("override lane was validated above"),
+            override_provider_or_agent,
+            &request.actor_ref,
+            &request.reason,
+            now_ms,
+        ),
+        _ => unreachable!("control_kind was validated above"),
+    };
+
+    match result {
+        Ok(()) => match db.get_route_decision(&resolved_decision_id) {
+            Ok(Some(decision)) => Envelope::new(
+                format!("{msg_id}-route-decision-control"),
+                now_ms,
+                Message::RouteDecisionControlResult {
+                    result: RouteDecisionControlResultWire {
+                        decision_id: decision.decision_id,
+                        mission_id: decision.mission_id,
+                        work_item_id: decision.work_item_id,
+                        control_kind: request.control_kind,
+                        override_lane: override_lane.map(|lane| lane.as_str().to_string()),
+                        override_provider_or_agent: request.override_provider_or_agent,
+                        actor_ref: request.actor_ref,
+                        reason: request.reason,
+                        updated_at_ms: now_ms,
+                    },
+                },
+            ),
+            Ok(None) => mission_intake_error(
+                msg_id,
+                now_ms,
+                ErrorCode::Internal,
+                "route decision control blocked: RouteDecision disappeared after control write",
+            ),
+            Err(err) => mission_intake_error(
+                msg_id,
+                now_ms,
+                ErrorCode::Internal,
+                &format!("route decision control blocked: {err}"),
+            ),
+        },
+        Err(err) => mission_intake_error(
+            msg_id,
+            now_ms,
+            ErrorCode::Internal,
+            &format!("route decision control blocked: {err}"),
+        ),
+    }
+}
+
+fn resolve_route_decision_control_target(
+    db: &Db,
+    request: &RouteDecisionControlRequestWire,
+) -> Result<(String, Option<friday_core::RouteDecisionCard>), &'static str> {
+    let direct = db
+        .get_route_decision(&request.decision_id)
+        .map_err(|_| "route decision control blocked: target lookup failed")?;
+    if let Some(decision) = direct {
+        return Ok((request.decision_id.clone(), Some(decision)));
+    }
+
+    let mission_id = request
+        .mission_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or("route decision control blocked: projection ref requires mission_id")?;
+    let projection_ref = request.decision_id.trim();
+    let mut matches = db
+        .list_route_decisions_for_mission(mission_id)
+        .map_err(|_| "route decision control blocked: mission lookup failed")?
+        .into_iter()
+        .filter(|candidate| {
+            candidate.to_projection().route_decision_ref == projection_ref
+                && request
+                    .work_item_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map_or(true, |work_item_id| candidate.work_item_id == work_item_id)
+        })
+        .collect::<Vec<_>>();
+    if matches.len() != 1 {
+        return Err("route decision control blocked: projection ref did not resolve to exactly one RouteDecision");
+    }
+    let decision = matches.remove(0);
+    Ok((decision.decision_id.clone(), Some(decision)))
 }
 
 /// Apply the OWNER's explicit confirm/reject decision to ONE pending memory

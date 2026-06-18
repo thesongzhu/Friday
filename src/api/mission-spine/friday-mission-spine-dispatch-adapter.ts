@@ -10,6 +10,8 @@ import {
   type FridayRustHubMissionIntakeResult,
   type FridayRustHubMissionLifecycleRequest,
   type FridayRustHubMissionLifecycleResult,
+  type FridayRustHubRouteDecisionControlRequest,
+  type FridayRustHubRouteDecisionControlResult,
   type FridayRustHubWorkItemStatusRequest,
   type FridayRustHubWorkItemStatusResult,
 } from "./friday-rust-hub-agent-run-ws-sealed-client.js";
@@ -191,6 +193,19 @@ export function createFridayMissionSpineDispatchAdapter(
         throw error instanceof FridayDomainError
           ? error
           : unavailable("Mission-spine work-item dispatch failed.");
+      }
+    },
+
+    async controlRouteDecision(
+      request: FridayRustHubRouteDecisionControlRequest,
+    ): Promise<FridayRustHubRouteDecisionControlResult> {
+      const client = buildClient();
+      try {
+        return await client.controlRouteDecision(request);
+      } catch (error) {
+        throw error instanceof FridayDomainError
+          ? error
+          : unavailable("Mission-spine route-decision control dispatch failed.");
       }
     },
   };
