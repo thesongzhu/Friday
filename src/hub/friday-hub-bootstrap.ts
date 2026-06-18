@@ -2664,6 +2664,7 @@ export async function createFridayHub(
     });
     guideLensRouteDeps = {
       service: guideLensService,
+      allowTestOnlyGuideLensExecution: config.allowTestOnlyGuideLensExecution,
     };
 
     console.log(

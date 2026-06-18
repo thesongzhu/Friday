@@ -13,6 +13,12 @@ import type {
 
 export interface FridayGuideLensRoutesDeps {
   service: FridayGuideLensService;
+  /**
+   * Test-oracle only: allow legacy TypeScript guide-lens routes in isolated validation.
+   * Production/runtime callers must leave this unset so guide-lens action/write routes
+   * stay fail-closed until the guide-lens surface is governed or Rust-owned.
+   */
+  allowTestOnlyGuideLensExecution?: boolean;
 }
 
 function requireBodyObject(body: unknown): Record<string, unknown> {
@@ -39,6 +45,26 @@ function validateNoMutatingIntent(service: FridayGuideLensService, body: unknown
   }
 }
 
+function throwRetiredGuideLens(): never {
+  throw new FridayDomainError(
+    "TS_RUNTIME_GUIDE_LENS_RETIRED",
+    "TypeScript guide-lens routes are fail-closed in default/live runtime; use the governed Rust-owned guide-lens entrypoint.",
+    {
+      httpStatus: 503,
+      details: {
+        classification: "fail_closed",
+        replacement: "rust_owned_guide_lens_entrypoint_required",
+      },
+    },
+  );
+}
+
+function assertGuideLensTestOracleAllowed(deps: FridayGuideLensRoutesDeps): void {
+  if (deps.allowTestOnlyGuideLensExecution !== true) {
+    throwRetiredGuideLens();
+  }
+}
+
 export function createFridayGuideLensRoutes(
   deps: FridayGuideLensRoutesDeps,
 ): FridayRouteDefinition<unknown, unknown, unknown, unknown>[] {
@@ -58,6 +84,7 @@ export function createFridayGuideLensRoutes(
       path: "/v1/guide-lens/snapshot",
       auth: { public: true },
       async handler(ctx) {
+        assertGuideLensTestOracleAllowed(deps);
         validateNoMutatingIntent(deps.service, ctx.body);
         return deps.service.captureSnapshot(ctx.body as FridayGuideLensSnapshotRequest);
       },
@@ -68,6 +95,7 @@ export function createFridayGuideLensRoutes(
       path: "/v1/guide-lens/targets/resolve",
       auth: { public: true },
       async handler(ctx) {
+        assertGuideLensTestOracleAllowed(deps);
         requireString(ctx.body, "instruction");
         validateNoMutatingIntent(deps.service, ctx.body);
         return deps.service.resolveTarget(ctx.body as FridayGuideLensResolveTargetRequest);
@@ -79,6 +107,7 @@ export function createFridayGuideLensRoutes(
       path: "/v1/guide-lens/overlay",
       auth: { public: true },
       async handler(ctx) {
+        assertGuideLensTestOracleAllowed(deps);
         requireString(ctx.body, "message");
         validateNoMutatingIntent(deps.service, ctx.body);
         return deps.service.showOverlay(ctx.body as FridayGuideLensShowOverlayRequest);
@@ -90,6 +119,7 @@ export function createFridayGuideLensRoutes(
       path: "/v1/guide-lens/overlay",
       auth: { public: true },
       async handler(ctx) {
+        assertGuideLensTestOracleAllowed(deps);
         const query = ctx.query as { sessionId?: string };
         return deps.service.clearOverlay(query.sessionId);
       },
@@ -100,6 +130,7 @@ export function createFridayGuideLensRoutes(
       path: "/v1/guide-lens/screenshots/analyze",
       auth: { public: true },
       async handler(ctx) {
+        assertGuideLensTestOracleAllowed(deps);
         validateNoMutatingIntent(deps.service, ctx.body);
         return deps.service.analyzeScreenshot(ctx.body as FridayGuideLensScreenshotIntakeRequest);
       },
@@ -110,6 +141,7 @@ export function createFridayGuideLensRoutes(
       path: "/v1/guide-lens/verifications",
       auth: { public: true },
       async handler(ctx) {
+        assertGuideLensTestOracleAllowed(deps);
         validateNoMutatingIntent(deps.service, ctx.body);
         return deps.service.verify(ctx.body as FridayGuideLensVerificationRequest);
       },
@@ -120,6 +152,7 @@ export function createFridayGuideLensRoutes(
       path: "/v1/guide-lens/preferences",
       auth: { public: true },
       async handler(ctx) {
+        assertGuideLensTestOracleAllowed(deps);
         const patch = requireBodyObject(ctx.body) as Partial<FridayGuideLensPreferences>;
         return deps.service.updatePreferences(patch);
       },
@@ -130,6 +163,7 @@ export function createFridayGuideLensRoutes(
       path: "/v1/guide-lens/avatar",
       auth: { public: true },
       async handler(ctx) {
+        assertGuideLensTestOracleAllowed(deps);
         const avatar = requireBodyObject(ctx.body) as Partial<FridayGuideLensAvatarPreference>;
         return deps.service.updateAvatar(avatar);
       },
