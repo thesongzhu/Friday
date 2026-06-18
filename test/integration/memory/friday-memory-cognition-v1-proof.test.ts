@@ -239,12 +239,13 @@ describe("Memory cognition v1 proof", () => {
     });
     expect(duplicates.filter((entry) => entry.item.content.includes("dedup advisory only")).length).toBeGreaterThanOrEqual(2);
 
-    const syncRepo = createFridayMemoryFileSyncRepository({ db });
+    const syncRepo = createFridayMemoryFileSyncRepository({ db, allowTestOnlyMemoryFileImport: true });
     const syncService = createFridayMemoryFileSyncService({
       repository: syncRepo,
       stateDir: tmpDir,
       enableWatcher: false,
       nowIso: () => nowIso,
+      allowTestOnlyMemoryFileImport: true,
     });
     const syncResult = await syncService.syncNow({ force: true });
     expect(syncResult.errors).toHaveLength(0);

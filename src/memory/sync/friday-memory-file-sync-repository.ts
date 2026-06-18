@@ -4,6 +4,7 @@ import type {
   FridayMemoryFileSyncStateRow,
   FridayMemorySyncEntityType,
 } from "./friday-memory-file-sync.types.js";
+import { FRIDAY_MEMORY_FILE_IMPORT_RETIRED_ERROR } from "./friday-memory-file-sync.constants.js";
 
 // ─── Raw DB row shapes ───
 
@@ -109,8 +110,11 @@ export interface FridayMemoryFileSyncRepository {
 
 export function createFridayMemoryFileSyncRepository(deps: {
   db: FridaySqliteLayer;
+  /** Test-only oracle for legacy file -> memory_items reverse imports. */
+  allowTestOnlyMemoryFileImport?: boolean;
 }): FridayMemoryFileSyncRepository {
   const { db } = deps;
+  const allowTestOnlyMemoryFileImport = deps.allowTestOnlyMemoryFileImport === true;
 
   return {
     dirtyCount(): number {
@@ -234,6 +238,10 @@ export function createFridayMemoryFileSyncRepository(deps: {
     },
 
     upsertMemoryItemsFromExport(namespace, items) {
+      if (!allowTestOnlyMemoryFileImport) {
+        throw new Error(FRIDAY_MEMORY_FILE_IMPORT_RETIRED_ERROR);
+      }
+
       return db.withWriteTransaction((conn) => {
         let upserted = 0;
 
@@ -271,6 +279,10 @@ export function createFridayMemoryFileSyncRepository(deps: {
     },
 
     deleteMemoryNamespace(namespace: string): number {
+      if (!allowTestOnlyMemoryFileImport) {
+        throw new Error(FRIDAY_MEMORY_FILE_IMPORT_RETIRED_ERROR);
+      }
+
       return db.withWriteTransaction((conn) => {
         const info = conn.prepare("DELETE FROM memory_items WHERE namespace = ?").run(namespace);
         return info.changes;

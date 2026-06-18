@@ -6,6 +6,7 @@ import { createFridaySqliteLayer } from "#state";
 import {
   createFridayMemoryFileSyncRepository,
   createFridayMemoryFileSyncService,
+  FRIDAY_MEMORY_FILE_IMPORT_RETIRED_ERROR,
   memoryNamespaceExportPath,
 } from "#memory";
 
@@ -80,14 +81,61 @@ describe("FridayMemoryFileSyncService — Watcher & Reindex", () => {
 
   // ─── Reindex: forced reindex from exported file ───
 
-  it("reindexNow imports changed data from file into DB", async () => {
-    insertMemoryItem("item-1", "reindex-ns", "key1", '{"hello":"world"}');
+  it("reindexNow fails closed by default for memory namespace file imports", async () => {
+    insertMemoryItem("item-default-1", "default-off-ns", "key1", '{"hello":"world"}');
 
     const repo = createFridayMemoryFileSyncRepository({ db });
     const service = createFridayMemoryFileSyncService({
       repository: repo,
       stateDir: tmpDir,
       enableWatcher: false,
+    });
+
+    await service.syncNow();
+
+    const filePath = memoryNamespaceExportPath(tmpDir, "default-off-ns");
+    const parsed = JSON.parse(await fs.readFile(filePath, "utf8"));
+    parsed.items[0].value = { hello: "modified" };
+    parsed.items.push({
+      id: "item-default-2",
+      key: "key2",
+      value: { should: "not import" },
+      contentText: null,
+      source: "file-edit",
+      tags: [],
+      metadata: null,
+      createdAt: "2025-01-02T00:00:00Z",
+      updatedAt: "2025-01-02T00:00:00Z",
+    });
+    await fs.writeFile(filePath, JSON.stringify(parsed, null, 2), "utf8");
+
+    const result = await service.reindexNow("memory_namespace", "default-off-ns");
+    expect(result.filesProcessed).toBe(0);
+    expect(result.itemsUpserted).toBe(0);
+    expect(result.itemsDeleted).toBe(0);
+    expect(result.errors).toEqual([{
+      entityType: "memory_namespace",
+      entityKey: "default-off-ns",
+      message: FRIDAY_MEMORY_FILE_IMPORT_RETIRED_ERROR,
+    }]);
+
+    const items = getMemoryItems("default-off-ns");
+    expect(items).toHaveLength(1);
+    expect(items[0]!.id).toBe("item-default-1");
+    expect(items[0]!.value_json).toBe('{"hello":"world"}');
+    expect(() => repo.upsertMemoryItemsFromExport("default-off-ns", [])).toThrow(FRIDAY_MEMORY_FILE_IMPORT_RETIRED_ERROR);
+    expect(() => repo.deleteMemoryNamespace("default-off-ns")).toThrow(FRIDAY_MEMORY_FILE_IMPORT_RETIRED_ERROR);
+  });
+
+  it("reindexNow imports changed data from file into DB", async () => {
+    insertMemoryItem("item-1", "reindex-ns", "key1", '{"hello":"world"}');
+
+    const repo = createFridayMemoryFileSyncRepository({ db, allowTestOnlyMemoryFileImport: true });
+    const service = createFridayMemoryFileSyncService({
+      repository: repo,
+      stateDir: tmpDir,
+      enableWatcher: false,
+      allowTestOnlyMemoryFileImport: true,
     });
 
     // Export to file
@@ -131,11 +179,12 @@ describe("FridayMemoryFileSyncService — Watcher & Reindex", () => {
   it("reindexNow rejects external imports that impersonate learned-fact synthetic ids", async () => {
     insertMemoryItem("item-boundary-1", "boundary-ns", "key1", '{"safe":true}');
 
-    const repo = createFridayMemoryFileSyncRepository({ db });
+    const repo = createFridayMemoryFileSyncRepository({ db, allowTestOnlyMemoryFileImport: true });
     const service = createFridayMemoryFileSyncService({
       repository: repo,
       stateDir: tmpDir,
       enableWatcher: false,
+      allowTestOnlyMemoryFileImport: true,
     });
 
     await service.syncNow();
@@ -170,11 +219,12 @@ describe("FridayMemoryFileSyncService — Watcher & Reindex", () => {
   it("reindexNow skips when file hash matches last export", async () => {
     insertMemoryItem("item-skip", "skip-reindex-ns", "key1", '{"val":1}');
 
-    const repo = createFridayMemoryFileSyncRepository({ db });
+    const repo = createFridayMemoryFileSyncRepository({ db, allowTestOnlyMemoryFileImport: true });
     const service = createFridayMemoryFileSyncService({
       repository: repo,
       stateDir: tmpDir,
       enableWatcher: false,
+      allowTestOnlyMemoryFileImport: true,
     });
 
     // Export to file
@@ -190,11 +240,12 @@ describe("FridayMemoryFileSyncService — Watcher & Reindex", () => {
     insertMemoryItem("item-d1", "del-ns", "key1", '{"val":1}');
     insertMemoryItem("item-d2", "del-ns", "key2", '{"val":2}');
 
-    const repo = createFridayMemoryFileSyncRepository({ db });
+    const repo = createFridayMemoryFileSyncRepository({ db, allowTestOnlyMemoryFileImport: true });
     const service = createFridayMemoryFileSyncService({
       repository: repo,
       stateDir: tmpDir,
       enableWatcher: false,
+      allowTestOnlyMemoryFileImport: true,
     });
 
     // Export
@@ -224,11 +275,12 @@ describe("FridayMemoryFileSyncService — Watcher & Reindex", () => {
     insertMemoryItem("item-a1", "ns-a", "key1", '{"val":"a"}');
     insertMemoryItem("item-b1", "ns-b", "key1", '{"val":"b"}');
 
-    const repo = createFridayMemoryFileSyncRepository({ db });
+    const repo = createFridayMemoryFileSyncRepository({ db, allowTestOnlyMemoryFileImport: true });
     const service = createFridayMemoryFileSyncService({
       repository: repo,
       stateDir: tmpDir,
       enableWatcher: false,
+      allowTestOnlyMemoryFileImport: true,
     });
 
     // Export both
@@ -254,11 +306,12 @@ describe("FridayMemoryFileSyncService — Watcher & Reindex", () => {
   it("reindexNow returns error for missing file", async () => {
     insertMemoryItem("item-miss", "missing-ns", "key1", '{"val":1}');
 
-    const repo = createFridayMemoryFileSyncRepository({ db });
+    const repo = createFridayMemoryFileSyncRepository({ db, allowTestOnlyMemoryFileImport: true });
     const service = createFridayMemoryFileSyncService({
       repository: repo,
       stateDir: tmpDir,
       enableWatcher: false,
+      allowTestOnlyMemoryFileImport: true,
     });
 
     // Export then delete the file
@@ -274,11 +327,12 @@ describe("FridayMemoryFileSyncService — Watcher & Reindex", () => {
   it("reindexNow returns error for invalid JSON in file", async () => {
     insertMemoryItem("item-bad", "bad-ns", "key1", '{"val":1}');
 
-    const repo = createFridayMemoryFileSyncRepository({ db });
+    const repo = createFridayMemoryFileSyncRepository({ db, allowTestOnlyMemoryFileImport: true });
     const service = createFridayMemoryFileSyncService({
       repository: repo,
       stateDir: tmpDir,
       enableWatcher: false,
+      allowTestOnlyMemoryFileImport: true,
     });
 
     // Export then corrupt the file
