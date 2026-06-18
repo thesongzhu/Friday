@@ -409,6 +409,13 @@ pub mod web_search;
 /// tests). Flipping the flag live is operator-gated (vision provider + token cost).
 pub mod vision_tools;
 
+/// B5 media tools (`tts`, `pdf_parse`, `ocr_extract`) — default-OFF DARK Hub executor layer over
+/// the Rust-owned media crates. Registered in [`ToolRegistry::default`] but REFUSED by the
+/// chokepoint unless `FRIDAY_MEDIA_TOOL_ENABLED` is `"1"` and hidden from the prompt while off.
+/// Runtime defaults fail closed (no live provider); tests inject deterministic stubs. Built-DARK
+/// only: no live flip, no operator key, no TRUE operator-in-the-loop, no organic instance.
+pub mod media_tools;
+
 /// L2-4 memory-as-tool — exposes the already-built memory spine (extract→confirm→recall) as two
 /// explicit agent tools: `memory_recall` (read the owner's CONFIRMED memory) + `memory_store`
 /// (propose an owner-scoped memory CANDIDATE). Both registered in [`ToolRegistry::default`] but
@@ -1328,6 +1335,7 @@ pub fn build_tool_prompt_with(task: &str, registry: &ToolRegistry) -> String {
     let web_fetch_enabled = web_fetch_enabled_from(std::env::var(FRIDAY_WEB_FETCH_ENABLED).ok());
     let web_search_enabled = web_search_enabled_from(std::env::var(FRIDAY_WEB_SEARCH_ENABLED).ok());
     let vision_enabled = vision_enabled_from(std::env::var(FRIDAY_VISION_ENABLED).ok());
+    let media_tool_enabled = media_tool_enabled_from(std::env::var(FRIDAY_MEDIA_TOOL_ENABLED).ok());
     let subagent_enabled = crate::subagent::subagent_tool_enabled_from(
         std::env::var(FRIDAY_SUBAGENT_TOOL_ENABLED).ok(),
     );
@@ -1339,6 +1347,7 @@ pub fn build_tool_prompt_with(task: &str, registry: &ToolRegistry) -> String {
         web_fetch_enabled,
         web_search_enabled,
         vision_enabled,
+        media_tool_enabled,
         subagent_enabled,
         memory_tool_enabled,
     )
@@ -1348,12 +1357,14 @@ pub fn build_tool_prompt_with(task: &str, registry: &ToolRegistry) -> String {
 /// capability flag is false, its tool (`web_fetch` / `web_search` / `image_analysis`) is filtered
 /// OUT of the advertised menu so the model is never offered it (byte-identical to the pre-L2
 /// prompt). Injected directly by the L2 prompt tests so they never mutate `std::env`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_tool_prompt_with_flagged(
     task: &str,
     registry: &ToolRegistry,
     web_fetch_enabled: bool,
     web_search_enabled: bool,
     vision_enabled: bool,
+    media_tool_enabled: bool,
     subagent_enabled: bool,
     memory_tool_enabled: bool,
 ) -> String {
@@ -1370,6 +1381,9 @@ pub(crate) fn build_tool_prompt_with_flagged(
             continue;
         }
         if name == "image_analysis" && !vision_enabled {
+            continue;
+        }
+        if matches!(name, "tts" | "pdf_parse" | "ocr_extract") && !media_tool_enabled {
             continue;
         }
         if name == crate::subagent::SUBAGENT_TOOL && !subagent_enabled {
@@ -1698,6 +1712,33 @@ impl Default for ToolRegistry {
             "analyze image(s) with a vision model (params: prompt, images [workspace path / \
              http(s) URL / data: URI], model, detail low/high/auto, maxTokens); returns the \
              model's analysis text",
+        );
+        // B5 media tools — registered for trusted classification + disabled-set resolution, but
+        // default-OFF behind FRIDAY_MEDIA_TOOL_ENABLED. Runtime defaults fail closed for live
+        // providers; flag-ON tests inject stubs to prove the path is functional while DARK.
+        r.register(
+            "tts",
+            true,
+            Risk::Medium,
+            Reversibility::ReversibleInWorkspace,
+            "convert text to speech (params: text, voice, format mp3/wav/opus, speed, model); \
+             returns audio metadata, never raw audio in the ledger",
+        );
+        r.register(
+            "pdf_parse",
+            false,
+            Risk::ReadOnly,
+            Reversibility::Reversible,
+            "extract text from a workspace PDF (params: path, maxPages, maxChars); returns page \
+             counts and bounded extracted text",
+        );
+        r.register(
+            "ocr_extract",
+            false,
+            Risk::ReadOnly,
+            Reversibility::Reversible,
+            "extract text from a workspace/data-URI image (params: path or image, prompt, model, \
+             maxOutputChars); returns bounded OCR text",
         );
         // L2 subagent — bounded sub-task delegation + the in-product #7 trust-mint. MUTATING
         // (mutating:true, Risk::Medium): a spawn MINTS a durable TrustGrant + drives a nested
@@ -2675,6 +2716,10 @@ pub enum ExecError {
     /// no-confirmed-memory case is NOT this — those are normal `ToolReceipt`s carrying the
     /// fail-closed message (so the model sees them); this variant is a hard storage failure.
     Memory(StorageError),
+    /// A B5 media-tool failure — malformed params, contained-file rejection after safe-open, or a
+    /// hard media parser/provider error. Missing TTS/OCR provider defaults return visible warning
+    /// receipts instead of silent skips.
+    Media(crate::media_tools::MediaToolError),
 }
 
 impl std::fmt::Display for ExecError {
@@ -2688,6 +2733,7 @@ impl std::fmt::Display for ExecError {
             ExecError::WebSearch(e) => write!(f, "web_search_error:{e}"),
             ExecError::Vision(e) => write!(f, "image_analysis_error:{e}"),
             ExecError::Memory(e) => write!(f, "memory_tool_error:{e}"),
+            ExecError::Media(e) => write!(f, "media_tool_error:{e}"),
         }
     }
 }
@@ -3456,6 +3502,18 @@ pub(crate) fn vision_enabled_from(raw: Option<String>) -> bool {
     matches!(raw, Some(v) if v.trim() == "1")
 }
 
+/// The `FRIDAY_MEDIA_TOOL_ENABLED` env var (B5 media tools). When exactly `"1"` (trimmed),
+/// `tts`, `pdf_parse`, and `ocr_extract` are DISPATCHABLE; otherwise the gate-dispatch chokepoint
+/// REFUSES them fail-closed (`media_tool_disabled_flag_off:<tool>`) BEFORE classify/execute.
+/// DEFAULT-OFF (DARK): flipping it live is operator-gated because TTS/OCR can touch provider/cost
+/// surfaces and TTS produces audio output.
+pub const FRIDAY_MEDIA_TOOL_ENABLED: &str = "FRIDAY_MEDIA_TOOL_ENABLED";
+
+/// Pure flag-matcher for [`FRIDAY_MEDIA_TOOL_ENABLED`]. ONLY literal `"1"` enables.
+pub(crate) fn media_tool_enabled_from(raw: Option<String>) -> bool {
+    matches!(raw, Some(v) if v.trim() == "1")
+}
+
 /// The `FRIDAY_SUBAGENT_TOOL_ENABLED` env var (L2 subagent and #7 trust-mint). When exactly `"1"`
 /// (trimmed), the `subagent` tool is INTERCEPTED at the loop dispatch seam (it mints a child grant
 /// that is a subset of the parent's then recurses into a bounded nested loop) and advertised in the
@@ -3567,6 +3625,21 @@ pub(crate) fn gate_dispatch_with_policy_enforced(
     {
         return Ok(GateDispatch::Denied(format!(
             "vision_disabled_flag_off:{}",
+            raw.action
+        )));
+    }
+    let media_tool_enabled = media_tool_enabled_from(std::env::var(FRIDAY_MEDIA_TOOL_ENABLED).ok());
+    // (B5) FRIDAY_MEDIA_TOOL_ENABLED flag-gate — identical posture to the L2 capability gates,
+    // for the dark media tools (`tts`, `pdf_parse`, `ocr_extract`). Fires ONLY for those canonical
+    // names, so a flag-OFF dispatch of every pre-existing action stays byte-identical.
+    if !media_tool_enabled
+        && matches!(
+            tool_name_map::canonical_rust_name(&raw.action),
+            Some("tts" | "pdf_parse" | "ocr_extract")
+        )
+    {
+        return Ok(GateDispatch::Denied(format!(
+            "media_tool_disabled_flag_off:{}",
             raw.action
         )));
     }
@@ -8218,8 +8291,9 @@ mod tests {
         // chokepoint/classification need it), but HIDDEN from the menu when off.
         let reg = ToolRegistry::default();
         // Hold the web_search flag OFF in BOTH arms so this isolates the web_fetch flag.
-        let off = build_tool_prompt_with_flagged("t", &reg, false, false, false, false, false);
-        let on = build_tool_prompt_with_flagged("t", &reg, true, false, false, false, false);
+        let off =
+            build_tool_prompt_with_flagged("t", &reg, false, false, false, false, false, false);
+        let on = build_tool_prompt_with_flagged("t", &reg, true, false, false, false, false, false);
         assert!(
             !off.contains("web_fetch"),
             "flag-OFF menu must NOT advertise web_fetch:\n{off}"
@@ -8280,13 +8354,19 @@ mod tests {
         // The vision arm is likewise irrelevant here (no image_analysis dispatched) — a
         // stub-backed executor satisfies the composite signature.
         let vision = crate::vision_tools::VisionExecutor::new(
-            ws,
+            ws.clone(),
             Box::new(friday_vision::StubVisionClient::default()),
+        );
+        let media = crate::media_tools::MediaToolExecutor::new(
+            ws,
+            Box::new(friday_tts::StubTtsClient::default()),
+            Box::new(friday_pdf::StubPdfTextExtractor::default()),
+            Box::new(friday_ocr::StubOcrProvider::default()),
         );
         // The memory arm is irrelevant here (no memory tool dispatched) — a no-owner executor
         // satisfies the composite signature (it would refuse anyway).
         let memory = crate::memory_tools::MemoryToolExecutor::new(conn, None, 1000, "test:memtool");
-        crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision, memory)
+        crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision, media, memory)
     }
 
     #[test]
@@ -8595,13 +8675,19 @@ mod tests {
         let web = crate::http_tools::WebFetchExecutor::new();
         let search = crate::web_search::WebSearchExecutor::with_config(Default::default());
         let vision = crate::vision_tools::VisionExecutor::new(
-            ws,
+            ws.clone(),
             Box::new(friday_vision::StubVisionClient::default()),
+        );
+        let media = crate::media_tools::MediaToolExecutor::new(
+            ws,
+            Box::new(friday_tts::StubTtsClient::default()),
+            Box::new(friday_pdf::StubPdfTextExtractor::default()),
+            Box::new(friday_ocr::StubOcrProvider::default()),
         );
         let memory =
             crate::memory_tools::MemoryToolExecutor::new(db.conn(), None, 1000, "test:memtool");
         let composite =
-            crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision, memory);
+            crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision, media, memory);
         let approve = no_approval();
         let policy = RunPolicy::default();
         let call = raw(
@@ -8668,8 +8754,9 @@ mod tests {
         // Hold the web_fetch flag OFF in both arms so this isolates the web_search flag. The
         // flag-OFF prompt must equal the flag-ON prompt minus only the web_search line.
         let reg = ToolRegistry::default();
-        let off = build_tool_prompt_with_flagged("t", &reg, false, false, false, false, false);
-        let on = build_tool_prompt_with_flagged("t", &reg, false, true, false, false, false);
+        let off =
+            build_tool_prompt_with_flagged("t", &reg, false, false, false, false, false, false);
+        let on = build_tool_prompt_with_flagged("t", &reg, false, true, false, false, false, false);
         assert!(
             !off.contains("web_search"),
             "flag-OFF menu must NOT advertise web_search:\n{off}"
@@ -8774,12 +8861,18 @@ mod tests {
         // The vision arm is irrelevant to the web_search tests (no image_analysis dispatched) —
         // a stub-backed executor satisfies the composite signature.
         let vision = crate::vision_tools::VisionExecutor::new(
-            ws,
+            ws.clone(),
             Box::new(friday_vision::StubVisionClient::default()),
+        );
+        let media = crate::media_tools::MediaToolExecutor::new(
+            ws,
+            Box::new(friday_tts::StubTtsClient::default()),
+            Box::new(friday_pdf::StubPdfTextExtractor::default()),
+            Box::new(friday_ocr::StubOcrProvider::default()),
         );
         // The memory arm is irrelevant here (no memory tool dispatched) — a no-owner executor.
         let memory = crate::memory_tools::MemoryToolExecutor::new(conn, None, 1000, "test:memtool");
-        crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision, memory)
+        crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision, media, memory)
     }
 
     #[test]
@@ -8980,16 +9073,22 @@ mod tests {
         });
         let search = crate::web_search::WebSearchExecutor::with_config(Default::default());
         let vision = crate::vision_tools::VisionExecutor::with_policy(
-            ws,
+            ws.clone(),
             crate::ssrf_guard::SsrfPolicy {
                 allow_private_network: true,
                 ..Default::default()
             },
             Box::new(friday_vision::StubVisionClient::default()),
         );
+        let media = crate::media_tools::MediaToolExecutor::new(
+            ws,
+            Box::new(friday_tts::StubTtsClient::default()),
+            Box::new(friday_pdf::StubPdfTextExtractor::default()),
+            Box::new(friday_ocr::StubOcrProvider::default()),
+        );
         // The memory arm is irrelevant here (no memory tool dispatched) — a no-owner executor.
         let memory = crate::memory_tools::MemoryToolExecutor::new(conn, None, 1000, "test:memtool");
-        crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision, memory)
+        crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision, media, memory)
     }
 
     /// Pure env-matcher glue: exactly `"1"` (trimmed) enables; everything else is OFF.
@@ -9019,8 +9118,9 @@ mod tests {
         // Hold the web_fetch + web_search flags OFF in both arms so this isolates the vision flag.
         // The flag-OFF prompt must equal the flag-ON prompt minus only the image_analysis line.
         let reg = ToolRegistry::default();
-        let off = build_tool_prompt_with_flagged("t", &reg, false, false, false, false, false);
-        let on = build_tool_prompt_with_flagged("t", &reg, false, false, true, false, false);
+        let off =
+            build_tool_prompt_with_flagged("t", &reg, false, false, false, false, false, false);
+        let on = build_tool_prompt_with_flagged("t", &reg, false, false, true, false, false, false);
         assert!(
             !off.contains("image_analysis"),
             "flag-OFF menu must NOT advertise image_analysis:\n{off}"
@@ -9303,13 +9403,19 @@ mod tests {
         let search = crate::web_search::WebSearchExecutor::with_config(Default::default());
         // PRODUCTION SSRF policy (deny-private) on the vision executor — NOT allow-private.
         let vision = crate::vision_tools::VisionExecutor::new(
-            ws,
+            ws.clone(),
             Box::new(friday_vision::StubVisionClient::default()),
+        );
+        let media = crate::media_tools::MediaToolExecutor::new(
+            ws,
+            Box::new(friday_tts::StubTtsClient::default()),
+            Box::new(friday_pdf::StubPdfTextExtractor::default()),
+            Box::new(friday_ocr::StubOcrProvider::default()),
         );
         let memory =
             crate::memory_tools::MemoryToolExecutor::new(db.conn(), None, 1000, "test:memtool");
         let composite =
-            crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision, memory);
+            crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision, media, memory);
         // Mint an approval for the (now-mutating) URL-image call so the gate Allows it and the
         // executor's SSRF guard is reached. The HMAC authorize path is the legacy symmetric seam.
         let approve = mint_for_each();
@@ -9351,6 +9457,177 @@ mod tests {
         }
     }
 
+    // ─── B5 media tools (FRIDAY_MEDIA_TOOL_ENABLED) ───
+
+    #[test]
+    fn media_tool_enabled_from_only_literal_one_enables() {
+        assert!(!media_tool_enabled_from(None), "unset ⇒ OFF (prod default)");
+        assert!(!media_tool_enabled_from(Some(String::new())), "empty ⇒ OFF");
+        assert!(!media_tool_enabled_from(Some("0".to_string())), "0 ⇒ OFF");
+        assert!(
+            !media_tool_enabled_from(Some("true".to_string())),
+            "`true` ⇒ OFF (only literal `1` enables)"
+        );
+        assert!(media_tool_enabled_from(Some("1".to_string())), "`1` ⇒ ON");
+        assert!(
+            media_tool_enabled_from(Some(" 1 ".to_string())),
+            "trimmed `1` ⇒ ON"
+        );
+    }
+
+    #[test]
+    fn media_flag_off_prompt_menu_is_byte_identical_no_media_tools() {
+        let reg = ToolRegistry::default();
+        let off =
+            build_tool_prompt_with_flagged("t", &reg, false, false, false, false, false, false);
+        let on = build_tool_prompt_with_flagged("t", &reg, false, false, false, true, false, false);
+        for tool in ["tts", "pdf_parse", "ocr_extract"] {
+            assert!(
+                !off.contains(tool),
+                "flag-OFF menu must hide {tool}:\n{off}"
+            );
+            assert!(
+                on.contains(tool),
+                "flag-ON menu must advertise {tool}:\n{on}"
+            );
+        }
+        let on_without_media: String = on
+            .split_inclusive('\n')
+            .filter(|l| {
+                !l.contains("tts") && !l.contains("pdf_parse") && !l.contains("ocr_extract")
+            })
+            .collect();
+        assert_eq!(
+            off, on_without_media,
+            "flag-OFF prompt must equal flag-ON minus only B5 media tool lines"
+        );
+    }
+
+    #[test]
+    fn media_flag_off_refuses_tool_unavailable_executor_never_reached() {
+        std::env::remove_var(FRIDAY_MEDIA_TOOL_ENABLED);
+        let db = Db::open_hub(&temp_path("media-off")).unwrap();
+        let ws = temp_ws("media-off");
+        std::fs::write(ws.join("sample.pdf"), b"%PDF-1.4\n(hello friday) Tj\n%%EOF").unwrap();
+        let fs = FsToolExecutor::new(ws);
+        let exec = CountingExecutor {
+            inner: &fs,
+            calls: std::cell::Cell::new(0),
+        };
+        let approve = no_approval();
+        let policy = RunPolicy::default();
+        let call = raw("pdf_parse", &[("path", "sample.pdf")]);
+
+        let out = gate_dispatch_with_policy_enforced(
+            db.conn(),
+            &exec,
+            &call,
+            AuthzMode::DenyAll,
+            &approve,
+            &policy,
+            1000,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+
+        match out {
+            GateDispatch::Denied(reason) => {
+                assert_eq!(reason, "media_tool_disabled_flag_off:pdf_parse")
+            }
+            other => panic!("flag-OFF must Deny pdf_parse, got {other:?}"),
+        }
+        assert_eq!(
+            exec.calls.get(),
+            0,
+            "flag-OFF media executor is never reached"
+        );
+    }
+
+    #[test]
+    fn media_executor_dark_functional_stubs_execute_tts_pdf_and_ocr() {
+        let ws = temp_ws("media-on");
+        std::fs::write(
+            ws.join("sample.pdf"),
+            b"%PDF-1.4\n(Hello Friday PDF) Tj\n%%EOF",
+        )
+        .unwrap();
+        let media = crate::media_tools::MediaToolExecutor::new(
+            ws,
+            Box::new(friday_tts::StubTtsClient::default()),
+            Box::new(friday_pdf::StubPdfTextExtractor::default()),
+            Box::new(friday_ocr::StubOcrProvider::default()),
+        );
+
+        let tts = media
+            .execute("tts", &raw("tts", &[("text", "hello")]).params)
+            .unwrap();
+        assert_eq!(tts.action, "tts");
+        assert!(
+            tts.summary.contains("stub-tts-1"),
+            "summary: {}",
+            tts.summary
+        );
+        assert!(
+            tts.content.unwrap().contains("\"mimeType\":\"audio/mpeg\""),
+            "stub TTS returns audio metadata"
+        );
+
+        let pdf = media
+            .execute(
+                "pdf_parse",
+                &raw("pdf_parse", &[("path", "sample.pdf")]).params,
+            )
+            .unwrap();
+        assert_eq!(pdf.action, "pdf_parse");
+        assert!(
+            pdf.content.unwrap().contains("STUB-PDF"),
+            "stub PDF extractor path must execute"
+        );
+
+        use base64::Engine as _;
+        let png = base64::engine::general_purpose::STANDARD.encode(b"\x89PNG\r\n\x1a\nstub");
+        let data_uri = format!("data:image/png;base64,{png}");
+        let ocr = media
+            .execute(
+                "ocr_extract",
+                &raw("ocr_extract", &[("image", &data_uri)]).params,
+            )
+            .unwrap();
+        assert_eq!(ocr.action, "ocr_extract");
+        assert!(
+            ocr.content.unwrap().contains("STUB-OCR"),
+            "stub OCR provider path must execute"
+        );
+    }
+
+    #[test]
+    fn media_tool_registry_classifies_tts_mutating_pdf_and_ocr_read_only() {
+        let reg = ToolRegistry::default();
+        assert!(
+            reg.classify("tts", &[("text".to_string(), "hello".to_string())])
+                .unwrap()
+                .mutating(),
+            "tts produces audio output/cost surface and must stay gated as mutating"
+        );
+        assert!(
+            !reg.classify("pdf_parse", &[("path".to_string(), "a.pdf".to_string())])
+                .unwrap()
+                .mutating(),
+            "pdf_parse is a contained workspace read"
+        );
+        assert!(
+            !reg.classify("ocr_extract", &[("path".to_string(), "a.png".to_string())])
+                .unwrap()
+                .mutating(),
+            "ocr_extract is read-only at the registry; FRIDAY_MEDIA_TOOL_ENABLED gates availability"
+        );
+    }
+
     // ─── L2-4 memory-as-tool (FRIDAY_MEMORY_TOOL_ENABLED) ───
 
     /// A composite (fs + web_fetch + web_search + vision + a MEMORY executor owned by `principal`)
@@ -9366,12 +9643,18 @@ mod tests {
         let web = crate::http_tools::WebFetchExecutor::new();
         let search = crate::web_search::WebSearchExecutor::with_config(Default::default());
         let vision = crate::vision_tools::VisionExecutor::new(
-            ws,
+            ws.clone(),
             Box::new(friday_vision::StubVisionClient::default()),
+        );
+        let media = crate::media_tools::MediaToolExecutor::new(
+            ws,
+            Box::new(friday_tts::StubTtsClient::default()),
+            Box::new(friday_pdf::StubPdfTextExtractor::default()),
+            Box::new(friday_ocr::StubOcrProvider::default()),
         );
         let memory =
             crate::memory_tools::MemoryToolExecutor::new(conn, principal, now_ms, "run1:memtool");
-        crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision, memory)
+        crate::http_tools::CompositeToolExecutor::new(fs, web, search, vision, media, memory)
     }
 
     /// Pure env-matcher glue: exactly `"1"` (trimmed) enables; everything else is OFF.
@@ -9404,8 +9687,9 @@ mod tests {
         // changed trajectory). Hold the other L2 flags OFF in both arms to isolate this flag. The
         // flag-OFF prompt must equal the flag-ON prompt minus only the two memory-tool lines.
         let reg = ToolRegistry::default();
-        let off = build_tool_prompt_with_flagged("t", &reg, false, false, false, false, false);
-        let on = build_tool_prompt_with_flagged("t", &reg, false, false, false, false, true);
+        let off =
+            build_tool_prompt_with_flagged("t", &reg, false, false, false, false, false, false);
+        let on = build_tool_prompt_with_flagged("t", &reg, false, false, false, false, false, true);
         assert!(
             !off.contains("memory_recall") && !off.contains("memory_store"),
             "flag-OFF menu must NOT advertise the memory tools:\n{off}"
@@ -15145,12 +15429,13 @@ mod tests {
         // (a) Registry-snapshot: the menu with subagent OFF must NOT mention `subagent`, and must
         //     be byte-identical to the menu computed with ALL L2 flags off (the established prompt).
         let reg = ToolRegistry::default();
-        let off = build_tool_prompt_with_flagged("t", &reg, false, false, false, false, false);
+        let off =
+            build_tool_prompt_with_flagged("t", &reg, false, false, false, false, false, false);
         assert!(
             !off.contains(SUBAGENT_TOOL),
             "flag-OFF menu must hide subagent: {off}"
         );
-        let on = build_tool_prompt_with_flagged("t", &reg, false, false, false, true, false);
+        let on = build_tool_prompt_with_flagged("t", &reg, false, false, false, false, true, false);
         assert!(
             on.contains(SUBAGENT_TOOL),
             "flag-ON menu advertises subagent"

@@ -128,6 +128,17 @@ pub const TS_RUST_PAIRS: &[ToolNamePair] = &[
         ts: "image_analysis",
         rust: "image_analysis",
     },
+    // B5 media: TTS and PDF parsing now have Rust Hub executors under the SAME names as their TS
+    // tools. Listing them here makes disabledToolNames / trust allowlists canonicalize to the
+    // registered Rust actions and lets FRIDAY_MEDIA_TOOL_ENABLED catch aliases at the chokepoint.
+    ToolNamePair {
+        ts: "tts",
+        rust: "tts",
+    },
+    ToolNamePair {
+        ts: "pdf_parse",
+        rust: "pdf_parse",
+    },
     // L2 subagent: the Rust registry action is `subagent`; this identity row lets the
     // FRIDAY_SUBAGENT_TOOL_ENABLED chokepoint flag-gate canonicalize an alias of it through this
     // map (mirroring the web_fetch/web_search/image_analysis identity rows), AND keeps a
@@ -178,6 +189,7 @@ pub const RUST_ONLY_ACTIONS: &[&str] = &[
     "append_file",
     "delete_file",
     "move_file",
+    "ocr_extract",
 ];
 
 /// TS-surface tool names that have NO Rust [`crate::ToolRegistry`] executor today, recorded
@@ -217,7 +229,6 @@ pub const TS_ONLY_UNMAPPED: &[&str] = &[
     // agent tool.)
     "message",
     "nodes",
-    "pdf_parse",
     "provider",
     "reflex_candidate_decide",
     "reflex_candidate_list",
@@ -234,7 +245,8 @@ pub const TS_ONLY_UNMAPPED: &[&str] = &[
     "system",
     "task_status",
     "tool_search",
-    "tts",
+    // B5: `tts` and `pdf_parse` now have Rust executors and TS_RUST_PAIRS identity aliases.
+    // `ocr_extract` is Rust-only for now: there is no TS agent tool named OCR today.
     // L2-1: `web_fetch` now has a Rust executor (http_tools::WebFetchExecutor) and is a
     // TS_RUST_PAIRS identity alias above — removed from the unmapped list.
     // L2-2: `web_search` likewise now has a Rust executor (web_search::WebSearchExecutor) and
@@ -323,6 +335,23 @@ pub const PARAM_SCHEMA_DIFFS: &[ParamSchemaDiff] = &[
                validation the TS tool documents: workspace-root scoping for local paths, SSRF on \
                URL images, data-uri base64 + media-type (image/*) + decoded-size caps, and \
                image-count/total-size bounds.",
+    },
+    ParamSchemaDiff {
+        ts: "tts",
+        rust: "tts",
+        note: "params align by name: `text` (required) / `voice` / `format` mp3|wav|opus / \
+               `speed` / `model`. Rust DARK runtime currently returns audio metadata only and \
+               does NOT persist an audio artifact path; live provider/file-output parity remains \
+               a later operator-gated slice. `tts` is registered mutating because it produces an \
+               audio output/cost surface, matching the TS risk posture.",
+    },
+    ParamSchemaDiff {
+        ts: "pdf_parse",
+        rust: "pdf_parse",
+        note: "params align by name: `path` (required) / `maxPages` / `maxChars` (Rust also \
+               accepts snake_case aliases). Rust opens the PDF through the hardened workspace-root \
+               safe-open and delegates text extraction to friday-pdf's conservative embedded-text \
+               extractor; it does not import the TS pdfjs engine.",
     },
     ParamSchemaDiff {
         ts: "subagent",

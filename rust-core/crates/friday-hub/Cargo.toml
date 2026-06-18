@@ -46,6 +46,11 @@ friday-anthropic.workspace = true
 # friday-arch-tests). The friday-hub VisionExecutor (vision_tools.rs) does the image
 # acquisition + validation and delegates the model call here. DARK / default-OFF.
 friday-vision.workspace = true
+# B5 media tools (TTS/PDF/OCR) — Hub-only, DARK/default-off executor seams. Runtime defaults
+# fail closed; tests inject deterministic stubs. Not linked into friday-ffi.
+friday-tts.workspace = true
+friday-pdf.workspace = true
+friday-ocr.workspace = true
 friday-providers.workspace = true
 # The ToolExecutor's file read/write goes through the hardened workspace-root-contained
 # safe-open — NEVER std::fs on an agent-supplied path.
