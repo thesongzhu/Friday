@@ -81,3 +81,4 @@ base64.workspace = true
 [dev-dependencies]
 # (ureq is a production dependency above — it also serves the LIVE Telegram channels proof
 # in tests/telegram_live.rs, `#[ignore]`d, run only in the phase-24-live-channels CI env.)
+ed25519-dalek.workspace = true
