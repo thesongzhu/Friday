@@ -195,6 +195,7 @@ function buildPackagingRoutes(layer: FridaySqliteLayer): ReturnType<typeof creat
   });
 
   const deps: FridayPackagingRoutesDeps = {
+    allowTestOnlyPackagingMutationExecution: true,
     packages: {
       publish(req) {
         const envelope = decodeFridayPackageArchiveEnvelope(req.archive);
