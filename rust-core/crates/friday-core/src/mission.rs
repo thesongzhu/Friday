@@ -668,6 +668,56 @@ pub struct WorkItem {
     pub updated_at_ms: i64,
 }
 
+/// D20 W1 plan-as-action-list item attached to a route decision.
+///
+/// This is a planning/display record, not an authorization decision. The W2
+/// trust-dial slice will replace the provisional reversibility label with the
+/// authoritative `classify()` output before any auto-allow logic exists.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RouteActionItem {
+    pub description: String,
+    pub target_kind: RouteActionTargetKind,
+    pub target_ref: String,
+    pub reversibility: RouteActionReversibility,
+    pub assigned_lane: WorkLane,
+    pub assigned_provider_or_agent: Option<String>,
+    pub route_reason: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RouteActionTargetKind {
+    File,
+    Command,
+    Subtask,
+}
+
+impl RouteActionTargetKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RouteActionTargetKind::File => "file",
+            RouteActionTargetKind::Command => "command",
+            RouteActionTargetKind::Subtask => "subtask",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RouteActionReversibility {
+    ReversibleGitWorktree,
+    OperatorGateRequired,
+    PendingClassify,
+}
+
+impl RouteActionReversibility {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RouteActionReversibility::ReversibleGitWorktree => "reversible_git_worktree",
+            RouteActionReversibility::OperatorGateRequired => "operator_gate_required",
+            RouteActionReversibility::PendingClassify => "pending_classify",
+        }
+    }
+}
+
 impl WorkItem {
     pub fn is_active_like(&self) -> bool {
         !self.status.is_terminal()
@@ -737,6 +787,7 @@ pub struct RouteDecisionCard {
     pub proof_requirements: Vec<String>,
     pub ownership_claim_ids: Vec<String>,
     pub trace_refs: Vec<String>,
+    pub action_items: Vec<RouteActionItem>,
     pub created_at_ms: i64,
     pub expires_at_ms: Option<i64>,
 }
@@ -761,6 +812,7 @@ pub struct RouteDecisionProjection {
     pub proof_requirements: Vec<String>,
     pub ownership_claim_count: usize,
     pub trace_ref_count: usize,
+    pub action_items: Vec<RouteActionItem>,
     pub created_at_ms: i64,
     pub expires_at_ms: Option<i64>,
 }
@@ -793,8 +845,55 @@ impl RouteDecisionCard {
             proof_requirements: item.judgment_memory.proof_requirements.clone(),
             ownership_claim_ids: item.judgment_memory.ownership_claim_ids.clone(),
             trace_refs,
+            action_items: Vec::new(),
             created_at_ms,
             expires_at_ms,
+        }
+    }
+
+    pub fn from_work_item_flagged(
+        decision_id: String,
+        item: &WorkItem,
+        trace_refs: Vec<String>,
+        created_at_ms: i64,
+        expires_at_ms: Option<i64>,
+        action_list_enabled: bool,
+    ) -> Self {
+        let card =
+            Self::from_work_item(decision_id, item, trace_refs, created_at_ms, expires_at_ms);
+        if action_list_enabled {
+            card.with_action_items(vec![Self::action_item_from_work_item(item)])
+        } else {
+            card
+        }
+    }
+
+    pub fn with_action_items(mut self, action_items: Vec<RouteActionItem>) -> Self {
+        self.action_items = action_items;
+        self
+    }
+
+    pub fn action_item_from_work_item(item: &WorkItem) -> RouteActionItem {
+        let (target_kind, target_ref) = item
+            .judgment_memory
+            .read_first_files
+            .first()
+            .map(|path| (RouteActionTargetKind::File, path.clone()))
+            .unwrap_or_else(|| {
+                (
+                    RouteActionTargetKind::Subtask,
+                    format!("friday://work-item/{}", item.work_item_id),
+                )
+            });
+
+        RouteActionItem {
+            description: item.judgment_memory.task.clone(),
+            target_kind,
+            target_ref,
+            reversibility: action_reversibility_for_work_item(item),
+            assigned_lane: item.lane,
+            assigned_provider_or_agent: item.target_provider_or_agent.clone(),
+            route_reason: item.judgment_memory.why_this_route.clone(),
         }
     }
 
@@ -814,6 +913,9 @@ impl RouteDecisionCard {
         require_non_empty_decision_vec(&self.conflict_refs, "conflict_refs")?;
         require_non_empty_decision_vec(&self.ownership_claim_ids, "ownership_claim_ids")?;
         require_non_empty_decision_vec(&self.trace_refs, "trace_refs")?;
+        for item in &self.action_items {
+            item.validate()?;
+        }
         Ok(())
     }
 
@@ -837,6 +939,11 @@ impl RouteDecisionCard {
             proof_requirements: self.proof_requirements.clone(),
             ownership_claim_count: self.ownership_claim_ids.len(),
             trace_ref_count: self.trace_refs.len(),
+            action_items: self
+                .action_items
+                .iter()
+                .map(project_route_action_item)
+                .collect(),
             created_at_ms: self.created_at_ms,
             expires_at_ms: self.expires_at_ms,
         }
@@ -857,6 +964,51 @@ impl RouteDecisionCard {
                 target.clone()
             }
         })
+    }
+}
+
+fn project_route_action_item(item: &RouteActionItem) -> RouteActionItem {
+    let mut projected = item.clone();
+    if projected.assigned_lane == WorkLane::Channel {
+        projected.assigned_provider_or_agent = Some("bound_channel".to_string());
+    }
+    projected.target_ref = match projected.target_kind {
+        RouteActionTargetKind::File => redacted_file_target(&projected.target_ref),
+        RouteActionTargetKind::Command => "command://redacted".to_string(),
+        RouteActionTargetKind::Subtask => projected.target_ref,
+    };
+    projected
+}
+
+fn redacted_file_target(value: &str) -> String {
+    let Some(last) = value
+        .rsplit(['/', '\\'])
+        .find(|part| !part.trim().is_empty())
+    else {
+        return "file://redacted".to_string();
+    };
+    format!("file://redacted/{last}")
+}
+
+impl RouteActionItem {
+    pub fn validate(&self) -> Result<(), MissionSpineError> {
+        require_non_empty_decision(&self.description, "action_item.description")?;
+        require_non_empty_decision(&self.target_ref, "action_item.target_ref")?;
+        if let Some(target) = self.assigned_provider_or_agent.as_deref() {
+            require_non_empty_decision(target, "action_item.assigned_provider_or_agent")?;
+        }
+        require_non_empty_decision(&self.route_reason, "action_item.route_reason")?;
+        Ok(())
+    }
+}
+
+fn action_reversibility_for_work_item(item: &WorkItem) -> RouteActionReversibility {
+    if item.approval_state == ApprovalState::Required || item.risk_level >= Risk::High {
+        RouteActionReversibility::OperatorGateRequired
+    } else if !item.workspace_refs.is_empty() {
+        RouteActionReversibility::ReversibleGitWorktree
+    } else {
+        RouteActionReversibility::PendingClassify
     }
 }
 
@@ -1259,6 +1411,37 @@ mod tests {
         assert_eq!(projection.selected_target_label.as_deref(), Some("codex"));
         assert_eq!(projection.trace_ref_count, 1);
         assert_eq!(projection.why_this_route, card.why_this_route);
+        assert!(projection.action_items.is_empty());
+    }
+
+    #[test]
+    fn route_decision_card_flagged_builds_plan_action_item() {
+        let item = work("wi-route", WorkItemStatus::ReadyToDispatch);
+        let card = RouteDecisionCard::from_work_item_flagged(
+            "route-decision-1".into(),
+            &item,
+            vec!["friday://trace/route-decision-1".into()],
+            10,
+            None,
+            true,
+        );
+
+        assert!(card.validate().is_ok());
+        assert_eq!(card.action_items.len(), 1);
+        let action = &card.action_items[0];
+        assert_eq!(action.description, "Implement Mission Spine domain types");
+        assert_eq!(action.target_kind, RouteActionTargetKind::File);
+        assert_eq!(action.target_ref, "rust-core/crates/friday-core/src/lib.rs");
+        assert_eq!(
+            action.reversibility,
+            RouteActionReversibility::OperatorGateRequired
+        );
+        assert_eq!(action.assigned_lane, WorkLane::Codex);
+        assert_eq!(action.assigned_provider_or_agent.as_deref(), Some("codex"));
+        assert_eq!(
+            action.route_reason,
+            "Rust Hub must own product truth before UI wiring"
+        );
     }
 
     #[test]

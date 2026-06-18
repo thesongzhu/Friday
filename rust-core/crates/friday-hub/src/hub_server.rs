@@ -248,6 +248,27 @@ fn resolve_conversation_owner(db: &Db, friday_conversation_id: &str) -> Option<S
 /// Returns either a [`Message::MissionIntakeResult`] envelope (ready/blocked) or a
 /// [`Message::Error`] envelope on a validation/preflight failure, correlated to `msg_id`.
 ///
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MissionIntakeFeatureFlags {
+    pub clarify_enabled: bool,
+    pub surface_events: bool,
+    pub action_list_enabled: bool,
+}
+
+impl MissionIntakeFeatureFlags {
+    pub const fn new(
+        clarify_enabled: bool,
+        surface_events: bool,
+        action_list_enabled: bool,
+    ) -> Self {
+        Self {
+            clarify_enabled,
+            surface_events,
+            action_list_enabled,
+        }
+    }
+}
+
 /// ## Mission-intake clarification ([`crate::FRIDAY_MISSION_INTAKE_CLARIFY`], DARK)
 /// The [`crate::FRIDAY_MISSION_INTAKE_CLARIFY`] env flag is read ONCE here (the only env
 /// read; semantics in [`crate::mission_intake_clarify_from`]) and threaded as a pure bool
@@ -279,14 +300,20 @@ pub fn mission_intake_result_for_db(
     // the flagged body — the "split env-read from pure logic" idiom. OFF ⇒ no surface_event emit.
     let surface_events =
         crate::surface_events_from(std::env::var(crate::FRIDAY_SURFACE_EVENTS).ok().as_deref());
+    let action_list_enabled = crate::d20_action_list_from(
+        std::env::var(crate::FRIDAY_D20_ACTION_LIST_ENABLED)
+            .ok()
+            .as_deref(),
+    );
+    let feature_flags =
+        MissionIntakeFeatureFlags::new(clarify_enabled, surface_events, action_list_enabled);
     mission_intake_result_for_db_flagged(
         db,
         msg_id,
         request,
         authenticated_owner,
         now_ms,
-        clarify_enabled,
-        surface_events,
+        feature_flags,
     )
 }
 
@@ -315,15 +342,23 @@ pub fn mission_intake_result_for_db(
 /// [`crate::surface_events::emit_surface_event`] so the Mission Workbench timeline reader has a
 /// birth row to fold in. OFF ⇒ byte-identical (no emit). The emit is failure-isolated: a write
 /// failure is logged + swallowed and the intake result is UNCHANGED.
+///
+/// **`action_list_enabled`** is the resolved [`crate::FRIDAY_D20_ACTION_LIST_ENABLED`] bool.
+/// OFF leaves route decisions without `action_items`; ON adds the D20 W1 plan-as-action-list
+/// item derived from the WorkItem's existing judgment memory.
 pub fn mission_intake_result_for_db_flagged(
     db: &Db,
     msg_id: &str,
     request: MissionIntakeRequestWire,
     authenticated_owner: Option<&str>,
     now_ms: i64,
-    clarify_enabled: bool,
-    surface_events: bool,
+    feature_flags: MissionIntakeFeatureFlags,
 ) -> Envelope {
+    let MissionIntakeFeatureFlags {
+        clarify_enabled,
+        surface_events,
+        action_list_enabled,
+    } = feature_flags;
     // (FIX-Q3b) OWNER BINDING — fail-closed BEFORE constructing or persisting ANY row. The
     // persisted Mission/conversation owner MUST be the AUTHENTICATED owner (the Rust-derived
     // session principal threaded from the dispatch arm), NEVER the self-asserted
@@ -578,7 +613,7 @@ pub fn mission_intake_result_for_db_flagged(
         created_at_ms: now_ms,
         updated_at_ms: now_ms,
     };
-    let route_decision = friday_core::RouteDecisionCard::from_work_item(
+    let route_decision = friday_core::RouteDecisionCard::from_work_item_flagged(
         format!(
             "route-intake-{}-{}",
             projection_ref_part(&request.mission_id),
@@ -591,6 +626,7 @@ pub fn mission_intake_result_for_db_flagged(
         )],
         now_ms,
         None,
+        action_list_enabled,
     );
 
     let outcome = match preflight_and_stage_work_item_with_workspace_claims(

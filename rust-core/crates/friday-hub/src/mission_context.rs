@@ -197,6 +197,32 @@ pub fn route_decision_card_for_context(
     now_ms: i64,
     expires_at_ms: Option<i64>,
 ) -> Result<RouteDecisionCard, StorageError> {
+    let action_list_enabled = crate::d20_action_list_from(
+        std::env::var(crate::FRIDAY_D20_ACTION_LIST_ENABLED)
+            .ok()
+            .as_deref(),
+    );
+    route_decision_card_for_context_flagged(
+        db,
+        context,
+        decision_id,
+        trace_refs,
+        now_ms,
+        expires_at_ms,
+        action_list_enabled,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn route_decision_card_for_context_flagged(
+    db: &Db,
+    context: &ResolvedMissionContext,
+    decision_id: String,
+    trace_refs: Vec<String>,
+    now_ms: i64,
+    expires_at_ms: Option<i64>,
+    action_list_enabled: bool,
+) -> Result<RouteDecisionCard, StorageError> {
     let Some(work_item) = db.get_work_item(&context.work_item_id)? else {
         return Err(StorageError::Unsupported(
             "resolved Mission context points to unknown WorkItem".into(),
@@ -207,12 +233,13 @@ pub fn route_decision_card_for_context(
             "resolved Mission context WorkItem/Mission mismatch".into(),
         ));
     }
-    let card = RouteDecisionCard::from_work_item(
+    let card = RouteDecisionCard::from_work_item_flagged(
         decision_id,
         &work_item,
         trace_refs,
         now_ms,
         expires_at_ms,
+        action_list_enabled,
     );
     card.validate()
         .map_err(|e| StorageError::Unsupported(e.to_string()))?;

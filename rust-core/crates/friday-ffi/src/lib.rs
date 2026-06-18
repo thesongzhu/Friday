@@ -1230,6 +1230,31 @@ impl From<friday_protocol::MissionSurfaceProjectionWire> for MissionSurfaceProje
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RouteActionItemFfi {
+    pub description: String,
+    pub target_kind: String,
+    pub target_ref: String,
+    pub reversibility: String,
+    pub assigned_lane: String,
+    pub assigned_provider_or_agent: Option<String>,
+    pub route_reason: String,
+}
+
+impl From<friday_protocol::RouteActionItemWire> for RouteActionItemFfi {
+    fn from(value: friday_protocol::RouteActionItemWire) -> Self {
+        Self {
+            description: value.description,
+            target_kind: value.target_kind,
+            target_ref: value.target_ref,
+            reversibility: value.reversibility,
+            assigned_lane: value.assigned_lane,
+            assigned_provider_or_agent: value.assigned_provider_or_agent,
+            route_reason: value.route_reason,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct RouteDecisionProjectionFfi {
     pub route_decision_ref: String,
     pub mission_id: String,
@@ -1245,6 +1270,7 @@ pub struct RouteDecisionProjectionFfi {
     pub proof_requirements: Vec<String>,
     pub ownership_claim_count: u64,
     pub trace_ref_count: u64,
+    pub action_items: Vec<RouteActionItemFfi>,
     pub created_at_ms: i64,
     pub expires_at_ms: Option<i64>,
 }
@@ -1266,6 +1292,7 @@ impl From<friday_protocol::RouteDecisionProjectionWire> for RouteDecisionProject
             proof_requirements: value.proof_requirements,
             ownership_claim_count: value.ownership_claim_count,
             trace_ref_count: value.trace_ref_count,
+            action_items: value.action_items.into_iter().map(Into::into).collect(),
             created_at_ms: value.created_at_ms,
             expires_at_ms: value.expires_at_ms,
         }
@@ -1577,6 +1604,7 @@ pub fn sample_mission_spine_responses() -> Vec<AskResponseFfi> {
         proof_requirements: vec!["ledger and provider timeline proof".to_string()],
         ownership_claim_count: 0,
         trace_ref_count: 3,
+        action_items: vec![],
         created_at_ms: 1_700_100_000_020,
         expires_at_ms: None,
     };
@@ -3053,6 +3081,7 @@ mod tests {
                         proof_requirements: vec!["FFI exposes redacted route trace".into()],
                         ownership_claim_count: 0,
                         trace_ref_count: 2,
+                        action_items: vec![],
                         created_at_ms: 125,
                         expires_at_ms: None,
                     }],
@@ -3191,6 +3220,7 @@ mod tests {
                         proof_requirements: vec!["FFI timeline redaction test".into()],
                         ownership_claim_count: 0,
                         trace_ref_count: 2,
+                        action_items: vec![],
                         created_at_ms: 132,
                         expires_at_ms: None,
                     }],

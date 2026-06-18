@@ -608,6 +608,16 @@ pub fn hub_migrations() -> Vec<Migration> {
             destructive: false,
             up: m0034_memory_fts5_hybrid_recall,
         },
+        // D20 W1: structured plan-as-action-list carried by route decisions. This
+        // is an additive Hub-only JSON column with DEFAULT [] so existing
+        // route_decision rows project byte-identically when the D20 action-list
+        // flag is OFF.
+        Migration {
+            version: 35,
+            name: "route_decision_action_items",
+            destructive: false,
+            up: m0035_route_decision_action_items,
+        },
     ]
 }
 
@@ -2426,5 +2436,12 @@ fn m0034_memory_fts5_hybrid_recall(tx: &Transaction) -> rusqlite::Result<()> {
          INSERT INTO memory_fts(content, memory_id)
            SELECT content, memory_id FROM memory_item
             WHERE state = 'confirmed' AND content IS NOT NULL AND content != '';",
+    )
+}
+
+fn m0035_route_decision_action_items(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "ALTER TABLE route_decision
+           ADD COLUMN action_items TEXT NOT NULL DEFAULT '[]';",
     )
 }

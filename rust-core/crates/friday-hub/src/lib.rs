@@ -4126,6 +4126,18 @@ fn mission_intake_clarify_from(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1"))
 }
 
+/// The `FRIDAY_D20_ACTION_LIST_ENABLED` env var. When ON, Mission route decisions
+/// carry the D20 W1 structured plan-as-action-list (`action_items`) in addition
+/// to the existing route judgment. DEFAULT-OFF: no action items are generated, so
+/// existing route_decision projections remain byte-identical at the JSON surface.
+pub const FRIDAY_D20_ACTION_LIST_ENABLED: &str = "FRIDAY_D20_ACTION_LIST_ENABLED";
+
+/// Pure flag-matcher for [`FRIDAY_D20_ACTION_LIST_ENABLED`]. ON only for exact
+/// `"1"` after trimming; all other values are OFF.
+fn d20_action_list_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
 /// The `FRIDAY_SURFACE_EVENTS` env var. When ON, the surface_event PRODUCER emits refs-only
 /// `surface_event` rows at the Mission lifecycle points (intake-birth, run-start, run-finish/proof)
 /// so the existing Mission Workbench timeline reader

@@ -594,7 +594,10 @@ fn route_decision_persists_as_trace_without_memory_authority_or_raw_surface_ids(
         ],
         42,
         None,
-    );
+    )
+    .with_action_items(vec![RouteDecisionCard::action_item_from_work_item(
+        &channel_work,
+    )]);
     db.upsert_route_decision(&card).unwrap();
 
     let stored = db
@@ -610,6 +613,7 @@ fn route_decision_persists_as_trace_without_memory_authority_or_raw_surface_ids(
         .trace_refs
         .iter()
         .any(|trace| trace.contains("tg:room-1")));
+    assert_eq!(stored.action_items, card.action_items);
 
     let links = db.list_mission_links("mission-spine").unwrap();
     let route_link = links
@@ -633,9 +637,21 @@ fn route_decision_persists_as_trace_without_memory_authority_or_raw_surface_ids(
     );
     assert_eq!(projection.trace_ref_count, 2);
     assert_eq!(projection.why_this_route, judgment().why_this_route);
+    assert_eq!(projection.action_items.len(), 1);
+    assert_eq!(
+        projection.action_items[0]
+            .assigned_provider_or_agent
+            .as_deref(),
+        Some("bound_channel")
+    );
+    assert_eq!(
+        projection.action_items[0].target_ref,
+        "file://redacted/schema.rs"
+    );
     let rendered_projection = format!("{projection:?}");
     assert!(!rendered_projection.contains("tg:room-1"));
     assert!(!rendered_projection.contains("chan:tg"));
+    assert!(!rendered_projection.contains("friday-storage/src"));
 }
 
 #[test]
