@@ -165,4 +165,59 @@ describe("TS runtime retirement gate", () => {
 
     expect(classification?.id).toBe("agent_runs_start");
   });
+
+  it("reports exact versus route-family coverage and enforces the exact floor", () => {
+    const manifest = {
+      ...baseManifest,
+      discovery: {
+        includeMethods: ["GET", "POST"],
+        exactRouteSurfacesMin: 2,
+      },
+      routeFamilies: [
+        {
+          id: "agent_compat",
+          match: { sourceFile: "src/api/http/routes/friday-agent-routes.ts" },
+          classification: "compat_shim",
+          user_triggerable: true,
+          migration_intent: "temporary",
+        },
+      ],
+      surfaces: [
+        {
+          id: "agent_runs_start",
+          route: {
+            method: "POST",
+            path: "/v1/agent/runs",
+            operationId: "agent.runs.start",
+          },
+          classification: "fail_closed",
+          user_triggerable: true,
+          executes_product_logic: false,
+          proof: "default/live route throws before TypeScript runtime execution",
+          next_action: "Delegate to Rust.",
+        },
+      ],
+    };
+
+    const result = collectTsRuntimeRetirementFailures(manifest, [
+      {
+        method: "POST",
+        path: "/v1/agent/runs",
+        operationId: "agent.runs.start",
+        sourceFile: "src/api/http/routes/friday-agent-routes.ts",
+      },
+      {
+        method: "GET",
+        path: "/v1/agent/runs",
+        operationId: "agent.runs.list",
+        sourceFile: "src/api/http/routes/friday-agent-routes.ts",
+      },
+    ]);
+
+    expect(result.summary.exactClassified).toBe(1);
+    expect(result.summary.familyClassified).toBe(1);
+    expect(result.failures).toContain(
+      "exact route surface coverage 1 is below discovery.exactRouteSurfacesMin 2",
+    );
+  });
 });
