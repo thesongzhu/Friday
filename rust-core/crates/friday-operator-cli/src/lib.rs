@@ -49,13 +49,15 @@
 //! against. The human-readable context fields are echoed for operator review and
 //! are explicitly NOT part of the signature.
 
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
 use friday_core::gate::{
-    canonical_approval_signature_bytes, ApprovalDecision, CanonicalApproval, CANONICAL_GATE_ISSUER,
+    canonical_approval_batch_signature_bytes, canonical_approval_signature_bytes, ApprovalDecision,
+    CanonicalApproval, CanonicalApprovalBatch, CANONICAL_GATE_ISSUER,
 };
 use friday_crypto::ed25519_approval::{SEED_LEN, VERIFYING_KEY_LEN};
 use friday_crypto::OperatorSigningKey;
@@ -127,6 +129,30 @@ pub struct PendingRequest {
     pub surface: Option<String>,
 }
 
+/// A pending batch request the operator signs for D20 W2. It binds one operator
+/// decision to an exact list of action digests. Unknown fields are tolerated so the
+/// operator surface can include richer review context without changing signed bytes.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PendingBatchRequest {
+    /// Batch replay namespace. Each member spends `(batch_sign_id, action_digest)`.
+    pub batch_sign_id: String,
+    /// Exact action digest members the operator reviewed.
+    pub action_digests: Vec<String>,
+    /// Epoch ms after which the batch approval is expired.
+    pub expires_at: i64,
+    /// Operator's decision: `"approved"` or `"denied"`.
+    pub decision: String,
+    /// Issuer string; defaults to the canonical gate issuer when omitted.
+    #[serde(default)]
+    pub issuer: Option<String>,
+
+    // ---- context-only (operator review); NOT part of the signature ----
+    #[serde(default)]
+    pub plan_label: Option<String>,
+    #[serde(default)]
+    pub worktree: Option<String>,
+}
+
 /// The operator-signed approval emitted to stdout. JSON the Hub-side S6d ingestion
 /// will parse; the `signature` is an Ed25519 signature (hex) over [`canonical_bytes`].
 /// The PUBLIC verify key is deliberately NOT carried here — the Hub MUST verify
@@ -143,6 +169,22 @@ pub struct SignedApproval {
     pub expires_at: i64,
     pub issuer: String,
     /// Hex Ed25519 signature (64 bytes -> 128 hex chars) over the canonical bytes.
+    pub signature: String,
+}
+
+/// Operator-signed D20 W2 batch approval emitted to stdout. The Hub verifies this
+/// under its provisioned operator public key; the private key is never carried here.
+#[derive(Debug, Clone, Serialize)]
+pub struct SignedApprovalBatch {
+    /// Always `"ed25519"`.
+    pub scheme: String,
+    /// `"approved"` or `"denied"` (normalized).
+    pub decision: String,
+    pub batch_sign_id: String,
+    pub action_digests: Vec<String>,
+    pub expires_at: i64,
+    pub issuer: String,
+    /// Hex Ed25519 signature over the canonical batch bytes.
     pub signature: String,
 }
 
@@ -210,6 +252,24 @@ fn validate_action_digest(s: &str) -> Result<(), CliError> {
     }
 }
 
+fn validate_batch_digests(digests: &[String]) -> Result<(), CliError> {
+    if digests.is_empty() {
+        return Err(CliError::BadRequest(
+            "action_digests must not be empty".to_string(),
+        ));
+    }
+    let mut seen = HashSet::with_capacity(digests.len());
+    for digest in digests {
+        validate_action_digest(digest)?;
+        if !seen.insert(digest) {
+            return Err(CliError::BadRequest(
+                "action_digests must not contain duplicates".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// The single shared path that produces the bytes a signature covers. Builds a
 /// `CanonicalApproval` (with `signature: None` — the gate function does not read it)
 /// and calls the REAL gate serializer, so these are byte-identical to what the Hub
@@ -230,6 +290,27 @@ pub fn canonical_bytes(
         signature: None,
     };
     canonical_approval_signature_bytes(&approval)
+}
+
+/// The single shared path that produces the bytes a batch signature covers.
+/// Builds a `CanonicalApprovalBatch` with `signature: None` and calls the REAL gate
+/// serializer, so sign-time and verify-time bytes are identical by construction.
+pub fn canonical_batch_bytes(
+    decision: ApprovalDecision,
+    batch_sign_id: &str,
+    action_digests: &[String],
+    expires_at: i64,
+    issuer: &str,
+) -> Vec<u8> {
+    let batch = CanonicalApprovalBatch {
+        decision,
+        batch_sign_id: batch_sign_id.to_string(),
+        action_digests: action_digests.to_vec(),
+        expires_at: Some(expires_at),
+        issuer: Some(issuer.to_string()),
+        signature: None,
+    };
+    canonical_approval_batch_signature_bytes(&batch)
 }
 
 /// Write the operator's PRIVATE seed (hex) to `path`, created fresh with `0o600`
@@ -305,6 +386,17 @@ pub fn sign_request(key_path: &Path, req: &PendingRequest) -> Result<SignedAppro
     sign_request_with_key(&sk, req)
 }
 
+/// sign-batch: validate a D20 W2 pending batch, load the PRIVATE key from
+/// `key_path`, reconstruct the canonical batch bytes, Ed25519-sign them, and return
+/// the signed batch approval.
+pub fn sign_batch_request(
+    key_path: &Path,
+    req: &PendingBatchRequest,
+) -> Result<SignedApprovalBatch, CliError> {
+    let sk = read_signing_key(key_path)?;
+    sign_batch_request_with_key(&sk, req)
+}
+
 /// sign with an ALREADY-LOADED operator signing key: validate the pending request,
 /// reconstruct the canonical bytes, Ed25519-sign them, and return the signed approval.
 ///
@@ -358,6 +450,53 @@ pub fn sign_request_with_key(
         decision: decision_str(decision).to_string(),
         approval_id: req.approval_id.clone(),
         action_digest: req.action_digest.clone(),
+        expires_at: req.expires_at,
+        issuer,
+        signature: to_hex(&sig.to_bytes()),
+    })
+}
+
+/// Sign with an already-loaded operator signing key, for operator-controlled key
+/// sources. The caller owns key custody; this function only validates and signs the
+/// canonical batch bytes.
+pub fn sign_batch_request_with_key(
+    sk: &OperatorSigningKey,
+    req: &PendingBatchRequest,
+) -> Result<SignedApprovalBatch, CliError> {
+    let decision = parse_decision(&req.decision)?;
+    if req.batch_sign_id.trim().is_empty() {
+        return Err(CliError::BadRequest(
+            "batch_sign_id must not be empty".to_string(),
+        ));
+    }
+    validate_batch_digests(&req.action_digests)?;
+    if req.expires_at <= 0 {
+        return Err(CliError::BadRequest(
+            "expires_at must be a positive epoch-ms".to_string(),
+        ));
+    }
+    let issuer = req
+        .issuer
+        .clone()
+        .unwrap_or_else(|| CANONICAL_GATE_ISSUER.to_string());
+    if issuer.trim().is_empty() {
+        return Err(CliError::BadRequest("issuer must not be empty".to_string()));
+    }
+
+    let bytes = canonical_batch_bytes(
+        decision,
+        &req.batch_sign_id,
+        &req.action_digests,
+        req.expires_at,
+        &issuer,
+    );
+    let sig = sk.sign(&bytes);
+
+    Ok(SignedApprovalBatch {
+        scheme: SCHEME_ED25519.to_string(),
+        decision: decision_str(decision).to_string(),
+        batch_sign_id: req.batch_sign_id.clone(),
+        action_digests: req.action_digests.clone(),
         expires_at: req.expires_at,
         issuer,
         signature: to_hex(&sig.to_bytes()),
@@ -575,6 +714,18 @@ mod tests {
         }
     }
 
+    fn sample_batch_request() -> PendingBatchRequest {
+        PendingBatchRequest {
+            batch_sign_id: "batch-d20-001".to_string(),
+            action_digests: vec!["a".repeat(64), "b".repeat(64)],
+            expires_at: 1_900_000_000_000,
+            decision: "approved".to_string(),
+            issuer: None,
+            plan_label: Some("D20 reversible batch".to_string()),
+            worktree: Some("/tmp/friday-worktree".to_string()),
+        }
+    }
+
     #[test]
     fn keygen_then_sign_verifies() {
         let dir = std::env::temp_dir().join(format!("op-cli-unit-{}", std::process::id()));
@@ -634,6 +785,58 @@ mod tests {
     }
 
     #[test]
+    fn keygen_then_sign_batch_verifies() {
+        let dir = std::env::temp_dir().join(format!("op-cli-unit-batch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let key_path = dir.join("operator.key");
+        let _ = std::fs::remove_file(&key_path);
+
+        let vk_hex = keygen_to_path(&key_path).unwrap();
+        let req = sample_batch_request();
+        let signed = sign_batch_request(&key_path, &req).unwrap();
+
+        let decision = parse_decision(&signed.decision).unwrap();
+        let bytes = canonical_batch_bytes(
+            decision,
+            &signed.batch_sign_id,
+            &signed.action_digests,
+            signed.expires_at,
+            &signed.issuer,
+        );
+        let vk = decode_verifying_key_hex(&vk_hex).unwrap();
+        let sig = decode_signature_hex(&signed.signature).unwrap();
+        assert!(
+            verify_ed25519_approval(&bytes, &vk, &sig),
+            "operator-signed batch must verify under the keygen public key"
+        );
+        assert_eq!(signed.issuer, CANONICAL_GATE_ISSUER);
+        std::fs::remove_file(&key_path).ok();
+    }
+
+    #[test]
+    fn sign_batch_request_and_with_key_are_byte_identical() {
+        let dir = std::env::temp_dir().join(format!("op-cli-unit-batch-eq-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let key_path = dir.join("operator.key");
+        let _ = std::fs::remove_file(&key_path);
+        keygen_to_path(&key_path).unwrap();
+
+        let req = sample_batch_request();
+        let from_file = sign_batch_request(&key_path, &req).unwrap();
+        let sk = read_signing_key(&key_path).unwrap();
+        let from_key = sign_batch_request_with_key(&sk, &req).unwrap();
+
+        assert_eq!(from_file.signature, from_key.signature);
+        assert_eq!(from_file.batch_sign_id, from_key.batch_sign_id);
+        assert_eq!(from_file.action_digests, from_key.action_digests);
+        assert_eq!(from_file.issuer, from_key.issuer);
+        assert_eq!(from_file.decision, from_key.decision);
+        assert_eq!(from_file.scheme, from_key.scheme);
+        assert_eq!(from_file.expires_at, from_key.expires_at);
+        std::fs::remove_file(&key_path).ok();
+    }
+
+    #[test]
     fn keygen_refuses_to_overwrite() {
         let dir = std::env::temp_dir().join(format!("op-cli-unit-ow-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -662,5 +865,7 @@ mod tests {
         assert!(validate_action_digest(&"A".repeat(64)).is_err()); // uppercase rejected
         assert!(validate_action_digest("abc").is_err()); // wrong length
         assert!(validate_action_digest(&"g".repeat(64)).is_err()); // non-hex
+        assert!(validate_batch_digests(&[]).is_err());
+        assert!(validate_batch_digests(&["a".repeat(64), "a".repeat(64)]).is_err());
     }
 }

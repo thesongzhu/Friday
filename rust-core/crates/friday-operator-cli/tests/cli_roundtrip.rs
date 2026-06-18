@@ -16,7 +16,8 @@ use std::process::{Command, Output};
 use friday_core::gate::ApprovalDecision;
 use friday_crypto::verify_ed25519_approval;
 use friday_operator_cli::{
-    canonical_bytes, decode_signature_hex, decode_verifying_key_hex, parse_decision,
+    canonical_batch_bytes, canonical_bytes, decode_signature_hex, decode_verifying_key_hex,
+    parse_decision,
 };
 
 const BIN: &str = env!("CARGO_BIN_EXE_friday-operator-approve");
@@ -43,6 +44,17 @@ fn sample_req() -> serde_json::Value {
         "principal": "owner:alice",
         "action": "fs.delete",
         "surface": "desktop"
+    })
+}
+
+fn sample_batch_req() -> serde_json::Value {
+    serde_json::json!({
+        "batch_sign_id": "batch-d20-cli",
+        "action_digests": ["a".repeat(64), "b".repeat(64)],
+        "expires_at": 1_900_000_000_000i64,
+        "decision": "approved",
+        "plan_label": "D20 reversible batch",
+        "worktree": "/tmp/friday-worktree"
     })
 }
 
@@ -83,6 +95,22 @@ fn rebuild_canonical_bytes(signed: &serde_json::Value) -> Vec<u8> {
         parse_decision(signed["decision"].as_str().unwrap()).unwrap(),
         signed["approval_id"].as_str().unwrap(),
         signed["action_digest"].as_str().unwrap(),
+        signed["expires_at"].as_i64().unwrap(),
+        signed["issuer"].as_str().unwrap(),
+    )
+}
+
+fn rebuild_canonical_batch_bytes(signed: &serde_json::Value) -> Vec<u8> {
+    let digests = signed["action_digests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    canonical_batch_bytes(
+        parse_decision(signed["decision"].as_str().unwrap()).unwrap(),
+        signed["batch_sign_id"].as_str().unwrap(),
+        &digests,
         signed["expires_at"].as_i64().unwrap(),
         signed["issuer"].as_str().unwrap(),
     )
@@ -182,6 +210,69 @@ fn keygen_sign_roundtrip_verifies_and_never_leaks_private_key() {
 }
 
 #[test]
+fn keygen_sign_batch_roundtrip_verifies_and_never_leaks_private_key() {
+    let dir = tmp_dir("batch-roundtrip");
+    let key_path = dir.join("operator.key");
+    let _ = std::fs::remove_file(&key_path);
+
+    let kg = run_bin(&["keygen", "--out", key_path.to_str().unwrap()]);
+    assert!(
+        kg.status.success(),
+        "keygen failed: {}",
+        String::from_utf8_lossy(&kg.stderr)
+    );
+    let kg_stdout = String::from_utf8(kg.stdout).unwrap();
+    let kg_stderr = String::from_utf8(kg.stderr).unwrap();
+    let seed_hex = std::fs::read_to_string(&key_path)
+        .unwrap()
+        .trim()
+        .to_string();
+    assert!(!kg_stdout.contains(&seed_hex));
+    assert!(!kg_stderr.contains(&seed_hex));
+    let kg_json: serde_json::Value = serde_json::from_str(&kg_stdout).unwrap();
+    let vk_hex = kg_json["verifying_key"].as_str().unwrap().to_string();
+
+    let req_path = dir.join("pending-batch.json");
+    std::fs::write(&req_path, serde_json::to_vec(&sample_batch_req()).unwrap()).unwrap();
+    let sg = run_bin(&[
+        "sign-batch",
+        "--key",
+        key_path.to_str().unwrap(),
+        "--request",
+        req_path.to_str().unwrap(),
+    ]);
+    assert!(
+        sg.status.success(),
+        "sign-batch failed: {}",
+        String::from_utf8_lossy(&sg.stderr)
+    );
+    let sg_stdout = String::from_utf8(sg.stdout).unwrap();
+    let sg_stderr = String::from_utf8(sg.stderr).unwrap();
+    assert!(
+        !sg_stdout.contains(&seed_hex),
+        "PRIVATE KEY LEAKED to sign-batch stdout"
+    );
+    assert!(
+        !sg_stderr.contains(&seed_hex),
+        "PRIVATE KEY LEAKED to sign-batch stderr"
+    );
+
+    let signed: serde_json::Value = serde_json::from_str(&sg_stdout).unwrap();
+    assert_eq!(signed["scheme"], "ed25519");
+    assert_eq!(signed["decision"], "approved");
+    assert_eq!(signed["issuer"], "friday_canonical_gate");
+    assert_eq!(signed["action_digests"].as_array().unwrap().len(), 2);
+
+    let bytes = rebuild_canonical_batch_bytes(&signed);
+    let vk = decode_verifying_key_hex(&vk_hex).unwrap();
+    let sig = decode_signature_hex(signed["signature"].as_str().unwrap()).unwrap();
+    assert!(
+        verify_ed25519_approval(&bytes, &vk, &sig),
+        "operator-signed batch must verify under the keygen public key"
+    );
+}
+
+#[test]
 fn any_signed_field_tamper_breaks_verification() {
     let (vk_hex, signed) = keygen_and_sign("tamper", &sample_req());
     let vk = decode_verifying_key_hex(&vk_hex).unwrap();
@@ -236,6 +327,85 @@ fn any_signed_field_tamper_breaks_verification() {
             action_digest,
             expires_at,
             "attacker_issuer"
+        ),
+        &vk,
+        &sig
+    ));
+}
+
+#[test]
+fn any_signed_batch_field_tamper_breaks_verification() {
+    let dir = tmp_dir("batch-tamper");
+    let key_path = dir.join("operator.key");
+    let _ = std::fs::remove_file(&key_path);
+    let kg = run_bin(&["keygen", "--out", key_path.to_str().unwrap()]);
+    assert!(kg.status.success());
+    let kg_json: serde_json::Value = serde_json::from_slice(&kg.stdout).unwrap();
+    let vk_hex = kg_json["verifying_key"].as_str().unwrap().to_string();
+
+    let req_path = dir.join("pending-batch.json");
+    std::fs::write(&req_path, serde_json::to_vec(&sample_batch_req()).unwrap()).unwrap();
+    let sg = run_bin(&[
+        "sign-batch",
+        "--key",
+        key_path.to_str().unwrap(),
+        "--request",
+        req_path.to_str().unwrap(),
+    ]);
+    assert!(sg.status.success());
+    let signed: serde_json::Value = serde_json::from_slice(&sg.stdout).unwrap();
+    let vk = decode_verifying_key_hex(&vk_hex).unwrap();
+    let sig = decode_signature_hex(signed["signature"].as_str().unwrap()).unwrap();
+    let digests = signed["action_digests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+
+    assert!(verify_ed25519_approval(
+        &canonical_batch_bytes(
+            parse_decision(signed["decision"].as_str().unwrap()).unwrap(),
+            signed["batch_sign_id"].as_str().unwrap(),
+            &digests,
+            signed["expires_at"].as_i64().unwrap(),
+            signed["issuer"].as_str().unwrap(),
+        ),
+        &vk,
+        &sig
+    ));
+
+    let mut flipped_digests = digests.clone();
+    flipped_digests[0] = "c".repeat(64);
+    assert!(!verify_ed25519_approval(
+        &canonical_batch_bytes(
+            ApprovalDecision::Approved,
+            signed["batch_sign_id"].as_str().unwrap(),
+            &flipped_digests,
+            signed["expires_at"].as_i64().unwrap(),
+            signed["issuer"].as_str().unwrap(),
+        ),
+        &vk,
+        &sig
+    ));
+    assert!(!verify_ed25519_approval(
+        &canonical_batch_bytes(
+            ApprovalDecision::Denied,
+            signed["batch_sign_id"].as_str().unwrap(),
+            &digests,
+            signed["expires_at"].as_i64().unwrap(),
+            signed["issuer"].as_str().unwrap(),
+        ),
+        &vk,
+        &sig
+    ));
+    assert!(!verify_ed25519_approval(
+        &canonical_batch_bytes(
+            ApprovalDecision::Approved,
+            "batch-different",
+            &digests,
+            signed["expires_at"].as_i64().unwrap(),
+            signed["issuer"].as_str().unwrap(),
         ),
         &vk,
         &sig

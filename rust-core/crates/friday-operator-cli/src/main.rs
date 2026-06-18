@@ -13,6 +13,10 @@
 //!     Read a pending request (the fields S6b persists when a mutating action
 //!     Pauses), load the PRIVATE key, and emit an Ed25519-signed CanonicalApproval
 //!     as JSON to stdout. No network. The private key never appears in the output.
+//!
+//! friday-operator-approve sign-batch --key <private-key-path> --request <pending-batch.json>
+//!     Read a D20 W2 pending batch (a batch_sign_id plus exact action digests), load
+//!     the PRIVATE key, and emit an Ed25519-signed CanonicalApprovalBatch as JSON.
 //! ```
 //!
 //! Truth label: offline operator-signing tool (operator-held private key; the Hub
@@ -28,7 +32,9 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use friday_operator_cli::trust_grant;
-use friday_operator_cli::{keygen_to_path, sign_request, PendingRequest};
+use friday_operator_cli::{
+    keygen_to_path, sign_batch_request, sign_request, PendingBatchRequest, PendingRequest,
+};
 
 const USAGE: &str = "\
 friday-operator-approve — operator CLI (S6c signing + NS-3 trust-grant issuance)
@@ -36,6 +42,7 @@ friday-operator-approve — operator CLI (S6c signing + NS-3 trust-grant issuanc
 USAGE:
     friday-operator-approve keygen --out <private-key-path>
     friday-operator-approve sign  --key <private-key-path> --request <pending-request.json>
+    friday-operator-approve sign-batch --key <private-key-path> --request <pending-batch.json>
     friday-operator-approve grant  --db <hub.sqlite> --grant-id <id> --agent <agent-id> \\
                                     --risk-ceiling <read_only|low|medium|high|critical> \\
                                     [--expires-at <epoch-ms>] [--workspace <path-prefix>] \\
@@ -50,6 +57,10 @@ verifying key (JSON) to stdout for Hub provisioning. The private key is never pr
 
 sign reads a pending request JSON and emits an Ed25519-signed CanonicalApproval (JSON)
 to stdout. The private key never appears in the output.
+
+sign-batch reads a D20 W2 pending batch JSON and emits an Ed25519-signed
+CanonicalApprovalBatch (JSON) for an exact digest set. The private key never appears in
+the output.
 
 grant mints a TrustGrant for --agent with the given boundaries (operator POLICY action;
 the allowlists are fail-closed — an omitted dimension is DENY-ALL) and prints the
@@ -71,6 +82,7 @@ fn run() -> Result<(), String> {
     match args.get(1).map(String::as_str) {
         Some("keygen") => cmd_keygen(&args[2..]),
         Some("sign") => cmd_sign(&args[2..]),
+        Some("sign-batch") => cmd_sign_batch(&args[2..]),
         Some("grant") => cmd_grant(&args[2..]),
         Some("revoke") => cmd_revoke(&args[2..]),
         Some("help") | Some("--help") | Some("-h") | None => {
@@ -110,6 +122,23 @@ fn cmd_sign(args: &[String]) -> Result<(), String> {
         serde_json::from_str(&json).map_err(|e| format!("invalid request JSON: {e}"))?;
     let signed = sign_request(Path::new(&key), &req).map_err(|e| e.to_string())?;
     // Signed approval -> stdout. The private key is never part of this output.
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&signed).map_err(|e| e.to_string())?
+    );
+    Ok(())
+}
+
+fn cmd_sign_batch(args: &[String]) -> Result<(), String> {
+    let key = arg_value(args, "--key")
+        .ok_or_else(|| format!("sign-batch requires --key <private-key-path>\n\n{USAGE}"))?;
+    let request = arg_value(args, "--request")
+        .ok_or_else(|| format!("sign-batch requires --request <pending-batch.json>\n\n{USAGE}"))?;
+    let json = std::fs::read_to_string(&request)
+        .map_err(|_| format!("could not read request file {request}"))?;
+    let req: PendingBatchRequest =
+        serde_json::from_str(&json).map_err(|e| format!("invalid batch request JSON: {e}"))?;
+    let signed = sign_batch_request(Path::new(&key), &req).map_err(|e| e.to_string())?;
     println!(
         "{}",
         serde_json::to_string_pretty(&signed).map_err(|e| e.to_string())?
