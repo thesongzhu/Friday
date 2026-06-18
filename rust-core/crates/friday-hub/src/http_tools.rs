@@ -483,13 +483,14 @@ impl std::fmt::Display for WebFetchError {
 
 /// A tool executor that routes `web_fetch` to a [`WebFetchExecutor`], `web_search` to a
 /// [`crate::web_search::WebSearchExecutor`], `image_analysis` to a
-/// [`crate::vision_tools::VisionExecutor`], `memory_recall`/`memory_store` to a
+/// [`crate::vision_tools::VisionExecutor`], `tts`/`pdf_parse`/`ocr_extract` to a
+/// [`crate::media_tools::MediaToolExecutor`], `memory_recall`/`memory_store` to a
 /// [`crate::memory_tools::MemoryToolExecutor`], and EVERY other action to an inner fs executor
 /// (typically [`crate::FsToolExecutor`]). The composition keeps the fs/shell executor
 /// untouched — the L2 capability tools are purely additive. The gate chokepoint still runs
 /// before EVERY dispatch (the executor is reached only on `Allow`), and the per-capability
 /// flag-gates (`FRIDAY_WEB_FETCH_ENABLED` / `FRIDAY_WEB_SEARCH_ENABLED` / `FRIDAY_VISION_ENABLED` /
-/// `FRIDAY_MEMORY_TOOL_ENABLED`) refuse the respective tool when off, so this composite is
+/// `FRIDAY_MEDIA_TOOL_ENABLED` / `FRIDAY_MEMORY_TOOL_ENABLED`) refuse the respective tool when off, so this composite is
 /// behavior-neutral until a flag is flipped.
 ///
 /// The `'c` lifetime is the borrowed DB connection the [`crate::memory_tools::MemoryToolExecutor`]
@@ -501,6 +502,7 @@ pub struct CompositeToolExecutor<'c, F: ToolExecutor> {
     web: WebFetchExecutor,
     search: crate::web_search::WebSearchExecutor,
     vision: crate::vision_tools::VisionExecutor,
+    media: crate::media_tools::MediaToolExecutor,
     memory: crate::memory_tools::MemoryToolExecutor<'c>,
 }
 
@@ -510,6 +512,7 @@ impl<'c, F: ToolExecutor> CompositeToolExecutor<'c, F> {
         web: WebFetchExecutor,
         search: crate::web_search::WebSearchExecutor,
         vision: crate::vision_tools::VisionExecutor,
+        media: crate::media_tools::MediaToolExecutor,
         memory: crate::memory_tools::MemoryToolExecutor<'c>,
     ) -> Self {
         Self {
@@ -517,6 +520,7 @@ impl<'c, F: ToolExecutor> CompositeToolExecutor<'c, F> {
             web,
             search,
             vision,
+            media,
             memory,
         }
     }
@@ -528,6 +532,7 @@ impl<F: ToolExecutor> ToolExecutor for CompositeToolExecutor<'_, F> {
             "web_fetch" => self.web.execute(action, params),
             "web_search" => self.search.execute(action, params),
             "image_analysis" => self.vision.execute(action, params),
+            "tts" | "pdf_parse" | "ocr_extract" => self.media.execute(action, params),
             "memory_recall" | "memory_store" => self.memory.execute(action, params),
             _ => self.fs.execute(action, params),
         }

@@ -913,6 +913,10 @@ impl<T: Transport> HubRuntime<T> {
             // tools use, with the runtime Claude-from-env vision client. Byte-identical when dark
             // (FRIDAY_VISION_ENABLED off ⇒ the chokepoint refuses image_analysis before here).
             crate::vision_tools::VisionExecutor::for_runtime(self.executor.root().to_path_buf()),
+            // B5 media tools (tts/pdf_parse/ocr_extract), scoped to the SAME workspace root.
+            // Runtime TTS/OCR providers fail closed until a reviewed provider injection lands;
+            // FRIDAY_MEDIA_TOOL_ENABLED off refuses every media action before this executor.
+            crate::media_tools::MediaToolExecutor::for_runtime(self.executor.root().to_path_buf()),
             // L2-4: the memory-as-tool executor, keyed on the run's AUTHENTICATED principal
             // (`policy.principal_id()` — the SAME owner-scope the sessionless `recall_preamble`
             // recalls under, so explicit recall reads exactly what auto-recall would). Byte-
@@ -1333,6 +1337,8 @@ impl<T: Transport> HubRuntime<T> {
             // tools use, with the runtime Claude-from-env vision client. Byte-identical when dark
             // (FRIDAY_VISION_ENABLED off ⇒ the chokepoint refuses image_analysis before here).
             crate::vision_tools::VisionExecutor::for_runtime(self.executor.root().to_path_buf()),
+            // B5 media tools (tts/pdf_parse/ocr_extract), scoped to the SAME workspace root.
+            crate::media_tools::MediaToolExecutor::for_runtime(self.executor.root().to_path_buf()),
             // L2-4: the memory-as-tool executor, keyed on the SESSION-DERIVED dual-read composite
             // namespaces (the SAME scope auto-extraction/auto-recall use). Recalls the UNION over
             // them; stores under the PRIMARY. Each encodes the owner's user segment under
@@ -1542,6 +1548,8 @@ impl<T: Transport> HubRuntime<T> {
             // tools use, with the runtime Claude-from-env vision client. Byte-identical when dark
             // (FRIDAY_VISION_ENABLED off ⇒ the chokepoint refuses image_analysis before here).
             crate::vision_tools::VisionExecutor::for_runtime(self.executor.root().to_path_buf()),
+            // B5 media tools (tts/pdf_parse/ocr_extract), scoped to the SAME workspace root.
+            crate::media_tools::MediaToolExecutor::for_runtime(self.executor.root().to_path_buf()),
             // L2-4: the memory-as-tool executor, keyed on the SESSION-DERIVED dual-read composite
             // namespaces (the SAME scope auto-extraction/auto-recall use). Recalls the UNION;
             // stores under the PRIMARY. Each encodes the owner's user segment under exact-match →
