@@ -1901,6 +1901,8 @@ export interface FridayHubConfig {
   allowTestOnlySessionMemoryExtractionExecution?: boolean;
   /** Test-oracle only; production hub creation must leave legacy TS durable memory writes fail-closed. */
   allowTestOnlyTsMemoryWrites?: boolean;
+  /** Test-oracle only; production hub creation must leave /v1/guide-lens/* fail-closed. */
+  allowTestOnlyGuideLensExecution?: boolean;
   /** Test-oracle only; production hub creation must leave cross-border pack mutations fail-closed. */
   allowTestOnlyCrossBorderPackExecution?: boolean;
   /** Test-oracle only; production hub creation must leave self-healing diagnosis mutations fail-closed. */
