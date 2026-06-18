@@ -163,27 +163,6 @@ function listMemoryItemsByNamespacePrefix(
     .all(namespace, `${keyPrefix}%`) as MemoryItemRow[];
 }
 
-function deleteMemoryItem(
-  db: Database.Database,
-  namespace: string,
-  key: string,
-): void {
-  db.prepare("DELETE FROM memory_items WHERE namespace = ? AND key = ?").run(
-    namespace,
-    key,
-  );
-}
-
-function deleteMemoryItemsByPrefix(
-  db: Database.Database,
-  namespace: string,
-  keyPrefix: string,
-): void {
-  db.prepare(
-    "DELETE FROM memory_items WHERE namespace = ? AND key LIKE ?",
-  ).run(namespace, `${keyPrefix}%`);
-}
-
 function deleteWorkflowGenerationSession(
   db: Database.Database,
   sessionId: string,
@@ -298,12 +277,6 @@ export function createFridayWorkflowGenerationSessionRepository(
       db.withWriteTransaction((writer) => {
         deleteWorkflowGenerationTurns(writer, sessionId);
         deleteWorkflowGenerationSession(writer, sessionId);
-        deleteMemoryItem(writer, SESSION_NAMESPACE, sessionKey(sessionId));
-        deleteMemoryItemsByPrefix(
-          writer,
-          TURN_NAMESPACE,
-          turnKeyPrefix(sessionId),
-        );
       });
     },
   };

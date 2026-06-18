@@ -77,6 +77,9 @@ interface HealthCheck {
   };
 }
 
+const RETIRED_MEMORY_ITEMS_MAINTENANCE =
+  "TS_RUNTIME_DURABLE_MEMORY_WRITE_RETIRED: expired memory_items maintenance is disabled in the TypeScript runtime; use the Rust memory owner/migration path instead.";
+
 const HEALTH_CHECKS: HealthCheck[] = [
   {
     name: "db_size",
@@ -112,17 +115,10 @@ const HEALTH_CHECKS: HealthCheck[] = [
       return { name: "expired_memory_items", healthy: count < 500, value: count, unit: "items" };
     },
     maintenance: {
-      detail: "Prune expired memory items in a bounded local batch",
+      detail: "Expired memory item cleanup must run through the Rust memory owner/migration path",
       nonReversibleReason: "Expired memory item deletion removes local rows and cannot be reconstructed by Friday.",
-      run: (deps) => {
-        const nowIso = deps.nowIso();
-        const result = deps.db.withWriteTransaction((db) =>
-          db
-            .prepare("DELETE FROM memory_items WHERE rowid IN (SELECT rowid FROM memory_items WHERE expires_at IS NOT NULL AND expires_at < ? LIMIT 200)")
-            .run(nowIso),
-        );
-        const pruned = (result as { changes?: number })?.changes ?? 0;
-        return { detail: `Pruned ${pruned} expired memory items`, changes: pruned };
+      run: () => {
+        throw new Error(RETIRED_MEMORY_ITEMS_MAINTENANCE);
       },
     },
   },

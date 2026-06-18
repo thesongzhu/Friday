@@ -720,9 +720,6 @@ export function createFridaySkillGeneratorService(
       writer
         .prepare("DELETE FROM skill_generation_drafts WHERE session_id = ?")
         .run(sessionId);
-      writer
-        .prepare("DELETE FROM memory_items WHERE namespace = ? AND key = ?")
-        .run(DRAFT_NAMESPACE, sessionId);
     });
   }
 

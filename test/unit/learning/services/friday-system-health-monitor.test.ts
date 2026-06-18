@@ -115,7 +115,7 @@ describe("FridaySystemHealthMonitor", () => {
     expect(summary.maintenanceRecommendations).toContainEqual({
       name: "expired_memory_items",
       gateRequired: "explicit_maintenance",
-      detail: "Prune expired memory items in a bounded local batch",
+      detail: "Expired memory item cleanup must run through the Rust memory owner/migration path",
       value: 600,
       unit: "items",
     });
@@ -142,7 +142,7 @@ describe("FridaySystemHealthMonitor", () => {
     expect(countStaleRealtimeCheckpoints()).toBe(1001);
   });
 
-  it("runs cleanup only with explicit maintenance gate and emits a non-reversible receipt", () => {
+  it("fails closed for expired memory cleanup even with an explicit maintenance gate", () => {
     insertExpiredMemoryItems(600);
 
     const summary = monitor.runAll({
@@ -159,8 +159,9 @@ describe("FridaySystemHealthMonitor", () => {
     expect(receipt).toMatchObject({
       receiptId: `system-health-maintenance:expired_memory_items:${NOW}`,
       name: "expired_memory_items",
-      status: "applied",
-      detail: "Pruned 200 expired memory items",
+      status: "failed",
+      detail:
+        "Maintenance failed: TS_RUNTIME_DURABLE_MEMORY_WRITE_RETIRED: expired memory_items maintenance is disabled in the TypeScript runtime; use the Rust memory owner/migration path instead.",
       runAt: NOW,
       requestedBy: "owner-user",
       reason: "manual maintenance window",
@@ -168,9 +169,9 @@ describe("FridaySystemHealthMonitor", () => {
       approvalRef: "maintenance-ticket-001",
       rollbackClass: "non_reversible_local",
       nonReversibleReason: "Expired memory item deletion removes local rows and cannot be reconstructed by Friday.",
-      evidence: { beforeValue: 600, unit: "items", changes: 200 },
+      evidence: { beforeValue: 600, unit: "items" },
     });
-    expect(countExpiredMemoryItems()).toBe(400);
+    expect(countExpiredMemoryItems()).toBe(600);
   });
 
   it("does not run cleanup with an incomplete maintenance gate", () => {

@@ -577,9 +577,6 @@ export function createFridayWorkflowGeneratorService(
       writer
         .prepare("DELETE FROM workflow_generation_drafts WHERE session_id = ?")
         .run(sessionId);
-      writer
-        .prepare("DELETE FROM memory_items WHERE namespace = ? AND key = ?")
-        .run(DRAFT_NAMESPACE, sessionId);
     });
   }
 

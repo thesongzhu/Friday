@@ -181,12 +181,13 @@ function makeMockDb(): FridaySqliteLayer {
 const NOW = "2026-02-18T10:00:00.000Z";
 
 describe("FridayWorkflowGenerationSessionRepository", () => {
+  let db: FridaySqliteLayer;
   let repo: FridayWorkflowGenerationSessionRepository;
   let idCounter: number;
 
   beforeEach(() => {
     idCounter = 0;
-    const db = makeMockDb();
+    db = makeMockDb();
     repo = createFridayWorkflowGenerationSessionRepository({
       db,
       idGenerator: () => `id-${++idCounter}`,
@@ -256,6 +257,27 @@ describe("FridayWorkflowGenerationSessionRepository", () => {
     repo.deleteSession("s-1");
     expect(repo.getSession("s-1")).toBeNull();
     expect(repo.getTurns("s-1")).toHaveLength(0);
+  });
+
+  it("deleteSession does not mutate legacy memory_items fallback rows", () => {
+    db.withWriteTransaction((writer) => {
+      (writer as { prepare: (sql: string) => { run: (...args: unknown[]) => void } }).prepare(
+        "INSERT INTO memory_items (id, namespace, key, value_json, tags_json, created_at, updated_at) VALUES (?, ?, ?, ?, '[]', ?, ?)",
+      ).run(
+        "legacy-session",
+        "workflow-generator-session",
+        "s-legacy",
+        JSON.stringify(makeSession({ sessionId: "s-legacy" })),
+        NOW,
+        NOW,
+      );
+    });
+
+    repo.deleteSession("s-legacy");
+
+    const legacySession = repo.getSession("s-legacy");
+    expect(legacySession).not.toBeNull();
+    expect(legacySession!.sessionId).toBe("s-legacy");
   });
 
   it("adds and retrieves turns in order", () => {
