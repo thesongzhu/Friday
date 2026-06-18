@@ -37,6 +37,7 @@ use friday_core::gate::{
 };
 use friday_crypto::OperatorVerifyingKey;
 use rusqlite::{params, Connection, Error as SqlErr, ErrorCode};
+use std::path::{Component, Path, PathBuf};
 
 /// A **verify-only** Ed25519 approval policy. It holds ONLY the operator's PUBLIC
 /// verify key — no signing key, no HMAC secret — so it can VERIFY an operator-signed
@@ -279,4 +280,154 @@ pub fn authorize_mutating_action_ed25519_batch(
 
 fn is_valid_digest_hex(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// DARK D20 W2-S4 driver scope for reversible batch auto-run.
+///
+/// This does not execute tools. It is the verify-only pre-dispatch guard that proves
+/// a signed batch member is confined to the git/worktree space where "reversible"
+/// actually means "operator can inspect/revert with git/worktree mechanics". The Hub
+/// still verifies only; it never mints the operator signature.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DialWorktreeScope {
+    pub plan_sign_id: String,
+    pub active_worktree: PathBuf,
+}
+
+/// Authorize one batch member only if its classified resource path is inside the
+/// active worktree and not in an explicitly never-revertable space (`~/.friday`,
+/// launchd plist, or Friday state DB files). On success, writes a hash-chain audit
+/// row in the same transaction as the batch replay consume.
+pub fn authorize_reversible_batch_in_worktree(
+    conn: &mut Connection,
+    request: &MutatingActionRequest,
+    batch: Option<&CanonicalApprovalBatch>,
+    operator_vk: &OperatorVerifyingKey,
+    now_ms: i64,
+    scope: &DialWorktreeScope,
+) -> Result<GateEvidenceRecord> {
+    let tx = conn.unchecked_transaction()?;
+    let preflight = worktree_revertable_preflight(request, batch, scope);
+    if let Some(reason) = preflight {
+        return Ok(GateEvidenceRecord {
+            decision: GateDecision::RequiresApproval,
+            reason: reason.to_string(),
+            risk: gate::evaluate(request).risk,
+            approval_required: true,
+            denied_by: Some("canonical_gate".to_string()),
+        });
+    }
+
+    let evidence =
+        authorize_mutating_action_ed25519_batch(&tx, request, batch, operator_vk, now_ms)?;
+    if evidence.decision == GateDecision::Allow {
+        let digest = friday_crypto::action_digest(&gate::canonical_action_bytes(request));
+        let audit_id = format!("dial.batch.worktree:{}:{}", scope.plan_sign_id, digest);
+        let payload_ref = format!("dial://batch/{}/action/{}", scope.plan_sign_id, digest);
+        crate::audit::append_audit(
+            &tx,
+            &audit_id,
+            "friday",
+            "dial.batch.worktree_authorized",
+            Some(&payload_ref),
+            now_ms,
+        )?;
+    }
+    tx.commit()?;
+    Ok(evidence)
+}
+
+fn worktree_revertable_preflight(
+    request: &MutatingActionRequest,
+    batch: Option<&CanonicalApprovalBatch>,
+    scope: &DialWorktreeScope,
+) -> Option<&'static str> {
+    if request.reversibility() == Reversibility::Irreversible {
+        return Some("dial_worktree_irreversible_requires_single_approval");
+    }
+    let batch = batch?;
+    if batch.batch_sign_id != scope.plan_sign_id {
+        return Some("dial_worktree_plan_sign_id_mismatch");
+    }
+    let resource_path = request.resource()?.id.as_deref()?;
+    let real_worktree = match std::fs::canonicalize(&scope.active_worktree) {
+        Ok(p) => p,
+        Err(_) => return Some("dial_worktree_active_root_unavailable"),
+    };
+    let real_target = match canonicalize_existing_parent(&real_worktree, resource_path) {
+        Ok(p) => p,
+        Err(reason) => return Some(reason),
+    };
+    if is_never_revertable_path(&real_target) {
+        return Some("dial_worktree_never_revertable_path");
+    }
+    if !real_target.starts_with(&real_worktree) {
+        return Some("dial_worktree_resource_out_of_scope");
+    }
+    None
+}
+
+fn canonicalize_existing_parent(
+    worktree: &Path,
+    path: &str,
+) -> std::result::Result<PathBuf, &'static str> {
+    let supplied = expand_home(path);
+    let candidate = if supplied.is_absolute() {
+        supplied
+    } else {
+        worktree.join(supplied)
+    };
+    if has_parent_traversal(&candidate) {
+        return Err("dial_worktree_resource_path_invalid");
+    }
+    if let Ok(real) = std::fs::canonicalize(&candidate) {
+        return Ok(real);
+    }
+    let Some(name) = candidate.file_name() else {
+        return Err("dial_worktree_resource_path_invalid");
+    };
+    let Some(parent) = candidate.parent() else {
+        return Err("dial_worktree_resource_path_invalid");
+    };
+    let real_parent =
+        std::fs::canonicalize(parent).map_err(|_| "dial_worktree_resource_parent_unavailable")?;
+    Ok(real_parent.join(name))
+}
+
+fn has_parent_traversal(path: &Path) -> bool {
+    path.components()
+        .any(|component| matches!(component, Component::ParentDir))
+}
+
+fn expand_home(path: &str) -> PathBuf {
+    if path == "~" {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(path))
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        std::env::var_os("HOME")
+            .map(|home| PathBuf::from(home).join(rest))
+            .unwrap_or_else(|| PathBuf::from(path))
+    } else {
+        PathBuf::from(path)
+    }
+}
+
+fn is_never_revertable_path(path: &Path) -> bool {
+    if std::env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join(".friday"))
+        .is_some_and(|friday_home| path.starts_with(friday_home))
+    {
+        return true;
+    }
+    if path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .is_some_and(|name| {
+            matches!(name, "friday.db" | "rust-hub.sqlite") || name.ends_with(".plist")
+        })
+    {
+        return true;
+    }
+    false
 }

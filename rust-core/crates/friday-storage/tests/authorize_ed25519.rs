@@ -22,9 +22,10 @@ use friday_core::Risk;
 use friday_crypto::{OperatorSigningKey, OperatorVerifyingKey};
 use friday_storage::{
     authorize_mutating_action_ed25519, authorize_mutating_action_ed25519_batch,
-    get_pending_request, persist_pending_request, Db, Ed25519VerifyOnlyPolicy,
-    PendingApprovalRequest,
+    authorize_reversible_batch_in_worktree, get_pending_request, persist_pending_request, Db,
+    DialWorktreeScope, Ed25519VerifyOnlyPolicy, PendingApprovalRequest,
 };
+use std::path::PathBuf;
 
 /// The HMAC secret the HUB holds (the symmetric mint==verify key). A correct verify-only
 /// Ed25519 policy must make this irrelevant for protected actions.
@@ -199,6 +200,24 @@ fn consumed_count(db: &Db) -> i64 {
     db.conn()
         .query_row("SELECT count(*) FROM consumed_approval", [], |r| r.get(0))
         .unwrap()
+}
+
+fn audit_count(db: &Db) -> i64 {
+    db.conn()
+        .query_row("SELECT count(*) FROM audit_ledger", [], |r| r.get(0))
+        .unwrap()
+}
+
+fn temp_worktree(tag: &str) -> PathBuf {
+    let mut dir = std::env::temp_dir();
+    dir.push(format!(
+        "friday-dial-worktree-{tag}-{}-{}",
+        std::process::id(),
+        NOW
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    dir
 }
 
 /// A fresh operator keypair; the Hub gets ONLY the verify key.
@@ -789,4 +808,173 @@ fn pending_tool_params_round_trip_and_status_update() {
         set_pending_status(db.conn(), "nope", "consumed").unwrap(),
         0
     );
+}
+
+#[test]
+fn dial_worktree_driver_allows_signed_member_inside_active_worktree_and_audits() {
+    let mut db = Db::open_hub(&temp_db_path("ed-dial-worktree-ok")).unwrap();
+    let worktree = temp_worktree("ok");
+    let target = worktree.join("src/owned.txt");
+    let (sk, vk) = operator();
+    let req = req_with(
+        "write_file",
+        ActorKind::Owner,
+        true,
+        Risk::Medium,
+        Some(target.to_string_lossy().as_ref()),
+        "p1",
+    );
+    let batch = batch_approval(&[&req], &sk, "dial-batch-ok", Some(FUTURE));
+    let scope = DialWorktreeScope {
+        plan_sign_id: "dial-batch-ok".to_string(),
+        active_worktree: worktree,
+    };
+
+    let r =
+        authorize_reversible_batch_in_worktree(db.conn_mut(), &req, Some(&batch), &vk, NOW, &scope)
+            .unwrap();
+    assert_eq!(r.decision, GateDecision::Allow);
+    assert_eq!(r.reason, "canonical_batch_approval_granted");
+    assert_eq!(consumed_count(&db), 1);
+    assert_eq!(
+        audit_count(&db),
+        1,
+        "successful dial worktree authorization must append an audit row"
+    );
+    assert_eq!(
+        friday_storage::audit::verify_audit_chain(db.conn()).unwrap(),
+        1
+    );
+}
+
+#[test]
+fn dial_worktree_driver_pauses_resource_outside_active_worktree_without_consuming() {
+    let mut db = Db::open_hub(&temp_db_path("ed-dial-worktree-escape")).unwrap();
+    let worktree = temp_worktree("escape");
+    let outside_parent = temp_worktree("outside");
+    let outside = outside_parent.join("outside.txt");
+    let (sk, vk) = operator();
+    let req = req_with(
+        "write_file",
+        ActorKind::Owner,
+        true,
+        Risk::Medium,
+        Some(outside.to_string_lossy().as_ref()),
+        "p1",
+    );
+    let batch = batch_approval(&[&req], &sk, "dial-batch-escape", Some(FUTURE));
+    let scope = DialWorktreeScope {
+        plan_sign_id: "dial-batch-escape".to_string(),
+        active_worktree: worktree,
+    };
+
+    let r =
+        authorize_reversible_batch_in_worktree(db.conn_mut(), &req, Some(&batch), &vk, NOW, &scope)
+            .unwrap();
+    assert_eq!(r.decision, GateDecision::RequiresApproval);
+    assert_eq!(r.reason, "dial_worktree_resource_out_of_scope");
+    assert_eq!(consumed_count(&db), 0);
+    assert_eq!(audit_count(&db), 0);
+}
+
+#[test]
+fn dial_worktree_driver_pauses_never_revertable_db_and_plist_targets() {
+    let mut db = Db::open_hub(&temp_db_path("ed-dial-worktree-never")).unwrap();
+    let worktree = temp_worktree("never");
+    let (sk, vk) = operator();
+    for (name, batch_id) in [
+        ("rust-hub.sqlite", "dial-batch-db"),
+        ("com.friday.hub.plist", "dial-batch-plist"),
+    ] {
+        let target = worktree.join(name);
+        let req = req_with(
+            "write_file",
+            ActorKind::Owner,
+            true,
+            Risk::Medium,
+            Some(target.to_string_lossy().as_ref()),
+            "p1",
+        );
+        let batch = batch_approval(&[&req], &sk, batch_id, Some(FUTURE));
+        let scope = DialWorktreeScope {
+            plan_sign_id: batch_id.to_string(),
+            active_worktree: worktree.clone(),
+        };
+        let r = authorize_reversible_batch_in_worktree(
+            db.conn_mut(),
+            &req,
+            Some(&batch),
+            &vk,
+            NOW,
+            &scope,
+        )
+        .unwrap();
+        assert_eq!(r.decision, GateDecision::RequiresApproval);
+        assert_eq!(r.reason, "dial_worktree_never_revertable_path");
+    }
+    assert_eq!(consumed_count(&db), 0);
+    assert_eq!(audit_count(&db), 0);
+}
+
+#[test]
+fn dial_worktree_driver_irreversible_and_plan_mismatch_pause_before_batch_consume() {
+    let mut db = Db::open_hub(&temp_db_path("ed-dial-worktree-guards")).unwrap();
+    let worktree = temp_worktree("guards");
+    let target = worktree.join("src/owned.txt");
+    let (sk, vk) = operator();
+    let irreversible = req_from_params(
+        "write_file",
+        ActorKind::Owner,
+        true,
+        Risk::Medium,
+        Reversibility::Irreversible,
+        vec![("path".to_string(), target.to_string_lossy().to_string())],
+        "p1",
+    );
+    let batch = batch_approval(&[&irreversible], &sk, "dial-batch-irrev", Some(FUTURE));
+    let scope = DialWorktreeScope {
+        plan_sign_id: "dial-batch-irrev".to_string(),
+        active_worktree: worktree.clone(),
+    };
+    let r = authorize_reversible_batch_in_worktree(
+        db.conn_mut(),
+        &irreversible,
+        Some(&batch),
+        &vk,
+        NOW,
+        &scope,
+    )
+    .unwrap();
+    assert_eq!(r.decision, GateDecision::RequiresApproval);
+    assert_eq!(
+        r.reason,
+        "dial_worktree_irreversible_requires_single_approval"
+    );
+
+    let reversible = req_with(
+        "write_file",
+        ActorKind::Owner,
+        true,
+        Risk::Medium,
+        Some(target.to_string_lossy().as_ref()),
+        "p1",
+    );
+    let batch = batch_approval(&[&reversible], &sk, "dial-batch-real", Some(FUTURE));
+    let bad_scope = DialWorktreeScope {
+        plan_sign_id: "dial-batch-other".to_string(),
+        active_worktree: worktree,
+    };
+    let r = authorize_reversible_batch_in_worktree(
+        db.conn_mut(),
+        &reversible,
+        Some(&batch),
+        &vk,
+        NOW,
+        &bad_scope,
+    )
+    .unwrap();
+    assert_eq!(r.decision, GateDecision::RequiresApproval);
+    assert_eq!(r.reason, "dial_worktree_plan_sign_id_mismatch");
+    assert_eq!(consumed_count(&db), 0);
+    assert_eq!(audit_count(&db), 0);
 }
