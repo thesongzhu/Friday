@@ -688,6 +688,7 @@ name = "friday-hub"
 version = "0.0.1"
 dependencies = [
  "base64 0.22.1",
+ "ed25519-dalek",
  "friday-anthropic",
  "friday-core",
  "friday-crypto",

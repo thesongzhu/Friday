@@ -485,7 +485,8 @@ pub mod read_seam_enroll;
 
 use friday_core::gate::{
     canonical_action_bytes, canonical_approval_signature_bytes, ActorKind, ApprovalDecision,
-    CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,
+    CanonicalApproval, CanonicalApprovalBatch, GateDecision, MutatingActionRequest,
+    CANONICAL_GATE_ISSUER,
 };
 // The risk-escalation primitives (`shell_risk`/`is_destructive_request`) now live behind
 // the sealed `friday_core::gate::classify`; `Resource` is constructed there too.
@@ -493,8 +494,8 @@ use friday_core::gate::Reversibility;
 use friday_core::{ActivityState, ActivityType, Risk};
 use friday_crypto::OperatorVerifyingKey;
 use friday_storage::{
-    agent_run, authorize_mutating_action, authorize_mutating_action_ed25519, ActivityRow,
-    AuditEvent, Db, StorageError,
+    agent_run, authorize_mutating_action, authorize_mutating_action_ed25519,
+    authorize_mutating_action_ed25519_batch, ActivityRow, AuditEvent, Db, StorageError,
 };
 use rusqlite::Connection;
 
@@ -3275,6 +3276,15 @@ pub(crate) enum AuthzMode<'a> {
     /// S6d loop path: verify a protected action's approval as Ed25519 under the operator's
     /// PUBLIC key (verify-only — the Hub can never mint). No HMAC code path is reachable.
     Ed25519(&'a OperatorVerifyingKey),
+    /// D20 W2 DARK loop path: verify a protected reversible action against an
+    /// operator-signed batch of exact action digests. The Hub still holds only the public
+    /// verify key and the signed batch; it never mints signatures, and Irreversible
+    /// actions remain paused by the storage verifier.
+    #[allow(dead_code)]
+    Ed25519Batch {
+        vk: &'a OperatorVerifyingKey,
+        batch: &'a CanonicalApprovalBatch,
+    },
     /// S6d loop path, unprovisioned: NO operator key ⇒ fail-closed. The base gate decision
     /// stands and a `RequiresApproval` is NEVER upgraded — a protected action Pauses.
     DenyAll,
@@ -3693,6 +3703,12 @@ pub(crate) fn gate_dispatch_with_policy_enforced(
         AuthzMode::Ed25519(vk) => {
             let approval = approve(&request);
             authorize_mutating_action_ed25519(conn, &request, approval.as_ref(), vk, now_ms)?
+        }
+        // D20 W2 DARK: verify a protected reversible action against an operator-signed
+        // exact-digest batch. This is verify-only and never consults HMAC; storage also
+        // hard-excludes classified Irreversible actions from batch Allow.
+        AuthzMode::Ed25519Batch { vk, batch } => {
+            authorize_mutating_action_ed25519_batch(conn, &request, Some(batch), vk, now_ms)?
         }
         // LOOP, unprovisioned: DenyAll-equivalent. The base decision stands; a
         // RequiresApproval is never upgraded (no approval consulted, no HMAC path), so a
@@ -11101,6 +11117,174 @@ mod tests {
         // an instant owner approval). Distinct requests → distinct digests → distinct
         // single-use keys.
         |req| Some(mint_approval(req, "ap-loop", SECRET, 1_000_000))
+    }
+
+    fn signed_batch(
+        requests: &[&MutatingActionRequest],
+        sk: &ed25519_dalek::SigningKey,
+        batch_sign_id: &str,
+        expires_at: i64,
+    ) -> CanonicalApprovalBatch {
+        use ed25519_dalek::Signer as _;
+
+        let mut batch = CanonicalApprovalBatch {
+            decision: ApprovalDecision::Approved,
+            batch_sign_id: batch_sign_id.to_string(),
+            action_digests: requests
+                .iter()
+                .map(|request| friday_crypto::action_digest(&canonical_action_bytes(request)))
+                .collect(),
+            expires_at: Some(expires_at),
+            issuer: Some(CANONICAL_GATE_ISSUER.to_string()),
+            signature: None,
+        };
+        let signature =
+            sk.sign(&friday_core::gate::canonical_approval_batch_signature_bytes(&batch));
+        batch.signature = Some(
+            signature
+                .to_bytes()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect(),
+        );
+        batch
+    }
+
+    fn test_batch_key(seed_byte: u8) -> (ed25519_dalek::SigningKey, OperatorVerifyingKey) {
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[seed_byte; 32]);
+        let vk = OperatorVerifyingKey::from_bytes(&sk.verifying_key().to_bytes())
+            .expect("fixed test key must produce a valid verify key");
+        (sk, vk)
+    }
+
+    #[test]
+    fn d20_batch_authz_mode_executes_exact_digest_member_once() {
+        let db = Db::open_hub(&temp_path("d20-batch-authz")).unwrap();
+        let ws = temp_ws("d20-batch-authz");
+        let fs = FsToolExecutor::new(ws.clone());
+        let exec = CountingExecutor {
+            inner: &fs,
+            calls: std::cell::Cell::new(0),
+        };
+        let approve = no_approval();
+        let policy = RunPolicy::default();
+        let call = raw("write_file", &[("path", "out.txt"), ("content", "D20")]);
+        let request = build_request_with_policy(&call, &policy).unwrap();
+        let (sk, vk) = test_batch_key(7);
+        let batch = signed_batch(&[&request], &sk, "d20-batch-authz-1", 10_000);
+
+        let out = gate_dispatch_with_policy_enforced(
+            db.conn(),
+            &exec,
+            &call,
+            AuthzMode::Ed25519Batch {
+                vk: &vk,
+                batch: &batch,
+            },
+            &approve,
+            &policy,
+            1000,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+        match out {
+            GateDispatch::Executed(receipt) => assert!(
+                receipt.summary.contains("wrote"),
+                "batch-authorized write_file must execute, got {}",
+                receipt.summary
+            ),
+            other => panic!("batch-authorized exact member must execute, got {other:?}"),
+        }
+        assert_eq!(std::fs::read_to_string(ws.join("out.txt")).unwrap(), "D20");
+        assert_eq!(exec.calls.get(), 1, "the approved member executed once");
+
+        let replay = gate_dispatch_with_policy_enforced(
+            db.conn(),
+            &exec,
+            &call,
+            AuthzMode::Ed25519Batch {
+                vk: &vk,
+                batch: &batch,
+            },
+            &approve,
+            &policy,
+            1001,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+        match replay {
+            GateDispatch::Denied(reason) => assert_eq!(
+                reason, "canonical_batch_replay_refused",
+                "the per-action batch nonce must be spent after the first execution"
+            ),
+            other => panic!("replaying the same batch member must Deny, got {other:?}"),
+        }
+        assert_eq!(
+            exec.calls.get(),
+            1,
+            "replay must be denied before reaching the executor"
+        );
+    }
+
+    #[test]
+    fn d20_batch_authz_mode_never_auto_allows_irreversible_member() {
+        let db = Db::open_hub(&temp_path("d20-batch-irrev")).unwrap();
+        let ws = temp_ws("d20-batch-irrev");
+        let fs = FsToolExecutor::new(ws);
+        let exec = CountingExecutor {
+            inner: &fs,
+            calls: std::cell::Cell::new(0),
+        };
+        let approve = no_approval();
+        let policy = RunPolicy::default();
+        let call = raw("run_command", &[("command", "true")]);
+        let request = build_request_with_policy(&call, &policy).unwrap();
+        assert_eq!(
+            request.reversibility(),
+            Reversibility::Irreversible,
+            "fixture must exercise the classified hard-exclude path"
+        );
+        let (sk, vk) = test_batch_key(8);
+        let batch = signed_batch(&[&request], &sk, "d20-batch-irrev-1", 10_000);
+
+        let out = gate_dispatch_with_policy_enforced(
+            db.conn(),
+            &exec,
+            &call,
+            AuthzMode::Ed25519Batch {
+                vk: &vk,
+                batch: &batch,
+            },
+            &approve,
+            &policy,
+            1000,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+        match out {
+            GateDispatch::RequiresApproval => {}
+            other => panic!("Irreversible batch member must Pause, got {other:?}"),
+        }
+        assert_eq!(
+            exec.calls.get(),
+            0,
+            "Irreversible batch member must not reach the executor"
+        );
     }
 
     /// A scripted client that ALSO captures the exact loop prompt
