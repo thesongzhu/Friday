@@ -158,7 +158,6 @@ export interface FridayNodeRunOptions {
   cwd?: string;
   timeoutMs?: number;
   signal?: AbortSignal;
-  allowWithoutGate?: boolean;
   aiHelper?: FridaySkillAiHelperContext;
   runtimeContext?: Omit<FridaySkillNodeRuntimeContext, "ai">;
 }

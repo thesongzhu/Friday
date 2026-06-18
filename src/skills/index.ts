@@ -274,7 +274,6 @@ export {
   createFridayNodeExecutor,
   FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
   FRIDAY_UNISOLATED_NODE_SKILLS_TEST_HARNESS_ENV,
-  canRunFridayBundledSystemNodeSkillWithoutGate,
   getFridayUnisolatedNodeSkillsDisabledMessage,
   isFridayUnisolatedNodeSkillsEnabled,
 } from "./executor/friday-node-executor.js";

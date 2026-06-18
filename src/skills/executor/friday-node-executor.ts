@@ -34,18 +34,6 @@ export function getFridayUnisolatedNodeSkillsDisabledMessage(): string {
   return `Node-based skills are disabled in production because they execute in-process without OS isolation. ${FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV}=true is accepted only by the test harness.`;
 }
 
-export function canRunFridayBundledSystemNodeSkillWithoutGate(input: {
-  runtimeKind?: string;
-  manifestKind?: string;
-  source?: string;
-  origin?: string;
-}): boolean {
-  return input.runtimeKind === "node"
-    && input.manifestKind === "system"
-    && input.source === "bundled"
-    && input.origin === "bundled";
-}
-
 /**
  * Creates a node executor that dynamically imports JS modules and calls their
  * exported `execute` function. Handles timeouts via `AbortSignal.timeout`.
@@ -58,7 +46,7 @@ export function createFridayNodeExecutor(config?: {
       const startMs = Date.now();
       const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
-      if (!options.allowWithoutGate && !isFridayUnisolatedNodeSkillsEnabled(config?.env ?? process.env)) {
+      if (!isFridayUnisolatedNodeSkillsEnabled(config?.env ?? process.env)) {
         return {
           output: {},
           timedOut: false,

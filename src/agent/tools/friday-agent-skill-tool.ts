@@ -1,7 +1,6 @@
 import type { FridayAgentToolDefinition, FridayAgentToolResult } from "../model/friday-agent.types.js";
 import { FridayDomainError } from "#errors";
 import {
-  canRunFridayBundledSystemNodeSkillWithoutGate,
   evaluateFridaySkillExecutionReadiness,
   FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
   type FridaySkillExecuteRequest,
@@ -184,15 +183,8 @@ export function createFridayAgentSkillTool(
         const runtimeReadiness = evaluateFridaySkillExecutionReadiness({
           manifest: registeredSkill.manifest,
         });
-        const allowBundledSystemNodeSkill = canRunFridayBundledSystemNodeSkillWithoutGate({
-          runtimeKind: registeredSkill.manifest.runtime.kind,
-          manifestKind: registeredSkill.manifest.kind,
-          source: registeredSkill.source,
-          origin: registeredSkill.origin,
-        });
         const nodeRuntimeBlocked =
           registeredSkill.manifest.runtime.kind === "node"
-          && !allowBundledSystemNodeSkill
           && !isFridayUnisolatedNodeSkillsEnabled();
         if (nodeRuntimeBlocked) {
           return jsonResult({

@@ -140,6 +140,11 @@ describe("createFridayHealthRoutes", () => {
           osSandbox: false,
           defaultLive: false,
         },
+        "skill.node.bundled_system": {
+          boundary: "disabled_in_production_unisolated_test_harness_only",
+          osSandbox: false,
+          defaultLive: false,
+        },
         "agent.exec": {
           boundary: "logical_workspace_guard_host_spawn",
           osSandbox: false,
