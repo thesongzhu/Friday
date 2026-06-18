@@ -86,8 +86,8 @@ use friday_core::{
     ActivityState, ActivityType, ContextPassport, DeviceIdentity, FridayConversation,
     FridayPairPayload, LedgerEntry, Mission, MissionLink, MissionSurfaceProjection,
     ProviderSessionEvent, ProviderSessionLink, ProviderSessionProjection, RouteDecisionCard,
-    RouteDecisionProjection, SessionState, SurfaceEvent, SurfaceThread, TrustedDeviceProjection,
-    WorkItem,
+    RouteDecisionProjection, SessionState, SurfaceEvent, SurfaceThread, ToolUsageMeasurement,
+    TrustedDeviceProjection, WorkItem,
 };
 use friday_core::{ProcessLease, ProcessObservation, WorkspaceClaim};
 use rusqlite::{Connection, ErrorCode, OpenFlags};
@@ -144,6 +144,33 @@ pub struct RunTokenUsageRow {
     pub total_tokens: i64,
     pub fallback: bool,
     pub created_at: i64,
+}
+
+/// A UI/readback projection of `tool_usage_ledger`. Unlike `token_ledger`, units are
+/// explicit because tools can report bytes, chars, pages, or provider-specific units.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolUsageRow {
+    pub usage_id: String,
+    pub run_id: Option<String>,
+    pub tool: String,
+    pub provider_kind: String,
+    pub model: String,
+    pub input_unit: String,
+    pub input_count: i64,
+    pub output_unit: String,
+    pub output_count: i64,
+    pub cost_estimate: Option<f64>,
+    pub result_link: Option<String>,
+    pub created_at: i64,
+}
+
+pub fn record_tool_usage(
+    conn: &Connection,
+    usage: &ToolUsageMeasurement,
+    run_id: Option<&str>,
+    created_at: i64,
+) -> Result<()> {
+    insert_tool_usage_conn(conn, usage, run_id, created_at)
 }
 
 /// A UI-facing activity summary (a read projection of `activity_item`).
@@ -1328,6 +1355,44 @@ impl Db {
         Ok(())
     }
 
+    pub fn insert_tool_usage(
+        &self,
+        usage: &ToolUsageMeasurement,
+        run_id: Option<&str>,
+        created_at: i64,
+    ) -> Result<()> {
+        insert_tool_usage_conn(&self.conn, usage, run_id, created_at)
+    }
+
+    pub fn list_tool_usage(&self) -> Result<Vec<ToolUsageRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT usage_id, run_id, tool, provider_kind, model, input_unit, input_count,
+                    output_unit, output_count, cost_estimate, result_link, created_at
+             FROM tool_usage_ledger ORDER BY created_at, usage_id",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(ToolUsageRow {
+                usage_id: r.get(0)?,
+                run_id: r.get(1)?,
+                tool: r.get(2)?,
+                provider_kind: r.get(3)?,
+                model: r.get(4)?,
+                input_unit: r.get(5)?,
+                input_count: r.get(6)?,
+                output_unit: r.get(7)?,
+                output_count: r.get(8)?,
+                cost_estimate: r.get(9)?,
+                result_link: r.get(10)?,
+                created_at: r.get(11)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
     /// Atomic write performed by a model call: writes `token_ledger`,
     /// `activity_item`, and `audit_ledger` in one transaction. If any insert
     /// fails, none persist (gate 21 §2.3). Hub-only (the audit ledger does not
@@ -1573,6 +1638,48 @@ fn insert_token_ledger_conn(
             e.result_link,
             e.created_at,
             run_id
+        ],
+    )?;
+    Ok(())
+}
+
+fn insert_tool_usage_conn(
+    conn: &Connection,
+    usage: &ToolUsageMeasurement,
+    run_id: Option<&str>,
+    created_at: i64,
+) -> Result<()> {
+    if usage.input_count < 0 || usage.output_count < 0 {
+        return Err(StorageError::Unsupported(format!(
+            "tool_usage_ledger invariant: negative count (input={}, output={})",
+            usage.input_count, usage.output_count
+        )));
+    }
+    if let Some(cost) = usage.cost_estimate {
+        if cost < 0.0 || !cost.is_finite() {
+            return Err(StorageError::Unsupported(format!(
+                "tool_usage_ledger invariant: invalid cost_estimate ({cost})"
+            )));
+        }
+    }
+    conn.execute(
+        "INSERT INTO tool_usage_ledger
+            (usage_id, run_id, tool, provider_kind, model, input_unit, input_count,
+             output_unit, output_count, cost_estimate, result_link, created_at)
+         VALUES ('toolusage:' || lower(hex(randomblob(16))), ?1, ?2, ?3, ?4, ?5, ?6,
+                 ?7, ?8, ?9, ?10, ?11)",
+        rusqlite::params![
+            run_id,
+            usage.tool,
+            usage.provider_kind,
+            usage.model,
+            usage.input_unit,
+            usage.input_count,
+            usage.output_unit,
+            usage.output_count,
+            usage.cost_estimate,
+            usage.result_link,
+            created_at,
         ],
     )?;
     Ok(())

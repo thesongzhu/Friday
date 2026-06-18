@@ -537,6 +537,21 @@ impl<F: ToolExecutor> ToolExecutor for CompositeToolExecutor<'_, F> {
             _ => self.fs.execute(action, params),
         }
     }
+
+    fn execute_with_usage(
+        &self,
+        action: &str,
+        params: &[(String, String)],
+    ) -> Result<(ToolReceipt, Option<friday_core::ToolUsageMeasurement>), ExecError> {
+        match action {
+            "web_fetch" => self.web.execute_with_usage(action, params),
+            "web_search" => self.search.execute_with_usage(action, params),
+            "image_analysis" => self.vision.execute_with_usage(action, params),
+            "tts" | "pdf_parse" | "ocr_extract" => self.media.execute_with_usage(action, params),
+            "memory_recall" | "memory_store" => self.memory.execute_with_usage(action, params),
+            _ => self.fs.execute_with_usage(action, params),
+        }
+    }
 }
 
 // ─── helpers ───

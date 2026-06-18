@@ -141,6 +141,76 @@ pub struct LedgerEntry {
     pub created_at: i64,
 }
 
+/// One tool/provider usage measurement. This is intentionally separate from
+/// [`LedgerEntry`]: `token_ledger` means exactly one model-token call, while media
+/// tools may report bytes, characters, pages, or provider-specific units.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolUsageMeasurement {
+    pub tool: String,
+    pub provider_kind: String,
+    pub model: String,
+    pub input_unit: String,
+    pub input_count: i64,
+    pub output_unit: String,
+    pub output_count: i64,
+    pub cost_estimate: Option<f64>,
+    pub result_link: Option<String>,
+}
+
+impl ToolUsageMeasurement {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        tool: impl Into<String>,
+        provider_kind: impl Into<String>,
+        model: impl Into<String>,
+        input_unit: impl Into<String>,
+        input_count: i64,
+        output_unit: impl Into<String>,
+        output_count: i64,
+        cost_estimate: Option<f64>,
+        result_link: Option<String>,
+    ) -> Result<Self, CoreError> {
+        let tool = tool.into();
+        let provider_kind = provider_kind.into();
+        let model = model.into();
+        let input_unit = input_unit.into();
+        let output_unit = output_unit.into();
+        if tool.trim().is_empty()
+            || provider_kind.trim().is_empty()
+            || model.trim().is_empty()
+            || input_unit.trim().is_empty()
+            || output_unit.trim().is_empty()
+        {
+            return Err(CoreError::InvalidLedger(
+                "tool usage fields must be non-empty".into(),
+            ));
+        }
+        if input_count < 0 || output_count < 0 {
+            return Err(CoreError::InvalidLedger(format!(
+                "tool usage counts must be non-negative (input={input_count}, output={output_count})"
+            )));
+        }
+        if let Some(cost) = cost_estimate {
+            if cost < 0.0 || !cost.is_finite() {
+                return Err(CoreError::InvalidLedger(format!(
+                    "tool usage cost_estimate must be finite and non-negative ({cost})"
+                )));
+            }
+        }
+        Ok(Self {
+            tool,
+            provider_kind,
+            model,
+            input_unit,
+            input_count,
+            output_unit,
+            output_count,
+            cost_estimate,
+            result_link,
+        })
+    }
+}
+
 impl LedgerEntry {
     /// Build a ledger entry, computing `total_tokens` and validating inputs.
     ///

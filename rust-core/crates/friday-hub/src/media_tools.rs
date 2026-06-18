@@ -89,8 +89,12 @@ impl MediaToolExecutor {
         Ok(buf)
     }
 
-    fn execute_tts(&self, params: &[(String, String)]) -> Result<ToolReceipt, ExecError> {
+    fn execute_tts(
+        &self,
+        params: &[(String, String)],
+    ) -> Result<(ToolReceipt, Option<friday_core::ToolUsageMeasurement>), ExecError> {
         let text = Self::param(params, "text")?.to_string();
+        let text_chars = text.chars().count() as i64;
         let format = match Self::optional_param(params, "format") {
             Some("mp3") | None => None,
             Some("wav") => Some(TtsFormat::Wav),
@@ -116,34 +120,57 @@ impl MediaToolExecutor {
             model: Self::optional_param(params, "model").map(str::to_string),
         };
         match self.tts.synthesize(&request) {
-            Ok(out) => Ok(ToolReceipt {
-                action: "tts".to_string(),
-                summary: format!(
-                    "tts [{}]: {} byte(s) {}",
-                    out.model,
-                    out.audio.len(),
-                    out.mime_type
-                ),
-                content: Some(format!(
-                    "{{\"mimeType\":\"{}\",\"bytes\":{},\"voice\":\"{}\",\"model\":\"{}\",\"format\":\"{}\"}}",
-                    out.mime_type,
-                    out.audio.len(),
-                    out.voice,
-                    out.model,
-                    out.format.as_str()
-                )),
-            }),
-            Err(e) => Ok(ToolReceipt {
-                action: "tts".to_string(),
-                summary: "tts: refused (provider unavailable)".to_string(),
-                content: Some(format!(
-                    "tts is unavailable: {e}. Refusing to silently synthesize audio."
-                )),
-            }),
+            Ok(out) => {
+                let usage = friday_core::ToolUsageMeasurement::new(
+                    "tts",
+                    "tts_provider",
+                    out.model.clone(),
+                    "input_chars",
+                    text_chars,
+                    "audio_bytes",
+                    out.audio.len() as i64,
+                    None,
+                    None,
+                )
+                .map_err(|e| ExecError::Media(MediaToolError::BadParam(e.to_string())))?;
+                Ok((
+                    ToolReceipt {
+                        action: "tts".to_string(),
+                        summary: format!(
+                            "tts [{}]: {} byte(s) {}",
+                            out.model,
+                            out.audio.len(),
+                            out.mime_type
+                        ),
+                        content: Some(format!(
+                            "{{\"mimeType\":\"{}\",\"bytes\":{},\"voice\":\"{}\",\"model\":\"{}\",\"format\":\"{}\"}}",
+                            out.mime_type,
+                            out.audio.len(),
+                            out.voice,
+                            out.model,
+                            out.format.as_str()
+                        )),
+                    },
+                    Some(usage),
+                ))
+            }
+            Err(e) => Ok((
+                ToolReceipt {
+                    action: "tts".to_string(),
+                    summary: "tts: refused (provider unavailable)".to_string(),
+                    content: Some(format!(
+                        "tts is unavailable: {e}. Refusing to silently synthesize audio."
+                    )),
+                },
+                None,
+            )),
         }
     }
 
-    fn execute_pdf_parse(&self, params: &[(String, String)]) -> Result<ToolReceipt, ExecError> {
+    fn execute_pdf_parse(
+        &self,
+        params: &[(String, String)],
+    ) -> Result<(ToolReceipt, Option<friday_core::ToolUsageMeasurement>), ExecError> {
         let path = Self::param(params, "path")?;
         let max_pages = parse_usize_param(params, "maxPages")
             .or_else(|| parse_usize_param(params, "max_pages"))
@@ -152,6 +179,7 @@ impl MediaToolExecutor {
             .or_else(|| parse_usize_param(params, "max_chars"))
             .unwrap_or(friday_pdf::DEFAULT_MAX_CHARS);
         let bytes = self.read_workspace_bytes(path, MAX_MEDIA_FILE_BYTES)?;
+        let input_bytes = bytes.len() as i64;
         let outcome = self
             .pdf
             .extract_text(&PdfParseRequest {
@@ -162,25 +190,42 @@ impl MediaToolExecutor {
                 },
             })
             .map_err(|e| ExecError::Media(MediaToolError::Pdf(e.to_string())))?;
-        Ok(ToolReceipt {
-            action: "pdf_parse".to_string(),
-            summary: format!(
-                "pdf_parse: {} page(s), {} parsed, {} char(s)",
-                outcome.page_count,
-                outcome.parsed_pages,
-                outcome.text.len()
-            ),
-            content: Some(format!(
-                "{{\"pageCount\":{},\"parsedPages\":{},\"truncated\":{},\"text\":{}}}",
-                outcome.page_count,
-                outcome.parsed_pages,
-                outcome.truncated,
-                serde_json::to_string(&outcome.text).unwrap_or_else(|_| "\"\"".to_string())
-            )),
-        })
+        let output_chars = outcome.text.chars().count() as i64;
+        let usage = friday_core::ToolUsageMeasurement::new(
+            "pdf_parse",
+            "local_pdf",
+            "embedded_text",
+            "document_bytes",
+            input_bytes,
+            "text_chars",
+            output_chars,
+            None,
+            None,
+        )
+        .map_err(|e| ExecError::Media(MediaToolError::BadParam(e.to_string())))?;
+        Ok((
+            ToolReceipt {
+                action: "pdf_parse".to_string(),
+                summary: format!(
+                    "pdf_parse: {} page(s), {} parsed, {} char(s)",
+                    outcome.page_count, outcome.parsed_pages, output_chars
+                ),
+                content: Some(format!(
+                    "{{\"pageCount\":{},\"parsedPages\":{},\"truncated\":{},\"text\":{}}}",
+                    outcome.page_count,
+                    outcome.parsed_pages,
+                    outcome.truncated,
+                    serde_json::to_string(&outcome.text).unwrap_or_else(|_| "\"\"".to_string())
+                )),
+            },
+            Some(usage),
+        ))
     }
 
-    fn execute_ocr(&self, params: &[(String, String)]) -> Result<ToolReceipt, ExecError> {
+    fn execute_ocr(
+        &self,
+        params: &[(String, String)],
+    ) -> Result<(ToolReceipt, Option<friday_core::ToolUsageMeasurement>), ExecError> {
         let (image, format) = if let Some(data_uri) = Self::optional_param(params, "image") {
             decode_ocr_data_uri(data_uri)?
         } else {
@@ -193,6 +238,7 @@ impl MediaToolExecutor {
             })?;
             (bytes, format)
         };
+        let input_bytes = image.len() as i64;
         let max_output_chars = parse_usize_param(params, "maxOutputChars")
             .or_else(|| parse_usize_param(params, "max_output_chars"));
         let outcome = self
@@ -205,24 +251,45 @@ impl MediaToolExecutor {
                 max_output_chars,
             })
             .map_err(|e| ExecError::Media(MediaToolError::Ocr(e.to_string())))?;
-        Ok(ToolReceipt {
-            action: "ocr_extract".to_string(),
-            summary: format!(
-                "ocr_extract [{}]: {} char(s)",
-                outcome.model,
-                outcome.text.len()
-            ),
-            content: Some(format!(
-                "{{\"model\":\"{}\",\"text\":{}}}",
-                outcome.model,
-                serde_json::to_string(&outcome.text).unwrap_or_else(|_| "\"\"".to_string())
-            )),
-        })
+        let output_chars = outcome.text.chars().count() as i64;
+        let usage = friday_core::ToolUsageMeasurement::new(
+            "ocr_extract",
+            "ocr_provider",
+            outcome.model.clone(),
+            "image_bytes",
+            input_bytes,
+            "text_chars",
+            output_chars,
+            None,
+            None,
+        )
+        .map_err(|e| ExecError::Media(MediaToolError::BadParam(e.to_string())))?;
+        Ok((
+            ToolReceipt {
+                action: "ocr_extract".to_string(),
+                summary: format!("ocr_extract [{}]: {} char(s)", outcome.model, output_chars),
+                content: Some(format!(
+                    "{{\"model\":\"{}\",\"text\":{}}}",
+                    outcome.model,
+                    serde_json::to_string(&outcome.text).unwrap_or_else(|_| "\"\"".to_string())
+                )),
+            },
+            Some(usage),
+        ))
     }
 }
 
 impl ToolExecutor for MediaToolExecutor {
     fn execute(&self, action: &str, params: &[(String, String)]) -> Result<ToolReceipt, ExecError> {
+        self.execute_with_usage(action, params)
+            .map(|(receipt, _)| receipt)
+    }
+
+    fn execute_with_usage(
+        &self,
+        action: &str,
+        params: &[(String, String)],
+    ) -> Result<(ToolReceipt, Option<friday_core::ToolUsageMeasurement>), ExecError> {
         match action {
             "tts" => self.execute_tts(params),
             "pdf_parse" => self.execute_pdf_parse(params),
