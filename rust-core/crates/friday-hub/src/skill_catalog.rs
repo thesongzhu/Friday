@@ -233,6 +233,30 @@ pub struct SkillRunReceipt {
     pub status: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkSkillCandidateReceiptRequest {
+    pub skill_id: String,
+    pub safe_title: String,
+    pub source_digest: String,
+    pub evidence_url: String,
+    pub mission_id: String,
+    pub work_item_id: String,
+    pub operator_principal_id: String,
+    pub canonical_approval: CanonicalApproval,
+    pub proof_ref: String,
+    pub now_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkSkillCandidateReceipt {
+    pub candidate_ref: String,
+    pub proof_ref: String,
+    pub skill_id: String,
+    pub mission_id: String,
+    pub work_item_id: String,
+    pub status: String,
+}
+
 pub fn record_skill_run_receipt(
     db: &Db,
     snapshot: &SkillCatalogSnapshot,
@@ -322,6 +346,99 @@ pub fn record_skill_run_receipt(
     })
 }
 
+pub fn stage_link_skill_candidate_receipt(
+    db: &Db,
+    request: LinkSkillCandidateReceiptRequest,
+    approval_secret: &[u8],
+) -> Result<LinkSkillCandidateReceipt, SkillCatalogError> {
+    if !is_safe_public_id(&request.skill_id) || !is_safe_public_text(&request.safe_title) {
+        return Err(SkillCatalogError::RunBlocked(
+            "link_skill_candidate_safe_public_metadata_required".to_string(),
+        ));
+    }
+    if !is_safe_public_id(&request.source_digest)
+        || !is_public_link_evidence_url(&request.evidence_url)
+    {
+        return Err(SkillCatalogError::RunBlocked(
+            "link_skill_candidate_public_evidence_required".to_string(),
+        ));
+    }
+    if !is_safe_proof_ref(&request.proof_ref) {
+        return Err(SkillCatalogError::RunBlocked(
+            "link_skill_candidate_proof_ref_required".to_string(),
+        ));
+    }
+
+    let mission = db
+        .get_mission(&request.mission_id)?
+        .ok_or_else(|| SkillCatalogError::RunBlocked("unknown_mission".to_string()))?;
+    if mission.status.is_terminal() {
+        return Err(SkillCatalogError::RunBlocked(
+            "mission_is_terminal".to_string(),
+        ));
+    }
+    let work_item = db
+        .get_work_item(&request.work_item_id)?
+        .ok_or_else(|| SkillCatalogError::RunBlocked("unknown_work_item".to_string()))?;
+    if work_item.mission_id != request.mission_id {
+        return Err(SkillCatalogError::RunBlocked(
+            "work_item_mission_mismatch".to_string(),
+        ));
+    }
+    if work_item.status.is_terminal() {
+        return Err(SkillCatalogError::RunBlocked(
+            "work_item_is_terminal".to_string(),
+        ));
+    }
+
+    let gate_request = link_skill_candidate_gate_request(
+        &request.skill_id,
+        &request.source_digest,
+        &request.mission_id,
+        &request.work_item_id,
+        &request.operator_principal_id,
+    );
+    let gate = authorize_mutating_action(
+        db.conn(),
+        &gate_request,
+        Some(&request.canonical_approval),
+        approval_secret,
+        request.now_ms,
+    )?;
+    if gate.decision != GateDecision::Allow {
+        return Err(SkillCatalogError::RunBlocked(format!(
+            "link_skill_candidate_canonical_gate_{}",
+            gate.reason
+        )));
+    }
+
+    let candidate_ref = redacted_ref(
+        "link-skill-candidate",
+        &format!(
+            "{}:{}:{}:{}",
+            request.skill_id, request.source_digest, request.mission_id, request.work_item_id
+        ),
+    );
+    db.upsert_mission_link(&MissionLink {
+        link_id: candidate_ref.clone(),
+        mission_id: request.mission_id.clone(),
+        work_item_id: Some(request.work_item_id.clone()),
+        link_kind: MissionLinkKind::ProofReceipt,
+        target_ref: candidate_ref.clone(),
+        proof_ref: Some(request.proof_ref.clone()),
+        created_at_ms: request.now_ms,
+    })?;
+
+    Ok(LinkSkillCandidateReceipt {
+        candidate_ref,
+        proof_ref: request.proof_ref,
+        skill_id: request.skill_id,
+        mission_id: request.mission_id,
+        work_item_id: request.work_item_id,
+        status: "candidate_receipt_recorded_not_imported".to_string(),
+    })
+}
+
 pub fn skill_run_gate_request(
     skill_id: &str,
     mission_id: &str,
@@ -351,6 +468,44 @@ pub fn skill_run_gate_request(
     )
 }
 
+pub fn link_skill_candidate_gate_request(
+    skill_id: &str,
+    source_digest: &str,
+    mission_id: &str,
+    work_item_id: &str,
+    operator_principal_id: &str,
+) -> MutatingActionRequest {
+    let params = vec![
+        ("target".to_string(), skill_id.to_string()),
+        ("source_digest".to_string(), source_digest.to_string()),
+        ("mission_id".to_string(), mission_id.to_string()),
+        ("work_item_id".to_string(), work_item_id.to_string()),
+    ];
+    MutatingActionRequest::from_classification(
+        friday_core::gate::classify(
+            true,
+            friday_core::Risk::High,
+            "stage_link_skill_candidate",
+            &params,
+        ),
+        "stage_link_skill_candidate".to_string(),
+        Actor {
+            kind: ActorKind::Owner,
+            id: operator_principal_id.to_string(),
+            principal_id: Some(operator_principal_id.to_string()),
+        },
+        "friday_hub_skill_catalog".to_string(),
+        Vec::new(),
+        Some(format!(
+            "skill_id={skill_id};source_digest={source_digest};mission_id={mission_id};work_item_id={work_item_id}"
+        )),
+        Some(format!(
+            "link-skill-candidate:{skill_id}:{source_digest}:{mission_id}:{work_item_id}"
+        )),
+        None,
+    )
+}
+
 pub fn skill_run_node(receipt: &SkillRunReceipt, now_ms: i64) -> WorkGraphNode {
     WorkGraphNode {
         node_ref: receipt.run_ref.clone(),
@@ -364,6 +519,31 @@ pub fn skill_run_node(receipt: &SkillRunReceipt, now_ms: i64) -> WorkGraphNode {
         evidence_refs: vec![receipt.skill_ref.clone(), receipt.run_ref.clone()],
         proof_refs: vec![receipt.proof_ref.clone()],
         blockers: vec!["skill_run_receipt_does_not_complete_work_item".to_string()],
+        control_allowed: false,
+        updated_at_ms: now_ms,
+    }
+}
+
+pub fn link_skill_candidate_node(
+    receipt: &LinkSkillCandidateReceipt,
+    safe_title: &str,
+    now_ms: i64,
+) -> WorkGraphNode {
+    WorkGraphNode {
+        node_ref: receipt.candidate_ref.clone(),
+        kind: WorkGraphNodeKind::Skill,
+        truth_label: WorkGraphTruthLabel::LinkedOnly,
+        mission_id: Some(receipt.mission_id.clone()),
+        work_item_id: Some(receipt.work_item_id.clone()),
+        lane: None,
+        safe_title: safe_title.to_string(),
+        status_label: receipt.status.clone(),
+        evidence_refs: vec![receipt.candidate_ref.clone()],
+        proof_refs: vec![receipt.proof_ref.clone()],
+        blockers: vec![
+            "link_skill_candidate_receipt_does_not_import_or_execute".to_string(),
+            "operator_adoption_required_before_skill_run".to_string(),
+        ],
         control_allowed: false,
         updated_at_ms: now_ms,
     }
@@ -434,6 +614,49 @@ fn is_safe_public_text(value: &str) -> bool {
         && !looks_private(value)
         && !value.contains('\n')
         && !value.contains('\r')
+}
+
+fn is_public_link_evidence_url(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+        return false;
+    }
+    if looks_private(value) {
+        return false;
+    }
+    let Some(after_scheme) = lower.split_once("://").map(|(_, rest)| rest) else {
+        return false;
+    };
+    let host_port_path = after_scheme.split('/').next().unwrap_or_default();
+    let host = host_port_path.split(':').next().unwrap_or_default();
+    if host.is_empty()
+        || host == "localhost"
+        || host.ends_with(".localhost")
+        || host == "0.0.0.0"
+        || host.starts_with("127.")
+        || host.starts_with("10.")
+        || host.starts_with("192.168.")
+        || host.starts_with("169.254.")
+        || is_private_172_host(host)
+        || host == "::1"
+        || host == "[::1]"
+    {
+        return false;
+    }
+    true
+}
+
+fn is_private_172_host(host: &str) -> bool {
+    let Some(rest) = host.strip_prefix("172.") else {
+        return false;
+    };
+    let Some(second) = rest.split('.').next() else {
+        return false;
+    };
+    second
+        .parse::<u8>()
+        .map(|n| (16..=31).contains(&n))
+        .unwrap_or(false)
 }
 
 fn redacted_ref(kind: &str, raw: &str) -> String {
@@ -592,6 +815,26 @@ mod tests {
         crate::mint_approval(
             &skill_run_gate_request(skill_id, mission_id, work_item_id, "operator"),
             "approval-skill-run",
+            APPROVAL_SECRET,
+            10_000,
+        )
+    }
+
+    fn signed_link_candidate_approval(
+        skill_id: &str,
+        source_digest: &str,
+        mission_id: &str,
+        work_item_id: &str,
+    ) -> friday_core::gate::CanonicalApproval {
+        crate::mint_approval(
+            &link_skill_candidate_gate_request(
+                skill_id,
+                source_digest,
+                mission_id,
+                work_item_id,
+                "operator",
+            ),
+            "approval-link-skill-candidate",
             APPROVAL_SECRET,
             10_000,
         )
@@ -944,6 +1187,125 @@ mod tests {
         assert!(blocked
             .to_string()
             .contains("skill_run_canonical_gate_canonical_approval_digest_mismatch"));
+        assert!(db.list_mission_links("mission-skill").unwrap().is_empty());
+    }
+
+    #[test]
+    fn link_skill_candidate_receipt_records_governed_candidate_without_import_or_execution() {
+        let db = Db::open_hub(&temp_db("link-candidate")).unwrap();
+        seed_skill_run_mission(&db);
+
+        let receipt = stage_link_skill_candidate_receipt(
+            &db,
+            LinkSkillCandidateReceiptRequest {
+                skill_id: "invoice-link-skill".into(),
+                safe_title: "Invoice Link Skill".into(),
+                source_digest: "link-source-digest-alpha".into(),
+                evidence_url: "https://example.com/skill-guide".into(),
+                mission_id: "mission-skill".into(),
+                work_item_id: "work-skill".into(),
+                operator_principal_id: "operator".into(),
+                canonical_approval: signed_link_candidate_approval(
+                    "invoice-link-skill",
+                    "link-source-digest-alpha",
+                    "mission-skill",
+                    "work-skill",
+                ),
+                proof_ref: "proof://link-skill-candidate/invoice".into(),
+                now_ms: 51,
+            },
+            APPROVAL_SECRET,
+        )
+        .unwrap();
+
+        assert_eq!(receipt.status, "candidate_receipt_recorded_not_imported");
+        let links = db.list_mission_links("mission-skill").unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_ref, receipt.candidate_ref);
+        assert_eq!(
+            links[0].proof_ref.as_deref(),
+            Some("proof://link-skill-candidate/invoice")
+        );
+        let item = db.get_work_item("work-skill").unwrap().unwrap();
+        assert_eq!(item.status, WorkItemStatus::ReadyToDispatch);
+        assert!(item.proof_receipts.is_empty());
+
+        let node = link_skill_candidate_node(&receipt, "Invoice Link Skill", 52);
+        assert_eq!(node.kind, WorkGraphNodeKind::Skill);
+        assert_eq!(node.truth_label, WorkGraphTruthLabel::LinkedOnly);
+        assert!(!node.control_allowed);
+        assert!(node
+            .blockers
+            .contains(&"link_skill_candidate_receipt_does_not_import_or_execute".to_string()));
+        assert!(format!("{node:?}").contains("Invoice Link Skill"));
+        assert!(!format!("{node:?}").contains("example.com/skill-guide"));
+    }
+
+    #[test]
+    fn link_skill_candidate_receipt_blocks_private_or_secret_evidence_before_write() {
+        let db = Db::open_hub(&temp_db("link-private")).unwrap();
+        seed_skill_run_mission(&db);
+
+        let blocked = stage_link_skill_candidate_receipt(
+            &db,
+            LinkSkillCandidateReceiptRequest {
+                skill_id: "private-link-skill".into(),
+                safe_title: "Private Link Skill".into(),
+                source_digest: "private-source-digest".into(),
+                evidence_url: "http://127.0.0.1:3000/private?token=secret".into(),
+                mission_id: "mission-skill".into(),
+                work_item_id: "work-skill".into(),
+                operator_principal_id: "operator".into(),
+                canonical_approval: signed_link_candidate_approval(
+                    "private-link-skill",
+                    "private-source-digest",
+                    "mission-skill",
+                    "work-skill",
+                ),
+                proof_ref: "proof://link-skill-candidate/private".into(),
+                now_ms: 61,
+            },
+            APPROVAL_SECRET,
+        )
+        .unwrap_err();
+
+        assert!(blocked
+            .to_string()
+            .contains("link_skill_candidate_public_evidence_required"));
+        assert!(db.list_mission_links("mission-skill").unwrap().is_empty());
+    }
+
+    #[test]
+    fn link_skill_candidate_receipt_requires_digest_bound_canonical_approval() {
+        let db = Db::open_hub(&temp_db("link-approval")).unwrap();
+        seed_skill_run_mission(&db);
+
+        let blocked = stage_link_skill_candidate_receipt(
+            &db,
+            LinkSkillCandidateReceiptRequest {
+                skill_id: "invoice-link-skill".into(),
+                safe_title: "Invoice Link Skill".into(),
+                source_digest: "link-source-digest-alpha".into(),
+                evidence_url: "https://example.com/skill-guide".into(),
+                mission_id: "mission-skill".into(),
+                work_item_id: "work-skill".into(),
+                operator_principal_id: "operator".into(),
+                canonical_approval: signed_link_candidate_approval(
+                    "invoice-link-skill",
+                    "wrong-source-digest",
+                    "mission-skill",
+                    "work-skill",
+                ),
+                proof_ref: "proof://link-skill-candidate/invoice".into(),
+                now_ms: 71,
+            },
+            APPROVAL_SECRET,
+        )
+        .unwrap_err();
+
+        assert!(blocked
+            .to_string()
+            .contains("link_skill_candidate_canonical_gate_canonical_approval_digest_mismatch"));
         assert!(db.list_mission_links("mission-skill").unwrap().is_empty());
     }
 }
