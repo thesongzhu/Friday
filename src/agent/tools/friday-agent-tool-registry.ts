@@ -93,6 +93,12 @@ export interface CreateFridayAgentToolRegistryOptions {
   subagentRegistry?: FridaySubagentRegistry;
   subagentContext?: FridaySubagentContext;
   browserManager?: FridayBrowserManager;
+  /**
+   * Test-oracle/descope override only. XHS automation is C1-descope and must
+   * not be exposed in the default/live agent tool registry even when bootstrap
+   * has legacy XHS deps available.
+   */
+  allowTestOnlyXhsExecution?: boolean;
   xhsPageInteractions?: XhsPageInteractions;
   xhsSessionManager?: XhsSessionManager;
   /** Optional SSRF guard for web_fetch tool. */
@@ -271,7 +277,11 @@ export function createFridayAgentToolRegistry(
     );
   }
 
-  if (options?.xhsPageInteractions && options?.xhsSessionManager) {
+  if (
+    options?.allowTestOnlyXhsExecution === true
+    && options.xhsPageInteractions
+    && options.xhsSessionManager
+  ) {
     tools.push(
       createFridayAgentXhsTool({
         pageInteractions: options.xhsPageInteractions,

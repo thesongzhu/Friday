@@ -75,10 +75,11 @@ const CONDITIONAL_MUTATING_TOOLS: Record<string, (args: Record<string, unknown>)
     return mutatingActions.has(action);
   },
   xhs: (args) => {
-    // XHS actions that create/modify content
+    // XHS is C1-descope and default-unregistered. Keep the classifier
+    // fail-safe for test-only/future re-enable paths that still construct it.
     const action = typeof args.action === "string" ? args.action : "";
     const mutatingActions = new Set([
-      "publish_note", "comment", "like", "follow", "collect",
+      "login", "post", "publish", "publish_note", "comment", "comments", "like", "follow", "collect",
     ]);
     return mutatingActions.has(action);
   },

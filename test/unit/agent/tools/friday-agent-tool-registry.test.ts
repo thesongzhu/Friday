@@ -178,6 +178,22 @@ function stubGuideLensService(): FridayGuideLensService {
   } as unknown as FridayGuideLensService;
 }
 
+function stubXhsPageInteractions(): unknown {
+  return {
+    login: vi.fn(),
+    search: vi.fn(),
+    createPost: vi.fn(),
+    extractComments: vi.fn(),
+  };
+}
+
+function stubXhsSessionManager(): unknown {
+  return {
+    getSession: vi.fn(),
+    isSessionValid: vi.fn(),
+  };
+}
+
 describe("createFridayAgentToolRegistry", () => {
   // ─── Issue 1 & 2: Sessions tool with lazy runtime getter ───
 
@@ -213,6 +229,25 @@ describe("createFridayAgentToolRegistry", () => {
     });
     const names = tools.map((t) => t.name);
     expect(names).not.toContain("sessions");
+  });
+
+  it("keeps C1 XHS automation unregistered by default even when legacy deps exist", () => {
+    const tools = createFridayAgentToolRegistry({
+      xhsPageInteractions: stubXhsPageInteractions() as never,
+      xhsSessionManager: stubXhsSessionManager() as never,
+    });
+    const names = tools.map((t) => t.name);
+    expect(names).not.toContain("xhs");
+  });
+
+  it("registers C1 XHS automation only through the explicit test oracle", () => {
+    const tools = createFridayAgentToolRegistry({
+      allowTestOnlyXhsExecution: true,
+      xhsPageInteractions: stubXhsPageInteractions() as never,
+      xhsSessionManager: stubXhsSessionManager() as never,
+    });
+    const names = tools.map((t) => t.name);
+    expect(names).toContain("xhs");
   });
 
   // ─── Cron + message tools require their deps ───
