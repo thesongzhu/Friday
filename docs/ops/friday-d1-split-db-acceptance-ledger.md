@@ -22,7 +22,7 @@ The currently shipped mainline satisfies the registry D1 block-release condition
 
 The TypeScript state runtime performs a Rust hub schema-version handshake before opening the split runtime:
 
-- `src/state/sqlite/friday-rust-hub-schema-handshake.ts` sets `FRIDAY_EXPECTED_RUST_HUB_SCHEMA_VERSION = 35`.
+- `src/state/sqlite/friday-rust-hub-schema-handshake.ts` sets `FRIDAY_EXPECTED_RUST_HUB_SCHEMA_VERSION = 37`.
 - The handshake reads `schema_version.version` from the configured Rust hub database or `stateDir/rust-hub.sqlite`.
 - Missing/invalid schema rows throw `RUST_HUB_SCHEMA_HANDSHAKE_FAILED`.
 - Version mismatch throws `RUST_HUB_SCHEMA_VERSION_MISMATCH` with HTTP 500 details and refuses to open the split TypeScript runtime.
@@ -138,4 +138,3 @@ Production deployment proof after #832:
 - `launchctl kickstart -k gui/501/com.friday.hub`
 - `/health` returned OK with version `1.0.3`
 - `com.friday.hub` was running with last exit code 0
-

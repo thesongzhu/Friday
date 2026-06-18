@@ -12,7 +12,7 @@ mod common;
 use common::temp_db_path;
 use friday_core::{
     ApprovalState, FridayConversation, HandoffJudgmentMemory, Mission, MissionStatus, Risk,
-    TruthStatus, WorkItem, WorkItemStatus, WorkLane,
+    RouteDecisionCard, TruthStatus, WorkItem, WorkItemStatus, WorkLane,
 };
 use friday_storage::{Db, StorageError};
 use std::sync::{Mutex, MutexGuard};
@@ -133,6 +133,18 @@ fn seed(db: &Db, status: WorkItemStatus) {
     db.upsert_friday_conversation(&conversation()).unwrap();
     db.upsert_mission(&mission()).unwrap();
     db.upsert_work_item(&work_item(status)).unwrap();
+}
+
+fn seed_route_decision(db: &Db) {
+    let item = db.get_work_item("work-wi").unwrap().unwrap();
+    let card = RouteDecisionCard::from_work_item(
+        "route-decision-work-wi".into(),
+        &item,
+        vec!["friday://trace/route-decision-work-wi".into()],
+        2,
+        None,
+    );
+    db.upsert_route_decision(&card).unwrap();
 }
 
 #[test]
@@ -327,6 +339,86 @@ fn proof_receipt_on_a_non_completion_transition_is_rejected() {
     assert_eq!(
         db.get_work_item("work-wi").unwrap().unwrap().status,
         WorkItemStatus::Draft
+    );
+}
+
+#[test]
+fn route_decision_veto_blocks_ready_to_dispatched_lifecycle_hop() {
+    let db = Db::open_hub(&temp_db_path("wi-route-veto")).unwrap();
+    seed(&db, WorkItemStatus::ReadyToDispatch);
+    seed_route_decision(&db);
+
+    db.veto_route_decision(
+        "route-decision-work-wi",
+        "operator:jarvis",
+        "operator vetoed the proposed Codex route",
+        20,
+    )
+    .unwrap();
+
+    let err = db
+        .transition_work_item_status(
+            "work-wi",
+            WorkItemStatus::Dispatched,
+            "agent:friday",
+            "dispatch proposed route",
+            None,
+            21,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(err, StorageError::Unsupported(ref message) if message.contains("route_decision_veto_active:route-decision-work-wi")),
+        "veto must fail closed at the dispatch lifecycle edge, got {err:?}"
+    );
+    let stored = db.get_work_item("work-wi").unwrap().unwrap();
+    assert_eq!(stored.status, WorkItemStatus::ReadyToDispatch);
+    assert_eq!(stored.lane, WorkLane::Codex);
+    assert_eq!(stored.target_provider_or_agent.as_deref(), Some("codex"));
+}
+
+#[test]
+fn route_decision_override_reassigns_before_dispatch_in_same_lifecycle_hop() {
+    let db = Db::open_hub(&temp_db_path("wi-route-override")).unwrap();
+    seed(&db, WorkItemStatus::ReadyToDispatch);
+    seed_route_decision(&db);
+
+    db.override_route_decision(
+        "route-decision-work-wi",
+        WorkLane::Claude,
+        Some("claude"),
+        "operator:jarvis",
+        "operator reassigned review-heavy work to Claude",
+        20,
+    )
+    .unwrap();
+
+    let (item, prev) = db
+        .transition_work_item_status(
+            "work-wi",
+            WorkItemStatus::Dispatched,
+            "agent:friday",
+            "dispatch with operator route override",
+            None,
+            21,
+        )
+        .unwrap();
+
+    assert_eq!(prev, WorkItemStatus::ReadyToDispatch);
+    assert_eq!(item.status, WorkItemStatus::Dispatched);
+    assert_eq!(item.lane, WorkLane::Claude);
+    assert_eq!(item.target_provider_or_agent.as_deref(), Some("claude"));
+
+    let override_audits: i64 = db
+        .conn()
+        .query_row(
+            "SELECT COUNT(*) FROM audit_ledger WHERE action LIKE 'route_decision.override_applied:%'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        override_audits, 1,
+        "override must be applied as a real audited pre-dispatch lifecycle control"
     );
 }
 
