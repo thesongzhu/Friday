@@ -1,8 +1,12 @@
 [package]
 name = "friday-ocr"
-description = "Friday F11 net-new media capability — ocr crate skeleton. Empty compiling stub, no logic/deps/executors yet (Hub-only, provider-secret-bearing → stays OUT of friday-ffi's phone dependency graph)."
+description = "Friday F11 net-new media capability — OCR DARK provider seam with deterministic stub and OpenAI-compatible request shaping. Hub-only; no live executor is flipped by this crate."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 publish = false
 rust-version.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+thiserror.workspace = true
