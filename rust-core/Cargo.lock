@@ -629,10 +629,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "friday-browser"
-version = "0.0.1"
-
-[[package]]
 name = "friday-core"
 version = "0.0.1"
 dependencies = [

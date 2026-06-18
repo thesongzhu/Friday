@@ -34,7 +34,6 @@ members = [
     "crates/friday-ocr",
     "crates/friday-tts",
     "crates/friday-pdf",
-    "crates/friday-browser",
 ]
 
 [workspace.package]
@@ -95,7 +94,6 @@ friday-vision = { path = "crates/friday-vision" }
 friday-ocr = { path = "crates/friday-ocr" }
 friday-tts = { path = "crates/friday-tts" }
 friday-pdf = { path = "crates/friday-pdf" }
-friday-browser = { path = "crates/friday-browser" }
 
 [profile.dev]
 # bundled SQLite compiles faster with some opt; keep debug assertions on.
