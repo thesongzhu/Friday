@@ -489,6 +489,7 @@ use friday_core::gate::{
 };
 // The risk-escalation primitives (`shell_risk`/`is_destructive_request`) now live behind
 // the sealed `friday_core::gate::classify`; `Resource` is constructed there too.
+use friday_core::gate::Reversibility;
 use friday_core::{ActivityState, ActivityType, Risk};
 use friday_crypto::OperatorVerifyingKey;
 use friday_storage::{
@@ -1549,6 +1550,9 @@ pub struct ToolSpec {
     pub mutating: bool,
     /// The tool's inherent risk floor (param inspection can only RAISE it).
     pub base_risk: Risk,
+    /// The tool's trusted base reversibility. Classification may only raise this to
+    /// Irreversible; it is never sufficient to auto-allow an action by itself.
+    pub base_reversibility: Reversibility,
     /// One-line purpose, advertised to the model in the tool-call prompt.
     pub description: String,
 }
@@ -1575,60 +1579,70 @@ impl Default for ToolRegistry {
             "read_file",
             false,
             Risk::ReadOnly,
+            Reversibility::Reversible,
             "read a file's contents (params: path)",
         );
         r.register(
             "list_dir",
             false,
             Risk::ReadOnly,
+            Reversibility::Reversible,
             "list a directory's entries (params: path)",
         );
         r.register(
             "stat_file",
             false,
             Risk::ReadOnly,
+            Reversibility::Reversible,
             "stat a file (params: path)",
         );
         r.register(
             "search",
             false,
             Risk::ReadOnly,
+            Reversibility::Reversible,
             "search the workspace (params: query)",
         );
         r.register(
             "write_file",
             true,
             Risk::Medium,
+            Reversibility::ReversibleInWorkspace,
             "create or replace a file (params: path, content)",
         );
         r.register(
             "edit_file",
             true,
             Risk::Medium,
+            Reversibility::ReversibleInWorkspace,
             "replace the first occurrence of old_text with new_text in a file (params: path, old_text, new_text)",
         );
         r.register(
             "append_file",
             true,
             Risk::Medium,
+            Reversibility::ReversibleInWorkspace,
             "append to a file (params: path, content)",
         );
         r.register(
             "delete_file",
             true,
             Risk::High,
+            Reversibility::Irreversible,
             "delete a file (params: path)",
         );
         r.register(
             "move_file",
             true,
             Risk::High,
+            Reversibility::Irreversible,
             "move/rename a file (params: path, target)",
         );
         r.register(
             "run_command",
             true,
             Risk::High,
+            Reversibility::Irreversible,
             "run a shell command (params: command)",
         );
         // L2-1 web_fetch — the first L2 capability tool. READ-ONLY (mutating:false,
@@ -1643,6 +1657,7 @@ impl Default for ToolRegistry {
             "web_fetch",
             false,
             Risk::ReadOnly,
+            Reversibility::Reversible,
             "fetch a web URL over HTTP/HTTPS (params: url, method, headers, body, timeoutMs, \
              parseHtml); HTML is converted to readable text; body truncated to 100KB",
         );
@@ -1660,6 +1675,7 @@ impl Default for ToolRegistry {
             "web_search",
             false,
             Risk::ReadOnly,
+            Reversibility::Reversible,
             "search the web for information (params: query, numResults 1-20, freshness \
              day/week/month); returns titled results with URLs and snippets",
         );
@@ -1677,6 +1693,7 @@ impl Default for ToolRegistry {
             "image_analysis",
             false,
             Risk::ReadOnly,
+            Reversibility::Reversible,
             "analyze image(s) with a vision model (params: prompt, images [workspace path / \
              http(s) URL / data: URI], model, detail low/high/auto, maxTokens); returns the \
              model's analysis text",
@@ -1693,6 +1710,7 @@ impl Default for ToolRegistry {
             crate::subagent::SUBAGENT_TOOL,
             true,
             Risk::Medium,
+            Reversibility::Irreversible,
             "delegate ONE bounded sub-task to a fresh nested agent that runs under a scope ⊆ \
              yours and returns its final message (params: task [required], tools [comma-list \
              subset of your tools, default read-only], max_turns [clamped])",
@@ -1709,6 +1727,7 @@ impl Default for ToolRegistry {
             "memory_recall",
             false,
             Risk::ReadOnly,
+            Reversibility::Reversible,
             "recall the owner's confirmed memory (params: query, limit 1-10); returns confirmed \
              memory items relevant to this owner (PII-redacted)",
         );
@@ -1728,6 +1747,7 @@ impl Default for ToolRegistry {
             "memory_store",
             false,
             Risk::ReadOnly,
+            Reversibility::Reversible,
             "propose a memory candidate for the owner (params: content, tags); the candidate is \
              pending and becomes recallable only after the owner confirms it",
         );
@@ -1744,6 +1764,7 @@ impl ToolRegistry {
         action: impl Into<String>,
         mutating: bool,
         base_risk: Risk,
+        base_reversibility: Reversibility,
         description: impl Into<String>,
     ) {
         self.tools.insert(
@@ -1751,6 +1772,7 @@ impl ToolRegistry {
             ToolSpec {
                 mutating,
                 base_risk,
+                base_reversibility,
                 description: description.into(),
             },
         );
@@ -1801,9 +1823,15 @@ impl ToolRegistry {
             "image_analysis" => crate::vision_tools::image_analysis_has_url_image(params),
             _ => false,
         };
-        Ok(friday_core::gate::classify(
+        let reversibility = if egress_mutating {
+            Reversibility::Irreversible
+        } else {
+            spec.base_reversibility
+        };
+        Ok(friday_core::gate::classify_with_reversibility(
             spec.mutating || egress_mutating,
             spec.base_risk,
+            reversibility,
             action,
             params,
         ))
@@ -1817,20 +1845,20 @@ pub enum ToolError {
     UnknownTool(String),
 }
 
-/// The trusted classification of a tool call: the sealed gate-decision trio from
+/// The trusted classification of a tool call: the sealed classification quartet from
 /// `friday-core` ([`friday_core::gate::Classification`]). Aliased here for continuity;
 /// it is derived from the registry spec + an inspection of the (model-controlled)
 /// params, NEVER from model-asserted fields, and its fields are read via getters
-/// (`mutating()`/`risk()`/`resource()`) — there is no forgeable struct literal.
+/// (`mutating()`/`risk()`/`resource()`/`reversibility()`) — there is no forgeable struct literal.
 pub type Classified = friday_core::gate::Classification;
 
 /// Classify a raw tool call against the DEFAULT (built-in) tool registry. `mutating`
 /// comes from the registry; `risk` is the registry floor RAISED (never lowered) by what
 /// the params actually do (a destructive `run_command`, or any `tool_policy`-flagged
 /// param, escalates); `resource` from a path/target param. An unregistered action is
-/// refused. This is the trusted oracle for `mutating`/`risk`/`resource`; the model
-/// contributes only strings. For a CUSTOM tool set (tool packs / skills, UNW-002), use
-/// [`ToolRegistry::classify`] on your own registry.
+/// refused. This is the trusted oracle for `mutating`/`risk`/`resource`/`reversibility`;
+/// the model contributes only strings. For a CUSTOM tool set (tool packs / skills,
+/// UNW-002), use [`ToolRegistry::classify`] on your own registry.
 pub fn trusted_classify(
     action: &str,
     params: &[(String, String)],
@@ -16233,6 +16261,14 @@ mod tool_registry_tests {
             trusted_classify("delete_file", &[]).unwrap(),
             r.classify("delete_file", &[]).unwrap()
         );
+        assert_eq!(
+            r.spec("run_command").unwrap().base_reversibility,
+            Reversibility::Irreversible
+        );
+        assert_eq!(
+            r.spec("write_file").unwrap().base_reversibility,
+            Reversibility::ReversibleInWorkspace
+        );
     }
 
     #[test]
@@ -16264,6 +16300,20 @@ mod tool_registry_tests {
             .unwrap()
             .mutating(),
             "POST-with-body web_fetch must classify mutating (exfiltration gate)"
+        );
+        assert_eq!(
+            trusted_classify(
+                "web_fetch",
+                &[
+                    ("url".into(), "https://x/".into()),
+                    ("method".into(), "POST".into()),
+                    ("body".into(), "ctx".into()),
+                ],
+            )
+            .unwrap()
+            .reversibility(),
+            Reversibility::Irreversible,
+            "outbound send-like web_fetch is an authoritative hard-exclude for D20 dial"
         );
         // The egress raise does NOT touch the risk floor — it stays ReadOnly (mutating alone forces
         // RequiresApproval; no risk escalation needed, keeping the change minimal/no-degrade).
@@ -16324,6 +16374,7 @@ mod tool_registry_tests {
             "deploy_release",
             true,
             Risk::High,
+            Reversibility::Irreversible,
             "deploy a release (params: target)",
         );
 
@@ -16349,7 +16400,13 @@ mod tool_registry_tests {
         // A tool pack may TIGHTEN a built-in (only the registrant — trusted code — can).
         let mut r = ToolRegistry::default();
         assert!(!r.classify("read_file", &[]).unwrap().mutating()); // built-in read-only
-        r.register("read_file", false, Risk::Medium, "read (audited)"); // raise the floor
+        r.register(
+            "read_file",
+            false,
+            Risk::Medium,
+            Reversibility::Reversible,
+            "read (audited)",
+        ); // raise the floor
         assert_eq!(
             r.classify("read_file", &[]).unwrap().risk(),
             Some(Risk::Medium)

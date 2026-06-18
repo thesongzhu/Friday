@@ -106,8 +106,17 @@ pub struct MutatingActionRequest {
     pub plan_digest: Option<String>,
 }
 
-/// The trusted classification of an action — the gate-decision trio
-/// (`mutating`/`risk`/`resource`). **Sealed**: its fields are private and it can ONLY
+/// The trusted reversibility axis used by D20 trust-dial eligibility. This is
+/// classification output, not an auto-allow decision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Reversibility {
+    Reversible,
+    ReversibleInWorkspace,
+    Irreversible,
+}
+
+/// The trusted classification of an action — the gate-decision quartet
+/// (`mutating`/`risk`/`resource`/`reversibility`). **Sealed**: its fields are private and it can ONLY
 /// be produced by [`classify`], which applies the never-lowered risk escalation. This
 /// is what makes the UNW-001 invariant true *by the type system*: a
 /// [`MutatingActionRequest`]'s decision fields can only come from a `Classification`,
@@ -118,6 +127,7 @@ pub struct Classification {
     mutating: bool,
     risk: Option<Risk>,
     resource: Option<Resource>,
+    reversibility: Reversibility,
 }
 
 impl Classification {
@@ -129,6 +139,9 @@ impl Classification {
     }
     pub fn resource(&self) -> Option<&Resource> {
         self.resource.as_ref()
+    }
+    pub fn reversibility(&self) -> Reversibility {
+        self.reversibility
     }
 }
 
@@ -152,6 +165,26 @@ pub fn classify(
     action: &str,
     params: &[(String, String)],
 ) -> Classification {
+    let base_reversibility = if action == "run_command" || base_risk >= Risk::High {
+        Reversibility::Irreversible
+    } else if mutating {
+        Reversibility::ReversibleInWorkspace
+    } else {
+        Reversibility::Reversible
+    };
+    classify_with_reversibility(mutating, base_risk, base_reversibility, action, params)
+}
+
+/// Classify an action with a trusted base reversibility tag from the tool registry.
+/// The base tag is eligibility-only: this function may raise it to Irreversible, but
+/// never lowers authoritative hard-exclude cases such as `run_command` or High risk.
+pub fn classify_with_reversibility(
+    mutating: bool,
+    base_risk: Risk,
+    base_reversibility: Reversibility,
+    action: &str,
+    params: &[(String, String)],
+) -> Classification {
     let mut risk = base_risk;
     for (key, value) in params {
         if action == "run_command" && (key == "command" || key == "cmd" || key == "argv") {
@@ -172,10 +205,16 @@ pub fn classify(
             id: Some(v.clone()),
             digest: None,
         });
+    let reversibility = if action == "run_command" || risk >= Risk::High {
+        Reversibility::Irreversible
+    } else {
+        base_reversibility
+    };
     Classification {
         mutating,
         risk: Some(risk),
         resource,
+        reversibility,
     }
 }
 
@@ -976,6 +1015,45 @@ mod tests {
             &[("note".to_string(), "all good".to_string())],
         );
         assert_eq!(keep.risk(), Some(Risk::Critical));
+    }
+
+    #[test]
+    fn run_command_and_high_risk_are_irreversible_classification_outputs() {
+        let benign_run = classify(
+            true,
+            Risk::Low,
+            "run_command",
+            &[("command".to_string(), "pwd".to_string())],
+        );
+        assert_eq!(benign_run.reversibility(), Reversibility::Irreversible);
+
+        let destructive_param = classify_with_reversibility(
+            false,
+            Risk::ReadOnly,
+            Reversibility::Reversible,
+            "some_tool",
+            &[(
+                "arg".to_string(),
+                "delete production deployment".to_string(),
+            )],
+        );
+        assert_eq!(destructive_param.risk(), Some(Risk::High));
+        assert_eq!(
+            destructive_param.reversibility(),
+            Reversibility::Irreversible
+        );
+    }
+
+    #[test]
+    fn base_reversibility_is_never_allowed_to_lower_authoritative_irreversible() {
+        let mislabeled = classify_with_reversibility(
+            true,
+            Risk::High,
+            Reversibility::Reversible,
+            "deploy_release",
+            &[("target".to_string(), "prod".to_string())],
+        );
+        assert_eq!(mislabeled.reversibility(), Reversibility::Irreversible);
     }
 
     #[test]
