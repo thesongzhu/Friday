@@ -16,19 +16,11 @@ const QA_VERDICT_NAMESPACE = "template-harness-qa-verdict";
 const HANDOFF_NAMESPACE = "template-harness-handoff";
 
 interface MemoryItemRow {
-  id: string;
   value_json: string;
 }
 
-interface UpsertMemoryItemInput {
-  id: string;
-  namespace: string;
-  key: string;
-  value: unknown;
-  summary: string;
-  metadata: Record<string, unknown>;
-  tags: string[];
-  nowIso: string;
+interface TemplateHarnessArtifactRow {
+  value_json: string;
 }
 
 export interface CreateFridayTemplateHarnessRepositoryDeps {
@@ -56,30 +48,46 @@ export interface FridayTemplateHarnessRepository {
   getHandoffArtifact(artifactId: string): FridayHarnessHandoffArtifactV1 | null;
 }
 
-function upsertMemoryItem(db: Database.Database, input: UpsertMemoryItemInput): void {
+function upsertTemplateHarnessArtifact(
+  db: Database.Database,
+  artifact:
+    | FridayHarnessPlanningSpecV1
+    | FridayHarnessDeliveryContractV1
+    | FridayHarnessQaVerdictV1
+    | FridayHarnessHandoffArtifactV1,
+): void {
+  const artifactKind = namespaceForArtifact(artifact);
   db.prepare(
-    `INSERT INTO memory_items (
-      id, namespace, key, value_json, tags_json, created_at, updated_at, content_text, source, metadata_json, tags_text
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'system', ?, ?)
-    ON CONFLICT(namespace, key) DO UPDATE SET
-      value_json = excluded.value_json,
-      tags_json = excluded.tags_json,
+    `INSERT INTO template_harness_artifacts (
+      artifact_kind, artifact_id, scope_kind, scope_id, created_at, updated_at, value_json, tags_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(artifact_kind, artifact_id) DO UPDATE SET
+      scope_kind = excluded.scope_kind,
+      scope_id = excluded.scope_id,
+      created_at = excluded.created_at,
       updated_at = excluded.updated_at,
-      content_text = excluded.content_text,
-      metadata_json = excluded.metadata_json,
-      tags_text = excluded.tags_text`,
+      value_json = excluded.value_json,
+      tags_json = excluded.tags_json`,
   ).run(
-    input.id,
-    input.namespace,
-    input.key,
-    JSON.stringify(input.value),
-    JSON.stringify(input.tags),
-    input.nowIso,
-    input.nowIso,
-    input.summary,
-    JSON.stringify(input.metadata),
-    input.tags.join(" "),
+    artifactKind,
+    artifact.artifactId,
+    artifact.scopeKind,
+    artifact.scopeId,
+    artifact.createdAt,
+    artifact.updatedAt,
+    JSON.stringify(artifact),
+    JSON.stringify(tagsForArtifact(artifact)),
   );
+}
+
+function getTemplateHarnessArtifact(
+  db: Database.Database,
+  artifactKind: string,
+  artifactId: string,
+): TemplateHarnessArtifactRow | undefined {
+  return db
+    .prepare("SELECT value_json FROM template_harness_artifacts WHERE artifact_kind = ? AND artifact_id = ?")
+    .get(artifactKind, artifactId) as TemplateHarnessArtifactRow | undefined;
 }
 
 function getMemoryItem(
@@ -88,7 +96,7 @@ function getMemoryItem(
   key: string,
 ): MemoryItemRow | undefined {
   return db
-    .prepare("SELECT id, value_json FROM memory_items WHERE namespace = ? AND key = ?")
+    .prepare("SELECT value_json FROM memory_items WHERE namespace = ? AND key = ?")
     .get(namespace, key) as MemoryItemRow | undefined;
 }
 
@@ -109,40 +117,6 @@ function namespaceForArtifact(
     return HANDOFF_NAMESPACE;
   }
   return PLANNING_SPEC_NAMESPACE;
-}
-
-function summaryForArtifact(
-  artifact:
-    | FridayHarnessPlanningSpecV1
-    | FridayHarnessDeliveryContractV1
-    | FridayHarnessQaVerdictV1
-    | FridayHarnessHandoffArtifactV1,
-): string {
-  if ("deliveryContractId" in artifact) {
-    return artifact.summary;
-  }
-  if ("stage" in artifact) {
-    return artifact.summary;
-  }
-  if ("planningSpecId" in artifact && "deliverableKind" in artifact) {
-    return artifact.acceptanceCriteria[0] ?? artifact.doneDefinition[0] ?? artifact.deliverables[0] ?? artifact.scopeId;
-  }
-  return artifact.summary;
-}
-
-function metadataForArtifact(
-  artifact:
-    | FridayHarnessPlanningSpecV1
-    | FridayHarnessDeliveryContractV1
-    | FridayHarnessQaVerdictV1
-    | FridayHarnessHandoffArtifactV1,
-): Record<string, unknown> {
-  return {
-    scopeKind: artifact.scopeKind,
-    scopeId: artifact.scopeId,
-    artifactId: artifact.artifactId,
-    artifactKind: namespaceForArtifact(artifact),
-  };
 }
 
 function tagsForArtifact(
@@ -170,6 +144,17 @@ function parseArtifact<T>(row: MemoryItemRow | undefined): T | null {
   return safeJsonParse<T>(row.value_json) ?? null;
 }
 
+function readArtifact<T>(
+  db: Database.Database,
+  artifactKind: string,
+  artifactId: string,
+): T | null {
+  return parseArtifact<T>(
+    getTemplateHarnessArtifact(db, artifactKind, artifactId)
+      ?? getMemoryItem(db, artifactKind, artifactId),
+  );
+}
+
 export function createFridayTemplateHarnessRepository(
   deps: CreateFridayTemplateHarnessRepositoryDeps,
 ): FridayTemplateHarnessRepository {
@@ -183,18 +168,7 @@ export function createFridayTemplateHarnessRepository(
       | FridayHarnessHandoffArtifactV1,
   >(artifact: T): T {
     db.withWriteTransaction((writer) => {
-      const namespace = namespaceForArtifact(artifact);
-      const existing = getMemoryItem(writer, namespace, artifact.artifactId);
-      upsertMemoryItem(writer, {
-        id: existing?.id ?? deps.idGenerator(),
-        namespace,
-        key: artifact.artifactId,
-        value: artifact,
-        summary: summaryForArtifact(artifact),
-        metadata: metadataForArtifact(artifact),
-        tags: tagsForArtifact(artifact),
-        nowIso: deps.nowIso(),
-      });
+      upsertTemplateHarnessArtifact(writer, artifact);
     });
     return artifact;
   }
@@ -205,8 +179,10 @@ export function createFridayTemplateHarnessRepository(
     },
     getPlanningSpec(artifactId) {
       return db.withReadConnection((reader) =>
-        parseArtifact<FridayHarnessPlanningSpecV1>(
-          getMemoryItem(reader, PLANNING_SPEC_NAMESPACE, artifactId),
+        readArtifact<FridayHarnessPlanningSpecV1>(
+          reader,
+          PLANNING_SPEC_NAMESPACE,
+          artifactId,
         ));
     },
     upsertDeliveryContract(artifact) {
@@ -214,8 +190,10 @@ export function createFridayTemplateHarnessRepository(
     },
     getDeliveryContract(artifactId) {
       return db.withReadConnection((reader) =>
-        parseArtifact<FridayHarnessDeliveryContractV1>(
-          getMemoryItem(reader, DELIVERY_CONTRACT_NAMESPACE, artifactId),
+        readArtifact<FridayHarnessDeliveryContractV1>(
+          reader,
+          DELIVERY_CONTRACT_NAMESPACE,
+          artifactId,
         ));
     },
     upsertQaVerdict(artifact) {
@@ -223,8 +201,10 @@ export function createFridayTemplateHarnessRepository(
     },
     getQaVerdict(artifactId) {
       return db.withReadConnection((reader) =>
-        parseArtifact<FridayHarnessQaVerdictV1>(
-          getMemoryItem(reader, QA_VERDICT_NAMESPACE, artifactId),
+        readArtifact<FridayHarnessQaVerdictV1>(
+          reader,
+          QA_VERDICT_NAMESPACE,
+          artifactId,
         ));
     },
     upsertHandoffArtifact(artifact) {
@@ -232,10 +212,11 @@ export function createFridayTemplateHarnessRepository(
     },
     getHandoffArtifact(artifactId) {
       return db.withReadConnection((reader) =>
-        parseArtifact<FridayHarnessHandoffArtifactV1>(
-          getMemoryItem(reader, HANDOFF_NAMESPACE, artifactId),
+        readArtifact<FridayHarnessHandoffArtifactV1>(
+          reader,
+          HANDOFF_NAMESPACE,
+          artifactId,
         ));
     },
   };
 }
-
