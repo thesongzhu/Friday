@@ -2,6 +2,7 @@ import {
   FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
   isFridayUnisolatedNodeSkillsEnabled,
 } from "./friday-node-executor.js";
+import { isFridayDarwinSandboxExecAvailable } from "./friday-shell-executor.js";
 
 export type FridayExecutionIsolationSurface =
   | "skill.shell"
@@ -13,41 +14,55 @@ export type FridayExecutionIsolationSurface =
 
 export interface FridayExecutionIsolationStatus {
   schemaVersion: "1.0";
-  disposition: "open_no_os_sandbox";
-  osSandbox: false;
+  disposition: "open_no_os_sandbox" | "partial_os_sandbox";
+  osSandbox: boolean;
   surfaces: Record<FridayExecutionIsolationSurface, {
     boundary:
       | "logical_guards_only"
+      | "darwin_sandbox_exec_write_network_guard"
       | "disabled_by_default_unisolated"
       | "in_process_trusted"
       | "retired_by_default_dynamic_import_when_enabled"
       | "logical_workspace_guard_host_spawn";
-    osSandbox: false;
+    osSandbox: boolean;
     defaultLive: boolean;
     notes: string;
   }>;
 }
 
+export interface FridayExecutionIsolationProbe {
+  darwinSandboxExecAvailable?: boolean;
+}
+
 export function getFridayExecutionIsolationStatus(
   env: NodeJS.ProcessEnv = process.env,
+  probe: FridayExecutionIsolationProbe = {},
 ): FridayExecutionIsolationStatus {
   const unisolatedNodeEnabled = isFridayUnisolatedNodeSkillsEnabled(env);
+  const skillProcessSandbox = probe.darwinSandboxExecAvailable ?? isFridayDarwinSandboxExecAvailable();
+  const skillProcessBoundary = skillProcessSandbox
+    ? "darwin_sandbox_exec_write_network_guard"
+    : "logical_guards_only";
   return {
     schemaVersion: "1.0",
-    disposition: "open_no_os_sandbox",
-    osSandbox: false,
+    disposition: skillProcessSandbox ? "partial_os_sandbox" : "open_no_os_sandbox",
+    osSandbox: skillProcessSandbox,
     surfaces: {
       "skill.shell": {
-        boundary: "logical_guards_only",
-        osSandbox: false,
-        defaultLive: false,
-        notes: "Shell skills use host child_process.spawn with cwd/env/timeout/output guards; no kernel sandbox is applied.",
+        boundary: skillProcessBoundary,
+        osSandbox: skillProcessSandbox,
+        defaultLive: skillProcessSandbox,
+        notes: skillProcessSandbox
+          ? "Shell skills run through macOS sandbox-exec with network denied and file writes limited to the skill directory."
+          : "Shell skills use host child_process.spawn with cwd/env/timeout/output guards; no kernel sandbox is applied.",
       },
       "skill.python": {
-        boundary: "logical_guards_only",
-        osSandbox: false,
-        defaultLive: false,
-        notes: "Python skills share the shell executor boundary and are not isolated by an OS sandbox.",
+        boundary: skillProcessBoundary,
+        osSandbox: skillProcessSandbox,
+        defaultLive: skillProcessSandbox,
+        notes: skillProcessSandbox
+          ? "Python skills share the shell executor sandbox-exec boundary: network denied and file writes limited to the skill directory."
+          : "Python skills share the shell executor boundary and are not isolated by an OS sandbox.",
       },
       "skill.node": {
         boundary: "disabled_by_default_unisolated",
