@@ -104,6 +104,7 @@ fn in_boundary_ctx() -> AgentActionContext {
         channel: None,
         workflow_family: None,
         skill_family: None,
+        run_id: Some("operator-cli-test-run".to_string()),
     }
 }
 

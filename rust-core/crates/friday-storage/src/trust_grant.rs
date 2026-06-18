@@ -12,9 +12,11 @@
 //! types use manual `as_str`), so the `TrustBoundaries` <-> JSON map lives HERE (the
 //! storage boundary), hand-built with `serde_json`.
 //!
-//! DEFERRED (honest): `token_ceiling` / `max_runs` are STORED but NOT enforced (no live
-//! ledger/run-state counter — no fake counter). Nothing in production CALLS
-//! `authorize_agent_action` yet (the runtime call-site wiring is a deferred AC).
+//! `max_runs` and `token_ceiling` are enforced here through the Hub-only
+//! `trust_grant_run_usage` ledger: one claim per `(grant_id, run_id)`, idempotent within
+//! a run and fail-closed when a capped grant is used without a run id. Token ceilings are
+//! action-time guardrails over already-ledgered model calls for claimed runs; they block
+//! subsequent actions after the ceiling is reached, not the model call that spent tokens.
 
 use crate::error::{Result, StorageError};
 use friday_core::gate::{
@@ -286,6 +288,10 @@ pub fn latest_grant_any_state(conn: &Connection, agent_id: &str) -> Result<Optio
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AgentActionContext {
     pub agent_id: String,
+    /// The stable run id consuming this grant. Required when `boundaries.max_runs`
+    /// or `boundaries.token_ceiling` is set so ceilings are enforced per distinct
+    /// run, not per tool action.
+    pub run_id: Option<String>,
     pub workspace: Option<String>,
     pub tool: Option<String>,
     pub provider: Option<String>,
@@ -354,10 +360,95 @@ pub fn authorize_agent_action(
         return Ok(denied(reason.to_string(), &base));
     }
 
+    if let Some(reason) = claim_trust_grant_run(conn, &grant, ctx.run_id.as_deref(), now)? {
+        return Ok(denied(reason.to_string(), &base));
+    }
+    if let Some(reason) = enforce_trust_grant_token_ceiling(conn, &grant)? {
+        return Ok(denied(reason.to_string(), &base));
+    }
+
     // (4) Grant OK ("no trust objection") => run the EXISTING mutating-action compose
     // verbatim. It alone decides Allow/RequiresApproval/Deny — the grant cannot upgrade
     // a RequiresApproval here (this branch never passes the grant decision down).
     crate::authorize::authorize_mutating_action(conn, request, approval, secret, now)
+}
+
+fn claim_trust_grant_run(
+    conn: &Connection,
+    grant: &TrustGrant,
+    run_id: Option<&str>,
+    now_ms: i64,
+) -> Result<Option<&'static str>> {
+    if grant.boundaries.max_runs.is_none() && grant.boundaries.token_ceiling.is_none() {
+        return Ok(None);
+    }
+    let Some(run_id) = run_id.filter(|value| !value.trim().is_empty()) else {
+        return Ok(Some("trust_grant_run_id_required"));
+    };
+
+    let tx = conn.unchecked_transaction()?;
+    let already_claimed: Option<i64> = tx
+        .query_row(
+            "SELECT 1 FROM trust_grant_run_usage
+             WHERE grant_id = ?1 AND run_id = ?2",
+            params![grant.grant_id, run_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if already_claimed.is_some() {
+        tx.commit()?;
+        return Ok(None);
+    }
+
+    if let Some(max_runs) = grant.boundaries.max_runs {
+        let used: i64 = tx.query_row(
+            "SELECT count(*) FROM trust_grant_run_usage WHERE grant_id = ?1",
+            params![grant.grant_id],
+            |r| r.get(0),
+        )?;
+        if used >= max_runs {
+            tx.commit()?;
+            return Ok(Some("trust_grant_max_runs_exceeded"));
+        }
+    }
+
+    tx.execute(
+        "INSERT INTO trust_grant_run_usage (grant_id, run_id, claimed_at)
+         VALUES (?1, ?2, ?3)",
+        params![grant.grant_id, run_id, now_ms],
+    )?;
+    crate::audit::append_audit(
+        &tx,
+        &format!("trust_grant_run:{}:{run_id}:{now_ms}", grant.grant_id),
+        &grant.agent_id,
+        "trust.run_claim",
+        Some(&grant.grant_id),
+        now_ms,
+    )?;
+    tx.commit()?;
+    Ok(None)
+}
+
+fn enforce_trust_grant_token_ceiling(
+    conn: &Connection,
+    grant: &TrustGrant,
+) -> Result<Option<&'static str>> {
+    let Some(token_ceiling) = grant.boundaries.token_ceiling else {
+        return Ok(None);
+    };
+    let spent: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(t.total_tokens), 0)
+         FROM trust_grant_run_usage AS u
+         LEFT JOIN token_ledger AS t
+              ON (t.session_id = u.run_id OR t.run_id = u.run_id)
+         WHERE u.grant_id = ?1",
+        params![grant.grant_id],
+        |r| r.get(0),
+    )?;
+    if spent >= token_ceiling {
+        return Ok(Some("trust_grant_token_ceiling_exceeded"));
+    }
+    Ok(None)
 }
 
 /// Build the `GrantCheck` from the action context + the gate's derived effective risk.

@@ -37,8 +37,8 @@ fn boundaries(tools: &[&str], risk_ceiling: Risk) -> TrustBoundaries {
     TrustBoundaries {
         workspace: None,
         risk_ceiling,
-        token_ceiling: Some(1000), // STORED, DEFERRED-not-enforced
-        max_runs: Some(5),         // STORED, DEFERRED-not-enforced
+        token_ceiling: Some(1000), // storage-enforced at action time
+        max_runs: Some(5),         // storage-enforced per distinct run id
         allowed_channels: vec![],
         allowed_providers: vec![],
         allowed_tools: tools.iter().map(|s| s.to_string()).collect(),
@@ -60,8 +60,13 @@ fn grant_for(tools: &[&str], risk_ceiling: Risk, expires_at: Option<i64>) -> Tru
 }
 
 fn ctx(tool: &str) -> AgentActionContext {
+    ctx_for_run(tool, Some("run-friday-1"))
+}
+
+fn ctx_for_run(tool: &str, run_id: Option<&str>) -> AgentActionContext {
     AgentActionContext {
         agent_id: "friday".into(),
+        run_id: run_id.map(str::to_string),
         workspace: None,
         tool: Some(tool.into()),
         provider: None,
@@ -71,10 +76,39 @@ fn ctx(tool: &str) -> AgentActionContext {
     }
 }
 
+fn grant_usage_count(db: &Db, grant_id: &str) -> i64 {
+    db.conn()
+        .query_row(
+            "SELECT count(*) FROM trust_grant_run_usage WHERE grant_id = ?1",
+            [grant_id],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
 fn audit_count(db: &Db) -> i64 {
     db.conn()
         .query_row("SELECT count(*) FROM audit_ledger", [], |r| r.get(0))
         .unwrap()
+}
+
+fn insert_run_tokens(db: &Db, run_id: &str, ledger_id: &str, total_tokens: i64) {
+    db.conn()
+        .execute(
+            "INSERT INTO token_ledger
+                (ledger_id, session_id, activity_id, provider_kind, model, base_url_host,
+                 prompt_tokens, completion_tokens, total_tokens, cost_estimate, fallback,
+                 result_link, created_at, run_id)
+             VALUES (?1, ?2, ?3, 'deepseek', 'deepseek-v4-flash', 'api.deepseek.com',
+                     ?4, 0, ?4, NULL, 0, NULL, 100, ?2)",
+            rusqlite::params![
+                ledger_id,
+                run_id,
+                format!("{ledger_id}:activity"),
+                total_tokens
+            ],
+        )
+        .unwrap();
 }
 
 #[test]
@@ -284,4 +318,124 @@ fn grant_then_revoke_writes_exactly_two_audit_rows_and_chain_verifies() {
         friday_storage::audit::verify_audit_chain(db.conn()).unwrap(),
         2
     );
+}
+
+#[test]
+fn max_runs_counts_distinct_run_ids_once_and_denies_over_limit() {
+    let db = Db::open_hub(&temp_db_path("trust-max-runs")).unwrap();
+    let mut grant = grant_for(&["read_file"], Risk::Medium, None);
+    grant.boundaries.max_runs = Some(1);
+    grant_trust(db.conn(), &grant, 1).unwrap();
+
+    let first = authorize_agent_action(
+        db.conn(),
+        &req("read_file", false, Risk::ReadOnly),
+        &ctx_for_run("read_file", Some("run-a")),
+        None,
+        SECRET,
+        100,
+    )
+    .unwrap();
+    assert_eq!(first.decision, GateDecision::Allow);
+    assert_eq!(grant_usage_count(&db, "g-friday"), 1);
+
+    let same_run = authorize_agent_action(
+        db.conn(),
+        &req("read_file", false, Risk::ReadOnly),
+        &ctx_for_run("read_file", Some("run-a")),
+        None,
+        SECRET,
+        101,
+    )
+    .unwrap();
+    assert_eq!(same_run.decision, GateDecision::Allow);
+    assert_eq!(
+        grant_usage_count(&db, "g-friday"),
+        1,
+        "same run id must not consume max_runs more than once"
+    );
+
+    let second_run = authorize_agent_action(
+        db.conn(),
+        &req("read_file", false, Risk::ReadOnly),
+        &ctx_for_run("read_file", Some("run-b")),
+        None,
+        SECRET,
+        102,
+    )
+    .unwrap();
+    assert_eq!(second_run.decision, GateDecision::Deny);
+    assert_eq!(second_run.reason, "trust_grant_max_runs_exceeded");
+    assert_eq!(second_run.denied_by.as_deref(), Some("trust_grant"));
+    assert_eq!(grant_usage_count(&db, "g-friday"), 1);
+}
+
+#[test]
+fn capped_grant_without_run_id_fails_closed() {
+    let db = Db::open_hub(&temp_db_path("trust-max-runs-no-run-id")).unwrap();
+    let mut grant = grant_for(&["read_file"], Risk::Medium, None);
+    grant.boundaries.max_runs = Some(1);
+    grant_trust(db.conn(), &grant, 1).unwrap();
+
+    let result = authorize_agent_action(
+        db.conn(),
+        &req("read_file", false, Risk::ReadOnly),
+        &ctx_for_run("read_file", None),
+        None,
+        SECRET,
+        100,
+    )
+    .unwrap();
+    assert_eq!(result.decision, GateDecision::Deny);
+    assert_eq!(result.reason, "trust_grant_run_id_required");
+    assert_eq!(result.denied_by.as_deref(), Some("trust_grant"));
+    assert_eq!(grant_usage_count(&db, "g-friday"), 0);
+}
+
+#[test]
+fn token_ceiling_requires_run_id_and_denies_after_claimed_runs_reach_ceiling() {
+    let db = Db::open_hub(&temp_db_path("trust-token-ceiling")).unwrap();
+    let mut grant = grant_for(&["read_file"], Risk::Medium, None);
+    grant.boundaries.max_runs = None;
+    grant.boundaries.token_ceiling = Some(10);
+    grant_trust(db.conn(), &grant, 1).unwrap();
+
+    let missing_run = authorize_agent_action(
+        db.conn(),
+        &req("read_file", false, Risk::ReadOnly),
+        &ctx_for_run("read_file", None),
+        None,
+        SECRET,
+        100,
+    )
+    .unwrap();
+    assert_eq!(missing_run.decision, GateDecision::Deny);
+    assert_eq!(missing_run.reason, "trust_grant_run_id_required");
+    assert_eq!(grant_usage_count(&db, "g-friday"), 0);
+
+    let under_ceiling = authorize_agent_action(
+        db.conn(),
+        &req("read_file", false, Risk::ReadOnly),
+        &ctx_for_run("read_file", Some("run-a")),
+        None,
+        SECRET,
+        101,
+    )
+    .unwrap();
+    assert_eq!(under_ceiling.decision, GateDecision::Allow);
+    assert_eq!(grant_usage_count(&db, "g-friday"), 1);
+
+    insert_run_tokens(&db, "run-a", "run-a:t0:ledger", 10);
+    let at_ceiling = authorize_agent_action(
+        db.conn(),
+        &req("read_file", false, Risk::ReadOnly),
+        &ctx_for_run("read_file", Some("run-a")),
+        None,
+        SECRET,
+        102,
+    )
+    .unwrap();
+    assert_eq!(at_ceiling.decision, GateDecision::Deny);
+    assert_eq!(at_ceiling.reason, "trust_grant_token_ceiling_exceeded");
+    assert_eq!(at_ceiling.denied_by.as_deref(), Some("trust_grant"));
 }
