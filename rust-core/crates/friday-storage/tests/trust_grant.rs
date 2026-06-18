@@ -39,6 +39,7 @@ fn boundaries(tools: &[&str], risk_ceiling: Risk) -> TrustBoundaries {
         risk_ceiling,
         token_ceiling: Some(1000), // storage-enforced at action time
         max_runs: Some(5),         // storage-enforced per distinct run id
+        auto_allow_reversible_ceiling: Some(Risk::Low), // STORED, inert D20 metadata
         allowed_channels: vec![],
         allowed_providers: vec![],
         allowed_tools: tools.iter().map(|s| s.to_string()).collect(),

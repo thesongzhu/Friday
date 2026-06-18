@@ -40,6 +40,7 @@ USAGE:
                                     --risk-ceiling <read_only|low|medium|high|critical> \\
                                     [--expires-at <epoch-ms>] [--workspace <path-prefix>] \\
                                     [--token-ceiling <n>] [--max-runs <n>] \\
+                                    [--auto-allow-reversible-ceiling <read_only|low|medium|high|critical>] \\
                                     [--tools a,b] [--providers a,b] [--channels a,b] \\
                                     [--workflow-families a,b] [--skill-families a,b]
     friday-operator-approve revoke --db <hub.sqlite> --grant-id <id>
@@ -139,6 +140,9 @@ fn cmd_grant(args: &[String]) -> Result<(), String> {
         arg_value(args, "--workspace"),
         arg_i64(args, "--token-ceiling")?,
         arg_i64(args, "--max-runs")?,
+        arg_value(args, "--auto-allow-reversible-ceiling")
+            .map(|s| trust_grant::parse_risk(&s).map_err(|e| e.to_string()))
+            .transpose()?,
         trust_grant::parse_csv(arg_value(args, "--channels").as_deref()),
         trust_grant::parse_csv(arg_value(args, "--providers").as_deref()),
         trust_grant::parse_csv(arg_value(args, "--tools").as_deref()),
@@ -164,6 +168,7 @@ fn cmd_grant(args: &[String]) -> Result<(), String> {
             "risk_ceiling": b.risk_ceiling.as_str(),
             "token_ceiling": b.token_ceiling,
             "max_runs": b.max_runs,
+            "auto_allow_reversible_ceiling": b.auto_allow_reversible_ceiling.map(|risk| risk.as_str()),
             "allowed_channels": b.allowed_channels,
             "allowed_providers": b.allowed_providers,
             "allowed_tools": b.allowed_tools,

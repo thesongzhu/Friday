@@ -20,6 +20,8 @@
 //! Storage-enforced outside this PURE check: `max_runs` and action-time
 //! `token_ceiling` use the `friday-storage` compose plus a `(grant_id, run_id)`
 //! usage ledger. This pure check still ignores counters because it has no I/O.
+//! D20 `auto_allow_reversible_ceiling` is inert metadata for a later
+//! operator-signed batch verifier. This pure check ignores all three.
 
 use crate::gate::GateDecision;
 use crate::tool_policy::Risk;
@@ -35,6 +37,9 @@ pub struct TrustBoundaries {
     pub token_ceiling: Option<i64>,
     /// Storage-enforced outside the pure check: max distinct run ids under this grant.
     pub max_runs: Option<i64>,
+    /// D20 W2-S2 DARK metadata: operator-configured ceiling for a later reversible
+    /// auto-allow dial. Stored only here; `check_grant` does not consume it.
+    pub auto_allow_reversible_ceiling: Option<Risk>,
     /// Allowlists. EMPTY = DENY-ALL for that dimension (fail-closed).
     pub allowed_channels: Vec<String>,
     pub allowed_providers: Vec<String>,
@@ -162,6 +167,7 @@ mod tests {
             risk_ceiling: Risk::Medium,
             token_ceiling: Some(1000),
             max_runs: Some(5),
+            auto_allow_reversible_ceiling: Some(Risk::Low),
             allowed_channels: vec!["telegram".into()],
             allowed_providers: vec!["deepseek".into()],
             allowed_tools: vec!["read_file".into()],
@@ -235,6 +241,18 @@ mod tests {
         let mut c = check();
         c.effective_risk = Risk::High; // > Medium ceiling
         let (d, r) = check_grant(&grant(), &c);
+        assert_eq!(d, GateDecision::Deny);
+        assert_eq!(r, "trust_grant_risk_over_ceiling");
+    }
+
+    #[test]
+    fn auto_allow_reversible_ceiling_is_inert_metadata() {
+        let mut g = grant();
+        g.boundaries.risk_ceiling = Risk::Low;
+        g.boundaries.auto_allow_reversible_ceiling = Some(Risk::Critical);
+        let mut c = check();
+        c.effective_risk = Risk::Medium;
+        let (d, r) = check_grant(&g, &c);
         assert_eq!(d, GateDecision::Deny);
         assert_eq!(r, "trust_grant_risk_over_ceiling");
     }

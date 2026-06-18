@@ -8122,6 +8122,7 @@ mod tests {
                 risk_ceiling: friday_core::Risk::Critical,
                 token_ceiling: None,
                 max_runs: None,
+                auto_allow_reversible_ceiling: None,
                 allowed_channels: vec![],
                 allowed_providers: vec![],
                 allowed_tools: vec!["write_file".to_string()],
@@ -9959,6 +9960,7 @@ mod tests {
                 risk_ceiling: friday_core::Risk::Critical,
                 token_ceiling: None,
                 max_runs: None,
+                auto_allow_reversible_ceiling: None,
                 allowed_channels: vec![],
                 allowed_providers: vec![],
                 allowed_tools: vec!["read_file".to_string()],
@@ -14769,6 +14771,7 @@ mod tests {
                 risk_ceiling: friday_core::Risk::High,
                 token_ceiling: None,
                 max_runs: None,
+                auto_allow_reversible_ceiling: None,
                 allowed_channels: vec![],
                 allowed_providers: vec![],
                 allowed_tools: vec![
