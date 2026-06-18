@@ -39,6 +39,7 @@ import type {
   FridayWorkflowRunNodeEntity,
   FridayWorkflowSpecV1,
   FridayWorkflowVersionEntity,
+  FridayWorkflowVisualGraphV1,
   JsonObject,
 } from "#workflows";
 
@@ -530,6 +531,49 @@ function sanitizePublicWorkflowSpec(spec: FridayWorkflowSpecV1): FridayWorkflowS
     errorPolicy: spec.errorPolicy,
     tests: [],
   };
+}
+
+function defaultDraftVisual(
+  workflowId: string,
+  spec: unknown,
+): FridayWorkflowVisualGraphV1 {
+  const maybeSpec = spec && typeof spec === "object" ? spec as Record<string, unknown> : {};
+  const rawStepIds = Array.isArray(maybeSpec.steps)
+    ? maybeSpec.steps.map((step) => (
+      step && typeof step === "object" && typeof (step as { id?: unknown }).id === "string"
+        ? (step as { id: string }).id
+        : undefined
+    ))
+    : Array.isArray(maybeSpec.nodes)
+      ? maybeSpec.nodes.map((node) => (
+        node && typeof node === "object" && typeof (node as { id?: unknown }).id === "string"
+          ? (node as { id: string }).id
+          : undefined
+      ))
+      : [];
+  const stepIds = rawStepIds.filter((id): id is string => Boolean(id));
+  const nodeIds = stepIds.length > 0 ? stepIds : ["__trigger__"];
+
+  return {
+    schemaVersion: "1.0",
+    workflowId,
+    viewport: { x: 0, y: 0, zoom: 1 },
+    panelLayout: { leftOpen: true, rightOpen: false, bottomOpen: false },
+    nodes: nodeIds.map((nodeId, index) => ({
+      nodeId,
+      x: index * 250,
+      y: 0,
+    })),
+    edges: [],
+  };
+}
+
+function draftVisualOrDefault(
+  workflowId: string,
+  spec: unknown,
+  visual: FridayWorkflowVisualGraphV1 | undefined,
+): FridayWorkflowVisualGraphV1 {
+  return visual ?? defaultDraftVisual(workflowId, spec);
 }
 
 function sanitizePublicWorkflowDraft(draft: FridayWorkflowDraftEntity): FridayWorkflowDraftEntity {
@@ -3196,7 +3240,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         workflowId,
         title: input.title,
         spec: input.spec,
-        visual: input.visual,
+        visual: draftVisualOrDefault(workflowId, input.spec, input.visual),
         ownerUserId: input.ownerUserId,
         baseWorkflowVersionId: input.baseWorkflowVersionId,
       });
@@ -3274,7 +3318,7 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
         draftId,
         lockToken: input.lockToken,
         spec: input.spec,
-        visual: input.visual,
+        visual: input.visual ?? existing.visual,
       });
       return { draft };
     },

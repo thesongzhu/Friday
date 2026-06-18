@@ -91,6 +91,7 @@ import { V089_WORKFLOW_COMPLETION_VERIFICATION_MIGRATION } from "./v089-workflow
 import { V090_REFLEX_LEARNED_FACT_CANDIDATES_MIGRATION } from "./v090-reflex-learned-fact-candidates.js";
 import { V091_PREFERENCE_FACT_METADATA_MIGRATION } from "./v091-preference-fact-metadata.js";
 import { V092_REFLEX_SECURE_FACT_CANDIDATES_MIGRATION } from "./v092-reflex-secure-fact-candidates.js";
+import { V093_WORKFLOW_BUILDER_DRAFT_REHOME_MIGRATION } from "./v093-workflow-builder-draft-rehome.js";
 
 /**
  * Ordered migration list, always ascending by version.
@@ -188,6 +189,7 @@ export const FRIDAY_SQLITE_MIGRATIONS: readonly FridaySqliteMigration[] = [
   V090_REFLEX_LEARNED_FACT_CANDIDATES_MIGRATION,
   V091_PREFERENCE_FACT_METADATA_MIGRATION,
   V092_REFLEX_SECURE_FACT_CANDIDATES_MIGRATION,
+  V093_WORKFLOW_BUILDER_DRAFT_REHOME_MIGRATION,
 ];
 
 export { V003_PROVIDER_USAGE_COST_ROUTING_MIGRATION };

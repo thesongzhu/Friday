@@ -24,6 +24,7 @@ describe("FridayWorkflowBuilderCompositorService", () => {
 
   beforeEach(() => {
     db = createTestDb();
+    seedWorkflow("wf-1");
   });
 
   afterEach(() => {
@@ -96,6 +97,22 @@ describe("FridayWorkflowBuilderCompositorService", () => {
       crudService,
       specVersionRepo,
     };
+  }
+
+  function seedWorkflow(workflowId: string): void {
+    db.writer
+      .prepare(
+        `INSERT INTO workflows (id, slug, name, latest_version_number, is_archived, revision, etag, created_at, updated_at)
+         VALUES (?, ?, ?, 1, 0, 1, ?, ?, ?)`,
+      )
+      .run(
+        workflowId,
+        `test-${workflowId}`,
+        `Test ${workflowId}`,
+        `etag-${workflowId}`,
+        NOW,
+        NOW,
+      );
   }
 
   it("compiles a valid draft", () => {

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { FridaySqliteLayer } from "#state";
 import { createFridayWorkflowBuilderDraftRepository } from "#workflows";
 import type { FridayWorkflowDraftEntity } from "#workflows";
-import { createTestDb, createTestIdGenerator } from "../_helpers/create-test-db.helper.js";
+import { createTestDb } from "../_helpers/create-test-db.helper.js";
 import { createTestSpec, createTestVisual } from "./_helpers/create-test-spec.helper.js";
 
 describe("FridayWorkflowBuilderDraftRepository", () => {
@@ -11,6 +11,8 @@ describe("FridayWorkflowBuilderDraftRepository", () => {
 
   beforeEach(() => {
     db = createTestDb();
+    seedWorkflow("wf-1");
+    seedWorkflow("wf-2");
   });
 
   afterEach(() => {
@@ -32,6 +34,38 @@ describe("FridayWorkflowBuilderDraftRepository", () => {
       autosave: { enabled: true, intervalMs: 30000 },
       ...overrides,
     };
+  }
+
+  function seedWorkflow(workflowId: string): void {
+    db.writer
+      .prepare(
+        `INSERT INTO workflows (id, slug, name, latest_version_number, is_archived, revision, etag, created_at, updated_at)
+         VALUES (?, ?, ?, 1, 0, 1, ?, ?, ?)`,
+      )
+      .run(
+        workflowId,
+        `test-${workflowId}`,
+        `Test ${workflowId}`,
+        `etag-${workflowId}`,
+        NOW,
+        NOW,
+      );
+  }
+
+  function insertLegacyDraft(draft: FridayWorkflowDraftEntity): void {
+    db.writer
+      .prepare(
+        `INSERT INTO memory_items (id, namespace, key, value_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        draft.draftId,
+        "workflow_builder_drafts",
+        `${draft.workflowId}:${draft.draftId}`,
+        JSON.stringify(draft),
+        draft.createdAt,
+        draft.updatedAt,
+      );
   }
 
   it("creates and retrieves a draft", () => {
@@ -125,23 +159,91 @@ describe("FridayWorkflowBuilderDraftRepository", () => {
     expect(fetched!.status).toBe("archived");
   });
 
-  it("stores namespace and key correctly", () => {
+  it("stores new drafts in the workflow builder table without writing memory_items", () => {
     const repo = createFridayWorkflowBuilderDraftRepository();
-    const draft = makeDraft();
+    const draft = makeDraft({
+      autosave: { enabled: true, intervalMs: 45000, lastSavedAt: "2025-06-15T10:30:00.000Z" },
+      publishedVersionId: "version-1",
+      sourceReview: {
+        source: "external",
+        sourceUrl: "https://example.com/spec",
+        requiresReviewBeforePublish: true,
+        confirmedAt: "2025-06-15T10:15:00.000Z",
+      },
+    });
 
     db.withWriteTransaction((writerDb) => {
       repo.create(writerDb, draft);
     });
 
-    // Verify raw row
     const row = db.withReadConnection((readerDb) =>
       readerDb
-        .prepare("SELECT namespace, key FROM memory_items WHERE id = ?")
+        .prepare(
+          `SELECT draft_id, workflow_id, published_workflow_version_id, autosave_last_saved_at, source_review_json
+           FROM workflow_builder_drafts WHERE draft_id = ?`,
+        )
         .get("draft-1"),
-    ) as { namespace: string; key: string };
+    ) as {
+      draft_id: string;
+      workflow_id: string;
+      published_workflow_version_id: string | null;
+      autosave_last_saved_at: string | null;
+      source_review_json: string | null;
+    };
 
-    expect(row.namespace).toBe("workflow_builder_drafts");
-    expect(row.key).toBe("wf-1:draft-1");
+    const memoryRowCount = db.withReadConnection((readerDb) =>
+      readerDb
+        .prepare("SELECT COUNT(*) AS count FROM memory_items WHERE namespace = ?")
+        .get("workflow_builder_drafts"),
+    ) as { count: number };
+
+    expect(row.draft_id).toBe("draft-1");
+    expect(row.workflow_id).toBe("wf-1");
+    expect(row.published_workflow_version_id).toBe("version-1");
+    expect(row.autosave_last_saved_at).toBe("2025-06-15T10:30:00.000Z");
+    expect(JSON.parse(row.source_review_json ?? "{}")).toMatchObject({
+      source: "external",
+      sourceUrl: "https://example.com/spec",
+      requiresReviewBeforePublish: true,
+    });
+    expect(memoryRowCount.count).toBe(0);
+  });
+
+  it("reads legacy memory_items drafts and updates them into the dedicated table", () => {
+    const repo = createFridayWorkflowBuilderDraftRepository();
+    const legacyDraft = makeDraft({
+      draftId: "legacy-draft",
+      title: "Legacy Draft",
+      updatedAt: "2025-06-15T09:00:00.000Z",
+    });
+    insertLegacyDraft(legacyDraft);
+
+    const fetched = db.withReadConnection((readerDb) => repo.getById(readerDb, "legacy-draft"));
+    expect(fetched!.title).toBe("Legacy Draft");
+
+    db.withWriteTransaction((writerDb) => {
+      repo.update(writerDb, {
+        ...legacyDraft,
+        title: "Promoted Draft",
+        revision: 2,
+        updatedAt: "2025-06-15T11:00:00.000Z",
+      });
+    });
+
+    const dedicatedRow = db.withReadConnection((readerDb) =>
+      readerDb
+        .prepare("SELECT title, revision FROM workflow_builder_drafts WHERE draft_id = ?")
+        .get("legacy-draft"),
+    ) as { title: string; revision: number };
+    const memoryRowCount = db.withReadConnection((readerDb) =>
+      readerDb
+        .prepare("SELECT COUNT(*) AS count FROM memory_items WHERE namespace = ?")
+        .get("workflow_builder_drafts"),
+    ) as { count: number };
+
+    expect(dedicatedRow.title).toBe("Promoted Draft");
+    expect(dedicatedRow.revision).toBe(2);
+    expect(memoryRowCount.count).toBe(1);
   });
 
   it("round-trips JSON correctly", () => {

@@ -20,6 +20,23 @@ const BROWSER_E2E_TIMEOUT_MS = 120_000;
 const WORKFLOW_BUILDER_SHELL_BUDGET_MS = 2_000;
 const WORKFLOW_BUILDER_CANVAS_BUDGET_MS = 8_000;
 
+async function createWorkflowParent(env: FridayMockBrowserE2eEnv, name: string): Promise<string> {
+  const unique = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const response = await env.apiFetch<{
+    workflow: {
+      id: string;
+    };
+  }>("POST", "/v1/workflows", {
+    slug: `browser-e2e-${unique}`,
+    name,
+    tags: ["browser-e2e"],
+    graph: { nodes: [], edges: [] },
+  });
+  expect(response.status).toBe(200);
+  expect(response.json.ok).toBe(true);
+  return response.json.data.workflow.id;
+}
+
 describe.skipIf(!CHROMIUM_AVAILABLE)("Friday workflow builder interaction baseline (mock hub browser E2E)", () => {
   let env: FridayMockBrowserE2eEnv | null = null;
   let pageHandle: FridayBrowserPageHandle | null = null;
@@ -58,13 +75,14 @@ describe.skipIf(!CHROMIUM_AVAILABLE)("Friday workflow builder interaction baseli
     const templateId = templates.json.data.stableItems[0]?.id ?? templates.json.data.items[0]?.id;
     expect(templateId).toBeTruthy();
 
+    const workflowId = await createWorkflowParent(env, "Browser E2E Draft");
     const instantiate = await env.apiFetch<{
       draft: {
         workflowId: string;
         draftId: string;
       };
     }>("POST", `/v1/workflow-builder/templates/${encodeURIComponent(String(templateId))}/instantiate`, {
-      workflowId: `browser-e2e-${Date.now()}`,
+      workflowId,
       title: "Browser E2E Draft",
       ownerUserId: "browser-e2e",
       taskProfileId: "planning",

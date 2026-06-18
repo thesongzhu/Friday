@@ -290,13 +290,27 @@ async function createBuilderDraft(env: FridayMockBrowserE2eEnv) {
     ?? templateList.json.data.items[0]?.templateId;
   expect(templateId).toBeTruthy();
 
+  const unique = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const workflow = await env.apiFetch<{
+    workflow: {
+      id: string;
+    };
+  }>("POST", "/v1/workflows", {
+    slug: `benchmark-${unique}`,
+    name: "Workflow Benchmark Draft",
+    tags: ["browser-e2e", "benchmark"],
+    graph: { nodes: [], edges: [] },
+  });
+  expect(workflow.status).toBe(200);
+  expect(workflow.json.ok).toBe(true);
+
   const instantiate = await env.apiFetch<{
     draft: {
       workflowId: string;
       draftId: string;
     };
   }>("POST", `/v1/workflow-builder/templates/${encodeURIComponent(String(templateId))}/instantiate`, {
-    workflowId: `benchmark-${Date.now()}`,
+    workflowId: workflow.json.data.workflow.id,
     title: "Workflow Benchmark Draft",
     ownerUserId: "browser-e2e",
     taskProfileId: "planning",

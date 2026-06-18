@@ -21,6 +21,10 @@ describe("FridayWorkflowBuilderImportExportService", () => {
 
   beforeEach(() => {
     db = createTestDb();
+    seedWorkflow("wf-1");
+    seedWorkflow("wf-original");
+    seedWorkflow("wf-imported");
+    seedWorkflow("wf-new");
   });
 
   afterEach(() => {
@@ -65,6 +69,22 @@ describe("FridayWorkflowBuilderImportExportService", () => {
     });
 
     return { draftService, importExportService };
+  }
+
+  function seedWorkflow(workflowId: string): void {
+    db.writer
+      .prepare(
+        `INSERT INTO workflows (id, slug, name, latest_version_number, is_archived, revision, etag, created_at, updated_at)
+         VALUES (?, ?, ?, 1, 0, 1, ?, ?, ?)`,
+      )
+      .run(
+        workflowId,
+        `test-${workflowId}`,
+        `Test ${workflowId}`,
+        `etag-${workflowId}`,
+        NOW,
+        NOW,
+      );
   }
 
   it("exports a draft as a bundle", () => {
