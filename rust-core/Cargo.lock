@@ -720,6 +720,7 @@ version = "0.0.1"
 dependencies = [
  "friday-core",
  "friday-crypto",
+ "friday-hub",
  "friday-storage",
  "serde",
  "serde_json",

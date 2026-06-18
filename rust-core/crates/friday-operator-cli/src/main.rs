@@ -17,6 +17,10 @@
 //! friday-operator-approve sign-batch --key <private-key-path> --request <pending-batch.json>
 //!     Read a D20 W2 pending batch (a batch_sign_id plus exact action digests), load
 //!     the PRIVATE key, and emit an Ed25519-signed CanonicalApprovalBatch as JSON.
+//!
+//! friday-operator-approve prepare-batch --request <batch-actions.json>
+//!     Read operator/tool-registry action specs, classify them through the real gate,
+//!     and emit a signable pending batch JSON. No key is read and no action executes.
 //! ```
 //!
 //! Truth label: offline operator-signing tool (operator-held private key; the Hub
@@ -33,7 +37,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use friday_operator_cli::trust_grant;
 use friday_operator_cli::{
-    keygen_to_path, sign_batch_request, sign_request, PendingBatchRequest, PendingRequest,
+    keygen_to_path, prepare_batch_request, sign_batch_request, sign_request, PendingBatchRequest,
+    PendingRequest, PrepareBatchRequest,
 };
 
 const USAGE: &str = "\
@@ -41,6 +46,7 @@ friday-operator-approve — operator CLI (S6c signing + NS-3 trust-grant issuanc
 
 USAGE:
     friday-operator-approve keygen --out <private-key-path>
+    friday-operator-approve prepare-batch --request <batch-actions.json>
     friday-operator-approve sign  --key <private-key-path> --request <pending-request.json>
     friday-operator-approve sign-batch --key <private-key-path> --request <pending-batch.json>
     friday-operator-approve grant  --db <hub.sqlite> --grant-id <id> --agent <agent-id> \\
@@ -62,6 +68,11 @@ sign-batch reads a D20 W2 pending batch JSON and emits an Ed25519-signed
 CanonicalApprovalBatch (JSON) for an exact digest set. The private key never appears in
 the output.
 
+prepare-batch reads operator/tool-registry action specs, runs the real gate
+classification, and emits a signable pending batch JSON. It reads no key, signs
+nothing, executes nothing, and rejects Irreversible actions so batches cannot bypass
+per-action manual gates.
+
 grant mints a TrustGrant for --agent with the given boundaries (operator POLICY action;
 the allowlists are fail-closed — an omitted dimension is DENY-ALL) and prints the
 persisted grant (JSON). revoke marks the grant --grant-id revoked. Both write a
@@ -81,6 +92,7 @@ fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("keygen") => cmd_keygen(&args[2..]),
+        Some("prepare-batch") => cmd_prepare_batch(&args[2..]),
         Some("sign") => cmd_sign(&args[2..]),
         Some("sign-batch") => cmd_sign_batch(&args[2..]),
         Some("grant") => cmd_grant(&args[2..]),
@@ -108,6 +120,22 @@ fn cmd_keygen(args: &[String]) -> Result<(), String> {
     );
     // Operator note -> stderr (the PATH is not secret; the key bytes never appear).
     eprintln!("operator private key written to {out} (mode 0600); keep it off the Hub. Provision the verifying_key above into the Hub.");
+    Ok(())
+}
+
+fn cmd_prepare_batch(args: &[String]) -> Result<(), String> {
+    let request = arg_value(args, "--request").ok_or_else(|| {
+        format!("prepare-batch requires --request <batch-actions.json>\n\n{USAGE}")
+    })?;
+    let json = std::fs::read_to_string(&request)
+        .map_err(|_| format!("could not read request file {request}"))?;
+    let req: PrepareBatchRequest =
+        serde_json::from_str(&json).map_err(|e| format!("invalid batch request JSON: {e}"))?;
+    let pending = prepare_batch_request(&req).map_err(|e| e.to_string())?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&pending).map_err(|e| e.to_string())?
+    );
     Ok(())
 }
 

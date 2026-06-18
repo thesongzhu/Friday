@@ -13,11 +13,13 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use friday_core::gate::canonical_action_bytes;
 use friday_core::gate::ApprovalDecision;
 use friday_crypto::verify_ed25519_approval;
+use friday_hub::{build_request, RawToolCall};
 use friday_operator_cli::{
-    canonical_batch_bytes, canonical_bytes, decode_signature_hex, decode_verifying_key_hex,
-    parse_decision,
+    build_prepared_action_request, canonical_batch_bytes, canonical_bytes, decode_signature_hex,
+    decode_verifying_key_hex, parse_decision, ActionParam, BatchActionSpec,
 };
 
 const BIN: &str = env!("CARGO_BIN_EXE_friday-operator-approve");
@@ -55,6 +57,26 @@ fn sample_batch_req() -> serde_json::Value {
         "decision": "approved",
         "plan_label": "D20 reversible batch",
         "worktree": "/tmp/friday-worktree"
+    })
+}
+
+fn sample_prepare_batch_req(action: &str) -> serde_json::Value {
+    serde_json::json!({
+        "batch_sign_id": "batch-d20-prepared",
+        "expires_at": 1_900_000_000_000i64,
+        "decision": "approved",
+        "plan_label": "D20 prepared reversible batch",
+        "worktree": "/tmp/friday-worktree",
+        "actions": [{
+            "action": action,
+            "actor_kind": "agent",
+            "actor_id": "hub-agent",
+            "surface": "agent",
+            "params": [
+                {"key": "path", "value": "/tmp/friday-worktree/out.txt"},
+                {"key": "content", "value": "hello"}
+            ]
+        }]
     })
 }
 
@@ -114,6 +136,186 @@ fn rebuild_canonical_batch_bytes(signed: &serde_json::Value) -> Vec<u8> {
         signed["expires_at"].as_i64().unwrap(),
         signed["issuer"].as_str().unwrap(),
     )
+}
+
+#[test]
+fn prepared_action_digest_matches_hub_default_request() {
+    let params = vec![
+        ("content".to_string(), "hello".to_string()),
+        (
+            "path".to_string(),
+            "/tmp/friday-worktree/out.txt".to_string(),
+        ),
+    ];
+    let spec = BatchActionSpec {
+        action: "write_file".to_string(),
+        actor_kind: "agent".to_string(),
+        actor_id: "hub-agent".to_string(),
+        principal_id: None,
+        surface: "agent".to_string(),
+        params: params
+            .iter()
+            .map(|(key, value)| ActionParam {
+                key: key.clone(),
+                value: value.clone(),
+            })
+            .collect(),
+        idempotency_key: None,
+        plan_digest: None,
+    };
+    let prepared = build_prepared_action_request(&spec).unwrap();
+    let hub = build_request(&RawToolCall {
+        action: "write_file".to_string(),
+        params,
+    })
+    .unwrap();
+
+    assert_eq!(
+        friday_crypto::action_digest(&canonical_action_bytes(&prepared)),
+        friday_crypto::action_digest(&canonical_action_bytes(&hub)),
+        "prepared batch digest must match the live Hub default request digest"
+    );
+}
+
+#[test]
+fn prepare_batch_then_sign_batch_roundtrip_verifies() {
+    let dir = tmp_dir("prepare-batch-roundtrip");
+    let key_path = dir.join("operator.key");
+    let _ = std::fs::remove_file(&key_path);
+
+    let kg = run_bin(&["keygen", "--out", key_path.to_str().unwrap()]);
+    assert!(
+        kg.status.success(),
+        "keygen failed: {}",
+        String::from_utf8_lossy(&kg.stderr)
+    );
+    let kg_json: serde_json::Value = serde_json::from_slice(&kg.stdout).unwrap();
+    let vk_hex = kg_json["verifying_key"].as_str().unwrap().to_string();
+
+    let actions_path = dir.join("batch-actions.json");
+    std::fs::write(
+        &actions_path,
+        serde_json::to_vec(&sample_prepare_batch_req("write_file")).unwrap(),
+    )
+    .unwrap();
+    let prepared = run_bin(&["prepare-batch", "--request", actions_path.to_str().unwrap()]);
+    assert!(
+        prepared.status.success(),
+        "prepare-batch failed: {}",
+        String::from_utf8_lossy(&prepared.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&prepared.stderr).trim().is_empty(),
+        "prepare-batch should not print operator-key guidance or leak-like noise"
+    );
+    let pending: serde_json::Value = serde_json::from_slice(&prepared.stdout).unwrap();
+    assert_eq!(pending["batch_sign_id"], "batch-d20-prepared");
+    assert_eq!(pending["decision"], "approved");
+    assert_eq!(pending["issuer"], "friday_canonical_gate");
+    assert!(
+        pending.get("signature").is_none(),
+        "prepare-batch must not sign"
+    );
+
+    let digests = pending["action_digests"].as_array().unwrap();
+    assert_eq!(digests.len(), 1);
+    let digest = digests[0].as_str().unwrap();
+    assert_eq!(digest.len(), 64);
+    assert!(digest
+        .bytes()
+        .all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f')));
+
+    let pending_path = dir.join("pending-batch.json");
+    std::fs::write(&pending_path, serde_json::to_vec(&pending).unwrap()).unwrap();
+    let signed = run_bin(&[
+        "sign-batch",
+        "--key",
+        key_path.to_str().unwrap(),
+        "--request",
+        pending_path.to_str().unwrap(),
+    ]);
+    assert!(
+        signed.status.success(),
+        "sign-batch failed: {}",
+        String::from_utf8_lossy(&signed.stderr)
+    );
+    let signed_json: serde_json::Value = serde_json::from_slice(&signed.stdout).unwrap();
+    let bytes = rebuild_canonical_batch_bytes(&signed_json);
+    let vk = decode_verifying_key_hex(&vk_hex).unwrap();
+    let sig = decode_signature_hex(signed_json["signature"].as_str().unwrap()).unwrap();
+    assert!(
+        verify_ed25519_approval(&bytes, &vk, &sig),
+        "prepared pending batch must sign and verify under the operator test key"
+    );
+}
+
+#[test]
+fn prepare_batch_rejects_logical_duplicate_after_param_sorting() {
+    let dir = tmp_dir("prepare-batch-duplicate");
+    let actions_path = dir.join("batch-actions.json");
+    let req = serde_json::json!({
+        "batch_sign_id": "batch-d20-dupe",
+        "expires_at": 1_900_000_000_000i64,
+        "decision": "approved",
+        "actions": [
+            {
+                "action": "write_file",
+                "actor_kind": "agent",
+                "actor_id": "hub-agent",
+                "surface": "agent",
+                "params": [
+                    {"key": "path", "value": "/tmp/friday-worktree/out.txt"},
+                    {"key": "content", "value": "hello"}
+                ]
+            },
+            {
+                "action": "write_file",
+                "actor_kind": "agent",
+                "actor_id": "hub-agent",
+                "surface": "agent",
+                "params": [
+                    {"key": "content", "value": "hello"},
+                    {"key": "path", "value": "/tmp/friday-worktree/out.txt"}
+                ]
+            }
+        ]
+    });
+    std::fs::write(&actions_path, serde_json::to_vec(&req).unwrap()).unwrap();
+
+    let prepared = run_bin(&["prepare-batch", "--request", actions_path.to_str().unwrap()]);
+    assert!(
+        !prepared.status.success(),
+        "same logical params in different order must collapse to a duplicate digest"
+    );
+    assert!(
+        String::from_utf8_lossy(&prepared.stderr).contains("duplicates"),
+        "expected duplicate digest error"
+    );
+}
+
+#[test]
+fn prepare_batch_rejects_irreversible_actions() {
+    let dir = tmp_dir("prepare-batch-irreversible");
+    let actions_path = dir.join("batch-actions.json");
+    std::fs::write(
+        &actions_path,
+        serde_json::to_vec(&sample_prepare_batch_req("run_command")).unwrap(),
+    )
+    .unwrap();
+
+    let prepared = run_bin(&["prepare-batch", "--request", actions_path.to_str().unwrap()]);
+    assert!(
+        !prepared.status.success(),
+        "run_command must never enter a batch approval"
+    );
+    assert!(
+        String::from_utf8_lossy(&prepared.stdout).trim().is_empty(),
+        "no pending batch may be emitted on irreversible input"
+    );
+    assert!(
+        String::from_utf8_lossy(&prepared.stderr).contains("irreversible"),
+        "expected a clean irreversible-action error"
+    );
 }
 
 #[test]

@@ -25,6 +25,9 @@ thiserror.workspace = true
 # Wipe transient secret buffers (decoded seed / hex) after use.
 zeroize.workspace = true
 
+[dev-dependencies]
+friday-hub.workspace = true
+
 [[bin]]
 name = "friday-operator-approve"
 path = "src/main.rs"

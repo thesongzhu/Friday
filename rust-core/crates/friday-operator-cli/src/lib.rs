@@ -56,11 +56,14 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
 use friday_core::gate::{
-    canonical_approval_batch_signature_bytes, canonical_approval_signature_bytes, ApprovalDecision,
-    CanonicalApproval, CanonicalApprovalBatch, CANONICAL_GATE_ISSUER,
+    canonical_action_bytes, canonical_approval_batch_signature_bytes,
+    canonical_approval_signature_bytes, Actor, ActorKind, ApprovalDecision, CanonicalApproval,
+    CanonicalApprovalBatch, LocalClaim, MutatingActionRequest, Reversibility,
+    CANONICAL_GATE_ISSUER,
 };
+use friday_core::Risk;
 use friday_crypto::ed25519_approval::{SEED_LEN, VERIFYING_KEY_LEN};
-use friday_crypto::OperatorSigningKey;
+use friday_crypto::{action_digest, OperatorSigningKey};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use zeroize::Zeroize;
@@ -132,7 +135,7 @@ pub struct PendingRequest {
 /// A pending batch request the operator signs for D20 W2. It binds one operator
 /// decision to an exact list of action digests. Unknown fields are tolerated so the
 /// operator surface can include richer review context without changing signed bytes.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PendingBatchRequest {
     /// Batch replay namespace. Each member spends `(batch_sign_id, action_digest)`.
     pub batch_sign_id: String,
@@ -151,6 +154,50 @@ pub struct PendingBatchRequest {
     pub plan_label: Option<String>,
     #[serde(default)]
     pub worktree: Option<String>,
+}
+
+/// Operator-side input for producing a D20 W2 pending batch from canonical action
+/// specs. This CLI does NOT sign or execute the actions; it computes the exact
+/// digests that a later operator-held-key `sign-batch` decision may cover.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PrepareBatchRequest {
+    pub batch_sign_id: String,
+    pub expires_at: i64,
+    pub decision: String,
+    #[serde(default)]
+    pub issuer: Option<String>,
+    #[serde(default)]
+    pub plan_label: Option<String>,
+    #[serde(default)]
+    pub worktree: Option<String>,
+    pub actions: Vec<BatchActionSpec>,
+}
+
+/// One action candidate to include in an operator batch. `mutating`, `base_risk`,
+/// and reversibility are never accepted from JSON; they come from the built-in
+/// registry mirror below and are recomputed by `friday_core::gate::classify`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BatchActionSpec {
+    pub action: String,
+    pub actor_kind: String,
+    pub actor_id: String,
+    #[serde(default)]
+    pub principal_id: Option<String>,
+    pub surface: String,
+    #[serde(default)]
+    pub params: Vec<ActionParam>,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+    #[serde(default)]
+    pub plan_digest: Option<String>,
+}
+
+/// Ordered action parameter entry. Order is preserved in both classification and the
+/// opaque canonical parameter string that is bound into the digest.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ActionParam {
+    pub key: String,
+    pub value: String,
 }
 
 /// The operator-signed approval emitted to stdout. JSON the Hub-side S6d ingestion
@@ -241,6 +288,119 @@ fn decision_str(d: ApprovalDecision) -> &'static str {
     }
 }
 
+fn parse_actor_kind(s: &str) -> Result<ActorKind, CliError> {
+    match s {
+        "owner" => Ok(ActorKind::Owner),
+        "agent" => Ok(ActorKind::Agent),
+        "api" => Ok(ActorKind::Api),
+        "channel" => Ok(ActorKind::Channel),
+        other => Err(CliError::BadRequest(format!(
+            "unknown actor_kind {other:?}: expected owner|agent|api|channel"
+        ))),
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct BuiltinToolSpec {
+    mutating: bool,
+    base_risk: Risk,
+    base_reversibility: Reversibility,
+}
+
+fn builtin_tool_spec(
+    action: &str,
+    params: &[(String, String)],
+) -> Result<BuiltinToolSpec, CliError> {
+    let mut spec = match action {
+        "read_file" | "list_dir" | "stat_file" | "search" | "web_search" | "memory_recall"
+        | "memory_store" => BuiltinToolSpec {
+            mutating: false,
+            base_risk: Risk::ReadOnly,
+            base_reversibility: Reversibility::Reversible,
+        },
+        "write_file" | "edit_file" | "append_file" => BuiltinToolSpec {
+            mutating: true,
+            base_risk: Risk::Medium,
+            base_reversibility: Reversibility::ReversibleInWorkspace,
+        },
+        "delete_file" | "move_file" | "run_command" => BuiltinToolSpec {
+            mutating: true,
+            base_risk: Risk::High,
+            base_reversibility: Reversibility::Irreversible,
+        },
+        "web_fetch" => BuiltinToolSpec {
+            mutating: false,
+            base_risk: Risk::ReadOnly,
+            base_reversibility: Reversibility::Reversible,
+        },
+        "image_analysis" => BuiltinToolSpec {
+            mutating: false,
+            base_risk: Risk::ReadOnly,
+            base_reversibility: Reversibility::Reversible,
+        },
+        "subagent" => BuiltinToolSpec {
+            mutating: true,
+            base_risk: Risk::Medium,
+            base_reversibility: Reversibility::Irreversible,
+        },
+        other => {
+            return Err(CliError::BadRequest(format!(
+                "unknown built-in action {other:?}; prepare-batch only supports default Hub tools"
+            )))
+        }
+    };
+    if (action == "web_fetch" && web_fetch_is_egress_mutating(params))
+        || (action == "image_analysis" && image_analysis_has_url_image(params))
+    {
+        spec.mutating = true;
+        spec.base_reversibility = Reversibility::Irreversible;
+    }
+    Ok(spec)
+}
+
+fn param_value<'a>(params: &'a [(String, String)], key: &str) -> Option<&'a str> {
+    params
+        .iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.as_str())
+}
+
+fn web_fetch_is_egress_mutating(params: &[(String, String)]) -> bool {
+    let method = param_value(params, "method")
+        .unwrap_or("GET")
+        .to_uppercase();
+    let has_body = param_value(params, "body").is_some_and(|body| !body.is_empty());
+    method != "GET" || has_body
+}
+
+fn image_analysis_has_url_image(params: &[(String, String)]) -> bool {
+    let Some(images_raw) = param_value(params, "images") else {
+        return false;
+    };
+    images_raw
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .any(|spec| spec.starts_with("http://") || spec.starts_with("https://"))
+}
+
+fn canonical_params(pairs: &[(String, String)]) -> String {
+    let mut sorted = pairs.to_vec();
+    sorted.sort();
+    let mut out = String::new();
+    for (key, value) in &sorted {
+        out.push_str(&key.len().to_string());
+        out.push(':');
+        out.push_str(key);
+        out.push('=');
+        out.push_str(&value.len().to_string());
+        out.push(':');
+        out.push_str(value);
+        out.push(';');
+    }
+    out
+}
+
 fn validate_action_digest(s: &str) -> Result<(), CliError> {
     // The Hub's digest is lowercase 64-hex SHA-256 (friday_crypto::action_digest).
     // We must sign the EXACT form the Hub compares against, so require lowercase.
@@ -249,6 +409,14 @@ fn validate_action_digest(s: &str) -> Result<(), CliError> {
         Ok(())
     } else {
         Err(CliError::BadActionDigest)
+    }
+}
+
+fn validate_nonempty_field(value: &str, field: &str) -> Result<(), CliError> {
+    if value.trim().is_empty() {
+        Err(CliError::BadRequest(format!("{field} must not be empty")))
+    } else {
+        Ok(())
     }
 }
 
@@ -311,6 +479,109 @@ pub fn canonical_batch_bytes(
         signature: None,
     };
     canonical_approval_batch_signature_bytes(&batch)
+}
+
+/// Produce a signable D20 W2 pending batch from action specs, without reading an
+/// operator key, signing, executing, or touching live state. Irreversible actions are
+/// fail-closed here so a batch signature can never become a path around the per-action
+/// manual gate for hard-excluded operations.
+pub fn prepare_batch_request(req: &PrepareBatchRequest) -> Result<PendingBatchRequest, CliError> {
+    let decision = parse_decision(&req.decision)?;
+    validate_nonempty_field(&req.batch_sign_id, "batch_sign_id")?;
+    if req.expires_at <= 0 {
+        return Err(CliError::BadRequest(
+            "expires_at must be a positive epoch-ms".to_string(),
+        ));
+    }
+    if req.actions.is_empty() {
+        return Err(CliError::BadRequest(
+            "actions must not be empty".to_string(),
+        ));
+    }
+    let issuer = req
+        .issuer
+        .clone()
+        .unwrap_or_else(|| CANONICAL_GATE_ISSUER.to_string());
+    validate_nonempty_field(&issuer, "issuer")?;
+
+    let mut action_digests = Vec::with_capacity(req.actions.len());
+    for spec in &req.actions {
+        let request = build_prepared_action_request(spec)?;
+        action_digests.push(action_digest(&canonical_action_bytes(&request)));
+    }
+    validate_batch_digests(&action_digests)?;
+
+    Ok(PendingBatchRequest {
+        batch_sign_id: req.batch_sign_id.clone(),
+        action_digests,
+        expires_at: req.expires_at,
+        decision: decision_str(decision).to_string(),
+        issuer: Some(issuer),
+        plan_label: req.plan_label.clone(),
+        worktree: req.worktree.clone(),
+    })
+}
+
+/// Build the same canonical request shape that the Hub will authorize for the supplied
+/// action spec: registry-owned mutating/risk/reversibility, sorted length-prefixed
+/// params, and caller-supplied actor/surface identity.
+pub fn build_prepared_action_request(
+    spec: &BatchActionSpec,
+) -> Result<MutatingActionRequest, CliError> {
+    validate_nonempty_field(&spec.action, "action")?;
+    validate_nonempty_field(&spec.actor_id, "actor_id")?;
+    validate_nonempty_field(&spec.surface, "surface")?;
+    if let Some(principal_id) = &spec.principal_id {
+        validate_nonempty_field(principal_id, "principal_id")?;
+    }
+    if let Some(idempotency_key) = &spec.idempotency_key {
+        validate_nonempty_field(idempotency_key, "idempotency_key")?;
+    }
+    if let Some(plan_digest) = &spec.plan_digest {
+        validate_nonempty_field(plan_digest, "plan_digest")?;
+    }
+
+    let actor_kind = parse_actor_kind(&spec.actor_kind)?;
+    let mut param_pairs = Vec::with_capacity(spec.params.len());
+    for param in &spec.params {
+        validate_nonempty_field(&param.key, "param.key")?;
+        param_pairs.push((param.key.clone(), param.value.clone()));
+    }
+
+    let tool_spec = builtin_tool_spec(&spec.action, &param_pairs)?;
+    let classification = friday_core::gate::classify_with_reversibility(
+        tool_spec.mutating,
+        tool_spec.base_risk,
+        tool_spec.base_reversibility,
+        &spec.action,
+        &param_pairs,
+    );
+    if classification.reversibility() == Reversibility::Irreversible {
+        return Err(CliError::BadRequest(format!(
+            "batch action classified irreversible: {}",
+            spec.action
+        )));
+    }
+
+    let parameters = if spec.params.is_empty() {
+        None
+    } else {
+        Some(canonical_params(&param_pairs))
+    };
+    Ok(MutatingActionRequest::from_classification(
+        classification,
+        spec.action.clone(),
+        Actor {
+            kind: actor_kind,
+            id: spec.actor_id.clone(),
+            principal_id: spec.principal_id.clone(),
+        },
+        spec.surface.clone(),
+        Vec::<LocalClaim>::new(),
+        parameters,
+        spec.idempotency_key.clone(),
+        spec.plan_digest.clone(),
+    ))
 }
 
 /// Write the operator's PRIVATE seed (hex) to `path`, created fresh with `0o600`
