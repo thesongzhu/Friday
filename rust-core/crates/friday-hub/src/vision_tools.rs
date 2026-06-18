@@ -1,4 +1,5 @@
-//! L2-3 `image_analysis` capability tool — vision over Claude, image input fail-closed-validated.
+//! L2-3 `image_analysis` capability tool — vision over a selected provider, image input
+//! fail-closed-validated.
 //!
 //! Ported from the TS oracle `src/agent/tools/friday-agent-image-analysis-tool.ts`. This is the
 //! THIRD L2 capability tool (after web_fetch / web_search). It lets the agent send image(s) +
@@ -7,8 +8,8 @@
 //! ## What this module does vs what `friday-vision` does (the split)
 //! The [`VisionExecutor`] here is the SECURITY boundary: it ACQUIRES + VALIDATES every image
 //! BEFORE any model call, then hands a fully-validated [`friday_vision::VisionRequest`] to an
-//! injected [`friday_vision::VisionModelClient`] (the Claude impl in prod, a stub in tests). The
-//! model-call shaping (the Anthropic Messages-API image-bearing request) lives in `friday-vision`.
+//! injected [`friday_vision::VisionModelClient`] (provider-selected in prod, a stub in tests). The
+//! model-call shaping (the provider image-bearing request) lives in `friday-vision`.
 //!
 //! ## Image-input validation (SECURITY — no-degrade critical)
 //! The TS oracle accepts three image forms; each is validated fail-closed here:
@@ -39,8 +40,8 @@ use crate::ssrf_guard::SsrfPolicy;
 use crate::{ExecError, ToolExecutor, ToolReceipt};
 use base64::Engine as _;
 use friday_vision::{
-    ClaudeVisionClient, VisionError, VisionImage, VisionModelClient, VisionOutcome, VisionRequest,
-    ALLOWED_MEDIA_TYPES,
+    ClaudeVisionClient, OpenAiCompatibleVisionClient, VisionError, VisionImage, VisionModelClient,
+    VisionOutcome, VisionRequest, ALLOWED_MEDIA_TYPES, VISION_PROVIDER_ENV_KEY,
 };
 use std::io::Read as _;
 use std::path::PathBuf;
@@ -94,7 +95,8 @@ const VALID_DETAILS: &[&str] = &["low", "high", "auto"];
 /// "no vision model configured" path (the model SEES the warning, never a silent change).
 const NO_VISION_PROVIDER_WARNING: &str =
     "image_analysis is unavailable: no vision provider credential is configured \
-     (set FRIDAY_ANTHROPIC_API_KEY on the Hub). Refusing to silently skip image analysis.";
+     (set FRIDAY_ANTHROPIC_API_KEY, or set FRIDAY_VISION_PROVIDER=openai with OPENAI_API_KEY, \
+     on the Hub). Refusing to silently skip image analysis.";
 
 /// Executes the `image_analysis` action: validate+acquire images → build a `VisionRequest` →
 /// delegate to the injected [`VisionModelClient`]. Holds the workspace `root` (for local-path
@@ -497,18 +499,27 @@ impl std::fmt::Display for VisionToolError {
     }
 }
 
-/// The runtime's [`VisionModelClient`]: per call it lazily constructs a [`ClaudeVisionClient`]
-/// from the Hub environment (`FRIDAY_ANTHROPIC_API_KEY`) and delegates. A MISSING/empty key
-/// surfaces as [`VisionError::CredentialMissing`] (→ the executor's fail-closed warning receipt,
-/// so the model sees it) — NEVER a silent fallback to a different provider. Constructing per call
-/// (rather than once at runtime boot) means the operator can provision the key without a restart,
-/// and an unkeyed Hub stays cleanly dark. The vision tool is itself flag-gated OFF by default, so
-/// this is reached only when `FRIDAY_VISION_ENABLED=1`.
+/// The runtime's [`VisionModelClient`]: per call it lazily constructs the selected provider client
+/// and delegates. Absent selector keeps the existing Claude default. Exactly
+/// `FRIDAY_VISION_PROVIDER=openai` selects the OpenAI-compatible Responses-API seam. A
+/// MISSING/empty key surfaces as [`VisionError::CredentialMissing`] (→ the executor's fail-closed
+/// warning receipt, so the model sees it) — NEVER a silent fallback to a different provider.
+/// Constructing per call (rather than once at runtime boot) means the operator can provision the
+/// key without a restart, and an unkeyed Hub stays cleanly dark. The vision tool is itself
+/// flag-gated OFF by default, so this is reached only when `FRIDAY_VISION_ENABLED=1`.
 struct RuntimeVisionClient;
 
 impl VisionModelClient for RuntimeVisionClient {
     fn analyze(&self, request: &VisionRequest) -> Result<VisionOutcome, VisionError> {
-        ClaudeVisionClient::from_env()?.analyze(request)
+        match std::env::var(VISION_PROVIDER_ENV_KEY)
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "openai" => OpenAiCompatibleVisionClient::from_env()?.analyze(request),
+            _ => ClaudeVisionClient::from_env()?.analyze(request),
+        }
     }
 }
 

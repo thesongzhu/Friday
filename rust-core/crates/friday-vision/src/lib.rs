@@ -1,9 +1,10 @@
 //! Friday F11 / L2-3 vision (`image_analysis`) capability — the model-call seam.
 //!
 //! This crate carries the [`VisionModelClient`] DI trait (the seam the friday-hub
-//! `VisionExecutor` delegates to after it has VALIDATED + ACQUIRED the image bytes), a real
-//! Claude/Anthropic vision impl ([`ClaudeVisionClient`]), and a deterministic test stub
-//! ([`StubVisionClient`]). The image ACQUISITION + VALIDATION (workspace-root scoping, SSRF on
+//! `VisionExecutor` delegates to after it has VALIDATED + ACQUIRED the image bytes), real
+//! Claude/Anthropic and OpenAI-compatible vision impls ([`ClaudeVisionClient`] and
+//! [`OpenAiCompatibleVisionClient`]), and a deterministic test stub ([`StubVisionClient`]).
+//! The image ACQUISITION + VALIDATION (workspace-root scoping, SSRF on
 //! URL images, data-uri caps, count/size bounds) lives in the friday-hub `VisionExecutor` —
 //! NOT here. This crate receives ALREADY-VALIDATED, already-base64 image payloads + a prompt
 //! and turns them into ONE provider call.
@@ -18,21 +19,39 @@
 //!
 //! DeepSeek (`friday-deepseek`, the default brain) exposes a TEXT chat-completions route only;
 //! the Friday DeepSeek crate has NO image-input message shape, and the public DeepSeek
-//! chat-completions API Friday targets is not a vision endpoint. So the ONE real vision impl is
-//! Claude. This is recorded honestly: the trait is provider-agnostic (a future DeepSeek-vision
-//! or other impl can be added), but today Claude is the only real path and the tool is DARK
-//! (flipping `FRIDAY_VISION_ENABLED` live is operator-gated on provider + token cost).
+//! chat-completions API Friday targets is not a vision endpoint. Friday therefore keeps Claude as
+//! the default runtime path, while B5 adds an OpenAI-compatible Responses-API vision seam that can
+//! be selected explicitly by the Hub. The tool is still DARK (flipping `FRIDAY_VISION_ENABLED`
+//! live is operator-gated on provider + token cost).
 //!
-//! ## The `detail` field — TS-parity, no-op for Claude (honest gap)
+//! ## The `detail` field — TS-parity, forwarded only by OpenAI-compatible vision
 //! The TS oracle's `image_analysis` tool has a `detail` param ("low"/"high"/"auto"), which is an
 //! OpenAI-vision concept. The Anthropic Messages API image block has NO `detail` field. So the
 //! detail value is carried through [`VisionRequest::detail`] for schema parity + surfaced in the
-//! request (and the executor validates it), but the Claude impl does NOT send it to the API
-//! (sending an unknown field would 400). It is documented as a no-op for the Claude route.
+//! request (and the executor validates it). The Claude impl does NOT send it to the API (sending
+//! an unknown field would 400); the OpenAI-compatible impl forwards it on each `input_image`.
 
 use base64::Engine as _;
 use friday_anthropic::{api_key_from_env_var, Transport, UreqTransport};
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
+
+/// Hub env var for the OpenAI-compatible vision key. The value is read only by the Hub-side
+/// runtime client and is never logged or exposed.
+pub const OPENAI_VISION_ENV_KEY: &str = "OPENAI_API_KEY";
+
+/// Optional provider selector consumed by friday-hub's runtime vision client. Absent/anything
+/// else keeps the existing Claude default; exactly `openai` selects the OpenAI-compatible seam.
+pub const VISION_PROVIDER_ENV_KEY: &str = "FRIDAY_VISION_PROVIDER";
+
+/// Default OpenAI-compatible base URL.
+pub const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com";
+
+/// Optional OpenAI-compatible base URL override for tests/self-hosted compatible endpoints.
+pub const OPENAI_BASE_URL_ENV_KEY: &str = "FRIDAY_OPENAI_BASE_URL";
+
+/// Default OpenAI-compatible vision model when the caller pins none.
+pub const DEFAULT_OPENAI_VISION_MODEL: &str = "gpt-5.5";
 
 /// Default Claude vision model when the caller pins none. Current Claude model
 /// (`claude-opus-4-8`) — vision-capable. The route/caller may override via [`VisionRequest::model`].
@@ -71,8 +90,8 @@ pub struct VisionRequest {
     pub images: Vec<VisionImage>,
     /// Optional model override; `None` ⇒ [`DEFAULT_VISION_MODEL`].
     pub model: Option<String>,
-    /// Optional OpenAI-style detail ("low"/"high"/"auto"). TS-parity ONLY — the Claude impl does
-    /// NOT forward it (Anthropic has no image `detail` field). Carried + validated upstream.
+    /// Optional OpenAI-style detail ("low"/"high"/"auto"). The Claude impl does NOT forward it
+    /// (Anthropic has no image `detail` field); OpenAI-compatible vision forwards it.
     pub detail: Option<String>,
     /// Optional max output tokens; `None` ⇒ [`DEFAULT_MAX_TOKENS`].
     pub max_tokens: Option<u32>,
@@ -115,6 +134,242 @@ pub enum VisionError {
 /// — or a fail-closed [`VisionError`] (NEVER a silent fallback to a different provider/model).
 pub trait VisionModelClient {
     fn analyze(&self, request: &VisionRequest) -> Result<VisionOutcome, VisionError>;
+}
+
+// ── Real OpenAI-compatible Responses vision client ──
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct OpenAiVisionHttpRequest {
+    pub url: String,
+    pub headers: BTreeMap<String, String>,
+    pub body: Value,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct OpenAiVisionHttpResponse {
+    pub status: u16,
+    pub body: Value,
+}
+
+pub trait OpenAiVisionTransport {
+    fn post_json(
+        &self,
+        request: &OpenAiVisionHttpRequest,
+    ) -> Result<OpenAiVisionHttpResponse, VisionError>;
+}
+
+pub struct UreqOpenAiVisionTransport {
+    agent: ureq::Agent,
+}
+
+impl UreqOpenAiVisionTransport {
+    pub fn new() -> Self {
+        Self {
+            agent: ureq::AgentBuilder::new()
+                .timeout(std::time::Duration::from_millis(
+                    friday_anthropic::ANTHROPIC_REQUEST_TIMEOUT_MS,
+                ))
+                .build(),
+        }
+    }
+}
+
+impl Default for UreqOpenAiVisionTransport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl OpenAiVisionTransport for UreqOpenAiVisionTransport {
+    fn post_json(
+        &self,
+        request: &OpenAiVisionHttpRequest,
+    ) -> Result<OpenAiVisionHttpResponse, VisionError> {
+        let mut req = self.agent.post(&request.url);
+        for (key, value) in &request.headers {
+            req = req.set(key, value);
+        }
+        let resp = req
+            .send_json(request.body.clone())
+            .map_err(map_openai_ureq_err)?;
+        let status = resp.status();
+        let body = resp
+            .into_json::<Value>()
+            .map_err(|e| VisionError::Provider(format!("invalid JSON: {e}")))?;
+        Ok(OpenAiVisionHttpResponse { status, body })
+    }
+}
+
+fn map_openai_ureq_err(e: ureq::Error) -> VisionError {
+    match e {
+        ureq::Error::Status(code, _resp) => VisionError::Provider(format!("http status {code}")),
+        ureq::Error::Transport(t) => VisionError::Provider(format!("transport: {}", t.kind())),
+    }
+}
+
+/// OpenAI-compatible Responses-API vision client. It uses the same validated [`VisionRequest`]
+/// seam as Claude, but shapes the body as `input_text` + one `input_image` per validated image.
+pub struct OpenAiCompatibleVisionClient<T: OpenAiVisionTransport> {
+    transport: T,
+    api_key: Option<String>,
+    base_url: String,
+    default_model: String,
+}
+
+impl OpenAiCompatibleVisionClient<UreqOpenAiVisionTransport> {
+    pub fn from_env() -> Result<Self, VisionError> {
+        let api_key = std::env::var(OPENAI_VISION_ENV_KEY)
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .ok_or(VisionError::CredentialMissing(OPENAI_VISION_ENV_KEY))?;
+        let base_url = std::env::var(OPENAI_BASE_URL_ENV_KEY)
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.to_string());
+        Ok(Self::new(
+            UreqOpenAiVisionTransport::new(),
+            base_url,
+            Some(api_key),
+        ))
+    }
+}
+
+impl<T: OpenAiVisionTransport> OpenAiCompatibleVisionClient<T> {
+    pub fn new(transport: T, base_url: impl Into<String>, api_key: Option<String>) -> Self {
+        Self {
+            transport,
+            api_key,
+            base_url: base_url.into().trim_end_matches('/').to_string(),
+            default_model: DEFAULT_OPENAI_VISION_MODEL.to_string(),
+        }
+    }
+
+    pub fn with_default_model(
+        transport: T,
+        base_url: impl Into<String>,
+        api_key: Option<String>,
+        default_model: impl Into<String>,
+    ) -> Self {
+        Self {
+            transport,
+            api_key,
+            base_url: base_url.into().trim_end_matches('/').to_string(),
+            default_model: default_model.into(),
+        }
+    }
+
+    pub fn build_http_request(
+        &self,
+        request: &VisionRequest,
+    ) -> Result<OpenAiVisionHttpRequest, VisionError> {
+        if request.images.is_empty() {
+            return Err(VisionError::NoImages);
+        }
+        let api_key = self
+            .api_key
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .ok_or(VisionError::CredentialMissing(OPENAI_VISION_ENV_KEY))?;
+        let model = request.model.as_deref().unwrap_or(&self.default_model);
+        let max_output_tokens = request.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS);
+        let mut content = vec![json!({ "type": "input_text", "text": request.prompt })];
+        for image in &request.images {
+            let data_url = format!("data:{};base64,{}", image.media_type, image.base64_data);
+            let mut image_obj = json!({ "type": "input_image", "image_url": data_url });
+            if let Some(detail) = request.detail.as_deref().filter(|s| !s.trim().is_empty()) {
+                image_obj["detail"] = json!(detail);
+            }
+            content.push(image_obj);
+        }
+
+        let mut headers = BTreeMap::new();
+        headers.insert("Content-Type".to_string(), "application/json".to_string());
+        headers.insert("Accept".to_string(), "application/json".to_string());
+        headers.insert("Authorization".to_string(), format!("Bearer {api_key}"));
+        Ok(OpenAiVisionHttpRequest {
+            url: format!("{}/v1/responses", self.base_url),
+            headers,
+            body: json!({
+                "model": model,
+                "max_output_tokens": max_output_tokens,
+                "input": [{
+                    "role": "user",
+                    "content": content
+                }]
+            }),
+        })
+    }
+}
+
+impl<T: OpenAiVisionTransport> VisionModelClient for OpenAiCompatibleVisionClient<T> {
+    fn analyze(&self, request: &VisionRequest) -> Result<VisionOutcome, VisionError> {
+        let model = request
+            .model
+            .as_deref()
+            .unwrap_or(&self.default_model)
+            .to_string();
+        let http = self.build_http_request(request)?;
+        let response = self.transport.post_json(&http)?;
+        if !(200..=299).contains(&response.status) {
+            return Err(VisionError::Provider(format!(
+                "http status {}",
+                response.status
+            )));
+        }
+        let analysis = extract_openai_output_text(&response.body)?;
+        let usage = response.body.get("usage");
+        Ok(VisionOutcome {
+            analysis,
+            model: response
+                .body
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or(&model)
+                .to_string(),
+            image_count: request.images.len(),
+            input_tokens: usage
+                .and_then(|u| u.get("input_tokens"))
+                .and_then(Value::as_i64),
+            output_tokens: usage
+                .and_then(|u| u.get("output_tokens"))
+                .and_then(Value::as_i64),
+        })
+    }
+}
+
+fn extract_openai_output_text(body: &Value) -> Result<String, VisionError> {
+    let text = body
+        .get("output_text")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            body.pointer("/choices/0/message/content")
+                .and_then(Value::as_str)
+        })
+        .or_else(|| {
+            body.get("output")
+                .and_then(Value::as_array)
+                .and_then(|items| {
+                    items.iter().find_map(|item| {
+                        item.get("content")
+                            .and_then(Value::as_array)
+                            .and_then(|content| {
+                                content.iter().find_map(|block| {
+                                    block.get("text").and_then(Value::as_str).or_else(|| {
+                                        block
+                                            .get("type")
+                                            .and_then(Value::as_str)
+                                            .filter(|t| *t == "output_text")
+                                            .and_then(|_| block.get("text").and_then(Value::as_str))
+                                    })
+                                })
+                            })
+                    })
+                })
+        })
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .ok_or_else(|| VisionError::Provider("empty OpenAI vision output".to_string()))?;
+    Ok(text.to_string())
 }
 
 // ── Real Claude/Anthropic vision client ──
@@ -325,6 +580,30 @@ mod tests {
         }
     }
 
+    struct MockOpenAiTransport {
+        last_request: RefCell<Option<OpenAiVisionHttpRequest>>,
+        response: OpenAiVisionHttpResponse,
+    }
+
+    impl MockOpenAiTransport {
+        fn new(response: OpenAiVisionHttpResponse) -> Self {
+            Self {
+                last_request: RefCell::new(None),
+                response,
+            }
+        }
+    }
+
+    impl OpenAiVisionTransport for MockOpenAiTransport {
+        fn post_json(
+            &self,
+            request: &OpenAiVisionHttpRequest,
+        ) -> Result<OpenAiVisionHttpResponse, VisionError> {
+            *self.last_request.borrow_mut() = Some(request.clone());
+            Ok(self.response.clone())
+        }
+    }
+
     fn sample_request() -> VisionRequest {
         VisionRequest {
             prompt: "What is in this image?".to_string(),
@@ -348,6 +627,18 @@ mod tests {
             "stop_reason": "end_turn",
             "usage": {"input_tokens": 42, "output_tokens": 5}
         })
+    }
+
+    fn openai_response() -> OpenAiVisionHttpResponse {
+        OpenAiVisionHttpResponse {
+            status: 200,
+            body: json!({
+                "id": "resp_x",
+                "model": "gpt-5.5",
+                "output_text": "A blue chart.",
+                "usage": {"input_tokens": 31, "output_tokens": 7}
+            }),
+        }
     }
 
     #[test]
@@ -380,6 +671,98 @@ mod tests {
             !body.to_string().contains("detail"),
             "detail must not be sent to the Anthropic API (no-op for Claude): {body}"
         );
+    }
+
+    #[test]
+    fn openai_client_builds_responses_input_images_with_detail_and_parses_usage() {
+        let mock = MockOpenAiTransport::new(openai_response());
+        let client = OpenAiCompatibleVisionClient::new(
+            mock,
+            "https://openai.example",
+            Some("sk-test".into()),
+        );
+        let out = client.analyze(&sample_request()).unwrap();
+
+        assert_eq!(out.analysis, "A blue chart.");
+        assert_eq!(out.model, "gpt-5.5");
+        assert_eq!(out.image_count, 1);
+        assert_eq!(out.input_tokens, Some(31));
+        assert_eq!(out.output_tokens, Some(7));
+
+        let req = client.transport.last_request.borrow().clone().unwrap();
+        assert_eq!(req.url, "https://openai.example/v1/responses");
+        assert_eq!(
+            req.headers.get("Authorization").map(String::as_str),
+            Some("Bearer sk-test")
+        );
+        assert_eq!(req.body["model"], DEFAULT_OPENAI_VISION_MODEL);
+        assert_eq!(req.body["max_output_tokens"], DEFAULT_MAX_TOKENS);
+        let content = req.body["input"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2, "input_text + input_image");
+        assert_eq!(content[0]["type"], "input_text");
+        assert_eq!(content[0]["text"], "What is in this image?");
+        assert_eq!(content[1]["type"], "input_image");
+        assert_eq!(content[1]["image_url"], "data:image/png;base64,aGVsbG8=");
+        assert_eq!(content[1]["detail"], "high");
+    }
+
+    #[test]
+    fn openai_client_multiple_images_each_get_data_url_and_detail() {
+        let mock = MockOpenAiTransport::new(openai_response());
+        let client = OpenAiCompatibleVisionClient::with_default_model(
+            mock,
+            "https://openai.example/",
+            Some("sk-test".into()),
+            "gpt-vision-test",
+        );
+        let mut req = sample_request();
+        req.images.push(VisionImage {
+            media_type: "image/jpeg".to_string(),
+            base64_data: "d29ybGQ=".to_string(),
+        });
+        req.max_tokens = Some(256);
+        let _ = client.analyze(&req).unwrap();
+        let http = client.transport.last_request.borrow().clone().unwrap();
+        assert_eq!(http.body["model"], "gpt-vision-test");
+        assert_eq!(http.body["max_output_tokens"], 256);
+        let content = http.body["input"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 3, "input_text + 2 input_image blocks");
+        assert_eq!(content[1]["image_url"], "data:image/png;base64,aGVsbG8=");
+        assert_eq!(content[1]["detail"], "high");
+        assert_eq!(content[2]["image_url"], "data:image/jpeg;base64,d29ybGQ=");
+        assert_eq!(content[2]["detail"], "high");
+    }
+
+    #[test]
+    fn openai_client_missing_key_fails_closed_before_transport() {
+        let mock = MockOpenAiTransport::new(openai_response());
+        let client = OpenAiCompatibleVisionClient::new(mock, "https://openai.example", None);
+        let err = client.analyze(&sample_request()).unwrap_err();
+        assert!(matches!(
+            err,
+            VisionError::CredentialMissing(OPENAI_VISION_ENV_KEY)
+        ));
+        assert!(client.transport.last_request.borrow().is_none());
+    }
+
+    #[test]
+    fn openai_client_parses_nested_responses_output_text_shape() {
+        let mock = MockOpenAiTransport::new(OpenAiVisionHttpResponse {
+            status: 200,
+            body: json!({
+                "output": [{
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": " nested text "}]
+                }]
+            }),
+        });
+        let client = OpenAiCompatibleVisionClient::new(
+            mock,
+            "https://openai.example",
+            Some("sk-test".into()),
+        );
+        let out = client.analyze(&sample_request()).unwrap();
+        assert_eq!(out.analysis, "nested text");
     }
 
     #[test]
