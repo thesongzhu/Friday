@@ -7,6 +7,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFridayAgentContextReplayRepository } from "../../../src/agent/persistence/friday-agent-context-replay-repository.js";
 import type { FridayChannelMessage, FridayChannelPlugin } from "#channels";
+import { createFridaySqliteLayer } from "#state";
 import {
   createFridayChannelNaturalTriggerResolver,
   createFridayHub,
@@ -14,12 +15,15 @@ import {
   sanitizeFridayChannelVisibleReply,
 } from "#hub";
 import type { FridayHub } from "#hub";
+import { createFridaySessionService } from "#sessions";
+import type { FridaySessionService } from "#sessions";
 import type { FridayCompiledWorkflowGraphV2 } from "#workflows";
 import {
   clearAutoDetectProviderEnv,
   restoreAutoDetectProviderEnv,
   type FridayAutoDetectProviderEnvSnapshot,
 } from "../../_helpers/auto-detect-provider-env.js";
+import { createTestIdGenerator } from "../satellites/_helpers/create-test-db.helper.js";
 
 function createTestChannelPlugin(kind = "testchannel"): {
   plugin: FridayChannelPlugin;
@@ -134,6 +138,29 @@ async function waitForWorkflowRunStable(
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   return hub.workflowRuntime.execution.getRun(runId)?.status ?? "unknown";
+}
+
+async function withTestOnlySessionSeedService<T>(
+  stateDir: string,
+  fn: (service: FridaySessionService) => Promise<T>,
+): Promise<T> {
+  const seedDb = createFridaySqliteLayer({
+    dbPath: path.join(stateDir, "friday.db"),
+    readPoolSize: 1,
+    pragmas: { busyTimeoutMs: 5_000, synchronous: "NORMAL" },
+    runMigrations: false,
+  });
+  try {
+    const seedService = createFridaySessionService({
+      db: seedDb,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => new Date().toISOString(),
+      allowTestOnlySessionExecution: true,
+    });
+    return await fn(seedService);
+  } finally {
+    seedDb.close();
+  }
 }
 
 describe("channel natural-trigger parent runtime resolver", () => {
@@ -851,11 +878,6 @@ describe("channel ENGINE control-plane write guard (G5 completeness, default fai
       identityMap: {},
     });
 
-    // Seed a PRE-EXISTING session row + a distinctive sentinel focus through the raw
-    // session service (no guard on the raw instance). Every field finalizeFridayConversationFocus
-    // would deterministically rewrite (currentTopicSummary / assistantAnchorSummary / lastRunId /
-    // taskLedger / fingerprints) is set to an unmistakable sentinel so any write is detectable.
-    await hub!.apiRuntime.sessionService.getOrCreateSession(sessionKey);
     const seededFocus = {
       currentTopicFingerprint: "SENTINEL_TOPIC_FP",
       currentTopicSummary: "SENTINEL_TOPIC_SUMMARY_DO_NOT_OVERWRITE",
@@ -867,9 +889,19 @@ describe("channel ENGINE control-plane write guard (G5 completeness, default fai
       lastTurnKind: "new_topic" as const,
       updatedAt: "2020-01-01T00:00:00.000Z",
     };
-    await hub!.apiRuntime.sessionService.setConversationFocus(sessionKey, seededFocus);
 
-    // Confirm the seed landed (raw write is NOT guarded; only the channel-engine dep is).
+    // Seed a PRE-EXISTING session row + a distinctive sentinel focus through a
+    // test-oracle-only service pointed at the same sqlite DB. Every field
+    // finalizeFridayConversationFocus would deterministically rewrite
+    // (currentTopicSummary / assistantAnchorSummary / lastRunId / taskLedger /
+    // fingerprints) is set to an unmistakable sentinel so any write is detectable.
+    await withTestOnlySessionSeedService(stateDir!, async (seedService) => {
+      await seedService.getOrCreateSession(sessionKey);
+      await seedService.setConversationFocus(sessionKey, seededFocus);
+    });
+
+    // Confirm the seed landed. Only this fixture service used the test-oracle write flag;
+    // the channel-engine dep remains default fail-closed.
     const focusBefore = await hub!.apiRuntime.sessionService.getConversationFocus(sessionKey);
     expect(focusBefore?.currentTopicSummary).toBe("SENTINEL_TOPIC_SUMMARY_DO_NOT_OVERWRITE");
     expect(focusBefore?.lastRunId).toBe("SENTINEL_LAST_RUN_ID");
@@ -958,36 +990,39 @@ describe("channel ENGINE control-plane write guard (G5 completeness, default fai
       identityMap: {},
     });
 
-    // Seed a PRE-EXISTING session with a multi-turn topic history (raw service, no guard).
+    // Seed a PRE-EXISTING session with a multi-turn topic history through a
+    // test-oracle-only service pointed at the same sqlite DB.
     // The seeded turns establish a "deployment" topic so prepareTurn produces focus_topic /
     // topic_block selectedBlocks (gated on focusState.currentTopicStartSequence), which is
     // what makes buildSelectedBlockCompactionEvidence non-null → persistCompactionEvidence
     // fires in the turn-preparer (before dispatch / before the executeRun guard).
-    await hub!.apiRuntime.sessionService!.getOrCreateSession(sessionKey);
-    await hub!.apiRuntime.sessionService!.addMessage(sessionKey, {
-      role: "user",
-      content: "Let's plan the production deployment. Decision: deploy to AWS ECS.",
-      contentText: "Let's plan the production deployment. Decision: deploy to AWS ECS.",
-    });
-    await hub!.apiRuntime.sessionService!.addMessage(sessionKey, {
-      role: "assistant",
-      content: "Plan recorded. Decision: deploy to AWS ECS. TODO: run smoke tests. Open question: use Redis?",
-      contentText: "Plan recorded. Decision: deploy to AWS ECS. TODO: run smoke tests. Open question: use Redis?",
-    });
-    await hub!.apiRuntime.sessionService!.addMessage(sessionKey, {
-      role: "user",
-      content: "Continue with the deployment topic and the ECS plan.",
-      contentText: "Continue with the deployment topic and the ECS plan.",
-    });
-    // Focus whose currentTopicStartSequence covers the seeded turns → topic-window /
-    // focus_topic blocks are eligible. Seeded via the raw (unguarded) service.
-    await hub!.apiRuntime.sessionService!.setConversationFocus(sessionKey, {
-      currentTopicFingerprint: "deployment-topic",
-      currentTopicSummary: "Production deployment to AWS ECS",
-      currentTopicStartSequence: 1,
-      assistantAnchorSummary: "Plan recorded; deploy to AWS ECS",
-      lastTurnKind: "new_topic" as const,
-      updatedAt: "2020-01-01T00:00:00.000Z",
+    await withTestOnlySessionSeedService(stateDir!, async (seedService) => {
+      await seedService.getOrCreateSession(sessionKey);
+      await seedService.addMessage(sessionKey, {
+        role: "user",
+        content: "Let's plan the production deployment. Decision: deploy to AWS ECS.",
+        contentText: "Let's plan the production deployment. Decision: deploy to AWS ECS.",
+      });
+      await seedService.addMessage(sessionKey, {
+        role: "assistant",
+        content: "Plan recorded. Decision: deploy to AWS ECS. TODO: run smoke tests. Open question: use Redis?",
+        contentText: "Plan recorded. Decision: deploy to AWS ECS. TODO: run smoke tests. Open question: use Redis?",
+      });
+      await seedService.addMessage(sessionKey, {
+        role: "user",
+        content: "Continue with the deployment topic and the ECS plan.",
+        contentText: "Continue with the deployment topic and the ECS plan.",
+      });
+      // Focus whose currentTopicStartSequence covers the seeded turns → topic-window /
+      // focus_topic blocks are eligible.
+      await seedService.setConversationFocus(sessionKey, {
+        currentTopicFingerprint: "deployment-topic",
+        currentTopicSummary: "Production deployment to AWS ECS",
+        currentTopicStartSequence: 1,
+        assistantAnchorSummary: "Plan recorded; deploy to AWS ECS",
+        lastTurnKind: "new_topic" as const,
+        updatedAt: "2020-01-01T00:00:00.000Z",
+      });
     });
 
     // Read-only snapshot of replay rows BEFORE the channel turn (instance-agnostic,

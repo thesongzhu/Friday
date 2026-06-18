@@ -58,10 +58,29 @@ export function createFridaySessionService(
        AND account_id IS NOT NULL
        AND account_id != ''
   `;
+  const allowLegacySessionWrites = deps.allowTestOnlySessionExecution === true;
 
-  deps.db.withWriteTransaction((db) => {
-    db.prepare(LEGACY_CHANNEL_SESSION_BACKFILL_SQL).run(deps.nowIso());
-  });
+  function assertLegacySessionWritesAllowed(): void {
+    if (deps.allowTestOnlySessionExecution !== true) {
+      throw new FridayDomainError(
+        "TS_RUNTIME_SESSION_RETIRED",
+        "TypeScript session execution is fail-closed in default/live runtime; use the Rust-owned session_lifecycle entrypoint.",
+        {
+          httpStatus: 503,
+          details: {
+            classification: "fail_closed",
+            replacement: "rust_owned_session_lifecycle_entrypoint_required",
+          },
+        },
+      );
+    }
+  }
+
+  if (allowLegacySessionWrites) {
+    deps.db.withWriteTransaction((db) => {
+      db.prepare(LEGACY_CHANNEL_SESSION_BACKFILL_SQL).run(deps.nowIso());
+    });
+  }
 
   function readConversationFocus(
     session: FridaySessionRecord | null,
@@ -179,6 +198,8 @@ export function createFridaySessionService(
 
   return {
     async createSession(input: FridaySessionCreateInput) {
+      assertLegacySessionWritesAllowed();
+
       const normalizedKey = normalizeFridaySessionKey({
         channel: input.channel,
         chatId: input.chatId,
@@ -252,6 +273,8 @@ export function createFridaySessionService(
       if (existing) {
         // Re-activate if idle
         if (existing.status === "idle") {
+          assertLegacySessionWritesAllowed();
+
           const reactivated = deps.db.withWriteTransaction((db) =>
             sessionRepo.updateStatus(db, {
               key,
@@ -264,6 +287,8 @@ export function createFridaySessionService(
         }
         return existing;
       }
+
+      assertLegacySessionWritesAllowed();
 
       const now = deps.nowIso();
       let memoryNamespace: string | undefined;
@@ -355,6 +380,8 @@ export function createFridaySessionService(
           { httpStatus: 400 },
         );
       }
+
+      assertLegacySessionWritesAllowed();
 
       const now = deps.nowIso();
       const contentJson = typeof message.content === "string"
@@ -462,6 +489,8 @@ export function createFridaySessionService(
 
     async updateMessageMetadataByIdempotency(key, input) {
       key = canonicalizeFridaySessionKey(key);
+      assertLegacySessionWritesAllowed();
+
       return deps.db.withWriteTransaction((db) =>
         messageRepo.updateMetadataByIdempotency(db, {
           sessionKey: key,
@@ -491,6 +520,7 @@ export function createFridaySessionService(
 
     async archiveSession(key) {
       key = canonicalizeFridaySessionKey(key);
+      assertLegacySessionWritesAllowed();
 
       const now = deps.nowIso();
       const session = deps.db.withWriteTransaction((db) =>
@@ -521,6 +551,8 @@ export function createFridaySessionService(
           { httpStatus: 400 },
         );
       }
+
+      assertLegacySessionWritesAllowed();
 
       return deps.db.withWriteTransaction((db) => {
         // Mark archived sessions as pruned
@@ -554,19 +586,7 @@ export function createFridaySessionService(
       // unless the explicit test-oracle flag is set. The scheduler's executeJob
       // catches this throw, records markFailed, and reschedules — no crash, no
       // partial sweep. Never default this flag on in production.
-      if (deps.allowTestOnlySessionExecution !== true) {
-        throw new FridayDomainError(
-          "TS_RUNTIME_SESSION_RETIRED",
-          "TypeScript session execution is fail-closed in default/live runtime; use the Rust-owned session_lifecycle entrypoint.",
-          {
-            httpStatus: 503,
-            details: {
-              classification: "fail_closed",
-              replacement: "rust_owned_session_lifecycle_entrypoint_required",
-            },
-          },
-        );
-      }
+      assertLegacySessionWritesAllowed();
 
       const now = deps.nowIso();
       const nowMs = new Date(now).getTime();
@@ -693,6 +713,7 @@ export function createFridaySessionService(
 
     async alignSessionContext(key, input) {
       key = canonicalizeFridaySessionKey(key);
+      assertLegacySessionWritesAllowed();
 
       return deps.db.withWriteTransaction((db) => {
         const session = sessionRepo.getByKey(db, key);
@@ -763,19 +784,7 @@ export function createFridaySessionService(
       // live path. Fails ALL callers closed BEFORE the fork write transaction
       // (and before the internal addMessage parent-summary write) unless the
       // explicit test-oracle flag is set. Never default this flag on in production.
-      if (deps.allowTestOnlySessionExecution !== true) {
-        throw new FridayDomainError(
-          "TS_RUNTIME_SESSION_RETIRED",
-          "TypeScript session execution is fail-closed in default/live runtime; use the Rust-owned session_lifecycle entrypoint.",
-          {
-            httpStatus: 503,
-            details: {
-              classification: "fail_closed",
-              replacement: "rust_owned_session_lifecycle_entrypoint_required",
-            },
-          },
-        );
-      }
+      assertLegacySessionWritesAllowed();
 
       parentKey = canonicalizeFridaySessionKey(parentKey);
 
@@ -953,6 +962,8 @@ export function createFridaySessionService(
         );
       }
 
+      assertLegacySessionWritesAllowed();
+
       // Validate parent and fork within a read
       const { fork } = deps.db.withReadConnection((db) => {
         const parent = sessionRepo.getByKey(db, parentKey);
@@ -1023,6 +1034,7 @@ export function createFridaySessionService(
 
     async resetSession(key) {
       key = canonicalizeFridaySessionKey(key);
+      assertLegacySessionWritesAllowed();
 
       const now = deps.nowIso();
 
@@ -1087,6 +1099,7 @@ export function createFridaySessionService(
 
     async setConversationFocus(key, focusState) {
       key = canonicalizeFridaySessionKey(key);
+      assertLegacySessionWritesAllowed();
 
       const now = deps.nowIso();
       const updated = deps.db.withWriteTransaction((db) => {
@@ -1122,6 +1135,7 @@ export function createFridaySessionService(
 
     async mergeMetadata(key, metadataPatch) {
       key = canonicalizeFridaySessionKey(key);
+      assertLegacySessionWritesAllowed();
 
       const now = deps.nowIso();
       const updated = deps.db.withWriteTransaction((db) => {
@@ -1153,6 +1167,7 @@ export function createFridaySessionService(
 
     async setSendPolicy(key, policy) {
       key = canonicalizeFridaySessionKey(key);
+      assertLegacySessionWritesAllowed();
 
       const now = deps.nowIso();
       const updated = deps.db.withWriteTransaction((db) =>

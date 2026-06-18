@@ -87,6 +87,7 @@ describe("Agent parity acceptance (integration)", () => {
       db,
       idGenerator,
       nowIso: () => NOW,
+      allowTestOnlySessionExecution: true,
     });
 
     const observedCalls: FridayAgentMessage[][] = [];
@@ -250,6 +251,7 @@ describe("Agent parity acceptance (integration)", () => {
       invokeSkill: async () => ({}),
       agentRuntime,
       allowTestOnlySessionRunExecution: true,
+      allowTestOnlySessionExecution: true,
     });
 
     await apiRuntime.sessionService.addMessage("discord:default:user-ctx", {

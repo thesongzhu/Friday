@@ -76,6 +76,21 @@ function createBoobyTrappedMemoryService(): FridayMemoryService {
   } as unknown as FridayMemoryService;
 }
 
+async function expectSessionWriteRetired(operation: () => Promise<unknown>): Promise<void> {
+  let caught: unknown;
+  try {
+    await operation();
+  } catch (error) {
+    caught = error;
+  }
+
+  expect(caught).toBeInstanceOf(FridayDomainError);
+  const domainError = caught as FridayDomainError;
+  expect(domainError.code).toBe("TS_RUNTIME_SESSION_RETIRED");
+  expect(domainError.httpStatus).toBe(503);
+  expect(domainError.details?.classification).toBe("fail_closed");
+}
+
 describe("Session lifecycle sweep TS-retirement method guard", () => {
   const allocatedDbs: FridaySqliteLayer[] = [];
 
@@ -163,6 +178,154 @@ describe("Session lifecycle sweep TS-retirement method guard", () => {
       archivedCount: expect.any(Number),
       prunedCount: expect.any(Number),
       hardDeletedCount: expect.any(Number),
+    });
+  });
+});
+
+describe("Session write mutators TS-retirement method guard (D1 session write legs)", () => {
+  const allocatedDbs: FridaySqliteLayer[] = [];
+  const ACTIVE_KEY = "discord:default:user1";
+
+  afterEach(() => {
+    while (allocatedDbs.length > 0) {
+      allocatedDbs.pop()!.close();
+    }
+    vi.restoreAllMocks();
+  });
+
+  function buildSessionService(
+    allowTestOnlySessionExecution?: boolean,
+    existingDb?: FridaySqliteLayer,
+  ): { db: FridaySqliteLayer; service: FridaySessionService } {
+    const db = existingDb ?? createTestDb();
+    if (!existingDb) {
+      allocatedDbs.push(db);
+    }
+    const service = createFridaySessionService({
+      db,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => NOW,
+      ...(allowTestOnlySessionExecution === undefined
+        ? {}
+        : { allowTestOnlySessionExecution }),
+    });
+    return { db, service };
+  }
+
+  async function seedActiveSession(service: FridaySessionService): Promise<void> {
+    await service.createSession({
+      channel: "discord",
+      chatId: "user1",
+      userId: "user1",
+      metadata: { seed: true },
+    });
+    await service.addMessage(ACTIVE_KEY, {
+      role: "user",
+      content: "seed message",
+      idempotencyKey: "seed-message",
+      metadata: { seed: true },
+    });
+  }
+
+  it("does not run the boot-time legacy backfill unless the test-only write flag is true", () => {
+    const db = createTestDb();
+    allocatedDbs.push(db);
+    const writeSpy = vi.spyOn(db, "withWriteTransaction");
+
+    createFridaySessionService({
+      db,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => NOW,
+    });
+
+    expect(writeSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps active getOrCreateSession as a read while failing closed missing-session creation", async () => {
+    const { db, service: seedService } = buildSessionService(true);
+    await seedActiveSession(seedService);
+
+    const { service: guardedService } = buildSessionService(undefined, db);
+
+    await expect(guardedService.getOrCreateSession(ACTIVE_KEY)).resolves.toMatchObject({
+      key: ACTIVE_KEY,
+      status: "active",
+    });
+
+    const missingKey = "discord:default:missing-user";
+    await expectSessionWriteRetired(() => guardedService.getOrCreateSession(missingKey));
+    await expect(guardedService.getSession(missingKey)).resolves.toBeNull();
+  });
+
+  it("fails closed common session write mutators before DB side effects", async () => {
+    const { db, service: seedService } = buildSessionService(true);
+    await seedActiveSession(seedService);
+    const { service: guardedService } = buildSessionService(undefined, db);
+
+    const beforeMessages = await guardedService.getMessages(ACTIVE_KEY);
+    expect(beforeMessages.length).toBe(1);
+
+    await expectSessionWriteRetired(() =>
+      guardedService.createSession({ channel: "discord", chatId: "blocked-create" }),
+    );
+    await expect(guardedService.getSession("discord:default:blocked-create")).resolves.toBeNull();
+
+    await expectSessionWriteRetired(() =>
+      guardedService.addMessage(ACTIVE_KEY, { role: "user", content: "blocked append" }),
+    );
+    await expectSessionWriteRetired(() =>
+      guardedService.updateMessageMetadataByIdempotency(ACTIVE_KEY, {
+        idempotencyKey: "seed-message",
+        metadataPatch: { blocked: true },
+      }),
+    );
+    await expectSessionWriteRetired(() => guardedService.archiveSession(ACTIVE_KEY));
+    await expectSessionWriteRetired(() => guardedService.pruneOldSessions(NOW));
+    await expectSessionWriteRetired(() => guardedService.resetSession(ACTIVE_KEY));
+    await expectSessionWriteRetired(() =>
+      guardedService.setConversationFocus(ACTIVE_KEY, { updatedAt: NOW }),
+    );
+    await expectSessionWriteRetired(() =>
+      guardedService.mergeMetadata(ACTIVE_KEY, { blocked: true }),
+    );
+    await expectSessionWriteRetired(() => guardedService.setSendPolicy(ACTIVE_KEY, "block"));
+    await expectSessionWriteRetired(() =>
+      guardedService.alignSessionContext(ACTIVE_KEY, { userId: "blocked-user" }),
+    );
+
+    const afterSession = await guardedService.getSession(ACTIVE_KEY);
+    expect(afterSession).toMatchObject({
+      status: "active",
+      userId: "user1",
+      metadata: { seed: true },
+    });
+    expect(afterSession?.sendPolicy).toBeUndefined();
+    expect(await guardedService.evaluateSendPolicy(ACTIVE_KEY)).toBe("allow");
+    expect(await guardedService.getConversationFocus(ACTIVE_KEY)).toBeNull();
+
+    const afterMessages = await guardedService.getMessages(ACTIVE_KEY);
+    expect(afterMessages).toHaveLength(beforeMessages.length);
+    expect(afterMessages[0]?.metadata).toEqual({ seed: true });
+  });
+
+  it("fails closed fork merge before parent summary or fork archive writes", async () => {
+    const { db, service: seedService } = buildSessionService(true);
+    await seedActiveSession(seedService);
+    const fork = await seedService.forkSession(ACTIVE_KEY, { taskId: "merge-retired" });
+    const beforeParentMessages = await seedService.getMessages(ACTIVE_KEY);
+
+    const { service: guardedService } = buildSessionService(undefined, db);
+    await expectSessionWriteRetired(() =>
+      guardedService.mergeForkSummary(ACTIVE_KEY, {
+        forkSessionKey: fork.forkSession.key,
+        summary: "blocked merge summary",
+        archiveFork: true,
+      }),
+    );
+
+    expect(await guardedService.getMessages(ACTIVE_KEY)).toHaveLength(beforeParentMessages.length);
+    expect(await guardedService.getSession(fork.forkSession.key)).toMatchObject({
+      status: "active",
     });
   });
 });

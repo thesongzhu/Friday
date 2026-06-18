@@ -170,6 +170,7 @@ describe("FridaySessionService", () => {
         db,
         idGenerator: createTestIdGenerator(),
         nowIso: () => NOW,
+        allowTestOnlySessionExecution: true,
       });
 
       const items = await service.listSessions({ channel: "irc" });
@@ -469,6 +470,7 @@ describe("FridaySessionService", () => {
         db,
         idGenerator: createTestIdGenerator(),
         nowIso: () => oldTime,
+        allowTestOnlySessionExecution: true,
       });
 
       await svc.createSession({ channel: "discord", chatId: "prune1" });
@@ -497,6 +499,7 @@ describe("FridaySessionService", () => {
         db,
         idGenerator: createTestIdGenerator(),
         nowIso: () => oldTime,
+        allowTestOnlySessionExecution: true,
       });
       await oldSvc.createSession({ channel: "discord", chatId: "sweep1" });
 

@@ -15,6 +15,8 @@ describe("Session Lifecycle (Integration)", () => {
       db,
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,
+      // TS-R4/G3: integration tests opt in to retired TS session mutators.
+      allowTestOnlySessionExecution: true,
     });
   });
 

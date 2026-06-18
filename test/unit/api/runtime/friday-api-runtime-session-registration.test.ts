@@ -211,6 +211,7 @@ describe("FridayApiRuntime — Session Registration", () => {
       agentEventEmitter: createFridayAgentEventEmitter(),
       allowTestOnlyAgentRunStartExecution: true,
       allowTestOnlySessionRunExecution: true,
+      allowTestOnlySessionExecution: true,
     });
 
     await runtime.sessionService.addMessage("discord:default:user1", {
@@ -267,6 +268,7 @@ describe("FridayApiRuntime — Session Registration", () => {
       agentEventEmitter: createFridayAgentEventEmitter(),
       allowTestOnlyAgentRunStartExecution: true,
       allowTestOnlySessionRunExecution: true,
+      allowTestOnlySessionExecution: true,
     });
 
     await runtime.sessionService.addMessage("discord:private-hub:user1", {
@@ -354,6 +356,7 @@ describe("FridayApiRuntime — Session Registration", () => {
       agentEventEmitter: createFridayAgentEventEmitter(),
       allowTestOnlyAgentRunStartExecution: true,
       allowTestOnlySessionRunExecution: true,
+      allowTestOnlySessionExecution: true,
     });
 
     await runtime.sessionService.addMessage("chat:private-hub:user1", {
@@ -440,6 +443,7 @@ describe("FridayApiRuntime — Session Registration", () => {
       agentEventEmitter: createFridayAgentEventEmitter(),
       allowTestOnlyAgentRunStartExecution: true,
       allowTestOnlySessionRunExecution: true,
+      allowTestOnlySessionExecution: true,
     });
 
     const route = runtimeRef.routes

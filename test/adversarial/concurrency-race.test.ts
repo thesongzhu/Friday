@@ -321,6 +321,7 @@ describe("TEST-30: Concurrent Session Idempotency Identity", () => {
       db,
       idGenerator,
       nowIso: () => "2025-06-15T10:00:00.000Z",
+      allowTestOnlySessionExecution: true,
     });
 
     const sessionKey = "discord:default:idem-race";
@@ -369,6 +370,7 @@ describe("TEST-30: Concurrent Session Idempotency Identity", () => {
       db,
       idGenerator,
       nowIso: () => "2025-06-15T10:00:00.000Z",
+      allowTestOnlySessionExecution: true,
     });
 
     const sessionKey = "discord:default:multi-idem";

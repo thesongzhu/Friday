@@ -159,6 +159,7 @@ describe("FridayApiRuntime — planning gate session loop", () => {
       resolveSkill: () => null,
       invokeSkill: async () => ({}),
       allowTestOnlyAgentRunStartExecution: true,
+      allowTestOnlySessionExecution: true,
     });
     sessionServiceRef = runtime.sessionService;
 
@@ -316,6 +317,7 @@ describe("FridayApiRuntime — planning gate session loop", () => {
       invokeSkill: async () => ({}),
       allowTestOnlyAgentRunStartExecution: true,
       allowTestOnlyAgentRunControlExecution: true,
+      allowTestOnlySessionExecution: true,
     });
     sessionServiceRef = runtime.sessionService;
 
@@ -386,6 +388,7 @@ describe("FridayApiRuntime — planning gate session loop", () => {
       resolveSkill: () => null,
       invokeSkill: async () => ({}),
       allowTestOnlyAgentRunStartExecution: true,
+      allowTestOnlySessionExecution: true,
     });
 
     const startRoute = runtime.routes.getRoutes().find((route) => route.operationId === "agent.runs.start");
@@ -452,6 +455,7 @@ describe("FridayApiRuntime — planning gate session loop", () => {
       resolveSkill: () => null,
       invokeSkill: async () => ({}),
       allowTestOnlyAgentRunStartExecution: true,
+      allowTestOnlySessionExecution: true,
     });
 
     const startRoute = runtime.routes.getRoutes().find((route) => route.operationId === "agent.runs.start");
