@@ -18,8 +18,10 @@
  */
 import { createFridayRustHubAgentRunSealedClient } from "../../src/api/mission-spine/friday-rust-hub-agent-run-ws-sealed-client.js";
 import { createFridayMissionSpineDispatchAdapter } from "../../src/api/mission-spine/friday-mission-spine-dispatch-adapter.js";
+import { createFridayMemorySpineDispatchAdapter } from "../../src/api/mission-spine/friday-memory-spine-dispatch-adapter.js";
 import { createFridayMissionAutoDispatchDriver } from "../../src/api/mission-spine/friday-mission-auto-dispatch-driver.js";
 import { createFridayMissionSpineRoutes } from "../../src/api/http/routes/friday-mission-spine-routes.js";
+import { createFridayMemorySpineRoutes } from "../../src/api/http/routes/friday-memory-spine-routes.js";
 import {
   RUST_ROUTE_CLAUDE_MODEL,
   RUST_ROUTE_CLAUDE_PROVIDER_ID,
@@ -273,6 +275,63 @@ async function main(): Promise<void> {
           constraints: dispatchedInput.constraints ?? null,
           allowedRustRouteTools: dispatchedInput.allowedRustRouteTools ?? [],
           missionContext: dispatchedInput.missionContext ?? null,
+        }) + "\n",
+      );
+      process.exit(0);
+      return;
+    }
+
+    if (mode === "memory-route-decision") {
+      const clientSecret = new Uint8Array(Buffer.from(secretHex, "hex"));
+      const memoryId = arg("memory-id") ?? "mem-interop-route";
+      const decision = arg("decision") ?? "confirm";
+      const dispatch = createFridayMemorySpineDispatchAdapter({
+        host: "127.0.0.1",
+        port,
+        timeoutMs,
+        secretResolver: () => clientSecret,
+      });
+      const route = createFridayMemorySpineRoutes({ dispatch }).find(
+        (candidate) => candidate.operationId === "memory.spine.decide.apply",
+      );
+      if (!route) {
+        process.stdout.write(JSON.stringify({ ok: false, code: "MEMORY_ROUTE_MISSING", httpStatus: 0 }) + "\n");
+        process.exit(6);
+        return;
+      }
+      const routeResponse = await route.handler({
+        requestId: "req-interop-memory-route-decision",
+        receivedAt: new Date(0).toISOString(),
+        params: {},
+        query: {},
+        body: {
+          memoryId,
+          ownerPrincipal: principal,
+          decision,
+        },
+        headers: {},
+        principal: {
+          principalType: "user",
+          principalId: principal,
+          userId: principal,
+          role: "admin",
+          scopes: ["hub.admin"],
+        },
+      } as never);
+      const result = (routeResponse as { result?: unknown }).result as
+        | {
+            memoryId?: string;
+            state?: string;
+            status?: string;
+            blocker?: string;
+            recallable?: boolean;
+          }
+        | undefined;
+      process.stdout.write(
+        JSON.stringify({
+          ok: true,
+          mode,
+          result: result ?? null,
         }) + "\n",
       );
       process.exit(0);
