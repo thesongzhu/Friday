@@ -205,6 +205,17 @@ describe("FridayWorkflowBuilderTestRunnerService", () => {
     );
     expect(stored).not.toBeNull();
     expect(stored!.passed).toBe(result.passed);
+
+    const storage = db.withReadConnection((readerDb) => {
+      const dedicated = readerDb
+        .prepare("SELECT COUNT(*) AS count FROM workflow_builder_test_runs WHERE run_id = ?")
+        .get(result.runId) as { count: number };
+      const memory = readerDb
+        .prepare("SELECT COUNT(*) AS count FROM memory_items WHERE namespace = ?")
+        .get("workflow_builder_test_runs") as { count: number };
+      return { dedicated: dedicated.count, memory: memory.count };
+    });
+    expect(storage).toEqual({ dedicated: 1, memory: 0 });
   });
 
   it("does not persist when not requested", () => {

@@ -441,6 +441,17 @@ describe("FridayWorkflowBuilderCompositorService", () => {
     expect(specVersion).not.toBeNull();
     expect(specVersion!.workflowId).toBe(workflow.id);
     expect(specVersion!.spec.schemaVersion).toBe("1.0");
+
+    const storage = db.withReadConnection((readerDb) => {
+      const dedicated = readerDb
+        .prepare("SELECT COUNT(*) AS count FROM workflow_builder_spec_versions WHERE workflow_version_id = ?")
+        .get(result.workflowVersionId) as { count: number };
+      const memory = readerDb
+        .prepare("SELECT COUNT(*) AS count FROM memory_items WHERE namespace = ?")
+        .get("workflow_builder_spec_versions") as { count: number };
+      return { dedicated: dedicated.count, memory: memory.count };
+    });
+    expect(storage).toEqual({ dedicated: 1, memory: 0 });
   });
 
   it("publish rejects mismatched workflowId", () => {

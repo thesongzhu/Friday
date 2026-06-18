@@ -34,6 +34,22 @@ describe("FridayWorkflowBuilderTemplateRepository", () => {
     };
   }
 
+  function insertLegacyTemplate(template: FridayWorkflowTemplateEntity): void {
+    db.writer
+      .prepare(
+        `INSERT INTO memory_items (id, namespace, key, value_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        template.templateId,
+        "workflow_builder_templates",
+        `${template.scope}:${template.ownerUserId ?? "global"}:${template.templateId}`,
+        JSON.stringify(template),
+        template.createdAt,
+        template.updatedAt,
+      );
+  }
+
   it("creates and retrieves a template", () => {
     const repo = createFridayWorkflowBuilderTemplateRepository();
     const template = makeTemplate();
@@ -112,7 +128,7 @@ describe("FridayWorkflowBuilderTemplateRepository", () => {
     ).toThrow("TEMPLATE_NOT_FOUND");
   });
 
-  it("stores correct key format", () => {
+  it("stores templates in the dedicated table and writes zero memory_items rows", () => {
     const repo = createFridayWorkflowBuilderTemplateRepository();
 
     db.withWriteTransaction((writerDb) => {
@@ -121,12 +137,20 @@ describe("FridayWorkflowBuilderTemplateRepository", () => {
 
     const row = db.withReadConnection((readerDb) =>
       readerDb
-        .prepare("SELECT namespace, key FROM memory_items WHERE id = ?")
+        .prepare("SELECT template_id, scope, owner_user_id FROM workflow_builder_templates WHERE template_id = ?")
         .get("tmpl-1"),
-    ) as { namespace: string; key: string };
+    ) as { template_id: string; scope: string; owner_user_id: string };
 
-    expect(row.namespace).toBe("workflow_builder_templates");
-    expect(row.key).toBe("user:test-user:tmpl-1");
+    const memoryRows = db.withReadConnection((readerDb) =>
+      readerDb
+        .prepare("SELECT COUNT(*) AS count FROM memory_items WHERE namespace = ?")
+        .get("workflow_builder_templates"),
+    ) as { count: number };
+
+    expect(row.template_id).toBe("tmpl-1");
+    expect(row.scope).toBe("user");
+    expect(row.owner_user_id).toBe("test-user");
+    expect(memoryRows.count).toBe(0);
   });
 
   it("round-trips JSON correctly", () => {
@@ -141,5 +165,17 @@ describe("FridayWorkflowBuilderTemplateRepository", () => {
     const fetched = db.withReadConnection((readerDb) => repo.getById(readerDb, "tmpl-1"));
     expect(fetched!.tags).toEqual(["tag1", "tag2", "tag3"]);
     expect(fetched!.spec.schemaVersion).toBe("1.0");
+  });
+
+  it("reads legacy memory_items templates without writing back to memory_items", () => {
+    const repo = createFridayWorkflowBuilderTemplateRepository();
+    insertLegacyTemplate(makeTemplate({ templateId: "legacy-tmpl" }));
+
+    const fetched = db.withReadConnection((readerDb) => repo.getById(readerDb, "legacy-tmpl"));
+    expect(fetched).not.toBeNull();
+    expect(fetched!.templateId).toBe("legacy-tmpl");
+
+    const listed = db.withReadConnection((readerDb) => repo.list(readerDb, "user"));
+    expect(listed.map((template) => template.templateId)).toContain("legacy-tmpl");
   });
 });
