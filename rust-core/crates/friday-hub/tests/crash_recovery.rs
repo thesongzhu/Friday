@@ -15,12 +15,11 @@
 //! an approval, so it has no pending row by design).
 //!
 //! Arms:
-//!   (a) an orphaned in-flight WorkItem (`Dispatched`, `HubAccepted`) ⇒ flag-ON reconcile
+//!   (a) an orphaned in-flight WorkItem (`Dispatched`, `HubAccepted`) ⇒ boot reconcile
 //!       advances it to `FailedTerminal` + `blocking_reason == crash_recovery_abort`, audit clean;
 //!   (b) legitimately-WAITING WorkItems (`ProviderRouted`, `ProviderWaiting` w/no approval,
 //!       `WaitingForUser`) WITH `executing == 0` ⇒ UNTOUCHED;
 //!   (c) a terminal WorkItem (`CompletedWithProof`) ⇒ UNTOUCHED;
-//!   flag-OFF ⇒ all untouched (byte-identical: the server never calls reconcile when OFF);
 //!   idempotency ⇒ a second reconcile is a no-op (0 aborted).
 //!
 //! #24b PASS-2 arms (durable execution-state crash recovery — the COMMON mid-call crash):
@@ -33,8 +32,6 @@
 //!   * `pass2_leaves_legit_paused_provider_routed_untouched`: `ProviderRouted` + `executing=0`
 //!     (legit-paused, awaiting approval) + a STALE timestamp ⇒ UNTOUCHED (executing==0 is never
 //!     reconciled, regardless of age).
-//!   * `pass2_disabled_when_flag_off`: even a stale-executing crash row stays untouched when the
-//!     flag is OFF (the server never calls reconcile).
 //!   * `loop_clears_executing_at_every_exit` (in lib.rs): a run through the real loop ends with
 //!     `executing == 0` for Finished / Paused / Blocked — proving the wrapper's tail clear.
 //!   * `loop_sets_executing_during_the_call_and_re_entry_re_sets_it` (in lib.rs): executing==1 is
@@ -42,9 +39,9 @@
 //!     re-entry re-set). NOTE: the signed-approval resume (`resume_with_approval`) does NOT re-enter
 //!     this loop — it runs ONE `executor.execute` — so the re-set is a property of any loop
 //!     RE-ENTRY (a continued/redriven run), not of the approval-resume path specifically.
-//!   * `forward_path_during_call_status_is_provider_routed_and_pass2_reconciles_a_mid_call_crash`
+//!   * `forward_path_during_call_status_is_ready_to_dispatch_and_pass2_reconciles_a_mid_call_crash`
 //!     (in lib.rs): the REACHABILITY proof — the real pre-dispatch binding makes the during-call
-//!     status `ProviderRouted`, and PASS-2 reconciles a simulated mid-call crash there.
+//!     status `ReadyToDispatch`, and PASS-2 reconciles a simulated mid-call crash there.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -53,8 +50,7 @@ use friday_core::{
     TruthStatus, WorkItem, WorkItemStatus, WorkLane,
 };
 use friday_hub::crash_recovery::{
-    crash_recovery_enabled_from, reconcile_orphaned_work_items, CRASH_RECOVERY_MARKER,
-    EXECUTION_STATE_STALE_THRESHOLD_MS,
+    reconcile_orphaned_work_items, CRASH_RECOVERY_MARKER, EXECUTION_STATE_STALE_THRESHOLD_MS,
 };
 use friday_storage::audit::verify_audit_chain;
 use friday_storage::Db;
@@ -202,17 +198,6 @@ const STALE_HEARTBEAT: i64 = RECONCILE_AT - 600_000;
 const FRESH_HEARTBEAT: i64 = RECONCILE_AT - 1_000;
 
 #[test]
-fn flag_matcher_is_default_off_and_exact_one() {
-    // The pure matcher the server reads at boot: default-OFF, ON only for the exact trimmed "1".
-    assert!(!crash_recovery_enabled_from(None));
-    assert!(crash_recovery_enabled_from(Some("1")));
-    assert!(crash_recovery_enabled_from(Some("  1  ")));
-    for off in ["", "0", "true", "TRUE", "yes", "enabled"] {
-        assert!(!crash_recovery_enabled_from(Some(off)), "off for {off:?}");
-    }
-}
-
-#[test]
 fn reconcile_aborts_only_orphans_leaves_waiting_and_terminal_untouched() {
     let db = Db::open_hub(&temp_db("mix")).unwrap();
     let mission = format!("mission-{}", unique("mix"));
@@ -296,25 +281,6 @@ fn reconcile_aborts_only_orphans_leaves_waiting_and_terminal_untouched() {
         audit_len_before + 2,
         "exactly one hash-chained lifecycle row per aborted orphan; chain verifies"
     );
-}
-
-#[test]
-fn flag_off_means_no_reconcile_byte_identical() {
-    // Flag-OFF is byte-identical because the server NEVER calls reconcile (the matcher returns
-    // false). This arm proves the matcher gates the call, then proves that NOT calling reconcile
-    // leaves an orphan exactly as seeded.
-    assert!(!crash_recovery_enabled_from(None));
-
-    let db = Db::open_hub(&temp_db("off")).unwrap();
-    let mission = format!("mission-{}", unique("off"));
-    seed_mission(&db, &mission);
-    seed_work_item(&db, &mission, "wi-orphan-off", WorkItemStatus::Dispatched);
-    let audit_before = verify_audit_chain(db.conn()).unwrap();
-
-    // Flag OFF ⇒ the boot path does NOT invoke reconcile. The orphan stays Dispatched, unmarked.
-    assert_eq!(status_of(&db, "wi-orphan-off"), WorkItemStatus::Dispatched);
-    assert_eq!(blocking_reason_of(&db, "wi-orphan-off"), None);
-    assert_eq!(verify_audit_chain(db.conn()).unwrap(), audit_before);
 }
 
 #[test]
@@ -474,37 +440,6 @@ fn pass2_leaves_legit_paused_provider_routed_untouched() {
         status_of(&db, "wi-default"),
         WorkItemStatus::ProviderWaiting
     );
-}
-
-#[test]
-fn pass2_disabled_when_flag_off() {
-    // Flag-OFF is byte-identical: the server never calls reconcile. A stale-executing crash row
-    // stays exactly as seeded (this arm proves the matcher gates the PASS-2 path too).
-    assert!(!crash_recovery_enabled_from(None));
-
-    let db = Db::open_hub(&temp_db("p2-off")).unwrap();
-    let mission = format!("mission-{}", unique("p2-off"));
-    seed_mission(&db, &mission);
-    seed_work_item(
-        &db,
-        &mission,
-        "wi-crashed-off",
-        WorkItemStatus::ProviderWaiting,
-    );
-    set_executing(&db, "wi-crashed-off", true, STALE_HEARTBEAT);
-    let audit_before = verify_audit_chain(db.conn()).unwrap();
-
-    // Flag OFF ⇒ no reconcile is invoked. The crash row stays ProviderWaiting + executing=1.
-    assert_eq!(
-        status_of(&db, "wi-crashed-off"),
-        WorkItemStatus::ProviderWaiting
-    );
-    assert_eq!(blocking_reason_of(&db, "wi-crashed-off"), None);
-    assert_eq!(
-        execution_state_of(&db, "wi-crashed-off"),
-        (true, Some(STALE_HEARTBEAT))
-    );
-    assert_eq!(verify_audit_chain(db.conn()).unwrap(), audit_before);
 }
 
 #[test]
