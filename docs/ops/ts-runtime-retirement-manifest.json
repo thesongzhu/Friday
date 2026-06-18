@@ -56,13 +56,15 @@
       "doc": "Anti-shrinkage floor: a CI-comparable baseline of manifest entry counts + per-surface method-guard counts. The assertion fails if any count drops BELOW its baseline, forcing a conscious, reviewable baseline edit in the same PR when a surface is legitimately removed/reclassified or a guard is intentionally retired. perSurfaceMethodsMin floors EACH registered surface (present + >= its method count) so 'drop a surface + add filler' cannot hold the grand total. behavioralTestsMin floors the count of surfaces backed by an existing behavioral test so one documented missing-test gap cannot be copied to null out the others. byClassification is EMITTED for review but NOT floored: fail_closed legitimately shrinks as surfaces move to Rust ownership.",
       "surfacesMin": 279,
       "routeFamiliesMin": 18,
-      "guardedMethodsMin": 53,
+      "guardedMethodsMin": 55,
       "perSurfaceMethodsMin": {
         "capability_acquisition": 3,
         "workflow_generator": 5,
         "system_intent": 1,
         "workflow_deploy": 2,
         "autonomy_policy": 1,
+        "autofix_execute": 1,
+        "agent_runs_start": 1,
         "satellite_registration": 1,
         "satellite_pairing": 4,
         "satellite_capability": 1,
@@ -79,9 +81,9 @@
         "desktop_recording": 6,
         "session": 2
       },
-      "behavioralTestsMin": 20,
+      "behavioralTestsMin": 22,
       "baselineCommit": "e6b39186",
-      "baselineNote": "Set from origin/main e6b39186 (post-#628 TS-R1 4-surface mirror + #597 autonomy-policy), then RAISED for the orphan off-route leak audit (2026-06-10) defense-in-depth wave: guardedMethodsMin 12->34, behavioralTestsMin 5->15 with the 10 new method-guarded orphan surfaces (satellite registration/pairing/capability/heartbeat/sync, fleet remediation, realtime ack, autonomy MCP lifecycle, node-runner execution, retry pipeline). RAISED AGAIN (2026-06-11 audit) for the workflow_run_execution surface: guardedMethodsMin 34->39, behavioralTestsMin 15->16 — its 5 run-control mutators (startRun/resumeRun/pauseRun/cancelRun/retryRun) were already METHOD-guarded in friday-workflow-execution-service.ts (§1 reconciliation, pauseRun fenced in this PR) but the service file was NOT registered in methodRetiredSurfaces, so its guards were never anti-shrinkage-floored. RAISED AGAIN (2026-06-12, route-only-guard A3 audit HOLE 1+2) for the desktop_action surface (executeAction/cancelAction/getActionLog method-fenced in src/desktop/engine/session-manager.ts, off-route callers = agent desktop tool / autonomy engine / skill desktop helper) and the standing_agenda surface (createStandingGoal/updateStandingGoal already fenced in d45b1af3 + approveAgendaItem fenced in this PR, off-route caller = agent controlled-autonomy tool): guardedMethodsMin 39->45 (+3 desktop_action, +3 standing_agenda), behavioralTestsMin 16->18 (+2). RAISED AGAIN (2026-06-12, A3 method-completeness reconcile — the LAST L1 build item) for the desktop_recording surface (6 lifecycle methods start/stop/pause/resume/delete/replay method-fenced in src/desktop/engine/session-manager.ts under the dedicated allowTestOnlyDesktopRecordingExecution flag, off-route caller = agent desktop tool; RESOLVES the residual recording hole #693 flagged-not-fixed) and the session surface (forkSession fenced in this PR + the already-fenced sweepLifecycle floored, on src/sessions/services/friday-session-service.ts under allowTestOnlySessionExecution, off-route caller of forkSession = subagent registry behind executeRun): guardedMethodsMin 45->53 (+6 desktop_recording, +2 session), behavioralTestsMin 18->20 (+2). The three other A3-audited session mutators (addMessage/getOrCreateSession/setConversationFocus) and the provider-probe surfaces (validateProvider/doctorProvider) are ACCEPT-GATED (live callers — see the session surface note + the providers.doctor/providers.validate route surfaces), and the satellite reportRemoteNodeResult is accepted-gated (live sync-push — see workflow_run_execution note); none is registered as a scanned surface because fencing them at the method head would degrade a live path. Lower a *Min / drop a perSurfaceMethodsMin entry only in a PR that also removes the corresponding entry/guard, so the reviewer sees the de-retirement."
+      "baselineNote": "Set from origin/main e6b39186 (post-#628 TS-R1 4-surface mirror + #597 autonomy-policy), then RAISED for the orphan off-route leak audit (2026-06-10) defense-in-depth wave: guardedMethodsMin 12->34, behavioralTestsMin 5->15 with the 10 new method-guarded orphan surfaces (satellite registration/pairing/capability/heartbeat/sync, fleet remediation, realtime ack, autonomy MCP lifecycle, node-runner execution, retry pipeline). RAISED AGAIN (2026-06-11 audit) for the workflow_run_execution surface: guardedMethodsMin 34->39, behavioralTestsMin 15->16 — its 5 run-control mutators (startRun/resumeRun/pauseRun/cancelRun/retryRun) were already METHOD-guarded in friday-workflow-execution-service.ts (§1 reconciliation, pauseRun fenced in this PR) but the service file was NOT registered in methodRetiredSurfaces, so its guards were never anti-shrinkage-floored. RAISED AGAIN (2026-06-12, route-only-guard A3 audit HOLE 1+2) for the desktop_action surface (executeAction/cancelAction/getActionLog method-fenced in src/desktop/engine/session-manager.ts, off-route callers = agent desktop tool / autonomy engine / skill desktop helper) and the standing_agenda surface (createStandingGoal/updateStandingGoal already fenced in d45b1af3 + approveAgendaItem fenced in this PR, off-route caller = agent controlled-autonomy tool): guardedMethodsMin 39->45 (+3 desktop_action, +3 standing_agenda), behavioralTestsMin 16->18 (+2). RAISED AGAIN (2026-06-12, A3 method-completeness reconcile — the LAST L1 build item) for the desktop_recording surface (6 lifecycle methods start/stop/pause/resume/delete/replay method-fenced in src/desktop/engine/session-manager.ts under the dedicated allowTestOnlyDesktopRecordingExecution flag, off-route caller = agent desktop tool; RESOLVES the residual recording hole #693 flagged-not-fixed) and the session surface (forkSession fenced in this PR + the already-fenced sweepLifecycle floored, on src/sessions/services/friday-session-service.ts under allowTestOnlySessionExecution, off-route caller of forkSession = subagent registry behind executeRun): guardedMethodsMin 45->53 (+6 desktop_recording, +2 session), behavioralTestsMin 18->20 (+2). RAISED AGAIN (2026-06-17, registry D5 audit) for the already-method-fenced autofix_execute and agent_runs_start off-route surfaces: guardedMethodsMin 53->55 (+1 autofix_execute, +1 agent_runs_start), behavioralTestsMin 20->22 (+2). skill_generator remains an accepted-live off-route service lane, not a fail-closed method-retired surface. The three other A3-audited session mutators (addMessage/getOrCreateSession/setConversationFocus) and the provider-probe surfaces (validateProvider/doctorProvider) are ACCEPT-GATED (live callers — see the session surface note + the providers.doctor/providers.validate route surfaces), and the satellite reportRemoteNodeResult is accepted-gated (live sync-push — see workflow_run_execution note); none is registered as a scanned surface because fencing them at the method head would degrade a live path. Lower a *Min / drop a perSurfaceMethodsMin entry only in a PR that also removes the corresponding entry/guard, so the reviewer sees the de-retirement."
     },
     "surfaces": [
       {
@@ -141,6 +143,37 @@
         "behavioralTest": "test/unit/autonomy/friday-controlled-autonomy-services.test.ts",
         "off_route_callers": "agent controlled-autonomy tool (policy_update)",
         "note": "Inline guard; synchronous (non-async) method. Reads getPolicy/evaluateRisks stay live. Guard added in #597. behavioralTest points to friday-controlled-autonomy-services.test.ts (its 'updatePolicy METHOD-level fail-closed' describe block) rather than a `*-retirement-guard*` file because the naming convention is non-uniform here."
+      },
+      {
+        "id": "autofix_execute",
+        "family_code": "TS_RUNTIME_AUTOFIX_EXECUTION_RETIRED",
+        "serviceFile": "src/learning/services/friday-auto-fix-execution-service.ts",
+        "flag": "allowTestOnlyAutoFixExecution",
+        "guardHelper": "assertAutoFixExecutionAllowed",
+        "mutatingMethods": ["execute"],
+        "behavioralTest": "test/unit/learning/services/friday-auto-fix-execution-retirement-guard.test.ts",
+        "off_route_callers": "agent auto-fix/tooling callers can reach friday-auto-fix-execution-service.execute directly, bypassing the HTTP route validator",
+        "note": "Registry D5 audit (2026-06-17): execute() was already method-fenced under allowTestOnlyAutoFixExecution, but the service file was not registered in methodRetiredSurfaces, so CI anti-shrinkage could not catch removal of the method-head guard. Registering this existing guard floors the off-route execute sink; route-only autofix controls remain documented in routeFamilies."
+      },
+      {
+        "id": "agent_runs_start",
+        "family_code": "TS_RUNTIME_AGENT_RUNS_RETIRED",
+        "serviceFile": "src/agent/runtime/friday-agent-runtime.ts",
+        "flag": "allowTestOnlyAgentRunExecution",
+        "mutatingMethods": ["executeRun"],
+        "allowlistMutators": [
+          {
+            "method": "resumeStaleRunsOnBoot",
+            "reason": "Boot crash-recovery maintenance, not a product agent-run start surface: it marks pre-existing active/stale run rows failed after restart and emits failed events, without provider calls, tool calls, or new run execution. Fencing this under allowTestOnlyAgentRunExecution would disable recovery cleanup rather than close the direct executeRun sink."
+          },
+          {
+            "method": "rollbackRun",
+            "reason": "Separate agent_runs_rollback control surface: rollbackRun is not the start/execution sink registered here, and is covered by the existing rollback route/control semantics. It is allowlisted so the method scanner does not force a false claim that the start surface owns rollback."
+          }
+        ],
+        "behavioralTest": "test/unit/agent/runtime/friday-agent-runtime-retirement-guard.test.ts",
+        "off_route_callers": "cron, heartbeat, autonomous, subagent, channel, and tool-driven execution paths reach executeRun directly rather than through the HTTP start route",
+        "note": "Registry D5 audit (2026-06-17): executeRun() was already method-fenced under allowTestOnlyAgentRunExecution, but the service file was not registered in methodRetiredSurfaces. Registering the existing guard floors the direct agent-run execution sink; compatibility reads and rollback stay outside this start-surface claim."
       },
       {
         "id": "satellite_registration",
