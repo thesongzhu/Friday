@@ -157,7 +157,10 @@ impl VisionExecutor {
     }
 
     /// The core path: parse params → validate+acquire each image → build the request → delegate.
-    fn analyze(&self, params: &[(String, String)]) -> Result<ToolReceipt, ExecError> {
+    fn analyze(
+        &self,
+        params: &[(String, String)],
+    ) -> Result<(ToolReceipt, Option<friday_core::ToolUsageMeasurement>), ExecError> {
         let prompt = Self::param(params, "prompt")
             .map(str::to_string)
             .filter(|p| !p.trim().is_empty())
@@ -252,21 +255,28 @@ impl VisionExecutor {
                     outcome.image_count,
                     outcome.analysis.len()
                 );
-                Ok(ToolReceipt {
-                    action: "image_analysis".to_string(),
-                    summary,
-                    content: Some(content),
-                })
+                let usage = vision_usage_measurement(&outcome, total_decoded)?;
+                Ok((
+                    ToolReceipt {
+                        action: "image_analysis".to_string(),
+                        summary,
+                        content: Some(content),
+                    },
+                    Some(usage),
+                ))
             }
             Err(friday_vision::VisionError::CredentialMissing(_)) => {
                 // Fail-closed: a result CARRYING the warning (the model SEES it), never a silent
                 // skip, never an ExecError that would hide the warning. Parity with web_search's
                 // missing-key receipt + the TS "no vision model configured" path.
-                Ok(ToolReceipt {
-                    action: "image_analysis".to_string(),
-                    summary: "image_analysis: refused (no vision provider)".to_string(),
-                    content: Some(NO_VISION_PROVIDER_WARNING.to_string()),
-                })
+                Ok((
+                    ToolReceipt {
+                        action: "image_analysis".to_string(),
+                        summary: "image_analysis: refused (no vision provider)".to_string(),
+                        content: Some(NO_VISION_PROVIDER_WARNING.to_string()),
+                    },
+                    None,
+                ))
             }
             Err(e) => Err(ExecError::Vision(VisionToolError::Provider(e.to_string()))),
         }
@@ -411,6 +421,17 @@ impl VisionExecutor {
 
 impl ToolExecutor for VisionExecutor {
     fn execute(&self, action: &str, params: &[(String, String)]) -> Result<ToolReceipt, ExecError> {
+        match action {
+            "image_analysis" => self.analyze(params).map(|(receipt, _)| receipt),
+            other => Err(ExecError::Unsupported(other.to_string())),
+        }
+    }
+
+    fn execute_with_usage(
+        &self,
+        action: &str,
+        params: &[(String, String)],
+    ) -> Result<(ToolReceipt, Option<friday_core::ToolUsageMeasurement>), ExecError> {
         match action {
             "image_analysis" => self.analyze(params),
             other => Err(ExecError::Unsupported(other.to_string())),
@@ -562,6 +583,39 @@ fn validate_media_type(media_type: &str) -> Result<(), ExecError> {
             media_type.to_string(),
         )))
     }
+}
+
+fn vision_usage_measurement(
+    outcome: &VisionOutcome,
+    total_decoded_bytes: usize,
+) -> Result<friday_core::ToolUsageMeasurement, ExecError> {
+    let (input_unit, input_count, output_unit, output_count) =
+        match (outcome.input_tokens, outcome.output_tokens) {
+            (Some(input_tokens), Some(output_tokens)) => (
+                "provider_input_tokens",
+                input_tokens,
+                "provider_output_tokens",
+                output_tokens,
+            ),
+            _ => (
+                "image_bytes",
+                total_decoded_bytes as i64,
+                "analysis_chars",
+                outcome.analysis.chars().count() as i64,
+            ),
+        };
+    friday_core::ToolUsageMeasurement::new(
+        "image_analysis",
+        "vision_provider",
+        outcome.model.clone(),
+        input_unit,
+        input_count,
+        output_unit,
+        output_count,
+        None,
+        None,
+    )
+    .map_err(|e| ExecError::Vision(VisionToolError::Provider(e.to_string())))
 }
 
 /// Map a file extension to an allowed image media type (lowercased). `None` for unknown.

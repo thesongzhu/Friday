@@ -149,6 +149,11 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     // lifecycle timestamps, and a JSON boundaries blob (path prefix / risk ceiling /
     // allowlists; token/run ceilings are STORED but DEFERRED-not-enforced).
     "trust_grant",
+    // B5: refs-only tool/provider usage ledger for DARK media tools and future
+    // governed provider-backed tools. Separate from `token_ledger`: rows may count
+    // bytes/chars/pages rather than model tokens, so mixing them would corrupt the
+    // token-ledger invariant. Hub-only because tool execution is Hub-coordinated.
+    "tool_usage_ledger",
     // Hybrid recall (v34): the FTS5 keyword index over confirmed memory text — the
     // keyword-relevance half of the flag-gated hybrid recall blend. Hub-only because
     // `memory_item` (the indexed source) is Hub-only and recall is Hub-side (`07` §9). It
@@ -652,6 +657,15 @@ pub fn hub_migrations() -> Vec<Migration> {
             destructive: false,
             up: m0038_run_outcome_learning_candidate,
         },
+        // B5: Hub-only tool/provider usage ledger. NEW-TABLE migration; no existing
+        // model-token ledger rows or projections are touched, and no production path
+        // writes it until a tool returns an explicit usage measurement.
+        Migration {
+            version: 39,
+            name: "tool_usage_ledger",
+            destructive: false,
+            up: m0039_tool_usage_ledger,
+        },
     ]
 }
 
@@ -925,6 +939,24 @@ CREATE TABLE trust_grant_run_usage (
     PRIMARY KEY (grant_id, run_id)
 );
 CREATE INDEX idx_trust_grant_run_usage_grant ON trust_grant_run_usage(grant_id);";
+
+const DDL_TOOL_USAGE_LEDGER: &str = "
+CREATE TABLE tool_usage_ledger (
+    usage_id      TEXT PRIMARY KEY,
+    run_id        TEXT,
+    tool          TEXT NOT NULL,
+    provider_kind TEXT NOT NULL,
+    model         TEXT NOT NULL,
+    input_unit    TEXT NOT NULL,
+    input_count   INTEGER NOT NULL CHECK(input_count >= 0),
+    output_unit   TEXT NOT NULL,
+    output_count  INTEGER NOT NULL CHECK(output_count >= 0),
+    cost_estimate REAL CHECK(cost_estimate IS NULL OR cost_estimate >= 0),
+    result_link   TEXT,
+    created_at    INTEGER NOT NULL
+);
+CREATE INDEX idx_tool_usage_run_created ON tool_usage_ledger(run_id, created_at);
+CREATE INDEX idx_tool_usage_created ON tool_usage_ledger(created_at);";
 
 // --- PR-5 agent-loop fragments (Hub-only) -----------------------------------
 
@@ -2548,4 +2580,8 @@ fn m0037_route_decision_control(tx: &Transaction) -> rusqlite::Result<()> {
 
 fn m0038_run_outcome_learning_candidate(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(DDL_RUN_OUTCOME_LEARNING_CANDIDATE)
+}
+
+fn m0039_tool_usage_ledger(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_TOOL_USAGE_LEDGER)
 }

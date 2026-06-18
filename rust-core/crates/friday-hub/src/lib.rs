@@ -2744,6 +2744,14 @@ impl std::fmt::Display for ExecError {
 /// an executor that skips it (this is the UNW-001 non-optional-DI property).
 pub trait ToolExecutor {
     fn execute(&self, action: &str, params: &[(String, String)]) -> Result<ToolReceipt, ExecError>;
+
+    fn execute_with_usage(
+        &self,
+        action: &str,
+        params: &[(String, String)],
+    ) -> Result<(ToolReceipt, Option<friday_core::ToolUsageMeasurement>), ExecError> {
+        self.execute(action, params).map(|receipt| (receipt, None))
+    }
 }
 
 /// Blanket impl so a shared reference to any executor is itself an executor. Lets the live
@@ -2754,6 +2762,14 @@ pub trait ToolExecutor {
 impl<T: ToolExecutor + ?Sized> ToolExecutor for &T {
     fn execute(&self, action: &str, params: &[(String, String)]) -> Result<ToolReceipt, ExecError> {
         (**self).execute(action, params)
+    }
+
+    fn execute_with_usage(
+        &self,
+        action: &str,
+        params: &[(String, String)],
+    ) -> Result<(ToolReceipt, Option<friday_core::ToolUsageMeasurement>), ExecError> {
+        (**self).execute_with_usage(action, params)
     }
 }
 
@@ -3795,8 +3811,16 @@ pub(crate) fn gate_dispatch_with_policy_enforced(
     };
     Ok(match record.decision {
         // Execute ONLY on Allow — the single chokepoint both drivers rely on.
-        GateDecision::Allow => match executor.execute(&raw.action, &raw.params) {
-            Ok(receipt) => GateDispatch::Executed(receipt),
+        GateDecision::Allow => match executor.execute_with_usage(&raw.action, &raw.params) {
+            Ok((receipt, usage)) => {
+                if let Some(usage) = usage.as_ref() {
+                    let run_id = policy
+                        .action_context()
+                        .and_then(|ctx| ctx.run_id.as_deref());
+                    friday_storage::record_tool_usage(conn, usage, run_id, now_ms)?;
+                }
+                GateDispatch::Executed(receipt)
+            }
             Err(e) => GateDispatch::ExecError(e),
         },
         GateDecision::RequiresApproval => GateDispatch::RequiresApproval,
@@ -6211,8 +6235,14 @@ mod tests {
     use super::*;
     use friday_storage::Db;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Mutex, OnceLock};
 
     static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn media_env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     fn temp_path(tag: &str) -> String {
         // Unique across runs AND processes: a fixed name would let a prior run's
@@ -9285,6 +9315,21 @@ mod tests {
             }
             other => panic!("flag-ON must dispatch+Execute image_analysis, got {other:?}"),
         }
+        let rows = db.list_tool_usage().unwrap();
+        assert_eq!(
+            rows.len(),
+            1,
+            "successful image_analysis should record one tool usage row"
+        );
+        let row = &rows[0];
+        assert_eq!(row.tool, "image_analysis");
+        assert_eq!(row.provider_kind, "vision_provider");
+        assert_eq!(row.model, "stub-vision-1");
+        assert_eq!(row.input_unit, "provider_input_tokens");
+        assert_eq!(row.input_count, 0);
+        assert_eq!(row.output_unit, "provider_output_tokens");
+        assert_eq!(row.output_count, 0);
+        assert_eq!(row.created_at, 1000);
     }
 
     #[test]
@@ -9505,6 +9550,7 @@ mod tests {
 
     #[test]
     fn media_flag_off_refuses_tool_unavailable_executor_never_reached() {
+        let _guard = media_env_lock().lock().unwrap();
         std::env::remove_var(FRIDAY_MEDIA_TOOL_ENABLED);
         let db = Db::open_hub(&temp_path("media-off")).unwrap();
         let ws = temp_ws("media-off");
@@ -9603,6 +9649,71 @@ mod tests {
             ocr.content.unwrap().contains("STUB-OCR"),
             "stub OCR provider path must execute"
         );
+    }
+
+    #[test]
+    fn media_gate_records_tool_usage_with_run_scope_when_enabled() {
+        let _guard = media_env_lock().lock().unwrap();
+        std::env::set_var(FRIDAY_MEDIA_TOOL_ENABLED, "1");
+        let db = Db::open_hub(&temp_path("media-usage")).unwrap();
+        let ws = temp_ws("media-usage");
+        std::fs::write(
+            ws.join("sample.pdf"),
+            b"%PDF-1.4\n(Hello Friday PDF) Tj\n%%EOF",
+        )
+        .unwrap();
+        let media = crate::media_tools::MediaToolExecutor::new(
+            ws,
+            Box::new(friday_tts::StubTtsClient::default()),
+            Box::new(friday_pdf::StubPdfTextExtractor::default()),
+            Box::new(friday_ocr::StubOcrProvider::default()),
+        );
+        let policy = RunPolicy::new(Some("friday".to_string()), Vec::<String>::new(), false)
+            .with_action_context(friday_storage::AgentActionContext {
+                agent_id: "friday".to_string(),
+                run_id: Some("run-media-usage".to_string()),
+                workspace: None,
+                tool: None,
+                provider: None,
+                channel: None,
+                workflow_family: None,
+                skill_family: None,
+            });
+        let out = gate_dispatch_with_policy_enforced(
+            db.conn(),
+            &media,
+            &raw("pdf_parse", &[("path", "sample.pdf")]),
+            AuthzMode::DenyAll,
+            &no_approval(),
+            &policy,
+            4242,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+        std::env::remove_var(FRIDAY_MEDIA_TOOL_ENABLED);
+
+        assert!(matches!(out, GateDispatch::Executed(_)));
+        let rows = db.list_tool_usage().unwrap();
+        assert_eq!(
+            rows.len(),
+            1,
+            "one media execution should write one usage row"
+        );
+        let row = &rows[0];
+        assert_eq!(row.run_id.as_deref(), Some("run-media-usage"));
+        assert_eq!(row.tool, "pdf_parse");
+        assert_eq!(row.provider_kind, "local_pdf");
+        assert_eq!(row.model, "embedded_text");
+        assert_eq!(row.input_unit, "document_bytes");
+        assert!(row.input_count > 0);
+        assert_eq!(row.output_unit, "text_chars");
+        assert!(row.output_count > 0);
+        assert_eq!(row.created_at, 4242);
     }
 
     #[test]

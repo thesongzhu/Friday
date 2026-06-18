@@ -48,7 +48,7 @@ pub use global_work_graph::{
     WorkGraphTruthLabel,
 };
 pub use identity::{DeviceIdentity, DeviceRole};
-pub use ledger::{estimate_cost_usd, LedgerEntry, ModelPrice, ProviderKind};
+pub use ledger::{estimate_cost_usd, LedgerEntry, ModelPrice, ProviderKind, ToolUsageMeasurement};
 pub use mechanism_matrix::{
     friday_v1_mechanism_matrix, friday_v1_no_go_blockers, MechanismOwner, MechanismRow,
     MechanismStatus,
