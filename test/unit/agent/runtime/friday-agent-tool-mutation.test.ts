@@ -167,12 +167,16 @@ describe("isMutatingToolCall", () => {
 
   // ─── Conditional: xhs ───
 
-  it("classifies xhs publish_note as mutating", () => {
+  it("classifies xhs legacy publish_note as mutating", () => {
     expect(isMutatingToolCall("xhs", { action: "publish_note" })).toBe(true);
   });
 
-  it("classifies xhs with read action as non-mutating", () => {
+  it("classifies current xhs browser/egress actions conservatively", () => {
+    expect(isMutatingToolCall("xhs", { action: "login" })).toBe(true);
+    expect(isMutatingToolCall("xhs", { action: "post" })).toBe(true);
+    expect(isMutatingToolCall("xhs", { action: "comments" })).toBe(true);
     expect(isMutatingToolCall("xhs", { action: "search" })).toBe(false);
+    expect(isMutatingToolCall("xhs", { action: "status" })).toBe(false);
   });
 
   // ─── Unknown tools ───
