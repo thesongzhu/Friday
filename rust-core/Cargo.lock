@@ -806,6 +806,10 @@ dependencies = [
 [[package]]
 name = "friday-tts"
 version = "0.0.1"
+dependencies = [
+ "serde_json",
+ "thiserror 1.0.69",
+]
 
 [[package]]
 name = "friday-vision"
