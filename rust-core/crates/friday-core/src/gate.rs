@@ -98,6 +98,7 @@ pub struct MutatingActionRequest {
     mutating: bool,
     risk: Option<Risk>,
     resource: Option<Resource>,
+    reversibility: Reversibility,
     pub local_claims: Vec<LocalClaim>,
     /// Caller-supplied canonical serialization of the action parameters (opaque to
     /// the gate; bound into the digest). The caller is responsible for determinism.
@@ -241,6 +242,7 @@ impl MutatingActionRequest {
             surface,
             mutating: classification.mutating,
             risk: classification.risk,
+            reversibility: classification.reversibility,
             local_claims,
             resource: classification.resource,
             parameters,
@@ -261,6 +263,9 @@ impl MutatingActionRequest {
     }
     pub fn resource(&self) -> Option<&Resource> {
         self.resource.as_ref()
+    }
+    pub fn reversibility(&self) -> Reversibility {
+        self.reversibility
     }
 }
 
@@ -305,6 +310,18 @@ pub struct CanonicalApproval {
     /// Must be `"friday_canonical_gate"` for a valid approval.
     pub issuer: Option<String>,
     /// Hex HMAC-SHA256 over `canonical_approval_signature_bytes`.
+    pub signature: Option<String>,
+}
+
+/// A canonical operator-signed batch approval. It signs a set of exact action digests
+/// under one operator decision; authorization still evaluates each action separately.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CanonicalApprovalBatch {
+    pub decision: ApprovalDecision,
+    pub batch_sign_id: String,
+    pub action_digests: Vec<String>,
+    pub expires_at: Option<i64>,
+    pub issuer: Option<String>,
     pub signature: Option<String>,
 }
 
@@ -390,6 +407,30 @@ pub fn canonical_approval_signature_bytes(approval: &CanonicalApproval) -> Vec<u
         }
     }
     put_opt_str(&mut out, &approval.issuer);
+    out
+}
+
+/// Deterministic byte serialization of batch approval fields that are SIGNED.
+pub fn canonical_approval_batch_signature_bytes(batch: &CanonicalApprovalBatch) -> Vec<u8> {
+    let mut out = Vec::new();
+    put_bytes(&mut out, b"friday.canonical_approval_batch.v1");
+    out.push(match batch.decision {
+        ApprovalDecision::Approved => 1u8,
+        ApprovalDecision::Denied => 0u8,
+    });
+    put_str(&mut out, &batch.batch_sign_id);
+    out.extend_from_slice(&(batch.action_digests.len() as u64).to_le_bytes());
+    for digest in &batch.action_digests {
+        put_str(&mut out, digest);
+    }
+    match batch.expires_at {
+        None => out.push(0u8),
+        Some(v) => {
+            out.push(1u8);
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    put_opt_str(&mut out, &batch.issuer);
     out
 }
 
@@ -670,6 +711,11 @@ mod tests {
             surface: "system".to_string(),
             mutating,
             risk: None,
+            reversibility: if mutating {
+                Reversibility::ReversibleInWorkspace
+            } else {
+                Reversibility::Reversible
+            },
             local_claims: vec![],
             resource: None,
             parameters: None,

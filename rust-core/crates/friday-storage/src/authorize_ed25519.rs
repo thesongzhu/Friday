@@ -32,8 +32,8 @@
 
 use crate::error::{Result, StorageError};
 use friday_core::gate::{
-    self, ApprovalDecision, CanonicalApproval, GateDecision, GateEvidenceRecord,
-    MutatingActionRequest, CANONICAL_GATE_ISSUER,
+    self, ApprovalDecision, CanonicalApproval, CanonicalApprovalBatch, GateDecision,
+    GateEvidenceRecord, MutatingActionRequest, Reversibility, CANONICAL_GATE_ISSUER,
 };
 use friday_crypto::OperatorVerifyingKey;
 use rusqlite::{params, Connection, Error as SqlErr, ErrorCode};
@@ -182,4 +182,101 @@ pub fn authorize_mutating_action_ed25519(
         }
         Err(e) => Err(StorageError::from(e)),
     }
+}
+
+/// Authorize one action against an operator-signed batch. This is verify-only and dark:
+/// callers must opt in explicitly, and the Hub still receives only the public verify key.
+pub fn authorize_mutating_action_ed25519_batch(
+    conn: &Connection,
+    request: &MutatingActionRequest,
+    batch: Option<&CanonicalApprovalBatch>,
+    operator_vk: &OperatorVerifyingKey,
+    now_ms: i64,
+) -> Result<GateEvidenceRecord> {
+    let base = gate::evaluate(request);
+    if base.decision != GateDecision::RequiresApproval {
+        return Ok(base);
+    }
+    if request.reversibility() == Reversibility::Irreversible {
+        return Ok(GateEvidenceRecord {
+            decision: GateDecision::RequiresApproval,
+            reason: "canonical_batch_irreversible_requires_single_approval".to_string(),
+            risk: base.risk,
+            approval_required: true,
+            denied_by: Some("canonical_gate".to_string()),
+        });
+    }
+    let batch = match batch {
+        Some(b) => b,
+        None => return Ok(base),
+    };
+    let deny = |reason: &str| GateEvidenceRecord {
+        decision: GateDecision::Deny,
+        reason: reason.to_string(),
+        risk: base.risk,
+        approval_required: true,
+        denied_by: Some("canonical_gate".to_string()),
+    };
+
+    let digest = friday_crypto::action_digest(&gate::canonical_action_bytes(request));
+    if !is_valid_digest_hex(&digest) {
+        return Ok(deny("canonical_batch_action_digest_invalid"));
+    }
+    if batch.batch_sign_id.trim().is_empty() {
+        return Ok(deny("canonical_batch_id_required"));
+    }
+    if batch.action_digests.is_empty() {
+        return Ok(deny("canonical_batch_empty"));
+    }
+    if batch.action_digests.iter().any(|d| !is_valid_digest_hex(d)) {
+        return Ok(deny("canonical_batch_member_digest_invalid"));
+    }
+    if !batch.action_digests.iter().any(|d| d == &digest) {
+        return Ok(deny("canonical_batch_digest_not_member"));
+    }
+    if batch.decision == ApprovalDecision::Denied {
+        return Ok(deny("canonical_batch_denied"));
+    }
+    if batch.issuer.as_deref() != Some(CANONICAL_GATE_ISSUER) {
+        return Ok(deny("canonical_batch_bad_issuer"));
+    }
+    let sig = match &batch.signature {
+        Some(s) => s,
+        None => return Ok(deny("canonical_batch_signature_missing")),
+    };
+    let sig_bytes = gate::canonical_approval_batch_signature_bytes(batch);
+    if !friday_crypto::verify_ed25519_approval_hex(&sig_bytes, &operator_vk.to_bytes(), sig) {
+        return Ok(deny("canonical_batch_signature_invalid"));
+    }
+    let expires_at = match batch.expires_at {
+        Some(e) => e,
+        None => return Ok(deny("canonical_batch_expiration_required")),
+    };
+    if expires_at <= now_ms {
+        return Ok(deny("canonical_batch_expired"));
+    }
+
+    let use_key = format!("ed25519-batch:{}:{}", batch.batch_sign_id, digest);
+    let insert = conn.execute(
+        "INSERT INTO consumed_approval (use_key, approval_id, action_digest, consumed_at)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![use_key, batch.batch_sign_id, digest, now_ms],
+    );
+    match insert {
+        Ok(_) => Ok(GateEvidenceRecord {
+            decision: GateDecision::Allow,
+            reason: "canonical_batch_approval_granted".to_string(),
+            risk: base.risk,
+            approval_required: true,
+            denied_by: None,
+        }),
+        Err(SqlErr::SqliteFailure(e, _)) if e.code == ErrorCode::ConstraintViolation => {
+            Ok(deny("canonical_batch_replay_refused"))
+        }
+        Err(e) => Err(StorageError::from(e)),
+    }
+}
+
+fn is_valid_digest_hex(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }

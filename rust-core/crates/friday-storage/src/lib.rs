@@ -48,7 +48,10 @@ pub use agent_session::{
     SessionOwner, StoredSessionMessage,
 };
 pub use authorize::authorize_mutating_action;
-pub use authorize_ed25519::{authorize_mutating_action_ed25519, Ed25519VerifyOnlyPolicy};
+pub use authorize_ed25519::{
+    authorize_mutating_action_ed25519, authorize_mutating_action_ed25519_batch,
+    Ed25519VerifyOnlyPolicy,
+};
 pub use error::{Result, StorageError};
 pub use migrate::{
     apply_migrations, current_version, now_ms, Migration, MigrationFn, MigrationReport,

@@ -13,14 +13,17 @@ mod common;
 
 use common::temp_db_path;
 use friday_core::gate::{
-    canonical_action_bytes, canonical_approval_signature_bytes, Actor, ActorKind, ApprovalDecision,
-    CanonicalApproval, GateDecision, MutatingActionRequest, CANONICAL_GATE_ISSUER,
+    canonical_action_bytes, canonical_approval_batch_signature_bytes,
+    canonical_approval_signature_bytes, Actor, ActorKind, ApprovalDecision, CanonicalApproval,
+    CanonicalApprovalBatch, GateDecision, MutatingActionRequest, Reversibility,
+    CANONICAL_GATE_ISSUER,
 };
 use friday_core::Risk;
 use friday_crypto::{OperatorSigningKey, OperatorVerifyingKey};
 use friday_storage::{
-    authorize_mutating_action_ed25519, get_pending_request, persist_pending_request, Db,
-    Ed25519VerifyOnlyPolicy, PendingApprovalRequest,
+    authorize_mutating_action_ed25519, authorize_mutating_action_ed25519_batch,
+    get_pending_request, persist_pending_request, Db, Ed25519VerifyOnlyPolicy,
+    PendingApprovalRequest,
 };
 
 /// The HMAC secret the HUB holds (the symmetric mint==verify key). A correct verify-only
@@ -43,8 +46,38 @@ fn req_with(
     let params: Vec<(String, String)> = path
         .map(|p| vec![("path".to_string(), p.to_string())])
         .unwrap_or_default();
+    req_from_params(
+        action,
+        actor_kind,
+        mutating,
+        base_risk,
+        if mutating {
+            Reversibility::ReversibleInWorkspace
+        } else {
+            Reversibility::Reversible
+        },
+        params,
+        principal,
+    )
+}
+
+fn req_from_params(
+    action: &str,
+    actor_kind: ActorKind,
+    mutating: bool,
+    base_risk: Risk,
+    base_reversibility: Reversibility,
+    params: Vec<(String, String)>,
+    principal: &str,
+) -> MutatingActionRequest {
     MutatingActionRequest::from_classification(
-        friday_core::gate::classify(mutating, base_risk, action, &params),
+        friday_core::gate::classify_with_reversibility(
+            mutating,
+            base_risk,
+            base_reversibility,
+            action,
+            &params,
+        ),
         action.to_string(),
         Actor {
             kind: actor_kind,
@@ -113,6 +146,53 @@ fn hmac_approval(
         HUB_HMAC_SECRET,
     ));
     a
+}
+
+fn batch_approval(
+    requests: &[&MutatingActionRequest],
+    sk: &OperatorSigningKey,
+    batch_sign_id: &str,
+    expires_at: Option<i64>,
+) -> CanonicalApprovalBatch {
+    let mut batch = CanonicalApprovalBatch {
+        decision: ApprovalDecision::Approved,
+        batch_sign_id: batch_sign_id.to_string(),
+        action_digests: requests
+            .iter()
+            .map(|request| friday_crypto::action_digest(&canonical_action_bytes(request)))
+            .collect(),
+        expires_at,
+        issuer: Some(CANONICAL_GATE_ISSUER.to_string()),
+        signature: None,
+    };
+    batch.signature = Some(
+        sk.sign(&canonical_approval_batch_signature_bytes(&batch))
+            .to_hex(),
+    );
+    batch
+}
+
+fn hmac_batch_approval(
+    requests: &[&MutatingActionRequest],
+    batch_sign_id: &str,
+    expires_at: Option<i64>,
+) -> CanonicalApprovalBatch {
+    let mut batch = CanonicalApprovalBatch {
+        decision: ApprovalDecision::Approved,
+        batch_sign_id: batch_sign_id.to_string(),
+        action_digests: requests
+            .iter()
+            .map(|request| friday_crypto::action_digest(&canonical_action_bytes(request)))
+            .collect(),
+        expires_at,
+        issuer: Some(CANONICAL_GATE_ISSUER.to_string()),
+        signature: None,
+    };
+    batch.signature = Some(friday_crypto::sign_approval(
+        &canonical_approval_batch_signature_bytes(&batch),
+        HUB_HMAC_SECRET,
+    ));
+    batch
 }
 
 fn consumed_count(db: &Db) -> i64 {
@@ -460,6 +540,145 @@ fn verify_only_policy_wrapper_grants_and_rejects_hmac() {
     let good = ed25519_approval(&req, &sk, "ap-pol", Some(FUTURE));
     let rg = policy.authorize(db.conn(), &req, Some(&good), NOW).unwrap();
     assert_eq!(rg.decision, GateDecision::Allow);
+}
+
+#[test]
+fn batch_approval_grants_each_member_once_with_composite_replay_key() {
+    let db = Db::open_hub(&temp_db_path("ed-batch-members")).unwrap();
+    let (sk, vk) = operator();
+    let req_a = req_with(
+        "write_file",
+        ActorKind::Owner,
+        true,
+        Risk::Medium,
+        Some("/worktree/a.txt"),
+        "p1",
+    );
+    let req_b = req_with(
+        "write_file",
+        ActorKind::Owner,
+        true,
+        Risk::Medium,
+        Some("/worktree/b.txt"),
+        "p1",
+    );
+    let batch = batch_approval(&[&req_a, &req_b], &sk, "batch-1", Some(FUTURE));
+
+    let a =
+        authorize_mutating_action_ed25519_batch(db.conn(), &req_a, Some(&batch), &vk, NOW).unwrap();
+    assert_eq!(a.decision, GateDecision::Allow);
+    assert_eq!(a.reason, "canonical_batch_approval_granted");
+
+    let b =
+        authorize_mutating_action_ed25519_batch(db.conn(), &req_b, Some(&batch), &vk, NOW).unwrap();
+    assert_eq!(
+        b.decision,
+        GateDecision::Allow,
+        "same batch id must not collide across distinct action digests"
+    );
+    assert_eq!(consumed_count(&db), 2);
+
+    let replay =
+        authorize_mutating_action_ed25519_batch(db.conn(), &req_a, Some(&batch), &vk, NOW).unwrap();
+    assert_eq!(replay.decision, GateDecision::Deny);
+    assert_eq!(replay.reason, "canonical_batch_replay_refused");
+    assert_eq!(consumed_count(&db), 2);
+}
+
+#[test]
+fn batch_approval_requires_digest_membership_and_ed25519_signature() {
+    let db = Db::open_hub(&temp_db_path("ed-batch-member-sig")).unwrap();
+    let (sk, vk) = operator();
+    let member = req_with(
+        "write_file",
+        ActorKind::Owner,
+        true,
+        Risk::Medium,
+        Some("/worktree/in.txt"),
+        "p1",
+    );
+    let outsider = req_with(
+        "write_file",
+        ActorKind::Owner,
+        true,
+        Risk::Medium,
+        Some("/worktree/out.txt"),
+        "p1",
+    );
+    let batch = batch_approval(&[&member], &sk, "batch-membership", Some(FUTURE));
+
+    let out = authorize_mutating_action_ed25519_batch(db.conn(), &outsider, Some(&batch), &vk, NOW)
+        .unwrap();
+    assert_eq!(out.decision, GateDecision::Deny);
+    assert_eq!(out.reason, "canonical_batch_digest_not_member");
+
+    let hmac = hmac_batch_approval(&[&member], "batch-hmac", Some(FUTURE));
+    let rh =
+        authorize_mutating_action_ed25519_batch(db.conn(), &member, Some(&hmac), &vk, NOW).unwrap();
+    assert_eq!(rh.decision, GateDecision::Deny);
+    assert_eq!(rh.reason, "canonical_batch_signature_invalid");
+    assert_eq!(consumed_count(&db), 0);
+}
+
+#[test]
+fn batch_approval_expiry_and_issuer_fail_closed_without_consuming() {
+    let db = Db::open_hub(&temp_db_path("ed-batch-expiry")).unwrap();
+    let (sk, vk) = operator();
+    let req = mutating_req();
+
+    let no_expiry = batch_approval(&[&req], &sk, "batch-no-expiry", None);
+    let rn = authorize_mutating_action_ed25519_batch(db.conn(), &req, Some(&no_expiry), &vk, NOW)
+        .unwrap();
+    assert_eq!(rn.decision, GateDecision::Deny);
+    assert_eq!(rn.reason, "canonical_batch_expiration_required");
+
+    let expired = batch_approval(&[&req], &sk, "batch-expired", Some(NOW));
+    let re =
+        authorize_mutating_action_ed25519_batch(db.conn(), &req, Some(&expired), &vk, NOW).unwrap();
+    assert_eq!(re.decision, GateDecision::Deny);
+    assert_eq!(re.reason, "canonical_batch_expired");
+
+    let mut bad_issuer = batch_approval(&[&req], &sk, "batch-bad-issuer", Some(FUTURE));
+    bad_issuer.issuer = Some("not_the_gate".to_string());
+    bad_issuer.signature = Some(
+        sk.sign(&canonical_approval_batch_signature_bytes(&bad_issuer))
+            .to_hex(),
+    );
+    let ri = authorize_mutating_action_ed25519_batch(db.conn(), &req, Some(&bad_issuer), &vk, NOW)
+        .unwrap();
+    assert_eq!(ri.decision, GateDecision::Deny);
+    assert_eq!(ri.reason, "canonical_batch_bad_issuer");
+    assert_eq!(consumed_count(&db), 0);
+}
+
+#[test]
+fn batch_approval_hard_excludes_classified_irreversible_actions() {
+    let db = Db::open_hub(&temp_db_path("ed-batch-irreversible")).unwrap();
+    let (sk, vk) = operator();
+    let req = req_from_params(
+        "write_file",
+        ActorKind::Owner,
+        true,
+        Risk::Medium,
+        Reversibility::Irreversible,
+        vec![("path".to_string(), "/worktree/signed.txt".to_string())],
+        "p1",
+    );
+    assert_eq!(req.reversibility(), Reversibility::Irreversible);
+    let batch = batch_approval(&[&req], &sk, "batch-irrev", Some(FUTURE));
+
+    let r =
+        authorize_mutating_action_ed25519_batch(db.conn(), &req, Some(&batch), &vk, NOW).unwrap();
+    assert_eq!(
+        r.decision,
+        GateDecision::RequiresApproval,
+        "Irreversible actions must Pause even inside a valid signed batch"
+    );
+    assert_eq!(
+        r.reason,
+        "canonical_batch_irreversible_requires_single_approval"
+    );
+    assert_eq!(consumed_count(&db), 0);
 }
 
 // ── pending-request persistence (the offline operator's to-sign work item) ──────────
