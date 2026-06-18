@@ -49,7 +49,7 @@ import type { FridayHubConfig } from "#hub";
 import {
   createFridaySecretRepository,
   encryptSecret,
-  getMasterKey,
+  getProvisionedMasterKey,
 } from "#providers";
 import {
   redactFridaySkillCandidateSourceUri,
@@ -1107,7 +1107,7 @@ function persistMigratedChannels(
   }
 
   if (secretWrites.length > 0) {
-    const masterKey = getMasterKey();
+    const masterKey = getProvisionedMasterKey();
     for (const write of secretWrites) {
       const envelope = encryptSecret(write.plaintext, masterKey);
       channelSecretRepository.upsert(db, {

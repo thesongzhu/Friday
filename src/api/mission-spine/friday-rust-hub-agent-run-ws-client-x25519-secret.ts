@@ -19,20 +19,15 @@
  *
  * ## Hard contracts enforced here (load-bearing — Directive-0i)
  * 1. **Fail-closed (no weak/zero/predictable key, ever)** — the resolver returns `null` (compose
- *    → today's 503) when: the presence env signal is explicitly off, {@link getMasterKey} THROWS
+ *    → today's 503) when: the presence env signal is explicitly off, {@link getProvisionedMasterKey} THROWS
  *    (misconfig, e.g. an invalid `FRIDAY_MASTER_KEY`), the key is empty, or the derived secret is
- *    not 32 bytes. There is no anonymous / default-key fallback. **IMPORTANT (6b):** `getMasterKey`
- *    AUTO-GENERATES + persists a random key on a fresh host, so a *merely-absent* master key does
- *    NOT fail closed HERE — it yields a valid secret from a random key, and the fail-closed is then
- *    enforced SERVER-side (the derived pubkey is not in the peer-allowlist → no session). So 6b must
- *    enroll the pubkey derived from the prod host's STABLE master key, and RE-ENROLL on key rotation
- *    (a rotated master key changes the derived secret → changes the pubkey → the stale allowlist
- *    entry no longer matches → fail-closed until re-provisioned).
- * 2. **SecureStore-derived, never an env-var key** — the secret is derived through the
- *    keychain-backed {@link getMasterKey} path (the SecureStore root the secret admin uses),
- *    domain-separated with {@link WS_X25519_SECRET_PURPOSE}. An env var may carry only the
- *    OPAQUE presence signal ({@link FRIDAY_HUB_AGENT_RUN_WS_X25519_SECRET_PRESENT}); it NEVER
- *    carries key material. The raw master key NEVER crosses the wire.
+ *    not 32 bytes. There is no anonymous / default-key fallback. A merely-absent master key fails
+ *    closed HERE; the client never derives a pubkey from fresh random key material.
+ * 2. **Provisioned-key-derived, never a WS env-var secret** — the secret is derived through
+ *    the keychain/file/env-backed {@link getProvisionedMasterKey} path (the same root the
+ *    secret admin uses), domain-separated with {@link WS_X25519_SECRET_PURPOSE}. This module
+ *    accepts the deployment's provisioned master key source but never reads X25519 secret
+ *    material from env, never generates one, and never sends the raw master key over the wire.
  * 3. **Never printed / logged** — the secret bytes are returned to the in-process caller only.
  *    This module logs nothing and throws no error carrying the secret; the returned value is an
  *    opaque `Uint8Array`. (`// pragma: allowlist secret` markers below sit on the SecureStore
@@ -46,7 +41,7 @@
  */
 import { createHash } from "node:crypto";
 
-import { getMasterKey } from "#providers";
+import { getProvisionedMasterKey } from "#providers";
 
 import {
   deviceKeypairFromSecret,
@@ -80,12 +75,12 @@ export const FRIDAY_HUB_AGENT_RUN_WS_X25519_SECRET_PRESENT =
 export type FridayRustAgentRunWsClientX25519SecretResolver = () => Uint8Array | null;
 
 /**
- * Default SecureStore-backed resolver. Derives a stable 32-byte X25519 SECRET from the keychain
+ * Default provisioned-key resolver. Derives a stable 32-byte X25519 SECRET from the provisioned
  * master key with a purpose tag (domain separation), so the raw master key never crosses the
  * wire and the same secret is reproduced deterministically on every call (so the derived pubkey
  * the operator enrolls at 6b stays stable). Fails closed (returns `null`) when:
  *   - the presence env signal is explicitly off, or
- *   - the SecureStore master key is unavailable / throws, or
+ *   - the provisioned master key is unavailable / throws, or
  *   - the derived secret is not exactly 32 bytes (defensive; sha256 is always 32 bytes).
  *
  * NOTE: a sha256 digest is a uniformly-random 32-byte string; X25519 clamps the scalar at use
@@ -102,13 +97,9 @@ export function resolveRustAgentRunWsClientX25519Secret(): Uint8Array | null {
 
   let masterKey: Buffer;
   try {
-    // SecureStore root (keychain-backed). NOTE: on a fresh host getMasterKey AUTO-GENERATES +
-    // persists a random key — it does NOT throw on a merely-absent key. It throws only on
-    // MISCONFIG (e.g. an invalid `FRIDAY_MASTER_KEY`), which this catch fail-closes. A
-    // merely-absent key therefore yields a VALID secret from a fresh random key; the resulting
-    // pubkey simply will not be in the server peer-allowlist (until 6b enrollment) → no session
-    // (fail-closed SERVER-side). The client never opens a weak/zero/predictable-key session.
-    masterKey = getMasterKey();
+    // SecureStore root (keychain/file/env-backed) with no auto-generation. A merely-absent key
+    // fails closed here, before deriving a client pubkey from unprovisioned random material.
+    masterKey = getProvisionedMasterKey();
   } catch {
     return null;
   }

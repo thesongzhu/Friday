@@ -14,11 +14,13 @@ describe("Multi-tenant security KPI assertions", () => {
   let rbacEngine: RbacEngine;
   let policyEngine: PolicyEngine;
   const superadminActor = { principalId: "root", roles: ["superadmin"] };
+  const testMasterKey = Buffer.from("44".repeat(32), "hex");
+  const resolveTestMasterKey = () => Buffer.from(testMasterKey);
 
   beforeEach(() => {
     auditLogger = new AuditLogger();
     tenantManager = new TenantManager(auditLogger);
-    secretManager = new SecretManager(auditLogger);
+    secretManager = new SecretManager(auditLogger, { masterKeyResolver: resolveTestMasterKey });
     rbacEngine = new RbacEngine(auditLogger);
     policyEngine = new PolicyEngine(auditLogger);
   });

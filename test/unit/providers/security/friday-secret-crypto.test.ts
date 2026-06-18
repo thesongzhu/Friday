@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as crypto from "node:crypto";
 import {
   encryptSecret,
   decryptSecret,
   getMasterKey,
+  getProvisionedMasterKey,
   getStrictMasterKey,
   resetMasterKeyCache,
 } from "#providers";
@@ -113,6 +114,7 @@ describe("FridaySecretCrypto", () => {
       } else {
         delete process.env.FRIDAY_MASTER_KEY_KEYCHAIN_ACCOUNT;
       }
+      vi.restoreAllMocks();
       resetMasterKeyCache();
     });
 
@@ -166,6 +168,22 @@ describe("FridaySecretCrypto", () => {
     it("throws on invalid hex length", () => {
       process.env.FRIDAY_MASTER_KEY = "abcd"; // Only 2 bytes
       expect(() => getMasterKey()).toThrow("32 bytes");
+    });
+
+    it("provisioned resolver reads explicit env key without generation", () => {
+      const key = crypto.randomBytes(32);
+      process.env.FRIDAY_MASTER_KEY = key.toString("hex");
+
+      expect(getProvisionedMasterKey()).toEqual(key);
+    });
+
+    it("provisioned resolver fails closed when configured keychain source is missing", () => {
+      delete process.env.FRIDAY_MASTER_KEY;
+      process.env.FRIDAY_MASTER_KEY_SOURCE = "keychain";
+      process.env.FRIDAY_MASTER_KEY_KEYCHAIN_SERVICE = `Friday Test Missing ${crypto.randomUUID()}`;
+      process.env.FRIDAY_MASTER_KEY_KEYCHAIN_ACCOUNT = `friday-test-${crypto.randomUUID()}`;
+
+      expect(() => getProvisionedMasterKey()).toThrow(/FRIDAY_MASTER_KEY_SOURCE=keychain/);
     });
   });
 });

@@ -130,7 +130,7 @@ function renderBootstrapScript(input: FridayCloudWorkerPackageInput): string {
     "",
     "# Generate FRIDAY_MASTER_KEY and FRIDAY_TOKEN_SECRET locally if still templated.",
     "if grep -qF 'FRIDAY_MASTER_KEY=" + PLACEHOLDER_MASTER_KEY + "' bootstrap.env; then",
-    "  MASTER_KEY=$(openssl rand -base64 48)",
+    "  MASTER_KEY=$(openssl rand -hex 32)",
     "  export MASTER_KEY",
     "  python3 -c 'import os,sys; sys.stdout.write(open(\"bootstrap.env\").read().replace(\"FRIDAY_MASTER_KEY=" + PLACEHOLDER_MASTER_KEY + "\", \"FRIDAY_MASTER_KEY=\"+os.environ[\"MASTER_KEY\"]))' > bootstrap.env.tmp && mv bootstrap.env.tmp bootstrap.env",
     "fi",

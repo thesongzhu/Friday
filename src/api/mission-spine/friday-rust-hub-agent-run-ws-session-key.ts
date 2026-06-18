@@ -8,9 +8,9 @@
  * agent-run WS server. Before the TS client may open that socket and dispatch a run, it
  * must hold the WS SESSION KEY — the sealed `authProof` bytes the Rust auth sub-slice
  * (S-C) verifies against the session. The operator decision: that key is obtained via the
- * SecureStore path (the keychain-backed master-key store), NOT an unguarded env var that
- * a misconfigured process could leak. A MISSING / invalid key MUST fail CLOSED: the
- * composition never opens an UNAUTHENTICATED WS connection — it falls to today's 503.
+ * provisioned master-key path (env/keychain/existing file), never by generating fresh key
+ * material at first use. A MISSING / invalid key MUST fail CLOSED: the composition never
+ * opens an UNAUTHENTICATED WS connection — it falls to today's 503.
  *
  * ## Hard contracts enforced here (load-bearing)
  * 1. **Fail-closed on missing/invalid** — `resolveRustAgentRunWsSessionKey` returns
@@ -21,11 +21,11 @@
  *    only. This module throws no error carrying the key, logs nothing, and the returned
  *    value is opaque `Uint8Array`. (`// pragma: allowlist secret` markers below sit on
  *    the SecureStore lookup IDENTIFIERS, never on a literal key.)
- * 3. **SecureStore-only source** — the key is read through the keychain-backed
- *    {@link getMasterKey} path (the same SecureStore root the secret admin service uses),
- *    derived deterministically for this WS purpose. There is no plaintext env-var key
- *    path: an env var may carry the OPAQUE SecureStore presence signal (see
- *    {@link FRIDAY_HUB_AGENT_RUN_WS_SESSION_KEY_PRESENT}) but never the key material.
+ * 3. **Provisioned source only** — the key is read through the env/keychain/existing-file
+ *    {@link getProvisionedMasterKey} path (the same root the secret admin service uses),
+ *    derived deterministically for this WS purpose. This module accepts the deployment's
+ *    provisioned master key source but never reads WS key material from env, never generates
+ *    one, and never sends the raw master key over the wire.
  *
  * ## Truth labels (read before trusting this)
  * - **DARK substrate**: no production route resolves a real key here until the
@@ -35,7 +35,7 @@
  */
 import { createHash } from "node:crypto";
 
-import { getMasterKey } from "#providers";
+import { getProvisionedMasterKey } from "#providers";
 
 /**
  * The minimum acceptable derived-key length (bytes). A key shorter than this is treated
@@ -68,11 +68,11 @@ export const FRIDAY_HUB_AGENT_RUN_WS_SESSION_KEY_PRESENT =
 export type FridayRustAgentRunWsSessionKeyResolver = () => Uint8Array | null;
 
 /**
- * Default SecureStore-backed resolver. Derives the WS session key from the keychain master
+ * Default provisioned-key resolver. Derives the WS session key from the provisioned master
  * key with a purpose tag (domain separation) so the raw master key never crosses the wire.
  * Fails closed (returns `null`) when:
  *   - the presence env signal is explicitly off, or
- *   - the SecureStore master key is unavailable / throws, or
+ *   - the provisioned master key is unavailable / throws, or
  *   - the derived key is shorter than the floor (defensive; sha256 is always 32 bytes).
  */
 export function resolveRustAgentRunWsSessionKey(): Uint8Array | null {
@@ -86,8 +86,9 @@ export function resolveRustAgentRunWsSessionKey(): Uint8Array | null {
 
   let masterKey: Buffer;
   try {
-    // SecureStore root (keychain-backed). Throws when no key is provisioned → fail closed.
-    masterKey = getMasterKey();
+    // SecureStore root (keychain/file/env-backed) with no auto-generation.
+    // Throws when no key is provisioned → fail closed.
+    masterKey = getProvisionedMasterKey();
   } catch {
     return null;
   }

@@ -19,6 +19,29 @@ import {
 import { FRIDAY_SQLITE_MIGRATIONS, runFridayMigrations } from "#state";
 import Database from "better-sqlite3";
 
+const TEST_MASTER_KEY_HEX = "66".repeat(32);
+
+function withProvisionedMasterKey<T>(run: () => T): T {
+  const previousMasterKey = process.env.FRIDAY_MASTER_KEY;
+  const previousMasterKeySource = process.env.FRIDAY_MASTER_KEY_SOURCE;
+  process.env.FRIDAY_MASTER_KEY = TEST_MASTER_KEY_HEX;
+  delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+  try {
+    return run();
+  } finally {
+    if (previousMasterKey === undefined) {
+      delete process.env.FRIDAY_MASTER_KEY;
+    } else {
+      process.env.FRIDAY_MASTER_KEY = previousMasterKey;
+    }
+    if (previousMasterKeySource === undefined) {
+      delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+    } else {
+      process.env.FRIDAY_MASTER_KEY_SOURCE = previousMasterKeySource;
+    }
+  }
+}
+
 describe("parseArgs", () => {
   // Helper: simulate argv with node + script prefix
   const argv = (...args: string[]) => ["node", "friday-cli.js", ...args];
@@ -1041,11 +1064,13 @@ describe("prepareStartupChannelsConfig", () => {
         }, null, 2),
       );
 
-      const resolution = prepareStartupChannelsConfig({
-        env: { HOME: tmpHome },
-        dbPath,
-        nowIso: () => "2026-03-12T12:00:00.000Z",
-      });
+      const resolution = withProvisionedMasterKey(() =>
+        prepareStartupChannelsConfig({
+          env: { HOME: tmpHome },
+          dbPath,
+          nowIso: () => "2026-03-12T12:00:00.000Z",
+        }),
+      );
 
       expect(resolution.source).toBe("migrated_legacy_to_setup_state");
       expect(resolution.migrated).toBe(true);
@@ -1151,11 +1176,13 @@ describe("prepareStartupChannelsConfig", () => {
         },
       ]));
 
-      const resolution = prepareStartupChannelsConfig({
-        env: { HOME: tmpHome },
-        dbPath,
-        nowIso: () => "2026-03-12T12:30:00.000Z",
-      });
+      const resolution = withProvisionedMasterKey(() =>
+        prepareStartupChannelsConfig({
+          env: { HOME: tmpHome },
+          dbPath,
+          nowIso: () => "2026-03-12T12:30:00.000Z",
+        }),
+      );
 
       expect(resolution.source).toBe("setup_state");
       expect(resolution.migrated).toBe(true);
