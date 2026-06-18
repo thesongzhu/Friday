@@ -1,7 +1,9 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
 import { extname } from "node:path";
 import type {
   FridayShellExecutor,
+  FridayShellOsSandboxOptions,
   FridayShellRunOptions,
   FridayShellRunResult,
 } from "./friday-skill-executor.types.js";
@@ -9,6 +11,7 @@ import type {
 const DEFAULT_TIMEOUT_MS = 30_000;
 const TERMINATION_GRACE_MS = 500;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_048_576;
+const DARWIN_SANDBOX_EXEC = "/usr/bin/sandbox-exec";
 const WINDOWS_SHELL_SCRIPT_EXTENSIONS = new Set([".bash", ".sh"]);
 const SAFE_PARENT_ENV_KEYS = [
   "PATH",
@@ -53,6 +56,71 @@ function resolveSpawnSpec(command: string, args: string[] = []): { command: stri
   }
 
   return { command, args };
+}
+
+export function isFridayDarwinSandboxExecAvailable(): boolean {
+  return process.platform === "darwin" && existsSync(DARWIN_SANDBOX_EXEC);
+}
+
+function sandboxProfileString(value: string): string {
+  return JSON.stringify(value);
+}
+
+function expandWritableRoots(roots: readonly string[] = []): string[] {
+  const expanded = new Set<string>();
+  for (const root of roots) {
+    if (!root) continue;
+    expanded.add(root);
+    try {
+      expanded.add(realpathSync.native(root));
+    } catch {
+      try {
+        expanded.add(realpathSync(root));
+      } catch {
+        // Keep the caller-provided path; sandbox-exec will ignore nonexistent roots.
+      }
+    }
+  }
+  return [...expanded];
+}
+
+function buildSandboxProfile(options: FridayShellOsSandboxOptions): string {
+  const lines = ["(version 1)", "(allow default)"];
+  if (options.denyNetwork !== false) {
+    lines.push("(deny network*)");
+  }
+  lines.push("(deny file-write*)");
+
+  const writableRoots = expandWritableRoots(options.writableRoots);
+  if (writableRoots.length > 0) {
+    lines.push(`(allow file-write* ${writableRoots.map((root) => `(subpath ${sandboxProfileString(root)})`).join(" ")})`);
+  }
+
+  return lines.join("\n");
+}
+
+function resolveSandboxedSpawnSpec(
+  spawnSpec: { command: string; args: string[] },
+  sandbox: FridayShellOsSandboxOptions | undefined,
+): { command: string; args: string[]; unavailableReason?: string } {
+  if (!sandbox?.enabled) {
+    return spawnSpec;
+  }
+  if (process.platform !== "darwin") {
+    return sandbox.required
+      ? { ...spawnSpec, unavailableReason: "OS sandbox is required but sandbox-exec is only supported on Darwin." }
+      : spawnSpec;
+  }
+  if (!existsSync(DARWIN_SANDBOX_EXEC)) {
+    return sandbox.required
+      ? { ...spawnSpec, unavailableReason: `OS sandbox is required but ${DARWIN_SANDBOX_EXEC} is unavailable.` }
+      : spawnSpec;
+  }
+
+  return {
+    command: DARWIN_SANDBOX_EXEC,
+    args: ["-p", buildSandboxProfile(sandbox), spawnSpec.command, ...spawnSpec.args],
+  };
 }
 
 function createBoundedOutputCollector(streamName: "stdout" | "stderr", maxBytes: number = DEFAULT_MAX_OUTPUT_BYTES) {
@@ -102,7 +170,22 @@ export function createFridayShellExecutor(): FridayShellExecutor {
         let settled = false;
         let terminationFallbackTimer: NodeJS.Timeout | null = null;
 
-        const spawnSpec = resolveSpawnSpec(options.command, options.args ?? []);
+        const spawnSpec = resolveSandboxedSpawnSpec(
+          resolveSpawnSpec(options.command, options.args ?? []),
+          options.osSandbox,
+        );
+        if (spawnSpec.unavailableReason) {
+          stderr.append(spawnSpec.unavailableReason);
+          resolve({
+            exitCode: 126,
+            stdout: stdout.toString(),
+            stderr: stderr.toString(),
+            timedOut: false,
+            cancelled: false,
+            durationMs: Date.now() - startMs,
+          });
+          return;
+        }
         let child: ChildProcessWithoutNullStreams;
         try {
           child = spawn(spawnSpec.command, spawnSpec.args, {

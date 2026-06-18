@@ -5,6 +5,7 @@ import type {
   FridaySkillExecuteRequest,
   FridaySkillExecuteResult,
   FridaySkillExecutor,
+  FridayShellOsSandboxOptions,
   FridaySkillLifecycleCanaryExecuteRequest,
 } from "./friday-skill-executor.types.js";
 import type { SkillManifestV2 } from "../model/friday-skill-manifest-v2.types.js";
@@ -740,6 +741,16 @@ export function createFridaySkillExecutor(
   const nodeExecutor = createFridayNodeExecutor();
   const activeRuns = new Map<string, { cancelled: boolean; controller: AbortController }>();
 
+  function skillProcessSandbox(skillDir: string): FridayShellOsSandboxOptions {
+    const darwin = process.platform === "darwin";
+    return {
+      enabled: darwin,
+      required: darwin,
+      denyNetwork: true,
+      writableRoots: [skillDir],
+    };
+  }
+
   function executeInternal(
     request: InternalFridaySkillExecuteRequest,
   ): FridaySkillExecuteHandle {
@@ -1012,6 +1023,7 @@ export function createFridaySkillExecutor(
                       command: entrypoint,
                       cwd: registered.skillDir,
                       env: buildRuntimeEnv(manifest.requirements.env),
+                      osSandbox: skillProcessSandbox(registered.skillDir),
                       timeoutMs,
                       stdin: JSON.stringify(preparedInput),
                       signal: controller.signal,
@@ -1089,6 +1101,7 @@ export function createFridaySkillExecutor(
                       args: [entrypoint],
                       cwd: registered.skillDir,
                       env: buildRuntimeEnv(manifest.requirements.env),
+                      osSandbox: skillProcessSandbox(registered.skillDir),
                       timeoutMs,
                       stdin: JSON.stringify(preparedInput),
                       signal: controller.signal,

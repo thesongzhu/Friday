@@ -22,9 +22,17 @@ export interface FridayShellRunOptions {
   args?: string[];
   cwd?: string;
   env?: Record<string, string>;
+  osSandbox?: FridayShellOsSandboxOptions;
   timeoutMs?: number;
   stdin?: string;
   signal?: AbortSignal;
+}
+
+export interface FridayShellOsSandboxOptions {
+  enabled: boolean;
+  required?: boolean;
+  denyNetwork?: boolean;
+  writableRoots?: readonly string[];
 }
 
 export interface FridayShellRunResult {

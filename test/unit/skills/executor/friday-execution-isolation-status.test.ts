@@ -8,8 +8,8 @@ import {
 } from "../../../../src/skills/executor/friday-execution-isolation-status.js";
 
 describe("getFridayExecutionIsolationStatus", () => {
-  it("truth-labels execution boundaries as not OS-sandboxed by default", () => {
-    const status = getFridayExecutionIsolationStatus({});
+  it("truth-labels execution boundaries as not OS-sandboxed when no process sandbox is available", () => {
+    const status = getFridayExecutionIsolationStatus({}, { darwinSandboxExecAvailable: false });
 
     expect(status).toMatchObject({
       schemaVersion: "1.0",
@@ -45,6 +45,37 @@ describe("getFridayExecutionIsolationStatus", () => {
           boundary: "logical_workspace_guard_host_spawn",
           osSandbox: false,
           defaultLive: true,
+        },
+      },
+    });
+  });
+
+  it("truth-labels shell and python as partially OS-sandboxed when Darwin sandbox-exec is available", () => {
+    const status = getFridayExecutionIsolationStatus({}, { darwinSandboxExecAvailable: true });
+
+    expect(status).toMatchObject({
+      schemaVersion: "1.0",
+      disposition: "partial_os_sandbox",
+      osSandbox: true,
+      surfaces: {
+        "skill.shell": {
+          boundary: "darwin_sandbox_exec_write_network_guard",
+          osSandbox: true,
+          defaultLive: true,
+        },
+        "skill.python": {
+          boundary: "darwin_sandbox_exec_write_network_guard",
+          osSandbox: true,
+          defaultLive: true,
+        },
+        "skill.node": {
+          osSandbox: false,
+        },
+        "plugin.entrypoint": {
+          osSandbox: false,
+        },
+        "agent.exec": {
+          osSandbox: false,
         },
       },
     });
