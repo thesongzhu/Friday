@@ -86,19 +86,9 @@ export function createFridayRetentionJob(deps: CreateRetentionJobDeps): FridayRe
           .run(learningCutoff).changes;
       });
 
-      result.deletedSkillRuns = deps.db.withWriteTransaction((db) => {
-        const skillRunCutoff = subtractDays(nowIso, policy.skillRunTerminalDays);
-        let deletedSkillRuns = 0;
-        for (const status of ["completed", "failed", "cancelled"]) {
-          const deleteResult = db
-            .prepare(
-              "DELETE FROM memory_items WHERE namespace = 'skill_runs' AND tags_json LIKE ? AND updated_at < ?",
-            )
-            .run(`%"status:${status}"%`, skillRunCutoff);
-          deletedSkillRuns += deleteResult.changes;
-        }
-        return deletedSkillRuns;
-      });
+      const skillRunCutoff = subtractDays(nowIso, policy.skillRunTerminalDays);
+      result.deletedSkillRuns =
+        deps.skillRunStore.pruneTerminalRunsBefore(skillRunCutoff);
 
       result.deletedAuditLogs = deps.db.withWriteTransaction((db) => {
         const auditCutoff = subtractDays(nowIso, policy.auditLogsDays);

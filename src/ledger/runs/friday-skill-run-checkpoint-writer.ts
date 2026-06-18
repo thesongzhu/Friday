@@ -1,5 +1,6 @@
 import type { FridaySqliteLayer } from "#state";
 import type { FridayLearningEventAppendInput } from "../friday-ledger-internal.types.js";
+import { upsertFridaySkillRunSnapshotRow } from "./friday-skill-run-store.js";
 import type { FridaySkillRunSnapshot } from "./friday-skill-run-store.types.js";
 
 export interface FridaySkillRunCheckpointWriter {
@@ -12,8 +13,6 @@ export interface FridaySkillRunCheckpointWriter {
 export interface CreateCheckpointWriterDeps {
   db: FridaySqliteLayer;
 }
-
-const NAMESPACE = "skill_runs";
 
 /**
  * Persists a skill run snapshot and an optional learning event
@@ -30,27 +29,8 @@ export function createFridaySkillRunCheckpointWriter(
       return deps.db.withWriteTransaction((db) => {
         const snapshot = input.run;
 
-        // 1. Upsert run snapshot in memory_items
-        db.prepare(
-          `INSERT INTO memory_items (id, namespace, key, value_json, tags_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(namespace, key) DO UPDATE SET
-             value_json = excluded.value_json,
-             tags_json = excluded.tags_json,
-             updated_at = excluded.updated_at`,
-        ).run(
-          snapshot.runId,
-          NAMESPACE,
-          snapshot.runId,
-          JSON.stringify(snapshot),
-          JSON.stringify([
-            `skill:${snapshot.skillId}`,
-            `status:${snapshot.status}`,
-            `user:${snapshot.userId}`,
-          ]),
-          snapshot.startedAt,
-          snapshot.updatedAt,
-        );
+        // 1. Upsert run snapshot in the dedicated skill run table.
+        upsertFridaySkillRunSnapshotRow(db, snapshot);
 
         // 2. Append learning event (optional)
         let eventInserted: boolean | undefined;

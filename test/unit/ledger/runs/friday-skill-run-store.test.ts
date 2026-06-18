@@ -56,6 +56,23 @@ describe("FridaySkillRunStore", () => {
     expect(retrieved!.channel).toBe("discord");
   });
 
+  it("stores runs in the dedicated table and writes zero memory_items rows", () => {
+    const store = createStore();
+    store.upsertRun(baseSnapshot);
+
+    const dedicated = db.writer
+      .prepare("SELECT run_id, skill_id, status FROM skill_run_snapshots WHERE run_id = ?")
+      .get("run-001") as { run_id: string; skill_id: string; status: string };
+    const memoryRows = db.writer
+      .prepare("SELECT COUNT(*) as cnt FROM memory_items WHERE namespace = 'skill_runs'")
+      .get() as { cnt: number };
+
+    expect(dedicated.run_id).toBe("run-001");
+    expect(dedicated.skill_id).toBe("skill-timer");
+    expect(dedicated.status).toBe("running");
+    expect(memoryRows.cnt).toBe(0);
+  });
+
   it("upsertRun updates existing run", () => {
     const store = createStore();
     store.upsertRun(baseSnapshot);
@@ -139,6 +156,14 @@ describe("FridaySkillRunStore", () => {
     expect(runs).toHaveLength(3);
   });
 
+  it("listRuns respects an explicit zero limit", () => {
+    const store = createStore();
+    store.upsertRun(baseSnapshot);
+
+    const runs = store.listRuns({ limit: 0 });
+    expect(runs).toEqual([]);
+  });
+
   it("pruneTerminalRunsBefore deletes old completed/failed/cancelled runs", () => {
     const store = createStore();
     // Old completed
@@ -187,5 +212,36 @@ describe("FridaySkillRunStore", () => {
 
     const retrieved = store.getRun<TestState>("run-001");
     expect(retrieved!.metadata).toEqual({ priority: "high", tags: ["urgent"] });
+  });
+
+  it("reads legacy memory_items runs without writing back to memory_items", () => {
+    const store = createStore();
+    db.writer
+      .prepare(
+        `INSERT INTO memory_items (id, namespace, key, value_json, tags_json, created_at, updated_at)
+         VALUES (?, 'skill_runs', ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        baseSnapshot.runId,
+        baseSnapshot.runId,
+        JSON.stringify(baseSnapshot),
+        JSON.stringify([
+          `skill:${baseSnapshot.skillId}`,
+          `status:${baseSnapshot.status}`,
+          `user:${baseSnapshot.userId}`,
+        ]),
+        baseSnapshot.startedAt,
+        baseSnapshot.updatedAt,
+      );
+
+    const retrieved = store.getRun<TestState>("run-001");
+    const listed = store.listRuns({ skillId: "skill-timer" });
+
+    expect(retrieved!.runId).toBe("run-001");
+    expect(listed.map((run) => run.runId)).toContain("run-001");
+    const memoryRows = db.writer
+      .prepare("SELECT COUNT(*) as cnt FROM memory_items WHERE namespace = 'skill_runs'")
+      .get() as { cnt: number };
+    expect(memoryRows.cnt).toBe(1);
   });
 });
