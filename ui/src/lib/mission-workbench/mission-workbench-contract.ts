@@ -66,6 +66,23 @@ export interface MissionWorkbenchCapabilityState {
   proofRef: string;
 }
 
+export type MissionRouteActionTargetKind = "file" | "command" | "subtask";
+
+export type MissionRouteActionReversibility =
+  | "reversible_git_worktree"
+  | "operator_gate_required"
+  | "pending_classify";
+
+export interface MissionRouteActionItem {
+  description: string;
+  targetKind: MissionRouteActionTargetKind;
+  targetRef: string;
+  reversibility: MissionRouteActionReversibility;
+  assignedLane: string;
+  assignedProviderOrAgent?: string | null;
+  routeReason: string;
+}
+
 export type MissionTranscriptGroupKind =
   | "mission"
   | "work_item"
@@ -125,6 +142,7 @@ export interface MissionWorkbenchSnapshot {
     advisorSummary: string;
     selectedRoute: string;
     alternatives: string[];
+    actionItems: MissionRouteActionItem[];
     truthLabel: MissionTruthLabel;
   };
   providerReceiptRefs: string[];

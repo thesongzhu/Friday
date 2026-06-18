@@ -125,6 +125,7 @@ pub fn project_workbench(db: &Db, requested_mission_id: Option<&str>) -> Result<
             "advisorSummary": route_decision.why_this_route,
             "selectedRoute": redacted_ref("route-decision", &route_decision.route_decision_ref),
             "alternatives": route_decision.considered_options,
+            "actionItems": route_decision_action_items_json(&route_decision.action_items),
             "truthLabel": "friday_owned"
         },
         "providerReceiptRefs": provider_receipt_refs,
@@ -188,6 +189,23 @@ fn channel_receipt_refs(links: &[friday_core::MissionLink]) -> Vec<String> {
             .map(|link| redacted_link_proof_ref("channel-receipt", link))
             .collect(),
     )
+}
+
+fn route_decision_action_items_json(items: &[friday_core::RouteActionItem]) -> Vec<Value> {
+    items
+        .iter()
+        .map(|item| {
+            json!({
+                "description": item.description.clone(),
+                "targetKind": item.target_kind.as_str(),
+                "targetRef": item.target_ref.clone(),
+                "reversibility": item.reversibility.as_str(),
+                "assignedLane": item.assigned_lane.as_str(),
+                "assignedProviderOrAgent": item.assigned_provider_or_agent.clone(),
+                "routeReason": item.route_reason.clone(),
+            })
+        })
+        .collect()
 }
 
 fn work_items_json(work_items: &[WorkItem]) -> Vec<Value> {

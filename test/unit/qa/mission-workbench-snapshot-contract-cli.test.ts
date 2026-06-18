@@ -20,6 +20,17 @@ function makeSnapshot(overrides: Record<string, unknown> = {}) {
       advisorSummary: "Rust Hub route decision projection.",
       selectedRoute: "route_decision_ref",
       alternatives: ["alternate_ref"],
+      actionItems: [
+        {
+          description: "Implement Mission Spine domain types",
+          targetKind: "file",
+          targetRef: "rust-core/crates/friday-core/src/lib.rs",
+          reversibility: "operator_gate_required",
+          assignedLane: "codex",
+          assignedProviderOrAgent: "codex",
+          routeReason: "Rust Hub must own product truth before UI wiring",
+        },
+      ],
       truthLabel: "friday_owned",
     },
     providerReceiptRefs: ["proof://provider/receipt/redacted"],

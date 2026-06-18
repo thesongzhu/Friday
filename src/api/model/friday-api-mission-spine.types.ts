@@ -66,6 +66,23 @@ export interface FridayMissionSpineWorkbenchCapabilityState {
   proofRef: string;
 }
 
+export type FridayMissionSpineRouteActionTargetKind = "file" | "command" | "subtask";
+
+export type FridayMissionSpineRouteActionReversibility =
+  | "reversible_git_worktree"
+  | "operator_gate_required"
+  | "pending_classify";
+
+export interface FridayMissionSpineRouteActionItem {
+  description: string;
+  targetKind: FridayMissionSpineRouteActionTargetKind;
+  targetRef: string;
+  reversibility: FridayMissionSpineRouteActionReversibility;
+  assignedLane: string;
+  assignedProviderOrAgent?: string | null;
+  routeReason: string;
+}
+
 export type FridayMissionSpineTranscriptGroupKind =
   | "mission"
   | "work_item"
@@ -125,6 +142,7 @@ export interface FridayMissionSpineWorkbenchSnapshot {
     advisorSummary: string;
     selectedRoute: string;
     alternatives: string[];
+    actionItems: FridayMissionSpineRouteActionItem[];
     truthLabel: FridayMissionSpineTruthLabel;
   };
   providerReceiptRefs: string[];
