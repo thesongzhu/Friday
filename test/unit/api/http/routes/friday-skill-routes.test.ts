@@ -728,7 +728,7 @@ describe("createFridaySkillRoutes", () => {
     }
   });
 
-  it("allows bundled system node skills when the runtime gate is off", async () => {
+  it("blocks bundled system node skills when the runtime gate is off", async () => {
     const previousGate = process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
     delete process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
     try {
@@ -752,16 +752,18 @@ describe("createFridaySkillRoutes", () => {
         allowTestOnlySkillRunExecution: true,
       });
 
-      const result = await routes.find((item) => item.operationId === "skills.run")!.handler(makeCtx({
+      await expect(routes.find((item) => item.operationId === "skills.run")!.handler(makeCtx({
         params: { skillId: "review-open-issues" },
         body: { input: { limit: 10 } },
-      }));
-
-      expect(executor.execute).toHaveBeenCalledWith(expect.objectContaining({
-        skillId: "review-open-issues",
-        input: { limit: 10 },
-      }));
-      expect(result).toHaveProperty("status", "completed");
+      }))).rejects.toMatchObject({
+        code: "CAPABILITY_DISABLED",
+        httpStatus: 501,
+        details: {
+          capability: "skill_node_runtime",
+          surface: "POST /v1/skills/:skillId/run",
+        },
+      });
+      expect(executor.execute).not.toHaveBeenCalled();
     } finally {
       if (previousGate === undefined) {
         delete process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];

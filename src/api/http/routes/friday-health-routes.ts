@@ -105,10 +105,10 @@ export function createFridayHealthRoutes(
           notes: "Non-bundled Node skills dynamically import in-process modules; FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS=true is accepted only by the test harness, never as a production live unlock.",
         },
         "skill.node.bundled_system": {
-          boundary: "in_process_trusted",
+          boundary: "disabled_in_production_unisolated_test_harness_only",
           osSandbox: false,
-          defaultLive: true,
-          notes: "Bundled system Node skills may run without the unisolated env gate, but still execute in the hub process.",
+          defaultLive: false,
+          notes: "Bundled system Node skills are also disabled in production because they dynamically import in-process modules without OS isolation; FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS=true is accepted only by the test harness.",
         },
         "plugin.entrypoint": {
           boundary: "retired_by_default_dynamic_import_when_enabled",

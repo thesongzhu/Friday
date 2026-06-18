@@ -1,5 +1,4 @@
 import {
-  canRunFridayBundledSystemNodeSkillWithoutGate,
   evaluateFridaySkillExecutionReadiness,
   FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
   type FridayRegisteredSkill,
@@ -120,15 +119,8 @@ export function createFridayAgentSkillsListTool(
             const runtimeReadiness = evaluateFridaySkillExecutionReadiness({
               manifest: skill.manifest,
             });
-            const allowBundledSystemNodeSkill = canRunFridayBundledSystemNodeSkillWithoutGate({
-              runtimeKind: skill.manifest.runtime.kind,
-              manifestKind: skill.manifest.kind,
-              source: skill.source,
-              origin: skill.origin,
-            });
             const nodeRuntimeBlocked =
               skill.manifest.runtime.kind === "node"
-              && !allowBundledSystemNodeSkill
               && !isFridayUnisolatedNodeSkillsEnabled();
             const lifecycleBlocked = lifecycleStatus !== "installed";
             const blockers = [

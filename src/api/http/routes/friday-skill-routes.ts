@@ -10,7 +10,6 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FridayAuthPrincipal, FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import {
-  canRunFridayBundledSystemNodeSkillWithoutGate,
   createFridaySkillRunMutatingActionRequest,
   evaluateFridaySkillExecutionReadiness,
   FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
@@ -953,15 +952,7 @@ export function createFridaySkillRoutes(
           );
         }
       }
-      const allowBundledSystemNodeSkill = canRunFridayBundledSystemNodeSkillWithoutGate({
-        runtimeKind,
-        manifestKind: registeredSkill?.manifest.kind
-          ?? lifecycleSkill?.currentManifest?.kind
-          ?? lifecycleSkill?.catalogEntry?.manifest?.kind,
-        source: registeredSkill?.source,
-        origin: registeredSkill?.origin,
-      });
-      if (runtimeKind === "node" && !allowBundledSystemNodeSkill && !isFridayUnisolatedNodeSkillsEnabled()) {
+      if (runtimeKind === "node" && !isFridayUnisolatedNodeSkillsEnabled()) {
         throwFridayCapabilityDisabled({
           capability: "skill_node_runtime",
           surface: "POST /v1/skills/:skillId/run",

@@ -32,9 +32,9 @@ describe("getFridayExecutionIsolationStatus", () => {
           defaultLive: false,
         },
         "skill.node.bundled_system": {
-          boundary: "in_process_trusted",
+          boundary: "disabled_in_production_unisolated_test_harness_only",
           osSandbox: false,
-          defaultLive: true,
+          defaultLive: false,
         },
         "plugin.entrypoint": {
           boundary: "retired_by_default_dynamic_import_when_enabled",
@@ -70,6 +70,11 @@ describe("getFridayExecutionIsolationStatus", () => {
         },
         "skill.node": {
           osSandbox: false,
+        },
+        "skill.node.bundled_system": {
+          boundary: "disabled_in_production_unisolated_test_harness_only",
+          osSandbox: false,
+          defaultLive: false,
         },
         "plugin.entrypoint": {
           osSandbox: false,

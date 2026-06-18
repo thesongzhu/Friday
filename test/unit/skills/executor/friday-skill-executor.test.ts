@@ -1285,7 +1285,7 @@ export async function execute(_input, ctx) {
     }
   });
 
-  it("allows bundled system node skills when the runtime gate is off", async () => {
+  it("blocks bundled system node skills when the runtime gate is off", async () => {
     const fs = await import("node:fs/promises");
     const scriptDir = await fs.mkdtemp("/tmp/friday-node-bundled-system-");
     const previousGate = process.env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
@@ -1322,9 +1322,12 @@ export async function execute(_input, ctx) {
         skillId: "review-open-issues",
       }).result;
 
-      expect(result.status).toBe("completed");
+      expect(result.status).toBe("failed");
+      expect(result.stderr).toContain("disabled in production");
       expect(result.output).toMatchObject({
-        summary: "starter-ok",
+        code: "CAPABILITY_DISABLED",
+        capability: "skill_node_runtime",
+        runtimeKind: "node",
       });
     } finally {
       if (previousGate === undefined) {
