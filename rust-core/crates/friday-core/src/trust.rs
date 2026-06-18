@@ -17,9 +17,9 @@
 //!   objection" — it is NEVER an upgrade (the storage compose feeds it to the mutating
 //!   gate, which can still require approval).
 //!
-//! DEFERRED (stored, NOT enforced — honest): `token_ceiling` / `max_runs` need a live
-//! token-ledger / run-state counter; this baseline stores them but does not enforce
-//! them (no fake counter). The check ignores them.
+//! Storage-enforced outside this PURE check: `max_runs` and action-time
+//! `token_ceiling` use the `friday-storage` compose plus a `(grant_id, run_id)`
+//! usage ledger. This pure check still ignores counters because it has no I/O.
 
 use crate::gate::GateDecision;
 use crate::tool_policy::Risk;
@@ -31,9 +31,9 @@ pub struct TrustBoundaries {
     pub workspace: Option<String>,
     /// The maximum risk an action may carry. An effective risk ABOVE this is denied.
     pub risk_ceiling: Risk,
-    /// DEFERRED (stored, not enforced): token spend ceiling.
+    /// Storage-enforced outside the pure check: action-time token spend ceiling.
     pub token_ceiling: Option<i64>,
-    /// DEFERRED (stored, not enforced): max runs under this grant.
+    /// Storage-enforced outside the pure check: max distinct run ids under this grant.
     pub max_runs: Option<i64>,
     /// Allowlists. EMPTY = DENY-ALL for that dimension (fail-closed).
     pub allowed_channels: Vec<String>,

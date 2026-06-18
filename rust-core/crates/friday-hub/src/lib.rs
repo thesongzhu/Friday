@@ -1972,6 +1972,18 @@ impl RunPolicy {
         self
     }
 
+    /// Attach the stable loop run id to an existing trust action context. This is done
+    /// at the loop entrypoint, where the authoritative `run_id` already exists, so
+    /// trust-grant `max_runs` is charged per run rather than per tool action.
+    fn with_run_id(mut self, run_id: &str) -> Self {
+        if let Some(ctx) = self.action_context.as_mut() {
+            if ctx.run_id.is_none() {
+                ctx.run_id = Some(run_id.to_string());
+            }
+        }
+        self
+    }
+
     /// (NS-1) The run's action context, as carried to the gate-dispatch chokepoint —
     /// the thin accessor NS-2 reads to build the [`friday_storage::AgentActionContext`]
     /// for the trust check. `None` ⇒ no context attached (every pre-NS-1 caller).
@@ -4847,6 +4859,7 @@ pub fn run_loop_with_policy_flagged(
     work_item_id: Option<&str>,
     escalation_client: Option<&dyn AgentLlmClient>,
 ) -> Result<LoopOutcome, StorageError> {
+    let policy_with_run_id = policy.clone().with_run_id(run_id);
     // (#24b) Run the loop body to completion, then CLEAR the durable execution marker EXACTLY ONCE
     // — covering EVERY exit (every `return` arm + every `?`-propagated error) structurally, so a
     // stale-executing row can never be left behind. The SET happens per-turn inside the inner fn,
@@ -4860,7 +4873,7 @@ pub fn run_loop_with_policy_flagged(
         recall_preamble,
         operator_vk,
         approve,
-        policy,
+        &policy_with_run_id,
         max_turns,
         cancel,
         steer,
@@ -6661,6 +6674,7 @@ mod tests {
     fn ns1_full_ctx() -> friday_storage::AgentActionContext {
         friday_storage::AgentActionContext {
             agent_id: "agent-ns1".to_string(),
+            run_id: None,
             workspace: Some("ws-ns1".to_string()),
             tool: Some("read_file".to_string()),
             provider: Some("deepseek".to_string()),
@@ -6703,6 +6717,31 @@ mod tests {
         assert_eq!(tightened.principal_id(), Some("alice"));
         assert!(tightened.is_read_only(), "tightening added read_only");
         assert!(tightened.is_tool_disabled("delete_file"));
+    }
+
+    #[test]
+    fn ns1_policy_run_id_is_attached_without_overwriting_existing_context_run_id() {
+        let policy = RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), false)
+            .with_action_context(ns1_full_ctx())
+            .with_run_id("run-1");
+        assert_eq!(
+            policy
+                .action_context()
+                .and_then(|ctx| ctx.run_id.as_deref()),
+            Some("run-1")
+        );
+
+        let mut prebound_ctx = ns1_full_ctx();
+        prebound_ctx.run_id = Some("prebound-run".to_string());
+        let prebound = RunPolicy::new(Some("alice".to_string()), Vec::<String>::new(), false)
+            .with_action_context(prebound_ctx)
+            .with_run_id("run-2");
+        assert_eq!(
+            prebound
+                .action_context()
+                .and_then(|ctx| ctx.run_id.as_deref()),
+            Some("prebound-run")
+        );
     }
 
     #[test]
@@ -8056,6 +8095,7 @@ mod tests {
     fn ns2_ctx() -> friday_storage::AgentActionContext {
         friday_storage::AgentActionContext {
             agent_id: "friday".to_string(),
+            run_id: None,
             workspace: None,
             tool: Some("write_file".to_string()),
             provider: None,
@@ -9892,6 +9932,7 @@ mod tests {
     fn tp1_producer_ctx_tool_none() -> friday_storage::AgentActionContext {
         friday_storage::AgentActionContext {
             agent_id: "friday".to_string(),
+            run_id: None,
             workspace: None,
             tool: None,
             provider: None,

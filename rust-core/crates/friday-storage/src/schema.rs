@@ -618,6 +618,18 @@ pub fn hub_migrations() -> Vec<Migration> {
             destructive: false,
             up: m0035_route_decision_action_items,
         },
+        // D4: Hub-only trust-grant run-usage ledger for enforcing `max_runs`
+        // without changing the `trust_grant` row shape. The primary key is
+        // (grant_id, run_id), so a grant is charged at most once per distinct
+        // run and repeated tool calls inside the same run are idempotent. This
+        // is a NEW-TABLE migration; pre-v36 grants remain valid, and grants
+        // without max_runs still behave byte-identically.
+        Migration {
+            version: 36,
+            name: "trust_grant_run_usage",
+            destructive: false,
+            up: m0036_trust_grant_run_usage,
+        },
     ]
 }
 
@@ -882,6 +894,15 @@ CREATE TABLE trust_grant (
     boundaries TEXT NOT NULL
 );
 CREATE INDEX idx_trust_grant_agent_active ON trust_grant(agent_id, revoked, expires_at);";
+
+const DDL_TRUST_GRANT_RUN_USAGE: &str = "
+CREATE TABLE trust_grant_run_usage (
+    grant_id   TEXT NOT NULL,
+    run_id     TEXT NOT NULL,
+    claimed_at INTEGER NOT NULL,
+    PRIMARY KEY (grant_id, run_id)
+);
+CREATE INDEX idx_trust_grant_run_usage_grant ON trust_grant_run_usage(grant_id);";
 
 // --- PR-5 agent-loop fragments (Hub-only) -----------------------------------
 
@@ -2444,4 +2465,8 @@ fn m0035_route_decision_action_items(tx: &Transaction) -> rusqlite::Result<()> {
         "ALTER TABLE route_decision
            ADD COLUMN action_items TEXT NOT NULL DEFAULT '[]';",
     )
+}
+
+fn m0036_trust_grant_run_usage(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_TRUST_GRANT_RUN_USAGE)
 }

@@ -311,8 +311,8 @@ impl<T: Transport> HubRuntime<T> {
         //     workspace prefix is satisfiable; `check_grant` would otherwise DENY a
         //     workspace-scoped grant when `ctx.workspace` is None (the `_ => deny
         //     trust_grant_workspace_out_of_scope` arm in friday_core::check_grant). v1 enforce
-        //     honors agent_id + workspace-prefix + risk_ceiling + expiry + token/run ceilings +
-        //     tool allowlist.
+        //     honors agent_id + workspace-prefix + risk_ceiling + expiry + max_runs + action-time
+        //     token_ceiling (via the loop run_id usage ledger) + tool allowlist.
         //   - `tool` = None: enriched PER-ACTION at the chokepoint from
         //     `canonical_rust_name(raw.action)` (TP-PR1), so the `allowed_tools` allowlist is
         //     actually evaluated rather than silently skipped. A boot-level `tool` would be wrong.
