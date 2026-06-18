@@ -44,6 +44,11 @@ import type {
   FridayVerifyPackageResponse,
 } from "../../../packaging/api/friday-packaging-api.types.js";
 import type { UUID } from "../../../security/multi-tenant/model/friday-multi-tenant-security.types.js";
+import type {
+  FridayCanonicalApprovalResolution,
+  FridayMutatingActionGate,
+  FridayMutatingActionGateResult,
+} from "../../../security/friday-mutating-action-gate.js";
 
 // ─── Service Dependencies ───
 
@@ -73,6 +78,8 @@ export interface FridayPackagingRoutesDeps {
     revoke(keyId: string, req: FridayRevokeTrustedKeyRequest): FridayRevokeTrustedKeyResponse;
     rotate(keyId: string, req: FridayRotateTrustedKeyRequest): FridayRotateTrustedKeyResponse;
   };
+  packagingMutationGate?: FridayMutatingActionGate;
+  allowTestOnlyPackagingMutationExecution?: boolean;
 }
 
 // ─── Validation Helpers ───
@@ -90,6 +97,112 @@ function requireIdempotencyKey(body: unknown): void {
 
 function requireEtag(body: unknown): void {
   requireString(body, "etag");
+}
+
+function getIdempotencyKey(body: unknown): string | undefined {
+  const obj = body as Record<string, unknown> | null | undefined;
+  return typeof obj?.idempotencyKey === "string" ? obj.idempotencyKey : undefined;
+}
+
+function getCanonicalApproval(body: unknown): FridayCanonicalApprovalResolution | undefined {
+  const obj = body as Record<string, unknown> | null | undefined;
+  const approval = obj?.canonicalApproval;
+  return typeof approval === "object" && approval !== null
+    ? approval as FridayCanonicalApprovalResolution
+    : undefined;
+}
+
+async function assertPackagingMutationAllowed(input: {
+  readonly deps: FridayPackagingRoutesDeps;
+  readonly gateAction: string;
+  readonly ctx: { readonly principal?: unknown; readonly params?: unknown; readonly body?: unknown };
+  readonly resourceType: string;
+  readonly resourceId?: string;
+  readonly risk?: "medium" | "high" | "critical";
+}): Promise<void> {
+  if (input.deps.allowTestOnlyPackagingMutationExecution === true) {
+    return;
+  }
+
+  const gate = input.deps.packagingMutationGate;
+  if (gate === undefined) {
+    throw new FridayDomainError(
+      "PACKAGING_MUTATION_GOVERNANCE_REQUIRED",
+      "Packaging mutation requires canonical governance before execution.",
+      {
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          operationId: input.gateAction,
+          replacement: "canonical_mutating_action_gate_required",
+        },
+      },
+    );
+  }
+
+  const result = gate.evaluate({
+    action: input.gateAction,
+    actor: actorFromPrincipal(input.ctx.principal),
+    surface: "packaging",
+    resource: {
+      type: input.resourceType,
+      id: input.resourceId,
+      attributes: {
+        params: input.ctx.params,
+      },
+    },
+    mutating: true,
+    risk: input.risk ?? "high",
+    parameters: {
+      operationId: input.gateAction,
+    },
+    idempotencyKey: getIdempotencyKey(input.ctx.body),
+    canonicalApproval: getCanonicalApproval(input.ctx.body),
+  });
+
+  if (result.decision !== "allow") {
+    throwPackagingMutationBlocked(result, input.gateAction);
+  }
+}
+
+function actorFromPrincipal(principal: unknown): { kind: string; id: string; principalId?: string } {
+  const obj = principal as Record<string, unknown> | null | undefined;
+  const principalId = readFirstString(obj, ["principalId", "id", "userId", "subject", "sub"]);
+  const kind = readFirstString(obj, ["kind", "type", "role"]) ?? "api";
+  const id = principalId ?? "anonymous";
+  return { kind, id, principalId };
+}
+
+function readFirstString(obj: Record<string, unknown> | null | undefined, keys: readonly string[]): string | undefined {
+  for (const key of keys) {
+    const value = obj?.[key];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function throwPackagingMutationBlocked(result: FridayMutatingActionGateResult, operationId: string): never {
+  const approvalRequired = result.decision === "requires_approval";
+  throw new FridayDomainError(
+    approvalRequired ? "PACKAGING_MUTATION_APPROVAL_REQUIRED" : "PACKAGING_MUTATION_DENIED",
+    approvalRequired
+      ? "Packaging mutation requires canonical approval before execution."
+      : "Packaging mutation was denied by canonical governance.",
+    {
+      httpStatus: approvalRequired ? 409 : 403,
+      details: {
+        operationId,
+        decision: result.decision,
+        reason: result.reason,
+        risk: result.risk,
+        actionDigest: result.actionDigest,
+        approvalRequired: result.approvalRequired,
+        deniedBy: result.deniedBy,
+      },
+    },
+  );
 }
 
 // ─── Factory ───
@@ -123,6 +236,13 @@ export function createFridayPackagingRoutes(
         const body = ctx.body as FridayPublishPackageRequest;
         requireString(body, "archive");
         requireIdempotencyKey(body);
+        await assertPackagingMutationAllowed({
+          deps: services,
+          gateAction: "packaging.packages.publish",
+          ctx,
+          resourceType: "package",
+          risk: "high",
+        });
         return services.packages.publish(body);
       },
     },
@@ -168,6 +288,14 @@ export function createFridayPackagingRoutes(
         const { packageId } = ctx.params as { packageId: UUID };
         const body = ctx.body as FridayVerifyPackageRequest;
         requireIdempotencyKey(body);
+        await assertPackagingMutationAllowed({
+          deps: services,
+          gateAction: "packaging.packages.verify",
+          ctx,
+          resourceType: "package",
+          resourceId: packageId,
+          risk: "medium",
+        });
         return services.packages.verify(packageId, body);
       },
     },
@@ -200,6 +328,14 @@ export function createFridayPackagingRoutes(
         const body = ctx.body as FridayInstallPackageRequest;
         requireString(body, "tenantId");
         requireIdempotencyKey(body);
+        await assertPackagingMutationAllowed({
+          deps: services,
+          gateAction: "packaging.installs.install",
+          ctx,
+          resourceType: "package_install",
+          resourceId: packageName,
+          risk: "critical",
+        });
         return services.installs.install(packageName, body);
       },
     },
@@ -214,6 +350,14 @@ export function createFridayPackagingRoutes(
         const body = ctx.body as FridayUpgradePackageRequest;
         requireEtag(body);
         requireIdempotencyKey(body);
+        await assertPackagingMutationAllowed({
+          deps: services,
+          gateAction: "packaging.installs.upgrade",
+          ctx,
+          resourceType: "package_install",
+          resourceId: packageName,
+          risk: "critical",
+        });
         return services.installs.upgrade(packageName, body);
       },
     },
@@ -230,6 +374,14 @@ export function createFridayPackagingRoutes(
         requireString(body, "targetVersion");
         requireString(body, "reason");
         requireIdempotencyKey(body);
+        await assertPackagingMutationAllowed({
+          deps: services,
+          gateAction: "packaging.installs.rollback",
+          ctx,
+          resourceType: "package_install",
+          resourceId: packageName,
+          risk: "critical",
+        });
         return services.installs.rollback(packageName, body);
       },
     },
@@ -244,6 +396,14 @@ export function createFridayPackagingRoutes(
         const body = ctx.body as FridayUninstallPackageRequest;
         requireEtag(body);
         requireIdempotencyKey(body);
+        await assertPackagingMutationAllowed({
+          deps: services,
+          gateAction: "packaging.installs.uninstall",
+          ctx,
+          resourceType: "package_install",
+          resourceId: packageName,
+          risk: "critical",
+        });
         return services.installs.uninstall(packageName, body);
       },
     },
@@ -310,6 +470,14 @@ export function createFridayPackagingRoutes(
         requireString(body, "publicKey");
         requireString(body, "owner");
         requireIdempotencyKey(body);
+        await assertPackagingMutationAllowed({
+          deps: services,
+          gateAction: "packaging.keys.add",
+          ctx,
+          resourceType: "packaging_trusted_key",
+          resourceId: body.keyId,
+          risk: "critical",
+        });
         return services.keys.add(body);
       },
     },
@@ -324,6 +492,14 @@ export function createFridayPackagingRoutes(
         const body = ctx.body as FridayRevokeTrustedKeyRequest;
         requireString(body, "reason");
         requireIdempotencyKey(body);
+        await assertPackagingMutationAllowed({
+          deps: services,
+          gateAction: "packaging.keys.revoke",
+          ctx,
+          resourceType: "packaging_trusted_key",
+          resourceId: keyId,
+          risk: "critical",
+        });
         return services.keys.revoke(keyId, body);
       },
     },
@@ -340,6 +516,14 @@ export function createFridayPackagingRoutes(
         requireString(body, "newPublicKey");
         requireString(body, "owner");
         requireIdempotencyKey(body);
+        await assertPackagingMutationAllowed({
+          deps: services,
+          gateAction: "packaging.keys.rotate",
+          ctx,
+          resourceType: "packaging_trusted_key",
+          resourceId: keyId,
+          risk: "critical",
+        });
         return services.keys.rotate(keyId, body);
       },
     },

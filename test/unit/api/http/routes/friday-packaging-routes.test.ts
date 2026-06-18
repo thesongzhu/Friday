@@ -14,6 +14,10 @@ import type {
   FridayRouteDefinition,
   FridayHttpContext,
 } from "../../../../../src/api/model/friday-api-common.types.js";
+import type {
+  FridayMutatingActionGate,
+  FridayMutatingActionGateResult,
+} from "../../../../../src/security/friday-mutating-action-gate.js";
 
 // ─── Helpers ───
 
@@ -34,7 +38,25 @@ function findRoute(routes: FridayRouteDefinition<unknown, unknown, unknown, unkn
   return routes.find((r) => r.operationId === operationId)!;
 }
 
-function makeDeps(): FridayPackagingRoutesDeps {
+function makeAllowGate(): FridayMutatingActionGate {
+  const allowResult = {
+    decision: "allow",
+    reason: "test_gate_allow",
+    risk: "critical",
+    actionDigest: "digest-test",
+    approvalRequired: true,
+    localClaims: [],
+    evidenceRecord: {},
+  } as FridayMutatingActionGateResult;
+  return {
+    evaluate: vi.fn().mockReturnValue(allowResult),
+  };
+}
+
+function makeDeps(options: {
+  readonly allowTestOnlyPackagingMutationExecution?: boolean;
+  readonly packagingMutationGate?: FridayMutatingActionGate;
+} = {}): FridayPackagingRoutesDeps {
   return {
     packages: {
       publish: vi.fn().mockReturnValue({ package: {}, verification: {} }),
@@ -61,6 +83,8 @@ function makeDeps(): FridayPackagingRoutesDeps {
       revoke: vi.fn().mockReturnValue({ key: {}, affectedInstalls: 0 }),
       rotate: vi.fn().mockReturnValue({ newKey: {}, oldKey: {}, gracePeriodEndsAt: "2026-04-01T00:00:00Z" }),
     },
+    allowTestOnlyPackagingMutationExecution: options.allowTestOnlyPackagingMutationExecution ?? true,
+    packagingMutationGate: options.packagingMutationGate,
   };
 }
 
@@ -107,6 +131,55 @@ describe("B-008 FridayPackagingRoutes", () => {
           surface: "/v1/packages",
         },
       });
+    });
+
+    it("fails closed before mutating when packaging deps have no governance gate", async () => {
+      const deps = makeDeps({ allowTestOnlyPackagingMutationExecution: false });
+      const routes = createFridayPackagingRoutes(deps);
+      const route = findRoute(routes, "packaging.installs.install");
+
+      await expect(route.handler(makeCtx({
+        params: { packageName: "@friday/test" },
+        body: { tenantId: "tenant-1", idempotencyKey: "key-1" },
+      }))).rejects.toMatchObject({
+        code: "PACKAGING_MUTATION_GOVERNANCE_REQUIRED",
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          operationId: "packaging.installs.install",
+        },
+      });
+      expect(deps.installs.install).not.toHaveBeenCalled();
+    });
+
+    it("runs canonical governance before mutating packaging services", async () => {
+      const gate = makeAllowGate();
+      const deps = makeDeps({
+        allowTestOnlyPackagingMutationExecution: false,
+        packagingMutationGate: gate,
+      });
+      const routes = createFridayPackagingRoutes(deps);
+      const route = findRoute(routes, "packaging.installs.uninstall");
+
+      await route.handler(makeCtx({
+        principal: { principalId: "operator-1", kind: "operator" },
+        params: { packageName: "@friday/test" },
+        body: { etag: "etag-1", idempotencyKey: "key-1" },
+      }));
+
+      expect(gate.evaluate).toHaveBeenCalledWith(expect.objectContaining({
+        action: "packaging.installs.uninstall",
+        surface: "packaging",
+        mutating: true,
+        risk: "critical",
+        idempotencyKey: "key-1",
+        actor: expect.objectContaining({
+          kind: "operator",
+          id: "operator-1",
+          principalId: "operator-1",
+        }),
+      }));
+      expect(deps.installs.uninstall).toHaveBeenCalledWith("@friday/test", { etag: "etag-1", idempotencyKey: "key-1" });
     });
   });
 
