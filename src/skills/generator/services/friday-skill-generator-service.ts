@@ -676,27 +676,25 @@ export function createFridaySkillGeneratorService(
     nowIso: deps.nowIso,
   });
 
-  // ─── Draft persistence via memory_items ───
+  // ─── Draft persistence ───
 
   function saveDraft(sessionId: string, draft: FridayGeneratedSkillDraft): void {
     deps.db.withWriteTransaction((writer) => {
       writer
         .prepare(
-          `INSERT INTO memory_items (id, namespace, key, value_json, tags_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(namespace, key) DO UPDATE SET
+          `INSERT INTO skill_generation_drafts (session_id, created_at, updated_at, value_json, tags_json)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(session_id) DO UPDATE SET
              value_json = excluded.value_json,
              tags_json = excluded.tags_json,
              updated_at = excluded.updated_at`,
         )
         .run(
-          deps.idGenerator(),
-          DRAFT_NAMESPACE,
           sessionId,
+          deps.nowIso(),
+          deps.nowIso(),
           JSON.stringify(draft),
           JSON.stringify(["draft"]),
-          deps.nowIso(),
-          deps.nowIso(),
         );
     });
   }
@@ -704,15 +702,24 @@ export function createFridaySkillGeneratorService(
   function loadDraft(sessionId: string): FridayGeneratedSkillDraft | undefined {
     return deps.db.withReadConnection((reader) => {
       const row = reader
+        .prepare("SELECT value_json FROM skill_generation_drafts WHERE session_id = ?")
+        .get(sessionId) as { value_json: string } | undefined;
+      if (row) return safeJsonParse<FridayGeneratedSkillDraft>(row.value_json);
+      const legacyRow = reader
         .prepare("SELECT value_json FROM memory_items WHERE namespace = ? AND key = ?")
         .get(DRAFT_NAMESPACE, sessionId) as { value_json: string } | undefined;
-      if (!row) return undefined;
-      return safeJsonParse<FridayGeneratedSkillDraft>(row.value_json);
+      if (legacyRow) {
+        return safeJsonParse<FridayGeneratedSkillDraft>(legacyRow.value_json);
+      }
+      return undefined;
     });
   }
 
   function deleteDraft(sessionId: string): void {
     deps.db.withWriteTransaction((writer) => {
+      writer
+        .prepare("DELETE FROM skill_generation_drafts WHERE session_id = ?")
+        .run(sessionId);
       writer
         .prepare("DELETE FROM memory_items WHERE namespace = ? AND key = ?")
         .run(DRAFT_NAMESPACE, sessionId);

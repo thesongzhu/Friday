@@ -225,6 +225,149 @@ function makeMockDb(options?: {
             }),
           };
         }
+        if (sql.startsWith("INSERT INTO skill_generation_sessions")) {
+          return {
+            run: vi.fn(
+              (
+                sessionId: string,
+                userId: string,
+                channel: string,
+                status: string,
+                createdAt: string,
+                updatedAt: string,
+                valueJson: string,
+                tagsJson: string,
+              ) => {
+                const key = `skill-generation-session:${sessionId}`;
+                const existing = store.get(key);
+                store.set(key, {
+                  id: sessionId,
+                  namespace: "skill-generation-session",
+                  key: sessionId,
+                  value_json: valueJson,
+                  tags_json: tagsJson,
+                  created_at: existing?.created_at ?? createdAt,
+                  updated_at: updatedAt,
+                  user_id: userId,
+                  channel,
+                  status,
+                });
+                options?.onUpsert?.({
+                  namespace: "skill-generation-session",
+                  key: sessionId,
+                  store,
+                });
+              },
+            ),
+          };
+        }
+        if (sql.startsWith("SELECT session_id, value_json FROM skill_generation_sessions")) {
+          return {
+            get: vi.fn((sessionId: string) => {
+              return store.get(`skill-generation-session:${sessionId}`) ?? undefined;
+            }),
+          };
+        }
+        if (sql.startsWith("DELETE FROM skill_generation_sessions")) {
+          return {
+            run: vi.fn((sessionId: string) => {
+              store.delete(`skill-generation-session:${sessionId}`);
+            }),
+          };
+        }
+        if (sql.startsWith("INSERT INTO skill_generation_turns")) {
+          return {
+            run: vi.fn(
+              (
+                sessionId: string,
+                turnId: string,
+                role: string,
+                createdAt: string,
+                valueJson: string,
+                tagsJson: string,
+              ) => {
+                store.set(`skill-generation-turn:${sessionId}:${turnId}`, {
+                  id: `${sessionId}:${turnId}`,
+                  namespace: "skill-generation-turn",
+                  key: `${sessionId}:${turnId}`,
+                  value_json: valueJson,
+                  tags_json: tagsJson,
+                  created_at: createdAt,
+                  updated_at: createdAt,
+                  session_id: sessionId,
+                  turn_id: turnId,
+                  role,
+                });
+              },
+            ),
+          };
+        }
+        if (sql.includes("FROM skill_generation_turns")) {
+          return {
+            all: vi.fn((sessionId: string) => {
+              const results: unknown[] = [];
+              for (const row of store.values()) {
+                if (row.namespace === "skill-generation-turn" && row.session_id === sessionId) {
+                  results.push(row);
+                }
+              }
+              return results;
+            }),
+          };
+        }
+        if (sql.startsWith("DELETE FROM skill_generation_turns")) {
+          return {
+            run: vi.fn((sessionId: string) => {
+              for (const [storeKey, row] of [...store.entries()]) {
+                if (row.namespace === "skill-generation-turn" && row.session_id === sessionId) {
+                  store.delete(storeKey);
+                }
+              }
+            }),
+          };
+        }
+        if (sql.startsWith("INSERT INTO skill_generation_drafts")) {
+          return {
+            run: vi.fn((
+              sessionId: string,
+              createdAt: string,
+              updatedAt: string,
+              valueJson: string,
+              tagsJson: string,
+            ) => {
+              const key = `skill-generation-draft:${sessionId}`;
+              const existing = store.get(key);
+              store.set(key, {
+                id: sessionId,
+                namespace: "skill-generation-draft",
+                key: sessionId,
+                value_json: valueJson,
+                tags_json: tagsJson,
+                created_at: existing?.created_at ?? createdAt,
+                updated_at: updatedAt,
+              });
+              options?.onUpsert?.({
+                namespace: "skill-generation-draft",
+                key: sessionId,
+                store,
+              });
+            }),
+          };
+        }
+        if (sql.startsWith("SELECT value_json FROM skill_generation_drafts")) {
+          return {
+            get: vi.fn((sessionId: string) => {
+              return store.get(`skill-generation-draft:${sessionId}`) ?? undefined;
+            }),
+          };
+        }
+        if (sql.startsWith("DELETE FROM skill_generation_drafts")) {
+          return {
+            run: vi.fn((sessionId: string) => {
+              store.delete(`skill-generation-draft:${sessionId}`);
+            }),
+          };
+        }
         if (sql.startsWith("INSERT INTO memory_items")) {
           return {
             run: vi.fn(
@@ -990,8 +1133,8 @@ describe("FridaySkillGeneratorService", () => {
         ...deps,
         db: makeMockDb({
           onUpsert: ({ namespace, key, store }) => {
-            if (namespace === "skill-generator-draft" && !droppedOnce) {
-              store.delete(`skill-generator-session:${key}`);
+            if (namespace === "skill-generation-draft" && !droppedOnce) {
+              store.delete(`skill-generation-session:${key}`);
               droppedOnce = true;
             }
           },
