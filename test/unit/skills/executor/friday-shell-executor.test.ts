@@ -1,4 +1,8 @@
 import { afterEach, describe, it, expect } from "vitest";
+import { existsSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createFridayShellExecutor } from "#skills";
 
 describe("FridayShellExecutor", () => {
@@ -159,5 +163,52 @@ describe("FridayShellExecutor", () => {
     expect(result.exitCode).toBe(0);
     // On macOS /tmp is a symlink to /private/tmp
     expect(result.stdout.trim()).toMatch(/\/(tmp|private\/tmp)$/);
+  });
+
+  const darwinSandboxIt = process.platform === "darwin" && existsSync("/usr/bin/sandbox-exec") ? it : it.skip;
+
+  darwinSandboxIt("uses macOS sandbox-exec to block writes outside declared roots", async () => {
+    const executor = createExecutor();
+    const root = await mkdtemp(join(tmpdir(), "friday-shell-sandbox-"));
+    const outsidePath = join(tmpdir(), `friday-shell-sandbox-outside-${Date.now().toString()}`);
+
+    try {
+      const result = await executor.run({
+        command: "sh",
+        args: ["-c", `printf ok > allowed.txt && touch ${outsidePath}`],
+        cwd: root,
+        osSandbox: {
+          enabled: true,
+          required: true,
+          writableRoots: [root],
+        },
+      });
+
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain("Operation not permitted");
+      expect(existsSync(join(root, "allowed.txt"))).toBe(true);
+      expect(existsSync(outsidePath)).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(outsidePath, { force: true });
+    }
+  });
+
+  const nonDarwinSandboxIt = process.platform === "darwin" ? it.skip : it;
+
+  nonDarwinSandboxIt("fails closed when a required OS sandbox is unavailable", async () => {
+    const executor = createExecutor();
+    const result = await executor.run({
+      command: "echo",
+      args: ["hello"],
+      osSandbox: {
+        enabled: true,
+        required: true,
+        writableRoots: [tmpdir()],
+      },
+    });
+
+    expect(result.exitCode).toBe(126);
+    expect(result.stderr).toContain("OS sandbox is required");
   });
 });
