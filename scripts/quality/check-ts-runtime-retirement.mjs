@@ -93,28 +93,37 @@ export function collectTsRuntimeRetirementFailures(manifest, routes) {
 
   const classified = [];
   for (const route of discoveredRoutes) {
-    const classification = findClassificationForRoute(route, exactSurfaces, routeFamilies);
-    if (!classification) {
+    const match = findClassificationMatchForRoute(route, exactSurfaces, routeFamilies);
+    if (!match) {
       failures.push(`${routeLabel(route)} is unclassified`);
       continue;
     }
-    classified.push({ route, classification });
+    const { classification, matchKind } = match;
+    classified.push({ route, classification, matchKind });
     validateClassification(route, classification, manifest, failures);
   }
+
+  const summary = summarizeClassifiedRoutes(classified);
+  validateExactCoverageFloor(manifest, summary, failures);
 
   return {
     failures,
     classified,
-    summary: summarizeClassifiedRoutes(classified),
+    summary,
   };
 }
 
 export function findClassificationForRoute(route, exactSurfaces, routeFamilies) {
+  return findClassificationMatchForRoute(route, exactSurfaces, routeFamilies)?.classification;
+}
+
+export function findClassificationMatchForRoute(route, exactSurfaces, routeFamilies) {
   const exact = exactSurfaces.find((surface) => surface.route && routeMatchesExact(route, surface.route));
   if (exact) {
-    return exact;
+    return { classification: exact, matchKind: "exact" };
   }
-  return routeFamilies.find((family) => routeMatchesRule(route, family.match ?? {}));
+  const family = routeFamilies.find((entry) => routeMatchesRule(route, entry.match ?? {}));
+  return family ? { classification: family, matchKind: "family" } : null;
 }
 
 function validateManifestBasics(manifest, failures) {
@@ -130,6 +139,23 @@ function validateManifestBasics(manifest, failures) {
     if (!(manifest.classificationValues ?? []).includes(required)) {
       failures.push(`manifest classificationValues is missing ${required}`);
     }
+  }
+}
+
+function validateExactCoverageFloor(manifest, summary, failures) {
+  const exactRouteSurfacesMin = manifest.discovery?.exactRouteSurfacesMin;
+  if (exactRouteSurfacesMin === undefined) {
+    return;
+  }
+  if (!Number.isInteger(exactRouteSurfacesMin) || exactRouteSurfacesMin < 0) {
+    failures.push("discovery.exactRouteSurfacesMin must be a non-negative integer when set");
+    return;
+  }
+  if (summary.exactClassified < exactRouteSurfacesMin) {
+    failures.push(
+      `exact route surface coverage ${summary.exactClassified} is below `
+      + `discovery.exactRouteSurfacesMin ${exactRouteSurfacesMin}`,
+    );
   }
 }
 
@@ -197,10 +223,12 @@ function validateLeakControls(label, classification, requiredLeakControls, failu
 
 function summarizeClassifiedRoutes(classified) {
   const byClassification = {};
+  const byMatchKind = {};
   const blockerIds = new Set();
-  for (const { classification } of classified) {
+  for (const { classification, matchKind } of classified) {
     byClassification[classification.classification] =
       (byClassification[classification.classification] ?? 0) + 1;
+    byMatchKind[matchKind] = (byMatchKind[matchKind] ?? 0) + 1;
     if (classification.classification === "ts_runtime_blocker") {
       blockerIds.add(classification.id);
     }
@@ -208,6 +236,9 @@ function summarizeClassifiedRoutes(classified) {
   return {
     total: classified.length,
     byClassification,
+    byMatchKind,
+    exactClassified: byMatchKind.exact ?? 0,
+    familyClassified: byMatchKind.family ?? 0,
     blockerFamilies: [...blockerIds].sort(),
   };
 }

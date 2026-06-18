@@ -9,7 +9,8 @@
   },
   "discovery": {
     "routeSourceDir": "src/api/http/routes",
-    "includeMethods": ["GET", "POST", "PATCH", "PUT", "DELETE"]
+    "includeMethods": ["GET", "POST", "PATCH", "PUT", "DELETE"],
+    "exactRouteSurfacesMin": 307
   },
   "classificationValues": [
     "ui_shell",
@@ -655,6 +656,344 @@
     }
   ],
   "surfaces": [
+    {
+      "id": "guidelens_state_get",
+      "route": {
+        "method": "GET",
+        "path": "/v1/guide-lens/state",
+        "operationId": "guidelens.state.get"
+      },
+      "classification": "ui_shell",
+      "user_triggerable": true,
+      "migration_intent": "Guide-lens state is a bounded UI guidance read; it does not execute tools, mutate product state, or mark task completion.",
+      "proof": "src/api/http/routes/friday-guide-lens-routes.ts keeps guidelens.state.get as the only default/live guide-lens route that delegates, and test/unit/api/http/routes/friday-guide-lens-routes.test.ts proves the read remains available while every action/write route fails closed by default.",
+      "next_action": "Keep guide-lens reads separated from runtime completion truth until a governed Rust-owned guide-lens entrypoint exists."
+    },
+    {
+      "id": "guidelens_snapshot_create",
+      "route": {
+        "method": "POST",
+        "path": "/v1/guide-lens/snapshot",
+        "operationId": "guidelens.snapshot.create"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-guide-lens-routes.ts calls assertGuideLensTestOracleAllowed before captureSnapshot; default/live deps leave allowTestOnlyGuideLensExecution unset, so the route throws TS_RUNTIME_GUIDE_LENS_RETIRED before service delegation. The default failure is covered by test/unit/api/http/routes/friday-guide-lens-routes.test.ts.",
+      "next_action": "Replace the test-oracle-only TypeScript action with a governed Rust-owned guide-lens entrypoint before enabling."
+    },
+    {
+      "id": "guidelens_targets_resolve",
+      "route": {
+        "method": "POST",
+        "path": "/v1/guide-lens/targets/resolve",
+        "operationId": "guidelens.targets.resolve"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-guide-lens-routes.ts calls assertGuideLensTestOracleAllowed before validating or resolving a target; default/live deps leave allowTestOnlyGuideLensExecution unset, so the route throws TS_RUNTIME_GUIDE_LENS_RETIRED before service delegation. The default failure is covered by test/unit/api/http/routes/friday-guide-lens-routes.test.ts.",
+      "next_action": "Replace the test-oracle-only TypeScript action with a governed Rust-owned guide-lens entrypoint before enabling."
+    },
+    {
+      "id": "guidelens_overlay_show",
+      "route": {
+        "method": "POST",
+        "path": "/v1/guide-lens/overlay",
+        "operationId": "guidelens.overlay.show"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-guide-lens-routes.ts calls assertGuideLensTestOracleAllowed before overlay validation or showOverlay; default/live deps leave allowTestOnlyGuideLensExecution unset, so the route throws TS_RUNTIME_GUIDE_LENS_RETIRED before service delegation. The default failure is covered by test/unit/api/http/routes/friday-guide-lens-routes.test.ts.",
+      "next_action": "Replace the test-oracle-only TypeScript action with a governed Rust-owned guide-lens entrypoint before enabling."
+    },
+    {
+      "id": "guidelens_overlay_clear",
+      "route": {
+        "method": "DELETE",
+        "path": "/v1/guide-lens/overlay",
+        "operationId": "guidelens.overlay.clear"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-guide-lens-routes.ts calls assertGuideLensTestOracleAllowed before clearOverlay; default/live deps leave allowTestOnlyGuideLensExecution unset, so the route throws TS_RUNTIME_GUIDE_LENS_RETIRED before service delegation. The default failure is covered by test/unit/api/http/routes/friday-guide-lens-routes.test.ts.",
+      "next_action": "Replace the test-oracle-only TypeScript action with a governed Rust-owned guide-lens entrypoint before enabling."
+    },
+    {
+      "id": "guidelens_screenshots_analyze",
+      "route": {
+        "method": "POST",
+        "path": "/v1/guide-lens/screenshots/analyze",
+        "operationId": "guidelens.screenshots.analyze"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-guide-lens-routes.ts calls assertGuideLensTestOracleAllowed before screenshot analysis; default/live deps leave allowTestOnlyGuideLensExecution unset, so the route throws TS_RUNTIME_GUIDE_LENS_RETIRED before service delegation. The default failure is covered by test/unit/api/http/routes/friday-guide-lens-routes.test.ts.",
+      "next_action": "Replace the test-oracle-only TypeScript action with a governed Rust-owned guide-lens entrypoint before enabling."
+    },
+    {
+      "id": "guidelens_verifications_create",
+      "route": {
+        "method": "POST",
+        "path": "/v1/guide-lens/verifications",
+        "operationId": "guidelens.verifications.create"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-guide-lens-routes.ts calls assertGuideLensTestOracleAllowed before verify; default/live deps leave allowTestOnlyGuideLensExecution unset, so the route throws TS_RUNTIME_GUIDE_LENS_RETIRED before service delegation. The default failure is covered by test/unit/api/http/routes/friday-guide-lens-routes.test.ts.",
+      "next_action": "Replace the test-oracle-only TypeScript action with a governed Rust-owned guide-lens entrypoint before enabling."
+    },
+    {
+      "id": "guidelens_preferences_update",
+      "route": {
+        "method": "PATCH",
+        "path": "/v1/guide-lens/preferences",
+        "operationId": "guidelens.preferences.update"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-guide-lens-routes.ts calls assertGuideLensTestOracleAllowed before updatePreferences; default/live deps leave allowTestOnlyGuideLensExecution unset, so the route throws TS_RUNTIME_GUIDE_LENS_RETIRED before service delegation. The default failure is covered by test/unit/api/http/routes/friday-guide-lens-routes.test.ts.",
+      "next_action": "Replace the test-oracle-only TypeScript action with a governed Rust-owned guide-lens entrypoint before enabling."
+    },
+    {
+      "id": "guidelens_avatar_update",
+      "route": {
+        "method": "POST",
+        "path": "/v1/guide-lens/avatar",
+        "operationId": "guidelens.avatar.update"
+      },
+      "classification": "fail_closed",
+      "user_triggerable": true,
+      "executes_product_logic": false,
+      "proof": "src/api/http/routes/friday-guide-lens-routes.ts calls assertGuideLensTestOracleAllowed before updateAvatar; default/live deps leave allowTestOnlyGuideLensExecution unset, so the route throws TS_RUNTIME_GUIDE_LENS_RETIRED before service delegation. The default failure is covered by test/unit/api/http/routes/friday-guide-lens-routes.test.ts.",
+      "next_action": "Replace the test-oracle-only TypeScript action with a governed Rust-owned guide-lens entrypoint before enabling."
+    },
+    {
+      "id": "packaging_packages_publish",
+      "route": {
+        "method": "POST",
+        "path": "/v1/packages",
+        "operationId": "packaging.packages.publish"
+      },
+      "classification": "release_tooling",
+      "user_triggerable": true,
+      "migration_intent": "Packaging is release/install tooling, not Friday runtime completion truth. Default/live hub wiring leaves packaging deps absent unless FRIDAY_PACKAGING_ENABLED=true.",
+      "proof": "src/api/http/routes/friday-packaging-routes.ts requireEnabled throws CAPABILITY_DISABLED before publish when deps are absent; test/unit/api/http/routes/friday-packaging-routes.test.ts covers the default-disabled 501 path.",
+      "next_action": "Keep packaging opt-in and out of runtime completion claims; require explicit governance before enabling package publication."
+    },
+    {
+      "id": "packaging_packages_list",
+      "route": {
+        "method": "GET",
+        "path": "/v1/packages",
+        "operationId": "packaging.packages.list"
+      },
+      "classification": "release_tooling",
+      "user_triggerable": true,
+      "migration_intent": "Packaging is release/install tooling, not Friday runtime completion truth. Default/live hub wiring leaves packaging deps absent unless FRIDAY_PACKAGING_ENABLED=true.",
+      "proof": "src/api/http/routes/friday-packaging-routes.ts requireEnabled throws CAPABILITY_DISABLED before list when deps are absent; test/unit/api/http/routes/friday-packaging-routes.test.ts covers the default-disabled 501 path.",
+      "next_action": "Keep packaging opt-in and out of runtime completion claims; require explicit governance before enabling package listing as an operational surface."
+    },
+    {
+      "id": "packaging_packages_get",
+      "route": {
+        "method": "GET",
+        "path": "/v1/packages/:packageId",
+        "operationId": "packaging.packages.get"
+      },
+      "classification": "release_tooling",
+      "user_triggerable": true,
+      "migration_intent": "Packaging is release/install tooling, not Friday runtime completion truth. Default/live hub wiring leaves packaging deps absent unless FRIDAY_PACKAGING_ENABLED=true.",
+      "proof": "src/api/http/routes/friday-packaging-routes.ts requireEnabled throws CAPABILITY_DISABLED before get when deps are absent; test/unit/api/http/routes/friday-packaging-routes.test.ts covers the default-disabled 501 path.",
+      "next_action": "Keep packaging opt-in and out of runtime completion claims."
+    },
+    {
+      "id": "packaging_packages_versions_list",
+      "route": {
+        "method": "GET",
+        "path": "/v1/packages/:packageName/versions",
+        "operationId": "packaging.packages.versions.list"
+      },
+      "classification": "release_tooling",
+      "user_triggerable": true,
+      "migration_intent": "Packaging is release/install tooling, not Friday runtime completion truth. Default/live hub wiring leaves packaging deps absent unless FRIDAY_PACKAGING_ENABLED=true.",
+      "proof": "src/api/http/routes/friday-packaging-routes.ts requireEnabled throws CAPABILITY_DISABLED before version listing when deps are absent; test/unit/api/http/routes/friday-packaging-routes.test.ts covers the default-disabled 501 path.",
+      "next_action": "Keep packaging opt-in and out of runtime completion claims."
+    },
+    {
+      "id": "packaging_packages_verify",
+      "route": {
+        "method": "POST",
+        "path": "/v1/packages/:packageId/verify",
+        "operationId": "packaging.packages.verify"
+      },
+      "classification": "release_tooling",
+      "user_triggerable": true,
+      "migration_intent": "Packaging verification is release/install tooling, not Friday runtime completion truth. Default/live hub wiring leaves packaging deps absent unless FRIDAY_PACKAGING_ENABLED=true.",
+      "proof": "src/api/http/routes/friday-packaging-routes.ts requireEnabled throws CAPABILITY_DISABLED before package verification when deps are absent; test/unit/api/http/routes/friday-packaging-routes.test.ts covers the default-disabled 501 path.",
+      "next_action": "Keep packaging verification opt-in and out of runtime completion claims."
+    },
+    {
+      "id": "packaging_packages_dependencies_check",
+      "route": {
+        "method": "POST",
+        "path": "/v1/packages/:packageName/check-dependencies",
+        "operationId": "packaging.packages.dependencies.check"
+      },
+      "classification": "release_tooling",
+      "user_triggerable": true,
+      "migration_intent": "Packaging dependency checks are release/install tooling, not Friday runtime completion truth. Default/live hub wiring leaves packaging deps absent unless FRIDAY_PACKAGING_ENABLED=true.",
+      "proof": "src/api/http/routes/friday-packaging-routes.ts requireEnabled throws CAPABILITY_DISABLED before dependency checks when deps are absent; test/unit/api/http/routes/friday-packaging-routes.test.ts covers the default-disabled 501 path.",
+      "next_action": "Keep packaging dependency checks opt-in and out of runtime completion claims."
+    },
+    {
+      "id": "packaging_installs_install",
+      "route": {
+        "method": "POST",
+        "path": "/v1/packages/:packageName/install",
+        "operationId": "packaging.installs.install"
+      },
+      "classification": "release_tooling",
+      "user_triggerable": true,
+      "migration_intent": "Package install controls are release/install tooling, not Friday runtime completion truth. Default/live hub wiring leaves packaging deps absent unless FRIDAY_PACKAGING_ENABLED=true.",
+      "proof": "src/api/http/routes/friday-packaging-routes.ts requireEnabled throws CAPABILITY_DISABLED before install when deps are absent; test/unit/api/http/routes/friday-packaging-routes.test.ts covers the default-disabled 501 path.",
+      "next_action": "Keep package installation opt-in and out of runtime completion claims; require explicit governance before enabling installs."
+    },
+    {
+      "id": "packaging_installs_upgrade",
+      "route": {
+        "method": "POST",
+        "path": "/v1/packages/:packageName/upgrade",
+        "operationId": "packaging.installs.upgrade"
+      },
+      "classification": "release_tooling",
+      "user_triggerable": true,
+      "migration_intent": "Package upgrade controls are release/install tooling, not Friday runtime completion truth. Default/live hub wiring leaves packaging deps absent unless FRIDAY_PACKAGING_ENABLED=true.",
+      "proof": "src/api/http/routes/friday-packaging-routes.ts requireEnabled throws CAPABILITY_DISABLED before upgrade when deps are absent; test/unit/api/http/routes/friday-packaging-routes.test.ts covers the default-disabled 501 path.",
+      "next_action": "Keep package upgrades opt-in and out of runtime completion claims; require explicit governance before enabling upgrades."
+    },
+    {
+      "id": "packaging_installs_rollback",
+      "route": {
+        "method": "POST",
+        "path": "/v1/packages/:packageName/rollback",
+        "operationId": "packaging.installs.rollback"
+      },
+      "classification": "release_tooling",
+      "user_triggerable": true,
+      "migration_intent": "Package rollback controls are release/install tooling, not Friday runtime completion truth. Default/live hub wiring leaves packaging deps absent unless FRIDAY_PACKAGING_ENABLED=true.",
+      "proof": "src/api/http/routes/friday-packaging-routes.ts requireEnabled throws CAPABILITY_DISABLED before rollback when deps are absent; test/unit/api/http/routes/friday-packaging-routes.test.ts covers the default-disabled 501 path.",
+      "next_action": "Keep package rollback opt-in and out of runtime completion claims; require explicit governance before enabling rollbacks."
+    },
+    {
+      "id": "packaging_installs_uninstall",
+      "route": {
+        "method": "POST",
+        "path": "/v1/packages/:packageName/uninstall",
+        "operationId": "packaging.installs.uninstall"
+      },
+      "classification": "release_tooling",
+      "user_triggerable": true,
+      "migration_intent": "Package uninstall controls are release/install tooling, not Friday runtime completion truth. Default/live hub wiring leaves packaging deps absent unless FRIDAY_PACKAGING_ENABLED=true.",
+      "proof": "src/api/http/routes/friday-packaging-routes.ts requireEnabled throws CAPABILITY_DISABLED before uninstall when deps are absent; test/unit/api/http/routes/friday-packaging-routes.test.ts covers the default-disabled 501 path.",
+      "next_action": "Keep package uninstall opt-in and out of runtime completion claims; require explicit governance before enabling uninstalls."
+    },
+    {
+      "id": "packaging_installs_list",
+      "route": {
+        "method": "GET",
+        "path": "/v1/packages/installs",
+        "operationId": "packaging.installs.list"
+      },
+      "classification": "release_tooling",
+      "user_triggerable": true,
+      "migration_intent": "Package install inventory is release/install tooling, not Friday runtime completion truth. Default/live hub wiring leaves packaging deps absent unless FRIDAY_PACKAGING_ENABLED=true.",
+      "proof": "src/api/http/routes/friday-packaging-routes.ts requireEnabled throws CAPABILITY_DISABLED before install listing when deps are absent; test/unit/api/http/routes/friday-packaging-routes.test.ts covers the default-disabled 501 path.",
+      "next_action": "Keep package install inventory opt-in and out of runtime completion claims."
+    },
+    {
+      "id": "packaging_installs_get",
+      "route": {
+        "method": "GET",
+        "path": "/v1/packages/installs/:installId",
+        "operationId": "packaging.installs.get"
+      },
+      "classification": "release_tooling",
+      "user_triggerable": true,
+      "migration_intent": "Package install detail is release/install tooling, not Friday runtime completion truth. Default/live hub wiring leaves packaging deps absent unless FRIDAY_PACKAGING_ENABLED=true.",
+      "proof": "src/api/http/routes/friday-packaging-routes.ts requireEnabled throws CAPABILITY_DISABLED before install detail when deps are absent; test/unit/api/http/routes/friday-packaging-routes.test.ts covers the default-disabled 501 path.",
+      "next_action": "Keep package install detail opt-in and out of runtime completion claims."
+    },
+    {
+      "id": "packaging_lifecycle_list",
+      "route": {
+        "method": "GET",
+        "path": "/v1/packages/lifecycle",
+        "operationId": "packaging.lifecycle.list"
+      },
+      "classification": "release_tooling",
+      "user_triggerable": true,
+      "migration_intent": "Package lifecycle events are release/install tooling, not Friday runtime completion truth. Default/live hub wiring leaves packaging deps absent unless FRIDAY_PACKAGING_ENABLED=true.",
+      "proof": "src/api/http/routes/friday-packaging-routes.ts requireEnabled throws CAPABILITY_DISABLED before lifecycle listing when deps are absent; test/unit/api/http/routes/friday-packaging-routes.test.ts covers the default-disabled 501 path.",
+      "next_action": "Keep package lifecycle reads opt-in and out of runtime completion claims."
+    },
+    {
+      "id": "packaging_keys_list",
+      "route": {
+        "method": "GET",
+        "path": "/v1/packages/keys",
+        "operationId": "packaging.keys.list"
+      },
+      "classification": "release_tooling",
+      "user_triggerable": true,
+      "migration_intent": "Packaging trusted-key inventory is release/install tooling, not Friday runtime completion truth. Default/live hub wiring leaves packaging deps absent unless FRIDAY_PACKAGING_ENABLED=true.",
+      "proof": "src/api/http/routes/friday-packaging-routes.ts requireEnabled throws CAPABILITY_DISABLED before trusted-key listing when deps are absent; test/unit/api/http/routes/friday-packaging-routes.test.ts covers the default-disabled 501 path.",
+      "next_action": "Keep packaging trusted-key reads opt-in and out of runtime completion claims."
+    },
+    {
+      "id": "packaging_keys_add",
+      "route": {
+        "method": "POST",
+        "path": "/v1/packages/keys",
+        "operationId": "packaging.keys.add"
+      },
+      "classification": "release_tooling",
+      "user_triggerable": true,
+      "migration_intent": "Packaging trusted-key mutation is release/install tooling, not Friday runtime completion truth. Default/live hub wiring leaves packaging deps absent unless FRIDAY_PACKAGING_ENABLED=true.",
+      "proof": "src/api/http/routes/friday-packaging-routes.ts requireEnabled throws CAPABILITY_DISABLED before trusted-key add when deps are absent; test/unit/api/http/routes/friday-packaging-routes.test.ts covers the default-disabled 501 path.",
+      "next_action": "Keep packaging trusted-key mutation opt-in and require explicit governance before enabling key changes."
+    },
+    {
+      "id": "packaging_keys_revoke",
+      "route": {
+        "method": "POST",
+        "path": "/v1/packages/keys/:keyId/revoke",
+        "operationId": "packaging.keys.revoke"
+      },
+      "classification": "release_tooling",
+      "user_triggerable": true,
+      "migration_intent": "Packaging trusted-key revocation is release/install tooling, not Friday runtime completion truth. Default/live hub wiring leaves packaging deps absent unless FRIDAY_PACKAGING_ENABLED=true.",
+      "proof": "src/api/http/routes/friday-packaging-routes.ts requireEnabled throws CAPABILITY_DISABLED before trusted-key revoke when deps are absent; test/unit/api/http/routes/friday-packaging-routes.test.ts covers the default-disabled 501 path.",
+      "next_action": "Keep packaging trusted-key revocation opt-in and require explicit governance before enabling key changes."
+    },
+    {
+      "id": "packaging_keys_rotate",
+      "route": {
+        "method": "POST",
+        "path": "/v1/packages/keys/:keyId/rotate",
+        "operationId": "packaging.keys.rotate"
+      },
+      "classification": "release_tooling",
+      "user_triggerable": true,
+      "migration_intent": "Packaging trusted-key rotation is release/install tooling, not Friday runtime completion truth. Default/live hub wiring leaves packaging deps absent unless FRIDAY_PACKAGING_ENABLED=true.",
+      "proof": "src/api/http/routes/friday-packaging-routes.ts requireEnabled throws CAPABILITY_DISABLED before trusted-key rotate when deps are absent; test/unit/api/http/routes/friday-packaging-routes.test.ts covers the default-disabled 501 path.",
+      "next_action": "Keep packaging trusted-key rotation opt-in and require explicit governance before enabling key changes."
+    },
     {
       "id": "agent_runs_start",
       "route": {
