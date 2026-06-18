@@ -978,7 +978,7 @@ describe("createFridayUixSurfaceService", () => {
           gate: "FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS",
         },
         stdout: "",
-        stderr: "Node-based skills are disabled because they execute in-process without isolation. Set FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS=true only in controlled environments.",
+        stderr: "Node-based skills are disabled in production because they execute in-process without OS isolation. FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS=true is accepted only by the test harness.",
         durationMs: 0,
       }),
     }));
@@ -1084,7 +1084,7 @@ describe("createFridayUixSurfaceService", () => {
           gate: "FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS",
         },
         stdout: "",
-        stderr: "Node-based skills are disabled because they execute in-process without isolation. Set FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS=true only in controlled environments.",
+        stderr: "Node-based skills are disabled in production because they execute in-process without OS isolation. FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS=true is accepted only by the test harness.",
         durationMs: 0,
       }),
     }));

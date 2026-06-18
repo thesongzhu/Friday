@@ -283,9 +283,9 @@ describe("resolveFridayHubConfig", () => {
 
   // ─── Plugin runtime mode ───
 
-  it("defaults pluginRuntimeMode to full", () => {
+  it("defaults pluginRuntimeMode to stub", () => {
     const resolved = resolveFridayHubConfig(makeConfig(), emptyEnv());
-    expect(resolved.pluginRuntimeMode).toBe("full");
+    expect(resolved.pluginRuntimeMode).toBe("stub");
   });
 
   it("uses explicit pluginRuntimeMode over env", () => {
@@ -296,9 +296,22 @@ describe("resolveFridayHubConfig", () => {
     expect(resolved.pluginRuntimeMode).toBe("stub");
   });
 
-  it("reads FRIDAY_PLUGIN_RUNTIME_MODE from env", () => {
+  it("keeps FRIDAY_PLUGIN_RUNTIME_MODE=stub from env", () => {
     const resolved = resolveFridayHubConfig(makeConfig(), { FRIDAY_PLUGIN_RUNTIME_MODE: "stub" });
     expect(resolved.pluginRuntimeMode).toBe("stub");
+  });
+
+  it("ignores FRIDAY_PLUGIN_RUNTIME_MODE=full without a test-oracle plugin flag", () => {
+    const resolved = resolveFridayHubConfig(makeConfig(), { FRIDAY_PLUGIN_RUNTIME_MODE: "full" });
+    expect(resolved.pluginRuntimeMode).toBe("stub");
+  });
+
+  it("allows pluginRuntimeMode full only with an explicit test-oracle plugin flag", () => {
+    const resolved = resolveFridayHubConfig(
+      makeConfig({ pluginRuntimeMode: "full", allowTestOnlyPluginExecution: true }),
+      emptyEnv(),
+    );
+    expect(resolved.pluginRuntimeMode).toBe("full");
   });
 
   // ─── Deterministic pipeline mode ───

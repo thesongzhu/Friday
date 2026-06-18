@@ -408,6 +408,16 @@ function buildDraftRuntimeEnv(requiredEnvKeys: readonly string[]): Record<string
   return env;
 }
 
+function draftSkillProcessSandbox(root: string) {
+  const darwin = process.platform === "darwin";
+  return {
+    enabled: darwin,
+    required: darwin,
+    denyNetwork: true,
+    writableRoots: [root],
+  };
+}
+
 function looksLikeJsonValue(value: string): boolean {
   const trimmed = value.trim();
   if (!trimmed) return false;
@@ -468,6 +478,7 @@ async function executeDraftFromTempDir(
       command: join(root, manifest.runtime.entrypoint),
       cwd: root,
       env: buildDraftRuntimeEnv(manifest.requirements.env),
+      osSandbox: draftSkillProcessSandbox(root),
       timeoutMs: manifest.runtime.timeoutMsDefault,
       stdin: JSON.stringify(input),
     });
@@ -510,6 +521,7 @@ async function executeDraftFromTempDir(
       args: [join(root, manifest.runtime.entrypoint)],
       cwd: root,
       env: buildDraftRuntimeEnv(manifest.requirements.env),
+      osSandbox: draftSkillProcessSandbox(root),
       timeoutMs: manifest.runtime.timeoutMsDefault,
       stdin: JSON.stringify(input),
     });

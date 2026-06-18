@@ -11,15 +11,27 @@ const ENABLED_VALUES = new Set(["1", "true", "yes", "on"]);
 export const FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV =
   "FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS";
 
+export const FRIDAY_UNISOLATED_NODE_SKILLS_TEST_HARNESS_ENV =
+  "FRIDAY_UNISOLATED_NODE_SKILLS_TEST_HARNESS";
+
+function isEnabledEnvValue(value: string | undefined): boolean {
+  return typeof value === "string" && ENABLED_VALUES.has(value.trim().toLowerCase());
+}
+
+function isFridayNodeSkillTestHarness(env: NodeJS.ProcessEnv): boolean {
+  return isEnabledEnvValue(env[FRIDAY_UNISOLATED_NODE_SKILLS_TEST_HARNESS_ENV])
+    || isEnabledEnvValue(env.VITEST);
+}
+
 export function isFridayUnisolatedNodeSkillsEnabled(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  const raw = env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV];
-  return typeof raw === "string" && ENABLED_VALUES.has(raw.trim().toLowerCase());
+  return isEnabledEnvValue(env[FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV])
+    && isFridayNodeSkillTestHarness(env);
 }
 
 export function getFridayUnisolatedNodeSkillsDisabledMessage(): string {
-  return `Node-based skills are disabled because they execute in-process without isolation. Set ${FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV}=true only in controlled environments.`;
+  return `Node-based skills are disabled in production because they execute in-process without OS isolation. ${FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV}=true is accepted only by the test harness.`;
 }
 
 export function canRunFridayBundledSystemNodeSkillWithoutGate(input: {

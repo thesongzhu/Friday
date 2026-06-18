@@ -136,7 +136,7 @@ describe("createFridayHealthRoutes", () => {
       osSandbox: false,
       surfaces: {
         "skill.node": {
-          boundary: "disabled_by_default_unisolated",
+          boundary: "disabled_in_production_unisolated_test_harness_only",
           osSandbox: false,
           defaultLive: false,
         },

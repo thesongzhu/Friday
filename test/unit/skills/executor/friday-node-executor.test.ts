@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   createFridayNodeExecutor,
   FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
+  FRIDAY_UNISOLATED_NODE_SKILLS_TEST_HARNESS_ENV,
+  isFridayUnisolatedNodeSkillsEnabled,
 } from "#skills";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -21,6 +23,7 @@ describe("FridayNodeExecutor", () => {
     return createFridayNodeExecutor({
       env: {
         [FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV]: "true",
+        [FRIDAY_UNISOLATED_NODE_SKILLS_TEST_HARNESS_ENV]: "true",
       } as NodeJS.ProcessEnv,
     });
   }
@@ -240,5 +243,27 @@ describe("FridayNodeExecutor", () => {
     expect(result.output).toEqual({});
     expect(result.error).toContain("disabled");
     expect(result.error).toContain(FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV);
+  });
+
+  it("does not let the unisolated env gate unlock Node skills outside the test harness", async () => {
+    await writeModule(
+      "prod-blocked.mjs",
+      `export async function execute() { return { ok: true }; }`,
+    );
+
+    const env = {
+      [FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV]: "true",
+      VITEST: "",
+    } as NodeJS.ProcessEnv;
+    const executor = createFridayNodeExecutor({ env });
+    const result = await executor.run({
+      entrypoint: "prod-blocked.mjs",
+      input: {},
+      cwd: tmpDir,
+    });
+
+    expect(isFridayUnisolatedNodeSkillsEnabled(env)).toBe(false);
+    expect(result.output).toEqual({});
+    expect(result.error).toContain("disabled in production");
   });
 });

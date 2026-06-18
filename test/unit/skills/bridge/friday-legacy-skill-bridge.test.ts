@@ -315,6 +315,12 @@ echo "default command"
     expect(callArgs.args).toEqual(["-c", 'echo "default command"']);
     // Verify cwd is set to skill directory (fix #3)
     expect(callArgs.cwd).toBe(tmpDir);
+    expect(callArgs.osSandbox).toEqual({
+      enabled: process.platform === "darwin",
+      required: process.platform === "darwin",
+      denyNetwork: true,
+      writableRoots: [tmpDir],
+    });
   });
 
   it("execute() selects command by commandIndex", async () => {

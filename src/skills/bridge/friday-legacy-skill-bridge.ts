@@ -44,6 +44,16 @@ export interface CreateFridayLegacySkillBridgeDeps {
   shellExecutor: FridayShellExecutor;
 }
 
+function legacySkillProcessSandbox(skillDir: string) {
+  const darwin = process.platform === "darwin";
+  return {
+    enabled: darwin,
+    required: darwin,
+    denyNetwork: true,
+    writableRoots: [skillDir],
+  };
+}
+
 // ─── Implementation ───
 
 /**
@@ -120,6 +130,7 @@ export function createFridayLegacySkillBridge(
             args: ["-c", safeCommand],
             cwd: skillDir,
             env: buildEnv(adapted, input as Record<string, unknown>),
+            osSandbox: legacySkillProcessSandbox(skillDir),
             timeoutMs: adapted.manifest.runtime.timeoutMsDefault,
           });
 
