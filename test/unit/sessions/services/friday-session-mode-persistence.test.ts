@@ -15,6 +15,9 @@ describe("Session operationalMode persistence", () => {
       db,
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,
+      // TS-R4/G3: this is a legacy in-process persistence suite. Default/live
+      // callers leave this unset and fail-close before TS session writes.
+      allowTestOnlySessionExecution: true,
     });
   });
 

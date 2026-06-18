@@ -212,6 +212,8 @@ describe("Session memory extraction — integration", () => {
       db,
       idGenerator,
       nowIso: () => NOW,
+      // TS-R4/G3: integration tests seed retired TS session mutators.
+      allowTestOnlySessionExecution: true,
     });
 
     mockMemory = createMockMemoryService();

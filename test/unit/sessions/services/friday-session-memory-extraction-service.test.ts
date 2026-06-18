@@ -88,6 +88,10 @@ describe("FridaySessionMemoryExtractionService", () => {
       db,
       idGenerator: idGen,
       nowIso: () => NOW,
+      // TS-R4/G3: this suite seeds legacy TS sessions directly so the
+      // extraction service can exercise its own retirement guard below.
+      // Default/live runtime leaves this unset and fail-closes.
+      allowTestOnlySessionExecution: true,
     });
 
     memoryService = createMockMemoryService();

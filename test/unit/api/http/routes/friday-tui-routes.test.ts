@@ -64,6 +64,9 @@ describe("createFridayTuiRoutes", () => {
       db,
       idGenerator: createTestIdGenerator(),
       nowIso: () => NOW,
+      // TS-R4/G3: seed legacy TS session rows for the read-only TUI status
+      // projection. Product/default writers remain fail-closed.
+      allowTestOnlySessionExecution: true,
     });
     await sessionService.createSession({
       channel: "discord",
