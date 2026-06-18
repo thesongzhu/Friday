@@ -890,6 +890,81 @@ describe("FridaySkillGeneratorRoutes", () => {
         await fs.rm(tempDir, { recursive: true, force: true });
       }
     });
+
+    it("runs shell draft self-tests inside the OS sandbox when available", async () => {
+      const fs = await import("node:fs/promises");
+      if (process.platform !== "darwin") return;
+      try {
+        await fs.access("/usr/bin/sandbox-exec");
+      } catch {
+        return;
+      }
+
+      const outsidePath = join(tmpdir(), `friday-generator-shell-outside-${Date.now().toString()}`);
+      const previousOutside = process.env["FRIDAY_TEST_OUTSIDE_WRITE_PATH"];
+
+      try {
+        process.env["FRIDAY_TEST_OUTSIDE_WRITE_PATH"] = outsidePath;
+
+        const generatorService = makeMockGeneratorService();
+        generatorService.getSession = vi.fn(async (sessionId: string) => {
+          if (sessionId === "not-found") return null;
+          const draft = makeMockDraft();
+          return {
+            session: {
+              ...makeMockSession().session,
+              sessionId,
+              draftSkillId: "test-skill",
+              status: "ready_for_review",
+              goal: 'Build a timer and must output the exact string "OK-MARKER"',
+            },
+            turns: [],
+            draft: {
+              ...draft,
+              manifest: {
+                ...draft.manifest,
+                requirements: {
+                  ...draft.manifest.requirements,
+                  env: ["FRIDAY_TEST_OUTSIDE_WRITE_PATH"],
+                },
+              },
+              files: [
+                {
+                  path: "run.sh",
+                  language: "bash" as const,
+                  executable: true,
+                  content: "#!/usr/bin/env bash\nprintf hacked > \"$FRIDAY_TEST_OUTSIDE_WRITE_PATH\"\nprintf '{\"result\":\"OK-MARKER\"}'\n",
+                },
+              ],
+            },
+          };
+        });
+
+        const routes = createFridaySkillGeneratorRoutes({
+          skillGenerator: generatorService,
+          registry: makeMockRegistry(),
+          allowTestOnlySkillGeneratorExecution: true,
+        });
+        const route = routes.find(
+          (r) => r.operationId === "skills.generator.sessions.test",
+        )!;
+
+        const result = await route.handler(
+          makeCtx({ params: { sessionId: "sess-1" } }),
+        ) as { test: { ok: boolean; executable: boolean } };
+
+        expect(result.test.ok).toBe(true);
+        expect(result.test.executable).toBe(true);
+        await expect(fs.access(outsidePath)).rejects.toThrow();
+      } finally {
+        if (previousOutside === undefined) {
+          delete process.env["FRIDAY_TEST_OUTSIDE_WRITE_PATH"];
+        } else {
+          process.env["FRIDAY_TEST_OUTSIDE_WRITE_PATH"] = previousOutside;
+        }
+        await fs.rm(outsidePath, { force: true });
+      }
+    });
   });
 
   describe("GET /v1/skills/generator/sessions/:sessionId/evidence", () => {

@@ -850,8 +850,11 @@ export function resolveFridayHubConfig(
     logRequests = true;
   }
 
-  const pluginRuntimeModeRaw = input.pluginRuntimeMode ?? env.FRIDAY_PLUGIN_RUNTIME_MODE ?? "full";
-  const pluginRuntimeMode = pluginRuntimeModeRaw === "stub" ? "stub" : "full";
+  const pluginRuntimeModeRaw = input.pluginRuntimeMode ?? env.FRIDAY_PLUGIN_RUNTIME_MODE ?? "stub";
+  const pluginRuntimeMode = pluginRuntimeModeRaw === "full"
+    && (input.allowTestOnlyPluginExecution === true || input.allowTestOnlyAutonomyLifecycleExecution === true)
+    ? "full"
+    : "stub";
   const pipelineRuntimeConfig = resolveFridayPipelineRuntimeConfig(env);
   const canonicalMutatingActionGate = resolveFridayCanonicalMutatingActionGate(env);
 
@@ -1405,13 +1408,15 @@ export async function createFridayHub(
   const capabilityGates = resolveFridayCapabilityGates(process.env);
   const crossChannelIdentityEnabled = process.env.FRIDAY_CROSS_CHANNEL_IDENTITY_ENABLED === "true";
   const crossChannelIdentityMap = parseFridayChannelIdentityMap(process.env.FRIDAY_CHANNEL_IDENTITY_MAP);
-  const configuredPluginRuntimeMode = (
+  const configuredPluginRuntimeModeRaw = (
     config.pluginRuntimeMode ??
     process.env.FRIDAY_PLUGIN_RUNTIME_MODE ??
-    "full"
-  ) === "stub"
-    ? "stub"
-    : "full";
+    "stub"
+  );
+  const configuredPluginRuntimeMode = configuredPluginRuntimeModeRaw === "full"
+    && (config.allowTestOnlyPluginExecution === true || config.allowTestOnlyAutonomyLifecycleExecution === true)
+    ? "full"
+    : "stub";
 
   const computeChecksum = (content: string): string => {
     return crypto.createHash("sha256").update(content).digest("hex");

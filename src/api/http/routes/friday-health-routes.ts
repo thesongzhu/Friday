@@ -99,10 +99,10 @@ export function createFridayHealthRoutes(
           notes: "Python skills share the shell executor boundary and are not isolated by an OS sandbox.",
         },
         "skill.node": {
-          boundary: "disabled_by_default_unisolated",
+          boundary: "disabled_in_production_unisolated_test_harness_only",
           osSandbox: false,
           defaultLive: false,
-          notes: "Non-bundled Node skills dynamically import in-process modules and require FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS=true.",
+          notes: "Non-bundled Node skills dynamically import in-process modules; FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS=true is accepted only by the test harness, never as a production live unlock.",
         },
         "skill.node.bundled_system": {
           boundary: "in_process_trusted",

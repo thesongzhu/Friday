@@ -1,6 +1,5 @@
 import {
   FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV,
-  isFridayUnisolatedNodeSkillsEnabled,
 } from "./friday-node-executor.js";
 import { isFridayDarwinSandboxExecAvailable } from "./friday-shell-executor.js";
 
@@ -21,6 +20,7 @@ export interface FridayExecutionIsolationStatus {
       | "logical_guards_only"
       | "darwin_sandbox_exec_write_network_guard"
       | "disabled_by_default_unisolated"
+      | "disabled_in_production_unisolated_test_harness_only"
       | "in_process_trusted"
       | "retired_by_default_dynamic_import_when_enabled"
       | "logical_workspace_guard_host_spawn";
@@ -38,7 +38,6 @@ export function getFridayExecutionIsolationStatus(
   env: NodeJS.ProcessEnv = process.env,
   probe: FridayExecutionIsolationProbe = {},
 ): FridayExecutionIsolationStatus {
-  const unisolatedNodeEnabled = isFridayUnisolatedNodeSkillsEnabled(env);
   const skillProcessSandbox = probe.darwinSandboxExecAvailable ?? isFridayDarwinSandboxExecAvailable();
   const skillProcessBoundary = skillProcessSandbox
     ? "darwin_sandbox_exec_write_network_guard"
@@ -65,10 +64,10 @@ export function getFridayExecutionIsolationStatus(
           : "Python skills share the shell executor boundary and are not isolated by an OS sandbox.",
       },
       "skill.node": {
-        boundary: "disabled_by_default_unisolated",
+        boundary: "disabled_in_production_unisolated_test_harness_only",
         osSandbox: false,
-        defaultLive: unisolatedNodeEnabled,
-        notes: `Non-bundled Node skills dynamically import in-process modules and require ${FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV}=true.`,
+        defaultLive: false,
+        notes: `Non-bundled Node skills dynamically import in-process modules; ${FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV}=true is accepted only by the test harness, never as a production live unlock.`,
       },
       "skill.node.bundled_system": {
         boundary: "in_process_trusted",

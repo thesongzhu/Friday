@@ -27,7 +27,7 @@ describe("getFridayExecutionIsolationStatus", () => {
           defaultLive: false,
         },
         "skill.node": {
-          boundary: "disabled_by_default_unisolated",
+          boundary: "disabled_in_production_unisolated_test_harness_only",
           osSandbox: false,
           defaultLive: false,
         },
@@ -81,15 +81,16 @@ describe("getFridayExecutionIsolationStatus", () => {
     });
   });
 
-  it("reports non-bundled Node skills as live only when the unisolated gate is enabled", () => {
+  it("never reports non-bundled Node skills as production-live from the unisolated test gate", () => {
     const status = getFridayExecutionIsolationStatus({
       [FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS_ENV]: "true",
+      FRIDAY_UNISOLATED_NODE_SKILLS_TEST_HARNESS: "true",
     });
 
     expect(status.surfaces["skill.node"]).toMatchObject({
-      boundary: "disabled_by_default_unisolated",
+      boundary: "disabled_in_production_unisolated_test_harness_only",
       osSandbox: false,
-      defaultLive: true,
+      defaultLive: false,
     });
   });
 });
