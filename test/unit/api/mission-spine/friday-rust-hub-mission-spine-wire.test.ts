@@ -3,12 +3,15 @@ import { describe, expect, it } from "vitest";
 import {
   buildMissionIntakeEnvelope,
   buildMissionLifecycleEnvelope,
+  buildRouteDecisionControlEnvelope,
   buildWorkItemStatusEnvelope,
   parseMissionIntakeResult,
   parseMissionLifecycleResult,
+  parseRouteDecisionControlResult,
   parseWorkItemStatusResult,
   type FridayRustHubMissionIntakeRequest,
   type FridayRustHubMissionLifecycleRequest,
+  type FridayRustHubRouteDecisionControlRequest,
   type FridayRustHubWorkItemStatusRequest,
 } from "../../../../src/api/mission-spine/friday-rust-hub-agent-run-ws-sealed-client.js";
 
@@ -171,6 +174,50 @@ describe("buildWorkItemStatusEnvelope (WorkItemStatusRequestWire wire mapping)",
   });
 });
 
+const FULL_ROUTE_CONTROL: FridayRustHubRouteDecisionControlRequest = {
+  decisionId: "route-decision-x",
+  missionId: "mission-x",
+  workItemId: "work-x",
+  controlKind: "override",
+  overrideLane: "codex",
+  overrideProviderOrAgent: "codex",
+  actorRef: "actor_x",
+  reason: "Codex owns this edit",
+};
+
+describe("buildRouteDecisionControlEnvelope (RouteDecisionControlRequestWire wire mapping)", () => {
+  it("nests override control under `request`, omitting no required refs", () => {
+    const env = buildRouteDecisionControlEnvelope(FULL_ROUTE_CONTROL);
+    expect(env.msg_id).toBe("route-decision-control-route-decision-x");
+    const message = env.message as Record<string, unknown>;
+    expect(message.kind).toBe("RouteDecisionControlRequest");
+    expect(Object.keys(message).sort()).toEqual(["kind", "request"]);
+    expect(message.request).toEqual({
+      decision_id: "route-decision-x",
+      mission_id: "mission-x",
+      work_item_id: "work-x",
+      control_kind: "override",
+      override_lane: "codex",
+      override_provider_or_agent: "codex",
+      actor_ref: "actor_x",
+      reason: "Codex owns this edit",
+    });
+  });
+
+  it("omits override fields for a veto", () => {
+    const message = buildRouteDecisionControlEnvelope({
+      decisionId: "route-decision-x",
+      controlKind: "veto",
+      actorRef: "actor_x",
+      reason: "operator veto",
+    }).message as Record<string, unknown>;
+    const request = message.request as Record<string, unknown>;
+    expect(request.control_kind).toBe("veto");
+    expect("override_lane" in request).toBe(false);
+    expect("override_provider_or_agent" in request).toBe(false);
+  });
+});
+
 describe("parseMissionIntakeResult (fail-closed refs-only, NESTED result)", () => {
   // The parser is handed the whole `message` object: `{kind, result:{…refs…}}`.
   const valid = {
@@ -270,6 +317,54 @@ describe("parseMissionIntakeResult (fail-closed refs-only, NESTED result)", () =
   });
 });
 
+describe("parseRouteDecisionControlResult (fail-closed refs-only, NESTED result)", () => {
+  it("parses a valid route control result", () => {
+    expect(
+      parseRouteDecisionControlResult({
+        result: {
+          decision_id: "route-decision-x",
+          mission_id: "mission-x",
+          work_item_id: "work-x",
+          control_kind: "override",
+          override_lane: "codex",
+          override_provider_or_agent: "codex",
+          actor_ref: "actor_x",
+          reason: "Codex owns this edit",
+          updated_at_ms: 1700000000000,
+        },
+      }),
+    ).toEqual({
+      truthLabel: "rust_wired",
+      decisionId: "route-decision-x",
+      missionId: "mission-x",
+      workItemId: "work-x",
+      controlKind: "override",
+      overrideLane: "codex",
+      overrideProviderOrAgent: "codex",
+      actorRef: "actor_x",
+      reason: "Codex owns this edit",
+      updatedAtMs: 1700000000000,
+    });
+  });
+
+  it("fails closed on missing wrapper or invalid control kind", () => {
+    expect(parseRouteDecisionControlResult({})).toBeUndefined();
+    expect(
+      parseRouteDecisionControlResult({
+        result: {
+          decision_id: "route-decision-x",
+          mission_id: "mission-x",
+          work_item_id: "work-x",
+          control_kind: "decorate",
+          actor_ref: "actor_x",
+          reason: "bad",
+          updated_at_ms: 1,
+        },
+      }),
+    ).toBeUndefined();
+  });
+});
+
 describe("parseMissionLifecycleResult (fail-closed refs-only, NESTED result)", () => {
   const valid = {
     result: {
@@ -362,7 +457,7 @@ describe("parseWorkItemStatusResult (fail-closed refs-only, count not raw refs, 
 //  - We `JSON.parse` the Rust JSON and `toEqual` the `message.request`/`message.result` SUB-OBJECT
 //    against what the TS builder emits / what the TS parser consumes. SUB-OBJECT (not full-envelope
 //    byte) comparison is deliberate: the outer envelope cannot be byte-equal (`sent_at = Date.now()`,
-//    `msg_id` is per-entity not "m1", and TS `SCHEMA_VERSION` is 12 vs the current Rust 13 — all
+//    `msg_id` is per-entity not "m1", and TS `SCHEMA_VERSION` is 12 vs the current Rust 14 — all
 //    orthogonal to the wire-NESTING bug under repair). The sub-object equality is exactly the bug's
 //    surface: nesting depth + key names + types.
 //  - `includes_sensitive_context`: Rust has `#[serde(default)]` WITHOUT `skip_serializing_if`, so it
@@ -372,17 +467,17 @@ describe("parseWorkItemStatusResult (fail-closed refs-only, count not raw refs, 
 //    is covered by the dedicated build unit test above.)
 
 const RUST_INTAKE_REQUEST_JSON =
-  '{"schema_version":13,"msg_id":"m1","correlation_id":"c1","sent_at":1000,"message":{"kind":"MissionIntakeRequest","request":{"friday_conversation_id":"conversation_x","owner_principal":"owner_x","surface_thread_id":"surface_x","surface_kind":"mobile","delivery_route":"in_app","visibility_policy":"owner_only","mission_id":"mission_x","work_item_id":"work_x","title":"Title","intent":"Intent","lane":"deepseek","target_provider_or_agent":"deepseek-v4","capability_id":"cap_x","body_ref":"body://ref","includes_sensitive_context":true}}}';
+  '{"schema_version":14,"msg_id":"m1","correlation_id":"c1","sent_at":1000,"message":{"kind":"MissionIntakeRequest","request":{"friday_conversation_id":"conversation_x","owner_principal":"owner_x","surface_thread_id":"surface_x","surface_kind":"mobile","delivery_route":"in_app","visibility_policy":"owner_only","mission_id":"mission_x","work_item_id":"work_x","title":"Title","intent":"Intent","lane":"deepseek","target_provider_or_agent":"deepseek-v4","capability_id":"cap_x","body_ref":"body://ref","includes_sensitive_context":true}}}';
 const RUST_INTAKE_RESULT_JSON =
-  '{"schema_version":13,"msg_id":"m1","correlation_id":"c1","sent_at":1000,"message":{"kind":"MissionIntakeResult","result":{"friday_conversation_id":"conversation_x","mission_id":"mission_x","work_item_id":"work_x","surface_thread_id":"surface_x","status":"ready","blockers":[],"duplicate_mission_id":"mission_dup","duplicate_work_item_id":"work_dup","created_or_ready":true}}}';
+  '{"schema_version":14,"msg_id":"m1","correlation_id":"c1","sent_at":1000,"message":{"kind":"MissionIntakeResult","result":{"friday_conversation_id":"conversation_x","mission_id":"mission_x","work_item_id":"work_x","surface_thread_id":"surface_x","status":"ready","blockers":[],"duplicate_mission_id":"mission_dup","duplicate_work_item_id":"work_dup","created_or_ready":true}}}';
 const RUST_LIFECYCLE_REQUEST_JSON =
-  '{"schema_version":13,"msg_id":"m1","correlation_id":"c1","sent_at":1000,"message":{"kind":"MissionLifecycleRequest","request":{"friday_conversation_id":"conversation_x","mission_id":"mission_x","target_status":"queued","actor_ref":"actor_x","reason":"advance","proof_ref":"proof://ref","merged_into_mission_id":"mission_y"}}}';
+  '{"schema_version":14,"msg_id":"m1","correlation_id":"c1","sent_at":1000,"message":{"kind":"MissionLifecycleRequest","request":{"friday_conversation_id":"conversation_x","mission_id":"mission_x","target_status":"queued","actor_ref":"actor_x","reason":"advance","proof_ref":"proof://ref","merged_into_mission_id":"mission_y"}}}';
 const RUST_LIFECYCLE_RESULT_JSON =
-  '{"schema_version":13,"msg_id":"m1","correlation_id":"c1","sent_at":1000,"message":{"kind":"MissionLifecycleResult","result":{"friday_conversation_id":"conversation_x","mission_id":"mission_x","previous_status":"ready","status":"queued","actor_ref":"actor_x","reason":"advance","proof_ref":"proof://r","merged_into_mission_id":"mission_y","active_mission_ids":["mission_x"],"updated_at_ms":1700000000000}}}';
+  '{"schema_version":14,"msg_id":"m1","correlation_id":"c1","sent_at":1000,"message":{"kind":"MissionLifecycleResult","result":{"friday_conversation_id":"conversation_x","mission_id":"mission_x","previous_status":"ready","status":"queued","actor_ref":"actor_x","reason":"advance","proof_ref":"proof://r","merged_into_mission_id":"mission_y","active_mission_ids":["mission_x"],"updated_at_ms":1700000000000}}}';
 const RUST_WORK_ITEM_REQUEST_JSON =
-  '{"schema_version":13,"msg_id":"m1","correlation_id":"c1","sent_at":1000,"message":{"kind":"WorkItemStatusRequest","request":{"work_item_id":"work_x","target_status":"completed_with_proof","actor_ref":"actor_x","reason":"stage","proof_receipt":"proof://receipt"}}}';
+  '{"schema_version":14,"msg_id":"m1","correlation_id":"c1","sent_at":1000,"message":{"kind":"WorkItemStatusRequest","request":{"work_item_id":"work_x","target_status":"completed_with_proof","actor_ref":"actor_x","reason":"stage","proof_receipt":"proof://receipt"}}}';
 const RUST_WORK_ITEM_RESULT_JSON =
-  '{"schema_version":13,"msg_id":"m1","correlation_id":"c1","sent_at":1000,"message":{"kind":"WorkItemStatusResult","result":{"work_item_id":"work_x","mission_id":"mission_x","previous_status":"ready_to_dispatch","status":"completed_with_proof","actor_ref":"actor_x","reason":"done","proof_receipt_count":2,"updated_at_ms":1700000000000}}}';
+  '{"schema_version":14,"msg_id":"m1","correlation_id":"c1","sent_at":1000,"message":{"kind":"WorkItemStatusResult","result":{"work_item_id":"work_x","mission_id":"mission_x","previous_status":"ready_to_dispatch","status":"completed_with_proof","actor_ref":"actor_x","reason":"done","proof_receipt_count":2,"updated_at_ms":1700000000000}}}';
 
 /** Pull the inner `message.<key>` sub-object out of a captured Rust envelope JSON string. */
 function rustInner(json: string, key: "request" | "result"): Record<string, unknown> {

@@ -11,6 +11,8 @@ import type {
   FridayRustHubMissionIntakeResult,
   FridayRustHubMissionLifecycleRequest,
   FridayRustHubMissionLifecycleResult,
+  FridayRustHubRouteDecisionControlRequest,
+  FridayRustHubRouteDecisionControlResult,
   FridayRustHubWorkItemStatusRequest,
   FridayRustHubWorkItemStatusResult,
 } from "../../mission-spine/friday-rust-hub-agent-run-ws-sealed-client.js";
@@ -44,6 +46,9 @@ export interface FridayMissionSpineDispatchService {
   transitionWorkItem(
     request: FridayRustHubWorkItemStatusRequest,
   ): Promise<FridayRustHubWorkItemStatusResult>;
+  controlRouteDecision(
+    request: FridayRustHubRouteDecisionControlRequest,
+  ): Promise<FridayRustHubRouteDecisionControlResult>;
 }
 
 export interface FridayMissionSpineRoutesDeps {
@@ -68,6 +73,9 @@ export interface FridayMissionSpineLifecycleResponse {
 }
 export interface FridayMissionSpineWorkItemStatusResponse {
   readonly result: FridayRustHubWorkItemStatusResult;
+}
+export interface FridayMissionSpineRouteDecisionControlResponse {
+  readonly result: FridayRustHubRouteDecisionControlResult;
 }
 
 const DEFAULT_DISABLED_MESSAGE =
@@ -96,6 +104,7 @@ const ROUTE_ACTION_REVERSIBILITY = new Set([
   "operator_gate_required",
   "pending_classify",
 ]);
+const WORK_LANES = new Set(["friday_hub", "codex", "claude", "deepseek", "workflow", "channel", "human", "future_api"]);
 const PLACEHOLDER_MARKERS = [
   "mission_pending_runtime_projection",
   "conversation_pending_runtime_projection",
@@ -353,6 +362,57 @@ function validateWorkItemStatusBody(workItemId: string, body: unknown): FridayRu
   };
 }
 
+/** Validate a RouteDecision control body + path decisionId into the typed request (or throw 400). */
+function validateRouteDecisionControlBody(
+  decisionId: string,
+  body: unknown,
+): FridayRustHubRouteDecisionControlRequest {
+  const surface = "api:/v1/mission-spine/route-decisions/:decisionId/control";
+  const b = asBody(body);
+  const failures: string[] = [];
+  const trimmedDecisionId = typeof decisionId === "string" ? decisionId.trim() : "";
+  if (trimmedDecisionId.length === 0) failures.push("decisionId_missing_or_empty");
+  const controlKind = readRequiredString(b, "controlKind", failures);
+  const missionId = readOptionalString(b, "missionId", failures);
+  const workItemId = readOptionalString(b, "workItemId", failures);
+  const overrideLane = readOptionalString(b, "overrideLane", failures);
+  const overrideProviderOrAgent = readOptionalString(b, "overrideProviderOrAgent", failures);
+  const actorRef = readRequiredString(b, "actorRef", failures);
+  const reason = readRequiredString(b, "reason", failures);
+  if (controlKind !== undefined && controlKind !== "veto" && controlKind !== "override") {
+    failures.push("control_kind_invalid");
+  }
+  if (controlKind === "veto" && (overrideLane !== undefined || overrideProviderOrAgent !== undefined)) {
+    failures.push("veto_cannot_carry_override_target");
+  }
+  if (controlKind === "override") {
+    if (overrideLane === undefined) {
+      failures.push("override_lane_required");
+    } else if (!WORK_LANES.has(overrideLane)) {
+      failures.push("override_lane_invalid");
+    }
+  }
+  if (
+    failures.length > 0 ||
+    controlKind === undefined ||
+    actorRef === undefined ||
+    reason === undefined
+  ) {
+    throwInvalidBody(surface, failures);
+  }
+  const parsedControlKind = controlKind as "veto" | "override";
+  return {
+    decisionId: trimmedDecisionId,
+    ...(missionId !== undefined ? { missionId } : {}),
+    ...(workItemId !== undefined ? { workItemId } : {}),
+    controlKind: parsedControlKind,
+    ...(overrideLane !== undefined ? { overrideLane } : {}),
+    ...(overrideProviderOrAgent !== undefined ? { overrideProviderOrAgent } : {}),
+    actorRef,
+    reason,
+  };
+}
+
 function readPathParam(params: unknown, key: string): string {
   if (!params || typeof params !== "object") return "";
   const value = (params as Record<string, unknown>)[key];
@@ -415,6 +475,8 @@ function validateSnapshotHeader(
   pushIfInvalid(failures, hasText(snapshot.duplicatePreflight.duplicateWorkItemId), "duplicate_work_item_missing");
   pushIfInvalid(failures, hasText(snapshot.routeDecision.advisorSummary), "route_decision_summary_missing");
   pushIfInvalid(failures, hasText(snapshot.routeDecision.selectedRoute), "route_decision_selected_missing");
+  pushIfInvalid(failures, hasText(snapshot.routeDecision.controlRef), "route_decision_control_ref_missing");
+  pushIfInvalid(failures, hasText(snapshot.routeDecision.workItemId), "route_decision_work_item_id_missing");
   pushIfInvalid(failures, TRUTH_LABELS.has(snapshot.routeDecision.truthLabel), "route_decision_truth_label_invalid");
   pushIfInvalid(failures, Array.isArray(snapshot.routeDecision.actionItems), "route_decision_action_items_not_array");
   if (Array.isArray(snapshot.routeDecision.actionItems)) {
@@ -760,6 +822,25 @@ export function createFridayMissionSpineRoutes(
         const workItemId = readPathParam(ctx.params, "workItemId");
         const request = validateWorkItemStatusBody(workItemId, ctx.body);
         const result = await dispatch.transitionWorkItem(request);
+        return { result };
+      },
+    },
+    // (D20 W1-S3) ROUTE-DECISION CONTROL — POST. This is the operator-triggerable control
+    // surface for veto/override before dispatch. It is load-bearing because Rust storage checks the
+    // persisted control at the ReadyToDispatch -> Dispatched transition.
+    {
+      operationId: "mission.spine.routedecision.control",
+      method: "POST",
+      path: "/v1/mission-spine/route-decisions/:decisionId/control",
+      auth: { public: true },
+      async handler(ctx): Promise<FridayMissionSpineRouteDecisionControlResponse> {
+        if (!dispatch) {
+          throwDispatchDisabled("api:/v1/mission-spine/route-decisions/:decisionId/control");
+        }
+        assertBoundPrincipalForOperation(ctx.principal ?? null, "mission.spine.routedecision.control", "api");
+        const decisionId = readPathParam(ctx.params, "decisionId");
+        const request = validateRouteDecisionControlBody(decisionId, ctx.body);
+        const result = await dispatch.controlRouteDecision(request);
         return { result };
       },
     },

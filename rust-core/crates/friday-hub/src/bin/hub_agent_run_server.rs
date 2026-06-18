@@ -477,20 +477,20 @@ fn run() -> Result<(), ServerError> {
     }
 
     // (KEYSTONE) Read the MISSION-SPINE DISPATCH flag ONCE at boot (default-off). When false the
-    // dispatch arms NEVER handle a `MissionLifecycleRequest` / `WorkItemStatusRequest` — each falls
-    // through to the EXISTING catch-all keepalive echo (byte-identical to today, since the server
-    // has never had these arms), so deploying this binary changes NO live behavior until the
-    // operator flips this flag.
+    // dispatch arms NEVER handle a `MissionLifecycleRequest` / `WorkItemStatusRequest` /
+    // `RouteDecisionControlRequest` — each falls through to the EXISTING catch-all keepalive echo
+    // (byte-identical to today, since the server has never had these arms), so deploying this
+    // binary changes NO live behavior until the operator flips this flag.
     let mission_spine_dispatch_enabled = mission_spine_dispatch_enabled_from(
         env::var(MISSION_SPINE_DISPATCH_ENABLED_ENV).ok().as_deref(),
     );
     if mission_spine_dispatch_enabled {
         eprintln!(
-            "hub_agent_run_server: MISSION-SPINE dispatch ENABLED (FRIDAY_MISSION_SPINE_DISPATCH) — Mission/WorkItem lifecycle requests transition the Hub state machine (no model call)"
+            "hub_agent_run_server: MISSION-SPINE dispatch ENABLED (FRIDAY_MISSION_SPINE_DISPATCH) — Mission/WorkItem lifecycle and RouteDecision control requests transition the Hub state machine (no model call)"
         );
     } else {
         eprintln!(
-            "hub_agent_run_server: MISSION-SPINE dispatch DISABLED (set FRIDAY_MISSION_SPINE_DISPATCH=1 to enable) — Mission/WorkItem lifecycle requests are benign keepalive echoes"
+            "hub_agent_run_server: MISSION-SPINE dispatch DISABLED (set FRIDAY_MISSION_SPINE_DISPATCH=1 to enable) — Mission/WorkItem lifecycle and RouteDecision control requests are benign keepalive echoes"
         );
     }
 
@@ -1804,6 +1804,34 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 );
                 eprintln!(
                     "hub_agent_run_server_dispatch: msg_id={} leg=work_item_status (mission-spine enabled)",
+                    env.msg_id
+                );
+                ws_send_envelope(
+                    ws,
+                    session_key,
+                    &result.with_correlation(env.msg_id.clone()),
+                    SESSION_AAD,
+                )?;
+                processed += 1;
+            }
+            // (D20 W1-S3) ROUTE-DECISION CONTROL — FLAG-GATED. When
+            // `FRIDAY_MISSION_SPINE_DISPATCH` is ON, an inbound `RouteDecisionControlRequest`
+            // persists an OWNER veto/override before dispatch. The storage lifecycle hook then
+            // blocks or remaps the later `ReadyToDispatch -> Dispatched` transition in the same DB
+            // transaction. PURE `&Db` mutation: NO provider/model call, ZERO `token_ledger` rows.
+            // When the flag is OFF this falls through to the catch-all keepalive echo below —
+            // byte-identical deploy safety.
+            Message::RouteDecisionControlRequest { request } if mission_spine_dispatch_enabled => {
+                let now_ms = now_ms();
+                let result = friday_hub::hub_server::route_decision_control_result_for_db(
+                    runtime.db(),
+                    &env.msg_id,
+                    request,
+                    runtime.policy().principal_id(),
+                    now_ms,
+                );
+                eprintln!(
+                    "hub_agent_run_server_dispatch: msg_id={} leg=route_decision_control (mission-spine enabled)",
                     env.msg_id
                 );
                 ws_send_envelope(
@@ -4398,6 +4426,31 @@ mod tests {
         )
     }
 
+    /// (D20 W1-S3) A `RouteDecisionControlRequest` envelope. No `auth_proof`: the sealed session is
+    /// the channel auth; the live arm owner-binds against the target decision's Mission owner.
+    fn route_decision_control_request(
+        msg_id: &str,
+        decision_id: &str,
+        control_kind: &str,
+    ) -> Envelope {
+        Envelope::new(
+            msg_id,
+            1000,
+            Message::RouteDecisionControlRequest {
+                request: friday_protocol::RouteDecisionControlRequestWire {
+                    decision_id: decision_id.into(),
+                    mission_id: None,
+                    work_item_id: None,
+                    control_kind: control_kind.into(),
+                    override_lane: None,
+                    override_provider_or_agent: None,
+                    actor_ref: OWNER.into(),
+                    reason: "operator controls the proposed route".into(),
+                },
+            },
+        )
+    }
+
     /// (KEYSTONE / KAT a) FLAG-ON: a `MissionLifecycleRequest` driven through the REAL dispatch path
     /// (`accept_one` → `serve_sealed_session`) advances the canonical Mission's status through the
     /// Hub state machine, returns a `MissionLifecycleResult`, and writes ZERO `token_ledger` rows.
@@ -4798,6 +4851,85 @@ mod tests {
             work.status,
             friday_core::WorkItemStatus::ReadyToDispatch,
             "a cross-owner request never transitions the foreign-owned WorkItem"
+        );
+    }
+
+    /// (D20 W1-S3) FLAG-ON: a `RouteDecisionControlRequest{veto}` driven through the REAL sealed
+    /// dispatch path persists a load-bearing pre-dispatch control. The subsequent
+    /// `ReadyToDispatch -> Dispatched` lifecycle hop is blocked by storage, proving this is not a
+    /// decorative field.
+    #[test]
+    fn flag_on_route_decision_veto_blocks_dispatch_lifecycle_hop() {
+        let (rt, _ws) = mock_runtime("spine-route-veto-on", OWNER);
+        seed_mission_and_work_item(&rt);
+        let route_decisions = rt
+            .db()
+            .list_route_decisions_for_mission("mission-ns5")
+            .unwrap();
+        let decision_id = route_decisions
+            .first()
+            .expect("seed intake writes a route decision")
+            .decision_id
+            .clone();
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        let client_kp = DeviceKeypair::generate();
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let decision_for_client = decision_id.clone();
+        let client = spawn_client(addr, client_kp, move |session, _nonce| {
+            let req = route_decision_control_request(
+                "req-route-control-on",
+                &decision_for_client,
+                "veto",
+            );
+            (req, session.clone(), session.clone())
+        });
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false,
+                false,
+                false,
+                true,  // mission-spine dispatch ON, including route controls
+                false, // memory-confirm ingress OFF
+                false, // (Loop4) per-run token surface OFF
+                false, // (C1/C2) provider-workspace dispatch OFF
+            )
+            .unwrap();
+        assert_eq!(processed, 1);
+        match client
+            .join()
+            .unwrap()
+            .result
+            .expect("a route-control reply")
+        {
+            Message::RouteDecisionControlResult { result } => {
+                assert_eq!(result.decision_id, decision_id);
+                assert_eq!(result.control_kind, "veto");
+                assert_eq!(result.work_item_id, "work-ns5");
+            }
+            other => panic!("route-control flag ON must return a result, got {other:?}"),
+        }
+
+        let err = rt
+            .db()
+            .transition_work_item_status(
+                "work-ns5",
+                friday_core::WorkItemStatus::Dispatched,
+                OWNER,
+                "dispatch after route veto",
+                None,
+                2_000,
+            )
+            .expect_err("veto must block the dispatch lifecycle transition");
+        assert!(
+            err.to_string().contains("route_decision_veto_active"),
+            "expected the storage lifecycle hook to block dispatch, got {err:?}"
         );
     }
 

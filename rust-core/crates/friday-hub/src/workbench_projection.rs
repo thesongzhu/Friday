@@ -124,6 +124,8 @@ pub fn project_workbench(db: &Db, requested_mission_id: Option<&str>) -> Result<
         "routeDecision": {
             "advisorSummary": route_decision.why_this_route,
             "selectedRoute": redacted_ref("route-decision", &route_decision.route_decision_ref),
+            "controlRef": route_decision.route_decision_ref,
+            "workItemId": route_decision.work_item_id,
             "alternatives": route_decision.considered_options,
             "actionItems": route_decision_action_items_json(&route_decision.action_items),
             "truthLabel": "friday_owned"

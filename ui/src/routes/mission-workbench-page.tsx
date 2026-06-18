@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { GitBranch, Search, ShieldX } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
-import { ShellCard, StatusPill } from "@/components/core/primitives";
+import { ActionButton, ShellCard, StatusPill } from "@/components/core/primitives";
 import { useMissionWorkbenchSnapshot } from "@/hooks/use-mission-workbench";
+import { missionWorkbenchApi } from "@/lib/api/mission-workbench";
 import { localize } from "@/lib/i18n/localized-text";
 import {
   type MissionWorkbenchApprovalState,
@@ -50,6 +52,7 @@ function truthLabelText(label: MissionTruthLabel): string {
 
 export function MissionWorkbenchPage() {
   const { locale } = useAppLocale();
+  const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const targetMissionId = searchParams.get("missionId")?.trim() || undefined;
   const { snapshot, isLoading, isLive, liveUnavailable } = useMissionWorkbenchSnapshot(targetMissionId);
@@ -58,6 +61,30 @@ export function MissionWorkbenchPage() {
   const [stateFilter, setStateFilter] = useState<MissionLifecycleState | "all">("all");
   const [groupFilter, setGroupFilter] = useState<MissionTranscriptGroupKind | "all">("all");
   const [facetFilter, setFacetFilter] = useState<MissionTranscriptFacetFilter>("all");
+  const [routeControlReason, setRouteControlReason] = useState("operator workbench route control");
+  const [routeOverrideLane, setRouteOverrideLane] = useState("codex");
+
+  const routeControlMutation = useMutation({
+    mutationFn: (input: { controlKind: "veto" | "override" }) => {
+      if (!snapshot) throw new Error("Mission Workbench snapshot is not loaded.");
+      const reason = routeControlReason.trim();
+      return missionWorkbenchApi.controlRouteDecision(snapshot.routeDecision.controlRef, {
+        controlKind: input.controlKind,
+        missionId: snapshot.missionId,
+        workItemId: snapshot.routeDecision.workItemId,
+        ...(input.controlKind === "override"
+          ? { overrideLane: routeOverrideLane, overrideProviderOrAgent: routeOverrideLane }
+          : {}),
+        actorRef: "operator:mission-workbench",
+        reason: reason.length > 0 ? reason : "operator workbench route control",
+      });
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["mission-spine", "workbench", "snapshot", targetMissionId ?? "latest"],
+      });
+    },
+  });
 
   const filteredSections = useMemo(() => {
     return filterMissionTranscriptSections(snapshot?.transcriptSections ?? [], {
@@ -179,6 +206,54 @@ export function MissionWorkbenchPage() {
                 <p className="mt-3 text-sm leading-6 text-[color:var(--color-text-secondary)]">
                   {snapshot.routeDecision.advisorSummary}
                 </p>
+                <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_170px]">
+                  <input
+                    value={routeControlReason}
+                    onChange={(event) => setRouteControlReason(event.target.value)}
+                    className="min-h-[44px] rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-3 text-sm text-[color:var(--color-text-primary)] outline-none focus:border-[color:var(--color-accent)]"
+                    aria-label={localize(locale, "路由控制原因", "Route control reason")}
+                  />
+                  <select
+                    value={routeOverrideLane}
+                    onChange={(event) => setRouteOverrideLane(event.target.value)}
+                    className="min-h-[44px] rounded-lg border border-[color:var(--color-border-soft)] bg-[color:var(--color-bg-surface)] px-3 text-sm text-[color:var(--color-text-primary)] outline-none focus:border-[color:var(--color-accent)]"
+                    aria-label={localize(locale, "覆盖分配", "Override lane")}
+                  >
+                    <option value="codex">Codex</option>
+                    <option value="claude">Claude</option>
+                    <option value="deepseek">DeepSeek</option>
+                    <option value="workflow">Workflow</option>
+                    <option value="channel">Channel</option>
+                    <option value="human">Human</option>
+                    <option value="future_api">Future API</option>
+                  </select>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <ActionButton
+                    tone="danger"
+                    className="gap-2 rounded-lg"
+                    disabled={routeControlMutation.isPending}
+                    onClick={() => routeControlMutation.mutate({ controlKind: "veto" })}
+                  >
+                    <ShieldX className="h-4 w-4" aria-hidden="true" />
+                    Veto
+                  </ActionButton>
+                  <ActionButton
+                    tone="secondary"
+                    className="gap-2 rounded-lg"
+                    disabled={routeControlMutation.isPending}
+                    onClick={() => routeControlMutation.mutate({ controlKind: "override" })}
+                  >
+                    <GitBranch className="h-4 w-4" aria-hidden="true" />
+                    Override
+                  </ActionButton>
+                  {routeControlMutation.data ? (
+                    <StatusPill tone="success">{routeControlMutation.data.controlKind}</StatusPill>
+                  ) : null}
+                  {routeControlMutation.isError ? (
+                    <StatusPill tone="danger">blocked</StatusPill>
+                  ) : null}
+                </div>
               </div>
               <div className="space-y-2">
                 {snapshot.routeDecision.alternatives.map((alternative) => (
