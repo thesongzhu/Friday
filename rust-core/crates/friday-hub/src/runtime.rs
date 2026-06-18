@@ -30,7 +30,9 @@ use friday_core::gate::{CanonicalApproval, MutatingActionRequest};
 use friday_core::WorkLane;
 use friday_crypto::OperatorVerifyingKey;
 use friday_deepseek::{DeepSeekClient, DeepSeekError, Transport, UreqTransport};
-use friday_storage::{agent_run, persist_run_result, Db, RunResult, SessionOwner, StorageError};
+use friday_storage::{
+    agent_run, learning_candidate, persist_run_result, Db, RunResult, SessionOwner, StorageError,
+};
 
 use crate::hub_server::{project_answer_for_authed, AuthedAnswer, AuthedPrincipal};
 use crate::mission_context::MissionContextLookup;
@@ -1385,6 +1387,7 @@ impl<T: Transport> HubRuntime<T> {
         // Finished; result discarded; failure-isolated) AFTER the owner-gated answer is bound +
         // projected. See `maybe_extract_memory_post_run`.
         self.maybe_extract_memory_post_run(session_id, run_id, &outcome, now_ms);
+        self.maybe_emit_run_outcome_learning_candidates(session_id, run_id, &outcome, now_ms);
         answer
     }
 
@@ -1589,7 +1592,55 @@ impl<T: Transport> HubRuntime<T> {
         // Finished; result discarded; failure-isolated) AFTER the owner-gated answer is bound +
         // projected. See `maybe_extract_memory_post_run`.
         self.maybe_extract_memory_post_run(session_id, run_id, &outcome, now_ms);
+        self.maybe_emit_run_outcome_learning_candidates(session_id, run_id, &outcome, now_ms);
         Ok((selection, answer))
+    }
+
+    /// A1 DARK run-outcome fan-out. Default-OFF and refs-only: when enabled for a
+    /// Finished sessioned run, this creates pending governance candidates for
+    /// preference/reflex/world-model learning. It never writes durable memory, never
+    /// confirms anything, and failure is isolated from the already-projected answer.
+    fn maybe_emit_run_outcome_learning_candidates(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        outcome: &LoopOutcome,
+        now_ms: i64,
+    ) {
+        let enabled = a1_run_outcome_learning_fanout_from(
+            std::env::var(ENV_A1_RUN_OUTCOME_LEARNING_FANOUT)
+                .ok()
+                .as_deref(),
+        );
+        self.maybe_emit_run_outcome_learning_candidates_flagged(
+            session_id, run_id, outcome, now_ms, enabled,
+        );
+    }
+
+    fn maybe_emit_run_outcome_learning_candidates_flagged(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        outcome: &LoopOutcome,
+        now_ms: i64,
+        enabled: bool,
+    ) {
+        if !enabled {
+            return;
+        }
+        if outcome.status != LoopStatus::Finished {
+            return;
+        }
+        let turns = i64::try_from(outcome.turns).unwrap_or(i64::MAX);
+        let executed_tools = i64::try_from(outcome.executed_tools).unwrap_or(i64::MAX);
+        let _ = learning_candidate::record_run_outcome_candidates(
+            self.db.conn(),
+            run_id,
+            Some(session_id),
+            turns,
+            executed_tools,
+            now_ms,
+        );
     }
 
     /// (NS8-WIRE-1, Loop5) Fire POST-RUN session-memory extraction from the LIVE sessioned run
@@ -3005,11 +3056,19 @@ fn workitem_guarded_transition_from(raw: Option<&str>) -> bool {
 /// change cannot be enabled by accident.
 pub const ENV_RUN_LOOP_MEMORY_EXTRACTION: &str = "FRIDAY_RUN_LOOP_MEMORY_EXTRACTION";
 
+/// A1 default-OFF env gate for refs-only run-outcome learning fan-out. ON only for
+/// exact `"1"`; unset/empty/other values are OFF and produce no extra writes.
+pub const ENV_A1_RUN_OUTCOME_LEARNING_FANOUT: &str = "FRIDAY_A1_RUN_OUTCOME_LEARNING_FANOUT";
+
 /// Pure flag-matcher for [`ENV_RUN_LOOP_MEMORY_EXTRACTION`] (env read split out so it is
 /// unit-testable without `set_var` — the program-standard env-race-free idiom this file uses).
 /// DEFAULT-OFF: `None` (unset) ⇒ false; ON only for the exact opt-in value `"1"` (trimmed);
 /// everything else ⇒ false.
 fn run_loop_memory_extraction_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
+fn a1_run_outcome_learning_fanout_from(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1"))
 }
 
@@ -8807,6 +8866,159 @@ mod tests {
                     .as_deref()
             ),
             "FRIDAY_RUN_LOOP_MEMORY_EXTRACTION must be unset/off in the test env (prod default)"
+        );
+    }
+
+    #[test]
+    fn a1_run_outcome_learning_fanout_flag_matcher_is_exact_one_default_off() {
+        assert!(
+            !a1_run_outcome_learning_fanout_from(None),
+            "unset ⇒ OFF (prod default)"
+        );
+        assert!(
+            a1_run_outcome_learning_fanout_from(Some("1")),
+            "exactly \"1\" ⇒ ON"
+        );
+        assert!(
+            a1_run_outcome_learning_fanout_from(Some(" 1 ")),
+            "trimmed \"1\" ⇒ ON"
+        );
+        for off in ["", "0", "true", "yes", "01", "1 0", "enabled", "TRUE"] {
+            assert!(
+                !a1_run_outcome_learning_fanout_from(Some(off)),
+                "{off:?} must NOT enable A1 fan-out"
+            );
+        }
+        assert!(
+            !a1_run_outcome_learning_fanout_from(
+                std::env::var(ENV_A1_RUN_OUTCOME_LEARNING_FANOUT)
+                    .ok()
+                    .as_deref()
+            ),
+            "FRIDAY_A1_RUN_OUTCOME_LEARNING_FANOUT must be unset/off in the test env"
+        );
+    }
+
+    #[test]
+    fn a1_run_outcome_learning_fanout_flag_off_is_byte_identical_even_on_finished() {
+        let owner = "owner-a1-off";
+        let (rt, _ws, _c) = runtime_with_owner("a1-fanout-off", owner, &["{\"tool\":\"none\"}"]);
+        let before = rt.db().count("run_outcome_learning_candidate").unwrap();
+
+        let outcome = LoopOutcome {
+            status: LoopStatus::Finished,
+            turns: 2,
+            executed_tools: 1,
+            final_message: Some("PONG".to_string()),
+            detail: String::new(),
+        };
+        rt.maybe_emit_run_outcome_learning_candidates_flagged(
+            "sess-a1-off",
+            "run-a1-off",
+            &outcome,
+            3_000,
+            false,
+        );
+
+        assert_eq!(
+            rt.db().count("run_outcome_learning_candidate").unwrap(),
+            before,
+            "flag-OFF creates no A1 candidates"
+        );
+    }
+
+    #[test]
+    fn a1_run_outcome_learning_fanout_writes_three_pending_refs_only_candidates() {
+        let owner = "owner-a1-on";
+        let (rt, _ws, _c) = runtime_with_owner("a1-fanout-on", owner, &["{\"tool\":\"none\"}"]);
+        let before_results = rt.db().count("run_result").unwrap();
+
+        let outcome = LoopOutcome {
+            status: LoopStatus::Finished,
+            turns: 2,
+            executed_tools: 1,
+            final_message: Some("PONG".to_string()),
+            detail: String::new(),
+        };
+        rt.maybe_emit_run_outcome_learning_candidates_flagged(
+            "sess-a1-on",
+            "run-a1-on",
+            &outcome,
+            4_000,
+            true,
+        );
+
+        let rows = friday_storage::learning_candidate::list_run_outcome_candidates_for_run(
+            rt.db().conn(),
+            "run-a1-on",
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().all(
+            |r| r.state == friday_storage::learning_candidate::RunOutcomeLearningState::Pending
+        ));
+        assert!(rows
+            .iter()
+            .all(|r| r.evidence_ref == "friday://agent-run/run-a1-on"));
+        assert!(rows.iter().all(|r| r.summary.contains("turns=2")
+            && r.summary.contains("executed_tools=1")
+            && !format!("{r:?}").contains("PONG")));
+        assert_eq!(
+            rt.db().count("run_result").unwrap(),
+            before_results,
+            "A1 fan-out is refs-only governance substrate; it does not alter run_result"
+        );
+
+        let decided = friday_storage::learning_candidate::decide_run_outcome_candidate(
+            rt.db().conn(),
+            "a1:run-a1-on:preference",
+            true,
+            4_500,
+            Some("operator-confirmed test governance leg"),
+        )
+        .unwrap();
+        assert_eq!(
+            decided,
+            friday_storage::learning_candidate::RunOutcomeLearningState::Confirmed,
+            "confirm is an explicit governance decision, not an automatic durable write"
+        );
+    }
+
+    #[test]
+    fn a1_run_outcome_learning_fanout_does_not_fire_on_non_finished() {
+        let owner = "owner-a1-np";
+        let (rt, _ws, _c) =
+            runtime_with_owner("a1-fanout-nonfinished", owner, &["{\"tool\":\"none\"}"]);
+        let before = rt.db().count("run_outcome_learning_candidate").unwrap();
+
+        for status in [
+            LoopStatus::Paused,
+            LoopStatus::Errored,
+            LoopStatus::Bounded,
+            LoopStatus::Blocked,
+            LoopStatus::Interrupted,
+            LoopStatus::AwaitingClarification,
+        ] {
+            let outcome = LoopOutcome {
+                status,
+                turns: 1,
+                executed_tools: 0,
+                final_message: None,
+                detail: String::new(),
+            };
+            rt.maybe_emit_run_outcome_learning_candidates_flagged(
+                "sess-a1-np",
+                "run-a1-np",
+                &outcome,
+                5_000,
+                true,
+            );
+        }
+
+        assert_eq!(
+            rt.db().count("run_outcome_learning_candidate").unwrap(),
+            before,
+            "A1 fan-out is gated on Finished only"
         );
     }
 

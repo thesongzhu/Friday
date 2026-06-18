@@ -18,6 +18,7 @@ pub mod authorize_ed25519;
 pub mod blob;
 pub mod channel;
 mod error;
+pub mod learning_candidate;
 pub mod memory;
 mod migrate;
 pub mod mission;

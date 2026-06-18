@@ -63,6 +63,10 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     // and there is no answer-body-over-wire, so the tables are never on a phone.
     "agent_session",
     "agent_session_message",
+    // A1: refs-only run-outcome learning candidates (DARK). These rows are governance
+    // work items derived from a completed Hub agent loop; they are not durable memory,
+    // not auto-recalled facts, and never exist on a phone surface.
+    "run_outcome_learning_candidate",
     // SMOOTH-001: Hub-only durable provider-session timeline (file 83). The parent
     // `provider_timeline` row + its ordered `provider_timeline_event` log + the
     // `provider_timeline_pending` action table persist the in-memory timeline state
@@ -639,6 +643,14 @@ pub fn hub_migrations() -> Vec<Migration> {
             name: "route_decision_control",
             destructive: false,
             up: m0037_route_decision_control,
+        },
+        // A1: default-off Rust run-outcome fan-out substrate. The table stores only
+        // refs/counts and pending governance candidates; confirmation is explicit.
+        Migration {
+            version: 38,
+            name: "run_outcome_learning_candidate",
+            destructive: false,
+            up: m0038_run_outcome_learning_candidate,
         },
     ]
 }
@@ -1742,6 +1754,27 @@ CREATE TABLE route_decision_control (
 CREATE INDEX idx_route_decision_control_work_item_active
     ON route_decision_control(work_item_id, active, created_at_ms, decision_id);";
 
+const DDL_RUN_OUTCOME_LEARNING_CANDIDATE: &str = "
+CREATE TABLE run_outcome_learning_candidate (
+    candidate_id    TEXT PRIMARY KEY CHECK(length(trim(candidate_id)) > 0),
+    run_id          TEXT NOT NULL CHECK(length(trim(run_id)) > 0),
+    session_id      TEXT CHECK(session_id IS NULL OR length(trim(session_id)) > 0),
+    kind            TEXT NOT NULL CHECK(kind IN ('preference', 'reflex', 'world_model')),
+    state           TEXT NOT NULL CHECK(state IN ('pending', 'confirmed', 'rejected')),
+    evidence_ref    TEXT NOT NULL CHECK(length(trim(evidence_ref)) > 0),
+    summary         TEXT NOT NULL CHECK(length(trim(summary)) > 0),
+    turns           INTEGER NOT NULL CHECK(turns >= 0),
+    executed_tools  INTEGER NOT NULL CHECK(executed_tools >= 0),
+    created_at_ms   INTEGER NOT NULL,
+    decided_at_ms   INTEGER,
+    decision_reason TEXT,
+    UNIQUE(run_id, kind)
+);
+CREATE INDEX idx_run_outcome_learning_candidate_state_created
+    ON run_outcome_learning_candidate(state, created_at_ms, candidate_id);
+CREATE INDEX idx_run_outcome_learning_candidate_run_kind
+    ON run_outcome_learning_candidate(run_id, kind);";
+
 const DDL_REBUILD_MISSION_LINK_WITH_ROUTE_DECISION: &str = "
 CREATE TABLE mission_link_new (
     link_id        TEXT PRIMARY KEY,
@@ -2511,4 +2544,8 @@ fn m0036_trust_grant_run_usage(tx: &Transaction) -> rusqlite::Result<()> {
 
 fn m0037_route_decision_control(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(DDL_ROUTE_DECISION_CONTROL)
+}
+
+fn m0038_run_outcome_learning_candidate(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_RUN_OUTCOME_LEARNING_CANDIDATE)
 }
