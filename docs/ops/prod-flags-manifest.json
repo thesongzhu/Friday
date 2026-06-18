@@ -60,6 +60,15 @@
       "notes": "Drives maybe_extract_memory_post_run_flagged(.., enabled=true) on a Finished outcome and asserts a candidate is extracted while the run result is unchanged. Sibling proofs cover flag-off byte-identical, non-finished-no-fire, and isolated-failure."
     },
     {
+      "flag": "FRIDAY_A1_RUN_OUTCOME_LEARNING_FANOUT",
+      "process": "rust-ws-wrapper",
+      "prod_state": "dark",
+      "closes_loop": "After a finished sessioned agent run, emit refs-only preference/reflex/world-model learning candidates and require an explicit governance decision before any candidate is terminal.",
+      "coverage": "loop-e2e",
+      "e2e_test": "rust-core/crates/friday-hub/src/runtime.rs::a1_run_outcome_learning_fanout_writes_three_pending_refs_only_candidates",
+      "notes": "Built-DARK only. Drives maybe_emit_run_outcome_learning_candidates_flagged(.., enabled=true) on a Finished outcome and asserts exactly three refs-only pending candidates (preference/reflex/world_model), no answer-body leak, and no run_result mutation; then confirms one candidate through the explicit governance API. Sibling proofs cover exact-'1' flag parsing, flag-off byte-identical, and non-finished-no-fire. Truth boundary: this is mechanism-soak with test data, not TRUE organic A1 live-done and not an automatic durable-memory write."
+    },
+    {
       "flag": "FRIDAY_MEMORY_CONFIRM",
       "process": "rust-ws-wrapper",
       "prod_state": "on",
