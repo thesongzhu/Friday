@@ -17,6 +17,7 @@ describe("FridayWorkflowBuilderDraftService", () => {
 
   beforeEach(() => {
     db = createTestDb();
+    seedWorkflow("wf-1");
   });
 
   afterEach(() => {
@@ -42,6 +43,22 @@ describe("FridayWorkflowBuilderDraftService", () => {
     });
 
     return { draftService, collaborationService };
+  }
+
+  function seedWorkflow(workflowId: string): void {
+    db.writer
+      .prepare(
+        `INSERT INTO workflows (id, slug, name, latest_version_number, is_archived, revision, etag, created_at, updated_at)
+         VALUES (?, ?, ?, 1, 0, 1, ?, ?, ?)`,
+      )
+      .run(
+        workflowId,
+        `test-${workflowId}`,
+        `Test ${workflowId}`,
+        `etag-${workflowId}`,
+        NOW,
+        NOW,
+      );
   }
 
   it("creates a draft", () => {

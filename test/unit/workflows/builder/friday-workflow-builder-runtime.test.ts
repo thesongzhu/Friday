@@ -45,6 +45,22 @@ describe("FridayWorkflowBuilderRuntime", () => {
     };
   }
 
+  function seedWorkflow(workflowId: string): void {
+    db.writer
+      .prepare(
+        `INSERT INTO workflows (id, slug, name, latest_version_number, is_archived, revision, etag, created_at, updated_at)
+         VALUES (?, ?, ?, 1, 0, 1, ?, ?, ?)`,
+      )
+      .run(
+        workflowId,
+        `test-${workflowId}`,
+        `Test ${workflowId}`,
+        `etag-${workflowId}`,
+        NOW,
+        NOW,
+      );
+  }
+
   it("exposes all expected services", () => {
     const { runtime } = createRuntime();
 
@@ -59,6 +75,7 @@ describe("FridayWorkflowBuilderRuntime", () => {
 
   it("services are functional and wired correctly", () => {
     const { runtime } = createRuntime();
+    seedWorkflow("wf-rt");
 
     // Create a draft via runtime
     const draft = runtime.drafts.createDraft({
@@ -139,6 +156,7 @@ describe("FridayWorkflowBuilderRuntime", () => {
 
   it("template instantiation creates a functional draft", () => {
     const { runtime } = createRuntime();
+    seedWorkflow("wf-from-template");
 
     const draft = runtime.templates.instantiateTemplate(
       "builtin-simple-action",
@@ -157,6 +175,8 @@ describe("FridayWorkflowBuilderRuntime", () => {
 
   it("import/export roundtrip works", () => {
     const { runtime } = createRuntime();
+    seedWorkflow("wf-export");
+    seedWorkflow("wf-imported");
 
     // Create and export
     const original = runtime.drafts.createDraft({
