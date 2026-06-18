@@ -50,7 +50,7 @@ pub use agent_session::{
 pub use authorize::authorize_mutating_action;
 pub use authorize_ed25519::{
     authorize_mutating_action_ed25519, authorize_mutating_action_ed25519_batch,
-    Ed25519VerifyOnlyPolicy,
+    authorize_reversible_batch_in_worktree, DialWorktreeScope, Ed25519VerifyOnlyPolicy,
 };
 pub use error::{Result, StorageError};
 pub use migrate::{
