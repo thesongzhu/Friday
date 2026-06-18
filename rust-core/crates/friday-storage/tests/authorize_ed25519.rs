@@ -978,3 +978,88 @@ fn dial_worktree_driver_irreversible_and_plan_mismatch_pause_before_batch_consum
     assert_eq!(consumed_count(&db), 0);
     assert_eq!(audit_count(&db), 0);
 }
+
+#[test]
+fn dial_worktree_driver_twenty_round_mixed_batch_soak_never_auto_allows_irreversible() {
+    let mut db = Db::open_hub(&temp_db_path("ed-dial-worktree-soak")).unwrap();
+    let worktree = temp_worktree("soak");
+    let (sk, vk) = operator();
+    const ROUNDS: usize = 20;
+
+    for i in 0..ROUNDS {
+        let batch_id = format!("dial-soak-batch-{i:02}");
+        let reversible_target = worktree.join(format!("src/owned-{i:02}.txt"));
+        let reversible = req_with(
+            "write_file",
+            ActorKind::Owner,
+            true,
+            Risk::Medium,
+            Some(reversible_target.to_string_lossy().as_ref()),
+            "p1",
+        );
+        let irreversible_target = worktree.join(format!("src/irrev-{i:02}.txt"));
+        let irreversible = req_from_params(
+            "write_file",
+            ActorKind::Owner,
+            true,
+            Risk::Medium,
+            Reversibility::Irreversible,
+            vec![(
+                "path".to_string(),
+                irreversible_target.to_string_lossy().to_string(),
+            )],
+            "p1",
+        );
+        let batch = batch_approval(&[&reversible, &irreversible], &sk, &batch_id, Some(FUTURE));
+        let scope = DialWorktreeScope {
+            plan_sign_id: batch_id,
+            active_worktree: worktree.clone(),
+        };
+
+        let allowed = authorize_reversible_batch_in_worktree(
+            db.conn_mut(),
+            &reversible,
+            Some(&batch),
+            &vk,
+            NOW + i as i64,
+            &scope,
+        )
+        .unwrap();
+        assert_eq!(allowed.decision, GateDecision::Allow);
+        assert_eq!(allowed.reason, "canonical_batch_approval_granted");
+
+        let paused = authorize_reversible_batch_in_worktree(
+            db.conn_mut(),
+            &irreversible,
+            Some(&batch),
+            &vk,
+            NOW + i as i64,
+            &scope,
+        )
+        .unwrap();
+        assert_eq!(
+            paused.decision,
+            GateDecision::RequiresApproval,
+            "round {i}: irreversible member must never be auto-allowed in a mixed signed batch"
+        );
+        assert_eq!(
+            paused.reason, "dial_worktree_irreversible_requires_single_approval",
+            "round {i}: pause must come from the classify-backed hard exclude"
+        );
+    }
+
+    assert_eq!(
+        consumed_count(&db),
+        ROUNDS as i64,
+        "only the reversible member in each mixed batch may consume approval"
+    );
+    assert_eq!(
+        audit_count(&db),
+        ROUNDS as i64,
+        "each reversible dial allow must append exactly one audit row"
+    );
+    assert_eq!(
+        friday_storage::audit::verify_audit_chain(db.conn()).unwrap(),
+        ROUNDS
+    );
+}
