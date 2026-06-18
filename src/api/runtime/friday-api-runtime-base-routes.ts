@@ -3,6 +3,7 @@ import type { FridayHttpRouteRegistry } from "../http/friday-http-route-registry
 import { createFridayHealthRoutes } from "../http/routes/friday-health-routes.js";
 import { createFridayTuiRoutes } from "../http/routes/friday-tui-routes.js";
 import type { CreateFridayApiRuntimeDeps } from "./friday-api-runtime.types.js";
+import { getFridayExecutionIsolationStatus } from "../../skills/executor/friday-execution-isolation-status.js";
 
 type FridayApiRuntimeBaseRouteDeps = Pick<
   CreateFridayApiRuntimeDeps,
@@ -72,6 +73,7 @@ export function installFridayApiRuntimeBaseRoutes(input: InstallFridayApiRuntime
         packaging: {
           enabled: deps.packaging !== undefined,
         },
+        executionIsolation: getFridayExecutionIsolationStatus(),
         search: searchHealth ?? {
           provider: "duckduckgo_html",
           latestness: "unverified" as const,
