@@ -181,6 +181,53 @@ describe("B-008 FridayPackagingRoutes", () => {
       }));
       expect(deps.installs.uninstall).toHaveBeenCalledWith("@friday/test", { etag: "etag-1", idempotencyKey: "key-1" });
     });
+
+    it("fails closed before dependency dry-run when packaging deps have no governance gate", async () => {
+      const deps = makeDeps({ allowTestOnlyPackagingMutationExecution: false });
+      const routes = createFridayPackagingRoutes(deps);
+      const route = findRoute(routes, "packaging.packages.dependencies.check");
+
+      await expect(route.handler(makeCtx({
+        params: { packageName: "@friday/test" },
+        body: { tenantId: "tenant-1" },
+      }))).rejects.toMatchObject({
+        code: "PACKAGING_MUTATION_GOVERNANCE_REQUIRED",
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          operationId: "packaging.packages.dependencies.check",
+        },
+      });
+      expect(deps.packages.checkDependencies).not.toHaveBeenCalled();
+    });
+
+    it("runs canonical governance before dependency dry-run resolution", async () => {
+      const gate = makeAllowGate();
+      const deps = makeDeps({
+        allowTestOnlyPackagingMutationExecution: false,
+        packagingMutationGate: gate,
+      });
+      const routes = createFridayPackagingRoutes(deps);
+      const route = findRoute(routes, "packaging.packages.dependencies.check");
+
+      await route.handler(makeCtx({
+        principal: { principalId: "operator-1", kind: "operator" },
+        params: { packageName: "@friday/test" },
+        body: { tenantId: "tenant-1" },
+      }));
+
+      expect(gate.evaluate).toHaveBeenCalledWith(expect.objectContaining({
+        action: "packaging.packages.dependencies.check",
+        surface: "packaging",
+        mutating: true,
+        risk: "medium",
+        resource: expect.objectContaining({
+          type: "package_dependency_resolution",
+          id: "@friday/test",
+        }),
+      }));
+      expect(deps.packages.checkDependencies).toHaveBeenCalledWith("@friday/test", { tenantId: "tenant-1" });
+    });
   });
 
   describe("package routes", () => {

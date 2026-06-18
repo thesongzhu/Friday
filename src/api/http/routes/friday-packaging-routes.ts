@@ -309,6 +309,14 @@ export function createFridayPackagingRoutes(
         const { packageName } = ctx.params as { packageName: string };
         const body = ctx.body as FridayCheckDependenciesRequest;
         requireString(body, "tenantId");
+        await assertPackagingMutationAllowed({
+          deps: services,
+          gateAction: "packaging.packages.dependencies.check",
+          ctx,
+          resourceType: "package_dependency_resolution",
+          resourceId: packageName,
+          risk: "medium",
+        });
         return services.packages.checkDependencies(packageName, body);
       },
     },
