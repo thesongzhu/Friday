@@ -59,7 +59,7 @@ describe("createFridayHealthRoutes", () => {
     });
     const route = findRoute(routes, "health.check");
     const result = await route.handler(makeCtx());
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       status: "ok",
       version: "0.1.0",
       uptime: 42,
@@ -96,7 +96,7 @@ describe("createFridayHealthRoutes", () => {
         issuedAt: "2025-06-15T10:00:00.000Z",
       },
     }));
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       status: "ok",
       version: "0.1.0",
       uptime: 42,
@@ -128,6 +128,22 @@ describe("createFridayHealthRoutes", () => {
           enabled: false,
           remoteMode: "unavailable",
           companionReadiness: "unavailable",
+        },
+      },
+    });
+    expect((result as { capabilities: { executionIsolation?: unknown } }).capabilities.executionIsolation).toMatchObject({
+      disposition: "open_no_os_sandbox",
+      osSandbox: false,
+      surfaces: {
+        "skill.node": {
+          boundary: "disabled_by_default_unisolated",
+          osSandbox: false,
+          defaultLive: false,
+        },
+        "agent.exec": {
+          boundary: "logical_workspace_guard_host_spawn",
+          osSandbox: false,
+          defaultLive: true,
         },
       },
     });
