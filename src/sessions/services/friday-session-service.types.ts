@@ -82,13 +82,15 @@ export interface CreateFridaySessionServiceDeps {
   idGenerator: () => string;
   nowIso: () => string;
   /**
-   * TS Runtime Retirement (TS-R4/G3) — METHOD-level fail-closed guard for the
-   * mutating session-lifecycle sweep. Default/live runtime must leave this unset
-   * so `sweepLifecycle` fails closed for ALL callers — including the
-   * `session-lifecycle-sweep` scheduler job, which bypasses the HTTP route guard
+   * TS Runtime Retirement (TS-R4/G3) — METHOD-level fail-closed guard for every
+   * legacy TypeScript session write leg. Default/live runtime must leave this
+   * unset so session creation, message append/update, lifecycle sweep, fork,
+   * merge, reset, metadata/focus/policy updates, context alignment, pruning, and
+   * boot-time legacy backfill all fail closed for ALL callers — including
+   * schedulers and off-route handlers that bypass the HTTP route guard
    * (`assertSessionTestOracleAllowed` in friday-session-routes). Test-oracle
-   * harnesses set it `true` to exercise the legacy in-process sweep. Reads stay
-   * live; only the sweep mutation is retired, mirroring the route surface.
+   * harnesses set it `true` to exercise the legacy in-process mutators. Reads
+   * stay live.
    */
   allowTestOnlySessionExecution?: boolean;
 }
