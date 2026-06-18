@@ -15,3 +15,7 @@ export const FRIDAY_MEMORY_FILE_SYNC_SESSION_DELTA_MESSAGES = 50;
 
 /** Export root subdirectory under stateDir. */
 export const FRIDAY_MEMORY_FILE_SYNC_EXPORT_DIR = ".friday/exports";
+
+/** Fail-closed code for legacy file -> memory_items reverse imports. */
+export const FRIDAY_MEMORY_FILE_IMPORT_RETIRED_ERROR =
+  "TS_RUNTIME_MEMORY_FILE_IMPORT_RETIRED: memory file reverse-import into memory_items is disabled by default; use the Rust memory owner/import migration path instead.";

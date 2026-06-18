@@ -67,6 +67,7 @@ export {
   FRIDAY_MEMORY_FILE_SYNC_SESSION_DELTA_BYTES,
   FRIDAY_MEMORY_FILE_SYNC_SESSION_DELTA_MESSAGES,
   FRIDAY_MEMORY_FILE_SYNC_EXPORT_DIR,
+  FRIDAY_MEMORY_FILE_IMPORT_RETIRED_ERROR,
 } from "./sync/friday-memory-file-sync.constants.js";
 
 export { createFridayMemoryFileSyncRepository } from "./sync/friday-memory-file-sync-repository.js";

@@ -27,6 +27,7 @@ import * as path from "node:path";
 import type { FridayMemoryFileSyncRepository } from "./friday-memory-file-sync-repository.js";
 import { memoryNamespaceExportPath, resolveExportRoot, sessionKeyExportPath } from "./friday-memory-file-sync-paths.js";
 import {
+  FRIDAY_MEMORY_FILE_IMPORT_RETIRED_ERROR,
   FRIDAY_MEMORY_FILE_SYNC_BATCH_SIZE,
   FRIDAY_MEMORY_FILE_SYNC_DEBOUNCE_MS,
   FRIDAY_MEMORY_FILE_SYNC_POLL_INTERVAL_MS,
@@ -58,6 +59,12 @@ export interface CreateFridayMemoryFileSyncServiceDeps {
   enableWatcher?: boolean;
   /** Override watcher debounce for testing. */
   watcherDebounceMs?: number;
+  /**
+   * Test-only oracle for legacy file -> memory_items import behavior.
+   * Production defaults fail-closed so external edits cannot keep splitting
+   * durable memory writes away from the Rust-owned memory path.
+   */
+  allowTestOnlyMemoryFileImport?: boolean;
 }
 
 // ─── Factory ───
@@ -68,6 +75,7 @@ export function createFridayMemoryFileSyncService(
   const { repository, stateDir } = deps;
   const nowIso = deps.nowIso ?? (() => new Date().toISOString());
   const enableWatcher = deps.enableWatcher ?? true;
+  const allowTestOnlyMemoryFileImport = deps.allowTestOnlyMemoryFileImport === true;
 
   let running = false;
   let syncing = false;
@@ -409,6 +417,11 @@ export function createFridayMemoryFileSyncService(
   ): Promise<void> {
     const state = repository.getState(entityType, entityKey);
     if (!state) return;
+
+    if (entityType === "memory_namespace" && !allowTestOnlyMemoryFileImport) {
+      result.errors.push({ entityType, entityKey, message: FRIDAY_MEMORY_FILE_IMPORT_RETIRED_ERROR });
+      return;
+    }
 
     const filePath = state.filePath;
 
