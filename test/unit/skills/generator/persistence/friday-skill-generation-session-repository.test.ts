@@ -127,6 +127,30 @@ describe("FridaySkillGenerationSessionRepository", () => {
     expect(repo.getTurns("sess-001")).toEqual([]);
   });
 
+  it("deleteSession does not mutate legacy memory_items fallback rows", () => {
+    db.withWriteTransaction((writer) => {
+      writer.prepare(
+        "INSERT INTO memory_items (id, namespace, key, value_json, tags_json, created_at, updated_at) VALUES (?, ?, ?, ?, '[]', ?, ?)",
+      ).run(
+        "legacy-session",
+        "skill-generator-session",
+        "sess-legacy",
+        JSON.stringify(baseSession),
+        NOW,
+        NOW,
+      );
+    });
+
+    repo.deleteSession("sess-legacy");
+
+    const row = db.withReadConnection((reader) =>
+      reader
+        .prepare("SELECT COUNT(*) AS count FROM memory_items WHERE namespace = ? AND key = ?")
+        .get("skill-generator-session", "sess-legacy"),
+    ) as { count: number };
+    expect(row.count).toBe(1);
+  });
+
   it("getTurns for one session does not return turns from another", () => {
     repo.createSession(baseSession);
     const session2: FridaySkillGenerationSession = {
