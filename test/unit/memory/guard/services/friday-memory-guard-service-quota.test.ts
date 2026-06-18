@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { FridayDomainError } from "#errors";
 import {
+  FRIDAY_MEMORY_ERROR_CODES,
   FRIDAY_MEMORY_GUARD_ERROR_CODES,
   FRIDAY_MEMORY_GUARD_QUOTA_MAX_ITEMS_PER_NAMESPACE,
   FRIDAY_MEMORY_GUARD_QUOTA_MAX_BYTES_PER_NAMESPACE,
@@ -96,6 +97,28 @@ describe("FridayMemoryGuardService — Quota", () => {
     await guard.store("test-ns", "content");
     expect(quotaRepo.pruneExpiredOldest).toHaveBeenCalled();
     expect(core.store).toHaveBeenCalled();
+  });
+
+  it("fails closed before quota auto-prune when TS durable memory writes are retired", async () => {
+    const { guard, core, quotaRepo, db } = createGuardTestSetup(undefined, { tsMemoryWritesEnabled: false });
+
+    vi.mocked(quotaRepo.getNamespaceUsage).mockReturnValue({
+      namespace: "test",
+      itemCount: FRIDAY_MEMORY_GUARD_QUOTA_MAX_ITEMS_PER_NAMESPACE,
+      totalBytes: 1000,
+      expiredItemCount: 100,
+      expiredBytes: 500,
+    });
+
+    await expect(guard.store("test-ns", "content")).rejects.toMatchObject({
+      code: FRIDAY_MEMORY_ERROR_CODES.TS_RUNTIME_DURABLE_MEMORY_WRITE_RETIRED,
+      httpStatus: 503,
+      details: { operation: "memory.store" },
+    });
+    expect(quotaRepo.getNamespaceUsage).not.toHaveBeenCalled();
+    expect(quotaRepo.pruneExpiredOldest).not.toHaveBeenCalled();
+    expect(db.withWriteTransaction).not.toHaveBeenCalled();
+    expect(core.store).not.toHaveBeenCalled();
   });
 
   it("still rejects if quota exceeded even after pruning", async () => {

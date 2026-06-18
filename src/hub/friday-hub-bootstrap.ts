@@ -1813,6 +1813,7 @@ export async function createFridayHub(
       db: stateRuntime.sqlite,
       nowIso,
       nowMs: () => new Date(nowIso()).getTime(),
+      tsMemoryWritesEnabled: config.allowTestOnlyTsMemoryWrites === true,
     })
     : undefined;
 
@@ -7172,6 +7173,7 @@ export async function createFridayHub(
     nowIso,
     providerService,
     memoryService,
+    allowTestOnlyTsMemoryWrites: config.allowTestOnlyTsMemoryWrites,
     skillGenerator,
     converterService,
     workflowGenerator,

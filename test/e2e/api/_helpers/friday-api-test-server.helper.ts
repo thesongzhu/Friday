@@ -184,6 +184,7 @@ export interface CreateFridayApiTestEnvOptions {
   allowTestOnlySessionExecution?: boolean;
   allowTestOnlySessionRunExecution?: boolean;
   allowTestOnlySessionMemoryExtractionExecution?: boolean;
+  allowTestOnlyTsMemoryWrites?: boolean;
   allowTestOnlyCrossBorderPackExecution?: boolean;
   allowTestOnlyRealtimeExecution?: boolean;
   allowTestOnlySkillConverterExecution?: boolean;
@@ -305,6 +306,7 @@ export async function createFridayApiTestEnv(
     allowTestOnlySessionExecution: options.allowTestOnlySessionExecution ?? true,
     allowTestOnlySessionRunExecution: options.allowTestOnlySessionRunExecution ?? true,
     allowTestOnlySessionMemoryExtractionExecution: options.allowTestOnlySessionMemoryExtractionExecution ?? true,
+    allowTestOnlyTsMemoryWrites: options.allowTestOnlyTsMemoryWrites ?? true,
     allowTestOnlyCrossBorderPackExecution: options.allowTestOnlyCrossBorderPackExecution ?? true,
     allowTestOnlyRealtimeExecution: options.allowTestOnlyRealtimeExecution ?? true,
     allowTestOnlySkillConverterExecution: options.allowTestOnlySkillConverterExecution ?? true,
