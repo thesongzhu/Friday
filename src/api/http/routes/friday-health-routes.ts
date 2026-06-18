@@ -7,6 +7,7 @@
 
 import type { FridayRouteDefinition } from "../../model/friday-api-common.types.js";
 import type { FridayRuntimeCapabilityMatrix } from "#providers";
+import type { FridayExecutionIsolationStatus } from "../../../skills/executor/friday-execution-isolation-status.js";
 
 // ─── Types ───
 
@@ -30,6 +31,7 @@ export interface FridayHealthCapabilities {
   packaging?: {
     enabled: boolean;
   };
+  executionIsolation?: FridayExecutionIsolationStatus;
   search: {
     provider: string;
     latestness: "provider_backed" | "unverified";
@@ -78,6 +80,49 @@ export function createFridayHealthRoutes(
     },
     packaging: {
       enabled: false,
+    },
+    executionIsolation: {
+      schemaVersion: "1.0",
+      disposition: "open_no_os_sandbox",
+      osSandbox: false,
+      surfaces: {
+        "skill.shell": {
+          boundary: "logical_guards_only",
+          osSandbox: false,
+          defaultLive: false,
+          notes: "Shell skills use host child_process.spawn with cwd/env/timeout/output guards; no kernel sandbox is applied.",
+        },
+        "skill.python": {
+          boundary: "logical_guards_only",
+          osSandbox: false,
+          defaultLive: false,
+          notes: "Python skills share the shell executor boundary and are not isolated by an OS sandbox.",
+        },
+        "skill.node": {
+          boundary: "disabled_by_default_unisolated",
+          osSandbox: false,
+          defaultLive: false,
+          notes: "Non-bundled Node skills dynamically import in-process modules and require FRIDAY_ENABLE_UNISOLATED_NODE_SKILLS=true.",
+        },
+        "skill.node.bundled_system": {
+          boundary: "in_process_trusted",
+          osSandbox: false,
+          defaultLive: true,
+          notes: "Bundled system Node skills may run without the unisolated env gate, but still execute in the hub process.",
+        },
+        "plugin.entrypoint": {
+          boundary: "retired_by_default_dynamic_import_when_enabled",
+          osSandbox: false,
+          defaultLive: false,
+          notes: "Plugin lifecycle routes are retired by default; enabled plugin entrypoints are dynamic imports, not OS-isolated processes.",
+        },
+        "agent.exec": {
+          boundary: "logical_workspace_guard_host_spawn",
+          osSandbox: false,
+          defaultLive: true,
+          notes: "Agent exec uses host spawn with workspace, shell, timeout, and output controls; no OS sandbox is applied.",
+        },
+      },
     },
     search: {
       provider: "duckduckgo_html",
