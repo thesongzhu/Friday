@@ -258,6 +258,22 @@ mod tests {
     }
 
     #[test]
+    fn dial_off_is_byte_identical() {
+        let mut baseline = grant();
+        baseline.boundaries.auto_allow_reversible_ceiling = None;
+        let mut dial_metadata = baseline.clone();
+        dial_metadata.boundaries.auto_allow_reversible_ceiling = Some(Risk::Critical);
+        let mut c = check();
+        c.effective_risk = Risk::Medium;
+
+        assert_eq!(
+            check_grant(&baseline, &c),
+            check_grant(&dial_metadata, &c),
+            "D20 dial metadata is stored-only; with no signed-batch driver it must not alter trust-grant decisions"
+        );
+    }
+
+    #[test]
     fn workspace_outside_prefix_denies() {
         let mut c = check();
         c.workspace = Some("/etc/passwd".into());
