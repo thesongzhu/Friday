@@ -1,7 +1,6 @@
-import type { ISODateTime } from "../../cross-program/model/friday-cross-program.types.js";
-
 export const FRIDAY_CROSS_BORDER_PACK_ID = "industry-cross-border-ecommerce" as const;
 
+export type FridayCrossBorderISODateTime = string;
 export type FridayCrossBorderRegionFocus = "sea_tiktok" | "na_amazon";
 export type FridayCrossBorderStoreStage = "new_store" | "scaling" | "mature";
 export type FridayCrossBorderFulfillmentMode =
@@ -65,10 +64,10 @@ export interface FridayCrossBorderCompetitorTarget {
 
 export interface FridayCrossBorderAdaptationState {
   status: "initializing" | "tracking" | "tuning";
-  firstReviewDueAt: ISODateTime;
-  stableReviewDueAt: ISODateTime;
-  lastRecommendedAt?: ISODateTime;
-  lastLearningAt?: ISODateTime;
+  firstReviewDueAt: FridayCrossBorderISODateTime;
+  stableReviewDueAt: FridayCrossBorderISODateTime;
+  lastRecommendedAt?: FridayCrossBorderISODateTime;
+  lastLearningAt?: FridayCrossBorderISODateTime;
   learningNotes?: string[];
 }
 
@@ -89,8 +88,8 @@ export interface FridayCrossBorderOperatingProfile {
   competitorTargets: FridayCrossBorderCompetitorTarget[];
   workflowPreset: FridayCrossBorderWorkflowId[];
   adaptationState: FridayCrossBorderAdaptationState;
-  createdAt: ISODateTime;
-  updatedAt: ISODateTime;
+  createdAt: FridayCrossBorderISODateTime;
+  updatedAt: FridayCrossBorderISODateTime;
 }
 
 export interface FridayCrossBorderImportBatch {
@@ -102,7 +101,7 @@ export interface FridayCrossBorderImportBatch {
   publicLinks: string[];
   fileNames: string[];
   stale?: boolean;
-  createdAt: ISODateTime;
+  createdAt: FridayCrossBorderISODateTime;
 }
 
 export interface FridayCrossBorderRunEvidence {
@@ -111,8 +110,8 @@ export interface FridayCrossBorderRunEvidence {
   managedWorkflowId: string;
   status: "completed" | "failed" | "skipped";
   summary: string;
-  capturedAt: ISODateTime;
-  inputSnapshotAt?: ISODateTime;
+  capturedAt: FridayCrossBorderISODateTime;
+  inputSnapshotAt?: FridayCrossBorderISODateTime;
 }
 
 export interface FridayCrossBorderWorkflowRecommendation {
@@ -138,9 +137,9 @@ export interface FridayCrossBorderWorkflowAutomationState {
     timezone: string;
   };
   triggerRegistrationId?: string;
-  nextRunAt?: ISODateTime;
-  lastPublishedAt: ISODateTime;
-  lastSyncedAt: ISODateTime;
+  nextRunAt?: FridayCrossBorderISODateTime;
+  lastPublishedAt: FridayCrossBorderISODateTime;
+  lastSyncedAt: FridayCrossBorderISODateTime;
 }
 
 export interface FridayCrossBorderWorkflowCadencePolicy {
@@ -179,7 +178,7 @@ export interface FridayCrossBorderBoard {
 }
 
 export interface FridayCrossBorderSnapshot {
-  generatedAt: ISODateTime;
+  generatedAt: FridayCrossBorderISODateTime;
   profile: FridayCrossBorderOperatingProfile | null;
   storeHealth: FridayCrossBorderBoard | null;
   categoryWatch: FridayCrossBorderBoard | null;
@@ -191,7 +190,7 @@ export interface FridayCrossBorderSnapshot {
   riskClusters: FridayCrossBorderRecommendation[];
   nextActions: FridayCrossBorderRecommendation[];
   importSummary: {
-    lastImportedAt: ISODateTime | null;
+    lastImportedAt: FridayCrossBorderISODateTime | null;
     totalImports: number;
     sourceTypes: FridayCrossBorderImportSource[];
   };

@@ -27,41 +27,40 @@ Date: 2026-03-04 (America/Los_Angeles)
 6. `cli`: command-line command parsing and runtime loop.
 7. `config`: config IO, backup, migration/rotation helpers.
 8. `converter`: source-to-skill conversion pipeline and diagnostics.
-9. `cross-program`: cross-runtime typed protocol/model layer.
-10. `daemon`: daemonized runtime process management.
-11. `desktop`: desktop automation adapters, permissions, recording/session manager.
-12. `errors`: shared domain error model and code taxonomy.
-13. `heartbeat`: periodic health/maintenance execution runner.
-14. `hub`: top-level runtime composition and service wiring.
-15. `jobs`: scheduler and background jobs (sessions/workflows/learning/satellites).
-16. `learning`: self-learning runtime, auto-fix, preference extraction services.
-17. `ledger`: persistent run/event storage.
-18. `lib`: shared low-level constants and utility primitives.
-19. `link-understanding`: URL/content understanding pipeline.
-20. `marketplace`: marketplace model/engine/persistence/routes.
-21. `media`: media utilities and handling.
-22. `media-understanding`: image/media understanding primitives.
-23. `memory`: memory services, sync, repositories.
-24. `node-runner`: execution for pipeline/workflow nodes.
-25. `nodes`: node definitions and execution contracts.
-26. `observability`: event/audit/trace model and engine.
-27. `packaging`: package build/sign/publish APIs.
-28. `playbook`: playbook model/runtime/persistence.
-29. `plugins`: plugin lifecycle, registry, signature/marketplace integration.
-30. `providers`: model provider auth/catalog/routing/fallback.
-31. `retry`: retry engine/classifier/orchestrator APIs.
-32. `routing`: reply routing and destination policy.
-33. `rules`: rule engine and policy evaluation.
-34. `satellites`: distributed node sync/pairing/services.
-35. `security`: tenant isolation, safe paths, audit log, authz boundaries.
-36. `sessions`: session lifecycle and extraction services.
-37. `skills`: skill registry/generator/import/marketplace sync.
-38. `state`: SQLite state runtime and migrations.
-39. `tui`: terminal UI flows.
-40. `uix`: guided UX workflow/runtime models and APIs.
-41. `utilities`: shared filesystem/network/string helpers.
-42. `workflows`: workflow compile/runtime/execution services.
-43. `xhs`: XHS-specific browser interaction/session tooling.
+9. `daemon`: daemonized runtime process management.
+10. `desktop`: desktop automation adapters, permissions, recording/session manager.
+11. `errors`: shared domain error model and code taxonomy.
+12. `heartbeat`: periodic health/maintenance execution runner.
+13. `hub`: top-level runtime composition and service wiring.
+14. `jobs`: scheduler and background jobs (sessions/workflows/learning/satellites).
+15. `learning`: self-learning runtime, auto-fix, preference extraction services.
+16. `ledger`: persistent run/event storage.
+17. `lib`: shared low-level constants and utility primitives.
+18. `link-understanding`: URL/content understanding pipeline.
+19. `marketplace`: marketplace model/engine/persistence/routes.
+20. `media`: media utilities and handling.
+21. `media-understanding`: image/media understanding primitives.
+22. `memory`: memory services, sync, repositories.
+23. `node-runner`: execution for pipeline/workflow nodes.
+24. `nodes`: node definitions and execution contracts.
+25. `observability`: event/audit/trace model and engine.
+26. `packaging`: package build/sign/publish APIs.
+27. `playbook`: playbook model/runtime/persistence.
+28. `plugins`: plugin lifecycle, registry, signature/marketplace integration.
+29. `providers`: model provider auth/catalog/routing/fallback.
+30. `retry`: retry engine/classifier/orchestrator APIs.
+31. `routing`: reply routing and destination policy.
+32. `rules`: rule engine and policy evaluation.
+33. `satellites`: distributed node sync/pairing/services.
+34. `security`: tenant isolation, safe paths, audit log, authz boundaries.
+35. `sessions`: session lifecycle and extraction services.
+36. `skills`: skill registry/generator/import/marketplace sync.
+37. `state`: SQLite state runtime and migrations.
+38. `tui`: terminal UI flows.
+39. `uix`: guided UX workflow/runtime models and APIs.
+40. `utilities`: shared filesystem/network/string helpers.
+41. `workflows`: workflow compile/runtime/execution services.
+42. `xhs`: XHS-specific browser interaction/session tooling.
 
 ## Non-src Code Areas
 
