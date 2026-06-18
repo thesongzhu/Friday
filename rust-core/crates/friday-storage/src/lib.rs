@@ -854,6 +854,46 @@ impl Db {
         )
     }
 
+    pub fn veto_route_decision(
+        &self,
+        decision_id: &str,
+        actor_ref: &str,
+        reason: &str,
+        now_ms: i64,
+    ) -> Result<()> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Route decision controls are Hub-only".into(),
+            ));
+        }
+        mission::veto_route_decision(&self.conn, decision_id, actor_ref, reason, now_ms)
+    }
+
+    pub fn override_route_decision(
+        &self,
+        decision_id: &str,
+        override_lane: friday_core::WorkLane,
+        override_provider_or_agent: Option<&str>,
+        actor_ref: &str,
+        reason: &str,
+        now_ms: i64,
+    ) -> Result<()> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Route decision controls are Hub-only".into(),
+            ));
+        }
+        mission::override_route_decision(
+            &self.conn,
+            decision_id,
+            override_lane,
+            override_provider_or_agent,
+            actor_ref,
+            reason,
+            now_ms,
+        )
+    }
+
     pub fn list_work_items_for_mission(&self, mission_id: &str) -> Result<Vec<WorkItem>> {
         if self.profile != Profile::Hub {
             return Err(StorageError::Unsupported("WorkItems are Hub-only".into()));

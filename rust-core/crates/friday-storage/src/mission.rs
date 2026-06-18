@@ -32,6 +32,15 @@ fn require_non_empty(value: &str, field: &str) -> Result<()> {
     }
 }
 
+#[derive(Debug)]
+struct ActiveRouteDecisionControl {
+    decision_id: String,
+    control_kind: String,
+    override_lane: Option<WorkLane>,
+    override_provider_or_agent: Option<String>,
+    reason: String,
+}
+
 fn encode_vec(values: &[String], field: &str) -> Result<String> {
     serde_json::to_string(values)
         .map_err(|e| unsupported(format!("failed to encode {field} as json: {e}")))
@@ -960,6 +969,49 @@ fn transition_work_item_status_inner(
         // The audit row IS the WorkItem's lifecycle entry — it carries actor, the
         // from->to hop, and the reason (a WorkItem has no decision_path_summary column).
         let tx = conn.unchecked_transaction()?;
+        if previous_status == WorkItemStatus::ReadyToDispatch
+            && item.status == WorkItemStatus::Dispatched
+        {
+            if let Some(control) = active_route_decision_control_for_work_item(&tx, work_item_id)? {
+                match control.control_kind.as_str() {
+                    "veto" => {
+                        return Err(unsupported(format!(
+                            "route_decision_veto_active:{}:{}",
+                            control.decision_id, control.reason
+                        )));
+                    }
+                    "override" => {
+                        let Some(override_lane) = control.override_lane else {
+                            return Err(unsupported(format!(
+                                "route_decision_override_missing_lane:{}",
+                                control.decision_id
+                            )));
+                        };
+                        item.lane = override_lane;
+                        item.target_provider_or_agent = control.override_provider_or_agent.clone();
+                        crate::audit::append_audit(
+                            &tx,
+                            &format!(
+                                "route_decision_override_applied:{work_item_id}:{}",
+                                control.decision_id
+                            ),
+                            actor_ref,
+                            &format!(
+                                "route_decision.override_applied:{}:{}",
+                                control.decision_id, control.reason
+                            ),
+                            Some(work_item_id),
+                            now_ms,
+                        )?;
+                    }
+                    other => {
+                        return Err(unsupported(format!(
+                            "unknown route_decision_control kind '{other}'"
+                        )));
+                    }
+                }
+            }
+        }
         let audit_id = format!("workitem_lifecycle:{work_item_id}:{now_ms}");
         let action = format!(
             "work_item.lifecycle:{}->{}:{}",
@@ -993,6 +1045,172 @@ fn transition_work_item_status_inner(
 
         Ok((item, previous_status))
     })
+}
+
+pub fn veto_route_decision(
+    conn: &Connection,
+    decision_id: &str,
+    actor_ref: &str,
+    reason: &str,
+    now_ms: i64,
+) -> Result<()> {
+    record_route_decision_control(
+        conn,
+        decision_id,
+        "veto",
+        None,
+        None,
+        actor_ref,
+        reason,
+        now_ms,
+    )
+}
+
+pub fn override_route_decision(
+    conn: &Connection,
+    decision_id: &str,
+    override_lane: WorkLane,
+    override_provider_or_agent: Option<&str>,
+    actor_ref: &str,
+    reason: &str,
+    now_ms: i64,
+) -> Result<()> {
+    record_route_decision_control(
+        conn,
+        decision_id,
+        "override",
+        Some(override_lane),
+        override_provider_or_agent,
+        actor_ref,
+        reason,
+        now_ms,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_route_decision_control(
+    conn: &Connection,
+    decision_id: &str,
+    control_kind: &str,
+    override_lane: Option<WorkLane>,
+    override_provider_or_agent: Option<&str>,
+    actor_ref: &str,
+    reason: &str,
+    now_ms: i64,
+) -> Result<()> {
+    require_non_empty(decision_id, "route_decision_control.decision_id")?;
+    require_non_empty(actor_ref, "route_decision_control.actor_ref")?;
+    require_non_empty(reason, "route_decision_control.reason")?;
+    if control_kind == "veto" {
+        if override_lane.is_some() || override_provider_or_agent.is_some() {
+            return Err(unsupported(
+                "route_decision_control veto cannot carry override target",
+            ));
+        }
+    } else if control_kind == "override" {
+        if let Some(target) = override_provider_or_agent {
+            require_non_empty(target, "route_decision_control.override_provider_or_agent")?;
+        }
+        if override_lane.is_none() {
+            return Err(unsupported(
+                "route_decision_control override requires override_lane",
+            ));
+        }
+    } else {
+        return Err(unsupported(format!(
+            "unknown route_decision_control kind '{control_kind}'"
+        )));
+    }
+
+    crate::with_busy_retry(|| {
+        let (mission_id, work_item_id): (String, String) = conn
+            .query_row(
+                "SELECT mission_id, work_item_id FROM route_decision WHERE decision_id = ?1",
+                [decision_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?
+            .ok_or_else(|| {
+                unsupported(format!(
+                    "route_decision_control points to unknown route_decision '{decision_id}'"
+                ))
+            })?;
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO route_decision_control
+                (decision_id, mission_id, work_item_id, control_kind, override_lane,
+                 override_provider_or_agent, actor_ref, reason, active, created_at_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9)
+             ON CONFLICT(decision_id) DO UPDATE SET
+                mission_id = excluded.mission_id,
+                work_item_id = excluded.work_item_id,
+                control_kind = excluded.control_kind,
+                override_lane = excluded.override_lane,
+                override_provider_or_agent = excluded.override_provider_or_agent,
+                actor_ref = excluded.actor_ref,
+                reason = excluded.reason,
+                active = 1,
+                created_at_ms = excluded.created_at_ms",
+            params![
+                decision_id,
+                mission_id,
+                work_item_id,
+                control_kind,
+                override_lane.map(|lane| lane.as_str().to_string()),
+                override_provider_or_agent,
+                actor_ref,
+                reason,
+                now_ms,
+            ],
+        )?;
+        crate::audit::append_audit(
+            &tx,
+            &format!("route_decision_control:{decision_id}:{now_ms}"),
+            actor_ref,
+            &format!("route_decision.{control_kind}:{decision_id}:{reason}"),
+            Some(&work_item_id),
+            now_ms,
+        )?;
+        tx.commit()?;
+        Ok(())
+    })
+}
+
+fn active_route_decision_control_for_work_item(
+    conn: &Connection,
+    work_item_id: &str,
+) -> Result<Option<ActiveRouteDecisionControl>> {
+    conn.query_row(
+        "SELECT decision_id, control_kind, override_lane, override_provider_or_agent, reason
+           FROM route_decision_control
+          WHERE work_item_id = ?1 AND active = 1
+          ORDER BY created_at_ms DESC, decision_id DESC
+          LIMIT 1",
+        [work_item_id],
+        |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, String>(4)?,
+            ))
+        },
+    )
+    .optional()?
+    .map(
+        |(decision_id, control_kind, override_lane, override_provider_or_agent, reason)| {
+            let override_lane = override_lane.map(parse_work_lane).transpose()?;
+            Ok(ActiveRouteDecisionControl {
+                decision_id,
+                control_kind,
+                override_lane,
+                override_provider_or_agent,
+                reason,
+            })
+        },
+    )
+    .transpose()
 }
 
 pub fn list_missions_for_conversation(

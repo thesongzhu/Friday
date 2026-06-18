@@ -30,10 +30,11 @@
 //!   2. **FK-safe parent deletes (no orphans, no FK crash).** `mission` and `work_item` are
 //!      RESTRICT-referenced (no `ON DELETE CASCADE`) by child tables and `foreign_keys` is ON on
 //!      every connection. `mission` is referenced by `work_item`, `surface_event`,
-//!      `surface_thread`, `mission_link`, `route_decision`, `workspace_claim`, `process_lease`;
-//!      `work_item` is referenced by `surface_event`, `mission_link`, `route_decision`,
-//!      `workspace_claim`, `process_lease`. (`process_observation` reaches them only TRANSITIVELY
-//!      via `workspace_claim`, so it is not a direct guard; and the v1 `mission_link` was rebuilt
+//!      `surface_thread`, `mission_link`, `route_decision`, `route_decision_control`,
+//!      `workspace_claim`, `process_lease`; `work_item` is referenced by `surface_event`,
+//!      `mission_link`, `route_decision`, `route_decision_control`, `workspace_claim`,
+//!      `process_lease`. (`process_observation` reaches them only TRANSITIVELY via
+//!      `workspace_claim`, so it is not a direct guard; and the v1 `mission_link` was rebuilt
 //!      then RENAMED from `mission_link_new`, so `mission_link` is the live child table.) A
 //!      parent DELETE while ANY child still references it would FAIL the FK constraint. So a
 //!      parent is deleted ONLY when NO surviving child references it (a `NOT EXISTS` guard across
@@ -217,6 +218,7 @@ pub fn sweep_retention(
                  AND NOT EXISTS (SELECT 1 FROM surface_event  c WHERE c.work_item_id = w.work_item_id)
                  AND NOT EXISTS (SELECT 1 FROM mission_link    c WHERE c.work_item_id = w.work_item_id)
                  AND NOT EXISTS (SELECT 1 FROM route_decision  c WHERE c.work_item_id = w.work_item_id)
+                 AND NOT EXISTS (SELECT 1 FROM route_decision_control c WHERE c.work_item_id = w.work_item_id)
                  AND NOT EXISTS (SELECT 1 FROM workspace_claim c WHERE c.work_item_id = w.work_item_id)
                  AND NOT EXISTS (SELECT 1 FROM process_lease   c WHERE c.work_item_id = w.work_item_id)
                ORDER BY w.updated_at_ms LIMIT ?2
@@ -244,6 +246,7 @@ pub fn sweep_retention(
                  AND NOT EXISTS (SELECT 1 FROM surface_thread  c WHERE c.mission_id = m.mission_id)
                  AND NOT EXISTS (SELECT 1 FROM mission_link    c WHERE c.mission_id = m.mission_id)
                  AND NOT EXISTS (SELECT 1 FROM route_decision  c WHERE c.mission_id = m.mission_id)
+                 AND NOT EXISTS (SELECT 1 FROM route_decision_control c WHERE c.mission_id = m.mission_id)
                  AND NOT EXISTS (SELECT 1 FROM workspace_claim c WHERE c.mission_id = m.mission_id)
                  AND NOT EXISTS (SELECT 1 FROM process_lease   c WHERE c.mission_id = m.mission_id)
                ORDER BY m.updated_at_ms LIMIT ?2
@@ -667,6 +670,60 @@ mod tests {
         );
         assert!(!exists(&db, "work_item", "work_item_id", "w"));
         assert!(!exists(&db, "mission", "mission_id", "m"));
+    }
+
+    #[test]
+    fn route_decision_control_child_keeps_terminal_aged_parents_fk_safe() {
+        // Structural guard: route_decision_control is a direct FK child of BOTH mission and
+        // work_item. Even if a future caller inserts an unusual but FK-valid control row, the
+        // parent sweep must skip instead of relying on the route_decision guard alone.
+        let db = Db::open_hub(&tmp("rd-control-fk-safe")).unwrap();
+        let now = 2_000 * 24 * 60 * 60 * 1000_i64;
+        let w = RetentionWindows::default();
+        seed_conversation(&db, "fconv_1");
+        seed_mission(
+            &db,
+            "m_guarded",
+            "fconv_1",
+            "done",
+            now - MISSION_MAX_AGE_MS - 1,
+        );
+        seed_work_item(
+            &db,
+            "w_guarded",
+            "m_guarded",
+            "completed_with_proof",
+            now - WORK_ITEM_MAX_AGE_MS - 1,
+        );
+        seed_mission(&db, "m_route", "fconv_1", "active", now);
+        seed_work_item(&db, "w_route", "m_route", "provider_waiting", now);
+        db.conn()
+            .execute(
+                "INSERT INTO route_decision
+                    (decision_id, mission_id, work_item_id, selected_lane,
+                     selected_provider_or_agent, why_this_route, created_at_ms)
+                 VALUES ('rd_guard', 'm_route', 'w_route', 'codex', 'codex',
+                         'seed route decision for control FK guard', ?1)",
+                [now],
+            )
+            .unwrap();
+        db.conn()
+            .execute(
+                "INSERT INTO route_decision_control
+                    (decision_id, mission_id, work_item_id, control_kind, actor_ref, reason,
+                     active, created_at_ms)
+                 VALUES ('rd_guard', 'm_guarded', 'w_guarded', 'veto', 'operator:test',
+                         'retention guard proof', 1, ?1)",
+                [now],
+            )
+            .unwrap();
+
+        let out = sweep_retention(db.conn(), now, w);
+        assert_eq!(out.table_errors, 0, "guard skips instead of hitting FK");
+        assert_eq!(out.work_item_deleted, 0);
+        assert_eq!(out.mission_deleted, 0);
+        assert!(exists(&db, "work_item", "work_item_id", "w_guarded"));
+        assert!(exists(&db, "mission", "mission_id", "m_guarded"));
     }
 
     // --- flag-OFF parity is the CALLER's concern; here prove the empty/boundary behavior ---

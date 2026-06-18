@@ -45,6 +45,7 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     "surface_event",
     "mission_link",
     "route_decision",
+    "route_decision_control",
     // Process Registry: Hub-owned workspace/process/port truth. Phone/channel
     // surfaces may see projections; only the Hub can own/control claims.
     "workspace_claim",
@@ -629,6 +630,15 @@ pub fn hub_migrations() -> Vec<Migration> {
             name: "trust_grant_run_usage",
             destructive: false,
             up: m0036_trust_grant_run_usage,
+        },
+        // D20 W1-S3: operator/user route veto and override are lifecycle
+        // controls, not decorative card fields. This Hub-only table is read at
+        // the ReadyToDispatch -> Dispatched persistence boundary.
+        Migration {
+            version: 37,
+            name: "route_decision_control",
+            destructive: false,
+            up: m0037_route_decision_control,
         },
     ]
 }
@@ -1704,6 +1714,34 @@ CREATE INDEX idx_route_decision_mission_created
 CREATE INDEX idx_route_decision_work_item_created
     ON route_decision(work_item_id, created_at_ms, decision_id);";
 
+const DDL_ROUTE_DECISION_CONTROL: &str = "
+CREATE TABLE route_decision_control (
+    decision_id                 TEXT PRIMARY KEY,
+    mission_id                  TEXT NOT NULL,
+    work_item_id                TEXT NOT NULL,
+    control_kind                TEXT NOT NULL CHECK(control_kind IN ('veto', 'override')),
+    override_lane               TEXT CHECK(override_lane IS NULL OR override_lane IN (
+        'friday_hub',
+        'codex',
+        'claude',
+        'deepseek',
+        'workflow',
+        'channel',
+        'human',
+        'future_api'
+    )),
+    override_provider_or_agent  TEXT,
+    actor_ref                   TEXT NOT NULL CHECK(length(trim(actor_ref)) > 0),
+    reason                      TEXT NOT NULL CHECK(length(trim(reason)) > 0),
+    active                      INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0, 1)),
+    created_at_ms               INTEGER NOT NULL,
+    FOREIGN KEY(decision_id) REFERENCES route_decision(decision_id),
+    FOREIGN KEY(mission_id) REFERENCES mission(mission_id),
+    FOREIGN KEY(work_item_id) REFERENCES work_item(work_item_id)
+);
+CREATE INDEX idx_route_decision_control_work_item_active
+    ON route_decision_control(work_item_id, active, created_at_ms, decision_id);";
+
 const DDL_REBUILD_MISSION_LINK_WITH_ROUTE_DECISION: &str = "
 CREATE TABLE mission_link_new (
     link_id        TEXT PRIMARY KEY,
@@ -2469,4 +2507,8 @@ fn m0035_route_decision_action_items(tx: &Transaction) -> rusqlite::Result<()> {
 
 fn m0036_trust_grant_run_usage(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(DDL_TRUST_GRANT_RUN_USAGE)
+}
+
+fn m0037_route_decision_control(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_ROUTE_DECISION_CONTROL)
 }
