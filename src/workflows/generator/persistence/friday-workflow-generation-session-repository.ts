@@ -14,7 +14,7 @@ import type {
 const SESSION_NAMESPACE = "workflow-generator-session";
 const TURN_NAMESPACE = "workflow-generator-turn";
 
-// ─── Row shape from memory_items ───
+// ─── Row shapes ───
 
 interface MemoryItemRow {
   id: string;
@@ -24,6 +24,19 @@ interface MemoryItemRow {
   tags_json: string;
   created_at: string;
   updated_at: string;
+}
+
+interface WorkflowGenerationValueRow {
+  value_json: string;
+}
+
+interface WorkflowGenerationSessionRow extends WorkflowGenerationValueRow {
+  session_id: string;
+}
+
+interface WorkflowGenerationTurnRow extends WorkflowGenerationValueRow {
+  session_id: string;
+  turn_id: string;
 }
 
 // ─── Repository interface ───
@@ -47,33 +60,85 @@ export interface CreateWorkflowGenerationSessionRepositoryDeps {
 
 // ─── Internal helpers ───
 
-function upsertMemoryItem(
+function upsertWorkflowGenerationSession(
   db: Database.Database,
   params: {
-    id: string;
-    namespace: string;
-    key: string;
-    value: unknown;
+    session: FridayWorkflowGenerationSession;
     tags: string[];
-    nowIso: string;
   },
 ): void {
   db.prepare(
-    `INSERT INTO memory_items (id, namespace, key, value_json, tags_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(namespace, key) DO UPDATE SET
+    `INSERT INTO workflow_generation_sessions (
+       session_id, user_id, channel, status, created_at, updated_at, value_json, tags_json
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(session_id) DO UPDATE SET
+       user_id = excluded.user_id,
+       channel = excluded.channel,
+       status = excluded.status,
+       updated_at = excluded.updated_at,
        value_json = excluded.value_json,
-       tags_json = excluded.tags_json,
-       updated_at = excluded.updated_at`,
+       tags_json = excluded.tags_json`,
   ).run(
-    params.id,
-    params.namespace,
-    params.key,
-    JSON.stringify(params.value),
+    params.session.sessionId,
+    params.session.userId,
+    params.session.channel,
+    params.session.status,
+    params.session.createdAt,
+    params.session.updatedAt,
+    JSON.stringify(params.session),
     JSON.stringify(params.tags),
-    params.nowIso,
-    params.nowIso,
   );
+}
+
+function getWorkflowGenerationSession(
+  db: Database.Database,
+  sessionId: string,
+): WorkflowGenerationSessionRow | undefined {
+  return db
+    .prepare("SELECT session_id, value_json FROM workflow_generation_sessions WHERE session_id = ?")
+    .get(sessionId) as WorkflowGenerationSessionRow | undefined;
+}
+
+function upsertWorkflowGenerationTurn(
+  db: Database.Database,
+  params: {
+    turn: FridayWorkflowGenerationTurn;
+    tags: string[];
+  },
+): void {
+  db.prepare(
+    `INSERT INTO workflow_generation_turns (
+       session_id, turn_id, role, created_at, value_json, tags_json
+     )
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(session_id, turn_id) DO UPDATE SET
+       role = excluded.role,
+       created_at = excluded.created_at,
+       value_json = excluded.value_json,
+       tags_json = excluded.tags_json`,
+  ).run(
+    params.turn.sessionId,
+    params.turn.turnId,
+    params.turn.role,
+    params.turn.createdAt,
+    JSON.stringify(params.turn),
+    JSON.stringify(params.tags),
+  );
+}
+
+function listWorkflowGenerationTurns(
+  db: Database.Database,
+  sessionId: string,
+): WorkflowGenerationTurnRow[] {
+  return db
+    .prepare(
+      `SELECT session_id, turn_id, value_json
+       FROM workflow_generation_turns
+       WHERE session_id = ?
+       ORDER BY created_at ASC`,
+    )
+    .all(sessionId) as WorkflowGenerationTurnRow[];
 }
 
 function getMemoryItem(
@@ -119,6 +184,24 @@ function deleteMemoryItemsByPrefix(
   ).run(namespace, `${keyPrefix}%`);
 }
 
+function deleteWorkflowGenerationSession(
+  db: Database.Database,
+  sessionId: string,
+): void {
+  db.prepare("DELETE FROM workflow_generation_sessions WHERE session_id = ?").run(
+    sessionId,
+  );
+}
+
+function deleteWorkflowGenerationTurns(
+  db: Database.Database,
+  sessionId: string,
+): void {
+  db.prepare("DELETE FROM workflow_generation_turns WHERE session_id = ?").run(
+    sessionId,
+  );
+}
+
 // ─── Factory ───
 
 export function createFridayWorkflowGenerationSessionRepository(
@@ -141,20 +224,17 @@ export function createFridayWorkflowGenerationSessionRepository(
   return {
     createSession(session) {
       db.withWriteTransaction((writer) => {
-        upsertMemoryItem(writer, {
-          id: deps.idGenerator(),
-          namespace: SESSION_NAMESPACE,
-          key: sessionKey(session.sessionId),
-          value: session,
+        upsertWorkflowGenerationSession(writer, {
+          session,
           tags: ["session", session.status],
-          nowIso: deps.nowIso(),
         });
       });
     },
 
     getSession(sessionId) {
       return db.withReadConnection((reader) => {
-        const row = getMemoryItem(
+        const row = getWorkflowGenerationSession(reader, sessionKey(sessionId))
+          ?? getMemoryItem(
           reader,
           SESSION_NAMESPACE,
           sessionKey(sessionId),
@@ -166,7 +246,8 @@ export function createFridayWorkflowGenerationSessionRepository(
 
     updateSession(session) {
       db.withWriteTransaction((writer) => {
-        const existing = getMemoryItem(
+        const existing = getWorkflowGenerationSession(writer, sessionKey(session.sessionId))
+          ?? getMemoryItem(
           writer,
           SESSION_NAMESPACE,
           sessionKey(session.sessionId),
@@ -178,37 +259,35 @@ export function createFridayWorkflowGenerationSessionRepository(
             { httpStatus: 404 },
           );
         }
-        upsertMemoryItem(writer, {
-          id: existing.id,
-          namespace: SESSION_NAMESPACE,
-          key: sessionKey(session.sessionId),
-          value: session,
+        upsertWorkflowGenerationSession(writer, {
+          session,
           tags: ["session", session.status],
-          nowIso: deps.nowIso(),
         });
       });
     },
 
     addTurn(turn) {
       db.withWriteTransaction((writer) => {
-        upsertMemoryItem(writer, {
-          id: deps.idGenerator(),
-          namespace: TURN_NAMESPACE,
-          key: turnKey(turn.sessionId, turn.turnId),
-          value: turn,
+        upsertWorkflowGenerationTurn(writer, {
+          turn,
           tags: ["turn", turn.role],
-          nowIso: deps.nowIso(),
         });
       });
     },
 
     getTurns(sessionId) {
       return db.withReadConnection((reader) => {
-        const rows = listMemoryItemsByNamespacePrefix(
-          reader,
-          TURN_NAMESPACE,
-          turnKeyPrefix(sessionId),
-        );
+        const rows = listWorkflowGenerationTurns(reader, sessionId);
+        if (rows.length === 0) {
+          const legacyRows = listMemoryItemsByNamespacePrefix(
+            reader,
+            TURN_NAMESPACE,
+            turnKeyPrefix(sessionId),
+          );
+          return legacyRows.map(
+            (row) => safeJsonParse<FridayWorkflowGenerationTurn>(row.value_json)!,
+          );
+        }
         return rows.map(
           (row) => safeJsonParse<FridayWorkflowGenerationTurn>(row.value_json)!,
         );
@@ -217,6 +296,8 @@ export function createFridayWorkflowGenerationSessionRepository(
 
     deleteSession(sessionId) {
       db.withWriteTransaction((writer) => {
+        deleteWorkflowGenerationTurns(writer, sessionId);
+        deleteWorkflowGenerationSession(writer, sessionId);
         deleteMemoryItem(writer, SESSION_NAMESPACE, sessionKey(sessionId));
         deleteMemoryItemsByPrefix(
           writer,

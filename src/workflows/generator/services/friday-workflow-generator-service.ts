@@ -533,27 +533,25 @@ export function createFridayWorkflowGeneratorService(
       idGenerator: deps.idGenerator,
     });
 
-  // ─── Draft persistence via memory_items ───
+  // ─── Draft persistence ───
 
   function saveDraft(sessionId: string, draft: FridayGeneratedWorkflowDraft): void {
     deps.db.withWriteTransaction((writer) => {
       writer
         .prepare(
-          `INSERT INTO memory_items (id, namespace, key, value_json, tags_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(namespace, key) DO UPDATE SET
+          `INSERT INTO workflow_generation_drafts (session_id, created_at, updated_at, value_json, tags_json)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(session_id) DO UPDATE SET
              value_json = excluded.value_json,
              tags_json = excluded.tags_json,
              updated_at = excluded.updated_at`,
         )
         .run(
-          deps.idGenerator(),
-          DRAFT_NAMESPACE,
           sessionId,
+          deps.nowIso(),
+          deps.nowIso(),
           JSON.stringify(draft),
           JSON.stringify(["draft"]),
-          deps.nowIso(),
-          deps.nowIso(),
         );
     });
   }
@@ -561,15 +559,24 @@ export function createFridayWorkflowGeneratorService(
   function loadDraft(sessionId: string): FridayGeneratedWorkflowDraft | undefined {
     return deps.db.withReadConnection((reader) => {
       const row = reader
+        .prepare("SELECT value_json FROM workflow_generation_drafts WHERE session_id = ?")
+        .get(sessionId) as { value_json: string } | undefined;
+      if (row) return safeJsonParse<FridayGeneratedWorkflowDraft>(row.value_json);
+      const legacyRow = reader
         .prepare("SELECT value_json FROM memory_items WHERE namespace = ? AND key = ?")
         .get(DRAFT_NAMESPACE, sessionId) as { value_json: string } | undefined;
-      if (!row) return undefined;
-      return safeJsonParse<FridayGeneratedWorkflowDraft>(row.value_json);
+      if (legacyRow) {
+        return safeJsonParse<FridayGeneratedWorkflowDraft>(legacyRow.value_json);
+      }
+      return undefined;
     });
   }
 
   function deleteDraft(sessionId: string): void {
     deps.db.withWriteTransaction((writer) => {
+      writer
+        .prepare("DELETE FROM workflow_generation_drafts WHERE session_id = ?")
+        .run(sessionId);
       writer
         .prepare("DELETE FROM memory_items WHERE namespace = ? AND key = ?")
         .run(DRAFT_NAMESPACE, sessionId);
