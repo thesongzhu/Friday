@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as crypto from "node:crypto";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
   encryptSecret,
   decryptSecret,
@@ -88,6 +91,8 @@ describe("FridaySecretCrypto", () => {
     const originalSource = process.env.FRIDAY_MASTER_KEY_SOURCE;
     const originalKeychainService = process.env.FRIDAY_MASTER_KEY_KEYCHAIN_SERVICE;
     const originalKeychainAccount = process.env.FRIDAY_MASTER_KEY_KEYCHAIN_ACCOUNT;
+    const originalAllowTestOnlyGeneration = process.env.FRIDAY_ALLOW_TEST_ONLY_MASTER_KEY_GENERATION;
+    const originalMasterKeyFile = process.env.FRIDAY_MASTER_KEY_FILE;
 
     beforeEach(() => {
       resetMasterKeyCache();
@@ -113,6 +118,16 @@ describe("FridaySecretCrypto", () => {
         process.env.FRIDAY_MASTER_KEY_KEYCHAIN_ACCOUNT = originalKeychainAccount;
       } else {
         delete process.env.FRIDAY_MASTER_KEY_KEYCHAIN_ACCOUNT;
+      }
+      if (originalAllowTestOnlyGeneration !== undefined) {
+        process.env.FRIDAY_ALLOW_TEST_ONLY_MASTER_KEY_GENERATION = originalAllowTestOnlyGeneration;
+      } else {
+        delete process.env.FRIDAY_ALLOW_TEST_ONLY_MASTER_KEY_GENERATION;
+      }
+      if (originalMasterKeyFile !== undefined) {
+        process.env.FRIDAY_MASTER_KEY_FILE = originalMasterKeyFile;
+      } else {
+        delete process.env.FRIDAY_MASTER_KEY_FILE;
       }
       vi.restoreAllMocks();
       resetMasterKeyCache();
@@ -142,16 +157,33 @@ describe("FridaySecretCrypto", () => {
       expect(() => getMasterKey()).toThrow("FRIDAY_MASTER_KEY_SOURCE=keychain");
     });
 
-    it("generates random key when env var not set", () => {
+    it("fails closed instead of generating a random key when env var is not set", () => {
       delete process.env.FRIDAY_MASTER_KEY;
+      delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+      delete process.env.FRIDAY_ALLOW_TEST_ONLY_MASTER_KEY_GENERATION;
+      process.env.FRIDAY_MASTER_KEY_FILE = path.join(os.tmpdir(), `friday-missing-master-key-${crypto.randomUUID()}`, "master.key");
+
+      expect(() => getMasterKey()).toThrow(/will not auto-generate a key/);
+    });
+
+    it("generates random key only when the test-only generation escape hatch is explicit", () => {
+      delete process.env.FRIDAY_MASTER_KEY;
+      delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+      process.env.FRIDAY_ALLOW_TEST_ONLY_MASTER_KEY_GENERATION = "1";
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "friday-master-key-generation-"));
+      process.env.FRIDAY_MASTER_KEY_FILE = path.join(tempDir, "master.key");
+
       const key = getMasterKey();
       expect(key).toBeInstanceOf(Buffer);
       expect(key.length).toBe(32);
+      expect(fs.readFileSync(process.env.FRIDAY_MASTER_KEY_FILE, "utf8").trim()).toHaveLength(64);
+      fs.rmSync(tempDir, { recursive: true, force: true });
     });
 
     it("does not let fail-open cached keys satisfy strict runtime resolution", () => {
       delete process.env.FRIDAY_MASTER_KEY;
       delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+      process.env.FRIDAY_ALLOW_TEST_ONLY_MASTER_KEY_GENERATION = "1";
       const key = getMasterKey();
       expect(key.length).toBe(32);
 
@@ -160,6 +192,8 @@ describe("FridaySecretCrypto", () => {
 
     it("caches the key across calls", () => {
       delete process.env.FRIDAY_MASTER_KEY;
+      delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+      process.env.FRIDAY_ALLOW_TEST_ONLY_MASTER_KEY_GENERATION = "1";
       const k1 = getMasterKey();
       const k2 = getMasterKey();
       expect(k1).toBe(k2); // Same reference

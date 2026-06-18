@@ -82,9 +82,14 @@ let cachedMasterKeySource: MasterKeyCacheSource | null = null;
 const MASTER_KEY_CACHE_TTL_MS = 3_600_000; // 1 hour
 
 const MASTER_KEY_DIR = path.join(os.homedir(), ".friday");
-const MASTER_KEY_FILE = path.join(MASTER_KEY_DIR, "master.key");
+const DEFAULT_MASTER_KEY_FILE = path.join(MASTER_KEY_DIR, "master.key");
 const MASTER_KEY_KEYCHAIN_SERVICE = "Friday Master Key";
 const MASTER_KEY_KEYCHAIN_ACCOUNT = "friday";
+const TEST_ONLY_MASTER_KEY_GENERATION_ENV = "FRIDAY_ALLOW_TEST_ONLY_MASTER_KEY_GENERATION";
+
+function getMasterKeyFilePath(): string {
+  return process.env.FRIDAY_MASTER_KEY_FILE ?? DEFAULT_MASTER_KEY_FILE;
+}
 
 function parseMasterKeyHex(hex: string, sourceLabel: string): Buffer {
   const buf = Buffer.from(hex, "hex");
@@ -110,8 +115,9 @@ function readPersistedMasterKeyFile(options: {
   readonly failClosed: boolean;
 }): Buffer | null {
   let hex: string;
+  const masterKeyFile = getMasterKeyFilePath();
   try {
-    hex = fs.readFileSync(MASTER_KEY_FILE, "utf8").trim();
+    hex = fs.readFileSync(masterKeyFile, "utf8").trim();
   } catch (err) {
     if (options.failClosed) {
       throw new FridayDomainError(
@@ -126,12 +132,12 @@ function readPersistedMasterKeyFile(options: {
 
   if (options.repairPermissions) {
     try {
-      const stat = fs.statSync(MASTER_KEY_FILE);
+      const stat = fs.statSync(masterKeyFile);
       if ((stat.mode & 0o077) !== 0) {
         // eslint-disable-next-line no-console
         console.warn(`[friday][SECURITY] Master key file permissions too open (0o${(stat.mode & 0o777).toString(8)}) — attempting chmod 0600`);
         try {
-          fs.chmodSync(MASTER_KEY_FILE, 0o600);
+          fs.chmodSync(masterKeyFile, 0o600);
         } catch (chmodErr) {
           // eslint-disable-next-line no-console
           console.warn("[friday][SECURITY] Could not fix master key file permissions:", chmodErr instanceof Error ? chmodErr.message : String(chmodErr));
@@ -193,12 +199,11 @@ function readKeychainMasterKey(): Buffer | null {
 
 /**
  * Resolves the master key from `FRIDAY_MASTER_KEY` env var (hex-encoded),
- * or persists/reads a random one from `~/.friday/master.key`.
+ * optional macOS keychain, or an already-provisioned `~/.friday/master.key`.
  *
- * When no explicit key is set:
- * - On first run, generates a random key, writes to `~/.friday/master.key`
- *   (mode 0600), and logs a warning.
- * - On subsequent runs, reads from that file so secrets survive restarts.
+ * Default runtime behavior is fail-closed: Friday must not silently create new
+ * encryption roots. Legacy/test generation exists only behind
+ * `FRIDAY_ALLOW_TEST_ONLY_MASTER_KEY_GENERATION=1`.
  */
 export function getMasterKey(): Buffer {
   // P2-SEC: Honor TTL — invalidate cache after expiry to support key rotation
@@ -233,24 +238,33 @@ export function getMasterKey(): Buffer {
   // 3. Try to read persisted key file
   const persistedKey = readPersistedMasterKeyFile({
     repairPermissions: true,
-    failClosed: false,
+    failClosed: process.env[TEST_ONLY_MASTER_KEY_GENERATION_ENV] !== "1",
   });
   if (persistedKey) {
     return cacheMasterKey(persistedKey, "file");
   }
 
-  // 4. Generate, persist, and warn
+  if (process.env[TEST_ONLY_MASTER_KEY_GENERATION_ENV] !== "1") {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "FRIDAY_MASTER_KEY is not configured. Set FRIDAY_MASTER_KEY (hex), set FRIDAY_MASTER_KEY_SOURCE=keychain, or provision an existing ~/.friday/master.key. Friday will not auto-generate a key for this path.",
+      { httpStatus: 503 },
+    );
+  }
+
+  // 4. Explicit test/legacy opt-in only: generate, persist, and warn
   const newKey = crypto.randomBytes(KEY_BYTES);
 
   try {
-    fs.mkdirSync(MASTER_KEY_DIR, { recursive: true, mode: 0o700 });
-    fs.writeFileSync(MASTER_KEY_FILE, newKey.toString("hex") + "\n", {
+    const masterKeyFile = getMasterKeyFilePath();
+    fs.mkdirSync(path.dirname(masterKeyFile), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(masterKeyFile, newKey.toString("hex") + "\n", {
       mode: 0o600,
     });
   } catch (err) {
     // Best-effort: if we can't write, the key lives only in memory this run
     console.warn(
-      "[friday] WARNING: Could not persist master key to " + MASTER_KEY_FILE,
+      "[friday] WARNING: Could not persist master key to " + getMasterKeyFilePath(),
       err instanceof Error ? err.message : String(err),
     );
   }
@@ -258,7 +272,7 @@ export function getMasterKey(): Buffer {
   console.warn(
     "[friday] WARNING: No FRIDAY_MASTER_KEY env var set. " +
       "Generated a random master key and saved to " +
-      MASTER_KEY_FILE +
+      getMasterKeyFilePath() +
       ". Set FRIDAY_MASTER_KEY for production use.",
   );
 
