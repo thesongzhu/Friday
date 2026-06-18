@@ -582,9 +582,8 @@ pub fn hub_migrations() -> Vec<Migration> {
         // stays FROZEN at its pre-v33 shape, so a fresh install runs the base CREATE then this
         // ALTER (no duplicate-column on fresh install) — mirrors how m0028/m0032 added columns.
         // Purely additive (ALTER only) — touches no other table. Hub-only — `work_item` is
-        // Hub-only (never created on a phone). The PASS-2 reconcile that consumes these is gated
-        // under the EXISTING default-OFF `FRIDAY_CRASH_RECOVERY` flag, so this migration is dark
-        // on deploy until the operator flips it.
+        // Hub-only (never created on a phone). The PASS-2 reconcile that consumes these now runs as
+        // a hard boot safety sweep; rows with `executing = 0` remain untouched at any age.
         Migration {
             version: 33,
             name: "work_item_execution_state",

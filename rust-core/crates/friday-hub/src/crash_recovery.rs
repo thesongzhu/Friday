@@ -1,4 +1,4 @@
-//! Crash-recovery for orphaned in-flight WorkItems (registry gap #24, DARK, default-OFF).
+//! Crash-recovery for orphaned in-flight WorkItems (D1 hard boot safety sweep).
 //!
 //! ## The wedge this closes
 //! With auto-dispatch LIVE, the WS server (`hub_agent_run_server`) owns an in-process agent
@@ -56,19 +56,19 @@
 //!     them) and are never touched.
 //!
 //! ## No-degrade posture
-//!   * **Flag-OFF ⇒ no PASS-2 reconcile (no scan, no write).** [`crash_recovery_enabled_from`] is
-//!     the pure matcher; the server reads `FRIDAY_CRASH_RECOVERY` ONCE at boot and, when OFF
-//!     (default / anything but the exact trimmed `"1"`), NEVER calls
-//!     [`reconcile_orphaned_work_items`]. NOTE — the #24b loop-side change is FLAG-INDEPENDENT (it
-//!     runs on every mission-bound run, flag on or off): the `executing`/`last_heartbeat_ms` columns
-//!     are written by the loop. The WorkItem-status TIMING is UNCHANGED vs pre-#24b: the binding is
-//!     driven AFTER the loop (the panel-BLOCK fix REVERTED the original pre-dispatch reorder), so an
-//!     errored run stays `ReadyToDispatch` (retryable) and the during-call status is `ReadyToDispatch`
-//!     exactly as before. So flag-OFF is BYTE-IDENTICAL for NON-mission runs, and END-STATE- +
-//!     AUDIT-IDENTICAL for mission-bound runs (only two columns no read path consults are written, +
-//!     the final-hop bind clears `executing` in the same tx) — proven by the full
-//!     mission_runtime/runtime/resume/surface-event suites staying green. Only the boot reconcile is
-//!     gated.
+//!   * **Boot sweep is hard-enabled and narrow.** The WS server calls
+//!     [`reconcile_orphaned_work_items`] once at boot before accepting connections. This is no longer
+//!     an operator-flipped dark flag: D1 treats orphan recovery as a safety requirement. The sweep is
+//!     still narrow enough that an ordinary healthy DB produces no writes; it only advances the
+//!     orphan/stale-executing candidates described above.
+//!   * **Loop-side heartbeat writes stay non-semantic.** The #24b loop-side change runs on every
+//!     mission-bound run: the `executing`/`last_heartbeat_ms` columns are written by the loop. The
+//!     WorkItem-status TIMING is UNCHANGED vs pre-#24b: the binding is driven AFTER the loop (the
+//!     panel-BLOCK fix REVERTED the original pre-dispatch reorder), so an errored run stays
+//!     `ReadyToDispatch` (retryable) and the during-call status is `ReadyToDispatch` exactly as
+//!     before. Only two execution-state columns no read path consults are written, and the final-hop
+//!     bind clears `executing` in the same tx — proven by the full
+//!     mission_runtime/runtime/resume/surface-event suites staying green.
 //!   * **Best-effort + fail-safe.** Reconciliation runs BEFORE the server accepts connections, but
 //!     a reconcile error is LOGGED (category only) and SWALLOWED — it MUST NEVER block boot (the
 //!     server coming up is load-bearing; this is cleanup). A per-row transition failure is logged
@@ -92,15 +92,12 @@
 //!     mid-turn leaves `executing == 0`, also unreconciled. Dark today (codex unavailable in the
 //!     autonomous baseline); named for when it is wired.
 //!
-//! GATING: the boot PASS-1+PASS-2 reconcile is default-OFF (`FRIDAY_CRASH_RECOVERY`). The loop-side
-//! marker writes are flag-INDEPENDENT (see the no-degrade posture above), but the WorkItem-status
-//! timing is UNCHANGED vs pre-#24b (binding driven after the loop).
+//! GATING: none. The boot PASS-1+PASS-2 reconcile is a hard safety sweep. The loop-side marker
+//! writes are also flag-independent (see the no-degrade posture above), while WorkItem-status timing
+//! stays unchanged vs pre-#24b (binding driven after the loop).
 
 use friday_core::{WorkItemStatus, WorkflowRunState};
 use friday_storage::{Db, StorageError};
-
-/// The env flag that gates boot-time crash-recovery reconciliation. DEFAULT-OFF.
-pub const FRIDAY_CRASH_RECOVERY: &str = "FRIDAY_CRASH_RECOVERY";
 
 /// The actor recorded on the lifecycle audit row for a crash-recovery abort.
 const CRASH_RECOVERY_ACTOR: &str = "crash-recovery";
@@ -130,14 +127,6 @@ pub const CRASH_RECOVERY_MARKER: &str = "crash_recovery_abort";
 /// Tightening this risks reconciling a slow-but-live run (a degrade); loosening it only delays
 /// cleanup of a genuinely-dead row (safe).
 pub const EXECUTION_STATE_STALE_THRESHOLD_MS: i64 = 300_000;
-
-/// Pure flag-matcher (separated from the env read so it is testable without mutating the
-/// process-global environment). DEFAULT-OFF: `None` (unset) ⇒ false; ON only for the exact
-/// opt-in value `"1"` (trimmed), matching the program's standard flag idiom; everything else
-/// (including `"true"`) ⇒ false.
-pub fn crash_recovery_enabled_from(raw: Option<&str>) -> bool {
-    matches!(raw.map(str::trim), Some("1"))
-}
 
 /// Whether a non-terminal [`WorkItemStatus`] is a GENUINELY-ORPHANED in-flight hub hop (no live
 /// recovery path) that boot crash-recovery may abort — as opposed to a status that is
@@ -401,24 +390,6 @@ pub fn reconcile_orphaned_scheduled_runs(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn flag_matcher_is_default_off_and_exact_one() {
-        // Default-OFF: unset.
-        assert!(!crash_recovery_enabled_from(None));
-        // ON only for the exact trimmed "1".
-        assert!(crash_recovery_enabled_from(Some("1")));
-        assert!(crash_recovery_enabled_from(Some("  1  ")));
-        // Everything else (including "true", "0", "yes", garbage) ⇒ OFF.
-        for off in [
-            "", " ", "0", "true", "TRUE", "yes", "on", "11", "1 0", "enabled",
-        ] {
-            assert!(
-                !crash_recovery_enabled_from(Some(off)),
-                "must be OFF for {off:?}"
-            );
-        }
-    }
 
     #[test]
     fn orphan_classifier_is_only_dispatched_and_hub_accepted() {

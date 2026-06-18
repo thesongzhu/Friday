@@ -322,12 +322,12 @@ pub mod provider_timeline;
 /// attaches provider/channel evidence as trace refs, not independent product state.
 pub mod mission_preflight;
 
-/// Boot-time crash-recovery for orphaned in-flight WorkItems (registry gap #24, DARK,
-/// default-OFF `FRIDAY_CRASH_RECOVERY`). After a mid-turn server crash the new process owns no
-/// in-flight run; genuinely-orphaned hub-internal rows (`Dispatched`/`HubAccepted`) are advanced
-/// to a terminal `FailedTerminal` via the legal state machine, while every legitimately-waiting
-/// row (paused/awaiting/provider-waiting) is left untouched. Best-effort + fail-safe (never
-/// blocks boot).
+/// Boot-time crash-recovery for orphaned in-flight WorkItems (D1 hard safety sweep). After a
+/// mid-turn server crash the new process owns no in-flight run; genuinely-orphaned hub-internal
+/// rows (`Dispatched`/`HubAccepted`) and stale-executing PASS-2 rows are advanced to a terminal
+/// `FailedTerminal` via the legal state machine, while every legitimately-waiting row
+/// (paused/awaiting/provider-waiting) is left untouched. Best-effort + fail-safe (never blocks
+/// boot).
 pub mod crash_recovery;
 
 /// The `surface_event` timeline PRODUCER (`FRIDAY_SURFACE_EVENTS`, DARK, default-OFF). Emits
@@ -4772,9 +4772,9 @@ fn run_loop_reading_flags(
 /// is UNREPRESENTABLE. `None` (every non-mission / sessionless caller) makes BOTH the SET and the
 /// CLEAR no-ops ⇒ byte-identical to the pre-#24b loop. The heartbeat write is FAIL-SAFE: a write
 /// error is logged + swallowed and never changes the turn outcome / billing / the returned status.
-/// Boot crash-recovery PASS-2 (gated under `FRIDAY_CRASH_RECOVERY`) reconciles a
-/// `ProviderRouted`/`ProviderWaiting` row left `executing == 1` with a STALE heartbeat after a
-/// mid-call crash; a row this loop cleared (`executing == 0`) is NEVER touched.
+/// Boot crash-recovery PASS-2 reconciles a `ProviderRouted`/`ProviderWaiting` row left
+/// `executing == 1` with a STALE heartbeat after a mid-call crash; a row this loop cleared
+/// (`executing == 0`) is NEVER touched.
 ///
 /// ## Why `pub` (not `pub(crate)`)
 /// This is `pub` (additive, no behavior change) so the out-of-crate `cheap_vs_strong_ab` A/B

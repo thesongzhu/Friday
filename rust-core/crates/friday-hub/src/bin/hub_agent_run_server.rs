@@ -553,24 +553,15 @@ fn run() -> Result<(), ServerError> {
         );
     }
 
-    // (2c) CRASH-RECOVERY reconciliation (gap #24, DARK, DEFAULT-OFF). Read the flag ONCE at boot;
-    // when ON, BEFORE accepting any connection, scan for genuinely-orphaned in-flight WorkItems
-    // (a `Dispatched`/`HubAccepted` row a prior process died mid-turn on) and advance each to a
-    // terminal `FailedTerminal` with the `crash_recovery_abort` marker, via the LEGAL work-item
-    // state machine. Legitimately-WAITING rows (paused/awaiting-clarification/provider-waiting,
-    // resumed by the signed-mutation/approval/reconnect paths) are NEVER touched. FAIL-SAFE: a
-    // reconcile error is LOGGED (category only) and SWALLOWED — it must NEVER block boot (the
-    // server coming up is load-bearing; reconciliation is best-effort cleanup). When OFF (default)
-    // there is NO scan and NO write, so deploying this binary changes NO live behavior until the
-    // operator flips `FRIDAY_CRASH_RECOVERY=1`. It opens its OWN short-lived DB connection (the
-    // accept-loop runtime connection is never shared) and runs synchronously here, before the loop.
-    if crash_recovery_enabled() {
-        run_boot_crash_recovery(&db_path);
-    } else {
-        eprintln!(
-            "hub_agent_run_server: crash-recovery DISABLED (set FRIDAY_CRASH_RECOVERY=1 to enable) — orphaned in-flight WorkItems are not reconciled at boot"
-        );
-    }
+    // (2c) CRASH-RECOVERY reconciliation (D1 hardening). BEFORE accepting any connection, scan for
+    // genuinely-orphaned in-flight WorkItems (a `Dispatched`/`HubAccepted` row a prior process died
+    // mid-turn on, plus stale-executing PASS-2 rows) and advance each to a terminal
+    // `FailedTerminal` with the `crash_recovery_abort` marker, via the LEGAL work-item state
+    // machine. Legitimately-WAITING rows (paused/awaiting-clarification/provider-waiting, resumed by
+    // the signed-mutation/approval/reconnect paths) are NEVER touched. FAIL-SAFE: a reconcile error
+    // is LOGGED (category only) and SWALLOWED — it must NEVER block boot (the server coming up is
+    // load-bearing). This is a hard boot safety sweep now, not an operator-flipped dark flag.
+    run_boot_crash_recovery(&db_path);
 
     // (3) Long-lived accept loop. Each accepted connection: set the read timeout, read the peer
     // pubkey preamble, REJECT a non-allowlisted peer pubkey (S-F, the FIRST gate), reject low-order
@@ -1055,17 +1046,6 @@ fn spawn_scheduler_tick(db_path: String, workspace_root: String) {
     });
 }
 
-/// Whether the operator has explicitly enabled boot-time crash-recovery reconciliation. Fail-closed:
-/// reads `FRIDAY_CRASH_RECOVERY` and delegates to the pure matcher (only the exact trimmed `"1"`
-/// enables it; everything else, including unset, is OFF).
-fn crash_recovery_enabled() -> bool {
-    friday_hub::crash_recovery::crash_recovery_enabled_from(
-        env::var(friday_hub::crash_recovery::FRIDAY_CRASH_RECOVERY)
-            .ok()
-            .as_deref(),
-    )
-}
-
 /// (gap #24) Run ONE boot-time crash-recovery sweep — FAIL-SAFE. Opens its OWN short-lived `Db`
 /// connection (the accept-loop runtime connection is never shared), reconciles genuinely-orphaned
 /// in-flight WorkItems to `FailedTerminal`, and LOGS a refs-only count line. EVERY error path
@@ -1089,7 +1069,7 @@ fn run_boot_crash_recovery(db_path: &str) {
     match friday_hub::crash_recovery::reconcile_orphaned_work_items(&db, now_ms) {
         Ok(outcome) => {
             eprintln!(
-                "hub_agent_run_server: crash-recovery ENABLED — reconcile scanned={} aborted={} skipped={}",
+                "hub_agent_run_server: crash-recovery hard-enabled — reconcile scanned={} aborted={} skipped={}",
                 outcome.scanned, outcome.aborted, outcome.skipped,
             );
         }
