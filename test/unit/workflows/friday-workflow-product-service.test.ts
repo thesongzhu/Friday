@@ -201,11 +201,20 @@ function makeDeps() {
       selfHealing: selfHealing as never,
       db: {
         withReadConnection: (fn) => fn({
-          prepare: vi.fn(() => ({
-            get: vi.fn((namespace?: string, key?: string) => {
+          prepare: vi.fn((sql: string) => ({
+            get: vi.fn((first?: string, second?: string) => {
+              if (sql.includes("workflow_generation_approvals")) {
+                if (first === approvalRecord?.sessionId) {
+                  return {
+                    session_id: approvalRecord.sessionId,
+                    value_json: JSON.stringify(approvalRecord),
+                  };
+                }
+                return undefined;
+              }
               if (
-                namespace === "workflow-generator-approval"
-                && key === approvalRecord?.sessionId
+                first === "workflow-generator-approval"
+                && second === approvalRecord?.sessionId
               ) {
                 return {
                   id: "approval-row-1",
@@ -217,11 +226,20 @@ function makeDeps() {
           })),
         } as never),
         withWriteTransaction: (fn) => fn({
-          prepare: vi.fn(() => ({
-            get: vi.fn((namespace?: string, key?: string) => {
+          prepare: vi.fn((sql: string) => ({
+            get: vi.fn((first?: string, second?: string) => {
+              if (sql.includes("workflow_generation_approvals")) {
+                if (first === approvalRecord?.sessionId) {
+                  return {
+                    session_id: approvalRecord.sessionId,
+                    value_json: JSON.stringify(approvalRecord),
+                  };
+                }
+                return undefined;
+              }
               if (
-                namespace === "workflow-generator-approval"
-                && key === approvalRecord?.sessionId
+                first === "workflow-generator-approval"
+                && second === approvalRecord?.sessionId
               ) {
                 return {
                   id: "approval-row-1",
@@ -230,23 +248,24 @@ function makeDeps() {
               }
               return undefined;
             }),
-            run: vi.fn(
-              (
-                _id: string,
-                namespace: string,
-                key: string,
-                valueJson: string,
-              ) => {
-                if (namespace === "workflow-generator-approval") {
-                  approvalRecord = JSON.parse(valueJson) as {
-                    sessionId: string;
-                    workflowId: string;
-                    workflowVersionId: string;
-                    savedAt: string;
-                  };
-                }
-              },
-            ),
+            run: vi.fn((...args: unknown[]) => {
+              if (sql.startsWith("INSERT INTO workflow_generation_approvals")) {
+                approvalRecord = JSON.parse(args[5] as string) as {
+                  sessionId: string;
+                  workflowId: string;
+                  workflowVersionId: string;
+                  savedAt: string;
+                };
+              }
+              if (sql.startsWith("INSERT INTO memory_items") && args[1] === "workflow-generator-approval") {
+                approvalRecord = JSON.parse(args[3] as string) as {
+                  sessionId: string;
+                  workflowId: string;
+                  workflowVersionId: string;
+                  savedAt: string;
+                };
+              }
+            }),
           })),
         } as never),
       },

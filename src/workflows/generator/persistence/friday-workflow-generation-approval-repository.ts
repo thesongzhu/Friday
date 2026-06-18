@@ -28,6 +28,48 @@ interface MemoryItemRow {
   value_json: string;
 }
 
+interface WorkflowGenerationApprovalRow {
+  session_id: string;
+  value_json: string;
+}
+
+function upsertWorkflowGenerationApproval(
+  db: Database.Database,
+  record: FridayWorkflowGenerationApprovalRecord,
+  nowIso: string,
+): void {
+  db.prepare(
+    `INSERT INTO workflow_generation_approvals (
+       session_id, workflow_id, workflow_version_id, saved_at, updated_at, value_json, tags_json
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(session_id) DO UPDATE SET
+       workflow_id = excluded.workflow_id,
+       workflow_version_id = excluded.workflow_version_id,
+       saved_at = excluded.saved_at,
+       updated_at = excluded.updated_at,
+       value_json = excluded.value_json,
+       tags_json = excluded.tags_json`,
+  ).run(
+    record.sessionId,
+    record.workflowId,
+    record.workflowVersionId,
+    record.savedAt,
+    nowIso,
+    JSON.stringify(record),
+    JSON.stringify(["approval", "workflow"]),
+  );
+}
+
+function getWorkflowGenerationApproval(
+  db: Database.Database,
+  sessionId: string,
+): WorkflowGenerationApprovalRow | undefined {
+  return db
+    .prepare("SELECT session_id, value_json FROM workflow_generation_approvals WHERE session_id = ?")
+    .get(sessionId) as WorkflowGenerationApprovalRow | undefined;
+}
+
 function getMemoryItem(
   db: Database.Database,
   namespace: string,
@@ -44,33 +86,14 @@ export function createFridayWorkflowGenerationApprovalRepository(
   return {
     save(record) {
       deps.db.withWriteTransaction((writer) => {
-        const existing = getMemoryItem(
-          writer,
-          FRIDAY_WORKFLOW_GENERATION_APPROVAL_NAMESPACE,
-          record.sessionId,
-        );
-        writer.prepare(
-          `INSERT INTO memory_items (id, namespace, key, value_json, tags_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(namespace, key) DO UPDATE SET
-             value_json = excluded.value_json,
-             tags_json = excluded.tags_json,
-             updated_at = excluded.updated_at`,
-        ).run(
-          existing?.id ?? deps.idGenerator(),
-          FRIDAY_WORKFLOW_GENERATION_APPROVAL_NAMESPACE,
-          record.sessionId,
-          JSON.stringify(record),
-          JSON.stringify(["approval", "workflow"]),
-          existing ? deps.nowIso() : record.savedAt,
-          deps.nowIso(),
-        );
+        upsertWorkflowGenerationApproval(writer, record, deps.nowIso());
       });
     },
 
     get(sessionId) {
       return deps.db.withReadConnection((reader) => {
-        const row = getMemoryItem(
+        const row = getWorkflowGenerationApproval(reader, sessionId)
+          ?? getMemoryItem(
           reader,
           FRIDAY_WORKFLOW_GENERATION_APPROVAL_NAMESPACE,
           sessionId,

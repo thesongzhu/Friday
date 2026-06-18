@@ -24,10 +24,104 @@ function makeMockDb(): FridaySqliteLayer {
     created_at: string;
     updated_at: string;
   }>();
+  const sessions = new Map<string, { session_id: string; value_json: string }>();
+  const turns = new Map<string, { session_id: string; turn_id: string; created_at: string; value_json: string }>();
+  const drafts = new Map<string, { session_id: string; value_json: string }>();
 
   function makeDb() {
     return {
       prepare: vi.fn((sql: string) => {
+        if (sql.startsWith("INSERT INTO workflow_generation_sessions")) {
+          return {
+            run: vi.fn(
+              (
+                sessionId: string,
+                _userId: string,
+                _channel: string,
+                _status: string,
+                _createdAt: string,
+                _updatedAt: string,
+                valueJson: string,
+              ) => {
+                sessions.set(sessionId, { session_id: sessionId, value_json: valueJson });
+              },
+            ),
+          };
+        }
+        if (sql.startsWith("SELECT session_id, value_json FROM workflow_generation_sessions")) {
+          return {
+            get: vi.fn((sessionId: string) => sessions.get(sessionId) ?? undefined),
+          };
+        }
+        if (sql.startsWith("INSERT INTO workflow_generation_turns")) {
+          return {
+            run: vi.fn(
+              (
+                sessionId: string,
+                turnId: string,
+                _role: string,
+                createdAt: string,
+                valueJson: string,
+              ) => {
+                turns.set(`${sessionId}:${turnId}`, {
+                  session_id: sessionId,
+                  turn_id: turnId,
+                  created_at: createdAt,
+                  value_json: valueJson,
+                });
+              },
+            ),
+          };
+        }
+        if (sql.startsWith("SELECT session_id, turn_id, value_json")) {
+          return {
+            all: vi.fn((sessionId: string) => [...turns.values()]
+              .filter((row) => row.session_id === sessionId)
+              .sort((a, b) => a.created_at.localeCompare(b.created_at))),
+          };
+        }
+        if (sql.startsWith("INSERT INTO workflow_generation_drafts")) {
+          return {
+            run: vi.fn(
+              (
+                sessionId: string,
+                _createdAt: string,
+                _updatedAt: string,
+                valueJson: string,
+              ) => {
+                drafts.set(sessionId, { session_id: sessionId, value_json: valueJson });
+              },
+            ),
+          };
+        }
+        if (sql.startsWith("SELECT value_json FROM workflow_generation_drafts")) {
+          return {
+            get: vi.fn((sessionId: string) => drafts.get(sessionId) ?? undefined),
+          };
+        }
+        if (sql.startsWith("DELETE FROM workflow_generation_drafts")) {
+          return {
+            run: vi.fn((sessionId: string) => {
+              drafts.delete(sessionId);
+            }),
+          };
+        }
+        if (sql.startsWith("DELETE FROM workflow_generation_sessions")) {
+          return {
+            run: vi.fn((sessionId: string) => {
+              sessions.delete(sessionId);
+            }),
+          };
+        }
+        if (sql.startsWith("DELETE FROM workflow_generation_turns")) {
+          return {
+            run: vi.fn((sessionId: string) => {
+              for (const key of [...turns.keys()]) {
+                if (key.startsWith(`${sessionId}:`)) turns.delete(key);
+              }
+            }),
+          };
+        }
         if (sql.startsWith("INSERT INTO memory_items")) {
           return {
             run: vi.fn(
@@ -1311,21 +1405,19 @@ describe("FridayWorkflowGeneratorService", () => {
       deps.db.withWriteTransaction((writer) => {
         writer
           .prepare(
-            `INSERT INTO memory_items (id, namespace, key, value_json, tags_json, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(namespace, key) DO UPDATE SET
+            `INSERT INTO workflow_generation_drafts (session_id, created_at, updated_at, value_json, tags_json)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(session_id) DO UPDATE SET
                value_json = excluded.value_json,
                tags_json = excluded.tags_json,
                updated_at = excluded.updated_at`,
           )
           .run(
-            deps.idGenerator(),
-            "workflow-generator-draft",
             sessionId,
+            NOW,
+            NOW,
             JSON.stringify(invalidDraft),
             JSON.stringify(["draft"]),
-            NOW,
-            NOW,
           );
       });
 
