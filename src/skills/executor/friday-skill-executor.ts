@@ -1,11 +1,11 @@
 import type {
   CreateFridaySkillExecutorDeps,
+  FridayShellOsSandboxOptions,
   FridaySkillAiHelperContext,
   FridaySkillExecuteHandle,
   FridaySkillExecuteRequest,
   FridaySkillExecuteResult,
   FridaySkillExecutor,
-  FridayShellOsSandboxOptions,
   FridaySkillLifecycleCanaryExecuteRequest,
 } from "./friday-skill-executor.types.js";
 import type { SkillManifestV2 } from "../model/friday-skill-manifest-v2.types.js";
