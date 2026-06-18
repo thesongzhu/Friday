@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { SecretManager } from "../../../../../src/security/multi-tenant/engine/secret-manager.js";
 import { AuditLogger } from "../../../../../src/security/multi-tenant/engine/audit-logger.js";
 import { SecurityEngineError } from "../../../../../src/security/multi-tenant/engine/utils.js";
 import { FRIDAY_MULTI_TENANT_SECURITY_ERROR_CODES } from "../../../../../src/security/multi-tenant/api/friday-multi-tenant-security-api.types.js";
+import { resetMasterKeyCache } from "../../../../../src/security/friday-secret-crypto.js";
 import type {
   FridaySecretEntry,
   FridaySecretRotation,
@@ -12,10 +13,41 @@ describe("SecretManager", () => {
   let auditLogger: AuditLogger;
   let manager: SecretManager;
   const tenantId = "tenant-1";
+  const testMasterKey = Buffer.from("33".repeat(32), "hex");
+  const resolveTestMasterKey = () => Buffer.from(testMasterKey);
+  const savedMasterKey = process.env.FRIDAY_MASTER_KEY;
+  const savedMasterKeySource = process.env.FRIDAY_MASTER_KEY_SOURCE;
+  const savedKeychainService = process.env.FRIDAY_MASTER_KEY_KEYCHAIN_SERVICE;
+  const savedKeychainAccount = process.env.FRIDAY_MASTER_KEY_KEYCHAIN_ACCOUNT;
 
   beforeEach(() => {
     auditLogger = new AuditLogger();
-    manager = new SecretManager(auditLogger);
+    manager = new SecretManager(auditLogger, { masterKeyResolver: resolveTestMasterKey });
+    resetMasterKeyCache();
+  });
+
+  afterEach(() => {
+    if (savedMasterKey === undefined) {
+      delete process.env.FRIDAY_MASTER_KEY;
+    } else {
+      process.env.FRIDAY_MASTER_KEY = savedMasterKey;
+    }
+    if (savedMasterKeySource === undefined) {
+      delete process.env.FRIDAY_MASTER_KEY_SOURCE;
+    } else {
+      process.env.FRIDAY_MASTER_KEY_SOURCE = savedMasterKeySource;
+    }
+    if (savedKeychainService === undefined) {
+      delete process.env.FRIDAY_MASTER_KEY_KEYCHAIN_SERVICE;
+    } else {
+      process.env.FRIDAY_MASTER_KEY_KEYCHAIN_SERVICE = savedKeychainService;
+    }
+    if (savedKeychainAccount === undefined) {
+      delete process.env.FRIDAY_MASTER_KEY_KEYCHAIN_ACCOUNT;
+    } else {
+      process.env.FRIDAY_MASTER_KEY_KEYCHAIN_ACCOUNT = savedKeychainAccount;
+    }
+    resetMasterKeyCache();
   });
 
   // ═══════════════════════════════════════════════════════════════
@@ -23,6 +55,22 @@ describe("SecretManager", () => {
   // ═══════════════════════════════════════════════════════════════
 
   describe("createSecret()", () => {
+    it("fails closed by default when no provisioned master key is available", () => {
+      delete process.env.FRIDAY_MASTER_KEY;
+      process.env.FRIDAY_MASTER_KEY_SOURCE = "keychain";
+      process.env.FRIDAY_MASTER_KEY_KEYCHAIN_SERVICE = "Friday Test Missing";
+      process.env.FRIDAY_MASTER_KEY_KEYCHAIN_ACCOUNT = "friday-test-missing";
+      const defaultManager = new SecretManager(auditLogger);
+
+      expect(() =>
+        defaultManager.createSecret(tenantId, {
+          name: "NO_KEY",
+          value: "value",
+          scope: { scopeType: "tenant" },
+        }),
+      ).toThrow(/FRIDAY_MASTER_KEY_SOURCE=keychain/);
+    });
+
     it("creates a tenant-scoped secret", () => {
       const secret = manager.createSecret(tenantId, {
         name: "API_KEY",

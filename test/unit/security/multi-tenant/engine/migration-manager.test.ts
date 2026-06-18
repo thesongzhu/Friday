@@ -14,12 +14,14 @@ describe("MigrationManager", () => {
   let secretManager: SecretManager;
   let idempotencyManager: IdempotencyManager;
   let migrationManager: MigrationManager;
+  const testMasterKey = Buffer.from("55".repeat(32), "hex");
+  const resolveTestMasterKey = () => Buffer.from(testMasterKey);
 
   beforeEach(() => {
     auditLogger = new AuditLogger();
     tenantManager = new TenantManager(auditLogger);
     rbacEngine = new RbacEngine(auditLogger);
-    secretManager = new SecretManager(auditLogger);
+    secretManager = new SecretManager(auditLogger, { masterKeyResolver: resolveTestMasterKey });
     idempotencyManager = new IdempotencyManager();
     migrationManager = new MigrationManager(
       tenantManager,

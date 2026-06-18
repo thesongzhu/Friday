@@ -33,7 +33,7 @@ import type { FridayCreateSecretScopeInput } from "../api/friday-multi-tenant-se
 
 import { cloneAndFreeze, generateEtag, generateId, now, SecurityEngineError } from "./utils.js";
 import type { AuditLogger } from "./audit-logger.js";
-import { decryptSecret, encryptSecret, getMasterKey } from "../../friday-secret-crypto.js";
+import { decryptSecret, encryptSecret, getProvisionedMasterKey } from "../../friday-secret-crypto.js";
 import type { FridayEncryptedEnvelope } from "../../friday-secret-crypto.js";
 
 // ─── Input Types ───
@@ -111,10 +111,9 @@ export interface SecretManagerPersistence {
 }
 
 /**
- * Optional master-key resolver override for the SecretManager.  Defaults
- * to {@link getMasterKey} which is fail-open (auto-generates and persists).
- * Bootstrap can pass `getStrictMasterKey` to fail closed when the env var
- * is not configured.
+ * Optional master-key resolver override for the SecretManager. Defaults to
+ * the no-generate provisioned resolver so production/default construction
+ * fails closed instead of silently creating a new encryption root.
  */
 export type MasterKeyResolver = () => Buffer;
 
@@ -130,7 +129,7 @@ export class SecretManager {
     options?: { persistence?: SecretManagerPersistence; masterKeyResolver?: MasterKeyResolver },
   ) {
     this.persistence = options?.persistence;
-    this.masterKeyResolver = options?.masterKeyResolver ?? getMasterKey;
+    this.masterKeyResolver = options?.masterKeyResolver ?? getProvisionedMasterKey;
     this.secrets = this.persistence?.hydrateSecrets() ?? new Map();
     this.rotations = this.persistence?.hydrateRotations() ?? new Map();
     this.accessLogs = this.persistence?.hydrateAccessLogs() ?? [];

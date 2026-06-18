@@ -86,6 +86,73 @@ const MASTER_KEY_FILE = path.join(MASTER_KEY_DIR, "master.key");
 const MASTER_KEY_KEYCHAIN_SERVICE = "Friday Master Key";
 const MASTER_KEY_KEYCHAIN_ACCOUNT = "friday";
 
+function parseMasterKeyHex(hex: string, sourceLabel: string): Buffer {
+  const buf = Buffer.from(hex, "hex");
+  if (buf.length !== KEY_BYTES) {
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      `${sourceLabel} must be ${KEY_BYTES} bytes (${KEY_BYTES * 2} hex chars), got ${String(buf.length)} bytes`,
+      { httpStatus: 400 },
+    );
+  }
+  return buf;
+}
+
+function cacheMasterKey(key: Buffer, source: MasterKeyCacheSource): Buffer {
+  cachedMasterKey = key;
+  cachedMasterKeySource = source;
+  cachedMasterKeyExpiresAt = Date.now() + MASTER_KEY_CACHE_TTL_MS;
+  return cachedMasterKey;
+}
+
+function readPersistedMasterKeyFile(options: {
+  readonly repairPermissions: boolean;
+  readonly failClosed: boolean;
+}): Buffer | null {
+  let hex: string;
+  try {
+    hex = fs.readFileSync(MASTER_KEY_FILE, "utf8").trim();
+  } catch (err) {
+    if (options.failClosed) {
+      throw new FridayDomainError(
+        "VALIDATION_ERROR",
+        "FRIDAY_MASTER_KEY is not configured. Set FRIDAY_MASTER_KEY (hex), set FRIDAY_MASTER_KEY_SOURCE=keychain, or provision an existing ~/.friday/master.key. Friday will not auto-generate a key for this path.",
+        { httpStatus: 503 },
+      );
+    }
+    console.warn("[friday][secret-crypto] master key file unreadable:", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+
+  if (options.repairPermissions) {
+    try {
+      const stat = fs.statSync(MASTER_KEY_FILE);
+      if ((stat.mode & 0o077) !== 0) {
+        // eslint-disable-next-line no-console
+        console.warn(`[friday][SECURITY] Master key file permissions too open (0o${(stat.mode & 0o777).toString(8)}) — attempting chmod 0600`);
+        try {
+          fs.chmodSync(MASTER_KEY_FILE, 0o600);
+        } catch (chmodErr) {
+          // eslint-disable-next-line no-console
+          console.warn("[friday][SECURITY] Could not fix master key file permissions:", chmodErr instanceof Error ? chmodErr.message : String(chmodErr));
+        }
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("[friday][secret-crypto] stat check failed:", err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  try {
+    return parseMasterKeyHex(hex, "Persisted master key file");
+  } catch (err) {
+    if (options.failClosed) {
+      throw err;
+    }
+    return null;
+  }
+}
+
 function readKeychainMasterKey(): Buffer | null {
   if (process.platform !== "darwin") {
     throw new FridayDomainError(
@@ -145,18 +212,7 @@ export function getMasterKey(): Buffer {
   // 1. Prefer explicit env var
   const envKey = process.env.FRIDAY_MASTER_KEY;
   if (envKey) {
-    const buf = Buffer.from(envKey, "hex");
-    if (buf.length !== KEY_BYTES) {
-      throw new FridayDomainError(
-        "VALIDATION_ERROR",
-        `FRIDAY_MASTER_KEY must be ${KEY_BYTES} bytes (${KEY_BYTES * 2} hex chars), got ${String(buf.length)} bytes`,
-        { httpStatus: 400 },
-      );
-    }
-    cachedMasterKey = buf;
-    cachedMasterKeySource = "env";
-    cachedMasterKeyExpiresAt = Date.now() + MASTER_KEY_CACHE_TTL_MS;
-    return cachedMasterKey;
+    return cacheMasterKey(parseMasterKeyHex(envKey, "FRIDAY_MASTER_KEY"), "env");
   }
 
   // 2. Optional OS keystore mode. This is opt-in to avoid unexpected keychain
@@ -164,10 +220,7 @@ export function getMasterKey(): Buffer {
   if (process.env.FRIDAY_MASTER_KEY_SOURCE === "keychain") {
     const keychainKey = readKeychainMasterKey();
     if (keychainKey) {
-      cachedMasterKey = keychainKey;
-      cachedMasterKeySource = "keychain";
-      cachedMasterKeyExpiresAt = Date.now() + MASTER_KEY_CACHE_TTL_MS;
-      return cachedMasterKey;
+      return cacheMasterKey(keychainKey, "keychain");
     }
 
     throw new FridayDomainError(
@@ -178,36 +231,12 @@ export function getMasterKey(): Buffer {
   }
 
   // 3. Try to read persisted key file
-  try {
-    const hex = fs.readFileSync(MASTER_KEY_FILE, "utf8").trim();
-    // P2-SEC: Verify and fix master key file permissions
-    try {
-      const stat = fs.statSync(MASTER_KEY_FILE);
-      if ((stat.mode & 0o077) !== 0) {
-        // eslint-disable-next-line no-console
-        console.warn(`[friday][SECURITY] Master key file permissions too open (0o${(stat.mode & 0o777).toString(8)}) — attempting chmod 0600`);
-        try {
-          fs.chmodSync(MASTER_KEY_FILE, 0o600);
-        } catch (chmodErr) {
-          // eslint-disable-next-line no-console
-          console.warn("[friday][SECURITY] Could not fix master key file permissions:", chmodErr instanceof Error ? chmodErr.message : String(chmodErr));
-        }
-      }
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn("[friday][secret-crypto] stat check failed:", err instanceof Error ? err.message : String(err));
-    }
-    const buf = Buffer.from(hex, "hex");
-    if (buf.length === KEY_BYTES) {
-      cachedMasterKey = buf;
-      cachedMasterKeySource = "file";
-      cachedMasterKeyExpiresAt = Date.now() + MASTER_KEY_CACHE_TTL_MS;
-      return cachedMasterKey;
-    }
-    // Invalid length — fall through to regenerate
-  } catch (err) {
-    // File unreadable — fall through to regenerate
-    console.warn("[friday][secret-crypto] master key file unreadable:", err instanceof Error ? err.message : String(err));
+  const persistedKey = readPersistedMasterKeyFile({
+    repairPermissions: true,
+    failClosed: false,
+  });
+  if (persistedKey) {
+    return cacheMasterKey(persistedKey, "file");
   }
 
   // 4. Generate, persist, and warn
@@ -233,10 +262,7 @@ export function getMasterKey(): Buffer {
       ". Set FRIDAY_MASTER_KEY for production use.",
   );
 
-  cachedMasterKey = newKey;
-  cachedMasterKeySource = "generated";
-  cachedMasterKeyExpiresAt = Date.now() + MASTER_KEY_CACHE_TTL_MS;
-  return cachedMasterKey;
+  return cacheMasterKey(newKey, "generated");
 }
 
 /**
@@ -299,6 +325,68 @@ export function getStrictMasterKey(): Buffer {
   throw new FridayDomainError(
     "VALIDATION_ERROR",
     "FRIDAY_MASTER_KEY is not configured. Set FRIDAY_MASTER_KEY (hex) or FRIDAY_MASTER_KEY_SOURCE=keychain. Multi-tenant security will not auto-generate a key.",
+    { httpStatus: 503 },
+  );
+}
+
+/**
+ * Fail-closed provisioned master-key resolver for legacy/file-backed paths.
+ *
+ * This is the no-generate counterpart to {@link getMasterKey}: it may read a
+ * configured env key, a configured keychain key, or an already-provisioned
+ * `~/.friday/master.key`, but it MUST NOT generate, create, or overwrite key
+ * material. Use this for production/default code paths that need to preserve
+ * an existing file-backed deployment without keeping the fail-open first-run
+ * behavior.
+ */
+export function getProvisionedMasterKey(): Buffer {
+  if (
+    cachedMasterKey
+    && Date.now() < cachedMasterKeyExpiresAt
+  ) {
+    if (cachedMasterKeySource === "env" && process.env.FRIDAY_MASTER_KEY) {
+      return cachedMasterKey;
+    }
+    if (cachedMasterKeySource === "keychain" && process.env.FRIDAY_MASTER_KEY_SOURCE === "keychain") {
+      return cachedMasterKey;
+    }
+    if (
+      cachedMasterKeySource === "file"
+      && !process.env.FRIDAY_MASTER_KEY
+      && process.env.FRIDAY_MASTER_KEY_SOURCE !== "keychain"
+    ) {
+      return cachedMasterKey;
+    }
+  }
+
+  const envKey = process.env.FRIDAY_MASTER_KEY;
+  if (envKey) {
+    return cacheMasterKey(parseMasterKeyHex(envKey, "FRIDAY_MASTER_KEY"), "env");
+  }
+
+  if (process.env.FRIDAY_MASTER_KEY_SOURCE === "keychain") {
+    const keychainKey = readKeychainMasterKey();
+    if (keychainKey) {
+      return cacheMasterKey(keychainKey, "keychain");
+    }
+    throw new FridayDomainError(
+      "VALIDATION_ERROR",
+      "FRIDAY_MASTER_KEY_SOURCE=keychain requires a pre-provisioned macOS keychain item",
+      { httpStatus: 400 },
+    );
+  }
+
+  const persistedKey = readPersistedMasterKeyFile({
+    repairPermissions: false,
+    failClosed: true,
+  });
+  if (persistedKey) {
+    return cacheMasterKey(persistedKey, "file");
+  }
+
+  throw new FridayDomainError(
+    "VALIDATION_ERROR",
+    "FRIDAY_MASTER_KEY is not configured. Set FRIDAY_MASTER_KEY (hex), set FRIDAY_MASTER_KEY_SOURCE=keychain, or provision an existing ~/.friday/master.key. Friday will not auto-generate a key for this path.",
     { httpStatus: 503 },
   );
 }

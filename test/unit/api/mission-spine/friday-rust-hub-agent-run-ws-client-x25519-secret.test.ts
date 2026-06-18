@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as crypto from "node:crypto";
 
 import {
   deriveRustAgentRunWsClientX25519PublicKey,
@@ -16,7 +17,10 @@ import { resetMasterKeyCache } from "../../../../src/security/friday-secret-cryp
 
 const SAVED_PRESENCE = process.env[FRIDAY_HUB_AGENT_RUN_WS_X25519_SECRET_PRESENT];
 const SAVED_MASTER_KEY = process.env.FRIDAY_MASTER_KEY;
-// A deterministic 32-byte hex master key so getMasterKey() returns a known value in-process.
+const SAVED_MASTER_KEY_SOURCE = process.env.FRIDAY_MASTER_KEY_SOURCE;
+const SAVED_KEYCHAIN_SERVICE = process.env.FRIDAY_MASTER_KEY_KEYCHAIN_SERVICE;
+const SAVED_KEYCHAIN_ACCOUNT = process.env.FRIDAY_MASTER_KEY_KEYCHAIN_ACCOUNT;
+// A deterministic 32-byte hex master key so getProvisionedMasterKey() returns a known value in-process.
 const FIXTURE_MASTER_KEY_HEX = "11".repeat(32); // pragma: allowlist secret
 
 function restoreEnv(name: string, saved: string | undefined): void {
@@ -32,7 +36,7 @@ describe("resolveRustAgentRunWsClientX25519Secret (B1-compose, dark, SecureStore
     delete process.env[FRIDAY_HUB_AGENT_RUN_WS_X25519_SECRET_PRESENT];
     // Hermetic: clear any inherited/leaked master-key env so each test controls it explicitly.
     delete process.env.FRIDAY_MASTER_KEY;
-    // getMasterKey() caches the master key for a TTL; reset it so a per-test FRIDAY_MASTER_KEY
+    // getProvisionedMasterKey() caches the master key for a TTL; reset it so a per-test FRIDAY_MASTER_KEY
     // takes effect deterministically (and the suite never inherits a real provisioned key).
     resetMasterKeyCache();
   });
@@ -40,6 +44,9 @@ describe("resolveRustAgentRunWsClientX25519Secret (B1-compose, dark, SecureStore
   afterEach(() => {
     restoreEnv(FRIDAY_HUB_AGENT_RUN_WS_X25519_SECRET_PRESENT, SAVED_PRESENCE);
     restoreEnv("FRIDAY_MASTER_KEY", SAVED_MASTER_KEY);
+    restoreEnv("FRIDAY_MASTER_KEY_SOURCE", SAVED_MASTER_KEY_SOURCE);
+    restoreEnv("FRIDAY_MASTER_KEY_KEYCHAIN_SERVICE", SAVED_KEYCHAIN_SERVICE);
+    restoreEnv("FRIDAY_MASTER_KEY_KEYCHAIN_ACCOUNT", SAVED_KEYCHAIN_ACCOUNT);
     resetMasterKeyCache();
     vi.restoreAllMocks();
   });
@@ -64,16 +71,12 @@ describe("resolveRustAgentRunWsClientX25519Secret (B1-compose, dark, SecureStore
   });
 
   it("when the SecureStore master key is unavailable → fail closed (null), never a throw", () => {
-    // With no keychain master key + no master-key env provisioned, the SecureStore lookup either
-    // throws internally (→ null) or yields a key; in BOTH cases the resolver never throws and never
-    // returns a short/invalid value.
     delete process.env.FRIDAY_MASTER_KEY;
-    const result = resolveRustAgentRunWsClientX25519Secret();
-    if (result !== null) {
-      expect(result.length).toBe(32);
-    } else {
-      expect(result).toBeNull();
-    }
+    process.env.FRIDAY_MASTER_KEY_SOURCE = "keychain";
+    process.env.FRIDAY_MASTER_KEY_KEYCHAIN_SERVICE = `Friday Test Missing ${crypto.randomUUID()}`;
+    process.env.FRIDAY_MASTER_KEY_KEYCHAIN_ACCOUNT = `friday-test-${crypto.randomUUID()}`;
+
+    expect(resolveRustAgentRunWsClientX25519Secret()).toBeNull();
   });
 
   it("derives a STABLE 32-byte secret from a fixture master key (idempotent across calls)", () => {
