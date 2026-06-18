@@ -25,7 +25,7 @@ use friday_storage::{
     authorize_reversible_batch_in_worktree, get_pending_request, persist_pending_request, Db,
     DialWorktreeScope, Ed25519VerifyOnlyPolicy, PendingApprovalRequest,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The HMAC secret the HUB holds (the symmetric mint==verify key). A correct verify-only
 /// Ed25519 policy must make this irrelevant for protected actions.
@@ -206,6 +206,20 @@ fn audit_count(db: &Db) -> i64 {
     db.conn()
         .query_row("SELECT count(*) FROM audit_ledger", [], |r| r.get(0))
         .unwrap()
+}
+
+fn only_audit_payload_ref(db: &Db) -> String {
+    db.conn()
+        .query_row("SELECT payload_ref FROM audit_ledger", [], |r| r.get(0))
+        .unwrap()
+}
+
+fn worktree_ref(path: &Path) -> String {
+    let canonical = std::fs::canonicalize(path)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    friday_crypto::action_digest(canonical.as_bytes())
 }
 
 fn temp_worktree(tag: &str) -> PathBuf {
@@ -827,7 +841,7 @@ fn dial_worktree_driver_allows_signed_member_inside_active_worktree_and_audits()
     let batch = batch_approval(&[&req], &sk, "dial-batch-ok", Some(FUTURE));
     let scope = DialWorktreeScope {
         plan_sign_id: "dial-batch-ok".to_string(),
-        active_worktree: worktree,
+        active_worktree: worktree.clone(),
     };
 
     let r =
@@ -844,6 +858,15 @@ fn dial_worktree_driver_allows_signed_member_inside_active_worktree_and_audits()
     assert_eq!(
         friday_storage::audit::verify_audit_chain(db.conn()).unwrap(),
         1
+    );
+    let payload_ref = only_audit_payload_ref(&db);
+    assert!(
+        payload_ref.contains(&format!("/worktree/{}/", worktree_ref(&worktree))),
+        "dial audit payload must carry a refs-only worktree digest, got {payload_ref}"
+    );
+    assert!(
+        payload_ref.starts_with("dial://batch/dial-batch-ok/worktree/"),
+        "dial audit payload must carry the plan sign id and worktree ref, got {payload_ref}"
     );
 }
 

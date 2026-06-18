@@ -323,7 +323,11 @@ pub fn authorize_reversible_batch_in_worktree(
     if evidence.decision == GateDecision::Allow {
         let digest = friday_crypto::action_digest(&gate::canonical_action_bytes(request));
         let audit_id = format!("dial.batch.worktree:{}:{}", scope.plan_sign_id, digest);
-        let payload_ref = format!("dial://batch/{}/action/{}", scope.plan_sign_id, digest);
+        let worktree_ref = dial_worktree_ref(&scope.active_worktree);
+        let payload_ref = format!(
+            "dial://batch/{}/worktree/{}/action/{}",
+            scope.plan_sign_id, worktree_ref, digest
+        );
         crate::audit::append_audit(
             &tx,
             &audit_id,
@@ -365,6 +369,14 @@ fn worktree_revertable_preflight(
         return Some("dial_worktree_resource_out_of_scope");
     }
     None
+}
+
+fn dial_worktree_ref(active_worktree: &Path) -> String {
+    let canonical = std::fs::canonicalize(active_worktree)
+        .unwrap_or_else(|_| active_worktree.to_path_buf())
+        .to_string_lossy()
+        .into_owned();
+    friday_crypto::action_digest(canonical.as_bytes())
 }
 
 fn canonicalize_existing_parent(
