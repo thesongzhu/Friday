@@ -39,8 +39,8 @@ use crate::mission_context::MissionContextLookup;
 use crate::mission_preflight::MissionAttachmentOutcome;
 use crate::mission_runtime::{
     answer_produced_outcome_receipt_for_work_item, attach_agent_loop_provider_state,
-    resolve_mission_runtime_envelope, MissionRuntimeEnvelope, MissionRuntimeOutcome,
-    MissionRuntimeRequest,
+    resolve_mission_runtime_envelope, AgentLoopProviderRestState, MissionRuntimeEnvelope,
+    MissionRuntimeOutcome, MissionRuntimeRequest,
 };
 use crate::routing::{
     run_routed_loop_with_policy, ProviderClientResolver, ProviderRoute, RouteRegistry,
@@ -2182,14 +2182,25 @@ impl<T: Transport> HubRuntime<T> {
 
         // Bind the run to the Mission via the ask path's provider-timeline attachment, AFTER the
         // loop. Truth-honest: complete the WorkItem with the run as proof ONLY when the loop
-        // Finished; otherwise bind at `ProviderRouted` (the pause/await rest state the #755 resume
-        // path drives from) without over-claiming completion. The binding ALSO clears the durable
-        // `executing` marker ATOMICALLY in the SAME transaction as its FINAL status hop (degrade-3
-        // fix): a run that reaches a binding rest state (`ProviderRouted` on pause/await,
+        // Finished; keep resumable/user-waiting stops at `ProviderRouted`; and terminal non-answer
+        // failures at `FailedTerminal` so they cannot strand a WorkItem as apparently live routed
+        // work. The binding ALSO clears the durable `executing` marker ATOMICALLY in the SAME
+        // transaction as its FINAL status hop (degrade-3 fix): a run that reaches a binding rest
+        // state (`ProviderRouted` on pause/await, `FailedTerminal` on terminal failure,
         // `CompletedWithProof` on completion) ends with `executing == 0` written in the SAME tx, so
         // a swallowed best-effort tail-clear can NEVER strand `executing == 1` on a live paused run
         // (which PASS-2 would then falsely reconcile after a long human approval latency).
         let completed = outcome.status == LoopStatus::Finished;
+        let rest_state = match outcome.status {
+            LoopStatus::Finished => AgentLoopProviderRestState::Completed,
+            LoopStatus::Paused | LoopStatus::AwaitingClarification => {
+                AgentLoopProviderRestState::Routed
+            }
+            LoopStatus::Blocked
+            | LoopStatus::Bounded
+            | LoopStatus::Errored
+            | LoopStatus::Interrupted => AgentLoopProviderRestState::FailedTerminal,
+        };
         let result_link = format!("friday://agent-run/{run_id}");
         let completion_proof_receipt = if completed {
             answer_produced_outcome_receipt_for_work_item(
@@ -2207,7 +2218,7 @@ impl<T: Transport> HubRuntime<T> {
             &envelope.context.work_item_id,
             session_id,
             run_id,
-            completed,
+            rest_state,
             &result_link,
             completion_proof_receipt.as_deref(),
             // WI-1 (M-6): DARK-flag bool threaded from the entrypoint env read. OFF ⇒ the inline
@@ -8353,6 +8364,66 @@ mod tests {
         assert!(work_item
             .proof_receipts
             .contains(&"friday://agent-run/run-mloop".to_string()));
+        assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
+    }
+
+    #[test]
+    fn mission_bound_terminal_non_answer_marks_work_item_failed_terminal_without_proof() {
+        let (rt, root, _post) = runtime_with(
+            "mloop-bounded-terminal",
+            &["{\"tool\":\"read_file\",\"parameters\":{\"path\":\"notes.md\"}}"],
+            Box::new(DenyAllApprovals),
+        );
+        std::fs::write(root.join("notes.md"), b"mission-bound note").unwrap();
+        seed_loop_mission(
+            rt.db(),
+            WorkLane::DeepSeek,
+            Some("deepseek"),
+            WorkItemStatus::ReadyToDispatch,
+        );
+
+        let outcome = rt
+            .run_agent_loop_for_mission_with_overrides(
+                loop_lookup(),
+                "friday-hub-session",
+                "run-mloop-bounded",
+                "keep reading until done",
+                None,
+                Some(1),
+                1000,
+            )
+            .unwrap();
+
+        let MissionBoundLoopOutcome::Ran {
+            outcome,
+            attachment,
+            ..
+        } = outcome
+        else {
+            panic!("expected a Mission-bound loop run");
+        };
+        assert_eq!(outcome.status, LoopStatus::Bounded);
+        assert!(matches!(
+            attachment,
+            MissionAttachmentOutcome::Attached {
+                work_item_status: WorkItemStatus::FailedTerminal,
+                ..
+            }
+        ));
+        let work_item = rt.db().get_work_item("work-loop").unwrap().unwrap();
+        assert_eq!(work_item.status, WorkItemStatus::FailedTerminal);
+        assert!(
+            work_item.proof_receipts.is_empty(),
+            "terminal non-answer must not mint a completion proof"
+        );
+        assert!(
+            !rt.db()
+                .get_work_item_execution_state("work-loop")
+                .unwrap()
+                .unwrap()
+                .executing,
+            "the terminal rest hop must clear executing atomically"
+        );
         assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
     }
 
