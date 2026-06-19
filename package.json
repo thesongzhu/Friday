@@ -132,6 +132,7 @@
     "ops:agent-adoption:resume": "node dist/cli/friday-cli.js phases resume",
     "ops:agent-adoption:closeout": "node dist/cli/friday-cli.js phases closeout",
     "test:install:smoke": "node scripts/ci/install-smoke.mjs",
+    "test:mechanism-wiring": "node scripts/ci/verify-mechanism-wiring-matrix.mjs",
     "test:docker:e2e:runtime": "FRIDAY_DOCKER_SMOKE_LAYER=runtime bash scripts/ci/docker-e2e-smoke.sh",
     "test:docker:e2e:bootstrap": "FRIDAY_DOCKER_SMOKE_LAYER=bootstrap bash scripts/ci/docker-e2e-smoke.sh",
     "test:docker:e2e:plugins": "FRIDAY_DOCKER_SMOKE_LAYER=plugins bash scripts/ci/docker-e2e-smoke.sh",
