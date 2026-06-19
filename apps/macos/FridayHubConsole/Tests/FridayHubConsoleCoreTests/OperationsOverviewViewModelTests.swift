@@ -573,6 +573,9 @@ func realWriteClientFactoryBuildsLiveAgainst48750OrHonestUnavailable() {
   // Wiring-only; the live round-trip against a RUNNING server is the operator-gated AC.
   #expect(AgentRunWriteServerConfig.liveLoopback.port == 48750)
   #expect(AgentRunWriteServerConfig.liveLoopback.host == "127.0.0.1")
+  // The client receive window must exceed the Rust Codex app-server watchdog (300s) so a
+  // provider timeout can settle as an honest AgentRunResult instead of racing the socket timeout.
+  #expect(AgentRunWriteServerConfig.liveLoopback.receiveTimeout > 300)
   let client = RealWriteClientFactory.make(
     config: .liveLoopback, forwardedPrincipal: "admin-001")
   #expect(client is SealedWSWriteClient)

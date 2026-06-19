@@ -43,7 +43,7 @@ public struct AgentRunWriteServerConfig: Sendable, Equatable {
     host: String = "127.0.0.1",
     port: UInt16,
     connectTimeout: TimeInterval = 4,
-    receiveTimeout: TimeInterval = 300
+    receiveTimeout: TimeInterval = 360
   ) {
     self.host = host
     self.port = port

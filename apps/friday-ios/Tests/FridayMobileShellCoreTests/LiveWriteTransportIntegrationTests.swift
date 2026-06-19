@@ -42,6 +42,13 @@ import Testing
 private let liveWriteTestEnabled =
   ProcessInfo.processInfo.environment["FRIDAY_MOBILE_LIVE_WRITE_TEST"] == "1"
 
+@Test
+func liveWriteConfigReceiveTimeoutOutlivesCodexWatchdog() {
+  // The client receive window must exceed the Rust Codex app-server watchdog (300s) so a
+  // provider timeout can settle as an honest AgentRunResult instead of racing the socket timeout.
+  #expect(AgentRunServerConfig.liveLoopback.receiveTimeout > 300)
+}
+
 /// Drive the sealed-WS handshake (preamble + WS upgrade + ECDH) over the live write transport as the
 /// enrolled master-derived peer, asserting peer-auth completes. NON-MUTATING: no envelope is sent.
 @Test(.enabled(if: liveWriteTestEnabled))
