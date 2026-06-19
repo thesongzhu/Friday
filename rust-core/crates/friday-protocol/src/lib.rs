@@ -368,6 +368,14 @@ pub struct MissionIntakeResultWire {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duplicate_work_item_id: Option<String>,
     pub created_or_ready: bool,
+    /// The canonical WorkItem route selected by Rust intake. Optional for
+    /// backward compatibility and non-ready results; when present it lets thin
+    /// TS producers dispatch the server-selected route instead of re-reading
+    /// the raw request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_lane: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_target_provider_or_agent: Option<String>,
     /// (Mission-intake clarification — DARK, default-OFF) The specific clarifying
     /// questions for an UNDER-SPECIFIED intent. NON-EMPTY only when
     /// `status == "needs_clarification"`; every existing ready/blocked path leaves
@@ -2248,6 +2256,8 @@ mod tests {
                     duplicate_mission_id: None,
                     duplicate_work_item_id: None,
                     created_or_ready: true,
+                    selected_lane: Some("deepseek".into()),
+                    selected_target_provider_or_agent: Some("deepseek".into()),
                     clarification_questions: Vec::new(),
                 },
             },

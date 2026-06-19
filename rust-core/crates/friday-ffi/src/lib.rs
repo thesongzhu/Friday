@@ -3026,6 +3026,8 @@ mod tests {
                     duplicate_work_item_id: None,
                     created_or_ready: false,
                     clarification_questions: Vec::new(),
+                    selected_lane: None,
+                    selected_target_provider_or_agent: None,
                 },
             },
         );

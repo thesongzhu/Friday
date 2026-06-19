@@ -132,22 +132,34 @@ function deriveTask(
   return `Advance mission work item ${result.workItemId ?? ""}`.trim();
 }
 
+function selectedLane(
+  request: FridayRustHubMissionIntakeRequest,
+  result: FridayRustHubMissionIntakeResult,
+): string {
+  return (result.selectedLane ?? request.lane).trim();
+}
+
+function selectedTargetProviderOrAgent(
+  request: FridayRustHubMissionIntakeRequest,
+  result: FridayRustHubMissionIntakeResult,
+): string | undefined {
+  return (result.selectedTargetProviderOrAgent ?? request.targetProviderOrAgent)?.trim();
+}
+
 function isCodexMissionTarget(
   request: FridayRustHubMissionIntakeRequest,
+  result: FridayRustHubMissionIntakeResult,
 ): boolean {
-  return (
-    request.lane.trim() === "codex" &&
-    request.targetProviderOrAgent?.trim() === "codex"
-  );
+  return selectedLane(request, result) === "codex" &&
+    selectedTargetProviderOrAgent(request, result) === "codex";
 }
 
 function isClaudeMissionTarget(
   request: FridayRustHubMissionIntakeRequest,
+  result: FridayRustHubMissionIntakeResult,
 ): boolean {
-  return (
-    request.lane.trim() === RUST_ROUTE_CLAUDE_PROVIDER_ID &&
-    request.targetProviderOrAgent?.trim() === RUST_ROUTE_CLAUDE_PROVIDER_ID
-  );
+  return selectedLane(request, result) === RUST_ROUTE_CLAUDE_PROVIDER_ID &&
+    selectedTargetProviderOrAgent(request, result) === RUST_ROUTE_CLAUDE_PROVIDER_ID;
 }
 
 export function createFridayMissionAutoDispatchDriver(
@@ -202,8 +214,8 @@ export function createFridayMissionAutoDispatchDriver(
           request.ownerPrincipal.trim().length > 0
             ? request.ownerPrincipal.trim()
             : undefined;
-        const codexMissionTarget = isCodexMissionTarget(request);
-        const claudeMissionTarget = isClaudeMissionTarget(request);
+        const codexMissionTarget = isCodexMissionTarget(request, result);
+        const claudeMissionTarget = isClaudeMissionTarget(request, result);
         const route = codexMissionTarget
           ? { providerId: codexProviderId, model: codexModel }
           : claudeMissionTarget
