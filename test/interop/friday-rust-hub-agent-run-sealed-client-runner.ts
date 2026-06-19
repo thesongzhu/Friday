@@ -338,6 +338,78 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (mode === "mission-route-lifecycle-workitem") {
+      const clientSecret = new Uint8Array(Buffer.from(secretHex, "hex"));
+      const missionId = arg("mission-id") ?? "mission-ns5";
+      const workItemId = arg("work-item-id") ?? "work-ns5";
+      const dispatch = createFridayMissionSpineDispatchAdapter({
+        host: "127.0.0.1",
+        port,
+        timeoutMs,
+        secretResolver: () => clientSecret,
+      });
+      const routes = createFridayMissionSpineRoutes({
+        workbench: null,
+        disabledReason: null,
+        dispatch,
+      });
+      const lifecycleRoute = routes.find(
+        (candidate) => candidate.operationId === "mission.spine.lifecycle.transition",
+      );
+      const workItemRoute = routes.find(
+        (candidate) => candidate.operationId === "mission.spine.workitem.status.transition",
+      );
+      if (!lifecycleRoute || !workItemRoute) {
+        process.stdout.write(JSON.stringify({ ok: false, code: "MISSION_ROUTE_MISSING", httpStatus: 0 }) + "\n");
+        process.exit(6);
+        return;
+      }
+      const principalContext = {
+        principalType: "user",
+        principalId: principal,
+        userId: principal,
+        role: "admin",
+        scopes: ["hub.admin"],
+      };
+      const workItemResponse = await workItemRoute.handler({
+        requestId: "req-interop-mission-route-workitem",
+        receivedAt: new Date(0).toISOString(),
+        params: { workItemId },
+        query: {},
+        body: {
+          targetStatus: "dispatched",
+          actorRef: principal,
+          reason: "interop route work-item transition",
+        },
+        headers: {},
+        principal: principalContext,
+      } as never);
+      const lifecycleResponse = await lifecycleRoute.handler({
+        requestId: "req-interop-mission-route-lifecycle",
+        receivedAt: new Date(0).toISOString(),
+        params: { missionId },
+        query: {},
+        body: {
+          fridayConversationId: arg("friday-conversation-id") ?? "fconv_ns5_intake",
+          targetStatus: "paused",
+          actorRef: principal,
+          reason: "interop route lifecycle transition",
+        },
+        headers: {},
+        principal: principalContext,
+      } as never);
+      process.stdout.write(
+        JSON.stringify({
+          ok: true,
+          mode,
+          lifecycle: (lifecycleResponse as { result?: unknown }).result ?? null,
+          workItem: (workItemResponse as { result?: unknown }).result ?? null,
+        }) + "\n",
+      );
+      process.exit(0);
+      return;
+    }
+
     const result = await client.dispatchRun({ runId, task, forwardedPrincipal: principal });
     // (A3 courier) dispatch returns a discriminated union (result | paused). This runner drives the
     // read-only path with the run-control flag OFF, so a paused outcome is unreachable here — narrow
