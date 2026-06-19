@@ -39,12 +39,12 @@ func liveConsoleMissionSpineWriteDispatchReturnsReadyReceipt() async throws {
 }
 
 @Test(.enabled(if: liveMissionBoundRunEnabled))
-func liveConsoleMissionSpineWriteDispatchCanStartMissionBoundRun() async throws {
+func liveConsoleMissionSpineWriteDispatchClarifiesVagueCodexRepairBeforeModelCall() async throws {
   let client = try RealWriteClientFactory.makeLiveWrite()
   let request = makeLiveIntake(
     surface: "desktop",
     route: "desktop://hub-console/live-bound-run",
-    title: "Verify live desktop auto-route mission-bound Codex run",
+    title: "Verify live desktop vague Codex repair clarifies before dispatch",
     intent: "Fix a small Rust compile failure in a workspace and describe the focused regression test that should be added.",
     lane: "auto",
     targetProviderOrAgent: nil)
@@ -68,7 +68,11 @@ func liveConsoleMissionSpineWriteDispatchCanStartMissionBoundRun() async throws 
   print(
     "[live-write-dispatch][desktop-bound] runId=\(receipt.runId) "
       + "status=\(receipt.status) turns=\(receipt.turns ?? 0)")
-  #expect(receipt.status == "completed" || receipt.status == "finished" || receipt.status == "ok")
+  #expect(receipt.status == "awaiting_clarification")
+  #expect(receipt.turns == 0)
+  #expect(receipt.executedTools == 0)
+  #expect(receipt.answerSha256 != nil)
+  #expect((receipt.answerLen ?? 0) > 0)
 }
 
 private func makeLiveIntake(
