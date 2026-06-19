@@ -193,7 +193,7 @@ function defaultReportPath() {
   return path.join(DEFAULT_REPORT_ROOT, "c1-c2-tier1-parity-capture.json");
 }
 
-function artifactPathFor(root, flow) {
+export function artifactPathFor(root, flow) {
   return path.join(root, `${String(flow.order).padStart(2, "0")}-${flow.flowId}.json`);
 }
 
@@ -279,6 +279,9 @@ export function validateCaptureRecord(flow, record) {
   }
   if (!Array.isArray(recordObject.evidence) || recordObject.evidence.length === 0) {
     errors.push(`evidence array is required for ${flow.flowId}`);
+  }
+  if (recordObject.status && !["passed", "captured"].includes(recordObject.status)) {
+    errors.push(`status must be passed or captured for ${flow.flowId}`);
   }
   return errors;
 }
