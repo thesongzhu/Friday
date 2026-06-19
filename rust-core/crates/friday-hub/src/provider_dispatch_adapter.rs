@@ -15,8 +15,9 @@
 //!   - [`ProviderWorkspaceAction::ListSessions`] → `CodexAppServerClient::list_threads`
 //!   - [`ProviderWorkspaceAction::StartSession`] → `CodexAppServerClient::start_thread`
 //! It can also route Codex `send_turn` when tests or a future live caller inject a prompt
-//! body resolver and the context carries a provider thread id. The current Hub selection
-//! intentionally injects no prompt resolver, so production remains fail-closed / DARK.
+//! body resolver and the context carries a provider thread id. The current Hub selection can
+//! inject the Mission body snapshot resolver, but production remains fail-closed / DARK because
+//! the flag is default-OFF and no `friday_current()` send-turn capability is `Verified`.
 //!
 //! Every OTHER action returns a typed [`DispatchError::AdapterNotReady`] with a code-only
 //! (secret-free) reason, NOT a fake success. The deferrals are honest and structural:
@@ -25,8 +26,8 @@
 //!   - Interrupt / Steer also need a provider `turn_id` (the session's `active_turn_id` is
 //!     not threaded through the dispatch context).
 //!   - Steer still needs both a provider `turn_id` and prompt text.
-//!   - Send needs prompt text and a provider thread id; the resolver seam exists here, but
-//!     the live Hub injects no resolver until a real body store / intake body snapshot lands.
+//!   - Send needs prompt text and a provider thread id; the resolver reads only a Mission-intake
+//!     body snapshot bound to the resolved WorkItem input refs.
 //!   - Fork / ApproveOrReject / AnswerQuestion have NO standalone client method (approve /
 //!     answer exist only as the in-turn handler inside `run_turn_with_handler`).
 //!   - OpenProviderNative is the unsupported / operator-gated native-link surface.
@@ -62,6 +63,7 @@ use friday_providers::codex_appserver::{
     CodexAppServerClient, CodexAppServerError, CodexAppServerTransport, LocalCodexAppServer,
     TurnSummary,
 };
+use friday_storage::Db;
 
 use crate::provider_dispatch::{
     DispatchContext, DispatchError, DispatchOutcome, DispatchStatus, ProviderDispatchAdapter,
@@ -224,6 +226,65 @@ impl PromptBodyResolver for NoPromptBodyResolver {
         Err(DispatchError::AdapterNotReady(
             "prompt_body_resolver_not_wired".to_string(),
         ))
+    }
+}
+
+pub struct DbPromptBodyResolver<'a> {
+    db: &'a Db,
+}
+
+impl<'a> DbPromptBodyResolver<'a> {
+    pub fn new(db: &'a Db) -> Self {
+        Self { db }
+    }
+}
+
+impl PromptBodyResolver for DbPromptBodyResolver<'_> {
+    fn resolve_prompt(&self, ctx: &DispatchContext<'_>) -> Result<String, DispatchError> {
+        let body_ref = ctx.payload_ref.ok_or_else(|| {
+            DispatchError::AdapterNotReady("prompt_body_ref_required".to_string())
+        })?;
+        if !ctx
+            .work_item_input_refs
+            .iter()
+            .any(|input| input == body_ref)
+        {
+            return Err(DispatchError::AdapterNotReady(
+                "prompt_body_ref_not_bound_to_work_item".to_string(),
+            ));
+        }
+        let mission = self
+            .db
+            .get_mission(&ctx.mission_context.mission_id)
+            .map_err(|_| {
+                DispatchError::AdapterNotReady("prompt_body_mission_lookup_failed".to_string())
+            })?
+            .ok_or_else(|| {
+                DispatchError::AdapterNotReady("prompt_body_mission_missing".to_string())
+            })?;
+        let conversation = self
+            .db
+            .get_friday_conversation(&mission.friday_conversation_id)
+            .map_err(|_| {
+                DispatchError::AdapterNotReady("prompt_body_conversation_lookup_failed".to_string())
+            })?
+            .ok_or_else(|| {
+                DispatchError::AdapterNotReady("prompt_body_conversation_missing".to_string())
+            })?;
+        let snapshot = self
+            .db
+            .get_mission_body_snapshot(
+                &conversation.owner_principal,
+                &ctx.mission_context.work_item_id,
+                body_ref,
+            )
+            .map_err(|_| {
+                DispatchError::AdapterNotReady("prompt_body_snapshot_lookup_failed".to_string())
+            })?
+            .ok_or_else(|| {
+                DispatchError::AdapterNotReady("prompt_body_snapshot_missing".to_string())
+            })?;
+        Ok(snapshot.body)
     }
 }
 
@@ -442,7 +503,7 @@ mod tests {
         CapabilityStatus, FallbackStatus, PlatformProvider, ProviderCapability,
         ProviderNativeAction, ProviderSession, ProviderSyncMode, SessionStatus,
     };
-    use friday_storage::Db;
+    use friday_storage::{Db, MissionBodySnapshot};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static C: AtomicU64 = AtomicU64::new(0);
@@ -604,6 +665,17 @@ mod tests {
             updated_at_ms: now,
         })
         .unwrap();
+        let snapshot = MissionBodySnapshot::new(
+            "owner-1",
+            "mission-1",
+            "work-1",
+            "friday://body/request/1",
+            "provider_workspace",
+            "Say exactly READY.",
+            now,
+        )
+        .unwrap();
+        db.upsert_mission_body_snapshot(&snapshot).unwrap();
         db
     }
 
@@ -717,6 +789,30 @@ mod tests {
             &adapter,
             &session(),
             &db_with_context(),
+            req("send_turn", "provider.codex.send_turn"),
+        );
+        assert!(result.accepted);
+        assert!(result.routed);
+        assert_eq!(result.status, "dispatched_running");
+        assert!(result.blocker.is_none());
+        assert!(result.dispatch_ref.is_some());
+        assert_eq!(result.truth_label, "verified test catalog");
+    }
+
+    #[test]
+    fn flag_on_send_turn_with_db_prompt_resolver_routes_to_turn_start() {
+        let db = db_with_context();
+        let adapter = ProviderWorkspaceDispatchAdapter::with_prompt_resolver(
+            transport_client(vec![ok(json!({
+                "turn": { "id": "turn-db", "status": "inProgress", "items": [] }
+            }))]),
+            DbPromptBodyResolver::new(&db),
+        );
+        let result = dispatch_provider_action(
+            &verified_codex_catalog(),
+            &adapter,
+            &session(),
+            &db,
             req("send_turn", "provider.codex.send_turn"),
         );
         assert!(result.accepted);

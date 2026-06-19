@@ -12,7 +12,7 @@ use friday_core::{
     outcome_checked_proof_enabled, requires_context_passport, ApprovalState, FridayConversation,
     Mission, MissionLink, MissionLinkKind, SurfaceThread, WorkItem, WorkItemStatus, WorkspaceClaim,
 };
-use friday_storage::{memory, workflow, Db, StorageError};
+use friday_storage::{memory, workflow, Db, MissionBodySnapshot, StorageError};
 
 use crate::channel_event::ChannelInboundReceipt;
 use crate::provider_timeline::PendingState;
@@ -23,6 +23,7 @@ pub struct MissionPreflightRequest {
     pub mission: Mission,
     pub surface_thread: Option<SurfaceThread>,
     pub work_item: WorkItem,
+    pub body_snapshot: Option<MissionBodySnapshot>,
     pub includes_sensitive_context: bool,
 }
 
@@ -162,12 +163,13 @@ pub fn preflight_and_stage_work_item_with_workspace_claims(
     // conversation+intent duplicate guard then matched and BLOCKED a clean retry against (binding the
     // surface to the orphan). `stage_intake_atomic` writes all-or-nothing (and busy-retries under
     // reaper/retention WAL contention), so a failure writes ZERO rows and a retry is clean.
-    db.stage_intake_atomic_with_workspace_claims(
+    db.stage_intake_atomic_with_workspace_claims_and_body_snapshot(
         &conversation,
         &mission,
         surface_thread.as_ref(),
         &work_item,
         workspace_claims,
+        request.body_snapshot.as_ref(),
     )?;
 
     Ok(MissionPreflightOutcome::Ready {
@@ -1076,6 +1078,7 @@ mod tests {
             mission: mission(mission_id, intent, context_passport_refs, now),
             surface_thread: Some(surface(mission_id, now)),
             work_item: work_item(work_item_id, mission_id, lane, Vec::new(), now),
+            body_snapshot: None,
             includes_sensitive_context: sensitive,
         }
     }
