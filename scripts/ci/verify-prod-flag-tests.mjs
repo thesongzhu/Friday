@@ -12,9 +12,10 @@
  *   1. The manifest is well-formed JSON with the required shape.
  *   2. Every flag with prod_state in (on, dark) names an e2e_test of the form
  *      "<relative/file/path>::<test_fn_name>".
- *   3. The named test file EXISTS and contains the named test function
+ *   3. Any additional_e2e_tests entries use the same form.
+ *   4. The named test file EXISTS and contains the named test function
  *      (Rust:  `fn <name>`  ·  vitest/TS:  `it("<name>"...)` or `test("<name>"...)`).
- *   4. No duplicate flag entries; coverage is a known value.
+ *   5. No duplicate flag entries; coverage is a known value.
  *
  * It FAILS (exit 1), naming the offending flag, on any missing/unmapped/unresolvable
  * test. It does NOT verify the live wrapper/plist actually sets these flags — that
@@ -96,6 +97,41 @@ function escapeRe(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+async function checkTestRef(label, prodState, ref, fieldName) {
+  const parsed = parseTestRef(ref);
+  if (!parsed) {
+    fail(
+      `${label} (prod_state=${prodState}): "${fieldName}" is missing or not of the form ` +
+        `"<file/path>::<test_fn_name>" (got ${JSON.stringify(ref)}). ` +
+        `A prod-${prodState} flag MUST name a loop-closing test — this is the registry-#27 gap.`
+    );
+    return;
+  }
+
+  const absFile = join(REPO_ROOT, parsed.file);
+  try {
+    await access(absFile, constants.R_OK);
+  } catch {
+    fail(
+      `${label} (prod_state=${prodState}): mapped test FILE does not exist: ${parsed.file} ` +
+        `(referenced by ${fieldName} ${JSON.stringify(ref)})`
+    );
+    return;
+  }
+
+  const content = await readFile(absFile, "utf-8");
+  if (!fileDeclaresTest(content, parsed.fn)) {
+    fail(
+      `${label} (prod_state=${prodState}): mapped test FUNCTION "${parsed.fn}" not found in ${parsed.file}. ` +
+        `Expected a Rust \`fn ${parsed.fn}(\` or a vitest it/test("${parsed.fn}"). ` +
+        `If the test was renamed/removed, update the manifest — a prod-${prodState} flag may not be left without a loop test.`
+    );
+    return;
+  }
+
+  ok(`${label} (${prodState}, ${fieldName}) -> ${parsed.file}::${parsed.fn}`);
+}
+
 for (let i = 0; i < manifest.flags.length; i++) {
   const entry = manifest.flags[i];
   const label = entry && entry.flag ? entry.flag : `flags[${i}]`;
@@ -130,38 +166,22 @@ for (let i = 0; i < manifest.flags.length; i++) {
   if (entry.coverage === "loop-e2e") loopE2eCount++;
   if (entry.coverage === "destination-only") destinationOnlyCount++;
 
-  const ref = parseTestRef(entry.e2e_test);
-  if (!ref) {
-    fail(
-      `${label} (prod_state=${entry.prod_state}): "e2e_test" is missing or not of the form ` +
-        `"<file/path>::<test_fn_name>" (got ${JSON.stringify(entry.e2e_test)}). ` +
-        `A prod-${entry.prod_state} flag MUST name a loop-closing test — this is the registry-#27 gap.`
-    );
-    continue;
-  }
+  await checkTestRef(label, entry.prod_state, entry.e2e_test, "e2e_test");
 
-  const absFile = join(REPO_ROOT, ref.file);
-  try {
-    await access(absFile, constants.R_OK);
-  } catch {
-    fail(
-      `${label} (prod_state=${entry.prod_state}): mapped test FILE does not exist: ${ref.file} ` +
-        `(referenced by e2e_test ${JSON.stringify(entry.e2e_test)})`
-    );
-    continue;
+  if (entry.additional_e2e_tests !== undefined) {
+    if (!Array.isArray(entry.additional_e2e_tests)) {
+      fail(`${label}: "additional_e2e_tests" must be an array when present`);
+    } else {
+      for (const [index, ref] of entry.additional_e2e_tests.entries()) {
+        await checkTestRef(
+          label,
+          entry.prod_state,
+          ref,
+          `additional_e2e_tests[${index}]`
+        );
+      }
+    }
   }
-
-  const content = await readFile(absFile, "utf-8");
-  if (!fileDeclaresTest(content, ref.fn)) {
-    fail(
-      `${label} (prod_state=${entry.prod_state}): mapped test FUNCTION "${ref.fn}" not found in ${ref.file}. ` +
-        `Expected a Rust \`fn ${ref.fn}(\` or a vitest it/test("${ref.fn}"). ` +
-        `If the test was renamed/removed, update the manifest — a prod-${entry.prod_state} flag may not be left without a loop test.`
-    );
-    continue;
-  }
-
-  ok(`${label} (${entry.prod_state}, ${entry.coverage}) -> ${ref.file}::${ref.fn}`);
 }
 
 // ── 3. Summary + exit ──

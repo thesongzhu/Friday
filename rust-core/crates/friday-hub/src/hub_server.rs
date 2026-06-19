@@ -6310,6 +6310,86 @@ mod tests {
     }
 
     #[test]
+    fn work_item_status_dispatch_arm_updates_timeline_without_provider_call() {
+        let db_path = tmp_db();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let db = Db::open_hub(&db_path).unwrap();
+        seed_mission_ask(&db);
+
+        let audit_before = db.count("audit_ledger").unwrap();
+        let response = work_item_status_result_for_db(
+            &db,
+            "workitem-dispatch-arm",
+            WorkItemStatusRequestWire {
+                work_item_id: "work-hub-ask".into(),
+                target_status: "dispatched".into(),
+                actor_ref: "system:mission-spine-dispatch".into(),
+                reason: "dispatch ready WorkItem through the mission spine".into(),
+                proof_receipt: None,
+            },
+            Some("owner-1"),
+            1_700_000_100_700,
+        );
+        let Message::WorkItemStatusResult { result } = response.message else {
+            panic!("expected WorkItem status result, got {response:?}");
+        };
+        assert_eq!(result.work_item_id, "work-hub-ask");
+        assert_eq!(result.mission_id, "mission-hub-ask");
+        assert_eq!(result.previous_status, "ready_to_dispatch");
+        assert_eq!(result.status, "dispatched");
+        assert_eq!(result.actor_ref, "system:mission-spine-dispatch");
+        assert_eq!(
+            result.reason,
+            "dispatch ready WorkItem through the mission spine"
+        );
+        assert_eq!(result.proof_receipt_count, 0);
+        assert_eq!(result.updated_at_ms, 1_700_000_100_700);
+
+        let stored = db.get_work_item("work-hub-ask").unwrap().unwrap();
+        assert_eq!(stored.status, WorkItemStatus::Dispatched);
+        assert_eq!(db.count("audit_ledger").unwrap(), audit_before + 1);
+        assert_eq!(db.count("token_ledger").unwrap(), 0);
+
+        let client = DeepSeekClient::with_transport(
+            CountingMock {
+                calls: calls.clone(),
+            },
+            "test-key-not-real".to_string(), // pragma: allowlist secret
+        );
+        let mut hub = HubServer::new(db, client, vec!["mission_timeline".into()], 64);
+        let timeline = hub.dispatch(
+            Envelope::new(
+                "workitem-dispatch-arm-timeline",
+                2,
+                Message::MissionTimelineRequest {
+                    request: friday_protocol::MissionTimelineRequestWire {
+                        friday_conversation_id: "fconv_hub_ask".into(),
+                        mission_id: "mission-hub-ask".into(),
+                        cursor: None,
+                        limit: None,
+                    },
+                },
+            ),
+            1_700_000_100_710,
+        );
+        let Message::MissionTimelineSnapshot { snapshot } = timeline.message else {
+            panic!("expected mission timeline snapshot, got {timeline:?}");
+        };
+        let item = snapshot
+            .work_items
+            .iter()
+            .find(|item| item.work_item_id == "work-hub-ask")
+            .expect("timeline should include dispatched WorkItem");
+        assert_eq!(item.status, "dispatched");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "WorkItem status dispatch/readback must not call a provider/model"
+        );
+        assert_eq!(hub.db().count("token_ledger").unwrap(), 0);
+    }
+
+    #[test]
     fn mission_bound_ask_pressure_loop_paginates_and_preserves_memory_boundary() {
         const ASK_COUNT: usize = 25;
         let db_path = tmp_db();
