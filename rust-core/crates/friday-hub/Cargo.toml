@@ -10,14 +10,13 @@ rust-version.workspace = true
 [features]
 # DEPLOY-GO actuation gate (Barrier 3). DEFAULT-OFF. The default build has NO real,
 # host-effecting `OsActuationBackend` compiled in: `OsIntentExecutor::production_default`
-# is `#[cfg(not(feature = "os-actuation-deploy-go"))]` and returns a
-# `OsIntentExecutor<UnavailableBackend>` — the only constructible production backend is
-# `UnavailableBackend`, which actuates NOTHING (compile-time property). A REAL backend can
-# only ship via a deliberate, reviewable, RECOMPILED DEPLOY-GO cutover that enables this
-# feature and supplies the impl — it can NEVER be flipped on at runtime (there is no
-# `env::var` that selects a backend; the selection is `#[cfg(feature = ...)]`-only). Until
-# that cutover the feature-ON arm is an explicit unbuilt seam (`compile_error!`), so the
-# default build cannot even link a real actuator. KEEP DEFAULT-OFF.
+# returns `OsIntentExecutor<UnavailableBackend>` — the only constructible production
+# backend is `UnavailableBackend`, which actuates NOTHING (compile-time property). A REAL
+# backend can only ship via a deliberate, reviewable, RECOMPILED DEPLOY-GO cutover that
+# enables this feature and supplies the impl — it can NEVER be flipped on at runtime
+# (there is no `env::var` that selects a backend; the production selector remains pinned
+# to `UnavailableBackend` until a real backend cutover is reviewed and wired). KEEP
+# DEFAULT-OFF.
 os-actuation-deploy-go = []
 
 [dependencies]
