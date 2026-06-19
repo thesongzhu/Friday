@@ -102,7 +102,7 @@
       "closes_loop": "The TS mission-spine routes (intake/lifecycle/workitem) forward to the Rust hub; the loop closes Rust-side.",
       "coverage": "destination-only",
       "e2e_test": "rust-core/crates/friday-hub/src/hub_server.rs::mission_lifecycle_request_updates_mission_without_provider_call",
-      "notes": "CRITICAL FINDING: destination loop (mission lifecycle dispatch) is proven Rust-side by the mapped test, but NO PR-CI test drives flag-ON TS-routing -> real Rust -> loop-closed. friday-mission-spine-dispatch-adapter.test.ts mocks the sealed client. The flag's own on-ramp is mock-only in PR CI."
+      "notes": "CRITICAL FINDING: destination loop (mission lifecycle dispatch) is proven Rust-side by the mapped test. Manual ignored interop proofs now cover (1) the real TS `/v1/mission-spine/intake` route handler -> real dispatch adapter -> real sealed client -> real auto-dispatch driver -> real Rust mission-bound run, and (2) the real TS lifecycle/workitem route handlers -> real dispatch adapter -> real sealed client -> real Rust mission-spine dispatch arm, mutating DB state with zero token/provider spend. Honest remaining gap: these are controlled loopback proofs requiring the prebuilt Node interop bundle, not organic/operator traffic and not a non-ignored PR-CI flag-on e2e."
     },
     {
       "flag": "FRIDAY_ROUTE_AGENT_RUN_VIA_RUST",

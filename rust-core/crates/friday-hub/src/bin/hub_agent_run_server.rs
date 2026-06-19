@@ -6197,6 +6197,37 @@ mod tests {
             .expect("spawn node TS memory-route decision subprocess")
     }
 
+    /// Spawn the TS sealed-client runner in mission-route lifecycle/workitem mode: the subprocess
+    /// calls the REAL mission-spine POST handlers, which delegate to the REAL dispatch adapter +
+    /// REAL sealed client. The Rust side serves two loopback sealed sessions with the mission-spine
+    /// dispatch arm enabled.
+    fn spawn_ts_mission_route_lifecycle_workitem_client(
+        port: u16,
+        secret_hex: &str,
+        principal: &str,
+        mission_id: &str,
+        work_item_id: &str,
+    ) -> std::process::Child {
+        let bundle = worktree_root().join("test/interop/.build/sealed-client-runner.cjs");
+        assert!(
+            bundle.exists(),
+            "interop bundle missing at {bundle:?} — run `node test/interop/build-sealed-client-runner.mjs` first"
+        );
+        std::process::Command::new("node")
+            .arg(bundle)
+            .arg("--mode=mission-route-lifecycle-workitem")
+            .arg(format!("--port={port}"))
+            .arg(format!("--secret-hex={secret_hex}"))
+            .arg(format!("--principal={principal}"))
+            .arg(format!("--mission-id={mission_id}"))
+            .arg(format!("--work-item-id={work_item_id}"))
+            .arg("--timeout-ms=15000")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn node TS mission-route lifecycle/workitem subprocess")
+    }
+
     /// Read the ONE JSON line the runner prints on stdout.
     fn read_client_json(child: std::process::Child) -> serde_json::Value {
         let out = child
@@ -6562,7 +6593,121 @@ mod tests {
         assert_eq!(route.selected_lane, friday_core::WorkLane::DeepSeek);
     }
 
-    // (1d) OPERATOR-SURFACE-SHAPED MEMORY CONFIRM ROUND-TRIP: real TS memory-spine POST route
+    // (1d) OPERATOR-SURFACE-SHAPED MISSION-SPINE ROUTE ROUND-TRIP: real TS mission-spine POST
+    // route handlers -> real dispatch adapter -> real sealed WorkItemStatusRequest +
+    // MissionLifecycleRequest -> real Rust mission-spine dispatch arm -> DB transitions. This is
+    // still manual/ignored (Node bundle + subprocess), not organic dogfood traffic.
+    #[test]
+    #[ignore = "needs `node` + the prebuilt interop bundle; opt in with --ignored"]
+    fn interop_ts_mission_route_lifecycle_and_workitem_hit_real_rust_spine() {
+        const MISSION_ID: &str = "mission-ns5";
+        const WORK_ITEM_ID: &str = "work-ns5";
+
+        let (rt, _ws) = mock_runtime("interop-mission-route-spine", OWNER);
+        seed_mission_and_work_item(&rt);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let owner_allowlist = vec![OWNER.to_string()];
+        let peer_allowlist = allowlist_of(ts_client_pubkey());
+
+        let mut child = spawn_ts_mission_route_lifecycle_workitem_client(
+            addr.port(),
+            &ts_client_secret_hex(),
+            OWNER,
+            MISSION_ID,
+            WORK_ITEM_ID,
+        );
+
+        let work_item_processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &owner_allowlist,
+                &peer_allowlist,
+                false, // run-control OFF
+                false, // mission-bound seam OFF
+                false, // mission-intake ingress OFF
+                true,  // mission-spine dispatch ON
+                false, // memory-confirm ingress OFF
+                false, // token surface OFF
+                false, // provider-workspace dispatch OFF
+            )
+            .expect("server serves the TS mission-route workitem session");
+        assert_eq!(
+            work_item_processed, 1,
+            "one route-triggered workitem request processed"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        if let Some(status) = child
+            .try_wait()
+            .expect("poll TS mission-route lifecycle/workitem subprocess")
+        {
+            let v = read_client_json(child);
+            panic!(
+                "TS mission-route subprocess exited before lifecycle session: status={status:?} json={v:?}"
+            );
+        }
+
+        let lifecycle_processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &owner_allowlist,
+                &peer_allowlist,
+                false, // run-control OFF
+                false, // mission-bound seam OFF
+                false, // mission-intake ingress OFF
+                true,  // mission-spine dispatch ON
+                false, // memory-confirm ingress OFF
+                false, // token surface OFF
+                false, // provider-workspace dispatch OFF
+            )
+            .expect("server serves the TS mission-route lifecycle session");
+        assert_eq!(
+            lifecycle_processed, 1,
+            "one route-triggered lifecycle request processed"
+        );
+
+        let v = read_client_json(child);
+        assert_eq!(
+            v["ok"],
+            serde_json::json!(true),
+            "TS mission-route lifecycle/workitem runner reports success: {v:?}"
+        );
+        assert_eq!(
+            v["mode"],
+            serde_json::json!("mission-route-lifecycle-workitem")
+        );
+        assert_eq!(v["workItem"]["workItemId"], serde_json::json!(WORK_ITEM_ID));
+        assert_eq!(v["workItem"]["status"], serde_json::json!("dispatched"));
+        assert_eq!(v["lifecycle"]["missionId"], serde_json::json!(MISSION_ID));
+        assert_eq!(v["lifecycle"]["status"], serde_json::json!("paused"));
+
+        let work = rt
+            .db()
+            .get_work_item(WORK_ITEM_ID)
+            .unwrap()
+            .expect("route-triggered work item still exists");
+        assert_eq!(work.status, friday_core::WorkItemStatus::Dispatched);
+        let mission = rt
+            .db()
+            .get_mission(MISSION_ID)
+            .unwrap()
+            .expect("route-triggered mission still exists");
+        assert_eq!(mission.status, friday_core::MissionStatus::Paused);
+        let ledger_rows: i64 = rt
+            .db()
+            .conn()
+            .query_row("SELECT COUNT(*) FROM token_ledger", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            ledger_rows, 0,
+            "route-triggered mission-spine lifecycle/status transitions do not spend tokens"
+        );
+    }
+
+    // (1e) OPERATOR-SURFACE-SHAPED MEMORY CONFIRM ROUND-TRIP: real TS memory-spine POST route
     // handler -> real dispatch adapter -> real sealed MemoryDecisionRequest -> real Rust
     // memory-confirm arm -> real DB candidate transition to Confirmed/recallable. This is still
     // manual/ignored (Node bundle + subprocess), not organic operator traffic, but closes the
