@@ -33,6 +33,13 @@ fn require_non_empty(value: &str, field: &str) -> Result<()> {
     }
 }
 
+fn ref_id_part(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+        .collect()
+}
+
 #[derive(Debug)]
 struct ActiveRouteDecisionControl {
     decision_id: String,
@@ -40,6 +47,17 @@ struct ActiveRouteDecisionControl {
     override_lane: Option<WorkLane>,
     override_provider_or_agent: Option<String>,
     reason: String,
+}
+
+pub struct DeferredRouteFollowUpRequest<'a> {
+    pub decision_id: &'a str,
+    pub source_work_item_id: &'a str,
+    pub follow_up_work_item_id: &'a str,
+    pub follow_up_lane: WorkLane,
+    pub follow_up_provider_or_agent: Option<&'a str>,
+    pub actor_ref: &'a str,
+    pub reason: &'a str,
+    pub now_ms: i64,
 }
 
 fn encode_vec(values: &[String], field: &str) -> Result<String> {
@@ -1158,6 +1176,195 @@ pub fn override_route_decision(
         reason,
         now_ms,
     )
+}
+
+pub fn materialize_deferred_route_follow_up(
+    conn: &Connection,
+    request: DeferredRouteFollowUpRequest<'_>,
+) -> Result<WorkItem> {
+    require_non_empty(request.decision_id, "deferred_follow_up.decision_id")?;
+    require_non_empty(
+        request.source_work_item_id,
+        "deferred_follow_up.source_work_item_id",
+    )?;
+    require_non_empty(
+        request.follow_up_work_item_id,
+        "deferred_follow_up.follow_up_work_item_id",
+    )?;
+    require_non_empty(request.actor_ref, "deferred_follow_up.actor_ref")?;
+    require_non_empty(request.reason, "deferred_follow_up.reason")?;
+    if let Some(target) = request.follow_up_provider_or_agent {
+        require_non_empty(target, "deferred_follow_up.follow_up_provider_or_agent")?;
+    }
+    if request.source_work_item_id == request.follow_up_work_item_id {
+        return Err(unsupported(
+            "deferred_follow_up follow-up WorkItem must be distinct from source WorkItem",
+        ));
+    }
+
+    crate::with_busy_retry(|| {
+        let tx = conn.unchecked_transaction()?;
+        let source = get_work_item(&tx, request.source_work_item_id)?.ok_or_else(|| {
+            unsupported(format!(
+                "deferred_follow_up source WorkItem '{}' not found",
+                request.source_work_item_id
+            ))
+        })?;
+        if source.status != WorkItemStatus::CompletedWithProof {
+            return Err(unsupported(format!(
+                "deferred_follow_up source WorkItem '{}' must be completed_with_proof",
+                request.source_work_item_id
+            )));
+        }
+        if get_work_item(&tx, request.follow_up_work_item_id)?.is_some() {
+            return Err(unsupported(format!(
+                "deferred_follow_up WorkItem '{}' already exists",
+                request.follow_up_work_item_id
+            )));
+        }
+
+        let route = get_route_decision(&tx, request.decision_id)?.ok_or_else(|| {
+            unsupported(format!(
+                "deferred_follow_up route_decision '{}' not found",
+                request.decision_id
+            ))
+        })?;
+        if route.work_item_id != source.work_item_id {
+            return Err(unsupported(format!(
+                "deferred_follow_up route_decision '{}' belongs to WorkItem '{}' not '{}'",
+                request.decision_id, route.work_item_id, source.work_item_id
+            )));
+        }
+        let Some(deferred_option) = route.deferred_options.first() else {
+            return Err(unsupported(format!(
+                "deferred_follow_up route_decision '{}' has no deferred options",
+                request.decision_id
+            )));
+        };
+
+        let mut mission = get_mission(&tx, &source.mission_id)?.ok_or_else(|| {
+            unsupported(format!(
+                "deferred_follow_up Mission '{}' not found",
+                source.mission_id
+            ))
+        })?;
+        let source_proof_refs = if source.proof_receipts.is_empty() {
+            vec![format!("friday://work-item/{}", source.work_item_id)]
+        } else {
+            source.proof_receipts.clone()
+        };
+        let target_label = request
+            .follow_up_provider_or_agent
+            .unwrap_or(request.follow_up_lane.as_str())
+            .to_string();
+
+        let mut inheritable_context = source.judgment_memory.inheritable_context.clone();
+        for value in [
+            format!("source_work_item:{}", source.work_item_id),
+            format!("source_route_decision:{}", route.decision_id),
+        ] {
+            if !inheritable_context.contains(&value) {
+                inheritable_context.push(value);
+            }
+        }
+        for proof_ref in &source_proof_refs {
+            let value = format!("source_proof:{proof_ref}");
+            if !inheritable_context.contains(&value) {
+                inheritable_context.push(value);
+            }
+        }
+
+        let mut considered_options = route.considered_options.clone();
+        if !considered_options.contains(deferred_option) {
+            considered_options.push(deferred_option.clone());
+        }
+        let follow_up = WorkItem {
+            work_item_id: request.follow_up_work_item_id.to_string(),
+            mission_id: source.mission_id.clone(),
+            lane: request.follow_up_lane,
+            target_provider_or_agent: request.follow_up_provider_or_agent.map(str::to_string),
+            status: WorkItemStatus::ReadyToDispatch,
+            owner_claim_ids: Vec::new(),
+            workspace_refs: Vec::new(),
+            capability_id: Some(format!("provider.{target_label}.turn")),
+            risk_level: source.risk_level,
+            approval_state: ApprovalState::NotRequired,
+            blocking_reason: None,
+            input_refs: source_proof_refs,
+            output_refs: Vec::new(),
+            proof_requirements: vec!["outcome:AnswerProduced:>=1".into()],
+            proof_receipts: Vec::new(),
+            judgment_memory: HandoffJudgmentMemory {
+                task: format!("Deferred follow-up for {}: {deferred_option}", source.work_item_id),
+                current_blocker: None,
+                target_lane_thread_agent_provider: target_label.clone(),
+                read_first_files: Vec::new(),
+                required_output: "synthesis follow-up answer with proof-backed completion".into(),
+                done_criteria: vec![
+                    "follow-up WorkItem reaches completed_with_proof with an answer receipt".into(),
+                ],
+                red_lines: vec![
+                    "do not claim dual-model completion until this follow-up completes with proof"
+                        .into(),
+                ],
+                why_this_route: format!(
+                    "Materialized deferred route option from {} after source proof: {deferred_option}",
+                    route.decision_id
+                ),
+                considered_options,
+                deferred_options: vec![
+                    "automatic follow-up execution is separate from materialization".into(),
+                ],
+                previous_pitfalls: route.previous_pitfalls.clone(),
+                inheritable_context,
+                proof_requirements: vec!["outcome:AnswerProduced:>=1".into()],
+                ownership_claim_ids: Vec::new(),
+            },
+            created_at_ms: request.now_ms,
+            updated_at_ms: request.now_ms,
+        };
+
+        upsert_work_item(&tx, &follow_up)?;
+        if !mission.work_item_ids.contains(&follow_up.work_item_id) {
+            mission.work_item_ids.push(follow_up.work_item_id.clone());
+        }
+        let marker = format!("deferred_follow_up:{}", follow_up.work_item_id);
+        if !mission.handoff_inheritance.contains(&marker) {
+            mission.handoff_inheritance.push(marker);
+        }
+        mission.updated_at_ms = request.now_ms;
+        upsert_mission(&tx, &mission)?;
+
+        let follow_route = RouteDecisionCard::from_work_item(
+            format!(
+                "route-deferred-{}-{}",
+                ref_id_part(&route.decision_id),
+                ref_id_part(&follow_up.work_item_id)
+            ),
+            &follow_up,
+            vec![route.route_decision_ref()],
+            request.now_ms,
+            None,
+        );
+        upsert_route_decision(&tx, &follow_route)?;
+        crate::audit::append_audit(
+            &tx,
+            &format!(
+                "route_decision_deferred_follow_up:{}:{}",
+                ref_id_part(&route.decision_id),
+                request.now_ms
+            ),
+            request.actor_ref,
+            &format!(
+                "route_decision.deferred_follow_up_materialized:{}:{}->{}:{}",
+                route.decision_id, source.work_item_id, follow_up.work_item_id, request.reason
+            ),
+            Some(&follow_up.work_item_id),
+            request.now_ms,
+        )?;
+        tx.commit()?;
+        Ok(follow_up)
+    })
 }
 
 #[allow(clippy::too_many_arguments)]

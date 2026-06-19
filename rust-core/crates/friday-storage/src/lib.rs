@@ -993,6 +993,18 @@ impl Db {
         )
     }
 
+    pub fn materialize_deferred_route_follow_up(
+        &self,
+        request: mission::DeferredRouteFollowUpRequest<'_>,
+    ) -> Result<WorkItem> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Deferred route follow-up materialization is Hub-only".into(),
+            ));
+        }
+        mission::materialize_deferred_route_follow_up(&self.conn, request)
+    }
+
     pub fn list_work_items_for_mission(&self, mission_id: &str) -> Result<Vec<WorkItem>> {
         if self.profile != Profile::Hub {
             return Err(StorageError::Unsupported("WorkItems are Hub-only".into()));
