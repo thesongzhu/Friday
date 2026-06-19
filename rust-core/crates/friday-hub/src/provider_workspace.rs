@@ -931,6 +931,7 @@ mod tests {
             },
             status: SessionStatus::Idle,
             capability_snapshot: Vec::new(),
+            external_thread_id: None,
             active_turn_id: None,
             last_event_seq: 0,
             truth_label: "provider workspace test".to_string(),
