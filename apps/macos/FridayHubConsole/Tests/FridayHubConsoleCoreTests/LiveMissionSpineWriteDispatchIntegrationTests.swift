@@ -18,6 +18,8 @@ private let liveMissionSpineWriteDispatchEnabled =
   ProcessInfo.processInfo.environment["FRIDAY_CONSOLE_LIVE_WRITE_DISPATCH_TEST"] == "1"
 private let liveMissionBoundRunEnabled =
   ProcessInfo.processInfo.environment["FRIDAY_CONSOLE_LIVE_MISSION_BOUND_RUN_TEST"] == "1"
+private let liveStrengthRouteEnabled =
+  ProcessInfo.processInfo.environment["FRIDAY_CONSOLE_LIVE_STRENGTH_ROUTE_TEST"] == "1"
 
 @Test(.enabled(if: liveMissionSpineWriteDispatchEnabled))
 func liveConsoleMissionSpineWriteDispatchReturnsReadyReceipt() async throws {
@@ -101,6 +103,42 @@ func liveConsoleMissionSpineWriteDispatchCanCompleteClearCodexRun() async throws
   #expect((receipt.answerLen ?? 0) > 0)
 }
 
+@Test(.enabled(if: liveStrengthRouteEnabled))
+func liveConsoleMissionSpineWriteDispatchRecordsHybridStrengthRouteDecision() async throws {
+  let writeClient = try RealWriteClientFactory.makeLiveWrite()
+  let request = makeLiveIntake(
+    surface: "desktop",
+    route: "desktop://hub-console/live-strength-route-hybrid",
+    title: "Verify live desktop hybrid auto route decision",
+    intent: "In the FridayHubConsole package, update LiveMissionSpineWriteDispatchIntegrationTests.swift "
+      + "with a regression test for hybrid auto routing, then summarize the tradeoffs between "
+      + "Codex workspace execution and Claude synthesis follow-up.",
+    lane: "auto",
+    targetProviderOrAgent: nil)
+
+  let result = try await writeClient.submitMissionIntake(request)
+  #expect(result.status == "ready")
+  #expect(result.createdOrReady)
+  #expect(result.missionId == request.missionId)
+  #expect(result.workItemId == request.workItemId)
+
+  let readClient = try RealReadClientFactory.makeLive(missionId: result.missionId)
+  let snapshot = try await pollLiveProjection(
+    client: readClient,
+    missionId: result.missionId,
+    workItemId: try #require(result.workItemId))
+
+  let alternatives = snapshot.rawRouteDecisionAlternatives
+  print(
+    "[live-strength-route][desktop-hybrid] missionId=\(result.missionId) "
+      + "workItemId=\(request.workItemId) routeSummary=\(snapshot.routeDecisionSummary ?? "<nil>") "
+      + "alternatives=\(alternatives)")
+
+  #expect(snapshot.routeDecisionSummary?.contains("Codex first") == true)
+  #expect(alternatives.contains { $0.contains("combination: Codex first") })
+  #expect(alternatives.contains { $0.contains("claude: writing") })
+}
+
 private func makeLiveIntake(
   surface: String,
   route: String,
@@ -125,4 +163,39 @@ private func makeLiveIntake(
       + "as its output destination",
     lane: lane,
     targetProviderOrAgent: targetProviderOrAgent)
+}
+
+private func pollLiveProjection(
+  client: FridayRustReadClient,
+  missionId: String,
+  workItemId: String
+) async throws -> FridayRustClient.WorkbenchSnapshot {
+  let deadline = Date().addingTimeInterval(20)
+  var lastError: Error?
+
+  repeat {
+    do {
+      let snapshot = try await client.fetchWorkbench()
+      if snapshot.missionId == missionId && snapshot.workItemIds.contains(workItemId) {
+        return snapshot
+      }
+      lastError = FridayReadClientError.malformedProjection(
+        "projection missionId=\(snapshot.missionId) workItemIds=\(snapshot.workItemIds)")
+    } catch {
+      lastError = error
+    }
+
+    try await Task.sleep(for: .seconds(1))
+  } while Date() < deadline
+
+  throw try #require(lastError)
+}
+
+private extension FridayRustClient.WorkbenchSnapshot {
+  var rawRouteDecisionAlternatives: [String] {
+    guard let routeDecision = raw["routeDecision"] as? [String: Any] else {
+      return []
+    }
+    return routeDecision["alternatives"] as? [String] ?? []
+  }
 }
