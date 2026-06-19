@@ -1392,54 +1392,62 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                     None
                 };
 
-                let outcome = if let Some(answer) = mission_bound {
-                    answer
-                } else {
-                    match session_id
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty())
-                    {
-                        Some(sid) => runtime.run_session_task_with_overrides(
-                            &caller,
-                            &run_id,
-                            sid,
-                            &task,
-                            policy_override,
-                            max_turns_override,
-                            now_ms,
-                        ),
-                        // (memory-loop) The no-`session_id` arm now routes through the SAME
-                        // SESSIONED entry with an EPHEMERAL per-run session_id == the run_id. This
-                        // CLOSES the previously-inert extract→confirm→recall loop on the common
-                        // live path: extraction structurally needs a session (it reads the
-                        // session's pending messages + derives the owner-composite namespace), and
-                        // recall is NAMESPACE-keyed (owner-derived), NOT session-keyed — so a
-                        // per-run ephemeral session writes a candidate under owner O's composite
-                        // namespace that a LATER run as O recalls across runs. A per-run id loads
-                        // EMPTY history, so the turn is behaviorally one-shot (equivalent to the
-                        // old sessionless arm) while now also writing session/message rows + firing
-                        // the flag-gated, Finished-only, failure-isolated post-run extraction.
-                        //
-                        // NO-DEGRADE caveat (deliberate, see the PR body): this arm is NO LONGER
-                        // byte-identical — closing an inert loop requires it. With
-                        // FRIDAY_RUN_LOOP_MEMORY_EXTRACTION ON (a memory feature flag, default-OFF)
-                        // every Finished run makes ONE extra extraction model call ⇒ one
-                        // token_ledger row (the intended memory behavior). Extraction is
-                        // failure-isolated (`let _` in the runtime) and can NEVER flip the run's
-                        // answer/status. The owner binding stays the AUTHENTICATED `caller` (never
-                        // the client-asserted session_id), so there is no cross-owner leak.
-                        None => runtime.run_session_task_with_overrides(
-                            &caller,
-                            &run_id,
-                            /* session_id = */ &run_id,
-                            &task,
-                            policy_override,
-                            max_turns_override,
-                            now_ms,
-                        ),
-                    }
-                };
+                let (outcome, mission_bound_learning_session_id) =
+                    if let Some(answer) = mission_bound {
+                        let learning_session_id = session_id
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or(&run_id)
+                            .to_string();
+                        (answer, Some(learning_session_id))
+                    } else {
+                        let answer = match session_id
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                        {
+                            Some(sid) => runtime.run_session_task_with_overrides(
+                                &caller,
+                                &run_id,
+                                sid,
+                                &task,
+                                policy_override,
+                                max_turns_override,
+                                now_ms,
+                            ),
+                            // (memory-loop) The no-`session_id` arm now routes through the SAME
+                            // SESSIONED entry with an EPHEMERAL per-run session_id == the run_id. This
+                            // CLOSES the previously-inert extract→confirm→recall loop on the common
+                            // live path: extraction structurally needs a session (it reads the
+                            // session's pending messages + derives the owner-composite namespace), and
+                            // recall is NAMESPACE-keyed (owner-derived), NOT session-keyed — so a
+                            // per-run ephemeral session writes a candidate under owner O's composite
+                            // namespace that a LATER run as O recalls across runs. A per-run id loads
+                            // EMPTY history, so the turn is behaviorally one-shot (equivalent to the
+                            // old sessionless arm) while now also writing session/message rows + firing
+                            // the flag-gated, Finished-only, failure-isolated post-run extraction.
+                            //
+                            // NO-DEGRADE caveat (deliberate, see the PR body): this arm is NO LONGER
+                            // byte-identical — closing an inert loop requires it. With
+                            // FRIDAY_RUN_LOOP_MEMORY_EXTRACTION ON (a memory feature flag, default-OFF)
+                            // every Finished run makes ONE extra extraction model call ⇒ one
+                            // token_ledger row (the intended memory behavior). Extraction is
+                            // failure-isolated (`let _` in the runtime) and can NEVER flip the run's
+                            // answer/status. The owner binding stays the AUTHENTICATED `caller` (never
+                            // the client-asserted session_id), so there is no cross-owner leak.
+                            None => runtime.run_session_task_with_overrides(
+                                &caller,
+                                &run_id,
+                                /* session_id = */ &run_id,
+                                &task,
+                                policy_override,
+                                max_turns_override,
+                                now_ms,
+                            ),
+                        };
+                        (answer, None)
+                    };
 
                 // (refs) REFS-ONLY terminal receipt over the wire: status + answer FINGERPRINT
                 // (sha256/len) + (A1) the run COUNTS (turns / executed_tools) — NEVER the body.
@@ -1456,6 +1464,16 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 // sends below means a transport drop ends the session; this line records that
                 // the refs leg was REACHED with the run_id, closing the diagnostic gap.
                 let has_body = outcome.delivered_body().is_some();
+                if let Some(sid) = mission_bound_learning_session_id.as_deref() {
+                    runtime.maybe_emit_run_outcome_learning_candidates_from_refs(
+                        sid,
+                        &run_id,
+                        &refs.status,
+                        refs.turns,
+                        refs.executed_tools,
+                        now_ms,
+                    );
+                }
                 eprintln!(
                     "hub_agent_run_server_dispatch: run_id={run_id} leg=refs status={} has_body={has_body}",
                     refs.status

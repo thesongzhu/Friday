@@ -1625,6 +1625,58 @@ impl<T: Transport> HubRuntime<T> {
         );
     }
 
+    /// Emit the same refs-only A1 run-outcome candidates for a finished
+    /// mission-bound run result. The mission-bound server arm only has the
+    /// owner-projected proof refs, not the private `LoopOutcome`, so this helper
+    /// takes the already-redacted count fields from `AuthedAnswer::proof_refs_json`.
+    pub fn maybe_emit_run_outcome_learning_candidates_from_refs(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        status: &str,
+        turns: Option<u64>,
+        executed_tools: Option<u64>,
+        now_ms: i64,
+    ) {
+        let enabled = a1_run_outcome_learning_fanout_from(
+            std::env::var(ENV_A1_RUN_OUTCOME_LEARNING_FANOUT)
+                .ok()
+                .as_deref(),
+        );
+        self.maybe_emit_run_outcome_learning_candidates_from_refs_flagged(
+            session_id,
+            run_id,
+            status,
+            (turns, executed_tools),
+            now_ms,
+            enabled,
+        );
+    }
+
+    fn maybe_emit_run_outcome_learning_candidates_from_refs_flagged(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        status: &str,
+        counts: (Option<u64>, Option<u64>),
+        now_ms: i64,
+        enabled: bool,
+    ) {
+        if !enabled || status != "finished" {
+            return;
+        }
+        let outcome = LoopOutcome {
+            status: LoopStatus::Finished,
+            turns: counts.0.unwrap_or_default(),
+            executed_tools: counts.1.unwrap_or_default(),
+            final_message: None,
+            detail: String::new(),
+        };
+        self.maybe_emit_run_outcome_learning_candidates_flagged(
+            session_id, run_id, &outcome, now_ms, true,
+        );
+    }
+
     fn maybe_emit_run_outcome_learning_candidates_flagged(
         &self,
         session_id: &str,
@@ -9085,6 +9137,59 @@ mod tests {
             decided,
             friday_storage::learning_candidate::RunOutcomeLearningState::Confirmed,
             "confirm is an explicit governance decision, not an automatic durable write"
+        );
+    }
+
+    #[test]
+    fn a1_run_outcome_learning_fanout_from_refs_writes_three_pending_candidates() {
+        let owner = "owner-a1-refs";
+        let (rt, _ws, _c) = runtime_with_owner("a1-fanout-refs", owner, &["{\"tool\":\"none\"}"]);
+
+        rt.maybe_emit_run_outcome_learning_candidates_from_refs_flagged(
+            "sess-a1-refs",
+            "run-a1-refs",
+            "finished",
+            (Some(3), Some(0)),
+            5_000,
+            true,
+        );
+
+        let rows = friday_storage::learning_candidate::list_run_outcome_candidates_for_run(
+            rt.db().conn(),
+            "run-a1-refs",
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(rows
+            .iter()
+            .all(|r| r.session_id.as_deref() == Some("sess-a1-refs")));
+        assert!(rows
+            .iter()
+            .all(|r| r.summary.contains("turns=3") && r.summary.contains("executed_tools=0")));
+    }
+
+    #[test]
+    fn a1_run_outcome_learning_fanout_from_refs_ignores_non_finished() {
+        let owner = "owner-a1-refs-nonfinished";
+        let (rt, _ws, _c) = runtime_with_owner(
+            "a1-fanout-refs-nonfinished",
+            owner,
+            &["{\"tool\":\"none\"}"],
+        );
+
+        rt.maybe_emit_run_outcome_learning_candidates_from_refs_flagged(
+            "sess-a1-refs",
+            "run-a1-refs-paused",
+            "no_answer",
+            (Some(1), Some(0)),
+            5_000,
+            true,
+        );
+
+        assert_eq!(
+            rt.db().count("run_outcome_learning_candidate").unwrap(),
+            0,
+            "non-finished refs must not create A1 candidates"
         );
     }
 
