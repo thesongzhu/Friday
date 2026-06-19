@@ -31,7 +31,8 @@ use friday_core::WorkLane;
 use friday_crypto::OperatorVerifyingKey;
 use friday_deepseek::{DeepSeekClient, DeepSeekError, Transport, UreqTransport};
 use friday_storage::{
-    agent_run, learning_candidate, persist_run_result, Db, RunResult, SessionOwner, StorageError,
+    agent_run, learning_candidate, mission::DeferredRouteFollowUpRequest, persist_run_result, Db,
+    RunResult, SessionOwner, StorageError,
 };
 
 use crate::hub_server::{project_answer_for_authed, AuthedAnswer, AuthedPrincipal};
@@ -2254,6 +2255,18 @@ impl<T: Transport> HubRuntime<T> {
             now_ms,
         )?;
 
+        if completed
+            && matches!(
+                attachment,
+                MissionAttachmentOutcome::Attached {
+                    work_item_status: friday_core::WorkItemStatus::CompletedWithProof,
+                    ..
+                }
+            )
+        {
+            self.materialize_deferred_claude_follow_up_after_completion(&envelope, now_ms);
+        }
+
         // (FRIDAY_SURFACE_EVENTS, DARK, default-OFF) RUN-PROOF surface_event — emitted ONLY when
         // the loop Finished AND the attachment actually completed the bound WorkItem with proof
         // (`Attached { work_item_status: CompletedWithProof }`). A Paused / Blocked / Errored loop
@@ -2304,6 +2317,43 @@ impl<T: Transport> HubRuntime<T> {
             result_link,
             attachment,
         })
+    }
+
+    fn materialize_deferred_claude_follow_up_after_completion(
+        &self,
+        envelope: &MissionRuntimeEnvelope,
+        now_ms: i64,
+    ) {
+        if envelope.route_decision.selected_lane != WorkLane::Codex {
+            return;
+        }
+        if !envelope
+            .route_decision
+            .deferred_options
+            .iter()
+            .any(|option| option.to_ascii_lowercase().contains("claude"))
+        {
+            return;
+        }
+        let follow_up_id = format!("{}-claude-followup", envelope.context.work_item_id);
+        if let Err(err) =
+            self.db
+                .materialize_deferred_route_follow_up(DeferredRouteFollowUpRequest {
+                    decision_id: &envelope.route_decision.decision_id,
+                    source_work_item_id: &envelope.context.work_item_id,
+                    follow_up_work_item_id: &follow_up_id,
+                    follow_up_lane: WorkLane::Claude,
+                    follow_up_provider_or_agent: Some("claude"),
+                    actor_ref: "friday-hub:mission-bound-runtime",
+                    reason: "completed Codex first leg exposed a deferred Claude follow-up",
+                    now_ms: now_ms.saturating_add(2),
+                })
+        {
+            eprintln!(
+                "mission-bound deferred Claude follow-up materialization failed for {}: {err}",
+                envelope.context.work_item_id
+            );
+        }
     }
 
     fn mission_bound_effective_task(
@@ -8520,6 +8570,12 @@ mod tests {
             vec![claim_id.clone()],
             vec![workspace_ref],
         );
+        let mut source_item = rt.db().get_work_item("work-loop").unwrap().unwrap();
+        source_item
+            .judgment_memory
+            .deferred_options
+            .push("claude synthesis follow-up after Codex proof".into());
+        rt.db().upsert_work_item(&source_item).unwrap();
         rt.db().upsert_workspace_claim(&claim).unwrap();
 
         let outcome = rt
@@ -8576,6 +8632,29 @@ mod tests {
         assert!(work_item
             .proof_receipts
             .contains(&format!("friday://agent-run/{run_id}")));
+        let follow_up = rt
+            .db()
+            .get_work_item("work-loop-claude-followup")
+            .unwrap()
+            .expect("completed Codex first leg materializes deferred Claude follow-up");
+        assert_eq!(follow_up.status, WorkItemStatus::ReadyToDispatch);
+        assert_eq!(follow_up.lane, WorkLane::Claude);
+        assert_eq!(
+            follow_up.target_provider_or_agent.as_deref(),
+            Some("claude")
+        );
+        assert_eq!(
+            follow_up.input_refs,
+            vec![format!("friday://agent-run/{run_id}")],
+            "follow-up inherits the Codex first-leg proof"
+        );
+        let mission = rt.db().get_mission("mission-loop").unwrap().unwrap();
+        assert!(mission
+            .work_item_ids
+            .contains(&"work-loop-claude-followup".to_string()));
+        assert!(mission
+            .handoff_inheritance
+            .contains(&"deferred_follow_up:work-loop-claude-followup".to_string()));
         assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
     }
 
