@@ -111,6 +111,12 @@ pub fn classify_kind(task: &str) -> Option<PlanningKind> {
         return Some(PlanningKind::MajorDecision);
     }
 
+    // Direct code-repair actions must not be hidden by trailing read-only words like
+    // "describe the regression test"; classify them before the broad Q&A bypass.
+    if matches_vague_code_repair(&lower) {
+        return Some(PlanningKind::MajorDecision);
+    }
+
     // 2. Ordinary Q&A / summarization bypasses the gate.
     if matches_qa_bypass(&lower) {
         return None;
@@ -130,8 +136,8 @@ pub fn classify_kind(task: &str) -> Option<PlanningKind> {
         return Some(PlanningKind::GenerateWorkflow);
     }
 
-    // 4. Vague-deliverable / vague-improvement / vague-strategic-plan asks are
-    //    text-only and escalate to MajorDecision (the gate clarifies before
+    // 4. Vague-deliverable / vague-improvement / vague-strategic-plan / code-repair asks
+    //    are text-only and escalate to MajorDecision (the gate clarifies before
     //    building), in the oracle's order — BEFORE the major-decision hints.
     if matches_vague_deliverable(&lower)
         || matches_vague_improvement(&lower)
@@ -439,6 +445,51 @@ fn matches_vague_deliverable(lower: &str) -> bool {
         "product",
     ];
     CJK_HINTS.iter().any(|h| lower.contains(h)) || co_occurs_within(lower, VERBS, NOUNS, 80)
+}
+
+/// Under-specified code-repair requests ("fix a Rust compile failure", "debug the failing test")
+/// are action requests, not ordinary Q&A. Escalating them to MajorDecision lets the live
+/// clarification gate ask for the concrete repo/file/error before Codex spends a long turn
+/// guessing at an absent workspace.
+fn matches_vague_code_repair(lower: &str) -> bool {
+    const QA_PREFIXES: &[&str] = &[
+        "explain ",
+        "please explain ",
+        "describe ",
+        "please describe ",
+        "how do i ",
+        "how can i ",
+        "what steps ",
+        "guide me ",
+        "walk me through ",
+    ];
+    if QA_PREFIXES.iter().any(|prefix| lower.starts_with(prefix)) {
+        return false;
+    }
+
+    const VERBS: &[&str] = &[
+        "fix",
+        "debug",
+        "repair",
+        "resolve",
+        "troubleshoot",
+        "diagnose",
+        "investigate",
+    ];
+    const FAILURES: &[&str] = &[
+        "compile failure",
+        "compile error",
+        "build failure",
+        "build error",
+        "test failure",
+        "failing test",
+        "failing tests",
+        "ci failure",
+        "compiler error",
+        "rust error",
+        "bug",
+    ];
+    co_occurs_within(lower, VERBS, FAILURES, 100)
 }
 
 /// `VAGUE_IMPROVEMENT_HINTS`: "make Friday/this app/the repo … better/
@@ -811,6 +862,23 @@ mod tests {
         assert_eq!(
             classify_kind("make Friday more production-ready and stable"),
             Some(PlanningKind::MajorDecision)
+        );
+    }
+
+    #[test]
+    fn classifies_vague_code_repair_as_major_decision() {
+        assert_eq!(
+            classify_kind("Fix a small Rust compile failure in a workspace and describe the focused regression test that should be added."),
+            Some(PlanningKind::MajorDecision)
+        );
+        assert_eq!(
+            classify_kind("debug the failing tests in the repo"),
+            Some(PlanningKind::MajorDecision)
+        );
+        assert_eq!(
+            classify_kind("explain how to fix a Rust compile error"),
+            None,
+            "Q&A phrasing stays a read-only explanation, not an action request"
         );
     }
 

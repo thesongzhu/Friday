@@ -1033,14 +1033,40 @@ impl<T: Transport> HubRuntime<T> {
     ) -> Result<LoopOutcome, RoutedLoopError> {
         // Plan classification + the SAME recall-preamble prompt the loop records/builds, so a
         // codex run's event log + prompt are consistent with a deepseek/claude run.
-        let plan_kind = friday_core::classify_kind(task).map(|k| k.as_str());
+        let plan_kind = friday_core::classify_kind(task);
         agent_run::record_event(
             self.db.conn(),
             &format!("{run_id}:plan"),
             run_id,
-            &format!("plan.{}", plan_kind.unwrap_or("none")),
+            &format!("plan.{}", plan_kind.map(|k| k.as_str()).unwrap_or("none")),
             now_ms,
         )?;
+        if crate::clarification_gate_from(
+            std::env::var(crate::FRIDAY_CLARIFICATION_GATE)
+                .ok()
+                .as_deref(),
+        ) {
+            if let Some(kind) = plan_kind {
+                if !friday_core::is_task_detailed_enough(task, kind) {
+                    let questions = friday_core::questions_for_kind(kind);
+                    let message = friday_core::build_clarification(kind, &questions);
+                    agent_run::record_event(
+                        self.db.conn(),
+                        &format!("{run_id}:awaiting_clarification"),
+                        run_id,
+                        &format!("agent.awaiting_clarification:{}", kind.as_str()),
+                        now_ms,
+                    )?;
+                    return Ok(LoopOutcome {
+                        status: LoopStatus::AwaitingClarification,
+                        turns: 0,
+                        executed_tools: 0,
+                        final_message: Some(message),
+                        detail: format!("awaiting_clarification:{}", kind.as_str()),
+                    });
+                }
+            }
+        }
         let prompt = if recall_preamble.is_empty() {
             task.to_string()
         } else {
@@ -8550,6 +8576,83 @@ mod tests {
         assert!(work_item
             .proof_receipts
             .contains(&format!("friday://agent-run/{run_id}")));
+        assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
+    }
+
+    #[test]
+    fn mission_bound_codex_vague_code_repair_clarifies_before_model_call() {
+        std::env::set_var(crate::FRIDAY_CLARIFICATION_GATE, "1");
+        let run_id = "run-mloop-codex-vague-code-clar";
+        let (rt, _ws, observe_probe) = runtime_with_codex_wired_observe_probe(
+            "mloop-codex-vague-code-clar",
+            vec![StubCodexGatedExecutor::finished("SHOULD_NOT_RUN")],
+        );
+        let claim = codex_provider_session_claim();
+        let claim_id = claim.claim_id.clone();
+        let workspace_ref = claim.workspace_ref.clone();
+        seed_loop_mission_with_ownership(
+            rt.db(),
+            WorkLane::Codex,
+            Some("codex"),
+            WorkItemStatus::ReadyToDispatch,
+            vec![claim_id],
+            vec![workspace_ref],
+        );
+        rt.db().upsert_workspace_claim(&claim).unwrap();
+
+        let outcome = rt
+            .run_codex_agent_loop_for_mission_with_overrides(
+                loop_lookup(),
+                "friday-hub-session",
+                run_id,
+                "Fix a small Rust compile failure in a workspace and describe the focused regression test that should be added.",
+                None,
+                None,
+                1_000,
+            )
+            .unwrap();
+
+        let MissionBoundLoopOutcome::Ran {
+            outcome,
+            attachment,
+            ..
+        } = outcome
+        else {
+            panic!("expected the mission-bound Codex loop to reach the clarification gate");
+        };
+        assert_eq!(outcome.status, LoopStatus::AwaitingClarification);
+        assert_eq!(
+            outcome.turns, 0,
+            "clarification happens before any Codex model call"
+        );
+        assert_eq!(outcome.executed_tools, 0);
+        assert!(
+            outcome
+                .final_message
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Question 1/2"),
+            "clarification should be delivered as numbered questions"
+        );
+        assert!(
+            observe_probe.borrow().is_none(),
+            "the Codex executor must not be called when the clarification gate stops first"
+        );
+        assert!(matches!(
+            attachment,
+            MissionAttachmentOutcome::Attached {
+                work_item_status: WorkItemStatus::ProviderRouted,
+                ..
+            }
+        ));
+
+        let result = friday_storage::get_run_result(rt.db().conn(), run_id)
+            .unwrap()
+            .expect("clarifying Codex mission-bound run persists owner-visible questions");
+        assert_eq!(result.status, "awaiting_clarification");
+        let work_item = rt.db().get_work_item("work-loop").unwrap().unwrap();
+        assert_eq!(work_item.status, WorkItemStatus::ProviderRouted);
+        assert!(work_item.proof_receipts.is_empty());
         assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
     }
 
