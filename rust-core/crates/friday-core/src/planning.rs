@@ -399,6 +399,18 @@ fn matches_export_bundle(lower: &str) -> bool {
 /// request — text-only, so it escalates to MajorDecision (the gate clarifies
 /// before building). Faithful to the oracle's verb`[\s\S]{0,80}`noun co-occurrence.
 fn matches_vague_deliverable(lower: &str) -> bool {
+    const CJK_HINTS: &[&str] = &[
+        "帮我做个计划",
+        "帮我做一个计划",
+        "帮我制定计划",
+        "制定一个计划",
+        "做个计划",
+        "做一个计划",
+        "帮我做个工具",
+        "帮我做一个工具",
+        "做个工具",
+        "做一个工具",
+    ];
     const VERBS: &[&str] = &[
         "build",
         "create",
@@ -426,7 +438,7 @@ fn matches_vague_deliverable(lower: &str) -> bool {
         "feature",
         "product",
     ];
-    co_occurs_within(lower, VERBS, NOUNS, 80)
+    CJK_HINTS.iter().any(|h| lower.contains(h)) || co_occurs_within(lower, VERBS, NOUNS, 80)
 }
 
 /// `VAGUE_IMPROVEMENT_HINTS`: "make Friday/this app/the repo … better/
@@ -785,6 +797,14 @@ mod tests {
         );
         assert_eq!(
             classify_kind("build a simple tool to track tasks"),
+            Some(PlanningKind::MajorDecision)
+        );
+        assert_eq!(
+            classify_kind("帮我做个计划"),
+            Some(PlanningKind::MajorDecision)
+        );
+        assert_eq!(
+            classify_kind("帮我做个工具"),
             Some(PlanningKind::MajorDecision)
         );
         // VAGUE_IMPROVEMENT: "make Friday production-ready" -> MajorDecision.
