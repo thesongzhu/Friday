@@ -15023,25 +15023,20 @@ mod tests {
 
     #[test]
     fn errored_mission_bound_run_stays_ready_to_dispatch_not_stranded() {
-        // DEGRADE-1 regression guard: a mission-bound loop that ERRORS (no Finished) must NOT have
-        // advanced the WorkItem past `ReadyToDispatch` — it stays retryable (the pre-#24b rest
-        // state), NOT stranded at `ProviderRouted`. We drive the REAL post-loop binding with
-        // `completed = false` (the non-Finished outcome) and assert the row rests at `ProviderRouted`
-        // ONLY because the bind ran (post-loop); the during-call status was `ReadyToDispatch`. The
-        // dispatch-retryability property is the during-call status, proven by the reachability test
-        // above; here we assert the post-loop `completed=false` bind is END-STATE-identical to
-        // pre-#24b (rests at `ProviderRouted`, no over-claimed completion) — i.e. the reorder is gone.
+        // DEGRADE-1 regression guard: the post-loop binding still has an explicit routed rest
+        // state for paused/resumable runs, so the #24b reorder stays gone without over-claiming
+        // completion.
         use friday_core::WorkItemStatus;
         let db3 = Db::open_hub(&temp_path("hb-err")).unwrap();
         seed_loop_work_item_at(&db3, "wi-err", WorkItemStatus::ReadyToDispatch);
-        // The loop errored ⇒ the post-loop bind runs with completed=false (3 in-flight hops).
+        // The paused/non-terminal rest path drives the post-loop bind to ProviderRouted.
         let attach = crate::mission_runtime::attach_agent_loop_provider_state(
             &db3,
             &format!("mission-{}", "wi-err"),
             "wi-err",
             "sess-err",
             "run-err",
-            /* completed = */ false,
+            crate::mission_runtime::AgentLoopProviderRestState::Routed,
             "",
             None,
             /* guarded = */ false,
@@ -15097,7 +15092,7 @@ mod tests {
             "wi-deg3",
             "sess-deg3",
             "run-deg3",
-            /* completed = */ false,
+            crate::mission_runtime::AgentLoopProviderRestState::Routed,
             "",
             None,
             /* guarded = */ false,

@@ -108,6 +108,13 @@ pub enum MissionBoundAskOutcome {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AgentLoopProviderRestState {
+    Routed,
+    Completed,
+    FailedTerminal,
+}
+
 pub fn resolve_mission_runtime_envelope(
     db: &Db,
     request: MissionRuntimeRequest,
@@ -580,7 +587,7 @@ fn attach_completed_provider_state_for_ask(
 /// keeps the single caller-side `now_ms` (byte-identical to pre-WI-1).
 ///
 /// The COMBINED all-at-once agent-loop binding drive (`SentToHub -> AcceptedByHub ->
-/// RoutedToProvider`, plus `WaitingProvider -> ProviderCompleted` when `completed`), run AFTER the
+/// RoutedToProvider`, plus either the completion or terminal-failure rest hop), run AFTER the
 /// loop. This is the PRODUCTION drive — the pre-#24b order, RESTORED in the panel-BLOCK fix.
 ///
 /// (#24b history) The original #24b SPLIT this into a pre-dispatch leg (before the loop, advancing
@@ -601,7 +608,7 @@ pub(crate) fn attach_agent_loop_provider_state(
     work_item_id: &str,
     session_id: &str,
     run_id: &str,
-    completed: bool,
+    rest_state: AgentLoopProviderRestState,
     proof_ref: &str,
     completion_proof_receipt: Option<&str>,
     guarded: bool,
@@ -612,9 +619,15 @@ pub(crate) fn attach_agent_loop_provider_state(
         PendingState::AcceptedByHub,
         PendingState::RoutedToProvider,
     ];
-    if completed {
-        states.push(PendingState::WaitingProvider);
-        states.push(PendingState::ProviderCompleted);
+    match rest_state {
+        AgentLoopProviderRestState::Routed => {}
+        AgentLoopProviderRestState::Completed => {
+            states.push(PendingState::WaitingProvider);
+            states.push(PendingState::ProviderCompleted);
+        }
+        AgentLoopProviderRestState::FailedTerminal => {
+            states.push(PendingState::FailedTerminal);
+        }
     }
     drive_provider_states(
         db,
@@ -677,8 +690,9 @@ fn drive_provider_states(
         };
         // (#24b degrade-3 fix) Clear the durable `executing` marker ATOMICALLY with the FINAL hop's
         // status write. Every caller of this driver is the agent-loop binding, whose final hop is
-        // the run's resting state (`ProviderRouted` on pause/await/error, `CompletedWithProof` on
-        // completion) — a state where `executing` MUST be 0. Doing the clear in the SAME tx as that
+        // the run's resting state (`ProviderRouted` on pause/await, `FailedTerminal` on terminal
+        // failure, `CompletedWithProof` on completion) — a state where `executing` MUST be 0.
+        // Doing the clear in the SAME tx as that
         // status write means a swallowed best-effort loop tail-clear can NEVER strand
         // `executing == 1` on a live paused run (which PASS-2 would then falsely reconcile). The
         // non-final in-flight hops keep `false` (the marker is still live mid-drive).
@@ -712,7 +726,8 @@ fn drive_provider_states(
 /// advance its bound WorkItem `ProviderRouted → CompletedWithProof`. This closes the ONE gap left
 /// by the dark mission-bound run path: after the operator's Ed25519-signed approval executes the
 /// one paused mutation, NOTHING previously advanced the WorkItem off `ProviderRouted` (the
-/// pause-time bind state — see `attach_agent_loop_provider_state` with `completed=false`).
+/// pause-time bind state — see `attach_agent_loop_provider_state` with
+/// `AgentLoopProviderRestState::Routed`).
 ///
 /// ## THE LOOPHOLE GATE (a false proof is a security defect)
 /// The WorkItem is advanced ONLY when the ONE approved mutation actually ran — gate `Allow` AND
@@ -1769,7 +1784,7 @@ mod tests {
             "work-runtime",
             "friday-session-loop",
             "run-loop-1",
-            /* completed = */ true,
+            AgentLoopProviderRestState::Completed,
             "friday://agent-run/run-loop-1",
             None,
             /* guarded = */ true,
@@ -1834,7 +1849,7 @@ mod tests {
             "work-runtime",
             "friday-session-loop",
             "run-loop-2",
-            /* completed = */ true,
+            AgentLoopProviderRestState::Completed,
             "friday://agent-run/run-loop-2",
             None,
             /* guarded = */ false,
@@ -1913,7 +1928,7 @@ mod tests {
             "work-runtime",
             "sess-z",
             "run-z",
-            /* completed = */ false,
+            AgentLoopProviderRestState::Routed,
             "friday://agent-run/run-z",
             None,
             /* guarded = */ false,
