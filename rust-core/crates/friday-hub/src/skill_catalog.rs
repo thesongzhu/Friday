@@ -45,6 +45,15 @@ pub struct SkillCatalogDiscovery {
     pub now_ms: i64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkillMdCandidate {
+    pub skill_id: String,
+    pub safe_title: String,
+    pub source_digest: String,
+    pub frontmatter_keys: Vec<String>,
+    pub body_len: usize,
+}
+
 pub fn discover_skill_catalog(
     request: SkillCatalogDiscovery,
 ) -> Result<SkillCatalogSnapshot, SkillCatalogError> {
@@ -181,6 +190,60 @@ pub fn discover_skill_catalog(
             "skill_memory_preference_is_not_auto_confirmed".to_string(),
         ],
     })
+}
+
+pub fn discover_skill_md_candidates(
+    managed_skills_root: impl AsRef<Path>,
+) -> Result<Vec<SkillMdCandidate>, SkillCatalogError> {
+    let root = managed_skills_root.as_ref();
+    let root_entries = fs::read_dir(root).map_err(SkillCatalogError::RootRead)?;
+    let mut candidates = Vec::new();
+    for entry in root_entries {
+        let Ok(dir_entry) = entry else {
+            continue;
+        };
+        let Ok(file_type) = dir_entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        let skill_md_path = dir_entry.path().join("SKILL.md");
+        if !skill_md_path.is_file() {
+            continue;
+        }
+        let markdown =
+            fs::read_to_string(&skill_md_path).map_err(SkillCatalogError::ManifestRead)?;
+        let (frontmatter, body_len) = parse_skill_md_frontmatter(&markdown);
+        let dir_skill_id = dir_entry.file_name().to_string_lossy().trim().to_string();
+        let skill_id = frontmatter
+            .get("id")
+            .or_else(|| frontmatter.get("skill_id"))
+            .cloned()
+            .unwrap_or(dir_skill_id);
+        if !is_safe_public_id(&skill_id) {
+            continue;
+        }
+        let safe_title = frontmatter
+            .get("title")
+            .or_else(|| frontmatter.get("name"))
+            .filter(|title| is_safe_public_text(title))
+            .cloned()
+            .unwrap_or_else(|| skill_id.clone());
+        candidates.push(SkillMdCandidate {
+            skill_id,
+            safe_title,
+            source_digest: format!("skill-md-{}", stable_hash(&markdown)),
+            frontmatter_keys: frontmatter
+                .keys()
+                .filter(|key| is_safe_public_id(key))
+                .cloned()
+                .collect(),
+            body_len,
+        });
+    }
+    candidates.sort_by(|a, b| a.skill_id.cmp(&b.skill_id));
+    Ok(candidates)
 }
 
 pub fn advise_skill_from_catalog(
@@ -593,6 +656,44 @@ fn filter_safe_refs(values: &[String]) -> Vec<String> {
         .collect()
 }
 
+fn parse_skill_md_frontmatter(markdown: &str) -> (BTreeMap<String, String>, usize) {
+    let normalized = markdown.replace("\r\n", "\n");
+    let Some(after_open) = normalized.strip_prefix("---\n") else {
+        return (BTreeMap::new(), markdown.len());
+    };
+    let Some(end) = after_open.find("\n---") else {
+        return (BTreeMap::new(), markdown.len());
+    };
+    let yaml_block = &after_open[..end];
+    let after_close = &after_open[end + "\n---".len()..];
+    let body = after_close.strip_prefix('\n').unwrap_or(after_close);
+    let mut fields = BTreeMap::new();
+    for line in yaml_block.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let key = key.trim();
+        if !is_safe_public_id(key) {
+            continue;
+        }
+        let value = value
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .trim()
+            .to_string();
+        if value.is_empty() || looks_private(&value) {
+            continue;
+        }
+        fields.insert(key.to_string(), value);
+    }
+    (fields, body.len())
+}
+
 fn is_safe_proof_ref(value: &str) -> bool {
     (value.starts_with("proof://") || value.starts_with("friday://"))
         && !looks_private(value)
@@ -717,6 +818,12 @@ mod tests {
         create_dir_all(&skill_dir).unwrap();
         write(skill_dir.join("skill.manifest.json"), manifest).unwrap();
         write(skill_dir.join("run.sh"), "#!/usr/bin/env bash\nexit 0\n").unwrap();
+    }
+
+    fn write_skill_md(root: &Path, dir: &str, markdown: &str) {
+        let skill_dir = root.join(dir);
+        create_dir_all(&skill_dir).unwrap();
+        write(skill_dir.join("SKILL.md"), markdown).unwrap();
     }
 
     fn temp_db(name: &str) -> String {
@@ -876,6 +983,87 @@ mod tests {
         let rendered = format!("{snapshot:?}");
         assert!(!rendered.contains(root.to_string_lossy().as_ref()));
         assert!(!rendered.contains("run.sh"));
+    }
+
+    #[test]
+    fn discovers_skill_md_candidates_without_body_path_or_secret_leak() {
+        let root = temp_root("skill-md");
+        write_skill_md(
+            &root,
+            "open-summary",
+            "---\nid: open-summary\ntitle: Open Summary Skill\nowner: public\n---\nRun this over /Users/private/source with sensitive material.\n",
+        );
+
+        let candidates = discover_skill_md_candidates(&root).unwrap();
+
+        assert_eq!(candidates.len(), 1);
+        let candidate = &candidates[0];
+        assert_eq!(candidate.skill_id, "open-summary");
+        assert_eq!(candidate.safe_title, "Open Summary Skill");
+        assert!(candidate.source_digest.starts_with("skill-md-"));
+        assert!(candidate.body_len > 0);
+        assert_eq!(
+            candidate.frontmatter_keys,
+            vec!["id".to_string(), "owner".to_string(), "title".to_string()]
+        );
+        let rendered = format!("{candidate:?}");
+        assert!(!rendered.contains(root.to_string_lossy().as_ref()));
+        assert!(!rendered.contains("/Users/private/source"));
+        assert!(!rendered.contains("sensitive material"));
+    }
+
+    #[test]
+    fn skill_md_candidate_can_stage_governed_receipt_without_import_or_execution() {
+        let root = temp_root("skill-md-governed");
+        write_skill_md(
+            &root,
+            "invoice-summarizer",
+            "---\nid: invoice-summarizer\ntitle: Invoice Summarizer\n---\nSummarize invoices after operator review.\n",
+        );
+        let candidate = discover_skill_md_candidates(&root)
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        let db = Db::open_hub(&temp_db("skill-md-governed")).unwrap();
+        seed_skill_run_mission(&db);
+
+        let receipt = stage_link_skill_candidate_receipt(
+            &db,
+            LinkSkillCandidateReceiptRequest {
+                skill_id: candidate.skill_id.clone(),
+                safe_title: candidate.safe_title.clone(),
+                source_digest: candidate.source_digest.clone(),
+                evidence_url: "https://example.com/open-skill-md/invoice-summarizer".into(),
+                mission_id: "mission-skill".into(),
+                work_item_id: "work-skill".into(),
+                operator_principal_id: "operator".into(),
+                canonical_approval: signed_link_candidate_approval(
+                    &candidate.skill_id,
+                    &candidate.source_digest,
+                    "mission-skill",
+                    "work-skill",
+                ),
+                proof_ref: "proof://skill-md-candidate/invoice-summarizer".into(),
+                now_ms: 81,
+            },
+            APPROVAL_SECRET,
+        )
+        .unwrap();
+
+        assert_eq!(receipt.status, "candidate_receipt_recorded_not_imported");
+        let links = db.list_mission_links("mission-skill").unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_ref, receipt.candidate_ref);
+        let item = db.get_work_item("work-skill").unwrap().unwrap();
+        assert_eq!(item.status, WorkItemStatus::ReadyToDispatch);
+        assert!(item.proof_receipts.is_empty());
+        let node = link_skill_candidate_node(&receipt, &candidate.safe_title, 82);
+        assert_eq!(node.truth_label, WorkGraphTruthLabel::LinkedOnly);
+        assert!(!node.control_allowed);
+        assert!(node
+            .blockers
+            .contains(&"link_skill_candidate_receipt_does_not_import_or_execute".to_string()));
     }
 
     #[test]
