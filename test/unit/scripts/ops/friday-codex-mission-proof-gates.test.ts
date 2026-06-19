@@ -466,6 +466,15 @@ describe("Codex mission proof gates", () => {
     expect(proofSource).toContain(
       'readonly MISSION_INTENT="${FRIDAY_CODEX_MISSION_PROOF_INTENT:-What is the proof token? Answer exactly FRIDAY_CODEX_PROOF_OK.}"',
     );
+    expect(proofSource).toContain(
+      'readonly BODY_REF_PREFIX="friday://body/ops/codex-mission-proof-of-life"',
+    );
+    expect(proofSource).toContain(
+      'readonly BODY_REF="${FRIDAY_CODEX_MISSION_PROOF_BODY_REF:-${BODY_REF_PREFIX}/${WORK_ITEM_ID}}"',
+    );
+    expect(proofSource).not.toContain(
+      'readonly BODY_REF="${FRIDAY_CODEX_MISSION_PROOF_BODY_REF:-friday://body/ops/codex-mission-proof-of-life}"',
+    );
     expect(proofSource).toContain("FRIDAY_CODEX_MISSION_PROOF_RUN_KIND must be proof or organic");
     expect(proofSource).toContain(
       "ops://codex-mission-proof-of-life|ops://codex-organic-spawn",
