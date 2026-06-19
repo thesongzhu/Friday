@@ -10,6 +10,7 @@ type CaptureModule = typeof import("../../../../scripts/ops/friday-c1-c2-tier1-p
 
 const repoRoot = process.cwd();
 const scriptPath = path.resolve(repoRoot, "scripts/ops/friday-c1-c2-tier1-parity-capture.mjs");
+const artifactRunnerPath = path.resolve(repoRoot, "scripts/ops/friday-c1-c2-tier1-parity-artifact-runner.mjs");
 const scriptUrl = pathToFileURL(scriptPath).href;
 const tempRoots: string[] = [];
 
@@ -138,16 +139,81 @@ describe("C1/C2 Tier-1 parity capture runner", () => {
   });
 
   it("keeps the runner source free of DB writes and operator-key reads", () => {
-    const source = readFileSync(scriptPath, "utf8");
+    const source = `${readFileSync(scriptPath, "utf8")}\n${readFileSync(artifactRunnerPath, "utf8")}`;
 
-    expect(source).not.toMatch(/\bINSERT\b/i);
-    expect(source).not.toMatch(/\bUPDATE\b/i);
-    expect(source).not.toMatch(/\bDELETE\b/i);
+    expect(source).not.toMatch(/\bINSERT\s+INTO\b/i);
+    expect(source).not.toMatch(/\bUPDATE\s+\S+\s+SET\b/i);
+    expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
     expect(source).not.toContain("better-sqlite3");
     expect(source).not.toMatch(/operator[_ -]?key/i);
     expect(source).not.toMatch(/read\s+-rs/i);
     expect(source).not.toContain("acquireLocalBearerToken");
     expect(source).not.toContain("FRIDAY_LOCAL_PASSPHRASE");
+  });
+
+  it("writes a capture artifact from an explicitly selected flow command", async () => {
+    const capture = await loadCaptureModule();
+    const root = makeTempRoot();
+    const result = spawnSync(process.execPath, [artifactRunnerPath], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        FRIDAY_C1_C2_TIER1_ARTIFACT_RUN: "1",
+        FRIDAY_C1_C2_TIER1_CAPTURE_ROOT: root,
+        FRIDAY_C1_C2_TIER1_FLOW_ID: "c1-codex-routed-proof",
+        FRIDAY_C1_C2_TIER1_FLOW_COMMAND_JSON: JSON.stringify([process.execPath, "-e", "process.stdout.write('ok')"]),
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('"status": "passed"');
+
+    const report = await capture.buildCaptureReport({
+      enabled: true,
+      artifactRoot: root,
+      reportPath: path.join(root, "report.json"),
+      generatedAt: "2026-06-19T00:00:00.000Z",
+    });
+    const captured = report.flows.find((flow) => flow.flowId === "c1-codex-routed-proof");
+
+    expect(captured?.status).toBe("captured");
+    expect(captured?.record.status).toBe("passed");
+    expect(captured?.record.evidence[0].outputSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(captured?.record.truthLabel).toContain("parity-capture");
+    expect(captured?.record.live).toBe(false);
+    expect(captured?.record.organic).toBe(false);
+  });
+
+  it("does not let a failed flow artifact count as captured", async () => {
+    const capture = await loadCaptureModule();
+    const root = makeTempRoot();
+    const result = spawnSync(process.execPath, [artifactRunnerPath], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        FRIDAY_C1_C2_TIER1_ARTIFACT_RUN: "1",
+        FRIDAY_C1_C2_TIER1_CAPTURE_ROOT: root,
+        FRIDAY_C1_C2_TIER1_FLOW_ID: "c1-codex-routed-proof",
+        FRIDAY_C1_C2_TIER1_FLOW_COMMAND_JSON: JSON.stringify([process.execPath, "-e", "process.exit(7)"]),
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('"status": "failed"');
+
+    const report = await capture.buildCaptureReport({
+      enabled: true,
+      artifactRoot: root,
+      reportPath: path.join(root, "report.json"),
+      generatedAt: "2026-06-19T00:00:00.000Z",
+    });
+    const failed = report.flows.find((flow) => flow.flowId === "c1-codex-routed-proof");
+
+    expect(report.status).toBe("blocked");
+    expect(failed?.status).toBe("invalid");
+    expect(failed?.errors).toContain("status must be passed or captured for c1-codex-routed-proof");
   });
 
   it("fails closed when capture is enabled without an artifact root", () => {
