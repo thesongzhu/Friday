@@ -56,7 +56,7 @@ readonly DELIVERY_ROUTE="${FRIDAY_CLAUDE_MISSION_PROOF_DELIVERY_ROUTE:-ops://cla
 readonly MISSION_TITLE="${FRIDAY_CLAUDE_MISSION_PROOF_TITLE:-Claude proof token}"
 readonly MISSION_INTENT="${FRIDAY_CLAUDE_MISSION_PROOF_INTENT:-Answer exactly FRIDAY_CLAUDE_PROOF_OK.}"
 readonly CAPABILITY_ID="${FRIDAY_CLAUDE_MISSION_PROOF_CAPABILITY_ID:-ask_friday.claude}"
-readonly BODY_REF="${FRIDAY_CLAUDE_MISSION_PROOF_BODY_REF:-friday://body/ops/claude-mission-proof-of-life}"
+readonly BODY_REF_PREFIX="friday://body/ops/claude-mission-proof-of-life"
 
 SQLITE_BIN="$(command -v sqlite3 || true)"
 if [ -z "${SQLITE_BIN}" ] && [ -x "/Users/jarvis/Library/Android/sdk/platform-tools/sqlite3" ]; then
@@ -397,6 +397,7 @@ readonly FRIDAY_CONVERSATION_ID="fconv_${ID_PREFIX//-/_}_${RUN_TAG//-/_}"
 readonly MISSION_ID="${ID_PREFIX}-mission-${RUN_TAG}"
 readonly WORK_ITEM_ID="${ID_PREFIX}-work-${RUN_TAG}"
 readonly SURFACE_THREAD_ID="${ID_PREFIX}-surface-${RUN_TAG}"
+readonly BODY_REF="${FRIDAY_CLAUDE_MISSION_PROOF_BODY_REF:-${BODY_REF_PREFIX}/${WORK_ITEM_ID}}"
 readonly STARTED_AT_MS="$(now_ms)"
 
 echo "Claude Mission proof starting."

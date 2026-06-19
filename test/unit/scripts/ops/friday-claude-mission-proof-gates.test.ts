@@ -46,6 +46,15 @@ describe("Claude mission proof operator gate", () => {
     expect(source).toContain("FRIDAY_CLAUDE_MISSION_PROOF_RUN_KIND");
     expect(source).toContain("FRIDAY_CLAUDE_MISSION_PROOF_SURFACE_KIND");
     expect(source).toContain("FRIDAY_CLAUDE_MISSION_PROOF_DELIVERY_ROUTE");
+    expect(source).toContain(
+      'readonly BODY_REF_PREFIX="friday://body/ops/claude-mission-proof-of-life"',
+    );
+    expect(source).toContain(
+      'readonly BODY_REF="${FRIDAY_CLAUDE_MISSION_PROOF_BODY_REF:-${BODY_REF_PREFIX}/${WORK_ITEM_ID}}"',
+    );
+    expect(source).not.toContain(
+      'readonly BODY_REF="${FRIDAY_CLAUDE_MISSION_PROOF_BODY_REF:-friday://body/ops/claude-mission-proof-of-life}"',
+    );
     expect(source).toContain('readonly CLAUDE_MODEL="claude-opus-4-8"');
     expect(source).toContain('lane: "claude"');
     expect(source).toContain('targetProviderOrAgent: "claude"');

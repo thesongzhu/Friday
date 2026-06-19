@@ -55,7 +55,7 @@ readonly DELIVERY_ROUTE="${FRIDAY_CODEX_MISSION_PROOF_DELIVERY_ROUTE:-ops://code
 readonly MISSION_TITLE="${FRIDAY_CODEX_MISSION_PROOF_TITLE:-Codex proof token}"
 readonly MISSION_INTENT="${FRIDAY_CODEX_MISSION_PROOF_INTENT:-What is the proof token? Answer exactly FRIDAY_CODEX_PROOF_OK.}"
 readonly CAPABILITY_ID="${FRIDAY_CODEX_MISSION_PROOF_CAPABILITY_ID:-observe-wrapper.codex}"
-readonly BODY_REF="${FRIDAY_CODEX_MISSION_PROOF_BODY_REF:-friday://body/ops/codex-mission-proof-of-life}"
+readonly BODY_REF_PREFIX="friday://body/ops/codex-mission-proof-of-life"
 
 SQLITE_BIN="$(command -v sqlite3 || true)"
 if [ -z "${SQLITE_BIN}" ] && [ -x "/Users/jarvis/Library/Android/sdk/platform-tools/sqlite3" ]; then
@@ -519,6 +519,7 @@ readonly FRIDAY_CONVERSATION_ID="fconv_${ID_PREFIX//-/_}_${RUN_TAG//-/_}"
 readonly MISSION_ID="${ID_PREFIX}-mission-${RUN_TAG}"
 readonly WORK_ITEM_ID="${ID_PREFIX}-work-${RUN_TAG}"
 readonly SURFACE_THREAD_ID="${ID_PREFIX}-surface-${RUN_TAG}"
+readonly BODY_REF="${FRIDAY_CODEX_MISSION_PROOF_BODY_REF:-${BODY_REF_PREFIX}/${WORK_ITEM_ID}}"
 
 echo "Codex Mission ${RUN_KIND} starting."
 echo "  TS hub: ${TS_HUB}"
