@@ -3,7 +3,7 @@ import type { FridaySqliteLayer } from "#state";
 import { createTestDb, createTestIdGenerator } from "../../satellites/_helpers/create-test-db.helper.js";
 import { createFridayApiRuntime } from "#api";
 import type { FridayProviderService } from "#providers";
-import type { FridayMemoryService } from "#memory";
+import { createFridayMemoryService, FRIDAY_MEMORY_ERROR_CODES, type FridayMemoryService } from "#memory";
 
 describe("FridayApiRuntime — Memory Registration", () => {
   let db: FridaySqliteLayer;
@@ -151,5 +151,65 @@ describe("FridayApiRuntime — Memory Registration", () => {
     });
 
     expect(runtime.memoryService).toBe(memoryService);
+  });
+
+  it("keeps the memory item write route fail-closed by default without adding split rows", async () => {
+    const countMemoryItems = (): number =>
+      db.withReadConnection((conn) => {
+        const row = conn.prepare("SELECT COUNT(*) AS count FROM memory_items").get() as { count: number };
+        return row.count;
+      });
+    const providerService = createMockProviderService();
+    const memoryService = createFridayMemoryService({
+      db,
+      providerService,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => NOW,
+      tsMemoryWritesEnabled: false,
+    });
+    const runtime = createFridayApiRuntime({
+      db,
+      idGenerator: createTestIdGenerator(),
+      nowIso: () => NOW,
+      providerService,
+      memoryService,
+      tokenSecret: "test-secret-key-that-is-at-least-32-chars-long!!", // pragma: allowlist secret
+      computeChecksum: (s: string) => s,
+      resolveSkill: () => null,
+      invokeSkill: async () => ({}),
+    });
+    const route = runtime.routes
+      .getRoutes()
+      .find((candidate) => candidate.operationId === "memory.items.create");
+    expect(route).toBeDefined();
+    const before = countMemoryItems();
+
+    await expect(route!.handler({
+      requestId: "req-d1-memory-route",
+      receivedAt: NOW,
+      params: {},
+      query: {},
+      headers: {},
+      body: {
+        namespace: "d1",
+        content: "do not write this into friday.db",
+        source: "user",
+      },
+      principal: {
+        principalType: "user",
+        principalId: "user-1",
+        userId: "user-1",
+        tokenId: "tok-1",
+        tokenKind: "access",
+        scopes: ["memory.write"],
+        issuedAt: NOW,
+      },
+    })).rejects.toMatchObject({
+      code: FRIDAY_MEMORY_ERROR_CODES.TS_RUNTIME_DURABLE_MEMORY_WRITE_RETIRED,
+      httpStatus: 503,
+      details: { operation: "memory.store" },
+    });
+    expect(countMemoryItems()).toBe(before);
+    expect(providerService.runWithFallback).not.toHaveBeenCalled();
   });
 });
