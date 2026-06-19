@@ -58,6 +58,7 @@ pub fn discover_skill_catalog(
     request: SkillCatalogDiscovery,
 ) -> Result<SkillCatalogSnapshot, SkillCatalogError> {
     let mut entries = Vec::new();
+    let mut manifest_skill_ids = BTreeSet::new();
     let adopted: BTreeSet<String> = request.adopted_skill_ids.into_iter().collect();
     let approved_first_run: BTreeSet<String> =
         request.approved_first_run_skill_ids.into_iter().collect();
@@ -84,6 +85,7 @@ pub fn discover_skill_catalog(
         let Some(skill_id) = string_field(&value, "id").filter(|id| is_safe_public_id(id)) else {
             continue;
         };
+        manifest_skill_ids.insert(skill_id.clone());
         let safe_name = string_field(&value, "name")
             .filter(|name| is_safe_public_text(name))
             .unwrap_or_else(|| skill_id.clone());
@@ -179,6 +181,41 @@ pub fn discover_skill_catalog(
             updated_at_ms: request.now_ms,
         });
     }
+    for candidate in discover_skill_md_candidates(root)? {
+        if manifest_skill_ids.contains(&candidate.skill_id) {
+            continue;
+        }
+        entries.push(SkillCatalogEntry {
+            skill_ref: redacted_ref("skill-md", &candidate.skill_id),
+            skill_id: candidate.skill_id.clone(),
+            safe_name: candidate.safe_title,
+            source: SkillCatalogSource::ManagedLocal,
+            truth_label: WorkGraphTruthLabel::ObservedOnly,
+            state: SkillState::Candidate,
+            runtime_kind: "legacy-skill-md".to_string(),
+            intent_keys: Vec::new(),
+            phrase_count: 0,
+            capability_ids: Vec::new(),
+            priority: 0,
+            requires_operator_approval: true,
+            approval_blockers: vec![
+                "operator_adoption_required_before_skill_run".to_string(),
+                "operator_approval_required_before_first_or_high_risk_run".to_string(),
+                "legacy_skill_md_requires_manifest_import_before_run".to_string(),
+            ],
+            proof_refs: request
+                .proof_refs_by_skill_id
+                .get(&candidate.skill_id)
+                .map(|refs| filter_safe_refs(refs))
+                .unwrap_or_default(),
+            run_refs: request
+                .run_refs_by_skill_id
+                .get(&candidate.skill_id)
+                .map(|refs| filter_safe_refs(refs))
+                .unwrap_or_default(),
+            updated_at_ms: request.now_ms,
+        });
+    }
     entries.sort_by(|a, b| a.skill_id.cmp(&b.skill_id));
     Ok(SkillCatalogSnapshot {
         generated_at_ms: request.now_ms,
@@ -188,6 +225,7 @@ pub fn discover_skill_catalog(
             "observed_skill_is_not_owned".to_string(),
             "skill_run_requires_gate_and_receipt".to_string(),
             "skill_memory_preference_is_not_auto_confirmed".to_string(),
+            "legacy_skill_md_candidate_is_not_imported_or_executable".to_string(),
         ],
     })
 }
@@ -1010,6 +1048,99 @@ mod tests {
         assert!(!rendered.contains(root.to_string_lossy().as_ref()));
         assert!(!rendered.contains("/Users/private/source"));
         assert!(!rendered.contains("sensitive material"));
+    }
+
+    #[test]
+    fn discover_catalog_surfaces_skill_md_only_candidates_without_execution_control() {
+        let root = temp_root("skill-md-snapshot");
+        write_skill_md(
+            &root,
+            "open-summary",
+            "---\nid: open-summary\ntitle: Open Summary Skill\n---\nUse private source material only after approval.\n",
+        );
+
+        let snapshot = discover_skill_catalog(SkillCatalogDiscovery {
+            managed_skills_root: root.to_string_lossy().to_string(),
+            adopted_skill_ids: vec!["open-summary".to_string()],
+            approved_first_run_skill_ids: vec!["open-summary".to_string()],
+            proof_refs_by_skill_id: BTreeMap::from([(
+                "open-summary".to_string(),
+                vec!["proof://operator/skill-md-observed".to_string()],
+            )]),
+            run_refs_by_skill_id: BTreeMap::new(),
+            now_ms: 70,
+        })
+        .unwrap();
+
+        assert_eq!(snapshot.entries.len(), 1);
+        assert!(snapshot
+            .no_go
+            .contains(&"legacy_skill_md_candidate_is_not_imported_or_executable".to_string()));
+        let entry = &snapshot.entries[0];
+        assert_eq!(entry.skill_id, "open-summary");
+        assert_eq!(entry.safe_name, "Open Summary Skill");
+        assert_eq!(entry.runtime_kind, "legacy-skill-md");
+        assert_eq!(entry.truth_label, WorkGraphTruthLabel::ObservedOnly);
+        assert_eq!(entry.state, SkillState::Candidate);
+        assert!(!entry.can_be_recommended());
+        assert!(entry.requires_operator_approval);
+        assert!(entry
+            .approval_blockers
+            .contains(&"legacy_skill_md_requires_manifest_import_before_run".to_string()));
+        assert_eq!(
+            entry.proof_refs,
+            vec!["proof://operator/skill-md-observed".to_string()]
+        );
+
+        let nodes = skill_catalog_nodes(&snapshot);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].truth_label, WorkGraphTruthLabel::ObservedOnly);
+        assert!(!nodes[0].control_allowed);
+        assert!(nodes[0]
+            .blockers
+            .contains(&"skill_catalog_does_not_grant_execution_control".to_string()));
+
+        let rendered = format!("{snapshot:?}{nodes:?}");
+        assert!(!rendered.contains(root.to_string_lossy().as_ref()));
+        assert!(!rendered.contains("private source material"));
+    }
+
+    #[test]
+    fn manifest_entry_wins_over_same_directory_skill_md_candidate() {
+        let root = temp_root("skill-md-manifest-wins");
+        write_skill(
+            &root,
+            "time",
+            r#"{
+              "id":"time",
+              "name":"Manifest Time",
+              "runtime":{"kind":"shell"},
+              "triggers":{"intents":["current_datetime"],"phrases":[]},
+              "invocation":{"priority":50},
+              "permissions":{"grants":[],"promptOn":[]},
+              "executionTargets":{"requiredCapabilities":[]}
+            }"#,
+        );
+        write_skill_md(
+            &root,
+            "time",
+            "---\nid: time\ntitle: Markdown Time\n---\nThis should not create a duplicate.\n",
+        );
+
+        let snapshot = discover_skill_catalog(SkillCatalogDiscovery {
+            managed_skills_root: root.to_string_lossy().to_string(),
+            adopted_skill_ids: Vec::new(),
+            approved_first_run_skill_ids: Vec::new(),
+            proof_refs_by_skill_id: BTreeMap::new(),
+            run_refs_by_skill_id: BTreeMap::new(),
+            now_ms: 71,
+        })
+        .unwrap();
+
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(snapshot.entries[0].skill_id, "time");
+        assert_eq!(snapshot.entries[0].safe_name, "Manifest Time");
+        assert_eq!(snapshot.entries[0].runtime_kind, "shell");
     }
 
     #[test]
