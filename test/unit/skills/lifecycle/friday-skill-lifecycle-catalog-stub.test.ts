@@ -1,18 +1,16 @@
 /**
  * B1 catalog truth-labeling tests.
  *
- * The `createFridaySkillLifecycleService` factory does not currently wire a
- * catalog backend through `CreateFridaySkillLifecycleServiceDeps`. As a result:
+ * When `createFridaySkillLifecycleService` is constructed without a catalog
+ * backend:
  *   1. A one-time INFO log is emitted at service creation advising operators
  *      that catalog-derived enrichments are proof_pending in this build.
  *   2. `listCatalog(query)` returns `{ items: [], total: 0 }` for every query.
  *   3. `getSkill(skillId)` returns a summary built from persisted + registry
  *      state only — `sourceDetails` and `catalogEntry` are always `undefined`.
  *
- * These tests lock in (1) and (2) as the current truthful behavior. (3) is
- * covered transitively by integration tests that exercise getSkill with
- * persisted skills and confirm the summary shape; this file does not
- * re-stub the full dep tree.
+ * The wired backend path is tested below for both manifest-v2 packages and
+ * legacy SKILL.md-only packages, matching D21's read-only discovery slice.
  */
 
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -142,6 +140,26 @@ async function makeManagedSkillDir(): Promise<string> {
   return managedSkillsDir;
 }
 
+async function makeLegacySkillMdDir(): Promise<string> {
+  const managedSkillsDir = await mkdtemp(join(tmpdir(), "friday-d21-legacy-skill-catalog-"));
+  const skillDir = join(managedSkillsDir, "legacy-markdown-skill");
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(
+    join(skillDir, "SKILL.md"),
+    [
+      "---",
+      "name: Legacy Markdown Skill",
+      "skillKey: legacy-markdown-skill",
+      "primaryEnv: FRIDAY_LEGACY_SKILL_TOKEN",
+      "---",
+      "Summarizes open SKILL.md packages through Friday's governed catalog.",
+      "",
+      "Use this when a user wants to inspect a legacy markdown skill before install.",
+    ].join("\n"),
+  );
+  return managedSkillsDir;
+}
+
 describe("createFridaySkillLifecycleService — B1 catalog truth-labeling", () => {
   let infoSpy: ReturnType<typeof vi.spyOn>;
 
@@ -266,6 +284,54 @@ describe("createFridaySkillLifecycleService — B1 catalog truth-labeling", () =
           implementationStatus: "installed",
         },
       });
+    } finally {
+      rmSync(managedSkillsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("listCatalog exposes SKILL.md-only managed entries through the legacy fallback", async () => {
+    const managedSkillsDir = await makeLegacySkillMdDir();
+    try {
+      const service = createFridaySkillLifecycleService(makeMinimalDeps({
+        managedSkillsDir,
+        catalog: createFridayManagedSkillsCatalogBackend({
+          managedSkillsDir,
+          workspaceDir: managedSkillsDir,
+          nowIso: () => "2026-05-24T13:30:00.000Z",
+        }),
+      }));
+
+      const result = service.listCatalog({ q: "markdown" } as never);
+      expect(result.total).toBe(1);
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0]).toMatchObject({
+        sourceId: "managed-skills",
+        skillId: "legacy-markdown-skill",
+        skillName: "Legacy Markdown Skill",
+        publisher: "unknown",
+        version: "0.0.0",
+        category: "utility",
+        implementationStatus: "installed",
+        sourceDetails: {
+          id: "managed-skills",
+          enabled: true,
+          trustPolicy: "warn",
+        },
+        manifest: {
+          id: "legacy-markdown-skill",
+          name: "Legacy Markdown Skill",
+          runtime: {
+            kind: "builtin",
+            entrypoint: "",
+          },
+          requirements: {
+            env: ["FRIDAY_LEGACY_SKILL_TOKEN"],
+          },
+        },
+      });
+      expect(result.items[0]?.manifest.description).toBe(
+        "Summarizes open SKILL.md packages through Friday's governed catalog.",
+      );
     } finally {
       rmSync(managedSkillsDir, { recursive: true, force: true });
     }
