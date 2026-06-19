@@ -14,7 +14,9 @@
       "FRIDAY_MEMORY_SPINE_ROUTES_VIA_RUST",
       "FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST",
       "FRIDAY_ROUTE_AGENT_RUN_VIA_RUST",
-      "FRIDAY_MISSION_AUTO_DISPATCH"
+      "FRIDAY_MISSION_AUTO_DISPATCH",
+      "FRIDAY_A1_RUN_OUTCOME_LEARNING_FANOUT",
+      "FRIDAY_RUN_OUTCOME_LEARNING_CONFIRM"
     ]
   },
   "coverage_legend": {
@@ -62,11 +64,20 @@
     {
       "flag": "FRIDAY_A1_RUN_OUTCOME_LEARNING_FANOUT",
       "process": "rust-ws-wrapper",
-      "prod_state": "dark",
+      "prod_state": "on",
       "closes_loop": "After a finished sessioned agent run, emit refs-only preference/reflex/world-model learning candidates and require an explicit governance decision before any candidate is terminal.",
       "coverage": "loop-e2e",
       "e2e_test": "rust-core/crates/friday-hub/src/runtime.rs::a1_run_outcome_learning_fanout_writes_three_pending_refs_only_candidates",
-      "notes": "Built-DARK only. Drives maybe_emit_run_outcome_learning_candidates_flagged(.., enabled=true) on a Finished outcome and asserts exactly three refs-only pending candidates (preference/reflex/world_model), no answer-body leak, and no run_result mutation; then confirms one candidate through the explicit governance API. Sibling proofs cover exact-'1' flag parsing, flag-off byte-identical, and non-finished-no-fire. Truth boundary: this is mechanism-soak with test data, not TRUE organic A1 live-done and not an automatic durable-memory write."
+      "notes": "Mechanism-live contract. Drives maybe_emit_run_outcome_learning_candidates_flagged(.., enabled=true) on a Finished outcome and asserts exactly three refs-only pending candidates (preference/reflex/world_model), no answer-body leak, and no run_result mutation; then confirms one candidate through the explicit governance API. Sibling proofs cover exact-'1' flag parsing, flag-off byte-identical, and non-finished-no-fire. Truth boundary: prod-on means the candidate emitter is wired for real finished runs; it is not TRUE organic A1 live-done until at least one candidate is fed by an operator-origin organic turn and explicitly confirmed."
+    },
+    {
+      "flag": "FRIDAY_RUN_OUTCOME_LEARNING_CONFIRM",
+      "process": "rust-ws-wrapper",
+      "prod_state": "on",
+      "closes_loop": "An owner-authed RunOutcomeLearningDecisionRequest confirms or rejects a refs-only run-outcome learning candidate, without a model call and without writing durable memory.",
+      "coverage": "loop-e2e",
+      "e2e_test": "rust-core/crates/friday-hub/src/bin/hub_agent_run_server.rs::flag_on_run_outcome_learning_decision_confirms_through_dispatch",
+      "notes": "This is the governance leg for A1 run-outcome learning. The mapped dispatch test seeds one pending owner-owned run-outcome candidate, sends the live sealed-message request shape through the flag-on server dispatch arm, and asserts the row transitions to Confirmed. Sibling proofs cover exact-'1' flag parsing and flag-off keepalive byte-identical behavior. Truth boundary: this enables product confirmation of candidates; A1 live-done still requires an operator-origin organic turn to feed a candidate and a real confirm decision."
     },
     {
       "flag": "FRIDAY_MEMORY_CONFIRM",
