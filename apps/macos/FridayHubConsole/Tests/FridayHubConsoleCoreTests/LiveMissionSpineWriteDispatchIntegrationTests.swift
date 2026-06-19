@@ -287,7 +287,7 @@ func liveOperationsOverviewSubmitIntakeAutoDispatchesHybridClaudeFollowUp() asyn
       + "then summarize that the product Operations view should automatically run the generated "
       + "Claude follow-up after the Codex first leg. Answer exactly FRIDAY_PRODUCT_AUTO_FOLLOWUP_OK.")
 
-  guard case let .confirmed(summary, _) = vm.intakeState else {
+  guard case let .confirmed(summary, _, _) = vm.intakeState else {
     Issue.record("expected product auto follow-up to confirm, got \(String(describing: vm.intakeState))")
     return
   }

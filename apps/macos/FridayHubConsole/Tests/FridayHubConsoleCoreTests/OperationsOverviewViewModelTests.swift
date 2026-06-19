@@ -390,10 +390,27 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
 
 struct StaticWorkbenchReadClient: FridayRustReadClient {
   let snapshot: FridayHubConsoleCore.WorkbenchSnapshot
+  var answerBodies: [String: String] = [:]
 
   func fetchWorkbench() async throws -> FridayRustClient.WorkbenchSnapshot {
     let json = try JSONEncoder().encode(snapshot)
     return try FridayRustClient.WorkbenchSnapshot(projectionJSON: json, generatedAtMs: 0)
+  }
+
+  func fetchRunAnswerBody(runId: String) async throws -> RunAnswerBody {
+    guard let answer = answerBodies[runId] else {
+      throw FridayReadClientError.transport("run answer body unavailable")
+    }
+    let data = """
+      {
+        "run_id": "\(runId)",
+        "outcome": "delivered",
+        "status": "finished",
+        "answer": "\(answer)",
+        "truth_label": "owner_gated_answer_body"
+      }
+      """.data(using: .utf8)!
+    return try RunAnswerBody(answerJSON: data, generatedAtMs: 1)
   }
 }
 
@@ -440,7 +457,7 @@ func submitIntakeReadyRendersConfirmedAndWiresOwnerAdmin001() async {
     writeOwnerPrincipal: "admin-001", newId: { "fixed" })
   await vm.submitIntake(intent: "keep one Mission across every surface")
 
-  guard case let .confirmed(summary, questions) = vm.intakeState else {
+  guard case let .confirmed(summary, questions, _) = vm.intakeState else {
     Issue.record("expected .confirmed, got \(vm.intakeState)")
     return
   }
@@ -462,7 +479,7 @@ func submitIntakeReadyDispatchesMissionBoundModelTurnWhenRunClientConfigured() a
     writeOwnerPrincipal: "admin-001", newId: { "fixed" })
   await vm.submitIntake(intent: "keep one Mission across every surface")
 
-  guard case let .confirmed(summary, _) = vm.intakeState else {
+  guard case let .confirmed(summary, _, _) = vm.intakeState else {
     Issue.record("expected .confirmed, got \(String(describing: vm.intakeState))")
     return
   }
@@ -490,7 +507,7 @@ func submitIntakeDispatchesClaudeFollowUpWhenProjectionExposesGeneratedWorkItem(
 
   await vm.submitIntake(intent: "route through Codex first and Claude follow-up")
 
-  guard case let .confirmed(summary, _) = vm.intakeState else {
+  guard case let .confirmed(summary, _, _) = vm.intakeState else {
     Issue.record("expected .confirmed, got \(vm.intakeState)")
     return
   }
@@ -502,12 +519,37 @@ func submitIntakeDispatchesClaudeFollowUpWhenProjectionExposesGeneratedWorkItem(
 
 @Test
 @MainActor
+func submitIntakeDisplaysOwnerGatedRunAnswerBodyWhenDelivered() async {
+  let write = MockMissionSpineWriteClient(behavior: .intakeReady)
+  let read = StaticWorkbenchReadClient(
+    snapshot: snapshotWithWorkItems(
+      missionId: "mission-desktop-fixed",
+      fridayConversationId: "fconv_desktop_fixed",
+      workItemIds: ["work-desktop-fixed"]),
+    answerBodies: ["run-bound-1": "Readable desktop answer body"])
+  let vm = OperationsOverviewViewModel(
+    client: read, writeClient: write, missionRunClient: write,
+    writeOwnerPrincipal: "admin-001", newId: { "fixed" })
+
+  await vm.submitIntake(intent: "show the actual answer in desktop")
+
+  guard case let .confirmed(summary, _, answerBody) = vm.intakeState else {
+    Issue.record("expected .confirmed, got \(vm.intakeState)")
+    return
+  }
+  #expect(summary.contains("run_id=run-bound-1"))
+  #expect(answerBody?.contains("Readable desktop answer body") == true)
+  #expect(answerBody?.contains("Codex:") == true)
+}
+
+@Test
+@MainActor
 func submitIntakeNeedsClarificationCarriesQuestionsHonestly() async {
   let vm = OperationsOverviewViewModel(
     client: MockReadClient(behavior: .loaded),
     writeClient: MockMissionSpineWriteClient(behavior: .intakeNeedsClarification))
   await vm.submitIntake(intent: "do the thing")
-  guard case let .confirmed(_, questions) = vm.intakeState else {
+  guard case let .confirmed(_, questions, _) = vm.intakeState else {
     Issue.record("expected .confirmed (with questions), got \(vm.intakeState)")
     return
   }
@@ -575,7 +617,7 @@ func decideMemoryConfirmRendersConfirmedRecallable() async {
   let vm = OperationsOverviewViewModel(
     client: MockReadClient(behavior: .loaded), writeClient: write, writeOwnerPrincipal: "admin-001")
   await vm.decideMemory(candidateId: "cand-1", memoryId: "mem-1", confirm: true)
-  guard case let .confirmed(summary, _) = vm.memoryDecisionStates["cand-1"] else {
+  guard case let .confirmed(summary, _, _) = vm.memoryDecisionStates["cand-1"] else {
     Issue.record("expected .confirmed, got \(String(describing: vm.memoryDecisionStates["cand-1"]))")
     return
   }
@@ -609,7 +651,7 @@ func decideRunOutcomeLearningConfirmRendersConfirmedAndWiresCandidate() async {
   let vm = OperationsOverviewViewModel(client: MockReadClient(behavior: .loaded), writeClient: write)
   await vm.decideRunOutcomeLearning(candidateId: "a1:run-a1:preference", confirm: true)
 
-  guard case let .confirmed(summary, questions) =
+  guard case let .confirmed(summary, questions, _) =
     vm.runOutcomeLearningDecisionStates["a1:run-a1:preference"] else {
     Issue.record("expected .confirmed, got \(String(describing: vm.runOutcomeLearningDecisionStates["a1:run-a1:preference"]))")
     return

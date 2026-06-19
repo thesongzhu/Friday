@@ -42,9 +42,10 @@ public enum WriteActionState: Sendable, Equatable {
   case ready
   /// The request is in flight (handshake + sealed send + awaiting the refs-only receipt).
   case sent
-  /// A terminal SUCCESS receipt. `summary` is a coarse refs-only line (status + ids + recallable);
+  /// A terminal SUCCESS receipt. `summary` is a coarse line (status + ids + recallable);
+  /// `answerBody` is populated only by the explicit owner-gated answer-body readback arm.
   /// `clarificationQuestions` is non-empty ONLY for a `needs_clarification` intake.
-  case confirmed(summary: String, clarificationQuestions: [String] = [])
+  case confirmed(summary: String, clarificationQuestions: [String] = [], answerBody: String? = nil)
   /// A terminal FAILURE rendered AS truth — a transport/honest-unavailable error, a typed server
   /// Error, OR a server `status:"blocked"` receipt (e.g. the synthetic-candidate-id block). Never a
   /// fabricated success.
@@ -176,6 +177,7 @@ public final class OperationsOverviewViewModel: ObservableObject {
       default:
         // ready / created_or_ready
         var summary = "Mission intake \(result.status) · mission_id=\(result.missionId)"
+        var answerBodies: [String] = []
         if let workItemId = result.workItemId { summary += " · work_item_id=\(workItemId)" }
         if let workItemId = result.workItemId, let missionRunClient {
           let context = MissionWorkItemContextWire(
@@ -188,14 +190,23 @@ public final class OperationsOverviewViewModel: ObservableObject {
               missionContext: context,
               constraints: AgentRunConstraintsWire(readOnly: true))
             summary += Self.dispatchSummary(for: outcome)
+            if let answerBody = await answerBodyText(for: outcome, label: "Codex") {
+              answerBodies.append(answerBody)
+            }
             if let followUpSummary = try await dispatchClaudeFollowUpIfPresent(
               sourceWorkItemId: workItemId,
               intakeResult: result,
               missionRunClient: missionRunClient)
             {
-              summary += followUpSummary
+              summary += followUpSummary.summary
+              if let answerBody = await answerBodyText(for: followUpSummary.outcome, label: "Claude follow-up") {
+                answerBodies.append(answerBody)
+              }
             }
-            intakeState = .confirmed(summary: summary, clarificationQuestions: result.clarificationQuestions)
+            intakeState = .confirmed(
+              summary: summary,
+              clarificationQuestions: result.clarificationQuestions,
+              answerBody: Self.joinAnswerBodies(answerBodies))
           } catch {
             intakeState = .error(
               reason: "Mission intake ready, but model dispatch failed — \(Self.writeReason(for: error))")
@@ -214,7 +225,7 @@ public final class OperationsOverviewViewModel: ObservableObject {
     sourceWorkItemId: String,
     intakeResult: MissionIntakeResultWire,
     missionRunClient: FridayMissionBoundRunWriteClient
-  ) async throws -> String? {
+  ) async throws -> FollowUpDispatch? {
     let followUpWorkItemId = "\(sourceWorkItemId)-claude-followup"
     let wire = try await client.fetchWorkbench()
     let snapshot = try WorkbenchSnapshotAdapter.display(from: wire)
@@ -231,7 +242,35 @@ public final class OperationsOverviewViewModel: ObservableObject {
         missionId: intakeResult.missionId,
         workItemId: followUpWorkItemId),
       constraints: AgentRunConstraintsWire(readOnly: true))
-    return " · follow_up_work_item_id=\(followUpWorkItemId)" + Self.dispatchSummary(for: outcome)
+    return FollowUpDispatch(
+      summary: " · follow_up_work_item_id=\(followUpWorkItemId)" + Self.dispatchSummary(for: outcome),
+      outcome: outcome)
+  }
+
+  private struct FollowUpDispatch {
+    let summary: String
+    let outcome: AgentRunDispatchOutcome
+  }
+
+  private func answerBodyText(for outcome: AgentRunDispatchOutcome, label: String) async -> String? {
+    guard case let .result(result) = outcome else { return nil }
+    do {
+      let body = try await client.fetchRunAnswerBody(runId: result.runId)
+      if let answer = body.deliveredAnswer?.trimmingCharacters(in: .whitespacesAndNewlines),
+        !answer.isEmpty
+      {
+        return "\(label): \(answer)"
+      }
+      let reason = body.denyReason ?? body.status ?? body.outcome
+      return "\(label): answer body unavailable (\(reason))"
+    } catch {
+      return "\(label): answer body unavailable (\(Self.reason(for: error)))"
+    }
+  }
+
+  private static func joinAnswerBodies(_ answerBodies: [String]) -> String? {
+    let nonEmpty = answerBodies.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    return nonEmpty.isEmpty ? nil : nonEmpty.joined(separator: "\n\n")
   }
 
   /// Submit ONE owner confirm/reject for a memory candidate over the sealed WRITE seam, keyed by the
