@@ -5,6 +5,14 @@ import {
   createFridayMissionSpineRoutes,
   type FridayMissionSpineRoutesDeps,
 } from "../../../../src/api/http/routes/friday-mission-spine-routes.js";
+import { createFridayMissionAutoDispatchDriver } from "../../../../src/api/mission-spine/friday-mission-auto-dispatch-driver.js";
+import { createFridayMissionSpineDispatchAdapter } from "../../../../src/api/mission-spine/friday-mission-spine-dispatch-adapter.js";
+import type {
+  CreateFridayRustHubAgentRunSealedClientOptions,
+  FridayRustHubAgentRunSealedClient,
+  FridayRustHubMissionIntakeRequest,
+  FridayRustHubMissionIntakeResult,
+} from "../../../../src/api/mission-spine/friday-rust-hub-agent-run-ws-sealed-client.js";
 import type { FridayMissionSpineWorkbenchSnapshot } from "../../../../src/api/model/friday-api-mission-spine.types.js";
 
 const snapshot: FridayMissionSpineWorkbenchSnapshot = {
@@ -878,6 +886,141 @@ describe("createFridayMissionSpineRoutes — Lane B organic mutation routes", ()
         reason: "Codex owns this edit",
       });
       expect((response as { result: { decisionId: string } }).result.decisionId).toBe("route_decision_lane_b");
+    });
+  });
+
+  describe("flag-ON: route + adapter + auto-dispatch producer composed", () => {
+    function makeRouteWithAutoDispatch(result: FridayRustHubMissionIntakeResult) {
+      const startRun = vi.fn(async () => ({ runId: "run-route-auto" }));
+      const driver = createFridayMissionAutoDispatchDriver({
+        startRun: () => startRun,
+        deepseekProviderId: "deepseek",
+        deepseekFlashModel: "deepseek-v4-flash",
+        codexProviderId: "codex",
+        codexModel: "gpt-5.5",
+        claudeProviderId: "claude",
+        claudeModel: "claude-opus-4-8",
+      });
+      const intakeCalls: FridayRustHubMissionIntakeRequest[] = [];
+      const createClient = vi.fn(
+        (_options: CreateFridayRustHubAgentRunSealedClientOptions): FridayRustHubAgentRunSealedClient => ({
+          dispatchRun: vi.fn(async () => {
+            throw new Error("dispatchRun is owned by the auto-dispatch startRun seam in this test");
+          }),
+          resumeWithApproval: vi.fn(async () => {
+            throw new Error("resumeWithApproval not used by mission-spine intake");
+          }),
+          intakeMission: vi.fn(async (request: FridayRustHubMissionIntakeRequest) => {
+            intakeCalls.push(request);
+            return result;
+          }),
+          transitionMission: vi.fn(async () => {
+            throw new Error("transitionMission not used by mission-spine intake");
+          }),
+          transitionWorkItem: vi.fn(async () => {
+            throw new Error("transitionWorkItem not used by mission-spine intake");
+          }),
+          controlRouteDecision: vi.fn(async () => {
+            throw new Error("controlRouteDecision not used by mission-spine intake");
+          }),
+        }),
+      );
+      const dispatch = createFridayMissionSpineDispatchAdapter({
+        port: 48750,
+        secretResolver: () => new Uint8Array(32).fill(9),
+        createClient,
+        autoDispatchDriver: driver,
+      });
+      const route = findPost(
+        createFridayMissionSpineRoutes({ workbench: null, disabledReason: null, dispatch }),
+        "mission.spine.intake.create",
+      );
+      return { route, startRun, intakeCalls };
+    }
+
+    it("fresh Ready intake from the HTTP route produces one RESULT-bound read-only run", async () => {
+      const { route, startRun, intakeCalls } = makeRouteWithAutoDispatch({
+        truthLabel: "rust_wired",
+        fridayConversationId: "conversation_from_rust_result",
+        missionId: "mission_from_rust_result",
+        workItemId: "work_from_rust_result",
+        surfaceThreadId: "surface_lane_b",
+        status: "ready",
+        blockers: [],
+        createdOrReady: true,
+      });
+
+      const response = await route.handler(
+        makeCtx({
+          principal: BOUND_PRINCIPAL,
+          body: {
+            ...VALID_INTAKE_BODY,
+            fridayConversationId: "conversation_from_http_body",
+            missionId: "mission_from_http_body",
+            workItemId: "work_from_http_body",
+            surfaceKind: "desktop",
+            deliveryRoute: "desktop://hub-console/operations/route-auto",
+            title: "Route auto dispatch",
+            intent: "Drive one surface-shaped intake into the mission-bound run producer",
+          },
+        }) as never,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect((response as { result: { status: string } }).result.status).toBe("ready");
+      expect(intakeCalls).toHaveLength(1);
+      expect(startRun).toHaveBeenCalledTimes(1);
+      const dispatched = startRun.mock.calls[0][0];
+      expect(dispatched).toMatchObject({
+        task: "Route auto dispatch — Drive one surface-shaped intake into the mission-bound run producer",
+        principalId: "owner_lane_b",
+        providerId: "deepseek",
+        model: "deepseek-v4-flash",
+        constraints: { readOnly: true },
+        allowedRustRouteTools: ["read_file", "list_dir", "stat_file", "search"],
+        missionContext: {
+          fridayConversationId: "conversation_from_rust_result",
+          missionId: "mission_from_rust_result",
+          workItemId: "work_from_rust_result",
+        },
+      });
+      expect(dispatched.missionContext?.missionId).not.toBe("mission_from_http_body");
+      expect(dispatched.missionContext?.workItemId).not.toBe("work_from_http_body");
+    });
+
+    it("blocked or clarification results return honestly and produce no bound run", async () => {
+      for (const result of [
+        {
+          truthLabel: "rust_wired" as const,
+          fridayConversationId: "conversation_lane_b",
+          missionId: "mission_lane_b",
+          surfaceThreadId: "surface_lane_b",
+          status: "blocked",
+          blockers: ["duplicate_open_mission"],
+          createdOrReady: false,
+        },
+        {
+          truthLabel: "rust_wired" as const,
+          fridayConversationId: "conversation_lane_b",
+          missionId: "mission_lane_b",
+          surfaceThreadId: "surface_lane_b",
+          status: "needs_clarification",
+          blockers: [],
+          createdOrReady: false,
+          clarificationQuestions: ["What outcome should this mission optimize for?"],
+        },
+      ] satisfies FridayRustHubMissionIntakeResult[]) {
+        const { route, startRun } = makeRouteWithAutoDispatch(result);
+        const response = await route.handler(
+          makeCtx({ principal: BOUND_PRINCIPAL, body: VALID_INTAKE_BODY }) as never,
+        );
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect((response as { result: { status: string } }).result.status).toBe(result.status);
+        expect(startRun).not.toHaveBeenCalled();
+      }
     });
   });
 
