@@ -14,7 +14,7 @@ use friday_core::{
     ApprovalState, FridayConversation, HandoffJudgmentMemory, Mission, MissionStatus, Risk,
     RouteDecisionCard, TruthStatus, WorkItem, WorkItemStatus, WorkLane,
 };
-use friday_storage::{Db, StorageError};
+use friday_storage::{mission::DeferredRouteFollowUpRequest, Db, StorageError};
 use std::sync::{Mutex, MutexGuard};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -141,6 +141,26 @@ fn seed_route_decision(db: &Db) {
         "route-decision-work-wi".into(),
         &item,
         vec!["friday://trace/route-decision-work-wi".into()],
+        2,
+        None,
+    );
+    db.upsert_route_decision(&card).unwrap();
+}
+
+fn seed_hybrid_route_decision(db: &Db) {
+    let mut item = db.get_work_item("work-wi").unwrap().unwrap();
+    item.judgment_memory.why_this_route =
+        "Codex first for workspace execution; Claude synthesis follow-up deferred".into();
+    item.judgment_memory.considered_options = vec![
+        "combination: Codex first, Claude synthesis after proof".into(),
+        "claude: writing only".into(),
+    ];
+    item.judgment_memory.deferred_options = vec!["Claude synthesis follow-up".into()];
+    db.upsert_work_item(&item).unwrap();
+    let card = RouteDecisionCard::from_work_item(
+        "route-decision-work-wi".into(),
+        &item,
+        vec!["friday://trace/hybrid-route".into()],
         2,
         None,
     );
@@ -419,6 +439,159 @@ fn route_decision_override_reassigns_before_dispatch_in_same_lifecycle_hop() {
     assert_eq!(
         override_audits, 1,
         "override must be applied as a real audited pre-dispatch lifecycle control"
+    );
+}
+
+#[test]
+fn completed_hybrid_source_materializes_deferred_claude_follow_up_work_item() {
+    let db = Db::open_hub(&temp_db_path("wi-deferred-followup")).unwrap();
+    seed(&db, WorkItemStatus::ProviderWaiting);
+    let (source, _) = db
+        .transition_work_item_status(
+            "work-wi",
+            WorkItemStatus::CompletedWithProof,
+            "agent:codex",
+            "codex first leg completed",
+            Some("friday://agent-run/run-codex-first"),
+            10,
+        )
+        .unwrap();
+    assert_eq!(source.status, WorkItemStatus::CompletedWithProof);
+    seed_hybrid_route_decision(&db);
+
+    let follow = db
+        .materialize_deferred_route_follow_up(DeferredRouteFollowUpRequest {
+            decision_id: "route-decision-work-wi",
+            source_work_item_id: "work-wi",
+            follow_up_work_item_id: "work-wi-claude-followup",
+            follow_up_lane: WorkLane::Claude,
+            follow_up_provider_or_agent: Some("claude"),
+            actor_ref: "agent:friday",
+            reason: "create tracked Claude synthesis leg after Codex proof",
+            now_ms: 20,
+        })
+        .unwrap();
+
+    assert_eq!(follow.status, WorkItemStatus::ReadyToDispatch);
+    assert_eq!(follow.lane, WorkLane::Claude);
+    assert_eq!(follow.target_provider_or_agent.as_deref(), Some("claude"));
+    assert_eq!(
+        follow.input_refs,
+        vec!["friday://agent-run/run-codex-first".to_string()],
+        "the Claude follow-up inherits the proven Codex first-leg receipt as input"
+    );
+    assert!(follow
+        .judgment_memory
+        .why_this_route
+        .contains("Materialized deferred route option"));
+    assert!(follow
+        .judgment_memory
+        .deferred_options
+        .iter()
+        .any(|option| option.contains("automatic follow-up execution is separate")));
+
+    let mission = db.get_mission("mission-wi").unwrap().unwrap();
+    assert!(mission
+        .work_item_ids
+        .contains(&"work-wi-claude-followup".to_string()));
+    assert!(mission
+        .handoff_inheritance
+        .contains(&"deferred_follow_up:work-wi-claude-followup".to_string()));
+
+    let route = db
+        .list_route_decisions_for_mission("mission-wi")
+        .unwrap()
+        .into_iter()
+        .find(|route| route.work_item_id == "work-wi-claude-followup")
+        .expect("follow-up route decision");
+    assert_eq!(route.selected_lane, WorkLane::Claude);
+    assert_eq!(route.selected_provider_or_agent.as_deref(), Some("claude"));
+    assert!(route
+        .trace_refs
+        .contains(&"friday://route-decision/route-decision-work-wi".to_string()));
+
+    let audits: i64 = db
+        .conn()
+        .query_row(
+            "SELECT COUNT(*) FROM audit_ledger WHERE action LIKE 'route_decision.deferred_follow_up_materialized:%'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(audits, 1);
+}
+
+#[test]
+fn deferred_follow_up_requires_proven_source_and_unused_follow_up_id() {
+    let db = Db::open_hub(&temp_db_path("wi-deferred-followup-gates")).unwrap();
+    seed(&db, WorkItemStatus::ReadyToDispatch);
+    seed_route_decision(&db);
+
+    let unproven = db
+        .materialize_deferred_route_follow_up(DeferredRouteFollowUpRequest {
+            decision_id: "route-decision-work-wi",
+            source_work_item_id: "work-wi",
+            follow_up_work_item_id: "work-wi-claude-followup",
+            follow_up_lane: WorkLane::Claude,
+            follow_up_provider_or_agent: Some("claude"),
+            actor_ref: "agent:friday",
+            reason: "should fail",
+            now_ms: 20,
+        })
+        .unwrap_err();
+    assert!(
+        matches!(unproven, StorageError::Unsupported(ref message) if message.contains("must be completed_with_proof")),
+        "unproven source must fail closed, got {unproven:?}"
+    );
+
+    for (now, next) in [
+        (21, WorkItemStatus::Dispatched),
+        (22, WorkItemStatus::HubAccepted),
+        (23, WorkItemStatus::ProviderRouted),
+        (24, WorkItemStatus::ProviderWaiting),
+    ] {
+        db.transition_work_item_status("work-wi", next, "agent:friday", "advance", None, now)
+            .unwrap();
+    }
+    db.transition_work_item_status(
+        "work-wi",
+        WorkItemStatus::CompletedWithProof,
+        "agent:friday",
+        "advance",
+        Some("friday://agent-run/run-codex-first"),
+        25,
+    )
+    .unwrap();
+
+    let follow = db
+        .materialize_deferred_route_follow_up(DeferredRouteFollowUpRequest {
+            decision_id: "route-decision-work-wi",
+            source_work_item_id: "work-wi",
+            follow_up_work_item_id: "work-wi-claude-followup",
+            follow_up_lane: WorkLane::Claude,
+            follow_up_provider_or_agent: Some("claude"),
+            actor_ref: "agent:friday",
+            reason: "create tracked Claude synthesis leg after Codex proof",
+            now_ms: 26,
+        })
+        .unwrap();
+    assert_eq!(follow.status, WorkItemStatus::ReadyToDispatch);
+
+    let duplicate_follow_up = db
+        .materialize_deferred_route_follow_up(DeferredRouteFollowUpRequest {
+            decision_id: "route-decision-work-wi",
+            source_work_item_id: "work-wi",
+            follow_up_work_item_id: "work-wi-claude-followup",
+            follow_up_lane: WorkLane::Claude,
+            follow_up_provider_or_agent: Some("claude"),
+            actor_ref: "agent:friday",
+            reason: "should fail",
+            now_ms: 27,
+        })
+        .unwrap_err();
+    assert!(
+        matches!(duplicate_follow_up, StorageError::Unsupported(ref message) if message.contains("already exists")),
+        "duplicate follow-up id must fail closed, got {duplicate_follow_up:?}"
     );
 }
 
