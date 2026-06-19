@@ -2416,11 +2416,15 @@ pub fn recall_preamble_for_principals_with_query(
     // Read the hybrid flag ONCE here (the only env read) and inject it into the pure-ish body
     // below — the split-env idiom so the behavior is unit-testable without mutating `std::env`.
     let hybrid_on = hybrid_recall_enabled_from(std::env::var(FRIDAY_HYBRID_RECALL_ENABLED).ok());
+    let a1_run_outcome_on = a1_run_outcome_learning_recall_enabled_from(
+        std::env::var(FRIDAY_A1_RUN_OUTCOME_LEARNING_RECALL).ok(),
+    );
     recall_preamble_for_principals_blended(
         db,
         principals,
         query,
         hybrid_on,
+        a1_run_outcome_on,
         receipt_audit_id,
         now_ms,
     )
@@ -2436,6 +2440,7 @@ pub(crate) fn recall_preamble_for_principals_blended(
     principals: &[&str],
     query: Option<&str>,
     hybrid_on: bool,
+    a1_run_outcome_on: bool,
     receipt_audit_id: &str,
     now_ms: i64,
 ) -> Result<String, StorageError> {
@@ -2493,6 +2498,104 @@ pub(crate) fn recall_preamble_for_principals_blended(
         .map_err(StorageError::from)?;
         tx.commit().map_err(StorageError::from)?;
     }
+    let a1_preamble = a1_run_outcome_learning_preamble_for_principals_flagged(
+        db,
+        principals,
+        a1_run_outcome_on,
+        receipt_audit_id,
+        now_ms,
+    )?;
+    Ok(format!("{preamble}{a1_preamble}"))
+}
+
+pub(crate) fn a1_run_outcome_learning_preamble_for_principals_flagged(
+    db: &Db,
+    principals: &[&str],
+    enabled: bool,
+    receipt_audit_id: &str,
+    now_ms: i64,
+) -> Result<String, StorageError> {
+    let Some(receipt_actor) = principals.first() else {
+        return Ok(String::new());
+    };
+    if !enabled {
+        return Ok(String::new());
+    }
+
+    let rows = friday_storage::learning_candidate::list_recent_confirmed_run_outcome_candidates(
+        db.conn(),
+        64,
+    )?;
+    let mut matched = Vec::new();
+    for row in rows {
+        let Some(session_id) = row.session_id.as_deref() else {
+            continue;
+        };
+        let Some(owner) = friday_storage::agent_session::load_session_owner(db.conn(), session_id)?
+        else {
+            continue;
+        };
+        let effective_user_id =
+            crate::session_namespace::resolve_effective_user_id(&owner, &mut |key: &str| {
+                friday_storage::agent_session::load_session_owner(db.conn(), key)
+            })?;
+        let candidates = match crate::session_namespace::resolve_session_memory_namespace_candidates(
+            owner.account_id.as_deref(),
+            owner.channel.as_deref(),
+            effective_user_id.as_deref(),
+        ) {
+            Ok(candidates) => candidates,
+            Err(crate::session_namespace::NamespaceError::UnresolvableNoUserId) => continue,
+        };
+        if candidates
+            .iter()
+            .any(|candidate| principals.iter().any(|principal| candidate == principal))
+        {
+            matched.push(row);
+        }
+        if matched.len() >= 8 {
+            break;
+        }
+    }
+    if matched.is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut preamble =
+        "Confirmed run-outcome learning signals (refs-only; no answer body):\n".to_string();
+    let mut injected_ids = Vec::new();
+    for row in matched {
+        injected_ids.push(row.candidate_id.clone());
+        preamble.push_str("- ");
+        preamble.push_str(row.kind.as_str());
+        preamble.push_str(": ");
+        preamble.push_str(&row.summary);
+        preamble.push_str("; evidence=");
+        preamble.push_str(&row.evidence_ref);
+        preamble.push_str("; run=");
+        preamble.push_str(&row.run_id);
+        preamble.push('\n');
+    }
+    preamble.push('\n');
+
+    let tx = db
+        .conn()
+        .unchecked_transaction()
+        .map_err(StorageError::from)?;
+    friday_storage::audit::append_audit(
+        &tx,
+        &format!("{receipt_audit_id}:run-outcome-learning"),
+        receipt_actor,
+        &format!(
+            "run_outcome_learning.recalled:signals={}",
+            injected_ids.len()
+        ),
+        Some(&injected_ids.join(",")),
+        now_ms,
+    )
+    .map_err(StorageError::from)?;
+    tx.commit().map_err(StorageError::from)?;
+
     Ok(preamble)
 }
 
@@ -3575,6 +3678,15 @@ pub const FRIDAY_HYBRID_RECALL_ENABLED: &str = "FRIDAY_HYBRID_RECALL_ENABLED";
 /// Pure flag-matcher for [`FRIDAY_HYBRID_RECALL_ENABLED`] (env read split out for race-free unit
 /// tests). ONLY the literal `"1"` (trimmed) enables; everything else (incl. `"true"`) is OFF.
 pub(crate) fn hybrid_recall_enabled_from(raw: Option<String>) -> bool {
+    matches!(raw, Some(v) if v.trim() == "1")
+}
+
+/// Default-OFF A1 DRIVE gate. When exactly `"1"`, confirmed refs-only run-outcome
+/// learning candidates are rendered into the owner's recall preamble as operational
+/// signals. They remain body-free and never become durable memory automatically.
+pub const FRIDAY_A1_RUN_OUTCOME_LEARNING_RECALL: &str = "FRIDAY_A1_RUN_OUTCOME_LEARNING_RECALL";
+
+pub(crate) fn a1_run_outcome_learning_recall_enabled_from(raw: Option<String>) -> bool {
     matches!(raw, Some(v) if v.trim() == "1")
 }
 
@@ -16253,6 +16365,7 @@ mod tests {
             &["alice"],
             Some("how do I tune my kafka cluster?"),
             false,
+            false,
             "audit-off",
             now,
         )
@@ -16268,6 +16381,7 @@ mod tests {
             &["alice"],
             Some("how do I tune my kafka cluster?"),
             true,
+            false,
             "audit-on",
             now,
         )
@@ -16305,13 +16419,21 @@ mod tests {
             &["alice"],
             Some("kafka kafka kafka"),
             false,
+            false,
             "audit-k",
             now,
         )
         .unwrap();
-        let off_none =
-            recall_preamble_for_principals_blended(&db, &["alice"], None, false, "audit-n", now)
-                .unwrap();
+        let off_none = recall_preamble_for_principals_blended(
+            &db,
+            &["alice"],
+            None,
+            false,
+            false,
+            "audit-n",
+            now,
+        )
+        .unwrap();
         assert_eq!(
             legacy, off_kafka,
             "flag-OFF must be byte-identical to the legacy recency-only preamble"
@@ -16355,6 +16477,7 @@ mod tests {
             &["alice"],
             Some("tell me about quantum research"),
             true,
+            false,
             "audit-iso",
             now,
         )
@@ -16362,6 +16485,144 @@ mod tests {
         assert!(
             !a_view.contains("quantum") && !a_view.contains("bob"),
             "owner A must never recall owner B's memory under hybrid: {a_view:?}"
+        );
+    }
+
+    fn seed_confirmed_run_outcome_learning(
+        db: &Db,
+        session_id: &str,
+        owner: &str,
+        run_id: &str,
+        now: i64,
+    ) {
+        friday_storage::agent_session::ensure_session_with_owner(
+            db.conn(),
+            session_id,
+            &friday_storage::agent_session::SessionOwner {
+                user_id: Some(owner.to_string()),
+                ..friday_storage::agent_session::SessionOwner::default()
+            },
+            now,
+        )
+        .unwrap();
+        friday_storage::learning_candidate::record_run_outcome_candidates(
+            db.conn(),
+            run_id,
+            Some(session_id),
+            3,
+            1,
+            now,
+        )
+        .unwrap();
+        friday_storage::learning_candidate::decide_run_outcome_candidate(
+            db.conn(),
+            &format!("a1:{run_id}:preference"),
+            true,
+            now + 1,
+            Some("operator confirmed refs-only signal"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a1_run_outcome_learning_recall_flag_on_surfaces_confirmed_refs_only_signal() {
+        let db = Db::open_hub(&temp_path("a1-drive-on")).unwrap();
+        let now = 1_000_000_000_000_i64;
+        seed_confirmed_run_outcome_learning(&db, "sess-a1-drive", "alice", "run-a1-drive", now);
+        let alice_ns =
+            crate::session_namespace::resolve_session_memory_namespace(None, None, Some("alice"))
+                .unwrap();
+
+        let off = recall_preamble_for_principals_blended(
+            &db,
+            &[alice_ns.as_str()],
+            None,
+            false,
+            false,
+            "audit-a1-off",
+            now + 2,
+        )
+        .unwrap();
+        assert_eq!(off, "", "flag-OFF must be byte-identical: no A1 signal");
+
+        let on = recall_preamble_for_principals_blended(
+            &db,
+            &[alice_ns.as_str()],
+            None,
+            false,
+            true,
+            "audit-a1-on",
+            now + 3,
+        )
+        .unwrap();
+        assert!(
+            on.contains("Confirmed run-outcome learning signals")
+                && on.contains("preference")
+                && on.contains("refs-only run outcome: turns=3; executed_tools=1")
+                && on.contains("friday://agent-run/run-a1-drive"),
+            "flag-ON must inject the confirmed refs-only learning signal: {on:?}"
+        );
+        assert!(
+            !on.contains("operator confirmed refs-only signal"),
+            "decision reason is operator text and must not be prompt-injected: {on:?}"
+        );
+    }
+
+    #[test]
+    fn a1_run_outcome_learning_recall_coexists_with_memory_recall_audit() {
+        let db = Db::open_hub(&temp_path("a1-drive-audit")).unwrap();
+        let now = 1_000_000_000_000_i64;
+        let alice_ns =
+            crate::session_namespace::resolve_session_memory_namespace(None, None, Some("alice"))
+                .unwrap();
+        seed_confirmed_memory(
+            &db,
+            "mem-a1-audit",
+            "alice keeps Friday concise",
+            &alice_ns,
+            now,
+        );
+        seed_confirmed_run_outcome_learning(&db, "sess-a1-audit", "alice", "run-a1-audit", now);
+
+        let preamble = recall_preamble_for_principals_blended(
+            &db,
+            &[alice_ns.as_str()],
+            None,
+            false,
+            true,
+            "audit-a1-coexist",
+            now + 2,
+        )
+        .unwrap();
+        assert!(preamble.contains("alice keeps Friday concise"));
+        assert!(preamble.contains("friday://agent-run/run-a1-audit"));
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
+    }
+
+    #[test]
+    fn a1_run_outcome_learning_recall_is_owner_scoped() {
+        let db = Db::open_hub(&temp_path("a1-drive-iso")).unwrap();
+        let now = 1_000_000_000_000_i64;
+        seed_confirmed_run_outcome_learning(&db, "sess-a1-alice", "alice", "run-alice", now);
+        seed_confirmed_run_outcome_learning(&db, "sess-a1-mallory", "mallory", "run-mallory", now);
+        let alice_ns =
+            crate::session_namespace::resolve_session_memory_namespace(None, None, Some("alice"))
+                .unwrap();
+
+        let preamble = recall_preamble_for_principals_blended(
+            &db,
+            &[alice_ns.as_str()],
+            None,
+            false,
+            true,
+            "audit-a1-iso",
+            now + 2,
+        )
+        .unwrap();
+        assert!(preamble.contains("run-alice"));
+        assert!(
+            !preamble.contains("run-mallory"),
+            "owner-scoped A1 recall must not leak another owner's run: {preamble:?}"
         );
     }
 }
