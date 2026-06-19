@@ -1972,6 +1972,8 @@ fn message_kind_name(m: &friday_protocol::Message) -> &'static str {
         // but naming them keeps this match exhaustive and carries the real kind in the truth label.
         M::RunReadbackRequest { .. } => "RunReadbackRequest",
         M::RunReadbackSnapshot { .. } => "RunReadbackSnapshot",
+        M::RunAnswerBodyRequest { .. } => "RunAnswerBodyRequest",
+        M::RunAnswerBodySnapshot { .. } => "RunAnswerBodySnapshot",
         M::ProvidersDoctorRequest { .. } => "ProvidersDoctorRequest",
         M::ProvidersDoctorSnapshot { .. } => "ProvidersDoctorSnapshot",
         // C2I-PR2 — the 5 DARK sealed-WS READ-seam owner-gated C2 read-plane kinds. NAMED here for
