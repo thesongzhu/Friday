@@ -6167,6 +6167,36 @@ mod tests {
             .expect("spawn node TS mission-route auto-dispatch subprocess")
     }
 
+    /// Spawn the TS sealed-client runner in memory-route decision mode: the subprocess calls the
+    /// REAL `createFridayMemorySpineRoutes` POST handler, which delegates to the REAL memory-spine
+    /// dispatch adapter + REAL sealed client. The Rust side serves one loopback sealed session with
+    /// the memory-confirm arm enabled.
+    fn spawn_ts_memory_route_decision_client(
+        port: u16,
+        secret_hex: &str,
+        principal: &str,
+        memory_id: &str,
+    ) -> std::process::Child {
+        let bundle = worktree_root().join("test/interop/.build/sealed-client-runner.cjs");
+        assert!(
+            bundle.exists(),
+            "interop bundle missing at {bundle:?} — run `node test/interop/build-sealed-client-runner.mjs` first"
+        );
+        std::process::Command::new("node")
+            .arg(bundle)
+            .arg("--mode=memory-route-decision")
+            .arg(format!("--port={port}"))
+            .arg(format!("--secret-hex={secret_hex}"))
+            .arg(format!("--principal={principal}"))
+            .arg(format!("--memory-id={memory_id}"))
+            .arg("--decision=confirm")
+            .arg("--timeout-ms=15000")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn node TS memory-route decision subprocess")
+    }
+
     /// Read the ONE JSON line the runner prints on stdout.
     fn read_client_json(child: std::process::Child) -> serde_json::Value {
         let out = child
@@ -6530,6 +6560,92 @@ mod tests {
         assert_eq!(route.mission_id, MISSION_ID);
         assert_eq!(route.work_item_id, WORK_ITEM_ID);
         assert_eq!(route.selected_lane, friday_core::WorkLane::DeepSeek);
+    }
+
+    // (1d) OPERATOR-SURFACE-SHAPED MEMORY CONFIRM ROUND-TRIP: real TS memory-spine POST route
+    // handler -> real dispatch adapter -> real sealed MemoryDecisionRequest -> real Rust
+    // memory-confirm arm -> real DB candidate transition to Confirmed/recallable. This is still
+    // manual/ignored (Node bundle + subprocess), not organic operator traffic, but closes the
+    // split proof at the HTTP route surface for Lane M without provider/model spend.
+    #[test]
+    #[ignore = "needs `node` + the prebuilt interop bundle; opt in with --ignored"]
+    fn interop_ts_memory_route_decision_confirms_real_rust_candidate() {
+        const MEMORY_ID: &str = "mem-interop-route";
+
+        let (rt, _ws) = mock_runtime("interop-memory-route", OWNER);
+        seed_memory_candidate(&rt, MEMORY_ID);
+        let ns = owner_composite_ns();
+        assert!(
+            friday_storage::memory::recall_confirmed(rt.db().conn(), &ns)
+                .unwrap()
+                .is_empty(),
+            "pre-confirm candidate must not be recallable"
+        );
+
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let owner_allowlist = vec![OWNER.to_string()];
+        let peer_allowlist = allowlist_of(ts_client_pubkey());
+
+        let child = spawn_ts_memory_route_decision_client(
+            addr.port(),
+            &ts_client_secret_hex(),
+            OWNER,
+            MEMORY_ID,
+        );
+
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &owner_allowlist,
+                &peer_allowlist,
+                false, // run-control OFF
+                false, // mission-bound seam OFF
+                false, // mission-intake ingress OFF
+                false, // mission-spine dispatch OFF
+                true,  // memory-confirm ingress ON
+                false, // token surface OFF
+                false, // provider-workspace dispatch OFF
+            )
+            .expect("server serves the TS memory-route decision session");
+        assert_eq!(
+            processed, 1,
+            "one route-triggered memory decision processed"
+        );
+
+        let v = read_client_json(child);
+        assert_eq!(
+            v["ok"],
+            serde_json::json!(true),
+            "TS memory-route runner reports success: {v:?}"
+        );
+        assert_eq!(v["mode"], serde_json::json!("memory-route-decision"));
+        assert_eq!(v["result"]["memoryId"], serde_json::json!(MEMORY_ID));
+        assert_eq!(v["result"]["status"], serde_json::json!("confirmed"));
+        assert_eq!(v["result"]["state"], serde_json::json!("confirmed"));
+        assert_eq!(v["result"]["recallable"], serde_json::json!(true));
+
+        let db = rt.db();
+        assert_eq!(
+            db.conn()
+                .query_row(
+                    "SELECT state FROM memory_item WHERE memory_id = 'mem-interop-route'",
+                    [],
+                    |r| r.get::<_, String>(0)
+                )
+                .unwrap(),
+            "confirmed"
+        );
+        let recalled = friday_storage::memory::recall_confirmed(db.conn(), &ns).unwrap();
+        assert_eq!(recalled.len(), 1);
+        assert_eq!(recalled[0].memory_id, MEMORY_ID);
+        assert_eq!(
+            db.count("token_ledger").unwrap(),
+            0,
+            "memory route confirmation is a pure DB decision, not a provider/model call"
+        );
     }
 
     // (2) FAIL-CLOSED — FORGED PEER: a client pubkey NOT in the allowlist ⇒ the server establishes
