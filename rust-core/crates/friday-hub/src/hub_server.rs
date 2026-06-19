@@ -618,6 +618,8 @@ pub fn mission_intake_result_for_db_flagged(
                     duplicate_mission_id: None,
                     duplicate_work_item_id: None,
                     created_or_ready: false,
+                    selected_lane: None,
+                    selected_target_provider_or_agent: None,
                     clarification_questions: questions,
                 };
                 return Envelope::new(
@@ -750,7 +752,7 @@ pub fn mission_intake_result_for_db_flagged(
         work_item_id: request.work_item_id.clone(),
         mission_id: request.mission_id.clone(),
         lane,
-        target_provider_or_agent: target,
+        target_provider_or_agent: target.clone(),
         status: friday_core::WorkItemStatus::Draft,
         owner_claim_ids: owner_claim_ids.clone(),
         workspace_refs: Vec::new(),
@@ -900,6 +902,8 @@ pub fn mission_intake_result_for_db_flagged(
             duplicate_mission_id: None,
             duplicate_work_item_id: None,
             created_or_ready: true,
+            selected_lane: Some(lane.as_str().to_string()),
+            selected_target_provider_or_agent: target.clone(),
             clarification_questions: Vec::new(),
         },
         MissionPreflightOutcome::Blocked {
@@ -921,6 +925,8 @@ pub fn mission_intake_result_for_db_flagged(
                 duplicate_mission_id,
                 duplicate_work_item_id,
                 created_or_ready: false,
+                selected_lane: None,
+                selected_target_provider_or_agent: None,
                 clarification_questions: Vec::new(),
             }
         }

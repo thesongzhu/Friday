@@ -480,6 +480,9 @@ export interface FridayRustHubMissionIntakeResult {
   readonly duplicateMissionId?: string;
   readonly duplicateWorkItemId?: string;
   readonly createdOrReady: boolean;
+  /** Server-selected WorkItem route, surfaced only when Rust sends it. */
+  readonly selectedLane?: string;
+  readonly selectedTargetProviderOrAgent?: string;
   /**
    * (Mission-intake clarification — DARK, default-OFF) The specific clarifying questions for an
    * UNDER-SPECIFIED intent. NON-EMPTY only when `status === "needs_clarification"` (the Rust
@@ -1132,6 +1135,8 @@ export function parseMissionIntakeResult(
   const workItemId = asString(r.work_item_id);
   const duplicateMissionId = asString(r.duplicate_mission_id);
   const duplicateWorkItemId = asString(r.duplicate_work_item_id);
+  const selectedLane = asString(r.selected_lane);
+  const selectedTargetProviderOrAgent = asString(r.selected_target_provider_or_agent);
   // (Mission-intake clarification — DARK) Optional, ADDITIVE: surfaced only when the server sends a
   // non-empty `clarification_questions` (the flag-gated needs_clarification arm). Absent / empty /
   // non-array / non-string entries ⇒ the field is OMITTED (never fabricated, never a parse failure
@@ -1155,6 +1160,10 @@ export function parseMissionIntakeResult(
     ...(workItemId !== undefined ? { workItemId } : {}),
     ...(duplicateMissionId !== undefined ? { duplicateMissionId } : {}),
     ...(duplicateWorkItemId !== undefined ? { duplicateWorkItemId } : {}),
+    ...(selectedLane !== undefined ? { selectedLane } : {}),
+    ...(selectedTargetProviderOrAgent !== undefined
+      ? { selectedTargetProviderOrAgent }
+      : {}),
     ...(clarificationQuestions !== undefined && clarificationQuestions.length > 0
       ? { clarificationQuestions }
       : {}),

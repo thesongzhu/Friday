@@ -247,11 +247,15 @@ describe("parseMissionIntakeResult (fail-closed refs-only, NESTED result)", () =
         work_item_id: "work_x",
         duplicate_mission_id: "mission_dup",
         duplicate_work_item_id: "work_dup",
+        selected_lane: "codex",
+        selected_target_provider_or_agent: "codex",
       },
     });
     expect(withOptionals?.workItemId).toBe("work_x");
     expect(withOptionals?.duplicateMissionId).toBe("mission_dup");
     expect(withOptionals?.duplicateWorkItemId).toBe("work_dup");
+    expect(withOptionals?.selectedLane).toBe("codex");
+    expect(withOptionals?.selectedTargetProviderOrAgent).toBe("codex");
   });
 
   it("does NOT surface clarificationQuestions when the field is absent (existing ready/blocked payloads)", () => {

@@ -187,6 +187,45 @@ describe("createFridayMissionAutoDispatchDriver (organic mission→run binding P
       });
     });
 
+    it("uses the Rust-selected route for lane=auto instead of re-reading the raw request", async () => {
+      const startRun = vi.fn(async () => ({
+        runId: "run-1",
+      })) as unknown as MissionAutoDispatchStartRun;
+      const driver = createFridayMissionAutoDispatchDriver({
+        startRun: () => startRun,
+        deepseekProviderId: DEEPSEEK_PROVIDER,
+        deepseekFlashModel: DEEPSEEK_FLASH,
+        codexProviderId: CODEX_PROVIDER,
+        codexModel: CODEX_MODEL,
+        claudeProviderId: CLAUDE_PROVIDER,
+        claudeModel: CLAUDE_MODEL,
+      });
+
+      driver.onIntakeReady(
+        {
+          ...REQUEST,
+          lane: "auto",
+          targetProviderOrAgent: undefined,
+        },
+        {
+          ...READY_RESULT,
+          selectedLane: "codex",
+          selectedTargetProviderOrAgent: "codex",
+        },
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(startRun).toHaveBeenCalledTimes(1);
+      const arg = (startRun as unknown as ReturnType<typeof vi.fn>).mock
+        .calls[0][0];
+      expect(arg).toMatchObject({
+        providerId: CODEX_PROVIDER,
+        model: CODEX_MODEL,
+        timeoutMs: RUST_ROUTE_CODEX_MISSION_DISPATCH_TIMEOUT_MS,
+      });
+    });
+
     it("dispatches a claude-targeted intake with the Claude mission-bound route shape", async () => {
       const startRun = vi.fn(async () => ({
         runId: "run-1",
