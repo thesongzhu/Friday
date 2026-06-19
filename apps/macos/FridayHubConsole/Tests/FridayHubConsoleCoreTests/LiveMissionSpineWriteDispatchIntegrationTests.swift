@@ -24,6 +24,8 @@ private let liveStrengthRouteRunEnabled =
   ProcessInfo.processInfo.environment["FRIDAY_CONSOLE_LIVE_STRENGTH_ROUTE_RUN_TEST"] == "1"
 private let liveHybridFollowUpRunEnabled =
   ProcessInfo.processInfo.environment["FRIDAY_CONSOLE_LIVE_HYBRID_FOLLOWUP_RUN_TEST"] == "1"
+private let liveProductAutoFollowUpRunEnabled =
+  ProcessInfo.processInfo.environment["FRIDAY_CONSOLE_LIVE_PRODUCT_AUTO_FOLLOWUP_RUN_TEST"] == "1"
 
 @Test(.enabled(if: liveMissionSpineWriteDispatchEnabled))
 func liveConsoleMissionSpineWriteDispatchReturnsReadyReceipt() async throws {
@@ -265,6 +267,35 @@ func liveConsoleMissionSpineWriteDispatchCanCompleteHybridCodexThenClaudeFollowU
   #expect((followUpReceipt.turns ?? 0) > 0)
   #expect(followUpReceipt.answerSha256 != nil)
   #expect((followUpReceipt.answerLen ?? 0) > 0)
+}
+
+@Test(.enabled(if: liveProductAutoFollowUpRunEnabled))
+@MainActor
+func liveOperationsOverviewSubmitIntakeAutoDispatchesHybridClaudeFollowUp() async throws {
+  let id = "liveauto\(UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: ""))"
+  let readClient = try RealReadClientFactory.makeLive(missionId: "mission-desktop-\(id)")
+  let writeClient = try RealWriteClientFactory.makeLiveWrite(config: hybridFollowUpWriteConfig())
+  let vm = OperationsOverviewViewModel(
+    client: readClient,
+    writeClient: writeClient,
+    missionRunClient: writeClient,
+    writeOwnerPrincipal: liveReadProjectionOwnerPrincipal,
+    newId: { id })
+
+  await vm.submitIntake(
+    intent: "In the FridayHubConsole test target, identify the live hybrid route test file path, "
+      + "then summarize that the product Operations view should automatically run the generated "
+      + "Claude follow-up after the Codex first leg. Answer exactly FRIDAY_PRODUCT_AUTO_FOLLOWUP_OK.")
+
+  guard case let .confirmed(summary, _) = vm.intakeState else {
+    Issue.record("expected product auto follow-up to confirm, got \(String(describing: vm.intakeState))")
+    return
+  }
+
+  print("[live-product-auto-followup] id=\(id) summary=\(summary)")
+  #expect(summary.contains("mission-desktop-\(id)"))
+  #expect(summary.contains("work-desktop-\(id)"))
+  #expect(summary.contains("follow_up_work_item_id=work-desktop-\(id)-claude-followup"))
 }
 
 private func hybridFollowUpWriteConfig() -> AgentRunWriteServerConfig {
