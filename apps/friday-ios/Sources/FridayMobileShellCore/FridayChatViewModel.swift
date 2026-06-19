@@ -48,8 +48,18 @@ public struct ChatAnswerReceipt: Sendable, Equatable {
   public let executedTools: UInt64?
   public let promptTokens: UInt64?
   public let completionTokens: UInt64?
+  public let missionId: String?
+  public let workItemId: String?
+  public let followUpWorkItemId: String?
+  public let followUpRunId: String?
 
-  init(_ r: AgentRunResultWire) {
+  init(
+    _ r: AgentRunResultWire,
+    missionId: String? = nil,
+    workItemId: String? = nil,
+    followUpWorkItemId: String? = nil,
+    followUpRunId: String? = nil
+  ) {
     self.runId = r.runId
     self.status = r.status
     self.answerSha256 = r.answerSha256
@@ -58,6 +68,10 @@ public struct ChatAnswerReceipt: Sendable, Equatable {
     self.executedTools = r.executedTools
     self.promptTokens = r.promptTokens
     self.completionTokens = r.completionTokens
+    self.missionId = missionId
+    self.workItemId = workItemId
+    self.followUpWorkItemId = followUpWorkItemId
+    self.followUpRunId = followUpRunId
   }
 }
 
@@ -171,16 +185,28 @@ public final class FridayChatViewModel: ObservableObject {
   /// a FRESH transport — no shared mutable state to race. Resolved on the CONSUMER side (the #677
   /// package is never edited). The `signer` is already `Sendable` (the protocol requires it).
   nonisolated(unsafe) private let writeClient: FridayRustWriteClient
+  private let missionClient: (any FridayMobileMissionDispatchingWriteClient)?
+  private let readClient: FridayRustReadClient?
   private let signer: OperatorSigner
+  private let newId: () -> String
 
   /// - Parameters:
   ///   - writeClient: the real `SealedWSWriteClient` (or a mock in tests/preview). DEFAULT
   ///     read-only / no-grant dispatch; the run-control flag lives on the client.
   ///   - signer: the operator-signing RELAY seam (INV-1). Mock now (`MockOperatorSigner`); the
   ///     real desktop signer (PR #671) is the slice-6 / operator-key gate.
-  public init(writeClient: FridayRustWriteClient, signer: OperatorSigner) {
+  public init(
+    writeClient: FridayRustWriteClient,
+    signer: OperatorSigner,
+    missionClient: (any FridayMobileMissionDispatchingWriteClient)? = nil,
+    readClient: FridayRustReadClient? = nil,
+    newId: @escaping () -> String = { UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "") }
+  ) {
     self.writeClient = writeClient
     self.signer = signer
+    self.missionClient = missionClient
+    self.readClient = readClient
+    self.newId = newId
   }
 
   // MARK: 1. Compose → Send
@@ -196,6 +222,10 @@ public final class FridayChatViewModel: ObservableObject {
     let trimmed = task.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return }
     phase = .dispatching(task: trimmed)
+    if let missionClient {
+      await sendMission(trimmed, missionClient: missionClient)
+      return
+    }
     do {
       let outcome = try await writeClient.dispatchAgentRun(task: trimmed, constraints: constraints)
       switch outcome {
@@ -209,6 +239,75 @@ public final class FridayChatViewModel: ObservableObject {
     } catch {
       phase = .unavailable(reason: Self.dispatchReason(for: error))
     }
+  }
+
+  private func sendMission(
+    _ task: String,
+    missionClient: any FridayMobileMissionDispatchingWriteClient
+  ) async {
+    do {
+      let request = Self.buildMissionIntakeRequest(
+        intent: task,
+        owner: liveAgentRunOwnerPrincipal,
+        idFactory: newId)
+      let result = try await missionClient.submitMissionIntake(request)
+      guard result.status == "ready", let workItemId = result.workItemId else {
+        phase = .unavailable(reason: "Mission intake not ready — \(result.status)")
+        return
+      }
+
+      let firstOutcome = try await missionClient.dispatchMissionBoundAgentRun(
+        task: task,
+        missionContext: MissionWorkItemContextWire(
+          fridayConversationId: result.fridayConversationId,
+          missionId: result.missionId,
+          workItemId: workItemId),
+        constraints: AgentRunConstraintsWire(readOnly: true))
+      guard case .result(let firstReceipt) = firstOutcome else {
+        phase = .unavailable(reason: "Mission dispatch paused — approval required")
+        return
+      }
+
+      let followUp = try await dispatchClaudeFollowUpIfPresent(
+        sourceWorkItemId: workItemId,
+        intakeResult: result,
+        missionClient: missionClient)
+      phase = .answered(ChatAnswerReceipt(
+        firstReceipt,
+        missionId: result.missionId,
+        workItemId: workItemId,
+        followUpWorkItemId: followUp?.workItemId,
+        followUpRunId: followUp?.runId))
+    } catch {
+      phase = .unavailable(reason: Self.dispatchReason(for: error))
+    }
+  }
+
+  private func dispatchClaudeFollowUpIfPresent(
+    sourceWorkItemId: String,
+    intakeResult: MissionIntakeResultWire,
+    missionClient: any FridayMissionBoundRunWriteClient
+  ) async throws -> (workItemId: String, runId: String)? {
+    guard let readClient else { return nil }
+    let followUpWorkItemId = "\(sourceWorkItemId)-claude-followup"
+    let snapshot = try await readClient.fetchWorkbench()
+    guard snapshot.missionId == intakeResult.missionId,
+      snapshot.workItemIds.contains(followUpWorkItemId)
+    else {
+      return nil
+    }
+
+    let outcome = try await missionClient.dispatchMissionBoundAgentRun(
+      task: Self.claudeFollowUpTask,
+      missionContext: MissionWorkItemContextWire(
+        fridayConversationId: intakeResult.fridayConversationId,
+        missionId: intakeResult.missionId,
+        workItemId: followUpWorkItemId),
+      constraints: AgentRunConstraintsWire(readOnly: true))
+    guard case .result(let receipt) = outcome else {
+      return nil
+    }
+    return (followUpWorkItemId, receipt.runId)
   }
 
   // MARK: 3. Approve → Resume (the S6 relay — INV-1, INV-2)
@@ -307,4 +406,29 @@ public final class FridayChatViewModel: ObservableObject {
       return "Hub offline — \(why)"
     }
   }
+
+  static func buildMissionIntakeRequest(
+    intent: String,
+    owner: String,
+    idFactory: () -> String
+  ) -> MissionIntakeRequestWire {
+    let id = idFactory()
+    return MissionIntakeRequestWire(
+      fridayConversationId: "fconv_mobile_\(id)",
+      ownerPrincipal: owner,
+      surfaceThreadId: "surface-mobile-\(id)",
+      surfaceKind: "mobile",
+      deliveryRoute: "ios://friday-mobile/chat/\(id)",
+      visibilityPolicy: "compact",
+      missionId: "mission-mobile-\(id)",
+      workItemId: "work-mobile-\(id)",
+      title: String(intent.prefix(72)),
+      intent: intent,
+      lane: "auto")
+  }
+
+  private static let claudeFollowUpTask =
+    "Run the generated Claude follow-up for this Mission. Use the inherited Codex first-leg "
+      + "proof and input refs attached to this WorkItem, keep the run read-only, and summarize "
+      + "the follow-up outcome."
 }

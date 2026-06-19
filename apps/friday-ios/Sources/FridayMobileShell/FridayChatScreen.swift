@@ -21,7 +21,10 @@ struct FridayChatScreen: View {
   init(session: FridaySession) {
     self.runControlEnabled = session.runControlEnabled
     _viewModel = StateObject(wrappedValue: FridayChatViewModel(
-      writeClient: session.writeClient, signer: session.signer))
+      writeClient: session.writeClient,
+      signer: session.signer,
+      missionClient: session.missionClient,
+      readClient: session.readClient))
   }
 
   @State private var draft = ""
@@ -146,6 +149,12 @@ struct FridayChatScreen: View {
         Text("answer is delivered refs-only — a fingerprint + counts (the body rides the owner-gated readback)")
           .font(.caption2).foregroundStyle(MobileTheme.textSecondary)
         if let sha = r.answerSha256 { RefPill(label: "answer_sha256", ref: short(sha)) }
+        if let missionId = r.missionId { RefPill(label: "mission_id", ref: missionId) }
+        if let workItemId = r.workItemId { RefPill(label: "work_item_id", ref: workItemId) }
+        if let followUpWorkItemId = r.followUpWorkItemId {
+          RefPill(label: "follow_up_work_item_id", ref: followUpWorkItemId)
+        }
+        if let followUpRunId = r.followUpRunId { RefPill(label: "follow_up_run_id", ref: followUpRunId) }
         if let len = r.answerLen { RefPill(label: "answer_len", ref: "\(len)") }
         if let turns = r.turns { RefPill(label: "turns", ref: "\(turns)") }
         if let tools = r.executedTools { RefPill(label: "executed_tools", ref: "\(tools)") }

@@ -18,6 +18,8 @@ private let liveMissionSpineWriteDispatchEnabled =
   ProcessInfo.processInfo.environment["FRIDAY_MOBILE_LIVE_WRITE_DISPATCH_TEST"] == "1"
 private let liveMissionBoundRunEnabled =
   ProcessInfo.processInfo.environment["FRIDAY_MOBILE_LIVE_MISSION_BOUND_RUN_TEST"] == "1"
+private let liveProductAutoFollowUpRunEnabled =
+  ProcessInfo.processInfo.environment["FRIDAY_MOBILE_LIVE_PRODUCT_AUTO_FOLLOWUP_RUN_TEST"] == "1"
 
 @Test(.enabled(if: liveMissionSpineWriteDispatchEnabled))
 func liveMobileMissionSpineWriteDispatchReturnsReadyReceipt() async throws {
@@ -67,6 +69,50 @@ func liveMobileMissionSpineWriteDispatchCanStartMissionBoundRun() async throws {
     "[live-write-dispatch][mobile-bound] runId=\(receipt.runId) "
       + "status=\(receipt.status) turns=\(receipt.turns ?? 0)")
   #expect(receipt.status == "completed" || receipt.status == "finished" || receipt.status == "ok")
+}
+
+@Test(.enabled(if: liveProductAutoFollowUpRunEnabled))
+@MainActor
+func liveMobileChatSendAutoDispatchesHybridClaudeFollowUp() async throws {
+  let id = "liveauto\(UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: ""))"
+  let writeClient = try RealWriteClientFactory.makeLive(config: mobileProductAutoFollowUpWriteConfig())
+  let readClient = try RealReadClientFactory.makeLive(missionId: "mission-mobile-\(id)")
+  let vm = FridayChatViewModel(
+    writeClient: writeClient,
+    signer: MockOperatorSigner(),
+    missionClient: writeClient,
+    readClient: readClient,
+    newId: { id })
+
+  await vm.send(
+    "In the Friday mobile shell test target, identify the mobile live mission-spine test file path, "
+      + "then summarize that the iOS Chat product path should automatically run the generated Claude "
+      + "follow-up after the Codex first leg. Answer exactly FRIDAY_MOBILE_PRODUCT_AUTO_FOLLOWUP_OK.")
+
+  guard case .answered(let receipt) = vm.phase else {
+    Issue.record("expected mobile product auto follow-up to answer, got \(String(describing: vm.phase))")
+    return
+  }
+
+  print(
+    "[live-mobile-product-auto-followup] id=\(id) firstRunId=\(receipt.runId) "
+      + "missionId=\(receipt.missionId ?? "<nil>") workItemId=\(receipt.workItemId ?? "<nil>") "
+      + "followUpWorkItemId=\(receipt.followUpWorkItemId ?? "<nil>") "
+      + "followUpRunId=\(receipt.followUpRunId ?? "<nil>")")
+  #expect(receipt.missionId == "mission-mobile-\(id)")
+  #expect(receipt.workItemId == "work-mobile-\(id)")
+  #expect(receipt.followUpWorkItemId == "work-mobile-\(id)-claude-followup")
+  #expect(receipt.followUpRunId != nil)
+}
+
+private func mobileProductAutoFollowUpWriteConfig() -> AgentRunServerConfig {
+  guard
+    let rawPort = ProcessInfo.processInfo.environment["FRIDAY_MOBILE_LIVE_PRODUCT_AUTO_FOLLOWUP_WRITE_PORT"],
+    let port = UInt16(rawPort)
+  else {
+    return .liveLoopback
+  }
+  return AgentRunServerConfig(host: "127.0.0.1", port: port)
 }
 
 private func makeLiveMobileIntake(
