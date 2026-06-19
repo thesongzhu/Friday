@@ -39,40 +39,27 @@ func liveConsoleMissionSpineWriteDispatchReturnsReadyReceipt() async throws {
 }
 
 @Test(.enabled(if: liveMissionBoundRunEnabled))
-func liveConsoleMissionSpineWriteDispatchClarifiesVagueCodexRepairBeforeModelCall() async throws {
+func liveConsoleMissionSpineWriteDispatchClarifiesVagueCodexRepairAtIntake() async throws {
   let client = try RealWriteClientFactory.makeLiveWrite()
   let request = makeLiveIntake(
     surface: "desktop",
-    route: "desktop://hub-console/live-bound-run",
-    title: "Verify live desktop vague Codex repair clarifies before dispatch",
+    route: "desktop://hub-console/live-vague-repair-intake-clarification",
+    title: "Verify live desktop vague Codex repair clarifies at intake",
     intent: "Fix a small Rust compile failure in a workspace and describe the focused regression test that should be added.",
     lane: "auto",
     targetProviderOrAgent: nil)
 
   let result = try await client.submitMissionIntake(request)
-  #expect(result.status == "ready")
-  #expect(result.workItemId == request.workItemId)
-
-  let outcome = try await client.dispatchMissionBoundAgentRun(
-    task: request.intent,
-    missionContext: MissionWorkItemContextWire(
-      fridayConversationId: result.fridayConversationId,
-      missionId: result.missionId,
-      workItemId: try #require(result.workItemId)),
-    constraints: AgentRunConstraintsWire(readOnly: true))
-
-  guard case .result(let receipt) = outcome else {
-    Issue.record("expected mission-bound read-only run to settle with a result")
-    return
-  }
   print(
-    "[live-write-dispatch][desktop-bound] runId=\(receipt.runId) "
-      + "status=\(receipt.status) turns=\(receipt.turns ?? 0)")
-  #expect(receipt.status == "awaiting_clarification")
-  #expect(receipt.turns == 0)
-  #expect(receipt.executedTools == 0)
-  #expect(receipt.answerSha256 != nil)
-  #expect((receipt.answerLen ?? 0) > 0)
+    "[live-write-dispatch][desktop-vague-repair] status=\(result.status) "
+      + "missionId=\(result.missionId) workItemId=\(result.workItemId ?? "<nil>") "
+      + "questions=\(result.clarificationQuestions.count)")
+  #expect(result.status == "needs_clarification")
+  #expect(!result.createdOrReady)
+  #expect(result.missionId == request.missionId)
+  #expect(result.workItemId == nil)
+  #expect(result.surfaceThreadId == request.surfaceThreadId)
+  #expect(!result.clarificationQuestions.isEmpty)
 }
 
 private func makeLiveIntake(
