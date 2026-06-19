@@ -46,6 +46,7 @@ pub const HUB_ONLY_TABLES: &[&str] = &[
     "mission_link",
     "route_decision",
     "route_decision_control",
+    "mission_body_snapshot",
     // Process Registry: Hub-owned workspace/process/port truth. Phone/channel
     // surfaces may see projections; only the Hub can own/control claims.
     "workspace_claim",
@@ -665,6 +666,16 @@ pub fn hub_migrations() -> Vec<Migration> {
             name: "tool_usage_ledger",
             destructive: false,
             up: m0039_tool_usage_ledger,
+        },
+        // C1/C2 dispatch: Hub-only mission-intake prompt snapshots. Provider
+        // workspace send_turn reads prompt text only through a body_ref that is
+        // bound to the authenticated owner + WorkItem input_refs; phone/surface
+        // projections remain refs-only.
+        Migration {
+            version: 40,
+            name: "mission_body_snapshot",
+            destructive: false,
+            up: m0040_mission_body_snapshot,
         },
     ]
 }
@@ -1807,6 +1818,23 @@ CREATE INDEX idx_run_outcome_learning_candidate_state_created
 CREATE INDEX idx_run_outcome_learning_candidate_run_kind
     ON run_outcome_learning_candidate(run_id, kind);";
 
+const DDL_MISSION_BODY_SNAPSHOT: &str = "
+CREATE TABLE mission_body_snapshot (
+    body_ref        TEXT PRIMARY KEY CHECK(length(trim(body_ref)) > 0),
+    owner_principal TEXT NOT NULL CHECK(length(trim(owner_principal)) > 0),
+    mission_id      TEXT NOT NULL CHECK(length(trim(mission_id)) > 0),
+    work_item_id    TEXT NOT NULL CHECK(length(trim(work_item_id)) > 0),
+    source_surface  TEXT NOT NULL CHECK(length(trim(source_surface)) > 0),
+    body            TEXT NOT NULL CHECK(length(trim(body)) > 0),
+    body_sha256     TEXT NOT NULL CHECK(length(body_sha256) = 64),
+    body_len        INTEGER NOT NULL CHECK(body_len >= 0),
+    created_at_ms   INTEGER NOT NULL,
+    FOREIGN KEY(mission_id) REFERENCES mission(mission_id),
+    FOREIGN KEY(work_item_id) REFERENCES work_item(work_item_id)
+);
+CREATE INDEX idx_mission_body_snapshot_work_item
+    ON mission_body_snapshot(owner_principal, work_item_id, body_ref);";
+
 const DDL_REBUILD_MISSION_LINK_WITH_ROUTE_DECISION: &str = "
 CREATE TABLE mission_link_new (
     link_id        TEXT PRIMARY KEY,
@@ -2584,4 +2612,8 @@ fn m0038_run_outcome_learning_candidate(tx: &Transaction) -> rusqlite::Result<()
 
 fn m0039_tool_usage_ledger(tx: &Transaction) -> rusqlite::Result<()> {
     tx.execute_batch(DDL_TOOL_USAGE_LEDGER)
+}
+
+fn m0040_mission_body_snapshot(tx: &Transaction) -> rusqlite::Result<()> {
+    tx.execute_batch(DDL_MISSION_BODY_SNAPSHOT)
 }

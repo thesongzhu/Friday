@@ -33,8 +33,8 @@ use friday_protocol::{
 };
 use friday_providers::unified::{FallbackStatus, PlatformProvider, ProviderSession, SessionStatus};
 use friday_storage::{
-    get_run_answer_for_principal, get_run_result_ref, AnswerDenyReason, Db, RunAnswerAccess,
-    RunResultRef,
+    get_run_answer_for_principal, get_run_result_ref, AnswerDenyReason, Db, MissionBodySnapshot,
+    RunAnswerAccess, RunResultRef,
 };
 use friday_transport::{ws_recv_envelope, ws_send_envelope, TransportError, WireWebSocket};
 use serde_json::json;
@@ -51,7 +51,7 @@ use crate::provider_dispatch::{
     dispatch_provider_action, DispatchContext, DispatchError, ProviderDispatchAdapter,
 };
 use crate::provider_dispatch_adapter::{
-    provider_workspace_dispatch_enabled, LocalCodexWorkspaceClient,
+    provider_workspace_dispatch_enabled, DbPromptBodyResolver, LocalCodexWorkspaceClient,
     ProviderWorkspaceDispatchAdapter,
 };
 use crate::provider_workspace::ProviderWorkspaceCatalog;
@@ -630,6 +630,29 @@ pub fn mission_intake_result_for_db_flagged(
         None,
         action_list_enabled,
     );
+    let body_snapshot = match MissionBodySnapshot::new(
+        authenticated_owner,
+        &request.mission_id,
+        &request.work_item_id,
+        work_item
+            .input_refs
+            .first()
+            .map(String::as_str)
+            .unwrap_or(""),
+        surface_kind.as_str(),
+        &request.intent,
+        now_ms,
+    ) {
+        Ok(snapshot) => snapshot,
+        Err(err) => {
+            return mission_intake_error(
+                msg_id,
+                now_ms,
+                ErrorCode::Internal,
+                &format!("mission intake body snapshot blocked: {err}"),
+            );
+        }
+    };
 
     let outcome = match preflight_and_stage_work_item_with_workspace_claims(
         db,
@@ -638,6 +661,7 @@ pub fn mission_intake_result_for_db_flagged(
             mission,
             surface_thread: Some(surface_thread),
             work_item,
+            body_snapshot: Some(body_snapshot),
             includes_sensitive_context: request.includes_sensitive_context,
         },
         &workspace_claims,
@@ -1461,12 +1485,14 @@ pub fn provider_workspace_action_result_for_db(
                     // `Verified` (none in `friday_current()` are), so the guard refuses
                     // every real request before the adapter is consulted regardless.
                     let no_adapter = NoProviderWorkspaceDispatchAdapter;
-                    let live_adapter =
-                        ProviderWorkspaceDispatchAdapter::new(LocalCodexWorkspaceClient::new(
+                    let live_adapter = ProviderWorkspaceDispatchAdapter::with_prompt_resolver(
+                        LocalCodexWorkspaceClient::new(
                             "codex",
                             "friday-hub",
                             env!("CARGO_PKG_VERSION"),
-                        ));
+                        ),
+                        DbPromptBodyResolver::new(db),
+                    );
                     let adapter: &dyn ProviderDispatchAdapter =
                         if provider_workspace_dispatch_enabled() {
                             &live_adapter
@@ -2975,6 +3001,54 @@ mod tests {
             ))
             .to_string_lossy()
             .into_owned()
+    }
+
+    #[test]
+    fn mission_intake_writes_body_snapshot_bound_to_work_item_input_ref() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        let now = 1_700_002_000_000;
+        let intent = "send this mission prompt to the Codex workspace";
+        let body_ref = "friday://body/mobile/snapshot-1";
+        let response = mission_intake_result_for_db(
+            &db,
+            "intake-snapshot",
+            MissionIntakeRequestWire {
+                friday_conversation_id: "fconv_snapshot".into(),
+                owner_principal: "principal:jarvis".into(),
+                surface_thread_id: "surface-snapshot".into(),
+                surface_kind: "mobile".into(),
+                delivery_route: "mobile://local/thread/snapshot".into(),
+                visibility_policy: "compact".into(),
+                mission_id: "mission-snapshot".into(),
+                work_item_id: "work-snapshot".into(),
+                title: "Snapshot Mission".into(),
+                intent: intent.into(),
+                lane: "codex".into(),
+                target_provider_or_agent: Some("codex".into()),
+                capability_id: Some("provider.codex.send_turn".into()),
+                body_ref: Some(body_ref.into()),
+                proof_requirements: Vec::new(),
+                includes_sensitive_context: false,
+            },
+            Some("principal:jarvis"),
+            now,
+        );
+        let Message::MissionIntakeResult { result } = response.message else {
+            panic!("expected MissionIntakeResult, got {response:?}");
+        };
+        assert_eq!(result.status, "ready");
+        let work_item = db
+            .get_work_item("work-snapshot")
+            .unwrap()
+            .expect("WorkItem row");
+        assert_eq!(work_item.input_refs, vec![body_ref.to_string()]);
+        let snapshot = db
+            .get_mission_body_snapshot("principal:jarvis", "work-snapshot", body_ref)
+            .unwrap()
+            .expect("mission body snapshot");
+        assert_eq!(snapshot.body, intent);
+        assert_eq!(snapshot.body_len, intent.len() as i64);
+        assert_eq!(snapshot.owner_principal, "principal:jarvis");
     }
 
     fn provider_session_link() -> ProviderSessionLink {

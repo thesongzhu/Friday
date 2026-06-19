@@ -17,6 +17,7 @@ use friday_core::{
     TruthStatus, VisibilityPolicy, WorkItem, WorkItemStatus, WorkLane,
 };
 use rusqlite::{params, Connection, OptionalExtension};
+use sha2::{Digest, Sha256};
 
 fn unsupported(message: impl Into<String>) -> StorageError {
     StorageError::Unsupported(message.into())
@@ -358,16 +359,88 @@ fn validate_work_item(item: &WorkItem) -> Result<()> {
 fn require_safe_surface_body_ref(value: &str, field: &str) -> Result<()> {
     require_non_empty(value, field)?;
     let trimmed = value.trim();
-    if trimmed.starts_with("friday://body/")
-        || trimmed.starts_with("friday://surface-event-body/")
-        || trimmed.starts_with("blob://")
-    {
+    if is_safe_body_ref(trimmed) {
         Ok(())
     } else {
         Err(unsupported(format!(
             "surface_event {field} must be a Friday-owned body/blob ref"
         )))
     }
+}
+
+fn is_safe_body_ref(value: &str) -> bool {
+    value.starts_with("friday://body/")
+        || value.starts_with("friday://surface-event-body/")
+        || value.starts_with("blob://")
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    format!("{digest:x}")
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MissionBodySnapshot {
+    pub body_ref: String,
+    pub owner_principal: String,
+    pub mission_id: String,
+    pub work_item_id: String,
+    pub source_surface: String,
+    pub body: String,
+    pub body_sha256: String,
+    pub body_len: i64,
+    pub created_at_ms: i64,
+}
+
+impl MissionBodySnapshot {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        owner_principal: &str,
+        mission_id: &str,
+        work_item_id: &str,
+        body_ref: &str,
+        source_surface: &str,
+        body: &str,
+        created_at_ms: i64,
+    ) -> Result<Self> {
+        let body_len = i64::try_from(body.len()).map_err(|_| {
+            unsupported("mission_body_snapshot.body length exceeds SQLite INTEGER range")
+        })?;
+        let snapshot = Self {
+            body_ref: body_ref.to_string(),
+            owner_principal: owner_principal.to_string(),
+            mission_id: mission_id.to_string(),
+            work_item_id: work_item_id.to_string(),
+            source_surface: source_surface.to_string(),
+            body: body.to_string(),
+            body_sha256: sha256_hex(body.as_bytes()),
+            body_len,
+            created_at_ms,
+        };
+        validate_mission_body_snapshot(&snapshot)?;
+        Ok(snapshot)
+    }
+}
+
+fn validate_mission_body_snapshot(snapshot: &MissionBodySnapshot) -> Result<()> {
+    require_non_empty(&snapshot.body_ref, "mission_body_snapshot.body_ref")?;
+    require_non_empty(
+        &snapshot.owner_principal,
+        "mission_body_snapshot.owner_principal",
+    )?;
+    require_non_empty(&snapshot.mission_id, "mission_body_snapshot.mission_id")?;
+    require_non_empty(&snapshot.work_item_id, "mission_body_snapshot.work_item_id")?;
+    require_non_empty(
+        &snapshot.source_surface,
+        "mission_body_snapshot.source_surface",
+    )?;
+    require_non_empty(&snapshot.body, "mission_body_snapshot.body")?;
+    if !is_safe_body_ref(snapshot.body_ref.trim()) {
+        return Err(unsupported(
+            "mission_body_snapshot.body_ref must be a Friday-owned body/blob ref",
+        ));
+    }
+    Ok(())
 }
 
 fn require_safe_surface_proof_ref(value: &str, field: &str) -> Result<()> {
@@ -1432,6 +1505,125 @@ pub fn upsert_work_item(conn: &Connection, item: &WorkItem) -> Result<()> {
         ],
     )?;
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn upsert_mission_body_snapshot(
+    conn: &Connection,
+    owner_principal: &str,
+    mission_id: &str,
+    work_item_id: &str,
+    body_ref: &str,
+    source_surface: &str,
+    body: &str,
+    created_at_ms: i64,
+) -> Result<MissionBodySnapshot> {
+    let snapshot = MissionBodySnapshot::new(
+        owner_principal,
+        mission_id,
+        work_item_id,
+        body_ref,
+        source_surface,
+        body,
+        created_at_ms,
+    )?;
+
+    let existing = conn
+        .query_row(
+            "SELECT owner_principal, mission_id, work_item_id, body_sha256, body_len
+             FROM mission_body_snapshot WHERE body_ref = ?1",
+            params![&snapshot.body_ref],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, i64>(4)?,
+                ))
+            },
+        )
+        .optional()?;
+    if let Some((owner, mission, work_item, sha, len)) = existing {
+        if owner == snapshot.owner_principal
+            && mission == snapshot.mission_id
+            && work_item == snapshot.work_item_id
+            && sha == snapshot.body_sha256
+            && len == snapshot.body_len
+        {
+            return Ok(snapshot);
+        }
+        return Err(unsupported(format!(
+            "mission_body_snapshot '{}' already exists with a different binding or body",
+            snapshot.body_ref
+        )));
+    }
+
+    conn.execute(
+        "INSERT INTO mission_body_snapshot
+            (body_ref, owner_principal, mission_id, work_item_id, source_surface,
+             body, body_sha256, body_len, created_at_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            &snapshot.body_ref,
+            &snapshot.owner_principal,
+            &snapshot.mission_id,
+            &snapshot.work_item_id,
+            &snapshot.source_surface,
+            &snapshot.body,
+            &snapshot.body_sha256,
+            snapshot.body_len,
+            snapshot.created_at_ms,
+        ],
+    )?;
+    Ok(snapshot)
+}
+
+pub fn get_mission_body_snapshot(
+    conn: &Connection,
+    owner_principal: &str,
+    work_item_id: &str,
+    body_ref: &str,
+) -> Result<Option<MissionBodySnapshot>> {
+    require_non_empty(owner_principal, "mission_body_snapshot.owner_principal")?;
+    require_non_empty(work_item_id, "mission_body_snapshot.work_item_id")?;
+    require_non_empty(body_ref, "mission_body_snapshot.body_ref")?;
+    let snapshot = conn
+        .query_row(
+            "SELECT body_ref, owner_principal, mission_id, work_item_id, source_surface,
+                    body, body_sha256, body_len, created_at_ms
+             FROM mission_body_snapshot
+             WHERE owner_principal = ?1 AND work_item_id = ?2 AND body_ref = ?3",
+            params![owner_principal, work_item_id, body_ref],
+            |r| {
+                Ok(MissionBodySnapshot {
+                    body_ref: r.get(0)?,
+                    owner_principal: r.get(1)?,
+                    mission_id: r.get(2)?,
+                    work_item_id: r.get(3)?,
+                    source_surface: r.get(4)?,
+                    body: r.get(5)?,
+                    body_sha256: r.get(6)?,
+                    body_len: r.get(7)?,
+                    created_at_ms: r.get(8)?,
+                })
+            },
+        )
+        .optional()?;
+    if let Some(snapshot) = snapshot {
+        let derived_sha = sha256_hex(snapshot.body.as_bytes());
+        let derived_len = i64::try_from(snapshot.body.len()).map_err(|_| {
+            unsupported("mission_body_snapshot.body length exceeds SQLite INTEGER range")
+        })?;
+        if snapshot.body_sha256 != derived_sha || snapshot.body_len != derived_len {
+            return Err(unsupported(format!(
+                "mission_body_snapshot '{}' fingerprint mismatch",
+                snapshot.body_ref
+            )));
+        }
+        return Ok(Some(snapshot));
+    }
+    Ok(None)
 }
 
 /// (#24b degrade-3 fix) `upsert_work_item` followed by clearing the durable `executing` marker

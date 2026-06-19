@@ -57,6 +57,7 @@ pub use error::{Result, StorageError};
 pub use migrate::{
     apply_migrations, current_version, now_ms, Migration, MigrationFn, MigrationReport,
 };
+pub use mission::MissionBodySnapshot;
 pub use passport::{get_context_passport, list_for_mission, upsert_context_passport};
 pub use pending_request::{
     get_pending_request, insert_pending_approval_activity, list_pending_requests_for_run,
@@ -710,6 +711,26 @@ impl Db {
         work_item: &WorkItem,
         workspace_claims: &[WorkspaceClaim],
     ) -> Result<()> {
+        self.stage_intake_atomic_with_workspace_claims_and_body_snapshot(
+            conversation,
+            mission,
+            surface_thread,
+            work_item,
+            workspace_claims,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn stage_intake_atomic_with_workspace_claims_and_body_snapshot(
+        &self,
+        conversation: &FridayConversation,
+        mission: &Mission,
+        surface_thread: Option<&SurfaceThread>,
+        work_item: &WorkItem,
+        workspace_claims: &[WorkspaceClaim],
+        body_snapshot: Option<&MissionBodySnapshot>,
+    ) -> Result<()> {
         if self.profile != Profile::Hub {
             return Err(StorageError::Unsupported(
                 "mission intake is Hub-only".into(),
@@ -726,6 +747,18 @@ impl Db {
             mission::upsert_work_item(&tx, work_item)?;
             for claim in workspace_claims {
                 process_registry::upsert_workspace_claim(&tx, claim)?;
+            }
+            if let Some(snapshot) = body_snapshot {
+                mission::upsert_mission_body_snapshot(
+                    &tx,
+                    &snapshot.owner_principal,
+                    &snapshot.mission_id,
+                    &snapshot.work_item_id,
+                    &snapshot.body_ref,
+                    &snapshot.source_surface,
+                    &snapshot.body,
+                    snapshot.created_at_ms,
+                )?;
             }
             tx.commit()?;
             Ok(())
@@ -832,6 +865,41 @@ impl Db {
             return Err(StorageError::Unsupported("WorkItems are Hub-only".into()));
         }
         mission::get_work_item(&self.conn, work_item_id)
+    }
+
+    pub fn get_mission_body_snapshot(
+        &self,
+        owner_principal: &str,
+        work_item_id: &str,
+        body_ref: &str,
+    ) -> Result<Option<MissionBodySnapshot>> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Mission body snapshots are Hub-only".into(),
+            ));
+        }
+        mission::get_mission_body_snapshot(&self.conn, owner_principal, work_item_id, body_ref)
+    }
+
+    pub fn upsert_mission_body_snapshot(
+        &self,
+        snapshot: &MissionBodySnapshot,
+    ) -> Result<MissionBodySnapshot> {
+        if self.profile != Profile::Hub {
+            return Err(StorageError::Unsupported(
+                "Mission body snapshots are Hub-only".into(),
+            ));
+        }
+        mission::upsert_mission_body_snapshot(
+            &self.conn,
+            &snapshot.owner_principal,
+            &snapshot.mission_id,
+            &snapshot.work_item_id,
+            &snapshot.body_ref,
+            &snapshot.source_surface,
+            &snapshot.body,
+            snapshot.created_at_ms,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
