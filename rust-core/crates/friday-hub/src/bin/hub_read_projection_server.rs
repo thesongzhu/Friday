@@ -18,14 +18,17 @@
 //!   `claude auth status`) via a [`friday_providers::ProviderProbe`] — never a prompt/send. That is
 //!   still NO model call, NO quota spend, NO credential read, and no network beyond the CLI's own
 //!   local auth check; it surfaces only booleans + a coarse static `detail`, never raw CLI text.
-//! * **Refs-only responses.** Each projection runs the SHARED library fn
+//! * **Refs-only responses, with one explicit answer-body carve-out.** The workbench/readback/
+//!   doctor projections run the SHARED library fn
 //!   ([`friday_hub::workbench_projection::project_workbench`] for S-R1,
 //!   [`friday_hub::run_readback_projection::project_run_readback`] for S-R2,
 //!   [`friday_hub::providers_doctor_projection::project_providers_doctor`] for S-R3), which runs the
 //!   forbidden-output guard INSIDE itself — so the snapshot carries redacted proof refs / counts /
 //!   labels / booleans only, never an inline body or raw CLI text. Truth labels ride as-is (provider
-//!   lanes conservatively `linked_only`, never upgraded); a `503`/unavailable state is surfaced as a
-//!   typed error, never a fabricated success.
+//!   lanes conservatively `linked_only`, never upgraded). S-R2b is deliberately separate: it releases
+//!   an answer body only after the same owner-auth chain passes and storage confirms the caller owns
+//!   the run; denied/not-found S-R2b payloads remain body-free. A `503`/unavailable state is
+//!   surfaced as a typed error, never a fabricated success.
 //! * **Owner-scoped, never client-asserted.** Every read request carries `forwarded_principal` +
 //!   `auth_proof`, verified by the SAME nonce-bound + owner-allowlisted + possession-of-session chain
 //!   a write uses (`authenticate_forwarded`), with the proof bound to the request's `request_id` (the
@@ -78,12 +81,14 @@ use friday_hub::sealed_ws::{
 use friday_hub::workbench_projection::project_workbench;
 use friday_protocol::{
     ActivityNeedsMeSnapshotWire, Envelope, IdempotencyTracker, Message,
-    ProvidersDoctorSnapshotWire, RunFileViewSnapshotWire, RunReadbackSnapshotWire, Seen,
-    SessionLinkStateSnapshotWire, SessionListSnapshotWire, SessionOpenSnapshotWire,
-    WorkbenchProjectionSnapshotWire,
+    ProvidersDoctorSnapshotWire, RunAnswerBodySnapshotWire, RunFileViewSnapshotWire,
+    RunReadbackSnapshotWire, Seen, SessionLinkStateSnapshotWire, SessionListSnapshotWire,
+    SessionOpenSnapshotWire, WorkbenchProjectionSnapshotWire,
 };
 use friday_providers::{CliProbe, ProviderProbe};
-use friday_storage::{Db, StorageError};
+use friday_storage::{
+    get_run_answer_for_principal, AnswerDenyReason, Db, RunAnswerAccess, StorageError,
+};
 use friday_transport::{ws_recv_envelope, ws_send_envelope, TransportError, WireWebSocket};
 
 /// The session AAD binding every sealed envelope on a READ session to this protocol/version. A
@@ -408,6 +413,38 @@ fn serve_read_session<S: Read + Write>(
                         snapshot: RunReadbackSnapshotWire {
                             request_id: request_id.clone(),
                             projection_json: sealed_hex,
+                            generated_at_ms: now_ms,
+                        },
+                    },
+                )?
+            }
+            Message::RunAnswerBodyRequest { request } => {
+                // Auth-before-body. This is the deliberate body-bearing sibling of RunReadback:
+                // authenticate the caller first, then release the answer only through the storage
+                // owner gate. Non-owner/unknown-run responses are body-free and owner-free.
+                let caller = match authenticate_read_request(
+                    session_key,
+                    session_nonce,
+                    &request.auth_proof,
+                    &request.forwarded_principal,
+                    &request.request_id,
+                    owner_allowlist,
+                ) {
+                    Some(caller) => caller,
+                    None => return Ok(processed),
+                };
+                let request_id = request.request_id.clone();
+                let projection = project_run_answer_body(db, caller.principal(), &request.run_id);
+                seal_and_frame(
+                    session_key,
+                    &env.msg_id,
+                    &request_id,
+                    now_ms,
+                    projection,
+                    |sealed_hex| Message::RunAnswerBodySnapshot {
+                        snapshot: RunAnswerBodySnapshotWire {
+                            request_id: request_id.clone(),
+                            answer_json: sealed_hex,
                             generated_at_ms: now_ms,
                         },
                     },
@@ -825,6 +862,48 @@ fn seal_and_frame(
     Ok(envelope)
 }
 
+fn project_run_answer_body(
+    db: &Db,
+    caller_principal: &str,
+    run_id: &str,
+) -> Result<serde_json::Value, String> {
+    match get_run_answer_for_principal(db.conn(), run_id, caller_principal)
+        .map_err(|_| "run_answer_read_failed".to_string())?
+    {
+        RunAnswerAccess::Granted(stored) => Ok(serde_json::json!({
+            "truth_label": "rust_wired_owner_gated",
+            "ok": true,
+            "outcome": "delivered",
+            "run_id": run_id,
+            "status": stored.status,
+            "answer": stored.answer,
+            "answer_sha256": stored.answer_sha256,
+            "answer_len": stored.answer_len,
+        })),
+        RunAnswerAccess::Denied(reason) => Ok(serde_json::json!({
+            "truth_label": "rust_wired_owner_gated",
+            "ok": true,
+            "outcome": "denied",
+            "run_id": run_id,
+            "deny_reason": answer_deny_reason_label(reason),
+        })),
+        RunAnswerAccess::NotFound => Ok(serde_json::json!({
+            "truth_label": "rust_wired_owner_gated",
+            "ok": true,
+            "outcome": "not_found",
+            "run_id": run_id,
+        })),
+    }
+}
+
+fn answer_deny_reason_label(reason: AnswerDenyReason) -> &'static str {
+    match reason {
+        AnswerDenyReason::NoOwnerPrincipal => "no_owner_principal",
+        AnswerDenyReason::AnonymousCaller => "anonymous_caller",
+        AnswerDenyReason::PrincipalMismatch => "principal_mismatch",
+    }
+}
+
 /// The current wall-clock in epoch-millis (best-effort; 0 on a pre-epoch clock).
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -883,7 +962,8 @@ mod tests {
     use friday_hub::hub_server::{auth_aad, nonce_bound_challenge};
     use friday_hub::sealed_ws::encode_sealed_proof;
     use friday_protocol::{
-        ProvidersDoctorRequestWire, RunReadbackRequestWire, WorkbenchProjectionRequestWire,
+        ProvidersDoctorRequestWire, RunAnswerBodyRequestWire, RunReadbackRequestWire,
+        WorkbenchProjectionRequestWire,
     };
     use friday_providers::{ProbeOutput, Provider, ProviderError};
     use friday_transport::{read_frame, write_frame, ws_connect};
@@ -1637,6 +1717,65 @@ mod tests {
         assert!(
             !json.contains("Authorization") && !json.contains("Bearer") && !json.contains("sk-"),
             "refs-only: no secret markers"
+        );
+        drop(ws);
+        let processed = server.join().unwrap();
+        assert_eq!(processed, 1);
+    }
+
+    /// KAT (S-R2b) — the answer-body projection round-trips through the read server: handshake →
+    /// owner auth → storage owner gate → owner-sealed body snapshot. This is the deliberate
+    /// body-bearing sibling of run-readback; the body reaches only the verified run owner.
+    #[test]
+    fn run_answer_body_round_trips_through_the_read_server_for_owner() {
+        let db_path = seed_run_db("r2b-answer");
+        let server_kp = DeviceKeypair::generate();
+        let client_kp = DeviceKeypair::from_secret_bytes(CLIENT_SECRET);
+        let peer_allowlist = vec![client_kp.public_bytes()];
+        let owner_allowlist = vec![OWNER.to_string()];
+
+        let listener = ReadWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = thread::spawn(move || {
+            let db = Db::open_hub_readonly(&db_path).unwrap();
+            let probe = null_probe();
+            listener
+                .accept_one(&server_kp, &db, &probe, &owner_allowlist, &peer_allowlist)
+                .unwrap()
+        });
+
+        let (mut ws, session_key, session_nonce) = client_handshake(addr, &client_kp);
+        let request_id = "req-r2b-answer-1";
+        let req = Envelope::new(
+            "msg-r2b-answer-1",
+            1000,
+            Message::RunAnswerBodyRequest {
+                request: RunAnswerBodyRequestWire {
+                    run_id: "run_read_seam_probe".to_string(),
+                    forwarded_principal: OWNER.to_string(),
+                    auth_proof: read_auth_proof(&session_key, &session_nonce, OWNER, request_id),
+                    request_id: request_id.to_string(),
+                },
+            },
+        );
+        ws_send_envelope(&mut ws, &session_key, &req, SESSION_AAD).unwrap();
+
+        let resp = ws_recv_envelope(&mut ws, &session_key, SESSION_AAD).unwrap();
+        let Message::RunAnswerBodySnapshot { snapshot } = resp.message else {
+            panic!("expected a RunAnswerBodySnapshot, got a different/typed-error frame");
+        };
+        assert_eq!(snapshot.request_id, request_id);
+        let sealed_bytes = hex_decode(&snapshot.answer_json);
+        let opened = crypto_open(&session_key, &decode_sealed(&sealed_bytes), SESSION_AAD).unwrap();
+        let json = String::from_utf8(opened).unwrap();
+        assert!(json.contains("\"outcome\":\"delivered\""));
+        assert!(json.contains("\"run_id\":\"run_read_seam_probe\""));
+        assert!(json.contains("\"truth_label\":\"rust_wired_owner_gated\""));
+        assert!(json.contains("owner-only run answer body that must never leak"));
+        assert!(
+            !json.contains("raw run task body"),
+            "task body must never ride answer readback"
         );
         drop(ws);
         let processed = server.join().unwrap();

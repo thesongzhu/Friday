@@ -333,6 +333,7 @@ public final class SealedWSWriteClient: FridayRustWriteClient, FridayMissionSpin
       throw FridayWriteClientError.serverError(code: code, message: message)
     case .agentRunRequest, .agentRunResume, .agentRunControlResult,
          .workbenchProjectionRequest, .workbenchProjectionSnapshot,
+         .runAnswerBodyRequest, .runAnswerBodySnapshot,
          .missionIntakeRequest, .missionIntakeResult,
          .memoryDecisionRequest, .memoryDecisionResult,
          .runOutcomeLearningDecisionRequest, .runOutcomeLearningDecisionResult:
@@ -549,6 +550,8 @@ private func dispatchKind(_ message: FridayMessage) -> String {
   switch message {
   case .workbenchProjectionRequest: return "WorkbenchProjectionRequest"
   case .workbenchProjectionSnapshot: return "WorkbenchProjectionSnapshot"
+  case .runAnswerBodyRequest: return "RunAnswerBodyRequest"
+  case .runAnswerBodySnapshot: return "RunAnswerBodySnapshot"
   case .error: return "Error"
   case .agentRunRequest: return "AgentRunRequest"
   case .agentRunResult: return "AgentRunResult"

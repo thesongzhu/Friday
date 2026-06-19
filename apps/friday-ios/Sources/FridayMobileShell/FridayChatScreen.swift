@@ -6,13 +6,13 @@ import SwiftUI
 ///
 /// This is the strict S6 needle: the 4-state chat loop over the package's REAL
 /// `SealedWSWriteClient` + the `OperatorSigner` relay (driven by `FridayChatViewModel`):
-///   compose → send → refs-only answer; mutating → AgentRunPaused → S6 approval card →
+///   compose → send → owner-gated readable answer; mutating → AgentRunPaused → S6 approval card →
 ///   operator-signs (relay-only) → resumeWithApproval VERBATIM → refs-only receipt; and
 ///   honest-unavailable when the Rust write server is DARK (the EXPECTED slice-6 state).
 ///
 /// Truth rules (enforced in the view model): INV-1 (no signing key on the app — the phone relays
 /// an OPAQUE blob), INV-2 (a mutation executes ONLY via an operator-approved resume), INV-5
-/// (every surfaced field is a ref/label/count/fingerprint — never an inline body).
+/// (the write receipt is refs-only; the answer body appears only through the owner-gated readback).
 struct FridayChatScreen: View {
   @StateObject private var viewModel: FridayChatViewModel
   /// Whether the S6 pause/approve/resume is enabled (the run-control flag). OFF ⇒ read-only.
@@ -134,20 +134,31 @@ struct FridayChatScreen: View {
       && !viewModel.phase.isBusy && !viewModel.phase.isAwaitingApproval
   }
 
-  // MARK: - Cards (refs-only throughout — INV-5)
+  // MARK: - Cards
 
-  /// The refs-only answer receipt (a fingerprint + counts, never a body).
+  /// The answer receipt: readable body when the owner-gated readback grants it, refs otherwise.
   private func answerCard(_ r: ChatAnswerReceipt) -> some View {
     GlassPanel {
-      VStack(alignment: .leading, spacing: 8) {
+      VStack(alignment: .leading, spacing: 10) {
         HStack {
           StatusChip(text: r.status.uppercased(), bg: MobileTheme.chipDoneBG, fg: MobileTheme.chipDoneFG)
           Spacer()
           Button("New") { viewModel.newTurn() }.font(.caption).foregroundStyle(MobileTheme.cyan)
         }
         Text("Friday answered").font(.headline).foregroundStyle(MobileTheme.textPrimary)
-        Text("answer is delivered refs-only — a fingerprint + counts (the body rides the owner-gated readback)")
-          .font(.caption2).foregroundStyle(MobileTheme.textSecondary)
+        if let answer = readableAnswer(r.answerBody) {
+          Text(answer)
+            .font(.body)
+            .foregroundStyle(MobileTheme.textPrimary)
+            .fixedSize(horizontal: false, vertical: true)
+            .textSelection(.enabled)
+          if let runId = r.answerBodyRunId {
+            RefPill(label: "answer_body_run_id", ref: runId)
+          }
+        } else {
+          Text("Answer body is not available from the owner-gated readback yet.")
+            .font(.caption2).foregroundStyle(MobileTheme.textSecondary)
+        }
         if let sha = r.answerSha256 { RefPill(label: "answer_sha256", ref: short(sha)) }
         if let missionId = r.missionId { RefPill(label: "mission_id", ref: missionId) }
         if let workItemId = r.workItemId { RefPill(label: "work_item_id", ref: workItemId) }
@@ -156,6 +167,7 @@ struct FridayChatScreen: View {
         }
         if let followUpRunId = r.followUpRunId { RefPill(label: "follow_up_run_id", ref: followUpRunId) }
         if let len = r.answerLen { RefPill(label: "answer_len", ref: "\(len)") }
+        if let outcome = r.answerBodyOutcome { RefPill(label: "answer_body", ref: outcome) }
         if let turns = r.turns { RefPill(label: "turns", ref: "\(turns)") }
         if let tools = r.executedTools { RefPill(label: "executed_tools", ref: "\(tools)") }
       }
@@ -236,6 +248,13 @@ struct FridayChatScreen: View {
 
   private func short(_ s: String) -> String {
     s.count > 16 ? "\(s.prefix(10))…\(s.suffix(4))" : s
+  }
+
+  private func readableAnswer(_ value: String?) -> String? {
+    guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+      return nil
+    }
+    return trimmed
   }
 }
 

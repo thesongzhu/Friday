@@ -93,6 +93,16 @@ public protocol FridayRustReadClient: Sendable {
   /// Fetch the Mission Workbench refs-only projection over the sealed-WS read seam:
   /// handshake → owner-authed request → open the owner-sealed snapshot → typed result.
   func fetchWorkbench() async throws -> WorkbenchSnapshot
+  /// Fetch one run's owner-gated answer body over the sealed-WS read seam. This is the explicit
+  /// body-bearing sibling of `fetchWorkbench()`/RunReadback; implementations must not source the
+  /// body from refs-only projections.
+  func fetchRunAnswerBody(runId: String) async throws -> RunAnswerBody
+}
+
+public extension FridayRustReadClient {
+  func fetchRunAnswerBody(runId: String) async throws -> RunAnswerBody {
+    throw FridayReadClientError.transport("run answer body readback unavailable")
+  }
 }
 
 // MARK: - The sealed-WS read client implementation
@@ -231,6 +241,105 @@ public final class SealedWSReadClient: FridayRustReadClient, @unchecked Sendable
       throw FridayReadClientError.unexpectedResponse(kind: "AgentRunControlResult")
     // The mission-spine WRITE variants share the `FridayMessage` enum but are NEVER answers a READ
     // server gives — surface them as unexpected (the read seam only answers a snapshot / Error).
+    case .missionIntakeRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "MissionIntakeRequest")
+    case .missionIntakeResult:
+      throw FridayReadClientError.unexpectedResponse(kind: "MissionIntakeResult")
+    case .memoryDecisionRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "MemoryDecisionRequest")
+    case .memoryDecisionResult:
+      throw FridayReadClientError.unexpectedResponse(kind: "MemoryDecisionResult")
+    case .runOutcomeLearningDecisionRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "RunOutcomeLearningDecisionRequest")
+    case .runOutcomeLearningDecisionResult:
+      throw FridayReadClientError.unexpectedResponse(kind: "RunOutcomeLearningDecisionResult")
+    case .runAnswerBodyRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "RunAnswerBodyRequest")
+    case .runAnswerBodySnapshot:
+      throw FridayReadClientError.unexpectedResponse(kind: "RunAnswerBodySnapshot")
+    case .unsupported(let kind):
+      throw FridayReadClientError.unexpectedResponse(kind: kind)
+    }
+  }
+
+  public func fetchRunAnswerBody(runId: String) async throws -> RunAnswerBody {
+    let transport = try makeTransport()
+
+    try transport.writeFrame(keypair.publicKey)
+    let serverPub = try transport.readFrame()
+    guard serverPub.count == FridayCrypto.x25519PublicKeyLen else {
+      throw FridayReadClientError.badServerPubkey
+    }
+    let sessionNonce = try transport.readFrame()
+    guard sessionNonce.count == 64 else {
+      throw FridayReadClientError.badSessionNonce
+    }
+    try transport.upgrade()
+
+    let sessionKey: [UInt8]
+    do {
+      sessionKey = try keypair.agree(peerPublicKey: serverPub)
+    } catch {
+      throw FridayReadClientError.transport("session-key agreement failed: \(error)")
+    }
+
+    let requestId = newRequestId()
+    let authProof = try FridayCrypto.buildAuthProof(
+      sessionKey: sessionKey,
+      sessionNonce: sessionNonce,
+      sessionAad: readSessionAad,
+      authChallenge: readAuthChallenge,
+      forwardedPrincipal: forwardedPrincipal,
+      boundContext: Array(requestId.utf8)
+    )
+    let reqEnvelope = FridayEnvelope(
+      msgId: "msg-\(requestId)",
+      sentAt: now(),
+      message: .runAnswerBodyRequest(RunAnswerBodyRequestWire(
+        runId: runId,
+        forwardedPrincipal: forwardedPrincipal,
+        authProof: authProof,
+        requestId: requestId))
+    )
+    try transport.sendMessage(try sealEnvelope(reqEnvelope, sessionKey: sessionKey))
+
+    let respBody: [UInt8]
+    do {
+      respBody = try transport.recvMessage()
+    } catch {
+      throw FridayReadClientError.transport("no response (session ended fail-closed): \(error)")
+    }
+    let respEnvelope = try openEnvelope(respBody, sessionKey: sessionKey)
+
+    switch respEnvelope.message {
+    case .runAnswerBodySnapshot(let snap):
+      let sealedBytes = try Hex.decode(snap.answerJson)
+      let innerSealed = try FridayCrypto.decodeSealed(sealedBytes)
+      let answerBytes: [UInt8]
+      do {
+        answerBytes = try FridayCrypto.open(key: sessionKey, sealed: innerSealed, aad: readSessionAad)
+      } catch {
+        throw FridayReadClientError.malformedProjection("owner-sealed answer failed to open: \(error)")
+      }
+      return try RunAnswerBody(answerJSON: Data(answerBytes), generatedAtMs: snap.generatedAtMs)
+    case .error(let code, let message):
+      throw FridayReadClientError.serverError(code: code, message: message)
+    case .runAnswerBodyRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "RunAnswerBodyRequest")
+    case .workbenchProjectionSnapshot:
+      throw FridayReadClientError.unexpectedResponse(kind: "WorkbenchProjectionSnapshot")
+    case .workbenchProjectionRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "WorkbenchProjectionRequest")
+    case .agentRunRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "AgentRunRequest")
+    case .agentRunResult:
+      throw FridayReadClientError.unexpectedResponse(kind: "AgentRunResult")
+    case .agentRunPaused:
+      throw FridayReadClientError.unexpectedResponse(kind: "AgentRunPaused")
+    case .agentRunResume:
+      throw FridayReadClientError.unexpectedResponse(kind: "AgentRunResume")
+    case .agentRunControlResult:
+      throw FridayReadClientError.unexpectedResponse(kind: "AgentRunControlResult")
     case .missionIntakeRequest:
       throw FridayReadClientError.unexpectedResponse(kind: "MissionIntakeRequest")
     case .missionIntakeResult:

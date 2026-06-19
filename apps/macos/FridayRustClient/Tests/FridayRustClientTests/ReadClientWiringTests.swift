@@ -24,6 +24,7 @@ final class ReadClientWiringTests: XCTestCase {
     private let peerAllowlist: [[UInt8]]
     private let ownerAllowlist: [String]
     private let projectionJSON: [UInt8]
+    private let answerJSON: [UInt8]
 
     // Handshake state.
     private var clientPub: [UInt8]?
@@ -37,12 +38,14 @@ final class ReadClientWiringTests: XCTestCase {
          sessionNonce: [UInt8],
          peerAllowlist: [[UInt8]],
          ownerAllowlist: [String],
-         projectionJSON: [UInt8]) {
+         projectionJSON: [UInt8],
+         answerJSON: [UInt8] = []) {
       self.serverKeypair = serverKeypair
       self.sessionNonce = sessionNonce
       self.peerAllowlist = peerAllowlist
       self.ownerAllowlist = ownerAllowlist
       self.projectionJSON = projectionJSON
+      self.answerJSON = answerJSON
     }
 
     // Phase 1 — preamble. The client writes its pubkey; we (server) reply with our pubkey
@@ -83,17 +86,33 @@ final class ReadClientWiringTests: XCTestCase {
       let envSealed = try FridayCrypto.decodeSealed(body)
       let envPt = try FridayCrypto.open(key: sessionKey, sealed: envSealed, aad: readSessionAad)
       let env = try FridayEnvelope.decodeJSON(Data(envPt))
-      guard case .workbenchProjectionRequest(let req) = env.message else {
-        throw FridayReadClientError.transport("expected a WorkbenchProjectionRequest")
+      let reqPrincipal: String
+      let reqId: String
+      let authProof: [UInt8]
+      enum ResponseKind { case workbench, answerBody(runId: String) }
+      let responseKind: ResponseKind
+      switch env.message {
+      case .workbenchProjectionRequest(let req):
+        reqPrincipal = req.forwardedPrincipal
+        reqId = req.requestId
+        authProof = req.authProof
+        responseKind = .workbench
+      case .runAnswerBodyRequest(let req):
+        reqPrincipal = req.forwardedPrincipal
+        reqId = req.requestId
+        authProof = req.authProof
+        responseKind = .answerBody(runId: req.runId)
+      default:
+        throw FridayReadClientError.transport("expected a read projection request")
       }
 
       // AUTH — the SAME chain `authenticate_forwarded` runs: open the auth_proof under the
       // session key with auth_aad(read_aad, principal, request_id); it must equal the
       // nonce-bound challenge; principal must be on the owner allowlist.
       let reqAad = FridayCrypto.authAad(readSessionAad,
-                                        forwardedPrincipal: req.forwardedPrincipal,
-                                        boundContext: Array(req.requestId.utf8))
-      let proofSealed = try FridayCrypto.decodeSealed(req.authProof)
+                                        forwardedPrincipal: reqPrincipal,
+                                        boundContext: Array(reqId.utf8))
+      let proofSealed = try FridayCrypto.decodeSealed(authProof)
       let openedChallenge: [UInt8]
       do {
         openedChallenge = try FridayCrypto.open(key: sessionKey, sealed: proofSealed, aad: reqAad)
@@ -102,23 +121,58 @@ final class ReadClientWiringTests: XCTestCase {
         return // NO snapshot — session ends fail-closed (the client recv will see EOF).
       }
       let expected = FridayCrypto.nonceBoundChallenge(readAuthChallenge, sessionNonce: sessionNonce)
-      guard openedChallenge == expected, ownerAllowlist.contains(req.forwardedPrincipal) else {
+      guard openedChallenge == expected, ownerAllowlist.contains(reqPrincipal) else {
         endedFailClosed = true
         return // fail-closed: no snapshot.
       }
 
-      // AUTHENTICATED — owner-seal the refs-only projection JSON under the session key, hex
-      // it, and answer with a WorkbenchProjectionSnapshot.
-      let inner = try FridayCrypto.seal(key: sessionKey, plaintext: projectionJSON, aad: readSessionAad)
-      let sealedHex = Hex.encode(FridayCrypto.encodeSealed(inner))
-      let resp = FridayEnvelope(
-        msgId: "read-projection-snapshot-\(req.requestId)",
-        sentAt: 1_780_640_000_000,
-        message: .workbenchProjectionSnapshot(WorkbenchProjectionSnapshotWire(
-          requestId: req.requestId,
-          projectionJson: sealedHex,
+      let responseMessage: FridayMessage
+      let plaintext: [UInt8]
+      switch responseKind {
+      case .workbench:
+        plaintext = projectionJSON
+        responseMessage = .workbenchProjectionSnapshot(WorkbenchProjectionSnapshotWire(
+          requestId: reqId,
+          projectionJson: "",
           generatedAtMs: 1_780_640_000_000
         ))
+      case .answerBody(let runId):
+        if answerJSON.isEmpty {
+          plaintext = Array("""
+          {"truth_label":"rust_wired_owner_gated","ok":true,"outcome":"not_found","run_id":"\(runId)"}
+          """.utf8)
+        } else {
+          plaintext = answerJSON
+        }
+        responseMessage = .runAnswerBodySnapshot(RunAnswerBodySnapshotWire(
+          requestId: reqId,
+          answerJson: "",
+          generatedAtMs: 1_780_640_000_000
+        ))
+      }
+
+      // AUTHENTICATED — owner-seal the projection JSON under the session key, hex it, and answer.
+      let inner = try FridayCrypto.seal(key: sessionKey, plaintext: plaintext, aad: readSessionAad)
+      let sealedHex = Hex.encode(FridayCrypto.encodeSealed(inner))
+      let finalMessage: FridayMessage
+      switch responseMessage {
+      case .workbenchProjectionSnapshot(let snap):
+        finalMessage = .workbenchProjectionSnapshot(WorkbenchProjectionSnapshotWire(
+          requestId: snap.requestId,
+          projectionJson: sealedHex,
+          generatedAtMs: snap.generatedAtMs))
+      case .runAnswerBodySnapshot(let snap):
+        finalMessage = .runAnswerBodySnapshot(RunAnswerBodySnapshotWire(
+          requestId: snap.requestId,
+          answerJson: sealedHex,
+          generatedAtMs: snap.generatedAtMs))
+      default:
+        throw FridayReadClientError.transport("unreachable response kind")
+      }
+      let resp = FridayEnvelope(
+        msgId: "read-projection-snapshot-\(reqId)",
+        sentAt: 1_780_640_000_000,
+        message: finalMessage
       ).withCorrelation(env.msgId)
       let respSealed = try FridayCrypto.seal(key: sessionKey, plaintext: [UInt8](resp.encodeJSON()), aad: readSessionAad)
       queuedFromServer.append(FridayCrypto.encodeSealed(respSealed))
@@ -181,6 +235,42 @@ final class ReadClientWiringTests: XCTestCase {
     let rawStr = String(decoding: raw, as: UTF8.self)
     XCTAssertFalse(rawStr.contains("Authorization"))
     XCTAssertFalse(rawStr.contains("Bearer"))
+  }
+
+  func testFetchRunAnswerBody_happyPath_decodesOwnerSealedAnswer() async throws {
+    let clientKp = try FridayCrypto.DeviceKeypair(secretBytes: try Hex.decode(B1KAT.k1Agree.clientSecret))
+    let serverKp = try FridayCrypto.DeviceKeypair(secretBytes: try Hex.decode(B1KAT.k1Agree.serverSecret))
+    let nonce = try Hex.decode(B1KAT.k3Auth.sessionNonce)
+    let answerJSON = """
+    {"truth_label":"rust_wired_owner_gated","ok":true,"outcome":"delivered","run_id":"run-readable",\
+    "status":"finished","answer":"Friday can now show the owner-gated answer body.",\
+    "answer_sha256":"\(String(repeating: "a", count: 64))","answer_len":50}
+    """
+
+    let transport = EmulatedRustServerTransport(
+      serverKeypair: serverKp,
+      sessionNonce: nonce,
+      peerAllowlist: [clientKp.publicKey],
+      ownerAllowlist: [owner],
+      projectionJSON: Array(Self.refsOnlyProjection.utf8),
+      answerJSON: Array(answerJSON.utf8)
+    )
+    let client = SealedWSReadClient(
+      keypair: clientKp,
+      forwardedPrincipal: owner,
+      makeTransport: { transport },
+      now: { 1000 },
+      newRequestId: { "req-answer-1" }
+    )
+
+    let body = try await client.fetchRunAnswerBody(runId: "run-readable")
+    XCTAssertEqual(body.runId, "run-readable")
+    XCTAssertEqual(body.outcome, "delivered")
+    XCTAssertEqual(body.deliveredAnswer, "Friday can now show the owner-gated answer body.")
+    XCTAssertEqual(body.status, "finished")
+    XCTAssertEqual(body.answerLen, 50)
+    XCTAssertEqual(body.truthLabel, "rust_wired_owner_gated")
+    XCTAssertEqual(transport.processed, 1)
   }
 
   func testFetchWorkbench_mismatchedPrincipal_endsFailClosed() async throws {
@@ -257,5 +347,16 @@ final class ReadClientWiringTests: XCTestCase {
     let json = String(decoding: data, as: UTF8.self)
     XCTAssertFalse(json.contains("mission_id"))
     XCTAssertTrue(json.contains("\"kind\":\"WorkbenchProjectionRequest\""))
+
+    let answerReq = RunAnswerBodyRequestWire(
+      runId: "run-1", forwardedPrincipal: owner, authProof: [4, 5, 6], requestId: "req-answer"
+    )
+    let answerEnv = FridayEnvelope(msgId: "msg-answer", sentAt: 8, message: .runAnswerBodyRequest(answerReq))
+      .withCorrelation("corr-answer")
+    let answerData = try answerEnv.encodeJSON()
+    let answerBack = try FridayEnvelope.decodeJSON(answerData)
+    XCTAssertEqual(answerBack, answerEnv)
+    let answerJson = String(decoding: answerData, as: UTF8.self)
+    XCTAssertTrue(answerJson.contains("\"kind\":\"RunAnswerBodyRequest\""))
   }
 }
