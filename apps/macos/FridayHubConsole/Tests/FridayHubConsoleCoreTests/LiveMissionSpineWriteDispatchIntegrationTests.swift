@@ -20,6 +20,8 @@ private let liveMissionBoundRunEnabled =
   ProcessInfo.processInfo.environment["FRIDAY_CONSOLE_LIVE_MISSION_BOUND_RUN_TEST"] == "1"
 private let liveStrengthRouteEnabled =
   ProcessInfo.processInfo.environment["FRIDAY_CONSOLE_LIVE_STRENGTH_ROUTE_TEST"] == "1"
+private let liveStrengthRouteRunEnabled =
+  ProcessInfo.processInfo.environment["FRIDAY_CONSOLE_LIVE_STRENGTH_ROUTE_RUN_TEST"] == "1"
 
 @Test(.enabled(if: liveMissionSpineWriteDispatchEnabled))
 func liveConsoleMissionSpineWriteDispatchReturnsReadyReceipt() async throws {
@@ -137,6 +139,54 @@ func liveConsoleMissionSpineWriteDispatchRecordsHybridStrengthRouteDecision() as
   #expect(snapshot.routeDecisionSummary?.contains("Codex first") == true)
   #expect(alternatives.contains { $0.contains("combination: Codex first") })
   #expect(alternatives.contains { $0.contains("claude: writing") })
+}
+
+@Test(.enabled(if: liveStrengthRouteRunEnabled))
+func liveConsoleMissionSpineWriteDispatchCanCompleteHybridCodexFirstRun() async throws {
+  let client = try RealWriteClientFactory.makeLiveWrite()
+  let request = makeLiveIntake(
+    surface: "desktop",
+    route: "desktop://hub-console/live-strength-route-codex-first",
+    title: "Verify live desktop hybrid auto route Codex first run",
+    intent: "In the FridayHubConsole test target, identify the live hybrid route test file path, "
+      + "then summarize that Claude synthesis follow-up remains deferred. Answer exactly "
+      + "FRIDAY_HYBRID_CODEX_FIRST_OK.",
+    lane: "auto",
+    targetProviderOrAgent: nil)
+
+  let result = try await client.submitMissionIntake(request)
+  #expect(result.status == "ready")
+  #expect(result.createdOrReady)
+  #expect(result.workItemId == request.workItemId)
+
+  let snapshot = try await pollLiveProjection(
+    client: RealReadClientFactory.makeLive(missionId: result.missionId),
+    missionId: result.missionId,
+    workItemId: try #require(result.workItemId))
+  #expect(snapshot.routeDecisionSummary?.contains("Codex first") == true)
+  #expect(snapshot.rawRouteDecisionAlternatives.contains { $0.contains("combination: Codex first") })
+
+  let outcome = try await client.dispatchMissionBoundAgentRun(
+    task: request.intent,
+    missionContext: MissionWorkItemContextWire(
+      fridayConversationId: result.fridayConversationId,
+      missionId: result.missionId,
+      workItemId: try #require(result.workItemId)),
+    constraints: AgentRunConstraintsWire(readOnly: true))
+
+  guard case .result(let receipt) = outcome else {
+    Issue.record("expected hybrid Codex-first mission-bound run to settle with a result")
+    return
+  }
+  print(
+    "[live-strength-route][desktop-hybrid-codex-first] missionId=\(result.missionId) "
+      + "workItemId=\(request.workItemId) runId=\(receipt.runId) status=\(receipt.status) "
+      + "turns=\(receipt.turns ?? 0) answerLen=\(receipt.answerLen ?? 0)")
+  #expect(receipt.status == "completed" || receipt.status == "finished" || receipt.status == "ok")
+  #expect((receipt.turns ?? 0) > 0)
+  #expect(receipt.executedTools == 0)
+  #expect(receipt.answerSha256 != nil)
+  #expect((receipt.answerLen ?? 0) > 0)
 }
 
 private func makeLiveIntake(
