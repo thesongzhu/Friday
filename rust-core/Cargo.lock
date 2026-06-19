@@ -788,6 +788,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "friday-studio"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "friday-system-remote"
 version = "0.0.1"
 dependencies = [
