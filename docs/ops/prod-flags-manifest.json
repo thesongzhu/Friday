@@ -41,7 +41,10 @@
       "closes_loop": "Mission/WorkItem lifecycle requests transition the Hub state machine (no model call).",
       "coverage": "loop-e2e",
       "e2e_test": "rust-core/crates/friday-hub/src/hub_server.rs::mission_lifecycle_request_updates_mission_without_provider_call",
-      "notes": "Drives HubServer::dispatch with a MissionLifecycleRequest through the SAME mission_lifecycle_result producer the flag-ON binary arm invokes; asserts active->archived transition, zero provider/model calls, zero token_ledger rows, then reads it back via MissionTimelineRequest. JUDGMENT: the WorkItem-status arm (work_item_status_result_for_db) shares this flag but has no by-name dispatch test of equal strength — sub-coverage gap noted in the report (the mission-lifecycle arm is the loop closure for the flag)."
+      "additional_e2e_tests": [
+        "rust-core/crates/friday-hub/src/hub_server.rs::work_item_status_dispatch_arm_updates_timeline_without_provider_call"
+      ],
+      "notes": "Primary manifest anchor drives HubServer::dispatch with a MissionLifecycleRequest through the SAME mission_lifecycle_result producer the flag-ON binary arm invokes; asserts active->archived transition, zero provider/model calls, zero token_ledger rows, then reads it back via MissionTimelineRequest. Additional enforced coverage drives the WorkItem-status flag-ON producer work_item_status_result_for_db through ready_to_dispatch->dispatched, asserts audit+state write, zero token_ledger rows, then reads the dispatched WorkItem back via MissionTimelineRequest."
     },
     {
       "flag": "FRIDAY_MISSION_BOUND_RUN",

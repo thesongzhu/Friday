@@ -79,9 +79,11 @@ restarts. A flag silently dropped on restart re-creates the inert-loop disaster
 2. **Close the `destination-only` gaps.** Add PR-CI tests that drive flag-ON TS routing →
    real Rust → loop-closed (today's coverage is mocked-unit + live-gated). When such a
    test lands, flip the flag's `coverage` to `loop-e2e`.
-3. **WorkItem-status dispatch arm.** `FRIDAY_MISSION_SPINE_DISPATCH` covers both the
-   Mission-lifecycle and WorkItem-status dispatch arms; the manifest maps it to the
-   Mission-lifecycle loop test. Add an equal-strength WorkItem-status dispatch test.
+3. **Closed 2026-06-19: WorkItem-status dispatch arm.** `FRIDAY_MISSION_SPINE_DISPATCH`
+   now maps to the Mission-lifecycle loop test plus an enforced
+   `additional_e2e_tests` WorkItem-status producer test; the WorkItem-status test
+   drives the same `work_item_status_result_for_db` path used by the flag-ON binary
+   arm, asserts audit+state write, zero token ledger rows, and MissionTimeline readback.
 4. **`deployment_critical.flags` ↔ `prod_state=on` cross-check.** The gate does not yet
    assert the `deployment_critical.flags` list equals the set of `prod_state=on` entries;
    a future editor could desync them. A one-line addition to the gate would harden this.
