@@ -173,6 +173,49 @@ public struct RunOutcomeLearningDecisionResultWire: Codable, Equatable, Sendable
   }
 }
 
+/// Client→read-server owner-gated answer-body request. This is a READ-seam message, but the shared
+/// wire types live beside the other protocol structs so `FridayMessage` can encode/decode it.
+public struct RunAnswerBodyRequestWire: Codable, Equatable, Sendable {
+  public var runId: String
+  public var forwardedPrincipal: String
+  public var authProof: [UInt8]
+  public var requestId: String
+
+  public init(runId: String, forwardedPrincipal: String, authProof: [UInt8], requestId: String) {
+    self.runId = runId
+    self.forwardedPrincipal = forwardedPrincipal
+    self.authProof = authProof
+    self.requestId = requestId
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case runId = "run_id"
+    case forwardedPrincipal = "forwarded_principal"
+    case authProof = "auth_proof"
+    case requestId = "request_id"
+  }
+}
+
+/// Read-server→client owner-sealed answer-body snapshot. The opened JSON carries an `answer` only
+/// when the authenticated caller owns the run; denied/not-found payloads are body-free.
+public struct RunAnswerBodySnapshotWire: Codable, Equatable, Sendable {
+  public var requestId: String
+  public var answerJson: String
+  public var generatedAtMs: Int64
+
+  public init(requestId: String, answerJson: String, generatedAtMs: Int64) {
+    self.requestId = requestId
+    self.answerJson = answerJson
+    self.generatedAtMs = generatedAtMs
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case requestId = "request_id"
+    case answerJson = "answer_json"
+    case generatedAtMs = "generated_at_ms"
+  }
+}
+
 // MARK: - AgentRunRequestWire
 
 /// First-class Mission handle for a bound agent run. Mirrors

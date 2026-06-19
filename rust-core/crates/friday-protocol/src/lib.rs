@@ -1079,6 +1079,28 @@ pub struct RunReadbackSnapshotWire {
     pub generated_at_ms: i64,
 }
 
+/// **S-R2b** — client->read-server request for the owner-gated run ANSWER BODY over the sealed-WS
+/// READ seam. This is deliberately separate from [`RunReadbackRequestWire`]: run-readback remains
+/// refs-only, while this path releases the body only after the same owner-auth chain succeeds and
+/// storage confirms the caller owns the run.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunAnswerBodyRequestWire {
+    pub run_id: String,
+    pub forwarded_principal: String,
+    pub auth_proof: Vec<u8>,
+    pub request_id: String,
+}
+
+/// **S-R2b** — read-server->client owner-sealed run answer body snapshot. The `answer_json` field is
+/// the owner-sealed JSON payload. On the delivered path that opened payload includes the answer body;
+/// denied/not-found payloads are body-free.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunAnswerBodySnapshotWire {
+    pub request_id: String,
+    pub answer_json: String,
+    pub generated_at_ms: i64,
+}
+
 /// **S-R3** — client→read-server request for the providers-doctor read projection over the DARK
 /// sealed-WS READ seam. The sibling of [`WorkbenchProjectionRequestWire`]: a PURE READ that runs
 /// the SAME owner-auth chain. Unlike the workbench/run-readback reads, the providers-doctor does NOT
@@ -1457,6 +1479,13 @@ pub enum Message {
     /// (state/loop-status/event-kinds/counts + DB-WIDE token totals labelled as such, never run
     /// cost). The shared projection fn ran the forbidden-output guard; truth labels never upgraded.
     RunReadbackSnapshot { snapshot: RunReadbackSnapshotWire },
+    /// **S-R2b** — UI→DARK read-server: request the OWNER-GATED run answer body over the sealed-WS
+    /// READ seam. PURE READ — no model/provider call. This is the body-bearing sibling of
+    /// RunReadback, kept separate so refs-only projections stay refs-only.
+    RunAnswerBodyRequest { request: RunAnswerBodyRequestWire },
+    /// **S-R2b** — DARK read-server→UI: owner-sealed answer-body snapshot. The opened payload
+    /// carries the answer only on the delivered path; denied/not-found paths stay body-free.
+    RunAnswerBodySnapshot { snapshot: RunAnswerBodySnapshotWire },
     /// **S-R3** — UI→DARK read-server: request the providers-doctor read projection over the
     /// sealed-WS READ seam. PURE READ — runs each provider CLI's read-only status command only (no
     /// prompt/send, no model call, no quota). Owner-scoped + DARK.
@@ -2296,6 +2325,21 @@ mod tests {
                     state: "confirmed".into(),
                     status: "confirmed".into(),
                     blocker: None,
+                },
+            },
+            Message::RunAnswerBodyRequest {
+                request: RunAnswerBodyRequestWire {
+                    run_id: "run-readable".into(),
+                    forwarded_principal: "owner-1".into(),
+                    auth_proof: vec![1, 2, 3],
+                    request_id: "req-r2b".into(),
+                },
+            },
+            Message::RunAnswerBodySnapshot {
+                snapshot: RunAnswerBodySnapshotWire {
+                    request_id: "req-r2b".into(),
+                    answer_json: "c0ffee".into(),
+                    generated_at_ms: 1_700_000_000_011,
                 },
             },
         ];

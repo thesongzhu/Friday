@@ -27,18 +27,17 @@ import FridayRustClient
 ///     which is reachable ONLY from `.pendingApproval`, which is reached ONLY by a server pause.
 ///     `approve()` is a NO-OP unless the loop is `.pendingApproval`. There is NO method that
 ///     executes a mutation without first pausing for approval — no bypass.
-///   - **INV-5 (refs-only):** every surfaced field is a ref/label/count/fingerprint — the answer
-///     is shown as `{status, answerSha256, answerLen, turns}`, NEVER an inline body; the pause is
-///     `{summary, actionDigest}`; the receipt is `{op, accepted, status, auditRef}`.
+///   - **INV-5 (answer-body carve-out):** write/dispatch receipts stay refs-only. An answer body is
+///     shown only after the separate owner-gated readback grants the authenticated owner access.
+///     The pause is `{summary, actionDigest}`; the receipt is `{op, accepted, status, auditRef}`.
 ///   - **Honest-unavailable:** the Rust write server is DARK; `dispatchAgentRun` /
 ///     `resumeWithApproval` are EXPECTED to throw — every throw renders `.unavailable`, never a
 ///     fabricated answer/approval/receipt, never a label upgrade.
 
-// MARK: - Refs-only surfaced models (INV-5)
+// MARK: - Surfaced models
 
-/// The refs-only ANSWER receipt the chat shows on a non-paused settle. Mirrors
-/// `AgentRunResultWire`: a coarse status + the answer FINGERPRINT (sha256/len) + run COUNTS —
-/// NEVER a body. The body is sourced by the owner-gated DB readback downstream, not here.
+/// The ANSWER receipt the chat shows on a non-paused settle. The write receipt remains refs-only
+/// (status/fingerprint/counts). `answerBody` is populated only by the separate owner-gated readback.
 public struct ChatAnswerReceipt: Sendable, Equatable {
   public let runId: String
   public let status: String
@@ -52,13 +51,19 @@ public struct ChatAnswerReceipt: Sendable, Equatable {
   public let workItemId: String?
   public let followUpWorkItemId: String?
   public let followUpRunId: String?
+  public let answerBody: String?
+  public let answerBodyRunId: String?
+  public let answerBodyOutcome: String?
 
   init(
     _ r: AgentRunResultWire,
     missionId: String? = nil,
     workItemId: String? = nil,
     followUpWorkItemId: String? = nil,
-    followUpRunId: String? = nil
+    followUpRunId: String? = nil,
+    answerBody: String? = nil,
+    answerBodyRunId: String? = nil,
+    answerBodyOutcome: String? = nil
   ) {
     self.runId = r.runId
     self.status = r.status
@@ -72,6 +77,9 @@ public struct ChatAnswerReceipt: Sendable, Equatable {
     self.workItemId = workItemId
     self.followUpWorkItemId = followUpWorkItemId
     self.followUpRunId = followUpRunId
+    self.answerBody = answerBody
+    self.answerBodyRunId = answerBodyRunId
+    self.answerBodyOutcome = answerBodyOutcome
   }
 }
 
@@ -230,8 +238,12 @@ public final class FridayChatViewModel: ObservableObject {
       let outcome = try await writeClient.dispatchAgentRun(task: trimmed, constraints: constraints)
       switch outcome {
       case .result(let r):
-        // Non-mutating settle: the refs-only answer receipt (fingerprint + counts, never a body).
-        phase = .answered(ChatAnswerReceipt(r))
+        let answer = await fetchDeliveredAnswerBody(for: r.runId)
+        phase = .answered(ChatAnswerReceipt(
+          r,
+          answerBody: answer?.body,
+          answerBodyRunId: answer?.runId,
+          answerBodyOutcome: answer?.outcome))
       case .paused(let p):
         // INV-2: a mutating run PAUSED — surface the S6 approval card. No mutation has executed.
         phase = .pendingApproval(ApprovalCard(p))
@@ -272,12 +284,17 @@ public final class FridayChatViewModel: ObservableObject {
         sourceWorkItemId: workItemId,
         intakeResult: result,
         missionClient: missionClient)
+      let bodyRunId = followUp?.runId ?? firstReceipt.runId
+      let answer = await fetchDeliveredAnswerBody(for: bodyRunId)
       phase = .answered(ChatAnswerReceipt(
         firstReceipt,
         missionId: result.missionId,
         workItemId: workItemId,
         followUpWorkItemId: followUp?.workItemId,
-        followUpRunId: followUp?.runId))
+        followUpRunId: followUp?.runId,
+        answerBody: answer?.body,
+        answerBodyRunId: answer?.runId,
+        answerBodyOutcome: answer?.outcome))
     } catch {
       phase = .unavailable(reason: Self.dispatchReason(for: error))
     }
@@ -308,6 +325,19 @@ public final class FridayChatViewModel: ObservableObject {
       return nil
     }
     return (followUpWorkItemId, receipt.runId)
+  }
+
+  private func fetchDeliveredAnswerBody(for runId: String) async -> (runId: String, body: String, outcome: String)? {
+    guard let readClient else { return nil }
+    do {
+      let body = try await readClient.fetchRunAnswerBody(runId: runId)
+      guard let answer = body.deliveredAnswer else {
+        return nil
+      }
+      return (body.runId, answer, body.outcome)
+    } catch {
+      return nil
+    }
   }
 
   // MARK: 3. Approve → Resume (the S6 relay — INV-1, INV-2)

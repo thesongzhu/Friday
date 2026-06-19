@@ -118,8 +118,37 @@ final class FridayChatViewModelTests: XCTestCase {
 
   final class FakeReadClient: FridayRustReadClient, @unchecked Sendable {
     let snapshot: WorkbenchSnapshot
-    init(snapshot: WorkbenchSnapshot) { self.snapshot = snapshot }
+    let answerBodies: [String: String]
+
+    init(snapshot: WorkbenchSnapshot, answerBodies: [String: String] = [:]) {
+      self.snapshot = snapshot
+      self.answerBodies = answerBodies
+    }
+
     func fetchWorkbench() async throws -> WorkbenchSnapshot { snapshot }
+
+    func fetchRunAnswerBody(runId: String) async throws -> RunAnswerBody {
+      guard let answer = answerBodies[runId] else {
+        let data = try JSONSerialization.data(withJSONObject: [
+          "truth_label": "rust_wired_owner_gated",
+          "ok": true,
+          "outcome": "not_found",
+          "run_id": runId,
+        ])
+        return try RunAnswerBody(answerJSON: data, generatedAtMs: 1)
+      }
+      let data = try JSONSerialization.data(withJSONObject: [
+        "truth_label": "rust_wired_owner_gated",
+        "ok": true,
+        "outcome": "delivered",
+        "run_id": runId,
+        "status": "finished",
+        "answer": answer,
+        "answer_sha256": String(repeating: "f", count: 64),
+        "answer_len": answer.utf8.count,
+      ])
+      return try RunAnswerBody(answerJSON: data, generatedAtMs: 1)
+    }
   }
 
   private func makeAnswer(_ runId: String = "run-1") -> AgentRunResultWire {
@@ -142,9 +171,34 @@ final class FridayChatViewModelTests: XCTestCase {
     XCTAssertEqual(receipt.status, "completed")
     XCTAssertEqual(receipt.answerLen, 128)         // refs/counts only (INV-5)
     XCTAssertEqual(receipt.answerSha256?.count, 64) // a fingerprint, never a body
+    XCTAssertNil(receipt.answerBody)
     XCTAssertEqual(client.dispatchedTasks, ["summarize my inbox"])
     // DEFAULT read-only/no-grant: a plain send carries NO constraints block.
     XCTAssertEqual(client.dispatchedConstraints, [Optional<AgentRunConstraintsWire>.none])
+  }
+
+  func testSend_withReadClient_surfacesOwnerGatedAnswerBody() async throws {
+    let client = FakeWriteClient(dispatch: .answer(makeAnswer("run-readable")))
+    let read = FakeReadClient(
+      snapshot: try WorkbenchSnapshot(
+        projectionJSON: Data("""
+        {"missionId":"mission-readable","fridayConversationId":"fconv-readable",\
+        "runtimeFeedStatus":"live_rust_hub_projection","statusLabels":[],"workItems":[]}
+        """.utf8),
+        generatedAtMs: 0),
+      answerBodies: ["run-readable": "Readable answer from the owner-gated readback."])
+    let vm = FridayChatViewModel(
+      writeClient: client,
+      signer: MockOperatorSigner(),
+      readClient: read)
+
+    await vm.send("summarize my inbox")
+
+    guard case .answered(let receipt) = vm.phase else { return XCTFail("expected .answered, got \(vm.phase)") }
+    XCTAssertEqual(receipt.runId, "run-readable")
+    XCTAssertEqual(receipt.answerBodyRunId, "run-readable")
+    XCTAssertEqual(receipt.answerBodyOutcome, "delivered")
+    XCTAssertEqual(receipt.answerBody, "Readable answer from the owner-gated readback.")
   }
 
   func testBuildMissionIntakeRequest_usesMobileAutoRoute() {
@@ -175,9 +229,11 @@ final class FridayChatViewModelTests: XCTestCase {
       ]
     }
     """
-    let read = FakeReadClient(snapshot: try WorkbenchSnapshot(
-      projectionJSON: Data(snapshotJSON.utf8),
-      generatedAtMs: 0))
+    let read = FakeReadClient(
+      snapshot: try WorkbenchSnapshot(
+        projectionJSON: Data(snapshotJSON.utf8),
+        generatedAtMs: 0),
+      answerBodies: ["run-followup": "Claude follow-up body visible to the owner."])
     let vm = FridayChatViewModel(
       writeClient: mission,
       signer: MockOperatorSigner(),
@@ -199,6 +255,8 @@ final class FridayChatViewModelTests: XCTestCase {
     XCTAssertEqual(receipt.workItemId, "work-mobile-fixed")
     XCTAssertEqual(receipt.followUpWorkItemId, "work-mobile-fixed-claude-followup")
     XCTAssertEqual(receipt.followUpRunId, "run-followup")
+    XCTAssertEqual(receipt.answerBodyRunId, "run-followup")
+    XCTAssertEqual(receipt.answerBody, "Claude follow-up body visible to the owner.")
   }
 
   func testSend_blankTask_isNoOp() async {

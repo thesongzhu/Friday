@@ -141,6 +141,11 @@ public enum FridayMessage: Equatable {
   /// hub→trusted-peer: A1 run-outcome learning decision receipt (refs-only). Mirrors
   /// `friday_protocol::Message::RunOutcomeLearningDecisionResult`.
   case runOutcomeLearningDecisionResult(RunOutcomeLearningDecisionResultWire)
+  /// client→read-server: owner-gated run answer body readback. Kept separate from
+  /// RunReadback so refs-only projections stay refs-only.
+  case runAnswerBodyRequest(RunAnswerBodyRequestWire)
+  /// read-server→client: owner-sealed answer-body snapshot.
+  case runAnswerBodySnapshot(RunAnswerBodySnapshotWire)
 
   /// A decoded-but-not-handled message kind. Carries the raw `kind` for truth-labeled surfacing
   /// (e.g. an `AgentRunPaused` reaching the read client, or any frame the client cannot handle).
@@ -263,6 +268,12 @@ extension FridayMessage: Codable {
       let c = try decoder.container(keyedBy: ResultKey.self)
       self = .runOutcomeLearningDecisionResult(
         try c.decode(RunOutcomeLearningDecisionResultWire.self, forKey: .result))
+    case "RunAnswerBodyRequest":
+      let c = try decoder.container(keyedBy: RequestKey.self)
+      self = .runAnswerBodyRequest(try c.decode(RunAnswerBodyRequestWire.self, forKey: .request))
+    case "RunAnswerBodySnapshot":
+      let c = try decoder.container(keyedBy: SnapshotKey.self)
+      self = .runAnswerBodySnapshot(try c.decode(RunAnswerBodySnapshotWire.self, forKey: .snapshot))
     default:
       self = .unsupported(kind: kind)
     }
@@ -363,6 +374,14 @@ extension FridayMessage: Codable {
       try tag.encode("RunOutcomeLearningDecisionResult", forKey: .kind)
       var c = encoder.container(keyedBy: ResultKey.self)
       try c.encode(r, forKey: .result)
+    case .runAnswerBodyRequest(let r):
+      try tag.encode("RunAnswerBodyRequest", forKey: .kind)
+      var c = encoder.container(keyedBy: RequestKey.self)
+      try c.encode(r, forKey: .request)
+    case .runAnswerBodySnapshot(let r):
+      try tag.encode("RunAnswerBodySnapshot", forKey: .kind)
+      var c = encoder.container(keyedBy: SnapshotKey.self)
+      try c.encode(r, forKey: .snapshot)
     case .unsupported(let kind):
       try tag.encode(kind, forKey: .kind)
     }
@@ -490,5 +509,50 @@ public struct WorkbenchSnapshot: Equatable {
     }
     self.generatedAtMs = generatedAtMs
     self.raw = obj
+  }
+}
+
+// MARK: - Owner-gated answer body projection
+
+public struct RunAnswerBody: Equatable, Sendable {
+  public let runId: String
+  public let outcome: String
+  public let status: String?
+  public let answer: String?
+  public let answerSha256: String?
+  public let answerLen: UInt64?
+  public let denyReason: String?
+  public let truthLabel: String
+  public let generatedAtMs: Int64
+
+  public var deliveredAnswer: String? {
+    outcome == "delivered" ? answer : nil
+  }
+
+  public init(answerJSON: Data, generatedAtMs: Int64) throws {
+    guard let obj = try JSONSerialization.jsonObject(with: answerJSON) as? [String: Any] else {
+      throw FridayReadClientError.malformedProjection("answer JSON is not an object")
+    }
+    guard let runId = obj["run_id"] as? String else {
+      throw FridayReadClientError.malformedProjection("answer JSON missing run_id")
+    }
+    guard let outcome = obj["outcome"] as? String else {
+      throw FridayReadClientError.malformedProjection("answer JSON missing outcome")
+    }
+    self.runId = runId
+    self.outcome = outcome
+    self.status = obj["status"] as? String
+    self.answer = obj["answer"] as? String
+    self.answerSha256 = obj["answer_sha256"] as? String
+    if let n = obj["answer_len"] as? UInt64 {
+      self.answerLen = n
+    } else if let n = obj["answer_len"] as? Int {
+      self.answerLen = UInt64(n)
+    } else {
+      self.answerLen = nil
+    }
+    self.denyReason = obj["deny_reason"] as? String
+    self.truthLabel = (obj["truth_label"] as? String) ?? "unknown"
+    self.generatedAtMs = generatedAtMs
   }
 }
