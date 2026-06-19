@@ -18,7 +18,10 @@ use friday_core::{
     SkillCatalogSnapshot, SkillCatalogSource, SkillState, WorkGraphNode, WorkGraphNodeKind,
     WorkGraphTruthLabel,
 };
-use friday_storage::{authorize_mutating_action, Db, StorageError};
+use friday_crypto::OperatorVerifyingKey;
+use friday_storage::{
+    authorize_mutating_action, authorize_mutating_action_ed25519, Db, StorageError,
+};
 use serde_json::Value;
 
 #[derive(Debug, thiserror::Error)]
@@ -364,42 +367,7 @@ pub fn record_skill_run_receipt(
     request: SkillRunReceiptRequest,
     approval_secret: &[u8],
 ) -> Result<SkillRunReceipt, SkillCatalogError> {
-    let entry = snapshot
-        .entries
-        .iter()
-        .find(|entry| entry.skill_id == request.skill_id)
-        .ok_or_else(|| SkillCatalogError::RunBlocked("unknown_skill".to_string()))?;
-    if !entry.can_be_recommended() {
-        return Err(SkillCatalogError::RunBlocked(
-            "skill_not_runnable_or_not_approved".to_string(),
-        ));
-    }
-    if !is_safe_proof_ref(&request.proof_ref) {
-        return Err(SkillCatalogError::RunBlocked(
-            "skill_run_proof_ref_required".to_string(),
-        ));
-    }
-    let mission = db
-        .get_mission(&request.mission_id)?
-        .ok_or_else(|| SkillCatalogError::RunBlocked("unknown_mission".to_string()))?;
-    if mission.status.is_terminal() {
-        return Err(SkillCatalogError::RunBlocked(
-            "mission_is_terminal".to_string(),
-        ));
-    }
-    let work_item = db
-        .get_work_item(&request.work_item_id)?
-        .ok_or_else(|| SkillCatalogError::RunBlocked("unknown_work_item".to_string()))?;
-    if work_item.mission_id != request.mission_id {
-        return Err(SkillCatalogError::RunBlocked(
-            "work_item_mission_mismatch".to_string(),
-        ));
-    }
-    if work_item.status.is_terminal() {
-        return Err(SkillCatalogError::RunBlocked(
-            "work_item_is_terminal".to_string(),
-        ));
-    }
+    let entry = validate_skill_run_receipt(db, snapshot, &request)?;
     let gate_request = skill_run_gate_request(
         &request.skill_id,
         &request.mission_id,
@@ -420,6 +388,68 @@ pub fn record_skill_run_receipt(
         )));
     }
 
+    write_skill_run_receipt(db, entry, request)
+}
+
+pub fn record_skill_run_receipt_ed25519(
+    db: &Db,
+    snapshot: &SkillCatalogSnapshot,
+    request: SkillRunReceiptRequest,
+    operator_vk: &OperatorVerifyingKey,
+) -> Result<SkillRunReceipt, SkillCatalogError> {
+    let entry = validate_skill_run_receipt(db, snapshot, &request)?;
+    let gate_request = skill_run_gate_request(
+        &request.skill_id,
+        &request.mission_id,
+        &request.work_item_id,
+        &request.operator_principal_id,
+    );
+    let gate = authorize_mutating_action_ed25519(
+        db.conn(),
+        &gate_request,
+        Some(&request.canonical_approval),
+        operator_vk,
+        request.now_ms,
+    )?;
+    if gate.decision != GateDecision::Allow {
+        return Err(SkillCatalogError::RunBlocked(format!(
+            "skill_run_canonical_gate_{}",
+            gate.reason
+        )));
+    }
+
+    write_skill_run_receipt(db, entry, request)
+}
+
+fn validate_skill_run_receipt<'a>(
+    db: &Db,
+    snapshot: &'a SkillCatalogSnapshot,
+    request: &SkillRunReceiptRequest,
+) -> Result<&'a SkillCatalogEntry, SkillCatalogError> {
+    let entry = snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.skill_id == request.skill_id)
+        .ok_or_else(|| SkillCatalogError::RunBlocked("unknown_skill".to_string()))?;
+    if !entry.can_be_recommended() {
+        return Err(SkillCatalogError::RunBlocked(
+            "skill_not_runnable_or_not_approved".to_string(),
+        ));
+    }
+    if !is_safe_proof_ref(&request.proof_ref) {
+        return Err(SkillCatalogError::RunBlocked(
+            "skill_run_proof_ref_required".to_string(),
+        ));
+    }
+    validate_mission_work_item(db, &request.mission_id, &request.work_item_id)?;
+    Ok(entry)
+}
+
+fn write_skill_run_receipt(
+    db: &Db,
+    entry: &SkillCatalogEntry,
+    request: SkillRunReceiptRequest,
+) -> Result<SkillRunReceipt, SkillCatalogError> {
     let run_ref = redacted_ref(
         "skill-run",
         &format!(
@@ -452,45 +482,7 @@ pub fn stage_link_skill_candidate_receipt(
     request: LinkSkillCandidateReceiptRequest,
     approval_secret: &[u8],
 ) -> Result<LinkSkillCandidateReceipt, SkillCatalogError> {
-    if !is_safe_public_id(&request.skill_id) || !is_safe_public_text(&request.safe_title) {
-        return Err(SkillCatalogError::RunBlocked(
-            "link_skill_candidate_safe_public_metadata_required".to_string(),
-        ));
-    }
-    if !is_safe_public_id(&request.source_digest)
-        || !is_public_link_evidence_url(&request.evidence_url)
-    {
-        return Err(SkillCatalogError::RunBlocked(
-            "link_skill_candidate_public_evidence_required".to_string(),
-        ));
-    }
-    if !is_safe_proof_ref(&request.proof_ref) {
-        return Err(SkillCatalogError::RunBlocked(
-            "link_skill_candidate_proof_ref_required".to_string(),
-        ));
-    }
-
-    let mission = db
-        .get_mission(&request.mission_id)?
-        .ok_or_else(|| SkillCatalogError::RunBlocked("unknown_mission".to_string()))?;
-    if mission.status.is_terminal() {
-        return Err(SkillCatalogError::RunBlocked(
-            "mission_is_terminal".to_string(),
-        ));
-    }
-    let work_item = db
-        .get_work_item(&request.work_item_id)?
-        .ok_or_else(|| SkillCatalogError::RunBlocked("unknown_work_item".to_string()))?;
-    if work_item.mission_id != request.mission_id {
-        return Err(SkillCatalogError::RunBlocked(
-            "work_item_mission_mismatch".to_string(),
-        ));
-    }
-    if work_item.status.is_terminal() {
-        return Err(SkillCatalogError::RunBlocked(
-            "work_item_is_terminal".to_string(),
-        ));
-    }
+    validate_link_skill_candidate_receipt(db, &request)?;
 
     let gate_request = link_skill_candidate_gate_request(
         &request.skill_id,
@@ -513,6 +505,96 @@ pub fn stage_link_skill_candidate_receipt(
         )));
     }
 
+    write_link_skill_candidate_receipt(db, request)
+}
+
+pub fn stage_link_skill_candidate_receipt_ed25519(
+    db: &Db,
+    request: LinkSkillCandidateReceiptRequest,
+    operator_vk: &OperatorVerifyingKey,
+) -> Result<LinkSkillCandidateReceipt, SkillCatalogError> {
+    validate_link_skill_candidate_receipt(db, &request)?;
+    let gate_request = link_skill_candidate_gate_request(
+        &request.skill_id,
+        &request.source_digest,
+        &request.mission_id,
+        &request.work_item_id,
+        &request.operator_principal_id,
+    );
+    let gate = authorize_mutating_action_ed25519(
+        db.conn(),
+        &gate_request,
+        Some(&request.canonical_approval),
+        operator_vk,
+        request.now_ms,
+    )?;
+    if gate.decision != GateDecision::Allow {
+        return Err(SkillCatalogError::RunBlocked(format!(
+            "link_skill_candidate_canonical_gate_{}",
+            gate.reason
+        )));
+    }
+
+    write_link_skill_candidate_receipt(db, request)
+}
+
+fn validate_link_skill_candidate_receipt(
+    db: &Db,
+    request: &LinkSkillCandidateReceiptRequest,
+) -> Result<(), SkillCatalogError> {
+    if !is_safe_public_id(&request.skill_id) || !is_safe_public_text(&request.safe_title) {
+        return Err(SkillCatalogError::RunBlocked(
+            "link_skill_candidate_safe_public_metadata_required".to_string(),
+        ));
+    }
+    if !is_safe_public_id(&request.source_digest)
+        || !is_public_link_evidence_url(&request.evidence_url)
+    {
+        return Err(SkillCatalogError::RunBlocked(
+            "link_skill_candidate_public_evidence_required".to_string(),
+        ));
+    }
+    if !is_safe_proof_ref(&request.proof_ref) {
+        return Err(SkillCatalogError::RunBlocked(
+            "link_skill_candidate_proof_ref_required".to_string(),
+        ));
+    }
+    validate_mission_work_item(db, &request.mission_id, &request.work_item_id)
+}
+
+fn validate_mission_work_item(
+    db: &Db,
+    mission_id: &str,
+    work_item_id: &str,
+) -> Result<(), SkillCatalogError> {
+    let mission = db
+        .get_mission(mission_id)?
+        .ok_or_else(|| SkillCatalogError::RunBlocked("unknown_mission".to_string()))?;
+    if mission.status.is_terminal() {
+        return Err(SkillCatalogError::RunBlocked(
+            "mission_is_terminal".to_string(),
+        ));
+    }
+    let work_item = db
+        .get_work_item(work_item_id)?
+        .ok_or_else(|| SkillCatalogError::RunBlocked("unknown_work_item".to_string()))?;
+    if work_item.mission_id != mission_id {
+        return Err(SkillCatalogError::RunBlocked(
+            "work_item_mission_mismatch".to_string(),
+        ));
+    }
+    if work_item.status.is_terminal() {
+        return Err(SkillCatalogError::RunBlocked(
+            "work_item_is_terminal".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn write_link_skill_candidate_receipt(
+    db: &Db,
+    request: LinkSkillCandidateReceiptRequest,
+) -> Result<LinkSkillCandidateReceipt, SkillCatalogError> {
     let candidate_ref = redacted_ref(
         "link-skill-candidate",
         &format!(
