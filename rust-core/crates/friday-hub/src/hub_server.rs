@@ -278,6 +278,15 @@ struct IntakeRouteSelection {
     target_provider_or_agent: Option<String>,
     why_this_route: String,
     considered_options: Vec<String>,
+    deferred_options: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AutoRouteDecision {
+    lane: friday_core::WorkLane,
+    reason: &'static str,
+    considered_options: Vec<String>,
+    deferred_options: Vec<String>,
 }
 
 fn intake_route_selection(
@@ -295,6 +304,7 @@ fn intake_route_selection(
             target_provider_or_agent: target,
             why_this_route: "Surface input must resolve to a canonical Mission.".into(),
             considered_options: vec!["surface-local chat".into(), "Mission Spine".into()],
+            deferred_options: vec!["native UI implementation".into()],
         });
     }
 
@@ -306,28 +316,22 @@ fn intake_route_selection(
         return Err("mission intake auto lane cannot carry an explicit target_provider_or_agent");
     }
 
-    let (lane, reason) = auto_route_for_intake(
+    let decision = auto_route_for_intake(
         &request.intent,
         request.capability_id.as_deref().unwrap_or(""),
     );
     Ok(IntakeRouteSelection {
-        lane,
-        target_provider_or_agent: Some(lane.as_str().to_string()),
-        why_this_route: format!("Auto route selected {reason}."),
-        considered_options: vec![
-            "codex: code, repo, file, test, and workspace changes".into(),
-            "claude: writing, synthesis, research, and explanation".into(),
-            "deepseek: general quick answer when no stronger route signal is present".into(),
-        ],
+        lane: decision.lane,
+        target_provider_or_agent: Some(decision.lane.as_str().to_string()),
+        why_this_route: format!("Auto route selected {}.", decision.reason),
+        considered_options: decision.considered_options,
+        deferred_options: decision.deferred_options,
     })
 }
 
-fn auto_route_for_intake(
-    intent: &str,
-    capability_id: &str,
-) -> (friday_core::WorkLane, &'static str) {
+fn auto_route_for_intake(intent: &str, capability_id: &str) -> AutoRouteDecision {
     let text = format!("{} {}", capability_id, intent).to_lowercase();
-    if contains_any(
+    let codex_signal = contains_any(
         &text,
         &[
             "codex",
@@ -358,13 +362,8 @@ fn auto_route_for_intake(
             "编译",
             "文件",
         ],
-    ) {
-        return (
-            friday_core::WorkLane::Codex,
-            "Codex for code, repo, and workspace execution strength",
-        );
-    }
-    if contains_any(
+    );
+    let claude_signal = contains_any(
         &text,
         &[
             "claude",
@@ -388,16 +387,53 @@ fn auto_route_for_intake(
             "解释",
             "计划",
         ],
-    ) {
-        return (
-            friday_core::WorkLane::Claude,
-            "Claude for synthesis, writing, and explanation strength",
-        );
+    );
+    let base_options = || {
+        vec![
+            "codex: code, repo, file, test, and workspace changes".into(),
+            "claude: writing, synthesis, research, and explanation".into(),
+            "deepseek: general quick answer when no stronger route signal is present".into(),
+        ]
+    };
+    if codex_signal && claude_signal {
+        return AutoRouteDecision {
+            lane: friday_core::WorkLane::Codex,
+            reason: "Codex first for workspace execution strength, with Claude synthesis deferred after proof",
+            considered_options: vec![
+                "combination: Codex first for repo execution, Claude follow-up for synthesis".into(),
+                "codex: code, repo, file, test, and workspace changes".into(),
+                "claude: writing, synthesis, research, and explanation".into(),
+                "deepseek: general quick answer when no stronger route signal is present".into(),
+            ],
+            deferred_options: vec![
+                "Claude synthesis follow-up after the Codex work item produces a proof receipt"
+                    .into(),
+                "native UI implementation".into(),
+            ],
+        };
     }
-    (
-        friday_core::WorkLane::DeepSeek,
-        "DeepSeek for general fast-response strength",
-    )
+    if codex_signal {
+        return AutoRouteDecision {
+            lane: friday_core::WorkLane::Codex,
+            reason: "Codex for code, repo, and workspace execution strength",
+            considered_options: base_options(),
+            deferred_options: vec!["native UI implementation".into()],
+        };
+    }
+    if claude_signal {
+        return AutoRouteDecision {
+            lane: friday_core::WorkLane::Claude,
+            reason: "Claude for synthesis, writing, and explanation strength",
+            considered_options: base_options(),
+            deferred_options: vec!["native UI implementation".into()],
+        };
+    }
+    AutoRouteDecision {
+        lane: friday_core::WorkLane::DeepSeek,
+        reason: "DeepSeek for general fast-response strength",
+        considered_options: base_options(),
+        deferred_options: vec!["native UI implementation".into()],
+    }
 }
 
 fn contains_any(text: &str, needles: &[&str]) -> bool {
@@ -736,7 +772,7 @@ pub fn mission_intake_result_for_db_flagged(
             red_lines: vec!["do not create detached provider state".into()],
             why_this_route: route_selection.why_this_route,
             considered_options: route_selection.considered_options,
-            deferred_options: vec!["native UI implementation".into()],
+            deferred_options: route_selection.deferred_options,
             previous_pitfalls: vec!["provider ack looked like done".into()],
             inheritable_context: vec!["same Mission renders across surfaces".into()],
             proof_requirements,
@@ -3504,6 +3540,76 @@ mod tests {
             .considered_options
             .iter()
             .any(|option| option.starts_with("claude:")));
+    }
+
+    #[test]
+    fn mission_intake_auto_route_records_hybrid_strength_plan() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        let response = mission_intake_result_for_db(
+            &db,
+            "intake-auto-hybrid",
+            MissionIntakeRequestWire {
+                friday_conversation_id: "fconv_auto_hybrid".into(),
+                owner_principal: "principal:jarvis".into(),
+                surface_thread_id: "surface-auto-hybrid".into(),
+                surface_kind: "desktop".into(),
+                delivery_route: "desktop://local/auto-hybrid".into(),
+                visibility_policy: "compact".into(),
+                mission_id: "mission-auto-hybrid".into(),
+                work_item_id: "work-auto-hybrid".into(),
+                title: "Auto route hybrid task".into(),
+                intent: "Fix the Swift bug, add a regression test, then summarize the tradeoffs."
+                    .into(),
+                lane: "auto".into(),
+                target_provider_or_agent: None,
+                capability_id: None,
+                body_ref: Some("friday://body/auto/hybrid".into()),
+                proof_requirements: Vec::new(),
+                includes_sensitive_context: false,
+            },
+            Some("principal:jarvis"),
+            1_700_002_030_000,
+        );
+        let Message::MissionIntakeResult { result } = response.message else {
+            panic!("expected MissionIntakeResult, got {response:?}");
+        };
+        assert_eq!(result.status, "ready");
+
+        let work = db
+            .get_work_item("work-auto-hybrid")
+            .unwrap()
+            .expect("auto-routed WorkItem");
+        assert_eq!(
+            work.lane,
+            WorkLane::Codex,
+            "hybrid code+synthesis work starts on the executable workspace leg"
+        );
+        assert_eq!(work.target_provider_or_agent.as_deref(), Some("codex"));
+        assert!(work.judgment_memory.why_this_route.contains("Codex first"));
+        assert!(work
+            .judgment_memory
+            .considered_options
+            .iter()
+            .any(|option| option.starts_with("combination:")));
+        assert!(work
+            .judgment_memory
+            .deferred_options
+            .iter()
+            .any(|option| option.contains("Claude synthesis follow-up")));
+
+        let route = db
+            .get_route_decision("route-intake-mission-auto-hybrid-work-auto-hybrid")
+            .unwrap()
+            .expect("route decision");
+        assert_eq!(route.selected_lane, WorkLane::Codex);
+        assert!(route
+            .considered_options
+            .iter()
+            .any(|option| option.starts_with("combination:")));
+        assert!(route
+            .deferred_options
+            .iter()
+            .any(|option| option.contains("Claude synthesis follow-up")));
     }
 
     fn provider_session_link() -> ProviderSessionLink {
