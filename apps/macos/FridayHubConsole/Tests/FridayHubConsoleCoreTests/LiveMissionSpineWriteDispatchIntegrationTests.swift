@@ -22,6 +22,8 @@ private let liveStrengthRouteEnabled =
   ProcessInfo.processInfo.environment["FRIDAY_CONSOLE_LIVE_STRENGTH_ROUTE_TEST"] == "1"
 private let liveStrengthRouteRunEnabled =
   ProcessInfo.processInfo.environment["FRIDAY_CONSOLE_LIVE_STRENGTH_ROUTE_RUN_TEST"] == "1"
+private let liveHybridFollowUpRunEnabled =
+  ProcessInfo.processInfo.environment["FRIDAY_CONSOLE_LIVE_HYBRID_FOLLOWUP_RUN_TEST"] == "1"
 
 @Test(.enabled(if: liveMissionSpineWriteDispatchEnabled))
 func liveConsoleMissionSpineWriteDispatchReturnsReadyReceipt() async throws {
@@ -187,6 +189,92 @@ func liveConsoleMissionSpineWriteDispatchCanCompleteHybridCodexFirstRun() async 
   #expect(receipt.executedTools == 0)
   #expect(receipt.answerSha256 != nil)
   #expect((receipt.answerLen ?? 0) > 0)
+}
+
+@Test(.enabled(if: liveHybridFollowUpRunEnabled))
+func liveConsoleMissionSpineWriteDispatchCanCompleteHybridCodexThenClaudeFollowUp() async throws {
+  let client = try RealWriteClientFactory.makeLiveWrite(config: hybridFollowUpWriteConfig())
+  let request = makeLiveIntake(
+    surface: "desktop",
+    route: "desktop://hub-console/live-strength-route-hybrid-followup",
+    title: "Verify live desktop hybrid route Codex then Claude follow-up",
+    intent: "In the FridayHubConsole test target, identify the live hybrid route test file path, "
+      + "then summarize that Claude synthesis follow-up should run after the Codex first leg. "
+      + "Answer exactly FRIDAY_HYBRID_CODEX_FIRST_FOR_CLAUDE_OK.",
+    lane: "auto",
+    targetProviderOrAgent: nil)
+
+  let result = try await client.submitMissionIntake(request)
+  #expect(result.status == "ready")
+  #expect(result.createdOrReady)
+  #expect(result.workItemId == request.workItemId)
+
+  let sourceWorkItemId = try #require(result.workItemId)
+  let firstSnapshot = try await pollLiveProjection(
+    client: RealReadClientFactory.makeLive(missionId: result.missionId),
+    missionId: result.missionId,
+    workItemId: sourceWorkItemId)
+  #expect(firstSnapshot.routeDecisionSummary?.contains("Codex first") == true)
+  #expect(firstSnapshot.rawRouteDecisionAlternatives.contains { $0.contains("combination: Codex first") })
+
+  let firstOutcome = try await client.dispatchMissionBoundAgentRun(
+    task: request.intent,
+    missionContext: MissionWorkItemContextWire(
+      fridayConversationId: result.fridayConversationId,
+      missionId: result.missionId,
+      workItemId: sourceWorkItemId),
+    constraints: AgentRunConstraintsWire(readOnly: true))
+
+  guard case .result(let firstReceipt) = firstOutcome else {
+    Issue.record("expected hybrid Codex-first mission-bound run to settle with a result")
+    return
+  }
+  #expect(firstReceipt.status == "completed" || firstReceipt.status == "finished" || firstReceipt.status == "ok")
+  #expect((firstReceipt.turns ?? 0) > 0)
+  #expect(firstReceipt.answerSha256 != nil)
+  #expect((firstReceipt.answerLen ?? 0) > 0)
+
+  let followUpWorkItemId = "\(sourceWorkItemId)-claude-followup"
+  _ = try await pollLiveProjection(
+    client: RealReadClientFactory.makeLive(missionId: result.missionId),
+    missionId: result.missionId,
+    workItemId: followUpWorkItemId)
+
+  let followUpOutcome = try await client.dispatchMissionBoundAgentRun(
+    task: "Read the completed Codex first-leg evidence already linked to this mission, summarize "
+      + "the follow-up in one sentence, and answer exactly FRIDAY_HYBRID_CLAUDE_FOLLOWUP_OK.",
+    missionContext: MissionWorkItemContextWire(
+      fridayConversationId: result.fridayConversationId,
+      missionId: result.missionId,
+      workItemId: followUpWorkItemId),
+    constraints: AgentRunConstraintsWire(readOnly: true))
+
+  guard case .result(let followUpReceipt) = followUpOutcome else {
+    Issue.record("expected hybrid Claude follow-up mission-bound run to settle with a result")
+    return
+  }
+  print(
+    "[live-strength-route][desktop-hybrid-followup] missionId=\(result.missionId) "
+      + "sourceWorkItemId=\(sourceWorkItemId) followUpWorkItemId=\(followUpWorkItemId) "
+      + "firstRunId=\(firstReceipt.runId) followUpRunId=\(followUpReceipt.runId) "
+      + "followUpStatus=\(followUpReceipt.status) followUpTurns=\(followUpReceipt.turns ?? 0) "
+      + "followUpAnswerLen=\(followUpReceipt.answerLen ?? 0)")
+  #expect(
+    followUpReceipt.status == "completed" || followUpReceipt.status == "finished"
+      || followUpReceipt.status == "ok")
+  #expect((followUpReceipt.turns ?? 0) > 0)
+  #expect(followUpReceipt.answerSha256 != nil)
+  #expect((followUpReceipt.answerLen ?? 0) > 0)
+}
+
+private func hybridFollowUpWriteConfig() -> AgentRunWriteServerConfig {
+  guard
+    let rawPort = ProcessInfo.processInfo.environment["FRIDAY_CONSOLE_LIVE_HYBRID_FOLLOWUP_WRITE_PORT"],
+    let port = UInt16(rawPort)
+  else {
+    return .liveLoopback
+  }
+  return AgentRunWriteServerConfig(host: "127.0.0.1", port: port)
 }
 
 private func makeLiveIntake(
