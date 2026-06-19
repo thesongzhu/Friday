@@ -45,6 +45,7 @@ final class WriteClientWiringTests: XCTestCase {
     private(set) var receivedSignedBlob: [UInt8]?
     private(set) var receivedConstraints: AgentRunConstraintsWire?
     private(set) var receivedSessionId: String?
+    private(set) var receivedMissionContext: MissionWorkItemContextWire?
 
     init(serverKeypair: FridayCrypto.DeviceKeypair, sessionNonce: [UInt8],
          peerAllowlist: [[UInt8]], ownerAllowlist: [String], mode: ServerMode) {
@@ -96,6 +97,7 @@ final class WriteClientWiringTests: XCTestCase {
     private func handleDispatch(_ req: AgentRunRequestWire, sessionKey: [UInt8], correlation: String) throws {
       receivedConstraints = req.constraints
       receivedSessionId = req.sessionId
+      receivedMissionContext = req.missionContext
       // AUTH — the SAME chain: open the auth_proof under the session key with auth_aad(write_aad,
       // principal, run_id); it must equal the WRITE nonce-bound challenge; principal must be on the
       // owner allowlist. (The WRITE constants, not the read constants.)
@@ -204,6 +206,23 @@ final class WriteClientWiringTests: XCTestCase {
     XCTAssertTrue(got.mutatingToolGrant.isEmpty)
     XCTAssertNil(got.mutationGate)
     XCTAssertEqual(transport.receivedSessionId, "sess-1")
+  }
+
+  func testDispatch_missionBoundCarriesFirstClassMissionContext() async throws {
+    let (client, transport) = try makeClient(mode: .completeRun, controlEnabled: false)
+    let context = MissionWorkItemContextWire(
+      fridayConversationId: "fconv-product-1",
+      missionId: "mission-product-1",
+      workItemId: "work-product-1")
+    let outcome = try await client.dispatchMissionBoundAgentRun(
+      task: "summarize the mission state",
+      missionContext: context,
+      constraints: AgentRunConstraintsWire(readOnly: true))
+    guard case .result(let r) = outcome else { return XCTFail("expected a result outcome") }
+    XCTAssertEqual(r.runId, "run-wiring-1")
+    XCTAssertEqual(transport.receivedMissionContext, context)
+    XCTAssertEqual(transport.receivedConstraints?.readOnly, true)
+    XCTAssertEqual(transport.dispatched, 1)
   }
 
   // MARK: dispatch — pause (flag-gated)

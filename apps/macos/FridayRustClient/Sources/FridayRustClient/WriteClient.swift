@@ -171,6 +171,16 @@ public protocol FridayMissionSpineWriteClient: Sendable {
   func submitMemoryDecision(_ request: MemoryDecisionRequestWire) async throws -> MemoryDecisionResultWire
 }
 
+/// Product-facing bridge for MissionIntakeResult -> mission-bound AgentRunRequest. This is the
+/// model-turn leg: it carries the server-produced Mission handle on the sealed WRITE dispatch.
+public protocol FridayMissionBoundRunWriteClient: Sendable {
+  func dispatchMissionBoundAgentRun(
+    task: String,
+    missionContext: MissionWorkItemContextWire,
+    constraints: AgentRunConstraintsWire?
+  ) async throws -> AgentRunDispatchOutcome
+}
+
 // MARK: - The sealed-WS write client implementation
 
 /// The sealed-WS WRITE client. Drives the full handshake + dispatch + courier LOGIC over an
@@ -183,7 +193,7 @@ public protocol FridayMissionSpineWriteClient: Sendable {
 /// carries no mutable shared state across an `await`, so it is safe to send — the SAME asserted
 /// posture as `SealedWSReadClient`. This lets a `@MainActor` view model store one and run the
 /// blocking synchronous transport OFF the main thread.
-public final class SealedWSWriteClient: FridayRustWriteClient, FridayMissionSpineWriteClient, @unchecked Sendable {
+public final class SealedWSWriteClient: FridayRustWriteClient, FridayMissionSpineWriteClient, FridayMissionBoundRunWriteClient, @unchecked Sendable {
   private let keypair: FridayCrypto.DeviceKeypair
   private let forwardedPrincipal: String
   private let sessionId: String?
@@ -229,6 +239,22 @@ public final class SealedWSWriteClient: FridayRustWriteClient, FridayMissionSpin
     task: String,
     constraints: AgentRunConstraintsWire? = nil
   ) async throws -> AgentRunDispatchOutcome {
+    try await dispatchAgentRun(task: task, constraints: constraints, missionContext: nil)
+  }
+
+  public func dispatchMissionBoundAgentRun(
+    task: String,
+    missionContext: MissionWorkItemContextWire,
+    constraints: AgentRunConstraintsWire? = nil
+  ) async throws -> AgentRunDispatchOutcome {
+    try await dispatchAgentRun(task: task, constraints: constraints, missionContext: missionContext)
+  }
+
+  private func dispatchAgentRun(
+    task: String,
+    constraints: AgentRunConstraintsWire?,
+    missionContext: MissionWorkItemContextWire?
+  ) async throws -> AgentRunDispatchOutcome {
     let transport = try makeTransport()
     let (sessionKey, sessionNonce) = try handshake(transport)
 
@@ -249,7 +275,8 @@ public final class SealedWSWriteClient: FridayRustWriteClient, FridayMissionSpin
       forwardedPrincipal: forwardedPrincipal,
       authProof: authProof,
       sessionId: normalizedSessionId(),
-      constraints: constraints
+      constraints: constraints,
+      missionContext: missionContext
     )
     let reqEnvelope = FridayEnvelope(
       msgId: "agent-run-\(runId)",

@@ -159,6 +159,7 @@ extension FridayMessage: Codable {
     case authProof = "auth_proof"
     case sessionId = "session_id"
     case constraints
+    case missionContext = "mission_context"
     case status
     case answerSha256 = "answer_sha256"
     case answerLen = "answer_len"
@@ -197,7 +198,8 @@ extension FridayMessage: Codable {
         forwardedPrincipal: try c.decode(String.self, forKey: .forwardedPrincipal),
         authProof: try c.decode([UInt8].self, forKey: .authProof),
         sessionId: try c.decodeIfPresent(String.self, forKey: .sessionId),
-        constraints: try c.decodeIfPresent(AgentRunConstraintsWire.self, forKey: .constraints)
+        constraints: try c.decodeIfPresent(AgentRunConstraintsWire.self, forKey: .constraints),
+        missionContext: try c.decodeIfPresent(MissionWorkItemContextWire.self, forKey: .missionContext)
       ))
     case "AgentRunResult":
       let c = try decoder.container(keyedBy: WriteKey.self)
@@ -271,7 +273,8 @@ extension FridayMessage: Codable {
     case .agentRunRequest(let req):
       var c = encoder.container(keyedBy: WriteKey.self)
       // Field order MIRRORS the Rust serde struct-variant order: kind, run_id, task,
-      // forwarded_principal, auth_proof, [session_id], [constraints]. Optional fields are
+      // forwarded_principal, auth_proof, [session_id], [constraints], [mission_context].
+      // Optional fields are
       // OMITTED when nil/empty (serde `skip_serializing_if`), keeping a sessionless/
       // constraint-free request byte-identical to the pre-A1/A2a wire.
       try c.encode("AgentRunRequest", forKey: .kind)
@@ -282,6 +285,9 @@ extension FridayMessage: Codable {
       if let sessionId = req.sessionId { try c.encode(sessionId, forKey: .sessionId) }
       if let constraints = req.constraints, !constraints.isWireEmpty {
         try c.encode(constraints, forKey: .constraints)
+      }
+      if let missionContext = req.missionContext {
+        try c.encode(missionContext, forKey: .missionContext)
       }
     case .agentRunResult(let r):
       var c = encoder.container(keyedBy: WriteKey.self)

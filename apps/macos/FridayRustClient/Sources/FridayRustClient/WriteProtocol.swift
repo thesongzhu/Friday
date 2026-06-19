@@ -121,6 +121,26 @@ public struct AgentRunConstraintsWire: Codable, Equatable, Sendable {
 
 // MARK: - AgentRunRequestWire
 
+/// First-class Mission handle for a bound agent run. Mirrors
+/// `friday_protocol::MissionWorkItemContextWire`; it is a selector, not authority.
+public struct MissionWorkItemContextWire: Codable, Equatable, Sendable {
+  public var fridayConversationId: String
+  public var missionId: String
+  public var workItemId: String
+
+  public init(fridayConversationId: String, missionId: String, workItemId: String) {
+    self.fridayConversationId = fridayConversationId
+    self.missionId = missionId
+    self.workItemId = workItemId
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case fridayConversationId = "friday_conversation_id"
+    case missionId = "mission_id"
+    case workItemId = "work_item_id"
+  }
+}
+
 /// trusted-peer→hub WRITE dispatch. Mirrors `friday_protocol::Message::AgentRunRequest`'s fields
 /// (flattened as siblings of `kind` on the wire). The `authProof` is the sealed possession proof
 /// bound to `(forwardedPrincipal, runId)`; `sessionId`/`constraints` are additive-optional.
@@ -131,6 +151,7 @@ public struct AgentRunRequestWire: Equatable, Sendable {
   public var authProof: [UInt8]
   public var sessionId: String?
   public var constraints: AgentRunConstraintsWire?
+  public var missionContext: MissionWorkItemContextWire?
 
   public init(
     runId: String,
@@ -138,7 +159,8 @@ public struct AgentRunRequestWire: Equatable, Sendable {
     forwardedPrincipal: String,
     authProof: [UInt8],
     sessionId: String? = nil,
-    constraints: AgentRunConstraintsWire? = nil
+    constraints: AgentRunConstraintsWire? = nil,
+    missionContext: MissionWorkItemContextWire? = nil
   ) {
     self.runId = runId
     self.task = task
@@ -146,6 +168,7 @@ public struct AgentRunRequestWire: Equatable, Sendable {
     self.authProof = authProof
     self.sessionId = sessionId
     self.constraints = constraints
+    self.missionContext = missionContext
   }
 }
 

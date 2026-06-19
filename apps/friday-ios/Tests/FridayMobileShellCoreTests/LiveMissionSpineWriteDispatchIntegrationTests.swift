@@ -8,26 +8,20 @@ import Testing
 //
 // Drives the real iOS shared write transport against the live agent-run WRITE server on
 // 127.0.0.1:48750 as the enrolled master-derived peer. This sends a single Mission intake and
-// expects a refs-only server receipt.
+// expects a refs-only server receipt. A stricter opt-in test also dispatches the returned
+// Mission/WorkItem handle as a read-only mission-bound model turn.
 //
-// HONEST CEILING: this is an agent-driven live product-surface write proof. It is not OG9 organic
-// origin, not a provider/model turn, not a completed_with_proof claim, and not A1 live-done.
+// HONEST CEILING: these are agent-driven live product-surface proofs. They are not OG9 organic
+// origin and not A1 live-done.
 
 private let liveMissionSpineWriteDispatchEnabled =
   ProcessInfo.processInfo.environment["FRIDAY_MOBILE_LIVE_WRITE_DISPATCH_TEST"] == "1"
+private let liveMissionBoundRunEnabled =
+  ProcessInfo.processInfo.environment["FRIDAY_MOBILE_LIVE_MISSION_BOUND_RUN_TEST"] == "1"
 
 @Test(.enabled(if: liveMissionSpineWriteDispatchEnabled))
 func liveMobileMissionSpineWriteDispatchReturnsReadyReceipt() async throws {
-  let keypair = try MasterKeyPeer.deriveKeypair()
-  let client = SealedWSWriteClient(
-    keypair: keypair,
-    forwardedPrincipal: liveAgentRunOwnerPrincipal,
-    makeTransport: {
-      try LoopbackSealedWSTransport(config: ReadProjectionServerConfig(
-        host: AgentRunServerConfig.liveLoopback.host,
-        port: AgentRunServerConfig.liveLoopback.port,
-        connectTimeout: AgentRunServerConfig.liveLoopback.connectTimeout))
-    })
+  let client = try RealWriteClientFactory.makeLive()
   let request = makeLiveMobileIntake()
 
   let result = try await client.submitMissionIntake(request)
@@ -44,7 +38,45 @@ func liveMobileMissionSpineWriteDispatchReturnsReadyReceipt() async throws {
   #expect(result.surfaceThreadId == request.surfaceThreadId)
 }
 
-private func makeLiveMobileIntake() -> MissionIntakeRequestWire {
+@Test(.enabled(if: liveMissionBoundRunEnabled))
+func liveMobileMissionSpineWriteDispatchCanStartMissionBoundRun() async throws {
+  let client = try RealWriteClientFactory.makeLive()
+  let request = makeLiveMobileIntake(
+    title: "Verify live mobile auto-route mission-bound Claude run",
+    intent: "写一份调研综述，总结 Friday 这个方案的利弊和下一步计划。",
+    lane: "auto",
+    targetProviderOrAgent: nil)
+
+  let result = try await client.submitMissionIntake(request)
+  #expect(result.status == "ready")
+  #expect(result.workItemId == request.workItemId)
+
+  let outcome = try await client.dispatchMissionBoundAgentRun(
+    task: request.intent,
+    missionContext: MissionWorkItemContextWire(
+      fridayConversationId: result.fridayConversationId,
+      missionId: result.missionId,
+      workItemId: try #require(result.workItemId)),
+    constraints: AgentRunConstraintsWire(readOnly: true))
+
+  guard case .result(let receipt) = outcome else {
+    Issue.record("expected mission-bound read-only run to settle with a result")
+    return
+  }
+  print(
+    "[live-write-dispatch][mobile-bound] runId=\(receipt.runId) "
+      + "status=\(receipt.status) turns=\(receipt.turns ?? 0)")
+  #expect(receipt.status == "completed" || receipt.status == "finished" || receipt.status == "ok")
+}
+
+private func makeLiveMobileIntake(
+  title: String = "Verify live mobile mission-spine write receipt",
+  intent: String = "create a workflow that triggers every morning at 9am, reads the Friday live mobile "
+    + "write receipt, and posts a refs-only status summary to the operator console as its "
+    + "output destination",
+  lane: String = "deepseek",
+  targetProviderOrAgent: String? = "deepseek"
+) -> MissionIntakeRequestWire {
   let id = UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "")
   return MissionIntakeRequestWire(
     fridayConversationId: "fconv_mobile_live_write_\(id)",
@@ -55,10 +87,8 @@ private func makeLiveMobileIntake() -> MissionIntakeRequestWire {
     visibilityPolicy: "compact",
     missionId: "mission-mobile-live-write-\(id)",
     workItemId: "work-mobile-live-write-\(id)",
-    title: "Verify live mobile mission-spine write receipt",
-    intent: "create a workflow that triggers every morning at 9am, reads the Friday live mobile "
-      + "write receipt, and posts a refs-only status summary to the operator console as its "
-      + "output destination",
-    lane: "deepseek",
-    targetProviderOrAgent: "deepseek")
+    title: title,
+    intent: intent,
+    lane: lane,
+    targetProviderOrAgent: targetProviderOrAgent)
 }

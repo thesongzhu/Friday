@@ -10,9 +10,16 @@ struct HubConsoleShell: View {
   @State private var destination: HubDestination = .operations
   @StateObject private var operationsVM: OperationsOverviewViewModel
 
-  init(client: FridayRustReadClient, writeClient: FridayMissionSpineWriteClient? = nil) {
+  init(
+    client: FridayRustReadClient,
+    writeClient: FridayMissionSpineWriteClient? = nil,
+    missionRunClient: FridayMissionBoundRunWriteClient? = nil
+  ) {
     _operationsVM = StateObject(
-      wrappedValue: OperationsOverviewViewModel(client: client, writeClient: writeClient))
+      wrappedValue: OperationsOverviewViewModel(
+        client: client,
+        writeClient: writeClient,
+        missionRunClient: missionRunClient))
   }
 
   var body: some View {
