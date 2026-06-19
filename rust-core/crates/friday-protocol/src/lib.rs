@@ -56,9 +56,14 @@ use thiserror::Error;
 /// the sealed Mission Spine dispatch flag. They stay refs-only and default-dark: a
 /// v14 binary with the dispatch flag off still echoes the message as a keepalive,
 /// changing no live behavior.
-pub const CURRENT_SCHEMA_VERSION: u16 = 14;
+///
+/// v15 (A1 run-outcome learning confirm) adds
+/// `RunOutcomeLearningDecisionRequest/Result`: the owner-authed, refs-only terminal
+/// confirm/reject caller for pending run-outcome learning candidates. It is a pure
+/// Hub DB mutation, default-dark behind the serving flag, and carries no answer body.
+pub const CURRENT_SCHEMA_VERSION: u16 = 15;
 /// The inclusive range of versions this build supports.
-pub const SUPPORTED: VersionRange = VersionRange { min: 1, max: 14 };
+pub const SUPPORTED: VersionRange = VersionRange { min: 1, max: 15 };
 
 /// A surface-safe Mission projection. This is the wire shape mobile, desktop, and
 /// channel surfaces may render. It intentionally has no raw provider ids, channel
@@ -416,6 +421,33 @@ pub struct MemoryDecisionResultWire {
     /// Whether the candidate is now recallable (durable `Confirmed`). Mirrors
     /// `created_or_ready` on the intake result — a single honest yes/no.
     pub recallable: bool,
+}
+
+/// Client request to apply the OWNER's explicit confirm/reject decision to ONE
+/// pending A1 run-outcome learning candidate. This is refs-only governance over a
+/// candidate row that already points at a run/session; it never carries the run
+/// answer body and never calls a provider/model.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunOutcomeLearningDecisionRequestWire {
+    pub candidate_id: String,
+    pub decision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Hub response for a run-outcome learning decision. Refs-only: candidate/run
+/// ids, lifecycle state, coarse status/blocker, and the candidate kind.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunOutcomeLearningDecisionResultWire {
+    pub candidate_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    pub state: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<String>,
 }
 
 /// Canonical Mission/WorkItem context for a user-facing request. This is not a
@@ -1393,6 +1425,16 @@ pub enum Message {
     /// the resulting lifecycle state, a coarse status, and whether it is now
     /// recallable. NEVER the candidate's content (the content stays Hub-side).
     MemoryDecisionResult { result: MemoryDecisionResultWire },
+    /// client->hub: confirm/reject ONE pending A1 run-outcome learning candidate.
+    /// Owner scope is derived server-side from the candidate's bound session/run.
+    /// Never a provider/model call and never carries the run answer body.
+    RunOutcomeLearningDecisionRequest {
+        request: RunOutcomeLearningDecisionRequestWire,
+    },
+    /// hub->client: refs-only run-outcome learning decision receipt.
+    RunOutcomeLearningDecisionResult {
+        result: RunOutcomeLearningDecisionResultWire,
+    },
     /// **S-R1** — UI→DARK read-server: request the Mission Workbench read projection over the
     /// sealed-WS READ seam. PURE READ — no model/provider call. Owner-scoped: the read server
     /// authenticates `forwarded_principal`/`auth_proof` against the sealed session (the SAME chain a
@@ -2239,6 +2281,23 @@ mod tests {
                     recallable: true,
                 },
             },
+            Message::RunOutcomeLearningDecisionRequest {
+                request: RunOutcomeLearningDecisionRequestWire {
+                    candidate_id: "a1:run-1:preference".into(),
+                    decision: "confirm".into(),
+                    reason: Some("owner confirmed this learning".into()),
+                },
+            },
+            Message::RunOutcomeLearningDecisionResult {
+                result: RunOutcomeLearningDecisionResultWire {
+                    candidate_id: "a1:run-1:preference".into(),
+                    run_id: Some("run-1".into()),
+                    kind: Some("preference".into()),
+                    state: "confirmed".into(),
+                    status: "confirmed".into(),
+                    blocker: None,
+                },
+            },
         ];
         for msg in cases {
             let env = Envelope::new("m1", 1000, msg).with_correlation("c1");
@@ -2247,6 +2306,51 @@ mod tests {
             let back = Envelope::decode(&json).unwrap();
             assert_eq!(back, env);
         }
+    }
+
+    #[test]
+    fn run_outcome_learning_decision_wire_is_refs_only_and_round_trips() {
+        let request = Message::RunOutcomeLearningDecisionRequest {
+            request: RunOutcomeLearningDecisionRequestWire {
+                candidate_id: "a1:run-1:preference".into(),
+                decision: "confirm".into(),
+                reason: Some("operator confirmed".into()),
+            },
+        };
+        let env = Envelope::new("a1-dec-req", 1000, request.clone()).with_correlation("c1");
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"RunOutcomeLearningDecisionRequest\""));
+        assert!(json.contains("\"request\":{"));
+        assert!(json.contains("\"candidate_id\":\"a1:run-1:preference\""));
+        for forbidden in [
+            "answer body",
+            "raw transcript",
+            "sk-",
+            "/Users/jarvis/private",
+        ] {
+            assert!(
+                !json.contains(forbidden),
+                "run-outcome learning request leaked {forbidden}: {json}"
+            );
+        }
+        assert_eq!(Envelope::decode(&json).unwrap(), env);
+
+        let result = Message::RunOutcomeLearningDecisionResult {
+            result: RunOutcomeLearningDecisionResultWire {
+                candidate_id: "a1:run-1:preference".into(),
+                run_id: Some("run-1".into()),
+                kind: Some("preference".into()),
+                state: "rejected".into(),
+                status: "blocked".into(),
+                blocker: Some("owner_scope_mismatch".into()),
+            },
+        };
+        let env = Envelope::new("a1-dec-res", 1001, result).with_correlation("c1");
+        let json = env.encode().unwrap();
+        assert!(json.contains("\"kind\":\"RunOutcomeLearningDecisionResult\""));
+        assert!(json.contains("\"result\":{"));
+        assert!(json.contains("\"blocker\":\"owner_scope_mismatch\""));
+        assert_eq!(Envelope::decode(&json).unwrap(), env);
     }
 
     #[test]
@@ -3038,13 +3142,13 @@ mod tests {
     }
 
     #[test]
-    fn schema_version_bumped_to_fourteen_for_route_decision_controls() {
+    fn schema_version_bumped_to_fifteen_for_run_outcome_learning_decision() {
         // A1 bumps the wire version so a v13 peer advertises the run-CONTROL kinds
         // (Paused/Resume/Cancel/Reject/ControlResult) exist — wire-compat honesty — even
         // while nothing emits them yet (DARK, behind the default-off flag). S-A's v12
         // substrate kinds are still present and unchanged.
-        assert_eq!(CURRENT_SCHEMA_VERSION, 14);
-        assert_eq!(SUPPORTED.max, 14);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 15);
+        assert_eq!(SUPPORTED.max, 15);
         assert_eq!(SUPPORTED.min, 1);
     }
 
