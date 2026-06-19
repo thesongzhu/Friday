@@ -34,8 +34,8 @@ use friday_protocol::{
 };
 use friday_providers::unified::{FallbackStatus, PlatformProvider, ProviderSession, SessionStatus};
 use friday_storage::{
-    get_run_answer_for_principal, get_run_result_ref, load_session_owner, AnswerDenyReason, Db,
-    MissionBodySnapshot, RunAnswerAccess, RunResultRef,
+    get_run_answer_for_principal, get_run_result, get_run_result_ref, load_session_owner,
+    AnswerDenyReason, Db, MissionBodySnapshot, RunAnswerAccess, RunResultRef,
 };
 use friday_transport::{ws_recv_envelope, ws_send_envelope, TransportError, WireWebSocket};
 use serde_json::json;
@@ -1695,6 +1695,13 @@ fn run_outcome_candidate_owner_matches(
             }
         }
     }
+
+    if let Some(result) = get_run_result(db.conn(), &row.run_id)? {
+        if result.owner_principal.as_deref().map(str::trim) == Some(authenticated_owner) {
+            return Ok(true);
+        }
+    }
+
     Ok(false)
 }
 
@@ -7307,6 +7314,32 @@ mod tests {
         .unwrap();
     }
 
+    fn seed_run_outcome_candidate_with_run_owner(
+        db: &Db,
+        run_id: &str,
+        session_id: Option<&str>,
+        owner: &str,
+    ) {
+        friday_storage::agent_run::create_run(db.conn(), run_id, "refs-only task", 1_000).unwrap();
+        friday_storage::persist_run_result(
+            db.conn(),
+            run_id,
+            &friday_storage::RunResult::new("finished", "refs-only answer", None)
+                .with_owner_principal(owner),
+            1_050,
+        )
+        .unwrap();
+        friday_storage::learning_candidate::record_run_outcome_candidates(
+            db.conn(),
+            run_id,
+            session_id,
+            2,
+            1,
+            1_100,
+        )
+        .unwrap();
+    }
+
     fn decode_run_outcome_learning_decision(
         env: &Envelope,
     ) -> &RunOutcomeLearningDecisionResultWire {
@@ -7352,6 +7385,81 @@ mod tests {
         assert_eq!(
             row.decision_reason.as_deref(),
             Some("owner accepted the preference")
+        );
+    }
+
+    #[test]
+    fn run_outcome_learning_decision_accepts_finished_run_owner_without_session_owner() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        seed_run_outcome_candidate_with_run_owner(
+            &db,
+            "run-a1-mission-owned",
+            Some("run-a1-mission-owned"),
+            "owner-1",
+        );
+
+        let env = run_outcome_learning_decision_result_for_db(
+            &db,
+            "msg-a1-run-owner",
+            RunOutcomeLearningDecisionRequestWire {
+                candidate_id: "a1:run-a1-mission-owned:preference".into(),
+                decision: "confirm".into(),
+                reason: Some("mission-bound run owner accepted the preference".into()),
+            },
+            Some("owner-1"),
+            1_200,
+        );
+        let result = decode_run_outcome_learning_decision(&env);
+        assert_eq!(result.status, "confirmed");
+        assert_eq!(result.state, "confirmed");
+        assert!(result.blocker.is_none());
+
+        let row = friday_storage::learning_candidate::get_run_outcome_candidate(
+            db.conn(),
+            "a1:run-a1-mission-owned:preference",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            row.state,
+            friday_storage::learning_candidate::RunOutcomeLearningState::Confirmed
+        );
+    }
+
+    #[test]
+    fn run_outcome_learning_decision_wrong_finished_run_owner_is_blocked() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        seed_run_outcome_candidate_with_run_owner(
+            &db,
+            "run-a1-mission-scope",
+            Some("run-a1-mission-scope"),
+            "owner-1",
+        );
+
+        let env = run_outcome_learning_decision_result_for_db(
+            &db,
+            "msg-a1-run-owner-scope",
+            RunOutcomeLearningDecisionRequestWire {
+                candidate_id: "a1:run-a1-mission-scope:world_model".into(),
+                decision: "confirm".into(),
+                reason: None,
+            },
+            Some("intruder"),
+            1_200,
+        );
+        let result = decode_run_outcome_learning_decision(&env);
+        assert_eq!(result.status, "blocked");
+        assert_eq!(result.blocker.as_deref(), Some("owner_scope_mismatch"));
+
+        let row = friday_storage::learning_candidate::get_run_outcome_candidate(
+            db.conn(),
+            "a1:run-a1-mission-scope:world_model",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            row.state,
+            friday_storage::learning_candidate::RunOutcomeLearningState::Pending
         );
     }
 
