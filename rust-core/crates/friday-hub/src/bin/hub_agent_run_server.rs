@@ -6108,6 +6108,39 @@ mod tests {
             .expect("spawn node TS client subprocess")
     }
 
+    /// Spawn the TS sealed-client runner in agent-route start-run mode: the subprocess creates the
+    /// real TS API runtime, calls the real `agent.runs.start` route, and lets the routeStartRun
+    /// compose path drive the real sealed-client service plus owner-gated Rust answer readback.
+    fn spawn_ts_agent_route_start_run_client(
+        port: u16,
+        secret_hex: &str,
+        principal: &str,
+        run_id: &str,
+        hub_db_path: &str,
+    ) -> std::process::Child {
+        let root = worktree_root();
+        let bundle = root.join("test/interop/.build/sealed-client-runner.cjs");
+        assert!(
+            bundle.exists(),
+            "interop bundle missing at {bundle:?} — run `node test/interop/build-sealed-client-runner.mjs` first"
+        );
+        std::process::Command::new("node")
+            .arg(bundle)
+            .arg("--mode=agent-route-start-run")
+            .arg(format!("--port={port}"))
+            .arg(format!("--secret-hex={secret_hex}"))
+            .arg(format!("--principal={principal}"))
+            .arg(format!("--run-id={run_id}"))
+            .arg("--task=ping")
+            .arg(format!("--hub-db-path={hub_db_path}"))
+            .arg(format!("--repo-root={}", root.to_string_lossy()))
+            .arg("--timeout-ms=15000")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn node TS agent-route start-run subprocess")
+    }
+
     /// Spawn the TS sealed-client runner in auto-dispatch mode: the subprocess first calls the real
     /// `intakeMission`, then invokes the real `createFridayMissionAutoDispatchDriver`, whose
     /// `startRun` thunk calls the real sealed client's `dispatchRun` with the emitted
@@ -6327,6 +6360,70 @@ mod tests {
             serde_json::json!(ANSWER.len()),
             "TS surfaced the refs len"
         );
+    }
+
+    // (1a) HTTP START-RUN ROUTE ON-RAMP: real TS API runtime -> real `agent.runs.start` route ->
+    // routeStartRun compose -> real sealed-client service -> real Rust AgentRunRequest -> real
+    // owner-gated Rust answer readback. This is still manual/ignored loopback proof, not organic
+    // operator traffic and not a non-ignored PR-CI e2e.
+    #[test]
+    #[ignore = "needs `node` + the prebuilt interop bundle; opt in with --ignored"]
+    fn interop_ts_agent_start_route_drives_real_rust_run_and_readback() {
+        const ANSWER: &str = "PONG";
+        const RUN_ID: &str = "run-interop-agent-route";
+
+        let (rt, _ws) = pong_runtime("interop-agent-route-start", OWNER, ANSWER);
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let owner_allowlist = vec![OWNER.to_string()];
+        let peer_allowlist = allowlist_of(ts_client_pubkey());
+
+        let child = spawn_ts_agent_route_start_run_client(
+            addr.port(),
+            &ts_client_secret_hex(),
+            OWNER,
+            RUN_ID,
+            rt.db().path(),
+        );
+
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &owner_allowlist,
+                &peer_allowlist,
+                true,  // run-control ON so the route's read-only constraints are enforced
+                false, // mission-bound seam OFF
+                false, // mission-intake ingress OFF
+                false, // mission-spine dispatch OFF
+                false, // memory-confirm ingress OFF
+                false, // token surface OFF
+                false, // provider-workspace dispatch OFF
+            )
+            .expect("server serves the TS agent start-route session");
+        assert_eq!(processed, 1, "one route-triggered agent run processed");
+
+        let v = read_client_json(child);
+        assert_eq!(
+            v["ok"],
+            serde_json::json!(true),
+            "TS agent start-route runner reports success: {v:?}"
+        );
+        assert_eq!(v["mode"], serde_json::json!("agent-route-start-run"));
+        assert_eq!(v["runId"], serde_json::json!(RUN_ID));
+        assert_eq!(v["status"], serde_json::json!("completed"));
+        assert_eq!(v["responseLen"], serde_json::json!(ANSWER.len()));
+        assert_eq!(v["finalResponseLen"], serde_json::json!(ANSWER.len()));
+
+        match friday_storage::get_run_answer_for_principal(rt.db().conn(), RUN_ID, OWNER)
+            .expect("owner-gated readback query succeeds")
+        {
+            friday_storage::RunAnswerAccess::Granted(stored) => {
+                assert_eq!(stored.answer, ANSWER, "Rust DB stores the delivered answer");
+            }
+            other => panic!("owner must read the route-triggered Rust answer, got {other:?}"),
+        }
     }
 
     // (1b) AUTO-DISPATCH FULL ROUND-TRIP: real TS sealed client -> real MissionIntakeRequest ->
