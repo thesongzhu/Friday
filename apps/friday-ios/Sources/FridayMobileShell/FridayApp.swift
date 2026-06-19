@@ -40,6 +40,7 @@ final class FridaySession: ObservableObject {
 
   let readClient: FridayRustReadClient
   let writeClient: FridayRustWriteClient
+  let missionClient: FridayMobileMissionDispatchingWriteClient?
   /// The operator-signing RELAY. Mock today (NOT a real signature); the real desktop signer
   /// (PR #671) is the slice-6 / operator-key gate. The phone holds NO signing key (INV-1).
   let signer: OperatorSigner
@@ -68,9 +69,14 @@ final class FridaySession: ObservableObject {
     // the read seam's `RealReadClientFactory.makeLive`) is now BUILT and wired behind an OPT-IN
     // env/arg gate (`FRIDAY_MOBILE_LIVE_WRITE=1` / `--live-write`, mirroring `FRIDAY_MOBILE_LIVE_READ`).
     // This PR does NOT flip the shipped default (that, and the S6 control plane, are operator gates).
-    self.writeClient = preview
-      ? Self.honestUnavailableWriteClient()
-      : Self.defaultWriteClient(runControlEnabled: runControlEnabled)
+    if preview {
+      self.writeClient = Self.honestUnavailableWriteClient()
+      self.missionClient = nil
+    } else {
+      let liveWrite = Self.defaultLiveWriteClient(runControlEnabled: runControlEnabled)
+      self.writeClient = liveWrite ?? Self.honestUnavailableWriteClient(runControlEnabled: runControlEnabled)
+      self.missionClient = liveWrite
+    }
     self.signer = MockOperatorSigner()
   }
 
@@ -111,20 +117,25 @@ final class FridaySession: ObservableObject {
   /// is unavailable (e.g. a real phone — the J2 pairing problem), fall back to the throwing default
   /// (honest unavailable) — NEVER fabricate a ready chat surface the live seam did not produce.
   static func defaultWriteClient(runControlEnabled: Bool) -> FridayRustWriteClient {
+    defaultLiveWriteClient(runControlEnabled: runControlEnabled)
+      ?? honestUnavailableWriteClient(runControlEnabled: runControlEnabled)
+  }
+
+  static func defaultLiveWriteClient(
+    runControlEnabled: Bool
+  ) -> FridayMobileMissionDispatchingWriteClient? {
     let args = ProcessInfo.processInfo.arguments
     let env = ProcessInfo.processInfo.environment
     let useLive = args.contains("--live-write") || env["FRIDAY_MOBILE_LIVE_WRITE"] == "1"
     guard useLive else {
-      // SHIPPED DEFAULT — unchanged: the throwing `liveTransportNotWired` factory transport, no
-      // socket, no SecureStore touch.
-      return honestUnavailableWriteClient(runControlEnabled: runControlEnabled)
+      return nil
     }
     do {
       return try RealWriteClientFactory.makeLive(agentRunControlViaRust: runControlEnabled)
     } catch {
-      // Master key unavailable (the J2 pairing problem on a real device): surface the truth via the
-      // throwing default transport (honest-unavailable) — never fabricate a ready chat surface.
-      return honestUnavailableWriteClient(runControlEnabled: runControlEnabled)
+      // Master key unavailable (the J2 pairing problem on a real device): no mission-capable
+      // client. The caller falls back to the throwing honest-unavailable write client.
+      return nil
     }
   }
 

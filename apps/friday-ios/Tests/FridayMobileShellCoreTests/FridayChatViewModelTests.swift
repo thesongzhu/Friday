@@ -56,6 +56,72 @@ final class FridayChatViewModelTests: XCTestCase {
     }
   }
 
+  final class FakeMissionClient: FridayMobileMissionDispatchingWriteClient, @unchecked Sendable {
+    private(set) var submittedIntakes: [MissionIntakeRequestWire] = []
+    private(set) var missionContexts: [MissionWorkItemContextWire] = []
+
+    func dispatchAgentRun(
+      task: String,
+      constraints: AgentRunConstraintsWire?
+    ) async throws -> AgentRunDispatchOutcome {
+      .result(AgentRunResultWire(
+        runId: "run-legacy", status: "completed",
+        answerSha256: String(repeating: "d", count: 64), answerLen: 1, turns: 1, executedTools: 0))
+    }
+
+    func resumeWithApproval(runId: String, opaqueSignedBlob: [UInt8]) async throws -> ResumeRelayResult {
+      ResumeRelayResult(runId: runId, op: "resume", accepted: false, status: "denied", auditRef: nil)
+    }
+
+    func submitMissionIntake(_ request: MissionIntakeRequestWire) async throws -> MissionIntakeResultWire {
+      submittedIntakes.append(request)
+      return MissionIntakeResultWire(
+        fridayConversationId: request.fridayConversationId,
+        missionId: request.missionId,
+        workItemId: request.workItemId,
+        surfaceThreadId: request.surfaceThreadId,
+        status: "ready",
+        createdOrReady: true)
+    }
+
+    func submitMemoryDecision(_ request: MemoryDecisionRequestWire) async throws -> MemoryDecisionResultWire {
+      MemoryDecisionResultWire(
+        memoryId: request.memoryId,
+        state: "unknown",
+        status: "blocked",
+        blocker: "unused",
+        recallable: false)
+    }
+
+    func submitRunOutcomeLearningDecision(
+      _ request: RunOutcomeLearningDecisionRequestWire
+    ) async throws -> RunOutcomeLearningDecisionResultWire {
+      RunOutcomeLearningDecisionResultWire(
+        candidateId: request.candidateId,
+        state: "unknown",
+        status: "blocked",
+        blocker: "unused")
+    }
+
+    func dispatchMissionBoundAgentRun(
+      task: String,
+      missionContext: MissionWorkItemContextWire,
+      constraints: AgentRunConstraintsWire?
+    ) async throws -> AgentRunDispatchOutcome {
+      missionContexts.append(missionContext)
+      let runId = missionContext.workItemId.hasSuffix("-claude-followup") ? "run-followup" : "run-first"
+      return .result(AgentRunResultWire(
+        runId: runId, status: "finished",
+        answerSha256: String(repeating: "e", count: 64), answerLen: 42, turns: 1, executedTools: 0))
+    }
+  }
+
+  final class FakeReadClient: FridayRustReadClient, @unchecked Sendable {
+    let snapshot: WorkbenchSnapshot
+    init(snapshot: WorkbenchSnapshot) { self.snapshot = snapshot }
+    func fetchWorkbench() async throws -> WorkbenchSnapshot { snapshot }
+  }
+
   private func makeAnswer(_ runId: String = "run-1") -> AgentRunResultWire {
     AgentRunResultWire(runId: runId, status: "completed",
                        answerSha256: String(repeating: "a", count: 64), answerLen: 128, turns: 2, executedTools: 0)
@@ -79,6 +145,60 @@ final class FridayChatViewModelTests: XCTestCase {
     XCTAssertEqual(client.dispatchedTasks, ["summarize my inbox"])
     // DEFAULT read-only/no-grant: a plain send carries NO constraints block.
     XCTAssertEqual(client.dispatchedConstraints, [Optional<AgentRunConstraintsWire>.none])
+  }
+
+  func testBuildMissionIntakeRequest_usesMobileAutoRoute() {
+    let request = FridayChatViewModel.buildMissionIntakeRequest(
+      intent: "route through Codex first and Claude follow-up",
+      owner: "admin-001",
+      idFactory: { "fixed" })
+    XCTAssertEqual(request.ownerPrincipal, "admin-001")
+    XCTAssertEqual(request.surfaceKind, "mobile")
+    XCTAssertEqual(request.deliveryRoute, "ios://friday-mobile/chat/fixed")
+    XCTAssertEqual(request.missionId, "mission-mobile-fixed")
+    XCTAssertEqual(request.workItemId, "work-mobile-fixed")
+    XCTAssertEqual(request.lane, "auto")
+    XCTAssertNil(request.targetProviderOrAgent)
+  }
+
+  func testSend_withMissionClient_dispatchesGeneratedClaudeFollowUp() async throws {
+    let mission = FakeMissionClient()
+    let snapshotJSON = """
+    {
+      "missionId": "mission-mobile-fixed",
+      "fridayConversationId": "fconv_mobile_fixed",
+      "runtimeFeedStatus": "live_rust_hub_projection",
+      "statusLabels": [],
+      "workItems": [
+        { "workItemId": "work-mobile-fixed" },
+        { "workItemId": "work-mobile-fixed-claude-followup" }
+      ]
+    }
+    """
+    let read = FakeReadClient(snapshot: try WorkbenchSnapshot(
+      projectionJSON: Data(snapshotJSON.utf8),
+      generatedAtMs: 0))
+    let vm = FridayChatViewModel(
+      writeClient: mission,
+      signer: MockOperatorSigner(),
+      missionClient: mission,
+      readClient: read,
+      newId: { "fixed" })
+
+    await vm.send("route through Codex first and Claude follow-up")
+
+    XCTAssertEqual(mission.submittedIntakes.map(\.lane), ["auto"])
+    XCTAssertEqual(mission.submittedIntakes.map(\.surfaceKind), ["mobile"])
+    XCTAssertEqual(mission.missionContexts.map(\.workItemId), [
+      "work-mobile-fixed",
+      "work-mobile-fixed-claude-followup",
+    ])
+    guard case .answered(let receipt) = vm.phase else { return XCTFail("expected answered, got \(vm.phase)") }
+    XCTAssertEqual(receipt.runId, "run-first")
+    XCTAssertEqual(receipt.missionId, "mission-mobile-fixed")
+    XCTAssertEqual(receipt.workItemId, "work-mobile-fixed")
+    XCTAssertEqual(receipt.followUpWorkItemId, "work-mobile-fixed-claude-followup")
+    XCTAssertEqual(receipt.followUpRunId, "run-followup")
   }
 
   func testSend_blankTask_isNoOp() async {
