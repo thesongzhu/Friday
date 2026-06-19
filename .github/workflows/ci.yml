@@ -305,11 +305,32 @@ jobs:
       - name: Verify every prod-ON flag maps to a loop e2e test
         run: node scripts/ci/verify-prod-flag-tests.mjs
 
+  # ── MECHANISM-9: L1 Mechanism Wiring Matrix Gate ──
+  # Reconciles the Rust-owned coarse mechanism matrix with the current-head docs
+  # and critical TS fail-closed mutation fences. This prevents L1 from drifting
+  # back into ungrounded percentage claims or stale "wired" labels.
+  mechanism-wiring:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify L1 mechanism wiring matrix
+        run: node scripts/ci/verify-mechanism-wiring-matrix.mjs
+
   # ── Terminal CI Aggregator — single required check for branch protection ──
   quality-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [build, test, migrations, security, contracts, ssd-lint, alignment-guard, agent-parity, secrets, ts-runtime-retirement, prod-flag-tests]
+    needs: [build, test, migrations, security, contracts, ssd-lint, alignment-guard, agent-parity, secrets, ts-runtime-retirement, prod-flag-tests, mechanism-wiring]
     if: ${{ always() }}
 
     steps:
@@ -326,6 +347,7 @@ jobs:
           echo "Secrets:            ${{ needs.secrets.result }}"
           echo "TS Runtime Retire:  ${{ needs.ts-runtime-retirement.result }}"
           echo "Prod-Flag Tests:    ${{ needs.prod-flag-tests.result }}"
+          echo "Mechanism Wiring:   ${{ needs.mechanism-wiring.result }}"
           echo ""
 
           FAILED=0
@@ -341,6 +363,7 @@ jobs:
             "${{ needs.secrets.result }}" \
             "${{ needs.ts-runtime-retirement.result }}" \
             "${{ needs.prod-flag-tests.result }}" \
+            "${{ needs.mechanism-wiring.result }}" \
           ; do
             if [ "$result" != "success" ]; then
               FAILED=1
