@@ -2009,6 +2009,11 @@ fn message_kind_name(m: &friday_protocol::Message) -> &'static str {
         // stays exhaustive.
         M::MemoryDecisionRequest { .. } => "MemoryDecisionRequest",
         M::MemoryDecisionResult { .. } => "MemoryDecisionResult",
+        // A1 run-outcome learning terminal decision arm. DARK on the FFI surface (the owner-authed
+        // decision rides the sealed-WS agent-run server arm gated by
+        // FRIDAY_RUN_OUTCOME_LEARNING_CONFIRM); NAMED so unsupported envelopes keep the real kind.
+        M::RunOutcomeLearningDecisionRequest { .. } => "RunOutcomeLearningDecisionRequest",
+        M::RunOutcomeLearningDecisionResult { .. } => "RunOutcomeLearningDecisionResult",
         M::Error { .. } => "Error",
     }
 }
@@ -3473,6 +3478,53 @@ mod tests {
         );
         match parse_hub_response(request.encode().unwrap()) {
             AskResponseFfi::Unsupported { kind } => assert_eq!(kind, "AgentRunRequest"),
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ffi_unsupported_kind_carries_the_real_message_kind_name_for_a1_learning_decisions() {
+        use friday_protocol::{
+            Envelope, Message, RunOutcomeLearningDecisionRequestWire,
+            RunOutcomeLearningDecisionResultWire,
+        };
+
+        let request = Envelope::new(
+            "a1d1",
+            0,
+            Message::RunOutcomeLearningDecisionRequest {
+                request: RunOutcomeLearningDecisionRequestWire {
+                    candidate_id: "cand-1".into(),
+                    decision: "confirm".into(),
+                    reason: Some("useful".into()),
+                },
+            },
+        );
+        match parse_hub_response(request.encode().unwrap()) {
+            AskResponseFfi::Unsupported { kind } => {
+                assert_eq!(kind, "RunOutcomeLearningDecisionRequest")
+            }
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
+
+        let result = Envelope::new(
+            "a1d2",
+            0,
+            Message::RunOutcomeLearningDecisionResult {
+                result: RunOutcomeLearningDecisionResultWire {
+                    candidate_id: "cand-1".into(),
+                    run_id: Some("run-1".into()),
+                    kind: Some("preference".into()),
+                    state: "confirmed".into(),
+                    status: "ok".into(),
+                    blocker: None,
+                },
+            },
+        );
+        match parse_hub_response(result.encode().unwrap()) {
+            AskResponseFfi::Unsupported { kind } => {
+                assert_eq!(kind, "RunOutcomeLearningDecisionResult")
+            }
             other => panic!("expected Unsupported, got {other:?}"),
         }
     }

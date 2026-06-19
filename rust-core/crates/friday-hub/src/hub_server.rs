@@ -29,12 +29,13 @@ use friday_protocol::{
     MissionTimelineSurfaceEventWire, MissionTimelineWorkItemWire, MissionWorkItemContextWire,
     ProviderWorkspaceActionRequestWire, ProviderWorkspaceActionResultWire,
     RouteDecisionControlRequestWire, RouteDecisionControlResultWire, RouteDecisionProjectionWire,
+    RunOutcomeLearningDecisionRequestWire, RunOutcomeLearningDecisionResultWire,
     WorkItemStatusRequestWire, WorkItemStatusResultWire, SUPPORTED,
 };
 use friday_providers::unified::{FallbackStatus, PlatformProvider, ProviderSession, SessionStatus};
 use friday_storage::{
-    get_run_answer_for_principal, get_run_result_ref, AnswerDenyReason, Db, MissionBodySnapshot,
-    RunAnswerAccess, RunResultRef,
+    get_run_answer_for_principal, get_run_result_ref, load_session_owner, AnswerDenyReason, Db,
+    MissionBodySnapshot, RunAnswerAccess, RunResultRef,
 };
 use friday_transport::{ws_recv_envelope, ws_send_envelope, TransportError, WireWebSocket};
 use serde_json::json;
@@ -1523,6 +1524,200 @@ fn memory_decision_blocked(
                 status: "blocked".to_string(),
                 blocker: Some(blocker.to_string()),
                 recallable: false,
+            },
+        },
+    )
+    .with_correlation(msg_id.to_string())
+}
+
+/// Apply the OWNER's explicit confirm/reject decision to ONE pending A1 run-outcome
+/// learning candidate. This is the product caller for the already-built
+/// emit -> candidate leg: it is a pure Hub DB mutation, makes no provider/model
+/// call, and returns only refs/coarse state.
+///
+/// Owner scope is derived from the candidate's bound session, not from a client
+/// asserted owner field. The candidate stores `session_id` (or falls back to
+/// `run_id` for run-scoped sessions); that session's `user_id` must match the
+/// authenticated sealed-session owner before any decision is written.
+pub fn run_outcome_learning_decision_result_for_db(
+    db: &Db,
+    msg_id: &str,
+    request: RunOutcomeLearningDecisionRequestWire,
+    authenticated_owner: Option<&str>,
+    now_ms: i64,
+) -> Envelope {
+    use friday_storage::learning_candidate;
+
+    let decision = request.decision.trim().to_ascii_lowercase();
+    let confirmed = match decision.as_str() {
+        "confirm" => true,
+        "reject" => false,
+        _ => {
+            return run_outcome_learning_decision_blocked(
+                msg_id,
+                now_ms,
+                &request.candidate_id,
+                None,
+                None,
+                "unknown",
+                "invalid_decision",
+            );
+        }
+    };
+
+    let row = match learning_candidate::get_run_outcome_candidate(db.conn(), &request.candidate_id)
+    {
+        Ok(Some(row)) => row,
+        Ok(None) => {
+            return run_outcome_learning_decision_blocked(
+                msg_id,
+                now_ms,
+                &request.candidate_id,
+                None,
+                None,
+                "unknown",
+                "unknown_candidate",
+            );
+        }
+        Err(_) => {
+            return run_outcome_learning_decision_blocked(
+                msg_id,
+                now_ms,
+                &request.candidate_id,
+                None,
+                None,
+                "unknown",
+                "candidate_read_failed",
+            );
+        }
+    };
+
+    let authed = authenticated_owner.unwrap_or("").trim();
+    if authed.is_empty() {
+        return run_outcome_learning_decision_blocked(
+            msg_id,
+            now_ms,
+            &row.candidate_id,
+            Some(&row.run_id),
+            Some(row.kind.as_str()),
+            row.state.as_str(),
+            "owner_principal_required",
+        );
+    }
+
+    match run_outcome_candidate_owner_matches(db, &row, authed) {
+        Ok(true) => {}
+        Ok(false) => {
+            return run_outcome_learning_decision_blocked(
+                msg_id,
+                now_ms,
+                &row.candidate_id,
+                Some(&row.run_id),
+                Some(row.kind.as_str()),
+                row.state.as_str(),
+                "owner_scope_mismatch",
+            );
+        }
+        Err(_) => {
+            return run_outcome_learning_decision_blocked(
+                msg_id,
+                now_ms,
+                &row.candidate_id,
+                Some(&row.run_id),
+                Some(row.kind.as_str()),
+                row.state.as_str(),
+                "owner_read_failed",
+            );
+        }
+    }
+
+    let new_state = match learning_candidate::decide_run_outcome_candidate(
+        db.conn(),
+        &row.candidate_id,
+        confirmed,
+        now_ms,
+        request.reason.as_deref(),
+    ) {
+        Ok(state) => state,
+        Err(_) => {
+            return run_outcome_learning_decision_blocked(
+                msg_id,
+                now_ms,
+                &row.candidate_id,
+                Some(&row.run_id),
+                Some(row.kind.as_str()),
+                row.state.as_str(),
+                "not_decidable",
+            );
+        }
+    };
+
+    let status = match new_state {
+        learning_candidate::RunOutcomeLearningState::Confirmed => "confirmed",
+        learning_candidate::RunOutcomeLearningState::Rejected => "rejected",
+        learning_candidate::RunOutcomeLearningState::Pending => "blocked",
+    };
+
+    Envelope::new(
+        format!("{msg_id}-run-outcome-learning-decision"),
+        now_ms,
+        Message::RunOutcomeLearningDecisionResult {
+            result: RunOutcomeLearningDecisionResultWire {
+                candidate_id: row.candidate_id,
+                run_id: Some(row.run_id),
+                kind: Some(row.kind.as_str().to_string()),
+                state: new_state.as_str().to_string(),
+                status: status.to_string(),
+                blocker: None,
+            },
+        },
+    )
+    .with_correlation(msg_id.to_string())
+}
+
+fn run_outcome_candidate_owner_matches(
+    db: &Db,
+    row: &friday_storage::learning_candidate::RunOutcomeLearningCandidateRow,
+    authenticated_owner: &str,
+) -> friday_storage::Result<bool> {
+    let mut keys = Vec::new();
+    if let Some(session_id) = row.session_id.as_deref().filter(|s| !s.trim().is_empty()) {
+        keys.push(session_id);
+    }
+    if !keys.iter().any(|key| *key == row.run_id) {
+        keys.push(row.run_id.as_str());
+    }
+
+    for key in keys {
+        if let Some(owner) = load_session_owner(db.conn(), key)? {
+            if owner.user_id.as_deref().map(str::trim) == Some(authenticated_owner) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn run_outcome_learning_decision_blocked(
+    msg_id: &str,
+    now_ms: i64,
+    candidate_id: &str,
+    run_id: Option<&str>,
+    kind: Option<&str>,
+    state: &str,
+    blocker: &str,
+) -> Envelope {
+    Envelope::new(
+        format!("{msg_id}-run-outcome-learning-decision"),
+        now_ms,
+        Message::RunOutcomeLearningDecisionResult {
+            result: RunOutcomeLearningDecisionResultWire {
+                candidate_id: candidate_id.to_string(),
+                run_id: run_id.map(str::to_string),
+                kind: kind.map(str::to_string),
+                state: state.to_string(),
+                status: "blocked".to_string(),
+                blocker: Some(blocker.to_string()),
             },
         },
     )
@@ -7085,6 +7280,152 @@ mod tests {
         }
         assert!(pages > 1);
         assert_eq!(provider_link_count, ask_count);
+    }
+
+    // --- A1 run-outcome learning confirm arm -----------------------------------------------
+
+    fn seed_run_outcome_candidate(db: &Db, run_id: &str, session_id: &str, owner: &str) {
+        friday_storage::ensure_session_with_owner(
+            db.conn(),
+            session_id,
+            &friday_storage::SessionOwner {
+                user_id: Some(owner.to_string()),
+                ..Default::default()
+            },
+            1_000,
+        )
+        .unwrap();
+        friday_storage::agent_run::create_run(db.conn(), run_id, "refs-only task", 1_000).unwrap();
+        friday_storage::learning_candidate::record_run_outcome_candidates(
+            db.conn(),
+            run_id,
+            Some(session_id),
+            2,
+            1,
+            1_100,
+        )
+        .unwrap();
+    }
+
+    fn decode_run_outcome_learning_decision(
+        env: &Envelope,
+    ) -> &RunOutcomeLearningDecisionResultWire {
+        match &env.message {
+            Message::RunOutcomeLearningDecisionResult { result } => result,
+            other => panic!("expected RunOutcomeLearningDecisionResult, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_outcome_learning_decision_confirm_marks_candidate_terminal_for_owner() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        seed_run_outcome_candidate(&db, "run-a1-confirm", "sess-a1-confirm", "owner-1");
+
+        let env = run_outcome_learning_decision_result_for_db(
+            &db,
+            "msg-a1-confirm",
+            RunOutcomeLearningDecisionRequestWire {
+                candidate_id: "a1:run-a1-confirm:preference".into(),
+                decision: "confirm".into(),
+                reason: Some("owner accepted the preference".into()),
+            },
+            Some("owner-1"),
+            1_200,
+        );
+        let result = decode_run_outcome_learning_decision(&env);
+        assert_eq!(result.status, "confirmed");
+        assert_eq!(result.state, "confirmed");
+        assert_eq!(result.run_id.as_deref(), Some("run-a1-confirm"));
+        assert_eq!(result.kind.as_deref(), Some("preference"));
+        assert!(result.blocker.is_none());
+
+        let row = friday_storage::learning_candidate::get_run_outcome_candidate(
+            db.conn(),
+            "a1:run-a1-confirm:preference",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            row.state,
+            friday_storage::learning_candidate::RunOutcomeLearningState::Confirmed
+        );
+        assert_eq!(
+            row.decision_reason.as_deref(),
+            Some("owner accepted the preference")
+        );
+    }
+
+    #[test]
+    fn run_outcome_learning_decision_wrong_owner_is_blocked_and_unchanged() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        seed_run_outcome_candidate(&db, "run-a1-scope", "sess-a1-scope", "owner-1");
+
+        let env = run_outcome_learning_decision_result_for_db(
+            &db,
+            "msg-a1-scope",
+            RunOutcomeLearningDecisionRequestWire {
+                candidate_id: "a1:run-a1-scope:reflex".into(),
+                decision: "confirm".into(),
+                reason: None,
+            },
+            Some("intruder"),
+            1_200,
+        );
+        let result = decode_run_outcome_learning_decision(&env);
+        assert_eq!(result.status, "blocked");
+        assert_eq!(result.blocker.as_deref(), Some("owner_scope_mismatch"));
+
+        let row = friday_storage::learning_candidate::get_run_outcome_candidate(
+            db.conn(),
+            "a1:run-a1-scope:reflex",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            row.state,
+            friday_storage::learning_candidate::RunOutcomeLearningState::Pending
+        );
+    }
+
+    #[test]
+    fn run_outcome_learning_decision_terminal_candidate_is_not_redone() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        seed_run_outcome_candidate(&db, "run-a1-terminal", "sess-a1-terminal", "owner-1");
+        friday_storage::learning_candidate::decide_run_outcome_candidate(
+            db.conn(),
+            "a1:run-a1-terminal:world_model",
+            true,
+            1_200,
+            Some("first decision"),
+        )
+        .unwrap();
+
+        let env = run_outcome_learning_decision_result_for_db(
+            &db,
+            "msg-a1-terminal",
+            RunOutcomeLearningDecisionRequestWire {
+                candidate_id: "a1:run-a1-terminal:world_model".into(),
+                decision: "reject".into(),
+                reason: Some("try to change it".into()),
+            },
+            Some("owner-1"),
+            1_300,
+        );
+        let result = decode_run_outcome_learning_decision(&env);
+        assert_eq!(result.status, "blocked");
+        assert_eq!(result.blocker.as_deref(), Some("not_decidable"));
+
+        let row = friday_storage::learning_candidate::get_run_outcome_candidate(
+            db.conn(),
+            "a1:run-a1-terminal:world_model",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            row.state,
+            friday_storage::learning_candidate::RunOutcomeLearningState::Confirmed
+        );
+        assert_eq!(row.decision_reason.as_deref(), Some("first decision"));
     }
 
     // --- Memory-confirm arm (the live caller that CLOSES the Memory-confirmation loop) ---------

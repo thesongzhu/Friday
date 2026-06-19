@@ -510,6 +510,21 @@ fn run() -> Result<(), ServerError> {
         );
     }
 
+    let run_outcome_learning_confirm_enabled = run_outcome_learning_confirm_enabled_from(
+        env::var(RUN_OUTCOME_LEARNING_CONFIRM_ENABLED_ENV)
+            .ok()
+            .as_deref(),
+    );
+    if run_outcome_learning_confirm_enabled {
+        eprintln!(
+            "hub_agent_run_server: RUN-OUTCOME-LEARNING confirm ENABLED (FRIDAY_RUN_OUTCOME_LEARNING_CONFIRM) — an inbound owner-authed RunOutcomeLearningDecisionRequest confirms/rejects a refs-only candidate (no model call)"
+        );
+    } else {
+        eprintln!(
+            "hub_agent_run_server: RUN-OUTCOME-LEARNING confirm DISABLED (set FRIDAY_RUN_OUTCOME_LEARNING_CONFIRM=1 to enable) — a RunOutcomeLearningDecisionRequest is a benign keepalive echo"
+        );
+    }
+
     // (C1/C2 §3) Read the PROVIDER-WORKSPACE-DISPATCH flag ONCE at boot (default-off). It gates the
     // serve-bin's `ProviderWorkspaceActionRequest` arm: when false the dispatch arm NEVER handles a
     // `ProviderWorkspaceActionRequest` — it falls through to the EXISTING catch-all keepalive echo
@@ -578,6 +593,7 @@ fn run() -> Result<(), ServerError> {
             mission_intake_enabled,
             mission_spine_dispatch_enabled,
             memory_confirm_enabled,
+            run_outcome_learning_confirm_enabled,
             token_surface_enabled,
             provider_workspace_dispatch_enabled,
         ) {
@@ -731,6 +747,12 @@ const MEMORY_CONFIRM_ENABLED_ENV: &str = "FRIDAY_MEMORY_CONFIRM";
 /// ON only for the exact opt-in value `"1"` (trimmed), matching the program's standard flag idiom;
 /// everything else (including `"true"`) ⇒ false.
 fn memory_confirm_enabled_from(raw: Option<&str>) -> bool {
+    matches!(raw.map(str::trim), Some("1"))
+}
+
+const RUN_OUTCOME_LEARNING_CONFIRM_ENABLED_ENV: &str = "FRIDAY_RUN_OUTCOME_LEARNING_CONFIRM";
+
+fn run_outcome_learning_confirm_enabled_from(raw: Option<&str>) -> bool {
     matches!(raw.map(str::trim), Some("1"))
 }
 
@@ -1141,6 +1163,7 @@ impl AgentRunWsListener {
         mission_intake_enabled: bool,
         mission_spine_dispatch_enabled: bool,
         memory_confirm_enabled: bool,
+        run_outcome_learning_confirm_enabled: bool,
         token_surface_enabled: bool,
         provider_workspace_dispatch_enabled: bool,
     ) -> Result<usize, TransportError> {
@@ -1161,6 +1184,7 @@ impl AgentRunWsListener {
             mission_intake_enabled,
             mission_spine_dispatch_enabled,
             memory_confirm_enabled,
+            run_outcome_learning_confirm_enabled,
             token_surface_enabled,
             provider_workspace_dispatch_enabled,
         )
@@ -1207,6 +1231,7 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
     mission_intake_enabled: bool,
     mission_spine_dispatch_enabled: bool,
     memory_confirm_enabled: bool,
+    run_outcome_learning_confirm_enabled: bool,
     token_surface_enabled: bool,
     provider_workspace_dispatch_enabled: bool,
 ) -> Result<usize, TransportError> {
@@ -1878,6 +1903,24 @@ fn serve_sealed_session<S: Read + Write, T: Transport>(
                 ws_send_envelope(ws, session_key, &result, SESSION_AAD)?;
                 processed += 1;
             }
+            Message::RunOutcomeLearningDecisionRequest { request }
+                if run_outcome_learning_confirm_enabled =>
+            {
+                let now_ms = now_ms();
+                let result = friday_hub::hub_server::run_outcome_learning_decision_result_for_db(
+                    runtime.db(),
+                    &env.msg_id,
+                    request,
+                    runtime.policy().principal_id(),
+                    now_ms,
+                );
+                eprintln!(
+                    "hub_agent_run_server_dispatch: msg_id={} leg=run_outcome_learning_decision (run-outcome-learning confirm enabled)",
+                    env.msg_id
+                );
+                ws_send_envelope(ws, session_key, &result, SESSION_AAD)?;
+                processed += 1;
+            }
             // (C1/C2 §3) PROVIDER-WORKSPACE dispatch — FLAG-GATED. When `FRIDAY_PROVIDER_WORKSPACE_DISPATCH`
             // is ON, an inbound `ProviderWorkspaceActionRequest` is routed through the EXISTING
             // `friday_hub::hub_server::provider_workspace_action_result_for_db` — the SAME GATE-FIRST
@@ -2529,6 +2572,7 @@ mod tests {
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -2609,6 +2653,7 @@ mod tests {
                 false, // mission-intake ingress OFF
                 false, // mission-spine dispatch OFF
                 false, // memory-confirm ingress OFF
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // token surface OFF
                 false, // provider-workspace dispatch OFF
             )
@@ -2738,6 +2783,7 @@ mod tests {
                 false, // (NS-5) mission-intake ingress OFF for the run-control flag tests
                 false, // (KEYSTONE) mission-spine dispatch OFF for the run-control flag tests
                 false, // memory-confirm ingress OFF — byte-identical to today
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -2975,6 +3021,7 @@ mod tests {
                     false, // mission-intake ingress OFF
                     false, // mission-spine dispatch OFF
                     false, // memory-confirm ingress OFF
+                    false, // run-outcome-learning confirm OFF — byte-identical to today
                     token_surface_enabled,
                     false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
                 )
@@ -3071,6 +3118,7 @@ mod tests {
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -3117,6 +3165,7 @@ mod tests {
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -3385,6 +3434,7 @@ mod tests {
                 true,  // (NS-5) mission-intake ingress ON
                 false, // (KEYSTONE) mission-spine dispatch OFF for the mission-intake test
                 false, // memory-confirm ingress OFF — byte-identical to today
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -3489,6 +3539,7 @@ mod tests {
                 false, // (NS-5) mission-intake ingress OFF — byte-identical to today
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -3566,6 +3617,7 @@ mod tests {
                 true,  // (NS-5) mission-intake ingress ON
                 false, // (KEYSTONE) mission-spine dispatch OFF
                 false, // memory-confirm ingress OFF
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -3646,6 +3698,7 @@ mod tests {
                 false,
                 false,
                 true, // mission-intake ON
+                false,
                 false,
                 false,
                 false,
@@ -3861,6 +3914,7 @@ mod tests {
                 false, // mission-intake ingress OFF
                 false, // mission-spine dispatch OFF
                 false, // memory-confirm ingress OFF
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF
                 false, // (C1/C2) provider-workspace dispatch OFF — the bit under test
             )
@@ -3914,6 +3968,7 @@ mod tests {
                 &rt,
                 &allowlist,
                 &peer_allowlist,
+                false,
                 false,
                 false,
                 false,
@@ -3978,6 +4033,7 @@ mod tests {
                 &rt,
                 &allowlist,
                 &peer_allowlist,
+                false,
                 false,
                 false,
                 false,
@@ -4104,6 +4160,185 @@ mod tests {
         );
     }
 
+    #[test]
+    fn run_outcome_learning_confirm_flag_is_default_off_and_fail_closed() {
+        assert!(!run_outcome_learning_confirm_enabled_from(None));
+        assert!(!run_outcome_learning_confirm_enabled_from(Some("")));
+        assert!(!run_outcome_learning_confirm_enabled_from(Some("0")));
+        assert!(!run_outcome_learning_confirm_enabled_from(Some("true")));
+        assert!(run_outcome_learning_confirm_enabled_from(Some("1")));
+        assert!(run_outcome_learning_confirm_enabled_from(Some(" 1 ")));
+    }
+
+    fn seed_run_outcome_learning_candidate<T: Transport>(
+        rt: &HubRuntime<T>,
+        run_id: &str,
+        session_id: &str,
+    ) {
+        friday_storage::ensure_session_with_owner(
+            rt.db().conn(),
+            session_id,
+            &friday_storage::SessionOwner {
+                user_id: Some(OWNER.to_string()),
+                ..Default::default()
+            },
+            1_000,
+        )
+        .unwrap();
+        friday_storage::agent_run::create_run(rt.db().conn(), run_id, "refs-only task", 1_000)
+            .unwrap();
+        friday_storage::learning_candidate::record_run_outcome_candidates(
+            rt.db().conn(),
+            run_id,
+            Some(session_id),
+            2,
+            1,
+            1_100,
+        )
+        .unwrap();
+    }
+
+    fn run_outcome_learning_decision_request(
+        msg_id: &str,
+        candidate_id: &str,
+        decision: &str,
+    ) -> Envelope {
+        Envelope::new(
+            msg_id,
+            1000,
+            Message::RunOutcomeLearningDecisionRequest {
+                request: friday_protocol::RunOutcomeLearningDecisionRequestWire {
+                    candidate_id: candidate_id.into(),
+                    decision: decision.into(),
+                    reason: Some("owner decision from sealed session".into()),
+                },
+            },
+        )
+    }
+
+    #[test]
+    fn flag_on_run_outcome_learning_decision_confirms_through_dispatch() {
+        let (rt, _ws) = mock_runtime("run-outcome-learning-on", OWNER);
+        seed_run_outcome_learning_candidate(&rt, "run-a1-wire", "sess-a1-wire");
+
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        let client_kp = DeviceKeypair::generate();
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let client = spawn_client(addr, client_kp, |session, _nonce| {
+            let req = run_outcome_learning_decision_request(
+                "req-a1-learning-on",
+                "a1:run-a1-wire:preference",
+                "confirm",
+            );
+            (req, session.clone(), session.clone())
+        });
+
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false, // run-control OFF
+                false, // mission-bound seam OFF
+                false, // mission-intake ingress OFF
+                false, // mission-spine dispatch OFF
+                false, // memory-confirm ingress OFF
+                true,  // run-outcome-learning confirm ON
+                false, // token surface OFF
+                false, // provider-workspace dispatch OFF
+            )
+            .unwrap();
+        assert_eq!(processed, 1, "one run-outcome learning decision processed");
+
+        let Some(Message::RunOutcomeLearningDecisionResult { result }) =
+            client.join().unwrap().result.clone()
+        else {
+            panic!("flag ON must reply with RunOutcomeLearningDecisionResult");
+        };
+        assert_eq!(result.status, "confirmed");
+        assert_eq!(result.state, "confirmed");
+        assert_eq!(result.run_id.as_deref(), Some("run-a1-wire"));
+
+        let row = friday_storage::learning_candidate::get_run_outcome_candidate(
+            rt.db().conn(),
+            "a1:run-a1-wire:preference",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            row.state,
+            friday_storage::learning_candidate::RunOutcomeLearningState::Confirmed
+        );
+        assert_eq!(
+            rt.db().count("token_ledger").unwrap(),
+            0,
+            "run-outcome learning decision makes NO model call"
+        );
+    }
+
+    #[test]
+    fn flag_off_run_outcome_learning_decision_is_keepalive_echo_and_changes_nothing() {
+        let (rt, _ws) = mock_runtime("run-outcome-learning-off", OWNER);
+        seed_run_outcome_learning_candidate(&rt, "run-a1-dark", "sess-a1-dark");
+
+        let server_kp = DeviceKeypair::generate();
+        let listener = AgentRunWsListener::bind_loopback(0).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let allowlist = vec![OWNER.to_string()];
+        let client_kp = DeviceKeypair::generate();
+        let peer_allowlist = allowlist_of(client_kp.public_bytes());
+        let client = spawn_client(addr, client_kp, |session, _nonce| {
+            let req = run_outcome_learning_decision_request(
+                "req-a1-learning-off",
+                "a1:run-a1-dark:preference",
+                "confirm",
+            );
+            (req, session.clone(), session.clone())
+        });
+
+        let processed = listener
+            .accept_one(
+                &server_kp,
+                &rt,
+                &allowlist,
+                &peer_allowlist,
+                false, // run-control OFF
+                false, // mission-bound seam OFF
+                false, // mission-intake ingress OFF
+                false, // mission-spine dispatch OFF
+                false, // memory-confirm ingress OFF
+                false, // run-outcome-learning confirm OFF
+                false, // token surface OFF
+                false, // provider-workspace dispatch OFF
+            )
+            .unwrap();
+        assert_eq!(processed, 1, "the message is processed as a keepalive");
+
+        match client.join().unwrap().result.expect("an echo reply") {
+            Message::RunOutcomeLearningDecisionRequest { request } => {
+                assert_eq!(request.candidate_id, "a1:run-a1-dark:preference");
+                assert_eq!(request.decision, "confirm");
+            }
+            other => {
+                panic!("flag OFF must echo the RunOutcomeLearningDecisionRequest, got {other:?}")
+            }
+        }
+        let row = friday_storage::learning_candidate::get_run_outcome_candidate(
+            rt.db().conn(),
+            "a1:run-a1-dark:preference",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            row.state,
+            friday_storage::learning_candidate::RunOutcomeLearningState::Pending
+        );
+    }
+
     /// Seed ONE pending, owner-owned, content-bearing memory candidate directly into the runtime's
     /// The COMPOSITE namespace OWNER's agent-run session resolves to — what the live extraction
     /// keys a candidate's `principal_id` on, and the SAME scope source the confirm dispatch arm
@@ -4189,6 +4424,7 @@ mod tests {
                 false, // mission-intake ingress OFF
                 false, // mission-spine dispatch OFF
                 true,  // memory-confirm ingress ON
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -4266,6 +4502,7 @@ mod tests {
                 false, // mission-intake ingress OFF
                 false, // mission-spine dispatch OFF
                 false, // memory-confirm ingress OFF — byte-identical to today
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -4480,6 +4717,7 @@ mod tests {
                 false, // mission-intake ingress OFF
                 true,  // (KEYSTONE) mission-spine dispatch ON
                 false, // memory-confirm ingress OFF — byte-identical to today
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -4569,6 +4807,7 @@ mod tests {
                 false,
                 true,  // (KEYSTONE) mission-spine dispatch ON
                 false, // memory-confirm ingress OFF — byte-identical to today
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -4651,6 +4890,7 @@ mod tests {
                 false,
                 true,  // (KEYSTONE) mission-spine dispatch ON
                 false, // memory-confirm ingress OFF — byte-identical to today
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -4720,6 +4960,7 @@ mod tests {
                 false,
                 true,  // (KEYSTONE) mission-spine dispatch ON
                 false, // memory-confirm ingress OFF — byte-identical to today
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -4771,6 +5012,7 @@ mod tests {
                 false,
                 false,
                 true, // mission-spine dispatch ON
+                false,
                 false,
                 false,
                 false, // (C1/C2) provider-workspace dispatch OFF
@@ -4828,6 +5070,7 @@ mod tests {
                 false,
                 false,
                 true, // mission-spine dispatch ON
+                false,
                 false,
                 false,
                 false, // (C1/C2) provider-workspace dispatch OFF
@@ -4897,6 +5140,7 @@ mod tests {
                 false,
                 true,  // mission-spine dispatch ON, including route controls
                 false, // memory-confirm ingress OFF
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF
                 false, // (C1/C2) provider-workspace dispatch OFF
             )
@@ -4964,6 +5208,7 @@ mod tests {
                     false,
                     false, // (KEYSTONE) mission-spine dispatch OFF
                     false, // memory-confirm ingress OFF — byte-identical to today
+                    false, // run-outcome-learning confirm OFF — byte-identical to today
                     false, // (Loop4) per-run token surface OFF — byte-identical to today
                     false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
                 )
@@ -5009,6 +5254,7 @@ mod tests {
                     false,
                     false, // (KEYSTONE) mission-spine dispatch OFF
                     false, // memory-confirm ingress OFF — byte-identical to today
+                    false, // run-outcome-learning confirm OFF — byte-identical to today
                     false, // (Loop4) per-run token surface OFF — byte-identical to today
                     false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
                 )
@@ -5096,6 +5342,7 @@ mod tests {
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -5143,6 +5390,7 @@ mod tests {
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -5190,6 +5438,7 @@ mod tests {
             false,
             false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             false, // memory-confirm ingress OFF — byte-identical to today
+            false, // run-outcome-learning confirm OFF — byte-identical to today
             false, // (Loop4) per-run token surface OFF — byte-identical to today
             false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
         );
@@ -5514,6 +5763,7 @@ mod tests {
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -5560,6 +5810,7 @@ mod tests {
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -5623,6 +5874,7 @@ mod tests {
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -5703,6 +5955,7 @@ mod tests {
             false,
             false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             false, // memory-confirm ingress OFF — byte-identical to today
+            false, // run-outcome-learning confirm OFF — byte-identical to today
             false, // (Loop4) per-run token surface OFF — byte-identical to today
             false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
         );
@@ -5764,6 +6017,7 @@ mod tests {
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -6330,6 +6584,7 @@ mod tests {
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -6398,6 +6653,7 @@ mod tests {
                 false, // mission-intake ingress OFF
                 false, // mission-spine dispatch OFF
                 false, // memory-confirm ingress OFF
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // token surface OFF
                 false, // provider-workspace dispatch OFF
             )
@@ -6460,6 +6716,7 @@ mod tests {
                 true,  // mission-intake ingress ON
                 false, // mission-spine dispatch OFF
                 false, // memory-confirm ingress OFF
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // token surface OFF
                 false, // provider-workspace dispatch OFF
             )
@@ -6486,6 +6743,7 @@ mod tests {
                 false, // mission-intake ingress OFF
                 false, // mission-spine dispatch OFF
                 false, // memory-confirm ingress OFF
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // token surface OFF
                 false, // provider-workspace dispatch OFF
             )
@@ -6592,6 +6850,7 @@ mod tests {
                 true,  // mission-intake ingress ON
                 false, // mission-spine dispatch OFF
                 false, // memory-confirm ingress OFF
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // token surface OFF
                 false, // provider-workspace dispatch OFF
             )
@@ -6623,6 +6882,7 @@ mod tests {
                 false, // mission-intake ingress OFF
                 false, // mission-spine dispatch OFF
                 false, // memory-confirm ingress OFF
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // token surface OFF
                 false, // provider-workspace dispatch OFF
             )
@@ -6727,6 +6987,7 @@ mod tests {
                 false, // mission-intake ingress OFF
                 true,  // mission-spine dispatch ON
                 false, // memory-confirm ingress OFF
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // token surface OFF
                 false, // provider-workspace dispatch OFF
             )
@@ -6757,6 +7018,7 @@ mod tests {
                 false, // mission-intake ingress OFF
                 true,  // mission-spine dispatch ON
                 false, // memory-confirm ingress OFF
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // token surface OFF
                 false, // provider-workspace dispatch OFF
             )
@@ -6848,6 +7110,7 @@ mod tests {
                 false, // mission-intake ingress OFF
                 false, // mission-spine dispatch OFF
                 true,  // memory-confirm ingress ON
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // token surface OFF
                 false, // provider-workspace dispatch OFF
             )
@@ -6917,6 +7180,7 @@ mod tests {
             false,
             false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             false, // memory-confirm ingress OFF — byte-identical to today
+            false, // run-outcome-learning confirm OFF — byte-identical to today
             false, // (Loop4) per-run token surface OFF — byte-identical to today
             false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
         );
@@ -6971,6 +7235,7 @@ mod tests {
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -7083,6 +7348,7 @@ mod tests {
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -7142,6 +7408,7 @@ mod tests {
             false,
             false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
             false, // memory-confirm ingress OFF — byte-identical to today
+            false, // run-outcome-learning confirm OFF — byte-identical to today
             false, // (Loop4) per-run token surface OFF — byte-identical to today
             false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
         );
@@ -7207,6 +7474,7 @@ mod tests {
                 false,
                 false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                 false, // memory-confirm ingress OFF — byte-identical to today
+                false, // run-outcome-learning confirm OFF — byte-identical to today
                 false, // (Loop4) per-run token surface OFF — byte-identical to today
                 false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
             )
@@ -7312,7 +7580,7 @@ mod tests {
             listener
                 .accept_one(
                     &server_kp, &rt, &allowlist, &peer1, false, false, false, false, false, false,
-                    false
+                    false, false
                 )
                 .unwrap(),
             1
@@ -7332,7 +7600,7 @@ mod tests {
             listener
                 .accept_one(
                     &server_kp, &rt, &allowlist, &peer2, false, false, false, false, false, false,
-                    false
+                    false, false
                 )
                 .unwrap(),
             1
@@ -7392,6 +7660,7 @@ mod tests {
                     false,
                     false, // (KEYSTONE) mission-spine dispatch OFF — byte-identical to today
                     false, // memory-confirm ingress OFF — byte-identical to today
+                    false, // run-outcome-learning confirm OFF — byte-identical to today
                     false, // (Loop4) per-run token surface OFF — byte-identical to today
                     false, // (C1/C2) provider-workspace dispatch OFF — byte-identical to today
                 )
@@ -7464,6 +7733,7 @@ mod tests {
                     false,
                     false,
                     false,
+                    false,
                     false, // (C1/C2) provider-workspace dispatch OFF
                 )
                 .unwrap(),
@@ -7520,6 +7790,7 @@ mod tests {
                     &run_peer_allowlist,
                     false,
                     true, // mission-bound run ON
+                    false,
                     false,
                     false,
                     false,
