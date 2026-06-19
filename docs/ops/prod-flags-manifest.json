@@ -83,6 +83,15 @@
       "notes": "This is the governance leg for A1 run-outcome learning. The mapped dispatch test seeds one pending owner-owned run-outcome candidate, sends the live sealed-message request shape through the flag-on server dispatch arm, and asserts the row transitions to Confirmed. Sibling proofs cover exact-'1' flag parsing and flag-off keepalive byte-identical behavior. Truth boundary: this enables product confirmation of candidates; A1 live-done still requires an operator-origin organic turn to feed a candidate and a real confirm decision."
     },
     {
+      "flag": "FRIDAY_A1_RUN_OUTCOME_LEARNING_RECALL",
+      "process": "rust-ws-wrapper",
+      "prod_state": "dark",
+      "closes_loop": "A later owner-scoped recall preamble includes confirmed refs-only run-outcome learning signals, without answer-body injection or durable memory writes.",
+      "coverage": "loop-e2e",
+      "e2e_test": "rust-core/crates/friday-hub/src/lib.rs::a1_run_outcome_learning_recall_flag_on_surfaces_confirmed_refs_only_signal",
+      "notes": "A1 DRIVE/consumer leg. Drives the shared recall-preamble chokepoint with the flag ON and a confirmed run-outcome learning candidate, asserting the later owner-scoped prompt includes only refs/counts/evidence for that confirmed candidate. Sibling proof asserts owner isolation. Truth boundary: built-DARK mechanism only; not A1 live-done until an operator-origin organic turn feeds a candidate and a real confirm decision."
+    },
+    {
       "flag": "FRIDAY_MEMORY_CONFIRM",
       "process": "rust-ws-wrapper",
       "prod_state": "on",

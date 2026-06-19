@@ -169,6 +169,29 @@ pub fn list_run_outcome_candidates_for_run(
     Ok(out)
 }
 
+pub fn list_recent_confirmed_run_outcome_candidates(
+    conn: &Connection,
+    limit: i64,
+) -> Result<Vec<RunOutcomeLearningCandidateRow>> {
+    let limit = limit.max(1);
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {SELECT_COLS}
+           FROM run_outcome_learning_candidate
+          WHERE state = ?1
+          ORDER BY COALESCE(decided_at_ms, created_at_ms) DESC, candidate_id
+          LIMIT ?2"
+    ))?;
+    let rows = stmt.query_map(
+        params![RunOutcomeLearningState::Confirmed.as_str(), limit],
+        row_from,
+    )?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
 pub fn get_run_outcome_candidate(
     conn: &Connection,
     candidate_id: &str,
