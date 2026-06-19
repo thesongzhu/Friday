@@ -50,6 +50,13 @@ readonly TS_HUB_LAUNCH_PLIST="${FRIDAY_TS_HUB_LAUNCH_PLIST:-/Users/jarvis/Librar
 readonly TS_HUB_LAUNCH_LABEL="${FRIDAY_TS_HUB_LAUNCH_LABEL:-com.friday.hub}"
 readonly TS_HUB_LAUNCH_DOMAIN="${FRIDAY_TS_HUB_LAUNCH_DOMAIN:-gui/$(id -u)}"
 readonly CLAUDE_MODEL="claude-opus-4-8"
+readonly RUN_KIND="${FRIDAY_CLAUDE_MISSION_PROOF_RUN_KIND:-proof}"
+readonly SURFACE_KIND="${FRIDAY_CLAUDE_MISSION_PROOF_SURFACE_KIND:-mobile}"
+readonly DELIVERY_ROUTE="${FRIDAY_CLAUDE_MISSION_PROOF_DELIVERY_ROUTE:-ops://claude-mission-proof-of-life}"
+readonly MISSION_TITLE="${FRIDAY_CLAUDE_MISSION_PROOF_TITLE:-Claude proof token}"
+readonly MISSION_INTENT="${FRIDAY_CLAUDE_MISSION_PROOF_INTENT:-Answer exactly FRIDAY_CLAUDE_PROOF_OK.}"
+readonly CAPABILITY_ID="${FRIDAY_CLAUDE_MISSION_PROOF_CAPABILITY_ID:-ask_friday.claude}"
+readonly BODY_REF="${FRIDAY_CLAUDE_MISSION_PROOF_BODY_REF:-friday://body/ops/claude-mission-proof-of-life}"
 
 SQLITE_BIN="$(command -v sqlite3 || true)"
 if [ -z "${SQLITE_BIN}" ] && [ -x "/Users/jarvis/Library/Android/sdk/platform-tools/sqlite3" ]; then
@@ -96,6 +103,20 @@ if [ "${OUTCOME_CHECKED}" != "0" ] && [ "${OUTCOME_CHECKED}" != "1" ]; then
   echo "FATAL: FRIDAY_CLAUDE_MISSION_PROOF_OUTCOME_CHECKED must be 0 or 1; got '${OUTCOME_CHECKED}'." >&2
   exit 3
 fi
+case "${RUN_KIND}" in
+  proof|organic) ;;
+  *)
+    echo "FATAL: FRIDAY_CLAUDE_MISSION_PROOF_RUN_KIND must be proof or organic; got '${RUN_KIND}'." >&2
+    exit 3
+    ;;
+esac
+case "${SURFACE_KIND}" in
+  mobile|desktop) ;;
+  *)
+    echo "FATAL: FRIDAY_CLAUDE_MISSION_PROOF_SURFACE_KIND must be mobile or desktop; got '${SURFACE_KIND}'." >&2
+    exit 3
+    ;;
+esac
 if [ "${POLL_INTERVAL_SEC}" -gt "${TIMEOUT_SEC}" ]; then
   echo "FATAL: poll interval cannot be greater than timeout." >&2
   exit 3
@@ -359,20 +380,31 @@ if [ "${PREFLIGHT_ONLY}" = "1" ]; then
   echo "  anthropicLedgerRows: $(sql_count "preflight anthropic ledger" "SELECT COUNT(*) FROM token_ledger WHERE provider_kind='anthropic';")"
   echo "  claudeWorkItems: $(sql_count "preflight claude work items" "SELECT COUNT(*) FROM work_item WHERE lane='claude' OR target_provider_or_agent='claude';")"
   echo "  outcomeCheckedMode: ${OUTCOME_CHECKED}"
+  echo "  runKind: ${RUN_KIND}"
+  echo "  surfaceKind: ${SURFACE_KIND}"
+  echo "  deliveryRoute: ${DELIVERY_ROUTE}"
   echo "Truth: preflight creates no traffic and proves only local readiness, not Claude proof / D8 / GO."
   exit 0
 fi
 
 readonly RUN_TAG="$(new_id)"
-readonly FRIDAY_CONVERSATION_ID="fconv_claude_proof_${RUN_TAG//-/_}"
-readonly MISSION_ID="claude-proof-mission-${RUN_TAG}"
-readonly WORK_ITEM_ID="claude-proof-work-${RUN_TAG}"
-readonly SURFACE_THREAD_ID="claude-proof-surface-${RUN_TAG}"
+if [ "${RUN_KIND}" = "organic" ]; then
+  readonly ID_PREFIX="claude-organic"
+else
+  readonly ID_PREFIX="claude-proof"
+fi
+readonly FRIDAY_CONVERSATION_ID="fconv_${ID_PREFIX//-/_}_${RUN_TAG//-/_}"
+readonly MISSION_ID="${ID_PREFIX}-mission-${RUN_TAG}"
+readonly WORK_ITEM_ID="${ID_PREFIX}-work-${RUN_TAG}"
+readonly SURFACE_THREAD_ID="${ID_PREFIX}-surface-${RUN_TAG}"
 readonly STARTED_AT_MS="$(now_ms)"
 
 echo "Claude Mission proof starting."
 echo "  TS hub: ${TS_HUB}"
 echo "  Rust DB: ${RUST_HUB_DB}"
+echo "  runKind: ${RUN_KIND}"
+echo "  surfaceKind: ${SURFACE_KIND}"
+echo "  deliveryRoute: ${DELIVERY_ROUTE}"
 echo "  missionId: ${MISSION_ID}"
 echo "  workItemId: ${WORK_ITEM_ID}"
 echo "  startedAtMs: ${STARTED_AT_MS}"
@@ -427,22 +459,28 @@ INTAKE_BODY="$(jq -nc \
   --arg surface "${SURFACE_THREAD_ID}" \
   --arg mission "${MISSION_ID}" \
   --arg work "${WORK_ITEM_ID}" \
+  --arg surface_kind "${SURFACE_KIND}" \
+  --arg delivery_route "${DELIVERY_ROUTE}" \
+  --arg title "${MISSION_TITLE}" \
+  --arg intent "${MISSION_INTENT}" \
+  --arg capability_id "${CAPABILITY_ID}" \
+  --arg body_ref "${BODY_REF}" \
   --arg outcome_checked "${OUTCOME_CHECKED}" \
   '{
     fridayConversationId: $conv,
     ownerPrincipal: $owner,
     surfaceThreadId: $surface,
-    surfaceKind: "mobile",
-    deliveryRoute: "ops://claude-mission-proof-of-life",
+    surfaceKind: $surface_kind,
+    deliveryRoute: $delivery_route,
     visibilityPolicy: "compact",
     missionId: $mission,
     workItemId: $work,
-    title: "Claude proof token",
-    intent: "Answer exactly FRIDAY_CLAUDE_PROOF_OK.",
+    title: $title,
+    intent: $intent,
     lane: "claude",
     targetProviderOrAgent: "claude",
-    capabilityId: "ask_friday.claude",
-    bodyRef: "friday://body/ops/claude-mission-proof-of-life",
+    capabilityId: $capability_id,
+    bodyRef: $body_ref,
     includesSensitiveContext: false
   } + (if $outcome_checked == "1" then {proofRequirements: ["outcome:AnswerProduced:>=1"]} else {} end)')"
 
@@ -553,8 +591,8 @@ while [ "$(date +%s)" -le "${deadline}" ]; do
       ON surface.surface_thread_id = '${SURFACE_THREAD_ID}'
      AND surface.mission_id = w.mission_id
      AND surface.friday_conversation_id = m.friday_conversation_id
-     AND surface.surface_kind = 'mobile'
-     AND surface.delivery_route = 'ops://claude-mission-proof-of-life'
+     AND surface.surface_kind = '${SURFACE_KIND}'
+     AND surface.delivery_route = '${DELIVERY_ROUTE}'
      AND surface.created_at_ms >= ${STARTED_AT_MS}
      AND surface.created_at_ms <= w.updated_at_ms
     WHERE w.work_item_id = '${WORK_ITEM_ID}'
@@ -683,7 +721,11 @@ if [ "${joined_proof:-0}" -gt 0 ] && [ "${surface_bound_proof:-0}" -gt 0 ]; then
   else
     echo "PASS (STRONG) - this Claude WorkItem completed_with_proof, the proof receipt joins to a same-run non-fallback Anthropic ledger row for ${CLAUDE_MODEL}, and the operator surface binding is present."
   fi
-  echo "Truth: operator-triggered Claude mission proof, not D8 / not soak / not UI-device-channel proof / not GO."
+  if [ "${RUN_KIND}" = "organic" ]; then
+    echo "Truth: operator-triggered organic Claude spawn through Friday; one organic row is not Phase-1 done / not D8 / not GO."
+  else
+    echo "Truth: operator-triggered Claude mission proof, not D8 / not soak / not UI-device-channel proof / not GO."
+  fi
   exit 0
 fi
 
