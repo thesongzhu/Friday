@@ -26,12 +26,14 @@ if [ -z "${TASK_TEXT}" ]; then
   exit 3
 fi
 
+ORGANIC_BODY_REF_ID="$(node -e 'process.stdout.write((globalThis.crypto?.randomUUID?.() ?? (`id-${Date.now()}-${Math.random().toString(16).slice(2)}`)).toLowerCase())')"
+
 export FRIDAY_CODEX_MISSION_PROOF_RUN_KIND="organic"
 export FRIDAY_CODEX_MISSION_PROOF_SURFACE_KIND="${FRIDAY_CODEX_ORGANIC_SURFACE_KIND:-desktop}"
 export FRIDAY_CODEX_MISSION_PROOF_DELIVERY_ROUTE="ops://codex-organic-spawn"
 export FRIDAY_CODEX_MISSION_PROOF_TITLE="${FRIDAY_CODEX_ORGANIC_TITLE:-Codex organic operator task}"
 export FRIDAY_CODEX_MISSION_PROOF_INTENT="${TASK_TEXT}"
 export FRIDAY_CODEX_MISSION_PROOF_CAPABILITY_ID="observe-wrapper.codex.organic"
-export FRIDAY_CODEX_MISSION_PROOF_BODY_REF="friday://body/ops/codex-organic-spawn"
+export FRIDAY_CODEX_MISSION_PROOF_BODY_REF="${FRIDAY_CODEX_MISSION_PROOF_BODY_REF:-friday://body/ops/codex-organic-spawn/${ORGANIC_BODY_REF_ID}}"
 
 exec "${PROOF_SCRIPT}"
