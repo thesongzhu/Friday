@@ -119,6 +119,60 @@ public struct AgentRunConstraintsWire: Codable, Equatable, Sendable {
   }
 }
 
+/// Client→hub A1 run-outcome learning decision. Mirrors
+/// `friday_protocol::RunOutcomeLearningDecisionRequestWire`.
+public struct RunOutcomeLearningDecisionRequestWire: Codable, Equatable, Sendable {
+  public var candidateId: String
+  /// EXACTLY `"confirm"` or `"reject"`.
+  public var decision: String
+  public var reason: String?
+
+  public init(candidateId: String, decision: String, reason: String? = nil) {
+    self.candidateId = candidateId
+    self.decision = decision
+    self.reason = reason
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case candidateId = "candidate_id"
+    case decision
+    case reason
+  }
+}
+
+/// Hub→client A1 run-outcome learning decision receipt. Refs-only: candidate/run/kind/state/status,
+/// never a run body or candidate content.
+public struct RunOutcomeLearningDecisionResultWire: Codable, Equatable, Sendable {
+  public var candidateId: String
+  public var runId: String?
+  public var kind: String?
+  public var state: String
+  public var status: String
+  public var blocker: String?
+
+  public init(
+    candidateId: String,
+    runId: String? = nil,
+    kind: String? = nil,
+    state: String,
+    status: String,
+    blocker: String? = nil
+  ) {
+    self.candidateId = candidateId
+    self.runId = runId
+    self.kind = kind
+    self.state = state
+    self.status = status
+    self.blocker = blocker
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case candidateId = "candidate_id"
+    case runId = "run_id"
+    case kind, state, status, blocker
+  }
+}
+
 // MARK: - AgentRunRequestWire
 
 /// First-class Mission handle for a bound agent run. Mirrors

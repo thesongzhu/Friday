@@ -194,6 +194,40 @@ public struct MissionWorkbenchMemoryCandidate: Codable, Sendable, Identifiable, 
   }
 }
 
+public struct MissionWorkbenchRunOutcomeLearningCandidate: Codable, Sendable, Identifiable, Equatable {
+  public let id: String
+  public let runId: String
+  public let workItemId: String
+  public let kind: String
+  public let state: String
+  public let summary: String
+  public let evidenceRef: String
+  public let turns: Int64
+  public let executedTools: Int64
+
+  public init(
+    id: String,
+    runId: String,
+    workItemId: String,
+    kind: String,
+    state: String,
+    summary: String,
+    evidenceRef: String,
+    turns: Int64,
+    executedTools: Int64
+  ) {
+    self.id = id
+    self.runId = runId
+    self.workItemId = workItemId
+    self.kind = kind
+    self.state = state
+    self.summary = summary
+    self.evidenceRef = evidenceRef
+    self.turns = turns
+    self.executedTools = executedTools
+  }
+}
+
 public struct MissionWorkbenchCapabilityState: Codable, Sendable, Identifiable, Equatable {
   public let id: String
   public let label: String
@@ -383,6 +417,7 @@ public struct WorkbenchSnapshot: Codable, Sendable, Equatable {
   public let workItems: [MissionWorkbenchWorkItem]
   public let timelinePages: [MissionWorkbenchTimelinePage]
   public let memoryCandidates: [MissionWorkbenchMemoryCandidate]
+  public let runOutcomeLearningCandidates: [MissionWorkbenchRunOutcomeLearningCandidate]
   public let capabilityStates: [MissionWorkbenchCapabilityState]
   public let transcriptSections: [MissionTranscriptSection]
 
@@ -398,6 +433,7 @@ public struct WorkbenchSnapshot: Codable, Sendable, Equatable {
     workItems: [MissionWorkbenchWorkItem],
     timelinePages: [MissionWorkbenchTimelinePage],
     memoryCandidates: [MissionWorkbenchMemoryCandidate],
+    runOutcomeLearningCandidates: [MissionWorkbenchRunOutcomeLearningCandidate] = [],
     capabilityStates: [MissionWorkbenchCapabilityState],
     transcriptSections: [MissionTranscriptSection]
   ) {
@@ -412,6 +448,7 @@ public struct WorkbenchSnapshot: Codable, Sendable, Equatable {
     self.workItems = workItems
     self.timelinePages = timelinePages
     self.memoryCandidates = memoryCandidates
+    self.runOutcomeLearningCandidates = runOutcomeLearningCandidates
     self.capabilityStates = capabilityStates
     self.transcriptSections = transcriptSections
   }

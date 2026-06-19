@@ -94,6 +94,7 @@ struct OperationsOverviewScreen: View {
       receiptsCard(snapshot)
       transcriptCard(snapshot)
       memoryCard(snapshot)
+      runOutcomeLearningCard(snapshot)
     }
     .padding(20)
   }
@@ -286,6 +287,31 @@ struct OperationsOverviewScreen: View {
     }
   }
 
+  private func runOutcomeLearningCard(_ snapshot: WorkbenchSnapshot) -> some View {
+    GlassPanel {
+      VStack(alignment: .leading, spacing: HubTheme.rowSpacing) {
+        cardTitle("Run Outcome Learning")
+        if snapshot.runOutcomeLearningCandidates.isEmpty {
+          Text("No pending run-outcome learning candidates.")
+            .font(.system(size: 12))
+            .foregroundStyle(HubTheme.textSecondary)
+        } else {
+          ForEach(snapshot.runOutcomeLearningCandidates) { candidate in
+            RunOutcomeLearningCandidateRow(
+              candidate: candidate,
+              state: viewModel.runOutcomeLearningDecisionStates[candidate.id] ?? .ready,
+              onConfirm: {
+                Task { await viewModel.decideRunOutcomeLearning(candidateId: candidate.id, confirm: true) }
+              },
+              onReject: {
+                Task { await viewModel.decideRunOutcomeLearning(candidateId: candidate.id, confirm: false) }
+              })
+          }
+        }
+      }
+    }
+  }
+
   private func cardTitle(_ text: String) -> some View {
     Text(text)
       .font(.system(size: 14, weight: .semibold))
@@ -435,6 +461,53 @@ struct MemoryCandidateRow: View {
   }
 
   /// Disabled while in flight or after a terminal outcome (a decision is applied once).
+  private var controlsDisabled: Bool { state.isSent || state.isTerminal }
+}
+
+/// One A1 run-outcome learning candidate row. The row remains refs-only: it shows the candidate's
+/// coarse summary, counters, and redacted evidence ref; confirm/reject is a governed WRITE call.
+struct RunOutcomeLearningCandidateRow: View {
+  let candidate: MissionWorkbenchRunOutcomeLearningCandidate
+  let state: WriteActionState
+  let onConfirm: () -> Void
+  let onReject: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(alignment: .top, spacing: 8) {
+        VStack(alignment: .leading, spacing: 4) {
+          Text(candidate.summary)
+            .font(.system(size: 12))
+            .foregroundStyle(HubTheme.textPrimary)
+          HStack(spacing: 6) {
+            StatusChip(text: candidate.kind, bg: HubTheme.chipNeutralBG, fg: HubTheme.chipNeutralFG)
+            StatusChip(text: candidate.state, bg: HubTheme.chipPendingBG, fg: HubTheme.chipPendingFG)
+            Text("turns \(candidate.turns) · tools \(candidate.executedTools)")
+              .font(.system(size: 11))
+              .foregroundStyle(HubTheme.textSecondary)
+          }
+        }
+        Spacer()
+        HStack(spacing: 6) {
+          Button("Confirm", action: onConfirm)
+            .buttonStyle(.borderedProminent)
+            .tint(HubTheme.cyan)
+            .controlSize(.small)
+            .disabled(controlsDisabled)
+          Button("Reject", action: onReject)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(controlsDisabled)
+        }
+      }
+      RefPill(label: "runId", ref: candidate.runId)
+      RefPill(label: "workItemId", ref: candidate.workItemId)
+      RefPill(label: "evidenceRef", ref: candidate.evidenceRef)
+      WriteActionStateView(state: state, pendingText: "Applying learning decision…")
+    }
+    .padding(.vertical, 2)
+  }
+
   private var controlsDisabled: Bool { state.isSent || state.isTerminal }
 }
 

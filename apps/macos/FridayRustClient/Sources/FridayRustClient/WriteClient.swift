@@ -169,6 +169,10 @@ public protocol FridayMissionSpineWriteClient: Sendable {
   /// refs-only receipt (`status:"confirmed"`/`"rejected"`/`"blocked"`). `decision` MUST be
   /// `"confirm"` or `"reject"`.
   func submitMemoryDecision(_ request: MemoryDecisionRequestWire) async throws -> MemoryDecisionResultWire
+  /// Submit the owner's explicit confirm/reject for ONE pending A1 run-outcome learning candidate.
+  func submitRunOutcomeLearningDecision(
+    _ request: RunOutcomeLearningDecisionRequestWire
+  ) async throws -> RunOutcomeLearningDecisionResultWire
 }
 
 /// Product-facing bridge for MissionIntakeResult -> mission-bound AgentRunRequest. This is the
@@ -330,7 +334,8 @@ public final class SealedWSWriteClient: FridayRustWriteClient, FridayMissionSpin
     case .agentRunRequest, .agentRunResume, .agentRunControlResult,
          .workbenchProjectionRequest, .workbenchProjectionSnapshot,
          .missionIntakeRequest, .missionIntakeResult,
-         .memoryDecisionRequest, .memoryDecisionResult:
+         .memoryDecisionRequest, .memoryDecisionResult,
+         .runOutcomeLearningDecisionRequest, .runOutcomeLearningDecisionResult:
       throw FridayWriteClientError.unexpectedResponse(kind: dispatchKind(message))
     case .unsupported(let kind):
       throw FridayWriteClientError.unexpectedResponse(kind: kind)
@@ -390,6 +395,36 @@ public final class SealedWSWriteClient: FridayRustWriteClient, FridayMissionSpin
     let resp = try openEnvelope(respBody, sessionKey: sessionKey)
     switch resp.message {
     case .memoryDecisionResult(let r):
+      return r
+    case .error(let code, let message):
+      throw FridayWriteClientError.serverError(code: code, message: message)
+    default:
+      throw FridayWriteClientError.unexpectedResponse(kind: dispatchKind(resp.message))
+    }
+  }
+
+  /// Submit the owner's confirm/reject for ONE pending A1 run-outcome learning candidate over the
+  /// sealed WRITE session. This is refs-only governance over an existing candidate row; a
+  /// `status:"blocked"` result is returned to the caller as truth, not thrown.
+  public func submitRunOutcomeLearningDecision(
+    _ request: RunOutcomeLearningDecisionRequestWire
+  ) async throws -> RunOutcomeLearningDecisionResultWire {
+    let transport = try makeTransport()
+    let (sessionKey, _) = try handshake(transport)
+    let msgId = "run-outcome-learning-decision-\(request.candidateId)"
+    let env = FridayEnvelope(msgId: msgId, sentAt: now(), message: .runOutcomeLearningDecisionRequest(request))
+      .withCorrelation(msgId)
+    try transport.sendMessage(try sealEnvelope(env, sessionKey: sessionKey))
+    let respBody: [UInt8]
+    do {
+      respBody = try transport.recvMessage()
+    } catch {
+      throw FridayWriteClientError.transport(
+        "no run-outcome-learning-decision result (session ended fail-closed): \(error)")
+    }
+    let resp = try openEnvelope(respBody, sessionKey: sessionKey)
+    switch resp.message {
+    case .runOutcomeLearningDecisionResult(let r):
       return r
     case .error(let code, let message):
       throw FridayWriteClientError.serverError(code: code, message: message)
@@ -524,6 +559,8 @@ private func dispatchKind(_ message: FridayMessage) -> String {
   case .missionIntakeResult: return "MissionIntakeResult"
   case .memoryDecisionRequest: return "MemoryDecisionRequest"
   case .memoryDecisionResult: return "MemoryDecisionResult"
+  case .runOutcomeLearningDecisionRequest: return "RunOutcomeLearningDecisionRequest"
+  case .runOutcomeLearningDecisionResult: return "RunOutcomeLearningDecisionResult"
   case .unsupported(let kind): return kind
   }
 }

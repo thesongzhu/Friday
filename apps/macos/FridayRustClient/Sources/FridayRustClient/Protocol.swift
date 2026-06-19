@@ -135,6 +135,12 @@ public enum FridayMessage: Equatable {
   /// hub→trusted-peer: memory decision receipt (refs-only). Mirrors
   /// `friday_protocol::Message::MemoryDecisionResult` — NESTED `{ result: … }`.
   case memoryDecisionResult(MemoryDecisionResultWire)
+  /// trusted-peer→hub: confirm/reject ONE pending A1 run-outcome learning candidate.
+  /// Mirrors `friday_protocol::Message::RunOutcomeLearningDecisionRequest`.
+  case runOutcomeLearningDecisionRequest(RunOutcomeLearningDecisionRequestWire)
+  /// hub→trusted-peer: A1 run-outcome learning decision receipt (refs-only). Mirrors
+  /// `friday_protocol::Message::RunOutcomeLearningDecisionResult`.
+  case runOutcomeLearningDecisionResult(RunOutcomeLearningDecisionResultWire)
 
   /// A decoded-but-not-handled message kind. Carries the raw `kind` for truth-labeled surfacing
   /// (e.g. an `AgentRunPaused` reaching the read client, or any frame the client cannot handle).
@@ -249,6 +255,14 @@ extension FridayMessage: Codable {
     case "MemoryDecisionResult":
       let c = try decoder.container(keyedBy: ResultKey.self)
       self = .memoryDecisionResult(try c.decode(MemoryDecisionResultWire.self, forKey: .result))
+    case "RunOutcomeLearningDecisionRequest":
+      let c = try decoder.container(keyedBy: RequestKey.self)
+      self = .runOutcomeLearningDecisionRequest(
+        try c.decode(RunOutcomeLearningDecisionRequestWire.self, forKey: .request))
+    case "RunOutcomeLearningDecisionResult":
+      let c = try decoder.container(keyedBy: ResultKey.self)
+      self = .runOutcomeLearningDecisionResult(
+        try c.decode(RunOutcomeLearningDecisionResultWire.self, forKey: .result))
     default:
       self = .unsupported(kind: kind)
     }
@@ -339,6 +353,14 @@ extension FridayMessage: Codable {
       try c.encode(r, forKey: .request)
     case .memoryDecisionResult(let r):
       try tag.encode("MemoryDecisionResult", forKey: .kind)
+      var c = encoder.container(keyedBy: ResultKey.self)
+      try c.encode(r, forKey: .result)
+    case .runOutcomeLearningDecisionRequest(let r):
+      try tag.encode("RunOutcomeLearningDecisionRequest", forKey: .kind)
+      var c = encoder.container(keyedBy: RequestKey.self)
+      try c.encode(r, forKey: .request)
+    case .runOutcomeLearningDecisionResult(let r):
+      try tag.encode("RunOutcomeLearningDecisionResult", forKey: .kind)
       var c = encoder.container(keyedBy: ResultKey.self)
       try c.encode(r, forKey: .result)
     case .unsupported(let kind):

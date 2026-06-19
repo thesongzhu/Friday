@@ -81,6 +81,8 @@ pub fn project_workbench(db: &Db, requested_mission_id: Option<&str>) -> Result<
         .first()
         .ok_or_else(|| "mission has no route decision projection".to_string())?;
 
+    let run_outcome_learning_candidates =
+        run_outcome_learning_candidates_json(db, &work_items).map_err(|err| err.to_string())?;
     let provider_receipt_refs = provider_receipt_refs(&work_items, &links);
     let channel_receipt_refs = channel_receipt_refs(&links);
     let mut transcript_events = Vec::new();
@@ -147,6 +149,7 @@ pub fn project_workbench(db: &Db, requested_mission_id: Option<&str>) -> Result<
             }
         ],
         "memoryCandidates": memory_candidates_json(&mission, &links),
+        "runOutcomeLearningCandidates": run_outcome_learning_candidates,
         "capabilityStates": capability_states_json(&work_items, route_decision.route_decision_ref.as_str()),
         "transcriptSections": transcript_sections_json(&mission.mission_id, transcript_events)
     });
@@ -269,6 +272,54 @@ fn memory_candidates_json(
         }));
     }
     rows
+}
+
+fn run_outcome_learning_candidates_json(
+    db: &Db,
+    work_items: &[WorkItem],
+) -> friday_storage::Result<Vec<Value>> {
+    let mut rows = Vec::new();
+    for item in work_items {
+        for run_id in work_item_agent_run_ids(item) {
+            let candidates =
+                friday_storage::learning_candidate::list_run_outcome_candidates_for_run(
+                    db.conn(),
+                    &run_id,
+                )?;
+            for candidate in candidates {
+                rows.push(json!({
+                    "id": candidate.candidate_id,
+                    "runId": candidate.run_id,
+                    "workItemId": item.work_item_id,
+                    "kind": candidate.kind.as_str(),
+                    "state": candidate.state.as_str(),
+                    "summary": candidate.summary,
+                    "evidenceRef": redacted_ref("run-outcome-learning-candidate", &candidate.evidence_ref),
+                    "turns": candidate.turns,
+                    "executedTools": candidate.executed_tools
+                }));
+            }
+        }
+    }
+    rows.sort_by(|left, right| {
+        let left_id = left.get("id").and_then(Value::as_str);
+        let right_id = right.get("id").and_then(Value::as_str);
+        left_id.cmp(&right_id)
+    });
+    Ok(rows)
+}
+
+fn work_item_agent_run_ids(item: &WorkItem) -> Vec<String> {
+    let mut ids = Vec::new();
+    for value in item.proof_receipts.iter().chain(item.output_refs.iter()) {
+        if let Some(run_id) = value.strip_prefix("friday://agent-run/") {
+            let run_id = run_id.trim();
+            if !run_id.is_empty() && !ids.iter().any(|seen| seen == run_id) {
+                ids.push(run_id.to_string());
+            }
+        }
+    }
+    ids
 }
 
 fn capability_states_json(work_items: &[WorkItem], route_ref: &str) -> Vec<Value> {
@@ -1053,5 +1104,40 @@ mod tests {
             Some(mission_id.as_str()),
             "the snapshot must carry the EXACT real hyphen mission id, not a rewritten/synthetic shape"
         );
+    }
+
+    #[test]
+    fn projects_run_outcome_learning_candidates_from_agent_run_proof_refs() {
+        let db = Db::open_hub(&tmp()).unwrap();
+        let mission_id = seed_real_producer_mission(&db);
+        let mut item = db.get_work_item("autodisp-1781492033").unwrap().unwrap();
+        item.status = WorkItemStatus::CompletedWithProof;
+        item.proof_receipts = vec!["friday://agent-run/run-a1-projected".into()];
+        db.upsert_work_item(&item).unwrap();
+        friday_storage::learning_candidate::record_run_outcome_candidates(
+            db.conn(),
+            "run-a1-projected",
+            Some("sess-a1-projected"),
+            2,
+            1,
+            1_780_640_000_100,
+        )
+        .unwrap();
+
+        let snapshot = project_workbench(&db, Some(&mission_id)).unwrap();
+        let candidates = snapshot
+            .get("runOutcomeLearningCandidates")
+            .and_then(Value::as_array)
+            .expect("projection must include runOutcomeLearningCandidates");
+        assert_eq!(candidates.len(), 3);
+        assert!(candidates.iter().all(|row| {
+            row.get("runId").and_then(Value::as_str) == Some("run-a1-projected")
+                && row.get("workItemId").and_then(Value::as_str) == Some("autodisp-1781492033")
+        }));
+        assert!(candidates.iter().all(|row| {
+            row.get("evidenceRef")
+                .and_then(Value::as_str)
+                .is_some_and(|ref_| ref_.starts_with("proof://run-outcome-learning-candidate/"))
+        }));
     }
 }
