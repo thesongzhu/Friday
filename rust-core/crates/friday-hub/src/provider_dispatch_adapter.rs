@@ -10,20 +10,23 @@
 //!
 //! ## What is LIVE vs honestly deferred
 //!
-//! The adapter routes only the two NON-MODEL Codex metadata operations the existing
-//! [`DispatchContext`] carries enough information to drive:
+//! The adapter routes the two NON-MODEL Codex metadata operations the existing
+//! [`DispatchContext`] carries enough information to drive by default:
 //!   - [`ProviderWorkspaceAction::ListSessions`] → `CodexAppServerClient::list_threads`
 //!   - [`ProviderWorkspaceAction::StartSession`] → `CodexAppServerClient::start_thread`
+//! It can also route Codex `send_turn` when tests or a future live caller inject a prompt
+//! body resolver and the context carries a provider thread id. The current Hub selection
+//! intentionally injects no prompt resolver, so production remains fail-closed / DARK.
 //!
 //! Every OTHER action returns a typed [`DispatchError::AdapterNotReady`] with a code-only
 //! (secret-free) reason, NOT a fake success. The deferrals are honest and structural:
-//!   - Read / Resume need a PROVIDER thread id. `external_thread_id` exists on the
-//!     [`friday_core::ProviderSessionLink`] but is dropped by the Hub's
-//!     `provider_workspace_session_from_link`, so the [`DispatchContext`] does not carry it.
+//!   - Read / Resume need provider client methods in this adapter; the context can now carry
+//!     the existing `ProviderSessionLink.external_thread_id` when one is present.
 //!   - Interrupt / Steer also need a provider `turn_id` (the session's `active_turn_id` is
 //!     not threaded through the dispatch context).
-//!   - Send / Steer also need the PROMPT TEXT: the request carries only a `payload_ref`
-//!     URI and there is no body-store reader for it, so the model input cannot be resolved.
+//!   - Steer still needs both a provider `turn_id` and prompt text.
+//!   - Send needs prompt text and a provider thread id; the resolver seam exists here, but
+//!     the live Hub injects no resolver until a real body store / intake body snapshot lands.
 //!   - Fork / ApproveOrReject / AnswerQuestion have NO standalone client method (approve /
 //!     answer exist only as the in-turn handler inside `run_turn_with_handler`).
 //!   - OpenProviderNative is the unsupported / operator-gated native-link surface.
@@ -57,6 +60,7 @@
 
 use friday_providers::codex_appserver::{
     CodexAppServerClient, CodexAppServerError, CodexAppServerTransport, LocalCodexAppServer,
+    TurnSummary,
 };
 
 use crate::provider_dispatch::{
@@ -93,6 +97,16 @@ pub trait CodexWorkspaceClient {
     /// `thread/start` — opens a fresh local Codex thread. Returns the new provider thread id
     /// (an opaque local identifier, surfaced only as a `provider_event_id` ref).
     fn start_thread(&self) -> Result<String, CodexAppServerError>;
+
+    /// `turn/start` — starts a Codex model turn on an existing provider thread. This is only
+    /// reachable when the dispatch gate accepts a Verified action AND a prompt resolver supplies
+    /// text from the WorkItem-bound payload ref.
+    fn send_turn_text(
+        &self,
+        thread_id: &str,
+        client_user_message_id: Option<&str>,
+        text: &str,
+    ) -> Result<TurnSummary, CodexAppServerError>;
 }
 
 /// A STATELESS live [`CodexWorkspaceClient`]: every call spawns a FRESH `codex app-server`,
@@ -140,6 +154,19 @@ impl CodexWorkspaceClient for LocalCodexWorkspaceClient {
         // neither; see the module deferral notes).
         Ok(client.start_thread(None, None)?.thread_id)
     }
+
+    fn send_turn_text(
+        &self,
+        thread_id: &str,
+        client_user_message_id: Option<&str>,
+        text: &str,
+    ) -> Result<TurnSummary, CodexAppServerError> {
+        let mut server = LocalCodexAppServer::spawn(&self.program)?;
+        let client = server.client();
+        client.initialize(&self.client_name, &self.client_version)?;
+        client.initialized()?;
+        client.send_turn_text(thread_id, client_user_message_id, text)
+    }
 }
 
 /// A [`CodexWorkspaceClient`] over an already-initialized [`CodexAppServerClient`] for a
@@ -172,22 +199,63 @@ impl<T: CodexAppServerTransport> CodexWorkspaceClient for TransportCodexWorkspac
     fn start_thread(&self) -> Result<String, CodexAppServerError> {
         Ok(self.client.borrow_mut().start_thread(None, None)?.thread_id)
     }
+
+    fn send_turn_text(
+        &self,
+        thread_id: &str,
+        client_user_message_id: Option<&str>,
+        text: &str,
+    ) -> Result<TurnSummary, CodexAppServerError> {
+        self.client
+            .borrow_mut()
+            .send_turn_text(thread_id, client_user_message_id, text)
+    }
+}
+
+pub trait PromptBodyResolver {
+    fn resolve_prompt(&self, ctx: &DispatchContext<'_>) -> Result<String, DispatchError>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoPromptBodyResolver;
+
+impl PromptBodyResolver for NoPromptBodyResolver {
+    fn resolve_prompt(&self, _ctx: &DispatchContext<'_>) -> Result<String, DispatchError> {
+        Err(DispatchError::AdapterNotReady(
+            "prompt_body_resolver_not_wired".to_string(),
+        ))
+    }
 }
 
 /// The live provider-workspace dispatch adapter. Routes the LIVE-set Codex metadata actions
 /// onto the injected [`CodexWorkspaceClient`]; returns a typed, secret-free
 /// [`DispatchError::AdapterNotReady`] for every honestly-deferred action.
-pub struct ProviderWorkspaceDispatchAdapter<C> {
+pub struct ProviderWorkspaceDispatchAdapter<C, R = NoPromptBodyResolver> {
     codex: C,
+    prompt_resolver: R,
 }
 
-impl<C: CodexWorkspaceClient> ProviderWorkspaceDispatchAdapter<C> {
+impl<C: CodexWorkspaceClient> ProviderWorkspaceDispatchAdapter<C, NoPromptBodyResolver> {
     pub fn new(codex: C) -> Self {
-        Self { codex }
+        Self {
+            codex,
+            prompt_resolver: NoPromptBodyResolver,
+        }
     }
 }
 
-impl<C: CodexWorkspaceClient> ProviderDispatchAdapter for ProviderWorkspaceDispatchAdapter<C> {
+impl<C: CodexWorkspaceClient, R: PromptBodyResolver> ProviderWorkspaceDispatchAdapter<C, R> {
+    pub fn with_prompt_resolver(codex: C, prompt_resolver: R) -> Self {
+        Self {
+            codex,
+            prompt_resolver,
+        }
+    }
+}
+
+impl<C: CodexWorkspaceClient, R: PromptBodyResolver> ProviderDispatchAdapter
+    for ProviderWorkspaceDispatchAdapter<C, R>
+{
     fn execute_action(&self, ctx: &DispatchContext<'_>) -> Result<DispatchOutcome, DispatchError> {
         // The provider/action strings are the guard-validated ones. Map provider kind first;
         // a non-codex provider has no live workspace client wired this slice.
@@ -205,7 +273,7 @@ impl<C: CodexWorkspaceClient> ProviderDispatchAdapter for ProviderWorkspaceDispa
     }
 }
 
-impl<C: CodexWorkspaceClient> ProviderWorkspaceDispatchAdapter<C> {
+impl<C: CodexWorkspaceClient, R: PromptBodyResolver> ProviderWorkspaceDispatchAdapter<C, R> {
     fn execute_codex(&self, ctx: &DispatchContext<'_>) -> Result<DispatchOutcome, DispatchError> {
         match ctx.action {
             "list_sessions" => {
@@ -225,6 +293,26 @@ impl<C: CodexWorkspaceClient> ProviderWorkspaceDispatchAdapter<C> {
                 Ok(DispatchOutcome {
                     status: DispatchStatus::Completed,
                     provider_event_id: Some(thread_id),
+                    audit_receipt_ref: None,
+                })
+            }
+            "send_turn" => {
+                let thread_id = ctx.provider_thread_id.ok_or_else(|| {
+                    DispatchError::AdapterNotReady("codex_send_turn_thread_id_missing".to_string())
+                })?;
+                let prompt = self.prompt_resolver.resolve_prompt(ctx)?;
+                if prompt.trim().is_empty() {
+                    return Err(DispatchError::AdapterNotReady(
+                        "prompt_body_empty".to_string(),
+                    ));
+                }
+                let turn = self
+                    .codex
+                    .send_turn_text(thread_id, None, &prompt)
+                    .map_err(map_codex_error)?;
+                Ok(DispatchOutcome {
+                    status: DispatchStatus::Running,
+                    provider_event_id: Some(turn.turn_id),
                     audit_receipt_ref: None,
                 })
             }
@@ -395,6 +483,11 @@ mod tests {
                 "provider.codex.fork_session",
                 friday_providers::unified::CodexAppServerMethod::ThreadFork,
             ),
+            (
+                ProviderWorkspaceAction::SendTurn,
+                "provider.codex.send_turn",
+                friday_providers::unified::CodexAppServerMethod::TurnStart,
+            ),
         ] {
             catalog
                 .register(
@@ -426,6 +519,7 @@ mod tests {
             sync_mode: ProviderSyncMode::ProviderAppServerLocal,
             status: SessionStatus::Idle,
             capability_snapshot: Vec::new(),
+            external_thread_id: Some("thread-1".to_string()),
             active_turn_id: None,
             last_event_seq: 0,
             truth_label: "test".to_string(),
@@ -529,6 +623,22 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy)]
+    struct TestPromptResolver;
+
+    impl PromptBodyResolver for TestPromptResolver {
+        fn resolve_prompt(&self, ctx: &DispatchContext<'_>) -> Result<String, DispatchError> {
+            let payload_ref = ctx.payload_ref.ok_or_else(|| {
+                DispatchError::AdapterNotReady("prompt_payload_ref_missing".to_string())
+            })?;
+            assert!(ctx
+                .work_item_input_refs
+                .iter()
+                .any(|input_ref| input_ref == payload_ref));
+            Ok("Say exactly READY.".to_string())
+        }
+    }
+
     /// FLAG-ON discriminator: the REAL adapter routes `list_sessions` to `thread/list` and the
     /// gated seam returns a dispatched/completed result (NOT `AdapterNotReady`).
     #[test]
@@ -570,6 +680,51 @@ mod tests {
         assert!(result.accepted);
         assert_eq!(result.status, "dispatched_completed");
         assert!(result.dispatch_ref.is_some());
+    }
+
+    #[test]
+    fn flag_on_send_turn_without_prompt_resolver_fails_closed() {
+        let adapter = ProviderWorkspaceDispatchAdapter::new(transport_client(vec![ok(json!({
+            "turn": { "id": "must-not-call", "status": "inProgress", "items": [] }
+        }))]));
+        let result = dispatch_provider_action(
+            &verified_codex_catalog(),
+            &adapter,
+            &session(),
+            &db_with_context(),
+            req("send_turn", "provider.codex.send_turn"),
+        );
+        assert!(result.accepted);
+        assert!(result.routed);
+        assert_eq!(result.status, "dispatch_failed");
+        assert_eq!(
+            result.blocker.as_deref(),
+            Some("provider adapter not ready")
+        );
+        assert!(result.dispatch_ref.is_none());
+    }
+
+    #[test]
+    fn flag_on_send_turn_with_prompt_resolver_routes_to_turn_start() {
+        let adapter = ProviderWorkspaceDispatchAdapter::with_prompt_resolver(
+            transport_client(vec![ok(json!({
+                "turn": { "id": "turn-1", "status": "inProgress", "items": [] }
+            }))]),
+            TestPromptResolver,
+        );
+        let result = dispatch_provider_action(
+            &verified_codex_catalog(),
+            &adapter,
+            &session(),
+            &db_with_context(),
+            req("send_turn", "provider.codex.send_turn"),
+        );
+        assert!(result.accepted);
+        assert!(result.routed);
+        assert_eq!(result.status, "dispatched_running");
+        assert!(result.blocker.is_none());
+        assert!(result.dispatch_ref.is_some());
+        assert_eq!(result.truth_label, "verified test catalog");
     }
 
     /// FLAG-OFF byte-identical discriminator: the `NoProviderWorkspaceDispatchAdapter` over the

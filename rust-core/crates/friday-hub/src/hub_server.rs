@@ -86,6 +86,7 @@ fn provider_workspace_session_from_link(
         sync_mode: link.sync_mode.into(),
         status: SessionStatus::Idle,
         capability_snapshot: Vec::new(),
+        external_thread_id: link.external_thread_id.clone(),
         active_turn_id: None,
         last_event_seq: 0,
         truth_label: link.truth_label.clone(),

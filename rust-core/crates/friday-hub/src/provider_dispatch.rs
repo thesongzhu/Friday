@@ -30,7 +30,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use friday_core::RouteDecisionCard;
+use friday_core::{RouteDecisionCard, WorkItem};
 use friday_protocol::{
     ProviderWorkspaceActionRequestWire, ProviderWorkspaceActionResultWire,
     ProviderWorkspaceMissionContextWire,
@@ -56,6 +56,8 @@ pub struct DispatchContext<'a> {
     pub dispatch_ref: &'a str,
     pub truth_label: &'a str,
     pub payload_ref: Option<&'a str>,
+    pub provider_thread_id: Option<&'a str>,
+    pub work_item_input_refs: &'a [String],
     pub mission_context: &'a ResolvedMissionContext,
     pub route_decision: &'a RouteDecisionCard,
 }
@@ -129,9 +131,12 @@ pub fn dispatch_provider_action(
         return guard;
     }
 
-    if let Err(blocker) =
-        validate_resolved_provider_context(db, session, &guard.provider, &resolved_context)
-    {
+    let work_item =
+        match validate_resolved_provider_context(db, session, &guard.provider, &resolved_context) {
+            Ok(work_item) => work_item,
+            Err(blocker) => return mission_context_blocked_result(guard, blocker),
+        };
+    if let Err(blocker) = validate_payload_ref_binding(payload_ref.as_deref(), &work_item) {
         return mission_context_blocked_result(guard, blocker);
     }
 
@@ -187,6 +192,8 @@ pub fn dispatch_provider_action(
             dispatch_ref: &dispatch_ref,
             truth_label: &guard.truth_label,
             payload_ref: payload_ref.as_deref(),
+            provider_thread_id: session.external_thread_id.as_deref(),
+            work_item_input_refs: &work_item.input_refs,
             mission_context: &resolved_context,
             route_decision: &route_decision,
         };
@@ -247,7 +254,7 @@ fn validate_resolved_provider_context(
     session: &ProviderSession,
     provider: &str,
     context: &ResolvedMissionContext,
-) -> Result<(), String> {
+) -> Result<WorkItem, String> {
     let work_item = db
         .get_work_item(&context.work_item_id)
         .map_err(|err| format!("provider dispatch Mission context read failed: {err}"))?
@@ -264,7 +271,25 @@ fn validate_resolved_provider_context(
     if !work_item.is_active_like() {
         return Err("provider dispatch Mission context work item is terminal".to_string());
     }
-    Ok(())
+    Ok(work_item)
+}
+
+fn validate_payload_ref_binding(
+    payload_ref: Option<&str>,
+    work_item: &WorkItem,
+) -> Result<(), String> {
+    let Some(payload_ref) = payload_ref else {
+        return Ok(());
+    };
+    if work_item
+        .input_refs
+        .iter()
+        .any(|input_ref| input_ref == payload_ref)
+    {
+        Ok(())
+    } else {
+        Err("provider dispatch payload_ref is not bound to the WorkItem input_refs".to_string())
+    }
 }
 
 fn mission_context_blocked_result(
@@ -475,6 +500,7 @@ mod tests {
             sync_mode: ProviderSyncMode::ProviderAppServerLocal,
             status: SessionStatus::Idle,
             capability_snapshot: Vec::new(),
+            external_thread_id: None,
             active_turn_id: None,
             last_event_seq: 0,
             truth_label: "provider dispatch test".to_string(),
@@ -604,6 +630,11 @@ mod tests {
             assert!(ctx.dispatch_ref.starts_with("friday://provider-dispatch/"));
             assert_eq!(ctx.mission_context.mission_id, "mission-provider-dispatch");
             assert_eq!(ctx.mission_context.work_item_id, "work-provider-dispatch");
+            assert_eq!(ctx.payload_ref, Some("friday://body/request/1"));
+            assert!(ctx
+                .work_item_input_refs
+                .iter()
+                .any(|input_ref| input_ref == "friday://body/request/1"));
             assert_eq!(ctx.route_decision.mission_id, "mission-provider-dispatch");
             assert_eq!(ctx.route_decision.work_item_id, "work-provider-dispatch");
             assert_eq!(
@@ -841,6 +872,31 @@ mod tests {
             0,
             "resolved Mission context must match the target provider before dispatch"
         );
+    }
+
+    #[test]
+    fn unbound_payload_ref_is_blocked_before_adapter() {
+        let adapter = FakeAdapter::ok();
+        let s = session(PlatformProvider::Codex);
+        let db = db_with_mission_context(PlatformProvider::Codex);
+        let mut request = req_with_mission_context(
+            "codex",
+            &s.friday_session_id,
+            "list_sessions",
+            "provider.codex.list_sessions",
+        );
+        request.payload_ref = Some("friday://body/other-request".to_string());
+
+        let result = dispatch_provider_action(&verified_catalog(), &adapter, &s, &db, request);
+
+        assert!(!result.accepted);
+        assert!(!result.routed);
+        assert_eq!(result.status, "mission_context_required");
+        assert_eq!(
+            result.blocker.as_deref(),
+            Some("provider dispatch payload_ref is not bound to the WorkItem input_refs")
+        );
+        assert_eq!(adapter.count(), 0);
     }
 
     #[test]
