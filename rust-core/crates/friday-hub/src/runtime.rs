@@ -2091,6 +2091,8 @@ impl<T: Transport> HubRuntime<T> {
             );
         }
 
+        let effective_task = self.mission_bound_effective_task(&envelope, task)?;
+
         // Run the SAME composed loop as the unbound entry (no divergence), threading the
         // (effective) per-run policy + ceiling so a mission-bound run enforces the IDENTICAL
         // tightening the unbound dispatch arm applies. Absent override ⇒ boot config unchanged.
@@ -2116,7 +2118,7 @@ impl<T: Transport> HubRuntime<T> {
         // cancel/steer).
         let (selection, outcome) = self.run_with_request(
             run_id,
-            task,
+            &effective_task,
             route_request,
             policy_override,
             max_turns_override,
@@ -2213,6 +2215,36 @@ impl<T: Transport> HubRuntime<T> {
             result_link,
             attachment,
         })
+    }
+
+    fn mission_bound_effective_task(
+        &self,
+        envelope: &MissionRuntimeEnvelope,
+        fallback_task: &str,
+    ) -> Result<String, StorageError> {
+        let Some(work_item) = self.db.get_work_item(&envelope.context.work_item_id)? else {
+            return Ok(fallback_task.to_string());
+        };
+        let Some(body_ref) = work_item.input_refs.first().map(String::as_str) else {
+            return Ok(fallback_task.to_string());
+        };
+        let Some(mission) = self.db.get_mission(&envelope.context.mission_id)? else {
+            return Ok(fallback_task.to_string());
+        };
+        let Some(conversation) = self
+            .db
+            .get_friday_conversation(&mission.friday_conversation_id)?
+        else {
+            return Ok(fallback_task.to_string());
+        };
+        match self.db.get_mission_body_snapshot(
+            &conversation.owner_principal,
+            &work_item.work_item_id,
+            body_ref,
+        )? {
+            Some(snapshot) => Ok(snapshot.body),
+            None => Ok(fallback_task.to_string()),
+        }
     }
 
     /// (NS-6) The real handoff item-source → mint. Collects the REAL context items THIS run
@@ -8062,6 +8094,10 @@ mod tests {
         seed_loop_mission_with_ownership(db, lane, target, status, Vec::new(), Vec::new());
     }
 
+    fn loop_body_ref() -> &'static str {
+        "friday://body/mission-loop-intent"
+    }
+
     fn seed_loop_mission_with_ownership(
         db: &Db,
         lane: WorkLane,
@@ -8132,7 +8168,7 @@ mod tests {
             risk_level: Risk::Medium,
             approval_state: ApprovalState::NotRequired,
             blocking_reason: None,
-            input_refs: vec!["input://loop".into()],
+            input_refs: vec![loop_body_ref().into()],
             output_refs: Vec::new(),
             proof_requirements: vec!["mission loop tests".into()],
             proof_receipts: Vec::new(),
@@ -8172,6 +8208,17 @@ mod tests {
             .conn()
             .query_row(
                 "SELECT count(*) FROM agent_run WHERE run_id = ?1",
+                [run_id],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    fn agent_run_task(rt: &HubRuntime<ScriptTransport>, run_id: &str) -> String {
+        rt.db()
+            .conn()
+            .query_row(
+                "SELECT task FROM agent_run WHERE run_id = ?1",
                 [run_id],
                 |r| r.get(0),
             )
@@ -8255,6 +8302,55 @@ mod tests {
             .proof_receipts
             .contains(&"friday://agent-run/run-mloop".to_string()));
         assert!(friday_storage::audit::verify_audit_chain(rt.db().conn()).is_ok());
+    }
+
+    #[test]
+    fn mission_bound_loop_uses_bound_body_snapshot_instead_of_fallback_task() {
+        let run_id = "run-mloop-snapshot-task";
+        let snapshot_body = "read the authoritative snapshot body";
+        let (rt, root, _post) = runtime_with(
+            "mloop-snapshot-task",
+            &[
+                "{\"tool\":\"read_file\",\"parameters\":{\"path\":\"notes.md\"}}",
+                "{\"tool\":\"none\"}",
+            ],
+            Box::new(DenyAllApprovals),
+        );
+        std::fs::write(root.join("notes.md"), b"mission-bound note").unwrap();
+        seed_loop_mission(
+            rt.db(),
+            WorkLane::DeepSeek,
+            Some("deepseek"),
+            WorkItemStatus::ReadyToDispatch,
+        );
+        let snapshot = friday_storage::MissionBodySnapshot::new(
+            "owner-1",
+            "mission-loop",
+            "work-loop",
+            loop_body_ref(),
+            "mobile",
+            snapshot_body,
+            1_700_000_000_010,
+        )
+        .unwrap();
+        rt.db().upsert_mission_body_snapshot(&snapshot).unwrap();
+
+        let outcome = rt
+            .run_agent_loop_for_mission(
+                loop_lookup(),
+                "friday-hub-session",
+                run_id,
+                "fallback task from caller",
+                1_000,
+            )
+            .unwrap();
+
+        assert!(matches!(outcome, MissionBoundLoopOutcome::Ran { .. }));
+        assert_eq!(
+            agent_run_task(&rt, run_id),
+            snapshot_body,
+            "mission-bound model work must use the WorkItem-bound intake snapshot body"
+        );
     }
 
     #[test]
