@@ -1,7 +1,7 @@
 /**
  * B1 interop runner BUILD STEP. Bundles the REAL sealed client + the runner into a single
- * `.mjs` that `node` can run without the repo's `#errors` import map. The Rust interop test
- * (and a human re-running it) invokes this first, then spawns `node <out>`.
+ * `.cjs` that `node` can run without a repo build step. The Rust interop test (and a human
+ * re-running it) invokes this first, then spawns `node <out>`.
  *
  * A tiny resolve plugin rewrites relative `.js` specifiers (the TS Node16 ESM convention) to
  * their `.ts` source so esbuild bundles from source — no prior `tsc` build required.
@@ -28,10 +28,37 @@ const tsFromJsPlugin = {
   },
 };
 
-// The repo maps `#errors` to a BUILT `dist/` path; for this source bundle alias it to source
-// so no prior `tsc` build is needed. Only `#errors` is reachable from the sealed client.
+// The repo maps package imports to BUILT `dist/` paths; this interop bundle resolves them to source
+// so no prior `tsc` build is needed.
 const repoRoot = resolvePath(here, "..", "..");
 const errorsSource = resolvePath(repoRoot, "src/errors/index.ts");
+const versionShim = resolvePath(here, "friday-version-shim.ts");
+const versionSource = resolvePath(repoRoot, "src/lib/version.js");
+const packageImportPlugin = {
+  name: "friday-package-imports",
+  setup(b) {
+    b.onResolve({ filter: /^#([^/]+)$/ }, (args) => {
+      return { path: resolvePath(repoRoot, "src", args.path.slice(1), "index.ts") };
+    });
+    b.onResolve({ filter: /^#([^/]+)\/(.+)$/ }, (args) => {
+      const [, pkg, rest] = args.path.match(/^#([^/]+)\/(.+)$/) ?? [];
+      if (!pkg || !rest) return undefined;
+      return { path: resolvePath(repoRoot, "src", pkg, rest, "index.ts") };
+    });
+  },
+};
+const interopShimPlugin = {
+  name: "friday-interop-shims",
+  setup(b) {
+    b.onResolve({ filter: /version\.js$/ }, (args) => {
+      const resolved = resolvePath(args.resolveDir, args.path);
+      if (resolved === versionSource) {
+        return { path: versionShim };
+      }
+      return undefined;
+    });
+  },
+};
 
 await build({
   entryPoints: [entry],
@@ -43,8 +70,16 @@ await build({
   format: "cjs",
   target: "node22",
   alias: { "#errors": errorsSource },
-  // node:* + the two real deps (ws, @noble/ciphers) bundle in; nothing is left external.
-  plugins: [tsFromJsPlugin],
+  // Native DB and browser-control deps are left to the repo's node_modules; they are not part of
+  // the Rust sealed-client protocol this bundle is proving.
+  plugins: [interopShimPlugin, packageImportPlugin, tsFromJsPlugin],
+  external: [
+    "better-sqlite3",
+    "chromium-bidi/*",
+    "playwright",
+    "playwright-core",
+    "playwright-core/*",
+  ],
   logLevel: "info",
 });
 

@@ -111,7 +111,7 @@
       "closes_loop": "The TS agent-run start forwards the run to the Rust hub agent-run seam; the Rust run loop delivers the answer.",
       "coverage": "destination-only",
       "e2e_test": "rust-core/crates/friday-hub/src/runtime.rs::memory_loop_end_to_end_extract_confirm_recall_closes_on_agent_run_ingress",
-      "notes": "CRITICAL FINDING: the destination agent-run loop (run_session_task -> Delivered answer with status 'finished') is proven Rust-side by the mapped test, but NO PR-CI test drives flag-ON TS-routing -> real Rust -> delivered answer. The routed parity harnesses (routed_claude_parity.rs / routed_codex_parity.rs) ARE end-to-end but are #[ignore]'d + live-key-gated, so they never run in PR CI. The flag's own on-ramp is mock-only/live-gated in PR CI."
+      "notes": "CRITICAL FINDING: the destination agent-run loop (run_session_task -> Delivered answer with status 'finished') is proven Rust-side by the mapped test. Manual ignored interop proof `interop_ts_agent_start_route_drives_real_rust_run_and_readback` now drives the real TS `agent.runs.start` HTTP route through the real routeStartRun compose path -> real sealed-client service -> real Rust AgentRunRequest -> real owner-gated Rust answer readback, returning the delivered answer through the route with zero live provider/API-key spend. The routed parity harnesses (routed_claude_parity.rs / routed_codex_parity.rs) ARE end-to-end but are #[ignore]'d + live-key-gated, so they never run in PR CI. Honest remaining gap: this is controlled loopback proof requiring the prebuilt Node interop bundle, not organic/operator traffic and not a non-ignored PR-CI flag-on e2e."
     },
     {
       "flag": "FRIDAY_MISSION_AUTO_DISPATCH",

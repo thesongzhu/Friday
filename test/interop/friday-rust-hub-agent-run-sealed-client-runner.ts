@@ -20,8 +20,11 @@ import { createFridayRustHubAgentRunSealedClient } from "../../src/api/mission-s
 import { createFridayMissionSpineDispatchAdapter } from "../../src/api/mission-spine/friday-mission-spine-dispatch-adapter.js";
 import { createFridayMemorySpineDispatchAdapter } from "../../src/api/mission-spine/friday-memory-spine-dispatch-adapter.js";
 import { createFridayMissionAutoDispatchDriver } from "../../src/api/mission-spine/friday-mission-auto-dispatch-driver.js";
+import { createFridayRustHubAgentRunSealedClientService } from "../../src/api/mission-spine/friday-rust-hub-agent-run-sealed-client-service.js";
+import { createFridayRustHubRunAnswerReadbackService } from "../../src/api/mission-spine/friday-rust-hub-run-answer-readback-service.js";
 import { createFridayMissionSpineRoutes } from "../../src/api/http/routes/friday-mission-spine-routes.js";
 import { createFridayMemorySpineRoutes } from "../../src/api/http/routes/friday-memory-spine-routes.js";
+import { createFridayApiRuntime } from "../../src/api/runtime/friday-api-runtime.js";
 import {
   RUST_ROUTE_CLAUDE_MODEL,
   RUST_ROUTE_CLAUDE_PROVIDER_ID,
@@ -29,13 +32,63 @@ import {
   RUST_ROUTE_CODEX_PROVIDER_ID,
   RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
   RUST_ROUTE_DEEPSEEK_PROVIDER_ID,
+  RUST_ROUTE_READ_TOOL_ALLOWLIST,
 } from "../../src/api/runtime/friday-rust-route-constants.js";
+import { createFridayAgentEventEmitter } from "../../src/agent/runtime/friday-agent-event-emitter.js";
+import { createTestDb } from "../helpers/friday-test-db.helper.js";
 import type { MissionAutoDispatchStartRun } from "../../src/api/mission-spine/friday-mission-auto-dispatch-driver.js";
 
 function arg(name: string): string | undefined {
   const prefix = `--${name}=`;
   const hit = process.argv.find((a) => a.startsWith(prefix));
   return hit ? hit.slice(prefix.length) : undefined;
+}
+
+function makeProviderService() {
+  const now = new Date(0).toISOString();
+  const provider = {
+    id: RUST_ROUTE_DEEPSEEK_PROVIDER_ID,
+    kind: "deepseek" as const,
+    name: "DeepSeek",
+    baseUrl: "https://api.deepseek.com",
+    enabled: true,
+    config: {
+      api: "openai-completions" as const,
+      authMode: "api-key" as const,
+      keySource: { kind: "env-ref" as const, envVar: "DEEPSEEK_API_KEY" },
+      supportedModels: [RUST_ROUTE_DEEPSEEK_FLASH_MODEL],
+      validation: { status: "ok" as const, checkedAt: now },
+    },
+    createdAt: now,
+    updatedAt: now,
+  };
+  return {
+    listProviders: async () => [provider],
+    getProvider: async (providerId: string) => (providerId === provider.id ? provider : null),
+    createProvider: async () => ({}),
+    updateProvider: async () => ({}),
+    deleteProvider: async () => undefined,
+    validateProvider: async () => ({ status: "ok" as const, checkedAt: now }),
+    getRoutingConfig: async () => ({ defaultProviderId: provider.id, fallbackProviderIds: [] }),
+    setRoutingConfig: async (input: unknown) => input,
+    resolveRoute: async () => ({
+      provider,
+      model: RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
+    }),
+    runWithFallback: async () => ({}),
+  };
+}
+
+function makePrincipal(principal: string) {
+  return {
+    principalType: "user",
+    principalId: principal,
+    userId: principal,
+    tokenId: `${principal}-token`,
+    tokenKind: "access",
+    scopes: ["agent.write"],
+    issuedAt: new Date(0).toISOString(),
+  };
 }
 
 async function main(): Promise<void> {
@@ -408,6 +461,97 @@ async function main(): Promise<void> {
       );
       process.exit(0);
       return;
+    }
+
+    if (mode === "agent-route-start-run") {
+      const hubDbPath = arg("hub-db-path") ?? "";
+      const repoRoot = arg("repo-root") ?? process.cwd();
+      if (hubDbPath.length === 0) {
+        process.stdout.write(JSON.stringify({ ok: false, code: "MISSING_HUB_DB_PATH", httpStatus: 0 }) + "\n");
+        process.exit(2);
+        return;
+      }
+      const clientSecret = new Uint8Array(Buffer.from(secretHex, "hex"));
+      const tsDb = createTestDb();
+      try {
+        process.env.FRIDAY_REPO_ROOT = repoRoot;
+        process.env.FRIDAY_MISSION_SPINE_RUST_CORE_ROOT = `${repoRoot}/rust-core`;
+        const runtime = createFridayApiRuntime({
+          db: tsDb,
+          idGenerator: () => runId,
+          nowIso: () => new Date(0).toISOString(),
+          providerService: makeProviderService() as never,
+          agentRuntime: {
+            executeRun: async () => {
+              throw new Error("legacy executeRun must not be reached on agent-route-start-run");
+            },
+            registerTool: () => undefined,
+            resumeStaleRunsOnBoot: () => 0,
+          } as never,
+          agentEventEmitter: createFridayAgentEventEmitter(),
+          tokenSecret: "interop-route-agent-run-token-secret-000000", // pragma: allowlist secret
+          computeChecksum: (content: string) => `checksum-${content.length}`,
+          resolveSkill: () => null,
+          invokeSkill: async () => ({}),
+          routeAgentRunViaRust: true,
+          rustAgentRunWsClient: createFridayRustHubAgentRunSealedClientService({
+            host: "127.0.0.1",
+            port,
+            timeoutMs,
+          }),
+          rustAgentRunAnswerReadback: createFridayRustHubRunAnswerReadbackService({
+            repoRoot,
+            timeoutMs,
+          }),
+          rustAgentRunWsClientSecretResolver: () => clientSecret,
+          rustAgentRunHubDbPath: hubDbPath,
+        });
+        const route = runtime.routes
+          .getRoutes()
+          .find((candidate) => candidate.operationId === "agent.runs.start");
+        if (!route) {
+          process.stdout.write(JSON.stringify({ ok: false, code: "AGENT_RUN_ROUTE_MISSING", httpStatus: 0 }) + "\n");
+          process.exit(6);
+          return;
+        }
+        const routeResponse = await route.handler({
+          requestId: "req-interop-agent-route-start-run",
+          receivedAt: new Date(0).toISOString(),
+          params: {},
+          query: {},
+          headers: {},
+          body: {
+            task,
+            providerId: RUST_ROUTE_DEEPSEEK_PROVIDER_ID,
+            model: RUST_ROUTE_DEEPSEEK_FLASH_MODEL,
+            constraints: { readOnly: true },
+            allowedRustRouteTools: [...RUST_ROUTE_READ_TOOL_ALLOWLIST],
+          },
+          principal: makePrincipal(principal),
+        } as never);
+        const result = routeResponse as {
+          runId?: string;
+          status?: string;
+          response?: string;
+          finalResponse?: string;
+          toolCallCount?: number;
+        };
+        process.stdout.write(
+          JSON.stringify({
+            ok: true,
+            mode,
+            runId: result.runId ?? null,
+            status: result.status ?? null,
+            responseLen: result.response?.length ?? null,
+            finalResponseLen: result.finalResponse?.length ?? null,
+            toolCallCount: result.toolCallCount ?? null,
+          }) + "\n",
+        );
+        process.exit(0);
+        return;
+      } finally {
+        tsDb.close();
+      }
     }
 
     const result = await client.dispatchRun({ runId, task, forwardedPrincipal: principal });
