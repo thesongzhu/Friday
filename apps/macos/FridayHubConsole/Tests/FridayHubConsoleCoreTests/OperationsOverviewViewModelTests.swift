@@ -68,6 +68,8 @@ func snapshotExercisesEveryHonestRenderingRule() {
 
   // Memory candidates never grant authority.
   #expect(snapshot.memoryCandidates.allSatisfy { !$0.grantsMemoryAuthority })
+  #expect(snapshot.runOutcomeLearningCandidates.first?.state == "pending")
+  #expect(snapshot.runOutcomeLearningCandidates.first?.evidenceRef.hasPrefix("proof://") == true)
 }
 
 @Test
@@ -146,6 +148,13 @@ func decodesRustProjectionShapedJSON() throws {
         {"page": 1, "cursor": "start", "nextCursor": "offset:1", "eventRefs": ["e0"]}
       ],
       "memoryCandidates": [],
+      "runOutcomeLearningCandidates": [
+        {"id": "a1:run_x:preference", "runId": "run_x", "workItemId": "wi_x",
+         "kind": "preference", "state": "pending",
+         "summary": "refs-only run outcome: turns=1; executed_tools=0",
+         "evidenceRef": "proof://run-outcome-learning-candidate/1",
+         "turns": 1, "executedTools": 0}
+      ],
       "capabilityStates": [
         {"id": "cap", "label": "Advisor", "kind": "advisor", "truthLabel": "friday_owned",
          "approvalState": "not_required", "dispatchAllowed": false, "summary": "s",
@@ -166,6 +175,7 @@ func decodesRustProjectionShapedJSON() throws {
   #expect(snapshot.missionId == "mission_x")
   #expect(snapshot.statusLabels == [.stale, .offline, .error])
   #expect(snapshot.workItems.first?.state == .providerAck)
+  #expect(snapshot.runOutcomeLearningCandidates.first?.id == "a1:run_x:preference")
   #expect(snapshot.transcriptSections.first?.events.first?.evidenceRefs.timelineRef != nil)
 }
 
@@ -276,16 +286,22 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
     case intakeBlocked
     case memoryConfirmed
     case memoryBlocked
+    case learningConfirmed
+    case learningBlocked
     case throwsTransport
   }
   let behavior: Behavior
   private let lock = NSLock()
   private var _lastIntake: MissionIntakeRequestWire?
   private var _lastDecision: MemoryDecisionRequestWire?
+  private var _lastLearningDecision: RunOutcomeLearningDecisionRequestWire?
   private var _lastMissionContext: MissionWorkItemContextWire?
   private var _lastMissionRunConstraints: AgentRunConstraintsWire?
   var lastIntake: MissionIntakeRequestWire? { lock.withLock { _lastIntake } }
   var lastDecision: MemoryDecisionRequestWire? { lock.withLock { _lastDecision } }
+  var lastLearningDecision: RunOutcomeLearningDecisionRequestWire? {
+    lock.withLock { _lastLearningDecision }
+  }
   var lastMissionContext: MissionWorkItemContextWire? { lock.withLock { _lastMissionContext } }
   var lastMissionRunConstraints: AgentRunConstraintsWire? { lock.withLock { _lastMissionRunConstraints } }
 
@@ -329,6 +345,27 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
         state: request.decision == "confirm" ? "confirmed" : "rejected",
         status: request.decision == "confirm" ? "confirmed" : "rejected",
         recallable: request.decision == "confirm")
+    }
+  }
+
+  func submitRunOutcomeLearningDecision(
+    _ request: RunOutcomeLearningDecisionRequestWire
+  ) async throws -> RunOutcomeLearningDecisionResultWire {
+    lock.withLock { _lastLearningDecision = request }
+    switch behavior {
+    case .throwsTransport:
+      throw FridayWriteClientError.transport("connection refused (write server dark)")
+    case .learningBlocked:
+      return RunOutcomeLearningDecisionResultWire(
+        candidateId: request.candidateId, state: "unknown", status: "blocked",
+        blocker: "unknown_candidate")
+    default:
+      return RunOutcomeLearningDecisionResultWire(
+        candidateId: request.candidateId,
+        runId: "run-a1",
+        kind: "preference",
+        state: request.decision == "confirm" ? "confirmed" : "rejected",
+        status: request.decision == "confirm" ? "confirmed" : "rejected")
     }
   }
 
@@ -491,6 +528,41 @@ func decideMemoryBlockedRendersErrorNotConfirmed() async {
     return
   }
   #expect(reason.contains("unknown_candidate") || reason.contains("blocked"))
+}
+
+@Test
+@MainActor
+func decideRunOutcomeLearningConfirmRendersConfirmedAndWiresCandidate() async {
+  let write = MockMissionSpineWriteClient(behavior: .learningConfirmed)
+  let vm = OperationsOverviewViewModel(client: MockReadClient(behavior: .loaded), writeClient: write)
+  await vm.decideRunOutcomeLearning(candidateId: "a1:run-a1:preference", confirm: true)
+
+  guard case let .confirmed(summary, questions) =
+    vm.runOutcomeLearningDecisionStates["a1:run-a1:preference"] else {
+    Issue.record("expected .confirmed, got \(String(describing: vm.runOutcomeLearningDecisionStates["a1:run-a1:preference"]))")
+    return
+  }
+  #expect(summary.contains("confirmed"))
+  #expect(summary.contains("kind=preference"))
+  #expect(questions.isEmpty)
+  #expect(write.lastLearningDecision?.candidateId == "a1:run-a1:preference")
+  #expect(write.lastLearningDecision?.decision == "confirm")
+}
+
+@Test
+@MainActor
+func decideRunOutcomeLearningBlockedRendersErrorNotConfirmed() async {
+  let write = MockMissionSpineWriteClient(behavior: .learningBlocked)
+  let vm = OperationsOverviewViewModel(client: MockReadClient(behavior: .loaded), writeClient: write)
+  await vm.decideRunOutcomeLearning(candidateId: "a1:missing:preference", confirm: false)
+
+  guard case let .error(reason) =
+    vm.runOutcomeLearningDecisionStates["a1:missing:preference"] else {
+    Issue.record("expected .error, got \(String(describing: vm.runOutcomeLearningDecisionStates["a1:missing:preference"]))")
+    return
+  }
+  #expect(reason.contains("unknown_candidate"))
+  #expect(write.lastLearningDecision?.decision == "reject")
 }
 
 @Test

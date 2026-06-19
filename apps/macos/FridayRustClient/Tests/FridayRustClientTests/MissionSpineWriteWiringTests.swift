@@ -2,7 +2,7 @@ import XCTest
 @testable import FridayRustClient
 
 /// **Tier-2 mission-spine-write wiring tests** — drive `SealedWSWriteClient.submitMissionIntake` +
-/// `submitMemoryDecision` end-to-end over an IN-MEMORY transport that emulates the Rust
+/// `submitMemoryDecision` + `submitRunOutcomeLearningDecision` end-to-end over an IN-MEMORY transport that emulates the Rust
 /// `hub_agent_run_server`'s mission-spine arms: the cleartext preamble (server pubkey + 64-byte
 /// nonce), the SEALED session (the channel auth — NO per-request `auth_proof` for these messages),
 /// and a `MissionIntakeResult` / `MemoryDecisionResult` reply.
@@ -21,6 +21,8 @@ final class MissionSpineWriteWiringTests: XCTestCase {
     case intakeNeedsClarification
     case memoryConfirmed
     case memoryBlocked         // the synthetic-candidate-id reality today
+    case learningConfirmed
+    case learningBlocked
     case serverError           // a typed Error frame
   }
 
@@ -40,6 +42,7 @@ final class MissionSpineWriteWiringTests: XCTestCase {
     private(set) var endedFailClosed = false
     private(set) var receivedIntake: MissionIntakeRequestWire?
     private(set) var receivedDecision: MemoryDecisionRequestWire?
+    private(set) var receivedLearningDecision: RunOutcomeLearningDecisionRequestWire?
     /// Proves the inbound message object carried NO `auth_proof` (sealed session is the channel auth).
     private(set) var sawAuthProof = false
 
@@ -120,6 +123,23 @@ final class MissionSpineWriteWiringTests: XCTestCase {
             state: req.decision == "confirm" ? "confirmed" : "rejected",
             status: req.decision == "confirm" ? "confirmed" : "rejected",
             recallable: req.decision == "confirm"))
+        }
+      case .runOutcomeLearningDecisionRequest(let req):
+        receivedLearningDecision = req
+        switch mode {
+        case .serverError:
+          reply = .error(code: .internal, message: "learning decision failed")
+        case .learningBlocked:
+          reply = .runOutcomeLearningDecisionResult(RunOutcomeLearningDecisionResultWire(
+            candidateId: req.candidateId, state: "unknown", status: "blocked",
+            blocker: "unknown_candidate"))
+        default:
+          reply = .runOutcomeLearningDecisionResult(RunOutcomeLearningDecisionResultWire(
+            candidateId: req.candidateId,
+            runId: "run-a1",
+            kind: "preference",
+            state: req.decision == "confirm" ? "confirmed" : "rejected",
+            status: req.decision == "confirm" ? "confirmed" : "rejected"))
         }
       default:
         throw FridayWriteClientError.transport("unexpected inbound on the spine session: \(env.msgId)")
@@ -235,6 +255,40 @@ final class MissionSpineWriteWiringTests: XCTestCase {
     do {
       _ = try await client.submitMemoryDecision(
         MemoryDecisionRequestWire(memoryId: "mem-1", ownerPrincipal: owner, decision: "reject"))
+      XCTFail("a typed Error frame must throw")
+    } catch let err as FridayWriteClientError {
+      guard case .serverError = err else { return XCTFail("expected serverError, got \(err)") }
+    }
+  }
+
+  // MARK: submitRunOutcomeLearningDecision
+
+  func testSubmitRunOutcomeLearningDecision_confirm_returnsConfirmedNoAuthProof() async throws {
+    let (client, transport) = try makeClient(mode: .learningConfirmed)
+    let result = try await client.submitRunOutcomeLearningDecision(
+      RunOutcomeLearningDecisionRequestWire(candidateId: "a1:run-a1:preference", decision: "confirm"))
+    XCTAssertEqual(result.status, "confirmed")
+    XCTAssertEqual(result.state, "confirmed")
+    XCTAssertEqual(result.runId, "run-a1")
+    XCTAssertEqual(result.kind, "preference")
+    XCTAssertEqual(transport.receivedLearningDecision?.candidateId, "a1:run-a1:preference")
+    XCTAssertEqual(transport.receivedLearningDecision?.decision, "confirm")
+    XCTAssertFalse(transport.sawAuthProof, "the A1 learning-decision request must carry NO auth_proof")
+  }
+
+  func testSubmitRunOutcomeLearningDecision_blocked_isAReturnedReceiptNotAThrow() async throws {
+    let (client, _) = try makeClient(mode: .learningBlocked)
+    let result = try await client.submitRunOutcomeLearningDecision(
+      RunOutcomeLearningDecisionRequestWire(candidateId: "a1:missing:preference", decision: "reject"))
+    XCTAssertEqual(result.status, "blocked")
+    XCTAssertEqual(result.blocker, "unknown_candidate")
+  }
+
+  func testSubmitRunOutcomeLearningDecision_serverError_throwsServerError() async throws {
+    let (client, _) = try makeClient(mode: .serverError)
+    do {
+      _ = try await client.submitRunOutcomeLearningDecision(
+        RunOutcomeLearningDecisionRequestWire(candidateId: "a1:run-a1:preference", decision: "confirm"))
       XCTFail("a typed Error frame must throw")
     } catch let err as FridayWriteClientError {
       guard case .serverError = err else { return XCTFail("expected serverError, got \(err)") }

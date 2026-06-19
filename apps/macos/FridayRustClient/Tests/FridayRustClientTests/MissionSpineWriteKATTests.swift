@@ -2,7 +2,7 @@ import XCTest
 @testable import FridayRustClient
 
 /// **The mission-spine WRITE deliverable — byte-asserted Swift↔Rust parity for the
-/// MissionIntake + MemoryDecision wire shapes (Lane-D entry-point-A).** These prove the Swift
+/// MissionIntake + MemoryDecision + RunOutcomeLearningDecision wire shapes (Lane-D entry-point-A).** These prove the Swift
 /// spine-write structs serialize to the EXACT JSON the Rust agent-run WRITE server
 /// (`bin/hub_agent_run_server.rs`) decodes under `FRIDAY_MISSION_INTAKE=1` / `FRIDAY_MEMORY_CONFIRM=1`.
 ///
@@ -224,5 +224,75 @@ final class MissionSpineWriteKATTests: XCTestCase {
     XCTAssertTrue(json.contains("\"result\":{"))
     XCTAssertTrue(json.contains("\"blocker\":\"unknown_candidate\""))
     XCTAssertTrue(json.contains("\"recallable\":false"))
+  }
+
+  // MARK: MS5 — RunOutcomeLearningDecision wire shape (nested + no auth_proof)
+
+  /// MS5: an A1 run-outcome learning decision rides as
+  /// `{"kind":"RunOutcomeLearningDecisionRequest","request":{…}}` with no per-request auth proof.
+  func testMS5_runOutcomeLearningDecisionRequestNestedShapeConfirm() throws {
+    let req = RunOutcomeLearningDecisionRequestWire(
+      candidateId: "a1:run-a1:preference",
+      decision: "confirm",
+      reason: "operator accepted the refs-only preference candidate")
+    let env = FridayEnvelope(msgId: "a1-dec-req", sentAt: 1000, message: .runOutcomeLearningDecisionRequest(req))
+      .withCorrelation("c1")
+    let json = String(decoding: try env.encodeJSON(), as: UTF8.self)
+
+    XCTAssertTrue(json.contains("\"kind\":\"RunOutcomeLearningDecisionRequest\""))
+    XCTAssertTrue(json.contains("\"request\":{"), "A1 decision must NEST under request, not flatten: \(json)")
+    XCTAssertTrue(json.contains("\"candidate_id\":\"a1:run-a1:preference\""))
+    XCTAssertTrue(json.contains("\"decision\":\"confirm\""))
+
+    let messageObj = try messageObject(json)
+    XCTAssertEqual(Set(messageObj.keys), ["kind", "request"])
+    let request = try XCTUnwrap(messageObj["request"] as? [String: Any])
+    XCTAssertEqual(Set(request.keys), ["candidate_id", "decision", "reason"])
+    XCTAssertNil(request["auth_proof"], "RunOutcomeLearningDecisionRequest carries NO per-request auth_proof")
+
+    XCTAssertEqual(try FridayEnvelope.decodeJSON(Data(json.utf8)).message, .runOutcomeLearningDecisionRequest(req))
+  }
+
+  /// MS5: a nil reason is omitted, matching Rust's optional serde field.
+  func testMS5_runOutcomeLearningDecisionReasonOmittedWhenNil() throws {
+    let req = RunOutcomeLearningDecisionRequestWire(candidateId: "a1:run-a1:preference", decision: "reject")
+    let env = FridayEnvelope(msgId: "a1", sentAt: 1, message: .runOutcomeLearningDecisionRequest(req))
+    let json = String(decoding: try env.encodeJSON(), as: UTF8.self)
+    XCTAssertFalse(json.contains("\"reason\""))
+    XCTAssertEqual(try FridayEnvelope.decodeJSON(Data(json.utf8)).message, .runOutcomeLearningDecisionRequest(req))
+  }
+
+  /// MS6: an A1 `status:"confirmed"` result decodes refs-only candidate/run/kind/state fields.
+  func testMS6_runOutcomeLearningDecisionResultConfirmedDecodes() throws {
+    let json = """
+      {"schema_version":15,"msg_id":"r","sent_at":1,"message":{
+        "kind":"RunOutcomeLearningDecisionResult","result":{
+          "candidate_id":"a1:run-a1:preference","run_id":"run-a1",
+          "kind":"preference","state":"confirmed","status":"confirmed"}}}
+      """
+    let env = try FridayEnvelope.decodeJSON(Data(json.utf8))
+    guard case .runOutcomeLearningDecisionResult(let r) = env.message else {
+      return XCTFail("expected RunOutcomeLearningDecisionResult")
+    }
+    XCTAssertEqual(r.candidateId, "a1:run-a1:preference")
+    XCTAssertEqual(r.runId, "run-a1")
+    XCTAssertEqual(r.kind, "preference")
+    XCTAssertEqual(r.state, "confirmed")
+    XCTAssertEqual(r.status, "confirmed")
+    XCTAssertNil(r.blocker)
+  }
+
+  /// MS6: a blocked A1 decision carries a blocker and stays a returned result, not a success.
+  func testMS6_runOutcomeLearningDecisionResultBlockedCarriesBlocker() throws {
+    let blocked = RunOutcomeLearningDecisionResultWire(
+      candidateId: "a1:missing:preference",
+      state: "unknown",
+      status: "blocked",
+      blocker: "unknown_candidate")
+    let env = FridayEnvelope(msgId: "r", sentAt: 1, message: .runOutcomeLearningDecisionResult(blocked))
+    XCTAssertEqual(try FridayEnvelope.decodeJSON(try env.encodeJSON()).message, .runOutcomeLearningDecisionResult(blocked))
+    let json = String(decoding: try env.encodeJSON(), as: UTF8.self)
+    XCTAssertTrue(json.contains("\"result\":{"))
+    XCTAssertTrue(json.contains("\"blocker\":\"unknown_candidate\""))
   }
 }

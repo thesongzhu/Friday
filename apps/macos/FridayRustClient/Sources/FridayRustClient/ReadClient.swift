@@ -239,6 +239,10 @@ public final class SealedWSReadClient: FridayRustReadClient, @unchecked Sendable
       throw FridayReadClientError.unexpectedResponse(kind: "MemoryDecisionRequest")
     case .memoryDecisionResult:
       throw FridayReadClientError.unexpectedResponse(kind: "MemoryDecisionResult")
+    case .runOutcomeLearningDecisionRequest:
+      throw FridayReadClientError.unexpectedResponse(kind: "RunOutcomeLearningDecisionRequest")
+    case .runOutcomeLearningDecisionResult:
+      throw FridayReadClientError.unexpectedResponse(kind: "RunOutcomeLearningDecisionResult")
     case .unsupported(let kind):
       throw FridayReadClientError.unexpectedResponse(kind: kind)
     }

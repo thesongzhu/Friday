@@ -139,6 +139,19 @@ public struct MockReadClient: FridayRustReadClient {
         evidenceRef: "proof://memory-candidate/0fedcba987654321"
       )
     ]
+    let runOutcomeLearningCandidates: [MissionWorkbenchRunOutcomeLearningCandidate] = [
+      MissionWorkbenchRunOutcomeLearningCandidate(
+        id: "a1:run_probe_done:preference",
+        runId: "run_probe_done",
+        workItemId: "work_probe_done",
+        kind: "preference",
+        state: "pending",
+        summary: "refs-only run outcome: turns=1; executed_tools=0",
+        evidenceRef: "proof://run-outcome-learning-candidate/1122334455667788",
+        turns: 1,
+        executedTools: 0
+      )
+    ]
 
     let providerReceiptRefs = [
       "proof://provider-receipt/3f9a1c2b7e004d18",
@@ -300,6 +313,7 @@ public struct MockReadClient: FridayRustReadClient {
         ),
       ],
       memoryCandidates: memoryCandidates,
+      runOutcomeLearningCandidates: runOutcomeLearningCandidates,
       capabilityStates: capabilityStates,
       transcriptSections: [missionSection, providerSection, channelSection, statusSection]
     )

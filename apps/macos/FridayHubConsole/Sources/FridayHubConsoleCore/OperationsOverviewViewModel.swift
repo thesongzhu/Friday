@@ -84,6 +84,8 @@ public final class OperationsOverviewViewModel: ObservableObject {
   @Published public private(set) var intakeState: WriteActionState = .ready
   /// Per-candidate memory-decision action state, keyed by the candidate's display id.
   @Published public private(set) var memoryDecisionStates: [String: WriteActionState] = [:]
+  /// Per-candidate A1 run-outcome learning decision state, keyed by candidate id.
+  @Published public private(set) var runOutcomeLearningDecisionStates: [String: WriteActionState] = [:]
 
   private let client: FridayRustReadClient
   /// The spine-WRITE collaborator. `nil` ⇒ the write seam is not configured (the drivers render
@@ -231,6 +233,36 @@ public final class OperationsOverviewViewModel: ObservableObject {
       }
     } catch {
       memoryDecisionStates[candidateId] = .error(reason: Self.writeReason(for: error))
+    }
+  }
+
+  /// Submit ONE owner confirm/reject for an A1 run-outcome learning candidate over the sealed WRITE
+  /// seam. This is governance for a refs-only candidate emitted from a real run outcome; `blocked`
+  /// remains an error-shaped truth state, never a fake confirm.
+  public func decideRunOutcomeLearning(candidateId: String, confirm: Bool) async {
+    guard let writeClient else {
+      runOutcomeLearningDecisionStates[candidateId] = .error(reason: "Write seam not configured.")
+      return
+    }
+    runOutcomeLearningDecisionStates[candidateId] = .sent
+    let request = RunOutcomeLearningDecisionRequestWire(
+      candidateId: candidateId,
+      decision: confirm ? "confirm" : "reject")
+    do {
+      let result = try await writeClient.submitRunOutcomeLearningDecision(request)
+      switch result.status {
+      case "confirmed", "rejected":
+        let kind = result.kind ?? "unknown"
+        runOutcomeLearningDecisionStates[candidateId] = .confirmed(
+          summary: "\(result.status) · state=\(result.state) · kind=\(kind)")
+        await refresh()
+      default:
+        let why = result.blocker ?? "blocked"
+        runOutcomeLearningDecisionStates[candidateId] = .error(
+          reason: "Learning decision blocked — \(why)")
+      }
+    } catch {
+      runOutcomeLearningDecisionStates[candidateId] = .error(reason: Self.writeReason(for: error))
     }
   }
 
