@@ -297,6 +297,7 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
   private var _lastLearningDecision: RunOutcomeLearningDecisionRequestWire?
   private var _lastMissionContext: MissionWorkItemContextWire?
   private var _lastMissionRunConstraints: AgentRunConstraintsWire?
+  private var _missionContexts: [MissionWorkItemContextWire] = []
   var lastIntake: MissionIntakeRequestWire? { lock.withLock { _lastIntake } }
   var lastDecision: MemoryDecisionRequestWire? { lock.withLock { _lastDecision } }
   var lastLearningDecision: RunOutcomeLearningDecisionRequestWire? {
@@ -304,6 +305,7 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
   }
   var lastMissionContext: MissionWorkItemContextWire? { lock.withLock { _lastMissionContext } }
   var lastMissionRunConstraints: AgentRunConstraintsWire? { lock.withLock { _lastMissionRunConstraints } }
+  var missionContexts: [MissionWorkItemContextWire] { lock.withLock { _missionContexts } }
 
   init(behavior: Behavior) { self.behavior = behavior }
 
@@ -377,12 +379,56 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMi
     lock.withLock {
       _lastMissionContext = missionContext
       _lastMissionRunConstraints = constraints
+      _missionContexts.append(missionContext)
     }
     if case .throwsTransport = behavior {
       throw FridayWriteClientError.transport("connection refused (write server dark)")
     }
     return .result(AgentRunResultWire(runId: "run-bound-1", status: "completed", turns: 1))
   }
+}
+
+struct StaticWorkbenchReadClient: FridayRustReadClient {
+  let snapshot: FridayHubConsoleCore.WorkbenchSnapshot
+
+  func fetchWorkbench() async throws -> FridayRustClient.WorkbenchSnapshot {
+    let json = try JSONEncoder().encode(snapshot)
+    return try FridayRustClient.WorkbenchSnapshot(projectionJSON: json, generatedAtMs: 0)
+  }
+}
+
+func snapshotWithWorkItems(
+  missionId: String,
+  fridayConversationId: String,
+  workItemIds: [String]
+) -> FridayHubConsoleCore.WorkbenchSnapshot {
+  FridayHubConsoleCore.WorkbenchSnapshot(
+    missionId: missionId,
+    fridayConversationId: fridayConversationId,
+    runtimeFeedStatus: .liveRustHubProjection,
+    statusLabels: [],
+    duplicatePreflight: MissionWorkbenchDuplicatePreflight(
+      status: "none", duplicateMissionId: "", duplicateWorkItemId: ""),
+    routeDecision: MissionWorkbenchRouteDecision(
+      advisorSummary: "Codex first with Claude follow-up.",
+      selectedRoute: "proof://route-decision/test",
+      alternatives: ["combination: Codex first, Claude follow-up"],
+      truthLabel: .fridayOwned),
+    providerReceiptRefs: [],
+    channelReceiptRefs: [],
+    workItems: workItemIds.map {
+      MissionWorkbenchWorkItem(
+        id: $0,
+        title: $0,
+        state: .ready,
+        owner: .fridayOwned,
+        proofRef: nil,
+        done: false)
+    },
+    timelinePages: [],
+    memoryCandidates: [],
+    capabilityStates: [],
+    transcriptSections: [])
 }
 
 @Test
@@ -404,7 +450,7 @@ func submitIntakeReadyRendersConfirmedAndWiresOwnerAdmin001() async {
   // FIX-Q3b: the body owner the view model wired MUST be the configured owner (admin-001).
   #expect(write.lastIntake?.ownerPrincipal == "admin-001")
   #expect(write.lastIntake?.surfaceKind == "desktop")
-  #expect(write.lastIntake?.lane == "deepseek")
+  #expect(write.lastIntake?.lane == "auto")
 }
 
 @Test
@@ -417,7 +463,7 @@ func submitIntakeReadyDispatchesMissionBoundModelTurnWhenRunClientConfigured() a
   await vm.submitIntake(intent: "keep one Mission across every surface")
 
   guard case let .confirmed(summary, _) = vm.intakeState else {
-    Issue.record("expected .confirmed, got \(vm.intakeState)")
+    Issue.record("expected .confirmed, got \(String(describing: vm.intakeState))")
     return
   }
   #expect(summary.contains("run_id=run-bound-1"))
@@ -426,6 +472,32 @@ func submitIntakeReadyDispatchesMissionBoundModelTurnWhenRunClientConfigured() a
     missionId: "mission-desktop-fixed",
     workItemId: "work-desktop-fixed"))
   #expect(write.lastMissionRunConstraints?.readOnly == true)
+  #expect(write.missionContexts.map(\.workItemId) == ["work-desktop-fixed"])
+}
+
+@Test
+@MainActor
+func submitIntakeDispatchesClaudeFollowUpWhenProjectionExposesGeneratedWorkItem() async {
+  let write = MockMissionSpineWriteClient(behavior: .intakeReady)
+  let read = StaticWorkbenchReadClient(
+    snapshot: snapshotWithWorkItems(
+      missionId: "mission-desktop-fixed",
+      fridayConversationId: "fconv_desktop_fixed",
+      workItemIds: ["work-desktop-fixed", "work-desktop-fixed-claude-followup"]))
+  let vm = OperationsOverviewViewModel(
+    client: read, writeClient: write, missionRunClient: write,
+    writeOwnerPrincipal: "admin-001", newId: { "fixed" })
+
+  await vm.submitIntake(intent: "route through Codex first and Claude follow-up")
+
+  guard case let .confirmed(summary, _) = vm.intakeState else {
+    Issue.record("expected .confirmed, got \(vm.intakeState)")
+    return
+  }
+  #expect(summary.contains("follow_up_work_item_id=work-desktop-fixed-claude-followup"))
+  #expect(
+    write.missionContexts.map(\.workItemId)
+      == ["work-desktop-fixed", "work-desktop-fixed-claude-followup"])
 }
 
 @Test

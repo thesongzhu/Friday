@@ -188,6 +188,13 @@ public final class OperationsOverviewViewModel: ObservableObject {
               missionContext: context,
               constraints: AgentRunConstraintsWire(readOnly: true))
             summary += Self.dispatchSummary(for: outcome)
+            if let followUpSummary = try await dispatchClaudeFollowUpIfPresent(
+              sourceWorkItemId: workItemId,
+              intakeResult: result,
+              missionRunClient: missionRunClient)
+            {
+              summary += followUpSummary
+            }
             intakeState = .confirmed(summary: summary, clarificationQuestions: result.clarificationQuestions)
           } catch {
             intakeState = .error(
@@ -201,6 +208,30 @@ public final class OperationsOverviewViewModel: ObservableObject {
     } catch {
       intakeState = .error(reason: Self.writeReason(for: error))
     }
+  }
+
+  private func dispatchClaudeFollowUpIfPresent(
+    sourceWorkItemId: String,
+    intakeResult: MissionIntakeResultWire,
+    missionRunClient: FridayMissionBoundRunWriteClient
+  ) async throws -> String? {
+    let followUpWorkItemId = "\(sourceWorkItemId)-claude-followup"
+    let wire = try await client.fetchWorkbench()
+    let snapshot = try WorkbenchSnapshotAdapter.display(from: wire)
+    guard snapshot.missionId == intakeResult.missionId,
+      snapshot.workItems.contains(where: { $0.id == followUpWorkItemId })
+    else {
+      return nil
+    }
+
+    let outcome = try await missionRunClient.dispatchMissionBoundAgentRun(
+      task: Self.claudeFollowUpTask,
+      missionContext: MissionWorkItemContextWire(
+        fridayConversationId: intakeResult.fridayConversationId,
+        missionId: intakeResult.missionId,
+        workItemId: followUpWorkItemId),
+      constraints: AgentRunConstraintsWire(readOnly: true))
+    return " · follow_up_work_item_id=\(followUpWorkItemId)" + Self.dispatchSummary(for: outcome)
   }
 
   /// Submit ONE owner confirm/reject for a memory candidate over the sealed WRITE seam, keyed by the
@@ -286,7 +317,7 @@ public final class OperationsOverviewViewModel: ObservableObject {
       workItemId: "work-desktop-\(id)",
       title: title,
       intent: intent,
-      lane: "deepseek")
+      lane: "auto")
   }
 
   /// Map a write-client error to an honest unavailable reason (mirrors `reason(for:)`'s tone).
@@ -331,6 +362,11 @@ public final class OperationsOverviewViewModel: ObservableObject {
       return " · run_id=\(paused.runId) · paused_for_approval=\(paused.approvalId)"
     }
   }
+
+  private static let claudeFollowUpTask =
+    "Run the generated Claude follow-up for this Mission. Use the inherited Codex first-leg "
+      + "proof and input refs attached to this WorkItem, keep the run read-only, and summarize "
+      + "the follow-up outcome."
 
   private static func reason(for error: Error) -> String {
     // Mock / preview / adapter vocabulary (503 / offline / projection-unavailable).
