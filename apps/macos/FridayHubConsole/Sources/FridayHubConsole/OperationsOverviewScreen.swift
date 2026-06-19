@@ -4,7 +4,7 @@ import SwiftUI
 /// The center pane: Operations Overview — a READ-ONLY typed projection of hub truth.
 ///
 /// Truth rules enforced here:
-///  - refs only (ledger/result/activity refs shown, never inline bodies),
+///  - projection refs only; answer text appears only via the owner-gated answer-body readback arm,
 ///  - 503 / stale / offline render AS truth (honest unavailable banner/state),
 ///  - the only actions are RefreshStatus and OpenEvidence-class selection,
 ///  - NO mutating action, NO provider-admin exec, NO NO-GO row made executable.
@@ -148,7 +148,7 @@ struct OperationsOverviewScreen: View {
             || intentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
       }
       WriteActionStateView(state: viewModel.intakeState, pendingText: "Submitting intake…")
-      Text("Births a Mission + WorkItem(Draft) through the Rust spine — no model call.")
+      Text("Births a Mission + WorkItem(Draft), then dispatches the governed model run when configured.")
         .font(.system(size: 10))
         .foregroundStyle(HubTheme.textSecondary)
     }
@@ -396,7 +396,7 @@ struct WriteActionStateView: View {
           .font(.system(size: 11))
           .foregroundStyle(HubTheme.textSecondary)
       }
-    case let .confirmed(summary, clarificationQuestions):
+    case let .confirmed(summary, clarificationQuestions, answerBody):
       VStack(alignment: .leading, spacing: 4) {
         HStack(spacing: 8) {
           StatusChip(
@@ -412,6 +412,16 @@ struct WriteActionStateView: View {
           Text("• \(question)")
             .font(.system(size: 11))
             .foregroundStyle(HubTheme.textPrimary)
+        }
+        if let answerBody,
+          !answerBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+          Text(answerBody)
+            .font(.system(size: 12))
+            .foregroundStyle(HubTheme.textPrimary)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.top, 2)
         }
       }
     case let .error(reason):
