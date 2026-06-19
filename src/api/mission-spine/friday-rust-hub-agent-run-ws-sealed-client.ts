@@ -631,9 +631,31 @@ export function missionSpineUnavailableFromRustErrorEnvelope(
 ): FridayDomainError {
   const code = asString(fields.code) ?? "unknown";
   const message = asString(fields.message) ?? "unknown";
-  return unavailable(`Sealed mission-spine client (${leg}) received a Rust Error envelope.`, {
+  const details = {
     leg,
     rustError: { code, message },
+  };
+  if (
+    leg === "mission-intake" &&
+    message === "mission intake owner_principal does not match the authenticated owner"
+  ) {
+    return new FridayDomainError(
+      "MISSION_SPINE_OWNER_PRINCIPAL_MISMATCH",
+      "Mission intake owner_principal does not match the authenticated owner.",
+      {
+        httpStatus: 403,
+        details: {
+          surface: "service:rust_hub_agent_run_sealed_ws_client",
+          bridge: "rust_wired",
+          proofOnly: true,
+          proofReady: false,
+          ...details,
+        },
+      },
+    );
+  }
+  return unavailable(`Sealed mission-spine client (${leg}) received a Rust Error envelope.`, {
+    ...details,
   });
 }
 
