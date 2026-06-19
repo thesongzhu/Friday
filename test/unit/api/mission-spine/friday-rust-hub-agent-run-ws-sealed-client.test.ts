@@ -216,6 +216,30 @@ describe("friday-rust-hub-agent-run-ws-sealed-client mission-spine typed errors"
       },
     });
   });
+
+  it("maps mission-intake owner mismatch to a typed 403 without dropping Rust diagnostics", () => {
+    const err = missionSpineUnavailableFromRustErrorEnvelope("mission-intake", {
+      kind: "Error",
+      code: "Internal",
+      message: "mission intake owner_principal does not match the authenticated owner",
+    });
+
+    expect(err).toBeInstanceOf(FridayDomainError);
+    expect(err.code).toBe("MISSION_SPINE_OWNER_PRINCIPAL_MISMATCH");
+    expect(err.httpStatus).toBe(403);
+    expect(err.message).toContain("owner_principal");
+    expect(err.details).toMatchObject({
+      surface: "service:rust_hub_agent_run_sealed_ws_client",
+      bridge: "rust_wired",
+      proofOnly: true,
+      proofReady: false,
+      leg: "mission-intake",
+      rustError: {
+        code: "Internal",
+        message: "mission intake owner_principal does not match the authenticated owner",
+      },
+    });
+  });
 });
 
 // (A3 courier) The pause/resume PRODUCT TRANSPORT — DARK, gated DEFAULT-OFF behind the courier's
