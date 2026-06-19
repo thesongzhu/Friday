@@ -269,7 +269,7 @@ func realClientFactoryBuildsAgainstLoopbackConfig() {
 /// An in-memory `FridayMissionSpineWriteClient` for view-model tests. Returns a programmed
 /// intake/decision outcome, OR throws to exercise the honest-unavailable path. Captures the last
 /// request so a test can assert the owner_principal / decision the view model wired.
-final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, @unchecked Sendable {
+final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, FridayMissionBoundRunWriteClient, @unchecked Sendable {
   enum Behavior: Sendable {
     case intakeReady
     case intakeNeedsClarification
@@ -282,8 +282,12 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, @uncheck
   private let lock = NSLock()
   private var _lastIntake: MissionIntakeRequestWire?
   private var _lastDecision: MemoryDecisionRequestWire?
+  private var _lastMissionContext: MissionWorkItemContextWire?
+  private var _lastMissionRunConstraints: AgentRunConstraintsWire?
   var lastIntake: MissionIntakeRequestWire? { lock.withLock { _lastIntake } }
   var lastDecision: MemoryDecisionRequestWire? { lock.withLock { _lastDecision } }
+  var lastMissionContext: MissionWorkItemContextWire? { lock.withLock { _lastMissionContext } }
+  var lastMissionRunConstraints: AgentRunConstraintsWire? { lock.withLock { _lastMissionRunConstraints } }
 
   init(behavior: Behavior) { self.behavior = behavior }
 
@@ -327,6 +331,21 @@ final class MockMissionSpineWriteClient: FridayMissionSpineWriteClient, @uncheck
         recallable: request.decision == "confirm")
     }
   }
+
+  func dispatchMissionBoundAgentRun(
+    task: String,
+    missionContext: MissionWorkItemContextWire,
+    constraints: AgentRunConstraintsWire?
+  ) async throws -> AgentRunDispatchOutcome {
+    lock.withLock {
+      _lastMissionContext = missionContext
+      _lastMissionRunConstraints = constraints
+    }
+    if case .throwsTransport = behavior {
+      throw FridayWriteClientError.transport("connection refused (write server dark)")
+    }
+    return .result(AgentRunResultWire(runId: "run-bound-1", status: "completed", turns: 1))
+  }
 }
 
 @Test
@@ -349,6 +368,27 @@ func submitIntakeReadyRendersConfirmedAndWiresOwnerAdmin001() async {
   #expect(write.lastIntake?.ownerPrincipal == "admin-001")
   #expect(write.lastIntake?.surfaceKind == "desktop")
   #expect(write.lastIntake?.lane == "deepseek")
+}
+
+@Test
+@MainActor
+func submitIntakeReadyDispatchesMissionBoundModelTurnWhenRunClientConfigured() async {
+  let write = MockMissionSpineWriteClient(behavior: .intakeReady)
+  let vm = OperationsOverviewViewModel(
+    client: MockReadClient(behavior: .loaded), writeClient: write, missionRunClient: write,
+    writeOwnerPrincipal: "admin-001", newId: { "fixed" })
+  await vm.submitIntake(intent: "keep one Mission across every surface")
+
+  guard case let .confirmed(summary, _) = vm.intakeState else {
+    Issue.record("expected .confirmed, got \(vm.intakeState)")
+    return
+  }
+  #expect(summary.contains("run_id=run-bound-1"))
+  #expect(write.lastMissionContext == MissionWorkItemContextWire(
+    fridayConversationId: "fconv_desktop_fixed",
+    missionId: "mission-desktop-fixed",
+    workItemId: "work-desktop-fixed"))
+  #expect(write.lastMissionRunConstraints?.readOnly == true)
 }
 
 @Test

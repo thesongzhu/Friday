@@ -1,6 +1,9 @@
 import Foundation
 import FridayRustClient
 
+public typealias FridayMissionSpineDispatchingWriteClient =
+  FridayMissionSpineWriteClient & FridayMissionBoundRunWriteClient
+
 // MARK: - Real mission-spine WRITE-client factory (Lane-D entry-point-A organic driver)
 //
 // Builds the REAL `SealedWSWriteClient` (the package's sealed-WS write client) configured for the
@@ -33,11 +36,19 @@ public struct AgentRunWriteServerConfig: Sendable, Equatable {
   public let port: UInt16
   /// Connect / preamble timeout. Past this, a dark server surfaces as honest unavailable.
   public let connectTimeout: TimeInterval
+  /// Agent-run result timeout. Long enough for real model turns while connect failure remains fast.
+  public let receiveTimeout: TimeInterval
 
-  public init(host: String = "127.0.0.1", port: UInt16, connectTimeout: TimeInterval = 4) {
+  public init(
+    host: String = "127.0.0.1",
+    port: UInt16,
+    connectTimeout: TimeInterval = 4,
+    receiveTimeout: TimeInterval = 300
+  ) {
     self.host = host
     self.port = port
     self.connectTimeout = connectTimeout
+    self.receiveTimeout = receiveTimeout
   }
 
   /// The LIVE agent-run WRITE seam: the loopback host:port the agent-run WRITE LaunchAgent
@@ -51,7 +62,8 @@ public struct AgentRunWriteServerConfig: Sendable, Equatable {
 
   /// Map to the read client's transport config (the transport class is shared + port-parameterized).
   var transportConfig: ReadProjectionServerConfig {
-    ReadProjectionServerConfig(host: host, port: port, connectTimeout: connectTimeout)
+    ReadProjectionServerConfig(
+      host: host, port: port, connectTimeout: connectTimeout, receiveTimeout: receiveTimeout)
   }
 }
 
@@ -71,7 +83,7 @@ public enum RealWriteClientFactory {
     config: AgentRunWriteServerConfig,
     keypair: FridayCrypto.DeviceKeypair = FridayCrypto.DeviceKeypair(),
     forwardedPrincipal: String
-  ) -> FridayMissionSpineWriteClient {
+  ) -> FridayMissionSpineDispatchingWriteClient {
     let transportConfig = config.transportConfig
     return SealedWSWriteClient(
       keypair: keypair,
@@ -91,7 +103,7 @@ public enum RealWriteClientFactory {
   public static func makeLiveWrite(
     config: AgentRunWriteServerConfig = .liveLoopback,
     forwardedPrincipal: String = liveReadProjectionOwnerPrincipal
-  ) throws -> FridayMissionSpineWriteClient {
+  ) throws -> FridayMissionSpineDispatchingWriteClient {
     let keypair = try MasterKeyPeer.deriveKeypair()
     return make(config: config, keypair: keypair, forwardedPrincipal: forwardedPrincipal)
   }
@@ -100,19 +112,26 @@ public enum RealWriteClientFactory {
   /// Used by the app when LIVE mode is requested but the master key is unavailable: the compose /
   /// confirm controls must render the truth, NOT a fabricated success (mirrors the read side's
   /// `makeHonestlyUnavailable`).
-  public static func makeHonestlyUnavailableWrite(reason: String) -> FridayMissionSpineWriteClient {
+  public static func makeHonestlyUnavailableWrite(reason: String) -> FridayMissionSpineDispatchingWriteClient {
     HonestlyUnavailableWriteClient(reason: reason)
   }
 }
 
 /// A `FridayMissionSpineWriteClient` that always throws — so the view model renders honest
 /// "unavailable". Never returns a result; it cannot fabricate a confirm.
-struct HonestlyUnavailableWriteClient: FridayMissionSpineWriteClient {
+struct HonestlyUnavailableWriteClient: FridayMissionSpineWriteClient, FridayMissionBoundRunWriteClient {
   let reason: String
   func submitMissionIntake(_ request: MissionIntakeRequestWire) async throws -> MissionIntakeResultWire {
     throw FridayWriteClientError.transport("live write client unavailable: \(reason)")
   }
   func submitMemoryDecision(_ request: MemoryDecisionRequestWire) async throws -> MemoryDecisionResultWire {
+    throw FridayWriteClientError.transport("live write client unavailable: \(reason)")
+  }
+  func dispatchMissionBoundAgentRun(
+    task: String,
+    missionContext: MissionWorkItemContextWire,
+    constraints: AgentRunConstraintsWire?
+  ) async throws -> AgentRunDispatchOutcome {
     throw FridayWriteClientError.transport("live write client unavailable: \(reason)")
   }
 }

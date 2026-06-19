@@ -8,13 +8,16 @@ import Testing
 //
 // Drives the real Console product write path (`RealWriteClientFactory.makeLiveWrite`) against the
 // live agent-run WRITE server on 127.0.0.1:48750 as the enrolled master-derived peer. This sends a
-// single Mission intake and expects a refs-only server receipt.
+// single Mission intake and expects a refs-only server receipt. A stricter opt-in test also
+// dispatches the returned Mission/WorkItem handle as a read-only mission-bound model turn.
 //
-// HONEST CEILING: this is an agent-driven live product-surface write proof. It is not OG9 organic
-// origin, not a provider/model turn, not a completed_with_proof claim, and not A1 live-done.
+// HONEST CEILING: these are agent-driven live product-surface proofs. They are not OG9 organic
+// origin and not A1 live-done.
 
 private let liveMissionSpineWriteDispatchEnabled =
   ProcessInfo.processInfo.environment["FRIDAY_CONSOLE_LIVE_WRITE_DISPATCH_TEST"] == "1"
+private let liveMissionBoundRunEnabled =
+  ProcessInfo.processInfo.environment["FRIDAY_CONSOLE_LIVE_MISSION_BOUND_RUN_TEST"] == "1"
 
 @Test(.enabled(if: liveMissionSpineWriteDispatchEnabled))
 func liveConsoleMissionSpineWriteDispatchReturnsReadyReceipt() async throws {
@@ -35,7 +38,47 @@ func liveConsoleMissionSpineWriteDispatchReturnsReadyReceipt() async throws {
   #expect(result.surfaceThreadId == request.surfaceThreadId)
 }
 
-private func makeLiveIntake(surface: String, route: String) -> MissionIntakeRequestWire {
+@Test(.enabled(if: liveMissionBoundRunEnabled))
+func liveConsoleMissionSpineWriteDispatchCanStartMissionBoundRun() async throws {
+  let client = try RealWriteClientFactory.makeLiveWrite()
+  let request = makeLiveIntake(
+    surface: "desktop",
+    route: "desktop://hub-console/live-bound-run",
+    title: "Verify live desktop auto-route mission-bound Codex run",
+    intent: "Fix a small Rust compile failure in a workspace and describe the focused regression test that should be added.",
+    lane: "auto",
+    targetProviderOrAgent: nil)
+
+  let result = try await client.submitMissionIntake(request)
+  #expect(result.status == "ready")
+  #expect(result.workItemId == request.workItemId)
+
+  let outcome = try await client.dispatchMissionBoundAgentRun(
+    task: request.intent,
+    missionContext: MissionWorkItemContextWire(
+      fridayConversationId: result.fridayConversationId,
+      missionId: result.missionId,
+      workItemId: try #require(result.workItemId)),
+    constraints: AgentRunConstraintsWire(readOnly: true))
+
+  guard case .result(let receipt) = outcome else {
+    Issue.record("expected mission-bound read-only run to settle with a result")
+    return
+  }
+  print(
+    "[live-write-dispatch][desktop-bound] runId=\(receipt.runId) "
+      + "status=\(receipt.status) turns=\(receipt.turns ?? 0)")
+  #expect(receipt.status == "completed" || receipt.status == "finished" || receipt.status == "ok")
+}
+
+private func makeLiveIntake(
+  surface: String,
+  route: String,
+  title: String? = nil,
+  intent: String? = nil,
+  lane: String = "deepseek",
+  targetProviderOrAgent: String? = "deepseek"
+) -> MissionIntakeRequestWire {
   let id = UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "")
   return MissionIntakeRequestWire(
     fridayConversationId: "fconv_\(surface)_live_write_\(id)",
@@ -46,10 +89,10 @@ private func makeLiveIntake(surface: String, route: String) -> MissionIntakeRequ
     visibilityPolicy: "compact",
     missionId: "mission-\(surface)-live-write-\(id)",
     workItemId: "work-\(surface)-live-write-\(id)",
-    title: "Verify live \(surface) mission-spine write receipt",
-    intent: "create a workflow that triggers every morning at 9am, reads the Friday live "
+    title: title ?? "Verify live \(surface) mission-spine write receipt",
+    intent: intent ?? "create a workflow that triggers every morning at 9am, reads the Friday live "
       + "\(surface) write receipt, and posts a refs-only status summary to the operator console "
       + "as its output destination",
-    lane: "deepseek",
-    targetProviderOrAgent: "deepseek")
+    lane: lane,
+    targetProviderOrAgent: targetProviderOrAgent)
 }

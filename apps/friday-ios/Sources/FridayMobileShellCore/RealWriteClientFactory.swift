@@ -39,11 +39,19 @@ public struct AgentRunServerConfig: Sendable, Equatable {
   public let port: UInt16
   /// Connect / preamble timeout. Past this, a dark server surfaces as honest unavailable.
   public let connectTimeout: TimeInterval
+  /// Agent-run result timeout. Long enough for real model turns while connect failure remains fast.
+  public let receiveTimeout: TimeInterval
 
-  public init(host: String = "127.0.0.1", port: UInt16, connectTimeout: TimeInterval = 4) {
+  public init(
+    host: String = "127.0.0.1",
+    port: UInt16,
+    connectTimeout: TimeInterval = 4,
+    receiveTimeout: TimeInterval = 300
+  ) {
     self.host = host
     self.port = port
     self.connectTimeout = connectTimeout
+    self.receiveTimeout = receiveTimeout
   }
 
   /// The LIVE write seam: the loopback host:port the agent-run WRITE LaunchAgent
@@ -62,6 +70,11 @@ public struct AgentRunServerConfig: Sendable, Equatable {
 /// (A handshake-only probe never asserts the principal — owner-auth is exercised only by a
 /// dispatch, which the live-write transport proof deliberately does NOT send.)
 public let liveAgentRunOwnerPrincipal = "admin-001"
+
+/// Mobile live WRITE client with both the legacy chat dispatch API and the first-class
+/// mission-bound dispatch API. The concrete implementation is still the shared `SealedWSWriteClient`.
+public typealias FridayMobileMissionDispatchingWriteClient =
+  FridayRustWriteClient & FridayMissionSpineWriteClient & FridayMissionBoundRunWriteClient
 
 /// Builds the REAL `SealedWSWriteClient` for the agent-run WRITE server.
 public enum RealWriteClientFactory {
@@ -84,14 +97,17 @@ public enum RealWriteClientFactory {
     forwardedPrincipal: String,
     sessionId: String? = nil,
     agentRunControlViaRust: Bool = false
-  ) -> FridayRustWriteClient {
+  ) -> FridayMobileMissionDispatchingWriteClient {
     SealedWSWriteClient(
       keypair: keypair,
       forwardedPrincipal: forwardedPrincipal,
       sessionId: sessionId,
       agentRunControlViaRust: agentRunControlViaRust,
       makeTransport: { try LoopbackSealedWSTransport(config: ReadProjectionServerConfig(
-        host: config.host, port: config.port, connectTimeout: config.connectTimeout)) }
+        host: config.host,
+        port: config.port,
+        connectTimeout: config.connectTimeout,
+        receiveTimeout: config.receiveTimeout)) }
     )
   }
 
@@ -116,7 +132,7 @@ public enum RealWriteClientFactory {
     forwardedPrincipal: String = liveAgentRunOwnerPrincipal,
     sessionId: String? = nil,
     agentRunControlViaRust: Bool = false
-  ) throws -> FridayRustWriteClient {
+  ) throws -> FridayMobileMissionDispatchingWriteClient {
     let keypair = try MasterKeyPeer.deriveKeypair()
     return make(
       config: config,

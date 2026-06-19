@@ -29,11 +29,20 @@ public struct ReadProjectionServerConfig: Sendable, Equatable {
   public let port: UInt16
   /// Connect / preamble timeout. Past this, a dark server surfaces as honest unavailable.
   public let connectTimeout: TimeInterval
+  /// Response-frame timeout. Defaults to `connectTimeout`; write clients can extend this for
+  /// real model-turn agent runs without making dark-server connects hang.
+  public let receiveTimeout: TimeInterval
 
-  public init(host: String = "127.0.0.1", port: UInt16, connectTimeout: TimeInterval = 4) {
+  public init(
+    host: String = "127.0.0.1",
+    port: UInt16,
+    connectTimeout: TimeInterval = 4,
+    receiveTimeout: TimeInterval? = nil
+  ) {
     self.host = host
     self.port = port
     self.connectTimeout = connectTimeout
+    self.receiveTimeout = receiveTimeout ?? connectTimeout
   }
 
   /// A PLACEHOLDER loopback config for pre-slice-6.
@@ -150,7 +159,8 @@ struct HonestlyUnavailableReadClient: FridayRustReadClient {
 /// honest unavailable. Never fake-ready.
 final class LoopbackSealedWSTransport: SealedWSTransport {
   private let connection: NWConnection
-  private let timeout: TimeInterval
+  private let connectTimeout: TimeInterval
+  private let receiveTimeout: TimeInterval
   private let host: String
   private let port: UInt16
   private var started = false
@@ -164,7 +174,8 @@ final class LoopbackSealedWSTransport: SealedWSTransport {
     guard let port = NWEndpoint.Port(rawValue: config.port) else {
       throw FridayReadClientError.transport("invalid read-projection port \(config.port)")
     }
-    self.timeout = config.connectTimeout
+    self.connectTimeout = config.connectTimeout
+    self.receiveTimeout = config.receiveTimeout
     self.host = config.host
     self.port = config.port
     self.connection = NWConnection(
@@ -201,9 +212,9 @@ final class LoopbackSealedWSTransport: SealedWSTransport {
       }
     }
     connection.start(queue: .global())
-    if semaphore.wait(timeout: .now() + timeout) == .timedOut {
+    if semaphore.wait(timeout: .now() + connectTimeout) == .timedOut {
       connection.cancel()
-      throw FridayReadClientError.transport("connect timed out after \(timeout)s (server dark?)")
+      throw FridayReadClientError.transport("connect timed out after \(connectTimeout)s (server dark?)")
     }
     if let error = outcome.take() { throw error }
   }
@@ -433,7 +444,7 @@ final class LoopbackSealedWSTransport: SealedWSTransport {
         if let error { outcome.set(FridayReadClientError.transport("send failed: \(error)")) }
         semaphore.signal()
       })
-    if semaphore.wait(timeout: .now() + timeout) == .timedOut {
+    if semaphore.wait(timeout: .now() + connectTimeout) == .timedOut {
       throw FridayReadClientError.transport("send timed out (server dark?)")
     }
     if let error = outcome.take() { throw error }
@@ -454,8 +465,8 @@ final class LoopbackSealedWSTransport: SealedWSTransport {
       }
       semaphore.signal()
     }
-    if semaphore.wait(timeout: .now() + timeout) == .timedOut {
-      throw FridayReadClientError.transport("receive timed out (server dark?)")
+    if semaphore.wait(timeout: .now() + receiveTimeout) == .timedOut {
+      throw FridayReadClientError.transport("receive timed out after \(receiveTimeout)s")
     }
     if let error = outcome.take() { throw error }
     return dataBox.take()

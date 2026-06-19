@@ -89,6 +89,9 @@ public final class OperationsOverviewViewModel: ObservableObject {
   /// The spine-WRITE collaborator. `nil` ⇒ the write seam is not configured (the drivers render
   /// honest-unavailable). Separate from `client` so the read contract stays a pure read.
   private let writeClient: FridayMissionSpineWriteClient?
+  /// Optional model-turn bridge. When present, a ready MissionIntake receipt immediately dispatches
+  /// a read-only mission-bound run using the server-produced Mission handle.
+  private let missionRunClient: FridayMissionBoundRunWriteClient?
   /// The owner principal the WRITE body self-supplies — MUST equal the server's `--owner`
   /// (`admin-001`); the server fail-closes a mismatch (FIX-Q3b). Wired from config, not UI input.
   private let writeOwnerPrincipal: String
@@ -99,11 +102,13 @@ public final class OperationsOverviewViewModel: ObservableObject {
   public init(
     client: FridayRustReadClient,
     writeClient: FridayMissionSpineWriteClient? = nil,
+    missionRunClient: FridayMissionBoundRunWriteClient? = nil,
     writeOwnerPrincipal: String = liveReadProjectionOwnerPrincipal,
     newId: @escaping @Sendable () -> String = { UUID().uuidString }
   ) {
     self.client = client
     self.writeClient = writeClient
+    self.missionRunClient = missionRunClient
     self.writeOwnerPrincipal = writeOwnerPrincipal
     self.newId = newId
   }
@@ -135,7 +140,8 @@ public final class OperationsOverviewViewModel: ObservableObject {
   // MARK: - Spine-WRITE drivers (Lane-D entry-point-A organic loop)
 
   /// Submit ONE operator-typed Mission intake over the sealed WRITE seam. Births a Mission +
-  /// WorkItem(Draft) server-side (NO model call); renders the refs-only receipt honestly:
+  /// WorkItem(Draft) server-side, then dispatches a mission-bound read-only model run when the
+  /// model-turn bridge is configured; renders the refs-only receipt honestly:
   ///  - `ready`               ⇒ `.confirmed` (status + mission/work-item ids),
   ///  - `needs_clarification` ⇒ `.confirmed` carrying the questions (rendered as a clarification ask),
   ///  - `blocked`             ⇒ `.error` (the blockers),
@@ -169,7 +175,25 @@ public final class OperationsOverviewViewModel: ObservableObject {
         // ready / created_or_ready
         var summary = "Mission intake \(result.status) · mission_id=\(result.missionId)"
         if let workItemId = result.workItemId { summary += " · work_item_id=\(workItemId)" }
-        intakeState = .confirmed(summary: summary, clarificationQuestions: result.clarificationQuestions)
+        if let workItemId = result.workItemId, let missionRunClient {
+          let context = MissionWorkItemContextWire(
+            fridayConversationId: result.fridayConversationId,
+            missionId: result.missionId,
+            workItemId: workItemId)
+          do {
+            let outcome = try await missionRunClient.dispatchMissionBoundAgentRun(
+              task: trimmed,
+              missionContext: context,
+              constraints: AgentRunConstraintsWire(readOnly: true))
+            summary += Self.dispatchSummary(for: outcome)
+            intakeState = .confirmed(summary: summary, clarificationQuestions: result.clarificationQuestions)
+          } catch {
+            intakeState = .error(
+              reason: "Mission intake ready, but model dispatch failed — \(Self.writeReason(for: error))")
+          }
+        } else {
+          intakeState = .confirmed(summary: summary, clarificationQuestions: result.clarificationQuestions)
+        }
         await refresh()
       }
     } catch {
@@ -265,6 +289,15 @@ public final class OperationsOverviewViewModel: ObservableObject {
       }
     }
     return "Write seam unavailable — \(error)"
+  }
+
+  static func dispatchSummary(for outcome: AgentRunDispatchOutcome) -> String {
+    switch outcome {
+    case .result(let result):
+      return " · run_id=\(result.runId) · run_status=\(result.status)"
+    case .paused(let paused):
+      return " · run_id=\(paused.runId) · paused_for_approval=\(paused.approvalId)"
+    }
   }
 
   private static func reason(for error: Error) -> String {

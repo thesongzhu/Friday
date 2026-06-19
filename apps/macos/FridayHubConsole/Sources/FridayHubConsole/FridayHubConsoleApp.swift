@@ -47,7 +47,10 @@ struct FridayHubConsoleApp: App {
 
   var body: some Scene {
     WindowGroup("Friday Hub Console") {
-      HubConsoleShell(client: Self.readClient, writeClient: Self.writeClient)
+      HubConsoleShell(
+        client: Self.readClient,
+        writeClient: Self.writeClient,
+        missionRunClient: Self.writeClient)
     }
     .windowStyle(.titleBar)
     .defaultSize(width: 1180, height: 720)
@@ -86,7 +89,7 @@ struct FridayHubConsoleApp: App {
   /// honest-unavailable rather than pretending to write against mock read data. The actual connect
   /// happens only when the operator submits an intake / decides a memory candidate (non-blocking
   /// at launch).
-  static var writeClient: FridayMissionSpineWriteClient? {
+  static var writeClient: FridayMissionSpineDispatchingWriteClient? {
     if useMock { return nil }
     do {
       return try RealWriteClientFactory.makeLiveWrite()
