@@ -6,7 +6,8 @@
 #   Mints an admin-001 bearer from your local passphrase (POST /v1/auth/login),
 #   then submits ONE qualifying read-only agent run (POST /v1/agent/runs) that
 #   routes TS hub :3141 -> sealed WS -> Rust hub :48750 -> a REAL DeepSeek
-#   chat() call (api.deepseek.com). It asks the model to reply "PONG".
+#   chat() call (api.deepseek.com). It asks the model to finish with "PONG"
+#   using the Rust loop's required one-JSON-object reply contract.
 #
 #   The REAL acceptance signal is a new row in the Rust hub DB `token_ledger`
 #   (provider_kind='deepseek', fallback=0, total_tokens>0) written by the Rust
@@ -45,7 +46,7 @@ readonly DEEPSEEK_PROVIDER_ID="fa15f1fe-a0b6-4f79-96c3-4ae8e1be28a4"
 readonly DEEPSEEK_MODEL="deepseek-v4-flash"
 readonly RUST_HUB_DB="/Users/jarvis/Library/Application Support/Friday/state/rust-hub.sqlite"
 # The exact 4-tool read-only allowlist the qualifier predicate requires (clause 4).
-readonly PONG_TASK="Reply with exactly the word PONG and nothing else."
+readonly PONG_TASK="Reply with exactly one JSON object and nothing else: {\"tool\":\"none\",\"answer\":\"PONG\"}"
 
 # Prefer a sqlite3 on PATH; fall back to the Android platform-tools one present
 # on this box. Read-only immutable opens only.
@@ -297,9 +298,8 @@ fi
 if [ "${AFTER}" -gt "${BEFORE}" ] && [ -n "${RUN_LEDGER_ROW}" ]; then
   echo
   echo "PARTIAL — a REAL DeepSeek call was BILLED (ledger ${BEFORE}->${AFTER}, tokens>0) but the answer was NOT delivered (HTTP ${RUN_CODE})."
-  echo "   The model ran + billed; the answer-return leg failed. leg-B (readback SQLITE_BUSY) +"
-  echo "   the init_failed crash-loop are fixed by this deploy, but a dropped/late body frame (leg-A) still 503'd."
-  echo "   => NOT reliable end-to-end yet. Next slice = the deferred leg-A (body-frame) decouple."
+  echo "   The model ran + billed, but the Rust route did not surface a deliverable answer."
+  echo "   Common causes: parse_error from a non-JSON model reply, clarification hold, or a true answer-return leg failure."
   echo "   Inspect the {run_id, leg, code} log for run ${RUN_ID:-<none>}.  errorCode=${RUN_ERRCODE:-<none>} classification=${RUN_CLASS:-<none>}"
   exit 2
 fi
