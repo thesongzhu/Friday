@@ -15,9 +15,19 @@
  * re-stub the full dep tree.
  */
 
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-import { createFridaySkillLifecycleService, type FridaySkillRegistry } from "#skills";
+import {
+  createFridayManagedSkillsCatalogBackend,
+  createFridaySkillLifecycleService,
+  type CreateFridaySkillLifecycleServiceDeps,
+  type FridaySkillRegistry,
+} from "#skills";
 
 function makeStubRegistry(): FridaySkillRegistry {
   return {
@@ -34,7 +44,9 @@ function makeStubRegistry(): FridaySkillRegistry {
   } as unknown as FridaySkillRegistry;
 }
 
-function makeMinimalDeps() {
+function makeMinimalDeps(
+  overrides: Partial<CreateFridaySkillLifecycleServiceDeps> = {},
+): CreateFridaySkillLifecycleServiceDeps {
   // Database stub: returns null/empty for every read; no writes expected in
   // listCatalog or getSkill(unknown).
   const db = {
@@ -56,6 +68,7 @@ function makeMinimalDeps() {
     skillRepo: {
       getSkillById: vi.fn(() => null),
       listSkills: vi.fn(() => []),
+      listAll: vi.fn(() => []),
     } as never,
     versionRepo: {
       listVersions: vi.fn(() => []),
@@ -63,7 +76,70 @@ function makeMinimalDeps() {
     installationRepo: {
       listBySkill: vi.fn(() => []),
     } as never,
+    ...overrides,
   };
+}
+
+async function makeManagedSkillDir(): Promise<string> {
+  const managedSkillsDir = await mkdtemp(join(tmpdir(), "friday-d21-skill-catalog-"));
+  const skillDir = join(managedSkillsDir, "live-catalog-smoke");
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(
+    join(skillDir, "skill.manifest.json"),
+    JSON.stringify({
+      schemaVersion: "2.0",
+      id: "live-catalog-smoke",
+      name: "Live Catalog Smoke",
+      description: "Exposes a managed skill through the read-only lifecycle catalog.",
+      version: "1.0.0",
+      kind: "conversation",
+      category: "utility",
+      author: {
+        name: "Friday",
+      },
+      tags: ["managed", "starter"],
+      runtime: {
+        kind: "shell",
+        entrypoint: "run.sh",
+        minHubVersion: "1.0.0",
+        apiVersion: "1",
+        timeoutMsDefault: 30000,
+      },
+      triggers: {
+        intents: ["catalog_smoke"],
+        phrases: ["catalog smoke"],
+        channels: ["*"],
+      },
+      invocation: {
+        userInvocable: true,
+        modelInvocable: true,
+        priority: 50,
+        modes: ["intent"],
+      },
+      requirements: {
+        bins: [],
+        env: [],
+        config: [],
+        os: ["darwin", "linux"],
+      },
+      inputs: [],
+      outputs: [],
+      permissions: {
+        grants: [],
+        promptOn: [],
+      },
+      schemas: null,
+      flow: null,
+      executionTargets: {
+        allowedSatelliteTypes: ["desktop", "cloud-vm"],
+        requiredCapabilities: [],
+      },
+      telemetry: {
+        events: [],
+      },
+    }),
+  );
+  return managedSkillsDir;
 }
 
 describe("createFridaySkillLifecycleService — B1 catalog truth-labeling", () => {
@@ -127,5 +203,71 @@ describe("createFridaySkillLifecycleService — B1 catalog truth-labeling", () =
       typeof msg === "string" && msg.includes("Catalog backend is not wired"),
     );
     expect(catalogAdvisories).toHaveLength(2);
+  });
+
+  it("listCatalog exposes managed-skills entries when a read-only catalog backend is wired", async () => {
+    const managedSkillsDir = await makeManagedSkillDir();
+    try {
+      const service = createFridaySkillLifecycleService(makeMinimalDeps({
+        managedSkillsDir,
+        catalog: createFridayManagedSkillsCatalogBackend({
+          managedSkillsDir,
+          workspaceDir: managedSkillsDir,
+          nowIso: () => "2026-05-24T13:30:00.000Z",
+        }),
+      }));
+
+      const result = service.listCatalog({ q: "smoke" } as never);
+      expect(result.total).toBe(1);
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0]).toMatchObject({
+        sourceId: "managed-skills",
+        skillId: "live-catalog-smoke",
+        skillName: "Live Catalog Smoke",
+        publisher: "Friday",
+        category: "utility",
+        implementationStatus: "installed",
+      });
+      expect(result.items[0]?.sourceDetails).toMatchObject({
+        id: "managed-skills",
+        enabled: true,
+        trustPolicy: "warn",
+      });
+      expect(result.items[0]?.firstUsePrompts).toEqual(["catalog smoke", "catalog_smoke"]);
+    } finally {
+      rmSync(managedSkillsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("getSkill enriches summaries with catalogEntry and sourceDetails from the backend", async () => {
+    const managedSkillsDir = await makeManagedSkillDir();
+    try {
+      const service = createFridaySkillLifecycleService(makeMinimalDeps({
+        managedSkillsDir,
+        catalog: createFridayManagedSkillsCatalogBackend({
+          managedSkillsDir,
+          workspaceDir: managedSkillsDir,
+          nowIso: () => "2026-05-24T13:30:00.000Z",
+        }),
+      }));
+
+      const result = service.getSkill("live-catalog-smoke");
+      expect(result).toMatchObject({
+        skillId: "live-catalog-smoke",
+        name: "Live Catalog Smoke",
+        sourceId: "managed-skills",
+        sourceDetails: {
+          id: "managed-skills",
+          enabled: true,
+        },
+        catalogEntry: {
+          skillId: "live-catalog-smoke",
+          sourceId: "managed-skills",
+          implementationStatus: "installed",
+        },
+      });
+    } finally {
+      rmSync(managedSkillsDir, { recursive: true, force: true });
+    }
   });
 });

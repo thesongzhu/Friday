@@ -61,6 +61,7 @@ import {
 import type { FridayEncryptedEnvelope, FridayProviderApi, FridayProviderKind, FridayProviderProfile, FridayProviderService } from "#providers";
 import { createFridayProviderContextCompactor, createFridayProviderContextPruner, createFridayProviderTokenEstimator } from "#providers";
 import {
+  createFridayManagedSkillsCatalogBackend,
   createFridaySkillInstallationRepository,
   createFridaySkillInstallationService,
   createFridaySkillLifecycleService,
@@ -6198,6 +6199,11 @@ export async function createFridayHub(
     db: stateRuntime.sqlite,
     nowIso,
     managedSkillsDir,
+    catalog: createFridayManagedSkillsCatalogBackend({
+      managedSkillsDir,
+      workspaceDir: workspaceRoot,
+      nowIso,
+    }),
     hubVersion: FRIDAY_HUB_SKILL_COMPAT_VERSION,
     supportedApiVersions: ["1"],
     registry,

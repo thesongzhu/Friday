@@ -234,6 +234,11 @@ export {
   type FridayManifestValidationOutcome,
   type CreateFridaySkillLifecycleServiceDeps,
 } from "./services/friday-skill-lifecycle-service.js";
+export {
+  createFridayManagedSkillsCatalogBackend,
+  type CreateFridayManagedSkillsCatalogBackendOptions,
+  type FridaySkillCatalogBackend,
+} from "./services/friday-managed-skills-catalog-backend.js";
 
 export {
   createFridaySkillUpgradeAnalysisService,
