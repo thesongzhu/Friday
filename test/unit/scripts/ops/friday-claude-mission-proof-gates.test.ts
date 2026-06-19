@@ -12,10 +12,23 @@ const keychainWrapper = resolve(
   repoRoot,
   "scripts/ops/friday-claude-mission-proof-of-life-keychain.sh",
 );
+const organicLauncher = resolve(
+  repoRoot,
+  "scripts/ops/friday-claude-organic-spawn.sh",
+);
+const organicKeychainWrapper = resolve(
+  repoRoot,
+  "scripts/ops/friday-claude-organic-spawn-keychain.sh",
+);
 
 describe("Claude mission proof operator gate", () => {
   it("keeps the script shell-parseable", () => {
-    for (const script of [proofScript, keychainWrapper]) {
+    for (const script of [
+      proofScript,
+      keychainWrapper,
+      organicLauncher,
+      organicKeychainWrapper,
+    ]) {
       const result = spawnSync("bash", ["-n", script], {
         cwd: repoRoot,
         encoding: "utf8",
@@ -30,13 +43,18 @@ describe("Claude mission proof operator gate", () => {
     expect(source).toContain("FRIDAY_CLAUDE_MISSION_PROOF_PREFLIGHT_ONLY");
     expect(source).toContain("FRIDAY_CLAUDE_MISSION_PROOF_PASSPHRASE_STDIN");
     expect(source).toContain("FRIDAY_CLAUDE_MISSION_PROOF_OUTCOME_CHECKED");
+    expect(source).toContain("FRIDAY_CLAUDE_MISSION_PROOF_RUN_KIND");
+    expect(source).toContain("FRIDAY_CLAUDE_MISSION_PROOF_SURFACE_KIND");
+    expect(source).toContain("FRIDAY_CLAUDE_MISSION_PROOF_DELIVERY_ROUTE");
     expect(source).toContain('readonly CLAUDE_MODEL="claude-opus-4-8"');
     expect(source).toContain('lane: "claude"');
     expect(source).toContain('targetProviderOrAgent: "claude"');
     expect(source).toContain('proofRequirements: ["outcome:AnswerProduced:>=1"]');
     expect(source).toContain(
-      'deliveryRoute: "ops://claude-mission-proof-of-life"',
+      "FRIDAY_CLAUDE_MISSION_PROOF_DELIVERY_ROUTE:-ops://claude-mission-proof-of-life",
     );
+    expect(source).toContain("deliveryRoute: $delivery_route");
+    expect(source).toContain("intent: $intent");
     expect(source).toContain(
       'require_file_contains "${RUST_WS_LAUNCH_WRAPPER}" "export FRIDAY_CLAUDE_ROUTE_ENABLED=1"',
     );
@@ -63,10 +81,8 @@ describe("Claude mission proof operator gate", () => {
     expect(source).toContain("ledger.model='${CLAUDE_MODEL}'");
     expect(source).toContain("ledger.fallback=0");
     expect(source).toContain("ledger.total_tokens > 0");
-    expect(source).toContain("surface.surface_kind = 'mobile'");
-    expect(source).toContain(
-      "surface.delivery_route = 'ops://claude-mission-proof-of-life'",
-    );
+    expect(source).toContain("surface.surface_kind = '${SURFACE_KIND}'");
+    expect(source).toContain("surface.delivery_route = '${DELIVERY_ROUTE}'");
     expect(source).toContain("PASS (STRONG)");
     expect(source).toContain("PASS (PARTIAL)");
     expect(source).toContain("PASS (STRONG OUTCOME)");
@@ -79,6 +95,36 @@ describe("Claude mission proof operator gate", () => {
     expect(source).not.toContain("provider_session_link");
     expect(source).not.toContain("process_observation");
     expect(source).not.toContain("codex_app_server");
+  });
+
+  it("exposes a Claude organic launcher without the fixed proof prompt", () => {
+    const launcherSource = readFileSync(organicLauncher, "utf8");
+    const keychainSource = readFileSync(organicKeychainWrapper, "utf8");
+
+    expect(launcherSource).toContain(
+      'FRIDAY_CLAUDE_MISSION_PROOF_RUN_KIND="organic"',
+    );
+    expect(launcherSource).toContain(
+      'FRIDAY_CLAUDE_MISSION_PROOF_SURFACE_KIND="${FRIDAY_CLAUDE_ORGANIC_SURFACE_KIND:-desktop}"',
+    );
+    expect(launcherSource).toContain(
+      'FRIDAY_CLAUDE_MISSION_PROOF_DELIVERY_ROUTE="ops://claude-organic-spawn"',
+    );
+    expect(launcherSource).toContain(
+      'FRIDAY_CLAUDE_MISSION_PROOF_INTENT="${TASK_TEXT}"',
+    );
+    expect(launcherSource).toContain("observe-wrapper.claude.organic");
+    expect(launcherSource).toContain("FRIDAY_CLAUDE_ORGANIC_TASK");
+    expect(launcherSource).not.toContain("FRIDAY_CLAUDE_PROOF_OK");
+
+    expect(keychainSource).toContain(
+      'FRIDAY_CLAUDE_MISSION_PROOF_PASSPHRASE_STDIN=1 "${ORGANIC_SCRIPT}"',
+    );
+    expect(keychainSource).toContain("passphrase_file_ok()");
+    expect(keychainSource).toContain("read_provisioned_passphrase()");
+    expect(keychainSource).toContain("stat -f '%Lp'");
+    expect(keychainSource).toContain("stat -f '%u'");
+    expect(keychainSource).toContain("400|600) ;;");
   });
 
   it("does not read secrets before preflight and does not put bearer in argv", () => {
