@@ -30,6 +30,14 @@ const proofKeychainWrapper = resolve(
   repoRoot,
   "scripts/ops/friday-codex-mission-proof-of-life-keychain.sh",
 );
+const organicSpawnScript = resolve(
+  repoRoot,
+  "scripts/ops/friday-codex-organic-spawn.sh",
+);
+const organicSpawnKeychainWrapper = resolve(
+  repoRoot,
+  "scripts/ops/friday-codex-organic-spawn-keychain.sh",
+);
 const proofProvisionPassphraseScript = resolve(
   repoRoot,
   "scripts/ops/friday-codex-mission-proof-provision-passphrase.sh",
@@ -444,6 +452,55 @@ async function runD8Audit(dbPath: string, requiredSessions = "1") {
 }
 
 describe("Codex mission proof gates", () => {
+  it("exposes an organic Codex launcher that requires operator task text", () => {
+    const proofSource = readFileSync(proofScript, "utf8");
+    const organicSource = readFileSync(organicSpawnScript, "utf8");
+    const organicKeychainSource = readFileSync(
+      organicSpawnKeychainWrapper,
+      "utf8",
+    );
+
+    expect(proofSource).toContain(
+      'readonly RUN_KIND="${FRIDAY_CODEX_MISSION_PROOF_RUN_KIND:-proof}"',
+    );
+    expect(proofSource).toContain(
+      'readonly MISSION_INTENT="${FRIDAY_CODEX_MISSION_PROOF_INTENT:-What is the proof token? Answer exactly FRIDAY_CODEX_PROOF_OK.}"',
+    );
+    expect(proofSource).toContain("FRIDAY_CODEX_MISSION_PROOF_RUN_KIND must be proof or organic");
+    expect(proofSource).toContain(
+      "ops://codex-mission-proof-of-life|ops://codex-organic-spawn",
+    );
+    expect(proofSource).toContain('surface.surface_kind = \'${SURFACE_KIND}\'');
+    expect(proofSource).toContain('surface.delivery_route = \'${DELIVERY_ROUTE}\'');
+    expect(proofSource).toContain(
+      "operator-triggered organic Codex spawn through Friday",
+    );
+
+    expect(organicSource).toContain("FRIDAY_CODEX_ORGANIC_TASK");
+    expect(organicSource).toContain("Usage: $0 '<operator task for Codex>'");
+    expect(organicSource).toContain(
+      'export FRIDAY_CODEX_MISSION_PROOF_RUN_KIND="organic"',
+    );
+    expect(organicSource).toContain(
+      'export FRIDAY_CODEX_MISSION_PROOF_DELIVERY_ROUTE="ops://codex-organic-spawn"',
+    );
+    expect(organicSource).toContain(
+      'export FRIDAY_CODEX_MISSION_PROOF_INTENT="${TASK_TEXT}"',
+    );
+    expect(organicSource).not.toContain("Answer exactly FRIDAY_CODEX_PROOF_OK");
+
+    expect(organicKeychainSource).toContain(
+      'readonly ORGANIC_SCRIPT="${SCRIPT_DIR}/friday-codex-organic-spawn.sh"',
+    );
+    expect(organicKeychainSource).toContain(
+      'FRIDAY_CODEX_MISSION_PROOF_PASSPHRASE_STDIN=1 "${ORGANIC_SCRIPT}" "$@"',
+    );
+    expect(organicKeychainSource).toContain(
+      'security find-generic-password -a "${KEYCHAIN_ACCOUNT}" -s "${KEYCHAIN_SERVICE}" -w >/dev/null 2>&1',
+    );
+    expect(organicKeychainSource).toContain("trap 'unset PASSPHRASE' EXIT");
+  });
+
   it("D8 audit passes only when a linked session has matching completed WorkItem proof", async () => {
     const tempRoot = makeTempRoot();
     const dbPath = join(tempRoot, "d8-pass.sqlite");
@@ -828,11 +885,13 @@ describe("Codex mission proof gates", () => {
 
     expect(proofSource).toContain("WORK_ITEM_COMPLETED");
     expect(proofSource).toContain(
-      'readonly FRIDAY_CONVERSATION_ID="fconv_codex_proof_${RUN_TAG//-/_}"',
+      'readonly FRIDAY_CONVERSATION_ID="fconv_${ID_PREFIX//-/_}_${RUN_TAG//-/_}"',
     );
     expect(proofSource).not.toContain(
       'readonly FRIDAY_CONVERSATION_ID="codex-proof-conv-${RUN_TAG}"',
     );
+    expect(proofSource).toContain('readonly ID_PREFIX="codex-proof"');
+    expect(proofSource).toContain('readonly ID_PREFIX="codex-organic"');
     expect(proofSource).toContain("status='completed_with_proof'");
     expect(proofSource).toContain("WORK_ITEM_LINKED_PROOF");
     expect(proofSource).toContain(
@@ -1042,9 +1101,9 @@ describe("Codex mission proof gates", () => {
     expect(proofSource).toContain(
       "surface.surface_thread_id = '${SURFACE_THREAD_ID}'",
     );
-    expect(proofSource).toContain("surface.surface_kind = 'mobile'");
+    expect(proofSource).toContain("surface.surface_kind = '${SURFACE_KIND}'");
     expect(proofSource).toContain(
-      "surface.delivery_route = 'ops://codex-mission-proof-of-life'",
+      "surface.delivery_route = '${DELIVERY_ROUTE}'",
     );
     expect(proofSource).toContain("Mission row:");
     expect(proofSource).toContain("Surface thread row:");

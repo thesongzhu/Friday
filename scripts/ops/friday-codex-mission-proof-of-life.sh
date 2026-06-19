@@ -49,6 +49,13 @@ readonly TS_HUB_LAUNCH_LABEL="${FRIDAY_TS_HUB_LAUNCH_LABEL:-com.friday.hub}"
 readonly TS_HUB_LAUNCH_DOMAIN="${FRIDAY_TS_HUB_LAUNCH_DOMAIN:-gui/$(id -u)}"
 readonly CODEX_MODEL="gpt-5.5"
 readonly EXPECTED_CODEX_CLI_VERSION="${FRIDAY_CODEX_MISSION_PROOF_CODEX_VERSION:-codex-cli 0.140.0}"
+readonly RUN_KIND="${FRIDAY_CODEX_MISSION_PROOF_RUN_KIND:-proof}"
+readonly SURFACE_KIND="${FRIDAY_CODEX_MISSION_PROOF_SURFACE_KIND:-mobile}"
+readonly DELIVERY_ROUTE="${FRIDAY_CODEX_MISSION_PROOF_DELIVERY_ROUTE:-ops://codex-mission-proof-of-life}"
+readonly MISSION_TITLE="${FRIDAY_CODEX_MISSION_PROOF_TITLE:-Codex proof token}"
+readonly MISSION_INTENT="${FRIDAY_CODEX_MISSION_PROOF_INTENT:-What is the proof token? Answer exactly FRIDAY_CODEX_PROOF_OK.}"
+readonly CAPABILITY_ID="${FRIDAY_CODEX_MISSION_PROOF_CAPABILITY_ID:-observe-wrapper.codex}"
+readonly BODY_REF="${FRIDAY_CODEX_MISSION_PROOF_BODY_REF:-friday://body/ops/codex-mission-proof-of-life}"
 
 SQLITE_BIN="$(command -v sqlite3 || true)"
 if [ -z "${SQLITE_BIN}" ] && [ -x "/Users/jarvis/Library/Android/sdk/platform-tools/sqlite3" ]; then
@@ -112,6 +119,31 @@ if [ "${PREFLIGHT_ONLY}" != "0" ] && [ "${PREFLIGHT_ONLY}" != "1" ]; then
 fi
 if [ "${POLL_INTERVAL_SEC}" -gt "${TIMEOUT_SEC}" ]; then
   echo "FATAL: poll interval cannot be greater than timeout." >&2
+  exit 3
+fi
+case "${RUN_KIND}" in
+  proof|organic) ;;
+  *)
+    echo "FATAL: FRIDAY_CODEX_MISSION_PROOF_RUN_KIND must be proof or organic; got '${RUN_KIND}'." >&2
+    exit 3
+    ;;
+esac
+case "${SURFACE_KIND}" in
+  mobile|desktop) ;;
+  *)
+    echo "FATAL: FRIDAY_CODEX_MISSION_PROOF_SURFACE_KIND must be mobile or desktop; got '${SURFACE_KIND}'." >&2
+    exit 3
+    ;;
+esac
+case "${DELIVERY_ROUTE}" in
+  ops://codex-mission-proof-of-life|ops://codex-organic-spawn) ;;
+  *)
+    echo "FATAL: FRIDAY_CODEX_MISSION_PROOF_DELIVERY_ROUTE is not an allowed local Codex launcher route: '${DELIVERY_ROUTE}'." >&2
+    exit 3
+    ;;
+esac
+if [ -z "${MISSION_INTENT}" ]; then
+  echo "FATAL: FRIDAY_CODEX_MISSION_PROOF_INTENT must not be empty." >&2
   exit 3
 fi
 if [ ! -r "${RUST_WS_LAUNCH_WRAPPER}" ]; then
@@ -478,12 +510,17 @@ if [ "${PREFLIGHT_ONLY}" = "1" ]; then
 fi
 
 readonly RUN_TAG="$(new_id)"
-readonly FRIDAY_CONVERSATION_ID="fconv_codex_proof_${RUN_TAG//-/_}"
-readonly MISSION_ID="codex-proof-mission-${RUN_TAG}"
-readonly WORK_ITEM_ID="codex-proof-work-${RUN_TAG}"
-readonly SURFACE_THREAD_ID="codex-proof-surface-${RUN_TAG}"
+if [ "${RUN_KIND}" = "organic" ]; then
+  readonly ID_PREFIX="codex-organic"
+else
+  readonly ID_PREFIX="codex-proof"
+fi
+readonly FRIDAY_CONVERSATION_ID="fconv_${ID_PREFIX//-/_}_${RUN_TAG//-/_}"
+readonly MISSION_ID="${ID_PREFIX}-mission-${RUN_TAG}"
+readonly WORK_ITEM_ID="${ID_PREFIX}-work-${RUN_TAG}"
+readonly SURFACE_THREAD_ID="${ID_PREFIX}-surface-${RUN_TAG}"
 
-echo "Codex Mission proof starting."
+echo "Codex Mission ${RUN_KIND} starting."
 echo "  TS hub: ${TS_HUB}"
 echo "  Rust DB: ${RUST_HUB_DB}"
 echo "  missionId: ${MISSION_ID}"
@@ -542,21 +579,27 @@ INTAKE_BODY="$(jq -nc \
   --arg surface "${SURFACE_THREAD_ID}" \
   --arg mission "${MISSION_ID}" \
   --arg work "${WORK_ITEM_ID}" \
+  --arg surfaceKind "${SURFACE_KIND}" \
+  --arg deliveryRoute "${DELIVERY_ROUTE}" \
+  --arg title "${MISSION_TITLE}" \
+  --arg intent "${MISSION_INTENT}" \
+  --arg capability "${CAPABILITY_ID}" \
+  --arg bodyRef "${BODY_REF}" \
   '{
     fridayConversationId: $conv,
     ownerPrincipal: $owner,
     surfaceThreadId: $surface,
-    surfaceKind: "mobile",
-    deliveryRoute: "ops://codex-mission-proof-of-life",
+    surfaceKind: $surfaceKind,
+    deliveryRoute: $deliveryRoute,
     visibilityPolicy: "compact",
     missionId: $mission,
     workItemId: $work,
-    title: "Codex proof token",
-    intent: "What is the proof token? Answer exactly FRIDAY_CODEX_PROOF_OK.",
+    title: $title,
+    intent: $intent,
     lane: "codex",
     targetProviderOrAgent: "codex",
-    capabilityId: "observe-wrapper.codex",
-    bodyRef: "friday://body/ops/codex-mission-proof-of-life",
+    capabilityId: $capability,
+    bodyRef: $bodyRef,
     includesSensitiveContext: false
   }')"
 
@@ -673,8 +716,8 @@ while [ "$(date +%s)" -le "${deadline}" ]; do
       ON surface.surface_thread_id = '${SURFACE_THREAD_ID}'
      AND surface.mission_id = w.mission_id
      AND surface.friday_conversation_id = m.friday_conversation_id
-     AND surface.surface_kind = 'mobile'
-     AND surface.delivery_route = 'ops://codex-mission-proof-of-life'
+     AND surface.surface_kind = '${SURFACE_KIND}'
+     AND surface.delivery_route = '${DELIVERY_ROUTE}'
      AND surface.created_at_ms >= ${STARTED_AT_MS}
      AND surface.created_at_ms <= w.updated_at_ms
     WHERE w.work_item_id = '${WORK_ITEM_ID}'
@@ -776,7 +819,11 @@ if [ -n "${pass_reason}" ]; then
     && [ "${WORK_ITEM_SURFACE_BOUND_PROOF:-0}" -gt 0 ] \
     && [ "${UNPROVED_LINKED_SESSION_RUNS:-0}" -eq 0 ]; then
     echo "PASS (STRONG) - ${pass_reason}; matching WorkItem proof, bound Mission SurfaceThread, claim-bound Codex process observation, and per-run proof reconciliation also present."
-    echo "Truth: operator-triggered Codex mission proof, not D8 / not 20-session soak / not GO."
+    if [ "${RUN_KIND}" = "organic" ]; then
+      echo "Truth: operator-triggered organic Codex spawn through Friday; one organic row is not Phase-1 done / not D8 / not GO."
+    else
+      echo "Truth: operator-triggered Codex mission proof, not D8 / not 20-session soak / not GO."
+    fi
     exit 0
   fi
   if [ "${WORK_ITEM_COMPLETED:-0}" -eq 0 ]; then
