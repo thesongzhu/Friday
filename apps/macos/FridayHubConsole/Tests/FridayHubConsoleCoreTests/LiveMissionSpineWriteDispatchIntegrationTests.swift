@@ -62,6 +62,45 @@ func liveConsoleMissionSpineWriteDispatchClarifiesVagueCodexRepairAtIntake() asy
   #expect(!result.clarificationQuestions.isEmpty)
 }
 
+@Test(.enabled(if: liveMissionBoundRunEnabled))
+func liveConsoleMissionSpineWriteDispatchCanCompleteClearCodexRun() async throws {
+  let client = try RealWriteClientFactory.makeLiveWrite()
+  let request = makeLiveIntake(
+    surface: "desktop",
+    route: "desktop://hub-console/live-clear-codex-bound-run",
+    title: "Verify live desktop clear Codex mission-bound run",
+    intent: "Answer exactly FRIDAY_DESKTOP_CODEX_CLEAR_OK.",
+    lane: "codex",
+    targetProviderOrAgent: "codex")
+
+  let result = try await client.submitMissionIntake(request)
+  #expect(result.status == "ready")
+  #expect(result.createdOrReady)
+  #expect(result.workItemId == request.workItemId)
+
+  let outcome = try await client.dispatchMissionBoundAgentRun(
+    task: request.intent,
+    missionContext: MissionWorkItemContextWire(
+      fridayConversationId: result.fridayConversationId,
+      missionId: result.missionId,
+      workItemId: try #require(result.workItemId)),
+    constraints: AgentRunConstraintsWire(readOnly: true))
+
+  guard case .result(let receipt) = outcome else {
+    Issue.record("expected clear Codex mission-bound read-only run to settle with a result")
+    return
+  }
+  print(
+    "[live-write-dispatch][desktop-clear-codex] runId=\(receipt.runId) "
+      + "status=\(receipt.status) turns=\(receipt.turns ?? 0) "
+      + "answerLen=\(receipt.answerLen ?? 0)")
+  #expect(receipt.status == "completed" || receipt.status == "finished" || receipt.status == "ok")
+  #expect((receipt.turns ?? 0) > 0)
+  #expect(receipt.executedTools == 0)
+  #expect(receipt.answerSha256 != nil)
+  #expect((receipt.answerLen ?? 0) > 0)
+}
+
 private func makeLiveIntake(
   surface: String,
   route: String,
