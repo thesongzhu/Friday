@@ -271,6 +271,138 @@ impl MissionIntakeFeatureFlags {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct IntakeRouteSelection {
+    lane: friday_core::WorkLane,
+    target_provider_or_agent: Option<String>,
+    why_this_route: String,
+    considered_options: Vec<String>,
+}
+
+fn intake_route_selection(
+    request: &MissionIntakeRequestWire,
+) -> Result<IntakeRouteSelection, &'static str> {
+    if request.lane.trim() != "auto" {
+        let lane = work_lane_from_wire(&request.lane)?;
+        let target = request
+            .target_provider_or_agent
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| Some(lane.as_str().to_string()));
+        return Ok(IntakeRouteSelection {
+            lane,
+            target_provider_or_agent: target,
+            why_this_route: "Surface input must resolve to a canonical Mission.".into(),
+            considered_options: vec!["surface-local chat".into(), "Mission Spine".into()],
+        });
+    }
+
+    if request
+        .target_provider_or_agent
+        .as_deref()
+        .is_some_and(|target| !target.trim().is_empty() && target.trim() != "auto")
+    {
+        return Err("mission intake auto lane cannot carry an explicit target_provider_or_agent");
+    }
+
+    let (lane, reason) = auto_route_for_intake(
+        &request.intent,
+        request.capability_id.as_deref().unwrap_or(""),
+    );
+    Ok(IntakeRouteSelection {
+        lane,
+        target_provider_or_agent: Some(lane.as_str().to_string()),
+        why_this_route: format!("Auto route selected {reason}."),
+        considered_options: vec![
+            "codex: code, repo, file, test, and workspace changes".into(),
+            "claude: writing, synthesis, research, and explanation".into(),
+            "deepseek: general quick answer when no stronger route signal is present".into(),
+        ],
+    })
+}
+
+fn auto_route_for_intake(
+    intent: &str,
+    capability_id: &str,
+) -> (friday_core::WorkLane, &'static str) {
+    let text = format!("{} {}", capability_id, intent).to_lowercase();
+    if contains_any(
+        &text,
+        &[
+            "codex",
+            "code",
+            "repo",
+            "rust",
+            "typescript",
+            "swift",
+            "python",
+            "test",
+            "debug",
+            "bug",
+            "build",
+            "compile",
+            "refactor",
+            "file",
+            "workspace",
+            "diff",
+            "patch",
+            "cargo",
+            "npm",
+            "git",
+            "代码",
+            "仓库",
+            "修复",
+            "调试",
+            "测试",
+            "编译",
+            "文件",
+        ],
+    ) {
+        return (
+            friday_core::WorkLane::Codex,
+            "Codex for code, repo, and workspace execution strength",
+        );
+    }
+    if contains_any(
+        &text,
+        &[
+            "claude",
+            "write",
+            "summarize",
+            "summary",
+            "research",
+            "explain",
+            "strategy",
+            "compare",
+            "doc",
+            "document",
+            "brief",
+            "synthesis",
+            "synthesize",
+            "综述",
+            "总结",
+            "调研",
+            "写作",
+            "文档",
+            "解释",
+            "计划",
+        ],
+    ) {
+        return (
+            friday_core::WorkLane::Claude,
+            "Claude for synthesis, writing, and explanation strength",
+        );
+    }
+    (
+        friday_core::WorkLane::DeepSeek,
+        "DeepSeek for general fast-response strength",
+    )
+}
+
+fn contains_any(text: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| text.contains(needle))
+}
+
 /// ## Mission-intake clarification ([`crate::FRIDAY_MISSION_INTAKE_CLARIFY`], DARK)
 /// The [`crate::FRIDAY_MISSION_INTAKE_CLARIFY`] env flag is read ONCE here (the only env
 /// read; semantics in [`crate::mission_intake_clarify_from`]) and threaded as a pure bool
@@ -404,10 +536,11 @@ pub fn mission_intake_result_for_db_flagged(
         Ok(policy) => policy,
         Err(message) => return mission_intake_error(msg_id, now_ms, ErrorCode::Internal, message),
     };
-    let lane = match work_lane_from_wire(&request.lane) {
-        Ok(lane) => lane,
+    let route_selection = match intake_route_selection(&request) {
+        Ok(selection) => selection,
         Err(message) => return mission_intake_error(msg_id, now_ms, ErrorCode::Internal, message),
     };
+    let lane = route_selection.lane;
     if let Some(body_ref) = request.body_ref.as_deref() {
         if !is_safe_body_ref(body_ref) {
             return mission_intake_error(
@@ -459,11 +592,7 @@ pub fn mission_intake_result_for_db_flagged(
         }
     }
 
-    let target = request
-        .target_provider_or_agent
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| Some(lane.as_str().to_string()));
+    let target = route_selection.target_provider_or_agent.clone();
     let capability_id = request
         .capability_id
         .clone()
@@ -599,13 +728,13 @@ pub fn mission_intake_result_for_db_flagged(
         judgment_memory: friday_core::HandoffJudgmentMemory {
             task: request.intent.clone(),
             current_blocker: None,
-            target_lane_thread_agent_provider: request.lane.clone(),
+            target_lane_thread_agent_provider: lane.as_str().to_string(),
             read_first_files: Vec::new(),
             required_output: "Mission-bound result with proof receipt".into(),
             done_criteria: vec!["WorkItem completes only after proof".into()],
             red_lines: vec!["do not create detached provider state".into()],
-            why_this_route: "Surface input must resolve to a canonical Mission.".into(),
-            considered_options: vec!["surface-local chat".into(), "Mission Spine".into()],
+            why_this_route: route_selection.why_this_route,
+            considered_options: route_selection.considered_options,
             deferred_options: vec!["native UI implementation".into()],
             previous_pitfalls: vec!["provider ack looked like done".into()],
             inheritable_context: vec!["same Mission renders across surfaces".into()],
@@ -3049,6 +3178,130 @@ mod tests {
         assert_eq!(snapshot.body, intent);
         assert_eq!(snapshot.body_len, intent.len() as i64);
         assert_eq!(snapshot.owner_principal, "principal:jarvis");
+    }
+
+    #[test]
+    fn mission_intake_auto_route_picks_codex_for_code_work() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        let response = mission_intake_result_for_db(
+            &db,
+            "intake-auto-codex",
+            MissionIntakeRequestWire {
+                friday_conversation_id: "fconv_auto_codex".into(),
+                owner_principal: "principal:jarvis".into(),
+                surface_thread_id: "surface-auto-codex".into(),
+                surface_kind: "desktop".into(),
+                delivery_route: "desktop://local/auto-codex".into(),
+                visibility_policy: "compact".into(),
+                mission_id: "mission-auto-codex".into(),
+                work_item_id: "work-auto-codex".into(),
+                title: "Auto route code task".into(),
+                intent: "Fix the Rust compile failure and add a focused regression test.".into(),
+                lane: "auto".into(),
+                target_provider_or_agent: None,
+                capability_id: None,
+                body_ref: Some("friday://body/auto/codex".into()),
+                proof_requirements: Vec::new(),
+                includes_sensitive_context: false,
+            },
+            Some("principal:jarvis"),
+            1_700_002_010_000,
+        );
+        let Message::MissionIntakeResult { result } = response.message else {
+            panic!("expected MissionIntakeResult, got {response:?}");
+        };
+        assert_eq!(result.status, "ready");
+
+        let work = db
+            .get_work_item("work-auto-codex")
+            .unwrap()
+            .expect("auto-routed WorkItem");
+        assert_eq!(work.lane, WorkLane::Codex);
+        assert_eq!(work.target_provider_or_agent.as_deref(), Some("codex"));
+        assert_eq!(
+            work.judgment_memory.target_lane_thread_agent_provider,
+            "codex"
+        );
+        assert!(work
+            .judgment_memory
+            .why_this_route
+            .contains("Auto route selected Codex"));
+        assert_eq!(db.count("workspace_claim").unwrap(), 1);
+
+        let route = db
+            .get_route_decision("route-intake-mission-auto-codex-work-auto-codex")
+            .unwrap()
+            .expect("route decision");
+        assert_eq!(route.selected_lane, WorkLane::Codex);
+        assert_eq!(route.selected_provider_or_agent.as_deref(), Some("codex"));
+        assert!(route
+            .considered_options
+            .iter()
+            .any(|option| option.starts_with("codex:")));
+    }
+
+    #[test]
+    fn mission_intake_auto_route_picks_claude_for_synthesis_work() {
+        let db = Db::open_hub(&tmp_db()).unwrap();
+        let response = mission_intake_result_for_db(
+            &db,
+            "intake-auto-claude",
+            MissionIntakeRequestWire {
+                friday_conversation_id: "fconv_auto_claude".into(),
+                owner_principal: "principal:jarvis".into(),
+                surface_thread_id: "surface-auto-claude".into(),
+                surface_kind: "mobile".into(),
+                delivery_route: "mobile://local/auto-claude".into(),
+                visibility_policy: "compact".into(),
+                mission_id: "mission-auto-claude".into(),
+                work_item_id: "work-auto-claude".into(),
+                title: "Auto route synthesis task".into(),
+                intent: "写一份调研综述，总结这个方案的利弊和下一步计划。".into(),
+                lane: "auto".into(),
+                target_provider_or_agent: None,
+                capability_id: None,
+                body_ref: Some("friday://body/auto/claude".into()),
+                proof_requirements: Vec::new(),
+                includes_sensitive_context: false,
+            },
+            Some("principal:jarvis"),
+            1_700_002_020_000,
+        );
+        let Message::MissionIntakeResult { result } = response.message else {
+            panic!("expected MissionIntakeResult, got {response:?}");
+        };
+        assert_eq!(result.status, "ready");
+
+        let work = db
+            .get_work_item("work-auto-claude")
+            .unwrap()
+            .expect("auto-routed WorkItem");
+        assert_eq!(work.lane, WorkLane::Claude);
+        assert_eq!(work.target_provider_or_agent.as_deref(), Some("claude"));
+        assert_eq!(
+            work.judgment_memory.target_lane_thread_agent_provider,
+            "claude"
+        );
+        assert!(work
+            .judgment_memory
+            .why_this_route
+            .contains("Auto route selected Claude"));
+        assert_eq!(
+            db.count("workspace_claim").unwrap(),
+            0,
+            "Claude auto-route must not mint a Codex provider-session claim"
+        );
+
+        let route = db
+            .get_route_decision("route-intake-mission-auto-claude-work-auto-claude")
+            .unwrap()
+            .expect("route decision");
+        assert_eq!(route.selected_lane, WorkLane::Claude);
+        assert_eq!(route.selected_provider_or_agent.as_deref(), Some("claude"));
+        assert!(route
+            .considered_options
+            .iter()
+            .any(|option| option.starts_with("claude:")));
     }
 
     fn provider_session_link() -> ProviderSessionLink {
