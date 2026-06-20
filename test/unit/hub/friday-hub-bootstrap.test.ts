@@ -411,6 +411,81 @@ describe("createFridayHub", () => {
     } as never)).resolves.toMatchObject({ kind: "telegram", persona: null });
   });
 
+  it("keeps packaging disabled by default in hub bootstrap", async () => {
+    const originalPackagingEnabled = process.env.FRIDAY_PACKAGING_ENABLED;
+    delete process.env.FRIDAY_PACKAGING_ENABLED;
+    try {
+      hub = await createIsolatedHub();
+      const route = hub.apiRuntime.routes
+        .getRoutes()
+        .find((r) => r.operationId === "packaging.installs.install");
+
+      await expect(route!.handler({
+        requestId: "req-packaging-bootstrap-disabled",
+        receivedAt: "2026-06-20T00:00:00.000Z",
+        params: { packageName: "@friday/test" },
+        query: {},
+        body: { tenantId: "tenant-1", idempotencyKey: "pkg-install-1" },
+        headers: {},
+        principal: null,
+      } as never)).rejects.toMatchObject({
+        code: "CAPABILITY_DISABLED",
+        httpStatus: 501,
+      });
+    } finally {
+      if (originalPackagingEnabled === undefined) {
+        delete process.env.FRIDAY_PACKAGING_ENABLED;
+      } else {
+        process.env.FRIDAY_PACKAGING_ENABLED = originalPackagingEnabled;
+      }
+    }
+  });
+
+  it("wires packaging mutations through the canonical gate when opt-in bootstrap is enabled", async () => {
+    const originalPackagingEnabled = process.env.FRIDAY_PACKAGING_ENABLED;
+    process.env.FRIDAY_PACKAGING_ENABLED = "true";
+    try {
+      hub = await createIsolatedHub();
+      const route = hub.apiRuntime.routes
+        .getRoutes()
+        .find((r) => r.operationId === "packaging.installs.install");
+
+      await expect(route!.handler({
+        requestId: "req-packaging-bootstrap-gate",
+        receivedAt: "2026-06-20T00:00:00.000Z",
+        params: { packageName: "@friday/test" },
+        query: {},
+        body: { tenantId: "tenant-1", idempotencyKey: "pkg-install-2" },
+        headers: {},
+        principal: {
+          principalType: "user",
+          principalId: "operator-1",
+          userId: "operator-1",
+          role: "admin",
+          scopes: ["hub.admin"],
+          tokenId: "token-1",
+          tokenKind: "access",
+          issuedAt: "2026-06-20T00:00:00.000Z",
+          expiresAt: "2026-06-20T01:00:00.000Z",
+        },
+      } as never)).rejects.toMatchObject({
+        code: "PACKAGING_MUTATION_APPROVAL_REQUIRED",
+        httpStatus: 409,
+        details: {
+          operationId: "packaging.installs.install",
+          decision: "requires_approval",
+          reason: "canonical_approval_required",
+        },
+      });
+    } finally {
+      if (originalPackagingEnabled === undefined) {
+        delete process.env.FRIDAY_PACKAGING_ENABLED;
+      } else {
+        process.env.FRIDAY_PACKAGING_ENABLED = originalPackagingEnabled;
+      }
+    }
+  });
+
   it("starts in stopped state", async () => {
     hub = await createIsolatedHub();
     const status = hub.status();
