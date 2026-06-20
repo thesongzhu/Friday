@@ -61,8 +61,8 @@ struct FridayChatScreen: View {
         "Ask Friday anything.",
         "Answers are refs-only (a fingerprint + counts). "
           + (runControlEnabled
-            ? "A mutating action pauses for your approval (S6)."
-            : "Read-only — approvals enable at slice-6."))
+            ? "A mutating action pauses for your approval."
+            : "Read-only — approvals are not available yet."))
     case .dispatching(let task):
       GlassPanel {
         VStack(alignment: .leading, spacing: 8) {

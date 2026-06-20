@@ -81,7 +81,7 @@ public enum OperatorSignerError: Error, Sendable, Equatable, CustomStringConvert
     switch self {
     case .signerUnavailable: return "Operator signer unavailable — connect the desktop signer to approve"
     case .declined: return "Operator declined the approval"
-    case .keyUnprovisioned: return "Operator signing key not provisioned (slice-6 / operator-key gate)"
+    case .keyUnprovisioned: return "Approval key is not set up on the trusted signer"
     }
   }
 }
