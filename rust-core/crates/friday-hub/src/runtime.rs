@@ -7633,6 +7633,99 @@ mod tests {
     }
 
     #[test]
+    fn session_recall_public_path_surfaces_a1_consumer_preference_world_model_only() {
+        // A1 preference/world-model consumer proof: the public session recall path reads the
+        // dark consumer gate and injects only refs-only preference/world_model signals. Reflex
+        // candidates remain governance-only, and operator decision text stays out of prompts.
+        let (rt, _ws, _bodies) = recall_runtime("session-a1-consumer-public", Some("alice"));
+        let now = 1_000_000_000_000_i64;
+        seed_confirmed_run_outcome_learning_signal(
+            &rt,
+            "sess-a1-consumer-source",
+            "alice",
+            "run-a1-consumer-source",
+            now,
+        );
+        friday_storage::learning_candidate::decide_run_outcome_candidate(
+            rt.db().conn(),
+            "a1:run-a1-consumer-source:world_model",
+            true,
+            now + 2,
+            Some("operator confirmed world-model text"),
+        )
+        .unwrap();
+        friday_storage::learning_candidate::decide_run_outcome_candidate(
+            rt.db().conn(),
+            "a1:run-a1-consumer-source:reflex",
+            true,
+            now + 3,
+            Some("operator confirmed reflex text"),
+        )
+        .unwrap();
+        bind_session_owner(&rt, "sess-a1-consumer-later", "alice");
+
+        {
+            let _consumer_flag = crate::test_env::EnvVarGuard::set(
+                crate::FRIDAY_A1_RUN_OUTCOME_LEARNING_CONSUMER,
+                "0",
+            );
+            let off = rt
+                .recall_preamble_for_session(
+                    "sess-a1-consumer-later",
+                    "run-a1-consumer-off",
+                    None,
+                    now + 4,
+                )
+                .expect("session recall composes with A1 consumer flag off");
+            assert_eq!(off, "", "consumer flag-OFF must not inject A1 signals");
+        }
+
+        {
+            let _consumer_flag = crate::test_env::EnvVarGuard::set(
+                crate::FRIDAY_A1_RUN_OUTCOME_LEARNING_CONSUMER,
+                "1",
+            );
+            let on = rt
+                .recall_preamble_for_session(
+                    "sess-a1-consumer-later",
+                    "run-a1-consumer-on",
+                    None,
+                    now + 5,
+                )
+                .expect("session recall composes with A1 consumer flag on");
+            assert!(
+                on.contains("Confirmed preference/world-model learning signals")
+                    && on.contains("- preference:")
+                    && on.contains("- world_model:")
+                    && on.contains("friday://agent-run/run-a1-consumer-source"),
+                "consumer flag-ON session recall must inject preference/world-model refs-only signals: {on:?}"
+            );
+            assert!(
+                !on.contains("- reflex:"),
+                "consumer must not inject reflex candidates: {on:?}"
+            );
+            assert!(
+                !on.contains("operator confirmed"),
+                "decision reasons are operator text and must not be prompt-injected: {on:?}"
+            );
+        }
+
+        let consumed: i64 = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM audit_ledger WHERE action LIKE 'run_outcome_learning.consumer%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            consumed, 1,
+            "flag-ON A1 consumer session recall writes one audit receipt"
+        );
+    }
+
+    #[test]
     fn session_recall_is_owner_isolated_no_cross_owner_leak() {
         // NO-LEAK (the CRITICAL guard): a confirmed candidate under owner O's composite
         // namespace is NEVER recalled for a DIFFERENT owner O2's session. The composite
