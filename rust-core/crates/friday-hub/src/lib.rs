@@ -3004,11 +3004,33 @@ impl<T: ToolExecutor + ?Sized> ToolExecutor for &T {
 /// executes here without one. Fail-closed in every arm.
 pub struct FsToolExecutor {
     root: std::path::PathBuf,
+    run_command_darwin_sandbox: bool,
+}
+
+pub const FRIDAY_RUN_COMMAND_DARWIN_SANDBOX: &str = "FRIDAY_RUN_COMMAND_DARWIN_SANDBOX";
+
+pub fn run_command_darwin_sandbox_from(value: Option<&str>) -> bool {
+    matches!(value.map(str::trim), Some("1"))
 }
 
 impl FsToolExecutor {
     pub fn new(root: impl Into<std::path::PathBuf>) -> Self {
-        Self { root: root.into() }
+        let run_command_darwin_sandbox = run_command_darwin_sandbox_from(
+            std::env::var(FRIDAY_RUN_COMMAND_DARWIN_SANDBOX)
+                .ok()
+                .as_deref(),
+        );
+        Self {
+            root: root.into(),
+            run_command_darwin_sandbox,
+        }
+    }
+
+    pub fn new_with_run_command_darwin_sandbox(root: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            root: root.into(),
+            run_command_darwin_sandbox: true,
+        }
     }
     /// The workspace root this executor is contained to. Exposed so the L2-3
     /// [`vision_tools::VisionExecutor`] can scope local-path image reads to the SAME root the fs
@@ -3183,8 +3205,16 @@ impl ToolExecutor for FsToolExecutor {
             // STATIC message (no path/command/secret).
             "run_command" => {
                 let command = Self::param(params, "command")?;
-                let result =
-                    friday_fs::run_command_in_root(&self.root, command).map_err(ExecError::Fs)?;
+                let result = if self.run_command_darwin_sandbox {
+                    friday_fs::run_command_in_root_with_darwin_sandbox_timeout(
+                        &self.root,
+                        command,
+                        friday_fs::RUN_COMMAND_TIMEOUT,
+                    )
+                } else {
+                    friday_fs::run_command_in_root(&self.root, command)
+                }
+                .map_err(ExecError::Fs)?;
                 // content (model-facing): the bounded output + an exit/timeout status line.
                 let status_line = if result.timed_out {
                     "[run_command: timed out, child killed]".to_string()
@@ -11715,6 +11745,53 @@ mod tests {
             "summary must be the refs-only exit+bytes form: {}",
             receipt.summary
         );
+    }
+
+    #[test]
+    fn run_command_darwin_sandbox_flag_parser_is_exact_one_default_off() {
+        assert!(!run_command_darwin_sandbox_from(None));
+        assert!(!run_command_darwin_sandbox_from(Some("")));
+        assert!(!run_command_darwin_sandbox_from(Some("0")));
+        assert!(!run_command_darwin_sandbox_from(Some("true")));
+        assert!(!run_command_darwin_sandbox_from(Some("2")));
+        assert!(run_command_darwin_sandbox_from(Some("1")));
+        assert!(run_command_darwin_sandbox_from(Some(" 1 ")));
+    }
+
+    #[test]
+    fn executor_run_command_darwin_sandbox_is_opt_in_and_fail_closed() {
+        let root = TempDir::new("runcmd-sandbox");
+        let executor = FsToolExecutor::new_with_run_command_darwin_sandbox(&root.0);
+        let result = executor.execute(
+            "run_command",
+            &[("command".to_string(), "echo sandboxed".to_string())],
+        );
+
+        if friday_fs::darwin_sandbox_exec_available() {
+            let receipt = result.unwrap();
+            assert_eq!(receipt.action, "run_command");
+            assert!(
+                receipt
+                    .content
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("sandboxed"),
+                "sandboxed command should still return bounded output"
+            );
+            assert!(
+                receipt.summary.starts_with("run_command: exit Some(0)"),
+                "summary must remain refs-only: {}",
+                receipt.summary
+            );
+        } else {
+            assert!(
+                matches!(
+                    result,
+                    Err(ExecError::Fs(friday_fs::FsError::CommandSandboxUnavailable))
+                ),
+                "required sandbox must fail closed when unavailable, got {result:?}"
+            );
+        }
     }
 
     /// S3-wiring ARM CORRECTNESS: each newly wired MUTATING arm (append/edit/move/delete)
