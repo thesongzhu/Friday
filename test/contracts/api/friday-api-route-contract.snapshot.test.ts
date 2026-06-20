@@ -866,6 +866,7 @@ describe("MECHANISM-4 — API Route Contract (Snapshot)", () => {
         "mission.spine.lifecycle.transition",
         "mission.spine.workitem.status.transition",
         "mission.spine.routedecision.control",
+        "agent.d20.worktree.batch.dispatch",
         // Lane M: the memory-confirmation loop's terminal mutation driven over the sealed-WS
         // dispatch arm. Refuses the synthetic public principal before any dispatch; flag-OFF/503
         // by default (the merged Rust arm #753 is gated by FRIDAY_MEMORY_CONFIRM).

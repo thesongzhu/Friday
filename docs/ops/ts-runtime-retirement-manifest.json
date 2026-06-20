@@ -10,7 +10,7 @@
   "discovery": {
     "routeSourceDir": "src/api/http/routes",
     "includeMethods": ["GET", "POST", "PATCH", "PUT", "DELETE"],
-    "exactRouteSurfacesMin": 307,
+    "exactRouteSurfacesMin": 308,
     "requiredRouteBehaviorTestSurfaceIds": [
       "agent_runs_start",
       "workflow_runs_start",
@@ -1041,6 +1041,20 @@
       "executes_product_logic": false,
       "proof": "src/api/http/routes/friday-agent-routes.ts gates agent.runs.resume on FRIDAY_AGENT_RUN_CONTROL_VIA_RUST (default-off): flag-off short-circuits to the byte-identical TS_RUNTIME_AGENT_RUNS_RETIRED 503 BEFORE any run lookup (no run-existence leak). Flag-on enforces caller==the wire run's bound owner, then relays the OPAQUE operator-signed Ed25519 approval blob verbatim to the Rust sealed-WS resumeWithApproval (INV-1: TS never parses/validates/inspects the signature/digest); the wire runId is bound to the executed run (pending.run_id==run_id, the s6-687 fix). TS performs NO agent/mutation execution — signature verification and the single approved mutation are Rust-owned under the operator Ed25519 verify key.",
       "next_action": "Replace the flag-gated TS courier relay with a Rust-owned resume entrypoint when the UI connects the Rust hub directly (slice-6 end-state)."
+    },
+    {
+      "id": "agent_d20_worktree_batches_dispatch",
+      "route": {
+        "method": "POST",
+        "path": "/v1/agent/d20/worktree-batches/dispatch",
+        "operationId": "agent.d20.worktree.batch.dispatch"
+      },
+      "classification": "rust_delegated",
+      "user_triggerable": true,
+      "rust_entrypoint": "rust-core/crates/friday-hub/src/bin/hub_d20_signed_batch_worktree.rs",
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-agent-routes.test.ts",
+      "proof": "src/api/http/routes/friday-agent-routes.ts gates the D20 signed-batch worktree product route on FRIDAY_D20_SIGNED_BATCH_WORKTREE_VIA_RUST (default-off) before body/owner work. Flag-on requires a bound owner and exact action.principal_id match, then relays the already operator-signed batch artifact and exact action JSON to the Rust hub_d20_signed_batch_worktree verifier/consumer. TS does not mint, verify, or rewrite the signature semantics; Rust owns Ed25519 verification, replay consumption, reversible-worktree scope, Irreversible/out-of-worktree pause, execution, and audit.",
+      "next_action": "Keep TS as a default-off owner-gated product courier until clients can call the Rust D20 signed-batch entrypoint directly; true live proof still requires an operator-signed batch and GO-LIVE gates."
     },
     {
       "id": "agent_runs_rollback",

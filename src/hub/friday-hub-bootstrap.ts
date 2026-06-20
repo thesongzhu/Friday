@@ -984,6 +984,23 @@ export function resolveAgentRunControlViaRust(
 }
 
 /**
+ * D20 W2 signed-batch worktree product entrypoint (DARK): single source of truth resolving the
+ * TS route flag from explicit config, else `FRIDAY_D20_SIGNED_BATCH_WORKTREE_VIA_RUST`.
+ * The route is still verify-only: Hub receives an operator-signed artifact and an exact action
+ * JSON, while Rust owns Ed25519 verification, replay consumption, worktree scope, and audit.
+ */
+export function resolveD20SignedBatchWorktreeViaRust(
+  configValue: boolean | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (typeof configValue === "boolean") {
+    return configValue;
+  }
+  const raw = (env.FRIDAY_D20_SIGNED_BATCH_WORKTREE_VIA_RUST ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true";
+}
+
+/**
  * providers-bridge cut-over (DARK): single source of truth resolving the
  * `routeProvidersViaRust` flag from (1) an EXPLICIT
  * {@link FridayHubConfig.routeProvidersViaRust} and, only as a fallback, (2) the
@@ -7451,6 +7468,12 @@ export async function createFridayHub(
     // paused/resume behavior is inert → the compose path never sees a paused outcome → byte-identical
     // to today. It admits NO mutating run (the read-only qualifier stays hard — a SEPARATE later PR).
     agentRunControlViaRust: resolveAgentRunControlViaRust(config.agentRunControlViaRust),
+    // D20 W2 signed-batch worktree PRODUCT ENTRYPOINT (DARK): default-false flag that makes the
+    // owner-gated TS route callable. Rust still owns verify-only batch admission, replay, worktree
+    // scope, and audit; this does not mint signatures or satisfy GO-LIVE by itself.
+    d20SignedBatchWorktreeViaRust: resolveD20SignedBatchWorktreeViaRust(
+      config.d20SignedBatchWorktreeViaRust,
+    ),
     // providers-bridge cut-over (DARK): default-false master flag for routing the retired
     // Tier-2 PROVIDER surfaces to the merged Rust bins. SINGLE SOURCE OF TRUTH =
     // `resolveRouteProvidersViaRust` (explicit config wins; else FRIDAY_ROUTE_PROVIDERS_VIA_RUST,

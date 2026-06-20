@@ -35,6 +35,7 @@ import type { FridayRustHubProvidersDetectService } from "../mission-spine/frida
 import type { FridayRustHubCapabilityDoctorService } from "../mission-spine/friday-rust-hub-capability-doctor-bridge-service.js";
 import type { FridayRustAgentRunWsClientX25519SecretResolver } from "../mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
 import type { FridayRustHubWorkflowCatalogBridgeService } from "../mission-spine/friday-rust-hub-workflow-catalog-bridge-service.js";
+import type { FridayD20SignedBatchWorktreeService } from "../mission-spine/friday-rust-hub-d20-signed-batch-worktree-service.js";
 import type { FridayMediaUnderstandingRoutesDeps } from "../http/routes/friday-media-understanding-routes.js";
 import type { FridaySocialImportRoutesDeps } from "../http/routes/friday-social-import-routes.js";
 import type { FridayTaskWorkflowRoutesDeps } from "../http/routes/friday-task-workflow-routes.js";
@@ -383,6 +384,14 @@ export interface CreateFridayApiRuntimeDeps {
    * behavior is never reached (byte-identical 503 / result paths untouched).
    */
   agentRunControlViaRust?: boolean;
+  /**
+   * D20 W2 trust-dial worktree batch product entrypoint (DARK): default false. When true, the
+   * agent route can relay an owner-bound signed batch artifact + exact action JSON to the Rust
+   * verifier/consumer. It does not mint signatures and does not relax the normal GO-LIVE gates.
+   */
+  d20SignedBatchWorktreeViaRust?: boolean;
+  /** D20 W2 bridge service; tests inject stubs, production lazily constructs the Rust-bin bridge. */
+  d20SignedBatchWorktreeService?: FridayD20SignedBatchWorktreeService;
   /**
    * providers-bridge cut-over (DARK): the master ON/OFF (resolved boolean) for routing
    * the retired Tier-2 PROVIDER surfaces — `providers.detect` (setup routes) and

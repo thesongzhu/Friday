@@ -169,6 +169,7 @@ import type { FridayRustHubRunAnswerReadbackService } from "../mission-spine/fri
 import { createFridayRustHubProvidersDetectService } from "../mission-spine/friday-rust-hub-providers-detect-bridge-service.js";
 import { createFridayRustHubCapabilityDoctorService } from "../mission-spine/friday-rust-hub-capability-doctor-bridge-service.js";
 import { createFridayRustHubWorkflowCatalogBridgeService } from "../mission-spine/friday-rust-hub-workflow-catalog-bridge-service.js";
+import { createFridayD20SignedBatchWorktreeService } from "../mission-spine/friday-rust-hub-d20-signed-batch-worktree-service.js";
 import { resolveRustAgentRunWsClientX25519Secret } from "../mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
 import type { FridayRustAgentRunWsClientX25519SecretResolver } from "../mission-spine/friday-rust-hub-agent-run-ws-client-x25519-secret.js";
 import {
@@ -4982,6 +4983,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
     const rustWsClientSecretResolver =
       deps.rustAgentRunWsClientSecretResolver ?? resolveRustAgentRunWsClientX25519Secret;
     const rustHubDbPath = deps.rustAgentRunHubDbPath ?? process.env.FRIDAY_HUB_AGENT_RUN_DB_PATH;
+    const d20SignedBatchWorktreeService =
+      deps.d20SignedBatchWorktreeService ?? createFridayD20SignedBatchWorktreeService();
 
     // OPERATOR ENV KNOBS for this dark Rust read-only execrun route (kept discoverable
     // together here, alongside the WS host/port + DB path siblings above):
@@ -5369,6 +5372,8 @@ export function createFridayApiRuntime(deps: CreateFridayApiRuntimeDeps): Friday
       // byte-identical retired 503 before any run lookup; on, it relays an owner-authorized resume.
       agentRunControlViaRust: deps.agentRunControlViaRust,
       resumeRun: routeResumeRun,
+      d20SignedBatchWorktreeViaRust: deps.d20SignedBatchWorktreeViaRust,
+      dispatchD20SignedBatchWorktree: (input) => d20SignedBatchWorktreeService.dispatch(input),
     })) {
       routes.register(route);
     }

@@ -94,6 +94,7 @@ export type FridayPublicMutationOperation =
   | "mission.spine.lifecycle"
   | "mission.spine.workitem.status"
   | "mission.spine.routedecision.control"
+  | "agent.d20.worktree.batch.dispatch"
   // Lane M — the memory-confirmation loop's terminal mutation driven over the
   // sealed-WS dispatch arm (OWNER confirm/reject of ONE memory candidate). Public
   // mutating route: refuse the synthetic public principal; only a bound owner can
