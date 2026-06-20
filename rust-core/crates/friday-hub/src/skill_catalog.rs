@@ -367,6 +367,27 @@ pub struct LinkSkillCandidateReceipt {
     pub status: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkillAdoptionReceiptRequest {
+    pub skill_id: String,
+    pub mission_id: String,
+    pub work_item_id: String,
+    pub operator_principal_id: String,
+    pub canonical_approval: CanonicalApproval,
+    pub proof_ref: String,
+    pub now_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkillAdoptionReceipt {
+    pub adoption_ref: String,
+    pub proof_ref: String,
+    pub skill_id: String,
+    pub mission_id: String,
+    pub work_item_id: String,
+    pub status: String,
+}
+
 pub fn record_skill_run_receipt(
     db: &Db,
     snapshot: &SkillCatalogSnapshot,
@@ -427,6 +448,35 @@ pub fn record_skill_run_receipt_ed25519(
     write_skill_run_receipt(db, entry, request)
 }
 
+pub fn record_skill_adoption_receipt_ed25519(
+    db: &Db,
+    request: SkillAdoptionReceiptRequest,
+    operator_vk: &OperatorVerifyingKey,
+) -> Result<SkillAdoptionReceipt, SkillCatalogError> {
+    validate_skill_adoption_receipt(db, &request)?;
+    let gate_request = skill_adoption_gate_request(
+        &request.skill_id,
+        &request.mission_id,
+        &request.work_item_id,
+        &request.operator_principal_id,
+    );
+    let gate = authorize_mutating_action_ed25519(
+        db.conn(),
+        &gate_request,
+        Some(&request.canonical_approval),
+        operator_vk,
+        request.now_ms,
+    )?;
+    if gate.decision != GateDecision::Allow {
+        return Err(SkillCatalogError::RunBlocked(format!(
+            "skill_adoption_canonical_gate_{}",
+            gate.reason
+        )));
+    }
+
+    write_skill_adoption_receipt(db, request)
+}
+
 fn validate_skill_run_receipt<'a>(
     db: &Db,
     snapshot: &'a SkillCatalogSnapshot,
@@ -449,6 +499,23 @@ fn validate_skill_run_receipt<'a>(
     }
     validate_mission_work_item(db, &request.mission_id, &request.work_item_id)?;
     Ok(entry)
+}
+
+fn validate_skill_adoption_receipt(
+    db: &Db,
+    request: &SkillAdoptionReceiptRequest,
+) -> Result<(), SkillCatalogError> {
+    if !is_safe_public_id(&request.skill_id) {
+        return Err(SkillCatalogError::RunBlocked(
+            "skill_adoption_safe_skill_id_required".to_string(),
+        ));
+    }
+    if !is_safe_proof_ref(&request.proof_ref) {
+        return Err(SkillCatalogError::RunBlocked(
+            "skill_adoption_proof_ref_required".to_string(),
+        ));
+    }
+    validate_mission_work_item(db, &request.mission_id, &request.work_item_id)
 }
 
 fn write_skill_run_receipt(
@@ -480,6 +547,37 @@ fn write_skill_run_receipt(
         mission_id: request.mission_id,
         work_item_id: request.work_item_id,
         status: "receipt_recorded_not_completed".to_string(),
+    })
+}
+
+fn write_skill_adoption_receipt(
+    db: &Db,
+    request: SkillAdoptionReceiptRequest,
+) -> Result<SkillAdoptionReceipt, SkillCatalogError> {
+    let adoption_ref = redacted_ref(
+        "skill-adoption",
+        &format!(
+            "{}:{}:{}:{}",
+            request.skill_id, request.mission_id, request.work_item_id, request.now_ms
+        ),
+    );
+    db.upsert_mission_link(&MissionLink {
+        link_id: adoption_ref.clone(),
+        mission_id: request.mission_id.clone(),
+        work_item_id: Some(request.work_item_id.clone()),
+        link_kind: MissionLinkKind::ProofReceipt,
+        target_ref: skill_adoption_target_ref(&request.skill_id),
+        proof_ref: Some(request.proof_ref.clone()),
+        created_at_ms: request.now_ms,
+    })?;
+
+    Ok(SkillAdoptionReceipt {
+        adoption_ref,
+        proof_ref: request.proof_ref,
+        skill_id: request.skill_id,
+        mission_id: request.mission_id,
+        work_item_id: request.work_item_id,
+        status: "skill_adoption_receipt_recorded_not_executed".to_string(),
     })
 }
 
@@ -628,6 +726,35 @@ fn write_link_skill_candidate_receipt(
     })
 }
 
+pub fn adopted_skill_ids_from_mission_links(
+    db: &Db,
+    mission_id: &str,
+    work_item_id: &str,
+) -> Result<Vec<String>, SkillCatalogError> {
+    let mut adopted = BTreeSet::new();
+    for link in db.list_mission_links(mission_id)? {
+        if link.work_item_id.as_deref() != Some(work_item_id) {
+            continue;
+        }
+        if link.link_kind != MissionLinkKind::ProofReceipt {
+            continue;
+        }
+        let Some(proof_ref) = link.proof_ref.as_deref() else {
+            continue;
+        };
+        if !is_safe_proof_ref(proof_ref) {
+            continue;
+        }
+        let Some(skill_id) = link.target_ref.strip_prefix("friday://skill-adoption/") else {
+            continue;
+        };
+        if is_safe_public_id(skill_id) {
+            adopted.insert(skill_id.to_string());
+        }
+    }
+    Ok(adopted.into_iter().collect())
+}
+
 pub fn skill_run_gate_request(
     skill_id: &str,
     mission_id: &str,
@@ -653,6 +780,37 @@ pub fn skill_run_gate_request(
             "skill_id={skill_id};mission_id={mission_id};work_item_id={work_item_id}"
         )),
         Some(format!("skill-run:{skill_id}:{mission_id}:{work_item_id}")),
+        None,
+    )
+}
+
+pub fn skill_adoption_gate_request(
+    skill_id: &str,
+    mission_id: &str,
+    work_item_id: &str,
+    operator_principal_id: &str,
+) -> MutatingActionRequest {
+    let params = vec![
+        ("target".to_string(), skill_id.to_string()),
+        ("mission_id".to_string(), mission_id.to_string()),
+        ("work_item_id".to_string(), work_item_id.to_string()),
+    ];
+    MutatingActionRequest::from_classification(
+        friday_core::gate::classify(true, friday_core::Risk::High, "adopt_skill", &params),
+        "adopt_skill".to_string(),
+        Actor {
+            kind: ActorKind::Owner,
+            id: operator_principal_id.to_string(),
+            principal_id: Some(operator_principal_id.to_string()),
+        },
+        "friday_hub_skill_catalog".to_string(),
+        Vec::new(),
+        Some(format!(
+            "skill_id={skill_id};mission_id={mission_id};work_item_id={work_item_id}"
+        )),
+        Some(format!(
+            "skill-adoption:{skill_id}:{mission_id}:{work_item_id}"
+        )),
         None,
     )
 }
@@ -736,6 +894,10 @@ pub fn link_skill_candidate_node(
         control_allowed: false,
         updated_at_ms: now_ms,
     }
+}
+
+fn skill_adoption_target_ref(skill_id: &str) -> String {
+    format!("friday://skill-adoption/{skill_id}")
 }
 
 fn skill_blockers(entry: &SkillCatalogEntry) -> Vec<String> {

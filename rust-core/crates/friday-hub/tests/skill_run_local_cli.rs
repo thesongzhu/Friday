@@ -13,8 +13,8 @@ use friday_core::gate::{
     CanonicalApproval, MutatingActionRequest, CANONICAL_GATE_ISSUER,
 };
 use friday_core::{
-    ApprovalState, FridayConversation, HandoffJudgmentMemory, Mission, MissionStatus, Risk,
-    TruthStatus, WorkItem, WorkItemStatus, WorkLane,
+    ApprovalState, FridayConversation, HandoffJudgmentMemory, Mission, MissionLink,
+    MissionLinkKind, MissionStatus, Risk, TruthStatus, WorkItem, WorkItemStatus, WorkLane,
 };
 use friday_crypto::{OperatorSigningKey, OperatorVerifyingKey};
 use friday_hub::skill_catalog::skill_run_gate_request;
@@ -233,6 +233,7 @@ fn cli_base(
     vk_path: &std::path::Path,
     approval_path: &std::path::Path,
     managed_root: &std::path::Path,
+    include_explicit_adoption: bool,
 ) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_hub_skill_run_local"));
     cmd.arg("run-local")
@@ -246,10 +247,6 @@ fn cli_base(
         .arg(managed_root)
         .arg("--skill-id")
         .arg("summarize-local")
-        .arg("--adopted-skill-id")
-        .arg("summarize-local")
-        .arg("--approved-first-run-skill-id")
-        .arg("summarize-local")
         .arg("--mission-id")
         .arg("mission-skill-run-local-cli")
         .arg("--work-item-id")
@@ -260,7 +257,25 @@ fn cli_base(
         .arg("5000")
         .arg("--now-ms")
         .arg((NOW + 1).to_string());
+    if include_explicit_adoption {
+        cmd.arg("--adopted-skill-id").arg("summarize-local");
+    }
+    cmd.arg("--approved-first-run-skill-id")
+        .arg("summarize-local");
     cmd
+}
+
+fn seed_adoption_receipt(db: &Db) {
+    db.upsert_mission_link(&MissionLink {
+        link_id: "friday://skill-adoption/test-receipt".into(),
+        mission_id: "mission-skill-run-local-cli".into(),
+        work_item_id: Some("work-skill-run-local-cli".into()),
+        link_kind: MissionLinkKind::ProofReceipt,
+        target_ref: "friday://skill-adoption/summarize-local".into(),
+        proof_ref: Some("proof://skill-adoption/summarize-local".into()),
+        created_at_ms: NOW,
+    })
+    .unwrap();
 }
 
 #[test]
@@ -281,7 +296,7 @@ fn flag_off_fails_closed_without_executing_skill() {
         &ed_approval(&gate_request(), &sk, "skill-run-local-flag-off"),
     );
 
-    let mut cmd = cli_base(&db_path, &vk_path, &approval_path, &managed_root);
+    let mut cmd = cli_base(&db_path, &vk_path, &approval_path, &managed_root, true);
     cmd.env_remove(FRIDAY_D21_SKILL_RUN_LOCAL);
     let output = cmd.output().unwrap();
     assert!(!output.status.success());
@@ -316,7 +331,7 @@ fn flag_on_executes_adopted_shell_skill_after_ed25519_approval() {
         &ed_approval(&gate_request(), &sk, "skill-run-local-ed-allow"),
     );
 
-    let mut cmd = cli_base(&db_path, &vk_path, &approval_path, &managed_root);
+    let mut cmd = cli_base(&db_path, &vk_path, &approval_path, &managed_root, true);
     cmd.env(FRIDAY_D21_SKILL_RUN_LOCAL, "1");
     let output = cmd.output().unwrap();
     assert!(
@@ -352,6 +367,56 @@ fn flag_on_executes_adopted_shell_skill_after_ed25519_approval() {
 }
 
 #[test]
+fn flag_on_executes_shell_skill_after_mission_scoped_adoption_receipt() {
+    let db_path = temp_db("adoption-receipt");
+    let db = Db::open_hub(&db_path).unwrap();
+    seed_mission(&db);
+    seed_adoption_receipt(&db);
+
+    let managed_root = temp_path("adoption-receipt-managed");
+    std::fs::create_dir_all(&managed_root).unwrap();
+    let skill_dir = write_shell_skill(&managed_root, "shell");
+    let (sk, vk) = operator();
+    let vk_path = temp_path("adoption-receipt.vk");
+    std::fs::write(&vk_path, vk_hex(&vk)).unwrap();
+    let approval_path = temp_path("adoption-receipt-approval.json");
+    write_approval(
+        &approval_path,
+        &ed_approval(&gate_request(), &sk, "skill-run-local-adoption-receipt"),
+    );
+
+    let mut cmd = cli_base(&db_path, &vk_path, &approval_path, &managed_root, false);
+    cmd.env(FRIDAY_D21_SKILL_RUN_LOCAL, "1");
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["runs_skill"], true);
+    assert_eq!(json["executes_skill"], true);
+    assert_eq!(json["completes_work_item"], false);
+    assert!(skill_dir.join("marker.txt").is_file());
+
+    let item = db
+        .get_work_item("work-skill-run-local-cli")
+        .unwrap()
+        .unwrap();
+    assert_eq!(item.status, WorkItemStatus::ReadyToDispatch);
+    assert!(item.proof_receipts.is_empty());
+    let links = db
+        .list_mission_links("mission-skill-run-local-cli")
+        .unwrap();
+    assert_eq!(links.len(), 2);
+    assert!(links
+        .iter()
+        .any(|link| link.target_ref == "friday://skill-adoption/summarize-local"));
+}
+
+#[test]
 fn hmac_approval_is_rejected_before_execution() {
     let db_path = temp_db("hmac");
     let db = Db::open_hub(&db_path).unwrap();
@@ -369,7 +434,7 @@ fn hmac_approval_is_rejected_before_execution() {
         &hmac_approval(&gate_request(), "skill-run-local-hmac"),
     );
 
-    let mut cmd = cli_base(&db_path, &vk_path, &approval_path, &managed_root);
+    let mut cmd = cli_base(&db_path, &vk_path, &approval_path, &managed_root, true);
     cmd.env(FRIDAY_D21_SKILL_RUN_LOCAL, "1");
     let output = cmd.output().unwrap();
     assert!(!output.status.success());
@@ -403,7 +468,7 @@ fn imported_skill_md_runtime_is_not_executable() {
         &ed_approval(&gate_request(), &sk, "skill-run-local-imported-runtime"),
     );
 
-    let mut cmd = cli_base(&db_path, &vk_path, &approval_path, &managed_root);
+    let mut cmd = cli_base(&db_path, &vk_path, &approval_path, &managed_root, true);
     cmd.env(FRIDAY_D21_SKILL_RUN_LOCAL, "1");
     let output = cmd.output().unwrap();
     assert!(!output.status.success());
