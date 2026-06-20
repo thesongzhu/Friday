@@ -4334,7 +4334,7 @@ fn mirror_anthropic_metered_turn(
     let link = ProviderSessionLink {
         friday_session_id: friday_session_id.clone(),
         provider: "claude".to_string(),
-        account_key_hash: "sha256:claude-account-unresolved".to_string(),
+        account_key_hash: "sha256:claude-account-unresolved".to_string(), // pragma: allowlist secret
         workspace_id: "anthropic-messages-api".to_string(),
         cwd: None,
         external_session_id: None,
