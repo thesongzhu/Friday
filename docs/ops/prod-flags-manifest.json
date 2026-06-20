@@ -250,6 +250,19 @@
       "notes": "Built-dark D21/A4 execution substrate. The runner uses the existing shell-free/env-scrubbed/cwd-contained friday-fs command path and supports a required Darwin sandbox CLI switch, but this flag does not flip live product execution policy and does not make imported SKILL.md packages executable. Hub still verifies only; operator signing remains operator-only."
     },
     {
+      "flag": "FRIDAY_SYSTEM_INTENT_RUST_ENTRYPOINT",
+      "process": "rust-ws-wrapper",
+      "prod_state": "dark",
+      "closes_loop": "With the flag ON, a Hub-owned system-intent proof entrypoint reaches the Rust system-intent domain layer and records refs-only request/result rows through the production dry-run/unavailable OS executor. With the flag OFF it fails closed before opening a DB. Even with a valid operator Ed25519 approval for an OS-affecting intent, the entrypoint reports unavailable dry-run evidence and never completes or actuates the host effect.",
+      "coverage": "loop-e2e",
+      "e2e_test": "rust-core/crates/friday-hub/tests/system_intent_dispatch_cli.rs::valid_operator_approval_authorizes_launch_app_but_still_dry_runs",
+      "additional_e2e_tests": [
+        "rust-core/crates/friday-hub/tests/system_intent_dispatch_cli.rs::flag_off_fails_closed_without_creating_db",
+        "rust-core/crates/friday-hub/tests/system_intent_dispatch_cli.rs::flag_on_dispatches_snapshot_as_dry_run_unavailable_not_completed"
+      ],
+      "notes": "Built-dark B3 companion/system-intent Rust entrypoint. The CLI composes the existing system-intent domain, m0026 storage substrate, and Ed25519 verify-only approval path; it does not add a product route, does not read or mint signing keys, and does not wire a real OS actuation backend. Honest boundary: this is not live companion OS execution and not a GO-LIVE flip."
+    },
+    {
       "flag": "FRIDAY_WEB_FETCH_ENABLED",
       "process": "rust-ws-wrapper",
       "prod_state": "dark",
