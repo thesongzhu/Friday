@@ -505,7 +505,8 @@ use friday_core::{
 use friday_crypto::OperatorVerifyingKey;
 use friday_storage::{
     agent_run, authorize_mutating_action, authorize_mutating_action_ed25519,
-    authorize_mutating_action_ed25519_batch, ActivityRow, AuditEvent, Db, StorageError,
+    authorize_mutating_action_ed25519_batch, authorize_reversible_batch_in_worktree, ActivityRow,
+    AuditEvent, Db, DialWorktreeScope, StorageError,
 };
 use rusqlite::Connection;
 
@@ -4036,6 +4037,67 @@ pub(crate) fn gate_dispatch_with_policy_enforced(
     };
     Ok(match record.decision {
         // Execute ONLY on Allow — the single chokepoint both drivers rely on.
+        GateDecision::Allow => match executor.execute_with_usage(&raw.action, &raw.params) {
+            Ok((receipt, usage)) => {
+                if let Some(usage) = usage.as_ref() {
+                    let run_id = policy
+                        .action_context()
+                        .and_then(|ctx| ctx.run_id.as_deref());
+                    friday_storage::record_tool_usage(conn, usage, run_id, now_ms)?;
+                }
+                GateDispatch::Executed(receipt)
+            }
+            Err(e) => GateDispatch::ExecError(e),
+        },
+        GateDecision::RequiresApproval => GateDispatch::RequiresApproval,
+        GateDecision::Deny => GateDispatch::Denied(record.reason),
+    })
+}
+
+/// D20 W2 DARK worktree batch driver.
+///
+/// This is the first live-shaped execution entrypoint for trust-dial batches, but it is still a
+/// library seam: the caller must supply an already operator-signed batch and the operator public
+/// verify key. The Hub never signs, never loads a private key, and this driver deliberately stays
+/// narrower than the general loop dispatcher: it only executes mutating actions whose exact digest
+/// is in the signed batch and whose classified resource is inside the active worktree.
+#[allow(clippy::too_many_arguments, dead_code)]
+pub(crate) fn d20_dispatch_signed_batch_in_worktree(
+    conn: &mut Connection,
+    executor: &dyn ToolExecutor,
+    raw: &RawToolCall,
+    vk: &OperatorVerifyingKey,
+    batch: &CanonicalApprovalBatch,
+    scope: &DialWorktreeScope,
+    policy: &RunPolicy,
+    now_ms: i64,
+) -> Result<GateDispatch, StorageError> {
+    if policy.is_tool_disabled(&raw.action) {
+        return Ok(GateDispatch::Denied(format!(
+            "tool_disabled_for_run:{}",
+            raw.action
+        )));
+    }
+    let request = match build_request_with_policy(raw, policy) {
+        Ok(request) => request,
+        Err(ToolError::UnknownTool(action)) => return Ok(GateDispatch::Unregistered(action)),
+    };
+    if !request.mutating() {
+        return Ok(GateDispatch::Denied(format!(
+            "dial_worktree_batch_requires_mutating_action:{}",
+            raw.action
+        )));
+    }
+    if policy.is_read_only() {
+        return Ok(GateDispatch::Denied(format!(
+            "run_is_read_only:{}",
+            raw.action
+        )));
+    }
+
+    let record =
+        authorize_reversible_batch_in_worktree(conn, &request, Some(batch), vk, now_ms, scope)?;
+    Ok(match record.decision {
         GateDecision::Allow => match executor.execute_with_usage(&raw.action, &raw.params) {
             Ok((receipt, usage)) => {
                 if let Some(usage) = usage.as_ref() {
@@ -11960,6 +12022,158 @@ mod tests {
             exec.calls.get(),
             0,
             "Irreversible batch member must not reach the executor"
+        );
+    }
+
+    fn d20_scope(plan_sign_id: &str, active_worktree: &std::path::Path) -> DialWorktreeScope {
+        DialWorktreeScope {
+            plan_sign_id: plan_sign_id.to_string(),
+            active_worktree: active_worktree.to_path_buf(),
+        }
+    }
+
+    #[test]
+    fn d20_worktree_batch_driver_executes_signed_member_and_audits_once() {
+        let mut db = Db::open_hub(&temp_path("d20-worktree-driver")).unwrap();
+        let ws = temp_ws("d20-worktree-driver");
+        let fs = FsToolExecutor::new(ws.clone());
+        let exec = CountingExecutor {
+            inner: &fs,
+            calls: std::cell::Cell::new(0),
+        };
+        let policy = RunPolicy::default();
+        let call = raw("write_file", &[("path", "out.txt"), ("content", "D20")]);
+        let request = build_request_with_policy(&call, &policy).unwrap();
+        let (sk, vk) = test_batch_key(31);
+        let batch = signed_batch(&[&request], &sk, "d20-worktree-driver-1", 10_000);
+        let scope = d20_scope("d20-worktree-driver-1", &ws);
+
+        let out = d20_dispatch_signed_batch_in_worktree(
+            db.conn_mut(),
+            &exec,
+            &call,
+            &vk,
+            &batch,
+            &scope,
+            &policy,
+            1000,
+        )
+        .unwrap();
+
+        match out {
+            GateDispatch::Executed(receipt) => assert!(
+                receipt.summary.contains("wrote"),
+                "signed worktree batch member must execute, got {}",
+                receipt.summary
+            ),
+            other => panic!("signed worktree batch member must execute, got {other:?}"),
+        }
+        assert_eq!(std::fs::read_to_string(ws.join("out.txt")).unwrap(), "D20");
+        assert_eq!(exec.calls.get(), 1);
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).unwrap() >= 1);
+        let audit_count: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM audit_ledger WHERE action='dial.batch.worktree_authorized'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            audit_count, 1,
+            "each allowed member writes one dial audit row"
+        );
+
+        let replay = d20_dispatch_signed_batch_in_worktree(
+            db.conn_mut(),
+            &exec,
+            &call,
+            &vk,
+            &batch,
+            &scope,
+            &policy,
+            1001,
+        )
+        .unwrap();
+        match replay {
+            GateDispatch::Denied(reason) => assert_eq!(reason, "canonical_batch_replay_refused"),
+            other => panic!("replay must deny before execution, got {other:?}"),
+        }
+        assert_eq!(exec.calls.get(), 1, "replay must not reach executor");
+    }
+
+    #[test]
+    fn d20_worktree_batch_driver_pauses_irreversible_and_out_of_scope_before_execute() {
+        let mut db = Db::open_hub(&temp_path("d20-worktree-driver-pauses")).unwrap();
+        let ws = temp_ws("d20-worktree-driver-pauses");
+        let outside = temp_ws("d20-worktree-driver-outside");
+        let fs = FsToolExecutor::new(ws.clone());
+        let exec = CountingExecutor {
+            inner: &fs,
+            calls: std::cell::Cell::new(0),
+        };
+        let policy = RunPolicy::default();
+        let (sk, vk) = test_batch_key(32);
+
+        let irreversible = raw("run_command", &[("command", "true")]);
+        let irreversible_request = build_request_with_policy(&irreversible, &policy).unwrap();
+        let irreversible_batch =
+            signed_batch(&[&irreversible_request], &sk, "d20-worktree-irrev", 10_000);
+        let irreversible_scope = d20_scope("d20-worktree-irrev", &ws);
+        let irreversible_out = d20_dispatch_signed_batch_in_worktree(
+            db.conn_mut(),
+            &exec,
+            &irreversible,
+            &vk,
+            &irreversible_batch,
+            &irreversible_scope,
+            &policy,
+            1000,
+        )
+        .unwrap();
+        match irreversible_out {
+            GateDispatch::RequiresApproval => {}
+            other => panic!("Irreversible batch member must Pause, got {other:?}"),
+        }
+
+        let outside_file = outside.join("outside.txt");
+        let outside_path = outside_file.to_string_lossy().to_string();
+        let out_of_scope = raw(
+            "write_file",
+            &[("path", outside_path.as_str()), ("content", "NOPE")],
+        );
+        let out_of_scope_request = build_request_with_policy(&out_of_scope, &policy).unwrap();
+        let out_of_scope_batch = signed_batch(
+            &[&out_of_scope_request],
+            &sk,
+            "d20-worktree-outscope",
+            10_000,
+        );
+        let out_of_scope_scope = d20_scope("d20-worktree-outscope", &ws);
+        let out_of_scope_out = d20_dispatch_signed_batch_in_worktree(
+            db.conn_mut(),
+            &exec,
+            &out_of_scope,
+            &vk,
+            &out_of_scope_batch,
+            &out_of_scope_scope,
+            &policy,
+            1001,
+        )
+        .unwrap();
+        match out_of_scope_out {
+            GateDispatch::RequiresApproval => {}
+            other => panic!("out-of-worktree batch member must Pause, got {other:?}"),
+        }
+
+        assert_eq!(
+            exec.calls.get(),
+            0,
+            "paused D20 worktree-batch members must not reach executor"
+        );
+        assert!(
+            !outside_file.exists(),
+            "out-of-worktree write must not create the target file"
         );
     }
 
