@@ -174,12 +174,13 @@ fn run() -> Result<String, BridgeError> {
             "batch_sign_id": batch.batch_sign_id,
             "audit_chain_verified": audit_chain_verified,
         }),
-        D20WorktreeBatchOutcome::RequiresApproval => json!({
+        D20WorktreeBatchOutcome::RequiresApproval { reason } => json!({
             "truth_label": "d20_worktree_signed_batch_artifact",
             "proof_only": true,
             "ok": true,
             "executed": false,
             "result_status": "requires_approval",
+            "reason": reason,
             "batch_sign_id": batch.batch_sign_id,
             "audit_chain_verified": audit_chain_verified,
         }),
