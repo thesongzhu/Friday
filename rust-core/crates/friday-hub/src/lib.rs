@@ -2419,12 +2419,18 @@ pub fn recall_preamble_for_principals_with_query(
     let a1_run_outcome_on = a1_run_outcome_learning_recall_enabled_from(
         std::env::var(FRIDAY_A1_RUN_OUTCOME_LEARNING_RECALL).ok(),
     );
+    let a1_run_outcome_consumer_on = a1_run_outcome_learning_consumer_enabled_from(
+        std::env::var(FRIDAY_A1_RUN_OUTCOME_LEARNING_CONSUMER).ok(),
+    );
     recall_preamble_for_principals_blended(
         db,
         principals,
         query,
-        hybrid_on,
-        a1_run_outcome_on,
+        RecallPreambleFlags {
+            hybrid_on,
+            a1_run_outcome_on,
+            a1_run_outcome_consumer_on,
+        },
         receipt_audit_id,
         now_ms,
     )
@@ -2435,12 +2441,18 @@ pub fn recall_preamble_for_principals_with_query(
 /// never mutate `std::env`, avoiding the in-process test race — the same split-env idiom the gate
 /// chokepoint uses). When `hybrid_on` is FALSE the ranking is recency-only and BYTE-IDENTICAL to
 /// the pre-hybrid path regardless of `query`.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct RecallPreambleFlags {
+    pub(crate) hybrid_on: bool,
+    pub(crate) a1_run_outcome_on: bool,
+    pub(crate) a1_run_outcome_consumer_on: bool,
+}
+
 pub(crate) fn recall_preamble_for_principals_blended(
     db: &Db,
     principals: &[&str],
     query: Option<&str>,
-    hybrid_on: bool,
-    a1_run_outcome_on: bool,
+    flags: RecallPreambleFlags,
     receipt_audit_id: &str,
     now_ms: i64,
 ) -> Result<String, StorageError> {
@@ -2456,7 +2468,10 @@ pub(crate) fn recall_preamble_for_principals_blended(
     // has a usable FTS5 MATCH expression. Any miss ⇒ recency-only (byte-identical). The keyword
     // scores are intersected with the owner-scoped `rows` inside `rank_recall_hybrid`, so no
     // cross-owner row can ever inject.
-    let ranked = match (hybrid_on, query.and_then(cognition::build_fts_match_query)) {
+    let ranked = match (
+        flags.hybrid_on,
+        query.and_then(cognition::build_fts_match_query),
+    ) {
         (true, Some(match_query)) => {
             let keyword_scores =
                 friday_storage::memory::fts_keyword_scores(db.conn(), &match_query)?;
@@ -2501,33 +2516,37 @@ pub(crate) fn recall_preamble_for_principals_blended(
     let a1_preamble = a1_run_outcome_learning_preamble_for_principals_flagged(
         db,
         principals,
-        a1_run_outcome_on,
+        flags.a1_run_outcome_on,
         receipt_audit_id,
         now_ms,
     )?;
-    Ok(format!("{preamble}{a1_preamble}"))
+    let a1_consumer_preamble = a1_run_outcome_learning_consumer_preamble_for_principals_flagged(
+        db,
+        principals,
+        flags.a1_run_outcome_consumer_on,
+        receipt_audit_id,
+        now_ms,
+    )?;
+    Ok(format!("{preamble}{a1_preamble}{a1_consumer_preamble}"))
 }
 
-pub(crate) fn a1_run_outcome_learning_preamble_for_principals_flagged(
+fn matched_run_outcome_learning_candidates_for_principals<F>(
     db: &Db,
     principals: &[&str],
-    enabled: bool,
-    receipt_audit_id: &str,
-    now_ms: i64,
-) -> Result<String, StorageError> {
-    let Some(receipt_actor) = principals.first() else {
-        return Ok(String::new());
-    };
-    if !enabled {
-        return Ok(String::new());
-    }
-
+    keep: F,
+) -> Result<Vec<friday_storage::learning_candidate::RunOutcomeLearningCandidateRow>, StorageError>
+where
+    F: Fn(&friday_storage::learning_candidate::RunOutcomeLearningCandidateRow) -> bool,
+{
     let rows = friday_storage::learning_candidate::list_recent_confirmed_run_outcome_candidates(
         db.conn(),
         64,
     )?;
     let mut matched = Vec::new();
     for row in rows {
+        if !keep(&row) {
+            continue;
+        }
         let Some(session_id) = row.session_id.as_deref() else {
             continue;
         };
@@ -2557,6 +2576,24 @@ pub(crate) fn a1_run_outcome_learning_preamble_for_principals_flagged(
             break;
         }
     }
+    Ok(matched)
+}
+
+pub(crate) fn a1_run_outcome_learning_preamble_for_principals_flagged(
+    db: &Db,
+    principals: &[&str],
+    enabled: bool,
+    receipt_audit_id: &str,
+    now_ms: i64,
+) -> Result<String, StorageError> {
+    let Some(receipt_actor) = principals.first() else {
+        return Ok(String::new());
+    };
+    if !enabled {
+        return Ok(String::new());
+    }
+
+    let matched = matched_run_outcome_learning_candidates_for_principals(db, principals, |_| true)?;
     if matched.is_empty() {
         return Ok(String::new());
     }
@@ -2588,6 +2625,70 @@ pub(crate) fn a1_run_outcome_learning_preamble_for_principals_flagged(
         receipt_actor,
         &format!(
             "run_outcome_learning.recalled:signals={}",
+            injected_ids.len()
+        ),
+        Some(&injected_ids.join(",")),
+        now_ms,
+    )
+    .map_err(StorageError::from)?;
+    tx.commit().map_err(StorageError::from)?;
+
+    Ok(preamble)
+}
+
+pub(crate) fn a1_run_outcome_learning_consumer_preamble_for_principals_flagged(
+    db: &Db,
+    principals: &[&str],
+    enabled: bool,
+    receipt_audit_id: &str,
+    now_ms: i64,
+) -> Result<String, StorageError> {
+    let Some(receipt_actor) = principals.first() else {
+        return Ok(String::new());
+    };
+    if !enabled {
+        return Ok(String::new());
+    }
+
+    let matched = matched_run_outcome_learning_candidates_for_principals(db, principals, |row| {
+        matches!(
+            row.kind,
+            friday_storage::learning_candidate::RunOutcomeLearningKind::Preference
+                | friday_storage::learning_candidate::RunOutcomeLearningKind::WorldModel
+        )
+    })?;
+    if matched.is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut preamble =
+        "Confirmed preference/world-model learning signals (refs-only; no answer body):\n"
+            .to_string();
+    let mut injected_ids = Vec::new();
+    for row in matched {
+        injected_ids.push(row.candidate_id.clone());
+        preamble.push_str("- ");
+        preamble.push_str(row.kind.as_str());
+        preamble.push_str(": ");
+        preamble.push_str(&row.summary);
+        preamble.push_str("; evidence=");
+        preamble.push_str(&row.evidence_ref);
+        preamble.push_str("; run=");
+        preamble.push_str(&row.run_id);
+        preamble.push('\n');
+    }
+    preamble.push('\n');
+
+    let tx = db
+        .conn()
+        .unchecked_transaction()
+        .map_err(StorageError::from)?;
+    friday_storage::audit::append_audit(
+        &tx,
+        &format!("{receipt_audit_id}:run-outcome-learning-consumer"),
+        receipt_actor,
+        &format!(
+            "run_outcome_learning.consumer:signals={}",
             injected_ids.len()
         ),
         Some(&injected_ids.join(",")),
@@ -3687,6 +3788,15 @@ pub(crate) fn hybrid_recall_enabled_from(raw: Option<String>) -> bool {
 pub const FRIDAY_A1_RUN_OUTCOME_LEARNING_RECALL: &str = "FRIDAY_A1_RUN_OUTCOME_LEARNING_RECALL";
 
 pub(crate) fn a1_run_outcome_learning_recall_enabled_from(raw: Option<String>) -> bool {
+    matches!(raw, Some(v) if v.trim() == "1")
+}
+
+/// Default-OFF A1 consumer gate. When exactly `"1"`, confirmed preference/world-model
+/// run-outcome candidates are rendered as refs-only context signals. Reflex rows stay
+/// governance-only, and no candidate is promoted to durable memory by this flag.
+pub const FRIDAY_A1_RUN_OUTCOME_LEARNING_CONSUMER: &str = "FRIDAY_A1_RUN_OUTCOME_LEARNING_CONSUMER";
+
+pub(crate) fn a1_run_outcome_learning_consumer_enabled_from(raw: Option<String>) -> bool {
     matches!(raw, Some(v) if v.trim() == "1")
 }
 
@@ -16364,8 +16474,7 @@ mod tests {
             &db,
             &["alice"],
             Some("how do I tune my kafka cluster?"),
-            false,
-            false,
+            RecallPreambleFlags::default(),
             "audit-off",
             now,
         )
@@ -16380,8 +16489,10 @@ mod tests {
             &db,
             &["alice"],
             Some("how do I tune my kafka cluster?"),
-            true,
-            false,
+            RecallPreambleFlags {
+                hybrid_on: true,
+                ..RecallPreambleFlags::default()
+            },
             "audit-on",
             now,
         )
@@ -16418,8 +16529,7 @@ mod tests {
             &db,
             &["alice"],
             Some("kafka kafka kafka"),
-            false,
-            false,
+            RecallPreambleFlags::default(),
             "audit-k",
             now,
         )
@@ -16428,8 +16538,7 @@ mod tests {
             &db,
             &["alice"],
             None,
-            false,
-            false,
+            RecallPreambleFlags::default(),
             "audit-n",
             now,
         )
@@ -16476,8 +16585,10 @@ mod tests {
             &db,
             &["alice"],
             Some("tell me about quantum research"),
-            true,
-            false,
+            RecallPreambleFlags {
+                hybrid_on: true,
+                ..RecallPreambleFlags::default()
+            },
             "audit-iso",
             now,
         )
@@ -16537,8 +16648,7 @@ mod tests {
             &db,
             &[alice_ns.as_str()],
             None,
-            false,
-            false,
+            RecallPreambleFlags::default(),
             "audit-a1-off",
             now + 2,
         )
@@ -16549,8 +16659,10 @@ mod tests {
             &db,
             &[alice_ns.as_str()],
             None,
-            false,
-            true,
+            RecallPreambleFlags {
+                a1_run_outcome_on: true,
+                ..RecallPreambleFlags::default()
+            },
             "audit-a1-on",
             now + 3,
         )
@@ -16588,8 +16700,10 @@ mod tests {
             &db,
             &[alice_ns.as_str()],
             None,
-            false,
-            true,
+            RecallPreambleFlags {
+                a1_run_outcome_on: true,
+                ..RecallPreambleFlags::default()
+            },
             "audit-a1-coexist",
             now + 2,
         )
@@ -16613,8 +16727,10 @@ mod tests {
             &db,
             &[alice_ns.as_str()],
             None,
-            false,
-            true,
+            RecallPreambleFlags {
+                a1_run_outcome_on: true,
+                ..RecallPreambleFlags::default()
+            },
             "audit-a1-iso",
             now + 2,
         )
@@ -16624,6 +16740,105 @@ mod tests {
             !preamble.contains("run-mallory"),
             "owner-scoped A1 recall must not leak another owner's run: {preamble:?}"
         );
+    }
+
+    #[test]
+    fn a1_run_outcome_learning_consumer_flag_matcher_is_exact() {
+        assert!(!a1_run_outcome_learning_consumer_enabled_from(None));
+        assert!(!a1_run_outcome_learning_consumer_enabled_from(Some(
+            "true".to_string()
+        )));
+        assert!(a1_run_outcome_learning_consumer_enabled_from(Some(
+            " 1 ".to_string()
+        )));
+    }
+
+    #[test]
+    fn a1_run_outcome_learning_consumer_flag_off_is_byte_identical() {
+        let db = Db::open_hub(&temp_path("a1-consumer-off")).unwrap();
+        let now = 1_000_000_000_000_i64;
+        seed_confirmed_run_outcome_learning(
+            &db,
+            "sess-a1-consumer-off",
+            "alice",
+            "run-a1-off",
+            now,
+        );
+        let alice_ns =
+            crate::session_namespace::resolve_session_memory_namespace(None, None, Some("alice"))
+                .unwrap();
+
+        let off = recall_preamble_for_principals_blended(
+            &db,
+            &[alice_ns.as_str()],
+            None,
+            RecallPreambleFlags::default(),
+            "audit-a1-consumer-off",
+            now + 2,
+        )
+        .unwrap();
+        assert_eq!(off, "", "consumer flag-OFF must not alter recall output");
+    }
+
+    #[test]
+    fn a1_run_outcome_learning_consumer_surfaces_preference_world_model_only() {
+        let db = Db::open_hub(&temp_path("a1-consumer-on")).unwrap();
+        let now = 1_000_000_000_000_i64;
+        seed_confirmed_run_outcome_learning(
+            &db,
+            "sess-a1-consumer",
+            "alice",
+            "run-a1-consumer",
+            now,
+        );
+        friday_storage::learning_candidate::decide_run_outcome_candidate(
+            db.conn(),
+            "a1:run-a1-consumer:world_model",
+            true,
+            now + 2,
+            Some("operator confirmed world-model text"),
+        )
+        .unwrap();
+        friday_storage::learning_candidate::decide_run_outcome_candidate(
+            db.conn(),
+            "a1:run-a1-consumer:reflex",
+            true,
+            now + 3,
+            Some("operator confirmed reflex text"),
+        )
+        .unwrap();
+        let alice_ns =
+            crate::session_namespace::resolve_session_memory_namespace(None, None, Some("alice"))
+                .unwrap();
+
+        let preamble = recall_preamble_for_principals_blended(
+            &db,
+            &[alice_ns.as_str()],
+            None,
+            RecallPreambleFlags {
+                a1_run_outcome_consumer_on: true,
+                ..RecallPreambleFlags::default()
+            },
+            "audit-a1-consumer-on",
+            now + 4,
+        )
+        .unwrap();
+        assert!(
+            preamble.contains("Confirmed preference/world-model learning signals")
+                && preamble.contains("- preference:")
+                && preamble.contains("- world_model:")
+                && preamble.contains("friday://agent-run/run-a1-consumer"),
+            "consumer flag-ON must inject preference/world-model refs-only signals: {preamble:?}"
+        );
+        assert!(
+            !preamble.contains("- reflex:"),
+            "consumer must not inject reflex candidates: {preamble:?}"
+        );
+        assert!(
+            !preamble.contains("operator confirmed"),
+            "decision reasons are operator text and must not be prompt-injected: {preamble:?}"
+        );
+        assert!(friday_storage::audit::verify_audit_chain(db.conn()).is_ok());
     }
 }
 
