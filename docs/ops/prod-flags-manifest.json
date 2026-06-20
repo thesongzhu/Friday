@@ -97,8 +97,8 @@
       "prod_state": "dark",
       "closes_loop": "A later owner-scoped prompt includes confirmed preference/world-model run-outcome learning signals as refs-only guidance, while excluding reflex candidates and answer bodies.",
       "coverage": "loop-e2e",
-      "e2e_test": "rust-core/crates/friday-hub/src/lib.rs::a1_run_outcome_learning_consumer_surfaces_preference_world_model_only",
-      "notes": "A1 preference/world-model consumer leg. Drives the shared recall-preamble chokepoint with the consumer flag ON and confirmed preference/world_model/reflex candidates, asserting only preference/world_model refs-only signals are injected and reflex is excluded. Sibling proofs cover exact-'1' parsing and flag-off byte-identical behavior. Truth boundary: built-DARK mechanism only; not A1 live-done until an operator-origin organic turn feeds a candidate and a real confirm decision."
+      "e2e_test": "rust-core/crates/friday-hub/src/runtime.rs::session_recall_public_path_surfaces_a1_consumer_preference_world_model_only",
+      "notes": "A1 preference/world-model consumer leg. Drives the public session recall path with the consumer flag ON and confirmed preference/world_model/reflex candidates, asserting only preference/world_model refs-only signals are injected and reflex is excluded. Sibling proofs cover exact-'1' parsing, shared chokepoint behavior, and flag-off byte-identical behavior. Truth boundary: built-DARK mechanism only; not A1 live-done until an operator-origin organic turn feeds a candidate and a real confirm decision."
     },
     {
       "flag": "FRIDAY_MEMORY_CONFIRM",
