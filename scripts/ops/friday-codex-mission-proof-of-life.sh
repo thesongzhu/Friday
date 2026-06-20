@@ -273,20 +273,45 @@ require_plist_path_contains() {
   esac
 }
 
+check_optional_plist_env_equals() {
+  local plist="$1"
+  local key="$2"
+  local expected="$3"
+  local label="$4"
+  local actual
+  if actual="$(plist_optional_env_value "${plist}" "${key}")"; then
+    if [ "${actual}" != "${expected}" ]; then
+      echo "FATAL: ${label} mismatch in ${plist}; expected '${expected}', got '${actual}'." >&2
+      exit 3
+    fi
+  fi
+}
+
+check_optional_plist_path_contains() {
+  local plist="$1"
+  local key="$2"
+  local required_path="$3"
+  local label="$4"
+  if plist_optional_env_value "${plist}" "${key}" >/dev/null; then
+    require_plist_path_contains "${plist}" "${key}" "${required_path}" "${label}"
+  fi
+}
+
 if RUST_WS_PLIST_CODEX_APP_SERVER_TIMEOUT_MS="$(plist_optional_env_value "${RUST_WS_LAUNCH_PLIST}" "FRIDAY_CODEX_APP_SERVER_TIMEOUT_MS")"; then
   require_codex_app_server_timeout "Rust WS LaunchAgent plist" "${RUST_WS_PLIST_CODEX_APP_SERVER_TIMEOUT_MS}"
 fi
 
-require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_AUTO_DISPATCH" "1" "TS hub mission auto-dispatch flag"
-require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST" "1" "TS hub mission spine Rust route flag"
-require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_ROUTE_AGENT_RUN_VIA_RUST" "1" "TS hub agent-run Rust route flag"
-require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_HUB_AGENT_RUN_WS_PORT" "48750" "TS hub Rust agent-run WS port"
-require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_HUB_AGENT_RUN_DB_PATH" "${RUST_HUB_DB}" "TS hub Rust DB path"
-require_plist_path_contains "${TS_HUB_LAUNCH_PLIST}" "PATH" "/Users/jarvis/.local/bin" "TS hub PATH"
-TS_HUB_NODE_BIN="$(plist_env_value "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_NODE_BIN" "TS hub")"
-if [ ! -x "${TS_HUB_NODE_BIN}" ]; then
-  echo "FATAL: TS hub FRIDAY_NODE_BIN is not executable at: ${TS_HUB_NODE_BIN}" >&2
-  exit 3
+check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_AUTO_DISPATCH" "1" "TS hub mission auto-dispatch flag"
+check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST" "1" "TS hub mission spine Rust route flag"
+check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_ROUTE_AGENT_RUN_VIA_RUST" "1" "TS hub agent-run Rust route flag"
+check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_HUB_AGENT_RUN_WS_PORT" "48750" "TS hub Rust agent-run WS port"
+check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_HUB_AGENT_RUN_DB_PATH" "${RUST_HUB_DB}" "TS hub Rust DB path"
+check_optional_plist_path_contains "${TS_HUB_LAUNCH_PLIST}" "PATH" "/Users/jarvis/.local/bin" "TS hub PATH"
+if TS_HUB_NODE_BIN="$(plist_optional_env_value "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_NODE_BIN")"; then
+  if [ ! -x "${TS_HUB_NODE_BIN}" ]; then
+    echo "FATAL: TS hub FRIDAY_NODE_BIN is not executable at: ${TS_HUB_NODE_BIN}" >&2
+    exit 3
+  fi
 fi
 
 if ! RUST_WS_LAUNCHCTL_PRINT="$(launchctl print "${RUST_WS_LAUNCH_DOMAIN}/${RUST_WS_LAUNCH_LABEL}" 2>/dev/null)"; then

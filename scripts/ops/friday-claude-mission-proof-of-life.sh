@@ -196,11 +196,25 @@ require_plist_env_equals() {
   fi
 }
 
-require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_AUTO_DISPATCH" "1" "TS hub mission auto-dispatch flag"
-require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST" "1" "TS hub mission spine Rust route flag"
-require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_ROUTE_AGENT_RUN_VIA_RUST" "1" "TS hub agent-run Rust route flag"
-require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_HUB_AGENT_RUN_WS_PORT" "48750" "TS hub Rust agent-run WS port"
-require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_HUB_AGENT_RUN_DB_PATH" "${RUST_HUB_DB}" "TS hub Rust DB path"
+check_optional_plist_env_equals() {
+  local plist="$1"
+  local key="$2"
+  local expected="$3"
+  local label="$4"
+  local actual
+  if actual="$(plist_optional_env_value "${plist}" "${key}")"; then
+    if [ "${actual}" != "${expected}" ]; then
+      echo "FATAL: ${label} mismatch in ${plist}; expected '${expected}', got '${actual}'." >&2
+      exit 3
+    fi
+  fi
+}
+
+check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_AUTO_DISPATCH" "1" "TS hub mission auto-dispatch flag"
+check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST" "1" "TS hub mission spine Rust route flag"
+check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_ROUTE_AGENT_RUN_VIA_RUST" "1" "TS hub agent-run Rust route flag"
+check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_HUB_AGENT_RUN_WS_PORT" "48750" "TS hub Rust agent-run WS port"
+check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_HUB_AGENT_RUN_DB_PATH" "${RUST_HUB_DB}" "TS hub Rust DB path"
 
 if ! RUST_WS_LAUNCHCTL_PRINT="$(launchctl print "${RUST_WS_LAUNCH_DOMAIN}/${RUST_WS_LAUNCH_LABEL}" 2>/dev/null)"; then
   echo "FATAL: live Rust WS LaunchAgent is not printable at ${RUST_WS_LAUNCH_DOMAIN}/${RUST_WS_LAUNCH_LABEL}." >&2

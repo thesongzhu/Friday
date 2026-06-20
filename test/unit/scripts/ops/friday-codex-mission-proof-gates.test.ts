@@ -1027,25 +1027,25 @@ describe("Codex mission proof gates", () => {
     expect(proofSource).toContain("shorter than required");
     expect(proofSource).toContain("TS_HUB_LAUNCH_PLIST");
     expect(proofSource).toContain(
-      'require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_AUTO_DISPATCH" "1"',
+      'check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_AUTO_DISPATCH" "1"',
     );
     expect(proofSource).toContain(
-      'require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST" "1"',
+      'check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST" "1"',
     );
     expect(proofSource).toContain(
-      'require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_ROUTE_AGENT_RUN_VIA_RUST" "1"',
+      'check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_ROUTE_AGENT_RUN_VIA_RUST" "1"',
     );
     expect(proofSource).toContain(
-      'require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_HUB_AGENT_RUN_WS_PORT" "48750"',
+      'check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_HUB_AGENT_RUN_WS_PORT" "48750"',
     );
     expect(proofSource).toContain(
-      'require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_HUB_AGENT_RUN_DB_PATH" "${RUST_HUB_DB}"',
+      'check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_HUB_AGENT_RUN_DB_PATH" "${RUST_HUB_DB}"',
     );
     expect(proofSource).toContain(
-      'require_plist_path_contains "${TS_HUB_LAUNCH_PLIST}" "PATH" "/Users/jarvis/.local/bin"',
+      'check_optional_plist_path_contains "${TS_HUB_LAUNCH_PLIST}" "PATH" "/Users/jarvis/.local/bin"',
     );
     expect(proofSource).toContain(
-      'TS_HUB_NODE_BIN="$(plist_env_value "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_NODE_BIN" "TS hub")"',
+      'if TS_HUB_NODE_BIN="$(plist_optional_env_value "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_NODE_BIN")"; then',
     );
     expect(proofSource).toContain("tsHubLaunchFlags: ok");
     expect(proofSource).toContain("TS_HUB_LAUNCH_LABEL");
@@ -1092,7 +1092,7 @@ describe("Codex mission proof gates", () => {
     ).toBeLessThan(proofSource.indexOf("read -rs PASSPHRASE"));
     expect(
       proofSource.indexOf(
-        'require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_AUTO_DISPATCH" "1"',
+        'check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_AUTO_DISPATCH" "1"',
       ),
     ).toBeLessThan(proofSource.indexOf("read -rs PASSPHRASE"));
     expect(
