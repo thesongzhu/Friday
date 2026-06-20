@@ -207,11 +207,28 @@ export interface FridayLearningPattern {
   evidence: JsonObject;
 }
 
+export interface FridayLearningAppliedFact {
+  factId: string;
+  key: string;
+  confidence: number;
+  evidenceCount: number;
+  lastConfirmedAt: ISODateTime;
+  sourceEventIds: string[];
+  reviewBoundary: string;
+  contextUseBoundary: "learning_context_service_gated";
+  provenance: {
+    source: "preference_fact";
+    reviewBoundary: string;
+    reviewCenterCandidateId?: string;
+    reviewCenterOrigin?: string;
+  };
+}
+
 export interface FridayLearningContext {
   userId: string;
   lifecycleState: FridayLearningLifecycleState;
   preferences: Record<string, JsonValue>;
-  appliedFacts: Array<{ factId: string; key: string; confidence: number }>;
+  appliedFacts: FridayLearningAppliedFact[];
   activePatterns: FridayLearningPattern[];
   individuationStage?: string;
   generatedAt: ISODateTime;
