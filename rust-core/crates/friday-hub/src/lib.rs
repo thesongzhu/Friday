@@ -3532,6 +3532,20 @@ pub(crate) enum GateDispatch {
     Unregistered(String),
 }
 
+/// Public, refs-only outcome for the D20 signed-batch worktree artifact consumer.
+///
+/// This intentionally does not expose the private gate-dispatch enum or tool result content:
+/// callers get only the action/summary or a bounded status reason, enough for operator-facing
+/// proof JSON without leaking file bodies.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum D20WorktreeBatchOutcome {
+    Executed { action: String, summary: String },
+    ExecError { reason: String },
+    RequiresApproval,
+    Denied { reason: String },
+    Unregistered { action: String },
+}
+
 /// How a protected (`RequiresApproval`) action is authorized at the dispatch chokepoint.
 /// This makes the authorization scheme EXPLICIT at each call site — there is no implicit
 /// fallback that could let a protected action be Allowed by the wrong scheme.
@@ -4112,6 +4126,40 @@ pub(crate) fn d20_dispatch_signed_batch_in_worktree(
         },
         GateDecision::RequiresApproval => GateDispatch::RequiresApproval,
         GateDecision::Deny => GateDispatch::Denied(record.reason),
+    })
+}
+
+/// Verify-and-consume a D20 operator-signed batch member inside a reversible worktree scope.
+///
+/// This is the artifact-facing public wrapper around the crate-private driver. The caller supplies
+/// an already signed [`CanonicalApprovalBatch`] plus the operator PUBLIC verify key; the Hub never
+/// reads a signing key and never mints. Classified Irreversible or out-of-worktree actions pause
+/// before the executor, and allowed members are consumed single-use by storage before execution.
+#[allow(clippy::too_many_arguments)]
+pub fn d20_dispatch_signed_batch_artifact_in_worktree(
+    conn: &mut Connection,
+    executor: &dyn ToolExecutor,
+    raw: &RawToolCall,
+    vk: &OperatorVerifyingKey,
+    batch: &CanonicalApprovalBatch,
+    scope: &DialWorktreeScope,
+    policy: &RunPolicy,
+    now_ms: i64,
+) -> Result<D20WorktreeBatchOutcome, StorageError> {
+    let outcome = d20_dispatch_signed_batch_in_worktree(
+        conn, executor, raw, vk, batch, scope, policy, now_ms,
+    )?;
+    Ok(match outcome {
+        GateDispatch::Executed(receipt) => D20WorktreeBatchOutcome::Executed {
+            action: receipt.action,
+            summary: receipt.summary,
+        },
+        GateDispatch::ExecError(err) => D20WorktreeBatchOutcome::ExecError {
+            reason: err.to_string(),
+        },
+        GateDispatch::RequiresApproval => D20WorktreeBatchOutcome::RequiresApproval,
+        GateDispatch::Denied(reason) => D20WorktreeBatchOutcome::Denied { reason },
+        GateDispatch::Unregistered(action) => D20WorktreeBatchOutcome::Unregistered { action },
     })
 }
 
