@@ -4305,30 +4305,31 @@ pub(crate) fn bill_model_call_keyed(
         payload_ref: Some(ledger_id.clone()),
         created_at: now_ms,
     };
-    friday_storage::record_run_model_call(conn, run_id, &entry, &activity, &audit)?;
     if outcome.provider_kind == friday_core::ProviderKind::Anthropic {
-        mirror_anthropic_metered_turn(
-            conn,
+        let (link, event) = anthropic_metered_turn_mirror(
             run_id,
             slot,
             outcome,
             ledger_id.as_str(),
             audit.audit_id.as_str(),
             now_ms,
-        )?;
+        );
+        friday_storage::record_run_model_call_with_provider_session_mirror(
+            conn, run_id, &entry, &activity, &audit, &link, &event,
+        )
+    } else {
+        friday_storage::record_run_model_call(conn, run_id, &entry, &activity, &audit)
     }
-    Ok(())
 }
 
-fn mirror_anthropic_metered_turn(
-    conn: &Connection,
+fn anthropic_metered_turn_mirror(
     run_id: &str,
     slot: &str,
     outcome: &BilledUsage,
     ledger_id: &str,
     audit_id: &str,
     now_ms: i64,
-) -> Result<(), StorageError> {
+) -> (ProviderSessionLink, ProviderSessionEvent) {
     let friday_session_id = format!("claude-metered-{run_id}");
     let provider_event_id = format!("claude-metered:{run_id}:{slot}");
     let link = ProviderSessionLink {
@@ -4346,7 +4347,6 @@ fn mirror_anthropic_metered_turn(
         last_friday_event_id: Some(provider_event_id.clone()),
         truth_label: "claude_anthropic_metered_turn_metadata_only".to_string(),
     };
-    friday_storage::provider_session::upsert_link(conn, &link)?;
 
     let event = ProviderSessionEvent {
         friday_session_id,
@@ -4361,8 +4361,7 @@ fn mirror_anthropic_metered_turn(
         audit_receipt_ref: Some(audit_id.to_string()),
         observed_at: now_ms,
     };
-    friday_storage::provider_session::append_event(conn, &event)?;
-    Ok(())
+    (link, event)
 }
 
 /// Drive a MULTI-TURN agent loop with the pre-S4 default policy (no per-run principal
@@ -12955,6 +12954,69 @@ mod tests {
             "the mirror is refs-only; it does not persist model text"
         );
         assert_eq!(event.audit_receipt_ref.as_deref(), Some("r1:t0:modelcall"));
+    }
+
+    #[test]
+    fn claude_provider_session_conflict_rolls_back_metered_billing() {
+        let db = Db::open_hub(&temp_path("claude-provider-session-conflict")).unwrap();
+        agent_run::create_run(db.conn(), "r-conflict", "ask claude", 1).unwrap();
+        let (link, event) = anthropic_metered_turn_mirror(
+            "r-conflict",
+            "t0",
+            &BilledUsage {
+                provider_kind: friday_core::ProviderKind::Anthropic,
+                model: "claude-opus-4-8".to_string(),
+                prompt_tokens: 11,
+                completion_tokens: 8,
+            },
+            "preexisting-ledger",
+            "preexisting-audit",
+            999,
+        );
+        friday_storage::provider_session::upsert_link(db.conn(), &link).unwrap();
+        friday_storage::provider_session::append_event(db.conn(), &event).unwrap();
+
+        let outcome = BilledUsage {
+            provider_kind: friday_core::ProviderKind::Anthropic,
+            model: "claude-opus-4-8".to_string(),
+            prompt_tokens: 3,
+            completion_tokens: 5,
+        };
+        let err = bill_model_call_keyed(db.conn(), "r-conflict", "t0", &outcome, 1000)
+            .expect_err("duplicate provider-session event must fail the metered write");
+        assert!(
+            format!("{err:?}").contains("UNIQUE") || format!("{err:?}").contains("constraint"),
+            "unexpected error: {err:?}"
+        );
+
+        assert!(
+            db.list_run_token_usage("r-conflict").unwrap().is_empty(),
+            "provider-session mirror conflict must roll back the token_ledger row"
+        );
+        let audit_rows: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM audit_ledger WHERE audit_id = 'r-conflict:t0:modelcall'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            audit_rows, 0,
+            "provider-session mirror conflict must roll back the audit receipt"
+        );
+        let activity_rows: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM activity_item WHERE activity_id = 'r-conflict:t0:askreceipt'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            activity_rows, 0,
+            "provider-session mirror conflict must roll back the activity receipt"
+        );
     }
 
     #[test]

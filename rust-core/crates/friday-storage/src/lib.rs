@@ -1619,6 +1619,39 @@ pub fn record_run_model_call(
     })
 }
 
+/// Atomic Anthropic/Claude metered-turn sibling of [`record_run_model_call`].
+///
+/// This writes the normal run-attributed model-call evidence and the refs-only provider-session
+/// mirror in one busy-retried transaction. A provider-session conflict can therefore never leave a
+/// half-billed run that reports failure after the ledger/audit rows have already committed.
+pub fn record_run_model_call_with_provider_session_mirror(
+    conn: &Connection,
+    run_id: &str,
+    entry: &LedgerEntry,
+    activity: &ActivityRow,
+    audit: &AuditEvent,
+    link: &ProviderSessionLink,
+    event: &ProviderSessionEvent,
+) -> Result<()> {
+    with_busy_retry(|| {
+        let tx = conn.unchecked_transaction()?;
+        insert_token_ledger_conn(&tx, entry, Some(run_id))?;
+        insert_activity_conn(&tx, activity)?;
+        audit::append_audit(
+            &tx,
+            &audit.audit_id,
+            &audit.actor,
+            &audit.action,
+            audit.payload_ref.as_deref(),
+            audit.created_at,
+        )?;
+        provider_session::upsert_link(&tx, link)?;
+        provider_session::append_event(&tx, event)?;
+        tx.commit()?;
+        Ok(())
+    })
+}
+
 fn quote_existing_table(conn: &Connection, table: &str) -> Result<String> {
     if table.is_empty()
         || !table
