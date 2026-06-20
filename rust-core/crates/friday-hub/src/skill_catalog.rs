@@ -157,6 +157,11 @@ pub fn discover_skill_catalog(
             approval_blockers
                 .push("operator_approval_required_before_first_or_high_risk_run".to_string());
         }
+        if runtime_kind == "skill-md-imported" {
+            approval_blockers.push(
+                "skill_md_imported_runtime_not_executable_until_sandboxed_executor".to_string(),
+            );
+        }
         entries.push(SkillCatalogEntry {
             skill_ref: redacted_ref("skill", &skill_id),
             skill_id: skill_id.clone(),
@@ -229,6 +234,7 @@ pub fn discover_skill_catalog(
             "skill_run_requires_gate_and_receipt".to_string(),
             "skill_memory_preference_is_not_auto_confirmed".to_string(),
             "legacy_skill_md_candidate_is_not_imported_or_executable".to_string(),
+            "skill_md_import_is_not_execution".to_string(),
         ],
     })
 }
@@ -1223,6 +1229,54 @@ mod tests {
         assert_eq!(snapshot.entries[0].skill_id, "time");
         assert_eq!(snapshot.entries[0].safe_name, "Manifest Time");
         assert_eq!(snapshot.entries[0].runtime_kind, "shell");
+    }
+
+    #[test]
+    fn imported_skill_md_manifest_remains_blocked_even_if_adopted_and_approved() {
+        let root = temp_root("skill-md-imported-manifest");
+        write_skill(
+            &root,
+            "summarize",
+            r#"{
+              "id":"summarize",
+              "name":"Imported Summarize",
+              "runtime":{"kind":"skill-md-imported"},
+              "triggers":{"intents":["summarize"],"phrases":[]},
+              "invocation":{"priority":50},
+              "permissions":{"grants":[],"promptOn":[]},
+              "executionTargets":{"requiredCapabilities":[]}
+            }"#,
+        );
+
+        let snapshot = discover_skill_catalog(SkillCatalogDiscovery {
+            managed_skills_root: root.to_string_lossy().to_string(),
+            adopted_skill_ids: vec!["summarize".to_string()],
+            approved_first_run_skill_ids: vec!["summarize".to_string()],
+            proof_refs_by_skill_id: BTreeMap::new(),
+            run_refs_by_skill_id: BTreeMap::new(),
+            now_ms: 72,
+        })
+        .unwrap();
+        let entry = &snapshot.entries[0];
+
+        assert_eq!(entry.runtime_kind, "skill-md-imported");
+        assert_eq!(entry.state, SkillState::Runnable);
+        assert!(!entry.can_be_recommended());
+        assert!(entry.approval_blockers.iter().any(|blocker| {
+            blocker == "skill_md_imported_runtime_not_executable_until_sandboxed_executor"
+        }));
+        let decision = advise_skill_from_catalog(
+            &snapshot,
+            SkillAdvisorRequest {
+                intent_key: "summarize".to_string(),
+                operator_approved_first_run: true,
+            },
+        );
+        assert_eq!(
+            decision.recommendation,
+            SkillAdvisorRecommendationKind::RecommendAfterOperatorApproval
+        );
+        assert!(!decision.run_allowed);
     }
 
     #[test]

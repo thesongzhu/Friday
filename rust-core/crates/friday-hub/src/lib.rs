@@ -341,6 +341,7 @@ pub mod skill_candidate_materializer;
 /// truth-labeled catalog entries and advisor inputs; it does not execute skills
 /// or grant control.
 pub mod skill_catalog;
+pub mod skill_md_importer;
 
 /// Shared refs-only output guard for the proof bins. Single source of truth for the
 /// common secret/path marker set; each bin passes its body-field markers as `extra`.
