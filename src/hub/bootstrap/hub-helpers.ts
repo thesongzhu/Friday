@@ -1962,6 +1962,8 @@ export interface FridayHubConfig {
   agentRunControlViaRust?: boolean;
   /** D20 W2 signed-batch worktree product entrypoint flag; default false / env fallback. */
   d20SignedBatchWorktreeViaRust?: boolean;
+  /** B3 system-intent Rust product courier flag; default false / env fallback. */
+  systemIntentViaRust?: boolean;
   /**
    * providers-bridge cut-over (DARK): master ON/OFF for routing the retired Tier-2
    * PROVIDER surfaces (`providers.detect` / `providers.doctor` / `providers.validate` /

@@ -320,5 +320,13 @@ export type {
   FridayD20SignedBatchWorktreeReceipt,
   FridayD20SignedBatchWorktreeService,
 } from "./mission-spine/friday-rust-hub-d20-signed-batch-worktree-service.js";
+export {
+  FRIDAY_SYSTEM_INTENT_RUST_FLAG,
+  createFridayRustHubSystemIntentService,
+} from "./mission-spine/friday-rust-hub-system-intent-service.js";
+export type {
+  CreateFridayRustHubSystemIntentServiceOptions,
+  FridayRustHubSystemIntentService,
+} from "./mission-spine/friday-rust-hub-system-intent-service.js";
 export { createFridayDeterministicPipelineRuntime } from "./runtime/friday-deterministic-pipeline-runtime.js";
 export type { CreateFridayDeterministicPipelineRuntimeDeps } from "./runtime/friday-deterministic-pipeline-runtime.js";

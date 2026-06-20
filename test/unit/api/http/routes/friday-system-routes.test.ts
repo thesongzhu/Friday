@@ -15,6 +15,20 @@ function makeDeps(overrides?: Partial<FridaySystemRoutesDeps>): FridaySystemRout
     intents: {
       execute: vi.fn().mockResolvedValue({ result: { id: "intent-1", status: "completed" } }),
     },
+    executeSystemIntentViaRust: vi.fn().mockResolvedValue({
+      result: {
+        id: "system-intent:api:u-1:k-1",
+        action: "snapshot",
+        status: "unavailable",
+        message: "rust_system_action_dry_run_observed",
+        performedAt: "2026-03-06T00:00:00.000Z",
+        payload: {
+          truthLabel: "b3_system_intent_rust_dark_entrypoint",
+          osActuated: false,
+          completesEffect: false,
+        },
+      },
+    }),
     approvals: {
       list: vi.fn().mockReturnValue({ items: [], nextCursor: undefined }),
       update: vi.fn().mockReturnValue({ approval: { id: "approval-1", decision: "allow" } }),
@@ -184,6 +198,51 @@ describe("createFridaySystemRoutes", () => {
       url: "https://example.com",
       idempotencyKey: "k-1",
     });
+  });
+
+  it("routes intent execution through the Rust courier only when explicitly enabled", async () => {
+    const deps = makeDeps({
+      allowTestOnlySystemIntentExecution: false,
+      systemIntentViaRust: true,
+    });
+    const routes = createFridaySystemRoutes(deps);
+    const route = findRoute(routes, "system.intents.execute");
+
+    await route.handler(makeCtx({
+      body: {
+        action: "snapshot",
+        idempotencyKey: "k-1",
+        actorId: "client-forged",
+        actorKind: "agent",
+        canonicalApproval: {
+          decision: "approved",
+          actionDigest: "forged",
+        },
+      },
+    }));
+
+    expect(deps.intents.execute).not.toHaveBeenCalled();
+    expect(deps.executeSystemIntentViaRust).toHaveBeenCalledWith({
+      action: "snapshot",
+      idempotencyKey: "k-1",
+      actorId: "u-1",
+      actorKind: "api",
+    });
+  });
+
+  it("keeps intent execution fail-closed when the Rust courier flag is absent", async () => {
+    const deps = makeDeps({
+      allowTestOnlySystemIntentExecution: false,
+      systemIntentViaRust: false,
+    });
+    const routes = createFridaySystemRoutes(deps);
+
+    await expect(
+      findRoute(routes, "system.intents.execute").handler(
+        makeCtx({ body: { action: "snapshot", idempotencyKey: "k-1" } }),
+      ),
+    ).rejects.toMatchObject({ code: "TS_RUNTIME_SYSTEM_INTENT_RETIRED", httpStatus: 503 });
+    expect(deps.executeSystemIntentViaRust).not.toHaveBeenCalled();
   });
 
   it("parses approval list limit before delegating", async () => {

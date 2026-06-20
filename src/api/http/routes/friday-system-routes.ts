@@ -55,6 +55,15 @@ export interface FridaySystemRoutesDeps {
   intents: {
     execute(req: FridayExecuteSystemIntentRequest): Promise<FridayExecuteSystemIntentResponse>;
   };
+  /**
+   * B3 system-intent Rust product courier (DARK): when true, POST /v1/system/intents
+   * calls the Rust-owned refs-only entrypoint instead of the retired TS executor.
+   * Default false/unset preserves today's 503 fail-closed posture.
+   */
+  systemIntentViaRust?: boolean;
+  executeSystemIntentViaRust?: (
+    req: FridayExecuteSystemIntentRequest,
+  ) => Promise<FridayExecuteSystemIntentResponse>;
   approvals: {
     list(query: FridayListSystemApprovalsQuery): FridayListSystemApprovalsResponse;
     update(
@@ -275,6 +284,13 @@ export function createFridaySystemRoutes(
         requireIdempotencyKey(body);
         const { canonicalApproval: _ignoredCanonicalApproval, ...safeBody } =
           body as FridayExecuteSystemIntentRequest & { canonicalApproval?: unknown };
+        if (deps.systemIntentViaRust === true && deps.executeSystemIntentViaRust) {
+          return deps.executeSystemIntentViaRust({
+            ...safeBody,
+            actorId: ctx.principal?.principalId ?? "system-intent-api",
+            actorKind: "api",
+          });
+        }
         assertSystemIntentTestOracleAllowed(deps);
         return deps.intents.execute(safeBody);
       },
