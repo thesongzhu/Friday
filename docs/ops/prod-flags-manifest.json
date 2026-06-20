@@ -223,6 +223,18 @@
       "notes": "Built-but-dark B4 Studio Hub wiring. The mapped CLI tests execute the real friday-studio core through a Hub binary while outputting only metadata (paths/mime/byte_len/sha256), never artifact bodies. Honest boundary: this is not a product route, not a TS replacement, and not live document export; PPTX/DOCX/PDF remain fail-closed until a later reviewed export cutover."
     },
     {
+      "flag": "FRIDAY_RUN_COMMAND_DARWIN_SANDBOX",
+      "process": "rust-ws-wrapper",
+      "prod_state": "dark",
+      "closes_loop": "With the flag ON, Hub `run_command` requires the friday-fs Darwin Seatbelt sandbox path; when Seatbelt is unavailable it fails closed instead of silently falling back to the unsandboxed runner. With the flag OFF, `run_command` uses the existing shell-free/env-scrubbed/cwd-contained runner byte-for-byte.",
+      "coverage": "loop-e2e",
+      "e2e_test": "rust-core/crates/friday-hub/src/lib.rs::executor_run_command_darwin_sandbox_is_opt_in_and_fail_closed",
+      "additional_e2e_tests": [
+        "rust-core/crates/friday-hub/src/lib.rs::run_command_darwin_sandbox_flag_parser_is_exact_one_default_off"
+      ],
+      "notes": "Built-dark D2 OS-sandbox wiring for the highest-risk Hub command arm. The mapped test uses an explicit sandboxed executor constructor to avoid global env races in parallel tests; on hosts with `/usr/bin/sandbox-exec` it executes through Seatbelt, and on other hosts it requires fail-closed `CommandSandboxUnavailable`. The friday-fs substrate tests prove root writes are allowed and outside-root writes are denied by the Seatbelt profile. Honest boundary: this does not flip live execution policy and does not replace operator approval/signature gates."
+    },
+    {
       "flag": "FRIDAY_WEB_FETCH_ENABLED",
       "process": "rust-ws-wrapper",
       "prod_state": "dark",
