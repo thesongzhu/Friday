@@ -323,8 +323,14 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Install dependencies
+        run: npm ci
+
       - name: Verify L1 mechanism wiring matrix
-        run: node scripts/ci/verify-mechanism-wiring-matrix.mjs
+        run: npm run test:mechanism-wiring
+
+      - name: Run L1 critical fence behavior tests
+        run: npm run test:mechanism-wiring:behavior
 
   # ── Terminal CI Aggregator — single required check for branch protection ──
   quality-gate:
