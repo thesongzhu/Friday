@@ -361,6 +361,40 @@ describe("FridayPreferenceExtractionService", () => {
       expect(signals[0]!.key).toContain("build_job");
     });
 
+    it("extracts feedback from agent outcome bridge success fields", () => {
+      const successEvent = makeEvent({
+        kind: "workflow_outcome",
+        payload: {
+          agentRunId: "agent-run-ok",
+          workflowId: "agent-run-ok",
+          success: true,
+          status: "completed",
+          testsPassed: true,
+        },
+      });
+      const failedEvent = makeEvent({
+        kind: "workflow_outcome",
+        payload: {
+          agentRunId: "agent-run-failed",
+          workflowId: "agent-run-failed",
+          success: false,
+          status: "failed",
+          testsPassed: false,
+        },
+      });
+
+      const successSignals = service.extract(successEvent);
+      expect(successSignals).toHaveLength(1);
+      expect(successSignals[0]!.kind).toBe("positive_feedback");
+      expect(successSignals[0]!.key).toContain("agent_run_ok");
+
+      const failedSignals = service.extract(failedEvent);
+      expect(failedSignals).toHaveLength(1);
+      expect(failedSignals[0]!.kind).toBe("correction");
+      expect(failedSignals[0]!.key).toContain("agent_run_failed");
+      expect(failedSignals[0]!.confidence).toBe(0.3);
+    });
+
     it("emits failure signal for workflow with error field", () => {
       const event = makeEvent({
         kind: "workflow_outcome",

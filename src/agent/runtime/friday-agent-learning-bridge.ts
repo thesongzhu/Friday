@@ -66,6 +66,9 @@ export function createFridayAgentLearningBridge(
         kind: "workflow_outcome",
         payload: {
           agentRunId: payload.runId,
+          workflowId: payload.runId,
+          success: payload.testsPassed,
+          status: payload.testsPassed ? "completed" : "failed",
           toolCallCount: payload.toolCallCount,
           durationMs: payload.durationMs,
           testsPassed: payload.testsPassed,
