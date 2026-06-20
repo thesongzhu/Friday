@@ -112,6 +112,13 @@ jobs:
       - name: Test
         # The one live DeepSeek test is #[ignore]d, so this needs no network/secrets.
         run: cargo test --workspace
+      - name: Provider failover loop proofs
+        # P0 multi-angle stress residue: name the transport-failover leg explicitly in
+        # CI. These are mocked-provider, real-loop/real-Db proofs: no keys, no network,
+        # no model spend, no live/organic truth upgrade.
+        run: |
+          cargo test -p friday-hub --test provider_failover -- --nocapture
+          cargo test -p friday-hub provider_failover --lib -- --nocapture
       - name: Setup Node for sealed-client interop proof
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
@@ -119,7 +126,21 @@ jobs:
           cache: npm
       - name: Install sealed-client interop dependencies
         working-directory: .
-        run: npm ci
+        env:
+          npm_config_fetch_retries: 5
+          npm_config_fetch_retry_mintimeout: 10000
+          npm_config_fetch_retry_maxtimeout: 120000
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci; then
+              exit 0
+            fi
+            status=$?
+            if [ "$attempt" -eq 3 ]; then
+              exit "$status"
+            fi
+            sleep $((attempt * 10))
+          done
       - name: Build sealed-client interop runner
         working-directory: .
         run: node test/interop/build-sealed-client-runner.mjs
