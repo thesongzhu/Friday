@@ -5,9 +5,9 @@
 <h1 align="center">Friday</h1>
 
 <p align="center">
-  <strong>可信的 AI Agent 应用层，用来把真实工作安全做完。</strong><br>
-  你给目标，Friday 调用已配置工具，但把审批、记忆、证据和回滚留在闭环里。<br>
-  本地优先 · 自带 Key · 先审批再行动 · 用户掌控 · 证据闭环
+  <strong>你的私人 AI agent 控制平面。</strong><br>
+  给它一个目标；Friday 跑一条受治理的闭环——路由 → 验证 → 批准 → 记忆——协调你自带的 AI（Codex、Claude、DeepSeek）。钥匙在你手里。<br>
+  本地优先的内核 · BYOK · 批准优先 · 人类掌控 · 证据兜底
 </p>
 
 <p align="center">
@@ -20,181 +20,77 @@
 
 ---
 
+> **Friday 不是模型，也不是聊天框。** “大脑”是*你自带*的云 AI（BYOK：Codex、Claude、DeepSeek……）。Friday 是**编排它们的内核**——而这个内核，加上你的钥匙、你的数据、你的记忆，都留在你自己机器上。**控制器归你所有；大脑是你租来的。**
+
 ## Friday 是什么？
 
-Friday 是一个自部署的个人 AI 和自动化执行系统：一个本地优先的 AI Agent 应用层，帮助 AI 把用户授权的目标变成可验证的真实工作。
+用 AI agent 的新方式，不是你自己去 prompt 它们——而是**设计那个去 prompt 它们的闭环**。Friday 就是那个闭环，做成了产品、并且做安全了：
 
-它不应该像一个空白聊天框，而应该像一个私人的执行搭档：你给它目标，它先检查自己有什么能力，使用已配置能力，遇到必须人类处理的地方就明确停下来问你，然后执行、验证、记录经验。能力自获取和自升级闭环仍是审查门控下的在建能力，不应理解为已经完全自动化。
+> **找到活 → 派给最合适的 AI → 查它是不是真干完了 → 记下完成了什么 → 决定下一步**——让系统去戳 agent，而不是你。
 
-Friday 不是万能自动机。它不会替你注册账号、绕过验证码、付款、偷偷拿权限、或在没有凭证的情况下调用外部服务。它的目标是：能自己做的尽量自己做；必须你介入的地方说清楚；做完留下证据和可回滚路径。
+它被设计来把 Codex、Claude、DeepSeek 当作**受治理、被计量的 worker** 协调——便宜模型负责思考规划，贵模型干重活——留一条可验证的证据链，且任何危险动作没有你的签名都不放行。
 
-## 当前发布状态
+## 闭环怎么运作
 
-Friday 现在更诚实的状态是：**public v1 local candidate**，仅通过 **npm/source** 发布，不是「所有集成都 release-complete」。
-
-- 当前 public claim 聚焦本地 UI、本地 runtime、BYOK setup、受监督 operator workflow、memory、evidence、approval-gated tool use，以及已配置的 Discord / Telegram / Lark+飞书 trusted-inbound（由 release SHA 的同 SHA Real Green Gate channel artifact 证明）。
-- 当前证明链不 claim 出站渠道控制自动化、云端 live certification、外部 OTEL/Grafana export、桌面 / Homebrew / 公证 macOS / 移动端分发、"所有集成 live"、或 release-complete-all。
-- Slack HTTP Events-API inbound 和 QQ 在本次发布中保持 **`unsupported`**。
-- Real Green Gate 只有在 artifact 属于同一个 SHA、scenarios 非零、全部通过、blockers 为空时才算 release-proof eligible。
-- `blocked_by_env`、mock-only、workflow success alone、stale artifact、wrong-SHA artifact 都不能算通过。
-- `1.0.1` 的 dogfood gate 收口为 **`dogfood_partial_pass`**（UX 加权 7.78/10）。已发布的 npm `1.0.2` 包仍 carry forward 原来的 9 个 `proof_pending` 头条项目；GitHub-visible source 在 `1.0.2` 之后关闭了若干确定性切片，并已作为 `1.0.3` package candidate 准备中，但 `1.0.3` 仍未发布，必须等待后续 operator 授权（详见 [`docs/public-v1-local-candidate.md`](docs/public-v1-local-candidate.md)）。
-
-## 核心闭环
-
-1. **你给目标。** 例如：“读这些 PDF，结合最新网页搜索，保存一份带引用的短总结。”
-2. **Friday 检查能力。** 它会看文本、视觉、OCR、网页搜索、PDF、文件、浏览器、可选渠道、模型、记忆、workflow 是否可用。
-3. **Friday 报告缺口或生成候选方案。** 它可以从已安装 skills、可信 catalog、MCP server、本地文件、包仓库、OpenAPI 文档和网页中找候选。生成或导入的 skill 先是 candidate，不会立刻变成可运行能力。
-4. **需要人类时明确停下。** API key、OAuth、付费、验证码、登录、敏感权限、高风险动作都要用户确认。
-5. **Friday 执行并验证。** 通过 skills、tools、workflow、浏览器/桌面控制或渠道适配器执行，然后检查结果。
-6. **Friday 安全地成长。** 它可以沉淀可审计 memory、learned facts、provider 路由信号、setup recipe、candidate skill、eval 用例和失败教训。learned signals 不会自动变成不经确认的真理。
-
-## Friday 现在能做什么
-
-| 领域 | Friday 的目标能力 | 边界 |
-| --- | --- | --- |
-| 对话与任务执行 | 回答、规划、调用工具执行、汇报进展、失败恢复 | 取决于已配置 provider 和已授权工具 |
-| 文本、视觉、OCR、PDF、文件 | 按能力路由到 provider 或内置解析器；缺能力时说明缺什么 | 视觉/OCR/TTS 依赖 provider 和凭证 |
-| 网页与浏览器 | 使用配置好的网页搜索 provider、本地浏览器控制和 workflow | 登录、付款、验证码、敏感账号需要用户 |
-| Skills 和 workflows | 在 lifecycle 闭合的路径上导入、验证、暂存、promote、运行、更新、回滚可复用能力 | 生成或导入的 skill 先是 candidate；必须通过 review、canary、promotion gate 才能变成可用能力；workflow upgrade proof 不等同于 skill lifecycle proof |
-| 记忆与自我改进 | 沉淀显式偏好、learned facts、教训、provider 路由、recipes、evals、恢复记录 | 用户可见、可审计、可撤销；learned signals 不是隐藏模型训练、不经确认的真理，也不保证都会进入 prompt 并改变行为 |
-| 自我修复 | 发现失败、诊断、提出修复，并且只在已接通、已配置、有证据的路径上执行低风险修复 | dispatcher 式 auto-fix 默认关闭；高风险或改数据的修复需要审批、receipt、rollback 或明确不可逆记录 |
-| 可选渠道适配器 | 在 release SHA 上由同 SHA Real Green Gate channel artifact 证明的 Discord、Telegram、飞书/Lark trusted-inbound 已配置可用；其它已配置渠道作为可选 surface | 渠道是配置后才可用的能力；出站渠道控制自动化不属于 public v1 local release claim；Slack HTTP Events-API inbound 和 QQ 为 `unsupported`；敏感动作仍要确认 |
-| 长期目标 | 对用户授权的 standing goals 生成 agenda、执行低风险事项、汇报证据 | Friday 接收用户目标，不主动发明无关长期议程 |
-
-## 安装与启动
-
-### 方式一 - npm 包
-
-```bash
-npm install -g @thesongzhu/friday
-friday start
-# 打开 http://localhost:3141
+```
+        你的目标
+           │
+           ▼
+   路由 ── 这一步挑最合适的 AI （你可以改派）
+           │
+           ▼
+   执行 ── 受治理：危险步骤停下等你批准
+           │
+           ▼
+   验证 ── 证明它真干完了 （绝不信“我做完了”）
+           │
+           ▼
+   记忆 ── 候选 → 你确认 → 它变得更聪明
+           │
+           └──────────────► 下一步
 ```
 
-### 方式二 - 源码首次安装
+大多数工具跳过的那条腿是**验证**。一个给自己打分的 agent 一定会偷工减料。在 Friday 里，“完成”被要求带真实、可核查的证据——模型说一句*“好了”*、或进程只是退出了，**永远不**被当作完成。
 
-```bash
-git clone https://github.com/thesongzhu/Friday.git
-cd Friday
-bash scripts/ops/friday-first-run.sh
-# macOS 也可以双击 "Friday Setup.command"
-```
+## 它的不同之处（也是难被复制之处）
 
-首次安装助手会安装依赖、构建 Friday、启动本机 runtime，并自动打开 setup 页面。在 macOS 上，它还会安装登录自启动和右上角菜单栏 companion，重启后 Friday 可以自己回来。如果你从 Desktop、Documents 或 Downloads 运行，它会先自动准备 `~/Friday` 这个 launchd 可安全启动的 runtime，再安装登录项。
+Codex 和 Claude 各给你一个很强的 agent。但它们不会替你去治理*彼此*，也不会把控制权放到你这边。Friday 被设计来站在它们上面一层、跨厂商、在你自己机器上：
 
-### 方式三 - 手动源码启动
+- **跨厂商编排**——一个目标，每一步用最合适的模型，绝不偷偷换模型。
+- **验证，而非自报**——确定性检查 + 证据回执，为每一个“完成”把关。
+- **批准优先**——任何不可逆动作都停下等你离线签名；内核只能*验证*你的钥匙，**永远**无法替你签。
+- **受治理的记忆**——长期记忆绝不静默写入；每条事实你确认后才落定。
+- **计量 + 审计**——每次模型调用都计费并上哈希链审计；私有上下文外传前先经显式护照 + 脱敏把关。
 
-```bash
-git clone https://github.com/thesongzhu/Friday.git
-cd Friday
-npm install
-npm run build
-npm start
-# 打开 http://localhost:3141
-```
+这正是单厂商工具结构上不会去填的缝：*中立的、跨厂商的、属于你这一侧的治理。*
 
-### 方式四 - Docker 源码构建
+## 为什么这么建
 
-```bash
-docker compose -f docker/docker-compose.yml up --build
-# 打开 http://localhost:3141
-```
+编程 agent 能力涨得很快——但在长任务上会撞可靠性悬崖，而且它们会悄悄偷工减料、或谎称干完了没干完的活。2026 年行业的转向是 **loop engineering（闭环工程）**：别再用手一条条 prompt agent，而是去设计那个系统——它找活、派活、**查活**、记下完成了什么、决定下一步。Friday 把这个想法里缺的那几块做成了真的：
 
-第一次启动会进入 setup：配置 provider、本机权限和可选能力。渠道配置是可选项，必须完成对应验证后才算可用。setup 完成后，再打开 Friday 应直接进入 Home。
+- **验证是承重腿。** 一个给自己打分的 agent 不可信——所以“完成”必须带证据，而不是自报。这是大多数工具跳过的部分，也正是 Friday 围绕着建的部分。
+- **治理该在你这一侧。** agent 的真实风险有大量记录——记忆被悄悄投毒、把私有数据传错地方、花费失控、破坏性命令。所以批准、显式的上下文护照、计量、审计，都活在*你的*内核里，而不是某个厂商的云上。
+- **跨厂商才是重点。** 每个厂商都给你一个很强的 agent，却不会替你治理别家。一个中立层、在你机器上编排它们、控制权在你这边——这正是单厂商结构上不会去填的缝。
+- **模型是租的，不是拥有的。** Friday 刻意不是一个模型。模型会一直换；真正持久的价值是它们外面那层 harness——路由、验证、记忆、治理，这些归你。
 
-## Provider 和 API Key
+## 它正在长成的样子
 
-Friday 是 BYOK：你使用自己的模型、搜索和第三方 API 凭证。
+一个住在你手机和桌面上的私人 AI 参谋长：
 
-每项能力都应该能回答四个问题：
+- 你在聊天里给它一个目标；它规划、跨模型路由，并**把路由展示给你、让你能改**。
+- 危险步骤变成一张**你一键签名的批准卡**；安全步骤直接做掉。
+- 它**学你的偏好、学你的世界**，越用越好用。
+- 它能旁观你自己的编程会话、从你的渠道（Telegram……）接活、跑你导入的 skill/workflow、接手定时任务——全在同一套治理之下。
+- 你握着一个**信任旋钮**：往上拨可以一次预批一批低风险的活，往下拨则每步都确认。不可逆动作永远会问你。
 
-- **我有没有这项能力？**
-- **如果没有，缺的是什么？**
-- **去哪里配置？**
-- **配置完后能不能用真实任务验证？**
+你自始至终是主权者：**大脑是租的，控制器是你的。**
 
-常见 provider 路径包括 OpenAI、豆包/火山方舟、Moonshot、Anthropic、Google、OpenRouter、Tavily、Serper、本地浏览器/PDF/文件工具、MCP server 和自定义 skill。缺 key 或缺账号不能算成功，必须显示成人类阻塞项，并告诉你下一步去哪配。
+## 原则
 
-## 能力自获取（WIP）
+**本地优先的内核 · BYOK · 批准优先 · 人类掌控 · 证据兜底**
 
-当 Friday 缺少完成目标所需的能力时，目标闭环是：
+> 这里的*本地优先*指**控制器、你的钥匙、你的数据、你的记忆**都在你机器上——模型本身是你接入的云 API。Friday 是本地的**内核**，不是本地模型。
 
-```text
-目标 -> 能力缺口 -> 候选来源 -> 沙箱/测试 -> 必要时审批 -> 安装/注册 -> doctor 验证 -> 执行任务
-```
+## 状态
 
-这不是当前版本的全自动承诺。当前版本可以报告缺口并覆盖闭环中的一部分流程；生成 skill、自升级、配置调整保真等路径仍是审查门控能力，需要继续压力测试。默认低风险步骤包括搜索、分析、生成草案和沙箱验证。下载代码、安装包、写配置、注册工具、shell、本地文件写入、外部网络调用都受 autonomy policy 控制。OAuth、付款、验证码、API key、敏感权限、生产写操作必须由用户介入。
-
-## 记忆、自我成长和自我修复
-
-Friday 的自我改进不是神秘黑盒，而是可检查的状态和产物：
-
-- **记忆事实：** 偏好、项目规则、反复出现的上下文、用户纠正。
-- **路由偏好：** 哪个 provider 更适合哪类任务。
-- **Setup recipes：** 成功的配置、恢复和验证步骤。
-- **Skills / workflows：** 生成或改进后的可复用能力，带测试和证据。
-- **Eval 用例：** 修过的问题以后要继续通过。
-- **失败教训：** 什么坏了、怎么修、什么时候该停止重试。
-
-这些不会默认训练模型权重。它们应该可见、可审计、可编辑、可暂停、可删除。
-
-## 安全模型
-
-Friday 的原则很简单：重复、低风险、可验证的事情尽量自动化；不可逆、敏感、高风险的事情留给用户确认。
-
-- 默认本地优先运行，本地保存状态。
-- 自带 key，凭证应放在环境变量、托管 secret 引用或系统密钥管理里。
-- 能力授权要有范围、理由、证据和过期时间。
-- 高风险动作必须显式审批。
-- 工具调用、workflow、自修复、渠道动作都要留下审计证据。
-- 安装失败或生成能力失败时要支持回滚。
-- 暴露到公网前必须明确配置认证、CORS、TLS/代理和最小权限。
-
-## Friday 不是什么
-
-- 它不是万能自动化系统。
-- 它不是任何任务都能完全不问人的全自动系统。
-- 它不会绕过登录、验证码、付款、平台规则或 provider 限制。
-- 它不会无审查安全运行任意第三方代码。
-- 它不会替你承担主机、API key、账号和渠道接入的安全责任。
-
-## 文档
-
-- [快速开始](docs/getting-started.md)
-- [文档中心](docs/README.md)
-- [信任模型](TRUST.md)
-- [隐私](PRIVACY.md)
-- [负责任使用](RESPONSIBLE_USE.md)
-- [Roadmap](ROADMAP.md)
-- [愿景](docs/VISION.md)
-- [能力矩阵](docs/ops/friday-capability-matrix.md)
-- [扩展 Friday](docs/EXTENDING.md)
-- [故障排查](docs/TROUBLESHOOTING.md)
-- [参与贡献](.github/CONTRIBUTING.md)
-- [安全策略](.github/SECURITY.md)
-
-## 下载与分发
-
-| 平台 | 方式 | 状态 |
-| --- | --- | --- |
-| macOS / Linux / Windows | `npm install -g @thesongzhu/friday` | 当前 npm 已发布版本为 `1.0.2`；仅 npm/source 发布；`1.0.2` release SHA 上已完成 R5 同 SHA Real Green Gate 证明；全新隔离 public install audit 为 `0` vulnerabilities |
-| 源码 | `git clone` + `npm install` + `npm run build` | 可用 |
-| Docker | `docker compose -f docker/docker-compose.yml up --build` | 可从本仓库构建 |
-
-官方 npm 包是 `@thesongzhu/friday`。npm 上无 scope 的 `friday` 是无关项目。
-仓库元数据已暂存为后续 operator 授权发布使用的 `1.0.3` package candidate；npm registry 的 latest 仍是 `1.0.2`。
-Linux 和 Windows 的桌面 companion 行为应以平台能力检查和 release evidence 为准，不应理解为原生桌面版本已经完成发布。`1.0.2` 不 claim 桌面、Homebrew、公证 macOS 或移动端发布。
-
-## 社区
-
-- **Discord** - [discord.gg/qXQRFg2u](https://discord.gg/qXQRFg2u)
-- **Issues** - [GitHub Issues](https://github.com/thesongzhu/Friday/issues)
-- **安全** - [SECURITY](.github/SECURITY.md)
-
-## 许可证
-
-Friday 使用 [MIT](LICENSE) 开源许可证。
-
-## 第三方声明
-
-Friday 包含面向第三方 Agent 生态格式和行为的兼容与适配工作。上游版权和许可声明见 [NOTICE](NOTICE)。
+Friday 是一个 **public v1 local candidate**，通过 npm / 源码分发。引擎与安全基质——目标→工作脊柱、路由、治理、计量、审计、封口传输——都已就位，你自带钥匙。能力获取与自我升级的流程是**受审查门控的进行中工作**，不是全自动的承诺。Friday 做它能安全做的事，**该需要你时清楚地停下**，并留下证据。
