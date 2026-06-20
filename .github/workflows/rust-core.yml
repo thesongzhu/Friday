@@ -123,5 +123,9 @@ jobs:
       - name: Build sealed-client interop runner
         working-directory: .
         run: node test/interop/build-sealed-client-runner.mjs
-      - name: Memory-spine TS route to Rust confirm proof
-        run: cargo test -p friday-hub interop_ts_memory_route_decision_confirms_real_rust_candidate --bin hub_agent_run_server -- --ignored --nocapture
+      - name: TS route to Rust interop proofs
+        run: |
+          cargo test -p friday-hub interop_ts_memory_route_decision_confirms_real_rust_candidate --bin hub_agent_run_server -- --ignored --nocapture
+          cargo test -p friday-hub interop_ts_agent_start_route_drives_real_rust_run_and_readback --bin hub_agent_run_server -- --ignored --nocapture
+          cargo test -p friday-hub interop_ts_mission_route_lifecycle_and_workitem_hit_real_rust_spine --bin hub_agent_run_server -- --ignored --nocapture
+          cargo test -p friday-hub interop_ts_mission_route_auto_dispatch_to_mission_bound_run --bin hub_agent_run_server -- --ignored --nocapture
