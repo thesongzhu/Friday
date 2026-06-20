@@ -85,6 +85,9 @@ describe("C1/C2 Tier-1 parity capture runner", () => {
       "live-synthetic",
       "live-synthetic",
     ]);
+    expect(capture.TIER1_PARITY_FLOW_SPECS.find(
+      (flow) => flow.flowId === "c1-deepseek-real-green-routing-diagnostic",
+    )?.expectedHarness).toBe("scripts/ops/friday-c1-c2-deepseek-rgg-core-gate.mjs");
 
     const report = await capture.buildCaptureReport({
       enabled: false,
