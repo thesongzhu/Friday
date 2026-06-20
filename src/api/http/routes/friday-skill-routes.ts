@@ -984,7 +984,7 @@ export function createFridaySkillRoutes(
           idempotencyKey: asOptionalString(body.idempotencyKey, "idempotencyKey"),
         })
         : undefined;
-      if (managedExternalSkillRun && canonicalApproval?.decision !== "approved") {
+      if (managedExternalSkillRun) {
         assertCanonicalApproval({
           deps,
           request: canonicalApprovalRequest!,

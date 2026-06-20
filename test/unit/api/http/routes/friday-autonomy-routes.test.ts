@@ -260,7 +260,7 @@ function makeChannelApproval(input: {
   };
 }
 
-function createRoutes() {
+function createRoutes(input: { allowTestOnlyAutonomyLifecycleExecution?: boolean } = {}) {
   const evidence = {
     candidateId: "candidate-1",
     events: [{ type: "shadow", at: "2026-05-07T18:00:00.000Z" }],
@@ -275,8 +275,10 @@ function createRoutes() {
     status: "not_installed",
     tags: [],
   }));
+  const promote = vi.fn(async () => ({ skillId: "skill-1", status: "installed", tags: [] }));
+  const rollback = vi.fn(async () => ({ skillId: "skill-1", status: "not_installed", tags: [] }));
   const routes = createFridayAutonomyRoutes({
-    allowTestOnlyAutonomyLifecycleExecution: true,
+    allowTestOnlyAutonomyLifecycleExecution: input.allowTestOnlyAutonomyLifecycleExecution ?? true,
     canonicalMutationGate: createFridayMutatingActionGate({
       nowIso: () => "2026-05-07T18:00:00.000Z",
       ticketIdGenerator: () => "ticket-1",
@@ -285,13 +287,13 @@ function createRoutes() {
     skillActions: {
       registerShadow,
       recordCanary,
-      promote: vi.fn(async () => ({ skillId: "skill-1", status: "installed", tags: [] })),
-      rollback: vi.fn(async () => ({ skillId: "skill-1", status: "not_installed", tags: [] })),
+      promote,
+      rollback,
       getStatus: () => null,
       getEvidence: vi.fn(() => evidence),
     },
   });
-  return { routes, registerShadow, recordCanary };
+  return { routes, registerShadow, recordCanary, promote, rollback };
 }
 
 function createProviderRoutes() {
@@ -530,6 +532,72 @@ function createChannelRoutes() {
 }
 
 describe("createFridayAutonomyRoutes skill lifecycle approval", () => {
+  it.each([
+    {
+      operationId: "autonomy.skills.shadow",
+      body: {
+        candidateId: "candidate-1",
+        runtimeVersion: "runtime-v1",
+        canonicalApproval: makeApproval({ action: "shadow", candidateId: "candidate-1" }),
+      },
+      mutation: "registerShadow",
+    },
+    {
+      operationId: "autonomy.skills.canary",
+      body: {
+        candidateId: "candidate-1",
+        runtimeVersion: "runtime-v1",
+        canonicalApproval: makeApproval({ action: "canary", candidateId: "candidate-1" }),
+      },
+      mutation: "recordCanary",
+    },
+    {
+      operationId: "autonomy.skills.promote",
+      body: {
+        candidateId: "candidate-1",
+        runtimeVersion: "runtime-v1",
+        planDigest: "plan-digest-1",
+        canonicalApproval: makeApproval({
+          action: "promote",
+          candidateId: "candidate-1",
+          planDigest: "plan-digest-1",
+        }),
+      },
+      mutation: "promote",
+    },
+    {
+      operationId: "autonomy.skills.rollback",
+      body: {
+        candidateId: "candidate-1",
+        runtimeVersion: "runtime-v1",
+        planDigest: "plan-digest-1",
+        canonicalApproval: makeApproval({
+          action: "rollback",
+          candidateId: "candidate-1",
+          planDigest: "plan-digest-1",
+        }),
+      },
+      mutation: "rollback",
+    },
+  ] as const)(
+    "fail-closes %s by default before invoking the TypeScript skill lifecycle mutation",
+    async ({ operationId, body, mutation }) => {
+      const deps = createRoutes({ allowTestOnlyAutonomyLifecycleExecution: false });
+      const route = deps.routes.find((entry) => entry.operationId === operationId)!;
+
+      await expect(route.handler(makeContext(body))).rejects.toMatchObject({
+        code: "TS_RUNTIME_AUTONOMY_LIFECYCLE_RETIRED",
+        httpStatus: 503,
+        details: {
+          classification: "fail_closed",
+          replacement: "rust_owned_autonomy_subject_upgrade_lifecycle_entrypoint_required",
+        },
+      });
+
+      expect(deps[mutation]).not.toHaveBeenCalled();
+    },
+  );
+
   it("requires canonical approval before shadow can mutate", async () => {
     const { routes, registerShadow } = createRoutes();
     const route = routes.find((entry) => entry.operationId === "autonomy.skills.shadow")!;
