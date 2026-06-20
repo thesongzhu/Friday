@@ -499,7 +499,9 @@ use friday_core::gate::{
 // The risk-escalation primitives (`shell_risk`/`is_destructive_request`) now live behind
 // the sealed `friday_core::gate::classify`; `Resource` is constructed there too.
 use friday_core::gate::Reversibility;
-use friday_core::{ActivityState, ActivityType, Risk};
+use friday_core::{
+    ActivityState, ActivityType, ProviderSessionEvent, ProviderSessionLink, Risk, SyncMode,
+};
 use friday_crypto::OperatorVerifyingKey;
 use friday_storage::{
     agent_run, authorize_mutating_action, authorize_mutating_action_ed25519,
@@ -4300,10 +4302,67 @@ pub(crate) fn bill_model_call_keyed(
         audit_id,
         actor: "hub-agent".to_string(),
         action: "agent_loop.model_call".to_string(),
-        payload_ref: Some(ledger_id),
+        payload_ref: Some(ledger_id.clone()),
         created_at: now_ms,
     };
-    friday_storage::record_run_model_call(conn, run_id, &entry, &activity, &audit)
+    friday_storage::record_run_model_call(conn, run_id, &entry, &activity, &audit)?;
+    if outcome.provider_kind == friday_core::ProviderKind::Anthropic {
+        mirror_anthropic_metered_turn(
+            conn,
+            run_id,
+            slot,
+            outcome,
+            ledger_id.as_str(),
+            audit.audit_id.as_str(),
+            now_ms,
+        )?;
+    }
+    Ok(())
+}
+
+fn mirror_anthropic_metered_turn(
+    conn: &Connection,
+    run_id: &str,
+    slot: &str,
+    outcome: &BilledUsage,
+    ledger_id: &str,
+    audit_id: &str,
+    now_ms: i64,
+) -> Result<(), StorageError> {
+    let friday_session_id = format!("claude-metered-{run_id}");
+    let provider_event_id = format!("claude-metered:{run_id}:{slot}");
+    let link = ProviderSessionLink {
+        friday_session_id: friday_session_id.clone(),
+        provider: "claude".to_string(),
+        account_key_hash: "sha256:claude-account-unresolved".to_string(),
+        workspace_id: "anthropic-messages-api".to_string(),
+        cwd: None,
+        external_session_id: None,
+        external_thread_id: None,
+        external_url: None,
+        sync_mode: SyncMode::FridayLocalMirror,
+        capability_snapshot: format!("claude_anthropic_metered_route:v1;model={}", outcome.model),
+        last_provider_seen_at: Some(now_ms),
+        last_friday_event_id: Some(provider_event_id.clone()),
+        truth_label: "claude_anthropic_metered_turn_metadata_only".to_string(),
+    };
+    friday_storage::provider_session::upsert_link(conn, &link)?;
+
+    let event = ProviderSessionEvent {
+        friday_session_id,
+        provider_event_id,
+        provider: "claude".to_string(),
+        event_kind: "metered_turn".to_string(),
+        transcript_item_kind: "model_call".to_string(),
+        body_ref: format!("friday://token-ledger/{ledger_id}"),
+        redaction_level: "metadata_only".to_string(),
+        token_ledger_ref: Some(ledger_id.to_string()),
+        approval_ref: None,
+        audit_receipt_ref: Some(audit_id.to_string()),
+        observed_at: now_ms,
+    };
+    friday_storage::provider_session::append_event(conn, &event)?;
+    Ok(())
 }
 
 /// Drive a MULTI-TURN agent loop with the pre-S4 default policy (no per-run principal
@@ -12175,6 +12234,16 @@ mod tests {
             "loop biller now stamps the pricing-table cost estimate (a#4 — was NULL)"
         );
         assert_eq!(fallback, 0, "Friday route is never a fallback (unchanged)");
+        assert_eq!(
+            db.count("provider_session_link").unwrap(),
+            0,
+            "DeepSeek billing does not synthesize a provider-session mirror"
+        );
+        assert_eq!(
+            db.count("provider_session_event").unwrap(),
+            0,
+            "DeepSeek billing remains byte-identical on provider-session evidence"
+        );
     }
 
     // ---- (a#3) flash→pro quality escalation (loop-layer) ----------------------------------
@@ -12852,6 +12921,40 @@ mod tests {
             )
             .unwrap();
         assert_eq!(host, "api.anthropic.com");
+
+        let session_id = "claude-metered-r1";
+        let link = friday_storage::provider_session::get_link(db.conn(), session_id)
+            .unwrap()
+            .expect("Anthropic metered turns are mirrored into a Claude provider-session link");
+        assert_eq!(link.provider, "claude");
+        assert_eq!(link.sync_mode, friday_core::SyncMode::FridayLocalMirror);
+        assert_eq!(
+            link.truth_label,
+            "claude_anthropic_metered_turn_metadata_only"
+        );
+        assert_eq!(
+            link.last_friday_event_id.as_deref(),
+            Some("claude-metered:r1:t0")
+        );
+
+        let events = friday_storage::provider_session::list_events(db.conn(), session_id).unwrap();
+        assert_eq!(
+            events.len(),
+            1,
+            "the Anthropic ledger row has exactly one provider-session event mirror"
+        );
+        let event = &events[0];
+        assert_eq!(event.provider_event_id, "claude-metered:r1:t0");
+        assert_eq!(event.provider, "claude");
+        assert_eq!(event.event_kind, "metered_turn");
+        assert_eq!(event.transcript_item_kind, "model_call");
+        assert_eq!(event.redaction_level, "metadata_only");
+        assert_eq!(event.token_ledger_ref.as_deref(), Some("r1:t0:ledger"));
+        assert_eq!(
+            event.body_ref, "friday://token-ledger/r1:t0:ledger",
+            "the mirror is refs-only; it does not persist model text"
+        );
+        assert_eq!(event.audit_receipt_ref.as_deref(), Some("r1:t0:modelcall"));
     }
 
     #[test]
