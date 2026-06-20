@@ -88,6 +88,14 @@ describe("C1/C2 Tier-1 parity capture runner", () => {
     expect(capture.TIER1_PARITY_FLOW_SPECS.find(
       (flow) => flow.flowId === "c1-deepseek-real-green-routing-diagnostic",
     )?.expectedHarness).toBe("scripts/ops/friday-c1-c2-deepseek-rgg-core-gate.mjs");
+    for (const flowId of [
+      "c1-claude-process-observation-audit",
+      "c1-claude-session-ledger-link-audit",
+      "c2-claude-workitem-proof-audit",
+    ]) {
+      expect(capture.TIER1_PARITY_FLOW_SPECS.find((flow) => flow.flowId === flowId)?.expectedHarness)
+        .toBe("scripts/diagnostics/friday-claude-provider-session-artifact-audit.sh");
+    }
 
     const report = await capture.buildCaptureReport({
       enabled: false,
