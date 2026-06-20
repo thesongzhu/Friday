@@ -329,7 +329,7 @@ jobs:
       - name: Verify L1 mechanism wiring matrix
         run: npm run test:mechanism-wiring
 
-      - name: Run L1 critical fence behavior tests
+      - name: Run L1 method-retired behavior tests
         run: npm run test:mechanism-wiring:behavior
 
   # ── Terminal CI Aggregator — single required check for branch protection ──
