@@ -150,12 +150,12 @@ struct UnavailableView: View {
     VStack(spacing: 10) {
       Image(systemName: "exclamationmark.triangle")
         .font(.system(size: 28)).foregroundStyle(MobileTheme.coral)
-      Text("Hub projection unavailable")
+      Text("Friday is offline")
         .font(.headline).foregroundStyle(MobileTheme.textPrimary)
       Text(reason)
         .font(.footnote).foregroundStyle(MobileTheme.textSecondary)
         .multilineTextAlignment(.center)
-      Text("Showing this as truth — no cached or fabricated status is presented.")
+      Text("No cached or fabricated status is shown.")
         .font(.caption2).foregroundStyle(MobileTheme.textSecondary)
         .multilineTextAlignment(.center)
     }
@@ -174,7 +174,7 @@ struct PlaceholderScreen: View {
         .font(.system(size: 30)).foregroundStyle(MobileTheme.textSecondary)
       Text(destination.title)
         .font(.headline).foregroundStyle(MobileTheme.textPrimary)
-      Text("This surface is part of the locked mobile design but is not built in this PR.")
+      Text("This area is not available yet.")
         .font(.footnote).foregroundStyle(MobileTheme.textSecondary)
         .multilineTextAlignment(.center)
         .frame(maxWidth: 320)

@@ -75,7 +75,7 @@ final class HomeViewModelTests: XCTestCase {
     let vm = HomeViewModel(client: FakeReadClient(.fail(.serverError(code: .hubOffline, message: "no active mission"))))
     await vm.refresh()
     guard case .unavailable(let reason) = vm.state else { return XCTFail("expected .unavailable") }
-    XCTAssertTrue(reason.contains("HUB_OFFLINE"), "reason: \(reason)")
+    XCTAssertTrue(reason.contains("Friday is unavailable"), "reason: \(reason)")
     XCTAssertNil(vm.state.projection) // never a fabricated ready projection
   }
 }
@@ -101,7 +101,7 @@ final class ReadClientFactoryTests: XCTestCase {
     let vm = HomeViewModel(client: client)
     await vm.refresh()
     guard case .unavailable(let reason) = vm.state else { return XCTFail("expected .unavailable, got \(vm.state)") }
-    XCTAssertTrue(reason.contains("offline") || reason.contains("not wired") || reason.contains("dark"),
+    XCTAssertTrue(reason.contains("offline") || reason.contains("not set up"),
                   "reason: \(reason)")
     XCTAssertFalse(vm.state.isOnline)
   }

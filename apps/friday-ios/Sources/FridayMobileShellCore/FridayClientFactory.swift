@@ -77,7 +77,7 @@ public enum FridayClientFactoryError: Error, Sendable, Equatable, CustomStringCo
   public var description: String {
     switch self {
     case .liveTransportNotWired:
-      return "live Hub transport not wired (Rust servers dark — slice-6 gate)"
+      return "live connection is not set up yet"
     }
   }
 }

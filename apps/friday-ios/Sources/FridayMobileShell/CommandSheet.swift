@@ -63,7 +63,7 @@ struct CommandSheet: View {
         }
         .padding(16)
 
-        Text("Read-only shell · M-PR1 · v1 NO-GO")
+        Text("Read-only mode · more surfaces coming online")
           .font(.caption2)
           .foregroundStyle(MobileTheme.textSecondary)
           .padding(.top, 8)

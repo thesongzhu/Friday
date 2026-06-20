@@ -122,18 +122,18 @@ public final class HomeViewModel: ObservableObject {
     if let e = error as? FridayReadClientError {
       switch e {
       case .badServerPubkey, .badSessionNonce:
-        return "Hub handshake failed — server unavailable"
+        return "Friday could not establish a trusted connection"
       case let .serverError(code, message):
-        return "Hub unavailable (\(code.rawValue)) — \(message)"
+        return "Friday is unavailable (\(code.rawValue)) — \(message)"
       case let .unexpectedResponse(kind):
-        return "Hub returned an unexpected response (\(kind))"
+        return "Friday returned an unexpected response (\(kind))"
       case let .malformedProjection(why):
-        return "Projection unavailable — \(why)"
+        return "Status unavailable — \(why)"
       case let .transport(why):
-        return "Hub offline — \(why)"
+        return "Friday is offline — \(why)"
       }
     }
-    return "Hub unavailable — \(error)"
+    return "Friday is unavailable — \(error)"
   }
 }
 
@@ -151,7 +151,7 @@ public final class HomeViewModel: ObservableObject {
 /// has no master key; that is the J2 pairing problem, deferred).
 public struct HonestlyUnavailableReadClient: FridayRustReadClient {
   private let reason: String
-  public init(reason: String = "live Hub transport not wired (Rust servers dark — slice-6 gate)") {
+  public init(reason: String = "live connection is not set up yet") {
     self.reason = reason
   }
   public func fetchWorkbench() async throws -> WorkbenchSnapshot {

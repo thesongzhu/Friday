@@ -405,7 +405,7 @@ public final class FridayChatViewModel: ObservableObject {
 
   static func dispatchReason(for error: Error) -> String {
     if let e = error as? FridayWriteClientError { return writeReason(e, verb: "dispatch") }
-    return "Hub unavailable — \(error)"
+    return "Friday is unavailable — \(error)"
   }
 
   static func resumeReason(for error: Error) -> String {
@@ -421,19 +421,19 @@ public final class FridayChatViewModel: ObservableObject {
   private static func writeReason(_ e: FridayWriteClientError, verb: String) -> String {
     switch e {
     case .badServerPubkey, .badSessionNonce:
-      return "Hub handshake failed — server unavailable"
+      return "Friday could not establish a trusted connection"
     case let .serverError(code, message):
-      return "Hub unavailable (\(code.rawValue)) — \(message)"
+      return "Friday is unavailable (\(code.rawValue)) — \(message)"
     case let .unexpectedResponse(kind):
-      return "Hub returned an unexpected response (\(kind))"
+      return "Friday returned an unexpected response (\(kind))"
     case let .missingRef(why):
-      return "Hub returned an incomplete \(verb) frame — \(why)"
+      return "Friday returned an incomplete \(verb) response — \(why)"
     case .runControlDisabled:
-      return "Run-control is disabled — approvals are not yet enabled (slice-6 gate)"
+      return "Approvals are not available yet — no action was resumed"
     case .emptySignedBlob:
       return "Approval unavailable — the signer returned no signature"
     case let .transport(why):
-      return "Hub offline — \(why)"
+      return "Friday is offline — \(why)"
     }
   }
 

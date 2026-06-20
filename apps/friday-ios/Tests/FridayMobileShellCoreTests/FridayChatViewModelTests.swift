@@ -376,7 +376,7 @@ final class FridayChatViewModelTests: XCTestCase {
     await vm.send("edit notes.md")
     await vm.approve()
     guard case .unavailable(let reason) = vm.phase else { return XCTFail("expected .unavailable") }
-    XCTAssertTrue(reason.contains("operator-key") || reason.lowercased().contains("not provisioned"), "reason: \(reason)")
+    XCTAssertTrue(reason.lowercased().contains("approval key"), "reason: \(reason)")
     XCTAssertTrue(client.resumedRunIds.isEmpty)
   }
 
@@ -400,13 +400,13 @@ final class FridayChatViewModelTests: XCTestCase {
   }
 
   /// FLAG-OFF posture: a write client with run-control disabled refuses the resume relay — the
-  /// view model surfaces it as the honest slice-6-gated reason (no fabricated receipt).
-  func testApprove_runControlDisabled_isSlice6Gated() async {
+  /// view model surfaces an honest unavailable reason (no fabricated receipt).
+  func testApprove_runControlDisabled_isUnavailable() async {
     let client = FakeWriteClient(dispatch: .pause(makePause()), resume: .fail(.runControlDisabled))
     let vm = FridayChatViewModel(writeClient: client, signer: MockOperatorSigner())
     await vm.send("edit notes.md")
     await vm.approve()
     guard case .unavailable(let reason) = vm.phase else { return XCTFail("expected .unavailable") }
-    XCTAssertTrue(reason.contains("slice-6") || reason.lowercased().contains("disabled"), "reason: \(reason)")
+    XCTAssertTrue(reason.lowercased().contains("approvals are not available"), "reason: \(reason)")
   }
 }
