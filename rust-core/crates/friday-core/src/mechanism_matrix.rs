@@ -224,6 +224,17 @@ pub fn friday_v1_mechanism_matrix() -> Vec<MechanismRow> {
             user_triggerable_product_logic: true,
         },
         MechanismRow {
+            id: "trust_passport_governance",
+            title: "Trust grant ceilings / context passport governance",
+            owner: RustHub,
+            status: RustOwnedPartial,
+            rust_entrypoint:
+                "friday_storage::trust_grant; friday_hub::mission_preflight; friday-operator-approve grant/revoke",
+            proof_gate: "npm run proof:d4:trust-passport",
+            blocker: "built-DARK proof harness only; live enforcement and root grant remain operator-gated, and this does not satisfy strict OG9 organic or D20/B4 true signature",
+            user_triggerable_product_logic: true,
+        },
+        MechanismRow {
             id: "pairing",
             title: "Pairing / trusted device bootstrap",
             owner: RustHub,
