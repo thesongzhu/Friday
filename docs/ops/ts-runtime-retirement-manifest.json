@@ -10,7 +10,15 @@
   "discovery": {
     "routeSourceDir": "src/api/http/routes",
     "includeMethods": ["GET", "POST", "PATCH", "PUT", "DELETE"],
-    "exactRouteSurfacesMin": 307
+    "exactRouteSurfacesMin": 307,
+    "requiredRouteBehaviorTestSurfaceIds": [
+      "agent_runs_start",
+      "workflow_runs_start",
+      "autofix_execute",
+      "skills_run",
+      "skills_import",
+      "mcp_server_rpc"
+    ]
   },
   "classificationValues": [
     "ui_shell",
@@ -1004,6 +1012,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-agent-routes.test.ts",
       "proof": "src/api/runtime/friday-api-runtime.ts wires default/live agent.runs.start to TS_RUNTIME_AGENT_RUNS_RETIRED before idempotency replay, state mutation, provider validation, or agent runtime execution; the legacy TS path is reachable only through explicit allowTestOnlyAgentRunStartExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned agent run entrypoint when available."
     },
@@ -1381,6 +1390,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/runtime/friday-api-runtime-extra-route-registration.test.ts",
       "proof": "src/api/runtime/friday-api-runtime.ts wires default/live runs.start to TS_RUNTIME_WORKFLOW_RUNS_RETIRED before building run security context or calling TypeScript workflowRuntime.execution.startRun; the legacy TS workflow run path is reachable only through explicit allowTestOnlyWorkflowRunExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned workflow run entrypoint when available."
     },
@@ -1530,6 +1540,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-skill-routes.test.ts",
       "proof": "src/api/http/routes/friday-skill-routes.ts wires default/live skills.run to TS_RUNTIME_SKILL_RUNS_RETIRED before resolving lifecycle state or calling the TypeScript skillExecutor; the legacy TS execution path is reachable only through explicit allowTestOnlySkillRunExecution test-oracle wiring. OFF-ROUTE CALLER COMPLETENESS (F3.1 / OF6 follow-up, 2026-06-12): the shared skillExecutor.execute arbitrary-code sink (shell/python/node) has exactly SIX call sites in the tree (whole-repo grep of .execute(/.executeLifecycleCanary( across src/apps/frontend-system/managed-skills, comment references excluded): (1) this route [route-guarded]; (2) agent skill_run tool src/agent/tools/friday-agent-skill-tool.ts:240 [method-fenced by #688 on allowTestOnlySkillRunExecution, ai-inference exempt — behavioral test friday-agent-skill-tool.test.ts]; (3) workflow invokeSkillForWorkflow src/hub/friday-hub-bootstrap.ts:1506 [method-fenced by #688 on config.allowTestOnlySkillRunExecution, ai-inference exempt — behavioral test friday-hub-bootstrap.test.ts]; (4) UIX starter-template src/uix/services/friday-uix-surface-service.ts:1509 [intended-LIVE v1 feature DEC-3a, single-chokepoint guard executeStarterSkillTemplate behind inverted-polarity enforceUixSkillExecRetirement (default off = live)]; (5) autonomy lifecycle canary src/autonomy/services/friday-skill-upgrade-lifecycle-service.ts:631 via the SEPARATE executeLifecycleCanary method [the public execute() throws SKILL_LIFECYCLE_CANARY_INTERNAL_ONLY 403 if a lifecycleCanary payload is passed; executeLifecycleCanary is fail-closed by the canonical mutation gate — requires canonicalApproval + canonicalApprovalRequest + digest match, blocks before the code sink, and fails closed if canonicalMutationGate is undefined — behavioral tests in friday-skill-executor.test.ts (INTERNAL_ONLY fence + SKILL_LIFECYCLE_CANARY_APPROVAL_DENIED)]; (6) operator-local CLI `friday run` src/cli/friday-cli.ts runCliSkillCommand hub.executor.execute, reached ONLY via argv command dispatch (cmdRun → runCliSkillCommand, no service/scheduler/programmatic caller) — its REMOTE branch (FRIDAY_HUB_URL set → runCliSkillRemotely) goes through the route-guarded HTTP surface and already fails closed; the LOCAL-hub branch is now ALSO method-fenced (defense-in-depth closeout, not a security requirement): the same per-caller guard as #2/#3 (config.allowTestOnlySkillRunExecution !== true && skillId !== ai-inference → throw TS_RUNTIME_SKILL_RUNS_RETIRED 503) fires AFTER skillId is parsed and BEFORE createHub/hub.executor.execute, so the local in-process executor sink is no longer reachable by default (buildConfig leaves the flag undefined → fail-closed). It was previously documented OUT OF RETIREMENT SCOPE (operator-local, non-route, non-HTTP, not remotely/autonomously/prompt-injection triggerable — the operator exercising shell access they already hold, no privilege boundary crossed) and is NOT a registered methodRetiredSurfaces surface; the guard is added for completeness/consistency with the agent + workflow non-route callers — behavioral test friday-cli.test.ts (fails-closed for a non-ai-inference local run + ai-inference exempt). NET: zero ungated holes among all remotely-reachable / autonomous / prompt-injectable callers; the operator-local CLI local-hub caller is now also fail-closed by default for arbitrary (non-ai-inference) skillIds.",
       "next_action": "Replace fail-closed response with a Rust-owned skill execution entrypoint when available; the operator-local CLI (friday-cli.ts runCliSkillCommand local-hub branch) is now method-fenced for completeness (default fail-closed for non-ai-inference skillIds) — when the Rust entrypoint lands, flip it the SAME way as the route/agent/workflow callers."
     },
@@ -1914,6 +1925,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-auto-fix-routes.test.ts",
       "proof": "src/api/http/routes/friday-auto-fix-routes.ts wires default/live autofix.actions.execute to TS_RUNTIME_AUTOFIX_EXECUTION_RETIRED after the bound-principal gate and before calling the TypeScript executeAction service; legacy TS execution is reachable only through explicit allowTestOnlyAutoFixExecution test-oracle wiring.",
       "next_action": "Replace fail-closed response with a Rust-owned auto-fix execute entrypoint when available."
     },
@@ -4217,6 +4229,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-skill-converter-routes.test.ts",
       "proof": "src/api/http/routes/friday-skill-converter-routes.ts skills.import wires default/live to assertSkillConverterTestOracleAllowed(deps) AFTER validateImportBody and AFTER assertSkillImportCanonicalApproval (so malformed -> 400 and unapproved -> 403 CANONICAL_APPROVAL_REQUIRED/DENIED still fire), IMMEDIATELY BEFORE importWithRedactedSkillSourceErrors -> converterService.import (the candidate-staging write that creates staged candidates + may refresh the registry); 503 TS_RUNTIME_SKILL_CONVERTER_RETIRED. executes_product_logic:false: no candidate is staged in default/live. SCOPE NOTE (route-scoped proof): the underlying converterService.import method is ALSO reached by three OTHER user-triggerable routes — /v1/deeplink/apply (src/api/runtime/friday-deep-link-apply-service.ts), /v1/discovery/integrate, /v1/skills/social-import — and by the controlled agent skill-import tool; this surface gates ONLY the /v1/skills/import route. Each of those other routes is its own ts_runtime_blocker retired in its own slice, so this proof does NOT claim the import method is globally unreachable — only that this route fail-closes. Legacy behavior of THIS route is reachable only through explicit allowTestOnlySkillConverterExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned skill-import entrypoint when available; retire the sibling import routes (deeplink/apply, discovery/integrate, social-import) in their own slices to fully gate converterService.import."
     },
@@ -4340,6 +4353,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-mcp-server-routes.test.ts",
       "proof": "src/api/http/routes/friday-mcp-server-routes.ts mcp.server.rpc is a JSON-RPC dispatcher (POST /v1/mcp). The TS-runtime retirement guard is METHOD-SCOPED to the EXECUTION path: inside case 'tools/call', AFTER the name/params validation (-32602 on missing name) and IMMEDIATELY BEFORE services.callTool (which runs a safe-catalog tool incl. web_fetch/web_search egress = the product logic), it fail-closes by returning a JSON-RPC error frame (code -32000, errorCode TS_RUNTIME_MCP_TOOLS_CALL_RETIRED) — a frame, not a 503, because the dispatcher's outer catch maps thrown errors to JSON-RPC -32603 (same rationale as the realtime WS ack error frame). callTool is NOT invoked, so executes_product_logic:false for the tool-execution path. The READ/metadata sub-methods (initialize, tools/list, resources/list, resources/read, prompts/list, prompts/get) are INTENTIONALLY ungated and remain available — they serve catalog/metadata reads, not the Rust-ownable tool execution. So this fail_closed classification is scoped to the route's product-logic-EXECUTION path (tools/call), which is the only sub-method that runs Rust-ownable compute. fail_closed not operator_external_adapter: the tools' web_fetch/web_search is an env-allowlisted, audit-logged safe-catalog compute that Rust will reimplement, not a permanent egress-delivery conduit. Reachable only through explicit allowTestOnlyMcpToolCallExecution test-oracle wiring (set on the FridayMcpServerRoutesDeps / mcpServer object; production bootstrap leaves it unset).",
       "next_action": "Replace the fail-closed tools/call response with the Rust-owned MCP tool-execution entrypoint when available; the read/metadata sub-methods can stay or move to Rust independently."
     },

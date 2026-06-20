@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   collectTsRuntimeRetirementFailures,
+  collectTsRuntimeRetirementFailuresWithFiles,
   findClassificationForRoute,
 } from "../../../scripts/quality/check-ts-runtime-retirement.mjs";
 
@@ -219,5 +223,109 @@ describe("TS runtime retirement gate", () => {
     expect(result.failures).toContain(
       "exact route surface coverage 1 is below discovery.exactRouteSurfacesMin 2",
     );
+  });
+
+  it("requires declared critical non-GET fail-closed route surfaces to name a route behavioral test", () => {
+    const manifest = {
+      ...baseManifest,
+      discovery: {
+        includeMethods: ["GET", "POST"],
+        requiredRouteBehaviorTestSurfaceIds: ["agent_runs_start"],
+      },
+      surfaces: [
+        {
+          id: "agent_runs_start",
+          route: {
+            method: "POST",
+            path: "/v1/agent/runs",
+            operationId: "agent.runs.start",
+          },
+          classification: "fail_closed",
+          user_triggerable: true,
+          executes_product_logic: false,
+          proof: "default/live route throws before TypeScript runtime execution",
+          next_action: "Delegate to Rust.",
+        },
+      ],
+    };
+
+    const result = collectTsRuntimeRetirementFailures(manifest, [
+      {
+        method: "POST",
+        path: "/v1/agent/runs",
+        operationId: "agent.runs.start",
+        sourceFile: "src/api/http/routes/friday-agent-routes.ts",
+      },
+    ]);
+
+    expect(result.failures).toContain("agent_runs_start: missing routeBehavioralTest");
+  });
+
+  it("checks required route behavioral test files exist when repoRoot is supplied", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "friday-route-behavior-test-"));
+    try {
+      writeFileSync(join(repoRoot, "present.test.ts"), "test('present', () => {});\n", "utf8");
+      const manifest = {
+        ...baseManifest,
+        discovery: {
+          includeMethods: ["GET", "POST"],
+          requiredRouteBehaviorTestSurfaceIds: ["agent_runs_start", "workflow_runs_start"],
+        },
+        surfaces: [
+          {
+            id: "agent_runs_start",
+            route: {
+              method: "POST",
+              path: "/v1/agent/runs",
+              operationId: "agent.runs.start",
+            },
+            classification: "fail_closed",
+            user_triggerable: true,
+            executes_product_logic: false,
+            routeBehavioralTest: "present.test.ts",
+            proof: "default/live route throws before TypeScript runtime execution",
+            next_action: "Delegate to Rust.",
+          },
+          {
+            id: "workflow_runs_start",
+            route: {
+              method: "POST",
+              path: "/v1/workflow-runs",
+              operationId: "runs.start",
+            },
+            classification: "fail_closed",
+            user_triggerable: true,
+            executes_product_logic: false,
+            routeBehavioralTest: "missing.test.ts",
+            proof: "default/live route throws before TypeScript workflow runtime execution",
+            next_action: "Delegate to Rust.",
+          },
+        ],
+      };
+
+      const result = collectTsRuntimeRetirementFailuresWithFiles(manifest, [
+        {
+          method: "POST",
+          path: "/v1/agent/runs",
+          operationId: "agent.runs.start",
+          sourceFile: "src/api/http/routes/friday-agent-routes.ts",
+        },
+        {
+          method: "POST",
+          path: "/v1/workflow-runs",
+          operationId: "runs.start",
+          sourceFile: "src/api/runtime/friday-api-runtime.ts",
+        },
+      ], { repoRoot });
+
+      expect(result.failures).toContain(
+        "workflow_runs_start: routeBehavioralTest file does not exist: missing.test.ts",
+      );
+      expect(result.failures).not.toContain(
+        "agent_runs_start: routeBehavioralTest file does not exist: present.test.ts",
+      );
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
   });
 });
