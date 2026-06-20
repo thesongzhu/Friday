@@ -15,6 +15,8 @@ use friday_core::{
     TruthStatus, WorkItem, WorkItemStatus, WorkLane,
 };
 use friday_crypto::{OperatorSigningKey, OperatorVerifyingKey};
+use friday_hub::skill_catalog::{skill_adoption_gate_request, skill_run_gate_request};
+use friday_hub::skill_executor::FRIDAY_D21_SKILL_RUN_LOCAL;
 use friday_hub::skill_md_importer::{skill_md_import_gate_request, skill_md_promote_gate_request};
 use friday_storage::Db;
 use serde_json::Value;
@@ -227,6 +229,24 @@ fn promote_gate_request() -> MutatingActionRequest {
     )
 }
 
+fn adoption_gate_request() -> MutatingActionRequest {
+    skill_adoption_gate_request(
+        "summarize-local",
+        "mission-skill-md-import-cli",
+        "work-skill-md-import-cli",
+        "operator",
+    )
+}
+
+fn run_gate_request() -> MutatingActionRequest {
+    skill_run_gate_request(
+        "summarize-local",
+        "mission-skill-md-import-cli",
+        "work-skill-md-import-cli",
+        "operator",
+    )
+}
+
 fn cli_base(
     db_path: &str,
     vk_path: &std::path::Path,
@@ -294,6 +314,68 @@ fn promote_cli_base(
         .arg("proof://skill-md-promote/summarize-local")
         .arg("--now-ms")
         .arg((NOW + 2).to_string());
+    cmd
+}
+
+fn adoption_cli_base(
+    db_path: &str,
+    vk_path: &std::path::Path,
+    approval_path: &std::path::Path,
+) -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_hub_skill_catalog_receipt"));
+    cmd.arg("adopt-managed-skill")
+        .arg("--db")
+        .arg(db_path)
+        .arg("--operator-vk-path")
+        .arg(vk_path)
+        .arg("--approval-json")
+        .arg(approval_path)
+        .arg("--skill-id")
+        .arg("summarize-local")
+        .arg("--mission-id")
+        .arg("mission-skill-md-import-cli")
+        .arg("--work-item-id")
+        .arg("work-skill-md-import-cli")
+        .arg("--operator-principal-id")
+        .arg("operator")
+        .arg("--proof-ref")
+        .arg("proof://skill-adoption/summarize-local")
+        .arg("--now-ms")
+        .arg((NOW + 3).to_string());
+    cmd
+}
+
+fn run_cli_base(
+    db_path: &str,
+    vk_path: &std::path::Path,
+    approval_path: &std::path::Path,
+    managed_root: &std::path::Path,
+) -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_hub_skill_run_local"));
+    cmd.arg("run-local")
+        .arg("--db")
+        .arg(db_path)
+        .arg("--operator-vk-path")
+        .arg(vk_path)
+        .arg("--approval-json")
+        .arg(approval_path)
+        .arg("--managed-skills-root")
+        .arg(managed_root)
+        .arg("--skill-id")
+        .arg("summarize-local")
+        .arg("--mission-id")
+        .arg("mission-skill-md-import-cli")
+        .arg("--work-item-id")
+        .arg("work-skill-md-import-cli")
+        .arg("--operator-principal-id")
+        .arg("operator")
+        .arg("--approved-first-run-skill-id")
+        .arg("summarize-local")
+        .arg("--timeout-ms")
+        .arg("5000")
+        .arg("--require-darwin-sandbox")
+        .arg("--now-ms")
+        .arg((NOW + 4).to_string());
     cmd
 }
 
@@ -465,6 +547,129 @@ fn cli_promotes_imported_candidate_to_sandbox_required_shell_without_execution()
         .list_mission_links("mission-skill-md-import-cli")
         .unwrap();
     assert_eq!(links.len(), 2);
+}
+
+#[test]
+fn promoted_imported_skill_runs_only_through_adoption_and_required_sandbox_request() {
+    let db_path = temp_db("promote-adopt-run");
+    let db = Db::open_hub(&db_path).unwrap();
+    seed_mission(&db);
+
+    let source_dir = temp_path("promote-adopt-run-source");
+    let managed_root = temp_path("promote-adopt-run-managed");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    std::fs::create_dir_all(&managed_root).unwrap();
+    let skill_md =
+        b"---\nid: summarize-local\ntitle: Summarize Local\n---\nSummarize local text.\n";
+    let run_sh = b"#!/bin/sh\nprintf 'imported-skill-raw-output\\n'\ntouch marker.txt\n";
+    std::fs::write(source_dir.join("SKILL.md"), skill_md).unwrap();
+    std::fs::write(source_dir.join("run.sh"), run_sh).unwrap();
+    let digest = source_digest_files(&[("SKILL.md", skill_md), ("run.sh", run_sh)]);
+
+    let (sk, vk) = operator();
+    let vk_path = temp_path("promote-adopt-run.vk");
+    std::fs::write(&vk_path, vk_hex(&vk)).unwrap();
+
+    let import_approval_path = temp_path("promote-adopt-run-import.json");
+    write_approval(
+        &import_approval_path,
+        &ed_approval(&gate_request(&digest), &sk, "skill-md-import-chain"),
+    );
+    let import_output = cli_base(
+        &db_path,
+        &vk_path,
+        &import_approval_path,
+        &source_dir,
+        &managed_root,
+        &digest,
+    )
+    .output()
+    .unwrap();
+    assert!(
+        import_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&import_output.stderr)
+    );
+
+    let promote_approval_path = temp_path("promote-adopt-run-promote.json");
+    write_approval(
+        &promote_approval_path,
+        &ed_approval(&promote_gate_request(), &sk, "skill-md-promote-chain"),
+    );
+    let promote_output =
+        promote_cli_base(&db_path, &vk_path, &promote_approval_path, &managed_root)
+            .output()
+            .unwrap();
+    assert!(
+        promote_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&promote_output.stderr)
+    );
+
+    let adoption_approval_path = temp_path("promote-adopt-run-adopt.json");
+    write_approval(
+        &adoption_approval_path,
+        &ed_approval(&adoption_gate_request(), &sk, "skill-adoption-chain"),
+    );
+    let adoption_output = adoption_cli_base(&db_path, &vk_path, &adoption_approval_path)
+        .output()
+        .unwrap();
+    assert!(
+        adoption_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&adoption_output.stderr)
+    );
+
+    let run_approval_path = temp_path("promote-adopt-run-run.json");
+    write_approval(
+        &run_approval_path,
+        &ed_approval(&run_gate_request(), &sk, "skill-run-chain"),
+    );
+    let mut run_cmd = run_cli_base(&db_path, &vk_path, &run_approval_path, &managed_root);
+    run_cmd.env(FRIDAY_D21_SKILL_RUN_LOCAL, "1");
+    let run_output = run_cmd.output().unwrap();
+    let stdout = String::from_utf8(run_output.stdout).unwrap();
+    assert!(!stdout.contains("imported-skill-raw-output"));
+    let json: Value = serde_json::from_str(stdout.trim()).unwrap();
+    let skill_dir = managed_root.join("summarize-local");
+
+    if friday_fs::darwin_sandbox_exec_available() {
+        assert!(
+            run_output.status.success(),
+            "stderr={}",
+            String::from_utf8_lossy(&run_output.stderr)
+        );
+        assert_eq!(json["truth_label"], "d21_skill_run_local");
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["runs_skill"], true);
+        assert_eq!(json["executes_skill"], true);
+        assert_eq!(json["completes_work_item"], false);
+        assert_eq!(json["sandbox_mode"], "darwin_seatbelt");
+        assert_eq!(json["exit_code"], 0);
+        assert!(skill_dir.join("marker.txt").is_file());
+    } else {
+        assert!(!run_output.status.success());
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["executes_skill"], false);
+        assert_eq!(json["error_kind"], "runner_failed");
+        assert!(!skill_dir.join("marker.txt").exists());
+    }
+
+    let item = db
+        .get_work_item("work-skill-md-import-cli")
+        .unwrap()
+        .unwrap();
+    assert_eq!(item.status, WorkItemStatus::ReadyToDispatch);
+    assert!(item.proof_receipts.is_empty());
+    let links = db
+        .list_mission_links("mission-skill-md-import-cli")
+        .unwrap();
+    let expected_links = if friday_fs::darwin_sandbox_exec_available() {
+        4
+    } else {
+        3
+    };
+    assert_eq!(links.len(), expected_links);
 }
 
 #[test]
