@@ -5,9 +5,9 @@
 <h1 align="center">Friday</h1>
 
 <p align="center">
-  <strong>The trusted application layer for AI agents to do real work.</strong><br>
-  Give Friday a goal, let it use configured tools, and keep approval, memory, evidence, and rollback in the loop.<br>
-  Local-first · BYOK · Approval-first · Human-controlled · Evidence-backed
+  <strong>Your private control plane for AI agents.</strong><br>
+  Give it a goal; Friday runs one governed loop — route → verify → approve → remember — across the AIs you bring (Codex, Claude, DeepSeek). You hold the keys.<br>
+  Local-first kernel · BYOK · Approval-first · Human-controlled · Evidence-backed
 </p>
 
 <p align="center">
@@ -20,181 +20,77 @@
 
 ---
 
+> **Friday is not a model, and not a chatbot.** The "brains" are the cloud AIs *you* bring (BYOK: Codex, Claude, DeepSeek, …). Friday is the **kernel that orchestrates them** — and that kernel, plus your keys, your data, and your memory, stay on your own machine. **You own the controller; you rent the brains.**
+
 ## What Is Friday?
 
-Friday is a self-hosted personal AI and automation runtime: a local-first application layer that helps AI agents turn user-approved goals into verified work.
+The new way to work with AI agents isn't to prompt them yourself — it's to **design the loop that prompts them**. Friday is that loop, turned into a product and made safe:
 
-It is meant to feel less like a blank chatbot and more like a private execution partner: you give a goal, Friday checks what it can do, uses configured capabilities, asks for the human-only pieces, executes, verifies the result, and records what it learned. Capability acquisition and self-upgrade flows are active work and should be treated as review-gated WIP rather than a fully autonomous promise.
+> **finds the work → hands it to the right AI → checks it really did it → writes down what's done → decides the next thing** — so the system pokes the agents instead of you.
 
-Friday is not a magic fully autonomous system. It will not create accounts for you, bypass CAPTCHA, pay for services, take production-changing actions, or use credentials you have not provided. Its job is to do the work it can safely do, stop clearly when it needs you, and leave evidence behind.
+It is built to coordinate Codex, Claude, and DeepSeek as **governed, metered workers** — cheap models think and plan, expensive models do the heavy lifting — to keep a verifiable evidence trail, and to never let a risky action run without your signature.
 
-## Current Release Posture
+## How The Loop Works
 
-Friday is a **public v1 local candidate** distributed via **npm/source only**, not a release-complete claim for every integration in the repository.
-
-- Current public claims focus on the local UI, local runtime, BYOK setup, supervised operator workflows, memory, evidence, approval-gated tool use, and configured trusted-channel inbound on Discord, Telegram, and Lark/Feishu (proven by same-SHA Real Green Gate channel artifacts).
-- The current proof track does not claim outbound channel control automation, cloud live certification, external OTEL/Grafana export, desktop / Homebrew / notarized macOS / mobile distribution, "all integrations live", or release-complete-all.
-- Slack HTTP Events-API inbound and QQ remain **`unsupported`** in this release.
-- Real Green Gate success is counted only when the artifact is for the same SHA, has nonzero scenarios, all scenarios pass, and blockers are empty.
-- `blocked_by_env`, mock-only tests, workflow success alone, stale artifacts, and wrong-SHA artifacts are not release proof.
-- Dogfood gate for `1.0.1` closed as **`dogfood_partial_pass`** (UX 7.78/10 weighted). The published npm `1.0.2` package still carries the original nine proof-pending headlines. GitHub-visible source after `1.0.2` has closed several deterministic slices and is staged as a `1.0.3` package candidate, but `1.0.3` is not published until a future authorized release; see [`docs/public-v1-local-candidate.md`](docs/public-v1-local-candidate.md).
-
-## The Product Loop
-
-1. **You give a goal.** Example: "Read these PDFs, compare them with the latest web results, and save a short summary with citations."
-2. **Friday checks capabilities.** It looks for text, vision, OCR, web search, PDF, file, browser, optional channel, model, memory, and workflow support.
-3. **Friday reports or drafts gap closure.** It can search installed skills, trusted catalogs, MCP servers, local files, package registries, OpenAPI specs, and the web for candidate tools or skills. Generated or imported skills start as candidates, not as immediately runnable capabilities.
-4. **Friday asks when humans are required.** API keys, OAuth, paid plans, CAPTCHA, logins, sensitive permissions, and high-risk actions go through a human gate.
-5. **Friday runs and verifies.** It executes through skills, tools, workflows, browser/desktop control, or channel adapters, then checks the result.
-6. **Friday learns safely.** It can store auditable memories, learned facts, routing signals, setup recipes, candidate skills, eval cases, and failure lessons. Learned signals do not automatically become unquestioned truth.
-
-## What Friday Can Do
-
-| Area | What Friday is built to do | Boundary |
-| --- | --- | --- |
-| Chat and task execution | Answer, plan, execute tool-backed work, show progress, and recover from failures | Depends on configured providers and granted tools |
-| Text, vision, OCR, PDF, files | Route work to configured providers or built-in parsers, then report what is missing when a lane is unavailable | Vision/OCR/TTS depend on provider support and credentials |
-| Web and browser work | Use configured web search providers, local browser control, and workflow steps | Login, payment, CAPTCHA, and sensitive accounts require the user |
-| Skills and workflows | Import, validate, stage, promote, run, verify, update, and roll back reusable skills/workflows where the lifecycle is closed | Generated or imported skills are candidates until review, canary, and promotion gates pass; workflow upgrade proof is not identical to skill lifecycle proof |
-| Memory and self-improvement | Store explicit preferences, learned facts, lessons, provider routing signals, recipes, evals, and recovery notes | User-visible, auditable, and reversible; learned signals are not hidden model training, unquestioned truth, or guaranteed prompt behavior |
-| Self-healing | Detect failures, propose fixes, and run low-risk repairs only where the path is wired, configured, and evidence-backed | Dispatcher-style auto-fix is default-off; high-risk or data-changing repairs require approval, receipts, and rollback or an explicit non-reversible record |
-| Optional channel adapters | Connect Discord, Telegram, and Feishu/Lark trusted-inbound (proven via same-SHA Real Green Gate channel artifacts on the release SHA) where configured; other configured channels remain optional surfaces | Channels are configured-only surfaces; outbound channel control automation is not part of the public v1 local release claim; Slack HTTP Events-API inbound and QQ are `unsupported`; sensitive actions still require confirmation |
-| Long-running goals | Run user-authorized standing goals, create agenda items, gather evidence, and report outcomes | Friday is goal-driven by the user; it does not invent unrelated long-term agendas |
-
-## Setup
-
-### Option 1 - npm package
-
-```bash
-npm install -g @thesongzhu/friday
-friday start
-# Open http://localhost:3141
+```
+        your goal
+           │
+           ▼
+   route ── pick the best AI for this step  (you can re-route)
+           │
+           ▼
+   execute ── governed: risky steps pause for your approval
+           │
+           ▼
+   verify ── proof it's really done  (never trust "I'm done")
+           │
+           ▼
+   remember ── candidate → you confirm → it gets smarter
+           │
+           └──────────────► the next thing
 ```
 
-### Option 2 - from source
+The leg most tools skip is **verify**. An agent that grades its own work will cut corners. In Friday, "done" is meant to carry real, checkable proof — a model saying *"ok"* or a process merely exiting is **never** treated as done.
 
-```bash
-git clone https://github.com/thesongzhu/Friday.git
-cd Friday
-bash scripts/ops/friday-first-run.sh
-# Or on macOS, double-click "Friday Setup.command"
-```
+## What Makes It Different (And Hard To Copy)
 
-The first-run helper installs dependencies, builds Friday, starts the local runtime, and opens the setup page. On macOS it also attempts to install the login startup agent and menu-bar companion (an unsigned local-source build — not a notarized or release-proven desktop distribution; see the capability matrix) so Friday can come back after restart. If you run it from Desktop, Documents, or Downloads, it prepares the launchd-safe runtime at `~/Friday` automatically before installing the login agents.
+Codex and Claude each give you one great agent. They won't govern *each other* for you, and they won't put the controls on your side. Friday is designed to sit one floor above them, across vendors, on your machine:
 
-### Option 3 - manual source start
+- **Cross-vendor orchestration** — one goal, the best model per step, no silent model swaps.
+- **Verification, not self-report** — deterministic checks + proof receipts gate every "done".
+- **Approval-first** — anything irreversible pauses for your offline signature; the kernel can only *verify* your key, it can **never** sign for you.
+- **Governed memory** — long-term memory is never written silently; you confirm each fact before it sticks.
+- **Metered & audited** — every model call is costed and hash-chain audited; private context is gated by an explicit passport + redaction before it can leave.
 
-```bash
-git clone https://github.com/thesongzhu/Friday.git
-cd Friday
-npm install
-npm run build
-npm start
-# Open http://localhost:3141
-```
+This is the seam single-vendor tools structurally won't fill: *neutral, cross-vendor, owner-side governance.*
 
-### Option 4 - Docker from source
+## Why It's Built This Way
 
-```bash
-docker compose -f docker/docker-compose.yml up --build
-# Open http://localhost:3141
-```
+Coding agents got powerful fast — but they hit a reliability cliff on longer tasks, and they will quietly cut corners or claim work they didn't finish. The industry's shift in 2026 is **loop engineering**: stop prompting agents by hand, and instead design the system that finds work, hands it out, **checks it**, records what's done, and decides the next thing. Friday takes that idea and makes the missing parts real:
 
-First-run setup guides you through providers, local permissions, and optional capabilities. Channel setup is optional and must verify the configured channel before it is treated as available. After setup, Friday should open directly to Home.
+- **Verification is the load-bearing leg.** An agent grading its own work isn't trustworthy — so "done" has to carry proof, not a self-report. It's the part most tools skip, and the part Friday is built around.
+- **Governance belongs on your side.** The real agent risks are well-documented — silent memory poisoning, leaking private data to the wrong place, runaway spend, destructive commands. So approval, an explicit context passport, metering, and audit live in *your* kernel, not a vendor's cloud.
+- **Cross-vendor is the point.** Each vendor ships one great agent, but won't govern the others for you. A neutral layer that orchestrates them on your machine, controls on your side, is the seam a single vendor structurally won't fill.
+- **The model is rented, not owned.** Friday deliberately isn't a model. Models will keep changing; the durable value is the harness around them — routing, verification, memory, and governance that stay yours.
 
-## Providers And Keys
+## The Shape It's Growing Into
 
-Friday is BYOK: you bring the model and search/API credentials you want to use.
+A private AI chief-of-staff that lives on your phone and your desktop:
 
-The setup flow should answer four questions for every capability:
+- You hand it a goal in chat; it plans, routes across models, and **shows you the routing so you can change it**.
+- Risky steps arrive as a **one-tap approval you sign**; safe steps just happen.
+- It **learns your preferences and your world**, so it gets more useful the more you use it.
+- It can watch your own coding sessions, take work in from your channels (Telegram, …), run your imported skills and workflows, and pick up scheduled work — all under the same governance.
+- You hold a **trust dial**: turn it up to pre-approve batches of low-risk work, turn it down to confirm every step. Irreversible actions always ask.
 
-- **Do I have this capability?**
-- **If not, what exactly is missing?**
-- **Where do I configure it?**
-- **After configuration, can Friday verify it with a real task?**
+You stay sovereign the whole way: **the brains are rented, the controller is yours.**
 
-Typical provider lanes include OpenAI, Doubao/Volcengine, Moonshot, Anthropic, Google, OpenRouter, Tavily, Serper, local browser/PDF/file tooling, MCP servers, and custom skills. A missing key or account is not treated as success; Friday should show it as a human blocker with the next configuration step.
+## Principles
 
-## Capability Self-Acquisition (WIP)
+**Local-first kernel · BYOK · Approval-first · Human-controlled · Evidence-backed**
 
-When Friday does not have a capability for a goal, the target closed loop is:
+> *Local-first* here means the **controller, your keys, your data, and your memory** live on your machine — the models themselves are cloud APIs you connect. Friday is the local **kernel**, not a local model.
 
-```text
-goal -> capability gap -> candidates -> sandbox/test -> approval if required -> install/register -> doctor verify -> execute
-```
+## Status
 
-This loop is not yet a blanket production guarantee. Current builds can report gaps and exercise parts of the workflow, while generated skills, self-upgrades, and adjustment-fidelity paths remain review-gated and covered by ongoing stress tests. Allowed automatic steps depend on policy. Searching, analysis, draft generation, and sandbox verification are low-risk by default. Downloading code, installing packages, writing config, registering tools, shell access, and external network calls are governed by the autonomy policy. OAuth, payment, CAPTCHA, API keys, sensitive permissions, and production writes always require the user.
-
-## Memory, Growth, And Repair
-
-Friday's self-improvement is intentionally boring and inspectable:
-
-- **Memory facts:** preferences, project rules, recurring context, and user corrections.
-- **Routing preferences:** which provider worked best for which kind of job.
-- **Recipes:** setup and recovery steps that worked.
-- **Skills and workflows:** generated or improved artifacts with tests and evidence.
-- **Eval cases:** fixed scenarios that should keep passing.
-- **Failure lessons:** what broke, what fixed it, and when to stop retrying.
-
-This is not model-weight training. It is auditable state and reusable artifacts that the user can inspect, edit, pause, or delete.
-
-## Safety Model
-
-Friday follows a simple rule: automate the boring parts, keep the user in control of irreversible or sensitive parts.
-
-- Local-first runtime and local state by default.
-- Bring-your-own keys; credentials should live in environment variables, managed secret refs, or OS-backed secret storage.
-- Capability grants have scope, reason, evidence, and expiry.
-- High-risk actions require explicit approval.
-- Tool calls, workflow runs, self-healing runs, and channel actions leave audit evidence.
-- Failed installs or generated capabilities must support rollback.
-- Public network exposure requires explicit auth, CORS, TLS/proxying, and least-privilege access.
-
-## What Friday Is Not
-
-- It is not a guarantee of universal automation.
-- It is not a fully autonomous system that can do every task without you.
-- It does not bypass logins, CAPTCHA, payment, platform rules, or provider limits.
-- It does not safely run arbitrary third-party code without review.
-- It does not remove your responsibility to secure the host, API keys, accounts, and connected channels.
-
-## Documentation
-
-- [Getting Started](docs/getting-started.md)
-- [Documentation Hub](docs/README.md)
-- [Trust Model](TRUST.md)
-- [Privacy](PRIVACY.md)
-- [Responsible Use](RESPONSIBLE_USE.md)
-- [Roadmap](ROADMAP.md)
-- [Vision](docs/VISION.md)
-- [Capability Matrix](docs/ops/friday-capability-matrix.md)
-- [Extending Friday](docs/EXTENDING.md)
-- [Troubleshooting](docs/TROUBLESHOOTING.md)
-- [Contributing](.github/CONTRIBUTING.md)
-- [Security](.github/SECURITY.md)
-
-## Download And Distribution
-
-| Platform | Method | Status |
-| --- | --- | --- |
-| macOS / Linux / Windows | `npm install -g @thesongzhu/friday` | Currently published on npm as `1.0.2`; npm/source-only distribution; R5 same-SHA Real Green Gate proof passed on the `1.0.2` release SHA; fresh isolated public install audit reports `0` vulnerabilities |
-| Source | `git clone` + `npm install` + `npm run build` | Available |
-| Docker | `docker compose -f docker/docker-compose.yml up --build` | Available from this repo |
-
-The official npm package is `@thesongzhu/friday`. The unscoped `friday` package on npm is unrelated.
-Repository metadata is staged as a `1.0.3` package candidate for the next operator-authorized publish; the npm registry latest remains `1.0.2`.
-Linux and Windows desktop companion behavior should be read through the platform-specific capability checks and release evidence, not as a completed native desktop release claim. Desktop, Homebrew, notarized macOS, and mobile distribution are not claimed in `1.0.2`.
-
-## Community
-
-- **Discord** - [discord.gg/qXQRFg2u](https://discord.gg/qXQRFg2u)
-- **Issues** - [GitHub Issues](https://github.com/thesongzhu/Friday/issues)
-- **Security** - [SECURITY](.github/SECURITY.md)
-
-## License
-
-Friday is open-source software under the [MIT license](LICENSE).
-
-## Third-Party Notices
-
-Friday includes compatibility and adaptation work for third-party agent ecosystem formats and behavior. See [NOTICE](NOTICE) for preserved upstream copyright and license notices.
+Friday is a **public v1 local candidate**, distributed via npm / source. The engine and safety substrate — the goal→work spine, routing, governance, metering, audit, and sealed transport — are in place, and you bring your own keys. Capability-acquisition and self-upgrade flows are **review-gated work in progress**, not a fully-autonomous promise. Friday does the work it can safely do, **stops clearly when it needs you**, and leaves evidence behind.
