@@ -204,6 +204,11 @@ fn validate_candidate_request(
             "source_inside_candidate_root".into(),
         ));
     }
+    if root.starts_with(&source) {
+        return Err(SkillCandidateMaterializeError::Blocked(
+            "candidate_root_inside_source".into(),
+        ));
+    }
     let files = collect_files(&source)?;
     if !files.iter().any(|file| file.rel == Path::new("SKILL.md")) {
         return Err(SkillCandidateMaterializeError::Blocked(
@@ -585,6 +590,41 @@ mod tests {
         .unwrap_err();
 
         assert!(err.to_string().contains("source_digest_mismatch"));
+        assert!(fs::read_dir(&candidate_root).unwrap().next().is_none());
+        assert!(db.list_mission_links("mission-skill").unwrap().is_empty());
+    }
+
+    #[test]
+    fn candidate_root_inside_source_is_rejected_before_writing() {
+        let source = temp_root("nested-source");
+        let candidate_root = source.join("candidates");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&candidate_root).unwrap();
+        fs::write(source.join("SKILL.md"), "body").unwrap();
+        let files = collect_files(&source).unwrap();
+        let digest = candidate_digest(&files);
+        let db = Db::open_hub(&temp_db("nested")).unwrap();
+        seed_mission(&db);
+
+        let err = materialize_skill_candidate(
+            &db,
+            SkillCandidateMaterializeRequest {
+                source_dir: source.to_string_lossy().to_string(),
+                candidate_root: candidate_root.to_string_lossy().to_string(),
+                skill_id: "summarize".into(),
+                source_digest: digest.clone(),
+                mission_id: "mission-skill".into(),
+                work_item_id: "work-skill".into(),
+                operator_principal_id: "operator".into(),
+                canonical_approval: approval("summarize", &digest),
+                proof_ref: "proof://skill-candidate/summarize".into(),
+                now_ms: 10,
+            },
+            APPROVAL_SECRET,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("candidate_root_inside_source"));
         assert!(fs::read_dir(&candidate_root).unwrap().next().is_none());
         assert!(db.list_mission_links("mission-skill").unwrap().is_empty());
     }
