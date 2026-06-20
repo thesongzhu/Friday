@@ -111,6 +111,7 @@ import {
   createFridayDeterministicPipelineRuntime,
   createFridayMissionAutoDispatchDriver,
   createFridayReflexRoutes,
+  createFridayRustHubSystemIntentService,
   getChannelPersona,
   hydrateChannelPersonaStore,
   RUST_ROUTE_CLAUDE_MODEL,
@@ -997,6 +998,23 @@ export function resolveD20SignedBatchWorktreeViaRust(
     return configValue;
   }
   const raw = (env.FRIDAY_D20_SIGNED_BATCH_WORKTREE_VIA_RUST ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true";
+}
+
+/**
+ * B3 system-intent Rust product courier (DARK): single source of truth resolving
+ * the TS system-intent route cutover from explicit config, else
+ * `FRIDAY_SYSTEM_INTENT_RUST_ENTRYPOINT`. The Rust side remains refs-only and
+ * dry-run/unavailable: no host OS action is completed or actuated.
+ */
+export function resolveSystemIntentViaRust(
+  configValue: boolean | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (typeof configValue === "boolean") {
+    return configValue;
+  }
+  const raw = (env.FRIDAY_SYSTEM_INTENT_RUST_ENTRYPOINT ?? "").trim().toLowerCase();
   return raw === "1" || raw === "true";
 }
 
@@ -2503,6 +2521,8 @@ export async function createFridayHub(
           result: await systemService!.executeIntent(req),
         }),
       },
+      systemIntentViaRust: resolveSystemIntentViaRust(config.systemIntentViaRust),
+      executeSystemIntentViaRust: createFridayRustHubSystemIntentService().execute,
       approvals: {
         list: (query) => {
           const items = systemService!.listApprovalRules({
