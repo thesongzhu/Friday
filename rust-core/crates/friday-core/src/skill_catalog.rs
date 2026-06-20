@@ -192,6 +192,13 @@ pub fn advise_skill(
     if entry.requires_operator_approval && !request.operator_approved_first_run {
         blockers.push("operator_approval_required_before_first_or_high_risk_run".to_string());
     }
+    let run_allowed = request.operator_approved_first_run
+        && entry.state == SkillState::Runnable
+        && matches!(
+            entry.truth_label,
+            WorkGraphTruthLabel::FridayOwned | WorkGraphTruthLabel::FridayAdopted
+        )
+        && blockers.is_empty();
     SkillAdvisorDecision {
         recommendation: SkillAdvisorRecommendationKind::RecommendAfterOperatorApproval,
         skill_ref,
@@ -202,12 +209,7 @@ pub fn advise_skill(
             "operator_approval_ref".to_string(),
             "skill_run_receipt".to_string(),
         ],
-        run_allowed: request.operator_approved_first_run
-            && entry.state == SkillState::Runnable
-            && matches!(
-                entry.truth_label,
-                WorkGraphTruthLabel::FridayOwned | WorkGraphTruthLabel::FridayAdopted
-            ),
+        run_allowed,
     }
 }
 
@@ -335,6 +337,41 @@ mod tests {
             decision.recommendation,
             SkillAdvisorRecommendationKind::RecommendAfterOperatorApproval
         );
+        assert!(!decision.run_allowed);
+    }
+
+    #[test]
+    fn runnable_skill_with_remaining_blocker_is_not_run_allowed() {
+        let mut blocked = entry(
+            "blocked",
+            WorkGraphTruthLabel::FridayAdopted,
+            SkillState::Runnable,
+            false,
+            50,
+        );
+        blocked
+            .approval_blockers
+            .push("sandboxed_executor_required".to_string());
+        let snapshot = SkillCatalogSnapshot {
+            generated_at_ms: 1,
+            entries: vec![blocked],
+            no_go: Vec::new(),
+        };
+        let decision = advise_skill(
+            &snapshot,
+            &SkillAdvisorRequest {
+                intent_key: "current_datetime".to_string(),
+                operator_approved_first_run: true,
+            },
+        );
+
+        assert_eq!(
+            decision.recommendation,
+            SkillAdvisorRecommendationKind::RecommendAfterOperatorApproval
+        );
+        assert!(decision
+            .blockers
+            .contains(&"sandboxed_executor_required".to_string()));
         assert!(!decision.run_allowed);
     }
 
