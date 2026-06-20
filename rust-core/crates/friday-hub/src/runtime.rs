@@ -7393,6 +7393,33 @@ mod tests {
         friday_storage::memory::confirm(conn, id, 2).unwrap();
     }
 
+    fn seed_confirmed_run_outcome_learning_signal(
+        rt: &HubRuntime<CaptureTransport>,
+        session_id: &str,
+        owner: &str,
+        run_id: &str,
+        now: i64,
+    ) {
+        bind_session_owner(rt, session_id, owner);
+        friday_storage::learning_candidate::record_run_outcome_candidates(
+            rt.db().conn(),
+            run_id,
+            Some(session_id),
+            3,
+            1,
+            now,
+        )
+        .unwrap();
+        friday_storage::learning_candidate::decide_run_outcome_candidate(
+            rt.db().conn(),
+            &format!("a1:{run_id}:preference"),
+            true,
+            now + 1,
+            Some("operator confirmed refs-only signal"),
+        )
+        .unwrap();
+    }
+
     fn body_contains(bodies: &Rc<std::cell::RefCell<Vec<Value>>>, needle: &str) -> bool {
         bodies
             .borrow()
@@ -7539,6 +7566,69 @@ mod tests {
         assert!(
             !raw_preamble.contains("MEMMARKER-alice-composite"),
             "the raw-owner recall must NOT match a composite-namespace row (the defect)"
+        );
+    }
+
+    #[test]
+    fn session_recall_public_path_surfaces_confirmed_a1_run_outcome_learning_when_flag_on() {
+        // A1 DRIVE proof: the public session recall path reads the env-gated A1 consumer and
+        // injects only refs/counts/evidence from an explicitly confirmed run-outcome candidate.
+        // This is still built-DARK proof, not organic A1 live-done.
+        let (rt, _ws, _bodies) = recall_runtime("session-a1-drive-public", Some("alice"));
+        let now = 1_000_000_000_000_i64;
+        seed_confirmed_run_outcome_learning_signal(
+            &rt,
+            "sess-a1-source",
+            "alice",
+            "run-a1-source",
+            now,
+        );
+        bind_session_owner(&rt, "sess-a1-later", "alice");
+
+        {
+            let _flag = crate::test_env::EnvVarGuard::set(
+                crate::FRIDAY_A1_RUN_OUTCOME_LEARNING_RECALL,
+                "0",
+            );
+            let off = rt
+                .recall_preamble_for_session("sess-a1-later", "run-a1-off", None, now + 2)
+                .expect("session recall composes with A1 recall flag off");
+            assert_eq!(off, "", "flag-OFF must not inject A1 run-outcome learning");
+        }
+
+        {
+            let _flag = crate::test_env::EnvVarGuard::set(
+                crate::FRIDAY_A1_RUN_OUTCOME_LEARNING_RECALL,
+                "1",
+            );
+            let on = rt
+                .recall_preamble_for_session("sess-a1-later", "run-a1-on", None, now + 3)
+                .expect("session recall composes with A1 recall flag on");
+            assert!(
+                on.contains("Confirmed run-outcome learning signals")
+                    && on.contains("preference")
+                    && on.contains("refs-only run outcome: turns=3; executed_tools=1")
+                    && on.contains("friday://agent-run/run-a1-source"),
+                "flag-ON session recall must inject the confirmed refs-only A1 signal: {on:?}"
+            );
+            assert!(
+                !on.contains("operator confirmed refs-only signal"),
+                "decision reason is operator text and must not be prompt-injected: {on:?}"
+            );
+        }
+
+        let recalled: i64 = rt
+            .db()
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM audit_ledger WHERE action LIKE 'run_outcome_learning.recalled%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            recalled, 1,
+            "flag-ON A1 session recall writes one audit receipt"
         );
     }
 
