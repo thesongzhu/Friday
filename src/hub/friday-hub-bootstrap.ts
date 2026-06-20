@@ -6826,6 +6826,7 @@ export async function createFridayHub(
           };
         },
       },
+      packagingMutationGate: skillRunCanonicalMutationGate,
     };
   }
 
