@@ -11,7 +11,7 @@ import type { FridayNodeCompletionVerification } from "../runtime/friday-workflo
 
 export interface FridayNodeExecutionInput {
   runId: UUID;
-  workflowId?: UUID;
+  workflowId: UUID;
   nodeId: string;
   attemptId: UUID;
   node: FridayWorkflowNode;

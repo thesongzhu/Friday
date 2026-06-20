@@ -42,6 +42,7 @@ function makeMockLegacyExecutor() {
 function makeInput(overrides: Partial<FridayNodeExecutionInput> = {}): FridayNodeExecutionInput {
   return {
     runId: "run-1",
+    workflowId: "workflow-1",
     nodeId: "node-1",
     attemptId: "attempt-1",
     node: {
@@ -202,10 +203,16 @@ describe("A-003 FridayWorkflowNodeRunnerFacade", () => {
   describe("execution context construction", () => {
     it("passes runId, nodeId, and attemptId through", async () => {
       const { facade, pipeline } = makeFacade();
-      await facade.executeNode(makeInput({ runId: "r-42", nodeId: "n-7", attemptId: "att-99" }));
+      await facade.executeNode(makeInput({
+        runId: "r-42",
+        workflowId: "w-42",
+        nodeId: "n-7",
+        attemptId: "att-99",
+      }));
 
       const ctx = (pipeline.execute as ReturnType<typeof vi.fn>).mock.calls[0][0];
       expect(ctx.runId).toBe("r-42");
+      expect(ctx.workflowId).toBe("w-42");
       expect(ctx.nodeId).toBe("n-7");
       expect(ctx.executionId).toBe("att-99");
     });

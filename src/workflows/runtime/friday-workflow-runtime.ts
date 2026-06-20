@@ -1540,7 +1540,7 @@ export function createFridayWorkflowRuntime(
         if (result.output != null) {
           const gateResult = await acceptanceGate.evaluate({
             runId: input.runId,
-            workflowId: input.workflowId ?? input.runId,
+            workflowId: input.workflowId,
             artifactType: inferArtifactType(result.output),
             artifactData: result.output,
             policy: pipelineEnforceMode
