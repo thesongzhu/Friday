@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createFridayMemoryRoutes } from "#api";
+import { createFridayMemoryService, FRIDAY_MEMORY_ERROR_CODES } from "#memory";
 import type { FridayMemoryService } from "#memory";
 import type { FridayMemoryGuardServiceFactory } from "#memory";
 import type { FridayRouteDefinition, FridayHttpContext } from "#api";
 import type { FridayMemoryItem, FridayMemorySearchResult } from "#memory";
 import { FridayDomainError } from "#errors";
 import { hashIdempotencyPayload } from "../../../../../src/api/http/routes/friday-route-idempotency.js";
+import { createTestDb } from "../../../satellites/_helpers/create-test-db.helper.js";
 
 describe("FridayMemoryRoutes", () => {
   let memoryService: FridayMemoryService;
@@ -222,6 +224,37 @@ describe("FridayMemoryRoutes", () => {
       code: "MEMORY_REQUIRES_REVIEW_CENTER_CONFIRMATION",
     });
     expect(memoryService.store).not.toHaveBeenCalled();
+  });
+
+  it("store alias fails closed through the retired durable-memory write guard", async () => {
+    const db = createTestDb();
+    try {
+      const disabledService = createFridayMemoryService({
+        db,
+        providerService: {} as never,
+        idGenerator: () => "mem-disabled-1",
+        nowIso: () => NOW,
+        tsMemoryWritesEnabled: false,
+      });
+      routes = createFridayMemoryRoutes({
+        memoryGuardFactory: {
+          forPrincipal: vi.fn().mockReturnValue(disabledService),
+          forContext: vi.fn().mockReturnValue(disabledService),
+        },
+      });
+      const route = findRoute("memory.items.create");
+
+      await expect(route.handler(makeCtx({
+        body: { namespace: "default", content: "do not persist via TS" },
+      }))).rejects.toMatchObject({
+        code: FRIDAY_MEMORY_ERROR_CODES.TS_RUNTIME_DURABLE_MEMORY_WRITE_RETIRED,
+        httpStatus: 503,
+      });
+
+      await expect(disabledService.list({ namespace: "default" })).resolves.toEqual([]);
+    } finally {
+      db.close();
+    }
   });
 
   it("store handler rejects preferenceKey metadata for high-impact preferences", async () => {

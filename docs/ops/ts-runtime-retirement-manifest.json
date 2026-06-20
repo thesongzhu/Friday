@@ -17,7 +17,19 @@
       "autofix_execute",
       "skills_run",
       "skills_import",
-      "mcp_server_rpc"
+      "mcp_server_rpc",
+      "sessions_messages_create",
+      "sessions_archive",
+      "sessions_reset",
+      "sessions_delete",
+      "sessions_prune",
+      "sessions_sweep",
+      "sessions_compact",
+      "sessions_forks_create",
+      "sessions_forks_merge",
+      "sessions_memory_remember",
+      "sessions_memory_extraction_retry",
+      "memory_items_create"
     ]
   },
   "classificationValues": [
@@ -3532,6 +3544,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-session-routes.test.ts",
       "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.messages.create to TS_RUNTIME_SESSION_RETIRED after session-key decode and request-body validation and immediately before the TypeScript sessionService.getOrCreateSession/addMessage mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned session lifecycle entrypoint when available."
     },
@@ -3545,6 +3558,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-session-routes.test.ts",
       "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.archive to TS_RUNTIME_SESSION_RETIRED after session-key decode and immediately before the TypeScript sessionService.archiveSession mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned session lifecycle entrypoint when available."
     },
@@ -3558,6 +3572,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-session-routes.test.ts",
       "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.reset to TS_RUNTIME_SESSION_RETIRED after session-key decode and immediately before the TypeScript sessionService.resetSession mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned session lifecycle entrypoint when available."
     },
@@ -3571,6 +3586,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-session-routes.test.ts",
       "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.delete to TS_RUNTIME_SESSION_RETIRED after session-key decode and immediately before the TypeScript sessionService.archiveSession mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned session lifecycle entrypoint when available."
     },
@@ -3584,6 +3600,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-session-routes.test.ts",
       "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.prune to TS_RUNTIME_SESSION_RETIRED after request-body validation and immediately before the TypeScript sessionService.pruneOldSessions mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned session lifecycle entrypoint when available."
     },
@@ -3597,6 +3614,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-session-routes.test.ts",
       "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.sweep to TS_RUNTIME_SESSION_RETIRED as the first handler statement, before the TypeScript sessionService.sweepLifecycle mutation; the route is public/unauthenticated (no bound-principal step) and has no request body; legacy behavior is reachable only through explicit allowTestOnlySessionExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned session lifecycle entrypoint when available."
     },
@@ -3610,6 +3628,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-session-routes.test.ts",
       "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.compact to TS_RUNTIME_SESSION_RETIRED after session-key decode and request-body validation and immediately before the first TypeScript sessionService read/mutation (getMessages, then setConversationFocus/mergeMetadata); the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned session lifecycle entrypoint when available."
     },
@@ -3623,6 +3642,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-session-routes.test.ts",
       "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.forks.create to TS_RUNTIME_SESSION_RETIRED after request-body validation and metadata sanitization and immediately before the TypeScript sessionService.forkSession mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned session lifecycle entrypoint when available."
     },
@@ -3636,6 +3656,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-session-routes.test.ts",
       "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.forks.merge to TS_RUNTIME_SESSION_RETIRED after request-body validation and metadata sanitization and immediately before the TypeScript sessionService.mergeForkSummary mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned session lifecycle entrypoint when available."
     },
@@ -3675,6 +3696,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-session-routes.test.ts",
       "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.memory.remember to TS_RUNTIME_SESSION_MEMORY_EXTRACTION_RETIRED after the memory-extraction availability check (501), session-key decode, and request-body validation (hoisted above the principal-alignment write), and immediately before the TypeScript principal alignment and extractionService.extractSpecificMessages mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionMemoryExtractionExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned session memory extraction entrypoint when available."
     },
@@ -3688,6 +3710,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-session-routes.test.ts",
       "proof": "src/api/http/routes/friday-session-routes.ts fail-closes default/live sessions.memory.extraction.retry to TS_RUNTIME_SESSION_MEMORY_EXTRACTION_RETIRED after the memory-extraction availability check (501) and request-body validation, and immediately before the TypeScript extractionService.retryFailedExtractions mutation; the route is public/unauthenticated (no bound-principal step); legacy behavior is reachable only through explicit allowTestOnlySessionMemoryExtractionExecution test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned session memory extraction entrypoint when available."
     },
@@ -3701,6 +3724,7 @@
       "classification": "fail_closed",
       "user_triggerable": true,
       "executes_product_logic": false,
+      "routeBehavioralTest": "test/unit/api/http/routes/friday-memory-routes.test.ts",
       "proof": "D17/D1 retires legacy TypeScript durable memory writes to stop friday.db diverging from the Rust-owned memory confirmation spine. src/hub/friday-hub-bootstrap.ts wires createFridayMemoryService with tsMemoryWritesEnabled: config.allowTestOnlyTsMemoryWrites === true, so default/live hub construction disables TS durable writes. src/memory/services/friday-memory-service.ts then throws TS_RUNTIME_DURABLE_MEMORY_WRITE_RETIRED from store() before id generation, provider embedding, item insert, embedding insert, or dedup advisory writes. The POST /v1/memory/items route still performs request validation, approval-boundary checks, idempotency replay reads, and principal guard setup before delegating to the guarded core store; legacy create behavior is reachable only through explicit allowTestOnlyTsMemoryWrites test-oracle wiring.",
       "next_action": "Replace the fail-closed response with the Rust-owned memory confirmation spine write entrypoint when available; keep memory reads/search bounded as compatibility surfaces."
     },
