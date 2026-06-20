@@ -6707,7 +6707,8 @@ mod tests {
         // body send lands in the loopback send buffer, so `serve_sealed_session` returns Ok (no
         // error settle). (Large bodies can Err on the body send; see the NOTE on the test above.)
         let processed = listener
-            .accept_one(
+            .accept_one_with_timeout(
+                Duration::from_secs(10),
                 &server_kp,
                 &rt,
                 &owner_allowlist,
@@ -6839,7 +6840,8 @@ mod tests {
             spawn_ts_auto_dispatch_client(addr.port(), &ts_client_secret_hex(), OWNER, RUN_ID);
 
         let intake_processed = listener
-            .accept_one(
+            .accept_one_with_timeout(
+                Duration::from_secs(10),
                 &server_kp,
                 &rt,
                 &owner_allowlist,
@@ -6866,7 +6868,8 @@ mod tests {
         eprintln!("interop_auto_dispatch: TS subprocess still running; awaiting bound run session");
 
         let run_processed = listener
-            .accept_one(
+            .accept_one_with_timeout(
+                Duration::from_secs(10),
                 &server_kp,
                 &rt,
                 &owner_allowlist,
@@ -7110,7 +7113,8 @@ mod tests {
         );
 
         let work_item_processed = listener
-            .accept_one(
+            .accept_one_with_timeout(
+                Duration::from_secs(10),
                 &server_kp,
                 &rt,
                 &owner_allowlist,
@@ -7141,7 +7145,8 @@ mod tests {
         }
 
         let lifecycle_processed = listener
-            .accept_one(
+            .accept_one_with_timeout(
+                Duration::from_secs(10),
                 &server_kp,
                 &rt,
                 &owner_allowlist,
