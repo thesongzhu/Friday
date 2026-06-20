@@ -2,7 +2,9 @@
 //!
 //! This DARK leg turns a reviewed local SKILL.md package into a managed manifest
 //! candidate so the catalog can reason about it. Import is not adoption,
-//! promotion, runnable eligibility, or execution.
+//! runnable eligibility, or execution. A separate operator-gated promotion can
+//! arm the imported package as a sandbox-required local shell runtime; it still
+//! does not adopt, run, or complete the skill.
 
 use std::{
     collections::BTreeMap,
@@ -61,6 +63,30 @@ pub struct SkillMdImportReceipt {
     pub total_bytes: u64,
     pub mission_id: String,
     pub work_item_id: String,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkillMdPromoteRequest {
+    pub managed_skills_root: String,
+    pub skill_id: String,
+    pub entrypoint: String,
+    pub mission_id: String,
+    pub work_item_id: String,
+    pub operator_principal_id: String,
+    pub canonical_approval: CanonicalApproval,
+    pub proof_ref: String,
+    pub now_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkillMdPromoteReceipt {
+    pub promote_ref: String,
+    pub proof_ref: String,
+    pub skill_id: String,
+    pub mission_id: String,
+    pub work_item_id: String,
+    pub entrypoint: String,
     pub status: String,
 }
 
@@ -161,6 +187,70 @@ pub fn skill_md_import_gate_request(
     )
 }
 
+pub fn promote_imported_skill_md_candidate_ed25519(
+    db: &Db,
+    request: SkillMdPromoteRequest,
+    operator_vk: &OperatorVerifyingKey,
+) -> Result<SkillMdPromoteReceipt, SkillMdImportError> {
+    let promote = validate_promote_request(db, &request)?;
+    let gate_request = skill_md_promote_gate_request(
+        &request.skill_id,
+        &request.mission_id,
+        &request.work_item_id,
+        &request.operator_principal_id,
+    );
+    let gate = authorize_mutating_action_ed25519(
+        db.conn(),
+        &gate_request,
+        Some(&request.canonical_approval),
+        operator_vk,
+        request.now_ms,
+    )?;
+    if gate.decision != GateDecision::Allow {
+        return Err(SkillMdImportError::Blocked(format!(
+            "skill_md_promote_canonical_gate_{}",
+            gate.reason
+        )));
+    }
+    write_promote(db, request, promote)
+}
+
+pub fn skill_md_promote_gate_request(
+    skill_id: &str,
+    mission_id: &str,
+    work_item_id: &str,
+    operator_principal_id: &str,
+) -> MutatingActionRequest {
+    let params = vec![
+        ("target".to_string(), skill_id.to_string()),
+        ("mission_id".to_string(), mission_id.to_string()),
+        ("work_item_id".to_string(), work_item_id.to_string()),
+    ];
+    MutatingActionRequest::from_classification(
+        friday_core::gate::classify(
+            true,
+            friday_core::Risk::High,
+            "promote_imported_skill_md",
+            &params,
+        ),
+        "promote_imported_skill_md".to_string(),
+        Actor {
+            kind: ActorKind::Owner,
+            id: operator_principal_id.to_string(),
+            principal_id: Some(operator_principal_id.to_string()),
+        },
+        "friday_hub_skill_md_importer".to_string(),
+        Vec::new(),
+        Some(format!(
+            "skill_id={skill_id};mission_id={mission_id};work_item_id={work_item_id}"
+        )),
+        Some(format!(
+            "skill-md-promote:{skill_id}:{mission_id}:{work_item_id}"
+        )),
+        None,
+    )
+}
+
 fn validate_import_request(
     db: &Db,
     request: &SkillMdImportRequest,
@@ -222,6 +312,84 @@ fn validate_import_request(
         return Err(SkillMdImportError::Blocked("source_digest_mismatch".into()));
     }
     Ok(files)
+}
+
+struct PromoteTarget {
+    manifest_path: PathBuf,
+    manifest: serde_json::Value,
+    entrypoint: PathBuf,
+}
+
+fn validate_promote_request(
+    db: &Db,
+    request: &SkillMdPromoteRequest,
+) -> Result<PromoteTarget, SkillMdImportError> {
+    if !is_safe_id(&request.skill_id) {
+        return Err(SkillMdImportError::Blocked("safe_skill_id_required".into()));
+    }
+    if !request.proof_ref.starts_with("proof://") {
+        return Err(SkillMdImportError::Blocked("proof_ref_required".into()));
+    }
+    validate_mission_work_item(db, &request.mission_id, &request.work_item_id)?;
+
+    let root = fs::canonicalize(&request.managed_skills_root)?;
+    let skill_dir = fs::canonicalize(root.join(&request.skill_id))?;
+    if !skill_dir.starts_with(&root) {
+        return Err(SkillMdImportError::Blocked("skill_dir_outside_root".into()));
+    }
+    if !skill_dir.join("SKILL.md").is_file() {
+        return Err(SkillMdImportError::Blocked("skill_md_required".into()));
+    }
+    let manifest_path = skill_dir.join("skill.manifest.json");
+    let manifest_raw = fs::read_to_string(&manifest_path)?;
+    let manifest: serde_json::Value = serde_json::from_str(&manifest_raw)?;
+    let runtime_kind = manifest
+        .get("runtime")
+        .and_then(|runtime| runtime.get("kind"))
+        .and_then(|kind| kind.as_str())
+        .unwrap_or("");
+    if runtime_kind != "skill-md-imported" {
+        return Err(SkillMdImportError::Blocked(
+            "imported_runtime_required".into(),
+        ));
+    }
+
+    let entrypoint = safe_relative_entrypoint(&request.entrypoint)?;
+    if !skill_dir.join(&entrypoint).is_file() {
+        return Err(SkillMdImportError::Blocked(
+            "skill_entrypoint_required".into(),
+        ));
+    }
+    Ok(PromoteTarget {
+        manifest_path,
+        manifest,
+        entrypoint,
+    })
+}
+
+fn validate_mission_work_item(
+    db: &Db,
+    mission_id: &str,
+    work_item_id: &str,
+) -> Result<(), SkillMdImportError> {
+    let mission = db
+        .get_mission(mission_id)?
+        .ok_or_else(|| SkillMdImportError::Blocked("unknown_mission".into()))?;
+    if mission.status.is_terminal() {
+        return Err(SkillMdImportError::Blocked("mission_is_terminal".into()));
+    }
+    let work_item = db
+        .get_work_item(work_item_id)?
+        .ok_or_else(|| SkillMdImportError::Blocked("unknown_work_item".into()))?;
+    if work_item.mission_id != mission_id {
+        return Err(SkillMdImportError::Blocked(
+            "work_item_mission_mismatch".into(),
+        ));
+    }
+    if work_item.status.is_terminal() {
+        return Err(SkillMdImportError::Blocked("work_item_is_terminal".into()));
+    }
+    Ok(())
 }
 
 fn write_import(
@@ -305,6 +473,57 @@ fn write_import(
     })
 }
 
+fn write_promote(
+    db: &Db,
+    request: SkillMdPromoteRequest,
+    mut promote: PromoteTarget,
+) -> Result<SkillMdPromoteReceipt, SkillMdImportError> {
+    let promote_ref = redacted_ref(
+        "skill-md-promote",
+        &format!(
+            "{}:{}:{}:{}",
+            request.skill_id, request.mission_id, request.work_item_id, request.now_ms
+        ),
+    );
+    let runtime = json!({
+        "kind": "shell",
+        "entrypoint": promote.entrypoint.to_string_lossy(),
+        "requiresDarwinSandbox": true
+    });
+    promote.manifest["runtime"] = runtime;
+    promote.manifest["permissions"] = json!({
+        "grants": [],
+        "promptOn": ["operator.adopt_skill", "operator.run_skill", "darwin_sandbox_required"]
+    });
+    promote.manifest["executionTargets"] = json!({
+        "requiredCapabilities": ["skill.import.review", "skill.run.local.darwin_sandbox"]
+    });
+    fs::write(
+        &promote.manifest_path,
+        serde_json::to_vec_pretty(&promote.manifest)?,
+    )?;
+
+    db.upsert_mission_link(&MissionLink {
+        link_id: promote_ref.clone(),
+        mission_id: request.mission_id.clone(),
+        work_item_id: Some(request.work_item_id.clone()),
+        link_kind: MissionLinkKind::ProofReceipt,
+        target_ref: format!("friday://skill-md-promote/{}", request.skill_id),
+        proof_ref: Some(request.proof_ref.clone()),
+        created_at_ms: request.now_ms,
+    })?;
+
+    Ok(SkillMdPromoteReceipt {
+        promote_ref,
+        proof_ref: request.proof_ref,
+        skill_id: request.skill_id,
+        mission_id: request.mission_id,
+        work_item_id: request.work_item_id,
+        entrypoint: request.entrypoint,
+        status: "imported_manifest_promoted_to_sandbox_required_shell_not_executed".to_string(),
+    })
+}
+
 fn collect_files(source: &Path) -> Result<Vec<CandidateFile>, SkillMdImportError> {
     let mut out = Vec::new();
     collect_files_inner(source, source, &mut out)?;
@@ -359,6 +578,38 @@ fn validate_relative_path(path: &Path) -> Result<(), SkillMdImportError> {
         }
     }
     Ok(())
+}
+
+fn safe_relative_entrypoint(value: &str) -> Result<PathBuf, SkillMdImportError> {
+    let value = value.trim();
+    if value.is_empty()
+        || value.len() > 160
+        || value.contains('\\')
+        || value.contains('"')
+        || value.contains('\'')
+        || value.chars().any(char::is_whitespace)
+    {
+        return Err(SkillMdImportError::Blocked(
+            "skill_entrypoint_safe_relative_required".into(),
+        ));
+    }
+    let path = PathBuf::from(value);
+    if path.is_absolute() {
+        return Err(SkillMdImportError::Blocked(
+            "skill_entrypoint_safe_relative_required".into(),
+        ));
+    }
+    for component in path.components() {
+        match component {
+            Component::Normal(_) => {}
+            _ => {
+                return Err(SkillMdImportError::Blocked(
+                    "skill_entrypoint_safe_relative_required".into(),
+                ));
+            }
+        }
+    }
+    Ok(path)
 }
 
 fn candidate_digest(files: &[CandidateFile]) -> String {

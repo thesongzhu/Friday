@@ -77,6 +77,7 @@ pub struct LocalSkillRunReceipt {
 #[derive(Clone, Debug)]
 struct RuntimeManifest {
     entrypoint: PathBuf,
+    requires_darwin_sandbox: bool,
 }
 
 pub fn skill_run_local_enabled_from(value: Option<&str>) -> bool {
@@ -112,6 +113,11 @@ pub fn run_local_skill_ed25519(
     let entry = runnable_entry(&snapshot, &request.skill_id)?;
     let skill_dir = contained_skill_dir(&request.managed_skills_root, &request.skill_id)?;
     let runtime = read_runtime_manifest(&skill_dir)?;
+    if runtime.requires_darwin_sandbox && !request.require_darwin_sandbox {
+        return Err(SkillExecutionError::Blocked(
+            "skill_requires_darwin_sandbox".to_string(),
+        ));
+    }
     validate_mission_work_item(db, &request.mission_id, &request.work_item_id)?;
 
     let gate_request = skill_run_gate_request(
@@ -260,8 +266,14 @@ fn read_runtime_manifest(skill_dir: &Path) -> Result<RuntimeManifest, SkillExecu
         .and_then(|runtime| runtime.get("entrypoint"))
         .and_then(Value::as_str)
         .ok_or_else(|| SkillExecutionError::Blocked("skill_entrypoint_required".to_string()))?;
+    let requires_darwin_sandbox = value
+        .get("runtime")
+        .and_then(|runtime| runtime.get("requiresDarwinSandbox"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     Ok(RuntimeManifest {
         entrypoint: safe_relative_entrypoint(entrypoint)?,
+        requires_darwin_sandbox,
     })
 }
 

@@ -1,8 +1,8 @@
 //! D21 governed SKILL.md import CLI.
 //!
 //! Verifies an operator-signed approval and imports a local SKILL.md package as a
-//! managed manifest candidate. It never adopts, promotes, marks runnable, or executes
-//! the skill.
+//! managed manifest candidate or promotes an imported candidate to a sandbox-required
+//! local shell runtime. It never adopts, executes, or marks a WorkItem complete.
 
 use std::env;
 use std::io::Read;
@@ -11,7 +11,8 @@ use std::path::Path;
 use friday_core::gate::{ApprovalDecision, CanonicalApproval, CANONICAL_GATE_ISSUER};
 use friday_hub::operator_vk::load_operator_vk_from_path;
 use friday_hub::skill_md_importer::{
-    import_skill_md_candidate_ed25519, SkillMdImportError, SkillMdImportRequest,
+    import_skill_md_candidate_ed25519, promote_imported_skill_md_candidate_ed25519,
+    SkillMdImportError, SkillMdImportRequest, SkillMdPromoteRequest,
 };
 use friday_storage::Db;
 use serde::Deserialize;
@@ -39,13 +40,15 @@ struct SignedApprovalIn {
 }
 
 fn main() {
+    let command = env::args().nth(1).unwrap_or_default();
     match run() {
         Ok(rendered) => println!("{rendered}"),
         Err(err) => {
             let payload = json!({
-                "truth_label": "d21_skill_md_import",
+                "truth_label": if command == "promote-imported-local" { "d21_skill_md_promote" } else { "d21_skill_md_import" },
                 "ok": false,
                 "imports_skill": false,
+                "promotes_runtime": false,
                 "installs_skill": false,
                 "executes_skill": false,
                 "error_kind": err.kind,
@@ -62,7 +65,8 @@ fn main() {
 
 fn run() -> Result<String, CliError> {
     let args: Vec<String> = env::args().collect();
-    if args.get(1).map(String::as_str) != Some("import-local") {
+    let command = args.get(1).map(String::as_str).unwrap_or_default();
+    if command != "import-local" && command != "promote-imported-local" {
         return Err(CliError::new("bad_args"));
     }
 
@@ -79,6 +83,9 @@ fn run() -> Result<String, CliError> {
         .and_then(|v| v.parse::<i64>().ok())
         .unwrap_or_else(now_ms);
     let db = Db::open_hub(&db_path).map_err(|_| CliError::new("init_failed"))?;
+    if command == "promote-imported-local" {
+        return promote_imported_local(&args, &db, approval, &operator_vk, now_ms);
+    }
     let receipt = import_skill_md_candidate_ed25519(
         &db,
         SkillMdImportRequest {
@@ -103,6 +110,7 @@ fn run() -> Result<String, CliError> {
         "truth_label": "d21_skill_md_import",
         "ok": true,
         "imports_skill": true,
+        "promotes_runtime": false,
         "installs_skill": false,
         "executes_skill": false,
         "import_ref": receipt.import_ref,
@@ -113,6 +121,55 @@ fn run() -> Result<String, CliError> {
         "total_bytes": receipt.total_bytes,
         "mission_id": receipt.mission_id,
         "work_item_id": receipt.work_item_id,
+        "status": receipt.status,
+    });
+    let rendered =
+        serde_json::to_string(&payload).map_err(|_| CliError::new("serialize_failed"))?;
+    reject_forbidden_output(&rendered)?;
+    Ok(rendered)
+}
+
+fn promote_imported_local(
+    args: &[String],
+    db: &Db,
+    approval: CanonicalApproval,
+    operator_vk: &friday_crypto::OperatorVerifyingKey,
+    now_ms: i64,
+) -> Result<String, CliError> {
+    let receipt = promote_imported_skill_md_candidate_ed25519(
+        db,
+        SkillMdPromoteRequest {
+            managed_skills_root: arg_value(args, "--managed-skills-root")
+                .ok_or(CliError::new("bad_args"))?,
+            skill_id: arg_value(args, "--skill-id").ok_or(CliError::new("bad_args"))?,
+            entrypoint: arg_value(args, "--entrypoint").ok_or(CliError::new("bad_args"))?,
+            mission_id: arg_value(args, "--mission-id").ok_or(CliError::new("bad_args"))?,
+            work_item_id: arg_value(args, "--work-item-id").ok_or(CliError::new("bad_args"))?,
+            operator_principal_id: arg_value(args, "--operator-principal-id")
+                .unwrap_or_else(|| "operator".to_string()),
+            canonical_approval: approval,
+            proof_ref: arg_value(args, "--proof-ref").ok_or(CliError::new("bad_args"))?,
+            now_ms,
+        },
+        operator_vk,
+    )
+    .map_err(|err| CliError::new(skill_error_kind(&err)))?;
+
+    let payload = json!({
+        "truth_label": "d21_skill_md_promote",
+        "ok": true,
+        "imports_skill": false,
+        "promotes_runtime": true,
+        "installs_skill": false,
+        "executes_skill": false,
+        "completes_work_item": false,
+        "requires_darwin_sandbox": true,
+        "promote_ref": receipt.promote_ref,
+        "proof_ref": receipt.proof_ref,
+        "skill_id": receipt.skill_id,
+        "mission_id": receipt.mission_id,
+        "work_item_id": receipt.work_item_id,
+        "entrypoint": receipt.entrypoint,
         "status": receipt.status,
     });
     let rendered =

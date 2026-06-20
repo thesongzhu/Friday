@@ -228,6 +228,14 @@ fn write_shell_skill(managed_root: &std::path::Path, runtime_kind: &str) -> std:
     skill_dir
 }
 
+fn mark_skill_requires_darwin_sandbox(skill_dir: &std::path::Path) {
+    let manifest_path = skill_dir.join("skill.manifest.json");
+    let mut manifest: Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    manifest["runtime"]["requiresDarwinSandbox"] = Value::Bool(true);
+    std::fs::write(&manifest_path, serde_json::to_string(&manifest).unwrap()).unwrap();
+}
+
 fn cli_base(
     db_path: &str,
     vk_path: &std::path::Path,
@@ -478,4 +486,39 @@ fn imported_skill_md_runtime_is_not_executable() {
     assert_eq!(json["executes_skill"], false);
     assert_eq!(json["error_kind"], "run_blocked");
     assert!(!skill_dir.join("marker.txt").exists());
+}
+
+#[test]
+fn sandbox_required_manifest_fails_closed_without_darwin_sandbox_request() {
+    let db_path = temp_db("sandbox-required");
+    let db = Db::open_hub(&db_path).unwrap();
+    seed_mission(&db);
+
+    let managed_root = temp_path("sandbox-required-managed");
+    std::fs::create_dir_all(&managed_root).unwrap();
+    let skill_dir = write_shell_skill(&managed_root, "shell");
+    mark_skill_requires_darwin_sandbox(&skill_dir);
+    let (sk, vk) = operator();
+    let vk_path = temp_path("sandbox-required.vk");
+    std::fs::write(&vk_path, vk_hex(&vk)).unwrap();
+    let approval_path = temp_path("sandbox-required-approval.json");
+    write_approval(
+        &approval_path,
+        &ed_approval(&gate_request(), &sk, "skill-run-local-sandbox-required"),
+    );
+
+    let mut cmd = cli_base(&db_path, &vk_path, &approval_path, &managed_root, true);
+    cmd.env(FRIDAY_D21_SKILL_RUN_LOCAL, "1");
+    let output = cmd.output().unwrap();
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(json["ok"], false);
+    assert_eq!(json["executes_skill"], false);
+    assert_eq!(json["error_kind"], "run_blocked");
+    assert!(!skill_dir.join("marker.txt").exists());
+    assert!(db
+        .list_mission_links("mission-skill-run-local-cli")
+        .unwrap()
+        .is_empty());
 }
