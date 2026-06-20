@@ -37,6 +37,7 @@ describe("FridayWorkflowNodeExecutor", () => {
   ): FridayNodeExecutionInput {
     return {
       runId: "run-1",
+      workflowId: "workflow-1",
       nodeId: node.id,
       attemptId: "att-1",
       node,

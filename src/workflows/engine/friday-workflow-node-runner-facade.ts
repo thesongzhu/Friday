@@ -99,7 +99,7 @@ export function createFridayWorkflowNodeRunnerFacade(
       const executionContext: FridayNodeExecutionContext = {
         executionId: input.attemptId,
         runId: input.runId,
-        workflowId: input.workflowId ?? input.runId,
+        workflowId: input.workflowId,
         nodeId: input.nodeId,
         attemptNumber: 1,
         node,
