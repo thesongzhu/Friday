@@ -125,7 +125,7 @@
       "closes_loop": "The TS memory-spine routes (confirm/decision) forward to the Rust hub instead of the legacy TS path; the loop closes Rust-side.",
       "coverage": "destination-only",
       "e2e_test": "rust-core/crates/friday-hub/src/runtime.rs::memory_loop_end_to_end_extract_confirm_recall_closes_on_agent_run_ingress",
-      "notes": "CRITICAL FINDING: this routing flag's destination loop (memory confirm->recall) is proven Rust-side by the mapped test. Manual ignored interop proof `interop_ts_memory_route_decision_confirms_real_rust_candidate` now drives the real TS `/v1/memory-spine/decide` route handler -> real dispatch adapter -> real sealed client -> real Rust memory-confirm arm, confirming a seeded candidate and proving recallable DB state with zero token/provider spend. Honest remaining gap: this is controlled loopback proof requiring the prebuilt Node interop bundle, not organic/operator traffic and not a non-ignored PR-CI flag-on e2e."
+      "notes": "CRITICAL FINDING: this routing flag's destination loop (memory confirm->recall) is proven Rust-side by the mapped test. PR-CI also runs the bounded controlled-loopback interop proof `interop_ts_memory_route_decision_confirms_real_rust_candidate`: the workflow builds the Node sealed-client runner, then drives the real TS `/v1/memory-spine/decide` route handler -> real dispatch adapter -> real sealed client -> real Rust memory-confirm arm, confirming a seeded candidate and proving recallable DB state with zero token/provider spend. Honest remaining gap: this is not organic/operator-origin traffic and not a GO-LIVE gate-3 satisfying flag-on e2e."
     },
     {
       "flag": "FRIDAY_MISSION_SPINE_ROUTES_VIA_RUST",
