@@ -26,6 +26,13 @@ if [ -z "${TASK_TEXT}" ]; then
   exit 3
 fi
 
+readonly REQUIRED_OPERATOR_ORIGIN_ACK="operator-physical-hand-starts-og9-organic-run"
+if [ "${FRIDAY_OG9_OPERATOR_ORIGIN_ACK:-}" != "${REQUIRED_OPERATOR_ORIGIN_ACK}" ]; then
+  echo "FATAL: strict OG9 organic launch requires FRIDAY_OG9_OPERATOR_ORIGIN_ACK=${REQUIRED_OPERATOR_ORIGIN_ACK}." >&2
+  echo "This must be set by the operator at launch time; agent automation must use proof/soak wrappers instead." >&2
+  exit 4
+fi
+
 ORGANIC_BODY_REF_ID="$(node -e 'process.stdout.write((globalThis.crypto?.randomUUID?.() ?? (`id-${Date.now()}-${Math.random().toString(16).slice(2)}`)).toLowerCase())')"
 
 export FRIDAY_CLAUDE_MISSION_PROOF_RUN_KIND="organic"
