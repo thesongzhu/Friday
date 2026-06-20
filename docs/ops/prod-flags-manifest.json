@@ -235,6 +235,20 @@
       "notes": "Built-dark D2 OS-sandbox wiring for the highest-risk Hub command arm. The mapped test uses an explicit sandboxed executor constructor to avoid global env races in parallel tests; on hosts with `/usr/bin/sandbox-exec` it executes through Seatbelt, and on other hosts it requires fail-closed `CommandSandboxUnavailable`. The friday-fs substrate tests prove root writes are allowed and outside-root writes are denied by the Seatbelt profile. Honest boundary: this does not flip live execution policy and does not replace operator approval/signature gates."
     },
     {
+      "flag": "FRIDAY_D21_SKILL_RUN_LOCAL",
+      "process": "rust-ws-wrapper",
+      "prod_state": "dark",
+      "closes_loop": "With the flag ON, Hub can execute an adopted managed-local `runtime.kind=shell` skill only after an operator Ed25519 approval for the exact `run_skill` request, emitting refs-only execution evidence without installing skills or completing WorkItems. With the flag OFF, the CLI fails closed before spawning anything.",
+      "coverage": "loop-e2e",
+      "e2e_test": "rust-core/crates/friday-hub/tests/skill_run_local_cli.rs::flag_on_executes_adopted_shell_skill_after_ed25519_approval",
+      "additional_e2e_tests": [
+        "rust-core/crates/friday-hub/tests/skill_run_local_cli.rs::flag_off_fails_closed_without_executing_skill",
+        "rust-core/crates/friday-hub/tests/skill_run_local_cli.rs::hmac_approval_is_rejected_before_execution",
+        "rust-core/crates/friday-hub/tests/skill_run_local_cli.rs::imported_skill_md_runtime_is_not_executable"
+      ],
+      "notes": "Built-dark D21/A4 execution substrate. The runner uses the existing shell-free/env-scrubbed/cwd-contained friday-fs command path and supports a required Darwin sandbox CLI switch, but this flag does not flip live product execution policy and does not make imported SKILL.md packages executable. Hub still verifies only; operator signing remains operator-only."
+    },
+    {
       "flag": "FRIDAY_WEB_FETCH_ENABLED",
       "process": "rust-ws-wrapper",
       "prod_state": "dark",
