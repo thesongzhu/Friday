@@ -15,7 +15,7 @@ use friday_core::{
     TruthStatus, WorkItem, WorkItemStatus, WorkLane,
 };
 use friday_crypto::{OperatorSigningKey, OperatorVerifyingKey};
-use friday_hub::skill_catalog::link_skill_candidate_gate_request;
+use friday_hub::skill_catalog::{link_skill_candidate_gate_request, skill_adoption_gate_request};
 use friday_storage::Db;
 use serde_json::Value;
 
@@ -200,6 +200,15 @@ fn gate_request() -> MutatingActionRequest {
     )
 }
 
+fn adoption_gate_request() -> MutatingActionRequest {
+    skill_adoption_gate_request(
+        "invoice-link-skill",
+        "mission-skill-cli",
+        "work-skill-cli",
+        "operator",
+    )
+}
+
 fn cli_base(db_path: &str, vk_path: &std::path::Path, approval_path: &std::path::Path) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_hub_skill_catalog_receipt"));
     cmd.arg("stage-link-candidate")
@@ -225,6 +234,34 @@ fn cli_base(db_path: &str, vk_path: &std::path::Path, approval_path: &std::path:
         .arg("operator")
         .arg("--proof-ref")
         .arg("proof://link-skill-candidate/invoice")
+        .arg("--now-ms")
+        .arg((NOW + 1).to_string());
+    cmd
+}
+
+fn adoption_cli_base(
+    db_path: &str,
+    vk_path: &std::path::Path,
+    approval_path: &std::path::Path,
+) -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_hub_skill_catalog_receipt"));
+    cmd.arg("adopt-managed-skill")
+        .arg("--db")
+        .arg(db_path)
+        .arg("--operator-vk-path")
+        .arg(vk_path)
+        .arg("--approval-json")
+        .arg(approval_path)
+        .arg("--skill-id")
+        .arg("invoice-link-skill")
+        .arg("--mission-id")
+        .arg("mission-skill-cli")
+        .arg("--work-item-id")
+        .arg("work-skill-cli")
+        .arg("--operator-principal-id")
+        .arg("operator")
+        .arg("--proof-ref")
+        .arg("proof://skill-adoption/invoice")
         .arg("--now-ms")
         .arg((NOW + 1).to_string());
     cmd
@@ -265,6 +302,56 @@ fn cli_records_ed25519_candidate_receipt_without_import_or_execution() {
 
     let links = db.list_mission_links("mission-skill-cli").unwrap();
     assert_eq!(links.len(), 1);
+    let item = db.get_work_item("work-skill-cli").unwrap().unwrap();
+    assert_eq!(item.status, WorkItemStatus::ReadyToDispatch);
+    assert!(item.proof_receipts.is_empty());
+}
+
+#[test]
+fn cli_records_ed25519_skill_adoption_without_import_or_execution() {
+    let db_path = temp_db("adopt-allow");
+    let db = Db::open_hub(&db_path).unwrap();
+    seed_mission(&db);
+    let (sk, vk) = operator();
+    let vk_path = temp_path("operator-adopt.vk");
+    std::fs::write(&vk_path, vk_hex(&vk)).unwrap();
+    let approval_path = temp_path("approval-adopt.json");
+    write_approval(
+        &approval_path,
+        &ed_approval(&adoption_gate_request(), &sk, "skill-adopt-cli-ed-allow"),
+    );
+
+    let output = adoption_cli_base(&db_path, &vk_path, &approval_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(json["truth_label"], "d21_skill_adoption_receipt");
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["adopts_skill_for_mission"], true);
+    assert_eq!(json["imports_skill"], false);
+    assert_eq!(json["executes_skill"], false);
+    assert_eq!(json["completes_work_item"], false);
+    assert_eq!(
+        json["status"],
+        "skill_adoption_receipt_recorded_not_executed"
+    );
+    assert!(json["adoption_ref"]
+        .as_str()
+        .unwrap()
+        .starts_with("friday://skill-adoption/"));
+
+    let links = db.list_mission_links("mission-skill-cli").unwrap();
+    assert_eq!(links.len(), 1);
+    assert_eq!(
+        links[0].target_ref,
+        "friday://skill-adoption/invoice-link-skill"
+    );
     let item = db.get_work_item("work-skill-cli").unwrap().unwrap();
     assert_eq!(item.status, WorkItemStatus::ReadyToDispatch);
     assert!(item.proof_receipts.is_empty());

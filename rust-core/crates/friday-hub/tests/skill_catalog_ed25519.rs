@@ -15,8 +15,10 @@ use friday_core::{
 };
 use friday_crypto::{OperatorSigningKey, OperatorVerifyingKey};
 use friday_hub::skill_catalog::{
-    link_skill_candidate_gate_request, stage_link_skill_candidate_receipt_ed25519,
-    LinkSkillCandidateReceiptRequest,
+    adopted_skill_ids_from_mission_links, link_skill_candidate_gate_request,
+    record_skill_adoption_receipt_ed25519, skill_adoption_gate_request,
+    stage_link_skill_candidate_receipt_ed25519, LinkSkillCandidateReceiptRequest,
+    SkillAdoptionReceiptRequest,
 };
 use friday_storage::Db;
 
@@ -191,10 +193,107 @@ fn gate_request() -> MutatingActionRequest {
     )
 }
 
+fn adoption_gate_request() -> MutatingActionRequest {
+    skill_adoption_gate_request(
+        "invoice-link-skill",
+        "mission-skill-ed",
+        "work-skill-ed",
+        "operator",
+    )
+}
+
+fn adoption_request(approval: CanonicalApproval, now_ms: i64) -> SkillAdoptionReceiptRequest {
+    SkillAdoptionReceiptRequest {
+        skill_id: "invoice-link-skill".into(),
+        mission_id: "mission-skill-ed".into(),
+        work_item_id: "work-skill-ed".into(),
+        operator_principal_id: "operator".into(),
+        canonical_approval: approval,
+        proof_ref: "proof://skill-adoption/invoice".into(),
+        now_ms,
+    }
+}
+
 fn consumed_count(db: &Db) -> i64 {
     db.conn()
         .query_row("SELECT count(*) FROM consumed_approval", [], |r| r.get(0))
         .unwrap()
+}
+
+#[test]
+fn ed25519_skill_adoption_receipt_records_mission_scoped_adoption_without_execution() {
+    let db = Db::open_hub(&temp_db("adopt-allow")).unwrap();
+    seed_mission(&db);
+    let (sk, vk) = operator();
+    let approval = ed_approval(&adoption_gate_request(), &sk, "skill-adoption-ed-allow");
+
+    let receipt =
+        record_skill_adoption_receipt_ed25519(&db, adoption_request(approval, NOW + 1), &vk)
+            .unwrap();
+
+    assert_eq!(
+        receipt.status,
+        "skill_adoption_receipt_recorded_not_executed"
+    );
+    assert_eq!(receipt.skill_id, "invoice-link-skill");
+    let adopted =
+        adopted_skill_ids_from_mission_links(&db, "mission-skill-ed", "work-skill-ed").unwrap();
+    assert_eq!(adopted, vec!["invoice-link-skill".to_string()]);
+    let links = db.list_mission_links("mission-skill-ed").unwrap();
+    assert_eq!(links.len(), 1);
+    assert_eq!(
+        links[0].target_ref,
+        "friday://skill-adoption/invoice-link-skill"
+    );
+    assert_eq!(
+        links[0].proof_ref.as_deref(),
+        Some("proof://skill-adoption/invoice")
+    );
+    let item = db.get_work_item("work-skill-ed").unwrap().unwrap();
+    assert_eq!(item.status, WorkItemStatus::ReadyToDispatch);
+    assert!(item.proof_receipts.is_empty());
+    assert_eq!(consumed_count(&db), 1);
+}
+
+#[test]
+fn hmac_skill_adoption_approval_is_rejected_by_ed25519_path() {
+    let db = Db::open_hub(&temp_db("adopt-hmac")).unwrap();
+    seed_mission(&db);
+    let (_sk, vk) = operator();
+    let approval = hmac_approval(&adoption_gate_request(), "skill-adoption-hmac");
+
+    let blocked =
+        record_skill_adoption_receipt_ed25519(&db, adoption_request(approval, NOW + 1), &vk)
+            .unwrap_err();
+
+    assert!(blocked
+        .to_string()
+        .contains("skill_adoption_canonical_gate_canonical_approval_signature_invalid"));
+    assert!(db
+        .list_mission_links("mission-skill-ed")
+        .unwrap()
+        .is_empty());
+    assert_eq!(consumed_count(&db), 0);
+}
+
+#[test]
+fn ed25519_skill_adoption_approval_replay_is_refused_without_second_write() {
+    let db = Db::open_hub(&temp_db("adopt-replay")).unwrap();
+    seed_mission(&db);
+    let (sk, vk) = operator();
+    let approval = ed_approval(&adoption_gate_request(), &sk, "skill-adoption-replay");
+
+    record_skill_adoption_receipt_ed25519(&db, adoption_request(approval.clone(), NOW + 1), &vk)
+        .unwrap();
+    let blocked =
+        record_skill_adoption_receipt_ed25519(&db, adoption_request(approval, NOW + 2), &vk)
+            .unwrap_err();
+
+    assert!(blocked
+        .to_string()
+        .contains("skill_adoption_canonical_gate_canonical_approval_replay_refused"));
+    assert_eq!(db.list_mission_links("mission-skill-ed").unwrap().len(), 1);
+    assert_eq!(consumed_count(&db), 1);
 }
 
 #[test]

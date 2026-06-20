@@ -19,7 +19,10 @@ use friday_storage::{authorize_mutating_action_ed25519, Db, StorageError};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::skill_catalog::{discover_skill_catalog, skill_run_gate_request, SkillCatalogDiscovery};
+use crate::skill_catalog::{
+    adopted_skill_ids_from_mission_links, discover_skill_catalog, skill_run_gate_request,
+    SkillCatalogDiscovery,
+};
 
 pub const FRIDAY_D21_SKILL_RUN_LOCAL: &str = "FRIDAY_D21_SKILL_RUN_LOCAL";
 
@@ -97,9 +100,10 @@ pub fn run_local_skill_ed25519(
         ));
     }
 
+    let adopted_skill_ids = skill_run_adopted_skill_ids(db, &request)?;
     let snapshot = discover_skill_catalog(SkillCatalogDiscovery {
         managed_skills_root: request.managed_skills_root.clone(),
-        adopted_skill_ids: request.adopted_skill_ids.clone(),
+        adopted_skill_ids,
         approved_first_run_skill_ids: request.approved_first_run_skill_ids.clone(),
         proof_refs_by_skill_id: Default::default(),
         run_refs_by_skill_id: Default::default(),
@@ -183,6 +187,21 @@ pub fn run_local_skill_ed25519(
         output_sha256,
         output_len: result.output.len(),
     })
+}
+
+fn skill_run_adopted_skill_ids(
+    db: &Db,
+    request: &LocalSkillRunRequest,
+) -> Result<Vec<String>, SkillExecutionError> {
+    let mut adopted = request.adopted_skill_ids.clone();
+    adopted.extend(adopted_skill_ids_from_mission_links(
+        db,
+        &request.mission_id,
+        &request.work_item_id,
+    )?);
+    adopted.sort();
+    adopted.dedup();
+    Ok(adopted)
 }
 
 fn runnable_entry<'a>(

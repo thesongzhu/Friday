@@ -12,7 +12,8 @@ use std::path::Path;
 use friday_core::gate::{ApprovalDecision, CanonicalApproval, CANONICAL_GATE_ISSUER};
 use friday_hub::operator_vk::load_operator_vk_from_path;
 use friday_hub::skill_catalog::{
-    stage_link_skill_candidate_receipt_ed25519, LinkSkillCandidateReceiptRequest, SkillCatalogError,
+    record_skill_adoption_receipt_ed25519, stage_link_skill_candidate_receipt_ed25519,
+    LinkSkillCandidateReceiptRequest, SkillAdoptionReceiptRequest, SkillCatalogError,
 };
 use friday_storage::Db;
 use serde::Deserialize;
@@ -63,7 +64,7 @@ fn main() {
 fn run() -> Result<String, CliError> {
     let args: Vec<String> = env::args().collect();
     let command = args.get(1).map(String::as_str).unwrap_or_default();
-    if command != "stage-link-candidate" {
+    if command != "stage-link-candidate" && command != "adopt-managed-skill" {
         return Err(CliError::new("bad_args"));
     }
 
@@ -81,6 +82,9 @@ fn run() -> Result<String, CliError> {
         .unwrap_or_else(now_ms);
 
     let db = Db::open_hub(&db_path).map_err(|_| CliError::new("init_failed"))?;
+    if command == "adopt-managed-skill" {
+        return adopt_managed_skill(&args, &db, approval, &operator_vk, now_ms);
+    }
     let request = LinkSkillCandidateReceiptRequest {
         skill_id: arg_value(&args, "--skill-id").ok_or(CliError::new("bad_args"))?,
         safe_title: arg_value(&args, "--safe-title").ok_or(CliError::new("bad_args"))?,
@@ -104,6 +108,45 @@ fn run() -> Result<String, CliError> {
         "executes_skill": false,
         "skill_id": receipt.skill_id,
         "candidate_ref": receipt.candidate_ref,
+        "proof_ref": receipt.proof_ref,
+        "mission_id": receipt.mission_id,
+        "work_item_id": receipt.work_item_id,
+        "status": receipt.status,
+    });
+    let rendered =
+        serde_json::to_string(&payload).map_err(|_| CliError::new("serialize_failed"))?;
+    reject_forbidden_output(&rendered)?;
+    Ok(rendered)
+}
+
+fn adopt_managed_skill(
+    args: &[String],
+    db: &Db,
+    approval: CanonicalApproval,
+    operator_vk: &friday_crypto::OperatorVerifyingKey,
+    now_ms: i64,
+) -> Result<String, CliError> {
+    let request = SkillAdoptionReceiptRequest {
+        skill_id: arg_value(args, "--skill-id").ok_or(CliError::new("bad_args"))?,
+        mission_id: arg_value(args, "--mission-id").ok_or(CliError::new("bad_args"))?,
+        work_item_id: arg_value(args, "--work-item-id").ok_or(CliError::new("bad_args"))?,
+        operator_principal_id: arg_value(args, "--operator-principal-id")
+            .unwrap_or_else(|| "operator".to_string()),
+        canonical_approval: approval,
+        proof_ref: arg_value(args, "--proof-ref").ok_or(CliError::new("bad_args"))?,
+        now_ms,
+    };
+    let receipt = record_skill_adoption_receipt_ed25519(db, request, operator_vk)
+        .map_err(|err| CliError::new(skill_error_kind(&err)))?;
+    let payload = json!({
+        "truth_label": "d21_skill_adoption_receipt",
+        "ok": true,
+        "adopts_skill_for_mission": true,
+        "imports_skill": false,
+        "executes_skill": false,
+        "completes_work_item": false,
+        "skill_id": receipt.skill_id,
+        "adoption_ref": receipt.adoption_ref,
         "proof_ref": receipt.proof_ref,
         "mission_id": receipt.mission_id,
         "work_item_id": receipt.work_item_id,
