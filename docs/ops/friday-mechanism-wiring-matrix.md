@@ -37,7 +37,7 @@ Mutation defaults:
 
 ## Critical TS Mutation Fences
 
-These TS surfaces remain in the retirement manifest as behavior-tested 503-by-default fences. They are not proof that the replacement Rust product path is complete; they are the no-ungated-hole side of L1.
+These TS surfaces remain in the retirement manifest as behavior-tested 503-by-default fences. They are not proof that the replacement Rust product path is complete; they are the no-ungated-hole side of L1. CI now runs every `methodRetiredSurfaces[*].behavioralTest` from `docs/ops/ts-runtime-retirement-manifest.json`; the table below is the critical subset mapped into the mechanism matrix, not the full behavior-test set.
 
 | surface_id | mechanism | default | behavior |
 |---|---|---|---|
