@@ -151,7 +151,7 @@ describe("Claude mission proof operator gate", () => {
     ).toBeLessThan(hiddenReadIndex);
     expect(
       source.indexOf(
-        'require_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_AUTO_DISPATCH" "1"',
+        'check_optional_plist_env_equals "${TS_HUB_LAUNCH_PLIST}" "FRIDAY_MISSION_AUTO_DISPATCH" "1"',
       ),
     ).toBeLessThan(hiddenReadIndex);
     expect(
