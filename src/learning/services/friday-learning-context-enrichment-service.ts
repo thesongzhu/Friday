@@ -7,6 +7,10 @@ import type {
   JsonValue,
 } from "../model/friday-learning.types.js";
 import { FRIDAY_LEARNING_DEFAULTS } from "../model/friday-learning.types.js";
+import {
+  FRIDAY_LEARNED_FACT_CONTEXT_USE_BOUNDARY,
+  readLearnedFactReviewBoundary,
+} from "./friday-learned-fact-memory-view.js";
 
 export interface FridayLearningContextEnrichmentService {
   buildContext(input: {
@@ -56,11 +60,27 @@ export function createFridayLearningContextEnrichmentService(
       const appliedFacts: FridayLearningContext["appliedFacts"] = [];
 
       for (const fact of activeFacts) {
+        const reviewBoundary = readLearnedFactReviewBoundary(fact);
         preferences[fact.key] = fact.value;
         appliedFacts.push({
           factId: fact.factId,
           key: fact.key,
           confidence: fact.confidence,
+          evidenceCount: fact.evidenceCount,
+          lastConfirmedAt: fact.lastConfirmedAt,
+          sourceEventIds: fact.sourceEventIds,
+          reviewBoundary,
+          contextUseBoundary: FRIDAY_LEARNED_FACT_CONTEXT_USE_BOUNDARY,
+          provenance: {
+            source: "preference_fact",
+            reviewBoundary,
+            reviewCenterCandidateId: typeof fact.metadata?.reviewCenterCandidateId === "string"
+              ? fact.metadata.reviewCenterCandidateId
+              : undefined,
+            reviewCenterOrigin: typeof fact.metadata?.reviewCenterOrigin === "string"
+              ? fact.metadata.reviewCenterOrigin
+              : undefined,
+          },
         });
       }
 

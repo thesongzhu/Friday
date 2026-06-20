@@ -176,6 +176,14 @@ describe("FridaySelfLearningRuntime", () => {
       nowIso: NOW,
     });
     expect(ctx.preferences).toHaveProperty("pref:editor", "nvim");
+    expect(ctx.appliedFacts[0]).toMatchObject({
+      key: "pref:editor",
+      contextUseBoundary: "learning_context_service_gated",
+      provenance: {
+        source: "preference_fact",
+        reviewBoundary: "not_review_center_confirmed",
+      },
+    });
   });
 
   it("pipeline end-to-end: explicit user-message preference is active on first evidence", () => {

@@ -92,6 +92,73 @@ describe("FridayLearningContextEnrichmentService", () => {
     expect(ctx.appliedFacts).toHaveLength(1);
     expect(ctx.appliedFacts[0]!.key).toBe("pref:language");
     expect(ctx.appliedFacts[0]!.confidence).toBe(0.90);
+    expect(ctx.appliedFacts[0]).toMatchObject({
+      evidenceCount: 1,
+      lastConfirmedAt: NOW,
+      sourceEventIds: ["evt-001"],
+      reviewBoundary: "not_review_center_confirmed",
+      contextUseBoundary: "learning_context_service_gated",
+      provenance: {
+        source: "preference_fact",
+        reviewBoundary: "not_review_center_confirmed",
+      },
+    });
+  });
+
+  it("buildContext carries Review Center provenance for confirmed learned facts", () => {
+    const factRepo = createFridayPreferenceFactRepository();
+    const factService = createFridayPreferenceFactService({
+      db,
+      factRepo,
+      idGenerator: idGen,
+      nowIso: () => NOW,
+    });
+
+    factService.applySignals({
+      event: {
+        eventId: "evt-review-learned-fact",
+        ts: NOW,
+        userId: "test-user",
+        kind: "user_correction",
+        payload: { feedbackKind: "learned_fact_approval" },
+      },
+      signals: [
+        {
+          signalId: "sig-review-learned-fact",
+          kind: "preference",
+          key: "learned.preferred_editor",
+          value: "Helix",
+          confidence: 0.9,
+          sourceEventId: "evt-review-learned-fact",
+          userId: "test-user",
+          ts: NOW,
+          situationalContext: {
+            candidateId: "candidate-123",
+            origin: "post_run",
+          },
+        },
+      ],
+      nowIso: NOW,
+    });
+
+    const ctx = service.buildContext({
+      userId: "test-user",
+      nowIso: NOW,
+    });
+
+    expect(ctx.preferences).toHaveProperty("learned.preferred_editor", "Helix");
+    expect(ctx.appliedFacts).toHaveLength(1);
+    expect(ctx.appliedFacts[0]).toMatchObject({
+      key: "learned.preferred_editor",
+      reviewBoundary: "review_center_confirmed",
+      contextUseBoundary: "learning_context_service_gated",
+      provenance: {
+        source: "preference_fact",
+        reviewBoundary: "review_center_confirmed",
+        reviewCenterCandidateId: "candidate-123",
+        reviewCenterOrigin: "post_run",
+      },
+    });
   });
 
   it("buildContext excludes low-confidence facts", () => {
