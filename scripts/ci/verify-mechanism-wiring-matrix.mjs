@@ -45,6 +45,58 @@ const CRITICAL_TS_FENCES = new Map([
   ["mcp_server_rpc", "agent_tool_execution"],
 ]);
 
+const CRITICAL_TS_FENCE_BEHAVIOR_TESTS = new Map([
+  ["agent_runs_start", {
+    path: "test/unit/api/runtime/friday-api-runtime-rust-route-compose.test.ts",
+    includes: [
+      "allowTestOnlyAgentRunStartExecution intentionally UNSET",
+      "TS_RUNTIME_AGENT_RUNS_RETIRED",
+      "httpStatus: 503",
+    ],
+  }],
+  ["workflow_runs_start", {
+    path: "test/integration/workflows/friday-workflow-trigger-retirement-guard.test.ts",
+    includes: [
+      "allowTestOnlyWorkflowRunExecution",
+      "TS_RUNTIME_WORKFLOW_RUNS_RETIRED",
+      "creates NO run row",
+      "expect(runRowCount()).toBe(0)",
+    ],
+  }],
+  ["autofix_execute", {
+    path: "test/unit/api/http/routes/friday-auto-fix-routes.test.ts",
+    includes: [
+      "TS_RUNTIME_AUTOFIX_EXECUTION_RETIRED",
+      "httpStatus: 503",
+      "expect(service.executeAction).not.toHaveBeenCalled",
+    ],
+  }],
+  ["skills_run", {
+    path: "test/unit/api/http/routes/friday-skill-routes.test.ts",
+    includes: [
+      "TS_RUNTIME_SKILL_RUNS_RETIRED",
+      "httpStatus: 503",
+      "expect(executor.execute).not.toHaveBeenCalled",
+    ],
+  }],
+  ["skills_import", {
+    path: "test/unit/api/http/routes/friday-skill-converter-routes.test.ts",
+    includes: [
+      "TS_RUNTIME_SKILL_CONVERTER_RETIRED",
+      "httpStatus: 503",
+      "expect(converterService.import).not.toHaveBeenCalled",
+    ],
+  }],
+  ["mcp_server_rpc", {
+    path: "test/unit/api/http/routes/friday-mcp-server-routes.test.ts",
+    includes: [
+      "TS_RUNTIME_MCP_TOOLS_CALL_RETIRED",
+      "expect(body.error?.code).toBe(-32000)",
+      "expect(deps.callTool).not.toHaveBeenCalled",
+    ],
+  }],
+]);
+
 const GOVERNED_NON_503_SURFACES = [
   "agent_cancel_rollback",
   "agent_plan_tool_approvals",
@@ -199,6 +251,22 @@ for (const [surfaceId, mechanismId] of CRITICAL_TS_FENCES.entries()) {
   }
   if (!docSource.includes(`| \`${surfaceId}\` | \`${mechanismId}\``)) {
     fail(`${surfaceId}: missing critical-fence row mapped to ${mechanismId} in docs`);
+  }
+
+  const behaviorTest = CRITICAL_TS_FENCE_BEHAVIOR_TESTS.get(surfaceId);
+  if (!behaviorTest) {
+    fail(`${surfaceId}: missing explicit critical-fence behavior-test binding`);
+    continue;
+  }
+  const behaviorTestSource = await readFile(join(REPO_ROOT, behaviorTest.path), "utf8").catch(() => null);
+  if (!behaviorTestSource) {
+    fail(`${surfaceId}: behavior test file is missing: ${behaviorTest.path}`);
+    continue;
+  }
+  for (const requiredSnippet of behaviorTest.includes) {
+    if (!behaviorTestSource.includes(requiredSnippet)) {
+      fail(`${surfaceId}: behavior test ${behaviorTest.path} is missing ${JSON.stringify(requiredSnippet)}`);
+    }
   }
 }
 
