@@ -315,6 +315,7 @@ fn validate_import_request(
 }
 
 struct PromoteTarget {
+    skill_dir: PathBuf,
     manifest_path: PathBuf,
     manifest: serde_json::Value,
     entrypoint: PathBuf,
@@ -361,6 +362,7 @@ fn validate_promote_request(
         ));
     }
     Ok(PromoteTarget {
+        skill_dir,
         manifest_path,
         manifest,
         entrypoint,
@@ -502,6 +504,7 @@ fn write_promote(
         &promote.manifest_path,
         serde_json::to_vec_pretty(&promote.manifest)?,
     )?;
+    mark_entrypoint_executable(&promote.skill_dir.join(&promote.entrypoint))?;
 
     db.upsert_mission_link(&MissionLink {
         link_id: promote_ref.clone(),
@@ -522,6 +525,21 @@ fn write_promote(
         entrypoint: request.entrypoint,
         status: "imported_manifest_promoted_to_sandbox_required_shell_not_executed".to_string(),
     })
+}
+
+#[cfg(unix)]
+fn mark_entrypoint_executable(path: &Path) -> Result<(), SkillMdImportError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut permissions = fs::metadata(path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn mark_entrypoint_executable(_path: &Path) -> Result<(), SkillMdImportError> {
+    Ok(())
 }
 
 fn collect_files(source: &Path) -> Result<Vec<CandidateFile>, SkillMdImportError> {
