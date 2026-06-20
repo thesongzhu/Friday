@@ -122,6 +122,9 @@ describe("Claude mission proof operator gate", () => {
     expect(launcherSource).toContain(
       'FRIDAY_CLAUDE_MISSION_PROOF_INTENT="${TASK_TEXT}"',
     );
+    expect(launcherSource).toContain("FRIDAY_OG9_OPERATOR_ORIGIN_ACK");
+    expect(launcherSource).toContain("operator-physical-hand-starts-og9-organic-run");
+    expect(launcherSource).toContain("agent automation must use proof/soak wrappers instead");
     expect(launcherSource).toContain("observe-wrapper.claude.organic");
     expect(launcherSource).toContain("FRIDAY_CLAUDE_ORGANIC_TASK");
     expect(launcherSource).not.toContain("FRIDAY_CLAUDE_PROOF_OK");
@@ -129,11 +132,27 @@ describe("Claude mission proof operator gate", () => {
     expect(keychainSource).toContain(
       'FRIDAY_CLAUDE_MISSION_PROOF_PASSPHRASE_STDIN=1 "${ORGANIC_SCRIPT}"',
     );
+    expect(keychainSource).not.toContain("FRIDAY_OG9_OPERATOR_ORIGIN_ACK=");
     expect(keychainSource).toContain("passphrase_file_ok()");
     expect(keychainSource).toContain("read_provisioned_passphrase()");
     expect(keychainSource).toContain("stat -f '%Lp'");
     expect(keychainSource).toContain("stat -f '%u'");
     expect(keychainSource).toContain("400|600) ;;");
+  });
+
+  it("refuses Claude organic launch without operator-origin acknowledgement", () => {
+    const result = spawnSync(organicLauncher, ["operator task"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        FRIDAY_OG9_OPERATOR_ORIGIN_ACK: "",
+      },
+    });
+
+    expect(result.status).toBe(4);
+    expect(result.stderr).toContain("strict OG9 organic launch requires FRIDAY_OG9_OPERATOR_ORIGIN_ACK");
+    expect(result.stderr).toContain("agent automation must use proof/soak wrappers instead");
   });
 
   it("does not read secrets before preflight and does not put bearer in argv", () => {

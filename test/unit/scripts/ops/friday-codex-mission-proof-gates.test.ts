@@ -487,6 +487,9 @@ describe("Codex mission proof gates", () => {
 
     expect(organicSource).toContain("FRIDAY_CODEX_ORGANIC_TASK");
     expect(organicSource).toContain("Usage: $0 '<operator task for Codex>'");
+    expect(organicSource).toContain("FRIDAY_OG9_OPERATOR_ORIGIN_ACK");
+    expect(organicSource).toContain("operator-physical-hand-starts-og9-organic-run");
+    expect(organicSource).toContain("agent automation must use proof/soak wrappers instead");
     expect(organicSource).toContain(
       'export FRIDAY_CODEX_MISSION_PROOF_RUN_KIND="organic"',
     );
@@ -504,10 +507,26 @@ describe("Codex mission proof gates", () => {
     expect(organicKeychainSource).toContain(
       'FRIDAY_CODEX_MISSION_PROOF_PASSPHRASE_STDIN=1 "${ORGANIC_SCRIPT}" "$@"',
     );
+    expect(organicKeychainSource).not.toContain("FRIDAY_OG9_OPERATOR_ORIGIN_ACK=");
     expect(organicKeychainSource).toContain(
       'security find-generic-password -a "${KEYCHAIN_ACCOUNT}" -s "${KEYCHAIN_SERVICE}" -w >/dev/null 2>&1',
     );
     expect(organicKeychainSource).toContain("trap 'unset PASSPHRASE' EXIT");
+  });
+
+  it("refuses Codex organic launch without operator-origin acknowledgement", () => {
+    const result = spawnSync(organicSpawnScript, ["operator task"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        FRIDAY_OG9_OPERATOR_ORIGIN_ACK: "",
+      },
+    });
+
+    expect(result.status).toBe(4);
+    expect(result.stderr).toContain("strict OG9 organic launch requires FRIDAY_OG9_OPERATOR_ORIGIN_ACK");
+    expect(result.stderr).toContain("agent automation must use proof/soak wrappers instead");
   });
 
   it("D8 audit passes only when a linked session has matching completed WorkItem proof", async () => {
