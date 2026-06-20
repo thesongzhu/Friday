@@ -15,7 +15,7 @@ use friday_core::{
     TruthStatus, WorkItem, WorkItemStatus, WorkLane,
 };
 use friday_crypto::{OperatorSigningKey, OperatorVerifyingKey};
-use friday_hub::skill_md_importer::skill_md_import_gate_request;
+use friday_hub::skill_md_importer::{skill_md_import_gate_request, skill_md_promote_gate_request};
 use friday_storage::Db;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -113,11 +113,17 @@ fn write_approval(path: &std::path::Path, approval: &CanonicalApproval) {
 }
 
 fn source_digest(skill_md: &[u8]) -> String {
+    source_digest_files(&[("SKILL.md", skill_md)])
+}
+
+fn source_digest_files(files: &[(&str, &[u8])]) -> String {
     let mut hash = Sha256::new();
-    hash.update(b"SKILL.md");
-    hash.update([0]);
-    hash.update(skill_md);
-    hash.update([0]);
+    for (path, bytes) in files {
+        hash.update(path.as_bytes());
+        hash.update([0]);
+        hash.update(bytes);
+        hash.update([0]);
+    }
     let digest = hash
         .finalize()
         .iter()
@@ -212,6 +218,15 @@ fn gate_request(digest: &str) -> MutatingActionRequest {
     )
 }
 
+fn promote_gate_request() -> MutatingActionRequest {
+    skill_md_promote_gate_request(
+        "summarize-local",
+        "mission-skill-md-import-cli",
+        "work-skill-md-import-cli",
+        "operator",
+    )
+}
+
 fn cli_base(
     db_path: &str,
     vk_path: &std::path::Path,
@@ -246,6 +261,39 @@ fn cli_base(
         .arg("proof://skill-md-import/summarize-local")
         .arg("--now-ms")
         .arg((NOW + 1).to_string());
+    cmd
+}
+
+fn promote_cli_base(
+    db_path: &str,
+    vk_path: &std::path::Path,
+    approval_path: &std::path::Path,
+    managed_root: &std::path::Path,
+) -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_hub_skill_md_import"));
+    cmd.arg("promote-imported-local")
+        .arg("--db")
+        .arg(db_path)
+        .arg("--operator-vk-path")
+        .arg(vk_path)
+        .arg("--approval-json")
+        .arg(approval_path)
+        .arg("--managed-skills-root")
+        .arg(managed_root)
+        .arg("--skill-id")
+        .arg("summarize-local")
+        .arg("--entrypoint")
+        .arg("run.sh")
+        .arg("--mission-id")
+        .arg("mission-skill-md-import-cli")
+        .arg("--work-item-id")
+        .arg("work-skill-md-import-cli")
+        .arg("--operator-principal-id")
+        .arg("operator")
+        .arg("--proof-ref")
+        .arg("proof://skill-md-promote/summarize-local")
+        .arg("--now-ms")
+        .arg((NOW + 2).to_string());
     cmd
 }
 
@@ -311,6 +359,175 @@ fn cli_imports_ed25519_candidate_without_install_or_execution() {
         .unwrap();
     assert_eq!(item.status, WorkItemStatus::ReadyToDispatch);
     assert!(item.proof_receipts.is_empty());
+    let links = db
+        .list_mission_links("mission-skill-md-import-cli")
+        .unwrap();
+    assert_eq!(links.len(), 1);
+}
+
+#[test]
+fn cli_promotes_imported_candidate_to_sandbox_required_shell_without_execution() {
+    let db_path = temp_db("promote");
+    let db = Db::open_hub(&db_path).unwrap();
+    seed_mission(&db);
+
+    let source_dir = temp_path("promote-source");
+    let managed_root = temp_path("promote-managed");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    std::fs::create_dir_all(&managed_root).unwrap();
+    let skill_md =
+        b"---\nid: summarize-local\ntitle: Summarize Local\n---\nSummarize local text.\n";
+    std::fs::write(source_dir.join("SKILL.md"), skill_md).unwrap();
+    std::fs::write(
+        source_dir.join("run.sh"),
+        "#!/bin/sh\nprintf 'should-not-run-during-promote'\n",
+    )
+    .unwrap();
+    let run_sh = b"#!/bin/sh\nprintf 'should-not-run-during-promote'\n";
+    let digest = source_digest_files(&[("SKILL.md", skill_md), ("run.sh", run_sh)]);
+
+    let (sk, vk) = operator();
+    let vk_path = temp_path("promote-operator.vk");
+    std::fs::write(&vk_path, vk_hex(&vk)).unwrap();
+    let import_approval_path = temp_path("promote-import-approval.json");
+    write_approval(
+        &import_approval_path,
+        &ed_approval(
+            &gate_request(&digest),
+            &sk,
+            "skill-md-import-before-promote",
+        ),
+    );
+    let import_output = cli_base(
+        &db_path,
+        &vk_path,
+        &import_approval_path,
+        &source_dir,
+        &managed_root,
+        &digest,
+    )
+    .output()
+    .unwrap();
+    assert!(
+        import_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&import_output.stderr)
+    );
+
+    let promote_approval_path = temp_path("promote-approval.json");
+    write_approval(
+        &promote_approval_path,
+        &ed_approval(&promote_gate_request(), &sk, "skill-md-promote-ed-allow"),
+    );
+    let output = promote_cli_base(&db_path, &vk_path, &promote_approval_path, &managed_root)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(!stdout.contains("should-not-run-during-promote"));
+    let json: Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(json["truth_label"], "d21_skill_md_promote");
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["imports_skill"], false);
+    assert_eq!(json["promotes_runtime"], true);
+    assert_eq!(json["executes_skill"], false);
+    assert_eq!(json["completes_work_item"], false);
+    assert_eq!(json["requires_darwin_sandbox"], true);
+    assert_eq!(
+        json["status"],
+        "imported_manifest_promoted_to_sandbox_required_shell_not_executed"
+    );
+
+    let manifest_path = managed_root
+        .join("summarize-local")
+        .join("skill.manifest.json");
+    let manifest: Value =
+        serde_json::from_str(&std::fs::read_to_string(manifest_path).unwrap()).unwrap();
+    assert_eq!(manifest["runtime"]["kind"], "shell");
+    assert_eq!(manifest["runtime"]["entrypoint"], "run.sh");
+    assert_eq!(manifest["runtime"]["requiresDarwinSandbox"], true);
+    assert!(!managed_root
+        .join("summarize-local")
+        .join("marker.txt")
+        .exists());
+
+    let item = db
+        .get_work_item("work-skill-md-import-cli")
+        .unwrap()
+        .unwrap();
+    assert_eq!(item.status, WorkItemStatus::ReadyToDispatch);
+    assert!(item.proof_receipts.is_empty());
+    let links = db
+        .list_mission_links("mission-skill-md-import-cli")
+        .unwrap();
+    assert_eq!(links.len(), 2);
+}
+
+#[test]
+fn cli_rejects_hmac_promote_approval_without_changing_manifest() {
+    let db_path = temp_db("promote-hmac");
+    let db = Db::open_hub(&db_path).unwrap();
+    seed_mission(&db);
+
+    let source_dir = temp_path("promote-hmac-source");
+    let managed_root = temp_path("promote-hmac-managed");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    std::fs::create_dir_all(&managed_root).unwrap();
+    let skill_md = b"---\nid: summarize-local\n---\nSummarize local text.\n";
+    std::fs::write(source_dir.join("SKILL.md"), skill_md).unwrap();
+    let run_sh = b"#!/bin/sh\nprintf nope\n";
+    std::fs::write(source_dir.join("run.sh"), run_sh).unwrap();
+    let digest = source_digest_files(&[("SKILL.md", skill_md), ("run.sh", run_sh)]);
+
+    let (sk, vk) = operator();
+    let vk_path = temp_path("operator-promote-hmac.vk");
+    std::fs::write(&vk_path, vk_hex(&vk)).unwrap();
+    let import_approval_path = temp_path("approval-promote-hmac-import.json");
+    write_approval(
+        &import_approval_path,
+        &ed_approval(
+            &gate_request(&digest),
+            &sk,
+            "skill-md-import-for-hmac-promote",
+        ),
+    );
+    let import_output = cli_base(
+        &db_path,
+        &vk_path,
+        &import_approval_path,
+        &source_dir,
+        &managed_root,
+        &digest,
+    )
+    .output()
+    .unwrap();
+    assert!(import_output.status.success());
+
+    let promote_approval_path = temp_path("approval-promote-hmac.json");
+    write_approval(
+        &promote_approval_path,
+        &hmac_approval(&promote_gate_request(), "skill-md-promote-hmac"),
+    );
+    let output = promote_cli_base(&db_path, &vk_path, &promote_approval_path, &managed_root)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(json["ok"], false);
+    assert_eq!(json["promotes_runtime"], false);
+    assert_eq!(json["executes_skill"], false);
+
+    let manifest_path = managed_root
+        .join("summarize-local")
+        .join("skill.manifest.json");
+    let manifest: Value =
+        serde_json::from_str(&std::fs::read_to_string(manifest_path).unwrap()).unwrap();
+    assert_eq!(manifest["runtime"]["kind"], "skill-md-imported");
     let links = db
         .list_mission_links("mission-skill-md-import-cli")
         .unwrap();

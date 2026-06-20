@@ -244,7 +244,8 @@
       "additional_e2e_tests": [
         "rust-core/crates/friday-hub/tests/skill_run_local_cli.rs::flag_off_fails_closed_without_executing_skill",
         "rust-core/crates/friday-hub/tests/skill_run_local_cli.rs::hmac_approval_is_rejected_before_execution",
-        "rust-core/crates/friday-hub/tests/skill_run_local_cli.rs::imported_skill_md_runtime_is_not_executable"
+        "rust-core/crates/friday-hub/tests/skill_run_local_cli.rs::imported_skill_md_runtime_is_not_executable",
+        "rust-core/crates/friday-hub/tests/skill_run_local_cli.rs::sandbox_required_manifest_fails_closed_without_darwin_sandbox_request"
       ],
       "notes": "Built-dark D21/A4 execution substrate. The runner uses the existing shell-free/env-scrubbed/cwd-contained friday-fs command path and supports a required Darwin sandbox CLI switch, but this flag does not flip live product execution policy and does not make imported SKILL.md packages executable. Hub still verifies only; operator signing remains operator-only."
     },
