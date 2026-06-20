@@ -50,6 +50,9 @@ friday-vision.workspace = true
 friday-tts.workspace = true
 friday-pdf.workspace = true
 friday-ocr.workspace = true
+# B4 Studio/document export — Rust-owned DARK artifact core. Hub wiring stays
+# default-off and metadata-only until a later product route/export cutover.
+friday-studio.workspace = true
 friday-providers.workspace = true
 # The ToolExecutor's file read/write goes through the hardened workspace-root-contained
 # safe-open — NEVER std::fs on an agent-supplied path.
