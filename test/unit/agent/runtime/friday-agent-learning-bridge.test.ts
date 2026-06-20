@@ -64,10 +64,40 @@ describe("FridayAgentLearningBridge", () => {
     expect(event.userId).toBe("admin-001");
     expect(event.payload).toEqual({
       agentRunId: "run-2",
+      workflowId: "run-2",
+      success: true,
+      status: "completed",
       toolCallCount: 3,
       durationMs: 5000,
       testsPassed: true,
       artifactCount: 1,
+    });
+  });
+
+  it("marks failed completed runs so workflow outcome extraction can learn from them", () => {
+    const { emitter, bridge, learningEventWriter, written } = setup();
+    bridge.start();
+
+    emitter.emit("agent.run.completed", {
+      runId: "run-5",
+      durationMs: 7000,
+      toolCallCount: 2,
+      testsPassed: false,
+      artifacts: [],
+    });
+
+    expect(learningEventWriter).toHaveBeenCalledOnce();
+    const event = written[0]![0]!;
+    expect(event.kind).toBe("workflow_outcome");
+    expect(event.payload).toEqual({
+      agentRunId: "run-5",
+      workflowId: "run-5",
+      success: false,
+      status: "failed",
+      toolCallCount: 2,
+      durationMs: 7000,
+      testsPassed: false,
+      artifactCount: 0,
     });
   });
 
