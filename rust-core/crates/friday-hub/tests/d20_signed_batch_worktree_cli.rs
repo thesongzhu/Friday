@@ -287,6 +287,10 @@ fn cli_pauses_irreversible_member_before_executor() {
     assert_eq!(json["ok"], true);
     assert_eq!(json["executed"], false);
     assert_eq!(json["result_status"], "requires_approval");
+    assert_eq!(
+        json["reason"],
+        "dial_worktree_irreversible_requires_single_approval"
+    );
     assert!(
         !workspace.join("should_not_exist").exists(),
         "irreversible run_command must pause before executor"
@@ -339,9 +343,67 @@ fn cli_pauses_out_of_worktree_member_before_executor() {
     assert_eq!(json["ok"], true);
     assert_eq!(json["executed"], false);
     assert_eq!(json["result_status"], "requires_approval");
+    assert_eq!(json["reason"], "dial_worktree_resource_out_of_scope");
     assert!(
         !outside_target.exists(),
         "out-of-worktree write must pause before executor"
+    );
+    assert_eq!(audit_count(&db), 0);
+    assert_eq!(consumed_count(&db), 0);
+}
+
+#[test]
+fn cli_reports_never_revertable_workspace_reason_refs_only() {
+    let db_path = temp_db("never-revertable");
+    let db = Db::open_hub(&db_path).unwrap();
+    let workspace = temp_path("never-revertable-workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let never_revertable_dir =
+        std::path::Path::new(&std::env::var("HOME").unwrap()).join(".friday");
+    std::fs::create_dir_all(&never_revertable_dir).unwrap();
+    let never_revertable_target = never_revertable_dir.join("d20-never-revertable.txt");
+    let _ = std::fs::remove_file(&never_revertable_target);
+
+    let action = raw(
+        "write_file",
+        &[
+            ("path", "~/.friday/d20-never-revertable.txt"),
+            ("content", "nope"),
+        ],
+    );
+    let request = request_for(&action);
+    let (sk, vk) = operator();
+    let vk_path = temp_path("never-revertable.vk");
+    std::fs::write(&vk_path, vk_hex(&vk)).unwrap();
+    let batch = signed_batch(&request, &sk, "d20-cli-never-revertable");
+    let signed_path = temp_path("never-revertable-signed.json");
+    write_signed_batch(&signed_path, &batch);
+    let action_path = temp_path("never-revertable-action.json");
+    write_action(&action_path, &action);
+
+    let output = run_cli(
+        &db_path,
+        &workspace,
+        &vk_path,
+        &signed_path,
+        &action_path,
+        NOW,
+    );
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json = parse_stdout(&output);
+    assert_eq!(json["truth_label"], "d20_worktree_signed_batch_artifact");
+    assert_eq!(json["proof_only"], true);
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["executed"], false);
+    assert_eq!(json["result_status"], "requires_approval");
+    assert_eq!(json["reason"], "dial_worktree_never_revertable_path");
+    assert!(
+        !never_revertable_target.exists(),
+        "never-revertable target must pause before executor"
     );
     assert_eq!(audit_count(&db), 0);
     assert_eq!(consumed_count(&db), 0);

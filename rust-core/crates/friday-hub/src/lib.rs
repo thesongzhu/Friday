@@ -3573,7 +3573,7 @@ pub(crate) enum GateDispatch {
 pub enum D20WorktreeBatchOutcome {
     Executed { action: String, summary: String },
     ExecError { reason: String },
-    RequiresApproval,
+    RequiresApproval { reason: String },
     Denied { reason: String },
     Unregistered { action: String },
 }
@@ -4178,20 +4178,57 @@ pub fn d20_dispatch_signed_batch_artifact_in_worktree(
     policy: &RunPolicy,
     now_ms: i64,
 ) -> Result<D20WorktreeBatchOutcome, StorageError> {
-    let outcome = d20_dispatch_signed_batch_in_worktree(
-        conn, executor, raw, vk, batch, scope, policy, now_ms,
-    )?;
-    Ok(match outcome {
-        GateDispatch::Executed(receipt) => D20WorktreeBatchOutcome::Executed {
-            action: receipt.action,
-            summary: receipt.summary,
+    if policy.is_tool_disabled(&raw.action) {
+        return Ok(D20WorktreeBatchOutcome::Denied {
+            reason: format!("tool_disabled_for_run:{}", raw.action),
+        });
+    }
+    let request = match build_request_with_policy(raw, policy) {
+        Ok(request) => request,
+        Err(ToolError::UnknownTool(action)) => {
+            return Ok(D20WorktreeBatchOutcome::Unregistered { action });
+        }
+    };
+    if !request.mutating() {
+        return Ok(D20WorktreeBatchOutcome::Denied {
+            reason: format!(
+                "dial_worktree_batch_requires_mutating_action:{}",
+                raw.action
+            ),
+        });
+    }
+    if policy.is_read_only() {
+        return Ok(D20WorktreeBatchOutcome::Denied {
+            reason: format!("run_is_read_only:{}", raw.action),
+        });
+    }
+
+    let record =
+        authorize_reversible_batch_in_worktree(conn, &request, Some(batch), vk, now_ms, scope)?;
+    Ok(match record.decision {
+        GateDecision::Allow => match executor.execute_with_usage(&raw.action, &raw.params) {
+            Ok((receipt, usage)) => {
+                if let Some(usage) = usage.as_ref() {
+                    let run_id = policy
+                        .action_context()
+                        .and_then(|ctx| ctx.run_id.as_deref());
+                    friday_storage::record_tool_usage(conn, usage, run_id, now_ms)?;
+                }
+                D20WorktreeBatchOutcome::Executed {
+                    action: receipt.action,
+                    summary: receipt.summary,
+                }
+            }
+            Err(err) => D20WorktreeBatchOutcome::ExecError {
+                reason: err.to_string(),
+            },
         },
-        GateDispatch::ExecError(err) => D20WorktreeBatchOutcome::ExecError {
-            reason: err.to_string(),
+        GateDecision::RequiresApproval => D20WorktreeBatchOutcome::RequiresApproval {
+            reason: record.reason,
         },
-        GateDispatch::RequiresApproval => D20WorktreeBatchOutcome::RequiresApproval,
-        GateDispatch::Denied(reason) => D20WorktreeBatchOutcome::Denied { reason },
-        GateDispatch::Unregistered(action) => D20WorktreeBatchOutcome::Unregistered { action },
+        GateDecision::Deny => D20WorktreeBatchOutcome::Denied {
+            reason: record.reason,
+        },
     })
 }
 
