@@ -135,7 +135,7 @@ export const TIER1_PARITY_FLOW_SPECS = Object.freeze([
     flowId: "c2-deepseek-no-openai-fallback-diagnostic",
     lane: "C2",
     source: "deepseek",
-    expectedHarness: "scripts/ops/phase24h-telegram-natural-trigger-listener.mjs",
+    expectedHarness: "scripts/ops/friday-c1-c2-deepseek-rgg-core-gate.mjs",
   },
   {
     order: 19,
