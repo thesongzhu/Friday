@@ -336,6 +336,7 @@ pub mod crash_recovery;
 /// the existing `upsert_surface_event` persist; best-effort / non-fatal; never touches the reader.
 pub(crate) mod surface_events;
 
+pub mod skill_candidate_materializer;
 /// Skill / Capability Catalog / Advisor Bridge. Reads managed skill manifests as
 /// truth-labeled catalog entries and advisor inputs; it does not execute skills
 /// or grant control.
