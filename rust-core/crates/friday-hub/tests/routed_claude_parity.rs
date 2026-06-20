@@ -246,6 +246,43 @@ fn assert_anthropic_rows(
         assert_eq!(row.base_url_host, "api.anthropic.com");
         assert!(!row.fallback, "the claude route is never a fallback");
     }
+    assert_claude_metered_provider_session_refs(rt, run_id);
+}
+
+fn assert_claude_metered_provider_session_refs(
+    rt: &HubRuntime<friday_deepseek::UreqTransport>,
+    run_id: &str,
+) {
+    let rows = rt.db().list_run_token_usage(run_id).unwrap();
+    let session_id = format!("claude-metered-{run_id}");
+    let link = friday_storage::provider_session::get_link(rt.db().conn(), &session_id)
+        .unwrap()
+        .expect("anthropic metered turns must write a Claude provider-session link");
+    assert_eq!(link.provider, "claude");
+    assert_eq!(link.sync_mode, friday_core::SyncMode::FridayLocalMirror);
+    assert_eq!(
+        link.truth_label,
+        "claude_anthropic_metered_turn_metadata_only"
+    );
+
+    let events =
+        friday_storage::provider_session::list_events(rt.db().conn(), &session_id).unwrap();
+    assert_eq!(
+        events.len(),
+        rows.len(),
+        "each Anthropic token_ledger row has one refs-only provider-session event"
+    );
+    for row in &rows {
+        assert!(
+            events.iter().any(|event| {
+                event.provider == "claude"
+                    && event.redaction_level == "metadata_only"
+                    && event.token_ledger_ref.as_deref() == Some(row.ledger_id.as_str())
+            }),
+            "missing provider-session event for ledger {}",
+            row.ledger_id
+        );
+    }
 }
 
 /// Build an authenticated caller bound to `principal` over a freshly paired sealed session — the
@@ -285,6 +322,7 @@ fn assert_sessioned_anthropic_rows(rt: &HubRuntime<friday_deepseek::UreqTranspor
         assert_eq!(row.base_url_host, "api.anthropic.com");
         assert!(!row.fallback, "the claude route is never a fallback");
     }
+    assert_claude_metered_provider_session_refs(rt, run_id);
 }
 
 // ---- CHAT-expressible flows (LIVE) ----------------------------------------------------------
